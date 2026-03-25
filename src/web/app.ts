@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
+import { cors } from "hono/cors";
 import { csrf } from "hono/csrf";
 import { HTTPException } from "hono/http-exception";
 import log from "../lib/logger.js";
@@ -67,6 +68,28 @@ app.use("*", async (c, next) => {
   }
 });
 
+// Body size limit (10MB — generous for image uploads)
+app.use("/api/*", bodyLimit({ maxSize: 10 * 1024 * 1024 }));
+
+// CORS for remote UI clients using Bearer auth (service worker proxy, CLI, Electron).
+app.use(
+  "/api/*",
+  cors({
+    origin: (origin) => origin,
+    allowHeaders: ["Authorization", "Content-Type", "X-Volute-Session"],
+    allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
+    credentials: true,
+  }),
+);
+
+// CSRF protection for cookie-based requests. Requests with Bearer auth are exempt
+// because Bearer tokens aren't auto-attached by browsers, making CSRF impossible.
+app.use("/api/*", async (c, next) => {
+  const auth = c.req.header("Authorization");
+  if (auth?.startsWith("Bearer ")) return next();
+  return csrf()(c, next);
+});
+
 // Daemon health (unauthenticated)
 app.get("/api/health", (c) => {
   let version = "unknown";
@@ -83,12 +106,6 @@ app.get("/api/health", (c) => {
     ...(cached?.updateAvailable ? { updateAvailable: true, latest: cached.latest } : {}),
   });
 });
-
-// Body size limit (10MB — generous for image uploads)
-app.use("/api/*", bodyLimit({ maxSize: 10 * 1024 * 1024 }));
-
-// CSRF protection for API mutation requests
-app.use("/api/*", csrf());
 
 // Protected API routes
 app.use("/api/activity/*", authMiddleware);

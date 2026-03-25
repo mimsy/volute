@@ -1,5 +1,6 @@
 // Typed API client using plain fetch against /api/v1/ endpoints.
 // No Hono RPC dependency — same interface works against daemon or Worker proxy.
+// In remote mode, the service worker intercepts and proxies these requests.
 
 import type {
   AvailableUser,
@@ -21,51 +22,31 @@ import type {
   UpdateResult,
   Variant,
 } from "@volute/api";
+import { createClient, type VoluteClient } from "@volute/api/client";
 import type { CursorResponse } from "@volute/api/pagination";
 import type { ExtensionManagementInfo } from "./extensions";
 
+// Singleton client instance — uses relative paths (service worker handles remote proxying)
+let _client: VoluteClient = createClient();
+
+/** Reconfigure the API client (e.g., when switching between local and remote mode) */
+export function configureClient(opts: { baseUrl?: string; token?: string }): void {
+  _client = createClient(opts);
+}
+
 const V1 = "/api/v1";
 
-async function get<T>(path: string): Promise<T> {
-  const res = await fetch(path);
-  if (!res.ok) {
-    const data = (await res.json().catch(() => ({}))) as { error?: string };
-    throw new Error(data.error || `Request failed: ${res.status}`);
-  }
-  return res.json();
+function get<T>(path: string): Promise<T> {
+  return _client.get<T>(path);
 }
-
-async function post<T>(path: string, body?: unknown): Promise<T> {
-  const res = await fetch(path, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: body != null ? JSON.stringify(body) : undefined,
-  });
-  if (!res.ok) {
-    const data = (await res.json().catch(() => ({}))) as { error?: string };
-    throw new Error(data.error || `Request failed: ${res.status}`);
-  }
-  return res.json();
+function post<T>(path: string, body?: unknown): Promise<T> {
+  return _client.post<T>(path, body);
 }
-
-async function put(path: string, body?: unknown): Promise<void> {
-  const res = await fetch(path, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: body != null ? JSON.stringify(body) : undefined,
-  });
-  if (!res.ok) {
-    const data = (await res.json().catch(() => ({}))) as { error?: string };
-    throw new Error(data.error || `Request failed: ${res.status}`);
-  }
+function put(path: string, body?: unknown): Promise<void> {
+  return _client.put(path, body);
 }
-
-async function del(path: string): Promise<void> {
-  const res = await fetch(path, { method: "DELETE" });
-  if (!res.ok) {
-    const data = (await res.json().catch(() => ({}))) as { error?: string };
-    throw new Error(data.error || `Request failed: ${res.status}`);
-  }
+function del(path: string): Promise<void> {
+  return _client.del(path);
 }
 
 // --- Minds ---
@@ -209,11 +190,13 @@ export function reportTyping(
   sender: string,
   active: boolean,
 ): void {
-  fetch(`${V1}/minds/${enc(mindName)}/typing`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ channel, sender, active }),
-  }).catch(() => {});
+  _client
+    .fetch(`${V1}/minds/${enc(mindName)}/typing`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ channel, sender, active }),
+    })
+    .catch(() => {});
 }
 
 // --- History ---
@@ -411,7 +394,7 @@ export function addDefaultSkill(skill: string): Promise<string[]> {
 }
 
 export async function removeDefaultSkill(skill: string): Promise<string[]> {
-  const res = await fetch(`${V1}/skills/defaults/list/${enc(skill)}`, { method: "DELETE" });
+  const res = await _client.fetch(`${V1}/skills/defaults/list/${enc(skill)}`, { method: "DELETE" });
   if (!res.ok) {
     const data = (await res.json().catch(() => ({}))) as { error?: string };
     throw new Error(data.error || `Request failed: ${res.status}`);
@@ -630,7 +613,7 @@ export function fetchAvailableUsers(type?: string): Promise<AvailableUser[]> {
 export async function uploadSkillZip(file: File): Promise<SharedSkill> {
   const form = new FormData();
   form.append("file", file);
-  const res = await fetch(`${V1}/skills/upload`, { method: "POST", body: form });
+  const res = await _client.fetch(`${V1}/skills/upload`, { method: "POST", body: form });
   if (!res.ok) {
     const data = (await res.json().catch(() => ({}))) as { error?: string };
     throw new Error(data.error || "Failed to upload skill");
@@ -729,7 +712,7 @@ export async function updateMindProfile(
   name: string,
   updates: { displayName?: string; description?: string },
 ): Promise<void> {
-  const res = await fetch(`${V1}/minds/${enc(name)}/profile`, {
+  const res = await _client.fetch(`${V1}/minds/${enc(name)}/profile`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(updates),
@@ -743,7 +726,10 @@ export async function updateMindProfile(
 export async function uploadMindAvatar(name: string, file: File): Promise<void> {
   const form = new FormData();
   form.append("file", file);
-  const res = await fetch(`${V1}/minds/${enc(name)}/avatar`, { method: "POST", body: form });
+  const res = await _client.fetch(`${V1}/minds/${enc(name)}/avatar`, {
+    method: "POST",
+    body: form,
+  });
   if (!res.ok) {
     const data = (await res.json().catch(() => ({}))) as { error?: string };
     throw new Error(data.error || "Failed to upload avatar");

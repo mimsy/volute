@@ -4,6 +4,7 @@ import { Icon, Modal, tooltip } from "@volute/ui";
 import { icons } from "@volute/ui/icons";
 import { onMount } from "svelte";
 import ChannelMembersPanel from "./components/ChannelMembersPanel.svelte";
+import ConnectionSetup from "./components/ConnectionSetup.svelte";
 import LoginPage from "./components/LoginPage.svelte";
 import MainFrame from "./components/layout/MainFrame.svelte";
 import UnifiedSidebar from "./components/layout/UnifiedSidebar.svelte";
@@ -18,6 +19,12 @@ import UpdateBanner from "./components/system/UpdateBanner.svelte";
 import TurnTimeline from "./components/TurnTimeline.svelte";
 import { type AuthUser, fetchMe } from "./lib/auth";
 import { deleteConversation } from "./lib/client";
+import {
+  daemon,
+  detectConnection,
+  disconnectRemote,
+  isRemote,
+} from "./lib/daemon-connection.svelte";
 import { navigate, parseSelection, type Selection, selectionToPath } from "./lib/navigate";
 import { requestNotificationPermission } from "./lib/notifications";
 import {
@@ -280,9 +287,28 @@ let breadcrumbs = $derived.by((): Breadcrumb[] => {
   return crumbs;
 });
 
-// Auth — one-time fetch on mount
+// Remote connection state — true when no daemon found and no saved connection
+let needsConnection = $state(false);
+
+async function doLogout() {
+  await handleLogout();
+  if (isRemote()) {
+    await disconnectRemote();
+    needsConnection = true;
+  }
+}
+
+// Auth — detect daemon connection first, then check auth
 onMount(() => {
-  checkAuth();
+  // Async init — fire and forget (onMount cleanup must be sync)
+  detectConnection().then((connected) => {
+    if (!connected) {
+      needsConnection = true;
+      auth.checked = true; // Mark as checked so we don't show "Loading..."
+    } else {
+      checkAuth();
+    }
+  });
 
   const mql = window.matchMedia("(max-width: 1024px)");
   narrowViewport = mql.matches;
@@ -634,6 +660,15 @@ function handleGlobalClick(e: MouseEvent) {
       });
     }} />
   </div>
+{:else if needsConnection}
+  <div class="app full-height">
+    <ConnectionSetup onConnected={(user) => {
+      needsConnection = false;
+      // After connecting via remote, the SW is active — now check auth
+      // The user was already authenticated during remote login
+      handleAuth(user);
+    }} />
+  </div>
 {:else if !auth.user}
   <div class="app full-height">
     <LoginPage {onAuth} />
@@ -773,7 +808,7 @@ function handleGlobalClick(e: MouseEvent) {
                 {#if showUserMenu}
                   <div class="user-dropdown" role="menu">
                     <button class="user-dropdown-item" onclick={() => { showUserMenu = false; activeModal = "userSettings"; }}>Profile</button>
-                    <button class="user-dropdown-item" onclick={() => { showUserMenu = false; handleLogout(); }}>Logout</button>
+                    <button class="user-dropdown-item" onclick={() => { showUserMenu = false; doLogout(); }}>Logout</button>
                   </div>
                 {/if}
               </div>

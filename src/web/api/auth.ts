@@ -300,7 +300,14 @@ const app = new Hono()
     return c.json({ ok: true });
   })
   .get("/me", async (c) => {
-    const sessionId = getCookie(c, "volute_session");
+    // Accept Bearer token (remote UI) or cookie (same-origin)
+    let sessionId = getCookie(c, "volute_session");
+    if (!sessionId) {
+      const authHeader = c.req.header("Authorization");
+      if (authHeader?.startsWith("Bearer ")) {
+        sessionId = authHeader.slice(7);
+      }
+    }
     if (!sessionId) return c.json({ error: "Not logged in" }, 401);
 
     const userId = await getSessionUserId(sessionId);
