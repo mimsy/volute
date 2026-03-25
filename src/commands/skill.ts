@@ -1,64 +1,9 @@
 import { getClient, urlOf } from "../lib/api-client.js";
+import { subcommands } from "../lib/command.js";
 import { daemonFetch } from "../lib/daemon-client.js";
 import { isCompact } from "../lib/format-cli.js";
 import { parseArgs } from "../lib/parse-args.js";
 import { resolveMindName } from "../lib/resolve-mind-name.js";
-
-export async function run(args: string[]) {
-  const subcommand = args[0];
-
-  switch (subcommand) {
-    case "list":
-      await listSkills(args.slice(1));
-      break;
-    case "info":
-      await infoSkill(args.slice(1));
-      break;
-    case "install":
-      await installSkill(args.slice(1));
-      break;
-    case "update":
-      await updateSkill(args.slice(1));
-      break;
-    case "publish":
-      await publishSkill(args.slice(1));
-      break;
-    case "remove":
-      await removeSkill(args.slice(1));
-      break;
-    case "uninstall":
-      await uninstallSkill(args.slice(1));
-      break;
-    case "defaults":
-      await manageDefaults(args.slice(1));
-      break;
-    case "--help":
-    case "-h":
-    case undefined:
-      printUsage();
-      break;
-    default:
-      console.error(`Unknown subcommand: ${subcommand}`);
-      printUsage();
-      process.exit(1);
-  }
-}
-
-function printUsage() {
-  console.log(`Usage:
-  volute skill list                    List shared skills available to install
-  volute skill list --mind <name>      List installed skills for a mind
-  volute skill info <name>             Show details of a shared skill
-  volute skill install <name> --mind   Install a shared skill into a mind
-  volute skill update <name> --mind    Update an installed skill (3-way merge)
-  volute skill update --all --mind     Update all installed skills
-  volute skill publish <name> --mind   Publish a mind's skill to the shared repository
-  volute skill remove <name>           Remove a shared skill
-  volute skill uninstall <name> --mind Uninstall a skill from a mind
-  volute skill defaults                List default skills for new minds
-  volute skill defaults add <name>     Add a skill to the default set
-  volute skill defaults remove <name>  Remove a skill from the default set`);
-}
 
 async function listSkills(args: string[]) {
   const { flags } = parseArgs(args, { mind: { type: "string" } });
@@ -448,3 +393,45 @@ async function uninstallSkill(args: string[]) {
 
   console.log(`Uninstalled skill "${skillId}" from ${mindName}.`);
 }
+
+const cmd = subcommands({
+  name: "volute skill",
+  description: "Browse, install, and manage skills",
+  commands: {
+    list: {
+      description: "List skills (shared or per-mind with --mind)",
+      run: listSkills,
+    },
+    info: {
+      description: "Show details of a shared skill",
+      run: infoSkill,
+    },
+    install: {
+      description: "Install a shared skill into a mind",
+      run: installSkill,
+    },
+    update: {
+      description: "Update an installed skill (3-way merge)",
+      run: updateSkill,
+    },
+    publish: {
+      description: "Publish a mind's skill to the shared repository",
+      run: publishSkill,
+    },
+    remove: {
+      description: "Remove a shared skill",
+      run: removeSkill,
+    },
+    uninstall: {
+      description: "Uninstall a skill from a mind",
+      run: uninstallSkill,
+    },
+    defaults: {
+      description: "Manage default skills for new minds",
+      run: manageDefaults,
+    },
+  },
+  footer: "Use --mind <name> or VOLUTE_MIND to identify the mind.",
+});
+
+export const run = cmd.execute;

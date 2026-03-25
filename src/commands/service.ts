@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { promisify } from "node:util";
-import { parseArgs } from "../lib/parse-args.js";
+import { subcommands } from "../lib/command.js";
 import {
   LAUNCHD_PLIST_LABEL,
   LAUNCHD_PLIST_PATH,
@@ -80,39 +80,36 @@ async function status(): Promise<void> {
   }
 }
 
-export async function run(args: string[]) {
-  const { positional } = parseArgs(args, {});
+const cmd = subcommands({
+  name: "volute service",
+  description: "Manage the system service",
+  commands: {
+    status: {
+      description: "Check service status",
+      run: async () => status(),
+    },
+    install: {
+      description: "(deprecated) Use 'volute setup' instead",
+      run: async () => {
+        console.log("'volute service install' has been replaced by 'volute setup'.");
+        console.log("Run `volute setup` to configure your installation.");
+      },
+    },
+    uninstall: {
+      description: "(deprecated) Use 'volute setup' instead",
+      run: async () => {
+        console.log("'volute service uninstall' has been replaced by 'volute setup'.");
+        console.log("To uninstall the service, remove the service file manually:");
+        if (process.platform === "darwin") {
+          console.log("  launchctl unload ~/Library/LaunchAgents/com.volute.daemon.plist");
+          console.log("  rm ~/Library/LaunchAgents/com.volute.daemon.plist");
+        } else {
+          console.log("  systemctl --user disable --now volute");
+          console.log("  rm ~/.config/systemd/user/volute.service");
+        }
+      },
+    },
+  },
+});
 
-  const subcommand = positional[0];
-
-  switch (subcommand) {
-    case "install":
-      console.log("'volute service install' has been replaced by 'volute setup'.");
-      console.log("Run `volute setup` to configure your installation.");
-      break;
-    case "uninstall":
-      console.log("'volute service uninstall' has been replaced by 'volute setup'.");
-      console.log("To uninstall the service, remove the service file manually:");
-      if (process.platform === "darwin") {
-        console.log("  launchctl unload ~/Library/LaunchAgents/com.volute.daemon.plist");
-        console.log("  rm ~/Library/LaunchAgents/com.volute.daemon.plist");
-      } else {
-        console.log("  systemctl --user disable --now volute");
-        console.log("  rm ~/.config/systemd/user/volute.service");
-      }
-      break;
-    case "status":
-      await status();
-      break;
-    default:
-      console.log(`Usage:
-  volute service status    Check service status
-
-Note: 'volute service install' and 'volute service uninstall' have been
-replaced by 'volute setup'. Run 'volute setup' to configure your installation.`);
-      if (subcommand && subcommand !== "--help") {
-        console.error(`\nUnknown subcommand: ${subcommand}`);
-        process.exit(1);
-      }
-  }
-}
+export const run = cmd.execute;

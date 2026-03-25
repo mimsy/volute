@@ -1,5 +1,6 @@
 import { CronExpressionParser } from "cron-parser";
 import { getClient, urlOf } from "../lib/api-client.js";
+import { subcommands } from "../lib/command.js";
 import { daemonFetch } from "../lib/daemon-client.js";
 import { compactDateTime, isCompact } from "../lib/format-cli.js";
 import { parseArgs } from "../lib/parse-args.js";
@@ -24,52 +25,6 @@ type ClockStatus = {
   schedules: Schedule[];
   upcoming: { id: string; at: string; type: "cron" | "timer" }[];
 };
-
-export async function run(args: string[]) {
-  const subcommand = args[0];
-
-  switch (subcommand) {
-    case "status":
-      await clockStatus(args.slice(1));
-      break;
-    case "list":
-      await listSchedules(args.slice(1));
-      break;
-    case "add":
-      await addSchedule(args.slice(1));
-      break;
-    case "remove":
-      await removeSchedule(args.slice(1));
-      break;
-    case "sleep":
-      await import("./mind-sleep.js").then((m) => m.run(args.slice(1)));
-      break;
-    case "wake":
-      await import("./mind-wake.js").then((m) => m.run(args.slice(1)));
-      break;
-    case "--help":
-    case "-h":
-    case undefined:
-      printUsage();
-      break;
-    default:
-      printUsage();
-      process.exit(1);
-  }
-}
-
-function printUsage() {
-  console.log(`Usage:
-  volute clock status [--mind <name>]
-  volute clock list [--mind <name>]
-  volute clock add [--mind <name>] --id <name> --cron "..." --message/--script "..." [--session name] [--while-sleeping skip|queue|trigger-wake]
-  volute clock add [--mind <name>] --id <name> --in <duration> --message/--script "..." [--session name] [--while-sleeping skip|queue|trigger-wake]
-  volute clock remove [--mind <name>] --id <id>
-  volute clock sleep [name] [--wake-at <time>]
-  volute clock wake [name]
-
-Duration format for --in: 30s, 10m, 1h, 2h30m`);
-}
 
 function parseDuration(input: string): number | null {
   const parts = input.match(/^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$/);
@@ -197,7 +152,6 @@ async function addSchedule(args: string[]) {
     message: { type: "string" },
     script: { type: "string" },
     id: { type: "string" },
-    channel: { type: "string" },
     session: { type: "string" },
     "while-sleeping": { type: "string" },
   });
@@ -250,7 +204,6 @@ async function addSchedule(args: string[]) {
   if (flags.message) body.message = flags.message;
   if (flags.script) body.script = flags.script;
   if (flags.id) body.id = flags.id;
-  if (flags.channel) body.channel = flags.channel;
   if (flags.session) body.session = flags.session;
   if (flags["while-sleeping"]) {
     const ws = flags["while-sleeping"] as string;
@@ -316,3 +269,37 @@ async function removeSchedule(args: string[]) {
 
   console.log(`Schedule removed: ${flags.id}`);
 }
+
+const cmd = subcommands({
+  name: "volute clock",
+  description: "Manage schedules, timers, and sleep/wake cycles",
+  commands: {
+    status: {
+      description: "Show sleep state and upcoming schedule fires",
+      run: clockStatus,
+    },
+    list: {
+      description: "List schedules and timers",
+      run: listSchedules,
+    },
+    add: {
+      description: "Add a schedule or timer",
+      run: addSchedule,
+    },
+    remove: {
+      description: "Remove a schedule or timer",
+      run: removeSchedule,
+    },
+    sleep: {
+      description: "Put a mind to sleep",
+      run: (args) => import("./mind-sleep.js").then((m) => m.run(args)),
+    },
+    wake: {
+      description: "Wake a sleeping mind",
+      run: (args) => import("./mind-wake.js").then((m) => m.run(args)),
+    },
+  },
+  footer: "Use --mind <name> or VOLUTE_MIND to identify the mind.",
+});
+
+export const run = cmd.execute;
