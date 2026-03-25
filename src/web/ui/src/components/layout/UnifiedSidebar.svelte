@@ -163,7 +163,6 @@ let activeChannelId = $derived.by(() => {
 let isSystemActive = $derived(
   selection.kind === "system-history" ||
     selection.kind === "system-chat" ||
-    selection.kind === "settings" ||
     selection.kind === "extension",
 );
 </script>
@@ -292,9 +291,17 @@ let isSystemActive = $derived(
     onclick={(e) => e.stopPropagation()}
     onkeydown={(e) => { if (e.key === "Escape") openMenu = null; }}
   >
+    <button class="mind-menu-item" onclick={() => handleMenuAction("__system__", "spirit")}>
+      <svg class="menu-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="2"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.05 3.05l1.41 1.41M11.54 11.54l1.41 1.41M3.05 12.95l1.41-1.41M11.54 4.46l1.41-1.41"/></svg>
+      Spirit
+    </button>
     <button class="mind-menu-item" onclick={() => handleMenuAction("__system__", "settings")}>
       <Icon kind="gear" class="menu-icon" />
       Settings
+    </button>
+    <button class="mind-menu-item" onclick={() => handleMenuAction("__system__", "logs")}>
+      <Icon kind="document-lines" class="menu-icon" />
+      Logs
     </button>
   </div>
 {:else if openMenu}
@@ -362,7 +369,6 @@ let isSystemActive = $derived(
   .section-header-row {
     display: flex;
     align-items: center;
-    padding-right: 8px;
     transition: background 0.1s;
   }
 
@@ -421,6 +427,7 @@ let isSystemActive = $derived(
     opacity: 0;
     transition: opacity 0.1s, color 0.1s;
     cursor: pointer;
+    margin-right: 8px;
   }
 
   .section-action svg {
@@ -510,7 +517,7 @@ let isSystemActive = $derived(
     opacity: 0;
     transition: opacity 0.1s, color 0.1s;
     cursor: pointer;
-    margin-right: 6px;
+    margin-right: 8px;
   }
 
   .mind-dots-btn svg {

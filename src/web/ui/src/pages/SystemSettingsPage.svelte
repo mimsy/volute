@@ -2,23 +2,13 @@
 import ExtensionManager from "../components/system/ExtensionManager.svelte";
 import MindDefaults from "../components/system/MindDefaults.svelte";
 import SharedSkills from "../components/system/SharedSkills.svelte";
-import SystemLogs from "../components/system/SystemLogs.svelte";
 import UserManagement from "../components/system/UserManagement.svelte";
 import { restartDaemon } from "../lib/client";
-import { navigate } from "../lib/navigate";
 import { data } from "../lib/stores.svelte";
 import Prompts from "./Prompts.svelte";
 import Settings from "./Settings.svelte";
 
-const TABS = [
-  "settings",
-  "mind-defaults",
-  "prompts",
-  "skills",
-  "extensions",
-  "logs",
-  "users",
-] as const;
+const TABS = ["settings", "mind-defaults", "prompts", "skills", "extensions", "users"] as const;
 type Tab = (typeof TABS)[number];
 
 const TAB_LABELS: Record<Tab, string> = {
@@ -27,17 +17,10 @@ const TAB_LABELS: Record<Tab, string> = {
   prompts: "Prompts",
   skills: "Skills",
   extensions: "Extensions",
-  logs: "System Logs",
   users: "Users",
 };
 
-let {
-  section,
-}: {
-  section?: string;
-} = $props();
-
-let activeTab = $derived<Tab>(TABS.includes(section as Tab) ? (section as Tab) : "settings");
+let activeTab = $state<Tab>("settings");
 
 let restarting = $state(false);
 let restartError = $state<string | null>(null);
@@ -63,7 +46,7 @@ async function handleRestart() {
         <button
           class="settings-tab"
           class:active={activeTab === tab}
-          onclick={() => navigate(tab === "settings" ? "/settings" : `/settings/${tab}`)}
+          onclick={() => (activeTab = tab)}
         >{TAB_LABELS[tab]}</button>
       {/each}
     </div>
@@ -89,8 +72,6 @@ async function handleRestart() {
       <SharedSkills />
     {:else if activeTab === "extensions"}
       <ExtensionManager />
-    {:else if activeTab === "logs"}
-      <SystemLogs />
     {:else if activeTab === "users"}
       <UserManagement minds={data.minds} />
     {/if}
