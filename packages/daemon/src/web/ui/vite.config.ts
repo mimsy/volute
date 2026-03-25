@@ -5,7 +5,7 @@ export default defineConfig({
   root: __dirname,
   plugins: [svelte()],
   build: {
-    outDir: "../../../dist/web-assets",
+    outDir: "../../../../../dist/web-assets",
     emptyOutDir: true,
   },
   server: {
