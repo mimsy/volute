@@ -11,7 +11,7 @@ import { initScheduler } from "./lib/daemon/scheduler.js";
 import { initSleepManager } from "./lib/daemon/sleep-manager.js";
 import { initSummarizer } from "./lib/daemon/summarizer.js";
 import { initTokenBudget } from "./lib/daemon/token-budget.js";
-import { completeOrphanedTurns } from "./lib/daemon/turn-tracker.js";
+import { completeOrphanedTurns, summarizeOrphanedTurns } from "./lib/daemon/turn-tracker.js";
 import { initDeliveryManager } from "./lib/delivery/delivery-manager.js";
 import { stopAll as stopAllActivityTrackers } from "./lib/events/mind-activity-tracker.js";
 import {
@@ -210,8 +210,9 @@ export async function startDaemon(opts: {
   summarizer.start();
   const unsubscribeWebhook = initWebhook();
 
-  // Clean up any turns left active from a previous daemon session
-  await completeOrphanedTurns();
+  // Clean up any turns left active from a previous daemon session and generate their summaries
+  const orphanedTurns = await completeOrphanedTurns();
+  summarizeOrphanedTurns(orphanedTurns);
 
   // Start all minds + variants that were previously running (parallel, concurrency limit of 5)
   // Skip sleeping minds — they only need connectors, not the mind process

@@ -1,32 +1,5 @@
+import { subcommands } from "../lib/command.js";
 import { daemonFetch } from "../lib/daemon-client.js";
-
-export async function run(args: string[]) {
-  const subcommand = args[0];
-
-  switch (subcommand) {
-    case "status":
-      await showStatus();
-      break;
-    case "register":
-      await import("./systems/register.js").then((m) => m.run(args.slice(1)));
-      break;
-    case "login":
-      await import("./systems/login.js").then((m) => m.run(args.slice(1)));
-      break;
-    case "logout":
-      await import("./systems/logout.js").then((m) => m.run());
-      break;
-    case "--help":
-    case "-h":
-    case undefined:
-      printUsage();
-      break;
-    default:
-      printUsage();
-      console.error(`\nUnknown subcommand: ${subcommand}`);
-      process.exit(1);
-  }
-}
 
 async function showStatus() {
   const res = await daemonFetch("/api/system/info");
@@ -46,10 +19,27 @@ async function showStatus() {
   console.log(`System: ${system}`);
 }
 
-function printUsage() {
-  console.log(`Usage:
-  volute systems status                    Show volute.systems account info
-  volute systems register [--name <name>]  Register a system on volute.systems
-  volute systems login [--key <key>]       Log in with an existing API key
-  volute systems logout                    Remove stored credentials`);
-}
+const cmd = subcommands({
+  name: "volute systems",
+  description: "Manage volute.systems account",
+  commands: {
+    status: {
+      description: "Show volute.systems account info",
+      run: async () => showStatus(),
+    },
+    register: {
+      description: "Register a system on volute.systems",
+      run: (args) => import("./systems/register.js").then((m) => m.run(args)),
+    },
+    login: {
+      description: "Log in with an existing API key",
+      run: (args) => import("./systems/login.js").then((m) => m.run(args)),
+    },
+    logout: {
+      description: "Remove stored credentials",
+      run: (args) => import("./systems/logout.js").then((m) => m.run(args)),
+    },
+  },
+});
+
+export const run = cmd.execute;

@@ -3,8 +3,9 @@ import { relative, resolve } from "node:path";
 
 import type { ExtensionCommand } from "@volute/extensions";
 
-import { getPublishedPages, syncPublishedPages } from "./db.js";
+import { getPublishedPages, syncPublishedPages, syncSystemPages } from "./db.js";
 import {
+  collectHtmlFiles,
   isolationFrom,
   pagesLog,
   pagesPull,
@@ -49,7 +50,20 @@ export function createCommands(): Record<string, ExtensionCommand> {
               };
             }
 
-            return { output: result.message || "Published shared pages." };
+            // Sync system pages to DB so they appear in the UI
+            let syncWarning = "";
+            if (result.ok && ctx.db) {
+              const repoDir = resolve(ctx.dataDir, "repo");
+              try {
+                syncSystemPages(ctx.db, collectHtmlFiles(repoDir), mindName);
+              } catch (err) {
+                console.error("[pages] failed to sync system pages to DB:", err);
+                syncWarning =
+                  "\nWarning: failed to sync pages to dashboard — they may not appear in the UI until the next daemon restart.";
+              }
+            }
+
+            return { output: (result.message || "Published shared pages.") + syncWarning };
           } catch (err) {
             return { error: `Shared publish failed: ${(err as Error).message}` };
           }
@@ -66,22 +80,26 @@ export function createCommands(): Record<string, ExtensionCommand> {
         const db = ctx.db;
         if (!db) return { error: "Database not available" };
 
-        // Copy entire directory to snapshot location (clean first for removals)
+        // Copy entire directory to snapshot location (clean first for removals).
+        // Exclude _system/ which is the shared pages git worktree.
         const snapshotDir = resolve(ctx.dataDir, "sites", mindName);
         try {
           if (existsSync(snapshotDir)) rmSync(snapshotDir, { recursive: true });
-          cpSync(sourceDir, snapshotDir, { recursive: true });
+          cpSync(sourceDir, snapshotDir, {
+            recursive: true,
+            filter: (src) => !src.endsWith("/_system") && !src.includes("/_system/"),
+          });
         } catch (err) {
           return { error: `Failed to publish snapshot: ${(err as Error).message}` };
         }
 
-        // Scan snapshot for .html files
-        const htmlFiles = collectFiles(snapshotDir, snapshotDir, ".html");
+        // Scan snapshot for page files (.html and .md)
+        const pageFiles = collectFiles(snapshotDir, snapshotDir, [".html", ".md"]);
 
         // Sync DB and get diff
         let diff: { added: string[]; removed: string[]; updated: string[] };
         try {
-          diff = syncPublishedPages(db, mindName, htmlFiles);
+          diff = syncPublishedPages(db, mindName, pageFiles);
         } catch (err) {
           return { error: `Failed to update page database: ${(err as Error).message}` };
         }
@@ -104,7 +122,7 @@ export function createCommands(): Record<string, ExtensionCommand> {
           });
         }
 
-        let output = `Published ${htmlFiles.length} files`;
+        let output = `Published ${pageFiles.length} files`;
         const parts: string[] = [];
         if (diff.added.length > 0) parts.push(`${diff.added.length} new`);
         if (diff.updated.length > 0) parts.push(`${diff.updated.length} updated`);
@@ -155,6 +173,36 @@ export function createCommands(): Record<string, ExtensionCommand> {
       description: "List pages with publish status",
       usage: "volute pages list [--all] [--shared]",
       handler: async (args, ctx) => {
+        const db = ctx.db;
+        if (!db) return { error: "Database not available" };
+
+        const allFlag = args.includes("--all");
+        const port = process.env.VOLUTE_DAEMON_PORT || "1618";
+
+        if (allFlag) {
+          const { getAllSites, getSystemPages } = await import("./db.js");
+          const sites = getAllSites(db);
+          const system = getSystemPages(db);
+          const lines: string[] = [];
+
+          if (system) {
+            for (const f of system.files) {
+              const url = `http://localhost:${port}/ext/pages/public/_system/${f.file}`;
+              const author = f.author ? ` (${f.author})` : "";
+              lines.push(`_system${author.padStart(10)} ${f.file.padEnd(25)} ${url}`);
+            }
+          }
+          for (const site of sites) {
+            for (const f of site.files) {
+              const url = `http://localhost:${port}/ext/pages/public/${site.mind}/${f.file}`;
+              lines.push(`${site.mind.padEnd(15)} ${f.file.padEnd(25)} ${url}`);
+            }
+          }
+
+          return { output: lines.length > 0 ? lines.join("\n") : "No published pages found." };
+        }
+
+        // Remaining modes require a mind
         const mindName = ctx.mindName;
         if (!mindName) return { error: "No mind specified (use --mind or VOLUTE_MIND)" };
 
@@ -170,34 +218,15 @@ export function createCommands(): Record<string, ExtensionCommand> {
           }
         }
 
-        const db = ctx.db;
-        if (!db) return { error: "Database not available" };
-
-        const allFlag = args.includes("--all");
-        const port = process.env.VOLUTE_DAEMON_PORT || "1618";
-
-        if (allFlag) {
-          const { getAllSites } = await import("./db.js");
-          const sites = getAllSites(db);
-          const lines: string[] = [];
-
-          for (const site of sites) {
-            for (const f of site.files) {
-              const url = `http://localhost:${port}/ext/pages/public/${site.mind}/${f.file}`;
-              lines.push(`${site.mind.padEnd(15)} ${f.file.padEnd(25)} ${url}`);
-            }
-          }
-
-          return { output: lines.length > 0 ? lines.join("\n") : "No published pages found." };
-        }
-
         // List current mind's pages with status
         const mindDir = ctx.getMindDir(mindName);
         if (!mindDir) return { error: `Mind not found: ${mindName}` };
 
         const sourceDir = resolve(mindDir, "home", "pages");
         const published = new Set(getPublishedPages(db, mindName).map((p) => p.file));
-        const draftFiles = existsSync(sourceDir) ? collectFiles(sourceDir, sourceDir, ".html") : [];
+        const draftFiles = existsSync(sourceDir)
+          ? collectFiles(sourceDir, sourceDir, [".html", ".md"])
+          : [];
         const allFiles = new Set([...published, ...draftFiles]);
 
         if (allFiles.size === 0) return { output: "No pages found." };
@@ -265,8 +294,8 @@ export function createCommands(): Record<string, ExtensionCommand> {
   };
 }
 
-/** Recursively collect files, returning paths relative to baseDir. Optionally filter by extension. */
-function collectFiles(dir: string, baseDir: string, ext?: string): string[] {
+/** Recursively collect files, returning paths relative to baseDir. Optionally filter by extension(s). */
+function collectFiles(dir: string, baseDir: string, ext?: string | string[]): string[] {
   const files: string[] = [];
   let items: string[];
   try {
@@ -281,7 +310,9 @@ function collectFiles(dir: string, baseDir: string, ext?: string): string[] {
     const fullPath = resolve(dir, item);
     try {
       const s = statSync(fullPath);
-      if (s.isFile() && (!ext || item.endsWith(ext))) {
+      const matchesExt =
+        !ext || (Array.isArray(ext) ? ext.some((e) => item.endsWith(e)) : item.endsWith(ext));
+      if (s.isFile() && matchesExt) {
         files.push(relative(baseDir, fullPath));
       } else if (s.isDirectory()) {
         files.push(...collectFiles(fullPath, baseDir, ext));

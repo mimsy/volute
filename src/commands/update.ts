@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { resolve } from "node:path";
+import { command } from "@volute/cli/lib/command.js";
 import { exec, execInherit, resolveVoluteBin } from "@volute/daemon/lib/exec.js";
 import { voluteSystemDir } from "@volute/daemon/lib/registry.js";
 import {
@@ -11,153 +12,106 @@ import {
 } from "@volute/daemon/lib/service-mode.js";
 import { checkForUpdate } from "@volute/daemon/lib/update-check.js";
 
-export async function run(_args: string[]) {
-  const result = await checkForUpdate(true);
-  if (result.checkFailed) {
-    console.error("Could not reach npm registry. Check your network connection and try again.");
-    process.exit(1);
-  }
-  console.log(`Current version: ${result.current}`);
-  console.log(`Latest version:  ${result.latest}`);
-
-  if (!result.updateAvailable) {
-    console.log("\nAlready up to date.");
-    return;
-  }
-
-  console.log(`\nUpdating volute ${result.current} → ${result.latest}...`);
-
-  const mode = getServiceMode();
-
-  if (mode === "system") {
-    // System service: use /usr/bin/npm (fall back to which npm) with sudo
-    let npmPath = "/usr/bin/npm";
-    if (!existsSync(npmPath)) {
-      try {
-        npmPath = (await exec("which", ["npm"])).trim();
-      } catch {
-        console.error("Could not find npm. Install npm and try again.");
-        process.exit(1);
-      }
-    }
-    try {
-      await execInherit("sudo", [npmPath, "install", "-g", "volute@latest"]);
-    } catch (err) {
-      console.error(`\nUpdate failed: ${(err as Error).message}`);
+const cmd = command({
+  name: "volute update",
+  description: "Check for and install updates",
+  flags: {},
+  run: async () => {
+    const result = await checkForUpdate(true);
+    if (result.checkFailed) {
+      console.error("Could not reach npm registry. Check your network connection and try again.");
       process.exit(1);
     }
-    console.log("Restarting service...");
-    try {
-      await restartService(mode);
-    } catch (err) {
-      console.error(`Failed to restart: ${err instanceof Error ? err.message : err}`);
-      console.error("Try: sudo systemctl restart volute");
-      process.exit(1);
-    }
-    {
-      const config = readDaemonConfig();
-      if (await pollHealth("127.0.0.1", config.internalPort ?? config.port)) {
-        console.log(`\nUpdated to volute v${result.latest}`);
-      } else {
-        console.error("Service restarted but daemon did not become healthy.");
-        process.exit(1);
-      }
-    }
-    return;
-  }
+    console.log(`Current version: ${result.current}`);
+    console.log(`Latest version:  ${result.latest}`);
 
-  if (mode === "user-systemd" || mode === "user-launchd") {
-    // User service: npm install (no sudo), then restart service
-    try {
-      await execInherit("npm", ["install", "-g", "volute@latest"]);
-    } catch (err) {
-      console.error(`\nUpdate failed: ${(err as Error).message}`);
-      process.exit(1);
-    }
-    console.log(`Restarting service (${modeLabel(mode)})...`);
-    try {
-      await restartService(mode);
-    } catch (err) {
-      console.error(`Failed to restart: ${err instanceof Error ? err.message : err}`);
-      process.exit(1);
-    }
-    {
-      const config = readDaemonConfig();
-      if (await pollHealth("127.0.0.1", config.internalPort ?? config.port)) {
-        console.log(`\nUpdated to volute v${result.latest}`);
-      } else {
-        console.error("Service restarted but daemon did not become healthy.");
-        process.exit(1);
-      }
-    }
-    return;
-  }
-
-  // Manual mode: stop → install → restart (existing logic)
-  const systemDir = voluteSystemDir();
-  const pidPath = resolve(systemDir, "daemon.pid");
-  const configPath = resolve(systemDir, "daemon.json");
-
-  let daemonWasRunning = false;
-  let daemonPort = 1618;
-  let daemonHost = "127.0.0.1";
-
-  if (existsSync(pidPath)) {
-    const pid = parseInt(readFileSync(pidPath, "utf-8").trim(), 10);
-    try {
-      process.kill(pid, 0);
-      daemonWasRunning = true;
-    } catch {
-      try {
-        unlinkSync(pidPath);
-      } catch {}
-    }
-  }
-
-  if (daemonWasRunning && existsSync(configPath)) {
-    try {
-      const config = JSON.parse(readFileSync(configPath, "utf-8"));
-      daemonPort = config.port ?? 1618;
-      daemonHost = config.hostname || "127.0.0.1";
-    } catch {
-      console.error("Warning: could not read daemon config, using default port/host");
-    }
-  }
-
-  if (daemonWasRunning) {
-    console.log("Stopping daemon...");
-    const pid = parseInt(readFileSync(pidPath, "utf-8").trim(), 10);
-    try {
-      process.kill(-pid, "SIGTERM");
-    } catch {
-      try {
-        process.kill(pid, "SIGTERM");
-      } catch {}
+    if (!result.updateAvailable) {
+      console.log("\nAlready up to date.");
+      return;
     }
 
-    const maxWait = 10_000;
-    const start = Date.now();
-    while (Date.now() - start < maxWait) {
-      if (!existsSync(pidPath)) break;
-      await new Promise((r) => setTimeout(r, 200));
-    }
+    console.log(`\nUpdating volute ${result.current} → ${result.latest}...`);
 
-    if (existsSync(pidPath)) {
-      try {
-        process.kill(-pid, "SIGKILL");
-      } catch {
+    const mode = getServiceMode();
+
+    if (mode === "system") {
+      // System service: use /usr/bin/npm (fall back to which npm) with sudo
+      let npmPath = "/usr/bin/npm";
+      if (!existsSync(npmPath)) {
         try {
-          process.kill(pid, "SIGKILL");
-        } catch {}
+          npmPath = (await exec("which", ["npm"])).trim();
+        } catch {
+          console.error("Could not find npm. Install npm and try again.");
+          process.exit(1);
+        }
       }
+      try {
+        await execInherit("sudo", [npmPath, "install", "-g", "volute@latest"]);
+      } catch (err) {
+        console.error(`\nUpdate failed: ${(err as Error).message}`);
+        process.exit(1);
+      }
+      console.log("Restarting service...");
+      try {
+        await restartService(mode);
+      } catch (err) {
+        console.error(`Failed to restart: ${err instanceof Error ? err.message : err}`);
+        console.error("Try: sudo systemctl restart volute");
+        process.exit(1);
+      }
+      {
+        const config = readDaemonConfig();
+        if (await pollHealth("127.0.0.1", config.internalPort ?? config.port)) {
+          console.log(`\nUpdated to volute v${result.latest}`);
+        } else {
+          console.error("Service restarted but daemon did not become healthy.");
+          process.exit(1);
+        }
+      }
+      return;
     }
 
-    if (existsSync(pidPath)) {
+    if (mode === "user-systemd" || mode === "user-launchd") {
+      // User service: npm install (no sudo), then restart service
       try {
-        const stalePid = parseInt(readFileSync(pidPath, "utf-8").trim(), 10);
-        process.kill(stalePid, 0);
-        console.error("Warning: daemon process may still be running. Aborting update.");
+        await execInherit("npm", ["install", "-g", "volute@latest"]);
+      } catch (err) {
+        console.error(`\nUpdate failed: ${(err as Error).message}`);
         process.exit(1);
+      }
+      console.log(`Restarting service (${modeLabel(mode)})...`);
+      try {
+        await restartService(mode);
+      } catch (err) {
+        console.error(`Failed to restart: ${err instanceof Error ? err.message : err}`);
+        process.exit(1);
+      }
+      {
+        const config = readDaemonConfig();
+        if (await pollHealth("127.0.0.1", config.internalPort ?? config.port)) {
+          console.log(`\nUpdated to volute v${result.latest}`);
+        } else {
+          console.error("Service restarted but daemon did not become healthy.");
+          process.exit(1);
+        }
+      }
+      return;
+    }
+
+    // Manual mode: stop → install → restart (existing logic)
+    const systemDir = voluteSystemDir();
+    const pidPath = resolve(systemDir, "daemon.pid");
+    const configPath = resolve(systemDir, "daemon.json");
+
+    let daemonWasRunning = false;
+    let daemonPort = 1618;
+    let daemonHost = "127.0.0.1";
+
+    if (existsSync(pidPath)) {
+      const pid = parseInt(readFileSync(pidPath, "utf-8").trim(), 10);
+      try {
+        process.kill(pid, 0);
+        daemonWasRunning = true;
       } catch {
         try {
           unlinkSync(pidPath);
@@ -165,15 +119,83 @@ export async function run(_args: string[]) {
       }
     }
 
-    console.log("Daemon stopped.");
-  }
+    if (daemonWasRunning && existsSync(configPath)) {
+      try {
+        const config = JSON.parse(readFileSync(configPath, "utf-8"));
+        daemonPort = config.port ?? 1618;
+        daemonHost = config.hostname || "127.0.0.1";
+      } catch {
+        console.error("Warning: could not read daemon config, using default port/host");
+      }
+    }
 
-  try {
-    await execInherit("npm", ["install", "-g", "volute@latest"]);
-  } catch (err) {
-    console.error(`\nUpdate failed: ${(err as Error).message}`);
     if (daemonWasRunning) {
-      console.log("Restarting daemon with current version...");
+      console.log("Stopping daemon...");
+      const pid = parseInt(readFileSync(pidPath, "utf-8").trim(), 10);
+      try {
+        process.kill(-pid, "SIGTERM");
+      } catch {
+        try {
+          process.kill(pid, "SIGTERM");
+        } catch {}
+      }
+
+      const maxWait = 10_000;
+      const start = Date.now();
+      while (Date.now() - start < maxWait) {
+        if (!existsSync(pidPath)) break;
+        await new Promise((r) => setTimeout(r, 200));
+      }
+
+      if (existsSync(pidPath)) {
+        try {
+          process.kill(-pid, "SIGKILL");
+        } catch {
+          try {
+            process.kill(pid, "SIGKILL");
+          } catch {}
+        }
+      }
+
+      if (existsSync(pidPath)) {
+        try {
+          const stalePid = parseInt(readFileSync(pidPath, "utf-8").trim(), 10);
+          process.kill(stalePid, 0);
+          console.error("Warning: daemon process may still be running. Aborting update.");
+          process.exit(1);
+        } catch {
+          try {
+            unlinkSync(pidPath);
+          } catch {}
+        }
+      }
+
+      console.log("Daemon stopped.");
+    }
+
+    try {
+      await execInherit("npm", ["install", "-g", "volute@latest"]);
+    } catch (err) {
+      console.error(`\nUpdate failed: ${(err as Error).message}`);
+      if (daemonWasRunning) {
+        console.log("Restarting daemon with current version...");
+        try {
+          await execInherit(resolveVoluteBin(), [
+            "up",
+            "--port",
+            String(daemonPort),
+            "--host",
+            daemonHost,
+          ]);
+        } catch {
+          console.error("Failed to restart daemon. Run `volute up` manually.");
+        }
+      }
+      process.exit(1);
+    }
+
+    if (daemonWasRunning) {
+      console.log("Restarting daemon...");
       try {
         await execInherit(resolveVoluteBin(), [
           "up",
@@ -186,23 +208,9 @@ export async function run(_args: string[]) {
         console.error("Failed to restart daemon. Run `volute up` manually.");
       }
     }
-    process.exit(1);
-  }
 
-  if (daemonWasRunning) {
-    console.log("Restarting daemon...");
-    try {
-      await execInherit(resolveVoluteBin(), [
-        "up",
-        "--port",
-        String(daemonPort),
-        "--host",
-        daemonHost,
-      ]);
-    } catch {
-      console.error("Failed to restart daemon. Run `volute up` manually.");
-    }
-  }
+    console.log(`\nUpdated to volute v${result.latest}`);
+  },
+});
 
-  console.log(`\nUpdated to volute v${result.latest}`);
-}
+export const run = cmd.execute;

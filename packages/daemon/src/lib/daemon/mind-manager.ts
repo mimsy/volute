@@ -14,7 +14,7 @@ import { isSandboxEnabled, wrapForSandbox } from "../sandbox.js";
 import { sendSystemMessageDirect } from "../system-chat.js";
 import { generateMindToken, revokeMindToken } from "./mind-tokens.js";
 import { RestartTracker } from "./restart-tracker.js";
-import { clearMind as clearTurnState } from "./turn-tracker.js";
+import { clearMind as clearTurnState, summarizeOrphanedTurns } from "./turn-tracker.js";
 
 const mlog = log.child("minds");
 
@@ -195,7 +195,7 @@ export class MindManager {
         .filter(([k, v]) => k.startsWith("VOLUTE_") && v != null)
         .map(([k, v]) => `export ${k}=${JSON.stringify(v)}`);
       zshenvLines.push(`export PATH=${JSON.stringify(env.PATH ?? "")}`);
-      writeFileSync(resolve(homeDir, ".zshenv"), zshenvLines.join("\n") + "\n", { mode: 0o600 });
+      writeFileSync(resolve(homeDir, ".zshenv"), `${zshenvLines.join("\n")}\n`, { mode: 0o600 });
     }
 
     // For claude minds, inject system Anthropic credentials.
@@ -443,10 +443,13 @@ export class MindManager {
         mlog.warn(`failed to check sleep state for ${name}`, log.errorData(err));
       }
 
-      // Clear turn state and delivery session state so ghost counts don't accumulate
-      clearTurnState(name).catch((err) =>
-        mlog.warn(`failed to clear turn state for ${name} after crash`, log.errorData(err)),
-      );
+      // Clear turn state and delivery session state so ghost counts don't accumulate.
+      // Generate summaries for any orphaned turns before they're lost.
+      clearTurnState(name)
+        .then((orphaned) => summarizeOrphanedTurns(orphaned))
+        .catch((err) =>
+          mlog.warn(`failed to clear turn state for ${name} after crash`, log.errorData(err)),
+        );
       try {
         const { getDeliveryManager } = await import("../delivery/delivery-manager.js");
         getDeliveryManager().clearMindSessions(name);
@@ -512,7 +515,12 @@ export class MindManager {
 
     this.stopping.delete(name);
     revokeMindToken(name);
-    await clearTurnState(name);
+    try {
+      const orphanedTurns = await clearTurnState(name);
+      summarizeOrphanedTurns(orphanedTurns);
+    } catch (err) {
+      mlog.warn(`failed to clear turn state for ${name} on stop`, log.errorData(err));
+    }
     try {
       const { getDeliveryManager } = await import("../delivery/delivery-manager.js");
       getDeliveryManager().clearMindSessions(name);

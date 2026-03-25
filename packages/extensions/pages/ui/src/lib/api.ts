@@ -4,6 +4,7 @@ export interface SitePage {
   file: string;
   modified: string;
   url: string;
+  author?: string | null;
 }
 
 export interface Site {
@@ -17,16 +18,18 @@ export interface RecentPage {
   file: string;
   modified: string;
   url: string;
+  author?: string | null;
 }
 
 export async function fetchPagesData(): Promise<{
   sites: Site[];
+  systemSite: Site | null;
   recentPages: RecentPage[];
 }> {
   const res = await fetch(API_BASE);
   if (!res.ok) {
     console.warn(`Failed to fetch pages data: HTTP ${res.status}`);
-    return { sites: [], recentPages: [] };
+    return { sites: [], systemSite: null, recentPages: [] };
   }
   return res.json();
 }

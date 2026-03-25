@@ -56,13 +56,21 @@ describe("parseArgs", () => {
     assert.equal(result.flags.json, true);
   });
 
-  it("ignores unknown flags", () => {
-    const result = parseArgs(["--unknown", "value", "pos"], {
-      known: { type: "string" },
-    });
-    // --unknown is skipped; "value" and "pos" become positional
-    assert.deepStrictEqual(result.positional, ["value", "pos"]);
-    assert.equal(result.flags.known, undefined);
+  it("warns on unknown flags and skips them", () => {
+    const origError = console.error;
+    const errors: string[] = [];
+    console.error = (...a: unknown[]) => errors.push(a.join(" "));
+    try {
+      const result = parseArgs(["--unknown", "value", "pos"], {
+        known: { type: "string" },
+      });
+      // --unknown is skipped; "value" and "pos" become positional
+      assert.deepStrictEqual(result.positional, ["value", "pos"]);
+      assert.equal(result.flags.known, undefined);
+      assert.ok(errors.some((e) => e.includes("unknown flag --unknown")));
+    } finally {
+      console.error = origError;
+    }
   });
 
   it("handles flag at end without value", () => {
@@ -90,5 +98,29 @@ describe("parseArgs", () => {
     assert.equal(result.flags.name, undefined);
     assert.equal(result.flags.port, undefined);
     assert.equal(result.flags.json, false);
+  });
+
+  it("detects --help flag", () => {
+    const result = parseArgs(["--help"], { name: { type: "string" } });
+    assert.equal(result.help, true);
+  });
+
+  it("detects -h flag", () => {
+    const result = parseArgs(["-h"], { name: { type: "string" } });
+    assert.equal(result.help, true);
+  });
+
+  it("defaults help to false", () => {
+    const result = parseArgs(["foo"], {});
+    assert.equal(result.help, false);
+  });
+
+  it("detects --help mixed with other args", () => {
+    const result = parseArgs(["foo", "--help", "--name", "bar"], {
+      name: { type: "string" },
+    });
+    assert.equal(result.help, true);
+    assert.ok(!result.positional.includes("--help"));
+    assert.equal(result.flags.name, "bar");
   });
 });

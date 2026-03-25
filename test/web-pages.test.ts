@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { extname, resolve } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { Hono } from "hono";
+import { parseFrontmatter, resolveStylesheet } from "../packages/extensions/pages/src/markdown.js";
 
 const MIME_TYPES: Record<string, string> = {
   ".html": "text/html",
@@ -49,6 +50,31 @@ function setupTestDir() {
   const sourceDir = resolve(testDir, "mind", "home", "pages");
   mkdirSync(sourceDir, { recursive: true });
   writeFileSync(resolve(sourceDir, "draft.html"), "<h1>Draft</h1>");
+
+  // Markdown files
+  writeFileSync(
+    resolve(snapshotDir, "hello.md"),
+    "---\ntitle: Hello World\n---\n\n# Hello\n\nThis is **bold**.\n",
+  );
+  writeFileSync(resolve(snapshotDir, "plain.md"), "# No frontmatter\n\nJust content.\n");
+
+  // Subdirectory with index.md (no index.html)
+  const blogDir = resolve(snapshotDir, "blog");
+  mkdirSync(blogDir, { recursive: true });
+  writeFileSync(resolve(blogDir, "index.md"), "# Blog\n\nWelcome to the blog.\n");
+  writeFileSync(resolve(blogDir, "style.css"), "body { color: blue; }");
+
+  // Subdirectory with both index.html and index.md (html should win)
+  const bothDir = resolve(snapshotDir, "both");
+  mkdirSync(bothDir, { recursive: true });
+  writeFileSync(resolve(bothDir, "index.html"), "<h1>HTML wins</h1>");
+  writeFileSync(resolve(bothDir, "index.md"), "# MD loses\n");
+
+  // Markdown with frontmatter style override
+  writeFileSync(
+    resolve(snapshotDir, "styled.md"),
+    "---\ntitle: Styled\nstyle: blog/style.css\n---\n\n# Styled page\n",
+  );
 
   // Secret file outside pages (for path traversal tests)
   writeFileSync(resolve(testDir, "mind", "home", "SOUL.md"), "secret soul");
@@ -227,6 +253,23 @@ describe("web pages routes", () => {
   });
 });
 
+function makeCtx(dir: string) {
+  return {
+    dataDir: dir,
+    db: null,
+    authMiddleware: (() => {}) as any,
+    getUser: async () => null,
+    getUserByUsername: async () => null,
+    getMindDir: () => null,
+    getSystemsConfig: () => null,
+    resolveUser: () => null,
+    publishActivity: () => {},
+    announceToSystem: async () => {},
+    isIsolationEnabled: () => false,
+    getMindUser: (name: string) => `mind-${name}`,
+  };
+}
+
 describe("createPublicRoutes name traversal", () => {
   beforeEach(cleanup);
   afterEach(cleanup);
@@ -235,22 +278,8 @@ describe("createPublicRoutes name traversal", () => {
     const dir = setupTestDir();
     const { createPublicRoutes } = await import("../packages/extensions/pages/src/routes.js");
 
-    const ctx = {
-      dataDir: dir,
-      db: null,
-      authMiddleware: (() => {}) as any,
-      getUser: async () => null,
-      getUserByUsername: async () => null,
-      getMindDir: () => null,
-      getSystemsConfig: () => null,
-      resolveUser: () => null,
-      publishActivity: () => {},
-      announceToSystem: async () => {},
-      isIsolationEnabled: () => false,
-      getMindUser: (name: string) => `mind-${name}`,
-    };
     const publicApp = new Hono();
-    publicApp.route("/public", createPublicRoutes(ctx));
+    publicApp.route("/public", createPublicRoutes(makeCtx(dir)));
 
     // Try traversal via the name segment
     const traversalNames = ["../../../etc", "..%2F..%2Fetc", "..", "."];
@@ -261,5 +290,209 @@ describe("createPublicRoutes name traversal", () => {
         `Expected 403/404 for name="${name}", got ${res.status}`,
       );
     }
+  });
+});
+
+describe("markdown page rendering", () => {
+  beforeEach(cleanup);
+  afterEach(cleanup);
+
+  it("serves .md files as rendered HTML", async () => {
+    const dir = setupTestDir();
+    const { createPublicRoutes } = await import("../packages/extensions/pages/src/routes.js");
+    const publicApp = new Hono();
+    publicApp.route("/public", createPublicRoutes(makeCtx(dir)));
+
+    const res = await publicApp.request("/public/test-mind/hello.md");
+    assert.equal(res.status, 200);
+    assert.ok(res.headers.get("content-type")?.includes("text/html"));
+    const body = await res.text();
+    assert.ok(body.includes("<strong>bold</strong>"), "should render markdown");
+    assert.ok(body.includes("<title>Hello World</title>"), "should use frontmatter title");
+    assert.ok(body.includes("<!DOCTYPE html>"), "should be a full HTML document");
+  });
+
+  it("renders .md without frontmatter", async () => {
+    const dir = setupTestDir();
+    const { createPublicRoutes } = await import("../packages/extensions/pages/src/routes.js");
+    const publicApp = new Hono();
+    publicApp.route("/public", createPublicRoutes(makeCtx(dir)));
+
+    const res = await publicApp.request("/public/test-mind/plain.md");
+    assert.equal(res.status, 200);
+    const body = await res.text();
+    assert.ok(body.includes("<title>Untitled</title>"), "should default to Untitled");
+    assert.ok(body.includes("Just content."), "should render body");
+  });
+
+  it("auto-includes style.css from same directory", async () => {
+    const dir = setupTestDir();
+    const { createPublicRoutes } = await import("../packages/extensions/pages/src/routes.js");
+    const publicApp = new Hono();
+    publicApp.route("/public", createPublicRoutes(makeCtx(dir)));
+
+    const res = await publicApp.request("/public/test-mind/blog/index.md");
+    assert.equal(res.status, 200);
+    const body = await res.text();
+    assert.ok(
+      body.includes('href="/ext/pages/public/test-mind/blog/style.css"'),
+      "should link to local style.css",
+    );
+  });
+
+  it("falls back to root style.css", async () => {
+    const dir = setupTestDir();
+    const { createPublicRoutes } = await import("../packages/extensions/pages/src/routes.js");
+    const publicApp = new Hono();
+    publicApp.route("/public", createPublicRoutes(makeCtx(dir)));
+
+    // plain.md is at the root level where style.css exists
+    const res = await publicApp.request("/public/test-mind/plain.md");
+    assert.equal(res.status, 200);
+    const body = await res.text();
+    assert.ok(
+      body.includes('href="/ext/pages/public/test-mind/style.css"'),
+      "should link to root style.css",
+    );
+  });
+
+  it("uses frontmatter style override", async () => {
+    const dir = setupTestDir();
+    const { createPublicRoutes } = await import("../packages/extensions/pages/src/routes.js");
+    const publicApp = new Hono();
+    publicApp.route("/public", createPublicRoutes(makeCtx(dir)));
+
+    const res = await publicApp.request("/public/test-mind/styled.md");
+    assert.equal(res.status, 200);
+    const body = await res.text();
+    assert.ok(
+      body.includes('href="/ext/pages/public/test-mind/blog/style.css"'),
+      "should link to frontmatter-specified style",
+    );
+  });
+
+  it("serves index.md as directory index fallback", async () => {
+    const dir = setupTestDir();
+    const { createPublicRoutes } = await import("../packages/extensions/pages/src/routes.js");
+    const publicApp = new Hono();
+    publicApp.route("/public", createPublicRoutes(makeCtx(dir)));
+
+    const res = await publicApp.request("/public/test-mind/blog/");
+    assert.equal(res.status, 200);
+    assert.ok(res.headers.get("content-type")?.includes("text/html"));
+    const body = await res.text();
+    assert.ok(body.includes("Welcome to the blog"), "should render index.md content");
+  });
+
+  it("prefers index.html over index.md", async () => {
+    const dir = setupTestDir();
+    const { createPublicRoutes } = await import("../packages/extensions/pages/src/routes.js");
+    const publicApp = new Hono();
+    publicApp.route("/public", createPublicRoutes(makeCtx(dir)));
+
+    const res = await publicApp.request("/public/test-mind/both/");
+    assert.equal(res.status, 200);
+    const body = await res.text();
+    assert.ok(body.includes("HTML wins"), "should serve index.html, not index.md");
+  });
+});
+
+describe("parseFrontmatter", () => {
+  it("parses title and style", () => {
+    const result = parseFrontmatter("---\ntitle: My Title\nstyle: custom.css\n---\n\n# Body\n");
+    assert.equal(result.title, "My Title");
+    assert.equal(result.style, "custom.css");
+    assert.ok(result.body.includes("# Body"));
+  });
+
+  it("returns body as-is when no frontmatter", () => {
+    const result = parseFrontmatter("# Just content\n\nHello.\n");
+    assert.equal(result.title, undefined);
+    assert.equal(result.style, undefined);
+    assert.equal(result.body, "# Just content\n\nHello.\n");
+  });
+
+  it("handles partial frontmatter", () => {
+    const result = parseFrontmatter("---\ntitle: Only Title\n---\n\nContent.\n");
+    assert.equal(result.title, "Only Title");
+    assert.equal(result.style, undefined);
+  });
+});
+
+describe("XSS prevention", () => {
+  beforeEach(cleanup);
+  afterEach(cleanup);
+
+  it("escapes HTML in frontmatter title", async () => {
+    const dir = resolve(tmpdir(), `volute-test-xss-${Date.now()}`);
+    const sitesDir = resolve(dir, "sites", "test-mind");
+    mkdirSync(sitesDir, { recursive: true });
+    testDir = dir;
+    writeFileSync(
+      resolve(sitesDir, "xss.md"),
+      "---\ntitle: </title><script>alert(1)</script>\n---\n\n# Safe\n",
+    );
+
+    const { createPublicRoutes } = await import("../packages/extensions/pages/src/routes.js");
+    const publicApp = new Hono();
+    publicApp.route("/public", createPublicRoutes(makeCtx(dir)));
+
+    const res = await publicApp.request("/public/test-mind/xss.md");
+    const body = await res.text();
+    assert.ok(!body.includes("<script>"), "should not contain unescaped script tag");
+    assert.ok(body.includes("&lt;script&gt;"), "should escape HTML entities in title");
+  });
+});
+
+describe("resolveStylesheet", () => {
+  beforeEach(cleanup);
+  afterEach(cleanup);
+
+  it("returns null when no stylesheet exists", () => {
+    const dir = resolve(tmpdir(), `volute-test-css-${Date.now()}`);
+    mkdirSync(dir, { recursive: true });
+    testDir = dir;
+    writeFileSync(resolve(dir, "page.md"), "# Test");
+    const result = resolveStylesheet(resolve(dir, "page.md"), dir);
+    assert.equal(result, null);
+  });
+
+  it("finds style.css in same directory", () => {
+    const dir = resolve(tmpdir(), `volute-test-css-${Date.now()}`);
+    const sub = resolve(dir, "sub");
+    mkdirSync(sub, { recursive: true });
+    testDir = dir;
+    writeFileSync(resolve(sub, "style.css"), "body {}");
+    const result = resolveStylesheet(resolve(sub, "page.md"), dir);
+    assert.equal(result, "sub/style.css");
+  });
+
+  it("falls back to root style.css", () => {
+    const dir = resolve(tmpdir(), `volute-test-css-${Date.now()}`);
+    const sub = resolve(dir, "sub");
+    mkdirSync(sub, { recursive: true });
+    testDir = dir;
+    writeFileSync(resolve(dir, "style.css"), "body {}");
+    const result = resolveStylesheet(resolve(sub, "page.md"), dir);
+    assert.equal(result, "style.css");
+  });
+
+  it("uses frontmatter style when file exists", () => {
+    const dir = resolve(tmpdir(), `volute-test-css-${Date.now()}`);
+    mkdirSync(resolve(dir, "css"), { recursive: true });
+    testDir = dir;
+    writeFileSync(resolve(dir, "css/dark.css"), "body {}");
+    writeFileSync(resolve(dir, "style.css"), "body {}");
+    const result = resolveStylesheet(resolve(dir, "page.md"), dir, "css/dark.css");
+    assert.equal(result, "css/dark.css");
+  });
+
+  it("rejects path traversal in frontmatter style", () => {
+    const dir = resolve(tmpdir(), `volute-test-css-${Date.now()}`);
+    mkdirSync(dir, { recursive: true });
+    testDir = dir;
+    // Even if the target exists, traversal should be blocked
+    const result = resolveStylesheet(resolve(dir, "page.md"), dir, "../../../etc/passwd");
+    assert.equal(result, null);
   });
 });

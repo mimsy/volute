@@ -1,36 +1,5 @@
+import { subcommands } from "../lib/command.js";
 import { daemonFetch } from "../lib/daemon-client.js";
-
-export async function run(args: string[]) {
-  const subcommand = args[0];
-
-  switch (subcommand) {
-    case "list":
-      await listExtensions();
-      break;
-    case "install":
-      await installExtension(args.slice(1));
-      break;
-    case "uninstall":
-      await uninstallExtension(args.slice(1));
-      break;
-    case "--help":
-    case "-h":
-    case undefined:
-      printUsage();
-      break;
-    default:
-      console.error(`Unknown subcommand: ${subcommand}`);
-      printUsage();
-      process.exit(1);
-  }
-}
-
-function printUsage() {
-  console.log(`Usage:
-  volute extension list                List installed extensions
-  volute extension install <package>   Install a third-party extension
-  volute extension uninstall <package> Uninstall a third-party extension`);
-}
 
 async function listExtensions() {
   const res = await daemonFetch("/api/extensions/all");
@@ -112,3 +81,24 @@ async function uninstallExtension(args: string[]) {
   console.log(`Removed "${pkg}".`);
   console.log("Restart the daemon (`volute restart`) to unload the extension.");
 }
+
+const cmd = subcommands({
+  name: "volute extension",
+  description: "Manage extensions",
+  commands: {
+    list: {
+      description: "List installed extensions",
+      run: async () => listExtensions(),
+    },
+    install: {
+      description: "Install a third-party extension",
+      run: installExtension,
+    },
+    uninstall: {
+      description: "Uninstall a third-party extension",
+      run: uninstallExtension,
+    },
+  },
+});
+
+export const run = cmd.execute;

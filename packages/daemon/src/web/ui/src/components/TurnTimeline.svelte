@@ -586,8 +586,10 @@ let timelineItems = $derived.by(() => {
   const items: TimelineItem[] = [];
   const now = new Date();
 
-  // Turns from the current hour onward are shown individually;
-  // older turns are covered by hourly summaries
+  // Show turns individually if they completed during or after the current hour.
+  // Use the turn's completion time (summary_meta.to_time) rather than created_at,
+  // because a turn that started in the previous hour but completed in the current
+  // hour won't be included in the previous hour's summary (race condition).
   const currentHourStart = new Date(now);
   currentHourStart.setMinutes(0, 0, 0);
   const hourCutoffMs = currentHourStart.getTime();
@@ -617,10 +619,18 @@ let timelineItems = $derived.by(() => {
   // Hourly summaries
   for (const s of hourSummaries) items.push({ kind: "summary", summary: s });
 
-  // Only turns from the current hour (or active turns)
+  // Only turns that completed during/after the current hour (or active turns).
+  // Use to_time (completion time) from summary metadata when available, since a
+  // turn that started in the previous hour but completed in the current hour
+  // won't be covered by the previous hour's summary.
   const recentTurns = turnsData.filter((t) => {
-    const turnTime = new Date(t.created_at + (t.created_at.endsWith("Z") ? "" : "Z")).getTime();
-    return turnTime >= hourCutoffMs || t.status === "active" || streamingEvents.has(t.id);
+    if (t.status === "active" || streamingEvents.has(t.id)) return true;
+    const toTime = (t.summary_meta as Record<string, unknown> | null)?.to_time as
+      | string
+      | undefined;
+    const timeStr = toTime ?? t.created_at;
+    const turnTime = new Date(timeStr + (timeStr.endsWith("Z") ? "" : "Z")).getTime();
+    return turnTime >= hourCutoffMs;
   });
 
   // Separator before turns

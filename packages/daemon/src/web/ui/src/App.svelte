@@ -15,6 +15,7 @@ import ContextModal from "./components/modals/ContextModal.svelte";
 import SeedModal from "./components/modals/SeedModal.svelte";
 import UserSettingsModal from "./components/modals/UserSettingsModal.svelte";
 import PublicFiles from "./components/system/PublicFiles.svelte";
+import SystemLogs from "./components/system/SystemLogs.svelte";
 import UpdateBanner from "./components/system/UpdateBanner.svelte";
 import TurnTimeline from "./components/TurnTimeline.svelte";
 import { type AuthUser, fetchMe } from "./lib/auth";
@@ -50,6 +51,7 @@ import {
   unreadCounts,
 } from "./lib/stores.svelte";
 import SetupPage from "./pages/SetupPage.svelte";
+import SystemSettingsPage from "./pages/SystemSettingsPage.svelte";
 
 // Selection state
 let selection = $state<Selection>(parseSelection(data.extensions));
@@ -93,8 +95,6 @@ let activeSystemSection = $derived.by((): string | null => {
   if (selection.kind === "system-chat") return "system-chat";
   if (selection.kind === "system-history") return "system-history";
   if (selection.kind === "extension") return `ext:${selection.extensionId}`;
-  if (selection.kind === "settings") return "settings";
-  if (selection.kind === "spirit-settings") return "spirit-settings";
   return null;
 });
 
@@ -111,6 +111,8 @@ type ModalType =
   | "mindFiles"
   | "mindSettings"
   | "mindContext"
+  | "systemSettings"
+  | "systemLogs"
   | null;
 let activeModal = $state<ModalType>(null);
 let selectedModalMind = $state<Mind | null>(null);
@@ -275,12 +277,6 @@ let breadcrumbs = $derived.by((): Breadcrumb[] => {
     crumbs.push({ label: "chat" });
   } else if (sel.kind === "system-history") {
     crumbs.push({ label: "system" });
-  } else if (sel.kind === "settings") {
-    crumbs.push({ label: "system", action: handleSystemHome });
-    crumbs.push({ label: "settings" });
-  } else if (sel.kind === "spirit-settings") {
-    crumbs.push({ label: "system", action: handleSystemHome });
-    crumbs.push({ label: "spirit settings" });
   } else {
     crumbs.push({ label: "system" });
   }
@@ -562,10 +558,6 @@ function handleSelectMindSection(name: string, section: string, defaultPath?: st
   selection = { kind: "mind", name, section: section as any, subpath: defaultPath };
 }
 
-function handleSelectSettings() {
-  selection = { kind: "settings" };
-}
-
 function handleSelectExtension(extensionId: string, path?: string) {
   selection = { kind: "extension", extensionId, path: path ?? "" };
   closeSidebar();
@@ -708,7 +700,8 @@ function handleGlobalClick(e: MouseEvent) {
             else if (section === "context") activeModal = "mindContext";
           }}
           onSelectSystemSection={(section) => {
-            if (section === "settings") handleSelectSettings();
+            if (section === "settings") activeModal = "systemSettings";
+            else if (section === "logs") activeModal = "systemLogs";
           }}
           onSelectConversation={handleSelectConversation}
           onDeleteConversation={handleDeleteConversation}
@@ -778,15 +771,6 @@ function handleGlobalClick(e: MouseEvent) {
                   aria-label="Chat"
                 >
                   <span class="tab-icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg></span>
-                </button>
-                <button
-                  class="mind-section-tab"
-                  class:active={activeSystemSection === "spirit-settings"}
-                  onclick={() => { selection = { kind: "spirit-settings" }; }}
-                  use:tooltip={{ text: "Spirit", position: "bottom" }}
-                  aria-label="Spirit"
-                >
-                  <span class="tab-icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="2"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.05 3.05l1.41 1.41M11.54 11.54l1.41 1.41M3.05 12.95l1.41-1.41M11.54 4.46l1.41-1.41"/></svg></span>
                 </button>
                 {#each data.extensions as ext}
                   {#if ext.systemSection}
@@ -921,6 +905,18 @@ function handleGlobalClick(e: MouseEvent) {
   {#if activeModal === "mindContext" && mindModalName}
     <ContextModal mindName={mindModalName} onClose={() => { activeModal = null; mindModalName = null; }} />
   {/if}
+  {#if activeModal === "systemSettings"}
+    <Modal title="Settings" onClose={() => (activeModal = null)}>
+      <SystemSettingsPage />
+    </Modal>
+  {/if}
+  {#if activeModal === "systemLogs"}
+    <Modal title="System Logs" onClose={() => (activeModal = null)}>
+      <div class="modal-scroll-body">
+        <SystemLogs />
+      </div>
+    </Modal>
+  {/if}
 {/if}
 
 <style>
@@ -1019,6 +1015,7 @@ function handleGlobalClick(e: MouseEvent) {
     line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;
+    overflow-wrap: anywhere;
     line-height: 1.2;
   }
 

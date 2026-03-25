@@ -221,7 +221,7 @@ function openMenu(e: MouseEvent, convId: string) {
   }
 
   .conv-item {
-    padding: 6px 12px 6px 24px;
+    padding: 6px 8px 6px 24px;
     cursor: pointer;
     display: flex;
     flex-direction: column;
@@ -420,7 +420,7 @@ function openMenu(e: MouseEvent, convId: string) {
 
   @media (max-width: 767px) {
     .conv-item {
-      padding: 10px 12px 10px 24px;
+      padding: 10px 8px 10px 24px;
     }
 
     .delete-btn {

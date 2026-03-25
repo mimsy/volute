@@ -5,8 +5,17 @@
  * Each mind gets a worktree at <mindDir>/home/pages/_system/ on a per-mind branch.
  */
 import { execFile as execFileCb } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { relative, resolve } from "node:path";
 
 /** Isolation info needed by shared pages operations. */
 export type IsolationInfo = {
@@ -470,18 +479,101 @@ export async function pagesPullAndMerge(
   });
 }
 
-/** Show what the mind has changed compared to main. */
+/** Recursively collect HTML files in a directory, returning paths relative to baseDir. */
+export function collectHtmlFiles(dir: string): string[] {
+  const files: string[] = [];
+  function walk(d: string) {
+    let items: string[];
+    try {
+      items = readdirSync(d);
+    } catch (err: any) {
+      if (err?.code === "ENOENT") return;
+      throw err;
+    }
+    for (const item of items) {
+      if (item.startsWith(".")) continue;
+      const full = resolve(d, item);
+      try {
+        const s = statSync(full);
+        if (s.isFile() && item.endsWith(".html")) {
+          files.push(relative(dir, full));
+        } else if (s.isDirectory()) {
+          walk(full);
+        }
+      } catch (err: any) {
+        if (err?.code === "ENOENT" || err?.code === "EACCES") continue;
+        throw err;
+      }
+    }
+  }
+  walk(dir);
+  return files.sort();
+}
+
+/** Show files in the mind's shared pages worktree with draft/published status. */
 export async function pagesStatus(mindDir: string, isolation?: IsolationInfo): Promise<string> {
   const wt = worktreePath(mindDir);
-  const [uncommitted, diff] = await Promise.all([
-    gitExec(["status", "--porcelain"], { cwd: wt }, isolation).then((s) => s.trim()),
-    gitExec(["diff", "main...HEAD", "--stat"], { cwd: wt }, isolation).then((s) => s.trim()),
+
+  // Get files on main and files on the mind's branch (including uncommitted)
+  const errors: Error[] = [];
+  const [mainFiles, branchFiles, uncommitted] = await Promise.all([
+    gitExec(["ls-tree", "-r", "--name-only", "main"], { cwd: wt }, isolation)
+      .then((s) => s.trim().split("\n").filter(Boolean))
+      .catch((err) => {
+        errors.push(err);
+        return [] as string[];
+      }),
+    gitExec(["ls-tree", "-r", "--name-only", "HEAD"], { cwd: wt }, isolation)
+      .then((s) => s.trim().split("\n").filter(Boolean))
+      .catch((err) => {
+        errors.push(err);
+        return [] as string[];
+      }),
+    gitExec(["status", "--porcelain"], { cwd: wt }, isolation)
+      .then((s) => s.trim())
+      .catch((err) => {
+        errors.push(err);
+        return "";
+      }),
   ]);
-  let result = diff || "No changes compared to main.";
-  if (uncommitted) {
-    result += `\n\nUncommitted changes:\n${uncommitted}`;
+
+  if (errors.length === 3) {
+    throw new Error(`Shared pages git error: ${errors[0].message}`);
   }
-  return result;
+
+  // Parse uncommitted files (new/modified)
+  const uncommittedFiles = new Set<string>();
+  if (uncommitted) {
+    for (const line of uncommitted.split("\n")) {
+      const match = line.match(/^.{2}\s+(.+)$/);
+      if (match) uncommittedFiles.add(match[1]);
+    }
+  }
+
+  const mainSet = new Set(mainFiles.filter((f) => f.endsWith(".html")));
+  const allHtml = new Set([
+    ...mainFiles.filter((f) => f.endsWith(".html")),
+    ...branchFiles.filter((f) => f.endsWith(".html")),
+    ...[...uncommittedFiles].filter((f) => f.endsWith(".html")),
+  ]);
+
+  if (allHtml.size === 0) return "No shared pages found.";
+
+  const lines = [...allHtml].sort().map((file) => {
+    const onMain = mainSet.has(file);
+    const isUncommitted = uncommittedFiles.has(file);
+    let status: string;
+    if (isUncommitted) {
+      status = "uncommitted";
+    } else if (onMain) {
+      status = "published";
+    } else {
+      status = "draft";
+    }
+    return `${status.padEnd(13)} ${file}`;
+  });
+
+  return lines.join("\n");
 }
 
 /** Show recent commit history on main. */
