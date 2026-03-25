@@ -1,5 +1,5 @@
 <script lang="ts">
-import { Modal } from "@volute/ui";
+import { Modal, tooltip } from "@volute/ui";
 import { onMount } from "svelte";
 import { type ContextBreakdown, type ContextInfo, fetchMindContext } from "../../lib/client";
 
@@ -167,12 +167,11 @@ function buildGrid(categories: Category[], contextWindow: number): Cell[] {
                   style:grid-template-columns="repeat({GRID_COLS}, 1fr)"
                 >
                   {#each cells as cell, i (i)}
-                    <div
-                      class="cell"
-                      class:has-tooltip={cell.tooltip}
-                      style:background={cell.color}
-                      data-tooltip={cell.tooltip || undefined}
-                    ></div>
+                    {#if cell.tooltip}
+                      <div class="cell" style:background={cell.color} use:tooltip={cell.tooltip}></div>
+                    {:else}
+                      <div class="cell" style:background={cell.color}></div>
+                    {/if}
                   {/each}
                 </div>
               {:else if session.contextTokens > 0}
@@ -281,29 +280,10 @@ function buildGrid(categories: Category[], contextWindow: number): Cell[] {
   .cell {
     aspect-ratio: 1;
     border-radius: 2px;
-    position: relative;
   }
 
-  .cell.has-tooltip:hover {
+  .cell:hover {
     box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.3);
-  }
-
-  .cell.has-tooltip:hover::after {
-    content: attr(data-tooltip);
-    position: absolute;
-    bottom: calc(100% + 4px);
-    left: 50%;
-    transform: translateX(-50%);
-    background: var(--bg-1, #1a1a1a);
-    color: var(--text-1);
-    font-size: 11px;
-    padding: 3px 7px;
-    border-radius: 4px;
-    white-space: nowrap;
-    pointer-events: none;
-    z-index: 10;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
-    font-variant-numeric: tabular-nums;
   }
 
   /* Simple bar fallback */

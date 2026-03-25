@@ -1,6 +1,6 @@
 <script lang="ts">
 import type { Conversation, Mind } from "@volute/api";
-import { Icon, Modal } from "@volute/ui";
+import { Icon, Modal, tooltip } from "@volute/ui";
 import { icons } from "@volute/ui/icons";
 import { onMount } from "svelte";
 import ChannelMembersPanel from "./components/ChannelMembersPanel.svelte";
@@ -717,9 +717,9 @@ function handleGlobalClick(e: MouseEvent) {
                     class="mind-section-tab"
                     class:active={activeMindSection === sec.key}
                     onclick={() => handleSelectMindSection(activeMindName!, sec.key, sec.defaultPath)}
+                    use:tooltip={{ text: sec.label, position: "bottom" }}
                   >
                     {#if sec.icon}<span class="tab-icon">{@html sec.icon}</span>{/if}
-                    <span class="tab-tooltip">{sec.label}</span>
                   </button>
                 {/each}
               </div>
@@ -729,25 +729,25 @@ function handleGlobalClick(e: MouseEvent) {
                   class="mind-section-tab"
                   class:active={activeSystemSection === "system-history"}
                   onclick={() => { selection = { kind: "system-history" }; }}
+                  use:tooltip={{ text: "History", position: "bottom" }}
                 >
                   <span class="tab-icon">{@html icons.history}</span>
-                  <span class="tab-tooltip">History</span>
                 </button>
                 <button
                   class="mind-section-tab"
                   class:active={activeSystemSection === "system-chat"}
                   onclick={() => { selection = { kind: "system-chat" }; }}
+                  use:tooltip={{ text: "Chat", position: "bottom" }}
                 >
                   <span class="tab-icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg></span>
-                  <span class="tab-tooltip">Chat</span>
                 </button>
                 <button
                   class="mind-section-tab"
                   class:active={activeSystemSection === "spirit-settings"}
                   onclick={() => { selection = { kind: "spirit-settings" }; }}
+                  use:tooltip={{ text: "Spirit", position: "bottom" }}
                 >
                   <span class="tab-icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="2"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.05 3.05l1.41 1.41M11.54 11.54l1.41 1.41M3.05 12.95l1.41-1.41M11.54 4.46l1.41-1.41"/></svg></span>
-                  <span class="tab-tooltip">Spirit</span>
                 </button>
                 {#each data.extensions as ext}
                   {#if ext.systemSection}
@@ -755,9 +755,9 @@ function handleGlobalClick(e: MouseEvent) {
                       class="mind-section-tab"
                       class:active={activeSystemSection === `ext:${ext.id}`}
                       onclick={() => handleSelectExtension(ext.id)}
+                      use:tooltip={{ text: ext.systemSection.label, position: "bottom" }}
                     >
                       <span class="tab-icon">{@html ext.icon ?? '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 2h5v5H2zM9 2h5v5H9zM2 9h5v5H2zM9 9h5v5H9z"/></svg>'}</span>
-                      <span class="tab-tooltip">{ext.systemSection.label}</span>
                     </button>
                   {/if}
                 {/each}
@@ -1136,30 +1136,6 @@ function handleGlobalClick(e: MouseEvent) {
   .tab-icon :global(svg) {
     width: 16px;
     height: 16px;
-  }
-
-  .tab-tooltip {
-    position: absolute;
-    top: 100%;
-    left: 50%;
-    transform: translateX(-50%);
-    margin-top: 6px;
-    padding: 4px 10px;
-    background: var(--bg-3);
-    color: var(--text-0);
-    font-family: var(--sans);
-    font-size: 12px;
-    border-radius: var(--radius);
-    white-space: nowrap;
-    pointer-events: none;
-    opacity: 0;
-    transition: opacity 0.15s;
-    border: 1px solid var(--border);
-    z-index: 10;
-  }
-
-  .mind-section-tab:hover .tab-tooltip {
-    opacity: 1;
   }
 
   .header-actions {

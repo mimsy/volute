@@ -1,6 +1,6 @@
 <script lang="ts">
 import type { Mind } from "@volute/api";
-import { Icon } from "@volute/ui";
+import { Icon, tooltip } from "@volute/ui";
 import { mindDotColor } from "../../lib/format";
 import { activeMinds, data } from "../../lib/stores.svelte";
 import TurnTimeline from "../TurnTimeline.svelte";
@@ -24,15 +24,13 @@ let isActive = $derived(activeMinds.has(mind.name));
   {#if onChat || onExpand}
     <div class="floating-btns">
       {#if onChat}
-        <button class="floating-btn" onclick={onChat}>
+        <button class="floating-btn" onclick={onChat} use:tooltip={{ text: "Chat", position: "right" }}>
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg>
-          <span class="btn-tooltip">Chat</span>
         </button>
       {/if}
       {#if onExpand}
-        <button class="floating-btn" onclick={onExpand}>
+        <button class="floating-btn" onclick={onExpand} use:tooltip={{ text: "Expand", position: "right" }}>
           <svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 7.414V9a1 1 0 1 1-2 0V5a1 1 0 0 1 1-1h4a1 1 0 1 1 0 2H7.414l2.293 2.293a1 1 0 0 1-1.414 1.414L6 7.414zM15 6a1 1 0 1 1 0-2h4a1 1 0 0 1 1 1v4a1 1 0 1 1-2 0V7.414l-2.293 2.293a1 1 0 0 1-1.414-1.414L16.586 6H15zM5 14a1 1 0 0 1 1 1v1.586l2.293-2.293a1 1 0 0 1 1.414 1.414L7.414 18H9a1 1 0 1 1 0 2H5a1 1 0 0 1-1-1v-4a1 1 0 0 1 1-1zm9.293 1.707a1 1 0 0 1 1.414-1.414L18 16.586V15a1 1 0 1 1 2 0v4a1 1 0 0 1-1 1h-4a1 1 0 1 1 0-2h1.586l-2.293-2.293z"/></svg>
-          <span class="btn-tooltip">Expand</span>
         </button>
       {/if}
     </div>
@@ -116,30 +114,6 @@ let isActive = $derived(activeMinds.has(mind.name));
   .floating-btn :global(.history-icon) {
     width: 13px;
     height: 13px;
-  }
-
-  .btn-tooltip {
-    position: absolute;
-    left: 100%;
-    top: 50%;
-    transform: translateY(-50%);
-    margin-left: 6px;
-    padding: 4px 10px;
-    background: var(--bg-3);
-    color: var(--text-0);
-    font-family: var(--sans);
-    font-size: 12px;
-    border-radius: var(--radius);
-    white-space: nowrap;
-    pointer-events: none;
-    opacity: 0;
-    transition: opacity 0.15s;
-    border: 1px solid var(--border);
-    z-index: 10;
-  }
-
-  .floating-btn:hover .btn-tooltip {
-    opacity: 1;
   }
 
   .panel-body {
