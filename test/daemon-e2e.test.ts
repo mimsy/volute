@@ -3,7 +3,12 @@ import { type ChildProcess, execFileSync, spawn } from "node:child_process";
 import { existsSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { after, before, describe, it } from "node:test";
-import { findMind, mindDir, removeMind, voluteSystemDir } from "../src/lib/registry.js";
+import {
+  findMind,
+  mindDir,
+  removeMind,
+  voluteSystemDir,
+} from "../packages/daemon/src/lib/registry.js";
 
 // Strip GIT_* env vars that hook runners (e.g. pre-push) inject, so that
 // spawned processes (like `volute create` which runs `git init`) don't
@@ -442,7 +447,9 @@ describe("daemon e2e", { timeout: 120000 }, () => {
   });
 
   it("bridge config: set, mappings CRUD, remove", async () => {
-    const { setBridgeConfig, removeBridgeConfig } = await import("../src/lib/bridges.js");
+    const { setBridgeConfig, removeBridgeConfig } = await import(
+      "../packages/daemon/src/lib/bridges.js"
+    );
 
     // Set up a test bridge config directly
     setBridgeConfig("test-platform", {
@@ -494,7 +501,9 @@ describe("daemon e2e", { timeout: 120000 }, () => {
   });
 
   it("bridge inbound: puppet user created, message lands in channel", async () => {
-    const { setBridgeConfig, removeBridgeConfig } = await import("../src/lib/bridges.js");
+    const { setBridgeConfig, removeBridgeConfig } = await import(
+      "../packages/daemon/src/lib/bridges.js"
+    );
 
     // Set up a bridge with a mapping to the channel we created earlier
     setBridgeConfig("test-inbound", {
@@ -552,7 +561,9 @@ describe("daemon e2e", { timeout: 120000 }, () => {
 
   it("bridge inbound: DM creates conversation with default mind", async () => {
     await ensureTestMind();
-    const { setBridgeConfig, removeBridgeConfig } = await import("../src/lib/bridges.js");
+    const { setBridgeConfig, removeBridgeConfig } = await import(
+      "../packages/daemon/src/lib/bridges.js"
+    );
 
     setBridgeConfig("test-dm", {
       enabled: true,
@@ -622,7 +633,9 @@ describe("daemon e2e", { timeout: 120000 }, () => {
   });
 
   it("bridge disable: delete removes config", async () => {
-    const { setBridgeConfig, getBridgeConfig } = await import("../src/lib/bridges.js");
+    const { setBridgeConfig, getBridgeConfig } = await import(
+      "../packages/daemon/src/lib/bridges.js"
+    );
 
     // Set up a fake bridge
     setBridgeConfig("test-disable", {
@@ -901,8 +914,8 @@ describe("daemon e2e", { timeout: 120000 }, () => {
     await ensureTestMind();
 
     // Insert some summary rows directly into mind_history via the history endpoint
-    const { getDb } = await import("../src/lib/db.js");
-    const { summaries, turns } = await import("../src/lib/schema.js");
+    const { getDb } = await import("../packages/daemon/src/lib/db.js");
+    const { summaries, turns } = await import("../packages/daemon/src/lib/schema.js");
     const db = await getDb();
 
     const now = new Date();
@@ -954,8 +967,8 @@ describe("daemon e2e", { timeout: 120000 }, () => {
   it("cross-session history: uses turn boundary as since timestamp", async () => {
     await ensureTestMind();
 
-    const { getDb } = await import("../src/lib/db.js");
-    const { mindHistory, summaries, turns } = await import("../src/lib/schema.js");
+    const { getDb } = await import("../packages/daemon/src/lib/db.js");
+    const { mindHistory, summaries, turns } = await import("../packages/daemon/src/lib/schema.js");
     const db = await getDb();
 
     const now = new Date();

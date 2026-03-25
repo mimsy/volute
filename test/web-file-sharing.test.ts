@@ -4,13 +4,13 @@ import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { like } from "drizzle-orm";
 import { Hono } from "hono";
-import { createUser } from "../src/lib/auth.js";
-import { getDb } from "../src/lib/db.js";
-import { listPending } from "../src/lib/file-sharing.js";
-import { addMind, mindDir, removeMind, stateDir } from "../src/lib/registry.js";
-import { users } from "../src/lib/schema.js";
-import fileSharing from "../src/web/api/file-sharing.js";
-import { authMiddleware, createSession } from "../src/web/middleware/auth.js";
+import { createUser } from "../packages/daemon/src/lib/auth.js";
+import { getDb } from "../packages/daemon/src/lib/db.js";
+import { listPending } from "../packages/daemon/src/lib/file-sharing.js";
+import { addMind, mindDir, removeMind, stateDir } from "../packages/daemon/src/lib/registry.js";
+import { users } from "../packages/daemon/src/lib/schema.js";
+import fileSharing from "../packages/daemon/src/web/api/file-sharing.js";
+import { authMiddleware, createSession } from "../packages/daemon/src/web/middleware/auth.js";
 
 let sessionId: string;
 

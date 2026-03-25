@@ -3,10 +3,10 @@ import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } fr
 import { join } from "node:path";
 import { after, afterEach, before, beforeEach, describe, it } from "node:test";
 import { eq } from "drizzle-orm";
-import { getDb } from "../src/lib/db.js";
-import { exec } from "../src/lib/exec.js";
-import { addMind, addVariant, voluteHome } from "../src/lib/registry.js";
-import { minds, sharedSkills } from "../src/lib/schema.js";
+import { getDb } from "../packages/daemon/src/lib/db.js";
+import { exec } from "../packages/daemon/src/lib/exec.js";
+import { addMind, addVariant, voluteHome } from "../packages/daemon/src/lib/registry.js";
+import { minds, sharedSkills } from "../packages/daemon/src/lib/schema.js";
 import {
   autoUpdateMindSkills,
   getSharedSkill,
@@ -26,7 +26,7 @@ import {
   syncBuiltinSkills,
   uninstallSkill,
   updateSkill,
-} from "../src/lib/skills.js";
+} from "../packages/daemon/src/lib/skills.js";
 import { createMindGitRepo } from "./helpers/git.js";
 
 async function cleanup() {

@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
 import { eq } from "drizzle-orm";
-import { getDb } from "../src/lib/db.js";
-import { extractTextContent } from "../src/lib/delivery/delivery-router.js";
+import { getDb } from "../packages/daemon/src/lib/db.js";
+import { extractTextContent } from "../packages/daemon/src/lib/delivery/delivery-router.js";
 import {
   linkToolResultToTurn,
   recordInbound,
@@ -10,10 +10,16 @@ import {
   resolveSleepAction,
   tagUntaggedInbound,
   tagUntaggedOutbound,
-} from "../src/lib/delivery/message-delivery.js";
-import { publish as publishActivity } from "../src/lib/events/activity-events.js";
-import { type MindEvent, subscribe } from "../src/lib/events/mind-events.js";
-import { activity, conversations, messages, mindHistory, turns } from "../src/lib/schema.js";
+} from "../packages/daemon/src/lib/delivery/message-delivery.js";
+import { publish as publishActivity } from "../packages/daemon/src/lib/events/activity-events.js";
+import { type MindEvent, subscribe } from "../packages/daemon/src/lib/events/mind-events.js";
+import {
+  activity,
+  conversations,
+  messages,
+  mindHistory,
+  turns,
+} from "../packages/daemon/src/lib/schema.js";
 
 describe("extractTextContent", () => {
   it("returns string content as-is", () => {

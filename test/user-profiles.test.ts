@@ -7,15 +7,15 @@ import {
   getUser,
   syncMindProfile,
   updateUserProfile,
-} from "../src/lib/auth.js";
-import { getDb } from "../src/lib/db.js";
-import { subscribe } from "../src/lib/events/activity-events.js";
+} from "../packages/daemon/src/lib/auth.js";
+import { getDb } from "../packages/daemon/src/lib/db.js";
+import { subscribe } from "../packages/daemon/src/lib/events/activity-events.js";
 import {
   createConversation,
   deleteConversation,
   getParticipants,
-} from "../src/lib/events/conversations.js";
-import { users } from "../src/lib/schema.js";
+} from "../packages/daemon/src/lib/events/conversations.js";
+import { users } from "../packages/daemon/src/lib/schema.js";
 import { formatPrefix } from "../templates/_base/src/lib/format-prefix.js";
 
 const TEST_USERNAMES = [

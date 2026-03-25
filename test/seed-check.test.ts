@@ -3,11 +3,11 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { eq } from "drizzle-orm";
-import { createUser } from "../src/lib/auth.js";
-import { getDb } from "../src/lib/db.js";
-import { addMind, mindDir, removeMind, voluteHome } from "../src/lib/registry.js";
-import { mindHistory, users } from "../src/lib/schema.js";
-import { createSession } from "../src/web/middleware/auth.js";
+import { createUser } from "../packages/daemon/src/lib/auth.js";
+import { getDb } from "../packages/daemon/src/lib/db.js";
+import { addMind, mindDir, removeMind, voluteHome } from "../packages/daemon/src/lib/registry.js";
+import { mindHistory, users } from "../packages/daemon/src/lib/schema.js";
+import { createSession } from "../packages/daemon/src/web/middleware/auth.js";
 
 function postHeaders(cookie: string) {
   return {
@@ -45,7 +45,7 @@ describe("seed check endpoint", () => {
     await removeMind(seedName);
     await addMind(seedName, 4200);
 
-    const { default: app } = await import("../src/web/app.js");
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
     const res = await app.request(`http://localhost/api/minds/${seedName}/seed-check`, {
       headers: postHeaders(cookie),
     });
@@ -55,7 +55,7 @@ describe("seed check endpoint", () => {
   });
 
   it("returns status when seed needs attention", async () => {
-    const { default: app } = await import("../src/web/app.js");
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
     const res = await app.request(`http://localhost/api/minds/${seedName}/seed-check`, {
       headers: postHeaders(cookie),
     });
@@ -74,7 +74,7 @@ describe("seed check endpoint", () => {
       JSON.stringify({ profile: { displayName: "Test Mind" } }),
     );
 
-    const { default: app } = await import("../src/web/app.js");
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
     const res = await app.request(`http://localhost/api/minds/${seedName}/seed-check`, {
       headers: postHeaders(cookie),
     });
@@ -86,7 +86,7 @@ describe("seed check endpoint", () => {
   });
 
   it("returns 404 for unknown mind", async () => {
-    const { default: app } = await import("../src/web/app.js");
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
     const res = await app.request("http://localhost/api/minds/nonexistent-xyz/seed-check", {
       headers: postHeaders(cookie),
     });
@@ -117,7 +117,7 @@ describe("sprout endpoint cleans up nurture schedule", () => {
   afterEach(cleanup);
 
   it("POST /api/minds/:name/sprout sets stage to sprouted", async () => {
-    const { default: app } = await import("../src/web/app.js");
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
 
     const res = await app.request(`http://localhost/api/minds/${seedName}/sprout`, {
       method: "POST",
@@ -152,7 +152,7 @@ describe("profile endpoint", () => {
   afterEach(cleanup);
 
   it("PATCH /api/minds/:name/profile updates profile", async () => {
-    const { default: app } = await import("../src/web/app.js");
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
 
     const res = await app.request(`http://localhost/api/minds/${mindName}/profile`, {
       method: "PATCH",
@@ -170,14 +170,14 @@ describe("profile endpoint", () => {
     assert.ok(body.ok);
 
     // Verify volute.json was updated
-    const { readVoluteConfig } = await import("../src/lib/volute-config.js");
+    const { readVoluteConfig } = await import("../packages/daemon/src/lib/volute-config.js");
     const config = readVoluteConfig(mindDir(mindName));
     assert.equal(config?.profile?.displayName, "Test Display");
     assert.equal(config?.profile?.description, "A test mind");
   });
 
   it("PATCH /api/minds/:name/profile returns 404 for unknown mind", async () => {
-    const { default: app } = await import("../src/web/app.js");
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
 
     const res = await app.request("http://localhost/api/minds/nonexistent-mind/profile", {
       method: "PATCH",

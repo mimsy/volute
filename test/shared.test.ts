@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, describe, it } from "node:test";
+import { gitExec } from "../packages/daemon/src/lib/exec.js";
+import { voluteHome } from "../packages/daemon/src/lib/registry.js";
 import {
   addPagesWorktree,
   ensurePagesRepo,
@@ -13,8 +15,6 @@ import {
   pagesStatus,
   removePagesWorktree,
 } from "../packages/extensions/pages/src/shared-pages.js";
-import { gitExec } from "../src/lib/exec.js";
-import { voluteHome } from "../src/lib/registry.js";
 import { cleanGitEnv } from "./helpers/test-git-env.js";
 
 // Use a test-specific data dir within the test VOLUTE_HOME

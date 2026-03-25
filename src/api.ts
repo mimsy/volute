@@ -1,1 +1,1 @@
-export type { AppType } from "./web/app.js";
+export type { AppType } from "@volute/daemon/web/app.js";

@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { eq } from "drizzle-orm";
-import { approveUser, createUser } from "../src/lib/auth.js";
-import { getDb } from "../src/lib/db.js";
-import { mindEnvPath, readEnv, sharedEnvPath, writeEnv } from "../src/lib/env.js";
-import { addMind, removeMind } from "../src/lib/registry.js";
-import { users } from "../src/lib/schema.js";
-import { createSession, deleteSession } from "../src/web/middleware/auth.js";
+import { approveUser, createUser } from "../packages/daemon/src/lib/auth.js";
+import { getDb } from "../packages/daemon/src/lib/db.js";
+import { mindEnvPath, readEnv, sharedEnvPath, writeEnv } from "../packages/daemon/src/lib/env.js";
+import { addMind, removeMind } from "../packages/daemon/src/lib/registry.js";
+import { users } from "../packages/daemon/src/lib/schema.js";
+import { createSession, deleteSession } from "../packages/daemon/src/web/middleware/auth.js";
 
 const TEST_MIND = "env-test-mind";
 const TEST_USERNAMES = ["env-admin", "regular-env-user", "regular-shared-user"];
@@ -58,7 +58,7 @@ describe("web env routes — mind-scoped", () => {
     writeEnv(sharedEnvPath(), { SHARED_KEY: "shared_val" });
     writeEnv(mindEnvPath(TEST_MIND), { MIND_KEY: "mind_val" });
 
-    const { default: app } = await import("../src/web/app.js");
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
 
     const res = await app.request(`/api/minds/${TEST_MIND}/env`, {
       headers: getHeaders(cookie),
@@ -74,7 +74,7 @@ describe("web env routes — mind-scoped", () => {
 
   it("GET /:name/env — 404 for nonexistent mind", async () => {
     const cookie = await setupAuth();
-    const { default: app } = await import("../src/web/app.js");
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
 
     const res = await app.request("/api/minds/nonexistent-env-mind/env", {
       headers: getHeaders(cookie),
@@ -88,7 +88,7 @@ describe("web env routes — mind-scoped", () => {
     const cookie = await setupAuth();
     addMind(TEST_MIND, 4150);
 
-    const { default: app } = await import("../src/web/app.js");
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
 
     const res = await app.request(`http://localhost/api/minds/${TEST_MIND}/env/MY_KEY`, {
       method: "PUT",
@@ -109,7 +109,7 @@ describe("web env routes — mind-scoped", () => {
     addMind(TEST_MIND, 4150);
     writeEnv(mindEnvPath(TEST_MIND), { TEST_VAR: "hello" });
 
-    const { default: app } = await import("../src/web/app.js");
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
 
     const res = await app.request(`/api/minds/${TEST_MIND}/env/TEST_VAR`, {
       headers: getHeaders(cookie),
@@ -123,7 +123,7 @@ describe("web env routes — mind-scoped", () => {
     const cookie = await setupAuth();
     addMind(TEST_MIND, 4150);
 
-    const { default: app } = await import("../src/web/app.js");
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
 
     const res = await app.request(`/api/minds/${TEST_MIND}/env/NONEXISTENT_KEY`, {
       headers: getHeaders(cookie),
@@ -136,7 +136,7 @@ describe("web env routes — mind-scoped", () => {
     addMind(TEST_MIND, 4150);
     writeEnv(sharedEnvPath(), { FROM_SHARED: "shared_val" });
 
-    const { default: app } = await import("../src/web/app.js");
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
 
     const res = await app.request(`/api/minds/${TEST_MIND}/env/FROM_SHARED`, {
       headers: getHeaders(cookie),
@@ -151,7 +151,7 @@ describe("web env routes — mind-scoped", () => {
     addMind(TEST_MIND, 4150);
     writeEnv(mindEnvPath(TEST_MIND), { TO_DELETE: "val" });
 
-    const { default: app } = await import("../src/web/app.js");
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
 
     const res = await app.request(`http://localhost/api/minds/${TEST_MIND}/env/TO_DELETE`, {
       method: "DELETE",
@@ -170,7 +170,7 @@ describe("web env routes — mind-scoped", () => {
   it("DELETE /:name/env/:key — 404 for nonexistent key", async () => {
     const cookie = await setupAuth();
     addMind(TEST_MIND, 4150);
-    const { default: app } = await import("../src/web/app.js");
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
 
     const res = await app.request(`http://localhost/api/minds/${TEST_MIND}/env/NONEXISTENT`, {
       method: "DELETE",
@@ -185,7 +185,7 @@ describe("web env routes — mind-scoped", () => {
   it("PUT /:name/env/:key — 400 for missing value field", async () => {
     const cookie = await setupAuth();
     addMind(TEST_MIND, 4150);
-    const { default: app } = await import("../src/web/app.js");
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
 
     const res = await app.request(`http://localhost/api/minds/${TEST_MIND}/env/KEY`, {
       method: "PUT",
@@ -199,7 +199,7 @@ describe("web env routes — mind-scoped", () => {
 
   it("PUT /:name/env/:key — 404 for nonexistent mind", async () => {
     const cookie = await setupAuth();
-    const { default: app } = await import("../src/web/app.js");
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
 
     const res = await app.request("http://localhost/api/minds/nonexistent-env-mind/env/KEY", {
       method: "PUT",
@@ -211,7 +211,7 @@ describe("web env routes — mind-scoped", () => {
 
   it("DELETE /:name/env/:key — 404 for nonexistent mind", async () => {
     const cookie = await setupAuth();
-    const { default: app } = await import("../src/web/app.js");
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
 
     const res = await app.request("http://localhost/api/minds/nonexistent-env-mind/env/KEY", {
       method: "DELETE",
@@ -224,7 +224,7 @@ describe("web env routes — mind-scoped", () => {
   });
 
   it("PUT /:name/env/:key — requires auth (401 without cookie)", async () => {
-    const { default: app } = await import("../src/web/app.js");
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
 
     const res = await app.request(`http://localhost/api/minds/${TEST_MIND}/env/KEY`, {
       method: "PUT",
@@ -241,7 +241,7 @@ describe("web env routes — mind-scoped", () => {
     const cookie2 = await createSession(user2.id);
 
     addMind(TEST_MIND, 4150);
-    const { default: app } = await import("../src/web/app.js");
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
 
     const res = await app.request(`http://localhost/api/minds/${TEST_MIND}/env/KEY`, {
       method: "PUT",
@@ -265,7 +265,7 @@ describe("web env routes — shared", () => {
     const cookie = await setupAuth();
     writeEnv(sharedEnvPath(), { GLOBAL_KEY: "global_val" });
 
-    const { default: app } = await import("../src/web/app.js");
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
 
     const res = await app.request("/api/env", {
       headers: getHeaders(cookie),
@@ -277,7 +277,7 @@ describe("web env routes — shared", () => {
 
   it("GET /api/env — returns empty object when no env set", async () => {
     const cookie = await setupAuth();
-    const { default: app } = await import("../src/web/app.js");
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
 
     const res = await app.request("/api/env", {
       headers: getHeaders(cookie),
@@ -289,7 +289,7 @@ describe("web env routes — shared", () => {
 
   it("PUT /api/env/:key — sets shared env var", async () => {
     const cookie = await setupAuth();
-    const { default: app } = await import("../src/web/app.js");
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
 
     const res = await app.request("http://localhost/api/env/NEW_KEY", {
       method: "PUT",
@@ -309,7 +309,7 @@ describe("web env routes — shared", () => {
     const cookie = await setupAuth();
     writeEnv(sharedEnvPath(), { DEL_KEY: "to_delete" });
 
-    const { default: app } = await import("../src/web/app.js");
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
 
     const res = await app.request("http://localhost/api/env/DEL_KEY", {
       method: "DELETE",
@@ -326,7 +326,7 @@ describe("web env routes — shared", () => {
 
   it("DELETE /api/env/:key — 404 for nonexistent key", async () => {
     const cookie = await setupAuth();
-    const { default: app } = await import("../src/web/app.js");
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
 
     const res = await app.request("http://localhost/api/env/NONEXISTENT", {
       method: "DELETE",
@@ -340,7 +340,7 @@ describe("web env routes — shared", () => {
 
   it("PUT /api/env/:key — 400 for missing value field", async () => {
     const cookie = await setupAuth();
-    const { default: app } = await import("../src/web/app.js");
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
 
     const res = await app.request("http://localhost/api/env/KEY", {
       method: "PUT",
@@ -351,7 +351,7 @@ describe("web env routes — shared", () => {
   });
 
   it("PUT /api/env/:key — requires auth (401 without cookie)", async () => {
-    const { default: app } = await import("../src/web/app.js");
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
 
     const res = await app.request("http://localhost/api/env/KEY", {
       method: "PUT",
@@ -362,7 +362,7 @@ describe("web env routes — shared", () => {
   });
 
   it("DELETE /api/env/:key — requires auth (401 without cookie)", async () => {
-    const { default: app } = await import("../src/web/app.js");
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
 
     const res = await app.request("http://localhost/api/env/KEY", {
       method: "DELETE",
@@ -377,7 +377,7 @@ describe("web env routes — shared", () => {
     await approveUser(user2.id);
     const cookie2 = await createSession(user2.id);
 
-    const { default: app } = await import("../src/web/app.js");
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
 
     const res = await app.request("http://localhost/api/env/KEY", {
       method: "PUT",

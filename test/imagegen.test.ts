@@ -8,8 +8,8 @@ import {
   resolveApiKey,
   saveProviderConfig,
   setEnabledModels,
-} from "../src/lib/services/imagegen.js";
-import { readGlobalConfig, writeGlobalConfig } from "../src/lib/setup.js";
+} from "../packages/daemon/src/lib/services/imagegen.js";
+import { readGlobalConfig, writeGlobalConfig } from "../packages/daemon/src/lib/setup.js";
 
 function resetImagegenConfig() {
   const config = readGlobalConfig();

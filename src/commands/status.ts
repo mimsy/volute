@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { promisify } from "node:util";
-import { command } from "../lib/command.js";
+import { command } from "@volute/cli/lib/command.js";
 import {
   getDaemonUrl,
   getServiceMode,
@@ -12,8 +12,8 @@ import {
   SYSTEM_LAUNCHD_PLIST_PATH,
   SYSTEM_SERVICE_PATH,
   USER_SYSTEMD_UNIT,
-} from "../lib/service-mode.js";
-import { checkForUpdate } from "../lib/update-check.js";
+} from "@volute/daemon/lib/service-mode.js";
+import { checkForUpdate } from "@volute/daemon/lib/update-check.js";
 
 const execFileAsync = promisify(execFile);
 

@@ -1,11 +1,11 @@
-import { command } from "../lib/command.js";
+import { command } from "@volute/cli/lib/command.js";
 import {
   getServiceMode,
   modeLabel,
   pollHealth,
   readDaemonConfig,
   restartService,
-} from "../lib/service-mode.js";
+} from "@volute/daemon/lib/service-mode.js";
 import { stopDaemon } from "./down.js";
 import { run as up } from "./up.js";
 

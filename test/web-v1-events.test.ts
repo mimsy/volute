@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { bufferEvent, getEventsSince, resetSequencer } from "../src/lib/events/event-sequencer.js";
+import {
+  bufferEvent,
+  getEventsSince,
+  resetSequencer,
+} from "../packages/daemon/src/lib/events/event-sequencer.js";
 
 describe("event sequencer", () => {
   it("assigns monotonically increasing IDs", () => {

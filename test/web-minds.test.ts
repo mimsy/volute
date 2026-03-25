@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { eq } from "drizzle-orm";
-import { approveUser, createUser } from "../src/lib/auth.js";
-import { getDb } from "../src/lib/db.js";
-import { users } from "../src/lib/schema.js";
-import { createSession, deleteSession } from "../src/web/middleware/auth.js";
+import { approveUser, createUser } from "../packages/daemon/src/lib/auth.js";
+import { getDb } from "../packages/daemon/src/lib/db.js";
+import { users } from "../packages/daemon/src/lib/schema.js";
+import { createSession, deleteSession } from "../packages/daemon/src/web/middleware/auth.js";
 
 const TEST_USERNAMES = ["testmind-admin", "regular-user", "regular-user2"];
 
@@ -37,7 +37,7 @@ describe("web minds routes", () => {
 
   it("GET / — lists minds from registry", async () => {
     const cookie = await setupAuth();
-    const { default: app } = await import("../src/web/app.js");
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
 
     const res = await app.request("/api/minds", {
       headers: { Cookie: `volute_session=${cookie}` },
@@ -49,7 +49,7 @@ describe("web minds routes", () => {
 
   it("GET /:name — 404 for missing mind", async () => {
     const cookie = await setupAuth();
-    const { default: app } = await import("../src/web/app.js");
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
 
     const res = await app.request("/api/minds/nonexistent-mind-xyz", {
       headers: { Cookie: `volute_session=${cookie}` },
@@ -61,7 +61,7 @@ describe("web minds routes", () => {
 
   it("POST /:name/start — 404 for missing mind", async () => {
     const cookie = await setupAuth();
-    const { default: app } = await import("../src/web/app.js");
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
 
     const res = await app.request("http://localhost/api/minds/nonexistent-mind-xyz/start", {
       method: "POST",
@@ -72,7 +72,7 @@ describe("web minds routes", () => {
 
   it("POST /:name/stop — 404 for missing mind", async () => {
     const cookie = await setupAuth();
-    const { default: app } = await import("../src/web/app.js");
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
 
     const res = await app.request("http://localhost/api/minds/nonexistent-mind-xyz/stop", {
       method: "POST",
@@ -82,7 +82,7 @@ describe("web minds routes", () => {
   });
 
   it("GET / — requires auth (401 without cookie)", async () => {
-    const { default: app } = await import("../src/web/app.js");
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
 
     const res = await app.request("/api/minds");
     assert.equal(res.status, 401);
@@ -93,7 +93,7 @@ describe("web minds routes", () => {
     const prev = process.env.VOLUTE_DAEMON_TOKEN;
     process.env.VOLUTE_DAEMON_TOKEN = token;
     try {
-      const { default: app } = await import("../src/web/app.js");
+      const { default: app } = await import("../packages/daemon/src/web/app.js");
       const res = await app.request("/api/minds", {
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -113,7 +113,7 @@ describe("web minds routes", () => {
     const prev = process.env.VOLUTE_DAEMON_TOKEN;
     process.env.VOLUTE_DAEMON_TOKEN = "real-token";
     try {
-      const { default: app } = await import("../src/web/app.js");
+      const { default: app } = await import("../packages/daemon/src/web/app.js");
       const res = await app.request("/api/minds", {
         headers: { Authorization: "Bearer wrong-token" },
       });
@@ -128,7 +128,7 @@ describe("web minds routes", () => {
   });
 
   it("POST /:name/start — blocked by CSRF without origin", async () => {
-    const { default: app } = await import("../src/web/app.js");
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
 
     const res = await app.request("/api/minds/test/start", {
       method: "POST",
@@ -145,7 +145,7 @@ describe("web minds routes", () => {
     await approveUser(user2.id);
     const cookie2 = await createSession(user2.id);
 
-    const { default: app } = await import("../src/web/app.js");
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
 
     const res = await app.request("http://localhost/api/minds/nonexistent/start", {
       method: "POST",
@@ -163,7 +163,7 @@ describe("web minds routes", () => {
 
   it("GET /:name/history/export — 404 for missing mind", async () => {
     const cookie = await setupAuth();
-    const { default: app } = await import("../src/web/app.js");
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
 
     const res = await app.request("/api/minds/nonexistent-mind-xyz/history/export", {
       headers: { Cookie: `volute_session=${cookie}` },
@@ -177,7 +177,7 @@ describe("web minds routes", () => {
     await approveUser(user2.id);
     const cookie2 = await createSession(user2.id);
 
-    const { default: app } = await import("../src/web/app.js");
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
 
     const res = await app.request("/api/minds", {
       headers: { Cookie: `volute_session=${cookie2}` },

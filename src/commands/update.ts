@@ -1,16 +1,16 @@
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { resolve } from "node:path";
-import { command } from "../lib/command.js";
-import { exec, execInherit, resolveVoluteBin } from "../lib/exec.js";
-import { voluteSystemDir } from "../lib/registry.js";
+import { command } from "@volute/cli/lib/command.js";
+import { exec, execInherit, resolveVoluteBin } from "@volute/daemon/lib/exec.js";
+import { voluteSystemDir } from "@volute/daemon/lib/registry.js";
 import {
   getServiceMode,
   modeLabel,
   pollHealth,
   readDaemonConfig,
   restartService,
-} from "../lib/service-mode.js";
-import { checkForUpdate } from "../lib/update-check.js";
+} from "@volute/daemon/lib/service-mode.js";
+import { checkForUpdate } from "@volute/daemon/lib/update-check.js";
 
 const cmd = command({
   name: "volute update",

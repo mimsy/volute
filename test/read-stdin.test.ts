@@ -7,7 +7,7 @@ const execAsync = promisify(execFile);
 
 describe("readStdin", () => {
   const script = `
-    import { readStdin } from "./src/lib/read-stdin.js";
+    import { readStdin } from "./packages/cli/src/lib/read-stdin.js";
     const result = await readStdin();
     process.stdout.write(result ?? "");
   `;

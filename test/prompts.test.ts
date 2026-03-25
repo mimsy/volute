@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { getDb } from "../src/lib/db.js";
+import { getDb } from "../packages/daemon/src/lib/db.js";
 import {
   getMindPromptDefaults,
   getPrompt,
   getPromptIfCustom,
   PROMPT_DEFAULTS,
   PROMPT_KEYS,
-} from "../src/lib/prompts.js";
-import { systemPrompts } from "../src/lib/schema.js";
+} from "../packages/daemon/src/lib/prompts.js";
+import { systemPrompts } from "../packages/daemon/src/lib/schema.js";
 
 async function cleanup() {
   const db = await getDb();

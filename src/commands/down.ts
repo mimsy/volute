@@ -1,14 +1,14 @@
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { resolve } from "node:path";
-import { command } from "../lib/command.js";
-import { voluteSystemDir } from "../lib/registry.js";
+import { command } from "@volute/cli/lib/command.js";
+import { voluteSystemDir } from "@volute/daemon/lib/registry.js";
 import {
   getServiceMode,
   modeLabel,
   pollHealthDown,
   readDaemonConfig,
   stopService,
-} from "../lib/service-mode.js";
+} from "@volute/daemon/lib/service-mode.js";
 
 export type StopResult =
   | { stopped: true; clean: boolean }

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { parseTarget } from "../src/lib/parse-target.js";
+import { parseTarget } from "../packages/cli/src/lib/parse-target.js";
 
 describe("parseTarget", () => {
   it("@lion → volute DM", () => {

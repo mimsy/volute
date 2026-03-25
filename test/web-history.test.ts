@@ -2,10 +2,10 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { eq, sql } from "drizzle-orm";
-import { createUser } from "../src/lib/auth.js";
-import { getDb } from "../src/lib/db.js";
-import { mindHistory, summaries, turns, users } from "../src/lib/schema.js";
-import { createSession, deleteSession } from "../src/web/middleware/auth.js";
+import { createUser } from "../packages/daemon/src/lib/auth.js";
+import { getDb } from "../packages/daemon/src/lib/db.js";
+import { mindHistory, summaries, turns, users } from "../packages/daemon/src/lib/schema.js";
+import { createSession, deleteSession } from "../packages/daemon/src/web/middleware/auth.js";
 
 const TEST_USERNAME = "history-test-admin";
 let sessionId: string;
@@ -34,7 +34,7 @@ describe("web history routes", () => {
 
   it("GET /api/v1/history/turns — returns empty array when no turns", async () => {
     const cookie = await setupAuth();
-    const { default: app } = await import("../src/web/app.js");
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
 
     const res = await app.request("/api/v1/history/turns", {
       headers: { Cookie: `volute_session=${cookie}` },
@@ -46,7 +46,7 @@ describe("web history routes", () => {
 
   it("GET /api/v1/history/turns — returns turns with mind field", async () => {
     const cookie = await setupAuth();
-    const { default: app } = await import("../src/web/app.js");
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
     const db = await getDb();
 
     const turnId = randomUUID();
@@ -69,7 +69,7 @@ describe("web history routes", () => {
 
   it("GET /api/v1/history/turns?mind=name — filters by mind", async () => {
     const cookie = await setupAuth();
-    const { default: app } = await import("../src/web/app.js");
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
     const db = await getDb();
 
     const turnId1 = randomUUID();
@@ -91,7 +91,7 @@ describe("web history routes", () => {
 
   it("GET /api/v1/history/turns — returns turns from multiple minds", async () => {
     const cookie = await setupAuth();
-    const { default: app } = await import("../src/web/app.js");
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
     const db = await getDb();
 
     const turnId1 = randomUUID();
@@ -113,7 +113,7 @@ describe("web history routes", () => {
 
   it("GET /api/v1/history/turns — includes summary when present", async () => {
     const cookie = await setupAuth();
-    const { default: app } = await import("../src/web/app.js");
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
     const db = await getDb();
 
     const turnId = randomUUID();
@@ -139,7 +139,7 @@ describe("web history routes", () => {
   });
 
   it("GET /api/v1/history/turns — requires auth", async () => {
-    const { default: app } = await import("../src/web/app.js");
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
     const res = await app.request("/api/v1/history/turns");
     assert.equal(res.status, 401);
   });
@@ -148,7 +148,7 @@ describe("web history routes", () => {
 
   it("GET /api/v1/history/summaries — requires period param", async () => {
     const cookie = await setupAuth();
-    const { default: app } = await import("../src/web/app.js");
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
 
     const res = await app.request("/api/v1/history/summaries", {
       headers: { Cookie: `volute_session=${cookie}` },
@@ -160,7 +160,7 @@ describe("web history routes", () => {
 
   it("GET /api/v1/history/summaries — rejects invalid period", async () => {
     const cookie = await setupAuth();
-    const { default: app } = await import("../src/web/app.js");
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
 
     const res = await app.request("/api/v1/history/summaries?period=invalid", {
       headers: { Cookie: `volute_session=${cookie}` },
@@ -170,7 +170,7 @@ describe("web history routes", () => {
 
   it("GET /api/v1/history/summaries — returns summaries by period", async () => {
     const cookie = await setupAuth();
-    const { default: app } = await import("../src/web/app.js");
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
     const db = await getDb();
 
     await db.insert(summaries).values({
@@ -193,7 +193,7 @@ describe("web history routes", () => {
 
   it("GET /api/v1/history/summaries — fetches by IDs", async () => {
     const cookie = await setupAuth();
-    const { default: app } = await import("../src/web/app.js");
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
     const db = await getDb();
 
     const result = await db
@@ -219,7 +219,7 @@ describe("web history routes", () => {
 
   it("GET /api/v1/history/summaries — respects from/to range", async () => {
     const cookie = await setupAuth();
-    const { default: app } = await import("../src/web/app.js");
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
     const db = await getDb();
 
     await db.insert(summaries).values([
@@ -249,7 +249,7 @@ describe("web history routes", () => {
 
   it("GET /api/v1/history/summaries — caps limit at 200", async () => {
     const cookie = await setupAuth();
-    const { default: app } = await import("../src/web/app.js");
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
 
     const res = await app.request(
       "/api/v1/history/summaries?period=hour&mind=test-history-cap&limit=999",

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { Scheduler } from "../src/lib/daemon/scheduler.js";
+import { Scheduler } from "../packages/daemon/src/lib/daemon/scheduler.js";
 
 type SystemDelivery = {
   mindName: string;

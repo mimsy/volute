@@ -5,17 +5,17 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { after, afterEach, before, beforeEach, describe, it } from "node:test";
 import { eq } from "drizzle-orm";
-import { approveUser, createUser } from "../src/lib/auth.js";
-import { getDb } from "../src/lib/db.js";
-import { loadAllExtensions } from "../src/lib/extensions.js";
-import { addMind, removeMind, voluteSystemDir } from "../src/lib/registry.js";
-import { users } from "../src/lib/schema.js";
+import { approveUser, createUser } from "../packages/daemon/src/lib/auth.js";
+import { getDb } from "../packages/daemon/src/lib/db.js";
+import { loadAllExtensions } from "../packages/daemon/src/lib/extensions.js";
+import { addMind, removeMind, voluteSystemDir } from "../packages/daemon/src/lib/registry.js";
+import { users } from "../packages/daemon/src/lib/schema.js";
 import {
   deleteSystemsConfig,
   readSystemsConfig,
   writeSystemsConfig,
-} from "../src/lib/systems-config.js";
-import { authMiddleware, createSession } from "../src/web/middleware/auth.js";
+} from "../packages/daemon/src/lib/systems-config.js";
+import { authMiddleware, createSession } from "../packages/daemon/src/web/middleware/auth.js";
 
 function configPath() {
   return resolve(voluteSystemDir(), "systems.json");
@@ -540,7 +540,7 @@ describe("system API routes", () => {
     addMind(MIND_NAME, 14900);
 
     // Load extensions into the app so /api/ext/pages/* routes are available
-    const { default: app } = await import("../src/web/app.js");
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
     await loadAllExtensions(app, authMiddleware);
   });
 
@@ -577,7 +577,7 @@ describe("system API routes", () => {
       };
 
       const cookie = await setupAuth();
-      const { default: app } = await import("../src/web/app.js");
+      const { default: app } = await import("../packages/daemon/src/web/app.js");
       const res = await app.request("http://localhost/api/system/register", {
         method: "POST",
         headers: adminHeaders(cookie),
@@ -596,7 +596,7 @@ describe("system API routes", () => {
     it("POST /api/system/register returns 400 if already registered", async () => {
       writeSystemsConfig({ apiKey: "vp_existing", system: "existing", apiUrl: baseUrl });
       const cookie = await setupAuth();
-      const { default: app } = await import("../src/web/app.js");
+      const { default: app } = await import("../packages/daemon/src/web/app.js");
       const res = await app.request("http://localhost/api/system/register", {
         method: "POST",
         headers: adminHeaders(cookie),
@@ -620,7 +620,7 @@ describe("system API routes", () => {
       };
 
       const cookie = await setupAuth();
-      const { default: app } = await import("../src/web/app.js");
+      const { default: app } = await import("../packages/daemon/src/web/app.js");
       const res = await app.request("http://localhost/api/system/login", {
         method: "POST",
         headers: adminHeaders(cookie),
@@ -636,7 +636,7 @@ describe("system API routes", () => {
     it("POST /api/system/login returns 400 if already logged in", async () => {
       writeSystemsConfig({ apiKey: "vp_existing", system: "existing", apiUrl: baseUrl });
       const cookie = await setupAuth();
-      const { default: app } = await import("../src/web/app.js");
+      const { default: app } = await import("../packages/daemon/src/web/app.js");
       const res = await app.request("http://localhost/api/system/login", {
         method: "POST",
         headers: adminHeaders(cookie),
@@ -655,7 +655,7 @@ describe("system API routes", () => {
       assert.ok(existsSync(configPath()));
 
       const cookie = await setupAuth();
-      const { default: app } = await import("../src/web/app.js");
+      const { default: app } = await import("../packages/daemon/src/web/app.js");
       const res = await app.request("http://localhost/api/system/logout", {
         method: "POST",
         headers: { Cookie: `volute_session=${cookie}`, Origin: "http://localhost" },
@@ -673,7 +673,7 @@ describe("system API routes", () => {
     it("GET /api/system/info returns system name when configured", async () => {
       writeSystemsConfig({ apiKey: "vp_key", system: "my-system", apiUrl: baseUrl });
       const cookie = await setupAuth();
-      const { default: app } = await import("../src/web/app.js");
+      const { default: app } = await import("../packages/daemon/src/web/app.js");
       const res = await app.request("/api/system/info", {
         headers: { Cookie: `volute_session=${cookie}` },
       });
@@ -685,7 +685,7 @@ describe("system API routes", () => {
 
     it("GET /api/system/info returns null when not configured", async () => {
       const cookie = await setupAuth();
-      const { default: app } = await import("../src/web/app.js");
+      const { default: app } = await import("../packages/daemon/src/web/app.js");
       const res = await app.request("/api/system/info", {
         headers: { Cookie: `volute_session=${cookie}` },
       });
@@ -716,7 +716,7 @@ describe("system API routes", () => {
       };
 
       const cookie = await setupAuth();
-      const { default: app } = await import("../src/web/app.js");
+      const { default: app } = await import("../packages/daemon/src/web/app.js");
       const res = await app.request(`http://localhost/api/ext/pages/publish/${MIND_NAME}`, {
         method: "PUT",
         headers: adminHeaders(cookie),
@@ -731,7 +731,7 @@ describe("system API routes", () => {
 
     it("PUT /api/ext/pages/publish returns 400 when not configured", async () => {
       const cookie = await setupAuth();
-      const { default: app } = await import("../src/web/app.js");
+      const { default: app } = await import("../packages/daemon/src/web/app.js");
       const res = await app.request(`http://localhost/api/ext/pages/publish/${MIND_NAME}`, {
         method: "PUT",
         headers: adminHeaders(cookie),
@@ -763,7 +763,7 @@ describe("system API routes", () => {
       };
 
       const cookie = await setupAuth();
-      const { default: app } = await import("../src/web/app.js");
+      const { default: app } = await import("../packages/daemon/src/web/app.js");
       const res = await app.request(`/api/ext/pages/status/${MIND_NAME}`, {
         headers: { Cookie: `volute_session=${cookie}` },
       });
@@ -775,7 +775,7 @@ describe("system API routes", () => {
 
     it("GET /api/ext/pages/status returns 400 when not configured", async () => {
       const cookie = await setupAuth();
-      const { default: app } = await import("../src/web/app.js");
+      const { default: app } = await import("../packages/daemon/src/web/app.js");
       const res = await app.request(`/api/ext/pages/status/${MIND_NAME}`, {
         headers: { Cookie: `volute_session=${cookie}` },
       });

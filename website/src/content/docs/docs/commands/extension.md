@@ -5,7 +5,7 @@ sidebar:
   order: 12
 ---
 
-Manage installed extensions. Built-in extensions (Notes, Pages, Plan) are always loaded. Third-party extensions are installed from npm.
+Manage installed extensions. Built-in extensions (Notes, Pages) are always loaded. Third-party extensions are installed from npm.
 
 ## extension list
 

@@ -3,17 +3,17 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { promisify } from "node:util";
-import { command } from "../lib/command.js";
-import { resolveVoluteBin } from "../lib/exec.js";
-import { ensureVoluteGroup } from "../lib/isolation.js";
-import { promptLine } from "../lib/prompt.js";
+import { command } from "@volute/cli/lib/command.js";
+import { promptLine } from "@volute/cli/lib/prompt.js";
+import { resolveVoluteBin } from "@volute/daemon/lib/exec.js";
+import { ensureVoluteGroup } from "@volute/daemon/lib/isolation.js";
 import {
   LAUNCHD_PLIST_LABEL,
   LAUNCHD_PLIST_PATH,
   SYSTEM_LAUNCHD_PLIST_PATH,
   SYSTEM_SERVICE_PATH,
   USER_SYSTEMD_UNIT,
-} from "../lib/service-mode.js";
+} from "@volute/daemon/lib/service-mode.js";
 import {
   type GlobalConfig,
   type IsolationMode,
@@ -21,7 +21,7 @@ import {
   type SetupConfig,
   type SetupType,
   writeGlobalConfig,
-} from "../lib/setup.js";
+} from "@volute/daemon/lib/setup.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -303,6 +303,7 @@ const cmd = command({
     name: { type: "string", description: "System name" },
     system: { type: "boolean", description: "System-level install" },
     service: { type: "boolean", description: "Install as service" },
+    remote: { type: "boolean", description: "Allow access from other devices" },
     dir: { type: "string", description: "Data directory" },
     port: { type: "number", description: "Daemon port" },
     host: { type: "string", description: "Daemon host" },
@@ -314,8 +315,9 @@ const cmd = command({
     let systemName: string;
     let setupType: SetupType;
     let wantService: boolean;
+    let wantRemote = flags.remote ?? false;
     const port = flags.port;
-    const host = flags.host;
+    let host = flags.host;
 
     if (isInteractive) {
       console.log("Welcome to Volute!\n");
@@ -338,6 +340,19 @@ const cmd = command({
         process.exit(1);
       }
 
+      // Remote access
+      if (!host) {
+        const remoteAnswer = (
+          await promptLine("\nAllow access from other devices on the network? [y/N]: ")
+        )
+          .trim()
+          .toLowerCase();
+        if (remoteAnswer === "y" || remoteAnswer === "yes") {
+          wantRemote = true;
+          host = "0.0.0.0";
+        }
+      }
+
       const serviceDefault = setupType === "system" ? "Y/n" : "y/N";
       const servicePrompt = `\nInstall as a service (auto-start on boot)? [${serviceDefault}]: `;
       const serviceAnswer = (await promptLine(servicePrompt)).trim().toLowerCase();
@@ -350,12 +365,19 @@ const cmd = command({
       // Non-interactive mode
       if (!flags.name) {
         console.error("Error: --name is required in non-interactive mode.");
-        console.error("Usage: volute setup --name <name> [--system] [--service] [--dir <path>]");
+        console.error(
+          "Usage: volute setup --name <name> [--system] [--service] [--remote] [--dir <path>]",
+        );
         process.exit(1);
       }
       systemName = flags.name;
       setupType = flags.system ? "system" : "local";
       wantService = flags.service ?? setupType === "system";
+
+      // --remote implies --host 0.0.0.0 unless --host is explicitly set
+      if (wantRemote && !host) {
+        host = "0.0.0.0";
+      }
 
       if (setupType === "system" && process.getuid?.() !== 0) {
         console.error("Error: system install requires root (use sudo).");
@@ -444,7 +466,7 @@ const cmd = command({
         if (aiProvider) {
           const aiApiKey = (await promptLine("API key (leave empty to use env var): ")).trim();
           if (aiApiKey) {
-            const { saveProviderConfig } = await import("../lib/ai-service.js");
+            const { saveProviderConfig } = await import("@volute/daemon/lib/ai-service.js");
             saveProviderConfig(aiProvider, { apiKey: aiApiKey });
             console.log(`  AI provider configured: ${aiProvider}`);
           } else {
@@ -455,6 +477,12 @@ const cmd = command({
     }
 
     console.log(`\nDone! Use \`volute mind create <name>\` to create your first mind.`);
+
+    if (wantRemote || host === "0.0.0.0" || host === "::") {
+      const displayPort = port ?? 1618;
+      console.log(`\nRemote access enabled. Connect from other devices at:`);
+      console.log(`  http://<this-machine-ip>:${displayPort}/`);
+    }
   },
 });
 

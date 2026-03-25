@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { type MindEvent, publish, subscribe, subscribeAll } from "../src/lib/events/mind-events.js";
+import {
+  type MindEvent,
+  publish,
+  subscribe,
+  subscribeAll,
+} from "../packages/daemon/src/lib/events/mind-events.js";
 
 function event(type: string, content?: string): MindEvent {
   return { mind: "test", type, content };

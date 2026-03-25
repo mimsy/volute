@@ -4,7 +4,7 @@ import {
   type ConversationEvent,
   publish,
   subscribe,
-} from "../src/lib/events/conversation-events.js";
+} from "../packages/daemon/src/lib/events/conversation-events.js";
 
 function makeEvent(
   overrides?: Partial<ConversationEvent & { type: "message" }>,

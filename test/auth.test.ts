@@ -12,9 +12,9 @@ import {
   listUsers,
   listUsersByType,
   verifyUser,
-} from "../src/lib/auth.js";
-import { getDb } from "../src/lib/db.js";
-import { users } from "../src/lib/schema.js";
+} from "../packages/daemon/src/lib/auth.js";
+import { getDb } from "../packages/daemon/src/lib/db.js";
+import { users } from "../packages/daemon/src/lib/schema.js";
 
 const TEST_USERNAMES = [
   "admin1",

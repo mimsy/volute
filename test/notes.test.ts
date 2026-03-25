@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import type { Database as ExtDb, ExtensionContext, User } from "@volute/extensions";
 import Database from "libsql";
+import { createUser } from "../packages/daemon/src/lib/auth.js";
 import { createCommands } from "../packages/extensions/notes/src/commands.js";
 import { initDb } from "../packages/extensions/notes/src/db.js";
 import {
@@ -17,7 +18,6 @@ import {
   toggleReaction,
   updateNote,
 } from "../packages/extensions/notes/src/notes.js";
-import { createUser } from "../src/lib/auth.js";
 
 let db: ExtDb;
 let userMap: Map<number, User>;

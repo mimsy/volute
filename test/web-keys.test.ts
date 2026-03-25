@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { mkdirSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { generateIdentity, getFingerprint } from "../src/lib/identity.js";
-import { addMind, mindDir, removeMind } from "../src/lib/registry.js";
+import { generateIdentity, getFingerprint } from "../packages/daemon/src/lib/identity.js";
+import { addMind, mindDir, removeMind } from "../packages/daemon/src/lib/registry.js";
 
 const TEST_MIND = `keys-test-${Date.now()}`;
 
@@ -27,7 +27,7 @@ describe("web keys routes", () => {
   });
 
   it("GET /:fingerprint — returns public key for matching fingerprint", async () => {
-    const { default: app } = await import("../src/web/app.js");
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
 
     const res = await app.request(`/api/keys/${fingerprint}`);
     assert.equal(res.status, 200);
@@ -37,7 +37,7 @@ describe("web keys routes", () => {
   });
 
   it("GET /:fingerprint — returns 404 for unknown fingerprint", async () => {
-    const { default: app } = await import("../src/web/app.js");
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
 
     const res = await app.request(
       "/api/keys/0000000000000000000000000000000000000000000000000000000000000000",
@@ -48,7 +48,7 @@ describe("web keys routes", () => {
   });
 
   it("GET /:fingerprint — works without authentication", async () => {
-    const { default: app } = await import("../src/web/app.js");
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
 
     // No Cookie header — should still work
     const res = await app.request(`/api/keys/${fingerprint}`);

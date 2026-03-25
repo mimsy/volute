@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { type ActivityEvent, publish, subscribe } from "../src/lib/events/activity-events.js";
+import {
+  type ActivityEvent,
+  publish,
+  subscribe,
+} from "../packages/daemon/src/lib/events/activity-events.js";
 
 function makeEvent(overrides?: Partial<ActivityEvent>): ActivityEvent {
   return {

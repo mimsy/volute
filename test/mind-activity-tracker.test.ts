@@ -1,13 +1,16 @@
 import assert from "node:assert/strict";
 import { after, afterEach, before, describe, test } from "node:test";
-import { getDb } from "../src/lib/db.js";
-import { type ActivityEvent, subscribe } from "../src/lib/events/activity-events.js";
+import { getDb } from "../packages/daemon/src/lib/db.js";
+import {
+  type ActivityEvent,
+  subscribe,
+} from "../packages/daemon/src/lib/events/activity-events.js";
 import {
   getActiveMinds,
   markIdle,
   onMindEvent,
   stopAll,
-} from "../src/lib/events/mind-activity-tracker.js";
+} from "../packages/daemon/src/lib/events/mind-activity-tracker.js";
 
 // Wait for an async fire-and-forget publish to complete
 function wait(ms = 200) {
