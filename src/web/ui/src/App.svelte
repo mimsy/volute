@@ -730,6 +730,7 @@ function handleGlobalClick(e: MouseEvent) {
                   class:active={activeSystemSection === "system-history"}
                   onclick={() => { selection = { kind: "system-history" }; }}
                   use:tooltip={{ text: "History", position: "bottom" }}
+                  aria-label="History"
                 >
                   <span class="tab-icon">{@html icons.history}</span>
                 </button>
@@ -738,6 +739,7 @@ function handleGlobalClick(e: MouseEvent) {
                   class:active={activeSystemSection === "system-chat"}
                   onclick={() => { selection = { kind: "system-chat" }; }}
                   use:tooltip={{ text: "Chat", position: "bottom" }}
+                  aria-label="Chat"
                 >
                   <span class="tab-icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg></span>
                 </button>
@@ -746,6 +748,7 @@ function handleGlobalClick(e: MouseEvent) {
                   class:active={activeSystemSection === "spirit-settings"}
                   onclick={() => { selection = { kind: "spirit-settings" }; }}
                   use:tooltip={{ text: "Spirit", position: "bottom" }}
+                  aria-label="Spirit"
                 >
                   <span class="tab-icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="2"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.05 3.05l1.41 1.41M11.54 11.54l1.41 1.41M3.05 12.95l1.41-1.41M11.54 4.46l1.41-1.41"/></svg></span>
                 </button>
