@@ -96,15 +96,6 @@ export function createRoutes(ctx: ExtensionContext): Hono {
     });
 }
 
-// Lazy-loaded reference to voluteHome for system pages
-let _voluteHome: (() => string) | null = null;
-async function getVoluteHome(): Promise<string> {
-  if (_voluteHome) return _voluteHome();
-  const mod = await import("../../../../src/lib/registry.js");
-  _voluteHome = mod.voluteHome;
-  return _voluteHome();
-}
-
 export function createPublicRoutes(ctx: ExtensionContext): Hono {
   return new Hono().get("/:name/*", async (c) => {
     const name = c.req.param("name");
@@ -113,8 +104,8 @@ export function createPublicRoutes(ctx: ExtensionContext): Hono {
 
     let pagesRoot: string;
     if (name === "_system") {
-      const home = await getVoluteHome();
-      pagesRoot = resolve(home, "shared", "pages");
+      // Serve collaborative pages from the pages repo (main branch working tree)
+      pagesRoot = resolve(ctx.dataDir, "repo");
     } else {
       // Serve from the published snapshot, not the working directory
       pagesRoot = resolve(ctx.dataDir, "sites", name);

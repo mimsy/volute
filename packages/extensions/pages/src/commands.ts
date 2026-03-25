@@ -4,15 +4,8 @@ import { relative, resolve } from "node:path";
 import type { ExtensionCommand } from "@volute/extensions";
 
 import { getPublishedPages, syncPublishedPages } from "./db.js";
-
-// Lazy-loaded shared repo functions (run in daemon process)
-type SharedFns = typeof import("../../../../src/lib/shared.js");
-let _shared: SharedFns | null = null;
-async function getShared(): Promise<SharedFns> {
-  if (_shared) return _shared;
-  _shared = await import("../../../../src/lib/shared.js");
-  return _shared;
-}
+import { pagesLog, pagesMerge, pagesPull, pagesStatus } from "./shared-pages.js";
+import { getDataDir } from "./state.js";
 
 export function createCommands(): Record<string, ExtensionCommand> {
   return {
@@ -37,10 +30,10 @@ export function createCommands(): Record<string, ExtensionCommand> {
             return { error: 'Usage: volute pages publish --shared "description of changes"' };
 
           try {
-            const { sharedPull, sharedMerge } = await getShared();
+            const dataDir = getDataDir();
 
             // Auto-pull first to reduce conflict frequency
-            const pullResult = await sharedPull(mindName, mindDir);
+            const pullResult = await pagesPull(mindName, mindDir, dataDir);
             if (!pullResult.ok) {
               return {
                 error: pullResult.message || "Pull failed — resolve conflicts and try again.",
@@ -48,7 +41,7 @@ export function createCommands(): Record<string, ExtensionCommand> {
             }
 
             // Merge to main
-            const mergeResult = await sharedMerge(mindName, mindDir, message);
+            const mergeResult = await pagesMerge(mindName, mindDir, dataDir, message);
             if (!mergeResult.ok) {
               return {
                 error:
@@ -68,9 +61,8 @@ export function createCommands(): Record<string, ExtensionCommand> {
         const mindDir = ctx.getMindDir(mindName);
         if (!mindDir) return { error: `Mind not found: ${mindName}` };
 
-        const sourceDir = resolve(mindDir, "home", "public", "pages");
-        if (!existsSync(sourceDir))
-          return { error: "No pages directory found (home/public/pages/)" };
+        const sourceDir = resolve(mindDir, "home", "pages");
+        if (!existsSync(sourceDir)) return { error: "No pages directory found (home/pages/)" };
 
         const db = ctx.db;
         if (!db) return { error: "Database not available" };
@@ -172,8 +164,7 @@ export function createCommands(): Record<string, ExtensionCommand> {
           if (!mindDir) return { error: `Mind not found: ${mindName}` };
 
           try {
-            const { sharedStatus } = await getShared();
-            const status = await sharedStatus(mindDir);
+            const status = await pagesStatus(mindDir);
             return { output: status };
           } catch (err) {
             return { error: `Failed to check shared status: ${(err as Error).message}` };
@@ -205,7 +196,7 @@ export function createCommands(): Record<string, ExtensionCommand> {
         const mindDir = ctx.getMindDir(mindName);
         if (!mindDir) return { error: `Mind not found: ${mindName}` };
 
-        const sourceDir = resolve(mindDir, "home", "public", "pages");
+        const sourceDir = resolve(mindDir, "home", "pages");
         const published = new Set(getPublishedPages(db, mindName).map((p) => p.file));
         const draftFiles = existsSync(sourceDir) ? collectHtmlFiles(sourceDir, sourceDir) : [];
         const allFiles = new Set([...published, ...draftFiles]);
@@ -236,8 +227,8 @@ export function createCommands(): Record<string, ExtensionCommand> {
         if (!mindDir) return { error: `Mind not found: ${mindName}` };
 
         try {
-          const { sharedPull } = await getShared();
-          const result = await sharedPull(mindName, mindDir);
+          const dataDir = getDataDir();
+          const result = await pagesPull(mindName, mindDir, dataDir);
           if (!result.ok) {
             return { error: result.message || "Pull failed." };
           }
@@ -266,8 +257,7 @@ export function createCommands(): Record<string, ExtensionCommand> {
         }
 
         try {
-          const { sharedLog } = await getShared();
-          const output = await sharedLog(mindDir, limit);
+          const output = await pagesLog(mindDir, limit);
           return { output };
         } catch (err) {
           return { error: `Failed to read shared log: ${(err as Error).message}` };

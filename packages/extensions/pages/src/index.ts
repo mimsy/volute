@@ -4,6 +4,8 @@ import { createExtension } from "@volute/extensions";
 import { createCommands } from "./commands.js";
 import { initDb } from "./db.js";
 import { createPublicRoutes, createRoutes } from "./routes.js";
+import { addPagesWorktree, ensurePagesRepo } from "./shared-pages.js";
+import { getDataDir, setDataDir } from "./state.js";
 
 const assetsDir = resolve(import.meta.dirname, "../dist/ui");
 const skillsDir = resolve(import.meta.dirname, "../skills");
@@ -13,8 +15,13 @@ export default createExtension({
   name: "Pages",
   version: "0.1.0",
   description: "Publish and serve web pages from mind directories",
-  initDb,
-  routes: (ctx) => createRoutes(ctx),
+  initDb: (db) => {
+    initDb(db);
+  },
+  routes: (ctx) => {
+    setDataDir(ctx.dataDir);
+    return createRoutes(ctx);
+  },
   publicRoutes: (ctx) => createPublicRoutes(ctx),
   commands: createCommands(),
   skillsDir,
@@ -32,5 +39,31 @@ export default createExtension({
     feedSource: {
       endpoint: "/api/ext/pages/feed",
     },
+  },
+
+  onDaemonStart() {
+    let dataDir: string;
+    try {
+      dataDir = getDataDir();
+    } catch {
+      return;
+    }
+    ensurePagesRepo(dataDir).catch((err) => {
+      console.error("[pages] failed to initialize pages repo:", err);
+    });
+  },
+
+  onMindStart(mindName: string) {
+    let dataDir: string;
+    try {
+      dataDir = getDataDir();
+    } catch {
+      return;
+    }
+    import("../../../../src/lib/registry.js")
+      .then(({ mindDir }) => addPagesWorktree(mindName, mindDir(mindName), dataDir))
+      .catch((err) => {
+        console.error(`[pages] failed to add pages worktree for ${mindName}:`, err);
+      });
   },
 });

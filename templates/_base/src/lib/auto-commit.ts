@@ -25,7 +25,7 @@ const pendingSharedFiles = new Set<string>();
  * Track a file change in the mind's home directory for batched commit.
  * Called by the PostToolUse hook when Edit or Write completes.
  *
- * Files under home/shared/ are tracked separately for the shared worktree repo.
+ * Files under home/pages/_system/ are tracked separately for the collaborative pages worktree.
  * All other files go to the mind's own repo.
  */
 export function trackFileChange(filePath: string, cwd: string): void {
@@ -37,7 +37,7 @@ export function trackFileChange(filePath: string, cwd: string): void {
   const relativePath = resolved.slice(homeDir.length + 1);
   if (!relativePath) return;
 
-  const sharedPrefix = "shared/";
+  const sharedPrefix = "pages/_system/";
   if (relativePath.startsWith(sharedPrefix)) {
     pendingSharedFiles.add(relativePath);
   } else {
@@ -89,16 +89,16 @@ export function flushFileChanges(cwd?: string): Promise<void> {
       }
     }
 
-    // Commit shared worktree files
+    // Commit collaborative pages worktree files
     if (sharedToCommit.length > 0) {
-      const sharedCwd = resolve(effectiveCwd, "shared");
-      const sharedPrefix = "shared/";
+      const sharedCwd = resolve(effectiveCwd, "pages", "_system");
+      const sharedPrefix = "pages/_system/";
       const mindName = process.env.VOLUTE_MIND ?? "unknown";
 
       for (const f of sharedToCommit) {
         const sharedRelative = f.slice(sharedPrefix.length);
         if ((await exec("git", gitArgs(["add", sharedRelative]), sharedCwd)).code !== 0) {
-          log("auto-commit", `git add failed for shared/${sharedRelative}`);
+          log("auto-commit", `git add failed for pages/_system/${sharedRelative}`);
         }
       }
       if ((await exec("git", gitArgs(["diff", "--cached", "--quiet"]), sharedCwd)).code !== 0) {
@@ -111,9 +111,9 @@ export function flushFileChanges(cwd?: string): Promise<void> {
           (await exec("git", gitArgs(["commit", "--author", authorFlag, "-m", message]), sharedCwd))
             .code === 0
         ) {
-          log("auto-commit", `[shared] ${message}`);
+          log("auto-commit", `[pages/_system] ${message}`);
         } else {
-          log("auto-commit", `[shared] commit failed`);
+          log("auto-commit", `[pages/_system] commit failed`);
         }
       }
     }

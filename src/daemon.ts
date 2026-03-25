@@ -29,7 +29,7 @@ import {
   voluteSystemDir,
 } from "./lib/registry.js";
 import { RotatingLog } from "./lib/rotating-log.js";
-import { ensureSharedRepo } from "./lib/shared.js";
+
 import { initDefaultSkills, syncBuiltinSkills } from "./lib/skills.js";
 import { ensureSystemChannel } from "./lib/system-channel.js";
 import { initWebhook } from "./lib/webhook.js";
@@ -76,13 +76,6 @@ export async function startDaemon(opts: {
 
   mkdirSync(home, { recursive: true });
   ensureSystemDir();
-
-  // Initialize shared repo for inter-mind collaboration (non-fatal)
-  try {
-    await ensureSharedRepo();
-  } catch (err) {
-    log.warn("failed to initialize shared repo", log.errorData(err));
-  }
 
   // Migrate pre-existing installations (setup field without setupCompleted)
   const { migrateSetupCompleted } = await import("./lib/setup.js");

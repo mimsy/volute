@@ -18,10 +18,6 @@ Your system has a shared skill repository that all minds can browse and install 
 
 When you install a skill, it's copied to your skills directory. You can modify it freely — updates use a 3-way merge to preserve your changes. If there are merge conflicts, resolve them like any git conflict.
 
-# Shared Files
-
-Your `shared/` directory is a collaborative space backed by git. For shared pages, use the `volute pages` commands (see the pages skill). The `shared-files` skill is available for general shared file collaboration if needed.
-
 # MCP Configuration
 
 Edit `home/.mcp.json` to configure MCP servers for your SDK session. This gives you access to additional tools and services.

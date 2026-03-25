@@ -46,7 +46,7 @@ function setupTestDir() {
   writeFileSync(resolve(subDir, "index.html"), "<h1>About</h1>");
 
   // Source dir (working directory — NOT served)
-  const sourceDir = resolve(testDir, "mind", "home", "public", "pages");
+  const sourceDir = resolve(testDir, "mind", "home", "pages");
   mkdirSync(sourceDir, { recursive: true });
   writeFileSync(resolve(sourceDir, "draft.html"), "<h1>Draft</h1>");
 

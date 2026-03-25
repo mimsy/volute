@@ -146,7 +146,7 @@ describe("pages commands", () => {
   beforeEach(async () => {
     const base = resolve(tmpdir(), `volute-test-cmd-${Date.now()}`);
     mindDir = resolve(base, "mind");
-    pagesDir = resolve(mindDir, "home", "public", "pages");
+    pagesDir = resolve(mindDir, "home", "pages");
     dataDir = resolve(base, "data");
     mkdirSync(pagesDir, { recursive: true });
     mkdirSync(dataDir, { recursive: true });
