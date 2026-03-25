@@ -97,18 +97,31 @@ describe("turn-tracker", () => {
     assert.equal(result, undefined);
   });
 
-  it("clearMind removes all entries for the mind", async () => {
+  it("clearMind removes all entries and returns orphaned turns", async () => {
     const turnId = await createTurn(mind);
-    await assignSession(mind, turnId, "s1");
+    await assignSession(mind, turnId!, "s1");
 
     // Create another turn for a different mind
     const otherMind = "test-turn-tracker-other";
     const otherId = await createTurn(otherMind);
 
-    await clearMind(mind);
+    const orphaned = await clearMind(mind);
     assert.equal(getActiveTurnId(mind, "s1"), undefined);
     assert.equal(getActiveTurnId(otherMind), otherId, "other mind should be unaffected");
 
+    assert.equal(orphaned.length, 1);
+    assert.equal(orphaned[0].turnId, turnId);
+    assert.equal(orphaned[0].session, "s1");
+
     await clearMind(otherMind);
+  });
+
+  it("clearMind returns wildcard session as undefined", async () => {
+    const turnId = await createTurn(mind);
+    const orphaned = await clearMind(mind);
+
+    assert.equal(orphaned.length, 1);
+    assert.equal(orphaned[0].turnId, turnId);
+    assert.equal(orphaned[0].session, undefined);
   });
 });
