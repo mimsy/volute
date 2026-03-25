@@ -295,19 +295,24 @@ export function countSystemPromptTokens(systemPrompt: string): number {
 
 /** Find the Claude SDK JSONL file for a session ID. */
 export function findClaudeSessionFile(cwd: string, sessionId: string): string | null {
-  const projectsDir = resolve(cwd, ".claude/projects");
-  try {
-    for (const dir of readdirSync(projectsDir)) {
-      const candidate = resolve(projectsDir, dir, `${sessionId}.jsonl`);
-      try {
-        statSync(candidate);
-        return candidate;
-      } catch {
-        // Not in this project dir
+  // The SDK stores JSONL in ~/.claude/projects/ (global), not inside the mind's home dir.
+  // Check both the global location and the local one (in case of sandboxed minds).
+  const homeDir = process.env.HOME ?? "";
+  const dirs = [resolve(homeDir, ".claude/projects"), resolve(cwd, ".claude/projects")];
+  for (const projectsDir of dirs) {
+    try {
+      for (const dir of readdirSync(projectsDir)) {
+        const candidate = resolve(projectsDir, dir, `${sessionId}.jsonl`);
+        try {
+          statSync(candidate);
+          return candidate;
+        } catch {
+          // Not in this project dir
+        }
       }
+    } catch {
+      // No projects dir
     }
-  } catch {
-    // No projects dir
   }
   return null;
 }
