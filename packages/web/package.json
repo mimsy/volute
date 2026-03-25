@@ -1,0 +1,21 @@
+{
+  "name": "@volute/web",
+  "version": "0.0.1",
+  "description": "Standalone Volute web UI — connect to any Volute daemon",
+  "type": "module",
+  "bin": {
+    "volute-web": "./dist/serve.js"
+  },
+  "scripts": {
+    "build": "npm run build:ui && npm run build:server",
+    "build:ui": "cd ../../src/web/ui && npx vite build --outDir ../../../packages/web/dist/assets --emptyOutDir",
+    "build:server": "tsc"
+  },
+  "files": [
+    "dist/"
+  ],
+  "dependencies": {},
+  "devDependencies": {
+    "typescript": "^5.7.0"
+  }
+}
