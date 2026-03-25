@@ -102,8 +102,9 @@ export async function addPagesWorktree(
   const wt = worktreePath(mindDir);
   if (existsSync(wt)) return;
 
-  // Ensure parent pages/ directory exists
-  mkdirSync(resolve(mindDir, "home", "pages"), { recursive: true });
+  // Ensure parent pages/ directory exists (mind may create personal pages here too)
+  const pagesDir = resolve(mindDir, "home", "pages");
+  mkdirSync(pagesDir, { recursive: true });
 
   let branchExists = false;
   try {
@@ -120,10 +121,17 @@ export async function addPagesWorktree(
   }
 
   if (isIsolationEnabled()) {
+    const user = mindUserName(mindName);
+    // Chown the worktree directory so the mind user can write files
+    try {
+      execFileSync("chown", ["-R", `${user}:volute`, wt], { stdio: "ignore" });
+    } catch (err: unknown) {
+      log.warn(`failed to chown worktree for ${mindName}`, log.errorData(err));
+    }
+    // Chown the git state directory (HEAD, index, refs) so auto-commit works
     const wtGitDir = readWorktreeGitDir(wt);
     if (wtGitDir) {
       try {
-        const user = mindUserName(mindName);
         execFileSync("chown", ["-R", `${user}:volute`, wtGitDir], { stdio: "ignore" });
       } catch (err: unknown) {
         log.warn(`failed to chown worktree git dir for ${mindName}`, log.errorData(err));
