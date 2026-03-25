@@ -3,17 +3,17 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { promisify } from "node:util";
-import { resolveVoluteBin } from "../lib/exec.js";
-import { ensureVoluteGroup } from "../lib/isolation.js";
-import { parseArgs } from "../lib/parse-args.js";
-import { promptLine } from "../lib/prompt.js";
+import { parseArgs } from "@volute/cli/lib/parse-args.js";
+import { promptLine } from "@volute/cli/lib/prompt.js";
+import { resolveVoluteBin } from "@volute/daemon/lib/exec.js";
+import { ensureVoluteGroup } from "@volute/daemon/lib/isolation.js";
 import {
   LAUNCHD_PLIST_LABEL,
   LAUNCHD_PLIST_PATH,
   SYSTEM_LAUNCHD_PLIST_PATH,
   SYSTEM_SERVICE_PATH,
   USER_SYSTEMD_UNIT,
-} from "../lib/service-mode.js";
+} from "@volute/daemon/lib/service-mode.js";
 import {
   type GlobalConfig,
   type IsolationMode,
@@ -21,7 +21,7 @@ import {
   type SetupConfig,
   type SetupType,
   writeGlobalConfig,
-} from "../lib/setup.js";
+} from "@volute/daemon/lib/setup.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -462,7 +462,7 @@ export async function run(args: string[]) {
       if (aiProvider) {
         const aiApiKey = (await promptLine("API key (leave empty to use env var): ")).trim();
         if (aiApiKey) {
-          const { saveProviderConfig } = await import("../lib/ai-service.js");
+          const { saveProviderConfig } = await import("@volute/daemon/lib/ai-service.js");
           saveProviderConfig(aiProvider, { apiKey: aiApiKey });
           console.log(`  AI provider configured: ${aiProvider}`);
         } else {

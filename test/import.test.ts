@@ -15,7 +15,7 @@ import {
   importPiSession,
   parseNameFromIdentity,
   sessionMatchesWorkspace,
-} from "../src/commands/import.js";
+} from "../packages/cli/src/commands/import.js";
 
 const scratchDir = resolve("/tmp/import-test");
 

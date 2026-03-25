@@ -1,16 +1,21 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { getOrCreateSystemUser, verifyUser } from "../src/lib/auth.js";
-import { getDb } from "../src/lib/db.js";
-import { validateMindName } from "../src/lib/registry.js";
-import { conversationParticipants, conversations, messages, users } from "../src/lib/schema.js";
+import { getOrCreateSystemUser, verifyUser } from "../packages/daemon/src/lib/auth.js";
+import { getDb } from "../packages/daemon/src/lib/db.js";
+import { validateMindName } from "../packages/daemon/src/lib/registry.js";
+import {
+  conversationParticipants,
+  conversations,
+  messages,
+  users,
+} from "../packages/daemon/src/lib/schema.js";
 import {
   ensureSystemDM,
   generateSystemReply,
   resetSystemDMCache,
   sendSystemMessage,
   sendSystemMessageDirect,
-} from "../src/lib/system-chat.js";
+} from "../packages/daemon/src/lib/system-chat.js";
 
 const { eq } = await import("drizzle-orm");
 

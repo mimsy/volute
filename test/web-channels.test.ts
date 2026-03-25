@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { eq } from "drizzle-orm";
-import { createUser } from "../src/lib/auth.js";
-import { getDb } from "../src/lib/db.js";
-import { addMind, removeMind } from "../src/lib/registry.js";
-import { users } from "../src/lib/schema.js";
-import { createSession } from "../src/web/middleware/auth.js";
+import { createUser } from "../packages/daemon/src/lib/auth.js";
+import { getDb } from "../packages/daemon/src/lib/db.js";
+import { addMind, removeMind } from "../packages/daemon/src/lib/registry.js";
+import { users } from "../packages/daemon/src/lib/schema.js";
+import { createSession } from "../packages/daemon/src/web/middleware/auth.js";
 
 const TEST_MIND = "channels-test-mind";
 const TEST_USERNAMES = ["channels-admin"];
@@ -46,7 +46,7 @@ describe("web channels routes", () => {
 
   it("POST /:name/channels/create — 404 for nonexistent mind", async () => {
     const cookie = await setupAuth();
-    const { default: app } = await import("../src/web/app.js");
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
 
     const res = await app.request(
       "http://localhost/api/minds/nonexistent-ch-mind/channels/create",
@@ -62,7 +62,7 @@ describe("web channels routes", () => {
   it("POST /:name/channels/create — 400 for platform without createConversation", async () => {
     const cookie = await setupAuth();
     addMind(TEST_MIND, 4160);
-    const { default: app } = await import("../src/web/app.js");
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
 
     // 'system' has no driver
     const res = await app.request(`http://localhost/api/minds/${TEST_MIND}/channels/create`, {
@@ -80,7 +80,7 @@ describe("web channels routes", () => {
   it("POST /:name/channels/send — removed (404)", async () => {
     const cookie = await setupAuth();
     addMind(TEST_MIND, 4160);
-    const { default: app } = await import("../src/web/app.js");
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
 
     const res = await app.request(`http://localhost/api/minds/${TEST_MIND}/channels/send`, {
       method: "POST",
@@ -93,7 +93,7 @@ describe("web channels routes", () => {
   it("GET /:name/channels/read — removed (404)", async () => {
     const cookie = await setupAuth();
     addMind(TEST_MIND, 4160);
-    const { default: app } = await import("../src/web/app.js");
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
 
     const res = await app.request(
       `/api/minds/${TEST_MIND}/channels/read?platform=discord&uri=test`,
@@ -105,7 +105,7 @@ describe("web channels routes", () => {
   it("GET /:name/channels/list — removed (404)", async () => {
     const cookie = await setupAuth();
     addMind(TEST_MIND, 4160);
-    const { default: app } = await import("../src/web/app.js");
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
 
     const res = await app.request(`/api/minds/${TEST_MIND}/channels/list`, {
       headers: { Cookie: `volute_session=${cookie}` },
@@ -116,7 +116,7 @@ describe("web channels routes", () => {
   it("GET /:name/channels/users — removed (404)", async () => {
     const cookie = await setupAuth();
     addMind(TEST_MIND, 4160);
-    const { default: app } = await import("../src/web/app.js");
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
 
     const res = await app.request(`/api/minds/${TEST_MIND}/channels/users?platform=discord`, {
       headers: { Cookie: `volute_session=${cookie}` },

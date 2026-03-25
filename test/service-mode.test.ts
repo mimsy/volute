@@ -15,7 +15,7 @@ import {
   STOP_GRACE_TIMEOUT,
   SYSTEM_SERVICE_PATH,
   USER_SYSTEMD_UNIT,
-} from "../src/lib/service-mode.js";
+} from "../packages/daemon/src/lib/service-mode.js";
 
 describe("service-mode constants", () => {
   it("has expected constant values", () => {

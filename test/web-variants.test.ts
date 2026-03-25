@@ -2,11 +2,11 @@ import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { eq } from "drizzle-orm";
 import { Hono } from "hono";
-import { createUser } from "../src/lib/auth.js";
-import { getDb } from "../src/lib/db.js";
-import { addMind, findVariants, removeMind } from "../src/lib/registry.js";
-import { users } from "../src/lib/schema.js";
-import { authMiddleware, createSession } from "../src/web/middleware/auth.js";
+import { createUser } from "../packages/daemon/src/lib/auth.js";
+import { getDb } from "../packages/daemon/src/lib/db.js";
+import { addMind, findVariants, removeMind } from "../packages/daemon/src/lib/registry.js";
+import { users } from "../packages/daemon/src/lib/schema.js";
+import { authMiddleware, createSession } from "../packages/daemon/src/web/middleware/auth.js";
 
 let sessionId: string;
 const testMind = `web-variants-test-${Date.now()}`;

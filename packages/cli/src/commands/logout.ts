@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { resolve } from "node:path";
+import { voluteUserHome } from "@volute/daemon/lib/registry.js";
 import { daemonFetch } from "../lib/daemon-client.js";
-import { voluteUserHome } from "../lib/registry.js";
 
 export async function run(_args: string[]): Promise<void> {
   const sessionPath = resolve(voluteUserHome(), "cli-session.json");

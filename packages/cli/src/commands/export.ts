@@ -1,8 +1,8 @@
 import { existsSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { addHistoryToArchive, createExportArchive } from "../lib/archive.js";
+import { addHistoryToArchive, createExportArchive } from "@volute/daemon/lib/archive.js";
+import { findMind, mindDir } from "@volute/daemon/lib/registry.js";
 import { parseArgs } from "../lib/parse-args.js";
-import { findMind, mindDir } from "../lib/registry.js";
 
 export async function run(args: string[]) {
   const { positional, flags } = parseArgs(args, {

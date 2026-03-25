@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { parseReleaseNotes } from "../src/lib/release-notes.js";
+import { parseReleaseNotes } from "../packages/daemon/src/lib/release-notes.js";
 
 describe("parseReleaseNotes", () => {
   it("parses an existing version from CHANGELOG.md", () => {

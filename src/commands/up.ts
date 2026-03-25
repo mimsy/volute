@@ -1,13 +1,18 @@
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, openSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import { parseArgs } from "../lib/parse-args.js";
-import { voluteHome, voluteSystemDir } from "../lib/registry.js";
-import { getServiceMode, modeLabel, pollHealth, startService } from "../lib/service-mode.js";
-import { readGlobalConfig } from "../lib/setup.js";
+import { parseArgs } from "@volute/cli/lib/parse-args.js";
+import { voluteHome, voluteSystemDir } from "@volute/daemon/lib/registry.js";
+import {
+  getServiceMode,
+  modeLabel,
+  pollHealth,
+  startService,
+} from "@volute/daemon/lib/service-mode.js";
+import { readGlobalConfig } from "@volute/daemon/lib/setup.js";
 
 export { readGlobalConfig };
-export type { GlobalConfig } from "../lib/setup.js";
+export type { GlobalConfig } from "@volute/daemon/lib/setup.js";
 
 export async function run(args: string[]) {
   const { flags } = parseArgs(args, {
@@ -100,7 +105,7 @@ export async function run(args: string[]) {
   }
 
   if (flags.foreground) {
-    const { startDaemon } = await import("../daemon.js");
+    const { startDaemon } = await import("@volute/daemon");
     await startDaemon({ port, hostname, foreground: true, tailscale: flags.tailscale });
     return;
   }

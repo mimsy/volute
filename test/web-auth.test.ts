@@ -2,10 +2,10 @@ import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { eq } from "drizzle-orm";
 import { Hono } from "hono";
-import { getDb } from "../src/lib/db.js";
-import { users } from "../src/lib/schema.js";
-import auth from "../src/web/api/auth.js";
-import { deleteSession } from "../src/web/middleware/auth.js";
+import { getDb } from "../packages/daemon/src/lib/db.js";
+import { users } from "../packages/daemon/src/lib/schema.js";
+import auth from "../packages/daemon/src/web/api/auth.js";
+import { deleteSession } from "../packages/daemon/src/web/middleware/auth.js";
 
 const TEST_USERNAMES = ["admin", "dupe", "loginuser", "meuser", "logoutuser"];
 

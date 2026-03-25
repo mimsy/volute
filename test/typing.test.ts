@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { eq } from "drizzle-orm";
-import { createUser } from "../src/lib/auth.js";
-import { getDb } from "../src/lib/db.js";
-import { users } from "../src/lib/schema.js";
-import { getTypingMap, TypingMap } from "../src/lib/typing.js";
-import { createSession } from "../src/web/middleware/auth.js";
+import { createUser } from "../packages/daemon/src/lib/auth.js";
+import { getDb } from "../packages/daemon/src/lib/db.js";
+import { users } from "../packages/daemon/src/lib/schema.js";
+import { getTypingMap, TypingMap } from "../packages/daemon/src/lib/typing.js";
+import { createSession } from "../packages/daemon/src/web/middleware/auth.js";
 
 describe("TypingMap", () => {
   let map: TypingMap;
@@ -128,7 +128,7 @@ describe("typing routes", () => {
 
   it("GET returns empty typing when nobody is typing", async () => {
     const cookie = await setupAuth();
-    const { default: app } = await import("../src/web/app.js");
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
 
     const res = await app.request("/api/minds/test-mind/typing?channel=discord:123", {
       headers: { Cookie: `volute_session=${cookie}` },
@@ -140,7 +140,7 @@ describe("typing routes", () => {
 
   it("POST + GET round-trip", async () => {
     const cookie = await setupAuth();
-    const { default: app } = await import("../src/web/app.js");
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
 
     // POST active:true
     const postRes = await app.request("http://localhost/api/minds/test-mind/typing", {
@@ -167,7 +167,7 @@ describe("typing routes", () => {
 
   it("POST active:false clears sender", async () => {
     const cookie = await setupAuth();
-    const { default: app } = await import("../src/web/app.js");
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
 
     // Set typing
     await app.request("http://localhost/api/minds/test-mind/typing", {
@@ -203,7 +203,7 @@ describe("typing routes", () => {
 
   it("GET requires channel query param", async () => {
     const cookie = await setupAuth();
-    const { default: app } = await import("../src/web/app.js");
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
 
     const res = await app.request("/api/minds/test-mind/typing", {
       headers: { Cookie: `volute_session=${cookie}` },
@@ -215,7 +215,7 @@ describe("typing routes", () => {
 
   it("POST requires channel and sender", async () => {
     const cookie = await setupAuth();
-    const { default: app } = await import("../src/web/app.js");
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
 
     const res = await app.request("http://localhost/api/minds/test-mind/typing", {
       method: "POST",

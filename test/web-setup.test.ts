@@ -2,8 +2,12 @@ import assert from "node:assert/strict";
 import { existsSync, rmSync } from "node:fs";
 import { beforeEach, describe, it } from "node:test";
 import { Hono } from "hono";
-import { configPath, readGlobalConfig, writeGlobalConfig } from "../src/lib/setup.js";
-import setup from "../src/web/api/setup.js";
+import {
+  configPath,
+  readGlobalConfig,
+  writeGlobalConfig,
+} from "../packages/daemon/src/lib/setup.js";
+import setup from "../packages/daemon/src/web/api/setup.js";
 
 function createApp() {
   const app = new Hono();

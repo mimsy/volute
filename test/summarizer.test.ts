@@ -8,10 +8,10 @@ import {
   type Period,
   summarizePeriod,
   summarizeTurn,
-} from "../src/lib/daemon/summarizer.js";
-import { clearMind } from "../src/lib/daemon/turn-tracker.js";
-import { getDb } from "../src/lib/db.js";
-import { mindHistory, summaries, turns } from "../src/lib/schema.js";
+} from "../packages/daemon/src/lib/daemon/summarizer.js";
+import { clearMind } from "../packages/daemon/src/lib/daemon/turn-tracker.js";
+import { getDb } from "../packages/daemon/src/lib/db.js";
+import { mindHistory, summaries, turns } from "../packages/daemon/src/lib/schema.js";
 
 describe("summarizer", () => {
   // ── Period key helpers ──

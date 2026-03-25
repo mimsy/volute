@@ -1,10 +1,10 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { userInfo } from "node:os";
 import { basename, extname } from "node:path";
+import type { ImageAttachment } from "@volute/daemon/lib/channels.js";
+import { formatFileSize } from "@volute/daemon/lib/file-sharing.js";
 import { getClient, urlOf } from "../lib/api-client.js";
-import type { ImageAttachment } from "../lib/channels.js";
 import { daemonFetch } from "../lib/daemon-client.js";
-import { formatFileSize } from "../lib/file-sharing.js";
 import { isCompact } from "../lib/format-cli.js";
 import { parseArgs } from "../lib/parse-args.js";
 import { parseTarget } from "../lib/parse-target.js";

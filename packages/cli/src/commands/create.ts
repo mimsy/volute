@@ -9,7 +9,7 @@ export async function run(args: string[]) {
   const name = positional[0];
   let template = flags.template;
   if (!template) {
-    const { resolveTemplate } = await import("../lib/ai-service.js");
+    const { resolveTemplate } = await import("@volute/daemon/lib/ai-service.js");
     template = resolveTemplate();
   }
 

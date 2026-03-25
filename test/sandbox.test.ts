@@ -2,13 +2,18 @@ import assert from "node:assert/strict";
 import { mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, describe, it } from "node:test";
-import { addMind, removeMind, voluteHome, voluteSystemDir } from "../src/lib/registry.js";
+import {
+  addMind,
+  removeMind,
+  voluteHome,
+  voluteSystemDir,
+} from "../packages/daemon/src/lib/registry.js";
 import {
   buildDenyRead,
   isSandboxEnabled,
   shellEscape,
   wrapForSandbox,
-} from "../src/lib/sandbox.js";
+} from "../packages/daemon/src/lib/sandbox.js";
 
 function configPath() {
   return resolve(voluteSystemDir(), "config.json");

@@ -12,12 +12,6 @@ import { zValidator } from "@hono/zod-validator";
 import { and, desc, eq, type SQL, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
-import {
-  findOpenClawSession,
-  importOpenClawConnectors,
-  importPiSession,
-  parseNameFromIdentity,
-} from "../../commands/import.js";
 import { qualifyModelId, resolveTemplate, unqualifyModelId } from "../../lib/ai-service.js";
 import { type ExportManifest, isHomeOnlyArchive } from "../../lib/archive.js";
 import { deleteMindUser } from "../../lib/auth.js";
@@ -66,6 +60,12 @@ import {
 import { exec, gitExec } from "../../lib/exec.js";
 import { checkHealth } from "../../lib/health.js";
 import { generateIdentity, publishPublicKey } from "../../lib/identity.js";
+import {
+  findOpenClawSession,
+  importOpenClawConnectors,
+  importPiSession,
+  parseNameFromIdentity,
+} from "../../lib/import-utils.js";
 import {
   chownMindDir,
   createMindUser,

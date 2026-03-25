@@ -1,5 +1,5 @@
+import type { AppType } from "@volute/daemon/web/app.js";
 import { hc } from "hono/client";
-import type { AppType } from "../web/app.js";
 
 export type Client = ReturnType<typeof hc<AppType>>;
 

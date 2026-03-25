@@ -16,7 +16,7 @@ import {
   setBridgeConfig,
   setChannelMapping,
   writeBridgesConfig,
-} from "../src/lib/bridges.js";
+} from "../packages/daemon/src/lib/bridges.js";
 
 describe("bridges config", () => {
   const bridgesPath = resolve(testHome, "system", "bridges.json");

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { getDb } from "../src/lib/db.js";
-import { conversations, messages, users } from "../src/lib/schema.js";
+import { getDb } from "../packages/daemon/src/lib/db.js";
+import { conversations, messages, users } from "../packages/daemon/src/lib/schema.js";
 
 describe("database", () => {
   it("getDb connects and returns a Drizzle instance", async () => {

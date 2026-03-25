@@ -2,11 +2,11 @@ import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { eq } from "drizzle-orm";
 import { Hono } from "hono";
-import { getDb } from "../src/lib/db.js";
-import { PROMPT_DEFAULTS, PROMPT_KEYS } from "../src/lib/prompts.js";
-import { sessions, systemPrompts, users } from "../src/lib/schema.js";
-import prompts from "../src/web/api/prompts.js";
-import { type AuthEnv, authMiddleware } from "../src/web/middleware/auth.js";
+import { getDb } from "../packages/daemon/src/lib/db.js";
+import { PROMPT_DEFAULTS, PROMPT_KEYS } from "../packages/daemon/src/lib/prompts.js";
+import { sessions, systemPrompts, users } from "../packages/daemon/src/lib/schema.js";
+import prompts from "../packages/daemon/src/web/api/prompts.js";
+import { type AuthEnv, authMiddleware } from "../packages/daemon/src/web/middleware/auth.js";
 
 function createApp() {
   const app = new Hono<AuthEnv>();

@@ -5,7 +5,7 @@ import {
   removeAiConfig,
   removeProviderConfig,
   saveProviderConfig,
-} from "../src/lib/ai-service.js";
+} from "../packages/daemon/src/lib/ai-service.js";
 
 describe("ai-service config", () => {
   it("returns null when not configured", () => {

@@ -1,8 +1,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { mindDir } from "@volute/daemon/lib/registry.js";
+import { getStandardSkillsWithExtensions } from "@volute/daemon/lib/skills.js";
 import { daemonFetch } from "../lib/daemon-client.js";
-import { mindDir } from "../lib/registry.js";
-import { getStandardSkillsWithExtensions } from "../lib/skills.js";
 
 const ORIENTATION_MARKER = "You don't have a soul yet";
 
@@ -49,9 +49,9 @@ export async function run(_args: string[]) {
   }
 
   // Validate avatar if imagegen is enabled
-  const { isImagegenEnabled } = await import("../lib/setup.js");
+  const { isImagegenEnabled } = await import("@volute/daemon/lib/setup.js");
   if (isImagegenEnabled()) {
-    const { readVoluteConfig } = await import("../lib/volute-config.js");
+    const { readVoluteConfig } = await import("@volute/daemon/lib/volute-config.js");
     const config = readVoluteConfig(dir);
     const avatarPath = config?.profile?.avatar;
     if (!avatarPath || !existsSync(resolve(dir, "home", avatarPath))) {
@@ -64,7 +64,7 @@ export async function run(_args: string[]) {
 
   // Set up API client for typed URL helpers
   const { getClient, urlOf } = await import("../lib/api-client.js");
-  const { mindSkillsDir } = await import("../lib/skills.js");
+  const { mindSkillsDir } = await import("@volute/daemon/lib/skills.js");
   const client = getClient();
 
   // Install standard skills from shared pool via daemon, remove orientation

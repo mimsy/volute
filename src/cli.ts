@@ -19,7 +19,7 @@ if (command === "--version" || command === "-v") {
   process.exit(0);
 }
 
-// Gate commands on setup — skip for setup itself, help, version, and update
+// Gate commands on setup — skip for setup itself, help, version, update, and when using remote daemon
 const ungatedCommands = new Set([
   "setup",
   "--help",
@@ -37,7 +37,7 @@ const ungatedCommands = new Set([
   undefined,
 ]);
 if (!ungatedCommands.has(command)) {
-  const { isSetupComplete } = await import("./lib/setup.js");
+  const { isSetupComplete } = await import("@volute/daemon/lib/setup.js");
   if (!isSetupComplete()) {
     console.error("Volute is not set up. Run `volute setup` first.");
     process.exit(1);
@@ -49,28 +49,28 @@ switch (command) {
     await import("./commands/setup.js").then((m) => m.run(args));
     break;
   case "mind":
-    await import("./commands/mind.js").then((m) => m.run(args));
+    await import("@volute/cli/commands/mind.js").then((m) => m.run(args));
     break;
   case "seed":
-    await import("./commands/seed-cmd.js").then((m) => m.run(args));
+    await import("@volute/cli/commands/seed-cmd.js").then((m) => m.run(args));
     break;
   case "chat":
-    await import("./commands/chat.js").then((m) => m.run(args));
+    await import("@volute/cli/commands/chat.js").then((m) => m.run(args));
     break;
   case "variant":
-    await import("./commands/variant.js").then((m) => m.run(args));
+    await import("@volute/cli/commands/variant.js").then((m) => m.run(args));
     break;
   case "clock":
-    await import("./commands/clock.js").then((m) => m.run(args));
+    await import("@volute/cli/commands/clock.js").then((m) => m.run(args));
     break;
   case "skill":
-    await import("./commands/skill.js").then((m) => m.run(args));
+    await import("@volute/cli/commands/skill.js").then((m) => m.run(args));
     break;
   case "env":
-    await import("./commands/env.js").then((m) => m.run(args));
+    await import("@volute/cli/commands/env.js").then((m) => m.run(args));
     break;
   case "config":
-    await import("./commands/config.js").then((m) => m.run(args));
+    await import("@volute/cli/commands/config.js").then((m) => m.run(args));
     break;
   case "up":
     await import("./commands/up.js").then((m) => m.run(args));
@@ -88,16 +88,19 @@ switch (command) {
     await import("./commands/status.js").then((m) => m.run(args));
     break;
   case "extension":
-    await import("./commands/extension.js").then((m) => m.run(args));
+    await import("@volute/cli/commands/extension.js").then((m) => m.run(args));
     break;
   case "systems":
-    await import("./commands/systems.js").then((m) => m.run(args));
+    await import("@volute/cli/commands/systems.js").then((m) => m.run(args));
     break;
   case "login":
-    await import("./commands/login.js").then((m) => m.run(args));
+    await import("@volute/cli/commands/login.js").then((m) => m.run(args));
     break;
   case "logout":
-    await import("./commands/logout.js").then((m) => m.run(args));
+    await import("@volute/cli/commands/logout.js").then((m) => m.run(args));
+    break;
+  case "service":
+    await import("@volute/cli/commands/service.js").then((m) => m.run(args));
     break;
   case "--help":
   case "-h":
@@ -155,7 +158,7 @@ use --mind <name> or VOLUTE_MIND env var to identify the mind.`);
     // Try extension commands before giving up
     let isExtensionCommand = false;
     try {
-      const { daemonFetch } = await import("./lib/daemon-client.js");
+      const { daemonFetch } = await import("@volute/cli/lib/daemon-client.js");
       const res = await daemonFetch("/api/extensions/commands");
       if (res.ok) {
         const extCommands = (await res.json()) as Record<
@@ -181,7 +184,7 @@ use --mind <name> or VOLUTE_MIND env var to identify the mind.`);
             mind = cmdArgs[mindIdx + 1];
             cmdArgs.splice(mindIdx, 2);
           }
-          const { readStdin } = await import("./lib/read-stdin.js");
+          const { readStdin } = await import("@volute/cli/lib/read-stdin.js");
           const stdin = await readStdin();
           const cmdRes = await daemonFetch(`/api/ext/${command}/commands/${subcommand}`, {
             method: "POST",
@@ -217,7 +220,7 @@ use --mind <name> or VOLUTE_MIND env var to identify the mind.`);
 
 // Non-blocking update check (prints to stderr so it doesn't interfere with piped output)
 if (command !== "update") {
-  import("./lib/update-check.js")
+  import("@volute/daemon/lib/update-check.js")
     .then((m) => m.checkForUpdate())
     .then((result) => {
       if (result.updateAvailable) {

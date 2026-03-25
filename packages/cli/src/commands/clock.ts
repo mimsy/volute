@@ -1,10 +1,10 @@
+import type { Schedule } from "@volute/daemon/lib/volute-config.js";
 import { CronExpressionParser } from "cron-parser";
 import { getClient, urlOf } from "../lib/api-client.js";
 import { daemonFetch } from "../lib/daemon-client.js";
 import { compactDateTime, isCompact } from "../lib/format-cli.js";
 import { parseArgs } from "../lib/parse-args.js";
 import { resolveMindName } from "../lib/resolve-mind-name.js";
-import type { Schedule } from "../lib/volute-config.js";
 
 type SleepState = {
   sleeping: boolean;

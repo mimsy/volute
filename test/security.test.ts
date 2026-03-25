@@ -2,11 +2,15 @@ import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { eq } from "drizzle-orm";
 import { Hono } from "hono";
-import { createUser } from "../src/lib/auth.js";
-import { getDb } from "../src/lib/db.js";
-import { users } from "../src/lib/schema.js";
-import auth from "../src/web/api/auth.js";
-import { createSession, deleteSession, getSessionUserId } from "../src/web/middleware/auth.js";
+import { createUser } from "../packages/daemon/src/lib/auth.js";
+import { getDb } from "../packages/daemon/src/lib/db.js";
+import { users } from "../packages/daemon/src/lib/schema.js";
+import auth from "../packages/daemon/src/web/api/auth.js";
+import {
+  createSession,
+  deleteSession,
+  getSessionUserId,
+} from "../packages/daemon/src/web/middleware/auth.js";
 
 function createApp() {
   const app = new Hono();
@@ -76,7 +80,7 @@ describe("security", () => {
   });
 
   it("CSRF rejects POST without matching origin", async () => {
-    const { default: appModule } = await import("../src/web/app.js");
+    const { default: appModule } = await import("../packages/daemon/src/web/app.js");
 
     // POST without Origin header triggers CSRF rejection
     const res = await appModule.request("/api/minds/test/start", {

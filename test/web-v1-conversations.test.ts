@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { eq } from "drizzle-orm";
 import { Hono } from "hono";
-import { approveUser, createUser } from "../src/lib/auth.js";
-import { getDb } from "../src/lib/db.js";
+import { approveUser, createUser } from "../packages/daemon/src/lib/auth.js";
+import { getDb } from "../packages/daemon/src/lib/db.js";
 import {
   addMessage,
   type ContentBlock,
@@ -13,10 +13,14 @@ import {
   getMessagesPaginated,
   getUnreadCounts,
   markConversationRead,
-} from "../src/lib/events/conversations.js";
-import { users } from "../src/lib/schema.js";
-import v1ConversationsRoute from "../src/web/api/v1/conversations.js";
-import { authMiddleware, createSession, deleteSession } from "../src/web/middleware/auth.js";
+} from "../packages/daemon/src/lib/events/conversations.js";
+import { users } from "../packages/daemon/src/lib/schema.js";
+import v1ConversationsRoute from "../packages/daemon/src/web/api/v1/conversations.js";
+import {
+  authMiddleware,
+  createSession,
+  deleteSession,
+} from "../packages/daemon/src/web/middleware/auth.js";
 
 describe("v1 paginated messages", () => {
   it("returns all messages with hasMore=false when fewer than limit", async () => {

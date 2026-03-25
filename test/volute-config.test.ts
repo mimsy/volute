@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { afterEach, describe, it } from "node:test";
-import { readVoluteConfig } from "../src/lib/volute-config.js";
+import { readVoluteConfig } from "../packages/daemon/src/lib/volute-config.js";
 
 let testDir: string;
 

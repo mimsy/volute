@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { eq } from "drizzle-orm";
-import { getDb } from "../src/lib/db.js";
-import { findOrCreatePuppet, updatePuppetAvatar } from "../src/lib/puppets.js";
-import { users } from "../src/lib/schema.js";
+import { getDb } from "../packages/daemon/src/lib/db.js";
+import { findOrCreatePuppet, updatePuppetAvatar } from "../packages/daemon/src/lib/puppets.js";
+import { users } from "../packages/daemon/src/lib/schema.js";
 
 describe("puppets", () => {
   it("creates a puppet user with platform-qualified username", async () => {

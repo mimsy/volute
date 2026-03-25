@@ -66,7 +66,7 @@ export async function run(args: string[]) {
   let model = flags.model;
   let template = flags.template;
   if (!template) {
-    const { resolveTemplate } = await import("../lib/ai-service.js");
+    const { resolveTemplate } = await import("@volute/daemon/lib/ai-service.js");
     template = resolveTemplate(model);
   }
 
@@ -74,8 +74,8 @@ export async function run(args: string[]) {
   if (template !== "claude" && !model) {
     // Non-interactive (e.g. mind running a command): use the spirit model as default
     if (process.env.VOLUTE_MIND || !process.stdin.isTTY) {
-      const { getSpiritModel } = await import("../lib/spirit.js");
-      const { qualifyModelId } = await import("../lib/ai-service.js");
+      const { getSpiritModel } = await import("@volute/daemon/lib/spirit.js");
+      const { qualifyModelId } = await import("@volute/daemon/lib/ai-service.js");
       const spiritModel = getSpiritModel();
       if (spiritModel) {
         model = template === "pi" ? qualifyModelId(spiritModel) : spiritModel;

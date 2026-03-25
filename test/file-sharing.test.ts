@@ -9,8 +9,8 @@ import {
   rejectPending,
   stageFile,
   validateFilePath,
-} from "../src/lib/file-sharing.js";
-import { voluteHome } from "../src/lib/registry.js";
+} from "../packages/daemon/src/lib/file-sharing.js";
+import { voluteHome } from "../packages/daemon/src/lib/registry.js";
 
 function makeMindDir(name: string): string {
   const dir = resolve(voluteHome(), "minds", name);

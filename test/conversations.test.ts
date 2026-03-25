@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { eq } from "drizzle-orm";
-import { getOrCreateMindUser } from "../src/lib/auth.js";
-import { getDb } from "../src/lib/db.js";
+import { getOrCreateMindUser } from "../packages/daemon/src/lib/auth.js";
+import { getDb } from "../packages/daemon/src/lib/db.js";
 import {
   addMessage,
   addParticipant,
@@ -22,8 +22,8 @@ import {
   listConversationsForUser,
   removeParticipant,
   setConversationPrivate,
-} from "../src/lib/events/conversations.js";
-import { messages, users } from "../src/lib/schema.js";
+} from "../packages/daemon/src/lib/events/conversations.js";
+import { messages, users } from "../packages/daemon/src/lib/schema.js";
 
 describe("conversations", () => {
   it("round-trips ContentBlock[] through addMessage/getMessages", async () => {

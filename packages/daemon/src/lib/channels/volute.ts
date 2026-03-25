@@ -6,7 +6,21 @@ import {
   type ImageAttachment,
   resolveChannelId,
 } from "../channels.js";
-import { readSessionFile } from "../daemon-client.js";
+
+/** Read session from a mind's current-session file. */
+function readSessionFile(mindDir: string): string | undefined {
+  try {
+    const p = resolve(mindDir, ".mind", "current-session");
+    if (existsSync(p)) return readFileSync(p, "utf-8").trim() || undefined;
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code !== "ENOENT") {
+      console.error(`[volute] failed to read session file: ${code ?? err}`);
+    }
+  }
+  return undefined;
+}
+
 import { voluteSystemDir } from "../registry.js";
 import { buildVoluteSlug } from "../slugify.js";
 

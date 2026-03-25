@@ -17,7 +17,7 @@ import {
   validateMindName,
   voluteHome,
   voluteSystemDir,
-} from "../src/lib/registry.js";
+} from "../packages/daemon/src/lib/registry.js";
 
 const testMind = `registry-test-${Date.now()}`;
 

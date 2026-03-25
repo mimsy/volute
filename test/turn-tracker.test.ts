@@ -9,9 +9,9 @@ import {
   getActiveTurnId,
   getLastToolUseEventId,
   trackToolUse,
-} from "../src/lib/daemon/turn-tracker.js";
-import { getDb } from "../src/lib/db.js";
-import { turns } from "../src/lib/schema.js";
+} from "../packages/daemon/src/lib/daemon/turn-tracker.js";
+import { getDb } from "../packages/daemon/src/lib/db.js";
+import { turns } from "../packages/daemon/src/lib/schema.js";
 
 describe("turn-tracker", () => {
   const mind = "test-turn-tracker";

@@ -3,7 +3,11 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { describe, it } from "node:test";
-import { matchesGlob, SleepManager, type SleepState } from "../src/lib/daemon/sleep-manager.js";
+import {
+  matchesGlob,
+  SleepManager,
+  type SleepState,
+} from "../packages/daemon/src/lib/daemon/sleep-manager.js";
 
 // We test the SleepManager's pure logic methods without starting the daemon.
 // The class methods like checkWakeTrigger, formatDuration, etc. are tested directly.

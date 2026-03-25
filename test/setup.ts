@@ -21,5 +21,5 @@ process.env.VOLUTE_HOME = testHome;
 process.env.VOLUTE_USER_HOME = testHome;
 
 // Initialize database (runs migrations + creates raw connection for registry)
-const { getDb } = await import("../src/lib/db.js");
+const { getDb } = await import("../packages/daemon/src/lib/db.js");
 await getDb();

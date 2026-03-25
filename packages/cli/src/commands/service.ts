@@ -1,14 +1,14 @@
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { promisify } from "node:util";
-import { parseArgs } from "../lib/parse-args.js";
 import {
   LAUNCHD_PLIST_LABEL,
   LAUNCHD_PLIST_PATH,
   SYSTEM_LAUNCHD_PLIST_PATH,
   SYSTEM_SERVICE_PATH,
   USER_SYSTEMD_UNIT,
-} from "../lib/service-mode.js";
+} from "@volute/daemon/lib/service-mode.js";
+import { parseArgs } from "../lib/parse-args.js";
 
 const execFileAsync = promisify(execFile);
 

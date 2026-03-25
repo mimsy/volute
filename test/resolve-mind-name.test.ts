@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
-import { resolveMindName } from "../src/lib/resolve-mind-name.js";
+import { resolveMindName } from "../packages/cli/src/lib/resolve-mind-name.js";
 
 describe("resolveMindName", () => {
   const original = process.env.VOLUTE_MIND;

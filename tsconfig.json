@@ -10,6 +10,6 @@
     "skipLibCheck": true,
     "lib": ["ES2022"]
   },
-  "include": ["src"],
-  "exclude": ["src/web/ui"]
+  "include": ["src", "packages/cli/src", "packages/daemon/src"],
+  "exclude": ["packages/daemon/src/web/ui"]
 }

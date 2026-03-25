@@ -9,10 +9,12 @@ import * as schema from "./schema.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // In built mode (__dirname = dist/), drizzle is at ../drizzle
-// In dev mode (__dirname = src/lib/), drizzle is at ../../drizzle
+// In dev mode (__dirname = packages/daemon/src/lib/), drizzle is at ../../../../drizzle
 const migrationsFolder = existsSync(resolve(__dirname, "../drizzle"))
   ? resolve(__dirname, "../drizzle")
-  : resolve(__dirname, "../../drizzle");
+  : existsSync(resolve(__dirname, "../../drizzle"))
+    ? resolve(__dirname, "../../drizzle")
+    : resolve(__dirname, "../../../../drizzle");
 
 export type DbInstance = ReturnType<typeof drizzle<typeof schema>>;
 

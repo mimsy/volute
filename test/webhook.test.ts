@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import { after, before, beforeEach, describe, it } from "node:test";
-import { broadcast } from "../src/lib/events/activity-events.js";
-import { fireWebhook, initWebhook } from "../src/lib/webhook.js";
+import { broadcast } from "../packages/daemon/src/lib/events/activity-events.js";
+import { fireWebhook, initWebhook } from "../packages/daemon/src/lib/webhook.js";
 
 describe("webhook", () => {
   let server: Server;

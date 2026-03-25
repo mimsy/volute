@@ -5,8 +5,8 @@ import {
   getChannelDriver,
   getChannelProvider,
   resolveChannelId,
-} from "../src/lib/channels.js";
-import { isConversationId } from "../src/lib/typing.js";
+} from "../packages/daemon/src/lib/channels.js";
+import { isConversationId } from "../packages/daemon/src/lib/typing.js";
 
 describe("channels", () => {
   it("CHANNELS has expected entries", () => {

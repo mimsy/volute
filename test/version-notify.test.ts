@@ -8,8 +8,11 @@ import {
   removeMind,
   setMindTemplateHash,
   voluteSystemDir,
-} from "../src/lib/registry.js";
-import { backfillTemplateHashes, notifyVersionUpdate } from "../src/lib/version-notify.js";
+} from "../packages/daemon/src/lib/registry.js";
+import {
+  backfillTemplateHashes,
+  notifyVersionUpdate,
+} from "../packages/daemon/src/lib/version-notify.js";
 
 const statePath = () => resolve(voluteSystemDir(), "version-notify.json");
 
@@ -87,7 +90,7 @@ describe("notifyVersionUpdate", () => {
   });
 
   it("does not send if version unchanged", async () => {
-    const { getCurrentVersion } = await import("../src/lib/update-check.js");
+    const { getCurrentVersion } = await import("../packages/daemon/src/lib/update-check.js");
     writeState({ lastNotifiedVersion: getCurrentVersion() });
 
     // Should complete without error

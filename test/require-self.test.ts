@@ -2,17 +2,17 @@ import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { eq } from "drizzle-orm";
 import { Hono } from "hono";
-import { approveUser, createUser, getOrCreateMindUser } from "../src/lib/auth.js";
-import { generateMindToken } from "../src/lib/daemon/mind-tokens.js";
-import { getDb } from "../src/lib/db.js";
-import { addMind, addVariant, mindDir, removeMind } from "../src/lib/registry.js";
-import { users } from "../src/lib/schema.js";
+import { approveUser, createUser, getOrCreateMindUser } from "../packages/daemon/src/lib/auth.js";
+import { generateMindToken } from "../packages/daemon/src/lib/daemon/mind-tokens.js";
+import { getDb } from "../packages/daemon/src/lib/db.js";
+import { addMind, addVariant, mindDir, removeMind } from "../packages/daemon/src/lib/registry.js";
+import { users } from "../packages/daemon/src/lib/schema.js";
 import {
   authMiddleware,
   createSession,
   requireAdmin,
   requireSelf,
-} from "../src/web/middleware/auth.js";
+} from "../packages/daemon/src/web/middleware/auth.js";
 
 const testMind = `require-self-test-${Date.now()}`;
 const testVariant = `${testMind}-variant`;

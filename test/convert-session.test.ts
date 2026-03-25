@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { convertSession } from "../src/lib/convert-session.js";
+import { convertSession } from "../packages/daemon/src/lib/convert-session.js";
 
 const scratchDir = resolve("/tmp/convert-session-test");
 

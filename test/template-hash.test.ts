@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { computeTemplateHash } from "../src/lib/template-hash.js";
+import { computeTemplateHash } from "../packages/daemon/src/lib/template-hash.js";
 
 describe("computeTemplateHash", () => {
   it("returns a 64-char hex string (SHA-256)", () => {

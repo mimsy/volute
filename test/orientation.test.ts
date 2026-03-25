@@ -3,8 +3,8 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { eq } from "drizzle-orm";
-import { createUser } from "../src/lib/auth.js";
-import { getDb } from "../src/lib/db.js";
+import { createUser } from "../packages/daemon/src/lib/auth.js";
+import { getDb } from "../packages/daemon/src/lib/db.js";
 import {
   addMind,
   findMind,
@@ -12,9 +12,9 @@ import {
   removeMind,
   setMindStage,
   voluteHome,
-} from "../src/lib/registry.js";
-import { users } from "../src/lib/schema.js";
-import { createSession } from "../src/web/middleware/auth.js";
+} from "../packages/daemon/src/lib/registry.js";
+import { users } from "../packages/daemon/src/lib/schema.js";
+import { createSession } from "../packages/daemon/src/web/middleware/auth.js";
 
 function postHeaders(cookie: string) {
   return {
@@ -90,7 +90,7 @@ describe("seed mind creation API", () => {
     const mindsDir = resolve(voluteHome(), "minds");
     mkdirSync(mindsDir, { recursive: true });
 
-    const { default: app } = await import("../src/web/app.js");
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
 
     const res = await app.request("http://localhost/api/minds", {
       method: "POST",
@@ -138,7 +138,7 @@ describe("seed gating", () => {
   afterEach(cleanup);
 
   it("POST schedules returns 403 for seed minds", async () => {
-    const { default: app } = await import("../src/web/app.js");
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
 
     const res = await app.request(`http://localhost/api/minds/${mindName}/schedules`, {
       method: "POST",
@@ -154,7 +154,7 @@ describe("seed gating", () => {
   });
 
   it("POST variants returns 403 for seed minds", async () => {
-    const { default: app } = await import("../src/web/app.js");
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
 
     const res = await app.request(`http://localhost/api/minds/${mindName}/variants`, {
       method: "POST",

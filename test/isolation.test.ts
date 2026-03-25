@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
-import { isIsolationEnabled, mindUserName, wrapForIsolation } from "../src/lib/isolation.js";
-import { addMind, addVariant, removeMind } from "../src/lib/registry.js";
+import {
+  isIsolationEnabled,
+  mindUserName,
+  wrapForIsolation,
+} from "../packages/daemon/src/lib/isolation.js";
+import { addMind, addVariant, removeMind } from "../packages/daemon/src/lib/registry.js";
 
 describe("isolation", () => {
   const originalEnv = process.env.VOLUTE_ISOLATION;

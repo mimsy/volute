@@ -3,7 +3,11 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { type BridgeDef, checkMissingBridgeEnv, getBridgeDef } from "../src/lib/bridge-defs.js";
+import {
+  type BridgeDef,
+  checkMissingBridgeEnv,
+  getBridgeDef,
+} from "../packages/daemon/src/lib/bridge-defs.js";
 
 describe("bridge-defs", () => {
   describe("getBridgeDef", () => {

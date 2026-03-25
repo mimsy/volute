@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { SEED_SKILLS, STANDARD_SKILLS } from "../src/lib/skills.js";
+import { SEED_SKILLS, STANDARD_SKILLS } from "../packages/daemon/src/lib/skills.js";
 
 describe("default skills", () => {
   it("STANDARD_SKILLS contains expected skills", () => {
