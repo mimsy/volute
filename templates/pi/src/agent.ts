@@ -11,7 +11,7 @@ import {
 } from "@mariozechner/pi-coding-agent";
 import { extractImages, extractText } from "./lib/content.js";
 import {
-  countClaudeMdTokens,
+  countSdkInstructionTokens,
   countSkillDescriptionTokens,
   countSystemPromptTokens,
   findPiSessionFile,
@@ -485,7 +485,7 @@ export function createMind(options: {
 
   const piSessionsDir = resolvePath(options.mindDir, ".mind/pi-sessions");
   const systemPromptTokens = countSystemPromptTokens(options.systemPrompt);
-  const claudeMdTokens = countClaudeMdTokens(options.cwd);
+  const claudeMdTokens = countSdkInstructionTokens(options.cwd);
   const skillDescTokens = countSkillDescriptionTokens([resolvePath(options.cwd, ".pi/skills")]);
 
   function getContextInfo(): ContextInfo {

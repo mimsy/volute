@@ -48,7 +48,12 @@ function getCategories(breakdown: ContextBreakdown, contextTokens: number): Cate
       tokens: breakdown.systemPrompt,
       color: COLORS.systemPrompt,
     },
-    { key: "claudeMd", label: "CLAUDE.md", tokens: breakdown.claudeMd, color: COLORS.claudeMd },
+    {
+      key: "sdkInstructions",
+      label: "SDK Instructions",
+      tokens: breakdown.sdkInstructions,
+      color: COLORS.claudeMd,
+    },
     {
       key: "skillDesc",
       label: "Skill Descriptions",

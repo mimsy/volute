@@ -120,7 +120,7 @@ export function parseClaudeSessionJSONL(
     contextTokens: lastContextTokens,
     breakdown: {
       systemPrompt: systemPromptTokens,
-      claudeMd: claudeMdTokens,
+      sdkInstructions: claudeMdTokens,
       skillDescriptions: skillDescriptionTokens,
       conversation: conv,
     },
@@ -140,6 +140,13 @@ type CodexEntry = {
     };
     content?: Array<{ type?: string; text?: string }>;
     role?: string;
+    // function_call fields
+    name?: string;
+    arguments?: string;
+    // function_call_output fields
+    output?: string;
+    // reasoning fields
+    summary?: Array<{ type?: string; text?: string }> | string;
   };
 };
 
@@ -179,33 +186,30 @@ export function parseCodexSessionJSONL(
       }
     } else if (entry.type === "response_item") {
       if (payload.type === "reasoning") {
-        const text =
-          payload.content
-            ?.filter((c) => c.type === "input_text")
-            .map((c) => c.text ?? "")
-            .join("") ?? "";
-        if (text) conv.thinking += countTokens(text);
+        // Reasoning summaries are in the `summary` field (array of {text} objects)
+        const summary = payload.summary;
+        if (Array.isArray(summary)) {
+          for (const s of summary) {
+            if (s && typeof s === "object" && s.text) conv.thinking += countTokens(s.text);
+          }
+        } else if (typeof summary === "string" && summary) {
+          conv.thinking += countTokens(summary);
+        }
       } else if (payload.type === "message") {
-        if (payload.role === "assistant") {
-          const text =
-            payload.content
-              ?.filter((c) => c.type === "output_text")
-              .map((c) => c.text ?? "")
-              .join("") ?? "";
-          if (text) conv.assistantText += countTokens(text);
-        } else if (payload.role === "user" || payload.role === "developer") {
-          const text =
-            payload.content
-              ?.filter((c) => c.type === "input_text")
-              .map((c) => c.text ?? "")
-              .join("") ?? "";
-          if (text) conv.userText += countTokens(text);
+        const text = payload.content?.map((c) => c.text ?? "").join("") ?? "";
+        if (text) {
+          if (payload.role === "assistant") {
+            conv.assistantText += countTokens(text);
+          } else {
+            conv.userText += countTokens(text);
+          }
         }
       } else if (payload.type === "function_call") {
-        conv.toolUse += countTokens(JSON.stringify(payload));
+        const args = payload.arguments ?? "";
+        if (args) conv.toolUse += countTokens(args);
       } else if (payload.type === "function_call_output") {
-        const text = payload.content?.map((c) => c.text ?? "").join("") ?? "";
-        if (text) conv.toolResult += countTokens(text);
+        const output = payload.output ?? "";
+        if (output) conv.toolResult += countTokens(output);
       }
     }
   }
@@ -216,7 +220,7 @@ export function parseCodexSessionJSONL(
     contextTokens: lastContextTokens,
     breakdown: {
       systemPrompt: systemPromptTokens,
-      claudeMd: claudeMdTokens,
+      sdkInstructions: claudeMdTokens,
       skillDescriptions: skillDescriptionTokens,
       conversation: conv,
     },
@@ -227,11 +231,14 @@ export function parseCodexSessionJSONL(
 
 type PiEntry = {
   type: string;
+  // message entries
   message?: {
     role?: string;
     usage?: { input?: number; cacheRead?: number; cacheWrite?: number };
     content?: Array<{ type?: string; text?: string; thinking?: string; arguments?: unknown }>;
   };
+  // custom_message entries (hook-injected context: reply-instructions, startup-context, etc.)
+  content?: string;
 };
 
 export function parsePiSessionJSONL(
@@ -257,6 +264,12 @@ export function parsePiSessionJSONL(
     try {
       entry = JSON.parse(line);
     } catch {
+      continue;
+    }
+
+    // custom_message entries are hook-injected context (reply-instructions, startup-context)
+    if (entry.type === "custom_message" && entry.content) {
+      conv.userText += countTokens(entry.content);
       continue;
     }
 
@@ -298,7 +311,7 @@ export function parsePiSessionJSONL(
     contextTokens: lastContextTokens,
     breakdown: {
       systemPrompt: systemPromptTokens,
-      claudeMd: claudeMdTokens,
+      sdkInstructions: claudeMdTokens,
       skillDescriptions: skillDescriptionTokens,
       conversation: conv,
     },
@@ -312,14 +325,17 @@ export function countSystemPromptTokens(systemPrompt: string): number {
   return countTokens(systemPrompt);
 }
 
-/** Count tokens in CLAUDE.md (loaded by the SDK separately from the system prompt). */
-export function countClaudeMdTokens(cwd: string): number {
-  try {
-    const content = readFileSync(resolve(cwd, "CLAUDE.md"), "utf-8");
-    return countTokens(content);
-  } catch {
-    return 0;
+/** Count tokens in the SDK instruction file (CLAUDE.md, MINDS.md, or AGENTS.md). */
+export function countSdkInstructionTokens(cwd: string): number {
+  for (const name of ["CLAUDE.md", "MINDS.md", "AGENTS.md"]) {
+    try {
+      const content = readFileSync(resolve(cwd, name), "utf-8");
+      return countTokens(content);
+    } catch {
+      // Try next
+    }
   }
+  return 0;
 }
 
 /** Count tokens in skill description frontmatter (always in context). */
