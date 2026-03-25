@@ -172,6 +172,17 @@ async function buildContext(
       }
     },
     getSystemsConfig: () => readSystemsConfig(),
+    announceToSystem: async (text: string) => {
+      const { announceToSystem: announce } = await import("./system-channel.js");
+      await announce(text);
+    },
+    isIsolationEnabled: () => {
+      return process.env.VOLUTE_ISOLATION === "user";
+    },
+    getMindUser: (name: string) => {
+      const prefix = process.env.VOLUTE_USER_PREFIX ?? "mind-";
+      return `${prefix}${name}`;
+    },
     dataDir,
   };
 }
@@ -709,9 +720,9 @@ export function getExtensionStandardSkills(): string[] {
 }
 
 export function notifyExtensionsDaemonStart(): void {
-  for (const { manifest } of loaded) {
+  for (const { manifest, context } of loaded) {
     try {
-      manifest.onDaemonStart?.();
+      manifest.onDaemonStart?.(context);
     } catch (err) {
       log.error(`extension ${manifest.id}: onDaemonStart failed`, log.errorData(err));
     }
@@ -736,9 +747,9 @@ export function notifyExtensionsDaemonStop(): void {
 }
 
 export function notifyExtensionsMindStart(mindName: string): void {
-  for (const { manifest } of loaded) {
+  for (const { manifest, context } of loaded) {
     try {
-      manifest.onMindStart?.(mindName);
+      manifest.onMindStart?.(mindName, context);
     } catch (err) {
       log.error(`extension ${manifest.id}: onMindStart failed for ${mindName}`, log.errorData(err));
     }

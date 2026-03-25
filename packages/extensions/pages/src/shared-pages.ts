@@ -4,28 +4,33 @@
  * The repo lives in the pages extension data directory at <dataDir>/repo/.
  * Each mind gets a worktree at <mindDir>/home/pages/_system/ on a per-mind branch.
  */
-import { execFileSync } from "node:child_process";
+import { execFile as execFileCb, execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-// Lazy-loaded core dependencies (pages extension runs in daemon process)
-// biome-ignore lint/suspicious/noExplicitAny: internal lazy loading
-let _core: any = null;
+/** Isolation info needed by shared pages operations. */
+export type IsolationInfo = {
+  isIsolationEnabled: () => boolean;
+  getMindUser: (name: string) => string;
+};
 
-async function core() {
-  if (_core) return _core;
-  const [execMod, isoMod, logMod] = await Promise.all([
-    import("../../../../src/lib/exec.js"),
-    import("../../../../src/lib/isolation.js"),
-    import("../../../../src/lib/logger.js"),
-  ]);
-  _core = {
-    gitExec: execMod.gitExec,
-    isIsolationEnabled: isoMod.isIsolationEnabled,
-    mindUserName: isoMod.mindUserName,
-    log: logMod.default,
-  };
-  return _core;
+/** Run a git command. Adds safe.directory when isolation is enabled. */
+function gitExec(
+  args: string[],
+  opts: { cwd: string },
+  isolation?: IsolationInfo,
+): Promise<string> {
+  const fullArgs = isolation?.isIsolationEnabled() ? ["-c", "safe.directory=*", ...args] : args;
+  return new Promise((resolve, reject) => {
+    execFileCb("git", fullArgs, { cwd: opts.cwd }, (err, stdout, stderr) => {
+      if (err) {
+        (err as Error & { stderr?: string }).stderr = stderr;
+        reject(err);
+      } else {
+        resolve(stdout);
+      }
+    });
+  });
 }
 
 /** Read the gitdir path from a worktree's .git file. */
@@ -51,19 +56,18 @@ function worktreePath(mindDir: string): string {
 }
 
 /** Idempotently initialize the collaborative pages git repo. */
-export async function ensurePagesRepo(dataDir: string): Promise<void> {
-  const { gitExec, isIsolationEnabled, log } = await core();
+export async function ensurePagesRepo(dataDir: string, isolation?: IsolationInfo): Promise<void> {
   const dir = pagesRepoDir(dataDir);
   mkdirSync(dir, { recursive: true });
 
   if (existsSync(resolve(dir, ".git"))) {
     try {
-      await gitExec(["rev-parse", "HEAD"], { cwd: dir });
+      await gitExec(["rev-parse", "HEAD"], { cwd: dir }, isolation);
       return;
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       if (msg.includes("unknown revision") || msg.includes("bad default revision")) {
-        log.warn("pages repo has no commits, re-initializing");
+        console.warn("[pages] repo has no commits, re-initializing");
         rmSync(resolve(dir, ".git"), { recursive: true, force: true });
       } else {
         throw err;
@@ -71,19 +75,20 @@ export async function ensurePagesRepo(dataDir: string): Promise<void> {
     }
   }
 
-  const initArgs = isIsolationEnabled() ? ["init", "--shared=group"] : ["init"];
-  await gitExec(initArgs, { cwd: dir });
-  await gitExec(["checkout", "-b", "main"], { cwd: dir });
+  const isIso = isolation?.isIsolationEnabled() ?? false;
+  const initArgs = isIso ? ["init", "--shared=group"] : ["init"];
+  await gitExec(initArgs, { cwd: dir }, isolation);
+  await gitExec(["checkout", "-b", "main"], { cwd: dir }, isolation);
 
   writeFileSync(resolve(dir, ".gitkeep"), "");
-  await gitExec(["add", "-A"], { cwd: dir });
-  await gitExec(["commit", "-m", "init pages repo"], { cwd: dir });
+  await gitExec(["add", "-A"], { cwd: dir }, isolation);
+  await gitExec(["commit", "-m", "init pages repo"], { cwd: dir }, isolation);
 
-  if (isIsolationEnabled()) {
+  if (isIso) {
     try {
       execFileSync("chgrp", ["-R", "volute", dir], { stdio: "ignore" });
-    } catch (err: unknown) {
-      log.warn("failed to chgrp pages repo to volute group", log.errorData(err));
+    } catch {
+      console.warn("[pages] failed to chgrp pages repo to volute group");
     }
     chmodSync(dir, 0o2775);
   }
@@ -94,47 +99,46 @@ export async function addPagesWorktree(
   mindName: string,
   mindDir: string,
   dataDir: string,
+  isolation?: IsolationInfo,
 ): Promise<void> {
-  const { gitExec, isIsolationEnabled, mindUserName, log } = await core();
   const dir = pagesRepoDir(dataDir);
   if (!existsSync(resolve(dir, ".git"))) return;
 
   const wt = worktreePath(mindDir);
   if (existsSync(wt)) return;
 
-  // Ensure parent pages/ directory exists (mind may create personal pages here too)
-  const pagesDir = resolve(mindDir, "home", "pages");
-  mkdirSync(pagesDir, { recursive: true });
+  // Ensure parent pages/ directory exists
+  mkdirSync(resolve(mindDir, "home", "pages"), { recursive: true });
 
   let branchExists = false;
   try {
-    await gitExec(["rev-parse", "--verify", mindName], { cwd: dir });
+    await gitExec(["rev-parse", "--verify", mindName], { cwd: dir }, isolation);
     branchExists = true;
   } catch {
     // branch doesn't exist
   }
 
   if (branchExists) {
-    await gitExec(["worktree", "add", wt, mindName], { cwd: dir });
+    await gitExec(["worktree", "add", wt, mindName], { cwd: dir }, isolation);
   } else {
-    await gitExec(["worktree", "add", "-b", mindName, wt], { cwd: dir });
+    await gitExec(["worktree", "add", "-b", mindName, wt], { cwd: dir }, isolation);
   }
 
-  if (isIsolationEnabled()) {
-    const user = mindUserName(mindName);
+  if (isolation?.isIsolationEnabled()) {
+    const user = isolation.getMindUser(mindName);
     // Chown the worktree directory so the mind user can write files
     try {
       execFileSync("chown", ["-R", `${user}:volute`, wt], { stdio: "ignore" });
-    } catch (err: unknown) {
-      log.warn(`failed to chown worktree for ${mindName}`, log.errorData(err));
+    } catch {
+      console.warn(`[pages] failed to chown worktree for ${mindName}`);
     }
     // Chown the git state directory (HEAD, index, refs) so auto-commit works
     const wtGitDir = readWorktreeGitDir(wt);
     if (wtGitDir) {
       try {
         execFileSync("chown", ["-R", `${user}:volute`, wtGitDir], { stdio: "ignore" });
-      } catch (err: unknown) {
-        log.warn(`failed to chown worktree git dir for ${mindName}`, log.errorData(err));
+      } catch {
+        console.warn(`[pages] failed to chown worktree git dir for ${mindName}`);
       }
     }
   }
@@ -145,8 +149,8 @@ export async function removePagesWorktree(
   mindName: string,
   mindDir: string,
   dataDir: string,
+  isolation?: IsolationInfo,
 ): Promise<void> {
-  const { gitExec, log } = await core();
   const dir = pagesRepoDir(dataDir);
   if (!existsSync(resolve(dir, ".git"))) return;
 
@@ -154,20 +158,20 @@ export async function removePagesWorktree(
 
   if (existsSync(wt)) {
     try {
-      await gitExec(["worktree", "remove", "--force", wt], { cwd: dir });
-    } catch (err: unknown) {
-      log.debug(`worktree remove failed for ${mindName}`, log.errorData(err));
+      await gitExec(["worktree", "remove", "--force", wt], { cwd: dir }, isolation);
+    } catch {
+      // best effort
     }
   }
 
   try {
-    await gitExec(["worktree", "prune"], { cwd: dir });
-  } catch (err: unknown) {
-    log.debug(`worktree prune failed for ${mindName}`, log.errorData(err));
+    await gitExec(["worktree", "prune"], { cwd: dir }, isolation);
+  } catch {
+    // best effort
   }
 
   try {
-    await gitExec(["branch", "-D", mindName], { cwd: dir });
+    await gitExec(["branch", "-D", mindName], { cwd: dir }, isolation);
   } catch {
     // branch may not exist
   }
@@ -198,59 +202,65 @@ export async function pagesMerge(
   mindDir: string,
   dataDir: string,
   message: string,
+  isolation?: IsolationInfo,
 ): Promise<{ ok: boolean; conflicts?: boolean; message?: string }> {
-  const { gitExec, isIsolationEnabled, mindUserName, log } = await core();
-
   return withPagesLock(async () => {
     const dir = pagesRepoDir(dataDir);
     const wt = worktreePath(mindDir);
 
     // Commit pending changes
-    const status = (await gitExec(["status", "--porcelain"], { cwd: wt })).trim();
+    const status = (await gitExec(["status", "--porcelain"], { cwd: wt }, isolation)).trim();
     if (status) {
-      await gitExec(["add", "-A"], { cwd: wt });
+      await gitExec(["add", "-A"], { cwd: wt }, isolation);
       await gitExec(
         ["commit", "--author", `${mindName} <${mindName}@volute>`, "-m", `wip: ${mindName}`],
         { cwd: wt },
+        isolation,
       );
     }
 
     // Check if there's anything to merge
-    const diff = (await gitExec(["diff", `main...${mindName}`, "--stat"], { cwd: dir })).trim();
+    const diff = (
+      await gitExec(["diff", `main...${mindName}`, "--stat"], { cwd: dir }, isolation)
+    ).trim();
     if (!diff) {
       return { ok: true, message: "Nothing to publish" };
     }
 
     // Squash-merge into main
     try {
-      await gitExec(["merge", "--squash", mindName], { cwd: dir });
+      await gitExec(["merge", "--squash", mindName], { cwd: dir }, isolation);
     } catch {
       try {
-        await gitExec(["reset", "--hard", "HEAD"], { cwd: dir });
+        await gitExec(["reset", "--hard", "HEAD"], { cwd: dir }, isolation);
       } catch (resetErr: unknown) {
-        log.error("reset after squash conflict failed in pages repo", log.errorData(resetErr));
+        console.error("[pages] reset after squash conflict failed", resetErr);
       }
       return { ok: false, conflicts: true, message: "Merge conflicts detected" };
     }
 
-    await gitExec(["commit", "--author", `${mindName} <${mindName}@volute>`, "-m", message], {
-      cwd: dir,
-    });
+    await gitExec(
+      ["commit", "--author", `${mindName} <${mindName}@volute>`, "-m", message],
+      { cwd: dir },
+      isolation,
+    );
 
     // Reset mind's branch to main
     try {
-      await gitExec(["reset", "--hard", "main"], { cwd: wt });
+      await gitExec(["reset", "--hard", "main"], { cwd: wt }, isolation);
     } catch (err: unknown) {
-      log.error(`pages merge: branch reset failed for ${mindName}`, log.errorData(err));
+      console.error(`[pages] branch reset failed for ${mindName}`, err);
       return {
         ok: true,
         message: "Published to main, but branch reset failed — run 'volute pages pull' to sync",
       };
     }
 
-    if (isIsolationEnabled()) {
+    if (isolation?.isIsolationEnabled()) {
       try {
-        execFileSync("chown", ["-R", `${mindUserName(mindName)}:volute`, wt], { stdio: "ignore" });
+        execFileSync("chown", ["-R", `${isolation.getMindUser(mindName)}:volute`, wt], {
+          stdio: "ignore",
+        });
       } catch {
         // best effort
       }
@@ -266,26 +276,26 @@ export async function pagesMerge(
 export async function pagesPull(
   mindName: string,
   mindDir: string,
-  dataDir: string,
+  _dataDir: string,
+  isolation?: IsolationInfo,
 ): Promise<{ ok: boolean; conflicts?: boolean; message?: string }> {
-  const { gitExec, isIsolationEnabled, mindUserName, log } = await core();
-
   return withPagesLock(async () => {
     const wt = worktreePath(mindDir);
 
     // Commit pending changes
-    const status = (await gitExec(["status", "--porcelain"], { cwd: wt })).trim();
+    const status = (await gitExec(["status", "--porcelain"], { cwd: wt }, isolation)).trim();
     if (status) {
-      await gitExec(["add", "-A"], { cwd: wt });
+      await gitExec(["add", "-A"], { cwd: wt }, isolation);
       await gitExec(
         ["commit", "--author", `${mindName} <${mindName}@volute>`, "-m", `wip: ${mindName}`],
         { cwd: wt },
+        isolation,
       );
     }
 
     // Rebase onto main
     try {
-      await gitExec(["rebase", "main"], { cwd: wt });
+      await gitExec(["rebase", "main"], { cwd: wt }, isolation);
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
       const isConflict =
@@ -294,9 +304,9 @@ export async function pagesPull(
         errMsg.includes("merge conflict");
 
       try {
-        await gitExec(["rebase", "--abort"], { cwd: wt });
+        await gitExec(["rebase", "--abort"], { cwd: wt }, isolation);
       } catch (abortErr: unknown) {
-        log.error("rebase abort failed in pages worktree", log.errorData(abortErr));
+        console.error("[pages] rebase abort failed", abortErr);
       }
 
       if (isConflict) {
@@ -308,13 +318,15 @@ export async function pagesPull(
         };
       }
 
-      log.error("pages pull rebase failed", log.errorData(err));
+      console.error("[pages] pull rebase failed", err);
       return { ok: false, message: `Pull failed: ${errMsg}` };
     }
 
-    if (isIsolationEnabled()) {
+    if (isolation?.isIsolationEnabled()) {
       try {
-        execFileSync("chown", ["-R", `${mindUserName(mindName)}:volute`, wt], { stdio: "ignore" });
+        execFileSync("chown", ["-R", `${isolation.getMindUser(mindName)}:volute`, wt], {
+          stdio: "ignore",
+        });
       } catch {
         // best effort
       }
@@ -325,11 +337,10 @@ export async function pagesPull(
 }
 
 /** Show what the mind has changed compared to main. */
-export async function pagesStatus(mindDir: string): Promise<string> {
-  const { gitExec } = await core();
+export async function pagesStatus(mindDir: string, isolation?: IsolationInfo): Promise<string> {
   const wt = worktreePath(mindDir);
-  const uncommitted = (await gitExec(["status", "--porcelain"], { cwd: wt })).trim();
-  const diff = (await gitExec(["diff", "main...HEAD", "--stat"], { cwd: wt })).trim();
+  const uncommitted = (await gitExec(["status", "--porcelain"], { cwd: wt }, isolation)).trim();
+  const diff = (await gitExec(["diff", "main...HEAD", "--stat"], { cwd: wt }, isolation)).trim();
   let result = diff || "No changes compared to main.";
   if (uncommitted) {
     result += `\n\nUncommitted changes:\n${uncommitted}`;
@@ -338,9 +349,14 @@ export async function pagesStatus(mindDir: string): Promise<string> {
 }
 
 /** Show recent commit history on main. */
-export async function pagesLog(mindDir: string, limit = 20): Promise<string> {
-  const { gitExec } = await core();
+export async function pagesLog(
+  mindDir: string,
+  limit = 20,
+  isolation?: IsolationInfo,
+): Promise<string> {
   const wt = worktreePath(mindDir);
-  const output = (await gitExec(["log", "--oneline", "main", `-${limit}`], { cwd: wt })).trim();
+  const output = (
+    await gitExec(["log", "--oneline", "main", `-${limit}`], { cwd: wt }, isolation)
+  ).trim();
   return output || "No history.";
 }

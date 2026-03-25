@@ -238,10 +238,16 @@ describe("createPublicRoutes name traversal", () => {
     const ctx = {
       dataDir: dir,
       db: null,
+      authMiddleware: (() => {}) as any,
+      getUser: async () => null,
+      getUserByUsername: async () => null,
       getMindDir: () => null,
       getSystemsConfig: () => null,
       resolveUser: () => null,
       publishActivity: () => {},
+      announceToSystem: async () => {},
+      isIsolationEnabled: () => false,
+      getMindUser: (name: string) => `mind-${name}`,
     };
     const publicApp = new Hono();
     publicApp.route("/public", createPublicRoutes(ctx));

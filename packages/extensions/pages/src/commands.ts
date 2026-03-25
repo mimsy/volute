@@ -4,8 +4,16 @@ import { relative, resolve } from "node:path";
 import type { ExtensionCommand } from "@volute/extensions";
 
 import { getPublishedPages, syncPublishedPages } from "./db.js";
+import type { IsolationInfo } from "./shared-pages.js";
 import { pagesLog, pagesMerge, pagesPull, pagesStatus } from "./shared-pages.js";
 import { getDataDir } from "./state.js";
+
+function isolationFrom(ctx: {
+  isIsolationEnabled: () => boolean;
+  getMindUser: (name: string) => string;
+}): IsolationInfo {
+  return { isIsolationEnabled: ctx.isIsolationEnabled, getMindUser: ctx.getMindUser };
+}
 
 export function createCommands(): Record<string, ExtensionCommand> {
   return {
@@ -33,7 +41,7 @@ export function createCommands(): Record<string, ExtensionCommand> {
             const dataDir = getDataDir();
 
             // Auto-pull first to reduce conflict frequency
-            const pullResult = await pagesPull(mindName, mindDir, dataDir);
+            const pullResult = await pagesPull(mindName, mindDir, dataDir, isolationFrom(ctx));
             if (!pullResult.ok) {
               return {
                 error: pullResult.message || "Pull failed — resolve conflicts and try again.",
@@ -41,7 +49,13 @@ export function createCommands(): Record<string, ExtensionCommand> {
             }
 
             // Merge to main
-            const mergeResult = await pagesMerge(mindName, mindDir, dataDir, message);
+            const mergeResult = await pagesMerge(
+              mindName,
+              mindDir,
+              dataDir,
+              message,
+              isolationFrom(ctx),
+            );
             if (!mergeResult.ok) {
               return {
                 error:
@@ -164,7 +178,7 @@ export function createCommands(): Record<string, ExtensionCommand> {
           if (!mindDir) return { error: `Mind not found: ${mindName}` };
 
           try {
-            const status = await pagesStatus(mindDir);
+            const status = await pagesStatus(mindDir, isolationFrom(ctx));
             return { output: status };
           } catch (err) {
             return { error: `Failed to check shared status: ${(err as Error).message}` };
@@ -257,7 +271,7 @@ export function createCommands(): Record<string, ExtensionCommand> {
         }
 
         try {
-          const output = await pagesLog(mindDir, limit);
+          const output = await pagesLog(mindDir, limit, isolationFrom(ctx));
           return { output };
         } catch (err) {
           return { error: `Failed to read shared log: ${(err as Error).message}` };

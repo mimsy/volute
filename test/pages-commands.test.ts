@@ -171,6 +171,9 @@ describe("pages commands", () => {
       publishActivity: (e: any) => events.push(e),
       getMindDir: (name: string) => (name === mindName ? mindDir : null),
       getSystemsConfig: () => null,
+      announceToSystem: async () => {},
+      isIsolationEnabled: () => false,
+      getMindUser: (name: string) => `mind-${name}`,
       dataDir,
       _events: events,
     };
