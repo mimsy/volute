@@ -57,6 +57,26 @@ function navigateParent(path: string) {
   window.parent.postMessage({ type: "navigate", path }, "*");
 }
 
+function handleIframeNav(e: Event) {
+  const iframe = e.target as HTMLIFrameElement;
+  try {
+    const path = iframe.contentWindow?.location.pathname;
+    if (!path) return;
+    // Match /ext/pages/public/{name}/{file...}
+    const match = path.match(/^\/ext\/pages\/public\/([^/]+)\/(.+)$/);
+    if (!match) return;
+    const [, mind, file] = match;
+    if (mind === route.name && file === (route as { path?: string }).path) return;
+    if (mind === "_system") {
+      navigateParent(`/pages/_system/${file}`);
+    } else {
+      navigateParent(`/minds/${mind}/pages/${file}`);
+    }
+  } catch {
+    // cross-origin or security error — ignore
+  }
+}
+
 function handleSelectPage(mind: string, path: string) {
   if (mind === "_system") {
     navigateParent(`/pages/_system/${path}`);
@@ -80,6 +100,7 @@ function handleSelectSite(name: string) {
       src="/ext/pages/public/{route.name}/{route.path}"
       class="full-page-iframe"
       title="{route.name}/{route.path}"
+      onload={handleIframeNav}
     ></iframe>
   {:else if (route.view === "site" || route.view === "mind") && selectedSite}
     <SiteView site={selectedSite} onSelectPage={handleSelectPage} />

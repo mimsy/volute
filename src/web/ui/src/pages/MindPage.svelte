@@ -1,6 +1,7 @@
 <script lang="ts">
 import type { ConversationWithParticipants, Mind } from "@volute/api";
 import Chat from "../components/chat/Chat.svelte";
+import { navigate } from "../lib/navigate";
 import { data } from "../lib/stores.svelte";
 
 let {
@@ -30,6 +31,22 @@ let {
 } = $props();
 
 let mind = $derived(data.minds.find((m) => m.name === name));
+
+function handleIframeNav(e: Event) {
+  const iframe = e.target as HTMLIFrameElement;
+  try {
+    const path = iframe.contentWindow?.location.pathname;
+    if (!path) return;
+    // Match /ext/pages/public/{mind}/{file...}
+    const match = path.match(/^\/ext\/pages\/public\/([^/]+)\/(.+)$/);
+    if (!match) return;
+    const [, mindName, file] = match;
+    if (mindName === name && file === subpath) return;
+    navigate(`/minds/${mindName}/pages/${file}`);
+  } catch {
+    // cross-origin or security error — ignore
+  }
+}
 </script>
 
 {#if !mind}
@@ -40,7 +57,7 @@ let mind = $derived(data.minds.find((m) => m.name === name));
       {@const extParts = section.split(":")}
       <div class="section-content">
         {#if subpath && extParts[1] === "pages"}
-          <iframe src="/ext/{extParts[1]}/public/{name}/{subpath}" class="ext-iframe page-content-iframe" title="Page content"></iframe>
+          <iframe src="/ext/{extParts[1]}/public/{name}/{subpath}" class="ext-iframe page-content-iframe" title="Page content" onload={handleIframeNav}></iframe>
         {:else}
           <iframe src="/ext/{extParts[1]}/#/mind/{name}{subpath ? '/' + subpath : ''}" class="ext-iframe" title="Extension"></iframe>
         {/if}
