@@ -91,4 +91,28 @@ describe("parseArgs", () => {
     assert.equal(result.flags.port, undefined);
     assert.equal(result.flags.json, false);
   });
+
+  it("detects --help flag", () => {
+    const result = parseArgs(["--help"], { name: { type: "string" } });
+    assert.equal(result.help, true);
+  });
+
+  it("detects -h flag", () => {
+    const result = parseArgs(["-h"], { name: { type: "string" } });
+    assert.equal(result.help, true);
+  });
+
+  it("defaults help to false", () => {
+    const result = parseArgs(["foo"], {});
+    assert.equal(result.help, false);
+  });
+
+  it("detects --help mixed with other args", () => {
+    const result = parseArgs(["foo", "--help", "--name", "bar"], {
+      name: { type: "string" },
+    });
+    assert.equal(result.help, true);
+    assert.ok(!result.positional.includes("--help"));
+    assert.equal(result.flags.name, "bar");
+  });
 });

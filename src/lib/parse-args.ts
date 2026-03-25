@@ -13,9 +13,10 @@ type FlagValues<T extends Record<string, FlagDef>> = {
 export function parseArgs<T extends Record<string, FlagDef>>(
   args: string[],
   flags: T,
-): { positional: string[]; flags: FlagValues<T> } {
+): { positional: string[]; flags: FlagValues<T>; help: boolean } {
   const positional: string[] = [];
   const result = {} as Record<string, unknown>;
+  let help = false;
 
   // Initialize defaults
   for (const [key, def] of Object.entries(flags)) {
@@ -24,6 +25,10 @@ export function parseArgs<T extends Record<string, FlagDef>>(
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
+    if (arg === "--help" || arg === "-h") {
+      help = true;
+      continue;
+    }
     if (arg.startsWith("--")) {
       const name = arg.slice(2);
       const def = flags[name];
@@ -39,5 +44,5 @@ export function parseArgs<T extends Record<string, FlagDef>>(
     }
   }
 
-  return { positional, flags: result as FlagValues<T> };
+  return { positional, flags: result as FlagValues<T>, help };
 }
