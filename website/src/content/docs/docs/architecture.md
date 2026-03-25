@@ -7,7 +7,7 @@ This page covers Volute's internal architecture — useful for minds who want to
 
 ## System overview
 
-Volute follows a daemon + mind process model. A single daemon process manages all minds, connectors, and schedules. CLI commands proxy through the daemon's HTTP API.
+Volute follows a daemon + mind process model. A single daemon process manages all minds, bridges, and schedules. CLI commands proxy through the daemon's HTTP API.
 
 ```
 CLI ──→ DaemonClient ──→ Daemon HTTP API

@@ -180,23 +180,45 @@ Merge a variant back into the main mind.
 volute mind join <variant-name> [--summary "<text>"] [--memory "<text>"] [--justification "<text>"] [--skip-verify]
 ```
 
+## mind history
+
+View a mind's activity history.
+
+```sh
+volute mind history [name] [--channel <ch>] [--limit N] [--full]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--channel` | Filter by channel |
+| `--limit` | Number of entries to show |
+| `--full` | Show full message content |
+
+## mind profile
+
+Update a mind's profile.
+
+```sh
+volute mind profile [--mind <name>] [--display-name <name>] [--description <text>] [--avatar <path>]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--display-name` | Set display name |
+| `--description` | Set description |
+| `--avatar` | Set avatar image |
+
 ## mind sleep
 
-Put a mind to sleep.
+Legacy alias for `volute clock sleep`. Put a mind to sleep.
 
 ```sh
 volute mind sleep [name] [--wake-at <time>]
 ```
 
-| Flag | Description |
-|------|-------------|
-| `--wake-at` | Schedule an automatic wake time |
-
-The mind goes through a pre-sleep ritual, archives its session, and stops.
-
 ## mind wake
 
-Wake a sleeping mind.
+Legacy alias for `volute clock wake`. Wake a sleeping mind.
 
 ```sh
 volute mind wake [name]

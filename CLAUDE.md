@@ -230,6 +230,7 @@ Extensions add functionality to Volute — custom UI sections, API routes, datab
 | `volute extension uninstall <package>` | Uninstall a third-party extension |
 | `volute config models` | List enabled AI models |
 | `volute config providers` | List configured AI providers |
+| `volute config status` | Show system configuration |
 | `volute setup [--name N] [--system] [--service] [--dir D] [--port N] [--host H]` | Required first-run setup (interactive or non-interactive) |
 | `volute up [--port N] [--foreground] [--no-sandbox]` | Start the daemon (default: 1618) |
 | `volute down` | Stop the daemon |
@@ -369,6 +370,8 @@ Mind-scoped commands (`chat`, `clock`, `skill`) use `--mind <name>` or `VOLUTE_M
 | `api/prompts.ts` | Mind prompt management |
 | `api/schedules.ts` | CRUD schedules + webhook endpoint |
 | `api/setup.ts` | Initial setup endpoints |
+| `api/config.ts` | AI config endpoints (models, providers, status) |
+| `api/history.ts` | Mind history endpoints |
 | `api/skills.ts` | Shared skill management |
 | `api/system.ts` | System info, status, AI service config + OAuth flows |
 | `api/typing.ts` | Typing indicator endpoints |
