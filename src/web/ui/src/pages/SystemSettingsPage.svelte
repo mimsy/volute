@@ -1,36 +1,57 @@
 <script lang="ts">
+import type { Mind } from "@volute/api";
+import { SectionHeader } from "@volute/ui";
+import { onMount } from "svelte";
+import MindSettingsCognition from "../components/mind/MindSettingsCognition.svelte";
+import MindSettingsEnv from "../components/mind/MindSettingsEnv.svelte";
+import MindSettingsProfile from "../components/mind/MindSettingsProfile.svelte";
+import MindSkills from "../components/mind/MindSkills.svelte";
 import ExtensionManager from "../components/system/ExtensionManager.svelte";
 import MindDefaults from "../components/system/MindDefaults.svelte";
 import SharedSkills from "../components/system/SharedSkills.svelte";
 import UserManagement from "../components/system/UserManagement.svelte";
-import { restartDaemon } from "../lib/client";
+import { fetchMind, restartDaemon } from "../lib/client";
 import { data } from "../lib/stores.svelte";
 import Prompts from "./Prompts.svelte";
 import Settings from "./Settings.svelte";
-import SpiritSettings from "./SpiritSettings.svelte";
 
 const TABS = [
-  "spirit",
   "settings",
   "mind-defaults",
   "prompts",
   "skills",
   "extensions",
   "users",
+  "spirit",
 ] as const;
 type Tab = (typeof TABS)[number];
 
 const TAB_LABELS: Record<Tab, string> = {
-  spirit: "Spirit",
   settings: "Settings",
   "mind-defaults": "Mind Defaults",
   prompts: "Prompts",
   skills: "Skills",
   extensions: "Extensions",
   users: "Users",
+  spirit: "Spirit",
 };
 
-let activeTab = $state<Tab>("spirit");
+let activeTab = $state<Tab>("settings");
+
+let spirit = $state<Mind | null>(null);
+let spiritError = $state("");
+
+onMount(() => {
+  loadSpirit();
+});
+
+async function loadSpirit() {
+  try {
+    spirit = await fetchMind("volute");
+  } catch (e) {
+    spiritError = e instanceof Error ? e.message : "Failed to load spirit";
+  }
+}
 
 let restarting = $state(false);
 let restartError = $state<string | null>(null);
@@ -72,9 +93,7 @@ async function handleRestart() {
     </div>
   </div>
   <div class="settings-body">
-    {#if activeTab === "spirit"}
-      <SpiritSettings />
-    {:else if activeTab === "settings"}
+    {#if activeTab === "settings"}
       <Settings />
     {:else if activeTab === "mind-defaults"}
       <MindDefaults />
@@ -86,6 +105,18 @@ async function handleRestart() {
       <ExtensionManager />
     {:else if activeTab === "users"}
       <UserManagement minds={data.minds} />
+    {:else if activeTab === "spirit"}
+      {#if spiritError}
+        <div class="spirit-error">{spiritError}</div>
+      {:else if spirit}
+        <div class="spirit-sections">
+          <MindSettingsProfile mind={spirit} onUpdated={loadSpirit} />
+          <SectionHeader title="Model" subtitle="Cognition settings" />
+          <MindSettingsCognition name={spirit.name} template={spirit.template} hideBudget />
+          <MindSkills name={spirit.name} />
+          <MindSettingsEnv name={spirit.name} />
+        </div>
+      {/if}
     {/if}
   </div>
 </div>
@@ -168,5 +199,18 @@ async function handleRestart() {
     flex: 1;
     overflow: auto;
     padding: 16px;
+  }
+
+  .spirit-sections {
+    max-width: 720px;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .spirit-error {
+    color: var(--red);
+    font-size: 13px;
   }
 </style>
