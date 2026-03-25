@@ -4,6 +4,8 @@ import { Codex } from "@openai/codex-sdk";
 import { flushFileChanges, trackFileChange } from "./lib/auto-commit.js";
 import { extractText } from "./lib/content.js";
 import {
+  countClaudeMdTokens,
+  countSkillDescriptionTokens,
   countSystemPromptTokens,
   findCodexSessionFile,
   parseCodexSessionJSONL,
@@ -588,6 +590,8 @@ export function createMind(options: {
   }
 
   const systemPromptTokens = countSystemPromptTokens(options.systemPrompt);
+  const claudeMdTokens = countClaudeMdTokens(options.cwd);
+  const skillDescTokens = countSkillDescriptionTokens([resolvePath(options.cwd, ".agents/skills")]);
 
   function getContextInfo(): ContextInfo {
     return {
@@ -595,7 +599,9 @@ export function createMind(options: {
         try {
           const threadId = sessionStore.load(s.name);
           const jsonlPath = threadId ? findCodexSessionFile(threadId) : null;
-          const parsed = jsonlPath ? parseCodexSessionJSONL(jsonlPath, systemPromptTokens) : null;
+          const parsed = jsonlPath
+            ? parseCodexSessionJSONL(jsonlPath, systemPromptTokens, claudeMdTokens, skillDescTokens)
+            : null;
 
           return {
             name: s.name,

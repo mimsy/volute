@@ -29,12 +29,14 @@ type Category = { key: string; label: string; tokens: number; color: string };
 
 const COLORS = {
   systemPrompt: "#6366f1",
+  claudeMd: "#818cf8",
+  skillDesc: "#8b5cf6",
   userText: "#3b82f6",
   assistantText: "#22c55e",
   thinking: "#f59e0b",
   toolUse: "#ec4899",
   toolResult: "#f97316",
-  other: "#64748b",
+  sdk: "#64748b",
   empty: "var(--bg-3, #2a2a2a)",
 };
 
@@ -45,6 +47,13 @@ function getCategories(breakdown: ContextBreakdown, contextTokens: number): Cate
       label: "System Prompt",
       tokens: breakdown.systemPrompt,
       color: COLORS.systemPrompt,
+    },
+    { key: "claudeMd", label: "CLAUDE.md", tokens: breakdown.claudeMd, color: COLORS.claudeMd },
+    {
+      key: "skillDesc",
+      label: "Skill Descriptions",
+      tokens: breakdown.skillDescriptions,
+      color: COLORS.skillDesc,
     },
     {
       key: "userText",
@@ -79,9 +88,9 @@ function getCategories(breakdown: ContextBreakdown, contextTokens: number): Cate
   ].filter((c) => c.tokens > 0);
 
   const counted = cats.reduce((s, c) => s + c.tokens, 0);
-  const other = contextTokens - counted;
-  if (other > 0) {
-    cats.push({ key: "other", label: "Other", tokens: other, color: COLORS.other });
+  const sdk = contextTokens - counted;
+  if (sdk > 0) {
+    cats.push({ key: "sdk", label: "Tools & SDK", tokens: sdk, color: COLORS.sdk });
   }
   return cats;
 }

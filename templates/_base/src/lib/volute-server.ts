@@ -97,6 +97,8 @@ async function verifyRequest(body: VoluteRequest): Promise<boolean | undefined> 
 
 export type ContextBreakdown = {
   systemPrompt: number;
+  claudeMd: number;
+  skillDescriptions: number;
   conversation: {
     userText: number;
     assistantText: number;

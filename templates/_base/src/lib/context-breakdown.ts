@@ -50,6 +50,8 @@ export type ParsedContext = {
 export function parseClaudeSessionJSONL(
   filePath: string,
   systemPromptTokens: number,
+  claudeMdTokens: number,
+  skillDescriptionTokens: number,
 ): ParsedContext | null {
   let data: string;
   try {
@@ -116,7 +118,12 @@ export function parseClaudeSessionJSONL(
 
   return {
     contextTokens: lastContextTokens,
-    breakdown: { systemPrompt: systemPromptTokens, conversation: conv },
+    breakdown: {
+      systemPrompt: systemPromptTokens,
+      claudeMd: claudeMdTokens,
+      skillDescriptions: skillDescriptionTokens,
+      conversation: conv,
+    },
   };
 }
 
@@ -139,6 +146,8 @@ type CodexEntry = {
 export function parseCodexSessionJSONL(
   filePath: string,
   systemPromptTokens: number,
+  claudeMdTokens: number,
+  skillDescriptionTokens: number,
 ): ParsedContext | null {
   let data: string;
   try {
@@ -205,7 +214,12 @@ export function parseCodexSessionJSONL(
 
   return {
     contextTokens: lastContextTokens,
-    breakdown: { systemPrompt: systemPromptTokens, conversation: conv },
+    breakdown: {
+      systemPrompt: systemPromptTokens,
+      claudeMd: claudeMdTokens,
+      skillDescriptions: skillDescriptionTokens,
+      conversation: conv,
+    },
   };
 }
 
@@ -223,6 +237,8 @@ type PiEntry = {
 export function parsePiSessionJSONL(
   filePath: string,
   systemPromptTokens: number,
+  claudeMdTokens: number,
+  skillDescriptionTokens: number,
 ): ParsedContext | null {
   let data: string;
   try {
@@ -280,15 +296,53 @@ export function parsePiSessionJSONL(
 
   return {
     contextTokens: lastContextTokens,
-    breakdown: { systemPrompt: systemPromptTokens, conversation: conv },
+    breakdown: {
+      systemPrompt: systemPromptTokens,
+      claudeMd: claudeMdTokens,
+      skillDescriptions: skillDescriptionTokens,
+      conversation: conv,
+    },
   };
 }
 
-// --- Tokenize system prompt ---
+// --- Measure known SDK overhead ---
 
 /** Count tokens in the actual composed system prompt string. */
 export function countSystemPromptTokens(systemPrompt: string): number {
   return countTokens(systemPrompt);
+}
+
+/** Count tokens in CLAUDE.md (loaded by the SDK separately from the system prompt). */
+export function countClaudeMdTokens(cwd: string): number {
+  try {
+    const content = readFileSync(resolve(cwd, "CLAUDE.md"), "utf-8");
+    return countTokens(content);
+  } catch {
+    return 0;
+  }
+}
+
+/** Count tokens in skill description frontmatter (always in context). */
+export function countSkillDescriptionTokens(skillsDirs: string[]): number {
+  let total = 0;
+  for (const dir of skillsDirs) {
+    try {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        if (!entry.isDirectory()) continue;
+        try {
+          const content = readFileSync(resolve(dir, entry.name, "SKILL.md"), "utf-8");
+          // Extract just the frontmatter description — that's what's always in context
+          const match = content.match(/^description:\s*(.+?)$/m);
+          if (match) total += countTokens(match[1]);
+        } catch {
+          // No SKILL.md
+        }
+      }
+    } catch {
+      // Dir doesn't exist
+    }
+  }
+  return total;
 }
 
 // --- Session file finders ---
