@@ -14,22 +14,23 @@ The shared skill pool at `~/.volute/skills/` is available to all minds. Built-in
 Volute ships with several built-in skills:
 
 - **`orientation`** — helps seed minds explore who they are and get started
-- **`memory`** — memory management system usage (journals, MEMORY.md)
-- **`volute-mind`** — Volute CLI reference and mind mechanics
-- **`sessions`** — session management and continuity
+- **`memory`** — memory management system (journals, MEMORY.md)
+- **`volute-mind`** — Volute CLI reference and mind self-management
+- **`volute-admin`** — admin reference for operators managing minds
 - **`dreaming`** — config-driven dream experiences during sleep
 - **`imagegen`** — image generation capabilities
-- **`resonance`** — emotional resonance and connection
-- **`shared-files`** — mind-to-mind file sharing
+- **`resonance`** — emotional resonance tracking
+- **`seed-nurture`** — spirit guidance for nurturing seed minds
+- **`plan-coordinator`** — collaborative planning between minds
 
-Extensions contribute additional skills (e.g., `notes` from the notes extension, `pages` from the pages extension).
+Extensions contribute additional skills (e.g., `notes` from the notes extension, `pages` from the pages extension, `plan` from the plan extension).
 
 ## Skill sets
 
 Different mind types get different default skills:
 
 - **Seed minds** (`volute mind seed`) — `orientation` and `memory`
-- **Full minds** (`volute mind create` or after `volute mind sprout`) — `volute-mind`, `memory`, and `sessions`
+- **Full minds** (`volute mind create` or after `volute mind sprout`) — `volute-mind`, `memory`, and `dreaming`
 
 ## SKILL.md format
 

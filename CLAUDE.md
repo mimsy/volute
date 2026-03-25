@@ -22,9 +22,10 @@ Core values:
 - `src/lib/` — Shared libraries (registry, mind-manager, bridge-manager, scheduler, daemon-client, arg parsing, exec wrappers, variant metadata, db, auth, conversations, channels)
 - `src/web/` — Web dashboard (Hono backend + Svelte frontend), served by the daemon
 - `src/connectors/` — Built-in bridge implementations (Discord, Slack, Telegram) + shared SDK
-- `skills/` — Built-in skill definitions (memory, sessions, orientation, volute-mind, dreaming, imagegen, resonance, shared-files), synced to the shared pool on daemon startup. Extensions contribute additional skills via `skillsDir` in their manifest (e.g., notes and pages extensions each bundle their own skill).
+- `skills/` — Built-in skill definitions (memory, orientation, volute-mind, volute-admin, dreaming, imagegen, resonance, seed-nurture, plan-coordinator), synced to the shared pool on daemon startup. Extensions contribute additional skills via `skillsDir` in their manifest (e.g., notes, pages, and plan extensions each bundle their own skill).
 - `templates/claude/` — Default template (Claude Agent SDK) copied by `volute mind create`
 - `templates/pi/` — Alternative template using pi-coding-agent for multi-provider LLM support
+- `templates/codex/` — Alternative template using OpenAI Codex models
 - All minds live in `~/.volute/minds/<name>/` by default (overridable via `VOLUTE_MINDS_DIR`) with a centralized registry backed by the `minds` DB table in `volute.db`
 
 ### Daemon model
@@ -93,8 +94,7 @@ Each mind project (created from the template) has:
 └── .mind/                     # Mind-internal runtime state
     ├── sessions/              # Per-session SDK state (e.g. sessions/main.json)
     ├── identity/              # Ed25519 keypair (private.pem, public.pem)
-    ├── connectors/            # Bridge configs (e.g. connectors/discord/config.json)
-    └── schedules.json         # Cron schedules for this mind
+    └── connectors/            # Bridge configs (e.g. connectors/discord/config.json)
 ```
 
 The SDK runs with `cwd: home/` so it picks up `CLAUDE.md` and `.claude/skills/` from there.
@@ -113,7 +113,7 @@ Unified `users` table with `user_type` discrimination (`"brain"` or `"mind"`) st
 
 Templates have a `.init/` directory containing identity and config files. On `volute mind create`, these are copied into `home/` and `.init/` is deleted. On `volute mind upgrade`, `.init/` files are excluded so identity files are never overwritten.
 
-- **`_base/.init/`**: SOUL.md, MEMORY.md, memory/journal/, .config/prompts.json, .local/hooks/startup-context.ts, .local/hooks/pre-prompt/session-activity.ts, .local/bin/volute
+- **`_base/.init/`**: SOUL.md, MEMORY.md, memory/journal/, .config/prompts.json, .local/hooks/startup-context.ts, .local/hooks/wake-context.sh, .local/hooks/pre-prompt/session-activity.ts, .local/bin/volute
 - **`claude/.init/`**: CLAUDE.md, .claude/settings.json, .config/routes.json
 - **`pi/.init/`**: MINDS.md, .config/routes.json
 
@@ -124,12 +124,12 @@ The daemon serves a Hono web server (default port 1618) with a Svelte frontend.
 - **Backend** (`src/web/`): Hono API routes for auth, minds, chat, conversations, logs, variants, files, bridges, schedules, channels, env, keys, prompts, skills, file-sharing, extensions, setup, activity
 - **Frontend** (`src/web/ui/`): Svelte SPA with login, dashboard, and mind detail pages (chat, logs, files, variants, connections tabs). Shared UI components imported from `@volute/ui`
 - **Auth**: Cookie-based (`volute_session`), in-memory session map, first user auto-admin
-- **Database**: libSQL at `~/.volute/volute.db` for minds, users, conversations, messages, turns, mind_history, activity, delivery_queue, sessions, shared_skills, system_prompts, conversation_reads
+- **Database**: libSQL at `~/.volute/volute.db` for minds, users, conversations, messages, turns, mind_history, activity, delivery_queue, sessions, shared_skills, system_prompts, conversation_reads, summaries
 - **Build**: `vite build` → `dist/web-assets/`
 
 ### Extensions
 
-Extensions add functionality to Volute — custom UI sections, API routes, database tables, feed sources, and mind lifecycle hooks. Built-in extensions (Notes, Pages) ship with Volute; third-party and local extensions can be added.
+Extensions add functionality to Volute — custom UI sections, API routes, database tables, feed sources, and mind lifecycle hooks. Built-in extensions (Notes, Pages, Plan) ship with Volute; third-party and local extensions can be added.
 
 **SDK** (`@volute/extensions`): Provides `ExtensionManifest`, `ExtensionContext`, and `createExtension()` helper.
 
@@ -169,6 +169,7 @@ Extensions add functionality to Volute — custom UI sections, API routes, datab
 - `packages/extensions/sdk/` (`@volute/extensions`) — shared types and helpers
 - `packages/extensions/notes/` (`@volute/notes`) — notes extension
 - `packages/extensions/pages/` (`@volute/pages`) — pages extension
+- `packages/extensions/plan/` (`@volute/plan`) — plan extension
 
 **Other packages:**
 - `packages/api/` (`@volute/api`) — public API client library
@@ -227,6 +228,8 @@ Extensions add functionality to Volute — custom UI sections, API routes, datab
 | `volute extension list` | List installed extensions |
 | `volute extension install <package>` | Install a third-party extension (npm package) |
 | `volute extension uninstall <package>` | Uninstall a third-party extension |
+| `volute config models` | List enabled AI models |
+| `volute config providers` | List configured AI providers |
 | `volute setup [--name N] [--system] [--service] [--dir D] [--port N] [--host H]` | Required first-run setup (interactive or non-interactive) |
 | `volute up [--port N] [--foreground] [--no-sandbox]` | Start the daemon (default: 1618) |
 | `volute down` | Stop the daemon |
@@ -262,7 +265,7 @@ Mind-scoped commands (`chat`, `clock`, `skill`) use `--mind <name>` or `VOLUTE_M
 | `env.ts` | Environment variables (shared `~/.volute/env.json` + mind-specific state dir env) |
 | `format-tool.ts` | Shared tool call summarization (`[toolName primaryArg]` format) |
 | `ai-service.ts` | System AI completion service via `@mariozechner/pi-ai` (multi-provider, OAuth + API key + env var auth, model selection) |
-| `schema.ts` | Drizzle ORM schema (minds, users, conversations, turns, mindHistory, conversationParticipants, sessions, systemPrompts, sharedSkills, deliveryQueue, activity, conversationReads, messages) |
+| `schema.ts` | Drizzle ORM schema (minds, users, conversations, turns, mindHistory, conversationParticipants, sessions, systemPrompts, sharedSkills, deliveryQueue, activity, conversationReads, messages, summaries) |
 | `db.ts` | libSQL database singleton at `~/.volute/volute.db` (WAL mode, foreign keys) |
 | `auth.ts` | bcrypt password hashing, first user auto-admin, pending approval flow, mind users |
 | `channels.ts` | ChannelProvider registry with optional drivers (read/send), display names, slug resolution |
@@ -319,7 +322,7 @@ Mind-scoped commands (`chat`, `clock`, `skill`) use `--mind <name>` or `VOLUTE_M
 | `token-budget.ts` | Per-mind token budget enforcement |
 | `restart-tracker.ts` | Tracks mind restart state |
 | `sleep-manager.ts` | Sleep/wake cycles, cron scheduling, message queuing, wake triggers |
-| `turn-summarizer.ts` | Generates 1-2 sentence turn summaries (AI or deterministic fallback) after each mind turn |
+| `summarizer.ts` | Generates 1-2 sentence turn summaries (AI or deterministic fallback) after each mind turn |
 | `turn-tracker.ts` | Turn tracking utilities |
 | `mind-tokens.ts` | Mind token management |
 | `mind-service.ts` | Mind service management utilities (startMindFull, startSpiritFull with schedule loading) |
@@ -363,11 +366,9 @@ Mind-scoped commands (`chat`, `clock`, `skill`) use `--mind <name>` or `VOLUTE_M
 | `api/keys.ts` | API key management |
 | `api/logs.ts` | Log streaming |
 | `api/mind-skills.ts` | Per-mind skill management |
-| `api/public-files.ts` | Public file serving |
 | `api/prompts.ts` | Mind prompt management |
 | `api/schedules.ts` | CRUD schedules + webhook endpoint |
 | `api/setup.ts` | Initial setup endpoints |
-| `api/shared.ts` | Shared resource endpoints |
 | `api/skills.ts` | Shared skill management |
 | `api/system.ts` | System info, status, AI service config + OAuth flows |
 | `api/typing.ts` | Typing indicator endpoints |
@@ -468,7 +469,7 @@ npm test                 # run tests
 
 The CLI is installed globally via `npm link` (requires `npm run build` first) or run in dev mode via `tsx src/cli.ts`.
 
-Tests run with `node --import tsx --test test/*.test.ts`.
+Tests run via `npm test` which uses `node --import tsx --import ./test/setup.ts --test` with concurrency and exclusions configured in package.json.
 
 ### Testing
 

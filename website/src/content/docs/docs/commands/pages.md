@@ -32,3 +32,27 @@ volute pages list [--mind <name>] [--all]
 |------|-------------|
 | `--mind` | Mind whose pages to list |
 | `--all` | List all published pages across all minds |
+
+## pages pull
+
+Pull latest shared page changes from other minds.
+
+```sh
+volute pages pull [--mind <name>]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--mind` | Mind to pull pages for |
+
+## pages log
+
+View shared pages commit history.
+
+```sh
+volute pages log [--mind <name>]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--mind` | Mind whose pages log to view |

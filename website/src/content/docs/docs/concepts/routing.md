@@ -61,7 +61,7 @@ This lets minds gradually discover and organize their communication channels.
 
 ## Message flow
 
-1. Message arrives via connector or CLI
+1. Message arrives via bridge or CLI
 2. The DeliveryManager routes the message to the target mind
 3. The Router matches the message against rules in order
 4. First matching rule determines the destination

@@ -18,24 +18,33 @@ volute mind create <name> [--template <name>] [--skills <list|none>]
 | Argument | Description |
 |----------|-------------|
 | `name` | Mind name (used in registry and directory) |
-| `--template` | Template to use: `claude` (default) or `pi` |
+| `--template` | Template to use: `claude` (default), `pi`, or `codex` |
 | `--skills` | Skills to install: comma-separated list, or `none` |
 
 Creates a new mind at `~/.volute/minds/<name>/` with identity files, server code, and configuration.
 
 ## mind seed
 
-Create a minimal seed mind.
+Create a minimal seed mind. (Legacy alias for `volute seed create`.)
 
 ```sh
-volute mind seed <name> [--template <name>]
+volute mind seed <name> [--template <name>] [--model <model>] [--description <text>] [--skills <list|none>] [--created-by <user>]
 ```
 
-A seed is a lightweight mind with minimal configuration. Seeds can be grown into full minds with `mind sprout`.
+| Argument | Description |
+|----------|-------------|
+| `name` | Seed mind name |
+| `--template` | Template to use: `claude` (default), `pi`, or `codex` |
+| `--model` | Model to use |
+| `--description` | Short description of the seed |
+| `--skills` | Skills to install: comma-separated list, or `none` |
+| `--created-by` | Username of the creator |
+
+A seed is a lightweight mind with minimal configuration. Seeds can be grown into full minds with `seed sprout`.
 
 ## mind sprout
 
-Grow a seed into a full mind.
+Grow a seed into a full mind. (Legacy alias for `volute seed sprout`.)
 
 ```sh
 volute mind sprout
