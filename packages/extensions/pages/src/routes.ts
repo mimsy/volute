@@ -103,9 +103,12 @@ export function createPublicRoutes(ctx: ExtensionContext): Hono {
       return c.text("Not found", 404);
 
     let pagesRoot: string;
+    let blockDotfiles = false;
     if (name === "_system") {
-      // Serve collaborative pages from the pages repo (main branch working tree)
+      // Serve from the pages repo root (main branch checked out here).
+      // Block dotfiles since .git/ is present in this directory.
       pagesRoot = resolve(ctx.dataDir, "repo");
+      blockDotfiles = true;
     } else {
       // Serve from the published snapshot, not the working directory
       pagesRoot = resolve(ctx.dataDir, "sites", name);
@@ -117,6 +120,13 @@ export function createPublicRoutes(ctx: ExtensionContext): Hono {
 
     if (requestedPath !== pagesRoot && !requestedPath.startsWith(`${pagesRoot}/`))
       return c.text("Forbidden", 403);
+
+    // Block dotfiles (e.g. .git/) when serving from a git repo root
+    if (blockDotfiles) {
+      const relativePath = requestedPath.slice(pagesRoot.length + 1);
+      if (relativePath.split("/").some((seg) => seg.startsWith(".")))
+        return c.text("Not found", 404);
+    }
 
     let fileToServe = requestedPath;
     let fileStat = await stat(requestedPath).catch(() => null);

@@ -1,32 +1,21 @@
 import { resolve } from "node:path";
-import type { ExtensionContext } from "@volute/extensions";
 import { createExtension } from "@volute/extensions";
 
 import { createCommands } from "./commands.js";
 import { initDb } from "./db.js";
 import { createPublicRoutes, createRoutes } from "./routes.js";
-import { addPagesWorktree, ensurePagesRepo } from "./shared-pages.js";
-import { setDataDir } from "./state.js";
+import { addPagesWorktree, ensurePagesRepo, isolationFrom } from "./shared-pages.js";
 
 const assetsDir = resolve(import.meta.dirname, "../dist/ui");
 const skillsDir = resolve(import.meta.dirname, "../skills");
-
-function isolationFrom(ctx: ExtensionContext) {
-  return { isIsolationEnabled: ctx.isIsolationEnabled, getMindUser: ctx.getMindUser };
-}
 
 export default createExtension({
   id: "pages",
   name: "Pages",
   version: "0.1.0",
   description: "Publish and serve web pages from mind directories",
-  initDb: (db) => {
-    initDb(db);
-  },
-  routes: (ctx) => {
-    setDataDir(ctx.dataDir);
-    return createRoutes(ctx);
-  },
+  initDb,
+  routes: (ctx) => createRoutes(ctx),
   publicRoutes: (ctx) => createPublicRoutes(ctx),
   commands: createCommands(),
   skillsDir,

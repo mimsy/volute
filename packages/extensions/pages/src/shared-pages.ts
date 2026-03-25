@@ -4,7 +4,7 @@
  * The repo lives in the pages extension data directory at <dataDir>/repo/.
  * Each mind gets a worktree at <mindDir>/home/pages/_system/ on a per-mind branch.
  */
-import { execFile as execFileCb, execFileSync } from "node:child_process";
+import { execFile as execFileCb } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
@@ -13,6 +13,24 @@ export type IsolationInfo = {
   isIsolationEnabled: () => boolean;
   getMindUser: (name: string) => string;
 };
+
+/** Extract IsolationInfo from an ExtensionContext-shaped object. */
+export function isolationFrom(ctx: {
+  isIsolationEnabled: () => boolean;
+  getMindUser: (name: string) => string;
+}): IsolationInfo {
+  return { isIsolationEnabled: ctx.isIsolationEnabled, getMindUser: ctx.getMindUser };
+}
+
+/** Run a command asynchronously. Resolves on success, rejects on error. Output is discarded. */
+function execAsync(cmd: string, args: string[]): Promise<void> {
+  return new Promise((resolve, reject) => {
+    execFileCb(cmd, args, (err) => {
+      if (err) reject(err);
+      else resolve();
+    });
+  });
+}
 
 /** Run a git command. Adds safe.directory when isolation is enabled. */
 function gitExec(
@@ -24,7 +42,9 @@ function gitExec(
   return new Promise((resolve, reject) => {
     execFileCb("git", fullArgs, { cwd: opts.cwd }, (err, stdout, stderr) => {
       if (err) {
-        (err as Error & { stderr?: string }).stderr = stderr;
+        const e = err as Error & { stderr?: string; stdout?: string };
+        e.stderr = stderr;
+        e.stdout = stdout;
         reject(err);
       } else {
         resolve(stdout);
@@ -41,7 +61,8 @@ function readWorktreeGitDir(worktreePath: string): string | null {
     const content = readFileSync(dotGit, "utf-8").trim();
     const match = content.match(/^gitdir:\s*(.+)$/);
     return match ? match[1] : null;
-  } catch {
+  } catch (err) {
+    console.warn(`[pages] failed to read .git file at ${dotGit}: ${(err as Error).message}`);
     return null;
   }
 }
@@ -86,7 +107,7 @@ export async function ensurePagesRepo(dataDir: string, isolation?: IsolationInfo
 
   if (isIso) {
     try {
-      execFileSync("chgrp", ["-R", "volute", dir], { stdio: "ignore" });
+      await execAsync("chgrp", ["-R", "volute", dir]);
     } catch {
       console.warn("[pages] failed to chgrp pages repo to volute group");
     }
@@ -126,17 +147,15 @@ export async function addPagesWorktree(
 
   if (isolation?.isIsolationEnabled()) {
     const user = isolation.getMindUser(mindName);
-    // Chown the worktree directory so the mind user can write files
     try {
-      execFileSync("chown", ["-R", `${user}:volute`, wt], { stdio: "ignore" });
+      await execAsync("chown", ["-R", `${user}:volute`, wt]);
     } catch {
       console.warn(`[pages] failed to chown worktree for ${mindName}`);
     }
-    // Chown the git state directory (HEAD, index, refs) so auto-commit works
     const wtGitDir = readWorktreeGitDir(wt);
     if (wtGitDir) {
       try {
-        execFileSync("chown", ["-R", `${user}:volute`, wtGitDir], { stdio: "ignore" });
+        await execAsync("chown", ["-R", `${user}:volute`, wtGitDir]);
       } catch {
         console.warn(`[pages] failed to chown worktree git dir for ${mindName}`);
       }
@@ -159,15 +178,15 @@ export async function removePagesWorktree(
   if (existsSync(wt)) {
     try {
       await gitExec(["worktree", "remove", "--force", wt], { cwd: dir }, isolation);
-    } catch {
-      // best effort
+    } catch (err) {
+      console.warn(`[pages] worktree remove failed for ${mindName}: ${(err as Error).message}`);
     }
   }
 
   try {
     await gitExec(["worktree", "prune"], { cwd: dir }, isolation);
-  } catch {
-    // best effort
+  } catch (err) {
+    console.warn(`[pages] worktree prune failed: ${(err as Error).message}`);
   }
 
   try {
@@ -230,13 +249,22 @@ export async function pagesMerge(
     // Squash-merge into main
     try {
       await gitExec(["merge", "--squash", mindName], { cwd: dir }, isolation);
-    } catch {
+    } catch (err) {
+      const errOutput = [
+        (err as Error).message,
+        (err as Error & { stderr?: string }).stderr ?? "",
+        (err as Error & { stdout?: string }).stdout ?? "",
+      ].join("\n");
+      const isConflict = errOutput.includes("CONFLICT") || errOutput.includes("could not apply");
       try {
         await gitExec(["reset", "--hard", "HEAD"], { cwd: dir }, isolation);
       } catch (resetErr: unknown) {
         console.error("[pages] reset after squash conflict failed", resetErr);
       }
-      return { ok: false, conflicts: true, message: "Merge conflicts detected" };
+      if (isConflict) {
+        return { ok: false, conflicts: true, message: "Merge conflicts detected" };
+      }
+      return { ok: false, message: `Merge failed: ${(err as Error).message}` };
     }
 
     await gitExec(
@@ -258,11 +286,9 @@ export async function pagesMerge(
 
     if (isolation?.isIsolationEnabled()) {
       try {
-        execFileSync("chown", ["-R", `${isolation.getMindUser(mindName)}:volute`, wt], {
-          stdio: "ignore",
-        });
+        await execAsync("chown", ["-R", `${isolation.getMindUser(mindName)}:volute`, wt]);
       } catch {
-        // best effort
+        // Non-fatal: mind still functions but may hit permission errors
       }
     }
 
@@ -276,7 +302,6 @@ export async function pagesMerge(
 export async function pagesPull(
   mindName: string,
   mindDir: string,
-  _dataDir: string,
   isolation?: IsolationInfo,
 ): Promise<{ ok: boolean; conflicts?: boolean; message?: string }> {
   return withPagesLock(async () => {
@@ -324,9 +349,7 @@ export async function pagesPull(
 
     if (isolation?.isIsolationEnabled()) {
       try {
-        execFileSync("chown", ["-R", `${isolation.getMindUser(mindName)}:volute`, wt], {
-          stdio: "ignore",
-        });
+        await execAsync("chown", ["-R", `${isolation.getMindUser(mindName)}:volute`, wt]);
       } catch {
         // best effort
       }
@@ -336,11 +359,124 @@ export async function pagesPull(
   });
 }
 
+/**
+ * Pull then merge in a single lock acquisition.
+ * Without this, another mind could publish between our pull and merge, causing unnecessary conflicts.
+ */
+export async function pagesPullAndMerge(
+  mindName: string,
+  mindDir: string,
+  dataDir: string,
+  message: string,
+  isolation?: IsolationInfo,
+): Promise<{ ok: boolean; conflicts?: boolean; message?: string }> {
+  return withPagesLock(async () => {
+    const wt = worktreePath(mindDir);
+    const dir = pagesRepoDir(dataDir);
+
+    // Commit pending changes once (shared by pull and merge)
+    const status = (await gitExec(["status", "--porcelain"], { cwd: wt }, isolation)).trim();
+    if (status) {
+      await gitExec(["add", "-A"], { cwd: wt }, isolation);
+      await gitExec(
+        ["commit", "--author", `${mindName} <${mindName}@volute>`, "-m", `wip: ${mindName}`],
+        { cwd: wt },
+        isolation,
+      );
+    }
+
+    // Rebase onto main (pull)
+    try {
+      await gitExec(["rebase", "main"], { cwd: wt }, isolation);
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      const isConflict =
+        errMsg.includes("CONFLICT") ||
+        errMsg.includes("could not apply") ||
+        errMsg.includes("merge conflict");
+
+      try {
+        await gitExec(["rebase", "--abort"], { cwd: wt }, isolation);
+      } catch (abortErr: unknown) {
+        console.error("[pages] rebase abort failed", abortErr);
+      }
+
+      if (isConflict) {
+        return {
+          ok: false,
+          conflicts: true,
+          message:
+            "Pull conflicts detected — your changes conflict with main. Reconcile the conflicting files, commit, and try again.",
+        };
+      }
+      return { ok: false, message: `Pull failed: ${errMsg}` };
+    }
+
+    // Check if there's anything to merge
+    const diff = (
+      await gitExec(["diff", `main...${mindName}`, "--stat"], { cwd: dir }, isolation)
+    ).trim();
+    if (!diff) {
+      return { ok: true, message: "Nothing to publish" };
+    }
+
+    // Squash-merge into main
+    try {
+      await gitExec(["merge", "--squash", mindName], { cwd: dir }, isolation);
+    } catch (err) {
+      const errOutput = [
+        (err as Error).message,
+        (err as Error & { stderr?: string }).stderr ?? "",
+        (err as Error & { stdout?: string }).stdout ?? "",
+      ].join("\n");
+      const isConflict = errOutput.includes("CONFLICT") || errOutput.includes("could not apply");
+      try {
+        await gitExec(["reset", "--hard", "HEAD"], { cwd: dir }, isolation);
+      } catch (resetErr: unknown) {
+        console.error("[pages] reset after squash conflict failed", resetErr);
+      }
+      if (isConflict) {
+        return { ok: false, conflicts: true, message: "Merge conflicts detected" };
+      }
+      return { ok: false, message: `Merge failed: ${(err as Error).message}` };
+    }
+
+    await gitExec(
+      ["commit", "--author", `${mindName} <${mindName}@volute>`, "-m", message],
+      { cwd: dir },
+      isolation,
+    );
+
+    // Reset mind's branch to main
+    try {
+      await gitExec(["reset", "--hard", "main"], { cwd: wt }, isolation);
+    } catch (err: unknown) {
+      console.error(`[pages] branch reset failed for ${mindName}`, err);
+      return {
+        ok: true,
+        message: "Published to main, but branch reset failed — run 'volute pages pull' to sync",
+      };
+    }
+
+    if (isolation?.isIsolationEnabled()) {
+      try {
+        await execAsync("chown", ["-R", `${isolation.getMindUser(mindName)}:volute`, wt]);
+      } catch {
+        // Non-fatal: mind still functions but may hit permission errors
+      }
+    }
+
+    return { ok: true };
+  });
+}
+
 /** Show what the mind has changed compared to main. */
 export async function pagesStatus(mindDir: string, isolation?: IsolationInfo): Promise<string> {
   const wt = worktreePath(mindDir);
-  const uncommitted = (await gitExec(["status", "--porcelain"], { cwd: wt }, isolation)).trim();
-  const diff = (await gitExec(["diff", "main...HEAD", "--stat"], { cwd: wt }, isolation)).trim();
+  const [uncommitted, diff] = await Promise.all([
+    gitExec(["status", "--porcelain"], { cwd: wt }, isolation).then((s) => s.trim()),
+    gitExec(["diff", "main...HEAD", "--stat"], { cwd: wt }, isolation).then((s) => s.trim()),
+  ]);
   let result = diff || "No changes compared to main.";
   if (uncommitted) {
     result += `\n\nUncommitted changes:\n${uncommitted}`;

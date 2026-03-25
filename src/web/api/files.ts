@@ -1,3 +1,4 @@
+import type { Dirent } from "node:fs";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import { extname, resolve } from "node:path";
@@ -17,6 +18,25 @@ const AVATAR_MIME: Record<string, string> = {
 };
 
 const MAX_AVATAR_SIZE = 2 * 1024 * 1024; // 2MB
+const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
+
+const MIME_TYPES: Record<string, string> = {
+  ".html": "text/html",
+  ".css": "text/css",
+  ".js": "application/javascript",
+  ".json": "application/json",
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".txt": "text/plain",
+  ".md": "text/markdown",
+  ".xml": "application/xml",
+  ".woff": "font/woff",
+  ".woff2": "font/woff2",
+};
 
 const app = new Hono<AuthEnv>()
   // Upload avatar image
@@ -116,7 +136,14 @@ const app = new Hono<AuthEnv>()
     if (!entry) return c.json({ error: "Mind not found" }, 404);
 
     const homeDir = resolve(entry.dir ?? mindDir(name), "home");
-    const entries = await readdir(homeDir, { withFileTypes: true }).catch(() => []);
+    let entries: Dirent[];
+    try {
+      entries = await readdir(homeDir, { withFileTypes: true });
+    } catch (err: unknown) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT")
+        return c.json({ error: "Mind home directory not found" }, 404);
+      return c.json({ error: "Failed to read directory" }, 500);
+    }
     const items = entries
       .filter((e) => !e.name.startsWith("."))
       .map((e) => ({ name: e.name, type: e.isDirectory() ? "directory" : ("file" as const) }));
@@ -137,47 +164,43 @@ const app = new Hono<AuthEnv>()
       return c.text("Forbidden", 403);
     if (relativePath.split("/").some((seg) => seg.startsWith("."))) return c.text("Forbidden", 403);
 
-    let fileStat: Awaited<ReturnType<typeof stat>>;
+    // Resolve symlinks and verify containment
+    let resolvedPath: string;
     try {
-      fileStat = await stat(requestedPath);
+      const realHome = await realpath(homeDir);
+      resolvedPath = await realpath(requestedPath);
+      if (resolvedPath !== realHome && !resolvedPath.startsWith(`${realHome}/`))
+        return c.text("Forbidden", 403);
     } catch (err: unknown) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") return c.text("Not found", 404);
       return c.text("Internal server error", 500);
     }
 
+    let fileStat: Awaited<ReturnType<typeof stat>>;
+    try {
+      fileStat = await stat(resolvedPath);
+    } catch (err: unknown) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return c.text("Not found", 404);
+      console.error(`[files] stat failed for ${resolvedPath}:`, err);
+      return c.text("Internal server error", 500);
+    }
+
     if (fileStat.isDirectory()) {
       // Redirect to trailing slash if missing, otherwise list contents
-      if (!c.req.path.endsWith("/")) return c.redirect(c.req.path + "/");
-      const dirEntries = await readdir(requestedPath, { withFileTypes: true }).catch(() => []);
+      if (!c.req.path.endsWith("/")) return c.redirect(`${c.req.path}/`);
+      const dirEntries = await readdir(resolvedPath, { withFileTypes: true }).catch(
+        () => [] as Dirent[],
+      );
       const items = dirEntries
         .filter((e) => !e.name.startsWith("."))
         .map((e) => ({ name: e.name, type: e.isDirectory() ? "directory" : ("file" as const) }));
       return c.json(items);
     }
 
-    const MIME_TYPES: Record<string, string> = {
-      ".html": "text/html",
-      ".css": "text/css",
-      ".js": "application/javascript",
-      ".json": "application/json",
-      ".svg": "image/svg+xml",
-      ".png": "image/png",
-      ".jpg": "image/jpeg",
-      ".jpeg": "image/jpeg",
-      ".gif": "image/gif",
-      ".webp": "image/webp",
-      ".txt": "text/plain",
-      ".md": "text/markdown",
-      ".xml": "application/xml",
-      ".woff": "font/woff",
-      ".woff2": "font/woff2",
-    };
-
-    const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
     if (fileStat.size > MAX_FILE_SIZE) return c.text("File too large", 413);
 
-    const body = await readFile(requestedPath);
-    const mime = MIME_TYPES[extname(requestedPath).toLowerCase()] || "application/octet-stream";
+    const body = await readFile(resolvedPath);
+    const mime = MIME_TYPES[extname(resolvedPath).toLowerCase()] || "application/octet-stream";
     return c.body(body, 200, { "Content-Type": mime });
   });
 

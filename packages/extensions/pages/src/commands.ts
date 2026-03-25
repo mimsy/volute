@@ -4,16 +4,13 @@ import { relative, resolve } from "node:path";
 import type { ExtensionCommand } from "@volute/extensions";
 
 import { getPublishedPages, syncPublishedPages } from "./db.js";
-import type { IsolationInfo } from "./shared-pages.js";
-import { pagesLog, pagesMerge, pagesPull, pagesStatus } from "./shared-pages.js";
-import { getDataDir } from "./state.js";
-
-function isolationFrom(ctx: {
-  isIsolationEnabled: () => boolean;
-  getMindUser: (name: string) => string;
-}): IsolationInfo {
-  return { isIsolationEnabled: ctx.isIsolationEnabled, getMindUser: ctx.getMindUser };
-}
+import {
+  isolationFrom,
+  pagesLog,
+  pagesPull,
+  pagesPullAndMerge,
+  pagesStatus,
+} from "./shared-pages.js";
 
 export function createCommands(): Record<string, ExtensionCommand> {
   return {
@@ -38,33 +35,21 @@ export function createCommands(): Record<string, ExtensionCommand> {
             return { error: 'Usage: volute pages publish --shared "description of changes"' };
 
           try {
-            const dataDir = getDataDir();
-
-            // Auto-pull first to reduce conflict frequency
-            const pullResult = await pagesPull(mindName, mindDir, dataDir, isolationFrom(ctx));
-            if (!pullResult.ok) {
-              return {
-                error: pullResult.message || "Pull failed — resolve conflicts and try again.",
-              };
-            }
-
-            // Merge to main
-            const mergeResult = await pagesMerge(
+            const result = await pagesPullAndMerge(
               mindName,
               mindDir,
-              dataDir,
+              ctx.dataDir,
               message,
               isolationFrom(ctx),
             );
-            if (!mergeResult.ok) {
+            if (!result.ok) {
               return {
                 error:
-                  mergeResult.message ||
-                  "Merge conflicts detected — pull, reconcile, and try again.",
+                  result.message || "Merge conflicts detected — pull, reconcile, and try again.",
               };
             }
 
-            return { output: mergeResult.message || "Published shared pages." };
+            return { output: result.message || "Published shared pages." };
           } catch (err) {
             return { error: `Shared publish failed: ${(err as Error).message}` };
           }
@@ -91,7 +76,7 @@ export function createCommands(): Record<string, ExtensionCommand> {
         }
 
         // Scan snapshot for .html files
-        const htmlFiles = collectHtmlFiles(snapshotDir, snapshotDir);
+        const htmlFiles = collectFiles(snapshotDir, snapshotDir, ".html");
 
         // Sync DB and get diff
         let diff: { added: string[]; removed: string[]; updated: string[] };
@@ -134,7 +119,7 @@ export function createCommands(): Record<string, ExtensionCommand> {
             };
 
           // Collect all files from snapshot as base64
-          const allFiles = collectAllFiles(snapshotDir, snapshotDir);
+          const allFiles = collectFiles(snapshotDir, snapshotDir);
           const files: Record<string, string> = {};
           for (const f of allFiles) {
             const fp = resolve(snapshotDir, f);
@@ -212,7 +197,7 @@ export function createCommands(): Record<string, ExtensionCommand> {
 
         const sourceDir = resolve(mindDir, "home", "pages");
         const published = new Set(getPublishedPages(db, mindName).map((p) => p.file));
-        const draftFiles = existsSync(sourceDir) ? collectHtmlFiles(sourceDir, sourceDir) : [];
+        const draftFiles = existsSync(sourceDir) ? collectFiles(sourceDir, sourceDir, ".html") : [];
         const allFiles = new Set([...published, ...draftFiles]);
 
         if (allFiles.size === 0) return { output: "No pages found." };
@@ -241,8 +226,7 @@ export function createCommands(): Record<string, ExtensionCommand> {
         if (!mindDir) return { error: `Mind not found: ${mindName}` };
 
         try {
-          const dataDir = getDataDir();
-          const result = await pagesPull(mindName, mindDir, dataDir);
+          const result = await pagesPull(mindName, mindDir, isolationFrom(ctx));
           if (!result.ok) {
             return { error: result.message || "Pull failed." };
           }
@@ -281,8 +265,8 @@ export function createCommands(): Record<string, ExtensionCommand> {
   };
 }
 
-/** Recursively collect .html files, returning paths relative to baseDir */
-function collectHtmlFiles(dir: string, baseDir: string): string[] {
+/** Recursively collect files, returning paths relative to baseDir. Optionally filter by extension. */
+function collectFiles(dir: string, baseDir: string, ext?: string): string[] {
   const files: string[] = [];
   let items: string[];
   try {
@@ -297,39 +281,10 @@ function collectHtmlFiles(dir: string, baseDir: string): string[] {
     const fullPath = resolve(dir, item);
     try {
       const s = statSync(fullPath);
-      if (s.isFile() && item.endsWith(".html")) {
+      if (s.isFile() && (!ext || item.endsWith(ext))) {
         files.push(relative(baseDir, fullPath));
       } else if (s.isDirectory()) {
-        files.push(...collectHtmlFiles(fullPath, baseDir));
-      }
-    } catch (err) {
-      console.error(`[pages] failed to stat ${fullPath}: ${(err as Error).message}`);
-    }
-  }
-
-  return files.sort();
-}
-
-/** Recursively collect all files, returning paths relative to baseDir */
-function collectAllFiles(dir: string, baseDir: string): string[] {
-  const files: string[] = [];
-  let items: string[];
-  try {
-    items = readdirSync(dir);
-  } catch (err) {
-    console.error(`[pages] failed to read directory ${dir}: ${(err as Error).message}`);
-    return files;
-  }
-
-  for (const item of items) {
-    if (item.startsWith(".")) continue;
-    const fullPath = resolve(dir, item);
-    try {
-      const s = statSync(fullPath);
-      if (s.isFile()) {
-        files.push(relative(baseDir, fullPath));
-      } else if (s.isDirectory()) {
-        files.push(...collectAllFiles(fullPath, baseDir));
+        files.push(...collectFiles(fullPath, baseDir, ext));
       }
     } catch (err) {
       console.error(`[pages] failed to stat ${fullPath}: ${(err as Error).message}`);
