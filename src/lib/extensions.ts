@@ -635,7 +635,12 @@ export async function installNpmExtension(pkg: string): Promise<void> {
 
   const dir = ensureExtensionsNpmDir();
   const { exec } = await import("./exec.js");
-  await exec("npm", ["install", pkg], { cwd: dir });
+  try {
+    await exec("npm", ["install", pkg], { cwd: dir });
+  } catch (err) {
+    log.error(`npm install failed for "${pkg}"`, log.errorData(err));
+    throw new Error(`Failed to install "${pkg}". Check daemon logs for details.`);
+  }
 
   packages.push(pkg);
   writeExtensionsConfig(packages);

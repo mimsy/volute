@@ -1,6 +1,6 @@
 <script lang="ts">
 import type { HistoryMessage, TurnActivity, TurnConversation } from "@volute/api";
-import { Icon } from "@volute/ui";
+import { Icon, tooltip as tooltipAction } from "@volute/ui";
 import { renderMarkdown } from "@volute/ui/markdown";
 import { tick } from "svelte";
 import { fetchTurnEvents } from "../lib/client";
@@ -197,22 +197,22 @@ async function handleClick() {
   bind:this={eventEl}
 >
   {#if event.type === "inbound"}
-    <div class="marker marker-icon" style:color="var(--blue)"><span class="marker-tooltip">{tooltip}</span><Icon kind="chat" /></div>
+    <div class="marker marker-icon" style:color="var(--blue)" use:tooltipAction={{ text: tooltip, position: "left" }}><Icon kind="chat" /></div>
   {:else if event.type === "outbound"}
-    <div class="marker marker-icon" style:color="var(--red)"><span class="marker-tooltip">{tooltip}</span><Icon kind="chat" /></div>
+    <div class="marker marker-icon" style:color="var(--red)" use:tooltipAction={{ text: tooltip, position: "left" }}><Icon kind="chat" /></div>
   {:else if event.type === "text"}
-    <div class="marker marker-icon" style:color="var(--text-1)"><span class="marker-tooltip">{tooltip}</span><Icon kind="text" /></div>
+    <div class="marker marker-icon" style:color="var(--text-1)" use:tooltipAction={{ text: tooltip, position: "left" }}><Icon kind="text" /></div>
   {:else if event.type === "thinking"}
-    <div class="marker marker-icon" style:color="var(--text-2)"><span class="marker-tooltip">{tooltip}</span><Icon kind="thinking" /></div>
+    <div class="marker marker-icon" style:color="var(--text-2)" use:tooltipAction={{ text: tooltip, position: "left" }}><Icon kind="thinking" /></div>
   {:else if event.type === "tool_use" || event.type === "tool_result"}
     {@const toolMeta = meta}
     {@const toolName = typeof toolMeta?.name === "string" ? toolMeta.name : "tool"}
     {@const cat = getToolCategory(toolName)}
-    <div class="marker marker-icon" style:color={getCategoryColor(cat)}><span class="marker-tooltip">{tooltip}</span><Icon kind={getCategoryIcon(cat)} /></div>
+    <div class="marker marker-icon" style:color={getCategoryColor(cat)} use:tooltipAction={{ text: tooltip, position: "left" }}><Icon kind={getCategoryIcon(cat)} /></div>
   {:else if event.type === "activity"}
     {@const actMeta = meta}
     {@const actColor = typeof actMeta?.color === "string" ? `var(--${actMeta.color})` : "var(--yellow)"}
-    <div class="marker marker-icon" style:color={actColor}><span class="marker-tooltip">{tooltip}</span>
+    <div class="marker marker-icon" style:color={actColor} use:tooltipAction={{ text: tooltip, position: "left" }}>
       {#if typeof actMeta?.icon === "string"}
         {@html actMeta.icon}
       {:else}
@@ -220,7 +220,7 @@ async function handleClick() {
       {/if}
     </div>
   {:else}
-    <div class="marker" style:background={color}><span class="marker-tooltip">{tooltip}</span></div>
+    <div class="marker" style:background={color} use:tooltipAction={{ text: tooltip, position: "left" }}></div>
   {/if}
   {#if event.type === "summary" && turnExpanded}
     <div class="turn-connector"></div>
@@ -235,7 +235,7 @@ async function handleClick() {
           {:else}
             <span class="time">{formatTime(event.created_at)}</span>
           {/if}
-          <button class="detail-toggle" class:detail-active={fullDetail} onclick={async (e) => {
+          <button class="detail-toggle" class:detail-active={fullDetail} use:tooltipAction={{ text: fullDetail ? "show grouped" : "show all events", position: "bottom" }} onclick={async (e) => {
             e.stopPropagation();
             if (!fullDetail && detailEvents.length === 0) {
               detailLoading = true;
@@ -263,7 +263,6 @@ async function handleClick() {
             {:else}
               <Icon kind="search" />
             {/if}
-            <span class="marker-tooltip">{fullDetail ? "show grouped" : "show all events"}</span>
           </button>
         </div>
       </div>
@@ -287,8 +286,7 @@ async function handleClick() {
                 {@const catIcon = getCategoryIcon(item.category)}
                 {@const toolTooltip = `${formatTime(item.toolUse.created_at)} · ${item.toolName}`}
                 <div class="event" style:--type-color={catColor}>
-                  <div class="marker marker-icon" style:color={catColor}>
-                    <span class="marker-tooltip">{toolTooltip}</span>
+                  <div class="marker marker-icon" style:color={catColor} use:tooltipAction={{ text: toolTooltip, position: "left" }}>
                     <Icon kind={catIcon} />
                   </div>
                   <ToolGroupComponent group={item} {mindName} turnStatus="complete" />
@@ -388,8 +386,12 @@ async function handleClick() {
   .event:hover::after {
     opacity: 1;
   }
-  /* Expandable summaries: dashed rail */
-  .event.expandable-summary::after,
+  /* Expandable summaries: solid rail when collapsed, dashed when expanded */
+  .event.expandable-summary::after {
+    top: 20px;
+    background: var(--timeline-rail);
+    opacity: 1;
+  }
   .event.turn-expanded::after {
     top: 20px;
     background: repeating-linear-gradient(
@@ -401,8 +403,10 @@ async function handleClick() {
     );
     opacity: 1;
   }
-  .event.expandable-summary:hover::after,
-  .event.turn-expanded:hover::after {
+  .event.expandable-summary:hover:not(:has(.turn-branch:hover))::after {
+    background: var(--type-color);
+  }
+  .event.turn-expanded:hover:not(:has(.turn-branch:hover))::after {
     background: repeating-linear-gradient(
       to bottom,
       var(--type-color) 0px,
@@ -457,29 +461,6 @@ async function handleClick() {
   .marker-icon :global(svg) {
     width: 13px;
     height: 13px;
-  }
-
-  .marker-tooltip {
-    position: absolute;
-    right: calc(100% + 6px);
-    top: 50%;
-    transform: translateY(-50%);
-    padding: 3px 8px;
-    background: var(--bg-3);
-    color: var(--text-0);
-    font-family: var(--sans);
-    font-size: 11px;
-    border-radius: var(--radius);
-    white-space: nowrap;
-    pointer-events: none;
-    opacity: 0;
-    transition: opacity 0.15s;
-    border: 1px solid var(--border);
-    z-index: 20;
-  }
-
-  .marker-icon:hover .marker-tooltip {
-    opacity: 1;
   }
 
   /* Inline compact text for collapsed events */
@@ -570,15 +551,6 @@ async function handleClick() {
   .detail-toggle.detail-active {
     color: var(--accent);
   }
-  .detail-toggle:hover .marker-tooltip {
-    opacity: 1;
-  }
-  .detail-toggle .marker-tooltip {
-    left: 50%;
-    top: calc(100% + 6px);
-    transform: translateX(-50%);
-  }
-
   .summary-text {
     font-size: 13px;
     color: var(--text-0);

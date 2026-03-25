@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 import { eq, sql } from "drizzle-orm";
 import { createUser } from "../src/lib/auth.js";
 import { getDb } from "../src/lib/db.js";
-import { mindHistory, turns, users } from "../src/lib/schema.js";
+import { mindHistory, summaries, turns, users } from "../src/lib/schema.js";
 import { createSession, deleteSession } from "../src/web/middleware/auth.js";
 
 const TEST_USERNAME = "history-test-admin";
@@ -13,7 +13,8 @@ let sessionId: string;
 async function cleanup() {
   const db = await getDb();
   await db.delete(users).where(eq(users.username, TEST_USERNAME));
-  // Clean up test turns and history
+  // Clean up test turns, history, and summaries
+  await db.delete(summaries).where(sql`mind LIKE 'test-history-%'`);
   await db.delete(turns).where(sql`mind LIKE 'test-history-%'`);
   await db.delete(mindHistory).where(sql`mind LIKE 'test-history-%'`);
 }
@@ -121,12 +122,11 @@ describe("web history routes", () => {
       mind: "test-history-mind1",
       status: "complete",
     });
-    await db.insert(mindHistory).values({
+    await db.insert(summaries).values({
       mind: "test-history-mind1",
-      type: "summary",
+      period: "turn",
+      period_key: turnId,
       content: "Test summary content",
-      turn_id: turnId,
-      channel: "",
     });
 
     const res = await app.request(`/api/v1/history/turns?turnId=${turnId}`, {
@@ -142,5 +142,122 @@ describe("web history routes", () => {
     const { default: app } = await import("../src/web/app.js");
     const res = await app.request("/api/v1/history/turns");
     assert.equal(res.status, 401);
+  });
+
+  // ── Summaries endpoint tests ──
+
+  it("GET /api/v1/history/summaries — requires period param", async () => {
+    const cookie = await setupAuth();
+    const { default: app } = await import("../src/web/app.js");
+
+    const res = await app.request("/api/v1/history/summaries", {
+      headers: { Cookie: `volute_session=${cookie}` },
+    });
+    assert.equal(res.status, 400);
+    const body = await res.json();
+    assert.ok((body as { error: string }).error.includes("period"));
+  });
+
+  it("GET /api/v1/history/summaries — rejects invalid period", async () => {
+    const cookie = await setupAuth();
+    const { default: app } = await import("../src/web/app.js");
+
+    const res = await app.request("/api/v1/history/summaries?period=invalid", {
+      headers: { Cookie: `volute_session=${cookie}` },
+    });
+    assert.equal(res.status, 400);
+  });
+
+  it("GET /api/v1/history/summaries — returns summaries by period", async () => {
+    const cookie = await setupAuth();
+    const { default: app } = await import("../src/web/app.js");
+    const db = await getDb();
+
+    await db.insert(summaries).values({
+      mind: "test-history-sum1",
+      period: "hour",
+      period_key: "2026-03-22T14",
+      content: "Hourly summary content",
+      metadata: JSON.stringify({ deterministic: true }),
+    });
+
+    const res = await app.request("/api/v1/history/summaries?period=hour&mind=test-history-sum1", {
+      headers: { Cookie: `volute_session=${cookie}` },
+    });
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as Array<{ content: string; period_key: string }>;
+    assert.ok(body.length >= 1);
+    assert.equal(body[0].content, "Hourly summary content");
+    assert.equal(body[0].period_key, "2026-03-22T14");
+  });
+
+  it("GET /api/v1/history/summaries — fetches by IDs", async () => {
+    const cookie = await setupAuth();
+    const { default: app } = await import("../src/web/app.js");
+    const db = await getDb();
+
+    const result = await db
+      .insert(summaries)
+      .values({
+        mind: "test-history-sum2",
+        period: "turn",
+        period_key: "some-turn-id",
+        content: "ID-based fetch test",
+      })
+      .returning({ id: summaries.id });
+    const id = result[0].id;
+
+    const res = await app.request(`/api/v1/history/summaries?ids=${id}`, {
+      headers: { Cookie: `volute_session=${cookie}` },
+    });
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as Array<{ id: number; content: string }>;
+    assert.equal(body.length, 1);
+    assert.equal(body[0].id, id);
+    assert.equal(body[0].content, "ID-based fetch test");
+  });
+
+  it("GET /api/v1/history/summaries — respects from/to range", async () => {
+    const cookie = await setupAuth();
+    const { default: app } = await import("../src/web/app.js");
+    const db = await getDb();
+
+    await db.insert(summaries).values([
+      {
+        mind: "test-history-range",
+        period: "hour",
+        period_key: "2026-03-20T10",
+        content: "Early",
+      },
+      {
+        mind: "test-history-range",
+        period: "hour",
+        period_key: "2026-03-22T14",
+        content: "Later",
+      },
+    ]);
+
+    const res = await app.request(
+      "/api/v1/history/summaries?period=hour&mind=test-history-range&from=2026-03-21&to=2026-03-23",
+      { headers: { Cookie: `volute_session=${cookie}` } },
+    );
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as Array<{ period_key: string }>;
+    assert.equal(body.length, 1);
+    assert.equal(body[0].period_key, "2026-03-22T14");
+  });
+
+  it("GET /api/v1/history/summaries — caps limit at 200", async () => {
+    const cookie = await setupAuth();
+    const { default: app } = await import("../src/web/app.js");
+
+    const res = await app.request(
+      "/api/v1/history/summaries?period=hour&mind=test-history-cap&limit=999",
+      { headers: { Cookie: `volute_session=${cookie}` } },
+    );
+    assert.equal(res.status, 200);
+    // We can't directly check the SQL limit, but we verify the endpoint doesn't error
+    const body = await res.json();
+    assert.ok(Array.isArray(body));
   });
 });

@@ -3,6 +3,13 @@ import { resolve as resolvePath } from "node:path";
 import type { HookCallback, SyncHookJSONOutput } from "@anthropic-ai/claude-agent-sdk";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { toSDKContent } from "./lib/content.js";
+import {
+  countSdkInstructionTokens,
+  countSkillDescriptionTokens,
+  countSystemPromptTokens,
+  findClaudeSessionFile,
+  parseClaudeSessionJSONL,
+} from "./lib/context-breakdown.js";
 import { daemonEmit } from "./lib/daemon-client.js";
 import { runHooks } from "./lib/hook-loader.js";
 import { createAutoCommitHook } from "./lib/hooks/auto-commit.js";
@@ -23,6 +30,7 @@ import type {
   VoluteContentPart,
   VoluteEvent,
 } from "./lib/types.js";
+import type { ContextInfo } from "./lib/volute-server.js";
 
 type Session = {
   name: string;
@@ -34,6 +42,7 @@ type Session = {
   messageChannels: Map<string, { channel: string; sender?: string }>;
   replyInstructionsFired: boolean;
   replyInstructionsMode: "once" | "always" | "never";
+  contextTokens: number;
 };
 
 export function createMind(options: {
@@ -47,7 +56,11 @@ export function createMind(options: {
   maxContextTokens?: number;
   subagents?: Record<string, SubagentConfig>;
   onIdentityReload?: () => Promise<void>;
-}): { resolve: HandlerResolver; waitForCommits: () => Promise<void> } {
+}): {
+  resolve: HandlerResolver;
+  waitForCommits: () => Promise<void>;
+  getContextInfo: () => ContextInfo;
+} {
   const autoCommit = createAutoCommitHook(options.cwd);
   const identityReload = createIdentityReloadHook(options.cwd);
   const sessionStore = createSessionStore(options.sessionsDir);
@@ -286,27 +299,30 @@ export function createMind(options: {
             options.onIdentityReload?.();
           }
         },
-        onContextTokens: maxContextTokens
-          ? (tokens: number) => {
-              if (tokens >= maxContextTokens && !compactionTriggered.get(session.name)) {
-                compactionTriggered.set(session.name, true);
-                log(
-                  "mind",
-                  `session "${session.name}": ${tokens} tokens >= ${maxContextTokens} — triggering compaction`,
-                );
-                session.messageIds.push(undefined);
-                session.channel.push({
-                  type: "user",
-                  session_id: "",
-                  message: {
-                    role: "user",
-                    content: [{ type: "text", text: compactionMessage }],
-                  },
-                  parent_tool_use_id: null,
-                });
-              }
-            }
-          : undefined,
+        onContextTokens: (tokens: number) => {
+          session.contextTokens = tokens;
+          if (
+            maxContextTokens &&
+            tokens >= maxContextTokens &&
+            !compactionTriggered.get(session.name)
+          ) {
+            compactionTriggered.set(session.name, true);
+            log(
+              "mind",
+              `session "${session.name}": ${tokens} tokens >= ${maxContextTokens} — triggering compaction`,
+            );
+            session.messageIds.push(undefined);
+            session.channel.push({
+              type: "user",
+              session_id: "",
+              message: {
+                role: "user",
+                content: [{ type: "text", text: compactionMessage }],
+              },
+              parent_tool_use_id: null,
+            });
+          }
+        },
       };
 
       async function runCompact(sessionId: string) {
@@ -436,6 +452,7 @@ export function createMind(options: {
       messageChannels: new Map(),
       replyInstructionsFired: false,
       replyInstructionsMode: "once",
+      contextTokens: 0,
     };
     sessions.set(name, session);
 
@@ -514,5 +531,39 @@ export function createMind(options: {
     return handler;
   }
 
-  return { resolve, waitForCommits: autoCommit.waitForCommits };
+  const systemPromptTokens = countSystemPromptTokens(options.systemPrompt);
+  const claudeMdTokens = countSdkInstructionTokens(options.cwd);
+  const skillDescTokens = countSkillDescriptionTokens([resolvePath(options.cwd, ".claude/skills")]);
+
+  function getContextInfo(): ContextInfo {
+    return {
+      sessions: Array.from(sessions.values()).map((s) => {
+        try {
+          const sessionId = sessionStore.load(s.name);
+          const jsonlPath = sessionId ? findClaudeSessionFile(options.cwd, sessionId) : null;
+          const parsed = jsonlPath
+            ? parseClaudeSessionJSONL(
+                jsonlPath,
+                systemPromptTokens,
+                claudeMdTokens,
+                skillDescTokens,
+              )
+            : null;
+
+          return {
+            name: s.name,
+            contextTokens: parsed?.contextTokens ?? s.contextTokens,
+            contextWindow: maxContextTokens,
+            breakdown: parsed?.breakdown,
+          };
+        } catch (err) {
+          log("mind", `failed to get context breakdown for session "${s.name}":`, err);
+          return { name: s.name, contextTokens: s.contextTokens, contextWindow: maxContextTokens };
+        }
+      }),
+      systemPrompt: systemPromptTokens,
+    };
+  }
+
+  return { resolve, waitForCommits: autoCommit.waitForCommits, getContextInfo };
 }

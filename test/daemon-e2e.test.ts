@@ -902,38 +902,41 @@ describe("daemon e2e", { timeout: 120000 }, () => {
 
     // Insert some summary rows directly into mind_history via the history endpoint
     const { getDb } = await import("../src/lib/db.js");
-    const { mindHistory } = await import("../src/lib/schema.js");
+    const { summaries, turns } = await import("../src/lib/schema.js");
     const db = await getDb();
 
     const now = new Date();
     const fiveMinAgo = new Date(now.getTime() - 5 * 60_000);
     const tenMinAgo = new Date(now.getTime() - 10 * 60_000);
+    const fmt = (d: Date) => d.toISOString().replace("T", " ").slice(0, 19);
 
-    // Insert summaries for different sessions
-    await db.insert(mindHistory).values([
+    // Insert turns and summaries for different sessions
+    await db.insert(turns).values([
+      { id: "turn-1", mind: TEST_MIND, session: "discord", status: "complete" },
+      { id: "turn-2", mind: TEST_MIND, session: "slack", status: "complete" },
+      { id: "turn-3", mind: TEST_MIND, session: "main", status: "complete" },
+    ]);
+    await db.insert(summaries).values([
       {
         mind: TEST_MIND,
-        session: "discord",
-        type: "summary",
+        period: "turn",
+        period_key: "turn-1",
         content: "Discussed project updates with Alice",
-        turn_id: "turn-1",
-        created_at: tenMinAgo.toISOString().replace("T", " ").slice(0, 19),
+        created_at: fmt(tenMinAgo),
       },
       {
         mind: TEST_MIND,
-        session: "slack",
-        type: "summary",
+        period: "turn",
+        period_key: "turn-2",
         content: "Reviewed code changes for PR #42",
-        turn_id: "turn-2",
-        created_at: fiveMinAgo.toISOString().replace("T", " ").slice(0, 19),
+        created_at: fmt(fiveMinAgo),
       },
       {
         mind: TEST_MIND,
-        session: "main",
-        type: "summary",
+        period: "turn",
+        period_key: "turn-3",
         content: "This should be excluded (same session)",
-        turn_id: "turn-3",
-        created_at: fiveMinAgo.toISOString().replace("T", " ").slice(0, 19),
+        created_at: fmt(fiveMinAgo),
       },
     ]);
 
@@ -952,7 +955,7 @@ describe("daemon e2e", { timeout: 120000 }, () => {
     await ensureTestMind();
 
     const { getDb } = await import("../src/lib/db.js");
-    const { mindHistory } = await import("../src/lib/schema.js");
+    const { mindHistory, summaries, turns } = await import("../src/lib/schema.js");
     const db = await getDb();
 
     const now = new Date();
@@ -981,22 +984,24 @@ describe("daemon e2e", { timeout: 120000 }, () => {
       },
     ]);
 
-    // Insert summaries: one before the turn boundary, one after
-    await db.insert(mindHistory).values([
+    // Insert turns and summaries: one before the turn boundary, one after
+    await db.insert(turns).values([
+      { id: "old-turn", mind: TEST_MIND, session: "telegram", status: "complete" },
+      { id: "new-turn", mind: TEST_MIND, session: "telegram", status: "complete" },
+    ]);
+    await db.insert(summaries).values([
       {
         mind: TEST_MIND,
-        session: "telegram",
-        type: "summary",
+        period: "turn",
+        period_key: "old-turn",
         content: "Old activity before turn boundary",
-        turn_id: "old-turn",
         created_at: fmt(thirtyMinAgo),
       },
       {
         mind: TEST_MIND,
-        session: "telegram",
-        type: "summary",
+        period: "turn",
+        period_key: "new-turn",
         content: "New activity after turn boundary",
-        turn_id: "new-turn",
         created_at: fmt(fiveMinAgo),
       },
     ]);

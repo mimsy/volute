@@ -9,7 +9,7 @@ import {
 } from "node:fs";
 import { resolve } from "node:path";
 import { zValidator } from "@hono/zod-validator";
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, type SQL, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
 import {
@@ -30,8 +30,8 @@ import {
   startMindFull as startMindFullService,
   stopMindFull as stopMindFullService,
 } from "../../lib/daemon/mind-service.js";
+import { summarizeTurn } from "../../lib/daemon/summarizer.js";
 import { getTokenBudget } from "../../lib/daemon/token-budget.js";
-import { summarizeTurn } from "../../lib/daemon/turn-summarizer.js";
 import {
   assignSession,
   completeTurn,
@@ -96,7 +96,7 @@ import {
   stateDir,
   validateMindName,
 } from "../../lib/registry.js";
-import { conversations, mindHistory } from "../../lib/schema.js";
+import { conversations, mindHistory, summaries, turns } from "../../lib/schema.js";
 
 import { getStandardSkillsWithExtensions, installSkill, SEED_SKILLS } from "../../lib/skills.js";
 import { announceToSystem } from "../../lib/system-channel.js";
@@ -1205,6 +1205,35 @@ const app = new Hono<AuthEnv>()
     const hasPages = existsSync(resolve(mindDir(name), "home", "pages"));
     return c.json({ ...entry, ...mindStatus, variants: variantStatuses, hasPages });
   })
+  // Context info — proxy to mind's /context endpoint
+  .get("/:name/context", async (c) => {
+    const name = c.req.param("name");
+    const entry = await findMind(name);
+    if (!entry) return c.json({ error: "Mind not found" }, 404);
+    if (!getMindManager().isRunning(name)) {
+      return c.json({ error: "Mind is not running" }, 503);
+    }
+    try {
+      const res = await fetch(`http://127.0.0.1:${entry.port}/context`, {
+        signal: AbortSignal.timeout(3000),
+      });
+      if (!res.ok) {
+        const status = res.status >= 500 ? 502 : 404;
+        return c.json(
+          {
+            error:
+              res.status >= 500 ? "Mind context handler errored" : "Context endpoint not available",
+          },
+          status,
+        );
+      }
+      const data = await res.json();
+      return c.json(data);
+    } catch (err) {
+      console.error(`context proxy for ${name}:`, err);
+      return c.json({ error: "Failed to reach mind" }, 503);
+    }
+  })
   // Start mind (supports variants) — admin only
   .post("/:name/start", requireSelf(), async (c) => {
     const name = c.req.param("name");
@@ -2274,8 +2303,8 @@ const app = new Hono<AuthEnv>()
           const globalConfig = readGlobalConfig();
           globalConfig.spiritModel = body.model;
           writeGlobalConfig(globalConfig);
-        } catch {
-          // Don't fail the request — the mind config was already saved
+        } catch (err) {
+          log.warn("failed to sync spirit model to global config", log.errorData(err));
         }
       }
 
@@ -2738,25 +2767,26 @@ const app = new Hono<AuthEnv>()
       sinceTimestamp = new Date(Date.now() - 3600_000).toISOString().replace("T", " ").slice(0, 19);
     }
 
-    // Query summaries from other sessions since the timestamp
+    // Query turn summaries from other sessions since the timestamp
     const conditions = [
-      eq(mindHistory.mind, name),
-      eq(mindHistory.type, "summary"),
-      sql`${mindHistory.created_at} > ${sinceTimestamp}`,
+      eq(summaries.mind, name),
+      eq(summaries.period, "turn"),
+      sql`${summaries.created_at} > ${sinceTimestamp}`,
     ];
     if (currentSession) {
-      conditions.push(sql`${mindHistory.session} != ${currentSession}`);
+      conditions.push(sql`${turns.session} != ${currentSession}`);
     }
 
     const rows = await db
       .select({
-        session: mindHistory.session,
-        content: mindHistory.content,
-        created_at: mindHistory.created_at,
+        session: turns.session,
+        content: summaries.content,
+        created_at: summaries.created_at,
       })
-      .from(mindHistory)
+      .from(summaries)
+      .innerJoin(turns, eq(turns.id, summaries.period_key))
       .where(and(...conditions))
-      .orderBy(desc(mindHistory.created_at))
+      .orderBy(desc(summaries.created_at))
       .limit(50);
 
     if (rows.length === 0) {
@@ -2797,20 +2827,82 @@ const app = new Hono<AuthEnv>()
 
     // Preset-based type filtering
     const effectivePreset = full ? "all" : preset;
+
+    // Default "summary" preset reads from the unified summaries table
+    if (!effectivePreset || effectivePreset === "summary") {
+      const sumConditions: SQL[] = [eq(summaries.mind, name), eq(summaries.period, "turn")];
+
+      if (session) {
+        sumConditions.push(eq(turns.session, session));
+        const sumRows = await db
+          .select({
+            id: summaries.id,
+            mind: summaries.mind,
+            period: summaries.period,
+            period_key: summaries.period_key,
+            content: summaries.content,
+            metadata: summaries.metadata,
+            created_at: summaries.created_at,
+            session: turns.session,
+          })
+          .from(summaries)
+          .innerJoin(turns, eq(turns.id, summaries.period_key))
+          .where(and(...sumConditions))
+          .orderBy(desc(summaries.created_at))
+          .limit(limit)
+          .offset(offset);
+        return c.json(
+          sumRows.map((r) => ({
+            id: r.id,
+            mind: r.mind,
+            type: "summary",
+            channel: null,
+            session: r.session,
+            sender: null,
+            message_id: null,
+            content: r.content,
+            metadata: r.metadata,
+            turn_id: r.period_key,
+            created_at: r.created_at,
+          })),
+        );
+      }
+
+      const sumRows = await db
+        .select()
+        .from(summaries)
+        .where(and(...sumConditions))
+        .orderBy(desc(summaries.created_at))
+        .limit(limit)
+        .offset(offset);
+      return c.json(
+        sumRows.map((r) => ({
+          id: r.id,
+          mind: r.mind,
+          type: "summary",
+          channel: null,
+          session: null,
+          sender: null,
+          message_id: null,
+          content: r.content,
+          metadata: r.metadata,
+          turn_id: r.period_key,
+          created_at: r.created_at,
+        })),
+      );
+    }
+
     switch (effectivePreset) {
       case "all":
         // No type filter
         break;
       case "conversation":
-        conditions.push(sql`${mindHistory.type} IN ('summary','inbound','outbound','tool_use')`);
+        conditions.push(sql`${mindHistory.type} IN ('inbound','outbound','tool_use')`);
         break;
       case "detailed":
         conditions.push(
-          sql`${mindHistory.type} IN ('summary','inbound','outbound','tool_use','tool_result','text','thinking')`,
+          sql`${mindHistory.type} IN ('inbound','outbound','tool_use','tool_result','text','thinking')`,
         );
-        break;
-      default:
-        conditions.push(sql`${mindHistory.type} IN ('summary')`);
         break;
     }
 

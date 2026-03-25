@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.34.0](https://github.com/mimsy/volute/compare/volute-v0.33.0...volute-v0.34.0) (2026-03-25)
+
+
+### Features
+
+* add default mind settings UI ([#263](https://github.com/mimsy/volute/issues/263)) ([f0f9854](https://github.com/mimsy/volute/commit/f0f98549cb8fa360d3aa6ee66001b36b7cbd9d54))
+* add extension management UI in system settings ([#260](https://github.com/mimsy/volute/issues/260)) ([1255278](https://github.com/mimsy/volute/commit/1255278cb7f151c091fdcc91f4d43646883274cf))
+* add progressive meta-summarization system ([#264](https://github.com/mimsy/volute/issues/264)) ([6cccf9d](https://github.com/mimsy/volute/commit/6cccf9deb3fa082903ae71e4ed28918d587f023a))
+* add session context inspector with waffle chart ([#266](https://github.com/mimsy/volute/issues/266)) ([dff5c9c](https://github.com/mimsy/volute/commit/dff5c9cc6eb545d458e9b6f302cf092c755ff435))
+* add spirit settings UI ([#262](https://github.com/mimsy/volute/issues/262)) ([35996c9](https://github.com/mimsy/volute/commit/35996c9bd495defbcb891d4d8f1983923634e9c1))
+* add system plan extension for coordinated mind activity ([#257](https://github.com/mimsy/volute/issues/257)) ([d51d63b](https://github.com/mimsy/volute/commit/d51d63bcdd1aa0aa644b0ac5aa10d5291343a73d))
+* add template type safety with composed typechecking ([#261](https://github.com/mimsy/volute/issues/261)) ([4b837d0](https://github.com/mimsy/volute/commit/4b837d07e0192a1564890db5e82c736fdc147004))
+* auto-update mind skills on daemon startup ([#265](https://github.com/mimsy/volute/issues/265)) ([5dc39c9](https://github.com/mimsy/volute/commit/5dc39c9d09f2ac8033601f3ba819100fd2dc474e))
+* redesign mind settings, sidebar, and schedule UI ([#250](https://github.com/mimsy/volute/issues/250)) ([44aa646](https://github.com/mimsy/volute/commit/44aa646b1d04470e928d6a7aad743a4902cfc213))
+* reduce mind token usage across prompts, messages, skills, and CLI ([#252](https://github.com/mimsy/volute/issues/252)) ([1c0747c](https://github.com/mimsy/volute/commit/1c0747c710fef7899de7d8b2f0c41c20afccda2d))
+* smooth UI improvements ([#258](https://github.com/mimsy/volute/issues/258)) ([169df65](https://github.com/mimsy/volute/commit/169df65e313128d30b30e9b7008890a70fa661c2))
+
+
+### Bug Fixes
+
+* eliminate ghost turns from startup context routing ([#259](https://github.com/mimsy/volute/issues/259)) ([987c2d9](https://github.com/mimsy/volute/commit/987c2d9bcefbad7faf9288f821c5cb07798af9b1))
+
 ## [0.33.0](https://github.com/mimsy/volute/compare/volute-v0.32.0...volute-v0.33.0) (2026-03-21)
 
 

@@ -26,7 +26,7 @@ export async function run(args: string[]) {
     case "history": {
       const rest = args.slice(1);
       const historyArgs = transformMindFlag(rest);
-      await import("./history.js").then((m) => m.run(historyArgs));
+      await import("./mind-history.js").then((m) => m.run(historyArgs));
       break;
     }
     case "upgrade":

@@ -118,16 +118,6 @@ export async function completeTurn(
   return entry.turnId;
 }
 
-/** Update a turn's summary_event_id. */
-export async function setSummaryEventId(turnId: string, summaryEventId: number): Promise<void> {
-  try {
-    const db = await getDb();
-    await db.update(turns).set({ summary_event_id: summaryEventId }).where(eq(turns.id, turnId));
-  } catch (err) {
-    tlog.error(`failed to set summary event for turn ${turnId}`, log.errorData(err));
-  }
-}
-
 /**
  * Mark any orphaned `active` turns as `complete` in the DB.
  * Called on daemon startup to clean up turns from a previous daemon instance

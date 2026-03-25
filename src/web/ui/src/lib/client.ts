@@ -16,6 +16,7 @@ import type {
   Participant,
   Prompt,
   SharedSkill,
+  SummaryRow,
   TurnRow,
   UpdateResult,
   Variant,
@@ -75,6 +76,33 @@ export function fetchMinds(): Promise<Mind[]> {
 
 export function fetchMind(name: string): Promise<Mind> {
   return get(`${V1}/minds/${enc(name)}`);
+}
+
+export type ContextBreakdown = {
+  systemPrompt: number;
+  sdkInstructions: number;
+  skillDescriptions: number;
+  conversation: {
+    userText: number;
+    assistantText: number;
+    thinking: number;
+    toolUse: number;
+    toolResult: number;
+  };
+};
+
+export type ContextInfo = {
+  sessions: Array<{
+    name: string;
+    contextTokens: number;
+    contextWindow?: number;
+    breakdown?: ContextBreakdown;
+  }>;
+  systemPrompt: number;
+};
+
+export function fetchMindContext(name: string): Promise<ContextInfo> {
+  return get(`${V1}/minds/${enc(name)}/context`);
 }
 
 export function startMind(name: string): Promise<void> {
@@ -241,14 +269,37 @@ export function fetchTurns(opts?: {
   limit?: number;
   offset?: number;
   turnId?: string;
+  turnIds?: string[];
 }): Promise<TurnRow[]> {
   const params = new URLSearchParams();
   if (opts?.mind) params.set("mind", opts.mind);
   if (opts?.limit !== undefined) params.set("limit", String(opts.limit));
   if (opts?.offset !== undefined) params.set("offset", String(opts.offset));
   if (opts?.turnId) params.set("turnId", opts.turnId);
+  if (opts?.turnIds?.length) params.set("turnIds", opts.turnIds.join(","));
   const qs = params.toString();
   return get(`${V1}/history/turns${qs ? `?${qs}` : ""}`);
+}
+
+export function fetchSummaries(opts: {
+  mind?: string;
+  period: string;
+  from?: string;
+  to?: string;
+  limit?: number;
+}): Promise<SummaryRow[]> {
+  const params = new URLSearchParams();
+  if (opts.mind) params.set("mind", opts.mind);
+  params.set("period", opts.period);
+  if (opts.from) params.set("from", opts.from);
+  if (opts.to) params.set("to", opts.to);
+  if (opts.limit !== undefined) params.set("limit", String(opts.limit));
+  return get(`${V1}/history/summaries?${params}`);
+}
+
+export function fetchSummaryByIds(ids: number[]): Promise<SummaryRow[]> {
+  if (ids.length === 0) return Promise.resolve([]);
+  return get(`${V1}/history/summaries?ids=${ids.join(",")}`);
 }
 
 // --- Variants ---
@@ -367,6 +418,14 @@ export async function removeDefaultSkill(skill: string): Promise<string[]> {
   }
   const body = (await res.json()) as { skills: string[] };
   return body.skills;
+}
+
+export function fetchAutoUpdateSkills(): Promise<boolean> {
+  return get<{ enabled: boolean }>(`${V1}/skills/auto-update`).then((r) => r.enabled);
+}
+
+export function setAutoUpdateSkills(enabled: boolean): Promise<void> {
+  return put(`${V1}/skills/auto-update`, { enabled });
 }
 
 // --- Prompts ---

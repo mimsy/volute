@@ -2,11 +2,13 @@ import assert from "node:assert/strict";
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, afterEach, before, beforeEach, describe, it } from "node:test";
+import { eq } from "drizzle-orm";
 import { getDb } from "../src/lib/db.js";
 import { exec } from "../src/lib/exec.js";
-import { voluteHome } from "../src/lib/registry.js";
-import { sharedSkills } from "../src/lib/schema.js";
+import { addMind, addVariant, voluteHome } from "../src/lib/registry.js";
+import { minds, sharedSkills } from "../src/lib/schema.js";
 import {
+  autoUpdateMindSkills,
   getSharedSkill,
   importSkillFromDir,
   installBinShim,
@@ -731,5 +733,195 @@ describe("mindSkillsDir template detection", () => {
     assert.ok(result.endsWith(join("home", ".agents", "skills")));
 
     rmSync(dir, { recursive: true });
+  });
+});
+
+describe("autoUpdateMindSkills", () => {
+  const testMindName = "test-auto-update-mind";
+  const testMindName2 = "test-auto-update-mind-2";
+  let testMindDir: string;
+  let testMindDir2: string;
+  const testNames = [testMindName, testMindName2, `${testMindName}-variant`];
+
+  beforeEach(async () => {
+    await cleanup();
+    testMindDir = join(voluteHome(), "minds", testMindName);
+    testMindDir2 = join(voluteHome(), "minds", testMindName2);
+    await createMindGitRepo(testMindDir);
+  });
+
+  afterEach(async () => {
+    await cleanup();
+    const db = await getDb();
+    for (const name of testNames) {
+      await db.delete(minds).where(eq(minds.name, name));
+    }
+    if (existsSync(testMindDir)) rmSync(testMindDir, { recursive: true });
+    if (existsSync(testMindDir2)) rmSync(testMindDir2, { recursive: true });
+  });
+
+  it("updates outdated skills on registered minds", async () => {
+    const source = createSkillSource("auto-test-skill", "A test skill");
+    await importSkillFromDir(source, "volute");
+
+    await addMind(testMindName, 4999);
+    await installSkill(testMindName, testMindDir, "auto-test-skill");
+
+    // Verify installed at v1
+    const skillsBefore = await listMindSkills(testMindDir);
+    const before = skillsBefore.find((s) => s.id === "auto-test-skill");
+    assert.ok(before);
+    assert.equal(before.upstream?.version, 1);
+
+    // Update shared skill to v2
+    writeFileSync(
+      join(source, "SKILL.md"),
+      "---\nname: auto-test-skill\ndescription: Updated\n---\n\nUpdated content.\n",
+    );
+    await importSkillFromDir(source, "volute");
+
+    await autoUpdateMindSkills();
+
+    const skillsAfter = await listMindSkills(testMindDir);
+    const after = skillsAfter.find((s) => s.id === "auto-test-skill");
+    assert.ok(after);
+    assert.equal(after.upstream?.version, 2);
+    assert.equal(after.updateAvailable, false);
+  });
+
+  it("skips minds without skills directories", async () => {
+    await addMind(testMindName, 4999);
+    const skillsDir = mindSkillsDir(testMindDir);
+    if (existsSync(skillsDir)) rmSync(skillsDir, { recursive: true });
+
+    // Should not throw
+    await autoUpdateMindSkills();
+  });
+
+  it("skips skills without upstream tracking", async () => {
+    await addMind(testMindName, 4999);
+
+    // Manually create a skill with no .upstream.json
+    const skillDir = join(mindSkillsDir(testMindDir), "local-skill");
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(
+      join(skillDir, "SKILL.md"),
+      "---\nname: local-skill\ndescription: Local only\n---\n\n# Local\n",
+    );
+
+    // Should not throw and should leave the skill untouched
+    await autoUpdateMindSkills();
+
+    assert.ok(existsSync(join(skillDir, "SKILL.md")));
+    assert.ok(!existsSync(join(skillDir, ".upstream.json")));
+  });
+
+  it("updates multiple minds with multiple skills independently", async () => {
+    // Create two shared skills
+    const sourceA = createSkillSource("skill-a", "Skill A");
+    const sourceB = createSkillSource("skill-b", "Skill B");
+    await importSkillFromDir(sourceA, "volute");
+    await importSkillFromDir(sourceB, "volute");
+
+    // Create two minds
+    await addMind(testMindName, 4999);
+    await createMindGitRepo(testMindDir2);
+    await addMind(testMindName2, 4998);
+
+    // Install both skills on both minds
+    await installSkill(testMindName, testMindDir, "skill-a");
+    await installSkill(testMindName, testMindDir, "skill-b");
+    await installSkill(testMindName2, testMindDir2, "skill-a");
+    await installSkill(testMindName2, testMindDir2, "skill-b");
+
+    // Only update skill-a
+    writeFileSync(
+      join(sourceA, "SKILL.md"),
+      "---\nname: skill-a\ndescription: Updated A\n---\n\nV2\n",
+    );
+    await importSkillFromDir(sourceA, "volute");
+
+    await autoUpdateMindSkills();
+
+    // skill-a should be v2 on both minds
+    for (const dir of [testMindDir, testMindDir2]) {
+      const skills = await listMindSkills(dir);
+      const a = skills.find((s) => s.id === "skill-a");
+      const b = skills.find((s) => s.id === "skill-b");
+      assert.ok(a);
+      assert.equal(a.upstream?.version, 2, `skill-a should be v2 in ${dir}`);
+      assert.ok(b);
+      assert.equal(b.upstream?.version, 1, `skill-b should remain v1 in ${dir}`);
+    }
+  });
+
+  it("continues updating other minds when one fails", async () => {
+    const source = createSkillSource("resilience-skill", "Test resilience");
+    await importSkillFromDir(source, "volute");
+
+    // Create two minds
+    await addMind(testMindName, 4999);
+    await installSkill(testMindName, testMindDir, "resilience-skill");
+
+    await createMindGitRepo(testMindDir2);
+    await addMind(testMindName2, 4998);
+    await installSkill(testMindName2, testMindDir2, "resilience-skill");
+
+    // Update shared skill
+    writeFileSync(
+      join(source, "SKILL.md"),
+      "---\nname: resilience-skill\ndescription: V2\n---\n\nV2\n",
+    );
+    await importSkillFromDir(source, "volute");
+
+    // Corrupt the first mind's git repo so updateSkill will fail
+    rmSync(join(testMindDir, ".git"), { recursive: true });
+
+    // Should not throw — first mind fails, second still updates
+    await autoUpdateMindSkills();
+
+    // Second mind should be updated
+    const skills2 = await listMindSkills(testMindDir2);
+    const skill2 = skills2.find((s) => s.id === "resilience-skill");
+    assert.ok(skill2);
+    assert.equal(skill2.upstream?.version, 2);
+  });
+
+  it("skips variant minds", async () => {
+    const source = createSkillSource("variant-test-skill", "Test");
+    await importSkillFromDir(source, "volute");
+
+    // Create base mind and install skill
+    await addMind(testMindName, 4999);
+    await installSkill(testMindName, testMindDir, "variant-test-skill");
+
+    // Create variant (registered in DB with parent field)
+    const variantDir = join(voluteHome(), "minds", `${testMindName}-variant`);
+    await createMindGitRepo(variantDir);
+    await addVariant(`${testMindName}-variant`, testMindName, 4998, variantDir, "variant-branch");
+    await installSkill(`${testMindName}-variant`, variantDir, "variant-test-skill");
+
+    // Update shared skill
+    writeFileSync(
+      join(source, "SKILL.md"),
+      "---\nname: variant-test-skill\ndescription: V2\n---\n\nV2\n",
+    );
+    await importSkillFromDir(source, "volute");
+
+    await autoUpdateMindSkills();
+
+    // Base mind should be updated
+    const baseSkills = await listMindSkills(testMindDir);
+    const baseSkill = baseSkills.find((s) => s.id === "variant-test-skill");
+    assert.ok(baseSkill);
+    assert.equal(baseSkill.upstream?.version, 2);
+
+    // Variant should NOT be updated (readRegistry excludes variants)
+    const variantSkills = await listMindSkills(variantDir);
+    const variantSkill = variantSkills.find((s) => s.id === "variant-test-skill");
+    assert.ok(variantSkill);
+    assert.equal(variantSkill.upstream?.version, 1);
+
+    rmSync(variantDir, { recursive: true });
   });
 });

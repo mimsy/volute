@@ -2,13 +2,20 @@
 import type {
   ConversationWithParticipants,
   HistoryMessage,
+  SummaryRow,
   TurnConversation,
   TurnRow,
 } from "@volute/api";
 import { Icon } from "@volute/ui";
 import { renderMarkdown } from "@volute/ui/markdown";
 import { SvelteMap } from "svelte/reactivity";
-import { fetchHistory, fetchTurnEvents, fetchTurns } from "../lib/client";
+import {
+  fetchHistory,
+  fetchSummaries,
+  fetchSummaryByIds,
+  fetchTurnEvents,
+  fetchTurns,
+} from "../lib/client";
 import { extractTextContent } from "../lib/feed-utils";
 import { formatRelativeTime } from "../lib/format";
 import { navigate } from "../lib/navigate";
@@ -18,6 +25,119 @@ import { getCategoryColor, getCategoryIcon } from "../lib/tool-names";
 import ToolGroupComponent from "./chat/ToolGroup.svelte";
 import HistoryEvent from "./HistoryEvent.svelte";
 import ReadOnlyChatModal from "./modals/ReadOnlyChatModal.svelte";
+import SummaryNode from "./SummaryNode.svelte";
+import TimelineBranch from "./TimelineBranch.svelte";
+
+type TimelineItem =
+  | { kind: "turn"; turn: TurnRow }
+  | { kind: "summary"; summary: SummaryRow }
+  | { kind: "separator"; above: string; below: string };
+
+const CHILD_PERIOD: Record<string, "turn" | "hour" | "day" | "week" | "month"> = {
+  hour: "turn",
+  day: "hour",
+  week: "day",
+  month: "week",
+};
+
+function parseISOWeek(weekKey: string): Date {
+  // weekKey format: "2026-W12" — returns the Monday of that week (local time)
+  const [yearStr, weekStr] = weekKey.split("-W");
+  const year = parseInt(yearStr, 10);
+  const week = parseInt(weekStr, 10);
+  const jan4 = new Date(year, 0, 4);
+  const dayOfWeek = jan4.getDay() || 7;
+  const monday = new Date(jan4);
+  monday.setDate(jan4.getDate() - dayOfWeek + 1 + (week - 1) * 7);
+  return monday;
+}
+
+// Period keys are local time. Parse without Z suffix.
+function periodKeyToDate(period: string, periodKey: string): Date {
+  if (period === "hour")
+    return new Date(`${periodKey.slice(0, 10)}T${periodKey.slice(11, 13)}:00:00`);
+  if (period === "day") return new Date(`${periodKey}T00:00:00`);
+  if (period === "week") return parseISOWeek(periodKey);
+  if (period === "month") return new Date(`${periodKey}-01T00:00:00`);
+  return new Date(periodKey);
+}
+
+function formatPeriodTime(period: string, periodKey: string): string {
+  const now = new Date();
+  const todayLocal = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const yesterdayLocal = new Date(todayLocal);
+  yesterdayLocal.setDate(todayLocal.getDate() - 1);
+
+  if (period === "hour") {
+    // Period keys are local time — parse directly
+    const start = periodKeyToDate("hour", periodKey);
+    const end = new Date(start.getTime() + 3600000);
+
+    const fmtTime = (d: Date) =>
+      d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+
+    const startDay = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+    const isToday = startDay.getTime() === todayLocal.getTime();
+    if (isToday) {
+      return `${fmtTime(start)} \u2013 ${fmtTime(end)}`;
+    }
+    const monthDay = start.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    return `${monthDay}, ${fmtTime(start)} \u2013 ${fmtTime(end)}`;
+  }
+
+  if (period === "day") {
+    // Period keys are local dates — direct comparison
+    const d = periodKeyToDate("day", periodKey);
+    if (d.getTime() === todayLocal.getTime()) return "Today";
+    if (d.getTime() === yesterdayLocal.getTime()) return "Yesterday";
+    return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  }
+
+  if (period === "week") {
+    const start = parseISOWeek(periodKey);
+    const end = new Date(start);
+    end.setDate(start.getDate() + 6);
+    const fmtDate = (d: Date) =>
+      d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    if (start.getFullYear() !== now.getFullYear()) {
+      return `${fmtDate(start)} \u2013 ${fmtDate(end)}, ${start.getFullYear()}`;
+    }
+    return `${fmtDate(start)} \u2013 ${fmtDate(end)}`;
+  }
+
+  if (period === "month") {
+    const [year, month] = periodKey.split("-");
+    const d = new Date(parseInt(year, 10), parseInt(month, 10) - 1, 1);
+    return d.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+  }
+
+  return periodKey;
+}
+
+function periodEndDate(period: string, periodKey: string): Date {
+  if (period === "hour") {
+    const d = periodKeyToDate(period, periodKey);
+    d.setHours(d.getHours() + 1);
+    return d;
+  }
+  if (period === "day") {
+    const d = periodKeyToDate(period, periodKey);
+    d.setDate(d.getDate() + 1);
+    return d;
+  }
+  if (period === "week") {
+    const monday = parseISOWeek(periodKey);
+    const sunday = new Date(monday);
+    sunday.setDate(monday.getDate() + 7);
+    return sunday;
+  }
+  if (period === "month") {
+    const d = periodKeyToDate(period, periodKey);
+    d.setMonth(d.getMonth() + 1);
+    return d;
+  }
+  return new Date(periodKey);
+}
 
 let { name, mindStatus }: { name?: string; mindStatus?: string } = $props();
 
@@ -29,6 +149,17 @@ let loading = $state(false);
 let historyError = $state("");
 
 let readOnlyConv = $state<ConversationWithParticipants | null>(null);
+
+// --- Summaries data ---
+let hourSummaries = $state<SummaryRow[]>([]);
+let daySummaries = $state<SummaryRow[]>([]);
+let weekSummaries = $state<SummaryRow[]>([]);
+let monthSummaries = $state<SummaryRow[]>([]);
+let summariesLoaded = $state(false);
+let expandedSummaries = $state(new SvelteMap<number, SummaryRow[] | TurnRow[]>());
+let loadingChildren = $state(new Set<number>());
+// For single-turn hours: expand directly to raw events instead of showing the turn summary
+let directEventsSummaries = $state(new SvelteMap<number, HistoryMessage[]>());
 
 // --- Streaming events for active turns ---
 let streamingEvents = $state(new SvelteMap<string, HistoryMessage[]>());
@@ -277,6 +408,233 @@ async function loadTurns(offset: number) {
   loading = false;
 }
 
+async function loadSummaries() {
+  try {
+    const now = new Date();
+
+    // Period keys are local time. Build boundaries directly.
+    const pad2 = (n: number) => String(n).padStart(2, "0");
+    const todayKey = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`;
+    const hourCutoff = `${todayKey}T${pad2(now.getHours())}`;
+    const todayHourFrom = `${todayKey}T00`;
+    const todayDayKey = todayKey;
+
+    // Week boundary (7 days ago)
+    const weekAgo = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 7);
+    const weekCutoff = `${weekAgo.getFullYear()}-${pad2(weekAgo.getMonth() + 1)}-${pad2(weekAgo.getDate())}`;
+
+    // Load hours for today (from local start-of-day to current hour, in UTC keys)
+    const hours = await fetchSummaries({
+      mind: name,
+      period: "hour",
+      from: todayHourFrom,
+      to: hourCutoff,
+      limit: 24,
+    });
+    hourSummaries = hours.sort((a, b) => a.period_key.localeCompare(b.period_key));
+
+    // Load days for last week (before today's day key)
+    const days = await fetchSummaries({
+      mind: name,
+      period: "day",
+      from: weekCutoff,
+      to: todayDayKey,
+      limit: 7,
+    });
+    // Exclude today — it's covered by hourly summaries
+    daySummaries = days
+      .filter((d) => d.period_key < todayDayKey)
+      .sort((a, b) => a.period_key.localeCompare(b.period_key));
+
+    // Load weeks (before last week). Exclude current week.
+    const weeks = await fetchSummaries({ mind: name, period: "week", to: weekCutoff, limit: 12 });
+    weekSummaries = weeks.sort((a, b) => a.period_key.localeCompare(b.period_key));
+
+    // Load months (exclude current month — it's still in progress)
+    const currentMonth = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}`;
+    const months = await fetchSummaries({
+      mind: name,
+      period: "month",
+      to: currentMonth,
+      limit: 12,
+    });
+    // Filter out the current month in case the boundary comparison includes it
+    monthSummaries = months
+      .filter((m) => m.period_key < currentMonth)
+      .sort((a, b) => a.period_key.localeCompare(b.period_key));
+
+    summariesLoaded = true;
+  } catch (e) {
+    console.warn("[TurnTimeline] Failed to load summaries:", e);
+    summariesLoaded = true; // still mark loaded so we don't block the UI
+  }
+}
+
+async function toggleSummaryExpand(summary: SummaryRow) {
+  if (expandedSummaries.has(summary.id) || directEventsSummaries.has(summary.id)) {
+    expandedSummaries.delete(summary.id);
+    directEventsSummaries.delete(summary.id);
+    expandedSummaries = new SvelteMap(expandedSummaries);
+    directEventsSummaries = new SvelteMap(directEventsSummaries);
+    return;
+  }
+
+  loadingChildren.add(summary.id);
+  loadingChildren = new Set(loadingChildren);
+
+  try {
+    const isSystem = summary.mind === "_system";
+    const childPeriod = CHILD_PERIOD[summary.period];
+
+    if (isSystem && childPeriod === "turn") {
+      // System-level hourly summaries don't have source_ids to turns.
+      // Instead, fetch per-mind summaries at the same period (hour).
+      // Their metadata will have source_ids pointing to turn summaries.
+      const minds: string[] =
+        ((summary.metadata as Record<string, unknown>)?.minds as string[]) ?? [];
+      const perMindSummaries: SummaryRow[] = [];
+      for (const mind of minds) {
+        const rows = await fetchSummaries({
+          mind,
+          period: summary.period,
+          from: summary.period_key,
+          to: summary.period_key,
+          limit: 1,
+        });
+        perMindSummaries.push(...rows);
+      }
+      perMindSummaries.sort((a, b) => a.mind.localeCompare(b.mind));
+      expandedSummaries.set(summary.id, perMindSummaries);
+      expandedSummaries = new SvelteMap(expandedSummaries);
+    } else if (childPeriod === "turn") {
+      // Per-mind hourly summaries have source_ids pointing to turn summaries.
+      const sourceIds: number[] =
+        ((summary.metadata as Record<string, unknown>)?.source_ids as number[]) ?? [];
+
+      if (sourceIds.length > 0) {
+        const turnSummaryRows = await fetchSummaryByIds(sourceIds);
+        const turnIds = turnSummaryRows.map((s) => s.period_key);
+
+        if (turnIds.length === 1) {
+          const events = await fetchTurnEvents(turnSummaryRows[0].mind, {
+            turnId: turnIds[0],
+          });
+          directEventsSummaries.set(summary.id, events);
+          directEventsSummaries = new SvelteMap(directEventsSummaries);
+        } else if (turnIds.length > 0) {
+          const turns: TurnRow[] = await fetchTurns({ turnIds: turnIds });
+          turns.sort((a, b) => a.created_at.localeCompare(b.created_at));
+          expandedSummaries.set(summary.id, turns);
+          expandedSummaries = new SvelteMap(expandedSummaries);
+        } else {
+          expandedSummaries.set(summary.id, []);
+          expandedSummaries = new SvelteMap(expandedSummaries);
+        }
+      } else {
+        expandedSummaries.set(summary.id, []);
+        expandedSummaries = new SvelteMap(expandedSummaries);
+      }
+    } else {
+      // For summary children, use period_key-format boundaries (not ISO timestamps)
+      // to avoid string comparison issues with colons in ISO strings.
+      let from: string;
+      let to: string;
+      if (summary.period === "day") {
+        // Day "2026-03-19" → hours with keys starting with "2026-03-19"
+        from = summary.period_key;
+        to = `${summary.period_key}T99`; // all hours within this date
+      } else if (summary.period === "week") {
+        // Week → days within the week's date range
+        const monday = parseISOWeek(summary.period_key);
+        const sunday = new Date(monday);
+        sunday.setDate(monday.getDate() + 6);
+        const pad2 = (n: number) => String(n).padStart(2, "0");
+        from = `${monday.getFullYear()}-${pad2(monday.getMonth() + 1)}-${pad2(monday.getDate())}`;
+        to = `${sunday.getFullYear()}-${pad2(sunday.getMonth() + 1)}-${pad2(sunday.getDate())}`;
+      } else if (summary.period === "month") {
+        // Month "2026-03" → weeks/days within
+        from = `${summary.period_key}-01`;
+        to = `${summary.period_key}-31`;
+      } else {
+        from = summary.period_key;
+        to = summary.period_key;
+      }
+
+      const children = await fetchSummaries({
+        mind: name,
+        period: childPeriod,
+        from,
+        to,
+        limit: 100,
+      });
+      expandedSummaries.set(
+        summary.id,
+        children.sort((a, b) => a.period_key.localeCompare(b.period_key)),
+      );
+    }
+    expandedSummaries = new SvelteMap(expandedSummaries);
+  } catch (e) {
+    console.warn("[TurnTimeline] Failed to load summary children:", e);
+  }
+
+  loadingChildren.delete(summary.id);
+  loadingChildren = new Set(loadingChildren);
+}
+
+// Build the combined timeline items list
+let timelineItems = $derived.by(() => {
+  const items: TimelineItem[] = [];
+  const now = new Date();
+
+  // Turns from the current hour onward are shown individually;
+  // older turns are covered by hourly summaries
+  const currentHourStart = new Date(now);
+  currentHourStart.setMinutes(0, 0, 0);
+  const hourCutoffMs = currentHourStart.getTime();
+
+  // But also include any turns from today that don't have an hourly summary yet
+  // (i.e., turns from the current in-progress hour)
+
+  // Monthly summaries (oldest)
+  for (const s of monthSummaries) items.push({ kind: "summary", summary: s });
+
+  // Weekly summaries
+  for (const s of weekSummaries) items.push({ kind: "summary", summary: s });
+
+  // Separator if transitioning from week/month to day level
+  if ((monthSummaries.length > 0 || weekSummaries.length > 0) && daySummaries.length > 0) {
+    items.push({ kind: "separator", above: "earlier", below: "this week" });
+  }
+
+  // Daily summaries
+  for (const s of daySummaries) items.push({ kind: "summary", summary: s });
+
+  // Separator before hourly
+  if ((daySummaries.length > 0 || items.length > 0) && hourSummaries.length > 0) {
+    items.push({ kind: "separator", above: "earlier this week", below: "today" });
+  }
+
+  // Hourly summaries
+  for (const s of hourSummaries) items.push({ kind: "summary", summary: s });
+
+  // Only turns from the current hour (or active turns)
+  const recentTurns = turnsData.filter((t) => {
+    const turnTime = new Date(t.created_at + (t.created_at.endsWith("Z") ? "" : "Z")).getTime();
+    return turnTime >= hourCutoffMs || t.status === "active" || streamingEvents.has(t.id);
+  });
+
+  // Separator before turns
+  if (items.length > 0 && recentTurns.length > 0) {
+    items.push({ kind: "separator", above: "earlier today", below: "this hour" });
+  }
+
+  for (const t of recentTurns) {
+    items.push({ kind: "turn", turn: t });
+  }
+
+  return items;
+});
+
 // Scroll to bottom on initial load -- keep nudging for a few seconds
 let scrollTimer: ReturnType<typeof setInterval> | null = null;
 let scrollTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -316,8 +674,22 @@ $effect(() => {
     streamingEvents = new SvelteMap();
     nextSyntheticId = -1;
     pendingInbounds = [];
+    hourSummaries = [];
+    daySummaries = [];
+    weekSummaries = [];
+    monthSummaries = [];
+    summariesLoaded = false;
+    expandedSummaries = new SvelteMap();
+    directEventsSummaries = new SvelteMap();
     startScrollToBottom();
     loadTurns(0);
+  }
+});
+
+// Load summaries once turns are available
+$effect(() => {
+  if (turnsData.length > 0 && !summariesLoaded && !loading) {
+    loadSummaries();
   }
 });
 
@@ -363,11 +735,62 @@ function jumpToLatest() {
 
     {#if historyError}
       <div class="error-hint">{historyError}</div>
-    {:else if turnsData.length === 0 && !loading}
+    {:else if timelineItems.length === 0 && !loading}
       <div class="empty-hint">No activity yet.</div>
     {:else}
       <div class="turn-track">
-        {#each turnsData as turn (turn.id)}
+        {#each timelineItems as item (item.kind === "turn" ? `turn-${item.turn.id}` : item.kind === "summary" ? `summary-${item.summary.id}` : `sep-${item.above}-${item.below}`)}
+          {#if item.kind === "separator"}
+            <div class="turn-row scale-break-row">
+              <div class="turn-time"></div>
+              <div class="scale-break-container">
+                <div class="scale-break-slash"></div>
+                <div class="scale-break-gap"></div>
+                <div class="scale-break-slash"></div>
+                <div class="scale-break-label scale-break-label-above">
+                  <svg class="scale-break-arrow" viewBox="0 0 8 5"><path d="M4 0L8 5H0z" fill="currentColor"/></svg>
+                  <span>{item.above}</span>
+                </div>
+                <div class="scale-break-label scale-break-label-below">
+                  <svg class="scale-break-arrow" viewBox="0 0 8 5"><path d="M4 5L0 0h8z" fill="currentColor"/></svg>
+                  <span>{item.below}</span>
+                </div>
+              </div>
+              <div class="turn-body"></div>
+            </div>
+          {:else if item.kind === "summary"}
+            {@const summary = item.summary}
+            {@const isExpanded = expandedSummaries.has(summary.id) || directEventsSummaries.has(summary.id)}
+            <div class="turn-row" data-summary-id={summary.id}>
+              <div class="turn-time">
+                {#if !name && summary.mind !== "_system"}
+                  <button class="mind-badge" onclick={() => navigate(`/minds/${summary.mind}/history`)}>{summary.mind}</button>
+                {/if}
+              </div>
+              <!-- svelte-ignore a11y_no_static_element_interactions -->
+              <div
+                class="turn-rail"
+                class:turn-rail-expanded={isExpanded}
+                onclick={() => toggleSummaryExpand(summary)}
+                onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleSummaryExpand(summary); } }}
+              >
+                <div class="turn-dot summary-dot"></div>
+              </div>
+              <div class="turn-body">
+                <div class="turn-summary">
+                  <SummaryNode
+                    {summary}
+                    {expandedSummaries}
+                    {directEventsSummaries}
+                    {loadingChildren}
+                    {toggleSummaryExpand}
+                    {formatPeriodTime}
+                  />
+                </div>
+              </div>
+            </div>
+          {:else}
+            {@const turn = item.turn}
           {@const peekCount = (!expandedTurns.has(turn.id) && turn.status !== "active") ? turn.conversations.length + turn.activities.length : 0}
           <div class="turn-row" data-turn-id={turn.id} style:min-height={peekCount > 0 ? `${36 + peekCount * 48}px` : undefined}>
             <div class="turn-time">
@@ -515,38 +938,40 @@ function jumpToLatest() {
                 {:else}
                   {@const events = streamingEvents.get(turn.id) ?? []}
                   {@const startTime = new Date(turn.created_at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
-                  <div class="active-turn-wrapper">
-                    <div class="active-turn-connector"></div>
-                    <div class="active-turn-branch">
+                  <TimelineBranch gap={24} reach={11} noReturn>
+                    {#snippet header()}
                       <div class="active-turn-header">
                         <span class="active-turn-time">{startTime} – now</span>
                       </div>
+                    {/snippet}
+                    {#snippet children()}
                       {#if events.length > 0}
                         {@const groups = groupToolEvents(events)}
-                        {#each groups as item (item.kind === "tool-group" ? `tg-${item.toolUse.id}` : `ev-${item.event.id}`)}
-                          {#if item.kind === "tool-group"}
-                            {@const catColor = getCategoryColor(item.category)}
-                            {@const catIcon = getCategoryIcon(item.category)}
+                        {#each groups as groupItem (groupItem.kind === "tool-group" ? `tg-${groupItem.toolUse.id}` : `ev-${groupItem.event.id}`)}
+                          {#if groupItem.kind === "tool-group"}
+                            {@const catColor = getCategoryColor(groupItem.category)}
+                            {@const catIcon = getCategoryIcon(groupItem.category)}
                             <div class="event" style:--type-color={catColor}>
                               <div class="marker marker-icon" style:color={catColor}>
                                 <Icon kind={catIcon} />
                               </div>
-                              <ToolGroupComponent group={item} mindName={turn.mind} turnStatus="active" />
+                              <ToolGroupComponent group={groupItem} mindName={turn.mind} turnStatus="active" />
                             </div>
                           {:else}
-                            <HistoryEvent event={item.event} mindName={turn.mind} />
+                            <HistoryEvent event={groupItem.event} mindName={turn.mind} />
                           {/if}
                         {/each}
                       {/if}
                       <div class="active-indicator">
                         <div class="active-dot"></div>
                       </div>
-                    </div>
-                  </div>
+                    {/snippet}
+                  </TimelineBranch>
                 {/if}
               </div>
             </div>
           </div>
+          {/if}
         {/each}
         {#if pendingInbounds.length > 0}
           <div class="turn-row">
@@ -558,20 +983,21 @@ function jumpToLatest() {
             </div>
             <div class="turn-body">
               <div class="turn-summary">
-                <div class="active-turn-wrapper">
-                  <div class="active-turn-connector"></div>
-                  <div class="active-turn-branch">
+                <TimelineBranch gap={24} reach={11} noReturn>
+                  {#snippet header()}
                     <div class="active-turn-header">
                       <span class="active-turn-time">{new Date(pendingInbounds[0].created_at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })} – now</span>
                     </div>
+                  {/snippet}
+                  {#snippet children()}
                     {#each pendingInbounds as ev (ev.id)}
                       <HistoryEvent event={ev} mindName={ev.mind || name || ""} />
                     {/each}
                     <div class="active-indicator">
                       <div class="active-dot"></div>
                     </div>
-                  </div>
-                </div>
+                  {/snippet}
+                </TimelineBranch>
               </div>
             </div>
           </div>
@@ -641,6 +1067,7 @@ function jumpToLatest() {
   .turn-row {
     display: flex;
     align-items: flex-start;
+    min-height: 48px;
   }
 
   .turn-time {
@@ -757,7 +1184,10 @@ function jumpToLatest() {
     cursor: pointer;
   }
 
-  /* Extend HistoryEvent connectors to bridge the .turn-body padding gap */
+  /* Extend HistoryEvent connectors to bridge the .turn-body padding gap (12px).
+     HistoryEvent's default connector is left:-23px, width:23px.
+     At top level, the gap is wider (12px body padding + 14px branch padding = 26px from inner rail to main rail).
+     At nested levels, the gap is narrower. */
   .turn-summary :global(.turn-connector::after) {
     left: -35px;
     width: 35px;
@@ -766,7 +1196,6 @@ function jumpToLatest() {
     left: -28px;
     width: 36px;
   }
-
   .turn-dot {
     position: absolute;
     top: 12px;
@@ -1013,47 +1442,12 @@ function jumpToLatest() {
 
 
 
-  /* Active turn: branching inner rail matching expanded turns.
-     Connector at left:22px matches HistoryEvent's .turn-connector position.
-     Horizontal line at top:16px aligns with the turn-dot center (8px dot at top:12px). */
-  .active-turn-wrapper {
-    position: relative;
-  }
-  .active-turn-connector {
-    position: absolute;
-    top: 16px;
-    left: 22px;
-    width: 2px;
-    bottom: 0;
-    background: var(--border);
-  }
-  /* Horizontal connector from main rail to inner rail */
-  .active-turn-connector::after {
-    content: "";
-    position: absolute;
-    top: 0;
-    left: -35px;
-    width: 35px;
-    height: 2px;
-    background: var(--border);
-  }
-  /* Branch container: padding-left positions events so their markers land on the rail.
-     Rail center = 22 + 1 = 23px from wrapper.
-     Marker icons are 22px wide at left:-12px, center at (padLeft - 12 + 11).
-     Solve: padLeft - 1 = 23 → padLeft = 24. */
-  .active-turn-branch {
-    position: relative;
-    padding-left: 24px;
-    padding-top: 8px;
-    padding-bottom: 0;
-  }
-
-  .active-turn-branch .event {
+  /* Inline event styling for active-turn tool groups */
+  .event {
     position: relative;
     padding: 6px 8px 6px 20px;
   }
-
-  .active-turn-branch .marker {
+  .marker {
     position: absolute;
     left: -5px;
     top: 12px;
@@ -1062,8 +1456,7 @@ function jumpToLatest() {
     border-radius: 50%;
     z-index: 1;
   }
-
-  .active-turn-branch .marker-icon {
+  .marker-icon {
     width: 22px;
     height: 22px;
     left: -12px;
@@ -1076,8 +1469,7 @@ function jumpToLatest() {
     justify-content: center;
     z-index: 3;
   }
-
-  .active-turn-branch .marker-icon :global(svg) {
+  .marker-icon :global(svg) {
     width: 13px;
     height: 13px;
   }
@@ -1154,6 +1546,74 @@ function jumpToLatest() {
     66%  { background: #fbbf24; }
     83%  { background: #34d399; }
     100% { background: #4ade80; }
+  }
+
+  /* Scale break: two diagonal lines on the rail with labels */
+  .scale-break-row {
+    min-height: 60px !important;
+  }
+  .scale-break-container {
+    width: 2px;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    align-self: stretch;
+  }
+  /* Rail segments above and below the slashes, with a gap for the marks */
+  .scale-break-container::before,
+  .scale-break-container::after {
+    content: "";
+    position: absolute;
+    width: 2px;
+    background: var(--timeline-rail);
+    left: 0;
+  }
+  .scale-break-container::before {
+    top: 0;
+    bottom: calc(50% + 8px);
+  }
+  .scale-break-container::after {
+    bottom: 0;
+    top: calc(50% + 8px);
+  }
+  .scale-break-slash {
+    width: 14px;
+    height: 2px;
+    background: var(--timeline-rail);
+    transform: rotate(-30deg);
+  }
+  .scale-break-gap {
+    height: 14px;
+  }
+  .scale-break-label {
+    position: absolute;
+    left: 16px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 14px;
+    color: var(--timeline-rail);
+    white-space: nowrap;
+  }
+  .scale-break-label-above {
+    top: 0;
+  }
+  .scale-break-label-below {
+    bottom: 0;
+  }
+  .scale-break-arrow {
+    width: 7px;
+    height: 5px;
+    flex-shrink: 0;
+  }
+  /* Summary dot style */
+  .summary-dot {
+    border: 2px solid var(--text-2);
+    background: var(--bg-1);
+    box-sizing: border-box;
   }
 
   .empty-hint {

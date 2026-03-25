@@ -9,6 +9,7 @@ import { initMindManager } from "./lib/daemon/mind-manager.js";
 import { startMindFull } from "./lib/daemon/mind-service.js";
 import { initScheduler } from "./lib/daemon/scheduler.js";
 import { initSleepManager } from "./lib/daemon/sleep-manager.js";
+import { initSummarizer } from "./lib/daemon/summarizer.js";
 import { initTokenBudget } from "./lib/daemon/token-budget.js";
 import { completeOrphanedTurns } from "./lib/daemon/turn-tracker.js";
 import { initDeliveryManager } from "./lib/delivery/delivery-manager.js";
@@ -29,8 +30,12 @@ import {
   voluteSystemDir,
 } from "./lib/registry.js";
 import { RotatingLog } from "./lib/rotating-log.js";
-
-import { initDefaultSkills, syncBuiltinSkills } from "./lib/skills.js";
+import {
+  autoUpdateMindSkills,
+  initDefaultSkills,
+  isAutoUpdateSkillsEnabled,
+  syncBuiltinSkills,
+} from "./lib/skills.js";
 import { ensureSystemChannel } from "./lib/system-channel.js";
 import { initWebhook } from "./lib/webhook.js";
 import { startApiKeyRefresh, stopApiKeyRefresh } from "./web/api/system.js";
@@ -119,6 +124,15 @@ export async function startDaemon(opts: {
   // Initialize default skills config if not set (after extensions load so their skills are included)
   await initDefaultSkills();
 
+  // Auto-update skills for all minds (non-fatal)
+  if (isAutoUpdateSkillsEnabled()) {
+    try {
+      await autoUpdateMindSkills();
+    } catch (err) {
+      log.error("failed to auto-update mind skills", log.errorData(err));
+    }
+  }
+
   // Ensure #system channel exists (non-fatal)
   try {
     await ensureSystemChannel();
@@ -192,6 +206,8 @@ export async function startDaemon(opts: {
   tokenBudget.start();
   const sleepManager = initSleepManager();
   sleepManager.start();
+  const summarizer = initSummarizer();
+  summarizer.start();
   const unsubscribeWebhook = initWebhook();
 
   // Clean up any turns left active from a previous daemon session
@@ -340,6 +356,7 @@ export async function startDaemon(opts: {
       safe("scheduler.saveState", () => scheduler.saveState());
       safe("mailPoller.stop", () => mailPoller.stop());
       safe("tokenBudget.stop", () => tokenBudget.stop());
+      safe("summarizer.stop", () => summarizer.stop());
       safe("stopApiKeyRefresh", stopApiKeyRefresh);
       safe("delivery.dispose", () => delivery.dispose());
       await safe("bridgeManager.stopAll", () => bridgeManager.stopAll());
