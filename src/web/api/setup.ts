@@ -111,13 +111,13 @@ setup.post("/configure", async (c) => {
   }
 });
 
-// Step 1: Configure system (name + description)
+// Step 1: Configure system (name + description + remote access)
 setup.post("/system", async (c) => {
   if (isSetupComplete()) {
     return c.json({ error: "Setup already complete" }, 400);
   }
 
-  let body: { name: string; description?: string };
+  let body: { name: string; description?: string; remote?: boolean };
   try {
     body = await c.req.json();
   } catch {
@@ -129,7 +129,14 @@ setup.post("/system", async (c) => {
   }
 
   try {
-    writeSetupConfig(body.name.trim(), body.description?.trim());
+    const config = writeSetupConfig(body.name.trim(), body.description?.trim());
+
+    // Enable remote access: bind to all interfaces
+    if (body.remote) {
+      config.hostname = "0.0.0.0";
+      writeGlobalConfig(config);
+    }
+
     return c.json({ ok: true });
   } catch (err) {
     return c.json({ error: `Failed to write configuration: ${(err as Error).message}` }, 500);

@@ -32,6 +32,7 @@ let systemsApiKey = $state("");
 let showSystemsLogin = $state(false);
 let systemsError = $state("");
 let systemsLoading = $state(false);
+let remoteAccess = $state(false);
 
 // Step 3: Account
 let displayName = $state("");
@@ -129,6 +130,7 @@ async function handleSystemSubmit(e: Event) {
       body: JSON.stringify({
         name: systemName.trim(),
         description: systemDescription.trim() || undefined,
+        remote: remoteAccess || undefined,
       }),
     });
     if (!res.ok) {
@@ -456,6 +458,12 @@ $effect(() => {
           {/if}
         </div>
 
+        <label class="remote-toggle">
+          <input type="checkbox" bind:checked={remoteAccess} />
+          <span>Allow access from other devices</span>
+        </label>
+        <div class="hint">Enable this to connect from other computers on your network.</div>
+
         {#if error}
           <div class="error">{error}</div>
         {/if}
@@ -742,6 +750,16 @@ $effect(() => {
     color: var(--text-2);
     font-size: 12px;
     margin-top: 6px;
+  }
+
+  .remote-toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 16px;
+    font-size: 14px;
+    color: var(--text-1);
+    cursor: pointer;
   }
 
   .error {
