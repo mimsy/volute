@@ -13,57 +13,63 @@ import {
 import { homedir, tmpdir } from "node:os";
 import { basename, resolve } from "node:path";
 import { setBridgeConfig } from "../lib/bridges.js";
+import { command } from "../lib/command.js";
 import { readEnv, sharedEnvPath, writeEnv } from "../lib/env.js";
-import { parseArgs } from "../lib/parse-args.js";
 
-export async function run(args: string[]) {
-  const { positional, flags } = parseArgs(args, {
-    name: { type: "string" },
-    session: { type: "string" },
-    template: { type: "string" },
-  });
+const cmd = command({
+  name: "volute mind import",
+  description: "Import an OpenClaw workspace or archive",
+  args: [{ name: "path", description: "Path to workspace or .volute archive" }],
+  flags: {
+    name: { type: "string", description: "Name for the imported mind" },
+    session: { type: "string", description: "Path to session file" },
+    template: { type: "string", description: "Template to use" },
+  },
+  run: async ({ args, flags }) => {
+    const inputPath = args.path;
 
-  const inputPath = positional[0];
+    // Detect .volute archive vs OpenClaw workspace
+    if (inputPath && (inputPath.endsWith(".volute") || isZipFile(inputPath))) {
+      await importArchive(resolve(inputPath), flags.name);
+      return;
+    }
 
-  // Detect .volute archive vs OpenClaw workspace
-  if (inputPath && (inputPath.endsWith(".volute") || isZipFile(inputPath))) {
-    await importArchive(resolve(inputPath), flags.name);
-    return;
-  }
+    const wsDir = resolveWorkspace(inputPath);
 
-  const wsDir = resolveWorkspace(inputPath);
+    const { daemonFetch } = await import("../lib/daemon-client.js");
+    const { getClient, urlOf } = await import("../lib/api-client.js");
+    const client = getClient();
 
-  const { daemonFetch } = await import("../lib/daemon-client.js");
-  const { getClient, urlOf } = await import("../lib/api-client.js");
-  const client = getClient();
+    const res = await daemonFetch(urlOf((client.api.minds as any).import.$url()), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        workspacePath: wsDir,
+        name: flags.name,
+        template: flags.template,
+        sessionPath: flags.session,
+      }),
+    });
 
-  const res = await daemonFetch(urlOf((client.api.minds as any).import.$url()), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      workspacePath: wsDir,
-      name: flags.name,
-      template: flags.template,
-      sessionPath: flags.session,
-    }),
-  });
+    const data = (await res.json()) as {
+      ok?: boolean;
+      error?: string;
+      name?: string;
+      port?: number;
+      message?: string;
+    };
 
-  const data = (await res.json()) as {
-    ok?: boolean;
-    error?: string;
-    name?: string;
-    port?: number;
-    message?: string;
-  };
+    if (!res.ok) {
+      console.error(data.error ?? "Failed to import mind");
+      process.exit(1);
+    }
 
-  if (!res.ok) {
-    console.error(data.error ?? "Failed to import mind");
-    process.exit(1);
-  }
+    console.log(`\n${data.message ?? `Imported mind: ${data.name} (port ${data.port})`}`);
+    console.log(`\n  volute mind start ${data.name}`);
+  },
+});
 
-  console.log(`\n${data.message ?? `Imported mind: ${data.name} (port ${data.port})`}`);
-  console.log(`\n  volute mind start ${data.name}`);
-}
+export const run = cmd.execute;
 
 /** Check if a file starts with the PK zip magic bytes. */
 function isZipFile(path: string): boolean {

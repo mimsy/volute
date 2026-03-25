@@ -14,7 +14,7 @@ export async function run(args: string[]) {
       await import("./systems/login.js").then((m) => m.run(args.slice(1)));
       break;
     case "logout":
-      await import("./systems/logout.js").then((m) => m.run());
+      await import("./systems/logout.js").then((m) => m.run(args.slice(1)));
       break;
     case "--help":
     case "-h":

@@ -1,48 +1,6 @@
+import { subcommands } from "../../lib/command.js";
 import { daemonFetch } from "../../lib/daemon-client.js";
 import { parseArgs } from "../../lib/parse-args.js";
-
-export async function run(args: string[]) {
-  const subcommand = args[0];
-  const subArgs = args.slice(1);
-
-  switch (subcommand) {
-    case "add":
-      await bridgeAdd(subArgs);
-      break;
-    case "remove":
-      await bridgeRemove(subArgs);
-      break;
-    case "list":
-      await bridgeList();
-      break;
-    case "map":
-      await bridgeMap(subArgs);
-      break;
-    case "unmap":
-      await bridgeUnmap(subArgs);
-      break;
-    case "mappings":
-      await bridgeMappings(subArgs);
-      break;
-    case "--help":
-    case "-h":
-    case undefined:
-      console.log(`volute chat bridge — manage platform bridges
-
-  add <platform>                 Set up a bridge (e.g. discord, slack, telegram)
-  remove <platform>              Remove a bridge
-  list                           Show bridges + status
-  map <platform>:<channel> <ch>  Map external → Volute channel
-  unmap <platform>:<channel>     Remove mapping
-  mappings [<platform>]          List mappings`);
-      break;
-    default:
-      console.error(
-        `Unknown bridge subcommand: ${subcommand}\nRun 'volute chat bridge --help' for usage.`,
-      );
-      process.exit(1);
-  }
-}
 
 async function bridgeAdd(args: string[]) {
   const { positional, flags } = parseArgs(args, {
@@ -238,3 +196,18 @@ async function bridgeMappings(args: string[]) {
     }
   }
 }
+
+const cmd = subcommands({
+  name: "volute chat bridge",
+  description: "Manage platform bridges",
+  commands: {
+    add: { description: "Enable a bridge with a default mind", run: bridgeAdd },
+    remove: { description: "Disable a bridge", run: bridgeRemove },
+    list: { description: "Show all bridges and their status", run: (args) => bridgeList() },
+    map: { description: "Map an external channel to a Volute channel", run: bridgeMap },
+    unmap: { description: "Remove a channel mapping", run: bridgeUnmap },
+    mappings: { description: "List channel mappings", run: bridgeMappings },
+  },
+});
+
+export const run = cmd.execute;

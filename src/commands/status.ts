@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { promisify } from "node:util";
+import { command } from "../lib/command.js";
 import {
   getDaemonUrl,
   getServiceMode,
@@ -16,82 +17,89 @@ import { checkForUpdate } from "../lib/update-check.js";
 
 const execFileAsync = promisify(execFile);
 
-export async function run(_args: string[]) {
-  const mode = getServiceMode();
-  console.log(`Mode: ${modeLabel(mode)}`);
+const cmd = command({
+  name: "volute status",
+  description: "Show daemon status, version, and running minds",
+  flags: {},
+  run: async () => {
+    const mode = getServiceMode();
+    console.log(`Mode: ${modeLabel(mode)}`);
 
-  const { hostname, port, internalPort, token } = readDaemonConfig();
-  // Use internal HTTP port for API calls, user-facing port for display
-  const apiPort = internalPort ?? port;
-  const baseUrl = getDaemonUrl("127.0.0.1", apiPort);
+    const { hostname, port, internalPort, token } = readDaemonConfig();
+    // Use internal HTTP port for API calls, user-facing port for display
+    const apiPort = internalPort ?? port;
+    const baseUrl = getDaemonUrl("127.0.0.1", apiPort);
 
-  // Check health
-  let running = false;
-  let version: string | undefined;
-  try {
-    const res = await fetch(`${baseUrl}/api/health`);
-    if (res.ok) {
-      const body = (await res.json()) as { ok?: boolean; version?: string };
-      if (body.ok) {
-        running = true;
-        version = body.version;
-      }
-    }
-  } catch {
-    // Not running
-  }
-
-  if (!running) {
-    console.log("Status: not running");
-    return;
-  }
-
-  console.log(`Status: running on ${hostname}:${port}`);
-  if (version) console.log(`Version: ${version}`);
-
-  // Check for updates
-  const update = await checkForUpdate();
-  if (update.updateAvailable) {
-    console.log(`Update available: ${update.current} → ${update.latest}`);
-  }
-
-  // Service details (for managed installs)
-  if (mode !== "manual") {
-    const serviceInfo = await getServiceInfo();
-    if (serviceInfo) {
-      console.log(`\nService:\n${serviceInfo}`);
-    }
-  }
-
-  // List minds
-  const headers: Record<string, string> = {};
-  if (token) headers.Authorization = `Bearer ${token}`;
-  headers.Origin = baseUrl;
-
-  try {
-    const res = await fetch(`${baseUrl}/api/minds`, { headers });
-    if (res.ok) {
-      const minds = (await res.json()) as Array<{
-        name: string;
-        running: boolean;
-        status?: string;
-        stage?: string;
-      }>;
-      if (minds.length > 0) {
-        console.log(`\nMinds (${minds.length}):`);
-        for (const mind of minds) {
-          const status = mind.status ?? (mind.running ? "running" : "stopped");
-          const label = mind.stage === "seed" ? " (seed)" : "";
-          console.log(`  ${mind.name}: ${status}${label}`);
+    // Check health
+    let running = false;
+    let version: string | undefined;
+    try {
+      const res = await fetch(`${baseUrl}/api/health`);
+      if (res.ok) {
+        const body = (await res.json()) as { ok?: boolean; version?: string };
+        if (body.ok) {
+          running = true;
+          version = body.version;
         }
-      } else {
-        console.log("\nNo minds configured.");
+      }
+    } catch {
+      // Not running
+    }
+
+    if (!running) {
+      console.log("Status: not running");
+      return;
+    }
+
+    console.log(`Status: running on ${hostname}:${port}`);
+    if (version) console.log(`Version: ${version}`);
+
+    // Check for updates
+    const update = await checkForUpdate();
+    if (update.updateAvailable) {
+      console.log(`Update available: ${update.current} → ${update.latest}`);
+    }
+
+    // Service details (for managed installs)
+    if (mode !== "manual") {
+      const serviceInfo = await getServiceInfo();
+      if (serviceInfo) {
+        console.log(`\nService:\n${serviceInfo}`);
       }
     }
-  } catch {
-    // Couldn't fetch minds — not critical
-  }
-}
+
+    // List minds
+    const headers: Record<string, string> = {};
+    if (token) headers.Authorization = `Bearer ${token}`;
+    headers.Origin = baseUrl;
+
+    try {
+      const res = await fetch(`${baseUrl}/api/minds`, { headers });
+      if (res.ok) {
+        const minds = (await res.json()) as Array<{
+          name: string;
+          running: boolean;
+          status?: string;
+          stage?: string;
+        }>;
+        if (minds.length > 0) {
+          console.log(`\nMinds (${minds.length}):`);
+          for (const mind of minds) {
+            const status = mind.status ?? (mind.running ? "running" : "stopped");
+            const label = mind.stage === "seed" ? " (seed)" : "";
+            console.log(`  ${mind.name}: ${status}${label}`);
+          }
+        } else {
+          console.log("\nNo minds configured.");
+        }
+      }
+    } catch {
+      // Couldn't fetch minds — not critical
+    }
+  },
+});
+
+export const run = cmd.execute;
 
 async function getServiceInfo(): Promise<string | null> {
   const platform = process.platform;

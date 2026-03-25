@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { resolve } from "node:path";
+import { command } from "../lib/command.js";
 import { voluteSystemDir } from "../lib/registry.js";
 import {
   getServiceMode,
@@ -124,38 +125,45 @@ export async function stopDaemon(): Promise<StopResult> {
   return { stopped: true, clean: false };
 }
 
-export async function run(_args: string[]) {
-  const mode = getServiceMode();
+const cmd = command({
+  name: "volute down",
+  description: "Stop the daemon",
+  flags: {},
+  run: async () => {
+    const mode = getServiceMode();
 
-  if (mode !== "manual") {
-    console.log(`Stopping volute (${modeLabel(mode)})...`);
-    try {
-      await stopService(mode);
-    } catch (err) {
-      console.error(`Failed to stop service: ${err instanceof Error ? err.message : err}`);
+    if (mode !== "manual") {
+      console.log(`Stopping volute (${modeLabel(mode)})...`);
+      try {
+        await stopService(mode);
+      } catch (err) {
+        console.error(`Failed to stop service: ${err instanceof Error ? err.message : err}`);
+        process.exit(1);
+      }
+      const config = readDaemonConfig();
+      if (await pollHealthDown("127.0.0.1", config.internalPort ?? config.port)) {
+        console.log("Daemon stopped.");
+      } else {
+        console.error("Service stopped but daemon may still be responding.");
+        process.exit(1);
+      }
+      return;
+    }
+
+    // Manual mode
+    const result = await stopDaemon();
+    if (result.stopped) return;
+
+    if (result.reason === "orphan") {
+      console.error(`Daemon appears to be running on port ${result.port} but PID file is missing.`);
+      console.error(`Kill the process manually: lsof -ti :${result.port} | xargs kill`);
+      process.exit(1);
+    } else if (result.reason === "kill-failed") {
       process.exit(1);
     }
-    const config = readDaemonConfig();
-    if (await pollHealthDown("127.0.0.1", config.internalPort ?? config.port)) {
-      console.log("Daemon stopped.");
-    } else {
-      console.error("Service stopped but daemon may still be responding.");
-      process.exit(1);
-    }
-    return;
-  }
+    // not-running: exit 0 (idempotent)
+    console.log("Daemon is not running.");
+  },
+});
 
-  // Manual mode
-  const result = await stopDaemon();
-  if (result.stopped) return;
-
-  if (result.reason === "orphan") {
-    console.error(`Daemon appears to be running on port ${result.port} but PID file is missing.`);
-    console.error(`Kill the process manually: lsof -ti :${result.port} | xargs kill`);
-    process.exit(1);
-  } else if (result.reason === "kill-failed") {
-    process.exit(1);
-  }
-  // not-running: exit 0 (idempotent)
-  console.log("Daemon is not running.");
-}
+export const run = cmd.execute;

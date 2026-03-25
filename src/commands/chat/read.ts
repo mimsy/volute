@@ -1,6 +1,6 @@
+import { command } from "../../lib/command.js";
 import { daemonFetch } from "../../lib/daemon-client.js";
 import { compactTime, isCompact } from "../../lib/format-cli.js";
-import { parseArgs } from "../../lib/parse-args.js";
 import { resolveMindName } from "../../lib/resolve-mind-name.js";
 
 type Conversation = {
@@ -54,61 +54,67 @@ async function resolveConversationId(mindName: string, input: string): Promise<s
   return input; // Fall through
 }
 
-export async function run(args: string[]) {
-  const { positional, flags } = parseArgs(args, {
-    mind: { type: "string" },
-    limit: { type: "number" },
-  });
+const cmd = command({
+  name: "volute chat read",
+  description: "Read conversation messages",
+  args: [
+    {
+      name: "conversation",
+      required: true,
+      description: "Conversation ID, channel name, or DM participant",
+    },
+  ],
+  flags: {
+    mind: { type: "string", description: "Mind name" },
+    limit: { type: "number", description: "Number of messages to show (default 50)" },
+  },
+  async run({ args, flags }) {
+    const mindName = resolveMindName(flags);
+    const conversationId = await resolveConversationId(mindName, args.conversation!);
+    const limit = String(flags.limit ?? 50);
 
-  const input = positional[0];
-  if (!input) {
-    console.error("Usage: volute chat read <conversation> [--limit N] [--mind <name>]");
-    process.exit(1);
-  }
-
-  const mindName = resolveMindName(flags);
-  const conversationId = await resolveConversationId(mindName, input);
-  const limit = String(flags.limit ?? 50);
-
-  const res = await daemonFetch(
-    `/api/minds/${encodeURIComponent(mindName)}/conversations/${encodeURIComponent(conversationId)}/messages?limit=${limit}`,
-  );
-  if (!res.ok) {
-    console.error(`Failed to read conversation: ${res.status}`);
-    process.exit(1);
-  }
-
-  const data = (await res.json()) as {
-    items: {
-      role: string;
-      sender_name: string | null;
-      content: string | { type: string; text?: string }[];
-      created_at: string;
-    }[];
-  };
-
-  if (!Array.isArray(data.items)) {
-    console.error("Unexpected response format from server");
-    process.exit(1);
-  }
-
-  const compact = isCompact();
-  for (const msg of data.items) {
-    const sender = msg.sender_name ?? msg.role;
-    const text = Array.isArray(msg.content)
-      ? msg.content
-          .filter((b): b is { type: "text"; text: string } => b.type === "text")
-          .map((b) => b.text)
-          .join("")
-      : msg.content;
-    if (compact) {
-      const time = compactTime(msg.created_at);
-      console.log(`[${time}] ${sender}: ${text}`);
-    } else {
-      const time = new Date(
-        msg.created_at.endsWith("Z") ? msg.created_at : `${msg.created_at}Z`,
-      ).toLocaleString();
-      console.log(`[${time}] ${sender}: ${text}`);
+    const res = await daemonFetch(
+      `/api/minds/${encodeURIComponent(mindName)}/conversations/${encodeURIComponent(conversationId)}/messages?limit=${limit}`,
+    );
+    if (!res.ok) {
+      console.error(`Failed to read conversation: ${res.status}`);
+      process.exit(1);
     }
-  }
-}
+
+    const data = (await res.json()) as {
+      items: {
+        role: string;
+        sender_name: string | null;
+        content: string | { type: string; text?: string }[];
+        created_at: string;
+      }[];
+    };
+
+    if (!Array.isArray(data.items)) {
+      console.error("Unexpected response format from server");
+      process.exit(1);
+    }
+
+    const compact = isCompact();
+    for (const msg of data.items) {
+      const sender = msg.sender_name ?? msg.role;
+      const text = Array.isArray(msg.content)
+        ? msg.content
+            .filter((b): b is { type: "text"; text: string } => b.type === "text")
+            .map((b) => b.text)
+            .join("")
+        : msg.content;
+      if (compact) {
+        const time = compactTime(msg.created_at);
+        console.log(`[${time}] ${sender}: ${text}`);
+      } else {
+        const time = new Date(
+          msg.created_at.endsWith("Z") ? msg.created_at : `${msg.created_at}Z`,
+        ).toLocaleString();
+        console.log(`[${time}] ${sender}: ${text}`);
+      }
+    }
+  },
+});
+
+export const run = cmd.execute;

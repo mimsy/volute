@@ -3,9 +3,9 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { promisify } from "node:util";
+import { command } from "../lib/command.js";
 import { resolveVoluteBin } from "../lib/exec.js";
 import { ensureVoluteGroup } from "../lib/isolation.js";
-import { parseArgs } from "../lib/parse-args.js";
 import { promptLine } from "../lib/prompt.js";
 import {
   LAUNCHD_PLIST_LABEL,
@@ -296,159 +296,166 @@ function setupSystemEnvProfile(): void {
 
 // --- Main ---
 
-export async function run(args: string[]) {
-  const { flags } = parseArgs(args, {
-    name: { type: "string" },
-    system: { type: "boolean" },
-    service: { type: "boolean" },
-    dir: { type: "string" },
-    port: { type: "number" },
-    host: { type: "string" },
-  });
+const cmd = command({
+  name: "volute setup",
+  description: "First-time Volute setup",
+  flags: {
+    name: { type: "string", description: "System name" },
+    system: { type: "boolean", description: "System-level install" },
+    service: { type: "boolean", description: "Install as service" },
+    dir: { type: "string", description: "Data directory" },
+    port: { type: "number", description: "Daemon port" },
+    host: { type: "string", description: "Daemon host" },
+  },
+  run: async ({ flags }) => {
+    // Determine interactive vs non-interactive
+    const isInteractive = !flags.name && process.stdin.isTTY;
 
-  // Determine interactive vs non-interactive
-  const isInteractive = !flags.name && process.stdin.isTTY;
+    let systemName: string;
+    let setupType: SetupType;
+    let wantService: boolean;
+    const port = flags.port;
+    const host = flags.host;
 
-  let systemName: string;
-  let setupType: SetupType;
-  let wantService: boolean;
-  const port = flags.port;
-  const host = flags.host;
+    if (isInteractive) {
+      console.log("Welcome to Volute!\n");
 
-  if (isInteractive) {
-    console.log("Welcome to Volute!\n");
+      systemName = await promptLine("System name: ");
+      if (!systemName.trim()) {
+        console.error("System name is required.");
+        process.exit(1);
+      }
+      systemName = systemName.trim();
 
-    systemName = await promptLine("System name: ");
-    if (!systemName.trim()) {
-      console.error("System name is required.");
-      process.exit(1);
-    }
-    systemName = systemName.trim();
+      console.log("\nInstall type:");
+      console.log("  1. Local (minds in ~/.volute/minds/, sandbox isolation)");
+      console.log("  2. System (minds in /minds, per-user isolation, requires sudo)");
+      const typeChoice = await promptLine("> ");
+      setupType = typeChoice.trim() === "2" ? "system" : "local";
 
-    console.log("\nInstall type:");
-    console.log("  1. Local (minds in ~/.volute/minds/, sandbox isolation)");
-    console.log("  2. System (minds in /minds, per-user isolation, requires sudo)");
-    const typeChoice = await promptLine("> ");
-    setupType = typeChoice.trim() === "2" ? "system" : "local";
+      if (setupType === "system" && process.getuid?.() !== 0) {
+        console.error("\nSystem install requires root. Re-run with sudo.");
+        process.exit(1);
+      }
 
-    if (setupType === "system" && process.getuid?.() !== 0) {
-      console.error("\nSystem install requires root. Re-run with sudo.");
-      process.exit(1);
-    }
-
-    const serviceDefault = setupType === "system" ? "Y/n" : "y/N";
-    const servicePrompt = `\nInstall as a service (auto-start on boot)? [${serviceDefault}]: `;
-    const serviceAnswer = (await promptLine(servicePrompt)).trim().toLowerCase();
-    if (setupType === "system") {
-      wantService = serviceAnswer !== "n";
+      const serviceDefault = setupType === "system" ? "Y/n" : "y/N";
+      const servicePrompt = `\nInstall as a service (auto-start on boot)? [${serviceDefault}]: `;
+      const serviceAnswer = (await promptLine(servicePrompt)).trim().toLowerCase();
+      if (setupType === "system") {
+        wantService = serviceAnswer !== "n";
+      } else {
+        wantService = serviceAnswer === "y" || serviceAnswer === "yes";
+      }
     } else {
-      wantService = serviceAnswer === "y" || serviceAnswer === "yes";
+      // Non-interactive mode
+      if (!flags.name) {
+        console.error("Error: --name is required in non-interactive mode.");
+        console.error("Usage: volute setup --name <name> [--system] [--service] [--dir <path>]");
+        process.exit(1);
+      }
+      systemName = flags.name;
+      setupType = flags.system ? "system" : "local";
+      wantService = flags.service ?? setupType === "system";
+
+      if (setupType === "system" && process.getuid?.() !== 0) {
+        console.error("Error: system install requires root (use sudo).");
+        process.exit(1);
+      }
     }
-  } else {
-    // Non-interactive mode
-    if (!flags.name) {
-      console.error("Error: --name is required in non-interactive mode.");
-      console.error("Usage: volute setup --name <name> [--system] [--service] [--dir <path>]");
-      process.exit(1);
-    }
-    systemName = flags.name;
-    setupType = flags.system ? "system" : "local";
-    wantService = flags.service ?? setupType === "system";
 
-    if (setupType === "system" && process.getuid?.() !== 0) {
-      console.error("Error: system install requires root (use sudo).");
-      process.exit(1);
-    }
-  }
+    if (host) validateHost(host);
 
-  if (host) validateHost(host);
+    console.log("\nSetting up...");
 
-  console.log("\nSetting up...");
+    let isolation: IsolationMode;
+    let mindsDir: string;
+    let configHome: string;
 
-  let isolation: IsolationMode;
-  let mindsDir: string;
-  let configHome: string;
+    if (setupType === "system") {
+      configHome = DATA_DIR;
+      mindsDir = MINDS_DIR;
+      isolation = "user";
 
-  if (setupType === "system") {
-    configHome = DATA_DIR;
-    mindsDir = MINDS_DIR;
-    isolation = "user";
+      // Set VOLUTE_HOME for system installs
+      process.env.VOLUTE_HOME = DATA_DIR;
+      process.env.VOLUTE_MINDS_DIR = MINDS_DIR;
 
-    // Set VOLUTE_HOME for system installs
-    process.env.VOLUTE_HOME = DATA_DIR;
-    process.env.VOLUTE_MINDS_DIR = MINDS_DIR;
+      setupSystemDirectories();
+      ensureVoluteGroup({ force: true });
+      console.log("  Ensured volute group exists");
+      setupSystemGitIdentity();
 
-    setupSystemDirectories();
-    ensureVoluteGroup({ force: true });
-    console.log("  Ensured volute group exists");
-    setupSystemGitIdentity();
-
-    const voluteBin = resolveVoluteBin();
-    setupSystemWrapper(voluteBin);
-    setupSystemEnvProfile();
-
-    if (wantService) {
-      if (!installSystemService(voluteBin, port, host)) wantService = false;
-    }
-  } else {
-    // Local setup
-    configHome = flags.dir ? resolve(flags.dir) : resolve(homedir(), ".volute");
-    if (flags.dir) {
-      process.env.VOLUTE_HOME = configHome;
-    }
-    mindsDir = resolve(configHome, "minds");
-    isolation = "sandbox";
-
-    mkdirSync(configHome, { recursive: true });
-    console.log(`  Created ${configHome}`);
-    mkdirSync(mindsDir, { recursive: true });
-    console.log("  Sandbox enabled for mind isolation");
-
-    if (wantService) {
       const voluteBin = resolveVoluteBin();
-      if (!(await installUserService(voluteBin, port, host))) wantService = false;
+      setupSystemWrapper(voluteBin);
+      setupSystemEnvProfile();
+
+      if (wantService) {
+        if (!installSystemService(voluteBin, port, host)) wantService = false;
+      }
+    } else {
+      // Local setup
+      configHome = flags.dir ? resolve(flags.dir) : resolve(homedir(), ".volute");
+      if (flags.dir) {
+        process.env.VOLUTE_HOME = configHome;
+      }
+      mindsDir = resolve(configHome, "minds");
+      isolation = "sandbox";
+
+      mkdirSync(configHome, { recursive: true });
+      console.log(`  Created ${configHome}`);
+      mkdirSync(mindsDir, { recursive: true });
+      console.log("  Sandbox enabled for mind isolation");
+
+      if (wantService) {
+        const voluteBin = resolveVoluteBin();
+        if (!(await installUserService(voluteBin, port, host))) wantService = false;
+      }
     }
-  }
 
-  // Write config
-  const existingConfig = readGlobalConfig();
-  const setup: SetupConfig = {
-    type: setupType,
-    mindsDir,
-    isolation,
-    service: wantService,
-  };
+    // Write config
+    const existingConfig = readGlobalConfig();
+    const setup: SetupConfig = {
+      type: setupType,
+      mindsDir,
+      isolation,
+      service: wantService,
+    };
 
-  const config: GlobalConfig = {
-    ...existingConfig,
-    name: systemName,
-    setup,
-    setupCompleted: true,
-  };
-  if (port != null) config.port = port;
-  if (host) config.hostname = host;
+    const config: GlobalConfig = {
+      ...existingConfig,
+      name: systemName,
+      setup,
+      setupCompleted: true,
+    };
+    if (port != null) config.port = port;
+    if (host) config.hostname = host;
 
-  writeGlobalConfig(config);
+    writeGlobalConfig(config);
 
-  // Optional AI provider configuration (interactive only)
-  if (isInteractive) {
-    const wantAi = (await promptLine("\nConfigure an AI provider? (optional) [y/N]: "))
-      .trim()
-      .toLowerCase();
-    if (wantAi === "y" || wantAi === "yes") {
-      const aiProvider = (await promptLine("Provider (anthropic, openai, google, etc.): ")).trim();
-      if (aiProvider) {
-        const aiApiKey = (await promptLine("API key (leave empty to use env var): ")).trim();
-        if (aiApiKey) {
-          const { saveProviderConfig } = await import("../lib/ai-service.js");
-          saveProviderConfig(aiProvider, { apiKey: aiApiKey });
-          console.log(`  AI provider configured: ${aiProvider}`);
-        } else {
-          console.log(`  Using env var for ${aiProvider} (no explicit key saved)`);
+    // Optional AI provider configuration (interactive only)
+    if (isInteractive) {
+      const wantAi = (await promptLine("\nConfigure an AI provider? (optional) [y/N]: "))
+        .trim()
+        .toLowerCase();
+      if (wantAi === "y" || wantAi === "yes") {
+        const aiProvider = (
+          await promptLine("Provider (anthropic, openai, google, etc.): ")
+        ).trim();
+        if (aiProvider) {
+          const aiApiKey = (await promptLine("API key (leave empty to use env var): ")).trim();
+          if (aiApiKey) {
+            const { saveProviderConfig } = await import("../lib/ai-service.js");
+            saveProviderConfig(aiProvider, { apiKey: aiApiKey });
+            console.log(`  AI provider configured: ${aiProvider}`);
+          } else {
+            console.log(`  Using env var for ${aiProvider} (no explicit key saved)`);
+          }
         }
       }
     }
-  }
 
-  console.log(`\nDone! Use \`volute mind create <name>\` to create your first mind.`);
-}
+    console.log(`\nDone! Use \`volute mind create <name>\` to create your first mind.`);
+  },
+});
+
+export const run = cmd.execute;
