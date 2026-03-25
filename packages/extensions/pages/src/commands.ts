@@ -54,7 +54,7 @@ export function createCommands(): Record<string, ExtensionCommand> {
             if (result.ok && ctx.db) {
               const repoDir = resolve(ctx.dataDir, "repo");
               try {
-                syncSystemPages(ctx.db, collectHtmlFiles(repoDir));
+                syncSystemPages(ctx.db, collectHtmlFiles(repoDir), mindName);
               } catch (err) {
                 console.error("[pages] failed to sync system pages to DB:", err);
               }
@@ -173,10 +173,18 @@ export function createCommands(): Record<string, ExtensionCommand> {
         const port = process.env.VOLUTE_DAEMON_PORT || "1618";
 
         if (allFlag) {
-          const { getAllSites } = await import("./db.js");
+          const { getAllSites, getSystemPages } = await import("./db.js");
           const sites = getAllSites(db);
+          const system = getSystemPages(db);
           const lines: string[] = [];
 
+          if (system) {
+            for (const f of system.files) {
+              const url = `http://localhost:${port}/ext/pages/public/_system/${f.file}`;
+              const author = f.author ? ` (${f.author})` : "";
+              lines.push(`_system${author.padStart(10)} ${f.file.padEnd(25)} ${url}`);
+            }
+          }
           for (const site of sites) {
             for (const f of site.files) {
               const url = `http://localhost:${port}/ext/pages/public/${site.mind}/${f.file}`;

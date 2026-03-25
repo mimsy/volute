@@ -38,18 +38,22 @@ let route = $derived.by((): Route => {
 });
 
 let sites = $state<Site[]>([]);
+let systemSite = $state<Site | null>(null);
 let recentPages = $state<any[]>([]);
 
 $effect(() => {
   fetchPagesData().then((data) => {
     sites = data.sites;
+    systemSite = data.systemSite;
     recentPages = data.recentPages;
   });
 });
 
+let allSites = $derived([...(systemSite ? [systemSite] : []), ...sites]);
+
 let selectedSite = $derived.by(() => {
-  if (route.view === "site") return sites.find((s) => s.name === route.name);
-  if (route.view === "mind") return sites.find((s) => s.name === route.name);
+  if (route.view === "site") return allSites.find((s) => s.name === route.name);
+  if (route.view === "mind") return allSites.find((s) => s.name === route.name);
   return undefined;
 });
 
@@ -105,7 +109,7 @@ function handleSelectSite(name: string) {
   {:else if (route.view === "site" || route.view === "mind") && selectedSite}
     <SiteView site={selectedSite} onSelectPage={handleSelectPage} />
   {:else}
-    <PagesDashboard {sites} {recentPages} onSelectSite={handleSelectSite} onSelectPage={handleSelectPage} />
+    <PagesDashboard {sites} {systemSite} {recentPages} onSelectSite={handleSelectSite} onSelectPage={handleSelectPage} />
   {/if}
 </div>
 
