@@ -106,5 +106,12 @@ self.addEventListener("fetch", (event) => {
     init.duplex = "half";
   }
 
-  event.respondWith(fetch(targetUrl, init));
+  event.respondWith(
+    fetch(targetUrl, init).catch((err) => {
+      return new Response(JSON.stringify({ error: `Daemon unreachable: ${err.message}` }), {
+        status: 502,
+        headers: { "Content-Type": "application/json" },
+      });
+    }),
+  );
 });

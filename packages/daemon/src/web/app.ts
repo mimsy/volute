@@ -88,7 +88,7 @@ app.use(
 // because Bearer tokens aren't auto-attached by browsers, making CSRF impossible.
 app.use("/api/*", async (c, next) => {
   const auth = c.req.header("Authorization");
-  if (auth?.startsWith("Bearer ")) return next();
+  if (auth?.startsWith("Bearer ") && auth.length > 7) return next();
   return csrf()(c, next);
 });
 

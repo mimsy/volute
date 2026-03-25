@@ -93,14 +93,19 @@ async function configureSW(daemonUrl: string, token: string): Promise<void> {
   if (!sw) throw new Error("Service worker failed to install");
 
   if (sw.state !== "activated") {
-    await new Promise<void>((resolve) => {
-      sw.addEventListener("statechange", function handler() {
-        if (sw.state === "activated") {
-          sw.removeEventListener("statechange", handler);
-          resolve();
-        }
-      });
-    });
+    await Promise.race([
+      new Promise<void>((resolve) => {
+        sw.addEventListener("statechange", function handler() {
+          if (sw.state === "activated") {
+            sw.removeEventListener("statechange", handler);
+            resolve();
+          }
+        });
+      }),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("Service worker activation timed out")), 10000),
+      ),
+    ]);
   }
 
   // Wait for the SW to claim this client (skipWaiting + clients.claim in sw.js)
@@ -108,9 +113,16 @@ async function configureSW(daemonUrl: string, token: string): Promise<void> {
 
   // If the SW hasn't claimed us yet, wait for the controllerchange event
   if (!navigator.serviceWorker.controller) {
-    await new Promise<void>((resolve) => {
-      navigator.serviceWorker.addEventListener("controllerchange", () => resolve(), { once: true });
-    });
+    await Promise.race([
+      new Promise<void>((resolve) => {
+        navigator.serviceWorker.addEventListener("controllerchange", () => resolve(), {
+          once: true,
+        });
+      }),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("Service worker claim timed out")), 10000),
+      ),
+    ]);
   }
 
   navigator.serviceWorker.controller!.postMessage({
@@ -157,8 +169,9 @@ export async function detectConnection(): Promise<boolean> {
       daemon.token = stored.token;
       daemon.detected = true;
       return true;
-    } catch {
+    } catch (err) {
       // Saved connection failed — clear it and show setup
+      console.warn("[volute] Saved remote connection failed, clearing:", (err as Error).message);
       saveStored(null);
     }
   }

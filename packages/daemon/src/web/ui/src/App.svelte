@@ -301,14 +301,20 @@ async function doLogout() {
 // Auth — detect daemon connection first, then check auth
 onMount(() => {
   // Async init — fire and forget (onMount cleanup must be sync)
-  detectConnection().then((connected) => {
-    if (!connected) {
+  detectConnection()
+    .then((connected) => {
+      if (!connected) {
+        needsConnection = true;
+        auth.checked = true; // Mark as checked so we don't show "Loading..."
+      } else {
+        checkAuth();
+      }
+    })
+    .catch(() => {
+      // Detection failed — show connection setup
       needsConnection = true;
-      auth.checked = true; // Mark as checked so we don't show "Loading..."
-    } else {
-      checkAuth();
-    }
-  });
+      auth.checked = true;
+    });
 
   const mql = window.matchMedia("(max-width: 1024px)");
   narrowViewport = mql.matches;
