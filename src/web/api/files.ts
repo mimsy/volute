@@ -1,12 +1,12 @@
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { readFile, realpath, stat } from "node:fs/promises";
+import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import { extname, resolve } from "node:path";
 import { Hono } from "hono";
 import { syncMindProfile } from "../../lib/auth.js";
 import { broadcast } from "../../lib/events/activity-events.js";
 import { findMind, mindDir } from "../../lib/registry.js";
 import { readVoluteConfig, writeVoluteConfig } from "../../lib/volute-config.js";
-import { type AuthEnv, requireSelf } from "../middleware/auth.js";
+import { type AuthEnv, requireAdmin, requireSelf } from "../middleware/auth.js";
 
 const AVATAR_MIME: Record<string, string> = {
   ".png": "image/png",
@@ -108,6 +108,77 @@ const app = new Hono<AuthEnv>()
     } catch {
       return c.json({ error: "Failed to read avatar file" }, 500);
     }
+  })
+  // Browse mind home directory (admin-only)
+  .get("/:name/files/", requireAdmin, async (c) => {
+    const name = c.req.param("name");
+    const entry = await findMind(name);
+    if (!entry) return c.json({ error: "Mind not found" }, 404);
+
+    const homeDir = resolve(entry.dir ?? mindDir(name), "home");
+    const entries = await readdir(homeDir, { withFileTypes: true }).catch(() => []);
+    const items = entries
+      .filter((e) => !e.name.startsWith("."))
+      .map((e) => ({ name: e.name, type: e.isDirectory() ? "directory" : ("file" as const) }));
+    return c.json(items);
+  })
+  .get("/:name/files/*", requireAdmin, async (c) => {
+    const name = c.req.param("name");
+    const entry = await findMind(name);
+    if (!entry) return c.json({ error: "Mind not found" }, 404);
+
+    const homeDir = resolve(entry.dir ?? mindDir(name), "home");
+    const wildcard = c.req.path.replace(new RegExp(`^.*/minds/${name}/files`), "") || "/";
+    const relativePath = wildcard.slice(1);
+    const requestedPath = resolve(homeDir, relativePath);
+
+    // Path traversal protection
+    if (requestedPath !== homeDir && !requestedPath.startsWith(`${homeDir}/`))
+      return c.text("Forbidden", 403);
+    if (relativePath.split("/").some((seg) => seg.startsWith("."))) return c.text("Forbidden", 403);
+
+    let fileStat: Awaited<ReturnType<typeof stat>>;
+    try {
+      fileStat = await stat(requestedPath);
+    } catch (err: unknown) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return c.text("Not found", 404);
+      return c.text("Internal server error", 500);
+    }
+
+    if (fileStat.isDirectory()) {
+      // Redirect to trailing slash if missing, otherwise list contents
+      if (!c.req.path.endsWith("/")) return c.redirect(c.req.path + "/");
+      const dirEntries = await readdir(requestedPath, { withFileTypes: true }).catch(() => []);
+      const items = dirEntries
+        .filter((e) => !e.name.startsWith("."))
+        .map((e) => ({ name: e.name, type: e.isDirectory() ? "directory" : ("file" as const) }));
+      return c.json(items);
+    }
+
+    const MIME_TYPES: Record<string, string> = {
+      ".html": "text/html",
+      ".css": "text/css",
+      ".js": "application/javascript",
+      ".json": "application/json",
+      ".svg": "image/svg+xml",
+      ".png": "image/png",
+      ".jpg": "image/jpeg",
+      ".jpeg": "image/jpeg",
+      ".gif": "image/gif",
+      ".webp": "image/webp",
+      ".txt": "text/plain",
+      ".md": "text/markdown",
+      ".xml": "application/xml",
+      ".woff": "font/woff",
+      ".woff2": "font/woff2",
+    };
+
+    const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
+    if (fileStat.size > MAX_FILE_SIZE) return c.text("File too large", 413);
+
+    const body = await readFile(requestedPath);
+    const mime = MIME_TYPES[extname(requestedPath).toLowerCase()] || "application/octet-stream";
+    return c.body(body, 200, { "Content-Type": mime });
   });
 
 export default app;

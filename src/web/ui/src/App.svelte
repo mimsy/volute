@@ -87,7 +87,6 @@ let activeSystemSection = $derived.by((): string | null => {
   if (selection.kind === "extension") return `ext:${selection.extensionId}`;
   if (selection.kind === "settings") return "settings";
   if (selection.kind === "spirit-settings") return "spirit-settings";
-  if (selection.kind === "shared-files") return "shared-files";
   return null;
 });
 
@@ -273,9 +272,6 @@ let breadcrumbs = $derived.by((): Breadcrumb[] => {
   } else if (sel.kind === "spirit-settings") {
     crumbs.push({ label: "system", action: handleSystemHome });
     crumbs.push({ label: "spirit settings" });
-  } else if (sel.kind === "shared-files") {
-    crumbs.push({ label: "system", action: handleSystemHome });
-    crumbs.push({ label: "shared files" });
   } else {
     crumbs.push({ label: "system" });
   }
@@ -668,8 +664,7 @@ function handleGlobalClick(e: MouseEvent) {
             else if (section === "settings") activeModal = "mindSettings";
           }}
           onSelectSystemSection={(section) => {
-            if (section === "shared-files") selection = { kind: "shared-files" };
-            else if (section === "settings") handleSelectSettings();
+            if (section === "settings") handleSelectSettings();
           }}
           onSelectConversation={handleSelectConversation}
           onDeleteConversation={handleDeleteConversation}

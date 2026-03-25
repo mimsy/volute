@@ -1,7 +1,7 @@
 <script lang="ts">
 import { renderMarkdown } from "@volute/ui/markdown";
 
-let { name, rootLabel }: { name: string; rootLabel?: string } = $props();
+let { name }: { name: string } = $props();
 
 type Entry = { name: string; type: "file" | "directory" };
 
@@ -42,7 +42,7 @@ async function loadDir() {
   fileContent = null;
   try {
     const dirPath = path.length > 0 ? `${path.join("/")}/` : "";
-    const res = await fetch(`/public/${encodeURIComponent(name)}/${dirPath}`);
+    const res = await fetch(`/api/minds/${encodeURIComponent(name)}/files/${dirPath}`);
     if (!res.ok) throw new Error("Failed to load directory");
     entries = await res.json();
   } catch (e) {
@@ -76,7 +76,7 @@ async function selectFile(entry: Entry) {
 
   try {
     const filePath = currentDir + entry.name;
-    const res = await fetch(`/public/${encodeURIComponent(name)}/${filePath}`);
+    const res = await fetch(`/api/minds/${encodeURIComponent(name)}/files/${filePath}`);
     if (!res.ok) throw new Error("Failed to load file");
 
     fileMime = res.headers.get("content-type") ?? "";
@@ -134,7 +134,7 @@ let sortedEntries = $derived(
     <div class="browser">
       <div class="file-list">
         <div class="breadcrumb">
-          <button class="crumb" onclick={navigateToRoot}>{rootLabel ?? "public"}/</button>
+          <button class="crumb" onclick={navigateToRoot}>home/</button>
           {#each path as segment, i (i)}
             <button class="crumb" onclick={() => (path = path.slice(0, i + 1))}>{segment}/</button>
           {/each}
@@ -166,7 +166,7 @@ let sortedEntries = $derived(
             <span class="preview-filename">{currentDir}{selectedFile}</span>
             <a
               class="preview-link"
-              href="/public/{encodeURIComponent(name)}/{currentDir}{selectedFile}"
+              href="/api/minds/{encodeURIComponent(name)}/files/{currentDir}{selectedFile}"
               target="_blank"
               rel="noopener"
             >open</a>
@@ -188,7 +188,7 @@ let sortedEntries = $derived(
               <span class="preview-mime">{fileMime || "unknown type"}</span>
               <a
                 class="download-link"
-                href="/public/{encodeURIComponent(name)}/{currentDir}{selectedFile}"
+                href="/api/minds/{encodeURIComponent(name)}/files/{currentDir}{selectedFile}"
                 target="_blank"
                 rel="noopener"
               >Download</a>
