@@ -281,7 +281,7 @@ const app = new Hono<AuthEnv>()
       const { model, prompt } = c.req.valid("json");
       try {
         const buf = await generateImage(model, prompt);
-        return new Response(buf, {
+        return new Response(new Uint8Array(buf), {
           headers: {
             "Content-Type": "image/png",
             "Content-Length": String(buf.length),
