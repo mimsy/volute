@@ -227,7 +227,7 @@ export async function sharedMerge(
     } catch {
       return {
         ok: true,
-        message: "Merged to main, but branch reset failed — run 'volute shared pull' to sync",
+        message: "Merged to main, but branch reset failed — run 'volute pages pull' to sync",
       };
     }
 
@@ -236,4 +236,66 @@ export async function sharedMerge(
 
     return { ok: true };
   });
+}
+
+/**
+ * Pull latest shared changes by rebasing the mind's branch onto main.
+ * Commits any pending changes first. Returns { ok, conflicts?, message? }.
+ */
+export async function sharedPull(
+  mindName: string,
+  mindDir: string,
+): Promise<{ ok: boolean; conflicts?: boolean; message?: string }> {
+  return withSharedLock(async () => {
+    const worktreePath = resolve(mindDir, "home", "shared");
+
+    // Commit any pending changes on the mind's branch
+    const status = (await gitExec(["status", "--porcelain"], { cwd: worktreePath })).trim();
+    if (status) {
+      await gitExec(["add", "-A"], { cwd: worktreePath });
+      await gitExec(
+        ["commit", "--author", `${mindName} <${mindName}@volute>`, "-m", `wip: ${mindName}`],
+        { cwd: worktreePath },
+      );
+    }
+
+    // Rebase onto main
+    try {
+      await gitExec(["rebase", "main"], { cwd: worktreePath });
+    } catch {
+      // Abort failed rebase
+      try {
+        await gitExec(["rebase", "--abort"], { cwd: worktreePath });
+      } catch (abortErr) {
+        log.error("rebase abort failed in shared worktree", log.errorData(abortErr));
+      }
+      return {
+        ok: false,
+        conflicts: true,
+        message:
+          "Pull conflicts detected — your changes conflict with main. Reconcile the conflicting files, commit, and pull again.",
+      };
+    }
+
+    // Daemon runs as root — restore mind user ownership on worktree files
+    rechownWorktree(worktreePath, mindName);
+
+    return { ok: true, message: "Pulled latest shared changes." };
+  });
+}
+
+/** Show what the mind has changed compared to main in the shared worktree. */
+export async function sharedStatus(mindDir: string): Promise<string> {
+  const worktreePath = resolve(mindDir, "home", "shared");
+  const diff = (await gitExec(["diff", "main...HEAD", "--stat"], { cwd: worktreePath })).trim();
+  return diff || "No changes compared to main.";
+}
+
+/** Show recent commit history on main in the shared repo. */
+export async function sharedLog(mindDir: string, limit = 20): Promise<string> {
+  const worktreePath = resolve(mindDir, "home", "shared");
+  const log = (
+    await gitExec(["log", "--oneline", "main", `-${limit}`], { cwd: worktreePath })
+  ).trim();
+  return log || "No history.";
 }

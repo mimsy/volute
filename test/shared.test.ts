@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { gitExec } from "../src/lib/exec.js";
@@ -9,7 +9,10 @@ import {
   ensureSharedRepo,
   removeSharedWorktree,
   sharedDir,
+  sharedLog,
   sharedMerge,
+  sharedPull,
+  sharedStatus,
 } from "../src/lib/shared.js";
 import { cleanGitEnv } from "./helpers/test-git-env.js";
 
@@ -183,5 +186,121 @@ describe("shared repo", () => {
 
     await removeSharedWorktree("test-conflict-a", mindDirA);
     await removeSharedWorktree("test-conflict-b", mindDirB);
+  });
+
+  it("sharedPull with no changes is a no-op", async () => {
+    await ensureSharedRepo();
+    const mindDir = await createFakeMind("test-pull-noop");
+    await addSharedWorktree("test-pull-noop", mindDir);
+
+    const result = await sharedPull("test-pull-noop", mindDir);
+    assert.ok(result.ok);
+
+    await removeSharedWorktree("test-pull-noop", mindDir);
+  });
+
+  it("sharedPull gets changes from another mind", async () => {
+    await ensureSharedRepo();
+    const mindDirA = await createFakeMind("test-pull-a");
+    const mindDirB = await createFakeMind("test-pull-b");
+    await addSharedWorktree("test-pull-a", mindDirA);
+    await addSharedWorktree("test-pull-b", mindDirB);
+
+    const worktreeA = resolve(mindDirA, "home", "shared");
+    const worktreeB = resolve(mindDirB, "home", "shared");
+
+    // Mind A creates a file and merges
+    writeFileSync(resolve(worktreeA, "pages", "from-a.html"), "<p>from A</p>");
+    await sharedMerge("test-pull-a", mindDirA, "A's page");
+
+    // Mind B pulls — should get A's file
+    const result = await sharedPull("test-pull-b", mindDirB);
+    assert.ok(result.ok);
+
+    const content = readFileSync(resolve(worktreeB, "pages", "from-a.html"), "utf-8");
+    assert.equal(content, "<p>from A</p>");
+
+    await removeSharedWorktree("test-pull-a", mindDirA);
+    await removeSharedWorktree("test-pull-b", mindDirB);
+  });
+
+  it("sharedPull detects conflicts and aborts cleanly", async () => {
+    await ensureSharedRepo();
+    const mindDirA = await createFakeMind("test-pull-conflict-a");
+    const mindDirB = await createFakeMind("test-pull-conflict-b");
+    await addSharedWorktree("test-pull-conflict-a", mindDirA);
+    await addSharedWorktree("test-pull-conflict-b", mindDirB);
+
+    const worktreeA = resolve(mindDirA, "home", "shared");
+    const worktreeB = resolve(mindDirB, "home", "shared");
+
+    // Mind A edits and merges
+    writeFileSync(resolve(worktreeA, "pages", "conflict.txt"), "version A");
+    await sharedMerge("test-pull-conflict-a", mindDirA, "A's version");
+
+    // Mind B edits the same file (on its branch) and commits
+    writeFileSync(resolve(worktreeB, "pages", "conflict.txt"), "version B");
+    await gitExec(["add", "-A"], { cwd: worktreeB });
+    await gitExec(
+      ["commit", "--author", "test-pull-conflict-b <test@volute>", "-m", "B's version"],
+      { cwd: worktreeB },
+    );
+
+    // Mind B pulls — should detect conflict
+    const result = await sharedPull("test-pull-conflict-b", mindDirB);
+    assert.equal(result.ok, false);
+    assert.equal(result.conflicts, true);
+
+    // Worktree should be usable (rebase was aborted)
+    const branch = (await gitExec(["branch", "--show-current"], { cwd: worktreeB })).trim();
+    assert.equal(branch, "test-pull-conflict-b");
+
+    await removeSharedWorktree("test-pull-conflict-a", mindDirA);
+    await removeSharedWorktree("test-pull-conflict-b", mindDirB);
+  });
+
+  it("sharedStatus shows diff output", async () => {
+    await ensureSharedRepo();
+    const mindDir = await createFakeMind("test-status");
+    await addSharedWorktree("test-status", mindDir);
+
+    const worktreePath = resolve(mindDir, "home", "shared");
+
+    // No changes — should show no diff
+    let status = await sharedStatus(mindDir);
+    assert.equal(status, "No changes compared to main.");
+
+    // Make a change and commit
+    writeFileSync(resolve(worktreePath, "pages", "new.html"), "<p>new</p>");
+    await gitExec(["add", "-A"], { cwd: worktreePath });
+    await gitExec(["commit", "--author", "test-status <test@volute>", "-m", "add page"], {
+      cwd: worktreePath,
+    });
+
+    status = await sharedStatus(mindDir);
+    assert.ok(status.includes("new.html"));
+
+    await removeSharedWorktree("test-status", mindDir);
+  });
+
+  it("sharedLog shows commit history", async () => {
+    await ensureSharedRepo();
+    const mindDir = await createFakeMind("test-log");
+    await addSharedWorktree("test-log", mindDir);
+
+    const worktreePath = resolve(mindDir, "home", "shared");
+
+    // Initial log should have at least the init commit
+    let log = await sharedLog(mindDir, 10);
+    assert.ok(log.includes("init shared repo"));
+
+    // Merge a change and check log
+    writeFileSync(resolve(worktreePath, "pages", "index.html"), "<h1>Hi</h1>");
+    await sharedMerge("test-log", mindDir, "Add index page");
+
+    log = await sharedLog(mindDir, 10);
+    assert.ok(log.includes("Add index page"));
+
+    await removeSharedWorktree("test-log", mindDir);
   });
 });

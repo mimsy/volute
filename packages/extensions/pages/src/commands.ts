@@ -5,14 +5,58 @@ import type { ExtensionCommand } from "@volute/extensions";
 
 import { getPublishedPages, syncPublishedPages } from "./db.js";
 
+// Lazy-loaded shared repo functions (run in daemon process)
+type SharedFns = typeof import("../../../../src/lib/shared.js");
+let _shared: SharedFns | null = null;
+async function getShared(): Promise<SharedFns> {
+  if (_shared) return _shared;
+  _shared = await import("../../../../src/lib/shared.js");
+  return _shared;
+}
+
 export function createCommands(): Record<string, ExtensionCommand> {
   return {
     publish: {
       description: "Publish all pages (copy to public snapshot)",
-      usage: "volute pages publish [--remote]",
+      usage: 'volute pages publish [--remote] [--shared "message"]',
       handler: async (args, ctx) => {
         const mindName = ctx.mindName;
         if (!mindName) return { error: "No mind specified (use --mind or VOLUTE_MIND)" };
+
+        const shared = args.includes("--shared");
+        if (shared) {
+          const mindDir = ctx.getMindDir(mindName);
+          if (!mindDir) return { error: `Mind not found: ${mindName}` };
+
+          // Get the commit message from remaining args (skip --shared flag)
+          const message = args
+            .filter((a) => a !== "--shared")
+            .join(" ")
+            .trim();
+          if (!message)
+            return { error: 'Usage: volute pages publish --shared "description of changes"' };
+
+          const { sharedPull, sharedMerge } = await getShared();
+
+          // Auto-pull first to reduce conflict frequency
+          const pullResult = await sharedPull(mindName, mindDir);
+          if (!pullResult.ok) {
+            return {
+              error: pullResult.message || "Pull failed — resolve conflicts and try again.",
+            };
+          }
+
+          // Merge to main
+          const mergeResult = await sharedMerge(mindName, mindDir, message);
+          if (!mergeResult.ok) {
+            return {
+              error:
+                mergeResult.message || "Merge conflicts detected — pull, reconcile, and try again.",
+            };
+          }
+
+          return { output: mergeResult.message || "Published shared pages." };
+        }
 
         const remote = args.includes("--remote");
 
@@ -113,10 +157,19 @@ export function createCommands(): Record<string, ExtensionCommand> {
 
     list: {
       description: "List pages with publish status",
-      usage: "volute pages list [--all]",
+      usage: "volute pages list [--all] [--shared]",
       handler: async (args, ctx) => {
         const mindName = ctx.mindName;
         if (!mindName) return { error: "No mind specified (use --mind or VOLUTE_MIND)" };
+
+        if (args.includes("--shared")) {
+          const mindDir = ctx.getMindDir(mindName);
+          if (!mindDir) return { error: `Mind not found: ${mindName}` };
+
+          const { sharedStatus } = await getShared();
+          const status = await sharedStatus(mindDir);
+          return { output: status };
+        }
 
         const db = ctx.db;
         if (!db) return { error: "Database not available" };
@@ -160,6 +213,48 @@ export function createCommands(): Record<string, ExtensionCommand> {
         });
 
         return { output: lines.join("\n") };
+      },
+    },
+
+    pull: {
+      description: "Pull latest shared page changes from other minds",
+      usage: "volute pages pull",
+      handler: async (_args, ctx) => {
+        const mindName = ctx.mindName;
+        if (!mindName) return { error: "No mind specified (use --mind or VOLUTE_MIND)" };
+
+        const mindDir = ctx.getMindDir(mindName);
+        if (!mindDir) return { error: `Mind not found: ${mindName}` };
+
+        const { sharedPull } = await getShared();
+        const result = await sharedPull(mindName, mindDir);
+        if (!result.ok) {
+          return { error: result.message || "Pull failed." };
+        }
+        return { output: result.message || "Pulled latest shared changes." };
+      },
+    },
+
+    log: {
+      description: "View shared pages commit history",
+      usage: "volute pages log [--limit N]",
+      handler: async (args, ctx) => {
+        const mindName = ctx.mindName;
+        if (!mindName) return { error: "No mind specified (use --mind or VOLUTE_MIND)" };
+
+        const mindDir = ctx.getMindDir(mindName);
+        if (!mindDir) return { error: `Mind not found: ${mindName}` };
+
+        let limit = 20;
+        const limitIdx = args.indexOf("--limit");
+        if (limitIdx !== -1 && args[limitIdx + 1]) {
+          const n = parseInt(args[limitIdx + 1], 10);
+          if (!isNaN(n) && n > 0) limit = n;
+        }
+
+        const { sharedLog } = await getShared();
+        const output = await sharedLog(mindDir, limit);
+        return { output };
       },
     },
   };
