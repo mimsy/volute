@@ -44,7 +44,6 @@ import {
   unreadCounts,
 } from "./lib/stores.svelte";
 import SetupPage from "./pages/SetupPage.svelte";
-import SpiritSettings from "./pages/SpiritSettings.svelte";
 import SystemSettingsPage from "./pages/SystemSettingsPage.svelte";
 
 // Selection state
@@ -105,7 +104,6 @@ type ModalType =
   | "mindFiles"
   | "mindSettings"
   | "mindContext"
-  | "spiritSettings"
   | "systemSettings"
   | "systemLogs"
   | null;
@@ -355,11 +353,8 @@ $effect(() => {
 
 // Redirect settings/spirit-settings page selections to modals
 $effect(() => {
-  if (selection.kind === "settings") {
+  if (selection.kind === "settings" || selection.kind === "spirit-settings") {
     activeModal = "systemSettings";
-    selection = { kind: "system-history" };
-  } else if (selection.kind === "spirit-settings") {
-    activeModal = "spiritSettings";
     selection = { kind: "system-history" };
   }
 });
@@ -673,7 +668,6 @@ function handleGlobalClick(e: MouseEvent) {
           }}
           onSelectSystemSection={(section) => {
             if (section === "settings") activeModal = "systemSettings";
-            else if (section === "spirit") activeModal = "spiritSettings";
             else if (section === "logs") activeModal = "systemLogs";
           }}
           onSelectConversation={handleSelectConversation}
@@ -877,11 +871,6 @@ function handleGlobalClick(e: MouseEvent) {
   {/if}
   {#if activeModal === "mindContext" && mindModalName}
     <ContextModal mindName={mindModalName} onClose={() => { activeModal = null; mindModalName = null; }} />
-  {/if}
-  {#if activeModal === "spiritSettings"}
-    <Modal title="Spirit" onClose={() => (activeModal = null)}>
-      <SpiritSettings />
-    </Modal>
   {/if}
   {#if activeModal === "systemSettings"}
     <Modal title="Settings" onClose={() => (activeModal = null)}>

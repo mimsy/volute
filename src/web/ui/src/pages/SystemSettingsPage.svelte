@@ -7,11 +7,21 @@ import { restartDaemon } from "../lib/client";
 import { data } from "../lib/stores.svelte";
 import Prompts from "./Prompts.svelte";
 import Settings from "./Settings.svelte";
+import SpiritSettings from "./SpiritSettings.svelte";
 
-const TABS = ["settings", "mind-defaults", "prompts", "skills", "extensions", "users"] as const;
+const TABS = [
+  "spirit",
+  "settings",
+  "mind-defaults",
+  "prompts",
+  "skills",
+  "extensions",
+  "users",
+] as const;
 type Tab = (typeof TABS)[number];
 
 const TAB_LABELS: Record<Tab, string> = {
+  spirit: "Spirit",
   settings: "Settings",
   "mind-defaults": "Mind Defaults",
   prompts: "Prompts",
@@ -20,7 +30,7 @@ const TAB_LABELS: Record<Tab, string> = {
   users: "Users",
 };
 
-let activeTab = $state<Tab>("settings");
+let activeTab = $state<Tab>("spirit");
 
 let restarting = $state(false);
 let restartError = $state<string | null>(null);
@@ -62,7 +72,9 @@ async function handleRestart() {
     </div>
   </div>
   <div class="settings-body">
-    {#if activeTab === "settings"}
+    {#if activeTab === "spirit"}
+      <SpiritSettings />
+    {:else if activeTab === "settings"}
       <Settings />
     {:else if activeTab === "mind-defaults"}
       <MindDefaults />
