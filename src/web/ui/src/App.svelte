@@ -351,14 +351,6 @@ $effect(() => {
   }
 });
 
-// Redirect settings/spirit-settings page selections to modals
-$effect(() => {
-  if (selection.kind === "settings" || selection.kind === "spirit-settings") {
-    activeModal = "systemSettings";
-    selection = { kind: "system-history" };
-  }
-});
-
 // Track whether selection change came from popstate
 let fromPopstate = $state(false);
 

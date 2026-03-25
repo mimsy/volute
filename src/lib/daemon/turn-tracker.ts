@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { getDb } from "../db.js";
 import log from "../logger.js";
 import { turns } from "../schema.js";
+import { summarizeTurn } from "./summarizer.js";
 
 const tlog = log.child("turn-tracker");
 
@@ -120,26 +121,30 @@ export async function completeTurn(
 
 /** Mark orphaned active turns as complete and return their IDs for summary generation.
  *  Called on daemon startup to clean up turns from a previous daemon instance. */
-export async function completeOrphanedTurns(): Promise<
-  { turnId: string; mind: string; session: string | null }[]
-> {
+export async function completeOrphanedTurns(): Promise<OrphanedTurn[]> {
+  const db = await getDb();
+  const active = await db
+    .select({ id: turns.id, mind: turns.mind, session: turns.session })
+    .from(turns)
+    .where(eq(turns.status, "active"));
+  if (active.length === 0) return [];
+
   try {
-    const db = await getDb();
-    const active = await db
-      .select({ id: turns.id, mind: turns.mind, session: turns.session })
-      .from(turns)
-      .where(eq(turns.status, "active"));
-    if (active.length === 0) return [];
     await db.update(turns).set({ status: "complete" }).where(eq(turns.status, "active"));
-    tlog.info(`completed ${active.length} orphaned active turn(s) from previous daemon session`);
-    return active.map((r) => ({ turnId: r.id, mind: r.mind, session: r.session }));
   } catch (err) {
     tlog.error("failed to complete orphaned turns on startup", log.errorData(err));
-    return [];
+    // Still return the turns so callers can attempt summarization
   }
+
+  tlog.info(`completed ${active.length} orphaned active turn(s) from previous daemon session`);
+  return active.map((r) => ({
+    turnId: r.id,
+    mind: r.mind,
+    session: r.session ?? undefined,
+  }));
 }
 
-export type OrphanedTurn = { turnId: string; session: string | undefined };
+export type OrphanedTurn = { turnId: string; mind: string; session: string | undefined };
 
 /** Remove all active turn entries for a mind (called on mind stop).
  *  Returns the orphaned turns so callers can generate summaries. */
@@ -149,7 +154,11 @@ export async function clearMind(mind: string): Promise<OrphanedTurn[]> {
   for (const [k, entry] of activeTurns.entries()) {
     if (k.startsWith(`${mind}:`)) {
       const session = k.slice(mind.length + 1);
-      orphaned.push({ turnId: entry.turnId, session: session === "*" ? undefined : session });
+      orphaned.push({
+        turnId: entry.turnId,
+        mind,
+        session: session === "*" ? undefined : session,
+      });
       toDelete.push(k);
     }
   }
@@ -166,4 +175,13 @@ export async function clearMind(mind: string): Promise<OrphanedTurn[]> {
     }
   }
   return orphaned;
+}
+
+/** Fire-and-forget summarization for a list of orphaned turns. */
+export function summarizeOrphanedTurns(orphanedTurns: OrphanedTurn[]): void {
+  for (const { turnId, mind, session } of orphanedTurns) {
+    summarizeTurn(mind, session, undefined, 0, turnId).catch((err) =>
+      tlog.warn(`failed to summarize orphaned turn ${turnId} for ${mind}`, log.errorData(err)),
+    );
+  }
 }

@@ -14,8 +14,7 @@ import { isSandboxEnabled, wrapForSandbox } from "../sandbox.js";
 import { sendSystemMessageDirect } from "../system-chat.js";
 import { generateMindToken, revokeMindToken } from "./mind-tokens.js";
 import { RestartTracker } from "./restart-tracker.js";
-import { summarizeTurn } from "./summarizer.js";
-import { clearMind as clearTurnState } from "./turn-tracker.js";
+import { clearMind as clearTurnState, summarizeOrphanedTurns } from "./turn-tracker.js";
 
 const mlog = log.child("minds");
 
@@ -447,16 +446,7 @@ export class MindManager {
       // Clear turn state and delivery session state so ghost counts don't accumulate.
       // Generate summaries for any orphaned turns before they're lost.
       clearTurnState(name)
-        .then((orphaned) => {
-          for (const { turnId, session } of orphaned) {
-            summarizeTurn(name, session, undefined, 0, turnId).catch((err) =>
-              mlog.warn(
-                `failed to summarize orphaned turn ${turnId} for ${name}`,
-                log.errorData(err),
-              ),
-            );
-          }
-        })
+        .then((orphaned) => summarizeOrphanedTurns(orphaned))
         .catch((err) =>
           mlog.warn(`failed to clear turn state for ${name} after crash`, log.errorData(err)),
         );
@@ -525,11 +515,11 @@ export class MindManager {
 
     this.stopping.delete(name);
     revokeMindToken(name);
-    const orphanedTurns = await clearTurnState(name);
-    for (const { turnId, session } of orphanedTurns) {
-      summarizeTurn(name, session, undefined, 0, turnId).catch((err) =>
-        mlog.warn(`failed to summarize orphaned turn ${turnId} for ${name}`, log.errorData(err)),
-      );
+    try {
+      const orphanedTurns = await clearTurnState(name);
+      summarizeOrphanedTurns(orphanedTurns);
+    } catch (err) {
+      mlog.warn(`failed to clear turn state for ${name} on stop`, log.errorData(err));
     }
     try {
       const { getDeliveryManager } = await import("../delivery/delivery-manager.js");

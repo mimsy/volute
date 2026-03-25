@@ -1,7 +1,6 @@
 <script lang="ts">
 import type { Mind } from "@volute/api";
 import { SectionHeader } from "@volute/ui";
-import { onMount } from "svelte";
 import MindSettingsCognition from "../components/mind/MindSettingsCognition.svelte";
 import MindSettingsEnv from "../components/mind/MindSettingsEnv.svelte";
 import MindSettingsProfile from "../components/mind/MindSettingsProfile.svelte";
@@ -40,18 +39,21 @@ let activeTab = $state<Tab>("settings");
 
 let spirit = $state<Mind | null>(null);
 let spiritError = $state("");
-
-onMount(() => {
-  loadSpirit();
-});
+let spiritLoaded = $state(false);
 
 async function loadSpirit() {
+  if (spiritLoaded) return;
+  spiritLoaded = true;
   try {
     spirit = await fetchMind("volute");
   } catch (e) {
     spiritError = e instanceof Error ? e.message : "Failed to load spirit";
   }
 }
+
+$effect(() => {
+  if (activeTab === "spirit") loadSpirit();
+});
 
 let restarting = $state(false);
 let restartError = $state<string | null>(null);

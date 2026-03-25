@@ -9,9 +9,9 @@ import { initMindManager } from "./lib/daemon/mind-manager.js";
 import { startMindFull } from "./lib/daemon/mind-service.js";
 import { initScheduler } from "./lib/daemon/scheduler.js";
 import { initSleepManager } from "./lib/daemon/sleep-manager.js";
-import { initSummarizer, summarizeTurn } from "./lib/daemon/summarizer.js";
+import { initSummarizer } from "./lib/daemon/summarizer.js";
 import { initTokenBudget } from "./lib/daemon/token-budget.js";
-import { completeOrphanedTurns } from "./lib/daemon/turn-tracker.js";
+import { completeOrphanedTurns, summarizeOrphanedTurns } from "./lib/daemon/turn-tracker.js";
 import { initDeliveryManager } from "./lib/delivery/delivery-manager.js";
 import { stopAll as stopAllActivityTrackers } from "./lib/events/mind-activity-tracker.js";
 import {
@@ -212,11 +212,7 @@ export async function startDaemon(opts: {
 
   // Clean up any turns left active from a previous daemon session and generate their summaries
   const orphanedTurns = await completeOrphanedTurns();
-  for (const { turnId, mind, session } of orphanedTurns) {
-    summarizeTurn(mind, session ?? undefined, undefined, 0, turnId).catch((err) =>
-      log.warn(`failed to summarize orphaned turn ${turnId}`, log.errorData(err)),
-    );
-  }
+  summarizeOrphanedTurns(orphanedTurns);
 
   // Start all minds + variants that were previously running (parallel, concurrency limit of 5)
   // Skip sleeping minds — they only need connectors, not the mind process

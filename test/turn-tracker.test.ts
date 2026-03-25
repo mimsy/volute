@@ -4,6 +4,7 @@ import { eq } from "drizzle-orm";
 import {
   assignSession,
   clearMind,
+  completeOrphanedTurns,
   completeTurn,
   createTurn,
   getActiveTurnId,
@@ -123,5 +124,36 @@ describe("turn-tracker", () => {
     assert.equal(orphaned.length, 1);
     assert.equal(orphaned[0].turnId, turnId);
     assert.equal(orphaned[0].session, undefined);
+  });
+
+  it("completeOrphanedTurns returns orphaned turns and marks them complete", async () => {
+    // Insert active turns directly into DB to simulate a previous daemon session
+    const db = await getDb();
+    const turn1 = "orphan-test-1";
+    const turn2 = "orphan-test-2";
+    await db.insert(turns).values({ id: turn1, mind: "mind-a", session: "s1", status: "active" });
+    await db.insert(turns).values({ id: turn2, mind: "mind-b", session: null, status: "active" });
+
+    const result = await completeOrphanedTurns();
+
+    assert.equal(result.length, 2);
+    const byId = new Map(result.map((r) => [r.turnId, r]));
+    assert.ok(byId.has(turn1));
+    assert.equal(byId.get(turn1)!.mind, "mind-a");
+    assert.equal(byId.get(turn1)!.session, "s1");
+    assert.ok(byId.has(turn2));
+    assert.equal(byId.get(turn2)!.mind, "mind-b");
+    assert.equal(byId.get(turn2)!.session, undefined);
+
+    // Verify they're marked complete in DB
+    const row1 = await db.select().from(turns).where(eq(turns.id, turn1)).get();
+    assert.equal(row1!.status, "complete");
+    const row2 = await db.select().from(turns).where(eq(turns.id, turn2)).get();
+    assert.equal(row2!.status, "complete");
+  });
+
+  it("completeOrphanedTurns returns empty array when no orphans exist", async () => {
+    const result = await completeOrphanedTurns();
+    assert.equal(result.length, 0);
   });
 });
