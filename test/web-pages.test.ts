@@ -46,7 +46,7 @@ function setupTestDir() {
   writeFileSync(resolve(subDir, "index.html"), "<h1>About</h1>");
 
   // Source dir (working directory — NOT served)
-  const sourceDir = resolve(testDir, "mind", "home", "public", "pages");
+  const sourceDir = resolve(testDir, "mind", "home", "pages");
   mkdirSync(sourceDir, { recursive: true });
   writeFileSync(resolve(sourceDir, "draft.html"), "<h1>Draft</h1>");
 
@@ -238,10 +238,16 @@ describe("createPublicRoutes name traversal", () => {
     const ctx = {
       dataDir: dir,
       db: null,
+      authMiddleware: (() => {}) as any,
+      getUser: async () => null,
+      getUserByUsername: async () => null,
       getMindDir: () => null,
       getSystemsConfig: () => null,
       resolveUser: () => null,
       publishActivity: () => {},
+      announceToSystem: async () => {},
+      isIsolationEnabled: () => false,
+      getMindUser: (name: string) => `mind-${name}`,
     };
     const publicApp = new Hono();
     publicApp.route("/public", createPublicRoutes(ctx));

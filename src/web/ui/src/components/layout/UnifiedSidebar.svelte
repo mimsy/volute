@@ -164,8 +164,7 @@ let isSystemActive = $derived(
   selection.kind === "system-history" ||
     selection.kind === "system-chat" ||
     selection.kind === "settings" ||
-    selection.kind === "extension" ||
-    selection.kind === "shared-files",
+    selection.kind === "extension",
 );
 </script>
 
@@ -293,10 +292,6 @@ let isSystemActive = $derived(
     onclick={(e) => e.stopPropagation()}
     onkeydown={(e) => { if (e.key === "Escape") openMenu = null; }}
   >
-    <button class="mind-menu-item" onclick={() => handleMenuAction("__system__", "shared-files")}>
-      <Icon kind="folder" class="menu-icon" />
-      Shared Files
-    </button>
     <button class="mind-menu-item" onclick={() => handleMenuAction("__system__", "settings")}>
       <Icon kind="gear" class="menu-icon" />
       Settings

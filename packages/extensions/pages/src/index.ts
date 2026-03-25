@@ -4,6 +4,7 @@ import { createExtension } from "@volute/extensions";
 import { createCommands } from "./commands.js";
 import { initDb } from "./db.js";
 import { createPublicRoutes, createRoutes } from "./routes.js";
+import { addPagesWorktree, ensurePagesRepo, isolationFrom } from "./shared-pages.js";
 
 const assetsDir = resolve(import.meta.dirname, "../dist/ui");
 const skillsDir = resolve(import.meta.dirname, "../skills");
@@ -32,5 +33,19 @@ export default createExtension({
     feedSource: {
       endpoint: "/api/ext/pages/feed",
     },
+  },
+
+  onDaemonStart(ctx) {
+    ensurePagesRepo(ctx.dataDir, isolationFrom(ctx)).catch((err) => {
+      console.error("[pages] failed to initialize pages repo:", err);
+    });
+  },
+
+  onMindStart(mindName, ctx) {
+    const mindDir = ctx.getMindDir(mindName);
+    if (!mindDir) return;
+    addPagesWorktree(mindName, mindDir, ctx.dataDir, isolationFrom(ctx)).catch((err) => {
+      console.error(`[pages] failed to add pages worktree for ${mindName}:`, err);
+    });
   },
 });

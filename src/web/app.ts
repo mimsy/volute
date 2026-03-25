@@ -19,10 +19,8 @@ import logs from "./api/logs.js";
 import mindSkills from "./api/mind-skills.js";
 import minds from "./api/minds.js";
 import prompts from "./api/prompts.js";
-import publicFiles from "./api/public-files.js";
 import schedules from "./api/schedules.js";
 import setup from "./api/setup.js";
-import shared from "./api/shared.js";
 import skills from "./api/skills.js";
 import system from "./api/system.js";
 import typing from "./api/typing.js";
@@ -110,9 +108,6 @@ app.use("/api/v1/*", authMiddleware);
 // Setup routes (no auth — needed before first user exists)
 app.route("/api/setup", setup);
 
-// Public routes (no auth)
-app.route("/public", publicFiles);
-
 // Config routes (authenticated, no admin required — accessible to minds)
 app.route("/api/config", configRoutes);
 
@@ -132,7 +127,6 @@ const routes = app
   .route("/api/minds", fileSharing)
   .route("/api/minds", files)
   .route("/api/minds", channels)
-  .route("/api/minds", shared)
   .route("/api/minds", envRoutes)
   .route("/api/minds", mindSkills)
   .route("/api/minds", conversations)

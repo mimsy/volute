@@ -15,21 +15,15 @@ function getFlag(args: string[], flag: string): string | undefined {
   return undefined;
 }
 
-// Lazy-load announceToSystem from daemon internals. This dynamic import is
-// resolved by tsup at bundle time (the extension is compiled into the daemon).
-// Falls back gracefully in test environments where the daemon module isn't available.
-let _announce: ((text: string) => Promise<void>) | null = null;
-async function announceToSystem(text: string): Promise<boolean> {
-  if (!_announce) {
-    try {
-      const mod = await import("../../../../src/lib/system-channel.js");
-      _announce = mod.announceToSystem;
-    } catch {
-      return false; // Not in daemon context (tests)
-    }
-  }
+// Announce to the #system channel via the extension context.
+// Falls back gracefully when context is unavailable (tests).
+async function announceToSystem(
+  text: string,
+  ctx?: { announceToSystem: (text: string) => Promise<void> },
+): Promise<boolean> {
+  if (!ctx) return false;
   try {
-    await _announce(text);
+    await ctx.announceToSystem(text);
     return true;
   } catch (err) {
     console.error("[plan] Failed to announce to system channel:", err);
@@ -91,7 +85,7 @@ export function createCommands(): Record<string, ExtensionCommand> {
         });
 
         // Announce to #system so all minds see it
-        const announced = await announceToSystem(`[Plan: ${plan.title}] ${content}`);
+        const announced = await announceToSystem(`[Plan: ${plan.title}] ${content}`, ctx);
 
         return {
           output: announced
@@ -204,7 +198,7 @@ export function createCommands(): Record<string, ExtensionCommand> {
         const announcement = message
           ? `[Plan finished: ${plan.title}] ${message}`
           : `[Plan finished: ${plan.title}]`;
-        const announced = await announceToSystem(announcement);
+        const announced = await announceToSystem(announcement, ctx);
 
         const suffix = announced ? "" : " (system channel unavailable)";
         return { output: `Finished: ${plan.title}${suffix}` };

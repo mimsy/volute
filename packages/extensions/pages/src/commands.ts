@@ -4,24 +4,64 @@ import { relative, resolve } from "node:path";
 import type { ExtensionCommand } from "@volute/extensions";
 
 import { getPublishedPages, syncPublishedPages } from "./db.js";
+import {
+  isolationFrom,
+  pagesLog,
+  pagesPull,
+  pagesPullAndMerge,
+  pagesStatus,
+} from "./shared-pages.js";
 
 export function createCommands(): Record<string, ExtensionCommand> {
   return {
     publish: {
       description: "Publish all pages (copy to public snapshot)",
-      usage: "volute pages publish [--remote]",
+      usage: 'volute pages publish [--remote] [--shared "message"]',
       handler: async (args, ctx) => {
         const mindName = ctx.mindName;
         if (!mindName) return { error: "No mind specified (use --mind or VOLUTE_MIND)" };
+
+        const shared = args.includes("--shared");
+        if (shared) {
+          const mindDir = ctx.getMindDir(mindName);
+          if (!mindDir) return { error: `Mind not found: ${mindName}` };
+
+          // Get the commit message from remaining args (skip flags)
+          const message = args
+            .filter((a) => !a.startsWith("--"))
+            .join(" ")
+            .trim();
+          if (!message)
+            return { error: 'Usage: volute pages publish --shared "description of changes"' };
+
+          try {
+            const result = await pagesPullAndMerge(
+              mindName,
+              mindDir,
+              ctx.dataDir,
+              message,
+              isolationFrom(ctx),
+            );
+            if (!result.ok) {
+              return {
+                error:
+                  result.message || "Merge conflicts detected — pull, reconcile, and try again.",
+              };
+            }
+
+            return { output: result.message || "Published shared pages." };
+          } catch (err) {
+            return { error: `Shared publish failed: ${(err as Error).message}` };
+          }
+        }
 
         const remote = args.includes("--remote");
 
         const mindDir = ctx.getMindDir(mindName);
         if (!mindDir) return { error: `Mind not found: ${mindName}` };
 
-        const sourceDir = resolve(mindDir, "home", "public", "pages");
-        if (!existsSync(sourceDir))
-          return { error: "No pages directory found (home/public/pages/)" };
+        const sourceDir = resolve(mindDir, "home", "pages");
+        if (!existsSync(sourceDir)) return { error: "No pages directory found (home/pages/)" };
 
         const db = ctx.db;
         if (!db) return { error: "Database not available" };
@@ -36,7 +76,7 @@ export function createCommands(): Record<string, ExtensionCommand> {
         }
 
         // Scan snapshot for .html files
-        const htmlFiles = collectHtmlFiles(snapshotDir, snapshotDir);
+        const htmlFiles = collectFiles(snapshotDir, snapshotDir, ".html");
 
         // Sync DB and get diff
         let diff: { added: string[]; removed: string[]; updated: string[] };
@@ -79,7 +119,7 @@ export function createCommands(): Record<string, ExtensionCommand> {
             };
 
           // Collect all files from snapshot as base64
-          const allFiles = collectAllFiles(snapshotDir, snapshotDir);
+          const allFiles = collectFiles(snapshotDir, snapshotDir);
           const files: Record<string, string> = {};
           for (const f of allFiles) {
             const fp = resolve(snapshotDir, f);
@@ -113,10 +153,22 @@ export function createCommands(): Record<string, ExtensionCommand> {
 
     list: {
       description: "List pages with publish status",
-      usage: "volute pages list [--all]",
+      usage: "volute pages list [--all] [--shared]",
       handler: async (args, ctx) => {
         const mindName = ctx.mindName;
         if (!mindName) return { error: "No mind specified (use --mind or VOLUTE_MIND)" };
+
+        if (args.includes("--shared")) {
+          const mindDir = ctx.getMindDir(mindName);
+          if (!mindDir) return { error: `Mind not found: ${mindName}` };
+
+          try {
+            const status = await pagesStatus(mindDir, isolationFrom(ctx));
+            return { output: status };
+          } catch (err) {
+            return { error: `Failed to check shared status: ${(err as Error).message}` };
+          }
+        }
 
         const db = ctx.db;
         if (!db) return { error: "Database not available" };
@@ -143,9 +195,9 @@ export function createCommands(): Record<string, ExtensionCommand> {
         const mindDir = ctx.getMindDir(mindName);
         if (!mindDir) return { error: `Mind not found: ${mindName}` };
 
-        const sourceDir = resolve(mindDir, "home", "public", "pages");
+        const sourceDir = resolve(mindDir, "home", "pages");
         const published = new Set(getPublishedPages(db, mindName).map((p) => p.file));
-        const draftFiles = existsSync(sourceDir) ? collectHtmlFiles(sourceDir, sourceDir) : [];
+        const draftFiles = existsSync(sourceDir) ? collectFiles(sourceDir, sourceDir, ".html") : [];
         const allFiles = new Set([...published, ...draftFiles]);
 
         if (allFiles.size === 0) return { output: "No pages found." };
@@ -162,11 +214,59 @@ export function createCommands(): Record<string, ExtensionCommand> {
         return { output: lines.join("\n") };
       },
     },
+
+    pull: {
+      description: "Pull latest shared page changes from other minds",
+      usage: "volute pages pull",
+      handler: async (_args, ctx) => {
+        const mindName = ctx.mindName;
+        if (!mindName) return { error: "No mind specified (use --mind or VOLUTE_MIND)" };
+
+        const mindDir = ctx.getMindDir(mindName);
+        if (!mindDir) return { error: `Mind not found: ${mindName}` };
+
+        try {
+          const result = await pagesPull(mindName, mindDir, isolationFrom(ctx));
+          if (!result.ok) {
+            return { error: result.message || "Pull failed." };
+          }
+          return { output: result.message || "Pulled latest shared changes." };
+        } catch (err) {
+          return { error: `Pull failed: ${(err as Error).message}` };
+        }
+      },
+    },
+
+    log: {
+      description: "View shared pages commit history",
+      usage: "volute pages log [--limit N]",
+      handler: async (args, ctx) => {
+        const mindName = ctx.mindName;
+        if (!mindName) return { error: "No mind specified (use --mind or VOLUTE_MIND)" };
+
+        const mindDir = ctx.getMindDir(mindName);
+        if (!mindDir) return { error: `Mind not found: ${mindName}` };
+
+        let limit = 20;
+        const limitIdx = args.indexOf("--limit");
+        if (limitIdx !== -1 && args[limitIdx + 1]) {
+          const n = parseInt(args[limitIdx + 1], 10);
+          if (!Number.isNaN(n) && n > 0) limit = n;
+        }
+
+        try {
+          const output = await pagesLog(mindDir, limit, isolationFrom(ctx));
+          return { output };
+        } catch (err) {
+          return { error: `Failed to read shared log: ${(err as Error).message}` };
+        }
+      },
+    },
   };
 }
 
-/** Recursively collect .html files, returning paths relative to baseDir */
-function collectHtmlFiles(dir: string, baseDir: string): string[] {
+/** Recursively collect files, returning paths relative to baseDir. Optionally filter by extension. */
+function collectFiles(dir: string, baseDir: string, ext?: string): string[] {
   const files: string[] = [];
   let items: string[];
   try {
@@ -181,39 +281,10 @@ function collectHtmlFiles(dir: string, baseDir: string): string[] {
     const fullPath = resolve(dir, item);
     try {
       const s = statSync(fullPath);
-      if (s.isFile() && item.endsWith(".html")) {
+      if (s.isFile() && (!ext || item.endsWith(ext))) {
         files.push(relative(baseDir, fullPath));
       } else if (s.isDirectory()) {
-        files.push(...collectHtmlFiles(fullPath, baseDir));
-      }
-    } catch (err) {
-      console.error(`[pages] failed to stat ${fullPath}: ${(err as Error).message}`);
-    }
-  }
-
-  return files.sort();
-}
-
-/** Recursively collect all files, returning paths relative to baseDir */
-function collectAllFiles(dir: string, baseDir: string): string[] {
-  const files: string[] = [];
-  let items: string[];
-  try {
-    items = readdirSync(dir);
-  } catch (err) {
-    console.error(`[pages] failed to read directory ${dir}: ${(err as Error).message}`);
-    return files;
-  }
-
-  for (const item of items) {
-    if (item.startsWith(".")) continue;
-    const fullPath = resolve(dir, item);
-    try {
-      const s = statSync(fullPath);
-      if (s.isFile()) {
-        files.push(relative(baseDir, fullPath));
-      } else if (s.isDirectory()) {
-        files.push(...collectAllFiles(fullPath, baseDir));
+        files.push(...collectFiles(fullPath, baseDir, ext));
       }
     } catch (err) {
       console.error(`[pages] failed to stat ${fullPath}: ${(err as Error).message}`);

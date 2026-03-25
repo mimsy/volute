@@ -15,10 +15,12 @@ import type { Context, Hono, MiddlewareHandler } from "hono";
 import type { AuthEnv } from "../web/middleware/auth.js";
 import { getUser, getUserByUsername } from "./auth.js";
 import { publish } from "./events/activity-events.js";
+import { isIsolationEnabled, mindUserName } from "./isolation.js";
 import log from "./logger.js";
 import { mindDir, voluteHome, voluteSystemDir } from "./registry.js";
 import { readGlobalConfig, writeGlobalConfig } from "./setup.js";
 import { hashSkillDir, importSkillFromDir, removeSharedSkill, sharedSkillsDir } from "./skills.js";
+import { announceToSystem } from "./system-channel.js";
 import { readSystemsConfig } from "./systems-config.js";
 
 const VALID_EXTENSION_ID = /^[a-z0-9][a-z0-9_-]*$/;
@@ -172,6 +174,9 @@ async function buildContext(
       }
     },
     getSystemsConfig: () => readSystemsConfig(),
+    announceToSystem: (text: string) => announceToSystem(text),
+    isIsolationEnabled,
+    getMindUser: mindUserName,
     dataDir,
   };
 }
@@ -304,7 +309,7 @@ async function loadExtension(
       const filePath = resolve(assetsDir, relativePath);
       // Boundary-aware check: assetsDir must be followed by "/" to prevent
       // prefix confusion (e.g. /path/assets-evil matching /path/assets)
-      if (filePath !== assetsDir && !filePath.startsWith(assetsDir + "/"))
+      if (filePath !== assetsDir && !filePath.startsWith(`${assetsDir}/`))
         return c.text("Forbidden", 403);
       const s = await fsStat(filePath).catch(() => null);
       if (s?.isFile()) {
@@ -714,9 +719,9 @@ export function getExtensionStandardSkills(): string[] {
 }
 
 export function notifyExtensionsDaemonStart(): void {
-  for (const { manifest } of loaded) {
+  for (const { manifest, context } of loaded) {
     try {
-      manifest.onDaemonStart?.();
+      manifest.onDaemonStart?.(context);
     } catch (err) {
       log.error(`extension ${manifest.id}: onDaemonStart failed`, log.errorData(err));
     }
@@ -741,9 +746,9 @@ export function notifyExtensionsDaemonStop(): void {
 }
 
 export function notifyExtensionsMindStart(mindName: string): void {
-  for (const { manifest } of loaded) {
+  for (const { manifest, context } of loaded) {
     try {
-      manifest.onMindStart?.(mindName);
+      manifest.onMindStart?.(mindName, context);
     } catch (err) {
       log.error(`extension ${manifest.id}: onMindStart failed for ${mindName}`, log.errorData(err));
     }

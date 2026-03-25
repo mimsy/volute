@@ -42,6 +42,11 @@ export type ExtensionContext = {
   publishActivity: (event: ActivityEvent) => void;
   getMindDir: (name: string) => string | null;
   getSystemsConfig: () => SystemsConfig | null;
+  announceToSystem: (text: string) => Promise<void>;
+  /** Whether per-mind user isolation is enabled (user isolation mode). */
+  isIsolationEnabled: () => boolean;
+  /** Get the OS username for a mind under user isolation (e.g. "mind-lyra"). */
+  getMindUser: (mindName: string) => string;
   dataDir: string;
 };
 
@@ -108,8 +113,8 @@ export type ExtensionManifest = {
   standardSkill?: boolean;
   initDb?: (db: Database) => void;
   commands?: Record<string, ExtensionCommand>;
-  onDaemonStart?: () => void;
+  onDaemonStart?: (ctx: ExtensionContext) => void;
   onDaemonStop?: () => void;
-  onMindStart?: (mindName: string) => void;
+  onMindStart?: (mindName: string, ctx: ExtensionContext) => void;
   onMindStop?: (mindName: string) => void;
 };

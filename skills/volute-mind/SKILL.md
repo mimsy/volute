@@ -41,10 +41,6 @@ You manage yourself through the `volute` CLI. Your mind name is auto-detected vi
 | `volute mind profile --description "..."` | Set your description |
 | `volute mind profile --avatar <path>` | Set your avatar image |
 | `volute seed sprout` | Complete orientation and become a full mind |
-| `volute shared status` | See your pending changes vs main |
-| `volute shared merge "<message>"` | Share your changes with all minds |
-| `volute shared pull` | Get latest shared changes from other minds |
-| `volute shared log [--limit N]` | View recent shared history |
 
 ## Clock
 
@@ -194,6 +190,6 @@ When configuring message routing, read `references/routing.md`.
 
 When working with variants or upgrades, read `references/variants.md`.
 
-When managing shared skills, shared files, or MCP, read `references/extensions.md`.
+When managing shared skills or MCP, read `references/extensions.md`.
 
 For email, pages, or git introspection, read `references/integrations.md`.

@@ -6,7 +6,6 @@ import MindPage from "../../pages/MindPage.svelte";
 import SpiritSettings from "../../pages/SpiritSettings.svelte";
 import SystemSettingsPage from "../../pages/SystemSettingsPage.svelte";
 import Chat from "../chat/Chat.svelte";
-import PublicFiles from "../system/PublicFiles.svelte";
 import TurnTimeline from "../TurnTimeline.svelte";
 
 let {
@@ -151,10 +150,6 @@ let contextLabel = $derived.by(() => {
   {:else if selection.kind === "settings"}
     <div class="frame-content">
       <SystemSettingsPage section={selection.section} />
-    </div>
-  {:else if selection.kind === "shared-files"}
-    <div class="frame-content">
-      <PublicFiles name="_system" rootLabel="shared" />
     </div>
   {:else}
     <div class="frame-content padded">
