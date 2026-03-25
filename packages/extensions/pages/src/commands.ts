@@ -77,11 +77,15 @@ export function createCommands(): Record<string, ExtensionCommand> {
         const db = ctx.db;
         if (!db) return { error: "Database not available" };
 
-        // Copy entire directory to snapshot location (clean first for removals)
+        // Copy entire directory to snapshot location (clean first for removals).
+        // Exclude _system/ which is the shared pages git worktree.
         const snapshotDir = resolve(ctx.dataDir, "sites", mindName);
         try {
           if (existsSync(snapshotDir)) rmSync(snapshotDir, { recursive: true });
-          cpSync(sourceDir, snapshotDir, { recursive: true });
+          cpSync(sourceDir, snapshotDir, {
+            recursive: true,
+            filter: (src) => !src.endsWith("/_system") && !src.includes("/_system/"),
+          });
         } catch (err) {
           return { error: `Failed to publish snapshot: ${(err as Error).message}` };
         }
