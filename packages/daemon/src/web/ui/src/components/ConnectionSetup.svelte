@@ -11,6 +11,7 @@ let username = $state("");
 let password = $state("");
 let error = $state("");
 let loading = $state(false);
+let httpWarning = $state(false);
 
 async function handleUrlSubmit(e: Event) {
   e.preventDefault();
@@ -27,13 +28,14 @@ async function handleUrlSubmit(e: Event) {
 
   const ok = await probeRemote(url);
   if (!ok) {
-    // Try http if https failed
+    // Try http if https failed (common on local networks)
     if (url.startsWith("https://")) {
       const httpUrl = url.replace("https://", "http://");
       const httpOk = await probeRemote(httpUrl);
       if (httpOk) {
         daemonUrl = httpUrl;
         loading = false;
+        httpWarning = true;
         step = "login";
         return;
       }
@@ -100,8 +102,11 @@ async function handleLogin(e: Event) {
     {:else}
       <div class="daemon-info">
         <span class="daemon-url">{daemonUrl}</span>
-        <button class="link-btn" onclick={() => { step = "url"; error = ""; }}>change</button>
+        <button class="link-btn" onclick={() => { step = "url"; error = ""; httpWarning = false; }}>change</button>
       </div>
+      {#if httpWarning}
+        <div class="warning">Connection is not encrypted. Credentials will be sent in plaintext.</div>
+      {/if}
       <form onsubmit={handleLogin}>
         <Input
           inputSize="md"
@@ -243,6 +248,15 @@ async function handleLogin(e: Event) {
     color: var(--red);
     font-size: 13px;
     margin-top: 8px;
+  }
+
+  .warning {
+    color: var(--yellow);
+    font-size: 12px;
+    margin-bottom: 12px;
+    padding: 8px 12px;
+    background: var(--bg-2);
+    border-radius: var(--radius);
   }
 
   .submit-btn {

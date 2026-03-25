@@ -6,19 +6,76 @@
 /** @type {{ daemonUrl: string; token: string } | null} */
 let config = null;
 
+// Persist config to IndexedDB so it survives SW restarts
+const DB_NAME = "volute-sw";
+const STORE_NAME = "config";
+
+function openDb() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, 1);
+    req.onupgradeneeded = () => req.result.createObjectStore(STORE_NAME);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function saveConfig(cfg) {
+  try {
+    const db = await openDb();
+    const tx = db.transaction(STORE_NAME, "readwrite");
+    if (cfg) {
+      tx.objectStore(STORE_NAME).put(cfg, "current");
+    } else {
+      tx.objectStore(STORE_NAME).delete("current");
+    }
+    db.close();
+  } catch {
+    // Best effort — SW still works with in-memory config
+  }
+}
+
+async function loadConfig() {
+  try {
+    const db = await openDb();
+    const tx = db.transaction(STORE_NAME, "readonly");
+    const req = tx.objectStore(STORE_NAME).get("current");
+    return new Promise((resolve) => {
+      req.onsuccess = () => {
+        db.close();
+        resolve(req.result || null);
+      };
+      req.onerror = () => {
+        db.close();
+        resolve(null);
+      };
+    });
+  } catch {
+    return null;
+  }
+}
+
 self.addEventListener("install", () => {
   self.skipWaiting();
 });
 
 self.addEventListener("activate", (event) => {
-  event.waitUntil(self.clients.claim());
+  event.waitUntil(
+    loadConfig().then((saved) => {
+      if (saved) config = saved;
+      return self.clients.claim();
+    }),
+  );
 });
 
 self.addEventListener("message", (event) => {
+  // Only accept configuration from window clients (not iframes or other SWs)
+  if (!event.source || event.source.type !== "window") return;
+
   if (event.data?.type === "configure") {
     config = event.data.daemonUrl
       ? { daemonUrl: event.data.daemonUrl.replace(/\/$/, ""), token: event.data.token }
       : null;
+    saveConfig(config);
   }
 });
 

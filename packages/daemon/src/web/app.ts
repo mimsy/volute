@@ -72,13 +72,15 @@ app.use("*", async (c, next) => {
 app.use("/api/*", bodyLimit({ maxSize: 10 * 1024 * 1024 }));
 
 // CORS for remote UI clients using Bearer auth (service worker proxy, CLI, Electron).
+// credentials: false because remote clients use Bearer tokens, not cookies.
+// This prevents cross-origin cookie-based attacks while allowing Bearer auth.
 app.use(
   "/api/*",
   cors({
     origin: (origin) => origin,
     allowHeaders: ["Authorization", "Content-Type", "X-Volute-Session"],
     allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
-    credentials: true,
+    credentials: false,
   }),
 );
 
