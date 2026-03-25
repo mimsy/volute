@@ -31,6 +31,7 @@ import {
   getRecentPages,
   initDb,
   syncPublishedPages,
+  syncSystemPages,
 } from "../packages/extensions/pages/src/db.js";
 import type { Database } from "../packages/extensions/sdk/src/types.js";
 
@@ -116,6 +117,18 @@ describe("pages db", () => {
     const pages = getRecentPages(db, { mind: "mind1" });
     assert.equal(pages.length, 1);
     assert.equal(pages[0].mind, "mind1");
+  });
+
+  it("syncSystemPages syncs _system entries", () => {
+    syncSystemPages(db, ["index.html", "about.html"]);
+    const pages = getPublishedPages(db, "_system");
+    assert.equal(pages.length, 2);
+
+    // Removes deleted files, keeps existing
+    syncSystemPages(db, ["index.html"]);
+    const after = getPublishedPages(db, "_system");
+    assert.equal(after.length, 1);
+    assert.equal(after[0].file, "index.html");
   });
 
   it("getAllSites groups by mind", () => {
@@ -263,6 +276,17 @@ describe("pages commands", () => {
     assert.ok("output" in result);
     assert.ok(result.output.includes("mind-a"));
     assert.ok(result.output.includes("mind-b"));
+  });
+
+  it("list --all works without a mind name", async () => {
+    syncPublishedPages(db, "mind-a", ["index.html"]);
+
+    const commands = createCommands();
+    const ctx = makeCtx();
+    ctx.mindName = undefined as any;
+    const result = await commands.list.handler(["--all"], ctx);
+    assert.ok("output" in result);
+    assert.ok(result.output.includes("mind-a"));
   });
 });
 

@@ -2,9 +2,14 @@ import { resolve } from "node:path";
 import { createExtension } from "@volute/extensions";
 
 import { createCommands } from "./commands.js";
-import { initDb } from "./db.js";
+import { initDb, syncSystemPages } from "./db.js";
 import { createPublicRoutes, createRoutes } from "./routes.js";
-import { addPagesWorktree, ensurePagesRepo, isolationFrom } from "./shared-pages.js";
+import {
+  addPagesWorktree,
+  collectHtmlFiles,
+  ensurePagesRepo,
+  isolationFrom,
+} from "./shared-pages.js";
 
 const assetsDir = resolve(import.meta.dirname, "../dist/ui");
 const skillsDir = resolve(import.meta.dirname, "../skills");
@@ -36,9 +41,24 @@ export default createExtension({
   },
 
   onDaemonStart(ctx) {
-    ensurePagesRepo(ctx.dataDir, isolationFrom(ctx)).catch((err) => {
-      console.error("[pages] failed to initialize pages repo:", err);
-    });
+    ensurePagesRepo(ctx.dataDir, isolationFrom(ctx))
+      .then(() => {
+        // Sync system pages from the repo to the DB so they appear in the UI
+        if (ctx.db) {
+          const repoDir = resolve(ctx.dataDir, "repo");
+          const htmlFiles = collectHtmlFiles(repoDir);
+          if (htmlFiles.length > 0) {
+            try {
+              syncSystemPages(ctx.db, htmlFiles);
+            } catch (err) {
+              console.error("[pages] failed to sync system pages to DB:", err);
+            }
+          }
+        }
+      })
+      .catch((err) => {
+        console.error("[pages] failed to initialize pages repo:", err);
+      });
   },
 
   onMindStart(mindName, ctx) {

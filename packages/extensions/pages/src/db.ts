@@ -61,6 +61,39 @@ export function getAllSites(db: Database): SiteEntry[] {
   return Array.from(siteMap.entries()).map(([mind, files]) => ({ mind, files }));
 }
 
+export function syncSystemPages(db: Database, htmlFiles: string[]): void {
+  const existing = new Set(
+    (
+      db.prepare("SELECT file FROM published_pages WHERE mind = '_system'").all() as {
+        file: string;
+      }[]
+    ).map((r) => r.file),
+  );
+  const newSet = new Set(htmlFiles);
+
+  db.exec("BEGIN");
+  try {
+    for (const file of htmlFiles) {
+      if (existing.has(file)) {
+        db.prepare(
+          "UPDATE published_pages SET updated_at = datetime('now') WHERE mind = '_system' AND file = ?",
+        ).run(file);
+      } else {
+        db.prepare("INSERT INTO published_pages (mind, file) VALUES ('_system', ?)").run(file);
+      }
+    }
+    for (const file of existing) {
+      if (!newSet.has(file)) {
+        db.prepare("DELETE FROM published_pages WHERE mind = '_system' AND file = ?").run(file);
+      }
+    }
+    db.exec("COMMIT");
+  } catch (err) {
+    db.exec("ROLLBACK");
+    throw err;
+  }
+}
+
 export function syncPublishedPages(
   db: Database,
   mind: string,

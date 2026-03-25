@@ -296,18 +296,18 @@ describe("pages collaborative repo", () => {
     await removePagesWorktree("test-pages-pull-conflict-b", mindDirB, dataDir);
   });
 
-  it("pagesStatus shows diff output", async () => {
+  it("pagesStatus shows file status", async () => {
     await ensurePagesRepo(dataDir);
     const mindDir = await createFakeMind("test-pages-status");
     await addPagesWorktree("test-pages-status", mindDir, dataDir);
 
     const worktreePath = resolve(mindDir, "home", "pages", "_system");
 
-    // No changes — should show no diff
+    // No HTML files — should show no pages
     let status = await pagesStatus(mindDir);
-    assert.equal(status, "No changes compared to main.");
+    assert.equal(status, "No shared pages found.");
 
-    // Make a change and commit
+    // Make a change and commit — should show as draft
     writeFileSync(resolve(worktreePath, "new.html"), "<p>new</p>");
     await gitExec(["add", "-A"], { cwd: worktreePath });
     await gitExec(["commit", "--author", "test-pages-status <test@volute>", "-m", "add page"], {
@@ -316,6 +316,13 @@ describe("pages collaborative repo", () => {
 
     status = await pagesStatus(mindDir);
     assert.ok(status.includes("new.html"));
+    assert.ok(status.includes("draft"));
+
+    // Merge to main — should show as published
+    await pagesMerge("test-pages-status", mindDir, dataDir, "publish");
+    status = await pagesStatus(mindDir);
+    assert.ok(status.includes("new.html"));
+    assert.ok(status.includes("published"));
 
     await removePagesWorktree("test-pages-status", mindDir, dataDir);
   });

@@ -3,8 +3,9 @@ import { relative, resolve } from "node:path";
 
 import type { ExtensionCommand } from "@volute/extensions";
 
-import { getPublishedPages, syncPublishedPages } from "./db.js";
+import { getPublishedPages, syncPublishedPages, syncSystemPages } from "./db.js";
 import {
+  collectHtmlFiles,
   isolationFrom,
   pagesLog,
   pagesPull,
@@ -47,6 +48,16 @@ export function createCommands(): Record<string, ExtensionCommand> {
                 error:
                   result.message || "Merge conflicts detected — pull, reconcile, and try again.",
               };
+            }
+
+            // Sync system pages to DB so they appear in the UI
+            if (result.ok && ctx.db) {
+              const repoDir = resolve(ctx.dataDir, "repo");
+              try {
+                syncSystemPages(ctx.db, collectHtmlFiles(repoDir));
+              } catch (err) {
+                console.error("[pages] failed to sync system pages to DB:", err);
+              }
             }
 
             return { output: result.message || "Published shared pages." };
@@ -155,21 +166,6 @@ export function createCommands(): Record<string, ExtensionCommand> {
       description: "List pages with publish status",
       usage: "volute pages list [--all] [--shared]",
       handler: async (args, ctx) => {
-        const mindName = ctx.mindName;
-        if (!mindName) return { error: "No mind specified (use --mind or VOLUTE_MIND)" };
-
-        if (args.includes("--shared")) {
-          const mindDir = ctx.getMindDir(mindName);
-          if (!mindDir) return { error: `Mind not found: ${mindName}` };
-
-          try {
-            const status = await pagesStatus(mindDir, isolationFrom(ctx));
-            return { output: status };
-          } catch (err) {
-            return { error: `Failed to check shared status: ${(err as Error).message}` };
-          }
-        }
-
         const db = ctx.db;
         if (!db) return { error: "Database not available" };
 
@@ -189,6 +185,22 @@ export function createCommands(): Record<string, ExtensionCommand> {
           }
 
           return { output: lines.length > 0 ? lines.join("\n") : "No published pages found." };
+        }
+
+        // Remaining modes require a mind
+        const mindName = ctx.mindName;
+        if (!mindName) return { error: "No mind specified (use --mind or VOLUTE_MIND)" };
+
+        if (args.includes("--shared")) {
+          const mindDir = ctx.getMindDir(mindName);
+          if (!mindDir) return { error: `Mind not found: ${mindName}` };
+
+          try {
+            const status = await pagesStatus(mindDir, isolationFrom(ctx));
+            return { output: status };
+          } catch (err) {
+            return { error: `Failed to check shared status: ${(err as Error).message}` };
+          }
         }
 
         // List current mind's pages with status
