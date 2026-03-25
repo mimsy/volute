@@ -99,6 +99,9 @@ switch (command) {
   case "logout":
     await import("./commands/logout.js").then((m) => m.run(args));
     break;
+  case "service":
+    await import("./commands/service.js").then((m) => m.run(args));
+    break;
   case "--help":
   case "-h":
   case undefined:

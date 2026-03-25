@@ -1,4 +1,4 @@
-import { parseArgs } from "../lib/parse-args.js";
+import { command } from "../lib/command.js";
 import { promptLine } from "../lib/prompt.js";
 
 type ModelInfo = {
@@ -38,99 +38,100 @@ async function chooseModel(
   return `${chosen.provider}:${chosen.id}`;
 }
 
-export async function run(args: string[]) {
-  const { positional, flags } = parseArgs(args, {
-    template: { type: "string" },
-    model: { type: "string" },
-    description: { type: "string" },
-    skills: { type: "string" },
-    "created-by": { type: "string" },
-  });
+const cmd = command({
+  name: "volute seed create",
+  description: "Plant a new seed mind",
+  args: [{ name: "name", required: true, description: "Name for the seed mind" }],
+  flags: {
+    template: { type: "string", description: "Template to use" },
+    model: { type: "string", description: "AI model to use" },
+    description: { type: "string", description: "Description of the seed" },
+    skills: { type: "string", description: "Skills to install (comma-separated, or 'none')" },
+    "created-by": { type: "string", description: "Username of creator" },
+  },
+  run: async ({ args, flags }) => {
+    const name = args.name!;
 
-  const name = positional[0];
-  if (!name) {
-    console.error(
-      "Usage: volute seed create <name> [--template <name>] [--model <model>] [--description <text>] [--skills <list|none>] [--created-by <username>]",
-    );
-    process.exit(1);
-  }
+    const skills =
+      flags.skills === "none" ? [] : flags.skills ? flags.skills.split(",") : undefined;
+    const createdBy = flags["created-by"];
 
-  const skills = flags.skills === "none" ? [] : flags.skills ? flags.skills.split(",") : undefined;
-  const createdBy = flags["created-by"];
+    const { daemonFetch } = await import("../lib/daemon-client.js");
+    const { getClient, urlOf } = await import("../lib/api-client.js");
+    const client = getClient();
 
-  const { daemonFetch } = await import("../lib/daemon-client.js");
-  const { getClient, urlOf } = await import("../lib/api-client.js");
-  const client = getClient();
-
-  // Auto-resolve template if not specified
-  let model = flags.model;
-  let template = flags.template;
-  if (!template) {
-    const { resolveTemplate } = await import("../lib/ai-service.js");
-    template = resolveTemplate(model);
-  }
-
-  // For non-claude templates, resolve model if not specified
-  if (template !== "claude" && !model) {
-    // Non-interactive (e.g. mind running a command): use the spirit model as default
-    if (process.env.VOLUTE_MIND || !process.stdin.isTTY) {
-      const { getSpiritModel } = await import("../lib/spirit.js");
-      const { qualifyModelId } = await import("../lib/ai-service.js");
-      const spiritModel = getSpiritModel();
-      if (spiritModel) {
-        model = template === "pi" ? qualifyModelId(spiritModel) : spiritModel;
-      }
+    // Auto-resolve template if not specified
+    let model = flags.model;
+    let template = flags.template;
+    if (!template) {
+      const { resolveTemplate } = await import("../lib/ai-service.js");
+      template = resolveTemplate(model);
     }
-    // Interactive: prompt for model selection
-    if (!model) {
-      model = await chooseModel(daemonFetch);
+
+    // For non-claude templates, resolve model if not specified
+    if (template !== "claude" && !model) {
+      // Non-interactive (e.g. mind running a command): use the spirit model as default
+      if (process.env.VOLUTE_MIND || !process.stdin.isTTY) {
+        const { getSpiritModel } = await import("../lib/spirit.js");
+        const { qualifyModelId } = await import("../lib/ai-service.js");
+        const spiritModel = getSpiritModel();
+        if (spiritModel) {
+          model = template === "pi" ? qualifyModelId(spiritModel) : spiritModel;
+        }
+      }
+      // Interactive: prompt for model selection
       if (!model) {
-        console.error("No AI models configured. Set up providers in the web dashboard first.");
-        process.exit(1);
+        model = await chooseModel(daemonFetch);
+        if (!model) {
+          console.error("No AI models configured. Set up providers in the web dashboard first.");
+          process.exit(1);
+        }
       }
     }
-  }
 
-  // Create mind as seed
-  const createRes = await daemonFetch(urlOf(client.api.minds.$url()), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      name,
-      template,
-      stage: "seed",
-      description: flags.description,
-      model,
-      skills,
-      createdBy,
-    }),
-  });
+    // Create mind as seed
+    const createRes = await daemonFetch(urlOf(client.api.minds.$url()), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name,
+        template,
+        stage: "seed",
+        description: flags.description,
+        model,
+        skills,
+        createdBy,
+      }),
+    });
 
-  const createData = (await createRes.json()) as {
-    ok?: boolean;
-    error?: string;
-    name?: string;
-    port?: number;
-  };
+    const createData = (await createRes.json()) as {
+      ok?: boolean;
+      error?: string;
+      name?: string;
+      port?: number;
+    };
 
-  if (!createRes.ok) {
-    console.error(createData.error ?? "Failed to create mind");
-    process.exit(1);
-  }
+    if (!createRes.ok) {
+      console.error(createData.error ?? "Failed to create mind");
+      process.exit(1);
+    }
 
-  // Start the mind
-  const startRes = await daemonFetch(
-    urlOf(client.api.minds[":name"].start.$url({ param: { name } })),
-    { method: "POST" },
-  );
+    // Start the mind
+    const startRes = await daemonFetch(
+      urlOf(client.api.minds[":name"].start.$url({ param: { name } })),
+      { method: "POST" },
+    );
 
-  if (!startRes.ok) {
-    const startData = (await startRes.json()) as { error?: string };
-    console.error(startData.error ?? "Failed to start mind");
-    process.exit(1);
-  }
+    if (!startRes.ok) {
+      const startData = (await startRes.json()) as { error?: string };
+      console.error(startData.error ?? "Failed to start mind");
+      process.exit(1);
+    }
 
-  console.log(`\nSeeded mind: ${name} (port ${createData.port})`);
-  console.log(`\nTalk to your new mind:`);
-  console.log(`  volute chat send @${name} "hello"`);
-}
+    console.log(`\nSeeded mind: ${name} (port ${createData.port})`);
+    console.log(`\nTalk to your new mind:`);
+    console.log(`  volute chat send @${name} "hello"`);
+  },
+});
+
+export const run = cmd.execute;

@@ -1,8 +1,8 @@
 import type { SummaryRow } from "@volute/api";
 import { getClient, urlOf } from "../lib/api-client.js";
+import { command } from "../lib/command.js";
 import { daemonFetch } from "../lib/daemon-client.js";
 import { compactTime, isCompact } from "../lib/format-cli.js";
-import { parseArgs } from "../lib/parse-args.js";
 import { resolveMindName } from "../lib/resolve-mind-name.js";
 
 type HistoryRow = {
@@ -183,85 +183,97 @@ function getDefaultRange(period: string): string {
   }
 }
 
-export async function run(args: string[]) {
-  const { flags } = parseArgs(args, {
-    mind: { type: "string" },
-    channel: { type: "string" },
-    session: { type: "string" },
-    preset: { type: "string" },
-    limit: { type: "string" },
-    full: { type: "boolean" },
-    period: { type: "string" },
-    from: { type: "string" },
-    to: { type: "string" },
-  });
+const cmd = command({
+  name: "volute mind history",
+  description: "View mind activity history",
+  flags: {
+    mind: { type: "string", description: "Mind name" },
+    channel: { type: "string", description: "Filter by channel" },
+    session: { type: "string", description: "Filter by session" },
+    preset: { type: "string", description: "Use a preset view" },
+    limit: { type: "string", description: "Number of entries to show" },
+    full: { type: "boolean", description: "Show full details" },
+    period: { type: "string", description: "Time period (hour, day, week, month)" },
+    from: { type: "string", description: "Start date" },
+    to: { type: "string", description: "End date" },
+  },
+  examples: [
+    "volute mind history --mind myname",
+    "volute mind history --mind myname --full",
+    "volute mind history --mind myname --period day",
+  ],
+  run: async ({ flags }) => {
+    // Meta-summary mode: --period hour|day|week|month
+    if (flags.period) {
+      const validPeriods = ["hour", "day", "week", "month"];
+      if (!validPeriods.includes(flags.period)) {
+        console.error(
+          `Invalid period: ${flags.period}. Must be one of: ${validPeriods.join(", ")}`,
+        );
+        process.exit(1);
+      }
 
-  // Meta-summary mode: --period hour|day|week|month
-  if (flags.period) {
-    const validPeriods = ["hour", "day", "week", "month"];
-    if (!validPeriods.includes(flags.period)) {
-      console.error(`Invalid period: ${flags.period}. Must be one of: ${validPeriods.join(", ")}`);
-      process.exit(1);
+      const name = resolveMindName(flags);
+      const params = new URLSearchParams();
+      params.set("mind", name);
+      params.set("period", flags.period);
+      if (flags.from) params.set("from", flags.from);
+      else params.set("from", getDefaultRange(flags.period));
+      if (flags.to) params.set("to", flags.to);
+      if (flags.limit) params.set("limit", flags.limit);
+
+      const res = await daemonFetch(`/api/v1/history/summaries?${params}`);
+      if (!res.ok) {
+        let errorMsg = `Failed to get summaries: ${res.status}`;
+        try {
+          const data = (await res.json()) as { error?: string };
+          if (data.error) errorMsg = data.error;
+        } catch {
+          // JSON body may not be present; fall through to status-code message
+        }
+        console.error(errorMsg);
+        process.exit(1);
+      }
+
+      const rows = (await res.json()) as SummaryRow[];
+      // Display in chronological order (API returns newest first)
+      for (const row of rows.reverse()) {
+        console.log(formatMetaSummary(row));
+      }
+      return;
     }
 
     const name = resolveMindName(flags);
-    const params = new URLSearchParams();
-    params.set("mind", name);
-    params.set("period", flags.period);
-    if (flags.from) params.set("from", flags.from);
-    else params.set("from", getDefaultRange(flags.period));
-    if (flags.to) params.set("to", flags.to);
-    if (flags.limit) params.set("limit", flags.limit);
+    const client = getClient();
 
-    const res = await daemonFetch(`/api/v1/history/summaries?${params}`);
+    const url = client.api.minds[":name"].history.$url({ param: { name } });
+    if (flags.channel) url.searchParams.set("channel", flags.channel);
+    if (flags.session) url.searchParams.set("session", flags.session);
+    if (flags.preset) url.searchParams.set("preset", flags.preset);
+    if (flags.limit) url.searchParams.set("limit", flags.limit);
+    if (flags.full) url.searchParams.set("full", "true");
+
+    const res = await daemonFetch(urlOf(url));
+
     if (!res.ok) {
-      let errorMsg = `Failed to get summaries: ${res.status}`;
+      let errorMsg = `Failed to get history: ${res.status}`;
       try {
         const data = (await res.json()) as { error?: string };
         if (data.error) errorMsg = data.error;
-      } catch {
-        // JSON body may not be present; fall through to status-code message
-      }
+      } catch {}
       console.error(errorMsg);
       process.exit(1);
     }
 
-    const rows = (await res.json()) as SummaryRow[];
-    // Display in chronological order (API returns newest first)
+    const rows = (await res.json()) as HistoryRow[];
+
+    // Display in chronological order (API returns newest first, so reverse)
+    const compact = isCompact();
     for (const row of rows.reverse()) {
-      console.log(formatMetaSummary(row));
+      if (compact && (row.type === "done" || row.type === "usage")) continue;
+      console.log(compact ? formatRowCompact(row) : formatRow(row));
     }
-    return;
-  }
+  },
+});
 
-  const name = resolveMindName(flags);
-  const client = getClient();
-
-  const url = client.api.minds[":name"].history.$url({ param: { name } });
-  if (flags.channel) url.searchParams.set("channel", flags.channel);
-  if (flags.session) url.searchParams.set("session", flags.session);
-  if (flags.preset) url.searchParams.set("preset", flags.preset);
-  if (flags.limit) url.searchParams.set("limit", flags.limit);
-  if (flags.full) url.searchParams.set("full", "true");
-
-  const res = await daemonFetch(urlOf(url));
-
-  if (!res.ok) {
-    let errorMsg = `Failed to get history: ${res.status}`;
-    try {
-      const data = (await res.json()) as { error?: string };
-      if (data.error) errorMsg = data.error;
-    } catch {}
-    console.error(errorMsg);
-    process.exit(1);
-  }
-
-  const rows = (await res.json()) as HistoryRow[];
-
-  // Display in chronological order (API returns newest first, so reverse)
-  const compact = isCompact();
-  for (const row of rows.reverse()) {
-    if (compact && (row.type === "done" || row.type === "usage")) continue;
-    console.log(compact ? formatRowCompact(row) : formatRow(row));
-  }
-}
+export const run = cmd.execute;

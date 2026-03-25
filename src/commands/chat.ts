@@ -1,61 +1,43 @@
-export async function run(args: string[]) {
-  const subcommand = args[0];
-  const subArgs = args.slice(1);
+import { subcommands } from "../lib/command.js";
 
-  switch (subcommand) {
-    case "send":
-      await import("./chat/send.js").then((m) => m.run(subArgs));
-      break;
-    case "list":
-      await import("./chat/list.js").then((m) => m.run(subArgs));
-      break;
-    case "read":
-      await import("./chat/read.js").then((m) => m.run(subArgs));
-      break;
-    case "create":
-      await import("./chat/create.js").then((m) => m.run(subArgs));
-      break;
-    case "bridge":
-      await import("./chat/bridge.js").then((m) => m.run(subArgs));
-      break;
-    case "files":
-      await import("./chat/files.js").then((m) => m.run(subArgs));
-      break;
-    case "accept":
-      await import("./chat/accept.js").then((m) => m.run(subArgs));
-      break;
-    case "reject":
-      await import("./chat/reject.js").then((m) => m.run(subArgs));
-      break;
-    case "--help":
-    case "-h":
-    case undefined:
-      console.log(`volute chat — conversations, files, and bridges
+const cmd = subcommands({
+  name: "volute chat",
+  description: "Manage conversations and messages",
+  commands: {
+    send: {
+      description: "Send a message",
+      run: (args) => import("./chat/send.js").then((m) => m.run(args)),
+    },
+    list: {
+      description: "List conversations",
+      run: (args) => import("./chat/list.js").then((m) => m.run(args)),
+    },
+    read: {
+      description: "Read conversation messages",
+      run: (args) => import("./chat/read.js").then((m) => m.run(args)),
+    },
+    create: {
+      description: "Create a conversation",
+      run: (args) => import("./chat/create.js").then((m) => m.run(args)),
+    },
+    bridge: {
+      description: "Manage platform bridges",
+      run: (args) => import("./chat/bridge.js").then((m) => m.run(args)),
+    },
+    files: {
+      description: "List pending incoming files",
+      run: (args) => import("./chat/files.js").then((m) => m.run(args)),
+    },
+    accept: {
+      description: "Accept a pending file",
+      run: (args) => import("./chat/accept.js").then((m) => m.run(args)),
+    },
+    reject: {
+      description: "Reject a pending file",
+      run: (args) => import("./chat/reject.js").then((m) => m.run(args)),
+    },
+  },
+  footer: "Use --mind <name> or VOLUTE_MIND to identify the mind.",
+});
 
-Messages:
-  send <target> "<msg>"          Send a message (--image, --file)
-  list                           List conversations
-  read <conversation> [--limit]  Read conversation messages
-  create --participants u1,u2    Create a conversation
-
-Files:
-  files [--mind <name>]              List pending incoming files
-  accept <id> [--mind] [--dest]      Accept a pending file
-  reject <id> [--mind]               Reject a pending file
-
-Bridges:
-  bridge add <platform>          Set up a bridge
-  bridge remove <platform>       Remove a bridge
-  bridge list                    Show bridges + status
-  bridge map <p>:<ch> <volute>   Map external → Volute channel
-  bridge unmap <p>:<ch>          Remove mapping
-  bridge mappings [<platform>]   List mappings
-
-Send targets: @mindname for DMs, channel-name for conversations.
-Mind-scoped commands use --mind <name> or VOLUTE_MIND env var.`);
-      break;
-    default:
-      console.error(`Unknown chat subcommand: ${subcommand}\nRun 'volute chat --help' for usage.`);
-      process.exit(1);
-  }
-}
+export const run = cmd.execute;

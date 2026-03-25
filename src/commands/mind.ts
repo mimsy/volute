@@ -1,76 +1,4 @@
-export async function run(args: string[]) {
-  const subcommand = args[0];
-
-  switch (subcommand) {
-    case "create":
-      await import("./create.js").then((m) => m.run(args.slice(1)));
-      break;
-    case "start":
-      await import("./start.js").then((m) => m.run(args.slice(1)));
-      break;
-    case "stop":
-      await import("./stop.js").then((m) => m.run(args.slice(1)));
-      break;
-    case "restart":
-      await import("./restart.js").then((m) => m.run(args.slice(1)));
-      break;
-    case "delete":
-      await import("./delete.js").then((m) => m.run(args.slice(1)));
-      break;
-    case "list":
-      await import("./mind-list.js").then((m) => m.run(args.slice(1)));
-      break;
-    case "status":
-      await import("./mind-status.js").then((m) => m.run(args.slice(1)));
-      break;
-    case "history": {
-      const rest = args.slice(1);
-      const historyArgs = transformMindFlag(rest);
-      await import("./mind-history.js").then((m) => m.run(historyArgs));
-      break;
-    }
-    case "upgrade":
-      await import("./upgrade.js").then((m) => m.run(args.slice(1)));
-      break;
-    case "import":
-      await import("./import.js").then((m) => m.run(args.slice(1)));
-      break;
-    case "export":
-      await import("./export.js").then((m) => m.run(args.slice(1)));
-      break;
-    case "seed":
-      await import("./seed.js").then((m) => m.run(args.slice(1)));
-      break;
-    case "sprout":
-      await import("./sprout.js").then((m) => m.run(args.slice(1)));
-      break;
-    case "profile":
-      await import("./mind-profile.js").then((m) => m.run(args.slice(1)));
-      break;
-    case "sleep":
-      // Legacy alias — redirect to clock sleep
-      await import("./mind-sleep.js").then((m) => m.run(args.slice(1)));
-      break;
-    case "wake":
-      // Legacy alias — redirect to clock wake
-      await import("./mind-wake.js").then((m) => m.run(args.slice(1)));
-      break;
-    case "split":
-      await import("./split.js").then((m) => m.run(args.slice(1)));
-      break;
-    case "join":
-      await import("./join.js").then((m) => m.run(args.slice(1)));
-      break;
-    case "--help":
-    case "-h":
-    case undefined:
-      printUsage();
-      break;
-    default:
-      printUsage();
-      process.exit(1);
-  }
-}
+import { subcommands } from "../lib/command.js";
 
 /** If first arg is a positional name (not a flag), inject as --mind <name>. */
 function transformMindFlag(args: string[]): string[] {
@@ -80,28 +8,84 @@ function transformMindFlag(args: string[]): string[] {
   return args;
 }
 
-function printUsage() {
-  console.log(`Usage:
-  volute mind create <name> [--template <name>]
-  volute mind seed <name> [--template <name>]
-  volute mind start <name>
-  volute mind stop [name]
-  volute mind restart [name]
-  volute mind delete [name] [--force]
-  volute mind list
-  volute mind status [name]
-  volute mind history [name] [--channel <ch>] [--limit N] [--full]
-  volute mind profile [--mind <name>] [--display-name <name>] [--description <text>] [--avatar <path>]
-  volute mind sprout
-  volute mind sleep [name] [--wake-at <time>]
-  volute mind wake [name]
-  volute mind split <name> [--from <mind>] [--soul "..."] [--port N] [--no-start] [--json]
-  volute mind join <variant-name> [--summary "..." --justification "..." --memory "..."] [--skip-verify]
-  volute mind upgrade [name] [--template <name>] [--diff] [--continue] [--abort]
-  volute mind import <path> [--name <name>] [--session <path>] [--template <name>]
-  volute mind export <name> [--include-env] [--include-identity] [--include-history] [--include-sessions] [--all] [--output <path>]
+const cmd = subcommands({
+  name: "volute mind",
+  description: "Manage minds",
+  commands: {
+    create: {
+      description: "Create a new mind",
+      run: (args) => import("./create.js").then((m) => m.run(args)),
+    },
+    start: {
+      description: "Start a mind",
+      run: (args) => import("./start.js").then((m) => m.run(args)),
+    },
+    stop: {
+      description: "Stop a mind",
+      run: (args) => import("./stop.js").then((m) => m.run(args)),
+    },
+    restart: {
+      description: "Restart a mind",
+      run: (args) => import("./restart.js").then((m) => m.run(args)),
+    },
+    delete: {
+      description: "Delete a mind",
+      run: (args) => import("./delete.js").then((m) => m.run(args)),
+    },
+    list: {
+      description: "List all minds",
+      run: (args) => import("./mind-list.js").then((m) => m.run(args)),
+    },
+    status: {
+      description: "Check mind status",
+      run: (args) => import("./mind-status.js").then((m) => m.run(args)),
+    },
+    history: {
+      description: "View mind activity history",
+      run: (args) => import("./mind-history.js").then((m) => m.run(transformMindFlag(args))),
+    },
+    profile: {
+      description: "Update mind profile",
+      run: (args) => import("./mind-profile.js").then((m) => m.run(args)),
+    },
+    upgrade: {
+      description: "Upgrade mind to latest template",
+      run: (args) => import("./upgrade.js").then((m) => m.run(args)),
+    },
+    import: {
+      description: "Import an OpenClaw workspace",
+      run: (args) => import("./import.js").then((m) => m.run(args)),
+    },
+    export: {
+      description: "Export a mind",
+      run: (args) => import("./export.js").then((m) => m.run(args)),
+    },
+    split: {
+      description: "Create a variant",
+      run: (args) => import("./split.js").then((m) => m.run(args)),
+    },
+    join: {
+      description: "Merge variant back",
+      run: (args) => import("./join.js").then((m) => m.run(args)),
+    },
+    sleep: {
+      description: "Put a mind to sleep",
+      run: (args) => import("./mind-sleep.js").then((m) => m.run(args)),
+    },
+    wake: {
+      description: "Wake a sleeping mind",
+      run: (args) => import("./mind-wake.js").then((m) => m.run(args)),
+    },
+    seed: {
+      description: "(legacy) Use 'volute seed create' instead",
+      run: (args) => import("./seed.js").then((m) => m.run(args)),
+    },
+    sprout: {
+      description: "(legacy) Use 'volute seed sprout' instead",
+      run: (args) => import("./sprout.js").then((m) => m.run(args)),
+    },
+  },
+  footer: "Mind name can be omitted (where applicable) if VOLUTE_MIND is set.",
+});
 
-Mind name can be omitted (where shown as [name]) if VOLUTE_MIND is set.
-
-Note: 'volute mind seed' and 'volute mind sprout' are now 'volute seed create' and 'volute seed sprout'.`);
-}
+export const run = cmd.execute;
