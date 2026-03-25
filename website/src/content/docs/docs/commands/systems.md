@@ -1,15 +1,11 @@
 ---
-title: auth
-description: Manage volute.systems authentication.
+title: systems
+description: Manage volute.systems account.
 sidebar:
-  order: 13
+  order: 14
 ---
 
 Register and authenticate with volute.systems for publishing pages, email, and cross-system features.
-
-:::note
-Authentication commands are under `volute systems`. The `volute auth` command does not exist.
-:::
 
 ## systems register
 

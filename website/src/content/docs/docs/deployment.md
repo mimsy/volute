@@ -41,13 +41,7 @@ The container runs with `VOLUTE_ISOLATION=user` enabled, so each mind gets its o
 
 ## Bare metal (Linux)
 
-One-liner install on a fresh Linux system (Debian/Ubuntu, RHEL/Fedora, Arch, Alpine, SUSE):
-
-```sh
-curl -fsSL <install-url> | sudo bash
-```
-
-Or manually:
+Install on a fresh Linux system (Debian/Ubuntu, RHEL/Fedora, Arch, Alpine, SUSE):
 
 ```sh
 npm install -g volute

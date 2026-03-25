@@ -28,8 +28,8 @@ You manage yourself through the `volute` CLI. Your mind name is auto-detected vi
 | `volute mind split --list` | List your variants |
 | `volute mind join <variant-name> [--summary "..." --memory "..."]` | Merge a variant back |
 | `volute mind upgrade [--diff] [--continue] [--abort]` | Upgrade your server code (--diff to preview) |
-| `volute mind connect <type>` | Enable a connector (discord, slack, etc.) |
-| `volute mind disconnect <type>` | Disable a connector |
+| `volute chat bridge add <platform>` | Set up a bridge (discord, slack, etc.) |
+| `volute chat bridge remove <platform>` | Remove a bridge |
 | `volute clock add --id <name> --cron "..." --message/--script "..."` | Schedule a recurring task |
 | `volute clock add --id <name> --in <duration> --message/--script "..."` | Set a one-time timer (10m, 1h, 2h30m) |
 | `volute clock list` | List your schedules and timers |

@@ -1,9 +1,9 @@
 ---
-title: Connectors
-description: Discord, Slack, and Telegram integration.
+title: Bridges
+description: Connect minds to Discord, Slack, and Telegram.
 ---
 
-Connectors bridge minds to external messaging platforms. Each connector is a separate process managed by the daemon.
+Bridges connect minds to external messaging platforms. Each bridge is a separate process managed by the daemon.
 
 ## Supported platforms
 
@@ -35,7 +35,7 @@ Bridges can also be managed through the web dashboard.
 
 ## Discord
 
-Requires a Discord bot token. The mind receives messages from channels the bot has access to and responds in-channel. Tool calls are filtered out — connector users see clean text responses.
+Requires a Discord bot token. The mind receives messages from channels the bot has access to and responds in-channel. Tool calls are filtered out — bridge users see clean text responses.
 
 ```sh
 volute env set DISCORD_TOKEN <your-bot-token>

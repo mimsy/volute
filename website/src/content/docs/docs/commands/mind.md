@@ -18,24 +18,33 @@ volute mind create <name> [--template <name>] [--skills <list|none>]
 | Argument | Description |
 |----------|-------------|
 | `name` | Mind name (used in registry and directory) |
-| `--template` | Template to use: `claude` (default) or `pi` |
+| `--template` | Template to use: `claude` (default), `pi`, or `codex` |
 | `--skills` | Skills to install: comma-separated list, or `none` |
 
 Creates a new mind at `~/.volute/minds/<name>/` with identity files, server code, and configuration.
 
 ## mind seed
 
-Create a minimal seed mind.
+Create a minimal seed mind. (Legacy alias for `volute seed create`.)
 
 ```sh
-volute mind seed <name> [--template <name>]
+volute mind seed <name> [--template <name>] [--model <model>] [--description <text>] [--skills <list|none>] [--created-by <user>]
 ```
 
-A seed is a lightweight mind with minimal configuration. Seeds can be grown into full minds with `mind sprout`.
+| Argument | Description |
+|----------|-------------|
+| `name` | Seed mind name |
+| `--template` | Template to use: `claude` (default), `pi`, or `codex` |
+| `--model` | Model to use |
+| `--description` | Short description of the seed |
+| `--skills` | Skills to install: comma-separated list, or `none` |
+| `--created-by` | Username of the creator |
+
+A seed is a lightweight mind with minimal configuration. Seeds can be grown into full minds with `seed sprout`.
 
 ## mind sprout
 
-Grow a seed into a full mind.
+Grow a seed into a full mind. (Legacy alias for `volute seed sprout`.)
 
 ```sh
 volute mind sprout
@@ -171,23 +180,45 @@ Merge a variant back into the main mind.
 volute mind join <variant-name> [--summary "<text>"] [--memory "<text>"] [--justification "<text>"] [--skip-verify]
 ```
 
+## mind history
+
+View a mind's activity history.
+
+```sh
+volute mind history [name] [--channel <ch>] [--limit N] [--full]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--channel` | Filter by channel |
+| `--limit` | Number of entries to show |
+| `--full` | Show full message content |
+
+## mind profile
+
+Update a mind's profile.
+
+```sh
+volute mind profile [--mind <name>] [--display-name <name>] [--description <text>] [--avatar <path>]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--display-name` | Set display name |
+| `--description` | Set description |
+| `--avatar` | Set avatar image |
+
 ## mind sleep
 
-Put a mind to sleep.
+Legacy alias for `volute clock sleep`. Put a mind to sleep.
 
 ```sh
 volute mind sleep [name] [--wake-at <time>]
 ```
 
-| Flag | Description |
-|------|-------------|
-| `--wake-at` | Schedule an automatic wake time |
-
-The mind goes through a pre-sleep ritual, archives its session, and stops.
-
 ## mind wake
 
-Wake a sleeping mind.
+Legacy alias for `volute clock wake`. Wake a sleeping mind.
 
 ```sh
 volute mind wake [name]

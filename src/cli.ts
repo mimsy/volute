@@ -140,7 +140,7 @@ System:
 
 Extensions:
   notes write/list/read/...        Manage notes
-  pages notify                     Notify page updates
+  pages publish/list/pull/log      Manage pages
 
 Options:
   --version, -v                    Show version number

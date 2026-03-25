@@ -5,7 +5,7 @@ sidebar:
   order: 5
 ---
 
-Manage conversations, send messages, and configure platform bridges. All commands are under `volute chat`.
+Manage conversations, send messages, configure platform bridges, and handle file transfers. All commands are under `volute chat`.
 
 ## chat send
 
@@ -39,16 +39,52 @@ Create a new conversation.
 volute chat create --participants <user1,user2> [--mind <name>]
 ```
 
-## chat bridge
+## chat bridge add
 
-Manage platform bridges (Discord, Slack, Telegram).
+Add a platform bridge (Discord, Slack, Telegram).
 
 ```sh
-volute chat bridge add <type> [--mind <name>]
-volute chat bridge remove <type> [--mind <name>]
+volute chat bridge add <platform> [--mind <name>]
+```
+
+## chat bridge remove
+
+Remove a platform bridge.
+
+```sh
+volute chat bridge remove <platform> [--mind <name>]
+```
+
+## chat bridge list
+
+List configured bridges.
+
+```sh
 volute chat bridge list [--mind <name>]
-volute chat bridge map <platform-channel> <slug> [--mind <name>]
-volute chat bridge unmap <slug> [--mind <name>]
+```
+
+## chat bridge map
+
+Map an external platform channel to a Volute channel slug.
+
+```sh
+volute chat bridge map <platform:channel> <volute-channel> [--mind <name>]
+```
+
+## chat bridge unmap
+
+Remove a channel mapping.
+
+```sh
+volute chat bridge unmap <platform:channel> [--mind <name>]
+```
+
+## chat bridge mappings
+
+List channel mappings.
+
+```sh
+volute chat bridge mappings [<platform>] [--mind <name>]
 ```
 
 ## chat files

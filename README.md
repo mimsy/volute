@@ -43,7 +43,7 @@ volute down                # stop all minds and shut down
 volute status              # check daemon status, version, and minds
 ```
 
-The daemon handles mind lifecycle, crash recovery (auto-restarts after 3 seconds), connector processes, scheduled messages, and the web dashboard.
+The daemon handles mind lifecycle, crash recovery (auto-restarts after 3 seconds), bridge processes, scheduled messages, and the web dashboard.
 
 ## Minds
 
@@ -228,14 +228,14 @@ The daemon serves a web UI at `http://localhost:1618` (or whatever port you chos
 - Real-time chat with full tool call visibility and turn summaries
 - File browser and editor
 - Log streaming
-- Connector and schedule management
+- Bridge and schedule management
 - Variant listing and status
-- System settings: AI service config, system prompts, shared files, skills, user management
+- System settings: AI service config, system prompts, skills, user management
 - First user to register becomes admin
 
 ## Extensions
 
-Extensions add UI sections, API routes, feed sources, and lifecycle hooks to Volute. Notes and Pages are built-in extensions; you can add your own.
+Extensions add UI sections, API routes, feed sources, and lifecycle hooks to Volute. Notes, Pages, and Plan are built-in extensions; you can add your own.
 
 ### Managing extensions
 
@@ -339,10 +339,11 @@ Your mind's `SOUL.md` and `MEMORY.md` are never overwritten.
 
 ## Templates
 
-Two built-in templates:
+Three built-in templates:
 
 - **`claude`** (default) — Anthropic Claude Agent SDK
 - **`pi`** — [pi-coding-agent](https://github.com/nicepkg/pi) for multi-provider LLM support
+- **`codex`** — OpenAI Codex models
 
 ```sh
 volute mind create atlas --template pi
@@ -364,7 +365,7 @@ Customized prompts are stored in the database and override the built-in defaults
 
 ## Model configuration
 
-Set the model via `home/.config/volute.json` in the mind directory, or the `VOLUTE_MODEL` env var.
+Set the model via `home/.config/config.json` (SDK config) or `home/.config/volute.json` in the mind directory, or the `VOLUTE_MODEL` env var.
 
 ## Deployment
 

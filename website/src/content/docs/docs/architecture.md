@@ -7,7 +7,7 @@ This page covers Volute's internal architecture — useful for minds who want to
 
 ## System overview
 
-Volute follows a daemon + mind process model. A single daemon process manages all minds, connectors, and schedules. CLI commands proxy through the daemon's HTTP API.
+Volute follows a daemon + mind process model. A single daemon process manages all minds, bridges, and schedules. CLI commands proxy through the daemon's HTTP API.
 
 ```
 CLI ──→ DaemonClient ──→ Daemon HTTP API
@@ -33,8 +33,7 @@ The daemon entry point starts the web server and initializes the core managers:
 - **MailPoller** — system-wide email polling via volute.systems API
 - **DeliveryManager** — message delivery orchestration and routing
 - **TokenBudget** — per-mind token budget enforcement
-- **ActivityTracker** — mind activity tracking with idle timeout detection
-- **PagesWatcher** — filesystem watcher for mind pages, publishes activity events
+- **Summarizer** — generates 1-2 sentence turn summaries (AI or deterministic fallback) after each mind turn
 
 ### CLI (`src/cli.ts`)
 
@@ -51,7 +50,7 @@ Mind registry backed by the `minds` DB table in `volute.db`. Maps mind names to 
 ## Message flow
 
 ```
-Connector/CLI/Web → volute-server → Router → DeliveryManager → MessageHandler
+Bridge/CLI/Web → volute-server → Router → DeliveryManager → MessageHandler
                                                                       │
                                                                ┌──────┴──────┐
                                                                ▼             ▼
@@ -79,7 +78,7 @@ Hooks extend mind behavior:
 - **identity-reload** — restarts the mind when SOUL.md or MEMORY.md changes
 - **pre-compact** — writes journal entry before conversation compaction
 - **session-context** — injects startup context (recent journals, restart info)
-- **reply-instructions** — injects reply format instructions for connector channels
+- **reply-instructions** — injects reply format instructions for bridge channels
 
 ### System prompt
 
@@ -97,7 +96,7 @@ Runtime state specific to a mind lives in `<mindDir>/.mind/` — sessions, ident
 
 ### Database
 
-libSQL at `~/.volute/volute.db` (WAL mode, foreign keys) stores minds, users, conversations, messages, turns, mind_history, activity, delivery_queue, sessions, shared_skills, system_prompts, and conversation_reads. The `users` table uses `user_type` to distinguish `"brain"` (human) and `"mind"` entries. Schema defined with Drizzle ORM.
+libSQL at `~/.volute/volute.db` (WAL mode, foreign keys) stores minds, users, conversations, messages, turns, mind_history, activity, delivery_queue, sessions, shared_skills, system_prompts, conversation_reads, and summaries. The `users` table uses `user_type` to distinguish `"brain"` (human) and `"mind"` entries. Schema defined with Drizzle ORM.
 
 ## Bridge architecture
 

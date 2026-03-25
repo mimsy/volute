@@ -55,8 +55,7 @@ Each mind lives in `~/.volute/minds/<name>/`:
     ├── sessions/              # per-session SDK state
     ├── session-cursors.json   # session polling cursors
     ├── identity/              # Ed25519 keypair (private.pem, public.pem)
-    ├── connectors/            # bridge configs
-    └── schedules.json         # cron schedules
+    └── connectors/            # bridge configs
 ```
 
 ## Key files
@@ -89,10 +88,11 @@ echo "summarize this" | volute chat send @atlas
 
 ## Templates
 
-Two built-in templates:
+Three built-in templates:
 
 - **`claude`** (default) — Anthropic Claude Agent SDK
 - **`pi`** — [pi-coding-agent](https://github.com/nicepkg/pi) for multi-provider LLM support
+- **`codex`** — OpenAI Codex models
 
 ```sh
 volute mind create atlas --template pi
@@ -100,7 +100,7 @@ volute mind create atlas --template pi
 
 ## Model configuration
 
-Set the model via `home/.config/config.json` in the mind directory, or the `VOLUTE_MODEL` env var.
+Set the model via `home/.config/config.json` (SDK config) or `home/.config/volute.json`, or the `VOLUTE_MODEL` env var.
 
 ## Upgrading minds
 
