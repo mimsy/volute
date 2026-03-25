@@ -38,23 +38,49 @@ let route = $derived.by((): Route => {
 });
 
 let sites = $state<Site[]>([]);
+let systemSite = $state<Site | null>(null);
 let recentPages = $state<any[]>([]);
 
 $effect(() => {
   fetchPagesData().then((data) => {
     sites = data.sites;
+    systemSite = data.systemSite;
     recentPages = data.recentPages;
   });
 });
 
+let allSites = $derived([...(systemSite ? [systemSite] : []), ...sites]);
+
 let selectedSite = $derived.by(() => {
-  if (route.view === "site") return sites.find((s) => s.name === route.name);
-  if (route.view === "mind") return sites.find((s) => s.name === route.name);
+  if (route.view === "site") return allSites.find((s) => s.name === route.name);
+  if (route.view === "mind") return allSites.find((s) => s.name === route.name);
   return undefined;
 });
 
 function navigateParent(path: string) {
   window.parent.postMessage({ type: "navigate", path }, "*");
+}
+
+function handleIframeNav(e: Event) {
+  const iframe = e.target as HTMLIFrameElement;
+  try {
+    const path = iframe.contentWindow?.location.pathname;
+    if (!path) return;
+    // Match /ext/pages/public/{name}/{file...}
+    const match = path.match(/^\/ext\/pages\/public\/([^/]+)\/(.+)$/);
+    if (!match) return;
+    const [, mind, file] = match;
+    if (mind === route.name && file === (route as { path?: string }).path) return;
+    if (mind === "_system") {
+      navigateParent(`/pages/_system/${file}`);
+    } else {
+      navigateParent(`/minds/${mind}/pages/${file}`);
+    }
+  } catch (err) {
+    if (!(err instanceof DOMException)) {
+      console.error("[pages] unexpected error in iframe nav handler:", err);
+    }
+  }
 }
 
 function handleSelectPage(mind: string, path: string) {
@@ -80,11 +106,12 @@ function handleSelectSite(name: string) {
       src="/ext/pages/public/{route.name}/{route.path}"
       class="full-page-iframe"
       title="{route.name}/{route.path}"
+      onload={handleIframeNav}
     ></iframe>
   {:else if (route.view === "site" || route.view === "mind") && selectedSite}
     <SiteView site={selectedSite} onSelectPage={handleSelectPage} />
   {:else}
-    <PagesDashboard {sites} {recentPages} onSelectSite={handleSelectSite} onSelectPage={handleSelectPage} />
+    <PagesDashboard {sites} {systemSite} {recentPages} onSelectSite={handleSelectSite} onSelectPage={handleSelectPage} />
   {/if}
 </div>
 

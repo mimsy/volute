@@ -27,9 +27,9 @@ export function createRoutes(ctx: ExtensionContext): Hono {
   return new Hono()
     .get("/", async (c) => {
       if (!ctx.db) return c.json({ error: "Pages database not available" }, 503);
-      const sites = getSites(ctx.db);
+      const { sites, systemSite } = getSites(ctx.db);
       const recentPages = getRecentPagesList(ctx.db);
-      return c.json({ sites, recentPages });
+      return c.json({ sites, systemSite, recentPages });
     })
     .get("/feed", async (c) => {
       if (!ctx.db) return c.json({ error: "Pages database not available" }, 503);

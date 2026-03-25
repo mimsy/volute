@@ -15,13 +15,21 @@ function formatRelativeTime(iso: string): string {
   return `${months}mo ago`;
 }
 
+function recentSublabel(page: RecentPage): string {
+  const time = formatRelativeTime(page.modified);
+  if (page.mind === "_system" && page.author) return `${page.author} · ${time}`;
+  return `${page.mind} · ${time}`;
+}
+
 let {
   sites,
+  systemSite,
   recentPages,
   onSelectSite,
   onSelectPage,
 }: {
   sites: Site[];
+  systemSite: Site | null;
   recentPages: RecentPage[];
   onSelectSite: (name: string) => void;
   onSelectPage: (mind: string, path: string) => void;
@@ -29,10 +37,28 @@ let {
 </script>
 
 <div class="dashboard">
+  {#if systemSite}
+    <div class="section">
+      <div class="section-header">
+        <span class="section-title">shared pages</span>
+      </div>
+      <div class="thumbnail-grid">
+        {#each systemSite.pages as page}
+          <PageThumbnail
+            url={page.url}
+            label={page.file}
+            sublabel={page.author ?? undefined}
+            onclick={() => onSelectPage("_system", page.file)}
+          />
+        {/each}
+      </div>
+    </div>
+  {/if}
+
   {#if sites.length > 0}
     <div class="section">
       <div class="section-header">
-        <span class="section-title">sites</span>
+        <span class="section-title">mind sites</span>
       </div>
       <div class="thumbnail-grid">
         {#each sites as site}
@@ -56,7 +82,7 @@ let {
           <PageThumbnail
             url={`/ext/pages/public/${page.mind}/${page.file}`}
             label={page.file}
-            sublabel="{page.mind} · {formatRelativeTime(page.modified)}"
+            sublabel={recentSublabel(page)}
             onclick={() => onSelectPage(page.mind, page.file)}
           />
         {/each}
@@ -64,7 +90,7 @@ let {
     </div>
   {/if}
 
-  {#if sites.length === 0 && recentPages.length === 0}
+  {#if !systemSite && sites.length === 0 && recentPages.length === 0}
     <div class="empty">No pages published yet.</div>
   {/if}
 </div>
