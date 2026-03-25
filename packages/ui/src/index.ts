@@ -19,3 +19,6 @@ export { default as Toggle } from "./components/Toggle.svelte";
 // Utilities
 export { icons } from "./icons.js";
 export { renderMarkdown } from "./markdown.js";
+export type { TooltipOptions, TooltipPosition } from "./tooltip.js";
+// Actions
+export { tooltip } from "./tooltip.js";

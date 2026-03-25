@@ -1226,6 +1226,35 @@ const app = new Hono<AuthEnv>()
     const hasPages = existsSync(resolve(mindDir(name), "home", "public", "pages"));
     return c.json({ ...entry, ...mindStatus, variants: variantStatuses, hasPages });
   })
+  // Context info — proxy to mind's /context endpoint
+  .get("/:name/context", async (c) => {
+    const name = c.req.param("name");
+    const entry = await findMind(name);
+    if (!entry) return c.json({ error: "Mind not found" }, 404);
+    if (!getMindManager().isRunning(name)) {
+      return c.json({ error: "Mind is not running" }, 503);
+    }
+    try {
+      const res = await fetch(`http://127.0.0.1:${entry.port}/context`, {
+        signal: AbortSignal.timeout(3000),
+      });
+      if (!res.ok) {
+        const status = res.status >= 500 ? 502 : 404;
+        return c.json(
+          {
+            error:
+              res.status >= 500 ? "Mind context handler errored" : "Context endpoint not available",
+          },
+          status,
+        );
+      }
+      const data = await res.json();
+      return c.json(data);
+    } catch (err) {
+      console.error(`context proxy for ${name}:`, err);
+      return c.json({ error: "Failed to reach mind" }, 503);
+    }
+  })
   // Start mind (supports variants) — admin only
   .post("/:name/start", requireSelf(), async (c) => {
     const name = c.req.param("name");

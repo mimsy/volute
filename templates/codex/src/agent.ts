@@ -3,6 +3,13 @@ import { resolve as resolvePath } from "node:path";
 import { Codex } from "@openai/codex-sdk";
 import { flushFileChanges, trackFileChange } from "./lib/auto-commit.js";
 import { extractText } from "./lib/content.js";
+import {
+  countSdkInstructionTokens,
+  countSkillDescriptionTokens,
+  countSystemPromptTokens,
+  findCodexSessionFile,
+  parseCodexSessionJSONL,
+} from "./lib/context-breakdown.js";
 import { daemonEmit, daemonRestart, type EventType } from "./lib/daemon-client.js";
 import { runHooks } from "./lib/hook-loader.js";
 import { log, warn } from "./lib/logger.js";
@@ -17,6 +24,7 @@ import type {
   VoluteContentPart,
   VoluteEvent,
 } from "./lib/types.js";
+import type { ContextInfo } from "./lib/volute-server.js";
 
 /** Minimal interface for a Codex SDK thread — typed to the methods we actually use */
 type CodexThread = {
@@ -65,7 +73,7 @@ export function createMind(options: {
   model?: string;
   reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh";
   maxContextTokens?: number;
-}): { resolve: HandlerResolver } {
+}): { resolve: HandlerResolver; getContextInfo: () => ContextInfo } {
   const sessions = new Map<string, CodexSession>();
   const prompts = loadPrompts();
   const maxContextTokens = options.maxContextTokens;
@@ -581,5 +589,38 @@ export function createMind(options: {
     return handler;
   }
 
-  return { resolve };
+  const systemPromptTokens = countSystemPromptTokens(options.systemPrompt);
+  const claudeMdTokens = countSdkInstructionTokens(options.cwd);
+  const skillDescTokens = countSkillDescriptionTokens([resolvePath(options.cwd, ".agents/skills")]);
+
+  function getContextInfo(): ContextInfo {
+    return {
+      sessions: Array.from(sessions.values()).map((s) => {
+        try {
+          const threadId = sessionStore.load(s.name);
+          const jsonlPath = threadId ? findCodexSessionFile(threadId) : null;
+          const parsed = jsonlPath
+            ? parseCodexSessionJSONL(jsonlPath, systemPromptTokens, claudeMdTokens, skillDescTokens)
+            : null;
+
+          return {
+            name: s.name,
+            contextTokens: parsed?.contextTokens ?? s.cumulativeInputTokens,
+            contextWindow: maxContextTokens,
+            breakdown: parsed?.breakdown,
+          };
+        } catch (err) {
+          log("mind", `failed to get context breakdown for session "${s.name}":`, err);
+          return {
+            name: s.name,
+            contextTokens: s.cumulativeInputTokens,
+            contextWindow: maxContextTokens,
+          };
+        }
+      }),
+      systemPrompt: systemPromptTokens,
+    };
+  }
+
+  return { resolve, getContextInfo };
 }

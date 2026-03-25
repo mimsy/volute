@@ -167,3 +167,19 @@ a:focus-visible {
   border-top: 1px solid var(--border);
   margin: 12px 0;
 }
+
+/* Tooltip (portaled to body by use:tooltip action) */
+.volute-tooltip {
+  position: fixed;
+  padding: 3px 8px;
+  background: var(--bg-3);
+  color: var(--text-0);
+  font-family: var(--sans);
+  font-size: 11px;
+  border-radius: var(--radius);
+  white-space: nowrap;
+  pointer-events: none;
+  border: 1px solid var(--border);
+  z-index: 9999;
+  font-variant-numeric: tabular-nums;
+}

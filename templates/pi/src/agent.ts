@@ -10,6 +10,13 @@ import {
   SettingsManager,
 } from "@mariozechner/pi-coding-agent";
 import { extractImages, extractText } from "./lib/content.js";
+import {
+  countSdkInstructionTokens,
+  countSkillDescriptionTokens,
+  countSystemPromptTokens,
+  findPiSessionFile,
+  parsePiSessionJSONL,
+} from "./lib/context-breakdown.js";
 import { createEventHandler, emit } from "./lib/event-handler.js";
 import { runHooks } from "./lib/hook-loader.js";
 import { log } from "./lib/logger.js";
@@ -25,6 +32,7 @@ import type {
   VoluteContentPart,
   VoluteEvent,
 } from "./lib/types.js";
+import type { ContextInfo } from "./lib/volute-server.js";
 
 type PiAgentSession = Awaited<ReturnType<typeof createAgentSession>>["session"];
 
@@ -37,6 +45,7 @@ type PiSession = {
   messageIds: (string | undefined)[];
   currentMessageId?: string;
   messageChannels: Map<string, { channel: string; sender?: string }>;
+  contextTokens: number;
 };
 
 export function createMind(options: {
@@ -48,7 +57,7 @@ export function createMind(options: {
   compactionMessage?: string;
   maxContextTokens?: number;
   subagents?: Record<string, SubagentConfig>;
-}): { resolve: HandlerResolver } {
+}): { resolve: HandlerResolver; getContextInfo: () => ContextInfo } {
   const sessions = new Map<string, PiSession>();
   const prompts = loadPrompts();
   const today = new Date().toLocaleDateString("en-CA");
@@ -208,6 +217,7 @@ export function createMind(options: {
       listeners: new Set(),
       messageIds: [],
       messageChannels: new Map(),
+      contextTokens: 0,
     };
     sessions.set(name, session);
 
@@ -313,29 +323,33 @@ export function createMind(options: {
       createEventHandler(session, {
         cwd: options.cwd,
         broadcast: (event) => broadcast(session, event),
-        onContextTokens: maxContextTokens
-          ? (tokens: number) => {
-              if (tokens >= maxContextTokens && !compactionTriggered && !compactionInProgress) {
-                if (!session.agentSession) {
-                  log(
-                    "mind",
-                    `session "${session.name}": compaction threshold hit but session not ready`,
-                  );
-                  return;
-                }
-                compactionTriggered = true;
-                log(
-                  "mind",
-                  `session "${session.name}": ${tokens} tokens >= ${maxContextTokens} — triggering compaction`,
-                );
-                // Send compaction warning; compaction will follow after the mind finishes its response turn
-                session.messageIds.push(undefined);
-                session.agentSession.prompt(compactionMessage, {
-                  streamingBehavior: "followUp",
-                });
-              }
+        onContextTokens: (tokens: number) => {
+          session.contextTokens = tokens;
+          if (
+            maxContextTokens &&
+            tokens >= maxContextTokens &&
+            !compactionTriggered &&
+            !compactionInProgress
+          ) {
+            if (!session.agentSession) {
+              log(
+                "mind",
+                `session "${session.name}": compaction threshold hit but session not ready`,
+              );
+              return;
             }
-          : undefined,
+            compactionTriggered = true;
+            log(
+              "mind",
+              `session "${session.name}": ${tokens} tokens >= ${maxContextTokens} — triggering compaction`,
+            );
+            // Send compaction warning; compaction will follow after the mind finishes its response turn
+            session.messageIds.push(undefined);
+            session.agentSession.prompt(compactionMessage, {
+              streamingBehavior: "followUp",
+            });
+          }
+        },
         onTurnEnd: maxContextTokens
           ? () => {
               try {
@@ -469,5 +483,34 @@ export function createMind(options: {
     return handler;
   }
 
-  return { resolve };
+  const piSessionsDir = resolvePath(options.mindDir, ".mind/pi-sessions");
+  const systemPromptTokens = countSystemPromptTokens(options.systemPrompt);
+  const claudeMdTokens = countSdkInstructionTokens(options.cwd);
+  const skillDescTokens = countSkillDescriptionTokens([resolvePath(options.cwd, ".pi/skills")]);
+
+  function getContextInfo(): ContextInfo {
+    return {
+      sessions: Array.from(sessions.values()).map((s) => {
+        try {
+          const jsonlPath = findPiSessionFile(piSessionsDir, s.name);
+          const parsed = jsonlPath
+            ? parsePiSessionJSONL(jsonlPath, systemPromptTokens, claudeMdTokens, skillDescTokens)
+            : null;
+
+          return {
+            name: s.name,
+            contextTokens: parsed?.contextTokens ?? s.contextTokens,
+            contextWindow: maxContextTokens,
+            breakdown: parsed?.breakdown,
+          };
+        } catch (err) {
+          log("mind", `failed to get context breakdown for session "${s.name}":`, err);
+          return { name: s.name, contextTokens: s.contextTokens, contextWindow: maxContextTokens };
+        }
+      }),
+      systemPrompt: systemPromptTokens,
+    };
+  }
+
+  return { resolve, getContextInfo };
 }
