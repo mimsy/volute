@@ -4,24 +4,28 @@ import { Button, EmptyState, ErrorMessage, SectionHeader } from "@volute/ui";
 import { onMount } from "svelte";
 import {
   addDefaultSkill,
+  fetchAutoUpdateSkills,
   fetchDefaultSkills,
   fetchSharedSkills,
   removeDefaultSkill,
   removeSharedSkill,
+  setAutoUpdateSkills,
   uploadSkillZip,
 } from "../../lib/client";
 
 let skills = $state<SharedSkill[]>([]);
 let defaults = $state<string[]>([]);
+let autoUpdate = $state(true);
 let error = $state("");
 let loading = $state(true);
 let actionLoading = $state<string | null>(null);
 
 function refresh() {
-  Promise.all([fetchSharedSkills(), fetchDefaultSkills()])
-    .then(([s, d]) => {
+  Promise.all([fetchSharedSkills(), fetchDefaultSkills(), fetchAutoUpdateSkills()])
+    .then(([s, d, au]) => {
       skills = s.sort((a, b) => a.name.localeCompare(b.name));
       defaults = d;
+      autoUpdate = au;
       loading = false;
       error = "";
     })
@@ -29,6 +33,17 @@ function refresh() {
       error = "Failed to load skills";
       loading = false;
     });
+}
+
+async function toggleAutoUpdate() {
+  const newValue = !autoUpdate;
+  autoUpdate = newValue;
+  try {
+    await setAutoUpdateSkills(newValue);
+  } catch (e) {
+    autoUpdate = !newValue;
+    error = e instanceof Error ? e.message : "Failed to update setting";
+  }
 }
 
 onMount(refresh);
@@ -103,6 +118,23 @@ async function toggleDefault(id: string) {
       </div>
     {/snippet}
   </SectionHeader>
+
+  <div class="auto-update-row">
+    <label class="default-toggle" title={autoUpdate ? "Skills auto-update on daemon restart" : "Skills must be updated manually per mind"}>
+      <input
+        type="checkbox"
+        checked={autoUpdate}
+        onchange={toggleAutoUpdate}
+      />
+      <span class="toggle-track">
+        <span class="toggle-thumb"></span>
+      </span>
+    </label>
+    <div class="auto-update-info">
+      <span class="auto-update-label">Auto-update mind skills</span>
+      <span class="auto-update-desc">Automatically update installed skills on all minds when a new version is available</span>
+    </div>
+  </div>
 
   {#if skills.length === 0}
     <EmptyState message="No shared skills yet." />
@@ -272,5 +304,31 @@ async function toggleDefault(id: string) {
     display: flex;
     gap: 4px;
     flex-shrink: 0;
+  }
+
+  .auto-update-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 0;
+    margin-bottom: 16px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .auto-update-info {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .auto-update-label {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-0);
+  }
+
+  .auto-update-desc {
+    font-size: 12px;
+    color: var(--text-2);
   }
 </style>

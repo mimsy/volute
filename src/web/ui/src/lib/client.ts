@@ -393,6 +393,14 @@ export async function removeDefaultSkill(skill: string): Promise<string[]> {
   return body.skills;
 }
 
+export function fetchAutoUpdateSkills(): Promise<boolean> {
+  return get<{ enabled: boolean }>(`${V1}/skills/auto-update`).then((r) => r.enabled);
+}
+
+export function setAutoUpdateSkills(enabled: boolean): Promise<void> {
+  return put(`${V1}/skills/auto-update`, { enabled });
+}
+
 // --- Prompts ---
 
 export function fetchPrompts(): Promise<Prompt[]> {
