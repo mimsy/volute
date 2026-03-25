@@ -4,6 +4,7 @@ import type { ExtensionContext } from "@volute/extensions";
 import { Hono } from "hono";
 
 import { getRecentPagesList, getSites } from "./cache.js";
+import { parseFrontmatter, renderMarkdownPage, resolveStylesheet } from "./markdown.js";
 
 const MIME_TYPES: Record<string, string> = {
   ".html": "text/html",
@@ -137,15 +138,30 @@ export function createPublicRoutes(ctx: ExtensionContext): Hono {
       if (fileStat?.isFile()) {
         fileToServe = indexPath;
       } else {
-        return c.text("Not found", 404);
+        const mdIndexPath = resolve(requestedPath, "index.md");
+        fileStat = await stat(mdIndexPath).catch(() => null);
+        if (fileStat?.isFile()) {
+          fileToServe = mdIndexPath;
+        } else {
+          return c.text("Not found", 404);
+        }
       }
     } else if (!fileStat?.isFile()) {
       return c.text("Not found", 404);
     }
 
     const ext = extname(fileToServe);
-    const mime = MIME_TYPES[ext] || "application/octet-stream";
     try {
+      if (ext === ".md") {
+        const content = await readFile(fileToServe, "utf-8");
+        const { title, style, body } = parseFrontmatter(content);
+        const cssRelPath = resolveStylesheet(fileToServe, pagesRoot, style);
+        const cssUrl = cssRelPath ? `/ext/pages/public/${name}/${cssRelPath}` : undefined;
+        const html = renderMarkdownPage(body, { title, stylesheetUrl: cssUrl });
+        return c.body(html, 200, { "Content-Type": "text/html; charset=utf-8" });
+      }
+
+      const mime = MIME_TYPES[ext] || "application/octet-stream";
       const body = await readFile(fileToServe);
       return c.body(body, 200, { "Content-Type": mime });
     } catch (err) {

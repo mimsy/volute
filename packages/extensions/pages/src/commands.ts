@@ -75,13 +75,13 @@ export function createCommands(): Record<string, ExtensionCommand> {
           return { error: `Failed to publish snapshot: ${(err as Error).message}` };
         }
 
-        // Scan snapshot for .html files
-        const htmlFiles = collectFiles(snapshotDir, snapshotDir, ".html");
+        // Scan snapshot for page files (.html and .md)
+        const pageFiles = collectFiles(snapshotDir, snapshotDir, [".html", ".md"]);
 
         // Sync DB and get diff
         let diff: { added: string[]; removed: string[]; updated: string[] };
         try {
-          diff = syncPublishedPages(db, mindName, htmlFiles);
+          diff = syncPublishedPages(db, mindName, pageFiles);
         } catch (err) {
           return { error: `Failed to update page database: ${(err as Error).message}` };
         }
@@ -104,7 +104,7 @@ export function createCommands(): Record<string, ExtensionCommand> {
           });
         }
 
-        let output = `Published ${htmlFiles.length} files`;
+        let output = `Published ${pageFiles.length} files`;
         const parts: string[] = [];
         if (diff.added.length > 0) parts.push(`${diff.added.length} new`);
         if (diff.updated.length > 0) parts.push(`${diff.updated.length} updated`);
@@ -197,7 +197,9 @@ export function createCommands(): Record<string, ExtensionCommand> {
 
         const sourceDir = resolve(mindDir, "home", "pages");
         const published = new Set(getPublishedPages(db, mindName).map((p) => p.file));
-        const draftFiles = existsSync(sourceDir) ? collectFiles(sourceDir, sourceDir, ".html") : [];
+        const draftFiles = existsSync(sourceDir)
+          ? collectFiles(sourceDir, sourceDir, [".html", ".md"])
+          : [];
         const allFiles = new Set([...published, ...draftFiles]);
 
         if (allFiles.size === 0) return { output: "No pages found." };
@@ -265,8 +267,8 @@ export function createCommands(): Record<string, ExtensionCommand> {
   };
 }
 
-/** Recursively collect files, returning paths relative to baseDir. Optionally filter by extension. */
-function collectFiles(dir: string, baseDir: string, ext?: string): string[] {
+/** Recursively collect files, returning paths relative to baseDir. Optionally filter by extension(s). */
+function collectFiles(dir: string, baseDir: string, ext?: string | string[]): string[] {
   const files: string[] = [];
   let items: string[];
   try {
@@ -281,7 +283,9 @@ function collectFiles(dir: string, baseDir: string, ext?: string): string[] {
     const fullPath = resolve(dir, item);
     try {
       const s = statSync(fullPath);
-      if (s.isFile() && (!ext || item.endsWith(ext))) {
+      const matchesExt =
+        !ext || (Array.isArray(ext) ? ext.some((e) => item.endsWith(e)) : item.endsWith(ext));
+      if (s.isFile() && matchesExt) {
         files.push(relative(baseDir, fullPath));
       } else if (s.isDirectory()) {
         files.push(...collectFiles(fullPath, baseDir, ext));

@@ -253,6 +253,36 @@ describe("pages commands", () => {
     assert.ok(result.output.includes("published.html"));
   });
 
+  it("publish command tracks .md files in DB", async () => {
+    writeFileSync(resolve(pagesDir, "index.html"), "<h1>Hello</h1>");
+    writeFileSync(resolve(pagesDir, "about.md"), "# About\n\nAbout page.\n");
+
+    const commands = createCommands();
+    const ctx = makeCtx();
+    const result = await commands.publish.handler([], ctx);
+
+    assert.ok("output" in result);
+    assert.ok(result.output.includes("Published 2 files"));
+
+    const pages = getPublishedPages(db, "test-mind");
+    assert.equal(pages.length, 2);
+    const files = pages.map((p) => p.file).sort();
+    assert.deepEqual(files, ["about.md", "index.html"]);
+  });
+
+  it("list command shows .md files", async () => {
+    writeFileSync(resolve(pagesDir, "index.html"), "<h1>Hello</h1>");
+    writeFileSync(resolve(pagesDir, "post.md"), "# Post\n");
+    syncPublishedPages(db, "test-mind", ["index.html"]);
+
+    const commands = createCommands();
+    const ctx = makeCtx();
+    const result = await commands.list.handler([], ctx);
+    assert.ok("output" in result);
+    assert.ok(result.output.includes("post.md"), "should list .md draft");
+    assert.ok(result.output.includes("index.html"), "should list .html published");
+  });
+
   it("list --all queries across minds", async () => {
     syncPublishedPages(db, "mind-a", ["index.html"]);
     syncPublishedPages(db, "mind-b", ["about.html"]);
