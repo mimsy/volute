@@ -86,8 +86,8 @@ function getCategories(breakdown: ContextBreakdown, contextTokens: number): Cate
   return cats;
 }
 
-const GRID_COLS = 20;
-const TOKENS_PER_CELL = 1000;
+const GRID_COLS = 15;
+const TOKENS_PER_CELL = 2000;
 
 function buildGrid(
   categories: Category[],
@@ -113,7 +113,7 @@ function buildGrid(
 }
 </script>
 
-<Modal title="Context — {mindName}" {onClose} size="520px">
+<Modal title="Context — {mindName}" {onClose} size="600px">
   {#if loading}
     <div class="loading">Loading context info...</div>
   {:else if error}
@@ -240,9 +240,9 @@ function buildGrid(
   /* Sessions */
 
   .sessions {
-    display: flex;
-    flex-direction: column;
-    gap: 20px;
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 16px;
   }
 
   .session-block {
@@ -255,7 +255,7 @@ function buildGrid(
     display: flex;
     justify-content: space-between;
     align-items: center;
-    font-size: 13px;
+    font-size: 12px;
   }
 
   .session-name {
@@ -281,7 +281,7 @@ function buildGrid(
 
   .waffle {
     display: grid;
-    gap: 2px;
+    gap: 1px;
   }
 
   .cell {
