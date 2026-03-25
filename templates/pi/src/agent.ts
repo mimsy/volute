@@ -10,19 +10,17 @@ import {
   SettingsManager,
 } from "@mariozechner/pi-coding-agent";
 import { extractImages, extractText } from "./lib/content.js";
-import { findPiSessionFile, parsePiSessionJSONL } from "./lib/context-breakdown.js";
+import {
+  countSystemPromptTokens,
+  findPiSessionFile,
+  parsePiSessionJSONL,
+} from "./lib/context-breakdown.js";
 import { createEventHandler, emit } from "./lib/event-handler.js";
 import { runHooks } from "./lib/hook-loader.js";
 import { log } from "./lib/logger.js";
 import { createReplyInstructionsExtension } from "./lib/reply-instructions-extension.js";
 import { resolveModel } from "./lib/resolve-model.js";
-import {
-  getSkillsSizes,
-  getStartupContext,
-  getSystemPromptSizes,
-  loadPrompts,
-  type SubagentConfig,
-} from "./lib/startup.js";
+import { getStartupContext, loadPrompts, type SubagentConfig } from "./lib/startup.js";
 import { createSubagentExtension, type SubagentDefinition } from "./lib/subagents.js";
 import type {
   HandlerMeta,
@@ -483,22 +481,15 @@ export function createMind(options: {
     return handler;
   }
 
-  const CHARS_PER_TOKEN = 3.5;
   const piSessionsDir = resolvePath(options.mindDir, ".mind/pi-sessions");
+  const systemPromptTokens = countSystemPromptTokens(options.systemPrompt);
 
   function getContextInfo(): ContextInfo {
-    const sizes = getSystemPromptSizes();
-    const toTokens = (chars: number) => Math.round(chars / CHARS_PER_TOKEN);
-    const systemPromptTokens = toTokens(sizes.soul + sizes.volute + sizes.memory);
-    const skills = getSkillsSizes(resolvePath(options.cwd, ".pi/skills"));
-
     return {
       sessions: Array.from(sessions.values()).map((s) => {
         try {
           const jsonlPath = findPiSessionFile(piSessionsDir, s.name);
-          const parsed = jsonlPath
-            ? parsePiSessionJSONL(jsonlPath, systemPromptTokens, skills.total)
-            : null;
+          const parsed = jsonlPath ? parsePiSessionJSONL(jsonlPath, systemPromptTokens) : null;
 
           return {
             name: s.name,
@@ -510,15 +501,7 @@ export function createMind(options: {
           return { name: s.name, contextTokens: s.contextTokens, contextWindow: maxContextTokens };
         }
       }),
-      systemPrompt: {
-        total: systemPromptTokens,
-        components: {
-          soul: toTokens(sizes.soul),
-          volute: toTokens(sizes.volute),
-          memory: toTokens(sizes.memory),
-        },
-      },
-      skills,
+      systemPrompt: systemPromptTokens,
     };
   }
 

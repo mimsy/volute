@@ -79,7 +79,6 @@ export function fetchMind(name: string): Promise<Mind> {
 
 export type ContextBreakdown = {
   systemPrompt: number;
-  skills: number;
   conversation: {
     userText: number;
     assistantText: number;
@@ -96,11 +95,7 @@ export type ContextInfo = {
     contextWindow?: number;
     breakdown?: ContextBreakdown;
   }>;
-  systemPrompt: {
-    total: number;
-    components: { soul: number; volute: number; memory: number };
-  };
-  skills?: { total: number; items: Array<{ name: string; tokens: number }> };
+  systemPrompt: number;
 };
 
 export function fetchMindContext(name: string): Promise<ContextInfo> {

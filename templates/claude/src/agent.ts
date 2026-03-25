@@ -3,7 +3,11 @@ import { resolve as resolvePath } from "node:path";
 import type { HookCallback, SyncHookJSONOutput } from "@anthropic-ai/claude-agent-sdk";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { toSDKContent } from "./lib/content.js";
-import { findClaudeSessionFile, parseClaudeSessionJSONL } from "./lib/context-breakdown.js";
+import {
+  countSystemPromptTokens,
+  findClaudeSessionFile,
+  parseClaudeSessionJSONL,
+} from "./lib/context-breakdown.js";
 import { daemonEmit } from "./lib/daemon-client.js";
 import { runHooks } from "./lib/hook-loader.js";
 import { createAutoCommitHook } from "./lib/hooks/auto-commit.js";
@@ -14,12 +18,7 @@ import { createReplyInstructionsHook } from "./lib/hooks/reply-instructions.js";
 import { log } from "./lib/logger.js";
 import { createMessageChannel } from "./lib/message-channel.js";
 import { createSessionStore } from "./lib/session-store.js";
-import {
-  getSkillsSizes,
-  getSystemPromptSizes,
-  loadPrompts,
-  type SubagentConfig,
-} from "./lib/startup.js";
+import { loadPrompts, type SubagentConfig } from "./lib/startup.js";
 import { consumeStream } from "./lib/stream-consumer.js";
 import type {
   HandlerMeta,
@@ -530,21 +529,15 @@ export function createMind(options: {
     return handler;
   }
 
-  const CHARS_PER_TOKEN = 3.5;
-  function getContextInfo(): ContextInfo {
-    const sizes = getSystemPromptSizes();
-    const toTokens = (chars: number) => Math.round(chars / CHARS_PER_TOKEN);
-    const systemPromptTokens = toTokens(sizes.soul + sizes.volute + sizes.memory);
-    const skills = getSkillsSizes(resolvePath(options.cwd, ".claude/skills"));
+  const systemPromptTokens = countSystemPromptTokens(options.systemPrompt);
 
+  function getContextInfo(): ContextInfo {
     return {
       sessions: Array.from(sessions.values()).map((s) => {
         try {
           const sessionId = sessionStore.load(s.name);
           const jsonlPath = sessionId ? findClaudeSessionFile(options.cwd, sessionId) : null;
-          const parsed = jsonlPath
-            ? parseClaudeSessionJSONL(jsonlPath, systemPromptTokens, skills.total)
-            : null;
+          const parsed = jsonlPath ? parseClaudeSessionJSONL(jsonlPath, systemPromptTokens) : null;
 
           return {
             name: s.name,
@@ -556,15 +549,7 @@ export function createMind(options: {
           return { name: s.name, contextTokens: s.contextTokens, contextWindow: maxContextTokens };
         }
       }),
-      systemPrompt: {
-        total: systemPromptTokens,
-        components: {
-          soul: toTokens(sizes.soul),
-          volute: toTokens(sizes.volute),
-          memory: toTokens(sizes.memory),
-        },
-      },
-      skills,
+      systemPrompt: systemPromptTokens,
     };
   }
 

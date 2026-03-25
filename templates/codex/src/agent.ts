@@ -3,18 +3,16 @@ import { resolve as resolvePath } from "node:path";
 import { Codex } from "@openai/codex-sdk";
 import { flushFileChanges, trackFileChange } from "./lib/auto-commit.js";
 import { extractText } from "./lib/content.js";
-import { findCodexSessionFile, parseCodexSessionJSONL } from "./lib/context-breakdown.js";
+import {
+  countSystemPromptTokens,
+  findCodexSessionFile,
+  parseCodexSessionJSONL,
+} from "./lib/context-breakdown.js";
 import { daemonEmit, daemonRestart, type EventType } from "./lib/daemon-client.js";
 import { runHooks } from "./lib/hook-loader.js";
 import { log, warn } from "./lib/logger.js";
 import { createSessionStore } from "./lib/session-store.js";
-import {
-  getSkillsSizes,
-  getStartupContext,
-  getSystemPromptSizes,
-  loadPrompts,
-  loadSystemPrompt,
-} from "./lib/startup.js";
+import { getStartupContext, loadPrompts, loadSystemPrompt } from "./lib/startup.js";
 import { filterEvent, loadTransparencyPreset } from "./lib/transparency.js";
 import type {
   HandlerMeta,
@@ -589,21 +587,15 @@ export function createMind(options: {
     return handler;
   }
 
-  const CHARS_PER_TOKEN = 3.5;
-  function getContextInfo(): ContextInfo {
-    const sizes = getSystemPromptSizes();
-    const toTokens = (chars: number) => Math.round(chars / CHARS_PER_TOKEN);
-    const systemPromptTokens = toTokens(sizes.soul + sizes.volute + sizes.memory);
-    const skills = getSkillsSizes(resolvePath(options.cwd, ".agents/skills"));
+  const systemPromptTokens = countSystemPromptTokens(options.systemPrompt);
 
+  function getContextInfo(): ContextInfo {
     return {
       sessions: Array.from(sessions.values()).map((s) => {
         try {
           const threadId = sessionStore.load(s.name);
           const jsonlPath = threadId ? findCodexSessionFile(threadId) : null;
-          const parsed = jsonlPath
-            ? parseCodexSessionJSONL(jsonlPath, systemPromptTokens, skills.total)
-            : null;
+          const parsed = jsonlPath ? parseCodexSessionJSONL(jsonlPath, systemPromptTokens) : null;
 
           return {
             name: s.name,
@@ -619,15 +611,7 @@ export function createMind(options: {
           };
         }
       }),
-      systemPrompt: {
-        total: systemPromptTokens,
-        components: {
-          soul: toTokens(sizes.soul),
-          volute: toTokens(sizes.volute),
-          memory: toTokens(sizes.memory),
-        },
-      },
-      skills,
+      systemPrompt: systemPromptTokens,
     };
   }
 

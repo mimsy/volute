@@ -2,10 +2,21 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import type { ContextBreakdown } from "./volute-server.js";
 
-const CHARS_PER_TOKEN = 3.5;
+// Lazy-loaded tokenizer — first call loads the encoding (~100ms), subsequent calls are fast
+let _countTokens: ((text: string) => number) | null = null;
 
-function estimateTokens(text: string): number {
-  return Math.round(text.length / CHARS_PER_TOKEN);
+function countTokens(text: string): number {
+  if (!_countTokens) {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const mod = require("@anthropic-ai/tokenizer");
+      _countTokens = mod.countTokens;
+    } catch {
+      // Tokenizer not installed — fall back to character estimation
+      _countTokens = (t: string) => Math.round(t.length / 3.5);
+    }
+  }
+  return _countTokens!(text);
 }
 
 // --- Claude JSONL parser ---
@@ -33,14 +44,12 @@ type ClaudeMessage = {
 
 export type ParsedContext = {
   contextTokens: number;
-  contextWindow?: number;
   breakdown: ContextBreakdown;
 };
 
 export function parseClaudeSessionJSONL(
   filePath: string,
   systemPromptTokens: number,
-  skillsTokens: number,
 ): ParsedContext | null {
   let data: string;
   try {
@@ -73,12 +82,12 @@ export function parseClaudeSessionJSONL(
       }
       for (const block of entry.message.content ?? []) {
         if (block.type === "thinking" && block.thinking) {
-          conv.thinking += estimateTokens(block.thinking);
+          conv.thinking += countTokens(block.thinking);
         } else if (block.type === "text" && block.text) {
-          conv.assistantText += estimateTokens(block.text);
+          conv.assistantText += countTokens(block.text);
         } else if (block.type === "tool_use") {
           const input = block.input;
-          conv.toolUse += estimateTokens(
+          conv.toolUse += countTokens(
             typeof input === "string" ? input : JSON.stringify(input ?? {}),
           );
         }
@@ -88,16 +97,16 @@ export function parseClaudeSessionJSONL(
         if (block.type === "tool_result") {
           const content = block.content;
           if (typeof content === "string") {
-            conv.toolResult += estimateTokens(content);
+            conv.toolResult += countTokens(content);
           } else if (Array.isArray(content)) {
             for (const c of content) {
               if (c && typeof c === "object" && "text" in c && typeof c.text === "string") {
-                conv.toolResult += estimateTokens(c.text);
+                conv.toolResult += countTokens(c.text);
               }
             }
           }
         } else if (block.type === "text" && block.text) {
-          conv.userText += estimateTokens(block.text);
+          conv.userText += countTokens(block.text);
         }
       }
     }
@@ -107,7 +116,7 @@ export function parseClaudeSessionJSONL(
 
   return {
     contextTokens: lastContextTokens,
-    breakdown: { systemPrompt: systemPromptTokens, skills: skillsTokens, conversation: conv },
+    breakdown: { systemPrompt: systemPromptTokens, conversation: conv },
   };
 }
 
@@ -130,7 +139,6 @@ type CodexEntry = {
 export function parseCodexSessionJSONL(
   filePath: string,
   systemPromptTokens: number,
-  skillsTokens: number,
 ): ParsedContext | null {
   let data: string;
   try {
@@ -142,7 +150,6 @@ export function parseCodexSessionJSONL(
 
   const lines = data.split("\n").filter((l) => l.trim());
   let lastContextTokens = 0;
-  let contextWindow: number | undefined;
   const conv = { userText: 0, assistantText: 0, thinking: 0, toolUse: 0, toolResult: 0 };
 
   for (const line of lines) {
@@ -161,9 +168,6 @@ export function parseCodexSessionJSONL(
       if (lastUsage?.input_tokens) {
         lastContextTokens = lastUsage.input_tokens;
       }
-      if (payload.info.model_context_window) {
-        contextWindow = payload.info.model_context_window;
-      }
     } else if (entry.type === "response_item") {
       if (payload.type === "reasoning") {
         const text =
@@ -171,7 +175,7 @@ export function parseCodexSessionJSONL(
             ?.filter((c) => c.type === "input_text")
             .map((c) => c.text ?? "")
             .join("") ?? "";
-        if (text) conv.thinking += estimateTokens(text);
+        if (text) conv.thinking += countTokens(text);
       } else if (payload.type === "message") {
         if (payload.role === "assistant") {
           const text =
@@ -179,30 +183,29 @@ export function parseCodexSessionJSONL(
               ?.filter((c) => c.type === "output_text")
               .map((c) => c.text ?? "")
               .join("") ?? "";
-          if (text) conv.assistantText += estimateTokens(text);
+          if (text) conv.assistantText += countTokens(text);
         } else if (payload.role === "user" || payload.role === "developer") {
           const text =
             payload.content
               ?.filter((c) => c.type === "input_text")
               .map((c) => c.text ?? "")
               .join("") ?? "";
-          if (text) conv.userText += estimateTokens(text);
+          if (text) conv.userText += countTokens(text);
         }
       } else if (payload.type === "function_call") {
-        conv.toolUse += estimateTokens(JSON.stringify(payload));
+        conv.toolUse += countTokens(JSON.stringify(payload));
       } else if (payload.type === "function_call_output") {
         const text = payload.content?.map((c) => c.text ?? "").join("") ?? "";
-        if (text) conv.toolResult += estimateTokens(text);
+        if (text) conv.toolResult += countTokens(text);
       }
     }
   }
 
-  if (lastContextTokens === 0 && !contextWindow) return null;
+  if (lastContextTokens === 0) return null;
 
   return {
     contextTokens: lastContextTokens,
-    contextWindow,
-    breakdown: { systemPrompt: systemPromptTokens, skills: skillsTokens, conversation: conv },
+    breakdown: { systemPrompt: systemPromptTokens, conversation: conv },
   };
 }
 
@@ -220,7 +223,6 @@ type PiEntry = {
 export function parsePiSessionJSONL(
   filePath: string,
   systemPromptTokens: number,
-  skillsTokens: number,
 ): ParsedContext | null {
   let data: string;
   try {
@@ -253,24 +255,22 @@ export function parsePiSessionJSONL(
       }
       for (const block of msg.content ?? []) {
         if (block.type === "thinking" && block.thinking) {
-          conv.thinking += estimateTokens(block.thinking);
+          conv.thinking += countTokens(block.thinking);
         } else if (block.type === "text" && block.text) {
-          conv.assistantText += estimateTokens(block.text);
+          conv.assistantText += countTokens(block.text);
         } else if (block.type === "toolCall") {
           const args = block.arguments;
-          conv.toolUse += estimateTokens(
-            typeof args === "string" ? args : JSON.stringify(args ?? {}),
-          );
+          conv.toolUse += countTokens(typeof args === "string" ? args : JSON.stringify(args ?? {}));
         }
       }
     } else if (msg.role === "toolResult") {
       for (const block of msg.content ?? []) {
-        if (block.text) conv.toolResult += estimateTokens(block.text);
+        if (block.text) conv.toolResult += countTokens(block.text);
       }
     } else if (msg.role === "user") {
       for (const block of msg.content ?? []) {
         if (block.type === "text" && block.text) {
-          conv.userText += estimateTokens(block.text);
+          conv.userText += countTokens(block.text);
         }
       }
     }
@@ -280,15 +280,21 @@ export function parsePiSessionJSONL(
 
   return {
     contextTokens: lastContextTokens,
-    breakdown: { systemPrompt: systemPromptTokens, skills: skillsTokens, conversation: conv },
+    breakdown: { systemPrompt: systemPromptTokens, conversation: conv },
   };
+}
+
+// --- Tokenize system prompt ---
+
+/** Count tokens in the actual composed system prompt string. */
+export function countSystemPromptTokens(systemPrompt: string): number {
+  return countTokens(systemPrompt);
 }
 
 // --- Session file finders ---
 
 /** Find the Claude SDK JSONL file for a session ID. */
 export function findClaudeSessionFile(cwd: string, sessionId: string): string | null {
-  // Claude SDK stores sessions at <cwd>/.claude/projects/<hash>/<session-id>.jsonl
   const projectsDir = resolve(cwd, ".claude/projects");
   try {
     for (const dir of readdirSync(projectsDir)) {
@@ -310,7 +316,6 @@ export function findClaudeSessionFile(cwd: string, sessionId: string): string | 
 export function findCodexSessionFile(threadId: string): string | null {
   const codexDir = resolve(process.env.HOME ?? "", ".codex/sessions");
   try {
-    // Walk year/month/day directories looking for a file containing the thread ID
     for (const year of readdirSync(codexDir)) {
       const yearDir = resolve(codexDir, year);
       try {

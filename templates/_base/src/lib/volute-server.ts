@@ -97,7 +97,6 @@ async function verifyRequest(body: VoluteRequest): Promise<boolean | undefined> 
 
 export type ContextBreakdown = {
   systemPrompt: number;
-  skills: number;
   conversation: {
     userText: number;
     assistantText: number;
@@ -105,11 +104,6 @@ export type ContextBreakdown = {
     toolUse: number;
     toolResult: number;
   };
-};
-
-export type SkillInfo = {
-  name: string;
-  tokens: number;
 };
 
 export type SessionContextInfo = {
@@ -121,11 +115,7 @@ export type SessionContextInfo = {
 
 export type ContextInfo = {
   sessions: SessionContextInfo[];
-  systemPrompt: {
-    total: number;
-    components: { soul: number; volute: number; memory: number };
-  };
-  skills?: { total: number; items: SkillInfo[] };
+  systemPrompt: number;
 };
 
 export function createVoluteServer(options: {

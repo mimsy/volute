@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { log } from "./logger.js";
 
@@ -72,42 +72,6 @@ export function loadSystemPrompt(): string {
   if (volute) promptParts.push(volute);
   if (memory) promptParts.push(`## Memory\n\n${memory}`);
   return promptParts.join("\n\n---\n\n");
-}
-
-/** Returns character counts for each system prompt component file. */
-export function getSystemPromptSizes(): { soul: number; volute: number; memory: number } {
-  return {
-    soul: loadFile(resolve("home/SOUL.md")).length,
-    volute: loadFile(resolve("home/VOLUTE.md")).length,
-    memory: loadFile(resolve("home/MEMORY.md")).length,
-  };
-}
-
-const CHARS_PER_TOKEN = 3.5;
-
-/** Returns estimated token sizes for each installed skill. */
-export function getSkillsSizes(skillsDir: string): {
-  total: number;
-  items: Array<{ name: string; tokens: number }>;
-} {
-  const items: Array<{ name: string; tokens: number }> = [];
-  try {
-    const entries = readdirSync(skillsDir, { withFileTypes: true });
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue;
-      const skillMd = resolve(skillsDir, entry.name, "SKILL.md");
-      try {
-        const content = readFileSync(skillMd, "utf-8");
-        items.push({ name: entry.name, tokens: Math.round(content.length / CHARS_PER_TOKEN) });
-      } catch {
-        // No SKILL.md — skip
-      }
-    }
-  } catch {
-    // Skills dir doesn't exist
-  }
-  const total = items.reduce((sum, s) => sum + s.tokens, 0);
-  return { total, items };
 }
 
 export function loadPackageInfo(): { name: string; version: string } {

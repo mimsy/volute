@@ -8,6 +8,7 @@ let { mindName, onClose }: { mindName: string; onClose: () => void } = $props();
 let contextInfo = $state<ContextInfo | null>(null);
 let loading = $state(true);
 let error = $state("");
+let hoveredCategory = $state<string | null>(null);
 
 onMount(async () => {
   try {
@@ -24,38 +25,91 @@ function formatTokens(n: number): string {
   return String(n);
 }
 
-type Segment = { label: string; tokens: number; color: string };
+type Category = { key: string; label: string; tokens: number; color: string };
 
-function getSegments(breakdown: ContextBreakdown): Segment[] {
-  return [
-    { label: "System Prompt", tokens: breakdown.systemPrompt, color: "var(--ctx-system, #6366f1)" },
-    { label: "Skills", tokens: breakdown.skills, color: "var(--ctx-skills, #8b5cf6)" },
+const COLORS = {
+  systemPrompt: "#6366f1",
+  userText: "#3b82f6",
+  assistantText: "#22c55e",
+  thinking: "#f59e0b",
+  toolUse: "#ec4899",
+  toolResult: "#f97316",
+  other: "#64748b",
+  empty: "var(--bg-3, #2a2a2a)",
+};
+
+function getCategories(breakdown: ContextBreakdown, contextTokens: number): Category[] {
+  const cats: Category[] = [
     {
+      key: "systemPrompt",
+      label: "System Prompt",
+      tokens: breakdown.systemPrompt,
+      color: COLORS.systemPrompt,
+    },
+    {
+      key: "userText",
       label: "User Messages",
       tokens: breakdown.conversation.userText,
-      color: "var(--ctx-user, #3b82f6)",
+      color: COLORS.userText,
     },
     {
+      key: "assistantText",
       label: "Assistant Text",
       tokens: breakdown.conversation.assistantText,
-      color: "var(--ctx-assistant, #22c55e)",
+      color: COLORS.assistantText,
     },
     {
+      key: "thinking",
       label: "Thinking",
       tokens: breakdown.conversation.thinking,
-      color: "var(--ctx-thinking, #f59e0b)",
+      color: COLORS.thinking,
     },
     {
+      key: "toolUse",
       label: "Tool Calls",
       tokens: breakdown.conversation.toolUse,
-      color: "var(--ctx-tool-use, #ec4899)",
+      color: COLORS.toolUse,
     },
     {
+      key: "toolResult",
       label: "Tool Results",
       tokens: breakdown.conversation.toolResult,
-      color: "var(--ctx-tool-result, #f97316)",
+      color: COLORS.toolResult,
     },
-  ].filter((s) => s.tokens > 0);
+  ].filter((c) => c.tokens > 0);
+
+  const counted = cats.reduce((s, c) => s + c.tokens, 0);
+  const other = contextTokens - counted;
+  if (other > 0) {
+    cats.push({ key: "other", label: "Other", tokens: other, color: COLORS.other });
+  }
+  return cats;
+}
+
+const GRID_COLS = 20;
+const TOKENS_PER_CELL = 1000;
+
+function buildGrid(
+  categories: Category[],
+  contextWindow: number,
+): { color: string; category: string }[] {
+  const totalCells = Math.ceil(contextWindow / TOKENS_PER_CELL);
+  // Round up to full row
+  const rows = Math.ceil(totalCells / GRID_COLS);
+  const gridCells = rows * GRID_COLS;
+
+  const cells: { color: string; category: string }[] = [];
+  for (const cat of categories) {
+    const count = Math.max(1, Math.round(cat.tokens / TOKENS_PER_CELL));
+    for (let i = 0; i < count && cells.length < gridCells; i++) {
+      cells.push({ color: cat.color, category: cat.key });
+    }
+  }
+  // Fill remaining with empty (unused context)
+  while (cells.length < gridCells) {
+    cells.push({ color: COLORS.empty, category: "empty" });
+  }
+  return cells;
 }
 </script>
 
@@ -66,119 +120,80 @@ function getSegments(breakdown: ContextBreakdown): Segment[] {
     <div class="error">{error}</div>
   {:else if contextInfo}
     <div class="context-content">
-      <section class="section">
-        <h3 class="section-title">System Prompt</h3>
-        <div class="estimate-note">Estimated from file sizes</div>
-        <div class="breakdown">
-          <div class="breakdown-row">
-            <span class="label">SOUL.md</span>
-            <span class="value">{formatTokens(contextInfo.systemPrompt.components.soul)}</span>
-          </div>
-          {#if contextInfo.systemPrompt.components.volute > 0}
-            <div class="breakdown-row">
-              <span class="label">VOLUTE.md</span>
-              <span class="value">{formatTokens(contextInfo.systemPrompt.components.volute)}</span>
-            </div>
-          {/if}
-          {#if contextInfo.systemPrompt.components.memory > 0}
-            <div class="breakdown-row">
-              <span class="label">MEMORY.md</span>
-              <span class="value">{formatTokens(contextInfo.systemPrompt.components.memory)}</span>
-            </div>
-          {/if}
-          <div class="breakdown-row total">
-            <span class="label">Total</span>
-            <span class="value">{formatTokens(contextInfo.systemPrompt.total)}</span>
-          </div>
+      {#if contextInfo.systemPrompt > 0}
+        <div class="system-prompt-line">
+          <span class="sp-label">System prompt</span>
+          <span class="sp-value">{formatTokens(contextInfo.systemPrompt)} tokens</span>
         </div>
-      </section>
-
-      {#if contextInfo.skills && contextInfo.skills.items.length > 0}
-        <section class="section">
-          <h3 class="section-title">Skills</h3>
-          <div class="breakdown">
-            {#each contextInfo.skills.items as skill (skill.name)}
-              <div class="breakdown-row">
-                <span class="label">{skill.name}</span>
-                <span class="value">{formatTokens(skill.tokens)}</span>
-              </div>
-            {/each}
-            <div class="breakdown-row total">
-              <span class="label">Total</span>
-              <span class="value">{formatTokens(contextInfo.skills.total)}</span>
-            </div>
-          </div>
-        </section>
       {/if}
 
-      <section class="section">
-        <h3 class="section-title">Sessions</h3>
-        {#if contextInfo.sessions.length === 0}
-          <div class="empty">No active sessions</div>
-        {:else}
-          <div class="sessions">
-            {#each contextInfo.sessions as session (session.name)}
-              {@const segments = session.breakdown ? getSegments(session.breakdown) : []}
-              {@const segmentTotal = segments.reduce((sum, s) => sum + s.tokens, 0)}
-              {@const barMax = session.contextWindow ?? session.contextTokens}
-              {@const overLimit = session.contextWindow ? session.contextTokens > session.contextWindow : false}
+      {#if contextInfo.sessions.length === 0}
+        <div class="empty">No active sessions</div>
+      {:else}
+        <div class="sessions">
+          {#each contextInfo.sessions as session (session.name)}
+            {@const categories = session.breakdown ? getCategories(session.breakdown, session.contextTokens) : []}
+            {@const cells = categories.length > 0 && session.contextWindow ? buildGrid(categories, session.contextWindow) : []}
+            {@const overLimit = session.contextWindow ? session.contextTokens > session.contextWindow : false}
 
-              <div class="session-block">
-                <div class="session-header">
-                  <span class="session-name">{session.name}</span>
-                  <span class="session-tokens">
-                    {#if session.contextTokens > 0}
-                      <span class:over-limit={overLimit}>{formatTokens(session.contextTokens)}</span>{#if session.contextWindow}&nbsp;/&nbsp;{formatTokens(session.contextWindow)}{/if}
-                    {:else}
-                      <span class="no-data">no data yet</span>
-                    {/if}
-                  </span>
+            <div class="session-block">
+              <div class="session-header">
+                <span class="session-name">{session.name}</span>
+                <span class="session-tokens">
+                  {#if session.contextTokens > 0}
+                    <span class:over-limit={overLimit}>{formatTokens(session.contextTokens)}</span>{#if session.contextWindow}&nbsp;/&nbsp;{formatTokens(session.contextWindow)}{/if}
+                  {:else}
+                    <span class="no-data">no data yet</span>
+                  {/if}
+                </span>
+              </div>
+
+              {#if cells.length > 0}
+                <!-- Waffle chart -->
+                <!-- svelte-ignore a11y_no_static_element_interactions -->
+                <div
+                  class="waffle"
+                  style:grid-template-columns="repeat({GRID_COLS}, 1fr)"
+                  onmouseleave={() => hoveredCategory = null}
+                >
+                  {#each cells as cell, i (i)}
+                    <!-- svelte-ignore a11y_no_static_element_interactions -->
+                    <div
+                      class="cell"
+                      class:dimmed={hoveredCategory !== null && cell.category !== hoveredCategory}
+                      class:highlighted={hoveredCategory === cell.category}
+                      style:background={cell.color}
+                      onmouseenter={() => { if (cell.category !== "empty") hoveredCategory = cell.category; }}
+                    ></div>
+                  {/each}
                 </div>
 
-                {#if session.contextTokens > 0}
-                  {#if segments.length > 0}
-                    <!-- Stacked breakdown bar -->
-                    <div class="stacked-bar" class:over-limit={overLimit} title="{formatTokens(session.contextTokens)} tokens used">
-                      {#each segments as seg}
-                        <div
-                          class="stacked-segment"
-                          style:width="{Math.max(1, (seg.tokens / barMax) * 100)}%"
-                          style:background={seg.color}
-                          title="{seg.label}: {formatTokens(seg.tokens)}"
-                        ></div>
-                      {/each}
-                    </div>
-
-                    <!-- Legend -->
-                    <div class="legend">
-                      {#each segments as seg}
-                        <div class="legend-item">
-                          <span class="legend-dot" style:background={seg.color}></span>
-                          <span class="legend-label">{seg.label}</span>
-                          <span class="legend-value">{formatTokens(seg.tokens)}</span>
-                        </div>
-                      {/each}
-                      {#if segmentTotal < session.contextTokens}
-                        {@const other = session.contextTokens - segmentTotal}
-                        <div class="legend-item">
-                          <span class="legend-dot" style:background="var(--text-3)"></span>
-                          <span class="legend-label">Other</span>
-                          <span class="legend-value">{formatTokens(other)}</span>
-                        </div>
-                      {/if}
-                    </div>
-                  {:else}
-                    <!-- Simple bar when no breakdown available -->
-                    <div class="token-bar" class:over-limit={overLimit}>
-                      <div class="token-bar-fill" style:width="{Math.min(100, (session.contextTokens / barMax) * 100)}%"></div>
+                <!-- Hover legend -->
+                {#if hoveredCategory}
+                  {@const cat = categories.find(c => c.key === hoveredCategory)}
+                  {#if cat}
+                    <div class="hover-legend">
+                      <span class="legend-dot" style:background={cat.color}></span>
+                      <span class="legend-label">{cat.label}</span>
+                      <span class="legend-value">{formatTokens(cat.tokens)}</span>
                     </div>
                   {/if}
+                {:else}
+                  <div class="hover-legend hint">hover for details</div>
                 {/if}
-              </div>
-            {/each}
-          </div>
-        {/if}
-      </section>
+              {:else if session.contextTokens > 0}
+                <!-- Simple bar fallback -->
+                <div class="token-bar">
+                  <div
+                    class="token-bar-fill"
+                    style:width="{Math.min(100, (session.contextTokens / (session.contextWindow ?? session.contextTokens)) * 100)}%"
+                  ></div>
+                </div>
+              {/if}
+            </div>
+          {/each}
+        </div>
+      {/if}
     </div>
   {/if}
 </Modal>
@@ -199,58 +214,26 @@ function getSegments(breakdown: ContextBreakdown): Segment[] {
     padding: 16px;
     display: flex;
     flex-direction: column;
-    gap: 20px;
+    gap: 16px;
   }
 
-  .section {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-
-  .section-title {
-    font-size: 11px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--text-2);
-    margin: 0;
-  }
-
-  .estimate-note {
-    font-size: 11px;
-    color: var(--text-3);
-    font-style: italic;
-  }
-
-  .breakdown {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-  }
-
-  .breakdown-row {
+  .system-prompt-line {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 4px 8px;
-    border-radius: var(--radius, 4px);
-    font-size: 13px;
-  }
-
-  .breakdown-row.total {
-    border-top: 1px solid var(--border);
-    margin-top: 4px;
-    padding-top: 8px;
-    font-weight: 600;
-  }
-
-  .label {
-    color: var(--text-1);
-  }
-
-  .value {
+    font-size: 12px;
     color: var(--text-2);
+    padding: 0 4px;
+  }
+
+  .sp-label {
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-weight: 600;
+    font-size: 11px;
+  }
+
+  .sp-value {
     font-variant-numeric: tabular-nums;
   }
 
@@ -259,7 +242,7 @@ function getSegments(breakdown: ContextBreakdown): Segment[] {
   .sessions {
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: 20px;
   }
 
   .session-block {
@@ -294,59 +277,56 @@ function getSegments(breakdown: ContextBreakdown): Segment[] {
     color: var(--danger, #e53e3e);
   }
 
-  /* Stacked breakdown bar */
+  /* Waffle chart */
 
-  .stacked-bar {
-    display: flex;
-    height: 8px;
-    border-radius: 4px;
-    overflow: hidden;
-    background: var(--bg-2);
-    gap: 1px;
+  .waffle {
+    display: grid;
+    gap: 2px;
   }
 
-  .stacked-segment {
-    height: 100%;
-    min-width: 2px;
-    transition: width 0.3s ease;
+  .cell {
+    aspect-ratio: 1;
+    border-radius: 2px;
+    transition: opacity 0.15s ease;
   }
 
-  .stacked-segment:first-child {
-    border-radius: 4px 0 0 4px;
+  .cell.dimmed {
+    opacity: 0.2;
   }
 
-  .stacked-segment:last-child {
-    border-radius: 0 4px 4px 0;
+  .cell.highlighted {
+    opacity: 1;
+    box-shadow: 0 0 0 1px rgba(255,255,255,0.3);
   }
 
-  /* Legend */
+  /* Hover legend */
 
-  .legend {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 2px 12px;
-  }
-
-  .legend-item {
+  .hover-legend {
     display: flex;
     align-items: center;
-    gap: 4px;
-    font-size: 11px;
+    gap: 6px;
+    font-size: 12px;
+    height: 18px;
+  }
+
+  .hover-legend.hint {
+    color: var(--text-3);
+    font-style: italic;
   }
 
   .legend-dot {
-    width: 6px;
-    height: 6px;
+    width: 8px;
+    height: 8px;
     border-radius: 50%;
     flex-shrink: 0;
   }
 
   .legend-label {
-    color: var(--text-2);
+    color: var(--text-1);
   }
 
   .legend-value {
-    color: var(--text-3);
+    color: var(--text-2);
     font-variant-numeric: tabular-nums;
   }
 
