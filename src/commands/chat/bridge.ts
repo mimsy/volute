@@ -203,7 +203,7 @@ const cmd = subcommands({
   commands: {
     add: { description: "Enable a bridge with a default mind", run: bridgeAdd },
     remove: { description: "Disable a bridge", run: bridgeRemove },
-    list: { description: "Show all bridges and their status", run: (args) => bridgeList() },
+    list: { description: "Show all bridges and their status", run: () => bridgeList() },
     map: { description: "Map an external channel to a Volute channel", run: bridgeMap },
     unmap: { description: "Remove a channel mapping", run: bridgeUnmap },
     mappings: { description: "List channel mappings", run: bridgeMappings },
