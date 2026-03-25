@@ -8,8 +8,6 @@ export type Selection =
       subpath?: string;
     }
   | { kind: "extension"; extensionId: string; path: string }
-  | { kind: "settings"; section?: string }
-  | { kind: "spirit-settings" }
   | { kind: "system-chat" }
   | { kind: "system-history" }
   | { kind: "channel"; slug: string };
@@ -87,11 +85,9 @@ export function parseSelection(extensions: ExtensionInfo[] = []): Selection {
 
   if (path === "/system/chat") return { kind: "system-chat" };
   if (path === "/history") return { kind: "system-history" };
-  if (path === "/system/settings") return { kind: "spirit-settings" };
-  if (path === "/settings") return { kind: "settings" };
-
-  const settingsSectionMatch = path.match(/^\/settings\/(.+)$/);
-  if (settingsSectionMatch) return { kind: "settings", section: settingsSectionMatch[1] };
+  // Legacy settings URLs — these are now modals, redirect to home
+  if (path === "/system/settings" || path === "/settings" || path.startsWith("/settings/"))
+    return { kind: "system-history" };
 
   // Mind detail pages — must be checked before extension URL patterns
   // because /minds/:name/:section could overlap
@@ -177,10 +173,6 @@ export function selectionToPath(selection: Selection, extensions: ExtensionInfo[
         ? `/ext/${selection.extensionId}/${selection.path}`
         : `/ext/${selection.extensionId}`;
     }
-    case "spirit-settings":
-      return "/system/settings";
-    case "settings":
-      return selection.section ? `/settings/${selection.section}` : "/settings";
     case "system-chat":
       return "/system/chat";
     case "channel": {

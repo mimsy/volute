@@ -163,7 +163,6 @@ let activeChannelId = $derived.by(() => {
 let isSystemActive = $derived(
   selection.kind === "system-history" ||
     selection.kind === "system-chat" ||
-    selection.kind === "settings" ||
     selection.kind === "extension",
 );
 </script>
@@ -296,6 +295,10 @@ let isSystemActive = $derived(
       <Icon kind="gear" class="menu-icon" />
       Settings
     </button>
+    <button class="mind-menu-item" onclick={() => handleMenuAction("__system__", "logs")}>
+      <Icon kind="document-lines" class="menu-icon" />
+      Logs
+    </button>
   </div>
 {:else if openMenu}
   <div
@@ -362,7 +365,6 @@ let isSystemActive = $derived(
   .section-header-row {
     display: flex;
     align-items: center;
-    padding-right: 8px;
     transition: background 0.1s;
   }
 
@@ -421,6 +423,7 @@ let isSystemActive = $derived(
     opacity: 0;
     transition: opacity 0.1s, color 0.1s;
     cursor: pointer;
+    margin-right: 8px;
   }
 
   .section-action svg {
@@ -510,7 +513,7 @@ let isSystemActive = $derived(
     opacity: 0;
     transition: opacity 0.1s, color 0.1s;
     cursor: pointer;
-    margin-right: 6px;
+    margin-right: 8px;
   }
 
   .mind-dots-btn svg {
