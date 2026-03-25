@@ -44,6 +44,14 @@ const BASE_STYLES = `
   hr { border: none; border-top: 1px solid #d1d5db; margin: 2em 0; }
 `;
 
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
 export function parseFrontmatter(raw: string): { title?: string; style?: string; body: string } {
   const match = raw.match(/^---\n([\s\S]*?)\n---\n?/);
   if (!match) return { body: raw };
@@ -66,10 +74,10 @@ export function resolveStylesheet(
   pagesRoot: string,
   frontmatterStyle?: string,
 ): string | null {
-  // Frontmatter override — path relative to pages root
+  // Frontmatter override — path relative to pages root (with containment check)
   if (frontmatterStyle) {
     const abs = resolve(pagesRoot, frontmatterStyle);
-    if (existsSync(abs)) return frontmatterStyle;
+    if (abs.startsWith(pagesRoot + "/") && existsSync(abs)) return frontmatterStyle;
   }
 
   // Convention: style.css in same directory as the markdown file
@@ -91,9 +99,9 @@ export function renderMarkdownPage(
   opts: { title?: string; stylesheetUrl?: string },
 ): string {
   const html = marked.parse(body) as string;
-  const title = opts.title || "Untitled";
+  const title = escapeHtml(opts.title || "Untitled");
   const linkTag = opts.stylesheetUrl
-    ? `\n    <link rel="stylesheet" href="${opts.stylesheetUrl}">`
+    ? `\n    <link rel="stylesheet" href="${escapeHtml(opts.stylesheetUrl)}">`
     : "";
 
   return `<!DOCTYPE html>

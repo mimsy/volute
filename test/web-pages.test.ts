@@ -419,6 +419,31 @@ describe("parseFrontmatter", () => {
   });
 });
 
+describe("XSS prevention", () => {
+  beforeEach(cleanup);
+  afterEach(cleanup);
+
+  it("escapes HTML in frontmatter title", async () => {
+    const dir = resolve(tmpdir(), `volute-test-xss-${Date.now()}`);
+    const sitesDir = resolve(dir, "sites", "test-mind");
+    mkdirSync(sitesDir, { recursive: true });
+    testDir = dir;
+    writeFileSync(
+      resolve(sitesDir, "xss.md"),
+      "---\ntitle: </title><script>alert(1)</script>\n---\n\n# Safe\n",
+    );
+
+    const { createPublicRoutes } = await import("../packages/extensions/pages/src/routes.js");
+    const publicApp = new Hono();
+    publicApp.route("/public", createPublicRoutes(makeCtx(dir)));
+
+    const res = await publicApp.request("/public/test-mind/xss.md");
+    const body = await res.text();
+    assert.ok(!body.includes("<script>"), "should not contain unescaped script tag");
+    assert.ok(body.includes("&lt;script&gt;"), "should escape HTML entities in title");
+  });
+});
+
 describe("resolveStylesheet", () => {
   beforeEach(cleanup);
   afterEach(cleanup);
@@ -460,5 +485,14 @@ describe("resolveStylesheet", () => {
     writeFileSync(resolve(dir, "style.css"), "body {}");
     const result = resolveStylesheet(resolve(dir, "page.md"), dir, "css/dark.css");
     assert.equal(result, "css/dark.css");
+  });
+
+  it("rejects path traversal in frontmatter style", () => {
+    const dir = resolve(tmpdir(), `volute-test-css-${Date.now()}`);
+    mkdirSync(dir, { recursive: true });
+    testDir = dir;
+    // Even if the target exists, traversal should be blocked
+    const result = resolveStylesheet(resolve(dir, "page.md"), dir, "../../../etc/passwd");
+    assert.equal(result, null);
   });
 });
