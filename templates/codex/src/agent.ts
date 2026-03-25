@@ -609,7 +609,8 @@ export function createMind(options: {
             contextWindow: maxContextTokens,
             breakdown: parsed?.breakdown,
           };
-        } catch {
+        } catch (err) {
+          log("mind", `failed to get context breakdown for session "${s.name}":`, err);
           return {
             name: s.name,
             contextTokens: s.cumulativeInputTokens,

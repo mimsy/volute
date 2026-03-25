@@ -1218,10 +1218,20 @@ const app = new Hono<AuthEnv>()
       const res = await fetch(`http://127.0.0.1:${entry.port}/context`, {
         signal: AbortSignal.timeout(3000),
       });
-      if (!res.ok) return c.json({ error: "Context endpoint not available" }, 404);
+      if (!res.ok) {
+        const status = res.status >= 500 ? 502 : 404;
+        return c.json(
+          {
+            error:
+              res.status >= 500 ? "Mind context handler errored" : "Context endpoint not available",
+          },
+          status,
+        );
+      }
       const data = await res.json();
       return c.json(data);
-    } catch {
+    } catch (err) {
+      console.error(`context proxy for ${name}:`, err);
       return c.json({ error: "Failed to reach mind" }, 503);
     }
   })

@@ -8,8 +8,6 @@ let { mindName, onClose }: { mindName: string; onClose: () => void } = $props();
 let contextInfo = $state<ContextInfo | null>(null);
 let loading = $state(true);
 let error = $state("");
-let hoveredCategory = $state<string | null>(null);
-
 onMount(async () => {
   try {
     contextInfo = await fetchMindContext(mindName);
@@ -103,25 +101,25 @@ function getCategories(breakdown: ContextBreakdown, contextTokens: number): Cate
 const GRID_COLS = 15;
 const TOKENS_PER_CELL = 2000;
 
-function buildGrid(
-  categories: Category[],
-  contextWindow: number,
-): { color: string; category: string }[] {
+type Cell = { color: string; tooltip: string };
+
+function buildGrid(categories: Category[], contextWindow: number): Cell[] {
   const totalCells = Math.ceil(contextWindow / TOKENS_PER_CELL);
   // Round up to full row
   const rows = Math.ceil(totalCells / GRID_COLS);
   const gridCells = rows * GRID_COLS;
 
-  const cells: { color: string; category: string }[] = [];
+  const cells: Cell[] = [];
   for (const cat of categories) {
+    const tooltip = `${cat.label}: ${formatTokens(cat.tokens)}`;
     const count = Math.max(1, Math.round(cat.tokens / TOKENS_PER_CELL));
     for (let i = 0; i < count && cells.length < gridCells; i++) {
-      cells.push({ color: cat.color, category: cat.key });
+      cells.push({ color: cat.color, tooltip });
     }
   }
   // Fill remaining with empty (unused context)
   while (cells.length < gridCells) {
-    cells.push({ color: COLORS.empty, category: "empty" });
+    cells.push({ color: COLORS.empty, tooltip: "" });
   }
   return cells;
 }
@@ -164,37 +162,19 @@ function buildGrid(
 
               {#if cells.length > 0}
                 <!-- Waffle chart -->
-                <!-- svelte-ignore a11y_no_static_element_interactions -->
                 <div
                   class="waffle"
                   style:grid-template-columns="repeat({GRID_COLS}, 1fr)"
-                  onmouseleave={() => hoveredCategory = null}
                 >
                   {#each cells as cell, i (i)}
-                    <!-- svelte-ignore a11y_no_static_element_interactions -->
                     <div
                       class="cell"
-                      class:dimmed={hoveredCategory !== null && cell.category !== hoveredCategory}
-                      class:highlighted={hoveredCategory === cell.category}
+                      class:has-tooltip={cell.tooltip}
                       style:background={cell.color}
-                      onmouseenter={() => { if (cell.category !== "empty") hoveredCategory = cell.category; }}
+                      data-tooltip={cell.tooltip || undefined}
                     ></div>
                   {/each}
                 </div>
-
-                <!-- Hover legend -->
-                {#if hoveredCategory}
-                  {@const cat = categories.find(c => c.key === hoveredCategory)}
-                  {#if cat}
-                    <div class="hover-legend">
-                      <span class="legend-dot" style:background={cat.color}></span>
-                      <span class="legend-label">{cat.label}</span>
-                      <span class="legend-value">{formatTokens(cat.tokens)}</span>
-                    </div>
-                  {/if}
-                {:else}
-                  <div class="hover-legend hint">hover for details</div>
-                {/if}
               {:else if session.contextTokens > 0}
                 <!-- Simple bar fallback -->
                 <div class="token-bar">
@@ -301,46 +281,28 @@ function buildGrid(
   .cell {
     aspect-ratio: 1;
     border-radius: 2px;
-    transition: opacity 0.15s ease;
+    position: relative;
   }
 
-  .cell.dimmed {
-    opacity: 0.2;
+  .cell.has-tooltip:hover {
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.3);
   }
 
-  .cell.highlighted {
-    opacity: 1;
-    box-shadow: 0 0 0 1px rgba(255,255,255,0.3);
-  }
-
-  /* Hover legend */
-
-  .hover-legend {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 12px;
-    height: 18px;
-  }
-
-  .hover-legend.hint {
-    color: var(--text-3);
-    font-style: italic;
-  }
-
-  .legend-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    flex-shrink: 0;
-  }
-
-  .legend-label {
+  .cell.has-tooltip:hover::after {
+    content: attr(data-tooltip);
+    position: absolute;
+    bottom: calc(100% + 4px);
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--bg-1, #1a1a1a);
     color: var(--text-1);
-  }
-
-  .legend-value {
-    color: var(--text-2);
+    font-size: 11px;
+    padding: 3px 7px;
+    border-radius: 4px;
+    white-space: nowrap;
+    pointer-events: none;
+    z-index: 10;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
     font-variant-numeric: tabular-nums;
   }
 

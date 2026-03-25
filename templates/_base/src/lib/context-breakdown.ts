@@ -11,8 +11,12 @@ function countTokens(text: string): number {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       const mod = require("@anthropic-ai/tokenizer");
       _countTokens = mod.countTokens;
-    } catch {
+    } catch (err) {
       // Tokenizer not installed — fall back to character estimation
+      console.warn(
+        "context-breakdown: @anthropic-ai/tokenizer not available, using character estimation:",
+        err instanceof Error ? err.message : err,
+      );
       _countTokens = (t: string) => Math.round(t.length / 3.5);
     }
   }
@@ -331,8 +335,9 @@ export function countSdkInstructionTokens(cwd: string): number {
     try {
       const content = readFileSync(resolve(cwd, name), "utf-8");
       return countTokens(content);
-    } catch {
-      // Try next
+    } catch (err: any) {
+      if (err?.code !== "ENOENT")
+        console.warn(`context-breakdown: ${resolve(cwd, name)}:`, err?.message);
     }
   }
   return 0;
@@ -350,12 +355,14 @@ export function countSkillDescriptionTokens(skillsDirs: string[]): number {
           // Extract just the frontmatter description — that's what's always in context
           const match = content.match(/^description:\s*(.+?)$/m);
           if (match) total += countTokens(match[1]);
-        } catch {
-          // No SKILL.md
+        } catch (err: any) {
+          if (err?.code !== "ENOENT")
+            console.warn(`context-breakdown: SKILL.md in ${entry.name}:`, err?.message);
         }
       }
-    } catch {
-      // Dir doesn't exist
+    } catch (err: any) {
+      if (err?.code !== "ENOENT")
+        console.warn(`context-breakdown: skills dir ${dir}:`, err?.message);
     }
   }
   return total;
@@ -380,8 +387,8 @@ export function findClaudeSessionFile(cwd: string, sessionId: string): string | 
           // Not in this project dir
         }
       }
-    } catch {
-      // No projects dir
+    } catch (err: any) {
+      if (err?.code !== "ENOENT") console.warn(`context-breakdown: ${projectsDir}:`, err?.message);
     }
   }
   return null;
@@ -420,8 +427,8 @@ export function findCodexSessionFile(threadId: string): string | null {
         }
       }
     }
-  } catch {
-    // No codex sessions dir
+  } catch (err: any) {
+    if (err?.code !== "ENOENT") console.warn("context-breakdown: codex sessions:", err?.message);
   }
   return null;
 }
@@ -435,7 +442,9 @@ export function findPiSessionFile(sessionsDir: string, sessionName: string): str
       .sort();
     if (files.length === 0) return null;
     return resolve(dir, files[files.length - 1]);
-  } catch {
+  } catch (err: any) {
+    if (err?.code !== "ENOENT")
+      console.warn(`context-breakdown: pi sessions ${dir}:`, err?.message);
     return null;
   }
 }
