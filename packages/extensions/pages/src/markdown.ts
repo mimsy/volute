@@ -94,11 +94,11 @@ export function resolveStylesheet(
   return null;
 }
 
-export function renderMarkdownPage(
+export async function renderMarkdownPage(
   body: string,
   opts: { title?: string; stylesheetUrl?: string },
-): string {
-  const html = marked.parse(body) as string;
+): Promise<string> {
+  const html = await marked.parse(body);
   const title = escapeHtml(opts.title || "Untitled");
   const linkTag = opts.stylesheetUrl
     ? `\n    <link rel="stylesheet" href="${escapeHtml(opts.stylesheetUrl)}">`

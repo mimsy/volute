@@ -157,7 +157,7 @@ export function createPublicRoutes(ctx: ExtensionContext): Hono {
         const { title, style, body } = parseFrontmatter(content);
         const cssRelPath = resolveStylesheet(fileToServe, pagesRoot, style);
         const cssUrl = cssRelPath ? `/ext/pages/public/${name}/${cssRelPath}` : undefined;
-        const html = renderMarkdownPage(body, { title, stylesheetUrl: cssUrl });
+        const html = await renderMarkdownPage(body, { title, stylesheetUrl: cssUrl });
         return c.body(html, 200, { "Content-Type": "text/html; charset=utf-8" });
       }
 
@@ -168,6 +168,7 @@ export function createPublicRoutes(ctx: ExtensionContext): Hono {
       const code = (err as NodeJS.ErrnoException).code;
       if (code === "EACCES") return c.text("Forbidden", 403);
       if (code === "ENOENT") return c.text("Not found", 404);
+      console.error(`[pages] error serving ${fileToServe}:`, (err as Error).message);
       return c.text("Internal server error", 500);
     }
   });
