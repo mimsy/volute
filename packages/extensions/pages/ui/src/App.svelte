@@ -76,8 +76,10 @@ function handleIframeNav(e: Event) {
     } else {
       navigateParent(`/minds/${mind}/pages/${file}`);
     }
-  } catch {
-    // cross-origin or security error — ignore
+  } catch (err) {
+    if (!(err instanceof DOMException)) {
+      console.error("[pages] unexpected error in iframe nav handler:", err);
+    }
   }
 }
 

@@ -16,8 +16,10 @@ export function initDb(db: Database): void {
   // Migration: add author column if missing
   try {
     db.exec("ALTER TABLE published_pages ADD COLUMN author TEXT");
-  } catch {
-    // column already exists
+  } catch (err) {
+    if (!(err instanceof Error) || !err.message.includes("duplicate column")) {
+      throw err;
+    }
   }
 }
 

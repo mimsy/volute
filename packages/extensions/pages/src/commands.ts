@@ -51,16 +51,19 @@ export function createCommands(): Record<string, ExtensionCommand> {
             }
 
             // Sync system pages to DB so they appear in the UI
+            let syncWarning = "";
             if (result.ok && ctx.db) {
               const repoDir = resolve(ctx.dataDir, "repo");
               try {
                 syncSystemPages(ctx.db, collectHtmlFiles(repoDir), mindName);
               } catch (err) {
                 console.error("[pages] failed to sync system pages to DB:", err);
+                syncWarning =
+                  "\nWarning: failed to sync pages to dashboard — they may not appear in the UI until the next daemon restart.";
               }
             }
 
-            return { output: result.message || "Published shared pages." };
+            return { output: (result.message || "Published shared pages.") + syncWarning };
           } catch (err) {
             return { error: `Shared publish failed: ${(err as Error).message}` };
           }

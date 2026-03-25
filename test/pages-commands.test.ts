@@ -29,6 +29,7 @@ import {
   getAllSites,
   getPublishedPages,
   getRecentPages,
+  getSystemPages,
   initDb,
   syncPublishedPages,
   syncSystemPages,
@@ -142,6 +143,49 @@ describe("pages db", () => {
     assert.equal(sites[1].mind, "mind2");
     assert.equal(sites[1].files.length, 2);
   });
+
+  it("getAllSites excludes _system pages", () => {
+    syncPublishedPages(db, "mind1", ["index.html"]);
+    syncSystemPages(db, ["shared.html"]);
+
+    const sites = getAllSites(db);
+    assert.equal(sites.length, 1);
+    assert.equal(sites[0].mind, "mind1");
+  });
+
+  it("syncSystemPages stores author", () => {
+    syncSystemPages(db, ["index.html"], "alice");
+    const pages = getPublishedPages(db, "_system");
+    assert.equal(pages[0].author, "alice");
+  });
+
+  it("syncSystemPages updates author on re-sync", () => {
+    syncSystemPages(db, ["index.html"], "alice");
+    syncSystemPages(db, ["index.html"], "bob");
+    const pages = getPublishedPages(db, "_system");
+    assert.equal(pages[0].author, "bob");
+  });
+
+  it("syncSystemPages preserves author when not provided", () => {
+    syncSystemPages(db, ["index.html"], "alice");
+    syncSystemPages(db, ["index.html"]);
+    const pages = getPublishedPages(db, "_system");
+    assert.equal(pages[0].author, "alice");
+  });
+
+  it("getSystemPages returns null when empty", () => {
+    assert.equal(getSystemPages(db), null);
+  });
+
+  it("getSystemPages returns system site with author", () => {
+    syncSystemPages(db, ["about.html", "index.html"], "alice");
+    const site = getSystemPages(db);
+    assert.ok(site);
+    assert.equal(site.mind, "_system");
+    assert.equal(site.files.length, 2);
+    assert.equal(site.files[0].file, "about.html");
+    assert.equal(site.files[0].author, "alice");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -241,6 +285,22 @@ describe("pages commands", () => {
     assert.equal(removeEvents[0].metadata.file, "about.html");
   });
 
+  it("publish command excludes _system/ from snapshot", async () => {
+    writeFileSync(resolve(pagesDir, "index.html"), "<h1>Hello</h1>");
+    const systemDir = resolve(pagesDir, "_system");
+    mkdirSync(systemDir, { recursive: true });
+    writeFileSync(resolve(systemDir, "shared.html"), "<h1>Shared</h1>");
+
+    const commands = createCommands();
+    const ctx = makeCtx();
+    await commands.publish.handler([], ctx);
+
+    const snapshotDir = resolve(dataDir, "sites", "test-mind");
+    assert.ok(existsSync(resolve(snapshotDir, "index.html")));
+    assert.ok(!existsSync(resolve(snapshotDir, "_system")));
+    assert.ok(!existsSync(resolve(snapshotDir, "_system", "shared.html")));
+  });
+
   it("publish command rejects when no pages dir exists", async () => {
     rmSync(pagesDir, { recursive: true });
     const commands = createCommands();
@@ -276,6 +336,19 @@ describe("pages commands", () => {
     assert.ok("output" in result);
     assert.ok(result.output.includes("mind-a"));
     assert.ok(result.output.includes("mind-b"));
+  });
+
+  it("list --all shows system pages with author", async () => {
+    syncSystemPages(db, ["shared.html"], "alice");
+    syncPublishedPages(db, "mind-a", ["index.html"]);
+
+    const commands = createCommands();
+    const ctx = makeCtx();
+    const result = await commands.list.handler(["--all"], ctx);
+    assert.ok("output" in result);
+    assert.ok(result.output.includes("_system"));
+    assert.ok(result.output.includes("alice"));
+    assert.ok(result.output.includes("mind-a"));
   });
 
   it("list --all works without a mind name", async () => {

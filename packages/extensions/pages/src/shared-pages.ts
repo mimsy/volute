@@ -486,8 +486,9 @@ export function collectHtmlFiles(dir: string): string[] {
     let items: string[];
     try {
       items = readdirSync(d);
-    } catch {
-      return;
+    } catch (err: any) {
+      if (err?.code === "ENOENT") return;
+      throw err;
     }
     for (const item of items) {
       if (item.startsWith(".")) continue;
@@ -499,8 +500,9 @@ export function collectHtmlFiles(dir: string): string[] {
         } else if (s.isDirectory()) {
           walk(full);
         }
-      } catch {
-        // skip
+      } catch (err: any) {
+        if (err?.code === "ENOENT" || err?.code === "EACCES") continue;
+        throw err;
       }
     }
   }
@@ -513,17 +515,31 @@ export async function pagesStatus(mindDir: string, isolation?: IsolationInfo): P
   const wt = worktreePath(mindDir);
 
   // Get files on main and files on the mind's branch (including uncommitted)
+  const errors: Error[] = [];
   const [mainFiles, branchFiles, uncommitted] = await Promise.all([
     gitExec(["ls-tree", "-r", "--name-only", "main"], { cwd: wt }, isolation)
       .then((s) => s.trim().split("\n").filter(Boolean))
-      .catch(() => [] as string[]),
+      .catch((err) => {
+        errors.push(err);
+        return [] as string[];
+      }),
     gitExec(["ls-tree", "-r", "--name-only", "HEAD"], { cwd: wt }, isolation)
       .then((s) => s.trim().split("\n").filter(Boolean))
-      .catch(() => [] as string[]),
+      .catch((err) => {
+        errors.push(err);
+        return [] as string[];
+      }),
     gitExec(["status", "--porcelain"], { cwd: wt }, isolation)
       .then((s) => s.trim())
-      .catch(() => ""),
+      .catch((err) => {
+        errors.push(err);
+        return "";
+      }),
   ]);
+
+  if (errors.length === 3) {
+    throw new Error(`Shared pages git error: ${errors[0].message}`);
+  }
 
   // Parse uncommitted files (new/modified)
   const uncommittedFiles = new Set<string>();
