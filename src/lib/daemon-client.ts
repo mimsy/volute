@@ -1,6 +1,15 @@
 import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { resolve } from "node:path";
-import { voluteSystemDir, voluteUserHome } from "./registry.js";
+
+function voluteUserHome(): string {
+  return process.env.VOLUTE_USER_HOME ?? resolve(homedir(), ".volute");
+}
+
+function voluteSystemDir(): string {
+  const home = process.env.VOLUTE_HOME ?? resolve(homedir(), ".volute");
+  return resolve(home, "system");
+}
 
 /** Read session from a mind's current-session file. */
 export function readSessionFile(mindDir: string): string | undefined {
@@ -23,7 +32,7 @@ function readMindSessionFile(): string | undefined {
   return readSessionFile(mindDir);
 }
 
-type CliSession = { sessionId: string; username: string };
+type CliSession = { sessionId: string; username: string; daemonUrl?: string };
 
 function readCliSession(): CliSession | null {
   const sessionPath = resolve(voluteUserHome(), "cli-session.json");
@@ -81,9 +90,15 @@ function buildUrl(config: DaemonConfig): string {
   return url.origin;
 }
 
+export function resolveDaemonUrl(): string {
+  if (process.env.VOLUTE_DAEMON_URL) return process.env.VOLUTE_DAEMON_URL;
+  const session = readCliSession();
+  if (session?.daemonUrl) return session.daemonUrl;
+  return buildUrl(readDaemonConfig());
+}
+
 export async function daemonFetch(path: string, options?: RequestInit): Promise<Response> {
-  const config = readDaemonConfig();
-  const url = buildUrl(config);
+  const url = resolveDaemonUrl();
   const headers = new Headers(options?.headers);
 
   // Authenticate: mind token (VOLUTE_DAEMON_TOKEN) > CLI session

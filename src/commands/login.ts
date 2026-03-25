@@ -32,7 +32,10 @@ export async function run(_args: string[]): Promise<void> {
 
   const sessionPath = resolve(voluteUserHome(), "cli-session.json");
   try {
-    writeFileSync(sessionPath, JSON.stringify({ sessionId, username: name }), { mode: 0o600 });
+    const sessionData: Record<string, string> = { sessionId, username: name };
+    const daemonUrl = process.env.VOLUTE_DAEMON_URL;
+    if (daemonUrl) sessionData.daemonUrl = daemonUrl;
+    writeFileSync(sessionPath, JSON.stringify(sessionData), { mode: 0o600 });
   } catch (err) {
     console.error(`Login succeeded but failed to save session: ${(err as Error).message}`);
     process.exit(1);

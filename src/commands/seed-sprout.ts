@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { findMind, mindDir } from "../lib/registry.js";
+import { daemonFetch } from "../lib/daemon-client.js";
+import { mindDir } from "../lib/registry.js";
 import { getStandardSkillsWithExtensions } from "../lib/skills.js";
 
 const ORIENTATION_MARKER = "You don't have a soul yet";
@@ -12,14 +13,15 @@ export async function run(_args: string[]) {
     process.exit(1);
   }
 
-  const entry = await findMind(mindName);
-  if (!entry) {
-    console.error(`Unknown mind: ${mindName}`);
+  const mindRes = await daemonFetch(`/api/minds/${encodeURIComponent(mindName)}`);
+  if (!mindRes.ok) {
+    console.error(`Mind "${mindName}" not found`);
     process.exit(1);
   }
+  const mind = (await mindRes.json()) as { stage?: string };
 
-  if (entry.stage !== "seed") {
-    console.error(`${mindName} is not a seed — already at stage "${entry.stage}"`);
+  if (mind.stage !== "seed") {
+    console.error(`${mindName} is not a seed — already at stage "${mind.stage}"`);
     process.exit(1);
   }
 
@@ -60,8 +62,7 @@ export async function run(_args: string[]) {
     }
   }
 
-  // Set up daemon client for API calls
-  const { daemonFetch } = await import("../lib/daemon-client.js");
+  // Set up API client for typed URL helpers
   const { getClient, urlOf } = await import("../lib/api-client.js");
   const { mindSkillsDir } = await import("../lib/skills.js");
   const client = getClient();
