@@ -158,6 +158,42 @@ describe("CLI --help", () => {
     assert.ok(out.includes("--model"), "should show --model flag");
   });
 
+  it("volute clock add --help shows flags", async () => {
+    const r = await runCli("clock", "add", "--help");
+    const out = combined(r);
+    assert.ok(out.includes("--mind"), "should show --mind flag");
+    assert.ok(out.includes("--cron"), "should show --cron flag");
+    assert.ok(out.includes("--message"), "should show --message flag");
+  });
+
+  it("volute env set --help shows args", async () => {
+    const r = await runCli("env", "set", "--help");
+    const out = combined(r);
+    assert.ok(out.includes("key"), "should show key arg");
+    assert.ok(out.includes("value"), "should show value arg");
+    assert.ok(out.includes("--mind"), "should show --mind flag");
+  });
+
+  it("volute skill install --help shows args", async () => {
+    const r = await runCli("skill", "install", "--help");
+    const out = combined(r);
+    assert.ok(out.includes("name"), "should show name arg");
+    assert.ok(out.includes("--mind"), "should show --mind flag");
+  });
+
+  it("volute mind delete --help shows flags", async () => {
+    const r = await runCli("mind", "delete", "--help");
+    const out = combined(r);
+    assert.ok(out.includes("--force"), "should show --force flag");
+    assert.ok(!out.includes("Missing required"), "should NOT execute");
+  });
+
+  it("volute down --help shows description", async () => {
+    const r = await runCli("down", "--help");
+    const out = combined(r);
+    assert.ok(out.includes("daemon") || out.includes("Stop"), "should show description");
+  });
+
   // Verify -h works too
   it("volute mind -h works same as --help", async () => {
     const r = await runCli("mind", "-h");

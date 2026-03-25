@@ -6,7 +6,7 @@ const cmd = command({
   description: "Delete a mind from the registry",
   args: [{ name: "name", description: "Mind to delete (or use VOLUTE_MIND)" }],
   flags: {
-    force: { type: "boolean" as const, description: "Also delete the mind's directory" },
+    force: { type: "boolean", description: "Also delete the mind's directory" },
   },
   async run({ args, flags }) {
     const name = resolveMindName({ mind: args.name });

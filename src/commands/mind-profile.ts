@@ -5,10 +5,10 @@ const cmd = command({
   name: "volute mind profile",
   description: "Update mind profile",
   flags: {
-    mind: { type: "string" as const, description: "Mind name" },
-    "display-name": { type: "string" as const, description: "Display name" },
-    description: { type: "string" as const, description: "Description text" },
-    avatar: { type: "string" as const, description: "Path to avatar image" },
+    mind: { type: "string", description: "Mind name" },
+    "display-name": { type: "string", description: "Display name" },
+    description: { type: "string", description: "Description text" },
+    avatar: { type: "string", description: "Path to avatar image" },
   },
   async run({ flags }) {
     const name = resolveMindName(flags);

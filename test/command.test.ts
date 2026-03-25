@@ -278,6 +278,61 @@ describe("subcommands", () => {
     assert.equal(exitMock.mock.calls[0]?.arguments[0], 1);
   });
 
+  it("exits with 1 when no subcommand provided", async () => {
+    const exitMock = mock.method(process, "exit", () => {
+      throw new Error("exit");
+    });
+    const cmd = subcommands({
+      name: "volute mind",
+      description: "Manage minds",
+      commands: {
+        create: { description: "Create a new mind", run: async () => {} },
+      },
+    });
+
+    const origLog = console.log;
+    console.log = () => {};
+    try {
+      await cmd.execute([]);
+    } catch {
+      // exit mock throws
+    } finally {
+      console.log = origLog;
+    }
+    assert.equal(
+      exitMock.mock.calls[0]?.arguments[0],
+      1,
+      "should exit with 1 for missing subcommand",
+    );
+  });
+
+  it("shows help on -h", async () => {
+    const exitMock = mock.method(process, "exit", () => {
+      throw new Error("exit");
+    });
+    const cmd = subcommands({
+      name: "volute mind",
+      description: "Manage minds",
+      commands: {
+        create: { description: "Create a new mind", run: async () => {} },
+      },
+    });
+
+    const origLog = console.log;
+    const lines: string[] = [];
+    console.log = (...a: unknown[]) => lines.push(a.join(" "));
+    try {
+      await cmd.execute(["-h"]);
+    } catch {
+      // exit mock throws
+    } finally {
+      console.log = origLog;
+    }
+    const output = lines.join("\n");
+    assert.ok(output.includes("create"));
+    assert.equal(exitMock.mock.calls[0]?.arguments[0], 0);
+  });
+
   it("includes footer in help", () => {
     const cmd = subcommands({
       name: "volute test",

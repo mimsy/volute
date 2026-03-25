@@ -56,8 +56,11 @@ const cmd = command({
         process.kill(pid, 0);
         console.error(`Daemon already running (pid ${pid}). Use 'volute down' first.`);
         process.exit(1);
-      } catch {
-        // PID file is stale, continue
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== "ESRCH") {
+          console.error(`Warning: could not check PID file: ${(err as Error).message}`);
+        }
+        // PID file is stale or unreadable, continue
       }
     }
 

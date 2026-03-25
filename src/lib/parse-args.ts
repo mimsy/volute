@@ -1,4 +1,4 @@
-type FlagDef = { type: "string" } | { type: "number" } | { type: "boolean" };
+export type FlagDef = { type: "string" } | { type: "number" } | { type: "boolean" };
 
 type FlagValue<T extends FlagDef> = T extends { type: "string" }
   ? string | undefined
@@ -32,7 +32,10 @@ export function parseArgs<T extends Record<string, FlagDef>>(
     if (arg.startsWith("--")) {
       const name = arg.slice(2);
       const def = flags[name];
-      if (!def) continue;
+      if (!def) {
+        console.error(`Warning: unknown flag --${name}`);
+        continue;
+      }
       if (def.type === "boolean") {
         result[name] = true;
       } else if (i + 1 < args.length) {

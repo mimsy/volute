@@ -5,9 +5,9 @@ const cmd = command({
   description: "Create a new mind",
   args: [{ name: "name", required: true, description: "Name for the new mind" }],
   flags: {
-    template: { type: "string" as const, description: "Template to use (claude, pi, codex)" },
+    template: { type: "string", description: "Template to use (claude, pi, codex)" },
     skills: {
-      type: "string" as const,
+      type: "string",
       description: "Skills to install (comma-separated, or 'none')",
     },
   },

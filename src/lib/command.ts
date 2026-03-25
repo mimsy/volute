@@ -1,9 +1,6 @@
-import { parseArgs } from "./parse-args.js";
+import { type FlagDef as BaseFlagDef, parseArgs } from "./parse-args.js";
 
-type FlagDef =
-  | { type: "string"; description: string }
-  | { type: "number"; description: string }
-  | { type: "boolean"; description: string };
+type FlagDef = BaseFlagDef & { description: string };
 
 type FlagValue<T extends FlagDef> = T extends { type: "string" }
   ? string | undefined
