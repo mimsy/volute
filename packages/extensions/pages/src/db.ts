@@ -64,7 +64,7 @@ export function getAllSites(db: Database): SiteEntry[] {
 export function syncPublishedPages(
   db: Database,
   mind: string,
-  htmlFiles: string[],
+  pageFiles: string[],
 ): { added: string[]; removed: string[]; updated: string[] } {
   const existing = new Map(
     (
@@ -75,14 +75,14 @@ export function syncPublishedPages(
     ).map((r) => [r.file, r.updated_at]),
   );
 
-  const newSet = new Set(htmlFiles);
+  const newSet = new Set(pageFiles);
   const added: string[] = [];
   const updated: string[] = [];
   const removed: string[] = [];
 
   db.exec("BEGIN");
   try {
-    for (const file of htmlFiles) {
+    for (const file of pageFiles) {
       if (existing.has(file)) {
         db.prepare(
           "UPDATE published_pages SET updated_at = datetime('now') WHERE mind = ? AND file = ?",

@@ -13,7 +13,8 @@
   "license": "MIT",
   "dependencies": {
     "@volute/extensions": "*",
-    "@volute/ui": "*"
+    "@volute/ui": "*",
+    "marked": "^17.0.0"
   },
   "peerDependencies": {
     "hono": "^4.0.0"
