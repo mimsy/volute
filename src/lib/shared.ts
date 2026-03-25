@@ -224,7 +224,8 @@ export async function sharedMerge(
     // Reset mind's branch to main so next round starts fresh
     try {
       await gitExec(["reset", "--hard", "main"], { cwd: worktreePath });
-    } catch {
+    } catch (err) {
+      log.error(`shared merge: branch reset failed for ${mindName}`, log.errorData(err));
       return {
         ok: true,
         message: "Merged to main, but branch reset failed — run 'volute pages pull' to sync",
@@ -262,19 +263,31 @@ export async function sharedPull(
     // Rebase onto main
     try {
       await gitExec(["rebase", "main"], { cwd: worktreePath });
-    } catch {
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      const isConflict =
+        errMsg.includes("CONFLICT") ||
+        errMsg.includes("could not apply") ||
+        errMsg.includes("merge conflict");
+
       // Abort failed rebase
       try {
         await gitExec(["rebase", "--abort"], { cwd: worktreePath });
       } catch (abortErr) {
         log.error("rebase abort failed in shared worktree", log.errorData(abortErr));
       }
-      return {
-        ok: false,
-        conflicts: true,
-        message:
-          "Pull conflicts detected — your changes conflict with main. Reconcile the conflicting files, commit, and pull again.",
-      };
+
+      if (isConflict) {
+        return {
+          ok: false,
+          conflicts: true,
+          message:
+            "Pull conflicts detected — your changes conflict with main. Reconcile the conflicting files, commit, and pull again.",
+        };
+      }
+
+      log.error("shared pull rebase failed", log.errorData(err));
+      return { ok: false, message: `Pull failed: ${errMsg}` };
     }
 
     // Daemon runs as root — restore mind user ownership on worktree files
@@ -287,8 +300,13 @@ export async function sharedPull(
 /** Show what the mind has changed compared to main in the shared worktree. */
 export async function sharedStatus(mindDir: string): Promise<string> {
   const worktreePath = resolve(mindDir, "home", "shared");
+  const uncommitted = (await gitExec(["status", "--porcelain"], { cwd: worktreePath })).trim();
   const diff = (await gitExec(["diff", "main...HEAD", "--stat"], { cwd: worktreePath })).trim();
-  return diff || "No changes compared to main.";
+  let result = diff || "No changes compared to main.";
+  if (uncommitted) {
+    result += "\n\nUncommitted changes:\n" + uncommitted;
+  }
+  return result;
 }
 
 /** Show recent commit history on main in the shared repo. */

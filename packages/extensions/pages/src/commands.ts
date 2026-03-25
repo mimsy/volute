@@ -28,34 +28,39 @@ export function createCommands(): Record<string, ExtensionCommand> {
           const mindDir = ctx.getMindDir(mindName);
           if (!mindDir) return { error: `Mind not found: ${mindName}` };
 
-          // Get the commit message from remaining args (skip --shared flag)
+          // Get the commit message from remaining args (skip flags)
           const message = args
-            .filter((a) => a !== "--shared")
+            .filter((a) => !a.startsWith("--"))
             .join(" ")
             .trim();
           if (!message)
             return { error: 'Usage: volute pages publish --shared "description of changes"' };
 
-          const { sharedPull, sharedMerge } = await getShared();
+          try {
+            const { sharedPull, sharedMerge } = await getShared();
 
-          // Auto-pull first to reduce conflict frequency
-          const pullResult = await sharedPull(mindName, mindDir);
-          if (!pullResult.ok) {
-            return {
-              error: pullResult.message || "Pull failed — resolve conflicts and try again.",
-            };
+            // Auto-pull first to reduce conflict frequency
+            const pullResult = await sharedPull(mindName, mindDir);
+            if (!pullResult.ok) {
+              return {
+                error: pullResult.message || "Pull failed — resolve conflicts and try again.",
+              };
+            }
+
+            // Merge to main
+            const mergeResult = await sharedMerge(mindName, mindDir, message);
+            if (!mergeResult.ok) {
+              return {
+                error:
+                  mergeResult.message ||
+                  "Merge conflicts detected — pull, reconcile, and try again.",
+              };
+            }
+
+            return { output: mergeResult.message || "Published shared pages." };
+          } catch (err) {
+            return { error: `Shared publish failed: ${(err as Error).message}` };
           }
-
-          // Merge to main
-          const mergeResult = await sharedMerge(mindName, mindDir, message);
-          if (!mergeResult.ok) {
-            return {
-              error:
-                mergeResult.message || "Merge conflicts detected — pull, reconcile, and try again.",
-            };
-          }
-
-          return { output: mergeResult.message || "Published shared pages." };
         }
 
         const remote = args.includes("--remote");
@@ -166,9 +171,13 @@ export function createCommands(): Record<string, ExtensionCommand> {
           const mindDir = ctx.getMindDir(mindName);
           if (!mindDir) return { error: `Mind not found: ${mindName}` };
 
-          const { sharedStatus } = await getShared();
-          const status = await sharedStatus(mindDir);
-          return { output: status };
+          try {
+            const { sharedStatus } = await getShared();
+            const status = await sharedStatus(mindDir);
+            return { output: status };
+          } catch (err) {
+            return { error: `Failed to check shared status: ${(err as Error).message}` };
+          }
         }
 
         const db = ctx.db;
@@ -226,12 +235,16 @@ export function createCommands(): Record<string, ExtensionCommand> {
         const mindDir = ctx.getMindDir(mindName);
         if (!mindDir) return { error: `Mind not found: ${mindName}` };
 
-        const { sharedPull } = await getShared();
-        const result = await sharedPull(mindName, mindDir);
-        if (!result.ok) {
-          return { error: result.message || "Pull failed." };
+        try {
+          const { sharedPull } = await getShared();
+          const result = await sharedPull(mindName, mindDir);
+          if (!result.ok) {
+            return { error: result.message || "Pull failed." };
+          }
+          return { output: result.message || "Pulled latest shared changes." };
+        } catch (err) {
+          return { error: `Pull failed: ${(err as Error).message}` };
         }
-        return { output: result.message || "Pulled latest shared changes." };
       },
     },
 
@@ -249,12 +262,16 @@ export function createCommands(): Record<string, ExtensionCommand> {
         const limitIdx = args.indexOf("--limit");
         if (limitIdx !== -1 && args[limitIdx + 1]) {
           const n = parseInt(args[limitIdx + 1], 10);
-          if (!isNaN(n) && n > 0) limit = n;
+          if (!Number.isNaN(n) && n > 0) limit = n;
         }
 
-        const { sharedLog } = await getShared();
-        const output = await sharedLog(mindDir, limit);
-        return { output };
+        try {
+          const { sharedLog } = await getShared();
+          const output = await sharedLog(mindDir, limit);
+          return { output };
+        } catch (err) {
+          return { error: `Failed to read shared log: ${(err as Error).message}` };
+        }
       },
     },
   };

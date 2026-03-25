@@ -199,6 +199,38 @@ describe("shared repo", () => {
     await removeSharedWorktree("test-pull-noop", mindDir);
   });
 
+  it("sharedPull auto-commits dirty worktree before pulling", async () => {
+    await ensureSharedRepo();
+    const mindDirA = await createFakeMind("test-pull-dirty-a");
+    const mindDirB = await createFakeMind("test-pull-dirty-b");
+    await addSharedWorktree("test-pull-dirty-a", mindDirA);
+    await addSharedWorktree("test-pull-dirty-b", mindDirB);
+
+    const worktreeA = resolve(mindDirA, "home", "shared");
+    const worktreeB = resolve(mindDirB, "home", "shared");
+
+    // Mind A creates a file and merges
+    writeFileSync(resolve(worktreeA, "pages", "from-a.html"), "<p>from A</p>");
+    await sharedMerge("test-pull-dirty-a", mindDirA, "A's page");
+
+    // Mind B has uncommitted changes in a different file
+    writeFileSync(resolve(worktreeB, "pages", "from-b.html"), "<p>from B</p>");
+
+    // Mind B pulls — should auto-commit B's file and get A's file
+    const result = await sharedPull("test-pull-dirty-b", mindDirB);
+    assert.ok(result.ok);
+
+    // Both files should exist
+    assert.ok(existsSync(resolve(worktreeB, "pages", "from-a.html")));
+    assert.equal(
+      readFileSync(resolve(worktreeB, "pages", "from-b.html"), "utf-8"),
+      "<p>from B</p>",
+    );
+
+    await removeSharedWorktree("test-pull-dirty-a", mindDirA);
+    await removeSharedWorktree("test-pull-dirty-b", mindDirB);
+  });
+
   it("sharedPull gets changes from another mind", async () => {
     await ensureSharedRepo();
     const mindDirA = await createFakeMind("test-pull-a");
