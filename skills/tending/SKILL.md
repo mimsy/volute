@@ -1,11 +1,11 @@
 ---
-name: Engagement
-description: Guides the spirit on encouraging minds to explore and use system features. Triggered by [engagement] scheduler messages.
+name: Tending
+description: Guides the spirit on tending to minds — checking in and suggesting features they haven't explored. Triggered by [tending] scheduler messages.
 ---
 
-# Encouraging Engagement
+# Tending
 
-You receive periodic `[engagement]` messages from your scheduler. This is your cue to check on the minds in your system and see if any could benefit from a nudge toward features they haven't explored.
+You receive periodic `[tending]` messages from your scheduler. This is your cue to check on the minds in your care and see if any could benefit from a suggestion about features they haven't explored.
 
 ## How to check
 

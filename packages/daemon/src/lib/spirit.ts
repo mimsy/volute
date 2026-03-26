@@ -21,15 +21,15 @@ const SPIRIT_SKILLS = [
   "orientation",
   "memory",
   "seed-nurture",
-  "engagement",
+  "tending",
   "plan-coordinator",
 ];
 
-const ENGAGEMENT_SCHEDULE = {
-  id: "engagement",
+const TENDING_SCHEDULE = {
+  id: "tending",
   cron: "0 10 * * *",
   message:
-    "Check on the minds in the system — see if anyone could use a suggestion about features they haven't tried yet.",
+    "Check on the minds in your care — see if anyone could use a suggestion about features they haven't tried yet.",
   enabled: true,
   whileSleeping: "skip" as const,
 };
@@ -41,12 +41,12 @@ function npmEnv(): NodeJS.ProcessEnv {
   return { ...process.env, npm_config_cache: cacheDir };
 }
 
-/** Add the engagement schedule to spirit's volute.json if missing. Returns true if added. */
-function ensureEngagementSchedule(dir: string): boolean {
+/** Add the tending schedule to spirit's volute.json if missing. Returns true if added. */
+function ensureTendingSchedule(dir: string): boolean {
   const config = readVoluteConfig(dir) ?? {};
   const schedules = config.schedules ?? [];
-  if (schedules.some((s) => s.id === "engagement")) return false;
-  schedules.push({ ...ENGAGEMENT_SCHEDULE });
+  if (schedules.some((s) => s.id === "tending")) return false;
+  schedules.push({ ...TENDING_SCHEDULE });
   config.schedules = schedules;
   writeVoluteConfig(dir, config);
   return true;
@@ -137,11 +137,11 @@ export async function ensureSpiritProject(): Promise<void> {
       }
     }
 
-    // Add default engagement schedule
+    // Add default tending schedule
     try {
-      ensureEngagementSchedule(dir);
+      ensureTendingSchedule(dir);
     } catch (err) {
-      slog.warn("failed to add engagement schedule to spirit config", log.errorData(err));
+      slog.warn("failed to add tending schedule to spirit config", log.errorData(err));
     }
 
     // Set up per-mind user isolation (creates mind-volute user, chowns project dir).
@@ -285,13 +285,13 @@ export async function syncSpiritTemplate(): Promise<void> {
     }
   }
 
-  // Ensure engagement schedule exists (handles upgrades)
+  // Ensure tending schedule exists (handles upgrades)
   try {
-    if (ensureEngagementSchedule(dir)) {
-      slog.info("added engagement schedule to spirit");
+    if (ensureTendingSchedule(dir)) {
+      slog.info("added tending schedule to spirit");
     }
   } catch (err) {
-    slog.warn("failed to add engagement schedule to spirit config", log.errorData(err));
+    slog.warn("failed to add tending schedule to spirit config", log.errorData(err));
   }
 
   slog.info("spirit template synced");
