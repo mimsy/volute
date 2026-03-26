@@ -152,25 +152,45 @@ function formatRowCompact(row: HistoryRow): string {
   }
 }
 
-/** Convert a timestamp to a period key matching the summaries format. */
+/**
+ * Convert a timestamp to a period key matching the summarizer's format.
+ * Uses local time to match getPeriodKey() in the daemon summarizer.
+ */
 function periodKeyFromTimestamp(dateStr: string, period: string): string {
   const d = new Date(normalizeTimestamp(dateStr));
   switch (period) {
-    case "hour":
-      return d.toISOString().slice(0, 13); // YYYY-MM-DDTHH
-    case "day":
-      return d.toISOString().slice(0, 10); // YYYY-MM-DD
-    case "week": {
-      // ISO week: YYYY-Www
-      const jan4 = new Date(d.getUTCFullYear(), 0, 4);
-      const dayOfYear = Math.floor((d.getTime() - jan4.getTime()) / 86400000) + 4;
-      const weekNum = Math.ceil(dayOfYear / 7);
-      return `${d.getUTCFullYear()}-W${String(weekNum).padStart(2, "0")}`;
+    case "hour": {
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, "0");
+      const day = String(d.getDate()).padStart(2, "0");
+      const h = String(d.getHours()).padStart(2, "0");
+      return `${y}-${m}-${day}T${h}`;
     }
-    case "month":
-      return d.toISOString().slice(0, 7); // YYYY-MM
-    default:
-      return d.toISOString().slice(0, 10);
+    case "day": {
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, "0");
+      const day = String(d.getDate()).padStart(2, "0");
+      return `${y}-${m}-${day}`;
+    }
+    case "week": {
+      // ISO week calculation — matches daemon summarizer's getISOWeekKey()
+      const local = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+      local.setDate(local.getDate() + 4 - (local.getDay() || 7));
+      const yearStart = new Date(local.getFullYear(), 0, 1);
+      const weekNum = Math.ceil(((local.getTime() - yearStart.getTime()) / 86400000 + 1) / 7);
+      return `${local.getFullYear()}-W${String(weekNum).padStart(2, "0")}`;
+    }
+    case "month": {
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, "0");
+      return `${y}-${m}`;
+    }
+    default: {
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, "0");
+      const day = String(d.getDate()).padStart(2, "0");
+      return `${y}-${m}-${day}`;
+    }
   }
 }
 
@@ -273,9 +293,14 @@ const cmd = command({
       }
 
       const rows = (await summaryRes.json()) as SummaryRow[];
-      const activities: ActivityRow[] = activityRes.ok
-        ? ((await activityRes.json()) as ActivityRow[])
-        : [];
+      let activities: ActivityRow[] = [];
+      if (activityRes.ok) {
+        activities = (await activityRes.json()) as ActivityRow[];
+      } else {
+        console.error(
+          `Warning: could not fetch activity data (${activityRes.status}), showing summaries only`,
+        );
+      }
 
       // Group activity by period key
       const activityByPeriod = new Map<string, ActivityRow[]>();

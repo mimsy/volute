@@ -661,8 +661,10 @@ export function getAllDiscoveredExtensionsDetailed(): DetailedExtensionInfo[] {
         detail.skills = readdirSync(skillsDir, { withFileTypes: true })
           .filter((d) => d.isDirectory())
           .map((d) => d.name);
-      } catch {
-        // ignore — dir may not exist
+      } catch (err: unknown) {
+        if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+          log.warn(`failed to read skills dir for ${ext.id}`, log.errorData(err));
+        }
       }
     }
 

@@ -507,8 +507,8 @@ const history = new Hono()
       if (r.metadata) {
         try {
           metadata = JSON.parse(r.metadata);
-        } catch {
-          // ignore malformed metadata
+        } catch (err) {
+          log.debug(`malformed activity metadata for id ${r.id}`, log.errorData(err));
         }
       }
       return { ...r, metadata };
