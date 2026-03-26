@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 import { eq } from "drizzle-orm";
 import { createUser } from "../packages/daemon/src/lib/auth.js";
 import { getDb } from "../packages/daemon/src/lib/db.js";
-import { addMind, removeMind } from "../packages/daemon/src/lib/registry.js";
+import { addMind, removeMind } from "../packages/daemon/src/lib/mind/registry.js";
 import { users } from "../packages/daemon/src/lib/schema.js";
 import { createSession } from "../packages/daemon/src/web/middleware/auth.js";
 

@@ -10,7 +10,7 @@ export {
   importPiSession,
   parseNameFromIdentity,
   sessionMatchesWorkspace,
-} from "@volute/daemon/lib/import-utils.js";
+} from "@volute/daemon/lib/template/import-utils.js";
 
 export async function run(args: string[]) {
   const { positional, flags } = parseArgs(args, {
@@ -84,7 +84,7 @@ async function importArchive(archivePath: string, nameOverride?: string): Promis
     process.exit(1);
   }
 
-  const { extractArchive } = await import("@volute/daemon/lib/archive.js");
+  const { extractArchive } = await import("@volute/daemon/lib/mind/archive.js");
 
   // Extract to temp dir
   const tempDir = resolve(tmpdir(), `volute-import-${Date.now()}`);

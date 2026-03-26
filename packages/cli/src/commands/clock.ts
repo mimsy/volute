@@ -1,4 +1,4 @@
-import type { Schedule } from "@volute/daemon/lib/volute-config.js";
+import type { Schedule } from "@volute/daemon/lib/mind/volute-config.js";
 import { CronExpressionParser } from "cron-parser";
 import { getClient, urlOf } from "../lib/api-client.js";
 import { command, subcommands } from "../lib/command.js";

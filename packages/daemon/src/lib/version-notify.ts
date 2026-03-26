@@ -1,11 +1,11 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import log from "./logger.js";
-import { readRegistry, setMindTemplateHash, voluteSystemDir } from "./registry.js";
+import { sendSystemMessage } from "./chat/system-chat.js";
+import { readRegistry, setMindTemplateHash, voluteSystemDir } from "./mind/registry.js";
 import { parseReleaseNotes } from "./release-notes.js";
-import { sendSystemMessage } from "./system-chat.js";
-import { computeTemplateHash } from "./template-hash.js";
+import { computeTemplateHash } from "./template/template-hash.js";
 import { getCurrentVersion } from "./update-check.js";
+import log from "./util/logger.js";
 
 type VersionNotifyState = {
   lastNotifiedVersion: string;

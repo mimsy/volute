@@ -20,9 +20,9 @@ import {
   updateUserProfile,
   verifyUser,
 } from "../../lib/auth.js";
+import { joinSystemChannel } from "../../lib/chat/system-channel.js";
 import { broadcast } from "../../lib/events/activity-events.js";
-import { readRegistry, voluteHome } from "../../lib/registry.js";
-import { joinSystemChannel } from "../../lib/system-channel.js";
+import { readRegistry, voluteHome } from "../../lib/mind/registry.js";
 
 /** Only join system channel when running inside the daemon (not in tests). */
 function tryJoinSystem(userId: number): void {

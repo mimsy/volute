@@ -3,7 +3,6 @@ import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { Hono } from "hono";
 import { setCookie } from "hono/cookie";
-import log from "../../lib/logger.js";
 import {
   type GlobalConfig,
   isSetupComplete,
@@ -11,12 +10,13 @@ import {
   type SetupConfig,
   type SetupType,
   writeGlobalConfig,
-} from "../../lib/setup.js";
+} from "../../lib/config/setup.js";
 import {
   deleteSystemsConfig,
   readSystemsConfig,
   writeSystemsConfig,
-} from "../../lib/systems-config.js";
+} from "../../lib/config/systems-config.js";
+import log from "../../lib/util/logger.js";
 import { createSession, SESSION_MAX_AGE } from "../middleware/auth.js";
 
 const DEFAULT_API_URL = "https://volute.systems";
@@ -394,7 +394,7 @@ setup.post("/complete", async (c) => {
   }
 
   try {
-    const { ensureSpiritProject, syncSpiritTemplate } = await import("../../lib/spirit.js");
+    const { ensureSpiritProject, syncSpiritTemplate } = await import("../../lib/mind/spirit.js");
     const { startSpiritFull } = await import("../../lib/daemon/mind-service.js");
 
     await ensureSpiritProject();
@@ -429,13 +429,12 @@ setup.post("/complete", async (c) => {
       const admin = brains.find((u) => u.role === "admin");
 
       if (admin) {
-        const existing = await findDMConversation("volute", [admin.id, spiritUser.id]);
+        const existing = await findDMConversation([admin.id, spiritUser.id]);
         if (existing) {
           spiritConversationId = existing;
         } else {
-          const conv = await createConversation("volute", "volute", {
+          const conv = await createConversation({
             participantIds: [admin.id, spiritUser.id],
-            title: "Volute",
           });
           spiritConversationId = conv.id;
         }

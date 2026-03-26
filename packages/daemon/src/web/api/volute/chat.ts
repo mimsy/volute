@@ -3,7 +3,10 @@ import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { z } from "zod";
 import { getOrCreateMindUser, getOrCreateSystemUser } from "../../../lib/auth.js";
-import { routeOutboundBridge } from "../../../lib/bridge-outbound.js";
+import { routeOutboundBridge } from "../../../lib/bridges/bridge-outbound.js";
+import { formatFileSize, stageFile, validateFilePath } from "../../../lib/chat/file-sharing.js";
+import { generateSystemReply } from "../../../lib/chat/system-chat.js";
+import { getTypingMap } from "../../../lib/chat/typing.js";
 import { extractTextContent } from "../../../lib/delivery/delivery-router.js";
 import { deliverMessage, recordOutbound } from "../../../lib/delivery/message-delivery.js";
 import { subscribe } from "../../../lib/events/conversation-events.js";
@@ -12,17 +15,15 @@ import {
   type ContentBlock,
   createConversation,
   findDMConversation,
+  getChannelName,
   getChannelSettings,
   getConversation,
   getParticipants,
   isParticipantOrOwner,
 } from "../../../lib/events/conversations.js";
-import { formatFileSize, stageFile, validateFilePath } from "../../../lib/file-sharing.js";
-import log from "../../../lib/logger.js";
-import { findMind, getBaseName } from "../../../lib/registry.js";
-import { buildVoluteSlug } from "../../../lib/slugify.js";
-import { generateSystemReply } from "../../../lib/system-chat.js";
-import { getTypingMap } from "../../../lib/typing.js";
+import { findMind, getBaseName } from "../../../lib/mind/registry.js";
+import log from "../../../lib/util/logger.js";
+import { buildVoluteSlug } from "../../../lib/util/slugify.js";
 import type { AuthEnv } from "../../middleware/auth.js";
 
 type SlugOpts = Parameters<typeof buildVoluteSlug>[0];
@@ -31,7 +32,6 @@ async function fanOutToMinds(opts: {
   conversationId: string;
   contentBlocks: ContentBlock[];
   senderName: string;
-  convTitle: string | null;
   /** Override isDM (defaults to participants.length === 2) */
   isDM?: boolean;
   /** Extra fields passed to buildVoluteSlug (e.g. convType, convName) */
@@ -64,7 +64,6 @@ async function fanOutToMinds(opts: {
     return buildVoluteSlug({
       participants,
       mindUsername,
-      convTitle: opts.convTitle,
       conversationId: opts.conversationId,
       ...opts.slugExtra,
     });
@@ -216,19 +215,15 @@ export const unifiedChatApp = new Hono<AuthEnv>().post(
 
         // DM reuse: if exactly 2 participants, look for an existing conversation
         if (participantIds.length === 2) {
-          const existing = await findDMConversation(baseName, participantIds as [number, number]);
+          const existing = await findDMConversation(participantIds as [number, number]);
           if (existing) {
             conversationId = existing;
           }
         }
 
         if (!conversationId) {
-          const participantNames = new Set([senderName, baseName]);
-          const title = [...participantNames].join(", ");
-
-          const conv = await createConversation(baseName, "volute", {
+          const conv = await createConversation({
             userId: user.id !== 0 ? user.id : undefined,
-            title,
             participantIds,
           });
           conversationId = conv.id;
@@ -243,7 +238,7 @@ export const unifiedChatApp = new Hono<AuthEnv>().post(
 
     const conv = await getConversation(conversationId!);
     if (!conv) return c.json({ error: "Conversation not found" }, 404);
-    const convTitle = conv.title;
+    const convName = conv.type === "channel" ? await getChannelName(conversationId!) : null;
 
     // Stage files
     const fileNotifications: string[] = [];
@@ -275,9 +270,9 @@ export const unifiedChatApp = new Hono<AuthEnv>().post(
     }
 
     // Enforce char_limit for mind senders in channels
-    if (senderIsMind && conv.type === "channel" && conv.name) {
+    if (senderIsMind && conv.type === "channel" && convName) {
       try {
-        const chSettings = await getChannelSettings(conv.name);
+        const chSettings = await getChannelSettings(convName);
         if (chSettings?.char_limit) {
           for (const block of contentBlocks) {
             if (block.type === "text" && block.text.length > chSettings.char_limit) {
@@ -308,10 +303,9 @@ export const unifiedChatApp = new Hono<AuthEnv>().post(
       const channel = buildVoluteSlug({
         participants: await getParticipants(conversationId!),
         mindUsername: senderName,
-        convTitle,
         conversationId: conversationId!,
         convType: conv.type as "dm" | "channel",
-        convName: conv.name,
+        convName,
       });
       try {
         outboundId = await recordOutbound(senderName, channel, extractTextContent(contentBlocks), {
@@ -328,9 +322,8 @@ export const unifiedChatApp = new Hono<AuthEnv>().post(
       conversationId: conversationId!,
       contentBlocks,
       senderName,
-      convTitle,
       isDM,
-      slugExtra: { convType: conv.type as "dm" | "channel", convName: conv.name },
+      slugExtra: { convType: conv.type as "dm" | "channel", convName },
       // Variant-aware targeting: when targetMind is a variant, route to the variant name
       targetName: baseName
         ? (username) => (username === baseName ? variantName! : username)

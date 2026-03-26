@@ -4,7 +4,7 @@ import {
   getConfiguredProviders,
   getEnabledModels,
 } from "../../lib/ai-service.js";
-import { readGlobalConfig } from "../../lib/setup.js";
+import { readGlobalConfig } from "../../lib/config/setup.js";
 
 const config = new Hono();
 

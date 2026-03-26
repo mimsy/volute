@@ -20,9 +20,9 @@ const cmd = command({
 
     const convs = (await res.json()) as {
       id: string;
-      title: string | null;
       type: string;
-      name: string | null;
+      channel_name: string | null;
+      participants: { username: string }[];
       updated_at: string;
     }[];
 
@@ -33,7 +33,13 @@ const cmd = command({
 
     const compact = isCompact();
     for (const conv of convs) {
-      const label = conv.type === "channel" ? `#${conv.name}` : (conv.title ?? conv.id.slice(0, 8));
+      let label: string;
+      if (conv.type === "channel" && conv.channel_name) {
+        label = `#${conv.channel_name}`;
+      } else {
+        const other = conv.participants?.find((p) => p.username !== mindName);
+        label = other ? `@${other.username}` : conv.id.slice(0, 8);
+      }
       if (compact) {
         console.log(`${label} (${conv.type})`);
       } else {

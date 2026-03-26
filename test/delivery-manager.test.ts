@@ -5,7 +5,7 @@ import { afterEach, describe, it } from "node:test";
 import { DeliveryManager } from "../packages/daemon/src/lib/delivery/delivery-manager.js";
 import type { RoutingConfig } from "../packages/daemon/src/lib/delivery/delivery-router.js";
 import { clearConfigCache } from "../packages/daemon/src/lib/delivery/delivery-router.js";
-import { addMind, removeMind } from "../packages/daemon/src/lib/registry.js";
+import { addMind, removeMind } from "../packages/daemon/src/lib/mind/registry.js";
 
 function createMindWithRoutes(config: RoutingConfig | object): string {
   const port = 4100 + Math.floor(Math.random() * 1000);

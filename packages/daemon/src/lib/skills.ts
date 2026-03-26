@@ -11,12 +11,12 @@ import {
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { eq, sql } from "drizzle-orm";
+import { readGlobalConfig, writeGlobalConfig } from "./config/setup.js";
 import { getDb } from "./db.js";
-import { exec, gitExec } from "./exec.js";
-import log from "./logger.js";
-import { mindDir, readRegistry, voluteHome } from "./registry.js";
+import { mindDir, readRegistry, voluteHome } from "./mind/registry.js";
 import { sharedSkills } from "./schema.js";
-import { readGlobalConfig, writeGlobalConfig } from "./setup.js";
+import { exec, gitExec } from "./util/exec.js";
+import log from "./util/logger.js";
 
 const VALID_SKILL_ID = /^[a-zA-Z0-9_-]+$/;
 

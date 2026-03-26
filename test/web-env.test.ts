@@ -2,9 +2,14 @@ import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { eq } from "drizzle-orm";
 import { approveUser, createUser } from "../packages/daemon/src/lib/auth.js";
+import {
+  mindEnvPath,
+  readEnv,
+  sharedEnvPath,
+  writeEnv,
+} from "../packages/daemon/src/lib/config/env.js";
 import { getDb } from "../packages/daemon/src/lib/db.js";
-import { mindEnvPath, readEnv, sharedEnvPath, writeEnv } from "../packages/daemon/src/lib/env.js";
-import { addMind, removeMind } from "../packages/daemon/src/lib/registry.js";
+import { addMind, removeMind } from "../packages/daemon/src/lib/mind/registry.js";
 import { users } from "../packages/daemon/src/lib/schema.js";
 import { createSession, deleteSession } from "../packages/daemon/src/web/middleware/auth.js";
 

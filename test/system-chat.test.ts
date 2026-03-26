@@ -1,21 +1,21 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { getOrCreateSystemUser, verifyUser } from "../packages/daemon/src/lib/auth.js";
-import { getDb } from "../packages/daemon/src/lib/db.js";
-import { validateMindName } from "../packages/daemon/src/lib/registry.js";
-import {
-  conversationParticipants,
-  conversations,
-  messages,
-  users,
-} from "../packages/daemon/src/lib/schema.js";
 import {
   ensureSystemDM,
   generateSystemReply,
   resetSystemDMCache,
   sendSystemMessage,
   sendSystemMessageDirect,
-} from "../packages/daemon/src/lib/system-chat.js";
+} from "../packages/daemon/src/lib/chat/system-chat.js";
+import { getDb } from "../packages/daemon/src/lib/db.js";
+import { validateMindName } from "../packages/daemon/src/lib/mind/registry.js";
+import {
+  conversationParticipants,
+  conversations,
+  messages,
+  users,
+} from "../packages/daemon/src/lib/schema.js";
 
 const { eq } = await import("drizzle-orm");
 
@@ -76,7 +76,6 @@ describe("system DM", () => {
       .get();
     assert.ok(conv, "conversation should exist in DB");
     assert.equal(conv!.type, "dm");
-    assert.equal(conv!.title, "Volute");
 
     // Should have 2 participants
     const parts = await db

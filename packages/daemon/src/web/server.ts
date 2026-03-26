@@ -4,7 +4,7 @@ import { createServer as createHttpsServer } from "node:https";
 import { dirname, extname, resolve } from "node:path";
 import type { ServerType } from "@hono/node-server";
 import { serve } from "@hono/node-server";
-import log from "../lib/logger.js";
+import log from "../lib/util/logger.js";
 import app from "./app.js";
 
 const MIME_TYPES: Record<string, string> = {

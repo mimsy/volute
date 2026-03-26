@@ -5,6 +5,8 @@ import { getOrCreateMindUser, getUserByUsername } from "../../../lib/auth.js";
 import {
   createConversation,
   deleteConversationForUser,
+  findDMConversation,
+  getConversation,
   getMessagesPaginated,
   getParticipants,
   isParticipantOrOwner,
@@ -12,11 +14,10 @@ import {
   markConversationRead,
   setConversationPrivate,
 } from "../../../lib/events/conversations.js";
-import { findMind } from "../../../lib/registry.js";
+import { findMind } from "../../../lib/mind/registry.js";
 import { type AuthEnv, authMiddleware } from "../../middleware/auth.js";
 
 const createSchema = z.object({
-  title: z.string().optional(),
   participantNames: z.array(z.string()).min(1),
 });
 
@@ -89,10 +90,20 @@ const app = new Hono<AuthEnv>()
       return c.json({ error: "Use channels for multi-participant conversations" }, 400);
     }
 
-    const conv = await createConversation(firstMindName, "volute", {
+    const ids = [...participantIds];
+
+    // DM reuse: if exactly 2 participants, return existing conversation if found
+    if (ids.length === 2) {
+      const existingId = await findDMConversation(ids as [number, number]);
+      if (existingId) {
+        const existing = await getConversation(existingId);
+        if (existing) return c.json(existing);
+      }
+    }
+
+    const conv = await createConversation({
       userId: user.id !== 0 ? user.id : undefined,
-      title: body.title,
-      participantIds: [...participantIds],
+      participantIds: ids,
     });
 
     return c.json(conv, 201);

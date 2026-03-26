@@ -2,8 +2,8 @@ import { execFile } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
-import log from "./logger.js";
-import { voluteHome } from "./registry.js";
+import { voluteHome } from "./mind/registry.js";
+import log from "./util/logger.js";
 
 const execFileAsync = promisify(execFile);
 

@@ -3,8 +3,8 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import AdmZip from "adm-zip";
 import { Hono } from "hono";
+import { readGlobalConfig, writeGlobalConfig } from "../../lib/config/setup.js";
 import { getExtensionStandardSkills } from "../../lib/extensions.js";
-import { readGlobalConfig, writeGlobalConfig } from "../../lib/setup.js";
 import {
   getSharedSkill,
   getStandardSkillsWithExtensions,

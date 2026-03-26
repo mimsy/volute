@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { splitMessage } from "../packages/daemon/src/connectors/sdk.js";
+import { splitMessage } from "../packages/daemon/src/lib/bridges/sdk.js";
 
 describe("splitMessage", () => {
   it("returns single chunk for short messages", () => {

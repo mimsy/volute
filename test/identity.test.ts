@@ -9,7 +9,7 @@ import {
   getPublicKey,
   signMessage,
   verifySignature,
-} from "../packages/daemon/src/lib/identity.js";
+} from "../packages/daemon/src/lib/mind/identity.js";
 
 const scratchDir = resolve("/tmp/identity-test");
 

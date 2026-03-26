@@ -11,7 +11,7 @@ import {
   findTemplatesDir,
   findTemplatesRoot,
   listFiles,
-} from "../packages/daemon/src/lib/template.js";
+} from "../packages/daemon/src/lib/template/template.js";
 
 const tmpDir = join(tmpdir(), ".volute-upgrade-test");
 

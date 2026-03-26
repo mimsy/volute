@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { eq } from "drizzle-orm";
 import { createUser } from "../packages/daemon/src/lib/auth.js";
+import { getTypingMap, TypingMap } from "../packages/daemon/src/lib/chat/typing.js";
 import { getDb } from "../packages/daemon/src/lib/db.js";
 import { users } from "../packages/daemon/src/lib/schema.js";
-import { getTypingMap, TypingMap } from "../packages/daemon/src/lib/typing.js";
 import { createSession } from "../packages/daemon/src/web/middleware/auth.js";
 
 describe("TypingMap", () => {

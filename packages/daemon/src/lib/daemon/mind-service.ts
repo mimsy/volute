@@ -1,13 +1,13 @@
 import { syncMindProfile } from "../auth.js";
+import { joinSystemChannelForMind } from "../chat/system-channel.js";
+import { ensureSystemDM, sendSystemMessage } from "../chat/system-chat.js";
 import { publish as publishActivity } from "../events/activity-events.js";
 import { markIdle } from "../events/mind-activity-tracker.js";
 import { notifyExtensionsMindStart, notifyExtensionsMindStop } from "../extensions.js";
-import log from "../logger.js";
-import { findMind, getBaseName, mindDir } from "../registry.js";
-import { spiritDir } from "../spirit.js";
-import { joinSystemChannelForMind } from "../system-channel.js";
-import { ensureSystemDM, sendSystemMessage } from "../system-chat.js";
-import { readVoluteConfig } from "../volute-config.js";
+import { findMind, getBaseName, mindDir } from "../mind/registry.js";
+import { spiritDir } from "../mind/spirit.js";
+import { readVoluteConfig } from "../mind/volute-config.js";
+import log from "../util/logger.js";
 import { ensureMailAddress } from "./mail-poller.js";
 import { getMindManager } from "./mind-manager.js";
 import { getScheduler } from "./scheduler.js";
@@ -173,9 +173,9 @@ async function ensureCreatorDM(mindName: string, creatorUsername: string): Promi
     return;
   }
 
-  const existing = await findDMConversation(mindName, [mindUser.id, creatorUser.id]);
+  const existing = await findDMConversation([mindUser.id, creatorUser.id]);
   if (!existing) {
-    await createConversation(mindName, creatorUsername, {
+    await createConversation({
       participantIds: [mindUser.id, creatorUser.id],
     });
   }

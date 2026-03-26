@@ -9,8 +9,8 @@ import {
   readAllMinds,
   removeMind,
   setMindRunning,
-} from "../packages/daemon/src/lib/registry.js";
-import { validateBranchName } from "../packages/daemon/src/lib/variants.js";
+} from "../packages/daemon/src/lib/mind/registry.js";
+import { validateBranchName } from "../packages/daemon/src/lib/mind/variants.js";
 
 const testMind = `test-mind-${Date.now()}`;
 

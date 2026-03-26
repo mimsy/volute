@@ -13,11 +13,10 @@ import {
   isParticipantOrOwner,
   listConversationsForUser,
 } from "../../../lib/events/conversations.js";
-import { findMind } from "../../../lib/registry.js";
+import { findMind } from "../../../lib/mind/registry.js";
 import type { AuthEnv } from "../../middleware/auth.js";
 
 const createConvSchema = z.object({
-  title: z.string().optional(),
   participantIds: z.array(z.number()).optional(),
   participantNames: z.array(z.string()).optional(),
 });
@@ -34,8 +33,7 @@ const app = new Hono<AuthEnv>()
       lookupId = mindUser.id;
     }
 
-    const all = await listConversationsForUser(lookupId);
-    const convs = all.filter((c) => c.mind_name === name || c.type === "channel");
+    const convs = await listConversationsForUser(lookupId);
     return c.json(convs);
   })
   .post("/:name/conversations", zValidator("json", createConvSchema), async (c) => {
@@ -100,7 +98,7 @@ const app = new Hono<AuthEnv>()
 
     // DM reuse: if exactly 2 participants, return existing conversation if found
     if (participantIds.length === 2) {
-      const existingId = await findDMConversation(name, participantIds as [number, number]);
+      const existingId = await findDMConversation(participantIds as [number, number]);
       if (existingId) {
         const conv = await getConversation(existingId);
         if (conv) return c.json(conv);
@@ -108,15 +106,8 @@ const app = new Hono<AuthEnv>()
       }
     }
 
-    // Default title from participant names when none provided
-    let title = body.title;
-    if (!title && body.participantNames?.length) {
-      title = body.participantNames.join(", ");
-    }
-
-    const conv = await createConversation(name, "volute", {
+    const conv = await createConversation({
       userId: user.id !== 0 ? user.id : undefined,
-      title,
       participantIds,
     });
 

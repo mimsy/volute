@@ -3,9 +3,16 @@ import { getSleepManagerIfReady } from "../daemon/sleep-manager.js";
 import { getActiveTurnId } from "../daemon/turn-tracker.js";
 import { getDb } from "../db.js";
 import { publish as publishMindEvent } from "../events/mind-events.js";
-import log from "../logger.js";
-import { findMind, getBaseName } from "../registry.js";
-import { activity, conversations, messages, mindHistory, turns } from "../schema.js";
+import { findMind, getBaseName } from "../mind/registry.js";
+import {
+  activity,
+  conversationParticipants,
+  messages,
+  mindHistory,
+  turns,
+  users,
+} from "../schema.js";
+import log from "../util/logger.js";
 import { getDeliveryManager } from "./delivery-manager.js";
 import { type DeliveryPayload, extractTextContent } from "./delivery-router.js";
 
@@ -324,20 +331,36 @@ export async function tagUntaggedInbound(
     }
   }
   // Tag recent untagged conversation messages (only inbound, i.e. not sent by the mind itself)
-  const recentMsgs = await db
-    .select({ id: messages.id })
-    .from(messages)
-    .innerJoin(conversations, eq(messages.conversation_id, conversations.id))
-    .where(
-      and(
-        eq(conversations.mind_name, mind),
-        sql`${messages.turn_id} IS NULL`,
-        sql`${messages.sender_name} != ${mind}`,
-        sql`${messages.created_at} > datetime('now', '-60 seconds')`,
-      ),
-    )
-    .orderBy(desc(messages.id))
-    .limit(limit);
+  // Find conversations where this mind is a participant
+  const mindUser = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(and(eq(users.username, mind), eq(users.user_type, "mind")))
+    .get();
+  const mindConvIds = mindUser
+    ? (
+        await db
+          .select({ conversation_id: conversationParticipants.conversation_id })
+          .from(conversationParticipants)
+          .where(eq(conversationParticipants.user_id, mindUser.id))
+      ).map((r) => r.conversation_id)
+    : [];
+  const recentMsgs =
+    mindConvIds.length > 0
+      ? await db
+          .select({ id: messages.id })
+          .from(messages)
+          .where(
+            and(
+              inArray(messages.conversation_id, mindConvIds),
+              sql`${messages.turn_id} IS NULL`,
+              sql`${messages.sender_name} != ${mind}`,
+              sql`${messages.created_at} > datetime('now', '-60 seconds')`,
+            ),
+          )
+          .orderBy(desc(messages.id))
+          .limit(limit)
+      : [];
   if (recentMsgs.length > 0) {
     const ids = recentMsgs.map((r) => r.id);
     await db.update(messages).set({ turn_id: turnId }).where(inArray(messages.id, ids));

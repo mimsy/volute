@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
+import { readGlobalConfig, writeGlobalConfig } from "../packages/daemon/src/lib/config/setup.js";
 import {
   getConfiguredProviders,
   getEnabledModels,
@@ -9,7 +10,6 @@ import {
   saveProviderConfig,
   setEnabledModels,
 } from "../packages/daemon/src/lib/services/imagegen.js";
-import { readGlobalConfig, writeGlobalConfig } from "../packages/daemon/src/lib/setup.js";
 
 function resetImagegenConfig() {
   const config = readGlobalConfig();

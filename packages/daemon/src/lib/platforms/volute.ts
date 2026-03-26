@@ -5,7 +5,7 @@ import {
   type PlatformConversation,
   type PlatformUser,
   resolvePlatformId,
-} from "../platforms.js";
+} from "@volute/platforms";
 
 /** Read session from a mind's current-session file. */
 function readSessionFile(mindDir: string): string | undefined {
@@ -21,8 +21,8 @@ function readSessionFile(mindDir: string): string | undefined {
   return undefined;
 }
 
-import { voluteSystemDir } from "../registry.js";
-import { buildVoluteSlug } from "../slugify.js";
+import { voluteSystemDir } from "../mind/registry.js";
+import { buildVoluteSlug } from "../util/slugify.js";
 
 function getDaemonConfig(): { url: string; token?: string } {
   const configPath = resolve(voluteSystemDir(), "daemon.json");
@@ -144,42 +144,33 @@ export async function listConversations(
   }
   const convs = (await res.json()) as {
     id: string;
-    title: string | null;
     type?: string;
-    name?: string | null;
-    participants?: { userId: number }[];
+    channel_name?: string | null;
+    participants?: { username: string }[];
   }[];
 
-  // Fetch participants for each conversation
   const results: PlatformConversation[] = [];
   for (const conv of convs) {
-    let participants: { username: string }[] = [];
-    try {
-      const pRes = await fetch(
-        `${url}/api/minds/${encodeURIComponent(mindName)}/conversations/${encodeURIComponent(conv.id)}/participants`,
-        { headers },
-      );
-      if (pRes.ok) {
-        participants = (await pRes.json()) as { username: string }[];
-      } else {
-        console.error(`[volute] failed to fetch participants for ${conv.id}: HTTP ${pRes.status}`);
-      }
-    } catch (err) {
-      console.error(`[volute] failed to fetch participants for ${conv.id}:`, err);
-    }
+    const participants = conv.participants ?? [];
     const slug = buildVoluteSlug({
       participants,
       mindUsername: mindName,
-      convTitle: conv.title,
       conversationId: conv.id,
       convType: conv.type as "dm" | "channel" | undefined,
-      convName: conv.name,
+      convName: conv.channel_name,
     });
     const convType = conv.type === "channel" ? "channel" : "dm";
+    const other = participants.find((p) => p.username !== mindName);
+    const displayName =
+      conv.type === "channel" && conv.channel_name
+        ? `#${conv.channel_name}`
+        : other
+          ? `@${other.username}`
+          : "(untitled)";
     results.push({
       id: slug,
       platformId: conv.id,
-      name: conv.type === "channel" ? `#${conv.name}` : (conv.title ?? "(untitled)"),
+      name: displayName,
       type: convType,
       participantCount: participants.length,
     });
@@ -226,7 +217,7 @@ export async function createConversation(
   const res = await fetch(`${url}/api/minds/${encodeURIComponent(mindName)}/conversations`, {
     method: "POST",
     headers,
-    body: JSON.stringify({ participantNames: participants, title: name }),
+    body: JSON.stringify({ participantNames: participants }),
   });
   if (!res.ok) {
     const data = (await res.json().catch(() => ({}))) as { error?: string };

@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { resolve } from "node:path";
-import { voluteUserHome } from "@volute/daemon/lib/registry.js";
+import { voluteUserHome } from "@volute/daemon/lib/mind/registry.js";
 import { command } from "../lib/command.js";
 import { daemonFetch } from "../lib/daemon-client.js";
 

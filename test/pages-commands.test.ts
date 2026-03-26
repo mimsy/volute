@@ -6,15 +6,15 @@ import { resolve } from "node:path";
 import { after, afterEach, before, beforeEach, describe, it } from "node:test";
 import { eq } from "drizzle-orm";
 import { approveUser, createUser } from "../packages/daemon/src/lib/auth.js";
-import { getDb } from "../packages/daemon/src/lib/db.js";
-import { loadAllExtensions } from "../packages/daemon/src/lib/extensions.js";
-import { addMind, removeMind, voluteSystemDir } from "../packages/daemon/src/lib/registry.js";
-import { users } from "../packages/daemon/src/lib/schema.js";
 import {
   deleteSystemsConfig,
   readSystemsConfig,
   writeSystemsConfig,
-} from "../packages/daemon/src/lib/systems-config.js";
+} from "../packages/daemon/src/lib/config/systems-config.js";
+import { getDb } from "../packages/daemon/src/lib/db.js";
+import { loadAllExtensions } from "../packages/daemon/src/lib/extensions.js";
+import { addMind, removeMind, voluteSystemDir } from "../packages/daemon/src/lib/mind/registry.js";
+import { users } from "../packages/daemon/src/lib/schema.js";
 import { authMiddleware, createSession } from "../packages/daemon/src/web/middleware/auth.js";
 
 function configPath() {

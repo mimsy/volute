@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { logBuffer } from "../packages/daemon/src/lib/log-buffer.js";
+import { logBuffer } from "../packages/daemon/src/lib/util/log-buffer.js";
 
 describe("logger", () => {
   it("logBuffer.append stores entries retrievable via getEntries", () => {
@@ -26,7 +26,7 @@ describe("logger", () => {
 
   it("log writes structured JSON to stderr", async () => {
     // Dynamically import to test the actual log module
-    const log = (await import("../packages/daemon/src/lib/logger.js")).default;
+    const log = (await import("../packages/daemon/src/lib/util/logger.js")).default;
     const chunks: Buffer[] = [];
     const origWrite = process.stderr.write;
     process.stderr.write = (chunk: Uint8Array | string) => {

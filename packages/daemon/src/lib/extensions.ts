@@ -17,14 +17,14 @@ import extPlan from "@volute/plan";
 import type { Context, Hono, MiddlewareHandler } from "hono";
 import type { AuthEnv } from "../web/middleware/auth.js";
 import { getUser, getUserByUsername } from "./auth.js";
+import { announceToSystem } from "./chat/system-channel.js";
+import { readGlobalConfig, writeGlobalConfig } from "./config/setup.js";
+import { readSystemsConfig } from "./config/systems-config.js";
 import { publish } from "./events/activity-events.js";
-import { isIsolationEnabled, mindUserName } from "./isolation.js";
-import log from "./logger.js";
-import { mindDir, voluteHome, voluteSystemDir } from "./registry.js";
-import { readGlobalConfig, writeGlobalConfig } from "./setup.js";
+import { isIsolationEnabled, mindUserName } from "./mind/isolation.js";
+import { mindDir, voluteHome, voluteSystemDir } from "./mind/registry.js";
 import { hashSkillDir, importSkillFromDir, removeSharedSkill, sharedSkillsDir } from "./skills.js";
-import { announceToSystem } from "./system-channel.js";
-import { readSystemsConfig } from "./systems-config.js";
+import log from "./util/logger.js";
 
 const VALID_EXTENSION_ID = /^[a-z0-9][a-z0-9_-]*$/;
 
@@ -734,7 +734,7 @@ export async function installNpmExtension(pkg: string): Promise<void> {
   }
 
   const dir = ensureExtensionsNpmDir();
-  const { exec } = await import("./exec.js");
+  const { exec } = await import("./util/exec.js");
   try {
     await exec("npm", ["install", pkg], { cwd: dir });
   } catch (err) {
@@ -761,7 +761,7 @@ export async function uninstallNpmExtension(pkg: string): Promise<void> {
   writeExtensionsConfig(packages);
 
   try {
-    const { exec } = await import("./exec.js");
+    const { exec } = await import("./util/exec.js");
     await exec("npm", ["uninstall", pkg], { cwd: extensionsNpmDir() });
   } catch (err) {
     log.warn(
