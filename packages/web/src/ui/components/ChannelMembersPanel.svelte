@@ -250,17 +250,6 @@ function isBrainIridescent(username: string): boolean {
   .status-dot.iridescent {
     animation: iridescent 3s ease-in-out infinite;
   }
-
-  @keyframes iridescent {
-    0%   { background: #4ade80; }
-    16%  { background: #60a5fa; }
-    33%  { background: #c084fc; }
-    50%  { background: #f472b6; }
-    66%  { background: #fbbf24; }
-    83%  { background: #34d399; }
-    100% { background: #4ade80; }
-  }
-
   @media (max-width: 1024px) {
     .members-panel {
       width: 100%;

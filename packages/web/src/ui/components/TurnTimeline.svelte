@@ -8,7 +8,7 @@ import type {
 } from "@volute/api";
 import { Icon } from "@volute/ui";
 import { renderMarkdown } from "@volute/ui/markdown";
-import { SvelteMap } from "svelte/reactivity";
+import { SvelteMap, SvelteSet } from "svelte/reactivity";
 import {
   fetchHistory,
   fetchSummaries,
@@ -17,7 +17,7 @@ import {
   fetchTurns,
 } from "../lib/client";
 import { extractTextContent } from "../lib/feed-utils";
-import { formatRelativeTime } from "../lib/format";
+import { formatRelativeTime, normalizeTimestamp } from "../lib/format";
 import { navigate } from "../lib/navigate";
 import { activeMinds } from "../lib/stores.svelte";
 import { groupToolEvents } from "../lib/tool-groups";
@@ -157,7 +157,7 @@ let weekSummaries = $state<SummaryRow[]>([]);
 let monthSummaries = $state<SummaryRow[]>([]);
 let summariesLoaded = $state(false);
 let expandedSummaries = $state(new SvelteMap<number, SummaryRow[] | TurnRow[]>());
-let loadingChildren = $state(new Set<number>());
+let loadingChildren = new SvelteSet<number>();
 // For single-turn hours: expand directly to raw events instead of showing the turn summary
 let directEventsSummaries = $state(new SvelteMap<number, HistoryMessage[]>());
 
@@ -191,12 +191,21 @@ function buildHistoryMessage(
 }
 
 function upsertTurnRows(rows: TurnRow[]) {
+  let changed = false;
+  const newRows: TurnRow[] = [];
   for (const row of rows) {
-    if (!turnsData.some((t) => t.id === row.id)) {
-      turnsData = [...turnsData, row];
+    const idx = turnsData.findIndex((t) => t.id === row.id);
+    if (idx === -1) {
+      newRows.push(row);
     } else {
-      turnsData = turnsData.map((t) => (t.id === row.id ? row : t));
+      turnsData[idx] = row;
+      changed = true;
     }
+  }
+  if (newRows.length > 0) {
+    turnsData = [...turnsData, ...newRows];
+  } else if (changed) {
+    turnsData = [...turnsData];
   }
 }
 
@@ -420,42 +429,27 @@ async function loadSummaries() {
     const weekAgo = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 7);
     const weekCutoff = `${weekAgo.getFullYear()}-${pad2(weekAgo.getMonth() + 1)}-${pad2(weekAgo.getDate())}`;
 
-    // Load hours for today (from local start-of-day to current hour, in UTC keys)
-    const hours = await fetchSummaries({
-      mind: name,
-      period: "hour",
-      from: todayHourFrom,
-      to: hourCutoff,
-      limit: 24,
-    });
-    hourSummaries = hours.sort((a, b) => a.period_key.localeCompare(b.period_key));
+    const currentMonth = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}`;
 
-    // Load days for last week (before today's day key)
-    const days = await fetchSummaries({
-      mind: name,
-      period: "day",
-      from: weekCutoff,
-      to: todayDayKey,
-      limit: 7,
-    });
-    // Exclude today — it's covered by hourly summaries
+    // Fetch all summary periods in parallel
+    const [hours, days, weeks, months] = await Promise.all([
+      fetchSummaries({
+        mind: name,
+        period: "hour",
+        from: todayHourFrom,
+        to: hourCutoff,
+        limit: 24,
+      }),
+      fetchSummaries({ mind: name, period: "day", from: weekCutoff, to: todayDayKey, limit: 7 }),
+      fetchSummaries({ mind: name, period: "week", to: weekCutoff, limit: 12 }),
+      fetchSummaries({ mind: name, period: "month", to: currentMonth, limit: 12 }),
+    ]);
+
+    hourSummaries = hours.sort((a, b) => a.period_key.localeCompare(b.period_key));
     daySummaries = days
       .filter((d) => d.period_key < todayDayKey)
       .sort((a, b) => a.period_key.localeCompare(b.period_key));
-
-    // Load weeks (before last week). Exclude current week.
-    const weeks = await fetchSummaries({ mind: name, period: "week", to: weekCutoff, limit: 12 });
     weekSummaries = weeks.sort((a, b) => a.period_key.localeCompare(b.period_key));
-
-    // Load months (exclude current month — it's still in progress)
-    const currentMonth = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}`;
-    const months = await fetchSummaries({
-      mind: name,
-      period: "month",
-      to: currentMonth,
-      limit: 12,
-    });
-    // Filter out the current month in case the boundary comparison includes it
     monthSummaries = months
       .filter((m) => m.period_key < currentMonth)
       .sort((a, b) => a.period_key.localeCompare(b.period_key));
@@ -471,13 +465,10 @@ async function toggleSummaryExpand(summary: SummaryRow) {
   if (expandedSummaries.has(summary.id) || directEventsSummaries.has(summary.id)) {
     expandedSummaries.delete(summary.id);
     directEventsSummaries.delete(summary.id);
-    expandedSummaries = new SvelteMap(expandedSummaries);
-    directEventsSummaries = new SvelteMap(directEventsSummaries);
     return;
   }
 
   loadingChildren.add(summary.id);
-  loadingChildren = new Set(loadingChildren);
 
   try {
     const isSystem = summary.mind === "_system";
@@ -486,23 +477,21 @@ async function toggleSummaryExpand(summary: SummaryRow) {
     if (isSystem && childPeriod === "turn") {
       // System-level hourly summaries don't have source_ids to turns.
       // Instead, fetch per-mind summaries at the same period (hour).
-      // Their metadata will have source_ids pointing to turn summaries.
       const minds: string[] =
         ((summary.metadata as Record<string, unknown>)?.minds as string[]) ?? [];
-      const perMindSummaries: SummaryRow[] = [];
-      for (const mind of minds) {
-        const rows = await fetchSummaries({
-          mind,
-          period: summary.period,
-          from: summary.period_key,
-          to: summary.period_key,
-          limit: 1,
-        });
-        perMindSummaries.push(...rows);
-      }
-      perMindSummaries.sort((a, b) => a.mind.localeCompare(b.mind));
+      const results = await Promise.all(
+        minds.map((mind) =>
+          fetchSummaries({
+            mind,
+            period: summary.period,
+            from: summary.period_key,
+            to: summary.period_key,
+            limit: 1,
+          }),
+        ),
+      );
+      const perMindSummaries = results.flat().sort((a, b) => a.mind.localeCompare(b.mind));
       expandedSummaries.set(summary.id, perMindSummaries);
-      expandedSummaries = new SvelteMap(expandedSummaries);
     } else if (childPeriod === "turn") {
       // Per-mind hourly summaries have source_ids pointing to turn summaries.
       const sourceIds: number[] =
@@ -517,19 +506,15 @@ async function toggleSummaryExpand(summary: SummaryRow) {
             turnId: turnIds[0],
           });
           directEventsSummaries.set(summary.id, events);
-          directEventsSummaries = new SvelteMap(directEventsSummaries);
         } else if (turnIds.length > 0) {
           const turns: TurnRow[] = await fetchTurns({ turnIds: turnIds });
           turns.sort((a, b) => a.created_at.localeCompare(b.created_at));
           expandedSummaries.set(summary.id, turns);
-          expandedSummaries = new SvelteMap(expandedSummaries);
         } else {
           expandedSummaries.set(summary.id, []);
-          expandedSummaries = new SvelteMap(expandedSummaries);
         }
       } else {
         expandedSummaries.set(summary.id, []);
-        expandedSummaries = new SvelteMap(expandedSummaries);
       }
     } else {
       // For summary children, use period_key-format boundaries (not ISO timestamps)
@@ -569,13 +554,11 @@ async function toggleSummaryExpand(summary: SummaryRow) {
         children.sort((a, b) => a.period_key.localeCompare(b.period_key)),
       );
     }
-    expandedSummaries = new SvelteMap(expandedSummaries);
   } catch (e) {
     console.warn("[TurnTimeline] Failed to load summary children:", e);
   }
 
   loadingChildren.delete(summary.id);
-  loadingChildren = new Set(loadingChildren);
 }
 
 // Build the combined timeline items list
@@ -626,7 +609,7 @@ let timelineItems = $derived.by(() => {
       | string
       | undefined;
     const timeStr = toTime ?? t.created_at;
-    const turnTime = new Date(timeStr + (timeStr.endsWith("Z") ? "" : "Z")).getTime();
+    const turnTime = new Date(normalizeTimestamp(timeStr)).getTime();
     return turnTime >= hourCutoffMs;
   });
 
@@ -1544,17 +1527,6 @@ function jumpToLatest() {
     line-height: 8px;
     padding-left: 20px;
   }
-
-  @keyframes iridescent {
-    0%   { background: #4ade80; }
-    16%  { background: #60a5fa; }
-    33%  { background: #c084fc; }
-    50%  { background: #f472b6; }
-    66%  { background: #fbbf24; }
-    83%  { background: #34d399; }
-    100% { background: #4ade80; }
-  }
-
   /* Scale break: two diagonal lines on the rail with labels */
   .scale-break-row {
     min-height: 60px !important;

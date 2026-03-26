@@ -11,7 +11,14 @@ import {
   updateSchedule,
   updateSleepConfig,
 } from "../../lib/client";
-import { formatCron } from "../../lib/clock-format";
+import {
+  fmtTime,
+  formatCron,
+  freqToCron,
+  parseCronToFreq,
+  parseCronToTime,
+  timeToCron,
+} from "../../lib/clock-format";
 
 let { name }: { name: string } = $props();
 
@@ -56,72 +63,6 @@ let editIfSleeping = $state("skip");
 let editEnabled = $state(true);
 
 let saving = $state<string | null>(null);
-
-function fmtTime(h: number, m: number): string {
-  const suffix = h >= 12 ? "pm" : "am";
-  const h12 = h % 12 || 12;
-  return m === 0 ? `${h12}${suffix}` : `${h12}:${String(m).padStart(2, "0")}${suffix}`;
-}
-
-function parseCronToTime(cron: string): { hour: number; minute: number } | null {
-  const parts = cron.split(" ");
-  if (parts.length < 5) return null;
-  const [min, hour, dom, , dow] = parts;
-  if (/^\d+$/.test(min) && /^\d+$/.test(hour) && dom === "*" && dow === "*") {
-    return { hour: +hour, minute: +min };
-  }
-  return null;
-}
-
-function timeToCron(hour: number, minute: number): string {
-  return `${minute} ${hour} * * *`;
-}
-
-/** Parse a cron into a frequency type for schedule editing */
-function parseCronToFreq(cron: string): {
-  type: "hours" | "daily" | "cron";
-  hours?: number;
-  hour?: number;
-  minute?: number;
-} {
-  const parts = cron.split(" ");
-  if (parts.length < 5) return { type: "cron" };
-  const [min, hour, dom, mon, dow] = parts;
-  // Every N minutes → convert to hours if clean
-  if (min.startsWith("*/") && hour === "*" && dom === "*" && mon === "*" && dow === "*") {
-    const n = +min.slice(2);
-    if (n >= 60 && n % 60 === 0) return { type: "hours", hours: n / 60 };
-  }
-  // Every N hours
-  if (/^\d+$/.test(min) && hour.startsWith("*/") && dom === "*" && mon === "*" && dow === "*") {
-    return { type: "hours", hours: +hour.slice(2) };
-  }
-  // Daily at specific time(s)
-  if (/^\d+$/.test(min) && /^\d+$/.test(hour) && dom === "*" && mon === "*" && dow === "*") {
-    return { type: "daily", hour: +hour, minute: +min };
-  }
-  // Multi-hour daily (e.g. "0 8,12,16 * * *")
-  if (/^\d+$/.test(min) && /^[\d,]+$/.test(hour) && dom === "*" && mon === "*" && dow === "*") {
-    const hours = hour.split(",").map(Number);
-    if (hours.length > 1) {
-      const gap = hours[1] - hours[0];
-      if (hours.every((h, i) => i === 0 || h - hours[i - 1] === gap)) {
-        return { type: "hours", hours: gap };
-      }
-    }
-    return { type: "daily", hour: hours[0], minute: +min };
-  }
-  return { type: "cron" };
-}
-
-function freqToCron(
-  type: "hours" | "daily" | "cron",
-  opts: { hours?: number; hour?: number; minute?: number; cron?: string },
-): string {
-  if (type === "hours") return `0 */${opts.hours ?? 4} * * *`;
-  if (type === "daily") return `${opts.minute ?? 0} ${opts.hour ?? 12} * * *`;
-  return opts.cron ?? "";
-}
 
 function syncSleepState(cfg: SleepConfig) {
   sleep = cfg;

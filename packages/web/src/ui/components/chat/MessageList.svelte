@@ -1,5 +1,6 @@
 <script lang="ts">
 import type { Mind, Participant } from "@volute/api";
+import { normalizeTimestamp } from "../../lib/format";
 import type { ChatEntry } from "../../lib/types";
 import MessageEntry from "./MessageEntry.svelte";
 
@@ -60,7 +61,7 @@ function showSenderHeader(i: number): boolean {
 function getDateStr(dateStr?: string): string {
   if (!dateStr) return "";
   try {
-    const d = new Date(dateStr.endsWith("Z") ? dateStr : `${dateStr}Z`);
+    const d = new Date(normalizeTimestamp(dateStr));
     return d.toLocaleDateString();
   } catch {
     return "";

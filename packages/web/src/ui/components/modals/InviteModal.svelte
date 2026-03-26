@@ -3,7 +3,7 @@ import type { AvailableUser, Mind } from "@volute/api";
 import { Modal } from "@volute/ui";
 import { fetchAvailableUsers, inviteToChannel } from "../../lib/client";
 import { mindDotColor } from "../../lib/format";
-import { activeMinds, onlineBrains, reconnectActivity } from "../../lib/stores.svelte";
+import { activeMinds, connectActivity, onlineBrains } from "../../lib/stores.svelte";
 
 let {
   channelName,
@@ -50,7 +50,7 @@ async function handleInvite(username: string) {
     await inviteToChannel(channelName, username);
     memberNames = new Set([...memberNames, username]);
     query = "";
-    reconnectActivity();
+    connectActivity();
   } catch (err) {
     error = err instanceof Error ? err.message : "Failed to invite";
   } finally {
@@ -186,17 +186,6 @@ function isIridescent(user: AvailableUser): boolean {
   .status-dot.iridescent {
     animation: iridescent 3s ease-in-out infinite;
   }
-
-  @keyframes iridescent {
-    0%   { background: #4ade80; }
-    16%  { background: #60a5fa; }
-    33%  { background: #c084fc; }
-    50%  { background: #f472b6; }
-    66%  { background: #fbbf24; }
-    83%  { background: #34d399; }
-    100% { background: #4ade80; }
-  }
-
   .empty {
     color: var(--text-2);
     font-size: 13px;

@@ -1,6 +1,7 @@
 <script lang="ts">
 import type { ContentBlock, Mind, Participant } from "@volute/api";
 import { renderMarkdown } from "@volute/ui/markdown";
+import { normalizeTimestamp } from "../../lib/format";
 import ProfileHoverCard, { type HoverProfile } from "../ProfileHoverCard.svelte";
 import ToolBlock from "./ToolBlock.svelte";
 
@@ -69,7 +70,7 @@ function profileForSender(name: string): HoverProfile | null {
 function formatTime(dateStr?: string): string {
   if (!dateStr) return "";
   try {
-    const d = new Date(dateStr.endsWith("Z") ? dateStr : `${dateStr}Z`);
+    const d = new Date(normalizeTimestamp(dateStr));
     const time = d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
     if (showDate) {
       const date = d.toLocaleDateString(undefined, { month: "short", day: "numeric" });

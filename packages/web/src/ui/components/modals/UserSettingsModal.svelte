@@ -1,5 +1,6 @@
 <script lang="ts">
 import { Modal } from "@volute/ui";
+import { onMount } from "svelte";
 import { changePassword, deleteAvatar, fetchMe, updateProfile, uploadAvatar } from "../../lib/auth";
 
 let { onClose }: { onClose: () => void } = $props();
@@ -23,8 +24,7 @@ let error = $state("");
 let success = $state("");
 let saving = $state(false);
 
-// Load profile on mount
-$effect(() => {
+onMount(() => {
   loadProfile();
 });
 
