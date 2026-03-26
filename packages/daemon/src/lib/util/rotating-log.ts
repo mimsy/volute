@@ -58,6 +58,7 @@ export class RotatingLog extends Writable {
           this.stream.write(chunk, callback);
         })
         .catch(() => {
+          this.size = chunk.length;
           this.stream.write(chunk, callback);
         });
       return;

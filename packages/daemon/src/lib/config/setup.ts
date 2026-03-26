@@ -87,7 +87,7 @@ export function _resetConfigCache(): void {
 
 export function readGlobalConfig(): GlobalConfig {
   if (_cachedConfig && Date.now() - _cachedConfig.ts < CONFIG_CACHE_TTL) {
-    return _cachedConfig.config;
+    return { ..._cachedConfig.config };
   }
   const path = configPath();
   if (!existsSync(path)) {

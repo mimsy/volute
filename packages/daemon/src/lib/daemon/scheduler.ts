@@ -21,7 +21,9 @@ export class Scheduler {
 
   start(): void {
     this.loadState();
-    this.interval = setInterval(() => this.tick(), 60_000);
+    this.interval = setInterval(() => {
+      this.tick().catch((err) => slog.error("scheduler tick failed", log.errorData(err)));
+    }, 60_000);
   }
 
   stop(): void {

@@ -347,7 +347,14 @@ export async function tagUntaggedInbound(
     .get();
 
   // Tag recent untagged conversation messages (only inbound, i.e. not sent by the mind itself)
-  const [, mindUser] = await Promise.all([tagHistoryPromise, mindUserPromise]);
+  const [tagResult, mindUserResult] = await Promise.allSettled([
+    tagHistoryPromise,
+    mindUserPromise,
+  ]);
+  if (tagResult.status === "rejected") {
+    dlog.error("failed to tag history inbound", log.errorData(tagResult.reason));
+  }
+  const mindUser = mindUserResult.status === "fulfilled" ? mindUserResult.value : undefined;
   const mindConvIds = mindUser
     ? (
         await db

@@ -804,7 +804,7 @@ export class DeliveryManager {
     participants: { username: string; userType: string; avatar?: string | null }[],
   ): Promise<AvatarBlock[]> {
     const cacheKey = participants
-      .map((p) => p.username)
+      .map((p) => `${p.username}:${p.avatar ?? ""}`)
       .sort()
       .join(",");
     const cached = avatarBlocksCache.get(cacheKey);
@@ -820,6 +820,8 @@ export class DeliveryManager {
       const code = (err as NodeJS.ErrnoException).code;
       if (code === "MODULE_NOT_FOUND" || code === "ERR_MODULE_NOT_FOUND") {
         dlog.debug("sharp not available, sending full-size avatars");
+      } else {
+        dlog.warn("sharp import failed, sending full-size avatars", log.errorData(err));
       }
     }
 

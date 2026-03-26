@@ -31,7 +31,9 @@ export class TokenBudget {
   private dirty = new Set<string>();
 
   start(): void {
-    this.interval = setInterval(() => this.tick(), 60_000);
+    this.interval = setInterval(() => {
+      this.tick().catch((err) => tlog.error("token budget tick failed", log.errorData(err)));
+    }, 60_000);
   }
 
   async stop(): Promise<void> {
@@ -154,12 +156,13 @@ export class TokenBudget {
 
   /** Flush all dirty budget states to disk. */
   async flush(): Promise<void> {
-    const writes = [];
-    for (const mind of this.dirty) {
-      const state = this.budgets.get(mind);
-      if (state) writes.push(this.saveBudgetState(mind, state));
-    }
+    const flushing = new Set(this.dirty);
     this.dirty.clear();
+    const writes = [];
+    for (const mind of flushing) {
+      const state = this.budgets.get(mind);
+      if (state) writes.push(this.saveBudgetState(mind, state).catch(() => this.dirty.add(mind)));
+    }
     await Promise.all(writes);
   }
 

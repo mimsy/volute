@@ -46,3 +46,8 @@ class LogBuffer {
 }
 
 export const logBuffer = new LogBuffer();
+
+/** Exported for testing only */
+export function createLogBuffer(maxSize: number): LogBuffer {
+  return new LogBuffer(maxSize);
+}

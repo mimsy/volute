@@ -312,15 +312,17 @@ async function enrichConversations(convs: Conversation[]): Promise<ConversationW
       arr = [];
       byConv.set(r.conversationId, arr);
     }
-    arr.push({
-      userId: r.userId,
-      username: r.username,
-      userType: r.userType as Participant["userType"],
-      role: r.role as "owner" | "member",
-      displayName: r.displayName,
-      description: r.description,
-      avatar: r.avatar,
-    });
+    if (!arr.some((p) => p.userId === r.userId)) {
+      arr.push({
+        userId: r.userId,
+        username: r.username,
+        userType: r.userType as Participant["userType"],
+        role: r.role as "owner" | "member",
+        displayName: r.displayName,
+        description: r.description,
+        avatar: r.avatar,
+      });
+    }
     if (r.channelName && !channelNames.has(r.conversationId)) {
       channelNames.set(r.conversationId, r.channelName);
     }

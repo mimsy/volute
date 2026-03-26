@@ -1166,11 +1166,11 @@ const app = new Hono<AuthEnv>()
           .from(mindHistory)
           .groupBy(mindHistory.mind);
         lastActiveMap = new Map(lastActiveRows.map((r) => [r.mind, r.lastActiveAt]));
+        _lastActiveCache.map = lastActiveMap;
+        _lastActiveCache.ts = Date.now();
       } catch {
         // Non-essential: degrade gracefully without activity data
       }
-      _lastActiveCache.map = lastActiveMap;
-      _lastActiveCache.ts = Date.now();
     }
 
     const minds = await Promise.all(

@@ -8,7 +8,8 @@ import { getDb } from "../../lib/db.js";
 import { getBaseName } from "../../lib/mind/registry.js";
 import { sessions } from "../../lib/schema.js";
 
-const mindUserCache = new Map<string, User>();
+const MIND_USER_CACHE_TTL = 5 * 60 * 1000;
+const mindUserCache = new Map<string, { user: User; ts: number }>();
 
 export function invalidateMindUserCache(mindName: string): void {
   mindUserCache.delete(mindName);
@@ -133,10 +134,13 @@ export const authMiddleware = createMiddleware<AuthEnv>(async (c, next) => {
     // 2. Mind token — per-mind, resolves to mind's user record
     const mindName = resolveMindToken(token);
     if (mindName) {
-      let mindUser = mindUserCache.get(mindName);
-      if (!mindUser) {
+      const cached = mindUserCache.get(mindName);
+      let mindUser: User;
+      if (cached && Date.now() - cached.ts < MIND_USER_CACHE_TTL) {
+        mindUser = cached.user;
+      } else {
         mindUser = await getOrCreateMindUser(mindName);
-        mindUserCache.set(mindName, mindUser);
+        mindUserCache.set(mindName, { user: mindUser, ts: Date.now() });
       }
       c.set("user", mindUser);
       // Capture mind session for turn resolution
