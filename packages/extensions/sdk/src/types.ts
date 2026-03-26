@@ -79,14 +79,31 @@ export type ExtensionFeedItem = {
   iframeUrl?: string;
 };
 
+export type ArgDef = {
+  name: string;
+  required?: boolean;
+  description: string;
+};
+
+export type FlagDef = {
+  type: "string" | "number" | "boolean";
+  description: string;
+};
+
 export type CommandHandler = (
-  args: string[],
+  parsed: {
+    args: Record<string, string | undefined>;
+    flags: Record<string, string | number | boolean | undefined>;
+    rest: string[];
+  },
   ctx: ExtensionContext & { mindName?: string; session?: string; stdin?: string },
 ) => Promise<{ output: string } | { error: string }>;
 
 export type ExtensionCommand = {
   description: string;
-  usage?: string;
+  args?: ArgDef[];
+  flags?: Record<string, FlagDef>;
+  examples?: string[];
   handler: CommandHandler;
 };
 

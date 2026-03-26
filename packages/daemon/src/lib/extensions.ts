@@ -1,10 +1,13 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import type {
+  ArgDef,
   Database,
+  ExtensionCommand,
   ExtensionContext,
   ExtensionManifest,
   FeedSource,
+  FlagDef,
   MindSection,
   SystemSection,
 } from "@volute/extensions";
@@ -55,10 +58,63 @@ export type DiscoveredExtensionInfo = {
   package?: string;
 };
 
-export type ExtensionCommandInfo = {
-  description: string;
-  usage?: string;
-};
+export type ExtensionCommandInfo = Omit<ExtensionCommand, "handler">;
+
+function toCommandInfo(cmd: ExtensionCommand): ExtensionCommandInfo {
+  const { handler: _, ...info } = cmd;
+  return info;
+}
+
+export function parseCommandArgs(
+  rawArgs: string[],
+  argDefs: ArgDef[],
+  flagDefs: Record<string, FlagDef>,
+): {
+  args: Record<string, string | undefined>;
+  flags: Record<string, string | number | boolean | undefined>;
+  rest: string[];
+} {
+  const positional: string[] = [];
+  const flags: Record<string, string | number | boolean | undefined> = {};
+
+  // Initialize defaults
+  for (const [key, def] of Object.entries(flagDefs)) {
+    flags[key] = def.type === "boolean" ? false : undefined;
+  }
+
+  for (let i = 0; i < rawArgs.length; i++) {
+    const arg = rawArgs[i];
+    if (arg.startsWith("--")) {
+      const name = arg.slice(2);
+      const def = flagDefs[name];
+      if (!def) {
+        log.warn(`unknown flag --${name}`);
+        continue;
+      }
+      if (def.type === "boolean") {
+        flags[name] = true;
+      } else if (i + 1 < rawArgs.length) {
+        const val = rawArgs[++i];
+        if (def.type === "number") {
+          const n = parseInt(val, 10);
+          flags[name] = Number.isNaN(n) ? undefined : n;
+        } else {
+          flags[name] = val;
+        }
+      }
+    } else {
+      positional.push(arg);
+    }
+  }
+
+  const namedArgs: Record<string, string | undefined> = {};
+  for (let i = 0; i < argDefs.length; i++) {
+    namedArgs[argDefs[i].name] = positional[i];
+  }
+  const rest = positional.slice(argDefs.length);
+
+  return { args: namedArgs, flags, rest };
+}
 
 export type ExtensionInfo = {
   id: string;
@@ -226,7 +282,8 @@ async function loadExtension(
           // to the output (linked to the correct turn when the tool_result event
           // arrives at the events endpoint).
           const activityPromises: Promise<number>[] = [];
-          const result = await cmd.handler(body.args ?? [], {
+          const parsed = parseCommandArgs(body.args ?? [], cmd.args ?? [], cmd.flags ?? {});
+          const result = await cmd.handler(parsed, {
             ...context,
             publishActivity: (rawEvent) => {
               const event = {
@@ -529,15 +586,12 @@ export async function loadAllExtensions(app: Hono, authMw: MiddlewareHandler): P
 
   // Discovery endpoint for CLI dynamic dispatch
   app.get("/api/extensions/commands", (c) => {
-    const result: Record<
-      string,
-      { commands: Record<string, { description: string; usage?: string }> }
-    > = {};
+    const result: Record<string, { commands: Record<string, ExtensionCommandInfo> }> = {};
     for (const { manifest } of loaded) {
       if (!manifest.commands) continue;
-      const cmds: Record<string, { description: string; usage?: string }> = {};
+      const cmds: Record<string, ExtensionCommandInfo> = {};
       for (const [name, cmd] of Object.entries(manifest.commands)) {
-        cmds[name] = { description: cmd.description, ...(cmd.usage ? { usage: cmd.usage } : {}) };
+        cmds[name] = toCommandInfo(cmd);
       }
       result[manifest.id] = { commands: cmds };
     }
@@ -551,10 +605,7 @@ export function getLoadedExtensions(): ExtensionInfo[] {
     if (manifest.commands) {
       commands = {};
       for (const [name, cmd] of Object.entries(manifest.commands)) {
-        commands[name] = {
-          description: cmd.description,
-          ...(cmd.usage ? { usage: cmd.usage } : {}),
-        };
+        commands[name] = toCommandInfo(cmd);
       }
     }
     return {

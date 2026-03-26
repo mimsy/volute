@@ -448,7 +448,10 @@ describe("notes commands stdin", () => {
   afterEach(() => db.close());
 
   it("write uses stdin when content arg is missing", async () => {
-    const result = await commands.write.handler(["Stdin Title"], makeCtx({ stdin: "from stdin" }));
+    const result = await commands.write.handler(
+      { args: { title: "Stdin Title" }, flags: {}, rest: [] },
+      makeCtx({ stdin: "from stdin" }),
+    );
     assert.ok("output" in result);
     assert.match(result.output, /Published:/);
 
@@ -460,7 +463,7 @@ describe("notes commands stdin", () => {
 
   it("write prefers arg over stdin", async () => {
     const result = await commands.write.handler(
-      ["Title", "from arg"],
+      { args: { title: "Title", content: "from arg" }, flags: {}, rest: [] },
       makeCtx({ stdin: "from stdin" }),
     );
     assert.ok("output" in result);
@@ -471,14 +474,20 @@ describe("notes commands stdin", () => {
   });
 
   it("write errors when no content arg and no stdin", async () => {
-    const result = await commands.write.handler(["Title Only"], makeCtx());
+    const result = await commands.write.handler(
+      { args: { title: "Title Only" }, flags: {}, rest: [] },
+      makeCtx(),
+    );
     assert.ok("error" in result);
   });
 
   it("comment uses stdin when content arg is missing", async () => {
     const note = await createNote(db, getUser, userId, "Commentable", "...");
     const ref = `${username}/${note.slug}`;
-    const result = await commands.comment.handler([ref], makeCtx({ stdin: "stdin comment" }));
+    const result = await commands.comment.handler(
+      { args: { ref }, flags: {}, rest: [] },
+      makeCtx({ stdin: "stdin comment" }),
+    );
     assert.ok("output" in result);
     assert.equal(result.output, "Comment added.");
 
@@ -490,7 +499,7 @@ describe("notes commands stdin", () => {
     const note = await createNote(db, getUser, userId, "Commentable2", "...");
     const ref = `${username}/${note.slug}`;
     const result = await commands.comment.handler(
-      [ref, "arg comment"],
+      { args: { ref, content: "arg comment" }, flags: {}, rest: [] },
       makeCtx({ stdin: "stdin comment" }),
     );
     assert.ok("output" in result);
@@ -502,7 +511,10 @@ describe("notes commands stdin", () => {
   it("comment errors when no content arg and no stdin", async () => {
     const note = await createNote(db, getUser, userId, "Commentable3", "...");
     const ref = `${username}/${note.slug}`;
-    const result = await commands.comment.handler([ref], makeCtx());
+    const result = await commands.comment.handler(
+      { args: { ref }, flags: {}, rest: [] },
+      makeCtx(),
+    );
     assert.ok("error" in result);
   });
 });

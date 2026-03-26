@@ -242,7 +242,10 @@ describe("pages commands", () => {
 
     const commands = createCommands();
     const ctx = makeCtx();
-    const result = await commands.publish.handler([], ctx);
+    const result = await commands.publish.handler(
+      { args: {}, flags: { remote: false, shared: false }, rest: [] },
+      ctx,
+    );
 
     assert.ok("output" in result);
     assert.ok(result.output.includes("Published 1 files"));
@@ -269,12 +272,18 @@ describe("pages commands", () => {
     writeFileSync(resolve(pagesDir, "about.html"), "<h1>About</h1>");
     const commands = createCommands();
     const ctx = makeCtx();
-    await commands.publish.handler([], ctx);
+    await commands.publish.handler(
+      { args: {}, flags: { remote: false, shared: false }, rest: [] },
+      ctx,
+    );
 
     // Remove about.html and re-publish
     rmSync(resolve(pagesDir, "about.html"));
     ctx._events.length = 0;
-    const result = await commands.publish.handler([], ctx);
+    const result = await commands.publish.handler(
+      { args: {}, flags: { remote: false, shared: false }, rest: [] },
+      ctx,
+    );
 
     assert.ok("output" in result);
     assert.ok(result.output.includes("1 removed"));
@@ -293,7 +302,10 @@ describe("pages commands", () => {
 
     const commands = createCommands();
     const ctx = makeCtx();
-    await commands.publish.handler([], ctx);
+    await commands.publish.handler(
+      { args: {}, flags: { remote: false, shared: false }, rest: [] },
+      ctx,
+    );
 
     const snapshotDir = resolve(dataDir, "sites", "test-mind");
     assert.ok(existsSync(resolve(snapshotDir, "index.html")));
@@ -304,7 +316,10 @@ describe("pages commands", () => {
   it("publish command rejects when no pages dir exists", async () => {
     rmSync(pagesDir, { recursive: true });
     const commands = createCommands();
-    const result = await commands.publish.handler([], makeCtx());
+    const result = await commands.publish.handler(
+      { args: {}, flags: { remote: false, shared: false }, rest: [] },
+      makeCtx(),
+    );
     assert.ok("error" in result);
     assert.ok(result.error.includes("No pages directory"));
   });
@@ -318,7 +333,10 @@ describe("pages commands", () => {
     const ctx = makeCtx();
     syncPublishedPages(db, "test-mind", ["published.html"]);
 
-    const result = await commands.list.handler([], ctx);
+    const result = await commands.list.handler(
+      { args: {}, flags: { all: false, shared: false }, rest: [] },
+      ctx,
+    );
     assert.ok("output" in result);
     assert.ok(result.output.includes("draft"));
     assert.ok(result.output.includes("published"));
@@ -332,7 +350,10 @@ describe("pages commands", () => {
 
     const commands = createCommands();
     const ctx = makeCtx();
-    const result = await commands.publish.handler([], ctx);
+    const result = await commands.publish.handler(
+      { args: {}, flags: { remote: false, shared: false }, rest: [] },
+      ctx,
+    );
 
     assert.ok("output" in result);
     assert.ok(result.output.includes("Published 2 files"));
@@ -350,7 +371,10 @@ describe("pages commands", () => {
 
     const commands = createCommands();
     const ctx = makeCtx();
-    const result = await commands.list.handler([], ctx);
+    const result = await commands.list.handler(
+      { args: {}, flags: { all: false, shared: false }, rest: [] },
+      ctx,
+    );
     assert.ok("output" in result);
     assert.ok(result.output.includes("post.md"), "should list .md draft");
     assert.ok(result.output.includes("index.html"), "should list .html published");
@@ -362,7 +386,10 @@ describe("pages commands", () => {
 
     const commands = createCommands();
     const ctx = makeCtx();
-    const result = await commands.list.handler(["--all"], ctx);
+    const result = await commands.list.handler(
+      { args: {}, flags: { all: true, shared: false }, rest: [] },
+      ctx,
+    );
     assert.ok("output" in result);
     assert.ok(result.output.includes("mind-a"));
     assert.ok(result.output.includes("mind-b"));
@@ -374,7 +401,10 @@ describe("pages commands", () => {
 
     const commands = createCommands();
     const ctx = makeCtx();
-    const result = await commands.list.handler(["--all"], ctx);
+    const result = await commands.list.handler(
+      { args: {}, flags: { all: true, shared: false }, rest: [] },
+      ctx,
+    );
     assert.ok("output" in result);
     assert.ok(result.output.includes("_system"));
     assert.ok(result.output.includes("alice"));
@@ -387,7 +417,10 @@ describe("pages commands", () => {
     const commands = createCommands();
     const ctx = makeCtx();
     ctx.mindName = undefined as any;
-    const result = await commands.list.handler(["--all"], ctx);
+    const result = await commands.list.handler(
+      { args: {}, flags: { all: true, shared: false }, rest: [] },
+      ctx,
+    );
     assert.ok("output" in result);
     assert.ok(result.output.includes("mind-a"));
   });
