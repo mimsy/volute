@@ -24,7 +24,7 @@ import {
 
 describe("v1 paginated messages", () => {
   it("returns all messages with hasMore=false when fewer than limit", async () => {
-    const conv = await createConversation("test-mind", "test-page-1");
+    const conv = await createConversation("test-page-1");
     try {
       await addMessage(conv.id, "user", "alice", [{ type: "text", text: "Hello" }]);
       await addMessage(conv.id, "assistant", "bot", [{ type: "text", text: "Hi" }]);
@@ -41,7 +41,7 @@ describe("v1 paginated messages", () => {
   });
 
   it("paginates with before cursor", async () => {
-    const conv = await createConversation("test-mind", "test-page-2");
+    const conv = await createConversation("test-page-2");
     try {
       // Add 5 messages
       for (let i = 0; i < 5; i++) {
@@ -75,7 +75,7 @@ describe("v1 paginated messages", () => {
   });
 
   it("returns empty when no messages", async () => {
-    const conv = await createConversation("test-mind", "test-page-empty");
+    const conv = await createConversation("test-page-empty");
     try {
       const result = await getMessagesPaginated(conv.id, { limit: 10 });
       assert.equal(result.messages.length, 0);
@@ -86,7 +86,7 @@ describe("v1 paginated messages", () => {
   });
 
   it("caps limit at 100", async () => {
-    const conv = await createConversation("test-mind", "test-page-cap");
+    const conv = await createConversation("test-page-cap");
     try {
       // Just verify it doesn't throw — actual capping tested by implementation
       const result = await getMessagesPaginated(conv.id, { limit: 200 });
@@ -97,7 +97,7 @@ describe("v1 paginated messages", () => {
   });
 
   it("defaults to 50 messages when no limit specified", async () => {
-    const conv = await createConversation("test-mind", "test-page-default");
+    const conv = await createConversation("test-page-default");
     try {
       // Add 55 messages
       for (let i = 0; i < 55; i++) {
@@ -113,7 +113,7 @@ describe("v1 paginated messages", () => {
   });
 
   it("returns messages in chronological order within page", async () => {
-    const conv = await createConversation("test-mind", "test-page-order");
+    const conv = await createConversation("test-page-order");
     try {
       await addMessage(conv.id, "user", "alice", [{ type: "text", text: "first" }]);
       await addMessage(conv.id, "assistant", "bot", [{ type: "text", text: "second" }]);
@@ -176,7 +176,7 @@ describe("v1 conversations HTTP routes", () => {
     const cookie = await setupAuth();
     const app = createApp();
 
-    const conv = await createConversation("test-mind", "volute", {
+    const conv = await createConversation("volute", {
       participantIds: [userId],
     });
     await addMessage(conv.id, "user", "v1-admin", [{ type: "text", text: "Hello" }]);
@@ -197,7 +197,7 @@ describe("v1 conversations HTTP routes", () => {
     const cookie = await setupAuth();
     const app = createApp();
 
-    const conv = await createConversation("test-mind", "volute", {
+    const conv = await createConversation("volute", {
       participantIds: [userId],
     });
     const blocks: ContentBlock[] = [{ type: "text", text: "msg" }];
@@ -220,7 +220,7 @@ describe("v1 conversations HTTP routes", () => {
     const cookie = await setupAuth();
     const app = createApp();
 
-    const conv = await createConversation("test-mind", "volute", {
+    const conv = await createConversation("volute", {
       participantIds: [userId],
     });
     const blocks: ContentBlock[] = [{ type: "text", text: "msg" }];
@@ -246,7 +246,7 @@ describe("v1 conversations HTTP routes", () => {
     const cookie = await setupAuth();
     const app = createApp();
 
-    const conv = await createConversation("test-mind", "volute", {
+    const conv = await createConversation("volute", {
       participantIds: [userId],
     });
 
@@ -264,7 +264,7 @@ describe("v1 conversations HTTP routes", () => {
     await setupAuth();
     const app = createApp();
 
-    const conv = await createConversation("test-mind", "volute", {
+    const conv = await createConversation("volute", {
       participantIds: [userId],
     });
 
@@ -285,7 +285,7 @@ describe("v1 conversations HTTP routes", () => {
     const cookie = await setupAuth();
     const app = createApp();
 
-    const conv = await createConversation("test-mind", "volute", {
+    const conv = await createConversation("volute", {
       participantIds: [userId],
     });
     await addMessage(conv.id, "user", "v1-admin", [{ type: "text", text: "Hello" }]);
@@ -310,7 +310,7 @@ describe("v1 conversations HTTP routes", () => {
     await setupAuth();
     const app = createApp();
 
-    const conv = await createConversation("test-mind", "volute", {
+    const conv = await createConversation("volute", {
       participantIds: [userId],
     });
 
@@ -339,7 +339,7 @@ describe("v1 conversation privacy toggle", () => {
     const cookie = await setupAuth();
     const app = createApp();
 
-    const conv = await createConversation("test-mind", "volute", {
+    const conv = await createConversation("volute", {
       participantIds: [userId],
     });
 
@@ -365,7 +365,7 @@ describe("v1 conversation privacy toggle", () => {
     await setupAuth();
     const app = createApp();
 
-    const conv = await createConversation("test-mind", "volute", {
+    const conv = await createConversation("volute", {
       participantIds: [userId],
     });
 
@@ -396,7 +396,7 @@ describe("unread tracking", () => {
 
   it("getUnreadCounts returns correct counts for unread messages", async () => {
     const user = await createUser("unread-test", "pass");
-    const conv = await createConversation("test-mind", "volute", {
+    const conv = await createConversation("volute", {
       participantIds: [user.id],
     });
 
@@ -412,7 +412,7 @@ describe("unread tracking", () => {
 
   it("getUnreadCounts returns 0 after markConversationRead", async () => {
     const user = await createUser("mark-read-test", "pass");
-    const conv = await createConversation("test-mind", "volute", {
+    const conv = await createConversation("volute", {
       participantIds: [user.id],
     });
 
@@ -429,7 +429,7 @@ describe("unread tracking", () => {
 
   it("new messages after markConversationRead show as unread", async () => {
     const user = await createUser("new-after-read", "pass");
-    const conv = await createConversation("test-mind", "volute", {
+    const conv = await createConversation("volute", {
       participantIds: [user.id],
     });
 
@@ -452,10 +452,10 @@ describe("unread tracking", () => {
 
   it("getUnreadCounts handles multiple conversations", async () => {
     const user = await createUser("multi-conv", "pass");
-    const conv1 = await createConversation("test-mind", "volute", {
+    const conv1 = await createConversation("volute", {
       participantIds: [user.id],
     });
-    const conv2 = await createConversation("test-mind", "volute-2", {
+    const conv2 = await createConversation("volute-2", {
       participantIds: [user.id],
     });
 
@@ -474,7 +474,7 @@ describe("unread tracking", () => {
   it("markConversationRead is per-user — does not affect other users", async () => {
     const userA = await createUser("user-a", "pass");
     const userB = await createUser("user-b", "pass");
-    const conv = await createConversation("test-mind", "volute", {
+    const conv = await createConversation("volute", {
       participantIds: [userA.id, userB.id],
     });
 

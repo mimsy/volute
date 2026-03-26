@@ -30,7 +30,6 @@ export type {
 };
 
 export async function createConversation(
-  mindName: string | null,
   channel: string,
   opts?: {
     userId?: number;
@@ -47,7 +46,6 @@ export async function createConversation(
   // conflicts with concurrent writes on the primary connection.
   await db.insert(conversations).values({
     id,
-    mind_name: mindName,
     channel,
     type,
     user_id: opts?.userId ?? null,
@@ -65,13 +63,12 @@ export async function createConversation(
 
   fireWebhook({
     event: "conversation_created",
-    mind: mindName ?? "",
-    data: { id, mindName, channel, type },
+    mind: "",
+    data: { id, channel, type },
   });
 
   return {
     id,
-    mind_name: mindName,
     channel,
     type,
     user_id: opts?.userId ?? null,
@@ -224,16 +221,9 @@ export async function addMessage(
     createdAt: msg.created_at,
   });
 
-  // Look up the mind that owns this conversation for the webhook
-  const conv = await db
-    .select({ mind_name: conversations.mind_name })
-    .from(conversations)
-    .where(eq(conversations.id, conversationId))
-    .get();
-
   fireWebhook({
     event: "message_created",
-    mind: conv?.mind_name ?? "",
+    mind: "",
     data: {
       conversationId,
       messageId: result.id,
@@ -401,7 +391,7 @@ export async function listConversationsWithParticipants(
 
 export async function findDMConversation(participantIds: [number, number]): Promise<string | null> {
   const db = await getDb();
-  // Find DM conversations with exactly these two participants (regardless of mind_name)
+  // Find DM conversations with exactly these two participants
   const [id1, id2] = participantIds;
 
   // Find conversations where participant 1 is a member
@@ -433,49 +423,32 @@ export async function listConversationsForMind(
 ): Promise<ConversationWithParticipants[]> {
   const db = await getDb();
 
-  // Find conversations by mind_name
-  const byName = (await db
-    .select()
-    .from(conversations)
-    .where(eq(conversations.mind_name, mindName))
-    .orderBy(desc(conversations.updated_at))
-    .all()) as Conversation[];
-
-  // Also find conversations where the mind is a participant
   const mindUser = await db
     .select({ id: users.id })
     .from(users)
     .where(and(eq(users.username, mindName), eq(users.user_type, "mind")))
     .get();
 
-  const byNameIds = new Set(byName.map((c) => c.id));
-  let byParticipation: Conversation[] = [];
-  if (mindUser) {
-    const participantRows = await db
-      .select({ conversation_id: conversationParticipants.conversation_id })
-      .from(conversationParticipants)
-      .where(eq(conversationParticipants.user_id, mindUser.id))
-      .all();
-    const extraIds = participantRows
-      .map((r) => r.conversation_id)
-      .filter((id) => !byNameIds.has(id));
-    if (extraIds.length > 0) {
-      byParticipation = (await db
-        .select()
-        .from(conversations)
-        .where(inArray(conversations.id, extraIds))
-        .orderBy(desc(conversations.updated_at))
-        .all()) as Conversation[];
-    }
-  }
+  if (!mindUser) return [];
 
-  const convs = [...byName, ...byParticipation].sort(
-    (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime(),
-  );
+  const participantRows = await db
+    .select({ conversation_id: conversationParticipants.conversation_id })
+    .from(conversationParticipants)
+    .where(eq(conversationParticipants.user_id, mindUser.id))
+    .all();
+
+  if (participantRows.length === 0) return [];
+
+  const convIds = participantRows.map((r) => r.conversation_id);
+  const convs = (await db
+    .select()
+    .from(conversations)
+    .where(inArray(conversations.id, convIds))
+    .orderBy(desc(conversations.updated_at))
+    .all()) as Conversation[];
 
   if (convs.length === 0) return [];
 
-  const convIds = convs.map((c) => c.id);
   const rows = await db
     .select({
       conversationId: conversationParticipants.conversation_id,
@@ -564,16 +537,6 @@ export async function isConversationForMind(
   conversationId: string,
 ): Promise<boolean> {
   const db = await getDb();
-
-  // Check if conversation belongs to mind by mind_name
-  const byName = await db
-    .select({ id: conversations.id })
-    .from(conversations)
-    .where(and(eq(conversations.id, conversationId), eq(conversations.mind_name, mindName)))
-    .get();
-  if (byName) return true;
-
-  // Check if mind is a participant
   const mindUser = await db
     .select({ id: users.id })
     .from(users)
@@ -581,17 +544,7 @@ export async function isConversationForMind(
     .get();
   if (!mindUser) return false;
 
-  const participant = await db
-    .select({ conversation_id: conversationParticipants.conversation_id })
-    .from(conversationParticipants)
-    .where(
-      and(
-        eq(conversationParticipants.conversation_id, conversationId),
-        eq(conversationParticipants.user_id, mindUser.id),
-      ),
-    )
-    .get();
-  return !!participant;
+  return isParticipant(conversationId, mindUser.id);
 }
 
 export async function setConversationPrivate(id: string, isPrivate: boolean): Promise<void> {
@@ -633,7 +586,7 @@ export async function createChannel(
   settings?: ChannelSettingsInput,
 ): Promise<Conversation> {
   const participantIds = creatorId ? [creatorId] : [];
-  const conv = await createConversation(null, "volute", {
+  const conv = await createConversation("volute", {
     type: "channel",
     participantIds,
   });

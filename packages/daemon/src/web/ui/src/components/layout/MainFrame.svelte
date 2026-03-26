@@ -40,7 +40,8 @@ let channelConv = $derived.by(() => {
 
 let channelMindName = $derived.by(() => {
   if (!channelConv) return "";
-  return channelConv.mind_name ?? "";
+  const mindParticipant = channelConv.participants?.find((p) => p.userType === "mind");
+  return mindParticipant?.username ?? "";
 });
 
 // For mind chat views, resolve the DM conversation ID

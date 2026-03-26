@@ -39,7 +39,6 @@ export const conversations = sqliteTable(
   "conversations",
   {
     id: text("id").primaryKey(),
-    mind_name: text("mind_name"),
     channel: text("channel").notNull(),
     type: text("type").notNull().default("dm"),
     user_id: integer("user_id").references(() => users.id),
@@ -48,7 +47,6 @@ export const conversations = sqliteTable(
     updated_at: text("updated_at").notNull().default(sql`(datetime('now'))`),
   },
   (table) => [
-    index("idx_conversations_mind_name").on(table.mind_name),
     index("idx_conversations_user_id").on(table.user_id),
     index("idx_conversations_updated_at").on(table.updated_at),
   ],

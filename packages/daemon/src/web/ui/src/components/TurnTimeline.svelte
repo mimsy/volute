@@ -203,7 +203,6 @@ function upsertTurnRows(rows: TurnRow[]) {
 function openConversation(conv: TurnConversation, turn: TurnRow) {
   readOnlyConv = {
     id: conv.id,
-    mind_name: turn.mind,
     channel: "",
     type: conv.type,
     user_id: null,
@@ -1041,7 +1040,7 @@ function jumpToLatest() {
 
 {#if readOnlyConv}
   <ReadOnlyChatModal
-    mindName={readOnlyConv.mind_name ?? name ?? ""}
+    mindName={name ?? ""}
     conversation={readOnlyConv}
     canChat={false}
     onClose={() => { readOnlyConv = null; }}

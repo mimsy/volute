@@ -222,7 +222,7 @@ export const unifiedChatApp = new Hono<AuthEnv>().post(
         }
 
         if (!conversationId) {
-          const conv = await createConversation(baseName, "volute", {
+          const conv = await createConversation("volute", {
             userId: user.id !== 0 ? user.id : undefined,
             participantIds,
           });

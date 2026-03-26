@@ -33,8 +33,7 @@ const app = new Hono<AuthEnv>()
       lookupId = mindUser.id;
     }
 
-    const all = await listConversationsForUser(lookupId);
-    const convs = all.filter((c) => c.mind_name === name || c.type === "channel");
+    const convs = await listConversationsForUser(lookupId);
     return c.json(convs);
   })
   .post("/:name/conversations", zValidator("json", createConvSchema), async (c) => {
@@ -107,7 +106,7 @@ const app = new Hono<AuthEnv>()
       }
     }
 
-    const conv = await createConversation(name, "volute", {
+    const conv = await createConversation("volute", {
       userId: user.id !== 0 ? user.id : undefined,
       participantIds,
     });

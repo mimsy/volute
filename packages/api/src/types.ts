@@ -33,7 +33,6 @@ export type PlatformConnection = {
 
 export type Conversation = {
   id: string;
-  mind_name: string | null;
   channel: string;
   type: "dm" | "channel";
   user_id: number | null;

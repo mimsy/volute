@@ -96,7 +96,7 @@ import {
   stateDir,
   validateMindName,
 } from "../../lib/registry.js";
-import { conversations, mindHistory, summaries, turns } from "../../lib/schema.js";
+import { mindHistory, summaries, turns } from "../../lib/schema.js";
 
 import { getStandardSkillsWithExtensions, installSkill, SEED_SKILLS } from "../../lib/skills.js";
 import { announceToSystem } from "../../lib/system-channel.js";
@@ -1380,13 +1380,8 @@ const app = new Hono<AuthEnv>()
       // Inject "[seed has sprouted]" system message into active volute conversations
       if (context?.type === "sprouted" && !entry.parent) {
         try {
-          const db = await getDb();
-          const activeConvs = await db
-            .select({ id: conversations.id, channel: conversations.channel })
-            .from(conversations)
-            .where(eq(conversations.mind_name, baseName))
-            .all();
-          for (const conv of activeConvs) {
+          const mindConvs = await listConversationsForMind(baseName);
+          for (const conv of mindConvs) {
             await recordInbound(baseName, conv.channel, "system", "[seed has sprouted]");
             await addMessage(conv.id, "assistant", "system", [
               { type: "text", text: "[seed has sprouted]" },

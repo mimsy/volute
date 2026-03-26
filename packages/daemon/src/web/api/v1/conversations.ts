@@ -101,7 +101,7 @@ const app = new Hono<AuthEnv>()
       }
     }
 
-    const conv = await createConversation(firstMindName, "volute", {
+    const conv = await createConversation("volute", {
       userId: user.id !== 0 ? user.id : undefined,
       participantIds: ids,
     });

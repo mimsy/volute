@@ -433,7 +433,7 @@ setup.post("/complete", async (c) => {
         if (existing) {
           spiritConversationId = existing;
         } else {
-          const conv = await createConversation("volute", "volute", {
+          const conv = await createConversation("volute", {
             participantIds: [admin.id, spiritUser.id],
           });
           spiritConversationId = conv.id;

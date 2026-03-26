@@ -438,8 +438,13 @@ $effect(() => {
   if (!conv) return;
   if (conv.type === "channel" && conv.channel_name) {
     selection = { kind: "channel", slug: conv.channel_name };
-  } else if (conv.mind_name) {
-    selection = { kind: "mind", name: conv.mind_name };
+  } else {
+    const mindParticipant = conv.participants?.find(
+      (p) => p.userType === "mind" && p.username !== auth.user?.username,
+    );
+    if (mindParticipant) {
+      selection = { kind: "mind", name: mindParticipant.username };
+    }
   }
 });
 
@@ -478,11 +483,10 @@ function handleSelectConversation(id: string) {
   const conv = data.conversations.find((c) => c.id === id);
   if (conv?.type === "channel" && conv.channel_name) {
     selection = { kind: "channel", slug: conv.channel_name };
-  } else if (conv?.mind_name) {
-    selection = { kind: "mind", name: conv.mind_name };
   } else {
-    // Fallback: find the other participant's name for DMs
-    const other = conv?.participants?.find((p) => p.username !== auth.user?.username);
+    const other = conv?.participants?.find(
+      (p) => p.userType === "mind" && p.username !== auth.user?.username,
+    );
     if (other) {
       selection = { kind: "mind", name: other.username };
     }

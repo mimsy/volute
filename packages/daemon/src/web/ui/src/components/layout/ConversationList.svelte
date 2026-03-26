@@ -103,7 +103,8 @@ function openMenu(e: MouseEvent, convId: string) {
       </div>
     {/if}
     {#each directMessages as conv (conv.id)}
-      {@const isSeed = minds.find((m) => m.name === conv.mind_name)?.stage === "seed"}
+      {@const otherMind = conv.participants?.find((p) => p.userType === "mind" && p.username !== username)}
+      {@const isSeed = otherMind ? minds.find((m) => m.name === otherMind.username)?.stage === "seed" : false}
       {@const dmInfo = getDmInfo(conv)}
       {@const isGroup = (conv.participants?.length ?? 0) > 2}
       {@const unread = unreadCounts.get(conv.id) ?? 0}

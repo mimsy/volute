@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
 import { eq } from "drizzle-orm";
+import { getOrCreateMindUser } from "../packages/daemon/src/lib/auth.js";
 import { getDb } from "../packages/daemon/src/lib/db.js";
 import { extractTextContent } from "../packages/daemon/src/lib/delivery/delivery-router.js";
 import {
@@ -15,6 +16,7 @@ import { publish as publishActivity } from "../packages/daemon/src/lib/events/ac
 import { type MindEvent, subscribe } from "../packages/daemon/src/lib/events/mind-events.js";
 import {
   activity,
+  conversationParticipants,
   conversations,
   messages,
   mindHistory,
@@ -187,20 +189,16 @@ describe("recordInbound", () => {
 const LINK_MIND = "test-link";
 const LINK_TURN_ID = "turn-link-001";
 
+const LINK_CONV_IDS = ["conv-link-test"];
 async function cleanupLinkData() {
   const db = await getDb();
   await db.delete(mindHistory).where(eq(mindHistory.mind, LINK_MIND));
   await db.delete(activity).where(eq(activity.mind, LINK_MIND));
   await db.delete(turns).where(eq(turns.mind, LINK_MIND));
-  // Clean up test conversations/messages
-  const convRows = await db
-    .select({ id: conversations.id })
-    .from(conversations)
-    .where(eq(conversations.mind_name, LINK_MIND));
-  for (const c of convRows) {
-    await db.delete(messages).where(eq(messages.conversation_id, c.id));
+  for (const id of LINK_CONV_IDS) {
+    await db.delete(messages).where(eq(messages.conversation_id, id));
+    await db.delete(conversations).where(eq(conversations.id, id));
   }
-  await db.delete(conversations).where(eq(conversations.mind_name, LINK_MIND));
 }
 
 describe("linkToolResultToTurn", () => {
@@ -245,7 +243,7 @@ describe("linkToolResultToTurn", () => {
     const convId = "conv-link-test";
     await db.insert(conversations).values({
       id: convId,
-      mind_name: LINK_MIND,
+
       channel: "dm:alice",
       type: "dm",
     });
@@ -343,18 +341,15 @@ describe("linkToolResultToTurn", () => {
 const TAG_MIND = "test-tag";
 const TAG_TURN_ID = "turn-tag-001";
 
+const TAG_CONV_IDS = ["conv-tag-test"];
 async function cleanupTagData() {
   const db = await getDb();
   await db.delete(mindHistory).where(eq(mindHistory.mind, TAG_MIND));
   await db.delete(turns).where(eq(turns.mind, TAG_MIND));
-  const convRows = await db
-    .select({ id: conversations.id })
-    .from(conversations)
-    .where(eq(conversations.mind_name, TAG_MIND));
-  for (const c of convRows) {
-    await db.delete(messages).where(eq(messages.conversation_id, c.id));
+  for (const id of TAG_CONV_IDS) {
+    await db.delete(messages).where(eq(messages.conversation_id, id));
+    await db.delete(conversations).where(eq(conversations.id, id));
   }
-  await db.delete(conversations).where(eq(conversations.mind_name, TAG_MIND));
 }
 
 describe("tagUntaggedOutbound", () => {
@@ -404,7 +399,7 @@ describe("tagUntaggedOutbound", () => {
     const convId = "conv-tag-test";
     await db.insert(conversations).values({
       id: convId,
-      mind_name: TAG_MIND,
+
       channel: "dm:x",
       type: "dm",
     });
@@ -483,18 +478,18 @@ describe("tagUntaggedOutbound", () => {
 const INBOUND_MIND = "test-inbound-tag";
 const INBOUND_TURN_ID = "turn-inbound-001";
 
+const INBOUND_CONV_IDS = ["conv-inbound-test", "conv-no-channel-test"];
 async function cleanupInboundData() {
   const db = await getDb();
   await db.delete(mindHistory).where(eq(mindHistory.mind, INBOUND_MIND));
   await db.delete(turns).where(eq(turns.mind, INBOUND_MIND));
-  const convRows = await db
-    .select({ id: conversations.id })
-    .from(conversations)
-    .where(eq(conversations.mind_name, INBOUND_MIND));
-  for (const c of convRows) {
-    await db.delete(messages).where(eq(messages.conversation_id, c.id));
+  for (const id of INBOUND_CONV_IDS) {
+    await db
+      .delete(conversationParticipants)
+      .where(eq(conversationParticipants.conversation_id, id));
+    await db.delete(messages).where(eq(messages.conversation_id, id));
+    await db.delete(conversations).where(eq(conversations.id, id));
   }
-  await db.delete(conversations).where(eq(conversations.mind_name, INBOUND_MIND));
 }
 
 describe("tagUntaggedInbound", () => {
@@ -580,13 +575,18 @@ describe("tagUntaggedInbound", () => {
     const db = await getDb();
     await db.insert(turns).values({ id: INBOUND_TURN_ID, mind: INBOUND_MIND, session: "main" });
 
-    // Create a conversation and an inbound message (not from the mind)
+    // Create a conversation with the mind as a participant
     const convId = "conv-inbound-test";
+    const mindUser = await getOrCreateMindUser(INBOUND_MIND);
     await db.insert(conversations).values({
       id: convId,
-      mind_name: INBOUND_MIND,
       channel: "dm:bob",
       type: "dm",
+    });
+    await db.insert(conversationParticipants).values({
+      conversation_id: convId,
+      user_id: mindUser.id,
+      role: "member",
     });
     const msgResult = await db
       .insert(messages)
@@ -642,11 +642,16 @@ describe("tagUntaggedInbound", () => {
 
     // Insert a conversation message (should still be tagged)
     const convId = "conv-no-channel-test";
+    const mindUser = await getOrCreateMindUser(INBOUND_MIND);
     await db.insert(conversations).values({
       id: convId,
-      mind_name: INBOUND_MIND,
       channel: "dm:bob",
       type: "dm",
+    });
+    await db.insert(conversationParticipants).values({
+      conversation_id: convId,
+      user_id: mindUser.id,
+      role: "member",
     });
     const msgResult = await db
       .insert(messages)

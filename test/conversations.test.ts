@@ -28,7 +28,7 @@ import { messages, users } from "../packages/daemon/src/lib/schema.js";
 
 describe("conversations", () => {
   it("round-trips ContentBlock[] through addMessage/getMessages", async () => {
-    const conv = await createConversation("test-mind", "test");
+    const conv = await createConversation("test");
     try {
       const blocks: ContentBlock[] = [
         { type: "text", text: "Hello" },
@@ -47,7 +47,7 @@ describe("conversations", () => {
   });
 
   it("reads legacy plain-string messages as [{ type: 'text', text }]", async () => {
-    const conv = await createConversation("test-mind", "test-legacy");
+    const conv = await createConversation("test-legacy");
     try {
       // Manually insert a plain string (simulating legacy data)
       const db = await getDb();
@@ -67,7 +67,7 @@ describe("conversations", () => {
   });
 
   it("stores user message with image and text blocks", async () => {
-    const conv = await createConversation("test-mind", "test-channel");
+    const conv = await createConversation("test-channel");
     try {
       const blocks: ContentBlock[] = [
         { type: "image", media_type: "image/png", data: "abc123" },
@@ -85,7 +85,7 @@ describe("conversations", () => {
   });
 
   it("handles tool_result with is_error flag", async () => {
-    const conv = await createConversation("test-mind", "test-error");
+    const conv = await createConversation("test-error");
     try {
       const blocks: ContentBlock[] = [
         { type: "tool_use", name: "bash", input: { command: "exit 1" } },
@@ -118,7 +118,7 @@ describe("conversation participants", () => {
       .returning({ id: users.id });
 
     try {
-      const conv = await createConversation("test-mind-p", "volute", {
+      const conv = await createConversation("volute", {
         participantIds: [humanUser.id, mindUser.id],
       });
 
@@ -150,7 +150,7 @@ describe("conversation participants", () => {
       .returning({ id: users.id });
 
     try {
-      const conv = await createConversation("test-mind", "volute");
+      const conv = await createConversation("volute");
 
       // Initially no participants
       assert.equal(await isParticipant(conv.id, user1.id), false);
@@ -184,7 +184,7 @@ describe("conversation participants", () => {
       .returning({ id: users.id });
 
     try {
-      const conv = await createConversation("test-mind", "volute", {
+      const conv = await createConversation("volute", {
         participantIds: [user1.id],
       });
 
@@ -203,7 +203,7 @@ describe("conversation participants", () => {
     const db = await getDb();
 
     try {
-      const conv = await createConversation("mind-type-test", "volute", {
+      const conv = await createConversation("volute", {
         participantIds: [mindUser.id],
       });
 
@@ -226,7 +226,7 @@ describe("conversation participants", () => {
       .returning({ id: users.id });
 
     try {
-      const conv = await createConversation("dm-test-mind", "volute", {
+      const conv = await createConversation("volute", {
         participantIds: [humanUser.id, mindUser.id],
       });
 
@@ -250,8 +250,8 @@ describe("conversation participants", () => {
     const mindB = await getOrCreateMindUser("dm-cross-b");
 
     try {
-      // Mind A creates the conversation (mind_name = "dm-cross-a")
-      const conv = await createConversation("dm-cross-a", "volute", {
+      // Mind A creates the conversation
+      const conv = await createConversation("volute", {
         participantIds: [mindA.id, mindB.id],
       });
 
@@ -285,7 +285,7 @@ describe("conversation participants", () => {
 
     try {
       // Create a 3-person conversation
-      const conv = await createConversation("dm-skip-mind", "volute", {
+      const conv = await createConversation("volute", {
         participantIds: [user1.id, mindUser.id, user2.id],
       });
 
@@ -313,7 +313,7 @@ describe("channels", () => {
     try {
       const ch = await createChannel("general", user.id);
       assert.equal(ch.type, "channel");
-      assert.equal(ch.mind_name, null);
+      assert.equal(ch.channel, "volute");
       assert.equal(ch.channel, "volute");
 
       // Creator is a participant
@@ -356,7 +356,7 @@ describe("channels", () => {
   });
 
   it("getChannelName returns null for DM conversation", async () => {
-    const dm = await createConversation("test-mind", "volute");
+    const dm = await createConversation("volute");
     try {
       const name = await getChannelName(dm.id);
       assert.equal(name, null);
@@ -373,7 +373,7 @@ describe("channels", () => {
   it("listChannels returns only channels", async () => {
     const ch1 = await createChannel("alpha");
     const ch2 = await createChannel("beta");
-    const dm = await createConversation("test-mind", "volute");
+    const dm = await createConversation("volute");
     try {
       const channels = await listChannels();
       const names = channels.map((c) => c.channel_name);
@@ -462,7 +462,7 @@ describe("channels", () => {
 
 describe("conversation privacy", () => {
   it("setConversationPrivate toggles private flag", async () => {
-    const conv = await createConversation("test-mind", "test");
+    const conv = await createConversation("test");
     try {
       // Default is not private
       assert.equal(conv.private, 0);

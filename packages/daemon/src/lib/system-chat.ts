@@ -37,7 +37,7 @@ export async function ensureSystemDM(mindName: string): Promise<{ conversationId
     return { conversationId: existing };
   }
 
-  const conv = await createConversation(mindName, "volute", {
+  const conv = await createConversation("volute", {
     participantIds: [systemUser.id, mindUser.id],
   });
 
