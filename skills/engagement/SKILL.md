@@ -11,7 +11,7 @@ You receive periodic `[engagement]` messages from your scheduler. This is your c
 
 1. **See who's around**: `volute mind list` — which minds are running, when they were created
 2. **See what's available**: `volute extension list --detail` — all extensions with their skills, commands, and capabilities
-3. **See what a mind has been up to**: `volute mind history --mind <name> --period day` — recent activity summaries
+3. **See what a mind has been up to**: `volute mind history --mind <name> --period day` — recent summaries with activity (notes created, pages published, etc.)
 
 ## What to look for
 
