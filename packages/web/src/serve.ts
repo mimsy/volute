@@ -4,7 +4,7 @@
 // Serves the built Svelte SPA and lets users connect to any Volute daemon.
 // Usage: volute-web [--port 3000]
 
-import { createReadStream, existsSync, statSync } from "node:fs";
+import { createReadStream, existsSync, type Stats, statSync } from "node:fs";
 import { createServer } from "node:http";
 import { extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -51,8 +51,12 @@ function parseArgs(): { port: number } {
 }
 
 function serveFile(filePath: string, res: import("node:http").ServerResponse): boolean {
-  if (!existsSync(filePath)) return false;
-  const stat = statSync(filePath);
+  let stat: Stats;
+  try {
+    stat = statSync(filePath);
+  } catch {
+    return false;
+  }
   if (!stat.isFile()) return false;
 
   const ext = extname(filePath).toLowerCase();

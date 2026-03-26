@@ -54,8 +54,8 @@ async function loadDir() {
 }
 
 $effect(() => {
-  // Re-run when name or path changes
-  void [name, currentDir];
+  const _name = name;
+  const _dir = currentDir;
   loadDir();
 });
 
@@ -112,8 +112,10 @@ let isText = $derived(TEXT_TYPES.has(baseMime));
 let isMarkdown = $derived(baseMime === "text/markdown" || (selectedFile?.endsWith(".md") ?? false));
 
 $effect(() => {
+  const url = fileContent;
+  const img = isImage;
   return () => {
-    if (fileContent && isImage) URL.revokeObjectURL(fileContent);
+    if (url && img) URL.revokeObjectURL(url);
   };
 });
 

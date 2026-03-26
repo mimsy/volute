@@ -1,8 +1,9 @@
 import type { ContentBlock, Message } from "@volute/api";
+import { normalizeTimestamp } from "./format";
 
 export function formatTime(dateStr: string): string {
   try {
-    const d = new Date(dateStr.endsWith("Z") ? dateStr : `${dateStr}Z`);
+    const d = new Date(normalizeTimestamp(dateStr));
     return d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
   } catch {
     return "";

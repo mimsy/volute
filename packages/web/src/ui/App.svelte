@@ -40,7 +40,6 @@ import {
   hiddenConversationIds,
   hideConversation,
   layout,
-  reconnectActivity,
   rightPanel,
   saveRightPanelWidth,
   saveSidebarWidth,
@@ -135,13 +134,8 @@ let narrowViewport = $state(false);
 let showUserMenu = $state(false);
 let userAvatar = $state<string | null>(null);
 
-// Auto-collapse right panel on narrow viewports
 $effect(() => {
-  if (narrowViewport) {
-    rightPanelCollapsed = true;
-  } else {
-    rightPanelCollapsed = false;
-  }
+  rightPanelCollapsed = narrowViewport;
 });
 
 // Active conversation ID — for mind DM views and channel views
@@ -190,14 +184,11 @@ let activeConv = $derived.by(() => {
   return undefined;
 });
 
-let contextMindName = $derived.by(() => {
-  if (selection.kind === "mind") return selection.name;
-  return "";
+let contextMind = $derived.by(() => {
+  const sel = selection;
+  if (sel.kind === "mind") return data.minds.find((m) => m.name === sel.name);
+  return undefined;
 });
-
-let contextMind = $derived(
-  contextMindName ? data.minds.find((m) => m.name === contextMindName) : undefined,
-);
 
 let rightPanelMind = $derived(
   activeModal === "mind" && selectedModalMind ? selectedModalMind : (contextMind ?? undefined),
@@ -506,7 +497,7 @@ async function handleDeleteConversation(id: string) {
     console.error("Failed to delete conversation:", err);
     return;
   }
-  reconnectActivity();
+  connectActivity();
   if (activeConversationId === id) {
     selection = { kind: "system-history" };
   }
@@ -514,7 +505,7 @@ async function handleDeleteConversation(id: string) {
 
 function handleConversationId(id: string) {
   setActiveConversation(id);
-  reconnectActivity();
+  connectActivity();
 }
 
 function handleNewChatCreated(name: string) {
@@ -528,7 +519,7 @@ function handleChannelJoined(conv: Conversation & { channel_name: string }) {
   activeModal = null;
   selectedModalMind = null;
   closeSidebar();
-  reconnectActivity();
+  connectActivity();
   if (conv.type === "channel" && conv.channel_name) {
     selection = { kind: "channel", slug: conv.channel_name };
   }
@@ -659,7 +650,7 @@ function handleGlobalClick(e: MouseEvent) {
       if (spiritConversationId) {
         initialSpiritConversationId = spiritConversationId;
       }
-      reconnectActivity();
+      connectActivity();
       requestAnimationFrame(() => {
         selection = { kind: "system-chat" };
       });
@@ -1025,17 +1016,6 @@ function handleGlobalClick(e: MouseEvent) {
     overflow-wrap: anywhere;
     line-height: 1.2;
   }
-
-  @keyframes iridescent {
-    0%   { background: #4ade80; }
-    16%  { background: #60a5fa; }
-    33%  { background: #c084fc; }
-    50%  { background: #f472b6; }
-    66%  { background: #fbbf24; }
-    83%  { background: #34d399; }
-    100% { background: #4ade80; }
-  }
-
   .resize-handle {
     width: 4px;
     cursor: col-resize;

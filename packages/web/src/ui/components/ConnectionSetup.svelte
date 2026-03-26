@@ -214,17 +214,6 @@ async function handleLogin(e: Event) {
     color: var(--text-2);
     font-size: 13px;
   }
-
-  @keyframes iridescent {
-    0%   { background: #4ade80; }
-    16%  { background: #60a5fa; }
-    33%  { background: #c084fc; }
-    50%  { background: #f472b6; }
-    66%  { background: #fbbf24; }
-    83%  { background: #34d399; }
-    100% { background: #4ade80; }
-  }
-
   .daemon-info {
     display: flex;
     align-items: center;

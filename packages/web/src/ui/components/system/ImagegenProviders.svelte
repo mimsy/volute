@@ -159,20 +159,22 @@ async function removeModel(modelId: string) {
 
 // Bridge defaultModel (string|null) to string for ModelSelect
 let defaultModelStr = $state("");
+let defaultsLoaded = $state(false);
+
 $effect(() => {
   defaultModelStr = defaultModel ?? "";
 });
 
-// Auto-save default model when it changes
-let defaultsLoaded = false;
+$effect(() => {
+  if (enabledModels.length > 0) defaultsLoaded = true;
+});
+
+// Auto-save default model when user changes it
 $effect(() => {
   const dm = defaultModelStr;
   if (!defaultsLoaded) return;
   defaultModel = dm || null;
   saveEnabledImagegenModels(enabledModels, dm || null).catch(() => {});
-});
-$effect(() => {
-  if (enabledModels.length > 0) defaultsLoaded = true;
 });
 </script>
 

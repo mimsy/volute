@@ -91,14 +91,9 @@ export const data = $state({
   activity: [] as ActivityItem[],
   extensions: [] as ExtensionInfo[],
   oauthErrors: [] as AiProvider[],
-  connectionOk: true,
-});
-
-// Sync SSE connection state to data.connectionOk
-$effect.root(() => {
-  $effect(() => {
-    data.connectionOk = connectionState.connected;
-  });
+  get connectionOk() {
+    return connectionState.connected;
+  },
 });
 
 // --- Real-time mind activity ---
@@ -114,6 +109,20 @@ export const onlineBrains = new SvelteSet<string>();
 export const unreadCounts = new SvelteMap<string, number>();
 
 const unreadState = $state({ activeConversationId: null as string | null });
+
+let cachedMentionPattern: { username: string; displayName: string; regex: RegExp } | null = null;
+function getMentionPattern(username: string, displayName: string): RegExp {
+  if (
+    cachedMentionPattern?.username === username &&
+    cachedMentionPattern?.displayName === displayName
+  ) {
+    return cachedMentionPattern.regex;
+  }
+  const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const regex = new RegExp(`@(${esc(username)}${displayName ? `|${esc(displayName)}` : ""})`, "i");
+  cachedMentionPattern = { username, displayName, regex };
+  return regex;
+}
 
 export function setActiveConversation(id: string | null) {
   unreadState.activeConversationId = id;
@@ -179,12 +188,10 @@ function handleSSEEvent(event: SSEEvent) {
     if (item.type === "brain_online") onlineBrains.add(item.mind);
     if (item.type === "brain_offline") onlineBrains.delete(item.mind);
 
-    // Refresh minds on status changes
+    // Refresh minds on status changes (mind_active/mind_idle handled by activeMinds set above)
     if (
       item.type === "mind_started" ||
       item.type === "mind_stopped" ||
-      item.type === "mind_active" ||
-      item.type === "mind_idle" ||
       item.type === "mind_sleeping" ||
       item.type === "mind_waking" ||
       item.type === "profile_updated"
@@ -231,12 +238,7 @@ function handleSSEEvent(event: SSEEvent) {
           // Notify on @mention
           const me = auth.user?.username ?? "";
           const displayName = auth.user?.display_name ?? "";
-          const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-          const mentionPattern = new RegExp(
-            `@(${esc(me)}${displayName ? `|${esc(displayName)}` : ""})`,
-            "i",
-          );
-          if (mentionPattern.test(text)) {
+          if (getMentionPattern(me, displayName).test(text)) {
             showNotification(
               `${senderLabel} in #${conv.channel_name ?? "channel"}`,
               text.slice(0, 200),
@@ -279,11 +281,6 @@ export function disconnectActivity() {
     oauthHealthTimer = null;
   }
   disconnect();
-}
-
-/** Force reconnect — call after creating a new conversation to pick up the new subscription. */
-export function reconnectActivity() {
-  connectActivity();
 }
 
 // --- Hidden chats (persisted to localStorage) ---

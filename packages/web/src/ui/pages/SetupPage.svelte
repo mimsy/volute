@@ -646,17 +646,6 @@ $effect(() => {
     letter-spacing: 0.04em;
     margin-top: -4px;
   }
-
-  @keyframes iridescent {
-    0%   { background: #4ade80; }
-    16%  { background: #60a5fa; }
-    33%  { background: #c084fc; }
-    50%  { background: #f472b6; }
-    66%  { background: #fbbf24; }
-    83%  { background: #34d399; }
-    100% { background: #4ade80; }
-  }
-
   /* Step indicator */
 
   .steps {
