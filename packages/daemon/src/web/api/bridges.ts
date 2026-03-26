@@ -85,12 +85,10 @@ const app = new Hono<AuthEnv>()
 
       // Find or create DM conversation between puppet and mind
       const participantIds: [number, number] = [puppet.id, mindUser.id];
-      let conversationId = await findDMConversation(mindName, participantIds);
+      let conversationId = await findDMConversation(participantIds);
 
       if (!conversationId) {
-        const title = `${body.displayName}, ${mindName}`;
-        const conv = await createConversation(mindName, "volute", {
-          title,
+        const conv = await createConversation({
           participantIds: [puppet.id, mindUser.id],
           type: "dm",
         });
@@ -282,7 +280,6 @@ async function fanOutToBridgedMinds(opts: {
     const channel = buildVoluteSlug({
       participants,
       mindUsername: mindName,
-      convTitle: null,
       conversationId: opts.conversationId,
     });
 

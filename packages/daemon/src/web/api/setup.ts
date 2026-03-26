@@ -429,13 +429,12 @@ setup.post("/complete", async (c) => {
       const admin = brains.find((u) => u.role === "admin");
 
       if (admin) {
-        const existing = await findDMConversation("volute", [admin.id, spiritUser.id]);
+        const existing = await findDMConversation([admin.id, spiritUser.id]);
         if (existing) {
           spiritConversationId = existing;
         } else {
-          const conv = await createConversation("volute", "volute", {
+          const conv = await createConversation({
             participantIds: [admin.id, spiritUser.id],
-            title: "Volute",
           });
           spiritConversationId = conv.id;
         }

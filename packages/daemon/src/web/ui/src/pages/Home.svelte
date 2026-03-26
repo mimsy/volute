@@ -114,7 +114,7 @@ let feedItems = $derived.by(() => {
 });
 
 function getConvLabel(conv: ConversationWithDetails): string {
-  if (conv.type === "channel" && conv.name) return `#${conv.name}`;
+  if (conv.type === "channel" && conv.channel_name) return `#${conv.channel_name}`;
   const parts = conv.participants ?? [];
   if (conv.type === "dm" && parts.length === 2) {
     const mind = parts.find((p) => p.userType === "mind");
@@ -123,7 +123,6 @@ function getConvLabel(conv: ConversationWithDetails): string {
   }
   const names = parts.map((p) => p.username);
   if (names.length > 0) return names.join(", ");
-  if (conv.title) return conv.title;
   return "Conversation";
 }
 </script>

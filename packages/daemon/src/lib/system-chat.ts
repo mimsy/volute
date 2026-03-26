@@ -31,15 +31,14 @@ export async function ensureSystemDM(mindName: string): Promise<{ conversationId
     throw new Error(`Cannot create system DM: mind "${mindName}" is the system user`);
   }
 
-  const existing = await findDMConversation(mindName, [systemUser.id, mindUser.id]);
+  const existing = await findDMConversation([systemUser.id, mindUser.id]);
   if (existing) {
     dmCache.set(mindName, existing);
     return { conversationId: existing };
   }
 
-  const conv = await createConversation(mindName, "volute", {
+  const conv = await createConversation({
     participantIds: [systemUser.id, mindUser.id],
-    title: "Volute",
   });
 
   dmCache.set(mindName, conv.id);

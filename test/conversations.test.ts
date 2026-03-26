@@ -12,6 +12,7 @@ import {
   deleteConversation,
   findDMConversation,
   getChannelByName,
+  getChannelName,
   getConversation,
   getMessages,
   getParticipants,
@@ -27,7 +28,7 @@ import { messages, users } from "../packages/daemon/src/lib/schema.js";
 
 describe("conversations", () => {
   it("round-trips ContentBlock[] through addMessage/getMessages", async () => {
-    const conv = await createConversation("test-mind", "test");
+    const conv = await createConversation();
     try {
       const blocks: ContentBlock[] = [
         { type: "text", text: "Hello" },
@@ -46,7 +47,7 @@ describe("conversations", () => {
   });
 
   it("reads legacy plain-string messages as [{ type: 'text', text }]", async () => {
-    const conv = await createConversation("test-mind", "test-legacy");
+    const conv = await createConversation();
     try {
       // Manually insert a plain string (simulating legacy data)
       const db = await getDb();
@@ -65,8 +66,8 @@ describe("conversations", () => {
     }
   });
 
-  it("stores user message and extracts title from first text block", async () => {
-    const conv = await createConversation("test-mind", "test-title");
+  it("stores user message with image and text blocks", async () => {
+    const conv = await createConversation();
     try {
       const blocks: ContentBlock[] = [
         { type: "image", media_type: "image/png", data: "abc123" },
@@ -84,7 +85,7 @@ describe("conversations", () => {
   });
 
   it("handles tool_result with is_error flag", async () => {
-    const conv = await createConversation("test-mind", "test-error");
+    const conv = await createConversation();
     try {
       const blocks: ContentBlock[] = [
         { type: "tool_use", name: "bash", input: { command: "exit 1" } },
@@ -117,7 +118,7 @@ describe("conversation participants", () => {
       .returning({ id: users.id });
 
     try {
-      const conv = await createConversation("test-mind-p", "volute", {
+      const conv = await createConversation({
         participantIds: [humanUser.id, mindUser.id],
       });
 
@@ -149,7 +150,7 @@ describe("conversation participants", () => {
       .returning({ id: users.id });
 
     try {
-      const conv = await createConversation("test-mind", "volute");
+      const conv = await createConversation();
 
       // Initially no participants
       assert.equal(await isParticipant(conv.id, user1.id), false);
@@ -183,7 +184,7 @@ describe("conversation participants", () => {
       .returning({ id: users.id });
 
     try {
-      const conv = await createConversation("test-mind", "volute", {
+      const conv = await createConversation({
         participantIds: [user1.id],
       });
 
@@ -202,7 +203,7 @@ describe("conversation participants", () => {
     const db = await getDb();
 
     try {
-      const conv = await createConversation("mind-type-test", "volute", {
+      const conv = await createConversation({
         participantIds: [mindUser.id],
       });
 
@@ -225,15 +226,15 @@ describe("conversation participants", () => {
       .returning({ id: users.id });
 
     try {
-      const conv = await createConversation("dm-test-mind", "volute", {
+      const conv = await createConversation({
         participantIds: [humanUser.id, mindUser.id],
       });
 
-      const found = await findDMConversation("dm-test-mind", [humanUser.id, mindUser.id]);
+      const found = await findDMConversation([humanUser.id, mindUser.id]);
       assert.equal(found, conv.id);
 
       // Reversed order should also find it
-      const found2 = await findDMConversation("dm-test-mind", [mindUser.id, humanUser.id]);
+      const found2 = await findDMConversation([mindUser.id, humanUser.id]);
       assert.equal(found2, conv.id);
 
       await deleteConversation(conv.id);
@@ -243,8 +244,30 @@ describe("conversation participants", () => {
     }
   });
 
+  it("findDMConversation finds DM regardless of which mind created it", async () => {
+    const db = await getDb();
+    const mindA = await getOrCreateMindUser("dm-cross-a");
+    const mindB = await getOrCreateMindUser("dm-cross-b");
+
+    try {
+      // Mind A creates the conversation
+      const conv = await createConversation({
+        participantIds: [mindA.id, mindB.id],
+      });
+
+      // Mind B should still find it
+      const found = await findDMConversation([mindA.id, mindB.id]);
+      assert.equal(found, conv.id);
+
+      await deleteConversation(conv.id);
+    } finally {
+      await db.delete(users).where(eq(users.id, mindA.id));
+      await db.delete(users).where(eq(users.id, mindB.id));
+    }
+  });
+
   it("findDMConversation returns null when no match", async () => {
-    const result = await findDMConversation("nonexistent-mind", [999, 998]);
+    const result = await findDMConversation([999, 998]);
     assert.equal(result, null);
   });
 
@@ -262,12 +285,12 @@ describe("conversation participants", () => {
 
     try {
       // Create a 3-person conversation
-      const conv = await createConversation("dm-skip-mind", "volute", {
+      const conv = await createConversation({
         participantIds: [user1.id, mindUser.id, user2.id],
       });
 
       // Should not find it as a DM between user1 and mind
-      const found = await findDMConversation("dm-skip-mind", [user1.id, mindUser.id]);
+      const found = await findDMConversation([user1.id, mindUser.id]);
       assert.equal(found, null);
 
       await deleteConversation(conv.id);
@@ -290,9 +313,6 @@ describe("channels", () => {
     try {
       const ch = await createChannel("general", user.id);
       assert.equal(ch.type, "channel");
-      assert.equal(ch.name, "general");
-      assert.equal(ch.mind_name, null);
-      assert.equal(ch.channel, "volute");
 
       // Creator is a participant
       const parts = await getParticipants(ch.id);
@@ -323,13 +343,38 @@ describe("channels", () => {
     assert.equal(found, null);
   });
 
+  it("getChannelName returns name for channel conversation", async () => {
+    const ch = await createChannel("lookup-test");
+    try {
+      const name = await getChannelName(ch.id);
+      assert.equal(name, "lookup-test");
+    } finally {
+      await deleteConversation(ch.id);
+    }
+  });
+
+  it("getChannelName returns null for DM conversation", async () => {
+    const dm = await createConversation();
+    try {
+      const name = await getChannelName(dm.id);
+      assert.equal(name, null);
+    } finally {
+      await deleteConversation(dm.id);
+    }
+  });
+
+  it("getChannelName returns null for nonexistent conversation", async () => {
+    const name = await getChannelName("nonexistent-conv-id");
+    assert.equal(name, null);
+  });
+
   it("listChannels returns only channels", async () => {
     const ch1 = await createChannel("alpha");
     const ch2 = await createChannel("beta");
-    const dm = await createConversation("test-mind", "volute");
+    const dm = await createConversation();
     try {
       const channels = await listChannels();
-      const names = channels.map((c) => c.name);
+      const names = channels.map((c) => c.channel_name);
       assert.ok(names.includes("alpha"));
       assert.ok(names.includes("beta"));
       // DM should not appear
@@ -402,7 +447,7 @@ describe("channels", () => {
       await joinChannel(ch.id, human.id);
 
       // findDMConversation should not find it
-      const found = await findDMConversation("ch-dm-mind", [human.id, mindUser.id]);
+      const found = await findDMConversation([human.id, mindUser.id]);
       assert.equal(found, null);
 
       await deleteConversation(ch.id);
@@ -415,7 +460,7 @@ describe("channels", () => {
 
 describe("conversation privacy", () => {
   it("setConversationPrivate toggles private flag", async () => {
-    const conv = await createConversation("test-mind", "test");
+    const conv = await createConversation();
     try {
       // Default is not private
       assert.equal(conv.private, 0);

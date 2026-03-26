@@ -24,11 +24,11 @@ let error = $state<string | null>(null);
 let scrollEl = $state<HTMLDivElement | undefined>();
 
 let label = $derived.by(() => {
-  if (conversation.type === "channel" && conversation.name) return `#${conversation.name}`;
+  if (conversation.type === "channel" && conversation.channel_name)
+    return `#${conversation.channel_name}`;
   const parts = conversation.participants ?? [];
   const others = parts.filter((p) => p.username !== mindName);
   if (others.length > 0) return others.map((p) => `@${p.username}`).join(", ");
-  if (conversation.title) return conversation.title;
   return "Conversation";
 });
 

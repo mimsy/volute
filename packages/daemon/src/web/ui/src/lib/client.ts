@@ -335,7 +335,9 @@ export function fetchChannels(): Promise<ChannelInfo[]> {
   return get(`${V1}/channels`);
 }
 
-export function createVoluteChannel(name: string): Promise<Conversation> {
+export function createVoluteChannel(
+  name: string,
+): Promise<Conversation & { channel_name: string }> {
   return post(`${V1}/channels`, { name });
 }
 

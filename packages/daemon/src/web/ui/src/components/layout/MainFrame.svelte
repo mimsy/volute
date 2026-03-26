@@ -35,12 +35,13 @@ let {
 // For channel views, resolve conversation from slug
 let channelConv = $derived.by(() => {
   if (selection.kind !== "channel") return undefined;
-  return conversations.find((c) => c.type === "channel" && c.name === selection.slug);
+  return conversations.find((c) => c.type === "channel" && c.channel_name === selection.slug);
 });
 
 let channelMindName = $derived.by(() => {
   if (!channelConv) return "";
-  return channelConv.mind_name ?? "";
+  const mindParticipant = channelConv.participants?.find((p) => p.userType === "mind");
+  return mindParticipant?.username ?? "";
 });
 
 // For mind chat views, resolve the DM conversation ID
@@ -57,7 +58,7 @@ let mindConversationId = $derived.by(() => {
 
 let contextLabel = $derived.by(() => {
   if (selection.kind === "channel" && channelConv) {
-    return `#${channelConv.name ?? ""}`;
+    return `#${channelConv.channel_name ?? ""}`;
   }
   if (selection.kind === "mind") {
     const mind = minds.find((m) => m.name === selection.name);
@@ -102,7 +103,7 @@ let contextLabel = $derived.by(() => {
           conversationId={channelConv.id}
           {onConversationId}
           convType="channel"
-          channelName={channelConv.name ?? ""}
+          channelName={channelConv.channel_name ?? ""}
           {minds}
           participants={channelConv.participants ?? []}
           {onOpenMind}

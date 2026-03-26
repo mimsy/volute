@@ -13,7 +13,6 @@ export function slugify(text: string): string {
 export function buildVoluteSlug(opts: {
   participants: { username: string }[];
   mindUsername: string;
-  convTitle: string | null | undefined;
   conversationId: string;
   convType?: "dm" | "channel";
   convName?: string | null;

@@ -238,7 +238,7 @@ function handleSSEEvent(event: SSEEvent) {
           );
           if (mentionPattern.test(text)) {
             showNotification(
-              `${senderLabel} in #${conv.name ?? conv.title ?? "channel"}`,
+              `${senderLabel} in #${conv.channel_name ?? "channel"}`,
               text.slice(0, 200),
             );
           }

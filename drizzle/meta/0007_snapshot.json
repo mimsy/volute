@@ -1,0 +1,7 @@
+{
+  "id": "0007_drop_conversation_name_title",
+  "prevId": "0006_channels",
+  "version": "6",
+  "dialect": "sqlite",
+  "tables": {}
+}

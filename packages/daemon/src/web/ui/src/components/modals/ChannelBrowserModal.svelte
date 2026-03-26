@@ -14,7 +14,7 @@ let {
   onJoined,
 }: {
   onClose: () => void;
-  onJoined: (conv: Conversation) => void;
+  onJoined: (conv: Conversation & { channel_name: string }) => void;
 } = $props();
 
 let channels = $state<ChannelInfo[]>([]);
@@ -62,10 +62,10 @@ async function handleCreate() {
 }
 
 async function handleJoin(ch: ChannelInfo) {
-  if (!ch.name) return;
-  joining = ch.name;
+  if (!ch.channel_name) return;
+  joining = ch.channel_name;
   try {
-    await joinVoluteChannel(ch.name);
+    await joinVoluteChannel(ch.channel_name);
     onJoined(ch);
   } catch (err) {
     error = err instanceof Error ? err.message : "Failed to join channel";
@@ -75,9 +75,9 @@ async function handleJoin(ch: ChannelInfo) {
 }
 
 async function handleLeave(ch: ChannelInfo) {
-  if (!ch.name) return;
+  if (!ch.channel_name) return;
   try {
-    await leaveVoluteChannel(ch.name);
+    await leaveVoluteChannel(ch.channel_name);
     loadChannels();
   } catch (err) {
     error = err instanceof Error ? err.message : "Failed to leave channel";
@@ -104,16 +104,16 @@ function handleKeyDown(e: KeyboardEvent) {
       {#each channels as ch (ch.id)}
         <div class="channel-row">
           <div class="channel-info">
-            <span class="channel-name">#{ch.name}</span>
+            <span class="channel-name">#{ch.channel_name}</span>
             <span class="channel-meta">{ch.participantCount} member{ch.participantCount === 1 ? "" : "s"}</span>
           </div>
           <button
             class="action-btn"
             class:leave={ch.isMember}
             onclick={() => ch.isMember ? handleLeave(ch) : handleJoin(ch)}
-            disabled={joining === ch.name}
+            disabled={joining === ch.channel_name}
           >
-            {joining === ch.name ? "..." : ch.isMember ? "leave" : "join"}
+            {joining === ch.channel_name ? "..." : ch.isMember ? "leave" : "join"}
           </button>
         </div>
       {/each}

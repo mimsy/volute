@@ -187,7 +187,7 @@ let channelConversations = $derived(conversations.filter((c) => c.type === "chan
 
 let activeChannelId = $derived.by(() => {
   if (selection.kind !== "channel") return null;
-  const conv = conversations.find((c) => c.type === "channel" && c.name === selection.slug);
+  const conv = conversations.find((c) => c.type === "channel" && c.channel_name === selection.slug);
   return conv?.id ?? null;
 });
 

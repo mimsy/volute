@@ -34,16 +34,14 @@ export function formatRelativeTime(dateStr: string): string {
 
 export function getConversationLabel(
   participants: Array<{ username: string; userType: string }>,
-  title: string | null,
   currentUsername: string,
-  conv?: { type?: string; name?: string | null },
+  conv?: { type?: string; channel_name?: string | null },
 ): string {
-  if (conv?.type === "channel" && conv.name) return `#${conv.name}`;
+  if (conv?.type === "channel" && conv.channel_name) return `#${conv.channel_name}`;
   if (participants.length === 2) {
     const other = participants.find((p) => p.username !== currentUsername);
     if (other) return `@${other.username}`;
   }
-  if (title) return title;
   const mindParticipants = participants.filter((p) => p.userType === "mind");
   if (mindParticipants.length > 0) return mindParticipants.map((a) => a.username).join(", ");
   return "Untitled";

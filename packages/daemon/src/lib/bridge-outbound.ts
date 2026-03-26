@@ -5,7 +5,7 @@
 import type { ContentBlock } from "@volute/api";
 import { findBridgeForChannel, getBridgeConfig } from "./bridges.js";
 import { readEnv, sharedEnvPath } from "./env.js";
-import { getConversation, getParticipants } from "./events/conversations.js";
+import { getChannelName, getConversation, getParticipants } from "./events/conversations.js";
 import log from "./logger.js";
 import { getPlatformDriver, type ImageAttachment } from "./platforms.js";
 import { mindDir } from "./registry.js";
@@ -44,8 +44,15 @@ export async function routeOutboundBridge(
     const conv = await getConversation(conversationId);
     if (!conv) return;
 
-    if (conv.type === "channel" && conv.name) {
-      await routeChannelOutbound(conv.name, senderName, contentBlocks);
+    if (conv.type === "channel") {
+      const channelName = await getChannelName(conversationId);
+      if (channelName) {
+        await routeChannelOutbound(channelName, senderName, contentBlocks);
+      } else {
+        log.warn(
+          `channel conversation ${conversationId} has no channel name — skipping bridge outbound`,
+        );
+      }
     } else if (conv.type === "dm") {
       await routeDMOutbound(conversationId, senderName, contentBlocks);
     }

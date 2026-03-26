@@ -2,11 +2,12 @@ import { randomUUID } from "node:crypto";
 import type {
   ContentBlock,
   Conversation,
+  ConversationWithParticipants,
   LastMessageSummary,
   Message,
   Participant,
 } from "@volute/api";
-import { and, desc, eq, inArray, isNull, lt, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, lt, sql } from "drizzle-orm";
 import { getDb } from "../db.js";
 import {
   channels,
@@ -19,35 +20,28 @@ import {
 import { fireWebhook } from "../webhook.js";
 import { publish } from "./conversation-events.js";
 
-export type { ContentBlock, Conversation, LastMessageSummary, Message, Participant };
+export type {
+  ContentBlock,
+  Conversation,
+  ConversationWithParticipants,
+  LastMessageSummary,
+  Message,
+  Participant,
+};
 
-export async function createConversation(
-  mindName: string | null,
-  channel: string,
-  opts?: {
-    userId?: number;
-    title?: string;
-    participantIds?: number[];
-    type?: "dm" | "channel";
-    name?: string;
-  },
-): Promise<Conversation> {
+export async function createConversation(opts?: {
+  userId?: number;
+  participantIds?: number[];
+  type?: "dm" | "channel";
+}): Promise<Conversation> {
   const db = await getDb();
   const id = randomUUID();
   const type = opts?.type ?? "dm";
-  const name = opts?.name ?? null;
 
-  // Sequential inserts instead of a transaction to avoid SQLITE_BUSY errors
-  // when @libsql/client's transaction() creates a second connection that
-  // conflicts with concurrent writes on the primary connection.
   await db.insert(conversations).values({
     id,
-    mind_name: mindName,
-    channel,
     type,
-    name,
     user_id: opts?.userId ?? null,
-    title: opts?.title ?? null,
   });
 
   if (opts?.participantIds && opts.participantIds.length > 0) {
@@ -62,18 +56,14 @@ export async function createConversation(
 
   fireWebhook({
     event: "conversation_created",
-    mind: mindName ?? "",
-    data: { id, mindName, channel, type, name, title: opts?.title ?? null },
+    mind: "",
+    data: { id, type },
   });
 
   return {
     id,
-    mind_name: mindName,
-    channel,
     type,
-    name,
     user_id: opts?.userId ?? null,
-    title: opts?.title ?? null,
     private: 0,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
@@ -205,18 +195,6 @@ export async function addMessage(
     .set({ updated_at: sql`datetime('now')` })
     .where(eq(conversations.id, conversationId));
 
-  // Set title from first user text block if unset
-  if (role === "user") {
-    const firstText = content.find((b) => b.type === "text");
-    const title = firstText ? (firstText as { text: string }).text.slice(0, 80) : "";
-    if (title) {
-      await db
-        .update(conversations)
-        .set({ title })
-        .where(and(eq(conversations.id, conversationId), isNull(conversations.title)));
-    }
-  }
-
   const msg: Message = {
     id: result.id,
     conversation_id: conversationId,
@@ -235,16 +213,9 @@ export async function addMessage(
     createdAt: msg.created_at,
   });
 
-  // Look up the mind that owns this conversation for the webhook
-  const conv = await db
-    .select({ mind_name: conversations.mind_name })
-    .from(conversations)
-    .where(eq(conversations.id, conversationId))
-    .get();
-
   fireWebhook({
     event: "message_created",
-    mind: conv?.mind_name ?? "",
+    mind: "",
     data: {
       conversationId,
       messageId: result.id,
@@ -310,9 +281,20 @@ function parseMessageRow(row: typeof messages.$inferSelect): Message {
   return { ...row, role: row.role as Message["role"], content };
 }
 
+/** Look up channel names for a set of conversation IDs. Returns a map of conversationId → channel name. */
+async function getChannelNames(convIds: string[]): Promise<Map<string, string>> {
+  if (convIds.length === 0) return new Map();
+  const db = await getDb();
+  const rows = await db
+    .select({ conversationId: channels.conversation_id, name: channels.name })
+    .from(channels)
+    .where(inArray(channels.conversation_id, convIds));
+  return new Map(rows.map((r) => [r.conversationId, r.name]));
+}
+
 export async function listConversationsWithParticipants(
   userId: number,
-): Promise<(Conversation & { participants: Participant[]; lastMessage?: LastMessageSummary })[]> {
+): Promise<ConversationWithParticipants[]> {
   const convs = await listConversationsForUser(userId);
   if (convs.length === 0) return [];
   const db = await getDb();
@@ -389,36 +371,40 @@ export async function listConversationsWithParticipants(
     }
   }
 
+  const channelNames = await getChannelNames(convIds);
+
   return convs.map((c) => ({
     ...c,
+    channel_name: channelNames.get(c.id) ?? null,
     participants: byConv.get(c.id) ?? [],
     lastMessage: byLastMsg.get(c.id),
   }));
 }
 
-export async function findDMConversation(
-  mindName: string,
-  participantIds: [number, number],
-): Promise<string | null> {
+export async function findDMConversation(participantIds: [number, number]): Promise<string | null> {
   const db = await getDb();
-  // Find DM conversations for this mind with exactly these two participants
-  const mindConvs = await db
-    .select({ id: conversations.id })
-    .from(conversations)
-    .where(and(eq(conversations.mind_name, mindName), eq(conversations.type, "dm")))
+  // Find DM conversations with exactly these two participants
+  const [id1, id2] = participantIds;
+
+  // Find conversations where participant 1 is a member
+  const p1Convs = await db
+    .select({ conversation_id: conversationParticipants.conversation_id })
+    .from(conversationParticipants)
+    .innerJoin(conversations, eq(conversations.id, conversationParticipants.conversation_id))
+    .where(and(eq(conversationParticipants.user_id, id1), eq(conversations.type, "dm")))
     .all();
 
-  for (const conv of mindConvs) {
+  for (const { conversation_id } of p1Convs) {
     const rows = await db
       .select({ user_id: conversationParticipants.user_id })
       .from(conversationParticipants)
-      .where(eq(conversationParticipants.conversation_id, conv.id))
+      .where(eq(conversationParticipants.conversation_id, conversation_id))
       .all();
 
     if (rows.length !== 2) continue;
     const ids = new Set(rows.map((r) => r.user_id));
-    if (ids.has(participantIds[0]) && ids.has(participantIds[1])) {
-      return conv.id;
+    if (ids.has(id1) && ids.has(id2)) {
+      return conversation_id;
     }
   }
   return null;
@@ -426,52 +412,35 @@ export async function findDMConversation(
 
 export async function listConversationsForMind(
   mindName: string,
-): Promise<(Conversation & { participants: Participant[]; lastMessage?: LastMessageSummary })[]> {
+): Promise<ConversationWithParticipants[]> {
   const db = await getDb();
 
-  // Find conversations by mind_name
-  const byName = (await db
-    .select()
-    .from(conversations)
-    .where(eq(conversations.mind_name, mindName))
-    .orderBy(desc(conversations.updated_at))
-    .all()) as Conversation[];
-
-  // Also find conversations where the mind is a participant
   const mindUser = await db
     .select({ id: users.id })
     .from(users)
     .where(and(eq(users.username, mindName), eq(users.user_type, "mind")))
     .get();
 
-  const byNameIds = new Set(byName.map((c) => c.id));
-  let byParticipation: Conversation[] = [];
-  if (mindUser) {
-    const participantRows = await db
-      .select({ conversation_id: conversationParticipants.conversation_id })
-      .from(conversationParticipants)
-      .where(eq(conversationParticipants.user_id, mindUser.id))
-      .all();
-    const extraIds = participantRows
-      .map((r) => r.conversation_id)
-      .filter((id) => !byNameIds.has(id));
-    if (extraIds.length > 0) {
-      byParticipation = (await db
-        .select()
-        .from(conversations)
-        .where(inArray(conversations.id, extraIds))
-        .orderBy(desc(conversations.updated_at))
-        .all()) as Conversation[];
-    }
-  }
+  if (!mindUser) return [];
 
-  const convs = [...byName, ...byParticipation].sort(
-    (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime(),
-  );
+  const participantRows = await db
+    .select({ conversation_id: conversationParticipants.conversation_id })
+    .from(conversationParticipants)
+    .where(eq(conversationParticipants.user_id, mindUser.id))
+    .all();
+
+  if (participantRows.length === 0) return [];
+
+  const convIds = participantRows.map((r) => r.conversation_id);
+  const convs = (await db
+    .select()
+    .from(conversations)
+    .where(inArray(conversations.id, convIds))
+    .orderBy(desc(conversations.updated_at))
+    .all()) as Conversation[];
 
   if (convs.length === 0) return [];
 
-  const convIds = convs.map((c) => c.id);
   const rows = await db
     .select({
       conversationId: conversationParticipants.conversation_id,
@@ -545,8 +514,11 @@ export async function listConversationsForMind(
     }
   }
 
+  const channelNames = await getChannelNames(convIds);
+
   return convs.map((c) => ({
     ...c,
+    channel_name: channelNames.get(c.id) ?? null,
     participants: byConv.get(c.id) ?? [],
     lastMessage: byLastMsg.get(c.id),
   }));
@@ -557,16 +529,6 @@ export async function isConversationForMind(
   conversationId: string,
 ): Promise<boolean> {
   const db = await getDb();
-
-  // Check if conversation belongs to mind by mind_name
-  const byName = await db
-    .select({ id: conversations.id })
-    .from(conversations)
-    .where(and(eq(conversations.id, conversationId), eq(conversations.mind_name, mindName)))
-    .get();
-  if (byName) return true;
-
-  // Check if mind is a participant
   const mindUser = await db
     .select({ id: users.id })
     .from(users)
@@ -574,17 +536,7 @@ export async function isConversationForMind(
     .get();
   if (!mindUser) return false;
 
-  const participant = await db
-    .select({ conversation_id: conversationParticipants.conversation_id })
-    .from(conversationParticipants)
-    .where(
-      and(
-        eq(conversationParticipants.conversation_id, conversationId),
-        eq(conversationParticipants.user_id, mindUser.id),
-      ),
-    )
-    .get();
-  return !!participant;
+  return isParticipant(conversationId, mindUser.id);
 }
 
 export async function setConversationPrivate(id: string, isPrivate: boolean): Promise<void> {
@@ -626,10 +578,8 @@ export async function createChannel(
   settings?: ChannelSettingsInput,
 ): Promise<Conversation> {
   const participantIds = creatorId ? [creatorId] : [];
-  const conv = await createConversation(null, "volute", {
+  const conv = await createConversation({
     type: "channel",
-    name,
-    title: name,
     participantIds,
   });
   const db = await getDb();
@@ -657,14 +607,21 @@ export async function createChannel(
   return conv;
 }
 
-export async function getChannelByName(name: string): Promise<Conversation | null> {
+export async function getChannelName(conversationId: string): Promise<string | null> {
   const db = await getDb();
   const row = await db
-    .select()
-    .from(conversations)
-    .where(and(eq(conversations.name, name), eq(conversations.type, "channel")))
+    .select({ name: channels.name })
+    .from(channels)
+    .where(eq(channels.conversation_id, conversationId))
     .get();
-  return (row as Conversation) ?? null;
+  return row?.name ?? null;
+}
+
+export async function getChannelByName(name: string): Promise<Conversation | null> {
+  const db = await getDb();
+  const ch = await db.select().from(channels).where(eq(channels.name, name)).get();
+  if (!ch) return null;
+  return getConversation(ch.conversation_id);
 }
 
 export async function getChannelSettings(name: string): Promise<ChannelRow | null> {
@@ -683,14 +640,19 @@ export function formatChannelSettings(row: ChannelRow | null) {
   };
 }
 
-export async function listChannels(): Promise<Conversation[]> {
+export async function listChannels(): Promise<(Conversation & { channel_name: string })[]> {
   const db = await getDb();
-  return (await db
+  const rows = await db
     .select()
     .from(conversations)
+    .innerJoin(channels, eq(channels.conversation_id, conversations.id))
     .where(eq(conversations.type, "channel"))
-    .orderBy(conversations.name)
-    .all()) as Conversation[];
+    .orderBy(channels.name)
+    .all();
+  return rows.map((r) => ({
+    ...(r.conversations as Conversation),
+    channel_name: r.channels.name,
+  }));
 }
 
 export async function updateChannelSettings(

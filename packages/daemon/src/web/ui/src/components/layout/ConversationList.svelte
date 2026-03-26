@@ -79,7 +79,7 @@ function openMenu(e: MouseEvent, convId: string) {
       >
         <div class="conv-item-header">
           <div class="conv-item-label" class:active={conv.id === activeId} class:unread={unread > 0}>
-            <span class="conv-label-text">{getConversationLabel(conv.participants ?? [], conv.title, username, conv)}</span>
+            <span class="conv-label-text">{getConversationLabel(conv.participants ?? [], username, conv)}</span>
             {#if conv.private === 1}
               <svg class="lock-icon" viewBox="0 0 16 16" fill="currentColor"><path d="M11 7V5a3 3 0 0 0-6 0v2H4v6h8V7h-1zm-4-2a1 1 0 1 1 2 0v2H7V5z"/></svg>
             {/if}
@@ -103,7 +103,8 @@ function openMenu(e: MouseEvent, convId: string) {
       </div>
     {/if}
     {#each directMessages as conv (conv.id)}
-      {@const isSeed = minds.find((m) => m.name === conv.mind_name)?.stage === "seed"}
+      {@const otherMind = conv.participants?.find((p) => p.userType === "mind" && p.username !== username)}
+      {@const isSeed = otherMind ? minds.find((m) => m.name === otherMind.username)?.stage === "seed" : false}
       {@const dmInfo = getDmInfo(conv)}
       {@const isGroup = (conv.participants?.length ?? 0) > 2}
       {@const unread = unreadCounts.get(conv.id) ?? 0}
@@ -129,7 +130,7 @@ function openMenu(e: MouseEvent, convId: string) {
             {:else if dmInfo.otherName}
               <span class="conv-label-text">@{dmInfo.otherName}</span>
             {:else}
-              <span class="conv-label-text">{getConversationLabel(conv.participants ?? [], conv.title, username, conv)}</span>
+              <span class="conv-label-text">{getConversationLabel(conv.participants ?? [], username, conv)}</span>
             {/if}
             {#if conv.private === 1}
               <svg class="lock-icon" viewBox="0 0 16 16" fill="currentColor"><path d="M11 7V5a3 3 0 0 0-6 0v2H4v6h8V7h-1zm-4-2a1 1 0 1 1 2 0v2H7V5z"/></svg>
