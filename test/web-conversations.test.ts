@@ -63,7 +63,7 @@ describe("web conversations routes", () => {
     const app = createApp();
 
     // Create a conversation with the user as participant
-    const conv = await createConversation("volute", {
+    const conv = await createConversation({
       participantIds: [userId],
     });
     await addMessage(conv.id, "user", "conv-admin", [{ type: "text", text: "Hello" }]);
@@ -84,7 +84,7 @@ describe("web conversations routes", () => {
     const cookie = await setupAuth();
     const app = createApp();
 
-    const conv = await createConversation("volute", {
+    const conv = await createConversation({
       participantIds: [userId],
     });
     const blocks: ContentBlock[] = [{ type: "text", text: "Test message" }];
@@ -109,7 +109,7 @@ describe("web conversations routes", () => {
     const cookie = await setupAuth();
     const app = createApp();
 
-    const conv = await createConversation("volute", {
+    const conv = await createConversation({
       participantIds: [userId],
     });
     for (let i = 0; i < 5; i++) {
@@ -132,7 +132,7 @@ describe("web conversations routes", () => {
     const cookie = await setupAuth();
     const app = createApp();
 
-    const conv = await createConversation("volute", {
+    const conv = await createConversation({
       participantIds: [userId],
     });
     const ids: number[] = [];
@@ -159,7 +159,7 @@ describe("web conversations routes", () => {
     const cookie = await setupAuth();
     const app = createApp();
 
-    const conv = await createConversation("volute", {
+    const conv = await createConversation({
       participantIds: [userId],
     });
 
@@ -176,7 +176,7 @@ describe("web conversations routes", () => {
     const cookie = await setupAuth();
     const app = createApp();
 
-    const conv = await createConversation("volute", {
+    const conv = await createConversation({
       participantIds: [userId],
     });
     await addMessage(conv.id, "user", "conv-admin", [{ type: "text", text: "To delete" }]);
@@ -207,7 +207,7 @@ describe("web conversations routes", () => {
     const app = createApp();
 
     // Create a conversation with the first user as participant
-    const conv = await createConversation("volute", {
+    const conv = await createConversation({
       participantIds: [userId],
     });
 
@@ -236,7 +236,7 @@ describe("web conversations routes", () => {
     const cookie = await setupAuth();
     const app = createApp();
 
-    const conv = await createConversation("volute", {
+    const conv = await createConversation({
       participantIds: [userId],
     });
 
@@ -265,7 +265,7 @@ describe("web conversations routes", () => {
     const cookie = await setupAuth();
     const app = createApp();
 
-    const conv = await createConversation("volute", {
+    const conv = await createConversation({
       participantIds: [userId],
     });
 
@@ -285,7 +285,7 @@ describe("web conversations routes", () => {
     await setupAuth();
     const app = createApp();
 
-    const conv = await createConversation("volute", {
+    const conv = await createConversation({
       participantIds: [userId],
     });
 
@@ -363,7 +363,7 @@ describe("web conversations routes", () => {
   it("addMessage — system sprouted message appears in conversation", async () => {
     await setupAuth();
 
-    const conv = await createConversation("volute", {
+    const conv = await createConversation({
       participantIds: [userId],
     });
     await addMessage(conv.id, "user", "conv-admin", [{ type: "text", text: "Hello" }]);
@@ -397,7 +397,7 @@ describe("conversation privacy toggle", () => {
     const cookie = await setupAuth();
     const app = createUserConvApp();
 
-    const conv = await createConversation("volute", {
+    const conv = await createConversation({
       participantIds: [userId],
     });
 
@@ -439,7 +439,7 @@ describe("conversation privacy toggle", () => {
     await setupAuth();
     const app = createUserConvApp();
 
-    const conv = await createConversation("volute", {
+    const conv = await createConversation({
       participantIds: [userId],
     });
 

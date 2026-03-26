@@ -29,24 +29,17 @@ export type {
   Participant,
 };
 
-export async function createConversation(
-  channel: string,
-  opts?: {
-    userId?: number;
-    participantIds?: number[];
-    type?: "dm" | "channel";
-  },
-): Promise<Conversation> {
+export async function createConversation(opts?: {
+  userId?: number;
+  participantIds?: number[];
+  type?: "dm" | "channel";
+}): Promise<Conversation> {
   const db = await getDb();
   const id = randomUUID();
   const type = opts?.type ?? "dm";
 
-  // Sequential inserts instead of a transaction to avoid SQLITE_BUSY errors
-  // when @libsql/client's transaction() creates a second connection that
-  // conflicts with concurrent writes on the primary connection.
   await db.insert(conversations).values({
     id,
-    channel,
     type,
     user_id: opts?.userId ?? null,
   });
@@ -64,12 +57,11 @@ export async function createConversation(
   fireWebhook({
     event: "conversation_created",
     mind: "",
-    data: { id, channel, type },
+    data: { id, type },
   });
 
   return {
     id,
-    channel,
     type,
     user_id: opts?.userId ?? null,
     private: 0,
@@ -586,7 +578,7 @@ export async function createChannel(
   settings?: ChannelSettingsInput,
 ): Promise<Conversation> {
   const participantIds = creatorId ? [creatorId] : [];
-  const conv = await createConversation("volute", {
+  const conv = await createConversation({
     type: "channel",
     participantIds,
   });

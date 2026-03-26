@@ -243,8 +243,6 @@ describe("linkToolResultToTurn", () => {
     const convId = "conv-link-test";
     await db.insert(conversations).values({
       id: convId,
-
-      channel: "dm:alice",
       type: "dm",
     });
     const msgResult = await db
@@ -399,8 +397,6 @@ describe("tagUntaggedOutbound", () => {
     const convId = "conv-tag-test";
     await db.insert(conversations).values({
       id: convId,
-
-      channel: "dm:x",
       type: "dm",
     });
     const msgResult = await db
@@ -580,7 +576,6 @@ describe("tagUntaggedInbound", () => {
     const mindUser = await getOrCreateMindUser(INBOUND_MIND);
     await db.insert(conversations).values({
       id: convId,
-      channel: "dm:bob",
       type: "dm",
     });
     await db.insert(conversationParticipants).values({
@@ -645,7 +640,6 @@ describe("tagUntaggedInbound", () => {
     const mindUser = await getOrCreateMindUser(INBOUND_MIND);
     await db.insert(conversations).values({
       id: convId,
-      channel: "dm:bob",
       type: "dm",
     });
     await db.insert(conversationParticipants).values({

@@ -203,7 +203,6 @@ function upsertTurnRows(rows: TurnRow[]) {
 function openConversation(conv: TurnConversation, turn: TurnRow) {
   readOnlyConv = {
     id: conv.id,
-    channel: "",
     type: conv.type,
     user_id: null,
     created_at: turn.created_at,

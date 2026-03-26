@@ -1382,7 +1382,7 @@ const app = new Hono<AuthEnv>()
         try {
           const mindConvs = await listConversationsForMind(baseName);
           for (const conv of mindConvs) {
-            await recordInbound(baseName, conv.channel, "system", "[seed has sprouted]");
+            await recordInbound(baseName, "system", "system", "[seed has sprouted]");
             await addMessage(conv.id, "assistant", "system", [
               { type: "text", text: "[seed has sprouted]" },
             ]);

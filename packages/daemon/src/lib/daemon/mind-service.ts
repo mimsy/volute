@@ -175,7 +175,7 @@ async function ensureCreatorDM(mindName: string, creatorUsername: string): Promi
 
   const existing = await findDMConversation([mindUser.id, creatorUser.id]);
   if (!existing) {
-    await createConversation("volute", {
+    await createConversation({
       participantIds: [mindUser.id, creatorUser.id],
     });
   }

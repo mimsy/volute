@@ -88,7 +88,7 @@ const app = new Hono<AuthEnv>()
       let conversationId = await findDMConversation(participantIds);
 
       if (!conversationId) {
-        const conv = await createConversation("volute", {
+        const conv = await createConversation({
           participantIds: [puppet.id, mindUser.id],
           type: "dm",
         });

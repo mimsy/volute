@@ -148,7 +148,7 @@ describe("participant profiles in conversations", () => {
       avatar: "avatar.png",
     });
 
-    const conv = await createConversation("volute", {
+    const conv = await createConversation({
       participantIds: [brain.id, mind.id],
     });
 

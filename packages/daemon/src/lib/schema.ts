@@ -39,7 +39,6 @@ export const conversations = sqliteTable(
   "conversations",
   {
     id: text("id").primaryKey(),
-    channel: text("channel").notNull(),
     type: text("type").notNull().default("dm"),
     user_id: integer("user_id").references(() => users.id),
     private: integer("private").notNull().default(0),
