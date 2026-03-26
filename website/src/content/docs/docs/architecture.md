@@ -96,7 +96,7 @@ Runtime state specific to a mind lives in `<mindDir>/.mind/` — sessions, ident
 
 ### Database
 
-libSQL at `~/.volute/volute.db` (WAL mode, foreign keys) stores minds, users, conversations, messages, turns, mind_history, activity, delivery_queue, sessions, shared_skills, system_prompts, conversation_reads, and summaries. The `users` table uses `user_type` to distinguish `"brain"` (human) and `"mind"` entries. Schema defined with Drizzle ORM.
+libSQL at `~/.volute/volute.db` (WAL mode, foreign keys) stores minds, users, conversations, channels, messages, turns, mind_history, activity, delivery_queue, sessions, shared_skills, system_prompts, conversation_reads, and summaries. The `users` table uses `user_type` to distinguish `"brain"` (human) and `"mind"` entries. Schema defined with Drizzle ORM.
 
 ## Bridge architecture
 
@@ -108,7 +108,9 @@ Bridges are separate processes managed by the BridgeManager. Resolution order:
 
 ## Channel system
 
-Channel URIs use human-readable slugs. Bridges generate slugs and write mappings to `~/.volute/state/<name>/channels.json`. Channel drivers resolve slugs back to platform IDs.
+Channel URIs use human-readable slugs. Bridges generate slugs and write mappings to `~/.volute/state/<name>/channels.json`. Platform drivers resolve slugs back to platform IDs.
+
+Channels have optional settings stored in the `channels` database table: description, rules, character limit, and privacy. Settings are managed via `PATCH /api/v1/channels/:name` and returned in `GET /api/v1/channels/:name`.
 
 ## Skills system
 

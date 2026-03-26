@@ -5,23 +5,35 @@ import { getOrCreateMindUser, getUserByUsername } from "../../../lib/auth.js";
 import {
   addMessage,
   createChannel,
+  formatChannelSettings,
   getChannelByName,
+  getChannelSettings,
   getParticipants,
   isParticipant,
   joinChannel,
   leaveChannel,
   listChannels,
+  updateChannelSettings,
 } from "../../../lib/events/conversations.js";
 import { findMind } from "../../../lib/registry.js";
 import type { AuthEnv } from "../../middleware/auth.js";
 
-const createSchema = z.object({
-  name: z
-    .string()
-    .min(1)
-    .max(50)
-    .regex(/^[a-z0-9][a-z0-9-]*$/, "Channel names must be lowercase alphanumeric with hyphens"),
+const channelSettingsSchema = z.object({
+  description: z.string().nullable().optional(),
+  rules: z.string().nullable().optional(),
+  charLimit: z.number().int().positive().nullable().optional(),
+  private: z.boolean().optional(),
 });
+
+const createSchema = z
+  .object({
+    name: z
+      .string()
+      .min(1)
+      .max(50)
+      .regex(/^[a-z0-9][a-z0-9-]*$/, "Channel names must be lowercase alphanumeric with hyphens"),
+  })
+  .merge(channelSettingsSchema);
 
 const inviteSchema = z.object({
   username: z.string().min(1),
@@ -45,7 +57,8 @@ const app = new Hono<AuthEnv>()
     const body = c.req.valid("json");
 
     try {
-      const ch = await createChannel(body.name, user.id);
+      const { name, ...settings } = body;
+      const ch = await createChannel(name, user.id, settings);
       return c.json(ch, 201);
     } catch (err: unknown) {
       const cause =
@@ -64,8 +77,22 @@ const app = new Hono<AuthEnv>()
     const ch = await getChannelByName(name);
     if (!ch) return c.json({ error: "Channel not found" }, 404);
 
-    const participants = await getParticipants(ch.id);
-    return c.json({ ...ch, participants });
+    const [participants, settings] = await Promise.all([
+      getParticipants(ch.id),
+      getChannelSettings(name),
+    ]);
+    return c.json({ ...ch, participants, settings: formatChannelSettings(settings) });
+  })
+  .patch("/:name", zValidator("json", channelSettingsSchema), async (c) => {
+    const name = c.req.param("name");
+    const body = c.req.valid("json");
+
+    const ch = await getChannelByName(name);
+    if (!ch) return c.json({ error: "Channel not found" }, 404);
+
+    await updateChannelSettings(name, body);
+    const settings = await getChannelSettings(name);
+    return c.json({ ...ch, settings: formatChannelSettings(settings) });
   })
   .post("/:name/join", async (c) => {
     const name = c.req.param("name");

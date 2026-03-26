@@ -1,10 +1,10 @@
 import { splitMessage } from "../../connectors/sdk.js";
 import {
-  type ChannelConversation,
-  type ChannelUser,
   type ImageAttachment,
-  resolveChannelId,
-} from "../channels.js";
+  type PlatformConversation,
+  type PlatformUser,
+  resolvePlatformId,
+} from "../platforms.js";
 import { slugify } from "../slugify.js";
 
 const SLACK_MAX_LENGTH = 4000;
@@ -46,7 +46,7 @@ export async function read(
   limit: number,
 ): Promise<string> {
   const token = requireToken(env);
-  const channelId = resolveChannelId(channelSlug);
+  const channelId = resolvePlatformId(channelSlug);
   const data = (await slackApi(token, "conversations.history", {
     channel: channelId,
     limit,
@@ -66,7 +66,7 @@ export async function send(
   images?: ImageAttachment[],
 ): Promise<void> {
   const token = requireToken(env);
-  const channelId = resolveChannelId(channelSlug);
+  const channelId = resolvePlatformId(channelSlug);
 
   if (images?.length) {
     for (const img of images) {
@@ -125,7 +125,7 @@ export async function send(
 
 export async function listConversations(
   env: Record<string, string>,
-): Promise<ChannelConversation[]> {
+): Promise<PlatformConversation[]> {
   const token = requireToken(env);
 
   // Get workspace name for slug prefix
@@ -184,7 +184,7 @@ export async function listConversations(
   });
 }
 
-export async function listUsers(env: Record<string, string>): Promise<ChannelUser[]> {
+export async function listUsers(env: Record<string, string>): Promise<PlatformUser[]> {
   const token = requireToken(env);
   const data = (await slackApi(token, "users.list", {})) as {
     members: {
@@ -248,6 +248,6 @@ export async function createConversation(
     channel: { id: string };
   };
 
-  // Return slug with actual channel ID so resolveChannelId can extract it for API calls
+  // Return slug with actual channel ID so resolvePlatformId can extract it for API calls
   return `slack:${openData.channel.id}`;
 }

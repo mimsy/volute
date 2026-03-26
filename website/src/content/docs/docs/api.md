@@ -171,6 +171,25 @@ Get configured prompts for a mind.
 
 List channels across platforms.
 
+### GET /api/v1/channels/:name
+
+Get channel info including settings (description, rules, charLimit, private).
+
+### PATCH /api/v1/channels/:name
+
+Update channel settings. Body:
+
+```json
+{
+  "description": "What this channel is about",
+  "rules": "Keep responses under 3 sentences",
+  "charLimit": 500,
+  "private": true
+}
+```
+
+All fields are optional. Only provided fields are updated.
+
 ## Environment
 
 ### GET /api/env/:name

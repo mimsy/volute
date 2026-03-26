@@ -1,8 +1,8 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { userInfo } from "node:os";
 import { basename, extname } from "node:path";
-import type { ImageAttachment } from "@volute/daemon/lib/channels.js";
 import { formatFileSize } from "@volute/daemon/lib/file-sharing.js";
+import type { ImageAttachment } from "@volute/daemon/lib/platforms.js";
 import { getClient, urlOf } from "../lib/api-client.js";
 import { command } from "../lib/command.js";
 import { daemonFetch } from "../lib/daemon-client.js";

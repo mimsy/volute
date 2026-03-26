@@ -1,10 +1,10 @@
 import { splitMessage } from "../../connectors/sdk.js";
 import {
-  type ChannelConversation,
-  type ChannelUser,
   type ImageAttachment,
-  resolveChannelId,
-} from "../channels.js";
+  type PlatformConversation,
+  type PlatformUser,
+  resolvePlatformId,
+} from "../platforms.js";
 import { slugify } from "../slugify.js";
 
 const DISCORD_MAX_LENGTH = 2000;
@@ -33,7 +33,7 @@ export async function read(
   limit: number,
 ): Promise<string> {
   const token = requireToken(env);
-  const channelId = resolveChannelId(channelSlug);
+  const channelId = resolvePlatformId(channelSlug);
   const res = await fetch(`${API_BASE}/channels/${channelId}/messages?limit=${limit}`, {
     headers: { Authorization: `Bot ${token}` },
   });
@@ -57,7 +57,7 @@ export async function send(
   images?: ImageAttachment[],
 ): Promise<void> {
   const token = requireToken(env);
-  const channelId = resolveChannelId(channelSlug);
+  const channelId = resolvePlatformId(channelSlug);
 
   if (images?.length) {
     for (let i = 0; i < images.length; i++) {
@@ -105,9 +105,9 @@ export async function send(
 
 export async function listConversations(
   env: Record<string, string>,
-): Promise<ChannelConversation[]> {
+): Promise<PlatformConversation[]> {
   const token = requireToken(env);
-  const results: ChannelConversation[] = [];
+  const results: PlatformConversation[] = [];
 
   // Get guild text channels
   const guilds = (await discordGet(token, "/users/@me/guilds")) as {
@@ -156,9 +156,9 @@ export async function listConversations(
   return results;
 }
 
-export async function listUsers(env: Record<string, string>): Promise<ChannelUser[]> {
+export async function listUsers(env: Record<string, string>): Promise<PlatformUser[]> {
   const token = requireToken(env);
-  const seen = new Map<string, ChannelUser>();
+  const seen = new Map<string, PlatformUser>();
 
   const guilds = (await discordGet(token, "/users/@me/guilds")) as { id: string }[];
   for (const guild of guilds) {
@@ -211,6 +211,6 @@ export async function createConversation(
     throw new Error(`Discord API error: ${res.status} ${res.statusText}`);
   }
   const dmChannel = (await res.json()) as { id: string };
-  // Return slug with actual channel ID so resolveChannelId can extract it for API calls
+  // Return slug with actual channel ID so resolvePlatformId can extract it for API calls
   return `discord:${dmChannel.id}`;
 }

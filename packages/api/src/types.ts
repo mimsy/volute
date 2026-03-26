@@ -15,7 +15,7 @@ export type Mind = {
   status: "running" | "stopped" | "starting" | "sleeping";
   stage?: "seed" | "sprouted";
   template?: string;
-  channels: Channel[];
+  channels: PlatformConnection[];
   hasPages?: boolean;
   lastActiveAt?: string | null;
   displayName?: string;
@@ -23,7 +23,7 @@ export type Mind = {
   avatar?: string;
 };
 
-export type Channel = {
+export type PlatformConnection = {
   name: string;
   displayName: string;
   status: "connected" | "disconnected";
@@ -199,7 +199,18 @@ export type MindEnv = {
   mind: Record<string, string>;
 };
 
-export type ChannelInfo = Conversation & { participantCount: number; isMember: boolean };
+export type ChannelSettings = {
+  description: string | null;
+  rules: string | null;
+  charLimit: number | null;
+  private: boolean;
+};
+
+export type ChannelInfo = Conversation & {
+  participantCount: number;
+  isMember: boolean;
+  settings?: ChannelSettings;
+};
 
 export type HistoryMessage = {
   id: number;

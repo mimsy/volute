@@ -1,7 +1,3 @@
-import { slugify } from "../lib/slugify.js";
-
-export { slugify } from "../lib/slugify.js";
-
 export type ContentPart =
   | { type: "text"; text: string }
   | { type: "image"; media_type: string; data: string };
@@ -13,17 +9,6 @@ export interface ConnectorEnv {
   baseUrl: string;
   daemonUrl: string | undefined;
   daemonToken: string | undefined;
-}
-
-export interface MindPayload {
-  content: ContentPart[];
-  channel: string;
-  sender: string;
-  platform: string;
-  isDM?: boolean;
-  channelName?: string;
-  serverName?: string;
-  participantCount?: number;
 }
 
 export function loadEnv(): ConnectorEnv {
@@ -94,68 +79,4 @@ export function reportTyping(
   }).catch((err) => {
     console.warn(`[typing] failed to report for ${sender} on ${channel}: ${err}`);
   });
-}
-
-export async function sendToMind(
-  env: ConnectorEnv,
-  payload: MindPayload,
-): Promise<{ ok: boolean; error?: string }> {
-  const url = `${env.baseUrl}/message`;
-
-  try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: getHeaders(env),
-      body: JSON.stringify(payload),
-    });
-
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      console.error(`Mind returned ${res.status}: ${body}`);
-      return { ok: false, error: `Mind returned ${res.status}` };
-    }
-
-    return { ok: true };
-  } catch (err) {
-    console.error(`Failed to forward message: ${err}`);
-    const isConnRefused =
-      err instanceof TypeError &&
-      (err.cause as NodeJS.ErrnoException | undefined)?.code === "ECONNREFUSED";
-    return { ok: false, error: isConnRefused ? "Mind is not running" : "Failed to reach mind" };
-  }
-}
-
-export interface ChannelSlugMeta {
-  channelName?: string;
-  serverName?: string;
-  isDM?: boolean;
-  senderName?: string;
-  recipients?: string[];
-  platformId?: string;
-}
-
-export function buildChannelSlug(platform: string, meta: ChannelSlugMeta): string {
-  if (meta.isDM) {
-    if (meta.recipients && meta.recipients.length > 0) {
-      const sorted = meta.recipients.map(slugify).sort();
-      return `${platform}:@${sorted.join(",")}`;
-    }
-    if (meta.senderName) {
-      return `${platform}:@${slugify(meta.senderName)}`;
-    }
-  }
-
-  if (meta.channelName && meta.serverName) {
-    return `${platform}:${slugify(meta.serverName)}/${slugify(meta.channelName)}`;
-  }
-
-  if (meta.channelName) {
-    return `${platform}:${slugify(meta.channelName)}`;
-  }
-
-  if (meta.platformId) {
-    return `${platform}:${meta.platformId}`;
-  }
-
-  return `${platform}:unknown`;
 }

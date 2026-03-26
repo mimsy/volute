@@ -1,11 +1,11 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import {
-  type ChannelConversation,
-  type ChannelUser,
   type ImageAttachment,
-  resolveChannelId,
-} from "../channels.js";
+  type PlatformConversation,
+  type PlatformUser,
+  resolvePlatformId,
+} from "../platforms.js";
 
 /** Read session from a mind's current-session file. */
 function readSessionFile(mindDir: string): string | undefined {
@@ -51,7 +51,7 @@ export async function read(
 ): Promise<string> {
   const mindName = env.VOLUTE_MIND;
   if (!mindName) throw new Error("VOLUTE_MIND not set");
-  const conversationId = resolveChannelId(channelSlug);
+  const conversationId = resolvePlatformId(channelSlug);
 
   const { url, token } = getDaemonConfig();
   const headers: Record<string, string> = { Origin: url };
@@ -96,7 +96,7 @@ export async function send(
 ): Promise<void> {
   const mindName = env.VOLUTE_MIND;
   if (!mindName) throw new Error("VOLUTE_MIND not set");
-  const conversationId = resolveChannelId(channelSlug);
+  const conversationId = resolvePlatformId(channelSlug);
 
   const { url, token } = getDaemonConfig();
   const headers: Record<string, string> = {
@@ -128,7 +128,7 @@ export async function send(
 
 export async function listConversations(
   env: Record<string, string>,
-): Promise<ChannelConversation[]> {
+): Promise<PlatformConversation[]> {
   const mindName = env.VOLUTE_MIND;
   if (!mindName) throw new Error("VOLUTE_MIND not set");
 
@@ -151,7 +151,7 @@ export async function listConversations(
   }[];
 
   // Fetch participants for each conversation
-  const results: ChannelConversation[] = [];
+  const results: PlatformConversation[] = [];
   for (const conv of convs) {
     let participants: { username: string }[] = [];
     try {
@@ -187,7 +187,7 @@ export async function listConversations(
   return results;
 }
 
-export async function listUsers(_env: Record<string, string>): Promise<ChannelUser[]> {
+export async function listUsers(_env: Record<string, string>): Promise<PlatformUser[]> {
   const { url, token } = getDaemonConfig();
   const headers: Record<string, string> = { Origin: url };
   if (token) headers.Authorization = `Bearer ${token}`;
@@ -233,7 +233,7 @@ export async function createConversation(
     throw new Error(data.error ?? `Failed to create conversation: ${res.status}`);
   }
   const conv = (await res.json()) as { id: string };
-  // Return the conversation ID directly — resolveChannelId passes it through.
+  // Return the conversation ID directly — resolvePlatformId passes it through.
   // Pretty @username slugs are generated dynamically by listConversations.
   return conv.id;
 }

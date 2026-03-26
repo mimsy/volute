@@ -12,6 +12,7 @@ import {
   type ContentBlock,
   createConversation,
   findDMConversation,
+  getChannelSettings,
   getConversation,
   getParticipants,
   isParticipantOrOwner,
@@ -270,6 +271,27 @@ export const unifiedChatApp = new Hono<AuthEnv>().post(
     if (body.images) {
       for (const img of body.images) {
         contentBlocks.push({ type: "image", media_type: img.media_type, data: img.data });
+      }
+    }
+
+    // Enforce char_limit for mind senders in channels
+    if (senderIsMind && conv.type === "channel" && conv.name) {
+      try {
+        const chSettings = await getChannelSettings(conv.name);
+        if (chSettings?.char_limit) {
+          for (const block of contentBlocks) {
+            if (block.type === "text" && block.text.length > chSettings.char_limit) {
+              return c.json(
+                {
+                  error: `Message exceeds channel character limit (${chSettings.char_limit}). Shorten your message and try again.`,
+                },
+                400,
+              );
+            }
+          }
+        }
+      } catch (err) {
+        log.warn("failed to look up channel char_limit, skipping enforcement", log.errorData(err));
       }
     }
 
