@@ -1,5 +1,4 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { qualifyModelId, resolveTemplate } from "./ai-service.js";
 import { exec } from "./exec.js";
@@ -18,7 +17,7 @@ const slog = log.child("spirit");
 
 /** Ensure npm cache dir exists and return env with npm_config_cache set. */
 function npmEnv(): NodeJS.ProcessEnv {
-  const cacheDir = resolve(homedir(), ".npm");
+  const cacheDir = resolve(voluteSystemDir(), ".npm-cache");
   mkdirSync(cacheDir, { recursive: true });
   return { ...process.env, npm_config_cache: cacheDir };
 }
