@@ -2,7 +2,6 @@ import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { getDb } from "../../lib/db.js";
 import { subscribeAll, subscribe as subscribeMindEvent } from "../../lib/events/mind-events.js";
-import log from "../../lib/logger.js";
 import {
   activity,
   channels,
@@ -13,6 +12,7 @@ import {
   turns,
   users,
 } from "../../lib/schema.js";
+import log from "../../lib/util/logger.js";
 
 const history = new Hono()
   .get("/turns", async (c) => {

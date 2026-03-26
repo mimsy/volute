@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { isConversationId } from "../packages/daemon/src/lib/chat/typing.js";
 import {
   getPlatform,
   getPlatformDriver,
   PLATFORMS,
   resolvePlatformId,
 } from "../packages/daemon/src/lib/platforms.js";
-import { isConversationId } from "../packages/daemon/src/lib/typing.js";
 
 describe("platforms", () => {
   it("PLATFORMS has expected entries", () => {

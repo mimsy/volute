@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { eq } from "drizzle-orm";
+import { findOrCreatePuppet, updatePuppetAvatar } from "../packages/daemon/src/lib/chat/puppets.js";
 import { getDb } from "../packages/daemon/src/lib/db.js";
-import { findOrCreatePuppet, updatePuppetAvatar } from "../packages/daemon/src/lib/puppets.js";
 import { users } from "../packages/daemon/src/lib/schema.js";
 
 describe("puppets", () => {

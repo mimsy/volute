@@ -8,7 +8,7 @@ import {
   mindDir,
   removeMind,
   voluteSystemDir,
-} from "../packages/daemon/src/lib/registry.js";
+} from "../packages/daemon/src/lib/mind/registry.js";
 
 // Strip GIT_* env vars that hook runners (e.g. pre-push) inject, so that
 // spawned processes (like `volute create` which runs `git init`) don't
@@ -448,7 +448,7 @@ describe("daemon e2e", { timeout: 120000 }, () => {
 
   it("bridge config: set, mappings CRUD, remove", async () => {
     const { setBridgeConfig, removeBridgeConfig } = await import(
-      "../packages/daemon/src/lib/bridges.js"
+      "../packages/daemon/src/lib/bridges/bridges.js"
     );
 
     // Set up a test bridge config directly
@@ -502,7 +502,7 @@ describe("daemon e2e", { timeout: 120000 }, () => {
 
   it("bridge inbound: puppet user created, message lands in channel", async () => {
     const { setBridgeConfig, removeBridgeConfig } = await import(
-      "../packages/daemon/src/lib/bridges.js"
+      "../packages/daemon/src/lib/bridges/bridges.js"
     );
 
     // Set up a bridge with a mapping to the channel we created earlier
@@ -562,7 +562,7 @@ describe("daemon e2e", { timeout: 120000 }, () => {
   it("bridge inbound: DM creates conversation with default mind", async () => {
     await ensureTestMind();
     const { setBridgeConfig, removeBridgeConfig } = await import(
-      "../packages/daemon/src/lib/bridges.js"
+      "../packages/daemon/src/lib/bridges/bridges.js"
     );
 
     setBridgeConfig("test-dm", {
@@ -634,7 +634,7 @@ describe("daemon e2e", { timeout: 120000 }, () => {
 
   it("bridge disable: delete removes config", async () => {
     const { setBridgeConfig, getBridgeConfig } = await import(
-      "../packages/daemon/src/lib/bridges.js"
+      "../packages/daemon/src/lib/bridges/bridges.js"
     );
 
     // Set up a fake bridge

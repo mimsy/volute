@@ -5,7 +5,12 @@ import { Hono } from "hono";
 import { approveUser, createUser, getOrCreateMindUser } from "../packages/daemon/src/lib/auth.js";
 import { generateMindToken } from "../packages/daemon/src/lib/daemon/mind-tokens.js";
 import { getDb } from "../packages/daemon/src/lib/db.js";
-import { addMind, addVariant, mindDir, removeMind } from "../packages/daemon/src/lib/registry.js";
+import {
+  addMind,
+  addVariant,
+  mindDir,
+  removeMind,
+} from "../packages/daemon/src/lib/mind/registry.js";
 import { users } from "../packages/daemon/src/lib/schema.js";
 import {
   authMiddleware,

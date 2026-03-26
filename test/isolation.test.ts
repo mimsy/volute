@@ -4,8 +4,8 @@ import {
   isIsolationEnabled,
   mindUserName,
   wrapForIsolation,
-} from "../packages/daemon/src/lib/isolation.js";
-import { addMind, addVariant, removeMind } from "../packages/daemon/src/lib/registry.js";
+} from "../packages/daemon/src/lib/mind/isolation.js";
+import { addMind, addVariant, removeMind } from "../packages/daemon/src/lib/mind/registry.js";
 
 describe("isolation", () => {
   const originalEnv = process.env.VOLUTE_ISOLATION;

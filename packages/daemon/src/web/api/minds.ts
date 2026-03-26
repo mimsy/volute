@@ -13,10 +13,10 @@ import { and, desc, eq, type SQL, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
 import { qualifyModelId, resolveTemplate, unqualifyModelId } from "../../lib/ai-service.js";
-import { type ExportManifest, isHomeOnlyArchive } from "../../lib/archive.js";
 import { deleteMindUser } from "../../lib/auth.js";
-import { consolidateMemory } from "../../lib/consolidate.js";
-import { convertSession } from "../../lib/convert-session.js";
+import { announceToSystem } from "../../lib/chat/system-channel.js";
+import { getTypingMap, publishTypingForChannels } from "../../lib/chat/typing.js";
+import { readSystemsConfig } from "../../lib/config/systems-config.js";
 import { getMindManager } from "../../lib/daemon/mind-manager.js";
 // Lifecycle functions from mind-service.ts
 import {
@@ -56,15 +56,9 @@ import {
   publish as publishMindEvent,
   subscribe as subscribeMindEvent,
 } from "../../lib/events/mind-events.js";
-import { exec, gitExec } from "../../lib/exec.js";
-import { checkHealth } from "../../lib/health.js";
-import { generateIdentity, publishPublicKey } from "../../lib/identity.js";
-import {
-  findOpenClawSession,
-  importOpenClawConnectors,
-  importPiSession,
-  parseNameFromIdentity,
-} from "../../lib/import-utils.js";
+import { type ExportManifest, isHomeOnlyArchive } from "../../lib/mind/archive.js";
+import { consolidateMemory } from "../../lib/mind/consolidate.js";
+import { generateIdentity, publishPublicKey } from "../../lib/mind/identity.js";
 import {
   chownMindDir,
   createMindUser,
@@ -72,15 +66,7 @@ import {
   ensureVoluteGroup,
   isIsolationEnabled,
   wrapForIsolation,
-} from "../../lib/isolation.js";
-import log from "../../lib/logger.js";
-import { PLATFORMS } from "../../lib/platforms.js";
-import {
-  getMindPromptDefaults,
-  getPrompt,
-  getPromptIfCustom,
-  substitute,
-} from "../../lib/prompts.js";
+} from "../../lib/mind/isolation.js";
 import {
   addMind,
   ensureVoluteHome,
@@ -95,12 +81,26 @@ import {
   setMindTemplateHash,
   stateDir,
   validateMindName,
-} from "../../lib/registry.js";
+} from "../../lib/mind/registry.js";
+import { cleanupVariant } from "../../lib/mind/variant-cleanup.js";
+import { validateBranchName } from "../../lib/mind/variants.js";
+import { readVoluteConfig, writeVoluteConfig } from "../../lib/mind/volute-config.js";
+import { PLATFORMS } from "../../lib/platforms.js";
+import {
+  getMindPromptDefaults,
+  getPrompt,
+  getPromptIfCustom,
+  substitute,
+} from "../../lib/prompts.js";
 import { mindHistory, summaries, turns } from "../../lib/schema.js";
-
 import { getStandardSkillsWithExtensions, installSkill, SEED_SKILLS } from "../../lib/skills.js";
-import { announceToSystem } from "../../lib/system-channel.js";
-import { readSystemsConfig } from "../../lib/systems-config.js";
+import { convertSession } from "../../lib/template/convert-session.js";
+import {
+  findOpenClawSession,
+  importOpenClawConnectors,
+  importPiSession,
+  parseNameFromIdentity,
+} from "../../lib/template/import-utils.js";
 import {
   applyInitFiles,
   composeTemplate,
@@ -108,12 +108,11 @@ import {
   findTemplatesRoot,
   listFiles,
   type TemplateManifest,
-} from "../../lib/template.js";
-import { computeTemplateHash } from "../../lib/template-hash.js";
-import { getTypingMap, publishTypingForChannels } from "../../lib/typing.js";
-import { cleanupVariant } from "../../lib/variant-cleanup.js";
-import { validateBranchName } from "../../lib/variants.js";
-import { readVoluteConfig, writeVoluteConfig } from "../../lib/volute-config.js";
+} from "../../lib/template/template.js";
+import { computeTemplateHash } from "../../lib/template/template-hash.js";
+import { exec, gitExec } from "../../lib/util/exec.js";
+import { checkHealth } from "../../lib/util/health.js";
+import log from "../../lib/util/logger.js";
 import { fireWebhook } from "../../lib/webhook.js";
 import {
   type AuthEnv,
@@ -767,7 +766,7 @@ const app = new Hono<AuthEnv>()
 
       // Merge default settings into volute.json and config.json
       {
-        const { readGlobalConfig: readGlobal } = await import("../../lib/setup.js");
+        const { readGlobalConfig: readGlobal } = await import("../../lib/config/setup.js");
         const mindDefaults = readGlobal().mindDefaults;
         const config = readVoluteConfig(dest);
         if (!config) throw new Error("Failed to read volute.json after identity generation");
@@ -888,7 +887,7 @@ const app = new Hono<AuthEnv>()
 
       // Add imagegen skill for seeds when image generation is enabled
       if (body.stage === "seed" && !body.skills) {
-        const { isImagegenEnabled } = await import("../../lib/setup.js");
+        const { isImagegenEnabled } = await import("../../lib/config/setup.js");
         if (isImagegenEnabled()) {
           skillSet = [...skillSet, "imagegen"];
         }
@@ -908,7 +907,7 @@ const app = new Hono<AuthEnv>()
         try {
           const spiritEntry = await findMind("volute");
           if (spiritEntry) {
-            const { spiritDir } = await import("../../lib/spirit.js");
+            const { spiritDir } = await import("../../lib/mind/spirit.js");
             const sDir = spiritEntry.dir ?? spiritDir();
             const spiritConfig = readVoluteConfig(sDir) ?? {};
             const schedules = spiritConfig.schedules ?? [];
@@ -1593,7 +1592,7 @@ const app = new Hono<AuthEnv>()
     const displayNameSet = !!config?.profile?.displayName;
     const avatarSet = !!config?.profile?.avatar;
 
-    const { isImagegenEnabled } = await import("../../lib/setup.js");
+    const { isImagegenEnabled } = await import("../../lib/config/setup.js");
     const imagegenEnabled = isImagegenEnabled();
 
     const done: string[] = [];
@@ -1642,7 +1641,7 @@ const app = new Hono<AuthEnv>()
     try {
       const spiritEntry = await findMind("volute");
       if (spiritEntry) {
-        const { spiritDir } = await import("../../lib/spirit.js");
+        const { spiritDir } = await import("../../lib/mind/spirit.js");
         const sDir = spiritEntry.dir ?? spiritDir();
         const spiritConfig = readVoluteConfig(sDir);
         if (spiritConfig?.schedules) {
@@ -2294,7 +2293,7 @@ const app = new Hono<AuthEnv>()
       // Sync spirit model to global config so syncSpiritTemplate() stays consistent
       if (entry.mindType === "spirit" && body.model !== undefined) {
         try {
-          const { readGlobalConfig, writeGlobalConfig } = await import("../../lib/setup.js");
+          const { readGlobalConfig, writeGlobalConfig } = await import("../../lib/config/setup.js");
           const globalConfig = readGlobalConfig();
           globalConfig.spiritModel = body.model;
           writeGlobalConfig(globalConfig);

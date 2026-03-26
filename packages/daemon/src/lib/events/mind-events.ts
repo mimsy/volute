@@ -1,4 +1,4 @@
-import log from "../logger.js";
+import log from "../util/logger.js";
 
 /**
  * In-process pub-sub for mind activity events. SSE endpoint subscribes per-mind;

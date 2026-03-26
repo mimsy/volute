@@ -1,5 +1,5 @@
 import { type ActivityEvent, subscribe } from "./events/activity-events.js";
-import log from "./logger.js";
+import log from "./util/logger.js";
 
 const slog = log.child("webhook");
 

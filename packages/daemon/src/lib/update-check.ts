@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { voluteSystemDir } from "./registry.js";
+import { voluteSystemDir } from "./mind/registry.js";
 
 type UpdateCheckResult = {
   current: string;

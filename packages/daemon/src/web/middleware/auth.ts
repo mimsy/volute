@@ -5,7 +5,7 @@ import { createMiddleware } from "hono/factory";
 import { getOrCreateMindUser, getUser, type User } from "../../lib/auth.js";
 import { resolveMindToken } from "../../lib/daemon/mind-tokens.js";
 import { getDb } from "../../lib/db.js";
-import { getBaseName } from "../../lib/registry.js";
+import { getBaseName } from "../../lib/mind/registry.js";
 import { sessions } from "../../lib/schema.js";
 
 function isValidDaemonToken(token: string): boolean {

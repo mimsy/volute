@@ -1,6 +1,6 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { exec } from "../../packages/daemon/src/lib/exec.js";
+import { exec } from "../../packages/daemon/src/lib/util/exec.js";
 import { cleanGitEnv } from "./test-git-env.js";
 
 /** Create a minimal mind git repo at the given directory (home/.claude/skills/, .gitkeep, git init+commit) */

@@ -12,7 +12,7 @@ import {
   removeMind,
   setMindStage,
   voluteHome,
-} from "../packages/daemon/src/lib/registry.js";
+} from "../packages/daemon/src/lib/mind/registry.js";
 import { users } from "../packages/daemon/src/lib/schema.js";
 import { createSession } from "../packages/daemon/src/web/middleware/auth.js";
 

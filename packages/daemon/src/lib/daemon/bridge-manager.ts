@@ -1,12 +1,12 @@
 import { type ChildProcess, type SpawnOptions, spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import { checkMissingBridgeEnv, getBridgeDef } from "../bridge-defs.js";
-import { readBridgesConfig } from "../bridges.js";
-import { readEnv, sharedEnvPath } from "../env.js";
-import log from "../logger.js";
-import { daemonLoopback, voluteSystemDir } from "../registry.js";
-import { RotatingLog } from "../rotating-log.js";
+import { checkMissingBridgeEnv, getBridgeDef } from "../bridges/bridge-defs.js";
+import { readBridgesConfig } from "../bridges/bridges.js";
+import { readEnv, sharedEnvPath } from "../config/env.js";
+import { daemonLoopback, voluteSystemDir } from "../mind/registry.js";
+import log from "../util/logger.js";
+import { RotatingLog } from "../util/rotating-log.js";
 import { RestartTracker } from "./restart-tracker.js";
 
 const blog = log.child("bridges");

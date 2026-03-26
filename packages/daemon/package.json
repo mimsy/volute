@@ -10,5 +10,8 @@
   },
   "files": [
     "src/"
-  ]
+  ],
+  "dependencies": {
+    "@volute/platforms": "*"
+  }
 }

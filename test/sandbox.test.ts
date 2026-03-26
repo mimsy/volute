@@ -7,13 +7,13 @@ import {
   removeMind,
   voluteHome,
   voluteSystemDir,
-} from "../packages/daemon/src/lib/registry.js";
+} from "../packages/daemon/src/lib/mind/registry.js";
 import {
   buildDenyRead,
   isSandboxEnabled,
   shellEscape,
   wrapForSandbox,
-} from "../packages/daemon/src/lib/sandbox.js";
+} from "../packages/daemon/src/lib/mind/sandbox.js";
 
 function configPath() {
   return resolve(voluteSystemDir(), "config.json");

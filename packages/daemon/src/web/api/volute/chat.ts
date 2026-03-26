@@ -3,7 +3,10 @@ import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { z } from "zod";
 import { getOrCreateMindUser, getOrCreateSystemUser } from "../../../lib/auth.js";
-import { routeOutboundBridge } from "../../../lib/bridge-outbound.js";
+import { routeOutboundBridge } from "../../../lib/bridges/bridge-outbound.js";
+import { formatFileSize, stageFile, validateFilePath } from "../../../lib/chat/file-sharing.js";
+import { generateSystemReply } from "../../../lib/chat/system-chat.js";
+import { getTypingMap } from "../../../lib/chat/typing.js";
 import { extractTextContent } from "../../../lib/delivery/delivery-router.js";
 import { deliverMessage, recordOutbound } from "../../../lib/delivery/message-delivery.js";
 import { subscribe } from "../../../lib/events/conversation-events.js";
@@ -18,12 +21,9 @@ import {
   getParticipants,
   isParticipantOrOwner,
 } from "../../../lib/events/conversations.js";
-import { formatFileSize, stageFile, validateFilePath } from "../../../lib/file-sharing.js";
-import log from "../../../lib/logger.js";
-import { findMind, getBaseName } from "../../../lib/registry.js";
-import { buildVoluteSlug } from "../../../lib/slugify.js";
-import { generateSystemReply } from "../../../lib/system-chat.js";
-import { getTypingMap } from "../../../lib/typing.js";
+import { findMind, getBaseName } from "../../../lib/mind/registry.js";
+import log from "../../../lib/util/logger.js";
+import { buildVoluteSlug } from "../../../lib/util/slugify.js";
 import type { AuthEnv } from "../../middleware/auth.js";
 
 type SlugOpts = Parameters<typeof buildVoluteSlug>[0];

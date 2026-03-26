@@ -2,10 +2,7 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { Hono } from "hono";
 import { getMindManager } from "../../lib/daemon/mind-manager.js";
-import { exec, gitExec } from "../../lib/exec.js";
-import { checkHealth } from "../../lib/health.js";
-import { chownMindDir, isIsolationEnabled, wrapForIsolation } from "../../lib/isolation.js";
-import log from "../../lib/logger.js";
+import { chownMindDir, isIsolationEnabled, wrapForIsolation } from "../../lib/mind/isolation.js";
 import {
   addVariant,
   findMind,
@@ -13,11 +10,14 @@ import {
   mindDir,
   nextPort,
   setMindRunning,
-} from "../../lib/registry.js";
-import { spawnServer } from "../../lib/spawn-server.js";
-import { cleanupVariant } from "../../lib/variant-cleanup.js";
-import { validateBranchName } from "../../lib/variants.js";
-import { verify } from "../../lib/verify.js";
+} from "../../lib/mind/registry.js";
+import { spawnServer } from "../../lib/mind/spawn-server.js";
+import { cleanupVariant } from "../../lib/mind/variant-cleanup.js";
+import { validateBranchName } from "../../lib/mind/variants.js";
+import { verify } from "../../lib/mind/verify.js";
+import { exec, gitExec } from "../../lib/util/exec.js";
+import { checkHealth } from "../../lib/util/health.js";
+import log from "../../lib/util/logger.js";
 import { type AuthEnv, requireSelf } from "../middleware/auth.js";
 
 const app = new Hono<AuthEnv>()
@@ -239,8 +239,8 @@ const app = new Hono<AuthEnv>()
     // Update template hash after upgrade merge
     if (variantName.endsWith("-upgrade") || variantName === "upgrade") {
       try {
-        const { computeTemplateHash } = await import("../../lib/template-hash.js");
-        const { setMindTemplateHash } = await import("../../lib/registry.js");
+        const { computeTemplateHash } = await import("../../lib/template/template-hash.js");
+        const { setMindTemplateHash } = await import("../../lib/mind/registry.js");
         const tmpl = parentEntry.template ?? "claude";
         await setMindTemplateHash(mindName, computeTemplateHash(tmpl));
       } catch (err) {

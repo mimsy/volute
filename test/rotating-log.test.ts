@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { RotatingLog } from "../packages/daemon/src/lib/rotating-log.js";
+import { RotatingLog } from "../packages/daemon/src/lib/util/rotating-log.js";
 
 function write(log: RotatingLog, data: string): Promise<void> {
   return new Promise((resolve, reject) => {

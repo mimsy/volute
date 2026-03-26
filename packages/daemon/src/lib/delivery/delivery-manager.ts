@@ -1,13 +1,13 @@
 import { readFile, realpath } from "node:fs/promises";
 import { extname, resolve } from "node:path";
 import { and, eq, sql } from "drizzle-orm";
+import { getTypingMap, publishTypingForChannels } from "../chat/typing.js";
 import { getDb } from "../db.js";
 import { getParticipants } from "../events/conversations.js";
-import log from "../logger.js";
-import { findMind, getBaseName, mindDir, voluteHome } from "../registry.js";
+import { findMind, getBaseName, mindDir, voluteHome } from "../mind/registry.js";
+import { readVoluteConfig } from "../mind/volute-config.js";
 import { deliveryQueue } from "../schema.js";
-import { getTypingMap, publishTypingForChannels } from "../typing.js";
-import { readVoluteConfig } from "../volute-config.js";
+import log from "../util/logger.js";
 import {
   type DeliveryPayload,
   extractTextContent,
@@ -712,7 +712,7 @@ export class DeliveryManager {
       .filter((line) => line !== null)
       .join("\n");
 
-    const { sendSystemMessage } = await import("../system-chat.js");
+    const { sendSystemMessage } = await import("../chat/system-chat.js");
     await sendSystemMessage(mindName, notification);
   }
 

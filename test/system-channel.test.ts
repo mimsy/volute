@@ -2,14 +2,14 @@ import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { eq } from "drizzle-orm";
 import { createUser } from "../packages/daemon/src/lib/auth.js";
-import { getDb } from "../packages/daemon/src/lib/db.js";
-import { messages, users } from "../packages/daemon/src/lib/schema.js";
 import {
   announceToSystem,
   ensureSystemChannel,
   joinSystemChannel,
   resetSystemChannelCache,
-} from "../packages/daemon/src/lib/system-channel.js";
+} from "../packages/daemon/src/lib/chat/system-channel.js";
+import { getDb } from "../packages/daemon/src/lib/db.js";
+import { messages, users } from "../packages/daemon/src/lib/schema.js";
 
 const TEST_USERNAMES = ["volute", "testbrain"];
 

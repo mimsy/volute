@@ -1,8 +1,8 @@
 import { readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import type { ParticipantProfile } from "@volute/api";
-import log from "../logger.js";
-import { mindDir } from "../registry.js";
+import { mindDir } from "../mind/registry.js";
+import log from "../util/logger.js";
 
 // --- Types ---
 

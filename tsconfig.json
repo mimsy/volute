@@ -11,5 +11,5 @@
     "lib": ["ES2022"]
   },
   "include": ["src", "packages/cli/src", "packages/daemon/src"],
-  "exclude": ["packages/daemon/src/web/ui"]
+  "exclude": ["packages/web/src/ui"]
 }

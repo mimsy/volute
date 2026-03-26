@@ -3,8 +3,7 @@ import { getSleepManagerIfReady } from "../daemon/sleep-manager.js";
 import { getActiveTurnId } from "../daemon/turn-tracker.js";
 import { getDb } from "../db.js";
 import { publish as publishMindEvent } from "../events/mind-events.js";
-import log from "../logger.js";
-import { findMind, getBaseName } from "../registry.js";
+import { findMind, getBaseName } from "../mind/registry.js";
 import {
   activity,
   conversationParticipants,
@@ -13,6 +12,7 @@ import {
   turns,
   users,
 } from "../schema.js";
+import log from "../util/logger.js";
 import { getDeliveryManager } from "./delivery-manager.js";
 import { type DeliveryPayload, extractTextContent } from "./delivery-router.js";
 

@@ -15,7 +15,7 @@ import {
   listChannels,
   updateChannelSettings,
 } from "../../../lib/events/conversations.js";
-import { findMind } from "../../../lib/registry.js";
+import { findMind } from "../../../lib/mind/registry.js";
 import type { AuthEnv } from "../../middleware/auth.js";
 
 const channelSettingsSchema = z.object({

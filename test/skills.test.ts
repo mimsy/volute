@@ -4,8 +4,7 @@ import { join } from "node:path";
 import { after, afterEach, before, beforeEach, describe, it } from "node:test";
 import { eq } from "drizzle-orm";
 import { getDb } from "../packages/daemon/src/lib/db.js";
-import { exec } from "../packages/daemon/src/lib/exec.js";
-import { addMind, addVariant, voluteHome } from "../packages/daemon/src/lib/registry.js";
+import { addMind, addVariant, voluteHome } from "../packages/daemon/src/lib/mind/registry.js";
 import { minds, sharedSkills } from "../packages/daemon/src/lib/schema.js";
 import {
   autoUpdateMindSkills,
@@ -27,6 +26,7 @@ import {
   uninstallSkill,
   updateSkill,
 } from "../packages/daemon/src/lib/skills.js";
+import { exec } from "../packages/daemon/src/lib/util/exec.js";
 import { createMindGitRepo } from "./helpers/git.js";
 
 async function cleanup() {
