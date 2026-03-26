@@ -1,5 +1,6 @@
 <script lang="ts">
 import type { Snippet } from "svelte";
+import { normalizeTimestamp } from "../lib/format";
 
 export type HoverProfile = {
   name: string;
@@ -26,7 +27,7 @@ let cardEl = $state<HTMLDivElement | undefined>();
 
 function formatCreated(dateStr: string): string {
   try {
-    const d = new Date(dateStr.endsWith("Z") ? dateStr : `${dateStr}Z`);
+    const d = new Date(normalizeTimestamp(dateStr));
     return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
   } catch {
     return "";

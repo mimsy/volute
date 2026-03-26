@@ -1,7 +1,7 @@
 <script lang="ts">
 import type { ConversationWithParticipants, Mind } from "@volute/api";
 import { Icon, Modal, tooltip as tooltipAction } from "@volute/ui";
-import { fetchMinds, startMind, stopMind } from "../../lib/client";
+import { startMind, stopMind } from "../../lib/client";
 import { mindDotColor } from "../../lib/format";
 import type { Selection } from "../../lib/navigate";
 import {
@@ -163,7 +163,6 @@ async function handleMindStart() {
   const name = openMenu;
   openMenu = null;
   await startMind(name);
-  data.minds = await fetchMinds();
 }
 
 async function handleMindStop() {
@@ -171,7 +170,6 @@ async function handleMindStop() {
   const name = openMenu;
   openMenu = null;
   await stopMind(name);
-  data.minds = await fetchMinds();
 }
 
 async function handleMindRestart() {
@@ -180,7 +178,6 @@ async function handleMindRestart() {
   openMenu = null;
   await stopMind(name);
   await startMind(name);
-  data.minds = await fetchMinds();
 }
 
 let channelConversations = $derived(conversations.filter((c) => c.type === "channel"));
@@ -675,17 +672,6 @@ let isSystemActive = $derived(
   .status-dot.iridescent {
     animation: iridescent 3s ease-in-out infinite;
   }
-
-  @keyframes iridescent {
-    0%   { background: #4ade80; }
-    16%  { background: #60a5fa; }
-    33%  { background: #c084fc; }
-    50%  { background: #f472b6; }
-    66%  { background: #fbbf24; }
-    83%  { background: #34d399; }
-    100% { background: #4ade80; }
-  }
-
   @media (max-width: 767px) {
     .nav-item {
       padding: 10px 12px 10px 24px;

@@ -69,8 +69,8 @@ $effect(() => {
 });
 
 $effect(() => {
-  if (autoScroll && scrollEl) {
-    void filteredEntries.length;
+  const count = filteredEntries.length;
+  if (autoScroll && scrollEl && count > 0) {
     scrollEl.scrollTop = scrollEl.scrollHeight;
   }
 });

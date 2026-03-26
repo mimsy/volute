@@ -49,7 +49,7 @@ export function formatCron(cron: string): string {
   return cron;
 }
 
-function fmtTime(h: number, m: number): string {
+export function fmtTime(h: number, m: number): string {
   const suffix = h >= 12 ? "pm" : "am";
   const h12 = h % 12 || 12;
   return m === 0 ? `${h12}${suffix}` : `${h12}:${String(m).padStart(2, "0")}${suffix}`;
@@ -70,4 +70,59 @@ function formatDays(dow: string): string {
   if (indices.length === 5 && !indices.includes(0) && !indices.includes(6)) return "weekdays";
   if (indices.length === 2 && indices.includes(0) && indices.includes(6)) return "weekends";
   return indices.map((i) => (names[i] ?? String(i)).replace(/s$/, "")).join(", ");
+}
+
+export function parseCronToTime(cron: string): { hour: number; minute: number } | null {
+  const parts = cron.split(" ");
+  if (parts.length < 5) return null;
+  const [min, hour, dom, , dow] = parts;
+  if (/^\d+$/.test(min) && /^\d+$/.test(hour) && dom === "*" && dow === "*") {
+    return { hour: +hour, minute: +min };
+  }
+  return null;
+}
+
+export function timeToCron(hour: number, minute: number): string {
+  return `${minute} ${hour} * * *`;
+}
+
+export function parseCronToFreq(cron: string): {
+  type: "hours" | "daily" | "cron";
+  hours?: number;
+  hour?: number;
+  minute?: number;
+} {
+  const parts = cron.split(" ");
+  if (parts.length < 5) return { type: "cron" };
+  const [min, hour, dom, mon, dow] = parts;
+  if (min.startsWith("*/") && hour === "*" && dom === "*" && mon === "*" && dow === "*") {
+    const n = +min.slice(2);
+    if (n >= 60 && n % 60 === 0) return { type: "hours", hours: n / 60 };
+  }
+  if (/^\d+$/.test(min) && hour.startsWith("*/") && dom === "*" && mon === "*" && dow === "*") {
+    return { type: "hours", hours: +hour.slice(2) };
+  }
+  if (/^\d+$/.test(min) && /^\d+$/.test(hour) && dom === "*" && mon === "*" && dow === "*") {
+    return { type: "daily", hour: +hour, minute: +min };
+  }
+  if (/^\d+$/.test(min) && /^[\d,]+$/.test(hour) && dom === "*" && mon === "*" && dow === "*") {
+    const hours = hour.split(",").map(Number);
+    if (hours.length > 1) {
+      const gap = hours[1] - hours[0];
+      if (hours.every((h, i) => i === 0 || h - hours[i - 1] === gap)) {
+        return { type: "hours", hours: gap };
+      }
+    }
+    return { type: "daily", hour: hours[0], minute: +min };
+  }
+  return { type: "cron" };
+}
+
+export function freqToCron(
+  type: "hours" | "daily" | "cron",
+  opts: { hours?: number; hour?: number; minute?: number; cron?: string },
+): string {
+  if (type === "hours") return `0 */${opts.hours ?? 4} * * *`;
+  if (type === "daily") return `${opts.minute ?? 0} ${opts.hour ?? 12} * * *`;
+  return opts.cron ?? "";
 }

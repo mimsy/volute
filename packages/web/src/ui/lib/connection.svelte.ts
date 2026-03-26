@@ -166,8 +166,3 @@ export function disconnect() {
   controller?.abort();
   controller = null;
 }
-
-/** Force reconnect (e.g. after creating a new conversation). */
-export function reconnect() {
-  connect();
-}

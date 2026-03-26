@@ -4,6 +4,7 @@ import { Modal } from "@volute/ui";
 import { renderMarkdown } from "@volute/ui/markdown";
 import { fetchMindConversationMessages } from "../../lib/client";
 import { extractTextContent, formatTime, showSenderHeader } from "../../lib/feed-utils";
+import { normalizeTimestamp } from "../../lib/format";
 import { navigate } from "../../lib/navigate";
 
 let {
@@ -57,7 +58,7 @@ $effect(() => {
 
 function formatDate(dateStr: string): string {
   try {
-    const d = new Date(dateStr.endsWith("Z") ? dateStr : `${dateStr}Z`);
+    const d = new Date(normalizeTimestamp(dateStr));
     return d.toLocaleDateString();
   } catch {
     return "";

@@ -2,7 +2,7 @@
 import type { Mind } from "@volute/api";
 import { Button, ErrorMessage, SettingRow, SettingsSection, StatusBadge } from "@volute/ui";
 import { fetchMinds, startMind, stopMind } from "../../lib/client";
-import { getDisplayStatus } from "../../lib/format";
+import { getDisplayStatus, normalizeTimestamp } from "../../lib/format";
 import { data } from "../../lib/stores.svelte";
 
 let { mind }: { mind: Mind } = $props();
@@ -49,7 +49,7 @@ async function handleStop() {
 
 function formatDate(dateStr: string): string {
   try {
-    const d = new Date(dateStr.endsWith("Z") ? dateStr : `${dateStr}Z`);
+    const d = new Date(normalizeTimestamp(dateStr));
     return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
   } catch {
     return dateStr;

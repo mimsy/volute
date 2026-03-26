@@ -25,8 +25,8 @@ $effect(() => {
 });
 
 $effect(() => {
-  if (autoScroll && scrollEl) {
-    void lines.length;
+  const count = lines.length;
+  if (autoScroll && scrollEl && count > 0) {
     scrollEl.scrollTop = scrollEl.scrollHeight;
   }
 });
