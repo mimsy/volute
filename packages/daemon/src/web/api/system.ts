@@ -19,8 +19,10 @@ import {
   setEnabledModels,
   setUtilityModel,
 } from "../../lib/ai-service.js";
+import { getMindManager } from "../../lib/daemon/mind-manager.js";
 import { logBuffer } from "../../lib/log-buffer.js";
 import log from "../../lib/logger.js";
+import { findMind } from "../../lib/registry.js";
 import {
   generateImage,
   getDefaultModel as getImagegenDefaultModel,
@@ -315,6 +317,7 @@ const app = new Hono<AuthEnv>()
       let authMethod: string | null = null;
       if (providerConfig?.oauth) authMethod = "oauth";
       else if (providerConfig?.apiKey) authMethod = "api_key";
+      const health = authMethod === "oauth" ? oauthHealth.get(id) : undefined;
       return {
         id,
         oauth: !!oauth,
@@ -322,6 +325,7 @@ const app = new Hono<AuthEnv>()
         usesCallbackServer: !!oauth?.usesCallbackServer,
         configured,
         authMethod,
+        ...(health && { oauthHealthy: health.healthy, oauthError: health.error }),
       };
     });
     return c.json(result);
@@ -445,10 +449,12 @@ const app = new Hono<AuthEnv>()
           },
           onManualCodeInput: needsManualCode ? () => promptPromise! : undefined,
         })
-        .then((credentials: OAuthCredentials) => {
+        .then(async (credentials: OAuthCredentials) => {
           saveProviderConfig(provider, { oauth: credentials });
           const existing = oauthFlows.get(flowId);
           if (existing) existing.status = "complete";
+          // Restart running minds that use this provider so they pick up new credentials
+          await restartMindsForProvider(provider);
         })
         .catch((err: unknown) => {
           const existing = oauthFlows.get(flowId);
@@ -598,11 +604,37 @@ function cleanupOAuthFlows() {
   }
 }
 
+// --- Restart minds after credential refresh ---
+// Maps provider IDs to the template types that use them.
+const PROVIDER_TEMPLATES: Record<string, (t: string | undefined) => boolean> = {
+  anthropic: (t) => !t || t === "claude",
+};
+
+async function restartMindsForProvider(provider: string): Promise<void> {
+  const matchTemplate = PROVIDER_TEMPLATES[provider];
+  if (!matchTemplate) return; // unknown provider → no minds to restart
+
+  const manager = getMindManager();
+  const running = manager.getRunningMinds();
+  for (const name of running) {
+    try {
+      const entry = await findMind(name);
+      if (entry && matchTemplate(entry.template)) {
+        slog.info(`restarting ${name} after ${provider} credential refresh`);
+        await manager.restartMind(name);
+      }
+    } catch (err) {
+      slog.warn(`failed to check mind ${name} for restart`, log.errorData(err));
+    }
+  }
+}
+
 // --- Cached API key resolution ---
 // The daemon refreshes provider keys on a single timer so that N minds polling
 // the /ai/key/:provider endpoint don't each trigger independent OAuth flows.
 const apiKeyCache = new Map<string, { key: string; expiresAt: number }>();
-const API_KEY_TTL_MS = 4 * 60 * 1000; // 4 minutes
+const API_KEY_CACHE_TTL_MS = 4 * 60 * 1000; // 4 minutes
+const REFRESH_CHECK_INTERVAL_MS = 60_000; // check every 60 seconds
 
 function getCachedApiKey(provider: string): string | undefined {
   const cached = apiKeyCache.get(provider);
@@ -614,15 +646,53 @@ let keyRefreshTimer: ReturnType<typeof setInterval> | null = null;
 
 const slog = log.child("ai-keys");
 
+// --- OAuth health tracking ---
+const oauthHealth = new Map<string, { healthy: boolean; error?: string; since?: number }>();
+
+/** Check whether an OAuth token needs refresh (expired or <15 min remaining). */
+export function needsRefresh(oauth: OAuthCredentials): boolean {
+  const expires = oauth.expires;
+  if (!expires || Date.now() >= expires) return true;
+  return expires - Date.now() < 15 * 60 * 1000;
+}
+
 export async function refreshApiKeyCache(): Promise<void> {
-  for (const provider of getConfiguredProviders()) {
+  const ai = getAiConfig();
+  const providers = getConfiguredProviders();
+
+  // Clean stale health entries for providers no longer configured
+  for (const id of oauthHealth.keys()) {
+    if (!providers.includes(id)) oauthHealth.delete(id);
+  }
+
+  for (const provider of providers) {
+    const providerConfig = ai?.providers[provider];
+    // Skip non-OAuth providers — API keys and env vars don't expire
+    if (!providerConfig?.oauth) continue;
+
+    if (!needsRefresh(providerConfig.oauth) && getCachedApiKey(provider)) {
+      // Token not near expiry and cached — mark healthy if not already tracked
+      if (!oauthHealth.has(provider)) oauthHealth.set(provider, { healthy: true });
+      continue;
+    }
+
     try {
       const key = await resolveApiKey(provider);
       if (key) {
-        apiKeyCache.set(provider, { key, expiresAt: Date.now() + API_KEY_TTL_MS });
+        apiKeyCache.set(provider, { key, expiresAt: Date.now() + API_KEY_CACHE_TTL_MS });
+        oauthHealth.set(provider, { healthy: true });
+      } else {
+        // resolveApiKey swallows OAuth errors and returns undefined — treat as unhealthy
+        oauthHealth.set(provider, {
+          healthy: false,
+          error: "Failed to resolve credentials",
+          since: oauthHealth.get(provider)?.since ?? Date.now(),
+        });
       }
     } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
       slog.warn(`API key refresh failed for ${provider}`, log.errorData(err));
+      oauthHealth.set(provider, { healthy: false, error: message, since: Date.now() });
     }
   }
 }
@@ -633,12 +703,11 @@ export function startApiKeyRefresh(): void {
   refreshApiKeyCache().catch((err) => {
     slog.warn("initial API key cache refresh failed", log.errorData(err));
   });
-  // Refresh every 4 minutes
   keyRefreshTimer = setInterval(() => {
     refreshApiKeyCache().catch((err) => {
       slog.warn("periodic API key cache refresh failed", log.errorData(err));
     });
-  }, API_KEY_TTL_MS);
+  }, REFRESH_CHECK_INTERVAL_MS);
 }
 
 export function stopApiKeyRefresh(): void {

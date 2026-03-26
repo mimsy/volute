@@ -457,7 +457,14 @@ export function createMind(options: {
     sessions.set(name, session);
 
     const isEphemeral = name.startsWith("new-");
-    const savedSessionId = isEphemeral ? undefined : sessionStore.load(name);
+    let savedSessionId = isEphemeral ? undefined : sessionStore.load(name);
+    // Validate that the SDK session file still exists — orphaned references
+    // cause the SDK to throw and can crash the process with EPIPE.
+    if (savedSessionId && !findClaudeSessionFile(options.cwd, savedSessionId)) {
+      log("mind", `session "${name}": stored session ${savedSessionId} not found, starting fresh`);
+      sessionStore.delete(name);
+      savedSessionId = undefined;
+    }
     if (savedSessionId) {
       log("mind", `session "${name}": resuming ${savedSessionId}`);
     } else {
