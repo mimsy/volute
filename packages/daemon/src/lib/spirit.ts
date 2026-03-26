@@ -1,4 +1,5 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { qualifyModelId, resolveTemplate } from "./ai-service.js";
 import { exec } from "./exec.js";
@@ -14,6 +15,13 @@ import {
 } from "./template.js";
 
 const slog = log.child("spirit");
+
+/** Ensure npm cache dir exists and return env with npm_config_cache set. */
+function npmEnv(): NodeJS.ProcessEnv {
+  const cacheDir = resolve(homedir(), ".npm");
+  mkdirSync(cacheDir, { recursive: true });
+  return { ...process.env, npm_config_cache: cacheDir };
+}
 
 /** Directory for the system spirit project. */
 export function spiritDir(): string {
@@ -77,7 +85,7 @@ export async function ensureSpiritProject(): Promise<void> {
     }
 
     // npm install — must succeed before DB registration
-    await exec("npm", ["install", "--ignore-scripts"], { cwd: dir });
+    await exec("npm", ["install", "--ignore-scripts"], { cwd: dir, env: npmEnv() });
 
     // git init (before skill install, which does git add)
     try {
@@ -157,7 +165,7 @@ export async function syncSpiritTemplate(): Promise<void> {
     const newPkg = resolve(newComposed.composedDir, "package.json");
     if (existsSync(newPkg)) {
       cpSync(newPkg, resolve(dir, "package.json"));
-      await exec("npm", ["install", "--ignore-scripts"], { cwd: dir });
+      await exec("npm", ["install", "--ignore-scripts"], { cwd: dir, env: npmEnv() });
     }
     // Update DB template
     const db = await (await import("./db.js")).getDb();
@@ -220,10 +228,10 @@ export async function syncSpiritTemplate(): Promise<void> {
       if (composedContent !== currentContent) {
         cpSync(composedPkg, currentPkg);
       }
-      await exec("npm", ["install", "--ignore-scripts"], { cwd: dir });
+      await exec("npm", ["install", "--ignore-scripts"], { cwd: dir, env: npmEnv() });
     }
   } else if (nodeModulesMissing) {
-    await exec("npm", ["install", "--ignore-scripts"], { cwd: dir });
+    await exec("npm", ["install", "--ignore-scripts"], { cwd: dir, env: npmEnv() });
   }
 
   // Restore preserved files
