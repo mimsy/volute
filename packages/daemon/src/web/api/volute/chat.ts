@@ -215,7 +215,7 @@ export const unifiedChatApp = new Hono<AuthEnv>().post(
 
         // DM reuse: if exactly 2 participants, look for an existing conversation
         if (participantIds.length === 2) {
-          const existing = await findDMConversation(baseName, participantIds as [number, number]);
+          const existing = await findDMConversation(participantIds as [number, number]);
           if (existing) {
             conversationId = existing;
           }

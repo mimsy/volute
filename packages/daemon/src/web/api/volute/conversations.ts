@@ -99,7 +99,7 @@ const app = new Hono<AuthEnv>()
 
     // DM reuse: if exactly 2 participants, return existing conversation if found
     if (participantIds.length === 2) {
-      const existingId = await findDMConversation(name, participantIds as [number, number]);
+      const existingId = await findDMConversation(participantIds as [number, number]);
       if (existingId) {
         const conv = await getConversation(existingId);
         if (conv) return c.json(conv);

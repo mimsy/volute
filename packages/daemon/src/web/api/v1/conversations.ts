@@ -5,6 +5,8 @@ import { getOrCreateMindUser, getUserByUsername } from "../../../lib/auth.js";
 import {
   createConversation,
   deleteConversationForUser,
+  findDMConversation,
+  getConversation,
   getMessagesPaginated,
   getParticipants,
   isParticipantOrOwner,
@@ -88,9 +90,20 @@ const app = new Hono<AuthEnv>()
       return c.json({ error: "Use channels for multi-participant conversations" }, 400);
     }
 
+    const ids = [...participantIds];
+
+    // DM reuse: if exactly 2 participants, return existing conversation if found
+    if (ids.length === 2) {
+      const existingId = await findDMConversation(ids as [number, number]);
+      if (existingId) {
+        const existing = await getConversation(existingId);
+        if (existing) return c.json(existing);
+      }
+    }
+
     const conv = await createConversation(firstMindName, "volute", {
       userId: user.id !== 0 ? user.id : undefined,
-      participantIds: [...participantIds],
+      participantIds: ids,
     });
 
     return c.json(conv, 201);

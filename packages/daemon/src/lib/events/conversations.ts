@@ -399,29 +399,30 @@ export async function listConversationsWithParticipants(
   }));
 }
 
-export async function findDMConversation(
-  mindName: string,
-  participantIds: [number, number],
-): Promise<string | null> {
+export async function findDMConversation(participantIds: [number, number]): Promise<string | null> {
   const db = await getDb();
-  // Find DM conversations for this mind with exactly these two participants
-  const mindConvs = await db
-    .select({ id: conversations.id })
-    .from(conversations)
-    .where(and(eq(conversations.mind_name, mindName), eq(conversations.type, "dm")))
+  // Find DM conversations with exactly these two participants (regardless of mind_name)
+  const [id1, id2] = participantIds;
+
+  // Find conversations where participant 1 is a member
+  const p1Convs = await db
+    .select({ conversation_id: conversationParticipants.conversation_id })
+    .from(conversationParticipants)
+    .innerJoin(conversations, eq(conversations.id, conversationParticipants.conversation_id))
+    .where(and(eq(conversationParticipants.user_id, id1), eq(conversations.type, "dm")))
     .all();
 
-  for (const conv of mindConvs) {
+  for (const { conversation_id } of p1Convs) {
     const rows = await db
       .select({ user_id: conversationParticipants.user_id })
       .from(conversationParticipants)
-      .where(eq(conversationParticipants.conversation_id, conv.id))
+      .where(eq(conversationParticipants.conversation_id, conversation_id))
       .all();
 
     if (rows.length !== 2) continue;
     const ids = new Set(rows.map((r) => r.user_id));
-    if (ids.has(participantIds[0]) && ids.has(participantIds[1])) {
-      return conv.id;
+    if (ids.has(id1) && ids.has(id2)) {
+      return conversation_id;
     }
   }
   return null;

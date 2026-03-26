@@ -230,11 +230,11 @@ describe("conversation participants", () => {
         participantIds: [humanUser.id, mindUser.id],
       });
 
-      const found = await findDMConversation("dm-test-mind", [humanUser.id, mindUser.id]);
+      const found = await findDMConversation([humanUser.id, mindUser.id]);
       assert.equal(found, conv.id);
 
       // Reversed order should also find it
-      const found2 = await findDMConversation("dm-test-mind", [mindUser.id, humanUser.id]);
+      const found2 = await findDMConversation([mindUser.id, humanUser.id]);
       assert.equal(found2, conv.id);
 
       await deleteConversation(conv.id);
@@ -244,8 +244,30 @@ describe("conversation participants", () => {
     }
   });
 
+  it("findDMConversation finds DM regardless of which mind created it", async () => {
+    const db = await getDb();
+    const mindA = await getOrCreateMindUser("dm-cross-a");
+    const mindB = await getOrCreateMindUser("dm-cross-b");
+
+    try {
+      // Mind A creates the conversation (mind_name = "dm-cross-a")
+      const conv = await createConversation("dm-cross-a", "volute", {
+        participantIds: [mindA.id, mindB.id],
+      });
+
+      // Mind B should still find it
+      const found = await findDMConversation([mindA.id, mindB.id]);
+      assert.equal(found, conv.id);
+
+      await deleteConversation(conv.id);
+    } finally {
+      await db.delete(users).where(eq(users.id, mindA.id));
+      await db.delete(users).where(eq(users.id, mindB.id));
+    }
+  });
+
   it("findDMConversation returns null when no match", async () => {
-    const result = await findDMConversation("nonexistent-mind", [999, 998]);
+    const result = await findDMConversation([999, 998]);
     assert.equal(result, null);
   });
 
@@ -268,7 +290,7 @@ describe("conversation participants", () => {
       });
 
       // Should not find it as a DM between user1 and mind
-      const found = await findDMConversation("dm-skip-mind", [user1.id, mindUser.id]);
+      const found = await findDMConversation([user1.id, mindUser.id]);
       assert.equal(found, null);
 
       await deleteConversation(conv.id);
@@ -427,7 +449,7 @@ describe("channels", () => {
       await joinChannel(ch.id, human.id);
 
       // findDMConversation should not find it
-      const found = await findDMConversation("ch-dm-mind", [human.id, mindUser.id]);
+      const found = await findDMConversation([human.id, mindUser.id]);
       assert.equal(found, null);
 
       await deleteConversation(ch.id);

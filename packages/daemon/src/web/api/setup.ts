@@ -429,7 +429,7 @@ setup.post("/complete", async (c) => {
       const admin = brains.find((u) => u.role === "admin");
 
       if (admin) {
-        const existing = await findDMConversation("volute", [admin.id, spiritUser.id]);
+        const existing = await findDMConversation([admin.id, spiritUser.id]);
         if (existing) {
           spiritConversationId = existing;
         } else {
