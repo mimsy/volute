@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { and, desc, eq } from "drizzle-orm";
 import { getDb } from "../packages/daemon/src/lib/db.js";
-import { cleanExpiredLogs } from "../packages/daemon/src/lib/history-cleanup.js";
 import { mindHistory } from "../packages/daemon/src/lib/schema.js";
+import { cleanExpiredLogs } from "../packages/daemon/src/lib/util/history-cleanup.js";
 
 describe("mind_history", () => {
   async function cleanup() {

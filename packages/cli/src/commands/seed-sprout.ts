@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { mindDir } from "@volute/daemon/lib/registry.js";
+import { mindDir } from "@volute/daemon/lib/mind/registry.js";
 import { getStandardSkillsWithExtensions } from "@volute/daemon/lib/skills.js";
 import { command } from "../lib/command.js";
 import { daemonFetch } from "../lib/daemon-client.js";
@@ -54,9 +54,9 @@ const cmd = command({
     }
 
     // Validate avatar if imagegen is enabled
-    const { isImagegenEnabled } = await import("@volute/daemon/lib/setup.js");
+    const { isImagegenEnabled } = await import("@volute/daemon/lib/config/setup.js");
     if (isImagegenEnabled()) {
-      const { readVoluteConfig } = await import("@volute/daemon/lib/volute-config.js");
+      const { readVoluteConfig } = await import("@volute/daemon/lib/mind/volute-config.js");
       const config = readVoluteConfig(dir);
       const avatarPath = config?.profile?.avatar;
       if (!avatarPath || !existsSync(resolve(dir, "home", avatarPath))) {

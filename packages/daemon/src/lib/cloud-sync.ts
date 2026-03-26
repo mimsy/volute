@@ -1,5 +1,5 @@
 import { deliverMessage } from "./delivery/message-delivery.js";
-import log from "./logger.js";
+import log from "./util/logger.js";
 import { getAuthHeaders, getWebhookUrl } from "./webhook.js";
 
 const slog = log.child("cloud-sync");

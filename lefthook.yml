@@ -11,8 +11,8 @@ pre-commit:
       glob: "templates/**/*.ts"
       run: npx tsx scripts/typecheck-templates.ts
     typecheck-frontend:
-      glob: "packages/daemon/src/web/ui/**/*.{ts,svelte}"
-      run: npx svelte-check --tsconfig packages/daemon/src/web/ui/tsconfig.json
+      glob: "packages/web/**/*.{ts,svelte}"
+      run: npx svelte-check --tsconfig packages/web/tsconfig.json
 
 pre-push:
   parallel: true
@@ -20,4 +20,4 @@ pre-push:
     test:
       run: npm test
     svelte-check:
-      run: npx svelte-check --tsconfig packages/daemon/src/web/ui/tsconfig.json
+      run: npx svelte-check --tsconfig packages/web/tsconfig.json

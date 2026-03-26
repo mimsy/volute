@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
-import { findMind, stateDir } from "../../lib/registry.js";
+import { findMind, stateDir } from "../../lib/mind/registry.js";
 
 const app = new Hono()
   .get("/:name/logs", async (c) => {

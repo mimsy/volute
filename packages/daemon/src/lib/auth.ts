@@ -2,8 +2,8 @@ import { compareSync, hashSync } from "bcryptjs";
 import { and, count, eq, or } from "drizzle-orm";
 import { getDb } from "./db.js";
 import { broadcast } from "./events/activity-events.js";
+import type { MindProfile } from "./mind/volute-config.js";
 import { users } from "./schema.js";
-import type { MindProfile } from "./volute-config.js";
 
 export type User = {
   id: number;

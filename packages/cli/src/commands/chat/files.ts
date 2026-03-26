@@ -1,4 +1,4 @@
-import { formatFileSize } from "@volute/daemon/lib/file-sharing.js";
+import { formatFileSize } from "@volute/daemon/lib/chat/file-sharing.js";
 import { command } from "../../lib/command.js";
 import { daemonFetch } from "../../lib/daemon-client.js";
 import { resolveMindName } from "../../lib/resolve-mind-name.js";

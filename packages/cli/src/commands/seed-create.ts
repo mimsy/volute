@@ -72,7 +72,7 @@ const cmd = command({
     if (template !== "claude" && !model) {
       // Non-interactive (e.g. mind running a command): use the spirit model as default
       if (process.env.VOLUTE_MIND || !process.stdin.isTTY) {
-        const { getSpiritModel } = await import("@volute/daemon/lib/spirit.js");
+        const { getSpiritModel } = await import("@volute/daemon/lib/mind/spirit.js");
         const { qualifyModelId } = await import("@volute/daemon/lib/ai-service.js");
         const spiritModel = getSpiritModel();
         if (spiritModel) {

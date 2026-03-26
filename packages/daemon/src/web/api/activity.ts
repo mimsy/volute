@@ -6,8 +6,8 @@ import { subscribe as subscribeActivity } from "../../lib/events/activity-events
 import { subscribe as subscribeConversation } from "../../lib/events/conversation-events.js";
 import { listConversationsWithParticipants } from "../../lib/events/conversations.js";
 import { getActiveMinds } from "../../lib/events/mind-activity-tracker.js";
-import log from "../../lib/logger.js";
 import { activity } from "../../lib/schema.js";
+import log from "../../lib/util/logger.js";
 import type { AuthEnv } from "../middleware/auth.js";
 
 const app = new Hono<AuthEnv>().get("/events", async (c) => {

@@ -15,8 +15,8 @@ import {
 } from "../../../lib/events/conversations.js";
 import { bufferEvent, getEventsSince } from "../../../lib/events/event-sequencer.js";
 import { getActiveMinds } from "../../../lib/events/mind-activity-tracker.js";
-import log from "../../../lib/logger.js";
 import { activity } from "../../../lib/schema.js";
+import log from "../../../lib/util/logger.js";
 import { type AuthEnv, authMiddleware } from "../../middleware/auth.js";
 
 const app = new Hono<AuthEnv>().use("*", authMiddleware).get("/", async (c) => {

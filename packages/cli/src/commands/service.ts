@@ -7,7 +7,7 @@ import {
   SYSTEM_LAUNCHD_PLIST_PATH,
   SYSTEM_SERVICE_PATH,
   USER_SYSTEMD_UNIT,
-} from "@volute/daemon/lib/service-mode.js";
+} from "@volute/daemon/lib/config/service-mode.js";
 import { subcommands } from "../lib/command.js";
 
 const execFileAsync = promisify(execFile);

@@ -3,7 +3,12 @@ import { mkdirSync, mkdtempSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, it } from "node:test";
-import { mindEnvPath, readEnv, sharedEnvPath, writeEnv } from "../packages/daemon/src/lib/env.js";
+import {
+  mindEnvPath,
+  readEnv,
+  sharedEnvPath,
+  writeEnv,
+} from "../packages/daemon/src/lib/config/env.js";
 
 describe("env", () => {
   let tmp: string;

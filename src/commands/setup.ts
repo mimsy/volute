@@ -5,15 +5,13 @@ import { dirname, resolve } from "node:path";
 import { promisify } from "node:util";
 import { command } from "@volute/cli/lib/command.js";
 import { promptLine } from "@volute/cli/lib/prompt.js";
-import { resolveVoluteBin } from "@volute/daemon/lib/exec.js";
-import { ensureVoluteGroup } from "@volute/daemon/lib/isolation.js";
 import {
   LAUNCHD_PLIST_LABEL,
   LAUNCHD_PLIST_PATH,
   SYSTEM_LAUNCHD_PLIST_PATH,
   SYSTEM_SERVICE_PATH,
   USER_SYSTEMD_UNIT,
-} from "@volute/daemon/lib/service-mode.js";
+} from "@volute/daemon/lib/config/service-mode.js";
 import {
   type GlobalConfig,
   type IsolationMode,
@@ -21,7 +19,9 @@ import {
   type SetupConfig,
   type SetupType,
   writeGlobalConfig,
-} from "@volute/daemon/lib/setup.js";
+} from "@volute/daemon/lib/config/setup.js";
+import { ensureVoluteGroup } from "@volute/daemon/lib/mind/isolation.js";
+import { resolveVoluteBin } from "@volute/daemon/lib/util/exec.js";
 
 const execFileAsync = promisify(execFile);
 

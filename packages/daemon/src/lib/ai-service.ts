@@ -1,15 +1,15 @@
 import type { Api, Model } from "@mariozechner/pi-ai";
 import { complete, getEnvApiKey, getModel, getModels, getProviders } from "@mariozechner/pi-ai";
 import { getOAuthApiKey } from "@mariozechner/pi-ai/oauth";
-import log from "./logger.js";
 import {
   type AiConfig,
   type AiProviderConfig,
   readGlobalConfig,
   writeGlobalConfig,
-} from "./setup.js";
+} from "./config/setup.js";
+import log from "./util/logger.js";
 
-export type { AiConfig, AiProviderConfig } from "./setup.js";
+export type { AiConfig, AiProviderConfig } from "./config/setup.js";
 
 const aiLog = log.child("ai-service");
 

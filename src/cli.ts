@@ -38,7 +38,7 @@ const ungatedCommands = new Set([
   undefined,
 ]);
 if (!ungatedCommands.has(command)) {
-  const { isSetupComplete } = await import("@volute/daemon/lib/setup.js");
+  const { isSetupComplete } = await import("@volute/daemon/lib/config/setup.js");
   if (!isSetupComplete()) {
     console.error("Volute is not set up. Run `volute setup` first.");
     process.exit(1);

@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { format } from "node:util";
+import { ensureSystemChannel } from "./lib/chat/system-channel.js";
 import { initBridgeManager } from "./lib/daemon/bridge-manager.js";
 import { initMailPoller } from "./lib/daemon/mail-poller.js";
 import { initMindManager } from "./lib/daemon/mind-manager.js";
@@ -19,8 +20,6 @@ import {
   notifyExtensionsDaemonStart,
   notifyExtensionsDaemonStop,
 } from "./lib/extensions.js";
-import { cleanExpiredLogs } from "./lib/history-cleanup.js";
-import log from "./lib/logger.js";
 import {
   ensureSystemDir,
   findMind,
@@ -28,15 +27,16 @@ import {
   setMindRunning,
   voluteHome,
   voluteSystemDir,
-} from "./lib/registry.js";
-import { RotatingLog } from "./lib/rotating-log.js";
+} from "./lib/mind/registry.js";
 import {
   autoUpdateMindSkills,
   initDefaultSkills,
   isAutoUpdateSkillsEnabled,
   syncBuiltinSkills,
 } from "./lib/skills.js";
-import { ensureSystemChannel } from "./lib/system-channel.js";
+import { cleanExpiredLogs } from "./lib/util/history-cleanup.js";
+import log from "./lib/util/logger.js";
+import { RotatingLog } from "./lib/util/rotating-log.js";
 import { initWebhook } from "./lib/webhook.js";
 import { startApiKeyRefresh, stopApiKeyRefresh } from "./web/api/system.js";
 import app from "./web/app.js";
@@ -83,7 +83,7 @@ export async function startDaemon(opts: {
   ensureSystemDir();
 
   // Migrate pre-existing installations (setup field without setupCompleted)
-  const { migrateSetupCompleted } = await import("./lib/setup.js");
+  const { migrateSetupCompleted } = await import("./lib/config/setup.js");
   migrateSetupCompleted();
 
   // Initialize database (runs drizzle migrations + creates raw connection)
@@ -103,7 +103,7 @@ export async function startDaemon(opts: {
   }
 
   // Initialize sandbox runtime for mind process isolation
-  const { initSandbox } = await import("./lib/sandbox.js");
+  const { initSandbox } = await import("./lib/mind/sandbox.js");
   await initSandbox();
 
   // Sync built-in skills into the shared pool (non-fatal)
@@ -249,9 +249,9 @@ export async function startDaemon(opts: {
   // Start system spirit (non-fatal — system works without it)
   // Only create/start the spirit if setup is complete (provider + model configured)
   try {
-    const { isSetupComplete } = await import("./lib/setup.js");
+    const { isSetupComplete } = await import("./lib/config/setup.js");
     if (isSetupComplete()) {
-      const { ensureSpiritProject, syncSpiritTemplate } = await import("./lib/spirit.js");
+      const { ensureSpiritProject, syncSpiritTemplate } = await import("./lib/mind/spirit.js");
       const { startSpiritFull } = await import("./lib/daemon/mind-service.js");
       await ensureSpiritProject();
       await syncSpiritTemplate();

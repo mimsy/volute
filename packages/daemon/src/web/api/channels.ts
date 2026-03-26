@@ -1,7 +1,7 @@
 import { Hono } from "hono";
-import { loadMergedEnv } from "../../lib/env.js";
+import { loadMergedEnv } from "../../lib/config/env.js";
+import { findMind, mindDir } from "../../lib/mind/registry.js";
 import { getPlatformDriver } from "../../lib/platforms.js";
-import { findMind, mindDir } from "../../lib/registry.js";
 import { type AuthEnv, requireSelf } from "../middleware/auth.js";
 
 function buildEnv(name: string): Record<string, string> {

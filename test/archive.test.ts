@@ -9,8 +9,13 @@ import {
   extractArchive,
   isHomeOnlyArchive,
   readManifest,
-} from "../packages/daemon/src/lib/archive.js";
-import { addMind, mindDir, removeMind, stateDir } from "../packages/daemon/src/lib/registry.js";
+} from "../packages/daemon/src/lib/mind/archive.js";
+import {
+  addMind,
+  mindDir,
+  removeMind,
+  stateDir,
+} from "../packages/daemon/src/lib/mind/registry.js";
 
 const testMind = `archive-test-${Date.now()}`;
 

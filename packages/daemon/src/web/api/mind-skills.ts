@@ -1,7 +1,7 @@
 import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
 import { z } from "zod";
-import { findMind, mindDir } from "../../lib/registry.js";
+import { findMind, mindDir } from "../../lib/mind/registry.js";
 import {
   installSkill,
   listMindSkills,

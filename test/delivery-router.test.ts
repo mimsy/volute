@@ -9,7 +9,7 @@ import {
   resolveDeliveryMode,
   resolveRoute,
 } from "../packages/daemon/src/lib/delivery/delivery-router.js";
-import { addMind, removeMind } from "../packages/daemon/src/lib/registry.js";
+import { addMind, removeMind } from "../packages/daemon/src/lib/mind/registry.js";
 
 function createMindWithRoutes(config: RoutingConfig | object): string {
   const port = 4100 + Math.floor(Math.random() * 1000);

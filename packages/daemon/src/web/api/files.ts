@@ -5,8 +5,8 @@ import { extname, resolve } from "node:path";
 import { Hono } from "hono";
 import { syncMindProfile } from "../../lib/auth.js";
 import { broadcast } from "../../lib/events/activity-events.js";
-import { findMind, mindDir } from "../../lib/registry.js";
-import { readVoluteConfig, writeVoluteConfig } from "../../lib/volute-config.js";
+import { findMind, mindDir } from "../../lib/mind/registry.js";
+import { readVoluteConfig, writeVoluteConfig } from "../../lib/mind/volute-config.js";
 import { type AuthEnv, requireAdmin, requireSelf } from "../middleware/auth.js";
 
 const AVATAR_MIME: Record<string, string> = {

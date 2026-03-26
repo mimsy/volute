@@ -12,14 +12,14 @@ import { resolve } from "node:path";
 import { promisify } from "node:util";
 import { CronExpressionParser } from "cron-parser";
 import { and, eq, inArray } from "drizzle-orm";
+import { sendSystemMessageDirect } from "../chat/system-chat.js";
 import { getDb } from "../db.js";
 import { type ActivityEvent, subscribe } from "../events/activity-events.js";
-import log from "../logger.js";
+import { findMind, mindDir, readRegistry, voluteSystemDir } from "../mind/registry.js";
+import { readVoluteConfig, type SleepConfig } from "../mind/volute-config.js";
 import { getPrompt } from "../prompts.js";
-import { findMind, mindDir, readRegistry, voluteSystemDir } from "../registry.js";
 import { deliveryQueue } from "../schema.js";
-import { sendSystemMessageDirect } from "../system-chat.js";
-import { readVoluteConfig, type SleepConfig } from "../volute-config.js";
+import log from "../util/logger.js";
 import { getMindManager } from "./mind-manager.js";
 import { sleepMind, wakeMind } from "./mind-service.js";
 

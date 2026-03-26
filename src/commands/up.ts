@@ -2,17 +2,17 @@ import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, openSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { command } from "@volute/cli/lib/command.js";
-import { voluteHome, voluteSystemDir } from "@volute/daemon/lib/registry.js";
 import {
   getServiceMode,
   modeLabel,
   pollHealth,
   startService,
-} from "@volute/daemon/lib/service-mode.js";
-import { readGlobalConfig } from "@volute/daemon/lib/setup.js";
+} from "@volute/daemon/lib/config/service-mode.js";
+import { readGlobalConfig } from "@volute/daemon/lib/config/setup.js";
+import { voluteHome, voluteSystemDir } from "@volute/daemon/lib/mind/registry.js";
 
 export { readGlobalConfig };
-export type { GlobalConfig } from "@volute/daemon/lib/setup.js";
+export type { GlobalConfig } from "@volute/daemon/lib/config/setup.js";
 
 const cmd = command({
   name: "volute up",

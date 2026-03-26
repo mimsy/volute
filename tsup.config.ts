@@ -5,9 +5,9 @@ export default defineConfig([
     entry: {
       cli: "src/cli.ts",
       daemon: "packages/daemon/src/daemon.ts",
-      "connectors/discord-bridge": "packages/daemon/src/connectors/discord-bridge.ts",
-      "connectors/slack-bridge": "packages/daemon/src/connectors/slack-bridge.ts",
-      "connectors/telegram-bridge": "packages/daemon/src/connectors/telegram-bridge.ts",
+      "connectors/discord-bridge": "packages/daemon/src/lib/bridges/discord-bridge.ts",
+      "connectors/slack-bridge": "packages/daemon/src/lib/bridges/slack-bridge.ts",
+      "connectors/telegram-bridge": "packages/daemon/src/lib/bridges/telegram-bridge.ts",
     },
     format: ["esm"],
     outDir: "dist",

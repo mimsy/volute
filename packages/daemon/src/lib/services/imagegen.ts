@@ -6,7 +6,7 @@
  */
 
 import Replicate from "replicate";
-import { type ImagegenConfig, readGlobalConfig, writeGlobalConfig } from "../setup.js";
+import { type ImagegenConfig, readGlobalConfig, writeGlobalConfig } from "../config/setup.js";
 
 // --- Provider registry ---
 

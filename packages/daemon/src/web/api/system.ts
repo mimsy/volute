@@ -19,10 +19,14 @@ import {
   setEnabledModels,
   setUtilityModel,
 } from "../../lib/ai-service.js";
+import { readGlobalConfig, writeGlobalConfig } from "../../lib/config/setup.js";
+import {
+  deleteSystemsConfig,
+  readSystemsConfig,
+  writeSystemsConfig,
+} from "../../lib/config/systems-config.js";
 import { getMindManager } from "../../lib/daemon/mind-manager.js";
-import { logBuffer } from "../../lib/log-buffer.js";
-import log from "../../lib/logger.js";
-import { findMind } from "../../lib/registry.js";
+import { findMind } from "../../lib/mind/registry.js";
 import {
   generateImage,
   getDefaultModel as getImagegenDefaultModel,
@@ -34,12 +38,8 @@ import {
   setDefaultModel as setImagegenDefaultModel,
   setEnabledModels as setImagegenModels,
 } from "../../lib/services/imagegen.js";
-import { readGlobalConfig, writeGlobalConfig } from "../../lib/setup.js";
-import {
-  deleteSystemsConfig,
-  readSystemsConfig,
-  writeSystemsConfig,
-} from "../../lib/systems-config.js";
+import { logBuffer } from "../../lib/util/log-buffer.js";
+import log from "../../lib/util/logger.js";
 import { type AuthEnv, requireAdmin } from "../middleware/auth.js";
 
 const DEFAULT_API_URL = "https://volute.systems";

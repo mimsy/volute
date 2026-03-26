@@ -6,7 +6,7 @@ import {
   configPath,
   readGlobalConfig,
   writeGlobalConfig,
-} from "../packages/daemon/src/lib/setup.js";
+} from "../packages/daemon/src/lib/config/setup.js";
 import setup from "../packages/daemon/src/web/api/setup.js";
 
 function createApp() {

@@ -5,7 +5,7 @@ import {
   type PlatformConversation,
   type PlatformUser,
   resolvePlatformId,
-} from "../platforms.js";
+} from "@volute/platforms";
 
 /** Read session from a mind's current-session file. */
 function readSessionFile(mindDir: string): string | undefined {
@@ -21,8 +21,8 @@ function readSessionFile(mindDir: string): string | undefined {
   return undefined;
 }
 
-import { voluteSystemDir } from "../registry.js";
-import { buildVoluteSlug } from "../slugify.js";
+import { voluteSystemDir } from "../mind/registry.js";
+import { buildVoluteSlug } from "../util/slugify.js";
 
 function getDaemonConfig(): { url: string; token?: string } {
   const configPath = resolve(voluteSystemDir(), "daemon.json");

@@ -1,7 +1,7 @@
 import { existsSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { addHistoryToArchive, createExportArchive } from "@volute/daemon/lib/archive.js";
-import { findMind, mindDir } from "@volute/daemon/lib/registry.js";
+import { addHistoryToArchive, createExportArchive } from "@volute/daemon/lib/mind/archive.js";
+import { findMind, mindDir } from "@volute/daemon/lib/mind/registry.js";
 import { command } from "../lib/command.js";
 
 const cmd = command({

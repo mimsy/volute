@@ -2,9 +2,13 @@ import { CronExpressionParser } from "cron-parser";
 import { Hono } from "hono";
 import { getScheduler } from "../../lib/daemon/scheduler.js";
 import { getSleepManagerIfReady } from "../../lib/daemon/sleep-manager.js";
-import log from "../../lib/logger.js";
-import { findMind, mindDir } from "../../lib/registry.js";
-import { readVoluteConfig, type Schedule, writeVoluteConfig } from "../../lib/volute-config.js";
+import { findMind, mindDir } from "../../lib/mind/registry.js";
+import {
+  readVoluteConfig,
+  type Schedule,
+  writeVoluteConfig,
+} from "../../lib/mind/volute-config.js";
+import log from "../../lib/util/logger.js";
 import { fireWebhook } from "../../lib/webhook.js";
 import { type AuthEnv, requireSelf } from "../middleware/auth.js";
 
@@ -299,7 +303,7 @@ const app = new Hono<AuthEnv>()
     const message = `[webhook: ${event}] ${body}`;
 
     try {
-      const { sendSystemMessage } = await import("../../lib/system-chat.js");
+      const { sendSystemMessage } = await import("../../lib/chat/system-chat.js");
       await sendSystemMessage(name, message);
       return c.json({ ok: true });
     } catch (err) {

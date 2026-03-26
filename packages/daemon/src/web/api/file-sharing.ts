@@ -8,16 +8,16 @@ import {
   rejectPending,
   stageFile,
   validateFilePath,
-} from "../../lib/file-sharing.js";
-import log from "../../lib/logger.js";
-import { findMind, mindDir } from "../../lib/registry.js";
+} from "../../lib/chat/file-sharing.js";
+import { findMind, mindDir } from "../../lib/mind/registry.js";
+import log from "../../lib/util/logger.js";
 import { type AuthEnv, requireSelf } from "../middleware/auth.js";
 
 async function notifyMind(mindName: string, message: string) {
   const entry = await findMind(mindName);
   if (!entry) return;
   try {
-    const { sendSystemMessage } = await import("../../lib/system-chat.js");
+    const { sendSystemMessage } = await import("../../lib/chat/system-chat.js");
     await sendSystemMessage(mindName, message);
   } catch (err) {
     log.warn(`[file-sharing] notify mind ${mindName} failed`, log.errorData(err));

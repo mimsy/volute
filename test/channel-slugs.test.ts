@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { buildVoluteSlug, slugify } from "../packages/daemon/src/lib/slugify.js";
+import { buildVoluteSlug, slugify } from "../packages/daemon/src/lib/util/slugify.js";
 
 describe("slugify", () => {
   it("converts spaces to hyphens", () => {

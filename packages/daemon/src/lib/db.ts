@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/libsql";
 import { migrate } from "drizzle-orm/libsql/migrator";
-import { voluteSystemDir } from "./registry.js";
+import { voluteSystemDir } from "./mind/registry.js";
 import * as schema from "./schema.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));

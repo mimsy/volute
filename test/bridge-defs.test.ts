@@ -7,7 +7,7 @@ import {
   type BridgeDef,
   checkMissingBridgeEnv,
   getBridgeDef,
-} from "../packages/daemon/src/lib/bridge-defs.js";
+} from "../packages/daemon/src/lib/bridges/bridge-defs.js";
 
 describe("bridge-defs", () => {
   describe("getBridgeDef", () => {

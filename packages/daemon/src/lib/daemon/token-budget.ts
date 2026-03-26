@@ -1,8 +1,8 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import log from "../logger.js";
-import { stateDir } from "../registry.js";
-import { sendSystemMessage } from "../system-chat.js";
+import { sendSystemMessage } from "../chat/system-chat.js";
+import { stateDir } from "../mind/registry.js";
+import log from "../util/logger.js";
 
 const tlog = log.child("token-budget");
 

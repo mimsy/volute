@@ -7,7 +7,10 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { composeTemplate, findTemplatesRoot } from "../packages/daemon/src/lib/template.js";
+import {
+  composeTemplate,
+  findTemplatesRoot,
+} from "../packages/daemon/src/lib/template/template.js";
 
 const ALL_TEMPLATES = ["claude", "pi", "codex"];
 

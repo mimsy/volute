@@ -2,7 +2,7 @@ import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
 import { z } from "zod";
 import { getOrCreateMindUser } from "../../lib/auth.js";
-import { getBridgeDef } from "../../lib/bridge-defs.js";
+import { getBridgeDef } from "../../lib/bridges/bridge-defs.js";
 import {
   getBridgeConfig,
   readBridgesConfig,
@@ -11,7 +11,8 @@ import {
   resolveChannelMapping,
   setBridgeConfig,
   setChannelMapping,
-} from "../../lib/bridges.js";
+} from "../../lib/bridges/bridges.js";
+import { findOrCreatePuppet } from "../../lib/chat/puppets.js";
 import { getBridgeManager } from "../../lib/daemon/bridge-manager.js";
 import { deliverMessage } from "../../lib/delivery/message-delivery.js";
 import {
@@ -22,10 +23,9 @@ import {
   getChannelByName,
   getParticipants,
 } from "../../lib/events/conversations.js";
-import log from "../../lib/logger.js";
-import { findOrCreatePuppet } from "../../lib/puppets.js";
-import { findMind } from "../../lib/registry.js";
-import { buildVoluteSlug } from "../../lib/slugify.js";
+import { findMind } from "../../lib/mind/registry.js";
+import log from "../../lib/util/logger.js";
+import { buildVoluteSlug } from "../../lib/util/slugify.js";
 import type { AuthEnv } from "../middleware/auth.js";
 import { requireAdmin } from "../middleware/auth.js";
 

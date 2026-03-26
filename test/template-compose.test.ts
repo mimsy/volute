@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import { existsSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, it } from "node:test";
-import { composeTemplate, findTemplatesRoot } from "../packages/daemon/src/lib/template.js";
+import {
+  composeTemplate,
+  findTemplatesRoot,
+} from "../packages/daemon/src/lib/template/template.js";
 
 describe("template composition", () => {
   const templatesRoot = findTemplatesRoot();

@@ -1,15 +1,12 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { HistoryMessage } from "@volute/api";
-import {
-  groupToolEvents,
-  type TimelineItem,
-} from "../packages/daemon/src/web/ui/src/lib/tool-groups";
+import { groupToolEvents, type TimelineItem } from "../packages/web/src/ui/lib/tool-groups";
 import {
   getToolCategory,
   getToolLabel,
   normalizeToolName,
-} from "../packages/daemon/src/web/ui/src/lib/tool-names";
+} from "../packages/web/src/ui/lib/tool-names";
 
 function makeEvent(overrides: Partial<HistoryMessage> & { type: string }): HistoryMessage {
   return {

@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { getDb } from "../db.js";
-import log from "../logger.js";
 import { turns } from "../schema.js";
+import log from "../util/logger.js";
 import { summarizeTurn } from "./summarizer.js";
 
 const tlog = log.child("turn-tracker");

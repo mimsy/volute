@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { summarizeTool } from "../packages/daemon/src/lib/format-tool.js";
+import { summarizeTool } from "../packages/daemon/src/lib/util/format-tool.js";
 
 describe("summarizeTool", () => {
   it("uses path key", () => {

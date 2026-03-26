@@ -1,8 +1,8 @@
 import { spawn } from "node:child_process";
 import { Hono } from "hono";
-import { resolveVoluteBin } from "../../lib/exec.js";
-import log from "../../lib/logger.js";
 import { checkForUpdate } from "../../lib/update-check.js";
+import { resolveVoluteBin } from "../../lib/util/exec.js";
+import log from "../../lib/util/logger.js";
 import { type AuthEnv, requireAdmin } from "../middleware/auth.js";
 
 let bin: string | undefined;

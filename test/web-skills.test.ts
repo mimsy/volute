@@ -6,7 +6,7 @@ import AdmZip from "adm-zip";
 import { eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { getDb } from "../packages/daemon/src/lib/db.js";
-import { addMind, mindDir, voluteHome } from "../packages/daemon/src/lib/registry.js";
+import { addMind, mindDir, voluteHome } from "../packages/daemon/src/lib/mind/registry.js";
 import { sessions, sharedSkills, users } from "../packages/daemon/src/lib/schema.js";
 import { importSkillFromDir } from "../packages/daemon/src/lib/skills.js";
 import mindSkillsApp from "../packages/daemon/src/web/api/mind-skills.js";

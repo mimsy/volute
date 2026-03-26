@@ -2,10 +2,10 @@ import { and, desc, eq, gte, like, lt, sql } from "drizzle-orm";
 import { aiCompleteUtility } from "../ai-service.js";
 import { getDb } from "../db.js";
 import { publish as publishMindEvent } from "../events/mind-events.js";
-import { summarizeTool } from "../format-tool.js";
-import log from "../logger.js";
 import { getPrompt } from "../prompts.js";
 import { messages, mindHistory, summaries, turns } from "../schema.js";
+import { summarizeTool } from "../util/format-tool.js";
+import log from "../util/logger.js";
 
 const sLog = log.child("summarizer");
 
