@@ -8,6 +8,12 @@ import { getDb } from "../../lib/db.js";
 import { getBaseName } from "../../lib/mind/registry.js";
 import { sessions } from "../../lib/schema.js";
 
+const mindUserCache = new Map<string, User>();
+
+export function invalidateMindUserCache(mindName: string): void {
+  mindUserCache.delete(mindName);
+}
+
 function isValidDaemonToken(token: string): boolean {
   const expected = process.env.VOLUTE_DAEMON_TOKEN;
   if (!expected || token.length !== expected.length) return false;
@@ -127,7 +133,11 @@ export const authMiddleware = createMiddleware<AuthEnv>(async (c, next) => {
     // 2. Mind token — per-mind, resolves to mind's user record
     const mindName = resolveMindToken(token);
     if (mindName) {
-      const mindUser = await getOrCreateMindUser(mindName);
+      let mindUser = mindUserCache.get(mindName);
+      if (!mindUser) {
+        mindUser = await getOrCreateMindUser(mindName);
+        mindUserCache.set(mindName, mindUser);
+      }
       c.set("user", mindUser);
       // Capture mind session for turn resolution
       const mindSessionHeader = c.req.header("X-Volute-Session");

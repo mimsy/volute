@@ -7,7 +7,7 @@ import type {
   Message,
   Participant,
 } from "@volute/api";
-import { and, desc, eq, inArray, lt, sql } from "drizzle-orm";
+import { aliasedTable, and, desc, eq, inArray, lt, sql } from "drizzle-orm";
 import { getDb } from "../db.js";
 import {
   channels,
@@ -229,16 +229,17 @@ export async function addMessage(
   return msg;
 }
 
-export async function getMessages(conversationId: string): Promise<Message[]> {
+export async function getMessages(conversationId: string, limit = 200): Promise<Message[]> {
   const db = await getDb();
   const rows = await db
     .select()
     .from(messages)
     .where(eq(messages.conversation_id, conversationId))
-    .orderBy(messages.created_at)
+    .orderBy(desc(messages.id))
+    .limit(limit)
     .all();
 
-  return rows.map(parseMessageRow);
+  return rows.reverse().map(parseMessageRow);
 }
 
 export async function getMessagesPaginated(
@@ -281,24 +282,11 @@ function parseMessageRow(row: typeof messages.$inferSelect): Message {
   return { ...row, role: row.role as Message["role"], content };
 }
 
-/** Look up channel names for a set of conversation IDs. Returns a map of conversationId → channel name. */
-async function getChannelNames(convIds: string[]): Promise<Map<string, string>> {
-  if (convIds.length === 0) return new Map();
-  const db = await getDb();
-  const rows = await db
-    .select({ conversationId: channels.conversation_id, name: channels.name })
-    .from(channels)
-    .where(inArray(channels.conversation_id, convIds));
-  return new Map(rows.map((r) => [r.conversationId, r.name]));
-}
-
-export async function listConversationsWithParticipants(
-  userId: number,
-): Promise<ConversationWithParticipants[]> {
-  const convs = await listConversationsForUser(userId);
+async function enrichConversations(convs: Conversation[]): Promise<ConversationWithParticipants[]> {
   if (convs.length === 0) return [];
   const db = await getDb();
   const convIds = convs.map((c) => c.id);
+
   const rows = await db
     .select({
       conversationId: conversationParticipants.conversation_id,
@@ -309,11 +297,15 @@ export async function listConversationsWithParticipants(
       displayName: users.display_name,
       description: users.description,
       avatar: users.avatar,
+      channelName: channels.name,
     })
     .from(conversationParticipants)
     .innerJoin(users, eq(conversationParticipants.user_id, users.id))
+    .leftJoin(channels, eq(channels.conversation_id, conversationParticipants.conversation_id))
     .where(inArray(conversationParticipants.conversation_id, convIds));
+
   const byConv = new Map<string, Participant[]>();
+  const channelNames = new Map<string, string>();
   for (const r of rows) {
     let arr = byConv.get(r.conversationId);
     if (!arr) {
@@ -329,49 +321,36 @@ export async function listConversationsWithParticipants(
       description: r.description,
       avatar: r.avatar,
     });
-  }
-
-  // Fetch last message per conversation
-  const lastMsgIds = await db
-    .select({
-      conversationId: messages.conversation_id,
-      maxId: sql<number>`MAX(${messages.id})`,
-    })
-    .from(messages)
-    .where(inArray(messages.conversation_id, convIds))
-    .groupBy(messages.conversation_id);
-
-  const byLastMsg = new Map<string, LastMessageSummary>();
-  if (lastMsgIds.length > 0) {
-    const msgRows = await db
-      .select()
-      .from(messages)
-      .where(
-        inArray(
-          messages.id,
-          lastMsgIds.map((r) => r.maxId),
-        ),
-      );
-    for (const m of msgRows) {
-      let text = "";
-      try {
-        const parsed = JSON.parse(m.content);
-        const blocks: ContentBlock[] = Array.isArray(parsed) ? parsed : [];
-        const textBlock = blocks.find((b) => b.type === "text");
-        if (textBlock && "text" in textBlock) text = textBlock.text;
-      } catch {
-        text = m.content;
-      }
-      byLastMsg.set(m.conversation_id, {
-        role: m.role as Message["role"],
-        senderName: m.sender_name,
-        text,
-        createdAt: m.created_at,
-      });
+    if (r.channelName && !channelNames.has(r.conversationId)) {
+      channelNames.set(r.conversationId, r.channelName);
     }
   }
 
-  const channelNames = await getChannelNames(convIds);
+  const msgRows = await db
+    .select()
+    .from(messages)
+    .where(
+      sql`${messages.id} IN (SELECT MAX(id) FROM ${messages} WHERE ${messages.conversation_id} IN ${convIds} GROUP BY ${messages.conversation_id})`,
+    );
+
+  const byLastMsg = new Map<string, LastMessageSummary>();
+  for (const m of msgRows) {
+    let text = "";
+    try {
+      const parsed = JSON.parse(m.content);
+      const blocks: ContentBlock[] = Array.isArray(parsed) ? parsed : [];
+      const textBlock = blocks.find((b) => b.type === "text");
+      if (textBlock && "text" in textBlock) text = textBlock.text;
+    } catch {
+      text = m.content;
+    }
+    byLastMsg.set(m.conversation_id, {
+      role: m.role as Message["role"],
+      senderName: m.sender_name,
+      text,
+      createdAt: m.created_at,
+    });
+  }
 
   return convs.map((c) => ({
     ...c,
@@ -381,33 +360,34 @@ export async function listConversationsWithParticipants(
   }));
 }
 
+export async function listConversationsWithParticipants(
+  userId: number,
+): Promise<ConversationWithParticipants[]> {
+  const convs = await listConversationsForUser(userId);
+  return enrichConversations(convs);
+}
+
 export async function findDMConversation(participantIds: [number, number]): Promise<string | null> {
   const db = await getDb();
-  // Find DM conversations with exactly these two participants
   const [id1, id2] = participantIds;
 
-  // Find conversations where participant 1 is a member
-  const p1Convs = await db
+  const cp2 = aliasedTable(conversationParticipants, "cp2");
+  const row = await db
     .select({ conversation_id: conversationParticipants.conversation_id })
     .from(conversationParticipants)
+    .innerJoin(cp2, eq(conversationParticipants.conversation_id, cp2.conversation_id))
     .innerJoin(conversations, eq(conversations.id, conversationParticipants.conversation_id))
-    .where(and(eq(conversationParticipants.user_id, id1), eq(conversations.type, "dm")))
-    .all();
+    .where(
+      and(
+        eq(conversationParticipants.user_id, id1),
+        eq(cp2.user_id, id2),
+        eq(conversations.type, "dm"),
+        sql`(SELECT COUNT(*) FROM conversation_participants cp3 WHERE cp3.conversation_id = ${conversations.id}) = 2`,
+      ),
+    )
+    .get();
 
-  for (const { conversation_id } of p1Convs) {
-    const rows = await db
-      .select({ user_id: conversationParticipants.user_id })
-      .from(conversationParticipants)
-      .where(eq(conversationParticipants.conversation_id, conversation_id))
-      .all();
-
-    if (rows.length !== 2) continue;
-    const ids = new Set(rows.map((r) => r.user_id));
-    if (ids.has(id1) && ids.has(id2)) {
-      return conversation_id;
-    }
-  }
-  return null;
+  return row?.conversation_id ?? null;
 }
 
 export async function listConversationsForMind(
@@ -439,89 +419,7 @@ export async function listConversationsForMind(
     .orderBy(desc(conversations.updated_at))
     .all()) as Conversation[];
 
-  if (convs.length === 0) return [];
-
-  const rows = await db
-    .select({
-      conversationId: conversationParticipants.conversation_id,
-      userId: users.id,
-      username: users.username,
-      userType: users.user_type,
-      role: conversationParticipants.role,
-      displayName: users.display_name,
-      description: users.description,
-      avatar: users.avatar,
-    })
-    .from(conversationParticipants)
-    .innerJoin(users, eq(conversationParticipants.user_id, users.id))
-    .where(inArray(conversationParticipants.conversation_id, convIds));
-
-  const byConv = new Map<string, Participant[]>();
-  for (const r of rows) {
-    let arr = byConv.get(r.conversationId);
-    if (!arr) {
-      arr = [];
-      byConv.set(r.conversationId, arr);
-    }
-    arr.push({
-      userId: r.userId,
-      username: r.username,
-      userType: r.userType as Participant["userType"],
-      role: r.role as "owner" | "member",
-      displayName: r.displayName,
-      description: r.description,
-      avatar: r.avatar,
-    });
-  }
-
-  // Fetch last message per conversation
-  const lastMsgIds = await db
-    .select({
-      conversationId: messages.conversation_id,
-      maxId: sql<number>`MAX(${messages.id})`,
-    })
-    .from(messages)
-    .where(inArray(messages.conversation_id, convIds))
-    .groupBy(messages.conversation_id);
-
-  const byLastMsg = new Map<string, LastMessageSummary>();
-  if (lastMsgIds.length > 0) {
-    const msgRows = await db
-      .select()
-      .from(messages)
-      .where(
-        inArray(
-          messages.id,
-          lastMsgIds.map((r) => r.maxId),
-        ),
-      );
-    for (const m of msgRows) {
-      let text = "";
-      try {
-        const parsed = JSON.parse(m.content);
-        const blocks: ContentBlock[] = Array.isArray(parsed) ? parsed : [];
-        const textBlock = blocks.find((b) => b.type === "text");
-        if (textBlock && "text" in textBlock) text = textBlock.text;
-      } catch {
-        text = m.content;
-      }
-      byLastMsg.set(m.conversation_id, {
-        role: m.role as Message["role"],
-        senderName: m.sender_name,
-        text,
-        createdAt: m.created_at,
-      });
-    }
-  }
-
-  const channelNames = await getChannelNames(convIds);
-
-  return convs.map((c) => ({
-    ...c,
-    channel_name: channelNames.get(c.id) ?? null,
-    participants: byConv.get(c.id) ?? [],
-    lastMessage: byLastMsg.get(c.id),
-  }));
+  return enrichConversations(convs);
 }
 
 export async function isConversationForMind(

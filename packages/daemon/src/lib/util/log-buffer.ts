@@ -9,14 +9,22 @@ export type LogEntry = {
 type Subscriber = (entry: LogEntry) => void;
 
 class LogBuffer {
-  private entries: LogEntry[] = [];
-  private maxSize = 1000;
+  private buffer: (LogEntry | null)[];
+  private head = 0;
+  private count = 0;
   private subscribers = new Set<Subscriber>();
 
+  constructor(private maxSize = 1000) {
+    this.buffer = new Array(maxSize).fill(null);
+  }
+
   append(entry: LogEntry) {
-    this.entries.push(entry);
-    if (this.entries.length > this.maxSize) {
-      this.entries.shift();
+    const idx = (this.head + this.count) % this.maxSize;
+    this.buffer[idx] = entry;
+    if (this.count === this.maxSize) {
+      this.head = (this.head + 1) % this.maxSize;
+    } else {
+      this.count++;
     }
     for (const sub of this.subscribers) {
       sub(entry);
@@ -24,7 +32,11 @@ class LogBuffer {
   }
 
   getEntries(): LogEntry[] {
-    return [...this.entries];
+    const result: LogEntry[] = [];
+    for (let i = 0; i < this.count; i++) {
+      result.push(this.buffer[(this.head + i) % this.maxSize]!);
+    }
+    return result;
   }
 
   subscribe(fn: Subscriber): () => void {

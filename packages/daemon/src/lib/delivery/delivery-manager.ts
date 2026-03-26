@@ -25,6 +25,15 @@ const dlog = log.child("delivery-manager");
 
 const MAX_BATCH_SIZE = 50;
 
+const mentionRegexCache = new Map<string, RegExp>();
+
+type AvatarBlock =
+  | { type: "text"; text: string }
+  | { type: "image"; media_type: string; data: string };
+type AvatarCacheEntry = { blocks: AvatarBlock[]; expiresAt: number };
+const avatarBlocksCache = new Map<string, AvatarCacheEntry>();
+const AVATAR_CACHE_TTL = 5 * 60 * 1000;
+
 // --- Session state tracking ---
 
 type SessionState = {
@@ -126,8 +135,12 @@ export class DeliveryManager {
     // Mention-mode filtering
     if (route.mode === "mention" && payload.sender) {
       const text = extractTextContent(payload.content);
-      const escaped = baseName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      const pattern = new RegExp(`\\b${escaped}\\b`, "i");
+      let pattern = mentionRegexCache.get(baseName);
+      if (!pattern) {
+        const escaped = baseName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        pattern = new RegExp(`\\b${escaped}\\b`, "i");
+        mentionRegexCache.set(baseName, pattern);
+      }
       if (!pattern.test(text)) {
         dlog.debug(`mention-filtered message on ${payload.channel} for ${mindName}`);
         return { routed: false, reason: "mention-filtered" };
@@ -420,11 +433,16 @@ export class DeliveryManager {
     const { baseName, port } = resolved;
 
     // Enrich first message per new channel with participant profiles
+    const firstPerChannel = new Set<string>();
+    const isFirstForChannel: boolean[] = [];
+    for (const msg of messages) {
+      const ch = msg.channel ?? "unknown";
+      isFirstForChannel.push(!firstPerChannel.has(ch));
+      firstPerChannel.add(ch);
+    }
     const enrichedMessages = await Promise.all(
       messages.map(async (msg, i) => {
-        // Only enrich the first message per unique channel in the batch
-        const isFirst = messages.findIndex((m) => m.channel === msg.channel) === i;
-        if (!isFirst) return msg;
+        if (!isFirstForChannel[i]) return msg;
         const enrichedPayload = await this.enrichWithProfiles(baseName, session, msg.payload);
         return { ...msg, payload: enrichedPayload };
       }),
@@ -784,13 +802,26 @@ export class DeliveryManager {
 
   private async loadAvatarBlocks(
     participants: { username: string; userType: string; avatar?: string | null }[],
-  ): Promise<
-    ({ type: "text"; text: string } | { type: "image"; media_type: string; data: string })[]
-  > {
-    const blocks: (
-      | { type: "text"; text: string }
-      | { type: "image"; media_type: string; data: string }
-    )[] = [];
+  ): Promise<AvatarBlock[]> {
+    const cacheKey = participants
+      .map((p) => p.username)
+      .sort()
+      .join(",");
+    const cached = avatarBlocksCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) return cached.blocks;
+
+    const blocks: AvatarBlock[] = [];
+
+    let sharpDefault: any = null;
+    try {
+      const mod = await import("sharp");
+      sharpDefault = mod.default ?? mod;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === "MODULE_NOT_FOUND" || code === "ERR_MODULE_NOT_FOUND") {
+        dlog.debug("sharp not available, sending full-size avatars");
+      }
+    }
 
     for (const p of participants) {
       if (!p.avatar) continue;
@@ -837,14 +868,10 @@ export class DeliveryManager {
 
         const data = await readFile(filePath);
         let imageData: Buffer = data;
-        try {
-          const sharpMod = await import("sharp");
-          imageData = await sharpMod.default(data).resize(128, 128, { fit: "cover" }).toBuffer();
-        } catch (err) {
-          const code = (err as NodeJS.ErrnoException).code;
-          if (code === "MODULE_NOT_FOUND" || code === "ERR_MODULE_NOT_FOUND") {
-            dlog.debug("sharp not available, sending full-size avatar");
-          } else {
+        if (sharpDefault) {
+          try {
+            imageData = await sharpDefault(data).resize(128, 128, { fit: "cover" }).toBuffer();
+          } catch (err) {
             dlog.warn(
               `avatar resize failed for ${p.username}, sending original`,
               log.errorData(err),
@@ -863,6 +890,7 @@ export class DeliveryManager {
       }
     }
 
+    avatarBlocksCache.set(cacheKey, { blocks, expiresAt: Date.now() + AVATAR_CACHE_TTL });
     return blocks;
   }
 

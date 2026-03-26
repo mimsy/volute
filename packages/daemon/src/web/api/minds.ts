@@ -116,6 +116,7 @@ import log from "../../lib/util/logger.js";
 import { fireWebhook } from "../../lib/webhook.js";
 import {
   type AuthEnv,
+  invalidateMindUserCache,
   requireAdmin,
   requireAdminOrSystem,
   requireSelf,
@@ -124,13 +125,16 @@ import {
 /** Event types that trigger turn creation (hoisted for perf — avoid per-request allocation). */
 const SUBSTANTIVE_TYPES = new Set(["thinking", "text", "tool_use", "tool_result", "outbound"]);
 
+const _lastActiveCache: { map: Map<string, string>; ts: number } = { map: new Map(), ts: 0 };
+const _LAST_ACTIVE_TTL = 60_000;
+
 type ChannelStatus = {
   name: string;
   displayName: string;
   status: "connected" | "disconnected";
 };
 
-async function getMindStatus(name: string, port: number) {
+async function getMindStatus(name: string, port: number, registryRunning?: boolean) {
   const manager = getMindManager();
   let status: "running" | "stopped" | "starting" | "sleeping" = "stopped";
 
@@ -142,7 +146,7 @@ async function getMindStatus(name: string, port: number) {
     }
   } catch {}
 
-  if (status !== "sleeping" && manager.isRunning(name)) {
+  if (status !== "sleeping" && registryRunning !== false && manager.isRunning(name)) {
     const health = await checkHealth(port);
     status = health.ok ? "running" : "starting";
   }
@@ -1147,24 +1151,31 @@ const app = new Hono<AuthEnv>()
   // List all minds
   .get("/", async (c) => {
     const entries = await readRegistry();
-    let lastActiveMap = new Map<string, string>();
-    try {
-      const db = await getDb();
-      const lastActiveRows = await db
-        .select({
-          mind: mindHistory.mind,
-          lastActiveAt: sql<string>`MAX(${mindHistory.created_at})`,
-        })
-        .from(mindHistory)
-        .groupBy(mindHistory.mind);
-      lastActiveMap = new Map(lastActiveRows.map((r) => [r.mind, r.lastActiveAt]));
-    } catch {
-      // Non-essential: degrade gracefully without activity data
+    let lastActiveMap: Map<string, string>;
+    if (_lastActiveCache.ts > 0 && Date.now() - _lastActiveCache.ts < _LAST_ACTIVE_TTL) {
+      lastActiveMap = _lastActiveCache.map;
+    } else {
+      lastActiveMap = new Map<string, string>();
+      try {
+        const db = await getDb();
+        const lastActiveRows = await db
+          .select({
+            mind: mindHistory.mind,
+            lastActiveAt: sql<string>`MAX(${mindHistory.created_at})`,
+          })
+          .from(mindHistory)
+          .groupBy(mindHistory.mind);
+        lastActiveMap = new Map(lastActiveRows.map((r) => [r.mind, r.lastActiveAt]));
+      } catch {
+        // Non-essential: degrade gracefully without activity data
+      }
+      _lastActiveCache.map = lastActiveMap;
+      _lastActiveCache.ts = Date.now();
     }
 
     const minds = await Promise.all(
       entries.map(async (entry) => {
-        const mindStatus = await getMindStatus(entry.name, entry.port);
+        const mindStatus = await getMindStatus(entry.name, entry.port, entry.running);
         const hasPages = existsSync(resolve(mindDir(entry.name), "home", "pages"));
         return {
           ...entry,
@@ -1684,6 +1695,7 @@ const app = new Hono<AuthEnv>()
 
     await removeMind(name);
     await deleteMindUser(name);
+    invalidateMindUserCache(name);
 
     // Clean up centralized state directory (logs, env, channels)
     const state = stateDir(name);

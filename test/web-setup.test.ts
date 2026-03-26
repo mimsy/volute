@@ -3,6 +3,7 @@ import { existsSync, rmSync } from "node:fs";
 import { beforeEach, describe, it } from "node:test";
 import { Hono } from "hono";
 import {
+  _resetConfigCache,
   configPath,
   readGlobalConfig,
   writeGlobalConfig,
@@ -16,6 +17,7 @@ function createApp() {
 }
 
 function clearConfig() {
+  _resetConfigCache();
   const path = configPath();
   if (existsSync(path)) rmSync(path);
 }

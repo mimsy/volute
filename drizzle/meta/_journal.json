@@ -57,6 +57,13 @@
       "when": 1775200000000,
       "tag": "0007_drop_conversation_name_title",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1775300000000,
+      "tag": "0008_performance_indexes",
+      "breakpoints": true
     }
   ]
 }

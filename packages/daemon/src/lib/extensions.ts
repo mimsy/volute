@@ -11,9 +11,6 @@ import type {
   MindSection,
   SystemSection,
 } from "@volute/extensions";
-import extNotes from "@volute/notes";
-import extPages from "@volute/pages";
-import extPlan from "@volute/plan";
 import type { Context, Hono, MiddlewareHandler } from "hono";
 import type { AuthEnv } from "../web/middleware/auth.js";
 import { getUser, getUserByUsername } from "./auth.js";
@@ -429,26 +426,50 @@ async function loadExtension(
  * The manifest's skillsDir may be wrong when bundled by tsup (import.meta.dirname
  * resolves to the dist/ directory). Fall back to searching from the project root.
  */
+const skillsDirCache = new Map<string, string | null>();
+
 function resolveSkillsDir(manifest: ExtensionManifest): string | null {
   if (!manifest.skillsDir) return null;
+  const cached = skillsDirCache.get(manifest.id);
+  if (cached !== undefined) return cached;
   // Search from daemon entry point for extension-specific skills directory first.
   // This is needed because tsup bundling makes import.meta.dirname resolve to dist/,
   // so relative paths like "../skills" can accidentally hit the repo root skills/ dir.
   let searchDir = dirname(new URL(import.meta.url).pathname);
   for (let i = 0; i < 5; i++) {
     const candidate = resolve(searchDir, "packages", "extensions", manifest.id, "skills");
-    if (existsSync(candidate)) return candidate;
+    if (existsSync(candidate)) {
+      skillsDirCache.set(manifest.id, candidate);
+      return candidate;
+    }
     searchDir = dirname(searchDir);
   }
   // Fall back to the declared path (works in dev mode where import.meta.dirname is correct)
-  if (existsSync(manifest.skillsDir)) return manifest.skillsDir;
+  if (existsSync(manifest.skillsDir)) {
+    skillsDirCache.set(manifest.id, manifest.skillsDir);
+    return manifest.skillsDir;
+  }
   log.warn(`skills dir not found for extension ${manifest.id}: ${manifest.skillsDir}`);
+  skillsDirCache.set(manifest.id, null);
   return null;
 }
 
-function discoverBuiltinExtensions(): ExtensionManifest[] {
-  // Built-in extensions imported statically so tsup bundles them
-  return [extNotes, extPages, extPlan];
+async function discoverBuiltinExtensions(disabledIds: Set<string>): Promise<ExtensionManifest[]> {
+  const builtins: { id: string; load: () => Promise<ExtensionManifest> }[] = [
+    { id: "notes", load: async () => (await import("@volute/notes")).default },
+    { id: "pages", load: async () => (await import("@volute/pages")).default },
+    { id: "plan", load: async () => (await import("@volute/plan")).default },
+  ];
+  const results: ExtensionManifest[] = [];
+  for (const { id, load } of builtins) {
+    if (disabledIds.has(id)) continue;
+    try {
+      results.push(await load());
+    } catch (err) {
+      log.error(`failed to load built-in extension: ${id}`, log.errorData(err));
+    }
+  }
+  return results;
 }
 
 type InstalledExtension = { manifest: ExtensionManifest; package: string };
@@ -549,11 +570,11 @@ async function discoverLocalExtensions(): Promise<ExtensionManifest[]> {
 }
 
 export async function loadAllExtensions(app: Hono, authMw: MiddlewareHandler): Promise<void> {
-  const builtins = discoverBuiltinExtensions();
+  const disabledIds = new Set(readGlobalConfig().disabledExtensions ?? []);
+
+  const builtins = await discoverBuiltinExtensions(disabledIds);
   const installed = await discoverInstalledExtensions();
   const local = await discoverLocalExtensions();
-
-  const disabledIds = new Set(readGlobalConfig().disabledExtensions ?? []);
 
   const all: DiscoveredExtension[] = [
     ...builtins.map((m) => ({ manifest: m, source: "builtin" as const })),
@@ -843,6 +864,7 @@ export function notifyExtensionsDaemonStop(): void {
   }
   loaded.length = 0;
   discovered.length = 0;
+  skillsDirCache.clear();
 }
 
 export function notifyExtensionsMindStart(mindName: string): void {

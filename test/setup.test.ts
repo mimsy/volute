@@ -3,6 +3,7 @@ import { mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import {
+  _resetConfigCache,
   type GlobalConfig,
   isSetupComplete,
   readGlobalConfig,
@@ -19,6 +20,7 @@ function registryPath() {
 }
 
 function cleanup() {
+  _resetConfigCache();
   try {
     unlinkSync(configPath());
   } catch {}

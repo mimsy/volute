@@ -152,19 +152,19 @@ describe("TokenBudget", () => {
     assert.deepEqual(tb.drain("unknown"), []);
   });
 
-  it("tick resets expired periods", () => {
+  it("tick resets expired periods", async () => {
     const tb = new TokenBudget();
     tb.setBudget("mind1", 10000, 0); // 0 minutes = always expired on tick
 
     tb.recordUsage("mind1", 5000, 5000);
     assert.equal(tb.getUsage("mind1")!.tokensUsed, 10000);
 
-    tb.tick();
+    await tb.tick();
 
     assert.equal(tb.getUsage("mind1")!.tokensUsed, 0);
   });
 
-  it("tick drains queue on period reset", () => {
+  it("tick drains queue on period reset", async () => {
     const tb = new TokenBudget();
     tb.setBudget("mind1", 10000, 0);
 
@@ -172,23 +172,23 @@ describe("TokenBudget", () => {
     assert.equal(tb.getUsage("mind1")!.queueLength, 1);
 
     // tick() resets the period and drains the queue for replay
-    tb.tick();
+    await tb.tick();
 
     // Queue is drained (deliverMessage handles delivery or logs if mind not found)
     assert.equal(tb.getUsage("mind1")!.queueLength, 0);
   });
 
-  it("tick does not reset unexpired periods", () => {
+  it("tick does not reset unexpired periods", async () => {
     const tb = new TokenBudget();
     tb.setBudget("mind1", 10000, 9999); // very long period
 
     tb.recordUsage("mind1", 5000, 5000);
-    tb.tick();
+    await tb.tick();
 
     assert.equal(tb.getUsage("mind1")!.tokensUsed, 10000); // NOT reset
   });
 
-  it("tick resets warningInjected flag", () => {
+  it("tick resets warningInjected flag", async () => {
     const tb = new TokenBudget();
     tb.setBudget("mind1", 10000, 0); // 0-minute period
 
@@ -197,7 +197,7 @@ describe("TokenBudget", () => {
     tb.acknowledgeWarning("mind1");
     assert.equal(tb.checkBudget("mind1"), "ok"); // already acknowledged
 
-    tb.tick(); // resets period
+    await tb.tick(); // resets period
 
     // After reset, new usage at 90% should trigger warning again
     tb.recordUsage("mind1", 4500, 4500);
@@ -238,11 +238,11 @@ describe("TokenBudget", () => {
     assert.equal(tb.checkBudget("b"), "ok");
   });
 
-  it("persists budget state across instances", () => {
+  it("persists budget state across instances", async () => {
     const tb1 = new TokenBudget();
     tb1.setBudget("mind1", 10000, 60);
     tb1.recordUsage("mind1", 3000, 2000); // 5000 tokens used
-    tb1.flush();
+    await tb1.flush();
 
     // New instance should load persisted state
     const tb2 = new TokenBudget();
@@ -250,13 +250,13 @@ describe("TokenBudget", () => {
     assert.equal(tb2.getUsage("mind1")!.tokensUsed, 5000);
   });
 
-  it("persists warningInjected flag via flush", () => {
+  it("persists warningInjected flag via flush", async () => {
     const tb1 = new TokenBudget();
     tb1.setBudget("mind1", 10000, 60);
     tb1.recordUsage("mind1", 4500, 4500); // 90%
     assert.equal(tb1.checkBudget("mind1"), "warning");
     tb1.acknowledgeWarning("mind1");
-    tb1.flush();
+    await tb1.flush();
 
     const tb2 = new TokenBudget();
     tb2.setBudget("mind1", 10000, 60);
@@ -264,13 +264,13 @@ describe("TokenBudget", () => {
     assert.equal(tb2.checkBudget("mind1"), "ok");
   });
 
-  it("persists queued messages via flush", () => {
+  it("persists queued messages via flush", async () => {
     const tb1 = new TokenBudget();
     tb1.setBudget("mind1", 10000, 60);
     tb1.recordUsage("mind1", 5000, 5000); // exceed budget
     tb1.enqueue("mind1", { channel: "ch1", sender: "user1", textContent: "hello" });
     tb1.enqueue("mind1", { channel: "ch2", sender: null, textContent: "world" });
-    tb1.flush();
+    await tb1.flush();
 
     const tb2 = new TokenBudget();
     tb2.setBudget("mind1", 10000, 60);
@@ -287,10 +287,10 @@ describe("TokenBudget", () => {
     assert.equal(tb.getUsage("nonexistent-mind")!.tokensUsed, 0);
   });
 
-  it("start and stop manage interval", () => {
+  it("start and stop manage interval", async () => {
     const tb = new TokenBudget();
     tb.start();
-    tb.stop();
+    await tb.stop();
     assert.ok(true);
   });
 });

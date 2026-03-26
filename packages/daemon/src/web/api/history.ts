@@ -246,23 +246,36 @@ const history = new Hono()
             )
             .innerJoin(users, eq(conversationParticipants.user_id, users.id))
             .where(and(eq(conversations.type, "dm"), inArray(users.username, targetNames)));
+          // Batch-verify mind participation in one query instead of per-DM
+          const dmCandidates: { slug: string; conversationId: string; mindNames: string[] }[] = [];
           for (const row of dmRows) {
             const slug = `@${row.targetUsername}`;
             const mindNames = dmSlugMinds.get(slug);
             if (mindNames && !channelIdMap.has(slug)) {
-              // Verify the mind is also a participant in this conversation
-              const mindCheck = await db
-                .select({ id: conversationParticipants.user_id })
-                .from(conversationParticipants)
-                .innerJoin(users, eq(conversationParticipants.user_id, users.id))
-                .where(
-                  and(
-                    eq(conversationParticipants.conversation_id, row.id),
-                    inArray(users.username, [...mindNames]),
-                  ),
-                )
-                .get();
-              if (mindCheck) channelIdMap.set(slug, row.id);
+              dmCandidates.push({ slug, conversationId: row.id, mindNames: [...mindNames] });
+            }
+          }
+          if (dmCandidates.length > 0) {
+            const candidateConvIds = dmCandidates.map((d) => d.conversationId);
+            const allMindNames = [...new Set(dmCandidates.flatMap((d) => d.mindNames))];
+            const verifyRows = await db
+              .select({
+                conversation_id: conversationParticipants.conversation_id,
+                username: users.username,
+              })
+              .from(conversationParticipants)
+              .innerJoin(users, eq(conversationParticipants.user_id, users.id))
+              .where(
+                and(
+                  inArray(conversationParticipants.conversation_id, candidateConvIds),
+                  inArray(users.username, allMindNames),
+                ),
+              );
+            const verifiedConvs = new Set(verifyRows.map((r) => r.conversation_id));
+            for (const candidate of dmCandidates) {
+              if (verifiedConvs.has(candidate.conversationId)) {
+                channelIdMap.set(candidate.slug, candidate.conversationId);
+              }
             }
           }
         }
@@ -413,7 +426,7 @@ const history = new Hono()
       const idList = ids
         .split(",")
         .map((s) => parseInt(s, 10))
-        .filter((n) => !isNaN(n));
+        .filter((n) => !Number.isNaN(n));
       if (idList.length === 0) return c.json([]);
       const rows = await db.select().from(summaries).where(inArray(summaries.id, idList));
       const result = rows.map((r) => {

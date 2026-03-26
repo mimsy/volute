@@ -304,11 +304,11 @@ export async function installSkill(
   mkdirSync(destDir, { recursive: true });
   cpSync(sourceDir, destDir, { recursive: true });
 
-  // Install npm dependencies if declared in SKILL.md frontmatter
+  // Parse SKILL.md once for npm dependencies, hooks, and bin
   const npmInstalled: string[] = [];
   const skillMdPath = join(sourceDir, "SKILL.md");
   if (existsSync(skillMdPath)) {
-    const { npmDependencies } = parseSkillMd(readFileSync(skillMdPath, "utf-8"));
+    const { npmDependencies, hooks, bin } = parseSkillMd(readFileSync(skillMdPath, "utf-8"));
     if (npmDependencies.length > 0) {
       try {
         await exec("npm", ["install", ...npmDependencies], { cwd: dir });
@@ -322,11 +322,6 @@ export async function installSkill(
         );
       }
     }
-  }
-
-  // Install hook shims and bin command if declared in SKILL.md frontmatter
-  if (existsSync(skillMdPath)) {
-    const { hooks, bin } = parseSkillMd(readFileSync(skillMdPath, "utf-8"));
     installHookShims(dir, skillId, hooks);
     if (bin) installBinShim(dir, skillId, bin);
   }
@@ -706,11 +701,16 @@ export function listFilesRecursive(dir: string, prefix = ""): string[] {
  * Find the skills/ root directory by walking up from the calling module's location.
  * Same pattern as findTemplatesRoot() in template.ts.
  */
+let _skillsRoot: string | null = null;
 export function findSkillsRoot(): string {
+  if (_skillsRoot) return _skillsRoot;
   let dir = dirname(new URL(import.meta.url).pathname);
   for (let i = 0; i < 5; i++) {
     const candidate = resolve(dir, "skills");
-    if (existsSync(candidate) && hasSkillSubdir(candidate)) return candidate;
+    if (existsSync(candidate) && hasSkillSubdir(candidate)) {
+      _skillsRoot = candidate;
+      return _skillsRoot;
+    }
     dir = dirname(dir);
   }
   throw new Error("Skills directory not found");

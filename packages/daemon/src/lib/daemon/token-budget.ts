@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { sendSystemMessage } from "../chat/system-chat.js";
 import { stateDir } from "../mind/registry.js";
@@ -33,8 +34,8 @@ export class TokenBudget {
     this.interval = setInterval(() => this.tick(), 60_000);
   }
 
-  stop(): void {
-    this.flush();
+  async stop(): Promise<void> {
+    await this.flush();
     if (this.interval) clearInterval(this.interval);
     this.interval = null;
   }
@@ -130,7 +131,7 @@ export class TokenBudget {
     };
   }
 
-  tick(): void {
+  async tick(): Promise<void> {
     const now = Date.now();
     for (const [mind, state] of this.budgets) {
       const elapsed = now - state.periodStart;
@@ -148,33 +149,35 @@ export class TokenBudget {
         }
       }
     }
-    this.flush();
+    await this.flush();
   }
 
   /** Flush all dirty budget states to disk. */
-  flush(): void {
+  async flush(): Promise<void> {
+    const writes = [];
     for (const mind of this.dirty) {
       const state = this.budgets.get(mind);
-      if (state) this.saveBudgetState(mind, state);
+      if (state) writes.push(this.saveBudgetState(mind, state));
     }
     this.dirty.clear();
+    await Promise.all(writes);
   }
 
   private budgetStatePath(mind: string): string {
     return resolve(stateDir(mind), "budget.json");
   }
 
-  private saveBudgetState(mind: string, state: BudgetState): void {
+  private async saveBudgetState(mind: string, state: BudgetState): Promise<void> {
     try {
       const dir = stateDir(mind);
-      mkdirSync(dir, { recursive: true });
+      await mkdir(dir, { recursive: true });
       const data = {
         periodStart: state.periodStart,
         tokensUsed: state.tokensUsed,
         warningInjected: state.warningInjected,
         queue: state.queue,
       };
-      writeFileSync(this.budgetStatePath(mind), `${JSON.stringify(data)}\n`);
+      await writeFile(this.budgetStatePath(mind), `${JSON.stringify(data)}\n`);
     } catch (err) {
       tlog.warn(`failed to save budget state for ${mind}`, log.errorData(err));
     }

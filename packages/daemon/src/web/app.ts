@@ -86,10 +86,11 @@ app.use(
 
 // CSRF protection for cookie-based requests. Requests with Bearer auth are exempt
 // because Bearer tokens aren't auto-attached by browsers, making CSRF impossible.
+const csrfMiddleware = csrf();
 app.use("/api/*", async (c, next) => {
   const auth = c.req.header("Authorization");
   if (auth?.startsWith("Bearer ") && auth.length > 7) return next();
-  return csrf()(c, next);
+  return csrfMiddleware(c, next);
 });
 
 // Daemon health (unauthenticated)

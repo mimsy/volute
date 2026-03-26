@@ -66,6 +66,7 @@ export const turns = sqliteTable(
   (table) => [
     index("idx_turns_mind").on(table.mind),
     index("idx_turns_mind_status").on(table.mind, table.status),
+    index("idx_turns_mind_created_at").on(table.mind, table.created_at),
   ],
 );
 
@@ -89,6 +90,8 @@ export const mindHistory = sqliteTable(
     index("idx_mind_history_mind_channel").on(table.mind, table.channel),
     index("idx_mind_history_mind_type").on(table.mind, table.type),
     index("idx_mind_history_turn_id").on(table.turn_id),
+    index("idx_mind_history_session").on(table.session),
+    index("idx_mind_history_mind_created_at").on(table.mind, table.created_at),
   ],
 );
 
@@ -149,6 +152,7 @@ export const deliveryQueue = sqliteTable(
   (table) => [
     index("idx_delivery_queue_mind_session").on(table.mind, table.session),
     index("idx_delivery_queue_mind_status").on(table.mind, table.status),
+    index("idx_delivery_queue_status").on(table.status),
   ],
 );
 
@@ -168,6 +172,7 @@ export const activity = sqliteTable(
     index("idx_activity_created_at").on(table.created_at),
     index("idx_activity_mind").on(table.mind),
     index("idx_activity_turn_id").on(table.turn_id),
+    index("idx_activity_type").on(table.type),
   ],
 );
 
@@ -185,6 +190,7 @@ export const summaries = sqliteTable(
   (table) => [
     uniqueIndex("idx_summaries_unique").on(table.mind, table.period, table.period_key),
     index("idx_summaries_mind_period").on(table.mind, table.period),
+    index("idx_summaries_mind_period_key").on(table.mind, table.period_key),
   ],
 );
 
