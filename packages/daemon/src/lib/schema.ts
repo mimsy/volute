@@ -210,6 +210,23 @@ export const conversationReads = sqliteTable(
   ],
 );
 
+export const channels = sqliteTable(
+  "channels",
+  {
+    conversation_id: text("conversation_id")
+      .primaryKey()
+      .references(() => conversations.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    description: text("description"),
+    rules: text("rules"),
+    char_limit: integer("char_limit"),
+    private: integer("private").notNull().default(0),
+    created_at: text("created_at").notNull().default(sql`(datetime('now'))`),
+    updated_at: text("updated_at").notNull().default(sql`(datetime('now'))`),
+  },
+  (table) => [uniqueIndex("idx_channels_name").on(table.name)],
+);
+
 export const messages = sqliteTable(
   "messages",
   {

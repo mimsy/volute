@@ -1,130 +1,130 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
-  CHANNELS,
-  getChannelDriver,
-  getChannelProvider,
-  resolveChannelId,
-} from "../packages/daemon/src/lib/channels.js";
+  getPlatform,
+  getPlatformDriver,
+  PLATFORMS,
+  resolvePlatformId,
+} from "../packages/daemon/src/lib/platforms.js";
 import { isConversationId } from "../packages/daemon/src/lib/typing.js";
 
-describe("channels", () => {
-  it("CHANNELS has expected entries", () => {
-    assert.ok(CHANNELS.volute);
-    assert.ok(CHANNELS.discord);
-    assert.ok(CHANNELS.slack);
-    assert.ok(CHANNELS.telegram);
-    assert.ok(CHANNELS.mail);
-    assert.ok(CHANNELS.system);
-    assert.equal(Object.keys(CHANNELS).length, 6);
+describe("platforms", () => {
+  it("PLATFORMS has expected entries", () => {
+    assert.ok(PLATFORMS.volute);
+    assert.ok(PLATFORMS.discord);
+    assert.ok(PLATFORMS.slack);
+    assert.ok(PLATFORMS.telegram);
+    assert.ok(PLATFORMS.mail);
+    assert.ok(PLATFORMS.system);
+    assert.equal(Object.keys(PLATFORMS).length, 6);
   });
 
-  it("volute channel is builtIn", () => {
-    assert.equal(CHANNELS.volute.builtIn, true);
+  it("volute platform is builtIn", () => {
+    assert.equal(PLATFORMS.volute.builtIn, true);
   });
 
-  it("non-volute channels are not builtIn", () => {
-    assert.equal(CHANNELS.discord.builtIn, undefined);
-    assert.equal(CHANNELS.slack.builtIn, undefined);
-    assert.equal(CHANNELS.telegram.builtIn, undefined);
-    assert.equal(CHANNELS.mail.builtIn, undefined);
-    assert.equal(CHANNELS.system.builtIn, undefined);
+  it("non-volute platforms are not builtIn", () => {
+    assert.equal(PLATFORMS.discord.builtIn, undefined);
+    assert.equal(PLATFORMS.slack.builtIn, undefined);
+    assert.equal(PLATFORMS.telegram.builtIn, undefined);
+    assert.equal(PLATFORMS.mail.builtIn, undefined);
+    assert.equal(PLATFORMS.system.builtIn, undefined);
   });
 
-  it("getChannelProvider with no arg returns volute config", () => {
-    const config = getChannelProvider();
+  it("getPlatform with no arg returns volute config", () => {
+    const config = getPlatform();
     assert.equal(config.name, "volute");
   });
 
-  it("getChannelProvider with bare slug returns volute config", () => {
-    const config = getChannelProvider("@alice");
+  it("getPlatform with bare slug returns volute config", () => {
+    const config = getPlatform("@alice");
     assert.equal(config.name, "volute");
   });
 
-  it("getChannelProvider with bare channel slug returns volute config", () => {
-    const config = getChannelProvider("#general");
+  it("getPlatform with bare channel slug returns volute config", () => {
+    const config = getPlatform("#general");
     assert.equal(config.name, "volute");
   });
 
-  it("getChannelProvider with bare conversationId returns volute config", () => {
-    const config = getChannelProvider("abc-123");
+  it("getPlatform with bare conversationId returns volute config", () => {
+    const config = getPlatform("abc-123");
     assert.equal(config.name, "volute");
   });
 
-  it("getChannelProvider with discord URI returns discord config", () => {
-    const config = getChannelProvider("discord:456");
+  it("getPlatform with discord URI returns discord config", () => {
+    const config = getPlatform("discord:456");
     assert.equal(config.name, "discord");
   });
 
-  it("getChannelProvider with slack URI returns slack config", () => {
-    const config = getChannelProvider("slack:C123");
+  it("getPlatform with slack URI returns slack config", () => {
+    const config = getPlatform("slack:C123");
     assert.equal(config.name, "slack");
     assert.equal(config.displayName, "Slack");
   });
 
-  it("getChannelProvider with telegram URI returns telegram config", () => {
-    const config = getChannelProvider("telegram:456");
+  it("getPlatform with telegram URI returns telegram config", () => {
+    const config = getPlatform("telegram:456");
     assert.equal(config.name, "telegram");
     assert.equal(config.displayName, "Telegram");
   });
 
-  it("getChannelProvider with mail URI returns mail config", () => {
-    const config = getChannelProvider("mail:user@example.com");
+  it("getPlatform with mail URI returns mail config", () => {
+    const config = getPlatform("mail:user@example.com");
     assert.equal(config.name, "mail");
     assert.equal(config.displayName, "Email");
   });
 
-  it("getChannelProvider with unknown platform auto-generates config", () => {
-    const config = getChannelProvider("matrix:foo");
+  it("getPlatform with unknown platform auto-generates config", () => {
+    const config = getPlatform("matrix:foo");
     assert.equal(config.name, "matrix");
     assert.equal(config.displayName, "matrix");
   });
 
-  it("getChannelDriver returns driver for volute", () => {
-    const driver = getChannelDriver("volute");
+  it("getPlatformDriver returns driver for volute", () => {
+    const driver = getPlatformDriver("volute");
     assert.ok(driver);
     assert.equal(typeof driver.read, "function");
     assert.equal(typeof driver.send, "function");
   });
 
-  it("getChannelDriver returns driver for discord", () => {
-    const driver = getChannelDriver("discord");
+  it("getPlatformDriver returns driver for discord", () => {
+    const driver = getPlatformDriver("discord");
     assert.ok(driver);
     assert.equal(typeof driver.read, "function");
     assert.equal(typeof driver.send, "function");
   });
 
-  it("getChannelDriver returns driver for slack", () => {
-    const driver = getChannelDriver("slack");
+  it("getPlatformDriver returns driver for slack", () => {
+    const driver = getPlatformDriver("slack");
     assert.ok(driver);
     assert.equal(typeof driver.read, "function");
     assert.equal(typeof driver.send, "function");
   });
 
-  it("getChannelDriver returns driver for telegram", () => {
-    const driver = getChannelDriver("telegram");
+  it("getPlatformDriver returns driver for telegram", () => {
+    const driver = getPlatformDriver("telegram");
     assert.ok(driver);
     assert.equal(typeof driver.read, "function");
     assert.equal(typeof driver.send, "function");
   });
 
-  it("getChannelDriver returns null for unknown platform", () => {
-    const driver = getChannelDriver("unknown");
+  it("getPlatformDriver returns null for unknown platform", () => {
+    const driver = getPlatformDriver("unknown");
     assert.equal(driver, null);
   });
 
-  it("getChannelDriver returns null for mail (no driver)", () => {
-    const driver = getChannelDriver("mail");
+  it("getPlatformDriver returns null for mail (no driver)", () => {
+    const driver = getPlatformDriver("mail");
     assert.equal(driver, null);
   });
 
-  it("getChannelDriver returns null for system (no driver)", () => {
-    const driver = getChannelDriver("system");
+  it("getPlatformDriver returns null for system (no driver)", () => {
+    const driver = getPlatformDriver("system");
     assert.equal(driver, null);
   });
 
   it("telegram read throws unsupported error", async () => {
-    const driver = getChannelDriver("telegram");
+    const driver = getPlatformDriver("telegram");
     assert.ok(driver);
     await assert.rejects(() => driver.read({}, "123", 10), {
       message: /does not support reading/,
@@ -132,7 +132,7 @@ describe("channels", () => {
   });
 
   it("volute driver has listConversations, listUsers, createConversation", () => {
-    const driver = getChannelDriver("volute");
+    const driver = getPlatformDriver("volute");
     assert.ok(driver);
     assert.equal(typeof driver.listConversations, "function");
     assert.equal(typeof driver.listUsers, "function");
@@ -140,7 +140,7 @@ describe("channels", () => {
   });
 
   it("discord driver has listConversations, listUsers, createConversation", () => {
-    const driver = getChannelDriver("discord");
+    const driver = getPlatformDriver("discord");
     assert.ok(driver);
     assert.equal(typeof driver.listConversations, "function");
     assert.equal(typeof driver.listUsers, "function");
@@ -148,7 +148,7 @@ describe("channels", () => {
   });
 
   it("slack driver has listConversations, listUsers, createConversation", () => {
-    const driver = getChannelDriver("slack");
+    const driver = getPlatformDriver("slack");
     assert.ok(driver);
     assert.equal(typeof driver.listConversations, "function");
     assert.equal(typeof driver.listUsers, "function");
@@ -156,7 +156,7 @@ describe("channels", () => {
   });
 
   it("telegram driver has listConversations, listUsers, createConversation that throw", async () => {
-    const driver = getChannelDriver("telegram");
+    const driver = getPlatformDriver("telegram");
     assert.ok(driver);
     assert.equal(typeof driver.listConversations, "function");
     assert.equal(typeof driver.listUsers, "function");
@@ -173,25 +173,25 @@ describe("channels", () => {
   });
 });
 
-describe("resolveChannelId", () => {
+describe("resolvePlatformId", () => {
   it("extracts part after colon for platform slugs", () => {
-    assert.equal(resolveChannelId("discord:my-server/general"), "my-server/general");
-    assert.equal(resolveChannelId("slack:workspace/channel"), "workspace/channel");
-    assert.equal(resolveChannelId("telegram:@user"), "@user");
+    assert.equal(resolvePlatformId("discord:my-server/general"), "my-server/general");
+    assert.equal(resolvePlatformId("slack:workspace/channel"), "workspace/channel");
+    assert.equal(resolvePlatformId("telegram:@user"), "@user");
   });
 
   it("returns full string for bare slugs", () => {
-    assert.equal(resolveChannelId("@alice"), "@alice");
-    assert.equal(resolveChannelId("#general"), "#general");
-    assert.equal(resolveChannelId("abc-123-def"), "abc-123-def");
+    assert.equal(resolvePlatformId("@alice"), "@alice");
+    assert.equal(resolvePlatformId("#general"), "#general");
+    assert.equal(resolvePlatformId("abc-123-def"), "abc-123-def");
   });
 
   it("handles multiple colons by splitting on first", () => {
-    assert.equal(resolveChannelId("slack:workspace:extra"), "workspace:extra");
+    assert.equal(resolvePlatformId("slack:workspace:extra"), "workspace:extra");
   });
 
   it("handles empty string", () => {
-    assert.equal(resolveChannelId(""), "");
+    assert.equal(resolvePlatformId(""), "");
   });
 });
 

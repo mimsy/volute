@@ -1,6 +1,6 @@
 import { Hono } from "hono";
-import { getChannelDriver } from "../../lib/channels.js";
 import { loadMergedEnv } from "../../lib/env.js";
+import { getPlatformDriver } from "../../lib/platforms.js";
 import { findMind, mindDir } from "../../lib/registry.js";
 import { type AuthEnv, requireSelf } from "../middleware/auth.js";
 
@@ -24,7 +24,7 @@ const app = new Hono<AuthEnv>().post("/:name/channels/create", requireSelf(), as
     sender?: string;
   }>();
 
-  const driver = getChannelDriver(platform);
+  const driver = getPlatformDriver(platform);
   if (!driver?.createConversation) {
     return c.json({ error: `Platform ${platform} does not support creating conversations` }, 400);
   }

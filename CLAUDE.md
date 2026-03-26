@@ -19,7 +19,7 @@ Core values:
 - `src/cli.ts` — CLI entry point, dynamic command imports via switch statement
 - `src/daemon.ts` — Daemon entry point, starts web server + mind/bridge/scheduler managers
 - `src/commands/` — One file per command, each exports `async function run(args: string[])`. Top-level nouns (`mind.ts`, `chat.ts`, `clock.ts`, `env.ts`, `skill.ts`, `seed-cmd.ts`, `systems.ts`) dispatch to subcommand files.
-- `src/lib/` — Shared libraries (registry, mind-manager, bridge-manager, scheduler, daemon-client, arg parsing, exec wrappers, variant metadata, db, auth, conversations, channels)
+- `src/lib/` — Shared libraries (registry, mind-manager, bridge-manager, scheduler, daemon-client, arg parsing, exec wrappers, variant metadata, db, auth, conversations, platforms)
 - `src/web/` — Web dashboard (Hono backend + Svelte frontend), served by the daemon
 - `src/connectors/` — Built-in bridge implementations (Discord, Slack, Telegram) + shared SDK
 - `skills/` — Built-in skill definitions (memory, orientation, volute-mind, volute-admin, dreaming, imagegen, resonance, seed-nurture, plan-coordinator), synced to the shared pool on daemon startup. Extensions contribute additional skills via `skillsDir` in their manifest (e.g., notes, pages, and plan extensions each bundle their own skill).
@@ -124,7 +124,7 @@ The daemon serves a Hono web server (default port 1618) with a Svelte frontend.
 - **Backend** (`src/web/`): Hono API routes for auth, minds, chat, conversations, logs, variants, files, bridges, schedules, channels, env, keys, prompts, skills, file-sharing, extensions, setup, activity
 - **Frontend** (`src/web/ui/`): Svelte SPA with login, dashboard, and mind detail pages (chat, logs, files, variants, connections tabs). Shared UI components imported from `@volute/ui`
 - **Auth**: Cookie-based (`volute_session`), in-memory session map, first user auto-admin
-- **Database**: libSQL at `~/.volute/volute.db` for minds, users, conversations, messages, turns, mind_history, activity, delivery_queue, sessions, shared_skills, system_prompts, conversation_reads, summaries
+- **Database**: libSQL at `~/.volute/volute.db` for minds, users, conversations, channels, messages, turns, mind_history, activity, delivery_queue, sessions, shared_skills, system_prompts, conversation_reads, summaries
 - **Build**: `vite build` → `dist/web-assets/`
 
 ### Extensions
@@ -265,14 +265,14 @@ Mind-scoped commands (`chat`, `clock`, `skill`) use `--mind <name>` or `VOLUTE_M
 | `env.ts` | Environment variables (shared `~/.volute/env.json` + mind-specific state dir env) |
 | `format-tool.ts` | Shared tool call summarization (`[toolName primaryArg]` format) |
 | `ai-service.ts` | System AI completion service via `@mariozechner/pi-ai` (multi-provider, OAuth + API key + env var auth, model selection) |
-| `schema.ts` | Drizzle ORM schema (minds, users, conversations, turns, mindHistory, conversationParticipants, sessions, systemPrompts, sharedSkills, deliveryQueue, activity, conversationReads, messages, summaries) |
+| `schema.ts` | Drizzle ORM schema (minds, users, conversations, channels, turns, mindHistory, conversationParticipants, sessions, systemPrompts, sharedSkills, deliveryQueue, activity, conversationReads, messages, summaries) |
 | `db.ts` | libSQL database singleton at `~/.volute/volute.db` (WAL mode, foreign keys) |
 | `auth.ts` | bcrypt password hashing, first user auto-admin, pending approval flow, mind users |
-| `channels.ts` | ChannelProvider registry with optional drivers (read/send), display names, slug resolution |
-| `channels/discord.ts` | Discord channel driver (read/send via REST API, slug-to-ID resolution) |
-| `channels/slack.ts` | Slack channel driver (read/send via Slack API, slug-to-ID resolution) |
-| `channels/telegram.ts` | Telegram channel driver (send via Bot API, slug-to-ID resolution; read not supported) |
-| `channels/volute.ts` | Volute platform channel driver (conversations, DMs, group chats) |
+| `platforms.ts` | Platform registry with optional drivers (read/send), display names, slug resolution |
+| `platforms/discord.ts` | Discord platform driver (read/send via REST API, slug-to-ID resolution) |
+| `platforms/slack.ts` | Slack platform driver (read/send via Slack API, slug-to-ID resolution) |
+| `platforms/telegram.ts` | Telegram platform driver (send via Bot API, slug-to-ID resolution; read not supported) |
+| `platforms/volute.ts` | Volute platform driver (conversations, DMs, group chats) |
 | `slugify.ts` | Shared slugify function for generating human-readable channel slugs |
 | `consolidate.ts` | Memory consolidation (reads daily logs, produces MEMORY.md via LLM) |
 | `convert-session.ts` | Converts OpenClaw `session.jsonl` to Claude Agent SDK format |
@@ -405,7 +405,8 @@ Mind-scoped commands (`chat`, `clock`, `skill`) use `--mind <name>` or `VOLUTE_M
 - Centralized registry in the `minds` DB table maps mind names to ports, tracks `running` state; variants are rows with a `parent` field
 - `resolveMind()` does DB lookups to resolve mind names (including variants by their standalone name)
 - MindManager spawns mind servers as child processes with crash recovery (3s delay) and merge-restart
-- Channel URIs use human-readable slugs: `discord:my-server/general`, `slack:workspace/channel`, `telegram:@username`, `@mind-name`, `#channel-name`. Volute channels use bare slugs (no platform prefix); external platform slugs use `platform:identifier` format. `resolveChannelId()` extracts the part after the colon, or returns the full string for bare slugs.
+- Channel URIs use human-readable slugs: `discord:my-server/general`, `slack:workspace/channel`, `telegram:@username`, `@mind-name`, `#channel-name`. Volute channels use bare slugs (no platform prefix); external platform slugs use `platform:identifier` format. `resolvePlatformId()` extracts the part after the colon, or returns the full string for bare slugs.
+- Channels have optional settings stored in the `channels` DB table: description, rules, char_limit, private. Settings are managed via `PATCH /api/v1/channels/:name` and returned in `GET /api/v1/channels/:name`.
 - Bridge resolution: mind-specific → user-shared (`~/.volute/connectors/`) → built-in (`src/connectors/`)
 - Mind message flow: `volute-server` (JSON req/res) → `Router` (routing/formatting/batching) → `MessageHandler` (mind or file destination); web dashboard receives updates via SSE event channel
 - `MessageHandler` interface: `handle(content, meta, listener) => unsubscribe`; `HandlerResolver`: `(key: string) => MessageHandler`

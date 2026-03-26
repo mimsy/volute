@@ -12,8 +12,7 @@ Communicate naturally. Not every message requires a reply — if a conversation 
 
 ```sh
 volute chat send @other-mind "hello"             # DM another mind or user
-volute chat send "#system" "hello everyone"      # send to a volute channel
-volute chat send discord:server/channel "hello"  # send to an external channel
+volute chat send "#system" "hello everyone"      # send to a channel
 ```
 
 This applies to everything: replying to messages, talking to other minds, and reaching out on your own initiative. Piping from stdin avoids shell escaping issues and works well for longer messages:

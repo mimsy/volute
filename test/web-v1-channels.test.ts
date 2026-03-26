@@ -7,6 +7,7 @@ import { getDb } from "../packages/daemon/src/lib/db.js";
 import {
   createChannel,
   deleteConversation,
+  getChannelSettings,
   getMessages,
   getParticipants,
 } from "../packages/daemon/src/lib/events/conversations.js";
@@ -347,6 +348,117 @@ describe("web v1 channels routes", () => {
     assert.equal(body.error, "User not found");
 
     await deleteConversation(ch.id);
+  });
+
+  it("POST /api/v1/channels — creates channel with settings", async () => {
+    const cookie = await setupAuth();
+    const app = createApp();
+
+    const res = await app.request("/api/v1/channels", {
+      method: "POST",
+      headers: {
+        Cookie: `volute_session=${cookie}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        name: "configured",
+        description: "A test channel",
+        rules: "Be concise",
+        charLimit: 500,
+        private: true,
+      }),
+    });
+    assert.equal(res.status, 201);
+    const body = await res.json();
+    assert.equal(body.name, "configured");
+
+    const settings = await getChannelSettings("configured");
+    assert.ok(settings);
+    assert.equal(settings.description, "A test channel");
+    assert.equal(settings.rules, "Be concise");
+    assert.equal(settings.char_limit, 500);
+    assert.equal(settings.private, 1);
+
+    await deleteConversation(body.id);
+  });
+
+  it("GET /:name — includes settings", async () => {
+    const cookie = await setupAuth();
+    const app = createApp();
+
+    const ch = await createChannel("with-settings", userId, {
+      description: "Test desc",
+      charLimit: 200,
+    });
+
+    const res = await app.request("/api/v1/channels/with-settings", {
+      headers: { Cookie: `volute_session=${cookie}` },
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.ok(body.settings);
+    assert.equal(body.settings.description, "Test desc");
+    assert.equal(body.settings.charLimit, 200);
+    assert.equal(body.settings.rules, null);
+
+    await deleteConversation(ch.id);
+  });
+
+  it("PATCH /:name — updates channel settings", async () => {
+    const cookie = await setupAuth();
+    const app = createApp();
+
+    const ch = await createChannel("patchable", userId);
+
+    const res = await app.request("/api/v1/channels/patchable", {
+      method: "PATCH",
+      headers: {
+        Cookie: `volute_session=${cookie}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        description: "Updated desc",
+        charLimit: 1000,
+        private: true,
+      }),
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.settings.description, "Updated desc");
+    assert.equal(body.settings.charLimit, 1000);
+    assert.equal(body.settings.private, true);
+
+    // Verify partial updates don't clobber other fields
+    const res2 = await app.request("/api/v1/channels/patchable", {
+      method: "PATCH",
+      headers: {
+        Cookie: `volute_session=${cookie}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ rules: "Be brief" }),
+    });
+    assert.equal(res2.status, 200);
+    const body2 = await res2.json();
+    assert.equal(body2.settings.rules, "Be brief");
+    assert.equal(body2.settings.description, "Updated desc");
+    assert.equal(body2.settings.charLimit, 1000);
+
+    await deleteConversation(ch.id);
+  });
+
+  it("PATCH /:name — 404 for nonexistent channel", async () => {
+    const cookie = await setupAuth();
+    const app = createApp();
+
+    const res = await app.request("/api/v1/channels/nope", {
+      method: "PATCH",
+      headers: {
+        Cookie: `volute_session=${cookie}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ description: "test" }),
+    });
+    assert.equal(res.status, 404);
   });
 
   it("requires auth — 401 without cookie", async () => {

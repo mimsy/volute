@@ -9,6 +9,7 @@ import type {
 import { and, desc, eq, inArray, isNull, lt, sql } from "drizzle-orm";
 import { getDb } from "../db.js";
 import {
+  channels,
   conversationParticipants,
   conversationReads,
   conversations,
@@ -77,30 +78,6 @@ export async function createConversation(
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   };
-}
-
-export async function getOrCreateConversation(
-  mindName: string,
-  channel: string,
-  opts?: { userId?: number },
-): Promise<Conversation> {
-  const db = await getDb();
-  const existing = await db
-    .select()
-    .from(conversations)
-    .where(
-      and(
-        eq(conversations.mind_name, mindName),
-        eq(conversations.channel, channel),
-        eq(conversations.type, "dm"),
-      ),
-    )
-    .orderBy(desc(conversations.updated_at))
-    .limit(1)
-    .get();
-
-  if (existing) return existing as Conversation;
-  return createConversation(mindName, channel, opts);
 }
 
 export async function getConversation(id: string): Promise<Conversation | null> {
@@ -625,14 +602,59 @@ export async function deleteConversation(id: string): Promise<void> {
 
 // --- Channel CRUD ---
 
-export async function createChannel(name: string, creatorId?: number): Promise<Conversation> {
+export type ChannelRow = {
+  conversation_id: string;
+  name: string;
+  description: string | null;
+  rules: string | null;
+  char_limit: number | null;
+  private: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ChannelSettingsInput = {
+  description?: string | null;
+  rules?: string | null;
+  charLimit?: number | null;
+  private?: boolean;
+};
+
+export async function createChannel(
+  name: string,
+  creatorId?: number,
+  settings?: ChannelSettingsInput,
+): Promise<Conversation> {
   const participantIds = creatorId ? [creatorId] : [];
-  return createConversation(null, "volute", {
+  const conv = await createConversation(null, "volute", {
     type: "channel",
     name,
     title: name,
     participantIds,
   });
+  const db = await getDb();
+  try {
+    const isPrivate = settings?.private ? 1 : 0;
+    await db.insert(channels).values({
+      conversation_id: conv.id,
+      name,
+      description: settings?.description ?? null,
+      rules: settings?.rules ?? null,
+      char_limit: settings?.charLimit ?? null,
+      private: isPrivate,
+    });
+    if (isPrivate) {
+      await db.update(conversations).set({ private: 1 }).where(eq(conversations.id, conv.id));
+    }
+  } catch (err) {
+    try {
+      await db.delete(conversations).where(eq(conversations.id, conv.id));
+    } catch {
+      // Best-effort cleanup — don't mask the original error
+    }
+    throw err;
+  }
+  return conv;
 }
 
 export async function getChannelByName(name: string): Promise<Conversation | null> {
@@ -645,6 +667,22 @@ export async function getChannelByName(name: string): Promise<Conversation | nul
   return (row as Conversation) ?? null;
 }
 
+export async function getChannelSettings(name: string): Promise<ChannelRow | null> {
+  const db = await getDb();
+  const row = await db.select().from(channels).where(eq(channels.name, name)).get();
+  return (row as ChannelRow) ?? null;
+}
+
+export function formatChannelSettings(row: ChannelRow | null) {
+  if (!row) return null;
+  return {
+    description: row.description,
+    rules: row.rules,
+    charLimit: row.char_limit,
+    private: !!row.private,
+  };
+}
+
 export async function listChannels(): Promise<Conversation[]> {
   const db = await getDb();
   return (await db
@@ -653,6 +691,31 @@ export async function listChannels(): Promise<Conversation[]> {
     .where(eq(conversations.type, "channel"))
     .orderBy(conversations.name)
     .all()) as Conversation[];
+}
+
+export async function updateChannelSettings(
+  name: string,
+  settings: ChannelSettingsInput,
+): Promise<void> {
+  const db = await getDb();
+  const updates: Record<string, unknown> = {
+    updated_at: sql`(datetime('now'))`,
+  };
+  if (settings.description !== undefined) updates.description = settings.description;
+  if (settings.rules !== undefined) updates.rules = settings.rules;
+  if (settings.charLimit !== undefined) updates.char_limit = settings.charLimit;
+  if (settings.private !== undefined) updates.private = settings.private ? 1 : 0;
+  await db.update(channels).set(updates).where(eq(channels.name, name));
+  // Keep conversations.private in sync
+  if (settings.private !== undefined) {
+    const ch = await db.select().from(channels).where(eq(channels.name, name)).get();
+    if (ch) {
+      await db
+        .update(conversations)
+        .set({ private: settings.private ? 1 : 0 })
+        .where(eq(conversations.id, ch.conversation_id));
+    }
+  }
 }
 
 export async function joinChannel(conversationId: string, userId: number): Promise<void> {

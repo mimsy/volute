@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { buildChannelSlug } from "../packages/daemon/src/connectors/sdk.js";
 import { buildVoluteSlug, slugify } from "../packages/daemon/src/lib/slugify.js";
 
 describe("slugify", () => {
@@ -151,60 +150,5 @@ describe("buildVoluteSlug", () => {
     });
     // convType is "dm", not "channel" → should use DM slug
     assert.equal(slug, "@alice");
-  });
-});
-
-describe("buildChannelSlug", () => {
-  it("builds guild channel slug with server name", () => {
-    const slug = buildChannelSlug("discord", {
-      channelName: "general",
-      serverName: "My Server",
-    });
-    assert.equal(slug, "discord:my-server/general");
-  });
-
-  it("builds DM slug with single recipient", () => {
-    const slug = buildChannelSlug("discord", {
-      isDM: true,
-      recipients: ["Alice"],
-    });
-    assert.equal(slug, "discord:@alice");
-  });
-
-  it("builds group DM slug with sorted recipients", () => {
-    const slug = buildChannelSlug("discord", {
-      isDM: true,
-      recipients: ["Charlie", "Alice", "Bob"],
-    });
-    assert.equal(slug, "discord:@alice,bob,charlie");
-  });
-
-  it("builds DM slug from senderName when no recipients", () => {
-    const slug = buildChannelSlug("discord", {
-      isDM: true,
-      senderName: "Alice",
-    });
-    assert.equal(slug, "discord:@alice");
-  });
-
-  it("builds telegram group slug without server", () => {
-    const slug = buildChannelSlug("telegram", {
-      channelName: "My Group Chat",
-    });
-    assert.equal(slug, "telegram:my-group-chat");
-  });
-
-  it("falls back to platformId", () => {
-    const slug = buildChannelSlug("discord", {
-      platformId: "123456789",
-    });
-    assert.equal(slug, "discord:123456789");
-  });
-
-  it("falls back to platformId when no useful metadata", () => {
-    const slug = buildChannelSlug("discord", {
-      platformId: "999",
-    });
-    assert.equal(slug, "discord:999");
   });
 });

@@ -17,15 +17,9 @@ export function compactTime(date: Date = new Date()): string {
   return `${h}:${min}`;
 }
 
-function derivePlatform(channel: string): string {
-  if (!channel.includes(":")) return "Volute";
-  const name = channel.split(":")[0];
-  return name.charAt(0).toUpperCase() + name.slice(1);
-}
-
 export function formatPrefix(meta: ChannelMeta | undefined, time: string): string {
   if (!meta?.channel && !meta?.sender) return "";
-  const platform = meta.platform ?? derivePlatform(meta.channel ?? "");
+  const platform = meta.platform ?? "Volute";
   // Build sender context (e.g., "alice in DM" or "alice in #general in My Server")
   let sender = meta.sender ?? "";
   if (meta.isDM) {

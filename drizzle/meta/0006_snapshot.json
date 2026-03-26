@@ -1,0 +1,7 @@
+{
+  "id": "0006_channels",
+  "prevId": "0005_meta_summaries",
+  "version": "6",
+  "dialect": "sqlite",
+  "tables": {}
+}

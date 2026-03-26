@@ -1,5 +1,5 @@
 import { splitMessage } from "../../connectors/sdk.js";
-import { type ImageAttachment, resolveChannelId } from "../channels.js";
+import { type ImageAttachment, resolvePlatformId } from "../platforms.js";
 
 const TELEGRAM_MAX_LENGTH = 4096;
 
@@ -28,7 +28,7 @@ export async function send(
   images?: ImageAttachment[],
 ): Promise<void> {
   const token = requireToken(env);
-  const chatId = resolveChannelId(channelSlug);
+  const chatId = resolvePlatformId(channelSlug);
 
   if (images?.length) {
     const CAPTION_MAX = 1024;

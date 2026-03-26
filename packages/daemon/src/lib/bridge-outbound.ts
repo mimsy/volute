@@ -4,10 +4,10 @@
  */
 import type { ContentBlock } from "@volute/api";
 import { findBridgeForChannel, getBridgeConfig } from "./bridges.js";
-import { getChannelDriver, type ImageAttachment } from "./channels.js";
 import { readEnv, sharedEnvPath } from "./env.js";
 import { getConversation, getParticipants } from "./events/conversations.js";
 import log from "./logger.js";
+import { getPlatformDriver, type ImageAttachment } from "./platforms.js";
 import { mindDir } from "./registry.js";
 
 function extractContent(contentBlocks: ContentBlock[]): {
@@ -63,7 +63,7 @@ async function routeChannelOutbound(
   const bridgeInfo = findBridgeForChannel(channelName);
   if (!bridgeInfo) return;
 
-  const driver = getChannelDriver(bridgeInfo.platform);
+  const driver = getPlatformDriver(bridgeInfo.platform);
   if (!driver) {
     log.warn(`no channel driver for bridge platform: ${bridgeInfo.platform}`);
     return;
@@ -110,7 +110,7 @@ async function routeDMOutbound(
     const bridgeConfig = getBridgeConfig(platform);
     if (!bridgeConfig?.enabled) continue;
 
-    const driver = getChannelDriver(platform);
+    const driver = getPlatformDriver(platform);
     if (!driver?.createConversation) {
       log.warn(`no channel driver with DM support for bridge platform: ${platform}`);
       continue;

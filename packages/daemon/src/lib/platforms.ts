@@ -1,9 +1,9 @@
-import * as discord from "./channels/discord.js";
-import * as slack from "./channels/slack.js";
-import * as telegram from "./channels/telegram.js";
-import * as volute from "./channels/volute.js";
+import * as discord from "./platforms/discord.js";
+import * as slack from "./platforms/slack.js";
+import * as telegram from "./platforms/telegram.js";
+import * as volute from "./platforms/volute.js";
 
-export type ChannelConversation = {
+export type PlatformConversation = {
   id: string;
   platformId: string;
   name: string;
@@ -11,7 +11,7 @@ export type ChannelConversation = {
   participantCount?: number;
 };
 
-export type ChannelUser = {
+export type PlatformUser = {
   id: string;
   username: string;
   type?: string;
@@ -22,7 +22,7 @@ export type ImageAttachment = {
   data: string; // base64
 };
 
-export type ChannelDriver = {
+export type PlatformDriver = {
   read(env: Record<string, string>, channelId: string, limit: number): Promise<string>;
   send(
     env: Record<string, string>,
@@ -30,8 +30,8 @@ export type ChannelDriver = {
     message: string,
     images?: ImageAttachment[],
   ): Promise<void>;
-  listConversations?(env: Record<string, string>): Promise<ChannelConversation[]>;
-  listUsers?(env: Record<string, string>): Promise<ChannelUser[]>;
+  listConversations?(env: Record<string, string>): Promise<PlatformConversation[]>;
+  listUsers?(env: Record<string, string>): Promise<PlatformUser[]>;
   createConversation?(
     env: Record<string, string>,
     participants: string[],
@@ -39,14 +39,14 @@ export type ChannelDriver = {
   ): Promise<string>;
 };
 
-export type ChannelProvider = {
+export type Platform = {
   name: string;
   displayName: string;
   builtIn?: boolean;
-  driver?: ChannelDriver;
+  driver?: PlatformDriver;
 };
 
-export const CHANNELS: Record<string, ChannelProvider> = {
+export const PLATFORMS: Record<string, Platform> = {
   volute: {
     name: "volute",
     displayName: "Volute",
@@ -72,25 +72,25 @@ export const CHANNELS: Record<string, ChannelProvider> = {
   system: { name: "system", displayName: "System" },
 };
 
-export function getChannelProvider(channelUri?: string): ChannelProvider {
-  if (!channelUri) return CHANNELS.volute;
-  if (!channelUri.includes(":")) return CHANNELS.volute;
+export function getPlatform(channelUri?: string): Platform {
+  if (!channelUri) return PLATFORMS.volute;
+  if (!channelUri.includes(":")) return PLATFORMS.volute;
   const platform = channelUri.split(":")[0];
   return (
-    CHANNELS[platform] ?? {
+    PLATFORMS[platform] ?? {
       name: platform,
       displayName: platform,
     }
   );
 }
 
-export function getChannelDriver(platform: string): ChannelDriver | null {
-  return CHANNELS[platform]?.driver ?? null;
+export function getPlatformDriver(platform: string): PlatformDriver | null {
+  return PLATFORMS[platform]?.driver ?? null;
 }
 
 /** Resolve a channel slug to its platform ID.
  *  Returns the part after the colon, or the full string if no colon. */
-export function resolveChannelId(slug: string): string {
+export function resolvePlatformId(slug: string): string {
   const colonIdx = slug.indexOf(":");
   return colonIdx !== -1 ? slug.slice(colonIdx + 1) : slug;
 }

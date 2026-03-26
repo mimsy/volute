@@ -15,7 +15,6 @@ import { z } from "zod";
 import { qualifyModelId, resolveTemplate, unqualifyModelId } from "../../lib/ai-service.js";
 import { type ExportManifest, isHomeOnlyArchive } from "../../lib/archive.js";
 import { deleteMindUser } from "../../lib/auth.js";
-import { CHANNELS } from "../../lib/channels.js";
 import { consolidateMemory } from "../../lib/consolidate.js";
 import { convertSession } from "../../lib/convert-session.js";
 import { getMindManager } from "../../lib/daemon/mind-manager.js";
@@ -75,6 +74,7 @@ import {
   wrapForIsolation,
 } from "../../lib/isolation.js";
 import log from "../../lib/logger.js";
+import { PLATFORMS } from "../../lib/platforms.js";
 import {
   getMindPromptDefaults,
   getPrompt,
@@ -152,7 +152,7 @@ async function getMindStatus(name: string, port: number) {
   const channels: ChannelStatus[] = [];
 
   // Built-in channels (e.g. volute)
-  for (const [, provider] of Object.entries(CHANNELS)) {
+  for (const [, provider] of Object.entries(PLATFORMS)) {
     if (!provider.builtIn) continue;
     channels.push({
       name: provider.name,
