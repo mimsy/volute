@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, like, lt, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, like, lt, sql } from "drizzle-orm";
 import { aiCompleteUtility } from "../ai-service.js";
 import { getDb } from "../db.js";
 import { publish as publishMindEvent } from "../events/mind-events.js";
@@ -156,32 +156,27 @@ async function gatherTurnEvents(
 ): Promise<{ events: HistoryRow[]; fromId: number; toId: number }> {
   const db = await getDb();
 
-  const conditions = [
+  // Find previous done event ID using a subquery in the main query
+  const subConditions = [
     eq(mindHistory.mind, mind),
     eq(mindHistory.type, "done"),
     lt(mindHistory.id, doneId),
   ];
-  if (session) {
-    conditions.push(eq(mindHistory.session, session));
-  }
+  if (session) subConditions.push(eq(mindHistory.session, session));
 
-  const prevDone = await db
+  const prevDoneSubquery = db
     .select({ id: mindHistory.id })
     .from(mindHistory)
-    .where(and(...conditions))
+    .where(and(...subConditions))
     .orderBy(desc(mindHistory.id))
     .limit(1);
 
-  const prevDoneId = prevDone.length > 0 ? prevDone[0].id : 0;
-
   const turnConditions = [
     eq(mindHistory.mind, mind),
-    sql`${mindHistory.id} > ${prevDoneId}`,
+    sql`${mindHistory.id} > COALESCE((${prevDoneSubquery}), 0)`,
     sql`${mindHistory.id} <= ${doneId}`,
   ];
-  if (session) {
-    turnConditions.push(eq(mindHistory.session, session));
-  }
+  if (session) turnConditions.push(eq(mindHistory.session, session));
 
   const events = await db
     .select({
@@ -229,7 +224,24 @@ async function gatherTurnEventsByTurnId(
   };
 }
 
-function buildTurnDeterministicSummary(events: HistoryRow[]): string {
+function parseEventMetadata(events: HistoryRow[]): Map<number, Record<string, unknown>> {
+  const parsed = new Map<number, Record<string, unknown>>();
+  for (const ev of events) {
+    if (ev.metadata) {
+      try {
+        parsed.set(ev.id, JSON.parse(ev.metadata));
+      } catch (err) {
+        sLog.debug(`failed to parse metadata for event ${ev.id}`, log.errorData(err));
+      }
+    }
+  }
+  return parsed;
+}
+
+function buildTurnDeterministicSummary(
+  events: HistoryRow[],
+  parsedMeta: Map<number, Record<string, unknown>>,
+): string {
   const channels = new Set<string>();
   const tools: string[] = [];
   let hasInbound = false;
@@ -243,13 +255,9 @@ function buildTurnDeterministicSummary(events: HistoryRow[]): string {
     if (ev.type === "outbound" || ev.type === "text") {
       hasOutbound = true;
     }
-    if (ev.type === "tool_use" && ev.metadata) {
-      try {
-        const meta = JSON.parse(ev.metadata);
-        if (meta.name) tools.push(meta.name);
-      } catch (err) {
-        sLog.debug(`failed to parse tool_use metadata for event ${ev.id}`, log.errorData(err));
-      }
+    if (ev.type === "tool_use") {
+      const meta = parsedMeta.get(ev.id);
+      if (meta?.name) tools.push(meta.name as string);
     }
   }
 
@@ -271,7 +279,10 @@ function buildTurnDeterministicSummary(events: HistoryRow[]): string {
   return parts.length > 0 ? `${parts.join(". ")}.` : "Turn completed.";
 }
 
-function buildTranscript(events: HistoryRow[]): string {
+function buildTranscript(
+  events: HistoryRow[],
+  parsedMeta: Map<number, Record<string, unknown>>,
+): string {
   const lines: string[] = [];
   for (const ev of events) {
     switch (ev.type) {
@@ -283,32 +294,20 @@ function buildTranscript(events: HistoryRow[]): string {
         lines.push(`[response] ${(ev.content ?? "").slice(0, 500)}`);
         break;
       case "tool_use": {
-        let toolInfo = "tool";
-        if (ev.metadata) {
-          try {
-            const meta = JSON.parse(ev.metadata);
-            toolInfo = summarizeTool(meta.name ?? "tool", meta.input ?? {});
-          } catch (err) {
-            sLog.debug(`failed to parse tool_use metadata for event ${ev.id}`, log.errorData(err));
-          }
-        }
+        const meta = parsedMeta.get(ev.id);
+        const toolInfo = meta
+          ? summarizeTool(
+              (meta.name as string) ?? "tool",
+              (meta.input as Record<string, unknown>) ?? {},
+            )
+          : "tool";
         lines.push(toolInfo);
         break;
       }
       case "tool_result": {
         const content = ev.content ?? "";
-        let isError = false;
-        if (ev.metadata) {
-          try {
-            const meta = JSON.parse(ev.metadata);
-            isError = !!meta.is_error;
-          } catch (err) {
-            sLog.debug(
-              `failed to parse tool_result metadata for event ${ev.id}`,
-              log.errorData(err),
-            );
-          }
-        }
+        const meta = parsedMeta.get(ev.id);
+        const isError = !!meta?.is_error;
         lines.push(isError ? "[result error]" : `[result] ${content.slice(0, 200)}`);
         break;
       }
@@ -355,15 +354,13 @@ export async function summarizeTurn(
     return;
   }
 
+  const parsedMeta = parseEventMetadata(events);
+
   const tools: string[] = [];
   for (const ev of events) {
-    if (ev.type === "tool_use" && ev.metadata) {
-      try {
-        const meta = JSON.parse(ev.metadata);
-        if (meta.name) tools.push(meta.name);
-      } catch (err) {
-        sLog.debug(`failed to parse tool_use metadata for event ${ev.id}`, log.errorData(err));
-      }
+    if (ev.type === "tool_use") {
+      const meta = parsedMeta.get(ev.id);
+      if (meta?.name) tools.push(meta.name as string);
     }
   }
 
@@ -373,7 +370,7 @@ export async function summarizeTurn(
   let summaryText: string;
   let deterministic: boolean;
 
-  const transcript = buildTranscript(events);
+  const transcript = buildTranscript(events, parsedMeta);
   if (transcript.trim()) {
     const summaryPrompt = await getPrompt("turn_summary");
     const aiResult = await aiCompleteUtility(summaryPrompt, transcript);
@@ -381,11 +378,11 @@ export async function summarizeTurn(
       summaryText = aiResult;
       deterministic = false;
     } else {
-      summaryText = buildTurnDeterministicSummary(events);
+      summaryText = buildTurnDeterministicSummary(events, parsedMeta);
       deterministic = true;
     }
   } else {
-    summaryText = buildTurnDeterministicSummary(events);
+    summaryText = buildTurnDeterministicSummary(events, parsedMeta);
     deterministic = true;
   }
 
@@ -856,55 +853,51 @@ async function summaryExists(
 async function backfill(): Promise<void> {
   const now = new Date();
 
+  // Collect all candidate period keys
+  const candidates: { period: TimerPeriod; key: string }[] = [];
   for (let i = 1; i <= 48; i++) {
-    try {
-      const d = new Date(now);
-      d.setHours(d.getHours() - i);
-      const key = getPeriodKey(d, "hour");
-      if (!(await summaryExists(SYSTEM_MIND, "hour", key))) {
-        await processHour(key);
-      }
-    } catch (err) {
-      sLog.error(`backfill failed for hour -${i}`, log.errorData(err));
-    }
+    const d = new Date(now);
+    d.setHours(d.getHours() - i);
+    candidates.push({ period: "hour", key: getPeriodKey(d, "hour") });
   }
-
   for (let i = 1; i <= 7; i++) {
-    try {
-      const d = new Date(now);
-      d.setDate(d.getDate() - i);
-      const key = getPeriodKey(d, "day");
-      if (!(await summaryExists(SYSTEM_MIND, "day", key))) {
-        await processDay(key);
-      }
-    } catch (err) {
-      sLog.error(`backfill failed for day -${i}`, log.errorData(err));
-    }
+    const d = new Date(now);
+    d.setDate(d.getDate() - i);
+    candidates.push({ period: "day", key: getPeriodKey(d, "day") });
   }
-
   for (let i = 1; i <= 4; i++) {
-    try {
-      const d = new Date(now);
-      d.setDate(d.getDate() - i * 7);
-      const key = getPeriodKey(d, "week");
-      if (!(await summaryExists(SYSTEM_MIND, "week", key))) {
-        await processWeek(key);
-      }
-    } catch (err) {
-      sLog.error(`backfill failed for week -${i}`, log.errorData(err));
-    }
+    const d = new Date(now);
+    d.setDate(d.getDate() - i * 7);
+    candidates.push({ period: "week", key: getPeriodKey(d, "week") });
+  }
+  for (let i = 1; i <= 3; i++) {
+    const d = new Date(now);
+    d.setMonth(d.getMonth() - i);
+    candidates.push({ period: "month", key: getPeriodKey(d, "month") });
   }
 
-  for (let i = 1; i <= 3; i++) {
+  // Batch check which summaries already exist
+  const allKeys = candidates.map((c) => c.key);
+  const db = await getDb();
+  const existingRows = await db
+    .select({ period: summaries.period, period_key: summaries.period_key })
+    .from(summaries)
+    .where(and(eq(summaries.mind, SYSTEM_MIND), inArray(summaries.period_key, allKeys)));
+  const existingSet = new Set(existingRows.map((r) => `${r.period}:${r.period_key}`));
+
+  const processFn: Record<TimerPeriod, (key: string) => Promise<void>> = {
+    hour: processHour,
+    day: processDay,
+    week: processWeek,
+    month: processMonth,
+  };
+
+  for (const { period, key } of candidates) {
+    if (existingSet.has(`${period}:${key}`)) continue;
     try {
-      const d = new Date(now);
-      d.setMonth(d.getMonth() - i);
-      const key = getPeriodKey(d, "month");
-      if (!(await summaryExists(SYSTEM_MIND, "month", key))) {
-        await processMonth(key);
-      }
+      await processFn[period](key);
     } catch (err) {
-      sLog.error(`backfill failed for month -${i}`, log.errorData(err));
+      sLog.error(`backfill failed for ${period} ${key}`, log.errorData(err));
     }
   }
 }

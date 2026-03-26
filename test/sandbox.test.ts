@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, describe, it } from "node:test";
+import { _resetConfigCache } from "../packages/daemon/src/lib/config/setup.js";
 import {
   addMind,
   removeMind,
@@ -27,6 +28,7 @@ describe("sandbox", () => {
   const origSandbox = process.env.VOLUTE_SANDBOX;
 
   afterEach(() => {
+    _resetConfigCache();
     try {
       unlinkSync(configPath());
     } catch {}

@@ -255,11 +255,10 @@ export async function tagUntaggedOutbound(mind: string, turnId: string): Promise
   await db.update(mindHistory).set({ turn_id: turnId }).where(inArray(mindHistory.id, orphanIds));
 
   // Fix linked messages: set turn_id and source_event_id
-  // For source_event_id, find the nearest preceding tool_use event in this turn
-  for (const orphan of orphans) {
-    if (!orphan.message_id) continue;
-    // Find the closest tool_use event before this outbound in the same turn
-    const toolUse = await db
+  // Fetch all tool_use events for this turn in one query, then find nearest preceding in-memory
+  const orphansWithMessages = orphans.filter((o) => o.message_id);
+  if (orphansWithMessages.length > 0) {
+    const toolUseEvents = await db
       .select({ id: mindHistory.id })
       .from(mindHistory)
       .where(
@@ -267,20 +266,27 @@ export async function tagUntaggedOutbound(mind: string, turnId: string): Promise
           eq(mindHistory.mind, mind),
           eq(mindHistory.turn_id, turnId),
           eq(mindHistory.type, "tool_use"),
-          sql`${mindHistory.id} < ${orphan.id}`,
         ),
       )
-      .orderBy(desc(mindHistory.id))
-      .limit(1);
+      .orderBy(mindHistory.id);
 
-    const sourceEventId = toolUse[0]?.id ?? null;
-    await db
-      .update(messages)
-      .set({
-        turn_id: turnId,
-        ...(sourceEventId != null ? { source_event_id: sourceEventId } : {}),
-      })
-      .where(eq(messages.id, Number(orphan.message_id)));
+    for (const orphan of orphansWithMessages) {
+      // Find the nearest preceding tool_use from the in-memory array
+      let sourceEventId: number | null = null;
+      for (let i = toolUseEvents.length - 1; i >= 0; i--) {
+        if (toolUseEvents[i].id < orphan.id) {
+          sourceEventId = toolUseEvents[i].id;
+          break;
+        }
+      }
+      await db
+        .update(messages)
+        .set({
+          turn_id: turnId,
+          ...(sourceEventId != null ? { source_event_id: sourceEventId } : {}),
+        })
+        .where(eq(messages.id, Number(orphan.message_id)));
+    }
   }
 
   dlog.info(`tagged ${orphans.length} orphaned outbound record(s) for ${mind} with turn ${turnId}`);
@@ -302,10 +308,13 @@ export async function tagUntaggedInbound(
   }: { limit?: number; setTrigger?: boolean; channel?: string } = {},
 ): Promise<void> {
   const db = await getDb();
-  // Tag recent untagged inbound events in mind_history.
-  // Channel is required to prevent cross-session tagging: without it, a turn on
-  // one session can steal inbound events meant for a different session/channel.
-  if (channel) {
+
+  // Run history inbound tagging and mind user lookup in parallel — they're independent
+  const tagHistoryPromise = (async () => {
+    // Tag recent untagged inbound events in mind_history.
+    // Channel is required to prevent cross-session tagging: without it, a turn on
+    // one session can steal inbound events meant for a different session/channel.
+    if (!channel) return;
     const historyConditions = [
       eq(mindHistory.mind, mind),
       eq(mindHistory.type, "inbound"),
@@ -329,14 +338,23 @@ export async function tagUntaggedInbound(
           .where(eq(turns.id, turnId));
       }
     }
-  }
-  // Tag recent untagged conversation messages (only inbound, i.e. not sent by the mind itself)
-  // Find conversations where this mind is a participant
-  const mindUser = await db
+  })();
+
+  const mindUserPromise = db
     .select({ id: users.id })
     .from(users)
     .where(and(eq(users.username, mind), eq(users.user_type, "mind")))
     .get();
+
+  // Tag recent untagged conversation messages (only inbound, i.e. not sent by the mind itself)
+  const [tagResult, mindUserResult] = await Promise.allSettled([
+    tagHistoryPromise,
+    mindUserPromise,
+  ]);
+  if (tagResult.status === "rejected") {
+    dlog.error("failed to tag history inbound", log.errorData(tagResult.reason));
+  }
+  const mindUser = mindUserResult.status === "fulfilled" ? mindUserResult.value : undefined;
   const mindConvIds = mindUser
     ? (
         await db

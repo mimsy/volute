@@ -7,6 +7,8 @@ import { routeOutboundBridge } from "../../../lib/bridges/bridge-outbound.js";
 import { formatFileSize, stageFile, validateFilePath } from "../../../lib/chat/file-sharing.js";
 import { generateSystemReply } from "../../../lib/chat/system-chat.js";
 import { getTypingMap } from "../../../lib/chat/typing.js";
+import { getMindManager } from "../../../lib/daemon/mind-manager.js";
+import { getSleepManagerIfReady } from "../../../lib/daemon/sleep-manager.js";
 import { extractTextContent } from "../../../lib/delivery/delivery-router.js";
 import { deliverMessage, recordOutbound } from "../../../lib/delivery/message-delivery.js";
 import { subscribe } from "../../../lib/events/conversation-events.js";
@@ -32,6 +34,7 @@ async function fanOutToMinds(opts: {
   conversationId: string;
   contentBlocks: ContentBlock[];
   senderName: string;
+  participants: Awaited<ReturnType<typeof getParticipants>>;
   /** Override isDM (defaults to participants.length === 2) */
   isDM?: boolean;
   /** Extra fields passed to buildVoluteSlug (e.g. convType, convName) */
@@ -39,15 +42,13 @@ async function fanOutToMinds(opts: {
   /** Maps mind username to delivery target name (for variant-aware targeting) */
   targetName?: (username: string) => string;
 }): Promise<void> {
-  const participants = await getParticipants(opts.conversationId);
+  const participants = opts.participants;
   const mindParticipants = participants.filter(
     (p) => p.userType === "mind" || p.userType === "system",
   );
   const participantNames = participants.map((p) => p.username);
   const isDM = opts.isDM ?? participants.length === 2;
 
-  const { getMindManager } = await import("../../../lib/daemon/mind-manager.js");
-  const { getSleepManagerIfReady } = await import("../../../lib/daemon/sleep-manager.js");
   const manager = getMindManager();
   const sm = getSleepManagerIfReady();
 
@@ -239,6 +240,7 @@ export const unifiedChatApp = new Hono<AuthEnv>().post(
     const conv = await getConversation(conversationId!);
     if (!conv) return c.json({ error: "Conversation not found" }, 404);
     const convName = conv.type === "channel" ? await getChannelName(conversationId!) : null;
+    const participants = await getParticipants(conversationId!);
 
     // Stage files
     const fileNotifications: string[] = [];
@@ -247,7 +249,6 @@ export const unifiedChatApp = new Hono<AuthEnv>().post(
       if (baseName) {
         fileTargets = [baseName];
       } else {
-        const participants = await getParticipants(conversationId!);
         fileTargets = participants
           .filter((p) => p.userType === "mind" && p.username !== senderName)
           .map((p) => p.username);
@@ -301,7 +302,7 @@ export const unifiedChatApp = new Hono<AuthEnv>().post(
       });
       // Record outbound event in mind_history (without turn_id — linked later via tool_result)
       const channel = buildVoluteSlug({
-        participants: await getParticipants(conversationId!),
+        participants,
         mindUsername: senderName,
         conversationId: conversationId!,
         convType: conv.type as "dm" | "channel",
@@ -322,6 +323,7 @@ export const unifiedChatApp = new Hono<AuthEnv>().post(
       conversationId: conversationId!,
       contentBlocks,
       senderName,
+      participants,
       isDM,
       slugExtra: { convType: conv.type as "dm" | "channel", convName },
       // Variant-aware targeting: when targetMind is a variant, route to the variant name
@@ -333,7 +335,6 @@ export const unifiedChatApp = new Hono<AuthEnv>().post(
     // Check if a mind is messaging a system DM — generate AI reply
     const systemReplyTarget = baseName ?? senderName;
     if (senderIsMind && body.message) {
-      const participants = await getParticipants(conversationId!);
       const hasSystemUser = participants.some((p) => p.userType === "system");
       if (hasSystemUser) {
         generateSystemReply(conversationId!, systemReplyTarget, body.message).catch((err) =>

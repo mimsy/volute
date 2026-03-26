@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { sendSystemMessage } from "../chat/system-chat.js";
 import { stateDir } from "../mind/registry.js";
@@ -30,11 +31,13 @@ export class TokenBudget {
   private dirty = new Set<string>();
 
   start(): void {
-    this.interval = setInterval(() => this.tick(), 60_000);
+    this.interval = setInterval(() => {
+      this.tick().catch((err) => tlog.error("token budget tick failed", log.errorData(err)));
+    }, 60_000);
   }
 
-  stop(): void {
-    this.flush();
+  async stop(): Promise<void> {
+    await this.flush();
     if (this.interval) clearInterval(this.interval);
     this.interval = null;
   }
@@ -130,7 +133,7 @@ export class TokenBudget {
     };
   }
 
-  tick(): void {
+  async tick(): Promise<void> {
     const now = Date.now();
     for (const [mind, state] of this.budgets) {
       const elapsed = now - state.periodStart;
@@ -148,33 +151,36 @@ export class TokenBudget {
         }
       }
     }
-    this.flush();
+    await this.flush();
   }
 
   /** Flush all dirty budget states to disk. */
-  flush(): void {
-    for (const mind of this.dirty) {
-      const state = this.budgets.get(mind);
-      if (state) this.saveBudgetState(mind, state);
-    }
+  async flush(): Promise<void> {
+    const flushing = new Set(this.dirty);
     this.dirty.clear();
+    const writes = [];
+    for (const mind of flushing) {
+      const state = this.budgets.get(mind);
+      if (state) writes.push(this.saveBudgetState(mind, state).catch(() => this.dirty.add(mind)));
+    }
+    await Promise.all(writes);
   }
 
   private budgetStatePath(mind: string): string {
     return resolve(stateDir(mind), "budget.json");
   }
 
-  private saveBudgetState(mind: string, state: BudgetState): void {
+  private async saveBudgetState(mind: string, state: BudgetState): Promise<void> {
     try {
       const dir = stateDir(mind);
-      mkdirSync(dir, { recursive: true });
+      await mkdir(dir, { recursive: true });
       const data = {
         periodStart: state.periodStart,
         tokensUsed: state.tokensUsed,
         warningInjected: state.warningInjected,
         queue: state.queue,
       };
-      writeFileSync(this.budgetStatePath(mind), `${JSON.stringify(data)}\n`);
+      await writeFile(this.budgetStatePath(mind), `${JSON.stringify(data)}\n`);
     } catch (err) {
       tlog.warn(`failed to save budget state for ${mind}`, log.errorData(err));
     }

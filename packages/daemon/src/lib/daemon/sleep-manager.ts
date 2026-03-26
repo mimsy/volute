@@ -15,7 +15,7 @@ import { and, eq, inArray } from "drizzle-orm";
 import { sendSystemMessageDirect } from "../chat/system-chat.js";
 import { getDb } from "../db.js";
 import { type ActivityEvent, subscribe } from "../events/activity-events.js";
-import { findMind, mindDir, readRegistry, voluteSystemDir } from "../mind/registry.js";
+import { findMind, mindDir, voluteSystemDir } from "../mind/registry.js";
 import { readVoluteConfig, type SleepConfig } from "../mind/volute-config.js";
 import { getPrompt } from "../prompts.js";
 import { deliveryQueue } from "../schema.js";
@@ -66,8 +66,13 @@ function formatDuration(from: Date, to: Date): string {
   return `${minutes}m`;
 }
 
+const globRegexCache = new Map<string, RegExp>();
 export function matchesGlob(pattern: string, value: string): boolean {
-  const re = new RegExp(`^${pattern.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*")}$`);
+  let re = globRegexCache.get(pattern);
+  if (!re) {
+    re = new RegExp(`^${pattern.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*")}$`);
+    globRegexCache.set(pattern, re);
+  }
   return re.test(value);
 }
 
@@ -505,23 +510,26 @@ export class SleepManager {
     const now = new Date();
     const epochMinute = Math.floor(now.getTime() / 60_000);
 
-    // Check each mind's sleep config
-    const registry = await readRegistry();
+    // Iterate minds that have sleep configs or sleep state, avoiding a full registry query
+    const mindNames = new Set([...this.sleepConfigs.keys(), ...this.states.keys()]);
 
-    for (const entry of registry) {
-      if (!entry.running && !this.isSleeping(entry.name)) continue;
+    for (const name of mindNames) {
+      if (!this.isSleeping(name)) {
+        const mind = await findMind(name);
+        if (!mind?.running) continue;
+      }
 
-      const config = this.getSleepConfig(entry.name);
+      const config = this.getSleepConfig(name);
       if (!config?.enabled || !config.schedule) continue;
 
-      const state = this.states.get(entry.name);
+      const state = this.states.get(name);
 
       // Check voluntary wake time
       if (state?.sleeping && state.voluntaryWakeAt) {
         const wakeAt = new Date(state.voluntaryWakeAt);
         if (now >= wakeAt) {
-          this.initiateWake(entry.name).catch((err) =>
-            slog.error(`failed voluntary wake for ${entry.name}`, log.errorData(err)),
+          this.initiateWake(name).catch((err) =>
+            slog.error(`failed voluntary wake for ${name}`, log.errorData(err)),
           );
           continue;
         }
@@ -531,18 +539,18 @@ export class SleepManager {
       if (state?.sleeping && state.scheduledWakeAt) {
         const wakeAt = new Date(state.scheduledWakeAt);
         if (now >= wakeAt) {
-          this.initiateWake(entry.name).catch((err) =>
-            slog.error(`failed scheduled wake for ${entry.name}`, log.errorData(err)),
+          this.initiateWake(name).catch((err) =>
+            slog.error(`failed scheduled wake for ${name}`, log.errorData(err)),
           );
           continue;
         }
       }
 
       // Check if it's time to sleep
-      if (!state?.sleeping && entry.running) {
+      if (!state?.sleeping) {
         if (this.shouldSleep(config.schedule.sleep, epochMinute)) {
-          this.initiateSleep(entry.name).catch((err) =>
-            slog.error(`failed to initiate sleep for ${entry.name}`, log.errorData(err)),
+          this.initiateSleep(name).catch((err) =>
+            slog.error(`failed to initiate sleep for ${name}`, log.errorData(err)),
           );
         }
       }

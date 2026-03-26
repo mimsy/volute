@@ -4,7 +4,7 @@ import { sendSystemMessage } from "../chat/system-chat.js";
 import { mindDir, voluteSystemDir } from "../mind/registry.js";
 import { readVoluteConfig, type Schedule, writeVoluteConfig } from "../mind/volute-config.js";
 import { exec } from "../util/exec.js";
-import { clearJsonMap, loadJsonMap, saveJsonMap } from "../util/json-state.js";
+import { clearJsonMap, loadJsonMap, saveJsonMapAsync } from "../util/json-state.js";
 import log from "../util/logger.js";
 
 const slog = log.child("scheduler");
@@ -21,7 +21,9 @@ export class Scheduler {
 
   start(): void {
     this.loadState();
-    this.interval = setInterval(() => this.tick(), 60_000);
+    this.interval = setInterval(() => {
+      this.tick().catch((err) => slog.error("scheduler tick failed", log.errorData(err)));
+    }, 60_000);
   }
 
   stop(): void {
@@ -32,8 +34,8 @@ export class Scheduler {
     this.lastFired = loadJsonMap(this.statePath);
   }
 
-  saveState(): void {
-    saveJsonMap(this.statePath, this.lastFired);
+  async saveState(): Promise<void> {
+    await saveJsonMapAsync(this.statePath, this.lastFired);
   }
 
   clearState(): void {
@@ -58,7 +60,7 @@ export class Scheduler {
     this.mindDirs.delete(mindName);
   }
 
-  private tick(): void {
+  private async tick(): Promise<void> {
     const now = new Date();
     const epochMinute = Math.floor(now.getTime() / 60000);
     // Cache cron parse results within this tick — same cron string only parsed once
@@ -75,7 +77,7 @@ export class Scheduler {
       }
     }
 
-    if (anyFired) this.saveState();
+    if (anyFired) await this.saveState();
   }
 
   private shouldFire(

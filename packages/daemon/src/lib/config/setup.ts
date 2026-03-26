@@ -78,11 +78,26 @@ export function configPath(): string {
   return resolve(voluteSystemDir(), "config.json");
 }
 
+let _cachedConfig: { config: GlobalConfig; ts: number } | null = null;
+const CONFIG_CACHE_TTL = 2000;
+
+export function _resetConfigCache(): void {
+  _cachedConfig = null;
+}
+
 export function readGlobalConfig(): GlobalConfig {
+  if (_cachedConfig && Date.now() - _cachedConfig.ts < CONFIG_CACHE_TTL) {
+    return { ..._cachedConfig.config };
+  }
   const path = configPath();
-  if (!existsSync(path)) return {};
+  if (!existsSync(path)) {
+    _cachedConfig = null;
+    return {};
+  }
   try {
-    return JSON.parse(readFileSync(path, "utf-8"));
+    const config = JSON.parse(readFileSync(path, "utf-8"));
+    _cachedConfig = { config, ts: Date.now() };
+    return config;
   } catch (err) {
     console.error(`Failed to parse ${path}: ${err instanceof Error ? err.message : err}`);
     return {};
@@ -93,6 +108,7 @@ export function writeGlobalConfig(config: GlobalConfig): void {
   const path = configPath();
   mkdirSync(voluteSystemDir(), { recursive: true });
   writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`);
+  _cachedConfig = { config, ts: Date.now() };
 }
 
 /** Check if setup has been completed. Returns true once the full setup flow has finished. */

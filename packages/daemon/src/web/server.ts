@@ -52,14 +52,18 @@ export async function startServer({
         const ext = extname(filePath);
         const mime = MIME_TYPES[ext] || "application/octet-stream";
         const body = await readFile(filePath);
-        return c.body(body, 200, { "Content-Type": mime });
+        const basename = filePath.slice(filePath.lastIndexOf("/") + 1);
+        const nameWithoutExt = basename.slice(0, basename.lastIndexOf("."));
+        const isHashed = /[-.][\da-f]{8,}$/.test(nameWithoutExt);
+        const cacheControl = isHashed ? "public, max-age=31536000, immutable" : "no-cache";
+        return c.body(body, 200, { "Content-Type": mime, "Cache-Control": cacheControl });
       }
       // SPA fallback
       const indexPath = resolve(assetsDir, "index.html");
       const indexStat = await stat(indexPath).catch(() => null);
       if (indexStat?.isFile()) {
         const body = await readFile(indexPath, "utf-8");
-        return c.html(body);
+        return c.html(body, 200, { "Cache-Control": "no-cache" });
       }
       return c.text("Not found", 404);
     });

@@ -21,11 +21,16 @@ export type TemplateManifest = {
  * Find the templates root directory by walking up from the calling module's location.
  * Returns the parent `templates/` directory (not a specific template).
  */
+let _templatesRoot: string | null = null;
 export function findTemplatesRoot(): string {
+  if (_templatesRoot) return _templatesRoot;
   let dir = dirname(new URL(import.meta.url).pathname);
   for (let i = 0; i < 7; i++) {
     const candidate = resolve(dir, "templates");
-    if (existsSync(resolve(candidate, "_base"))) return candidate;
+    if (existsSync(resolve(candidate, "_base"))) {
+      _templatesRoot = candidate;
+      return _templatesRoot;
+    }
     dir = dirname(dir);
   }
   console.error(
