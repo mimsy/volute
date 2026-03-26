@@ -32,7 +32,7 @@ let mindParticipants = $derived(
 
 let userParticipants = $derived(conversation.participants.filter((p) => p.userType !== "mind"));
 
-let isChannel = $derived(conversation.type === "channel" && !!conversation.name);
+let isChannel = $derived(conversation.type === "channel" && !!conversation.channel_name);
 let showInvite = $state(false);
 
 function brainDotColor(username: string): string | undefined {
@@ -127,9 +127,9 @@ function isBrainIridescent(username: string): boolean {
   </div>
 </div>
 
-{#if showInvite && conversation.name}
+{#if showInvite && conversation.channel_name}
   <InviteModal
-    channelName={conversation.name}
+    channelName={conversation.channel_name}
     {minds}
     onClose={() => showInvite = false}
   />

@@ -206,12 +206,11 @@ function openConversation(conv: TurnConversation, turn: TurnRow) {
     mind_name: turn.mind,
     channel: "",
     type: conv.type,
-    name: conv.type === "channel" ? conv.label.replace(/^#/, "") : null,
     user_id: null,
-    title: conv.label,
     created_at: turn.created_at,
     updated_at: turn.created_at,
     private: 0,
+    channel_name: conv.type === "channel" ? conv.label.replace(/^#/, "") : null,
     participants: [],
   };
 }

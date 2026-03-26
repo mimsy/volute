@@ -148,7 +148,9 @@ $effect(() => {
 let activeConversationId = $derived.by(() => {
   const sel = selection;
   if (sel.kind === "channel") {
-    const conv = data.conversations.find((c) => c.type === "channel" && c.name === sel.slug);
+    const conv = data.conversations.find(
+      (c) => c.type === "channel" && c.channel_name === sel.slug,
+    );
     return conv?.id ?? null;
   }
   if (sel.kind === "mind" && (!sel.section || sel.section === "chat")) {
@@ -183,7 +185,7 @@ $effect(() => {
 let activeConv = $derived.by(() => {
   const sel = selection;
   if (sel.kind === "channel") {
-    return data.conversations.find((c) => c.type === "channel" && c.name === sel.slug);
+    return data.conversations.find((c) => c.type === "channel" && c.channel_name === sel.slug);
   }
   return undefined;
 });
@@ -226,7 +228,8 @@ let showRightPanel = $derived(
 // Breadcrumbs
 let channelBreadcrumbLabel = $derived.by(() => {
   if (selection.kind !== "channel") return "";
-  if (activeConv?.type === "channel" && activeConv.name) return `#${activeConv.name}`;
+  if (activeConv?.type === "channel" && activeConv.channel_name)
+    return `#${activeConv.channel_name}`;
   return selection.slug;
 });
 
@@ -433,8 +436,8 @@ $effect(() => {
   const convId = selection.slug.replace("__conv:", "");
   const conv = data.conversations.find((c) => c.id === convId);
   if (!conv) return;
-  if (conv.type === "channel" && conv.name) {
-    selection = { kind: "channel", slug: conv.name };
+  if (conv.type === "channel" && conv.channel_name) {
+    selection = { kind: "channel", slug: conv.channel_name };
   } else if (conv.mind_name) {
     selection = { kind: "mind", name: conv.mind_name };
   }
@@ -473,8 +476,8 @@ function handleOpenMindModal(mind: Mind) {
 function handleSelectConversation(id: string) {
   // Determine if this is a channel or a DM and route appropriately
   const conv = data.conversations.find((c) => c.id === id);
-  if (conv?.type === "channel" && conv.name) {
-    selection = { kind: "channel", slug: conv.name };
+  if (conv?.type === "channel" && conv.channel_name) {
+    selection = { kind: "channel", slug: conv.channel_name };
   } else if (conv?.mind_name) {
     selection = { kind: "mind", name: conv.mind_name };
   } else {
@@ -517,13 +520,14 @@ function handleNewChatCreated(name: string) {
   selection = { kind: "mind", name };
 }
 
-function handleChannelJoined(conv: Conversation) {
+function handleChannelJoined(conv: Conversation & { name?: string; channel_name?: string | null }) {
   activeModal = null;
   selectedModalMind = null;
   closeSidebar();
   reconnectActivity();
-  if (conv.type === "channel" && conv.name) {
-    selection = { kind: "channel", slug: conv.name };
+  const channelName = conv.channel_name ?? conv.name;
+  if (conv.type === "channel" && channelName) {
+    selection = { kind: "channel", slug: channelName };
   }
 }
 

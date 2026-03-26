@@ -27,7 +27,7 @@ describe("database", () => {
     assert.ok(convCols.includes("mind_name"));
     assert.ok(convCols.includes("channel"));
     assert.ok(convCols.includes("user_id"));
-    assert.ok(convCols.includes("title"));
+    assert.ok(convCols.includes("type"));
 
     // Messages table
     const msgCols = Object.keys(messages);

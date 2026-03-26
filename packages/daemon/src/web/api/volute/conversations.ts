@@ -17,7 +17,6 @@ import { findMind } from "../../../lib/registry.js";
 import type { AuthEnv } from "../../middleware/auth.js";
 
 const createConvSchema = z.object({
-  title: z.string().optional(),
   participantIds: z.array(z.number()).optional(),
   participantNames: z.array(z.string()).optional(),
 });
@@ -108,15 +107,8 @@ const app = new Hono<AuthEnv>()
       }
     }
 
-    // Default title from participant names when none provided
-    let title = body.title;
-    if (!title && body.participantNames?.length) {
-      title = body.participantNames.join(", ");
-    }
-
     const conv = await createConversation(name, "volute", {
       userId: user.id !== 0 ? user.id : undefined,
-      title,
       participantIds,
     });
 

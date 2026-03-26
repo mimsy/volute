@@ -37,7 +37,7 @@ describe("buildVoluteSlug", () => {
     const slug = buildVoluteSlug({
       participants: [{ username: "bot" }, { username: "alice" }],
       mindUsername: "bot",
-      convTitle: "bot, alice",
+
       conversationId: "conv-123",
     });
     assert.equal(slug, "@alice");
@@ -48,13 +48,13 @@ describe("buildVoluteSlug", () => {
     const slug1 = buildVoluteSlug({
       participants,
       mindUsername: "mind1",
-      convTitle: null,
+
       conversationId: "conv-456",
     });
     const slug2 = buildVoluteSlug({
       participants,
       mindUsername: "mind2",
-      convTitle: null,
+
       conversationId: "conv-456",
     });
     assert.equal(slug1, "@mind2");
@@ -65,7 +65,7 @@ describe("buildVoluteSlug", () => {
     const slug = buildVoluteSlug({
       participants: [{ username: "bot" }, { username: "!!!" }],
       mindUsername: "bot",
-      convTitle: null,
+
       conversationId: "conv-789",
     });
     assert.equal(slug, "conv-789");
@@ -75,7 +75,7 @@ describe("buildVoluteSlug", () => {
     const slug = buildVoluteSlug({
       participants: [{ username: "bot" }, { username: "alice" }, { username: "bob" }],
       mindUsername: "bot",
-      convTitle: "Project Chat",
+
       conversationId: "conv-abc",
     });
     // Without convType: "channel", falls through to DM slug using first non-mind participant
@@ -86,7 +86,7 @@ describe("buildVoluteSlug", () => {
     const slug = buildVoluteSlug({
       participants: [{ username: "bot" }, { username: "alice" }, { username: "bob" }],
       mindUsername: "bot",
-      convTitle: "Project Chat",
+
       conversationId: "conv-def",
       convType: "channel",
       convName: "project-chat",
@@ -98,7 +98,7 @@ describe("buildVoluteSlug", () => {
     const slug = buildVoluteSlug({
       participants: [{ username: "bot" }],
       mindUsername: "bot",
-      convTitle: null,
+
       conversationId: "conv-solo",
     });
     assert.equal(slug, "conv-solo");
@@ -108,7 +108,7 @@ describe("buildVoluteSlug", () => {
     const slug = buildVoluteSlug({
       participants: [],
       mindUsername: "bot",
-      convTitle: null,
+
       conversationId: "conv-empty",
     });
     assert.equal(slug, "conv-empty");
@@ -118,7 +118,7 @@ describe("buildVoluteSlug", () => {
     const slug = buildVoluteSlug({
       participants: [{ username: "bot" }, { username: "alice" }],
       mindUsername: "bot",
-      convTitle: "general",
+
       conversationId: "conv-ch1",
       convType: "channel",
       convName: "general",
@@ -130,7 +130,7 @@ describe("buildVoluteSlug", () => {
     const slug = buildVoluteSlug({
       participants: [{ username: "bot" }, { username: "alice" }],
       mindUsername: "bot",
-      convTitle: null,
+
       conversationId: "conv-ch2",
       convType: "channel",
       convName: undefined,
@@ -143,7 +143,7 @@ describe("buildVoluteSlug", () => {
     const slug = buildVoluteSlug({
       participants: [{ username: "bot" }, { username: "alice" }],
       mindUsername: "bot",
-      convTitle: null,
+
       conversationId: "conv-ch3",
       convType: "dm",
       convName: "general",

@@ -14,7 +14,7 @@ let {
   onJoined,
 }: {
   onClose: () => void;
-  onJoined: (conv: Conversation) => void;
+  onJoined: (conv: Conversation & { name?: string; channel_name?: string | null }) => void;
 } = $props();
 
 let channels = $state<ChannelInfo[]>([]);

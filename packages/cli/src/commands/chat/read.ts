@@ -5,9 +5,9 @@ import { resolveMindName } from "../../lib/resolve-mind-name.js";
 
 type Conversation = {
   id: string;
-  title: string | null;
   type: string;
-  name: string | null;
+  channel_name: string | null;
+  participants: { username: string }[];
 };
 
 async function resolveConversationId(mindName: string, input: string): Promise<string> {
@@ -29,21 +29,16 @@ async function resolveConversationId(mindName: string, input: string): Promise<s
   const lower = cleaned.toLowerCase();
 
   // Try channel name match (e.g. "#system" or "system")
-  const channelMatch = convs.find((c) => c.type === "channel" && c.name?.toLowerCase() === lower);
+  const channelMatch = convs.find(
+    (c) => c.type === "channel" && c.channel_name?.toLowerCase() === lower,
+  );
   if (channelMatch) return channelMatch.id;
 
-  // Try DM match by title (e.g. "psamiton, iris" or just "psamiton")
-  const titleMatch = convs.find((c) => c.title?.toLowerCase() === lower);
-  if (titleMatch) return titleMatch.id;
-
-  // Try partial DM match — input matches any participant name in the title
+  // Try DM match by participant username (e.g. "@cricket" or "cricket")
   const dmMatch = convs.find(
     (c) =>
       c.type === "dm" &&
-      c.title
-        ?.toLowerCase()
-        .split(/,\s*/)
-        .some((name) => name === lower),
+      c.participants?.some((p) => p.username.toLowerCase() === lower && p.username !== mindName),
   );
   if (dmMatch) return dmMatch.id;
 

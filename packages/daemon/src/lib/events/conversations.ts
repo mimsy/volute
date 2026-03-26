@@ -2,11 +2,12 @@ import { randomUUID } from "node:crypto";
 import type {
   ContentBlock,
   Conversation,
+  ConversationWithParticipants,
   LastMessageSummary,
   Message,
   Participant,
 } from "@volute/api";
-import { and, desc, eq, inArray, isNull, lt, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, lt, sql } from "drizzle-orm";
 import { getDb } from "../db.js";
 import {
   channels,
@@ -19,23 +20,27 @@ import {
 import { fireWebhook } from "../webhook.js";
 import { publish } from "./conversation-events.js";
 
-export type { ContentBlock, Conversation, LastMessageSummary, Message, Participant };
+export type {
+  ContentBlock,
+  Conversation,
+  ConversationWithParticipants,
+  LastMessageSummary,
+  Message,
+  Participant,
+};
 
 export async function createConversation(
   mindName: string | null,
   channel: string,
   opts?: {
     userId?: number;
-    title?: string;
     participantIds?: number[];
     type?: "dm" | "channel";
-    name?: string;
   },
 ): Promise<Conversation> {
   const db = await getDb();
   const id = randomUUID();
   const type = opts?.type ?? "dm";
-  const name = opts?.name ?? null;
 
   // Sequential inserts instead of a transaction to avoid SQLITE_BUSY errors
   // when @libsql/client's transaction() creates a second connection that
@@ -45,9 +50,7 @@ export async function createConversation(
     mind_name: mindName,
     channel,
     type,
-    name,
     user_id: opts?.userId ?? null,
-    title: opts?.title ?? null,
   });
 
   if (opts?.participantIds && opts.participantIds.length > 0) {
@@ -63,7 +66,7 @@ export async function createConversation(
   fireWebhook({
     event: "conversation_created",
     mind: mindName ?? "",
-    data: { id, mindName, channel, type, name, title: opts?.title ?? null },
+    data: { id, mindName, channel, type },
   });
 
   return {
@@ -71,9 +74,7 @@ export async function createConversation(
     mind_name: mindName,
     channel,
     type,
-    name,
     user_id: opts?.userId ?? null,
-    title: opts?.title ?? null,
     private: 0,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
@@ -205,18 +206,6 @@ export async function addMessage(
     .set({ updated_at: sql`datetime('now')` })
     .where(eq(conversations.id, conversationId));
 
-  // Set title from first user text block if unset
-  if (role === "user") {
-    const firstText = content.find((b) => b.type === "text");
-    const title = firstText ? (firstText as { text: string }).text.slice(0, 80) : "";
-    if (title) {
-      await db
-        .update(conversations)
-        .set({ title })
-        .where(and(eq(conversations.id, conversationId), isNull(conversations.title)));
-    }
-  }
-
   const msg: Message = {
     id: result.id,
     conversation_id: conversationId,
@@ -310,9 +299,20 @@ function parseMessageRow(row: typeof messages.$inferSelect): Message {
   return { ...row, role: row.role as Message["role"], content };
 }
 
+/** Look up channel names for a set of conversation IDs. Returns a map of conversationId → channel name. */
+async function getChannelNames(convIds: string[]): Promise<Map<string, string>> {
+  if (convIds.length === 0) return new Map();
+  const db = await getDb();
+  const rows = await db
+    .select({ conversationId: channels.conversation_id, name: channels.name })
+    .from(channels)
+    .where(inArray(channels.conversation_id, convIds));
+  return new Map(rows.map((r) => [r.conversationId, r.name]));
+}
+
 export async function listConversationsWithParticipants(
   userId: number,
-): Promise<(Conversation & { participants: Participant[]; lastMessage?: LastMessageSummary })[]> {
+): Promise<ConversationWithParticipants[]> {
   const convs = await listConversationsForUser(userId);
   if (convs.length === 0) return [];
   const db = await getDb();
@@ -389,8 +389,11 @@ export async function listConversationsWithParticipants(
     }
   }
 
+  const channelNames = await getChannelNames(convIds);
+
   return convs.map((c) => ({
     ...c,
+    channel_name: channelNames.get(c.id) ?? null,
     participants: byConv.get(c.id) ?? [],
     lastMessage: byLastMsg.get(c.id),
   }));
@@ -426,7 +429,7 @@ export async function findDMConversation(
 
 export async function listConversationsForMind(
   mindName: string,
-): Promise<(Conversation & { participants: Participant[]; lastMessage?: LastMessageSummary })[]> {
+): Promise<ConversationWithParticipants[]> {
   const db = await getDb();
 
   // Find conversations by mind_name
@@ -545,8 +548,11 @@ export async function listConversationsForMind(
     }
   }
 
+  const channelNames = await getChannelNames(convIds);
+
   return convs.map((c) => ({
     ...c,
+    channel_name: channelNames.get(c.id) ?? null,
     participants: byConv.get(c.id) ?? [],
     lastMessage: byLastMsg.get(c.id),
   }));
@@ -628,8 +634,6 @@ export async function createChannel(
   const participantIds = creatorId ? [creatorId] : [];
   const conv = await createConversation(null, "volute", {
     type: "channel",
-    name,
-    title: name,
     participantIds,
   });
   const db = await getDb();
@@ -657,14 +661,21 @@ export async function createChannel(
   return conv;
 }
 
-export async function getChannelByName(name: string): Promise<Conversation | null> {
+export async function getChannelName(conversationId: string): Promise<string | null> {
   const db = await getDb();
   const row = await db
-    .select()
-    .from(conversations)
-    .where(and(eq(conversations.name, name), eq(conversations.type, "channel")))
+    .select({ name: channels.name })
+    .from(channels)
+    .where(eq(channels.conversation_id, conversationId))
     .get();
-  return (row as Conversation) ?? null;
+  return row?.name ?? null;
+}
+
+export async function getChannelByName(name: string): Promise<Conversation | null> {
+  const db = await getDb();
+  const ch = await db.select().from(channels).where(eq(channels.name, name)).get();
+  if (!ch) return null;
+  return getConversation(ch.conversation_id);
 }
 
 export async function getChannelSettings(name: string): Promise<ChannelRow | null> {
@@ -683,14 +694,19 @@ export function formatChannelSettings(row: ChannelRow | null) {
   };
 }
 
-export async function listChannels(): Promise<Conversation[]> {
+export async function listChannels(): Promise<(Conversation & { channel_name: string })[]> {
   const db = await getDb();
-  return (await db
+  const rows = await db
     .select()
     .from(conversations)
+    .innerJoin(channels, eq(channels.conversation_id, conversations.id))
     .where(eq(conversations.type, "channel"))
-    .orderBy(conversations.name)
-    .all()) as Conversation[];
+    .orderBy(channels.name)
+    .all();
+  return rows.map((r) => ({
+    ...(r.conversations as Conversation),
+    channel_name: r.channels.name,
+  }));
 }
 
 export async function updateChannelSettings(

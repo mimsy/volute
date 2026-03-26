@@ -76,7 +76,6 @@ describe("system DM", () => {
       .get();
     assert.ok(conv, "conversation should exist in DB");
     assert.equal(conv!.type, "dm");
-    assert.equal(conv!.title, "Volute");
 
     // Should have 2 participants
     const parts = await db

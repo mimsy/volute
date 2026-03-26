@@ -5,6 +5,7 @@ import { subscribeAll, subscribe as subscribeMindEvent } from "../../lib/events/
 import log from "../../lib/logger.js";
 import {
   activity,
+  channels,
   conversationParticipants,
   conversations,
   mindHistory,
@@ -204,18 +205,15 @@ const history = new Hono()
           });
         if (channelNames.length > 0) {
           const channelRows = await db
-            .select({ id: conversations.id, name: conversations.name })
-            .from(conversations)
+            .select({ conversationId: channels.conversation_id, name: channels.name })
+            .from(channels)
             .where(
-              and(
-                eq(conversations.type, "channel"),
-                inArray(
-                  conversations.name,
-                  channelNames.map((c) => c.name),
-                ),
+              inArray(
+                channels.name,
+                channelNames.map((c) => c.name),
               ),
             );
-          const nameToId = new Map(channelRows.map((r) => [r.name, r.id]));
+          const nameToId = new Map(channelRows.map((r) => [r.name, r.conversationId]));
           for (const { slug, name } of channelNames) {
             const id = nameToId.get(name);
             if (id) channelIdMap.set(slug, id);

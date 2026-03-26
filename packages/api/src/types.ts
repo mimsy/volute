@@ -36,9 +36,7 @@ export type Conversation = {
   mind_name: string | null;
   channel: string;
   type: "dm" | "channel";
-  name: string | null;
   user_id: number | null;
-  title: string | null;
   private: number;
   created_at: string;
   updated_at: string;
@@ -71,6 +69,7 @@ export type LastMessageSummary = {
 };
 
 export type ConversationWithParticipants = Conversation & {
+  channel_name: string | null;
   participants: Participant[];
   lastMessage?: LastMessageSummary;
   unreadCount?: number;
@@ -207,6 +206,7 @@ export type ChannelSettings = {
 };
 
 export type ChannelInfo = Conversation & {
+  name: string;
   participantCount: number;
   isMember: boolean;
   settings?: ChannelSettings;

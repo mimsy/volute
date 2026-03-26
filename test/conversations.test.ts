@@ -65,8 +65,8 @@ describe("conversations", () => {
     }
   });
 
-  it("stores user message and extracts title from first text block", async () => {
-    const conv = await createConversation("test-mind", "test-title");
+  it("stores user message with image and text blocks", async () => {
+    const conv = await createConversation("test-mind", "test-channel");
     try {
       const blocks: ContentBlock[] = [
         { type: "image", media_type: "image/png", data: "abc123" },
@@ -290,7 +290,6 @@ describe("channels", () => {
     try {
       const ch = await createChannel("general", user.id);
       assert.equal(ch.type, "channel");
-      assert.equal(ch.name, "general");
       assert.equal(ch.mind_name, null);
       assert.equal(ch.channel, "volute");
 
@@ -329,7 +328,7 @@ describe("channels", () => {
     const dm = await createConversation("test-mind", "volute");
     try {
       const channels = await listChannels();
-      const names = channels.map((c) => c.name);
+      const names = channels.map((c) => c.channel_name);
       assert.ok(names.includes("alpha"));
       assert.ok(names.includes("beta"));
       // DM should not appear

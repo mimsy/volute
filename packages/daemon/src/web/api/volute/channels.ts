@@ -47,7 +47,7 @@ const app = new Hono<AuthEnv>()
       channels.map(async (ch) => {
         const participants = await getParticipants(ch.id);
         const isMember = participants.some((p) => p.userId === user.id);
-        return { ...ch, participantCount: participants.length, isMember };
+        return { ...ch, name: ch.channel_name, participantCount: participants.length, isMember };
       }),
     );
     return c.json(results);
@@ -59,7 +59,7 @@ const app = new Hono<AuthEnv>()
     try {
       const { name, ...settings } = body;
       const ch = await createChannel(name, user.id, settings);
-      return c.json(ch, 201);
+      return c.json({ ...ch, name }, 201);
     } catch (err: unknown) {
       const cause =
         err instanceof Error
@@ -81,7 +81,7 @@ const app = new Hono<AuthEnv>()
       getParticipants(ch.id),
       getChannelSettings(name),
     ]);
-    return c.json({ ...ch, participants, settings: formatChannelSettings(settings) });
+    return c.json({ ...ch, name, participants, settings: formatChannelSettings(settings) });
   })
   .patch("/:name", zValidator("json", channelSettingsSchema), async (c) => {
     const name = c.req.param("name");
@@ -92,7 +92,7 @@ const app = new Hono<AuthEnv>()
 
     await updateChannelSettings(name, body);
     const settings = await getChannelSettings(name);
-    return c.json({ ...ch, settings: formatChannelSettings(settings) });
+    return c.json({ ...ch, name, settings: formatChannelSettings(settings) });
   })
   .post("/:name/join", async (c) => {
     const name = c.req.param("name");

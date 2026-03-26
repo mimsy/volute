@@ -435,7 +435,6 @@ setup.post("/complete", async (c) => {
         } else {
           const conv = await createConversation("volute", "volute", {
             participantIds: [admin.id, spiritUser.id],
-            title: "Volute",
           });
           spiritConversationId = conv.id;
         }

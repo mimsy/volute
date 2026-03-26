@@ -16,7 +16,6 @@ import { findMind } from "../../../lib/registry.js";
 import { type AuthEnv, authMiddleware } from "../../middleware/auth.js";
 
 const createSchema = z.object({
-  title: z.string().optional(),
   participantNames: z.array(z.string()).min(1),
 });
 
@@ -91,7 +90,6 @@ const app = new Hono<AuthEnv>()
 
     const conv = await createConversation(firstMindName, "volute", {
       userId: user.id !== 0 ? user.id : undefined,
-      title: body.title,
       participantIds: [...participantIds],
     });
 

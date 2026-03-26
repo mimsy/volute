@@ -79,7 +79,7 @@ function openMenu(e: MouseEvent, convId: string) {
       >
         <div class="conv-item-header">
           <div class="conv-item-label" class:active={conv.id === activeId} class:unread={unread > 0}>
-            <span class="conv-label-text">{getConversationLabel(conv.participants ?? [], conv.title, username, conv)}</span>
+            <span class="conv-label-text">{getConversationLabel(conv.participants ?? [], username, conv)}</span>
             {#if conv.private === 1}
               <svg class="lock-icon" viewBox="0 0 16 16" fill="currentColor"><path d="M11 7V5a3 3 0 0 0-6 0v2H4v6h8V7h-1zm-4-2a1 1 0 1 1 2 0v2H7V5z"/></svg>
             {/if}
@@ -129,7 +129,7 @@ function openMenu(e: MouseEvent, convId: string) {
             {:else if dmInfo.otherName}
               <span class="conv-label-text">@{dmInfo.otherName}</span>
             {:else}
-              <span class="conv-label-text">{getConversationLabel(conv.participants ?? [], conv.title, username, conv)}</span>
+              <span class="conv-label-text">{getConversationLabel(conv.participants ?? [], username, conv)}</span>
             {/if}
             {#if conv.private === 1}
               <svg class="lock-icon" viewBox="0 0 16 16" fill="currentColor"><path d="M11 7V5a3 3 0 0 0-6 0v2H4v6h8V7h-1zm-4-2a1 1 0 1 1 2 0v2H7V5z"/></svg>

@@ -39,7 +39,6 @@ export async function ensureSystemDM(mindName: string): Promise<{ conversationId
 
   const conv = await createConversation(mindName, "volute", {
     participantIds: [systemUser.id, mindUser.id],
-    title: "Volute",
   });
 
   dmCache.set(mindName, conv.id);
