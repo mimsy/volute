@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.35.0](https://github.com/mimsy/volute/compare/volute-v0.34.0...volute-v0.35.0) (2026-03-26)
+
+
+### Features
+
+* add --help support across all CLI commands ([#272](https://github.com/mimsy/volute/issues/272)) ([43e1948](https://github.com/mimsy/volute/commit/43e19480b952d2303131e544958c3ee0d7a3d19e))
+* add markdown page rendering to pages extension ([#269](https://github.com/mimsy/volute/issues/269)) ([ee9af1a](https://github.com/mimsy/volute/commit/ee9af1a760e777b1021445d0f9a66b0461af42d1))
+* add structured args/flags to extension commands with auto-generated --help ([#276](https://github.com/mimsy/volute/issues/276)) ([3c433c2](https://github.com/mimsy/volute/commit/3c433c278fbc9155268a301a051398919911f08a))
+* enable remote web UI connections to daemon ([#274](https://github.com/mimsy/volute/issues/274)) ([d25e4c2](https://github.com/mimsy/volute/commit/d25e4c2cdf2450e1c397e426c55b675c0e468f5a))
+* OAuth error detection, re-auth UI, and session resilience ([#275](https://github.com/mimsy/volute/issues/275)) ([4e126da](https://github.com/mimsy/volute/commit/4e126dabb7c273607583e327162475c6e8bca915))
+
+
+### Bug Fixes
+
+* ensure npm cache dir exists for spirit creation ([#277](https://github.com/mimsy/volute/issues/277)) ([be3ccda](https://github.com/mimsy/volute/commit/be3ccda9db51fbc39e2a60736eb0884e36a5419f))
+* system pages separation, error handling, and test coverage ([#270](https://github.com/mimsy/volute/issues/270)) ([ed5f9fc](https://github.com/mimsy/volute/commit/ed5f9fcc10e0d3e73623e0cb87d812e0ab14a48a))
+
 ## [0.34.0](https://github.com/mimsy/volute/compare/volute-v0.33.0...volute-v0.34.0) (2026-03-25)
 
 
