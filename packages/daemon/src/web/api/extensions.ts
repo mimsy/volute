@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import {
   getAllDiscoveredExtensions,
+  getAllDiscoveredExtensionsDetailed,
   getLoadedExtensions,
   installNpmExtension,
   setExtensionEnabled,
@@ -16,7 +17,8 @@ const app = new Hono<AuthEnv>()
 
   // All discovered extensions with source/enabled metadata
   .get("/all", (c) => {
-    return c.json(getAllDiscoveredExtensions());
+    const detail = c.req.query("detail") === "true";
+    return c.json(detail ? getAllDiscoveredExtensionsDetailed() : getAllDiscoveredExtensions());
   })
 
   // Toggle enable/disable

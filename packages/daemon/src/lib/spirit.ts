@@ -5,13 +5,14 @@ import { exec } from "./exec.js";
 import log from "./logger.js";
 import { addSpirit, findMind, nextPort, voluteSystemDir } from "./registry.js";
 import { readGlobalConfig } from "./setup.js";
-import { getSharedSkill, installSkill } from "./skills.js";
+import { getSharedSkill, installSkill, mindSkillsDir } from "./skills.js";
 import {
   applyInitFiles,
   composeTemplate,
   copyTemplateToDir,
   findTemplatesRoot,
 } from "./template.js";
+import { readVoluteConfig, writeVoluteConfig } from "./volute-config.js";
 
 const slog = log.child("spirit");
 
@@ -101,6 +102,7 @@ export async function ensureSpiritProject(): Promise<void> {
       "orientation",
       "memory",
       "seed-nurture",
+      "engagement",
       "plan-coordinator",
     ];
     for (const skillId of spiritSkills) {
@@ -112,6 +114,22 @@ export async function ensureSpiritProject(): Promise<void> {
       } catch (err) {
         slog.warn(`failed to install skill ${skillId} for spirit`, log.errorData(err));
       }
+    }
+
+    // Add default engagement schedule
+    const spiritConfig = readVoluteConfig(dir) ?? {};
+    const schedules = spiritConfig.schedules ?? [];
+    if (!schedules.some((s) => s.id === "engagement")) {
+      schedules.push({
+        id: "engagement",
+        cron: "0 10 * * *",
+        message:
+          "Check on the minds in the system — see if anyone could use a suggestion about features they haven't tried yet.",
+        enabled: true,
+        whileSleeping: "skip",
+      });
+      spiritConfig.schedules = schedules;
+      writeVoluteConfig(dir, spiritConfig);
     }
 
     // Set up per-mind user isolation (creates mind-volute user, chowns project dir).
@@ -238,6 +256,47 @@ export async function syncSpiritTemplate(): Promise<void> {
     const full = resolve(dir, p);
     mkdirSync(resolve(full, ".."), { recursive: true });
     writeFileSync(full, content);
+  }
+
+  // Ensure all spirit skills are installed (handles upgrades when new skills are added)
+  const spiritSkills = [
+    "volute-admin",
+    "orientation",
+    "memory",
+    "seed-nurture",
+    "engagement",
+    "plan-coordinator",
+  ];
+  for (const skillId of spiritSkills) {
+    // Check if skill is already installed
+    const skillDir = resolve(mindSkillsDir(dir), skillId);
+    if (existsSync(skillDir)) continue;
+    try {
+      const shared = await getSharedSkill(skillId);
+      if (shared) {
+        await installSkill("volute", dir, skillId);
+        slog.info(`installed missing spirit skill: ${skillId}`);
+      }
+    } catch (err) {
+      slog.warn(`failed to install spirit skill ${skillId}`, log.errorData(err));
+    }
+  }
+
+  // Ensure engagement schedule exists (handles upgrades)
+  const spiritConfig = readVoluteConfig(dir) ?? {};
+  const schedules = spiritConfig.schedules ?? [];
+  if (!schedules.some((s) => s.id === "engagement")) {
+    schedules.push({
+      id: "engagement",
+      cron: "0 10 * * *",
+      message:
+        "Check on the minds in the system — see if anyone could use a suggestion about features they haven't tried yet.",
+      enabled: true,
+      whileSleeping: "skip",
+    });
+    spiritConfig.schedules = schedules;
+    writeVoluteConfig(dir, spiritConfig);
+    slog.info("added engagement schedule to spirit");
   }
 
   slog.info("spirit template synced");
