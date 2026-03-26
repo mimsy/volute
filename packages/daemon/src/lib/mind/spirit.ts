@@ -2,7 +2,7 @@ import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } fr
 import { resolve } from "node:path";
 import { qualifyModelId, resolveTemplate } from "../ai-service.js";
 import { readGlobalConfig } from "../config/setup.js";
-import { getSharedSkill, installSkill } from "../skills.js";
+import { getSharedSkill, installSkill, mindSkillsDir } from "../skills.js";
 import {
   applyInitFiles,
   composeTemplate,
@@ -12,14 +12,44 @@ import {
 import { exec } from "../util/exec.js";
 import log from "../util/logger.js";
 import { addSpirit, findMind, nextPort, voluteSystemDir } from "./registry.js";
+import { readVoluteConfig, writeVoluteConfig } from "./volute-config.js";
 
 const slog = log.child("spirit");
+
+const SPIRIT_SKILLS = [
+  "volute-admin",
+  "orientation",
+  "memory",
+  "seed-nurture",
+  "tending",
+  "plan-coordinator",
+];
+
+const TENDING_SCHEDULE = {
+  id: "tending",
+  cron: "0 10 * * *",
+  message:
+    "Check on the minds in your care — see if anyone could use a suggestion about features they haven't tried yet.",
+  enabled: true,
+  whileSleeping: "skip" as const,
+};
 
 /** Ensure npm cache dir exists and return env with npm_config_cache set. */
 function npmEnv(): NodeJS.ProcessEnv {
   const cacheDir = resolve(voluteSystemDir(), ".npm-cache");
   mkdirSync(cacheDir, { recursive: true });
   return { ...process.env, npm_config_cache: cacheDir };
+}
+
+/** Add the tending schedule to spirit's volute.json if missing. Returns true if added. */
+function ensureTendingSchedule(dir: string): boolean {
+  const config = readVoluteConfig(dir) ?? {};
+  const schedules = config.schedules ?? [];
+  if (schedules.some((s) => s.id === "tending")) return false;
+  schedules.push({ ...TENDING_SCHEDULE });
+  config.schedules = schedules;
+  writeVoluteConfig(dir, config);
+  return true;
 }
 
 /** Directory for the system spirit project. */
@@ -96,14 +126,7 @@ export async function ensureSpiritProject(): Promise<void> {
     }
 
     // Install spirit skills from shared pool (after git init)
-    const spiritSkills = [
-      "volute-admin",
-      "orientation",
-      "memory",
-      "seed-nurture",
-      "plan-coordinator",
-    ];
-    for (const skillId of spiritSkills) {
+    for (const skillId of SPIRIT_SKILLS) {
       try {
         const shared = await getSharedSkill(skillId);
         if (shared) {
@@ -112,6 +135,13 @@ export async function ensureSpiritProject(): Promise<void> {
       } catch (err) {
         slog.warn(`failed to install skill ${skillId} for spirit`, log.errorData(err));
       }
+    }
+
+    // Add default tending schedule
+    try {
+      ensureTendingSchedule(dir);
+    } catch (err) {
+      slog.warn("failed to add tending schedule to spirit config", log.errorData(err));
     }
 
     // Set up per-mind user isolation (creates mind-volute user, chowns project dir).
@@ -238,6 +268,30 @@ export async function syncSpiritTemplate(): Promise<void> {
     const full = resolve(dir, p);
     mkdirSync(resolve(full, ".."), { recursive: true });
     writeFileSync(full, content);
+  }
+
+  // Ensure all spirit skills are installed (handles upgrades when new skills are added)
+  for (const skillId of SPIRIT_SKILLS) {
+    const skillDir = resolve(mindSkillsDir(dir), skillId);
+    if (existsSync(skillDir)) continue;
+    try {
+      const shared = await getSharedSkill(skillId);
+      if (shared) {
+        await installSkill("volute", dir, skillId);
+        slog.info(`installed missing spirit skill: ${skillId}`);
+      }
+    } catch (err) {
+      slog.warn(`failed to install spirit skill ${skillId}`, log.errorData(err));
+    }
+  }
+
+  // Ensure tending schedule exists (handles upgrades)
+  try {
+    if (ensureTendingSchedule(dir)) {
+      slog.info("added tending schedule to spirit");
+    }
+  } catch (err) {
+    slog.warn("failed to add tending schedule to spirit config", log.errorData(err));
   }
 
   slog.info("spirit template synced");

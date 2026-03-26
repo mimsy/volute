@@ -636,6 +636,55 @@ export function getAllDiscoveredExtensions(): DiscoveredExtensionInfo[] {
   }));
 }
 
+export type DetailedExtensionInfo = DiscoveredExtensionInfo & {
+  skills?: string[];
+  commands?: Record<string, ExtensionCommandInfo>;
+  mindSections?: MindSection[];
+  systemSection?: SystemSection;
+  standardSkill?: boolean;
+};
+
+export function getAllDiscoveredExtensionsDetailed(): DetailedExtensionInfo[] {
+  const basic = getAllDiscoveredExtensions();
+  const loadedMap = new Map(loaded.map((l) => [l.manifest.id, l.manifest]));
+
+  return basic.map((ext) => {
+    const manifest = loadedMap.get(ext.id);
+    if (!manifest) return ext;
+
+    const detail: DetailedExtensionInfo = { ...ext };
+
+    // Get skill names from skillsDir
+    const skillsDir = resolveSkillsDir(manifest);
+    if (skillsDir) {
+      try {
+        detail.skills = readdirSync(skillsDir, { withFileTypes: true })
+          .filter((d) => d.isDirectory())
+          .map((d) => d.name);
+      } catch (err: unknown) {
+        if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+          log.warn(`failed to read skills dir for ${ext.id}`, log.errorData(err));
+        }
+      }
+    }
+
+    // Commands
+    if (manifest.commands) {
+      detail.commands = {};
+      for (const [name, cmd] of Object.entries(manifest.commands)) {
+        detail.commands[name] = toCommandInfo(cmd);
+      }
+    }
+
+    // UI sections
+    if (manifest.ui?.mindSections) detail.mindSections = manifest.ui.mindSections;
+    if (manifest.ui?.systemSection) detail.systemSection = manifest.ui.systemSection;
+    if (manifest.standardSkill) detail.standardSkill = true;
+
+    return detail;
+  });
+}
+
 export function setExtensionEnabled(id: string, enabled: boolean): void {
   if (!discovered.find((d) => d.manifest.id === id)) {
     throw new Error(`Extension "${id}" not found`);

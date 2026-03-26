@@ -1,8 +1,24 @@
 import { subcommands } from "../lib/command.js";
 import { daemonFetch } from "../lib/daemon-client.js";
 
-async function listExtensions() {
-  const res = await daemonFetch("/api/extensions/all");
+type ExtensionListItem = {
+  id: string;
+  name: string;
+  version: string;
+  description?: string;
+  source: string;
+  enabled: boolean;
+  skills?: string[];
+  commands?: Record<string, { description: string }>;
+  mindSections?: Array<{ label: string }>;
+  systemSection?: { label: string };
+  standardSkill?: boolean;
+};
+
+async function listExtensions(args: string[]) {
+  const detail = args.includes("--detail");
+  const url = detail ? "/api/extensions/all?detail=true" : "/api/extensions/all";
+  const res = await daemonFetch(url);
   if (!res.ok) {
     const body = (await res.json().catch(() => ({ error: "Unknown error" }))) as {
       error: string;
@@ -11,14 +27,7 @@ async function listExtensions() {
     process.exit(1);
   }
 
-  const extensions = (await res.json()) as Array<{
-    id: string;
-    name: string;
-    version: string;
-    description?: string;
-    source: string;
-    enabled: boolean;
-  }>;
+  const extensions = (await res.json()) as ExtensionListItem[];
 
   if (extensions.length === 0) {
     console.log("No extensions found.");
@@ -30,6 +39,24 @@ async function listExtensions() {
     const status = ext.enabled ? "enabled" : "disabled";
     console.log(`  ${ext.id} — ${ext.name} v${ext.version} (${ext.source}, ${status})`);
     if (ext.description) console.log(`    ${ext.description}`);
+
+    if (detail) {
+      if (ext.skills?.length) console.log(`    Skills: ${ext.skills.join(", ")}`);
+      if (ext.commands) {
+        for (const [name, cmd] of Object.entries(ext.commands)) {
+          console.log(`    Command: ${name} — ${cmd.description}`);
+        }
+      }
+      if (ext.mindSections?.length) {
+        console.log(`    Mind tabs: ${ext.mindSections.map((s) => s.label).join(", ")}`);
+      }
+      if (ext.systemSection) {
+        console.log(`    System tab: ${ext.systemSection.label}`);
+      }
+      if (ext.standardSkill) {
+        console.log(`    Auto-installed on new minds`);
+      }
+    }
   }
 }
 
@@ -88,7 +115,7 @@ const cmd = subcommands({
   commands: {
     list: {
       description: "List installed extensions",
-      run: async () => listExtensions(),
+      run: listExtensions,
     },
     install: {
       description: "Install a third-party extension",

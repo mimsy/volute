@@ -468,6 +468,51 @@ const history = new Hono()
     });
 
     return c.json(result);
+  })
+  .get("/activity", async (c) => {
+    const mind = c.req.query("mind");
+    const from = c.req.query("from");
+    const to = c.req.query("to");
+    const limit = Math.min(Math.max(parseInt(c.req.query("limit") ?? "100", 10) || 100, 1), 500);
+
+    const db = await getDb();
+    const conditions = [];
+    if (mind) conditions.push(eq(activity.mind, mind));
+    if (from) conditions.push(gte(activity.created_at, from));
+    if (to) conditions.push(sql`${activity.created_at} <= ${to}`);
+
+    // Exclude noise events (mind lifecycle, brain presence)
+    conditions.push(
+      sql`${activity.type} NOT IN ('mind_started', 'mind_stopped', 'mind_active', 'mind_idle', 'mind_done', 'mind_sleeping', 'mind_waking', 'brain_online', 'brain_offline')`,
+    );
+
+    const rows = await db
+      .select({
+        id: activity.id,
+        type: activity.type,
+        mind: activity.mind,
+        summary: activity.summary,
+        metadata: activity.metadata,
+        created_at: activity.created_at,
+      })
+      .from(activity)
+      .where(conditions.length > 0 ? and(...conditions) : undefined)
+      .orderBy(desc(activity.created_at))
+      .limit(limit);
+
+    const result = rows.map((r) => {
+      let metadata: Record<string, unknown> | null = null;
+      if (r.metadata) {
+        try {
+          metadata = JSON.parse(r.metadata);
+        } catch (err) {
+          log.debug(`malformed activity metadata for id ${r.id}`, log.errorData(err));
+        }
+      }
+      return { ...r, metadata };
+    });
+
+    return c.json(result);
   });
 
 export default history;

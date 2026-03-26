@@ -14,16 +14,15 @@ import { type AuthEnv, requireSelf } from "../middleware/auth.js";
 
 const slog = log.child("schedules");
 
-function readSchedules(name: string): Schedule[] {
-  return readVoluteConfig(mindDir(name))?.schedules ?? [];
+function readSchedules(dir: string): Schedule[] {
+  return readVoluteConfig(dir)?.schedules ?? [];
 }
 
-function writeSchedules(name: string, schedules: Schedule[]): void {
-  const dir = mindDir(name);
+function writeSchedules(name: string, dir: string, schedules: Schedule[]): void {
   const config = readVoluteConfig(dir) ?? {};
   config.schedules = schedules.length > 0 ? schedules : undefined;
   writeVoluteConfig(dir, config);
-  getScheduler().loadSchedules(name);
+  getScheduler().loadSchedules(name, dir);
   getSleepManagerIfReady()?.invalidateSleepConfig(name);
   fireWebhook({
     event: "schedule_changed",
@@ -36,12 +35,14 @@ const app = new Hono<AuthEnv>()
   // Clock status — combined sleep state + upcoming schedules
   .get("/:name/clock/status", async (c) => {
     const name = c.req.param("name");
-    if (!(await findMind(name))) return c.json({ error: "Mind not found" }, 404);
+    const entry = await findMind(name);
+    if (!entry) return c.json({ error: "Mind not found" }, 404);
+    const dir = entry.dir ?? mindDir(name);
 
     const sleepManager = getSleepManagerIfReady();
     const sleepState = sleepManager?.getState(name) ?? null;
     const sleepConfig = sleepManager?.getSleepConfig(name) ?? null;
-    const schedules = readSchedules(name);
+    const schedules = readSchedules(dir);
 
     // Compute upcoming and previous schedule fires
     const now = new Date();
@@ -106,8 +107,9 @@ const app = new Hono<AuthEnv>()
   // Get sleep config
   .get("/:name/sleep/config", async (c) => {
     const name = c.req.param("name");
-    if (!(await findMind(name))) return c.json({ error: "Mind not found" }, 404);
-    const config = readVoluteConfig(mindDir(name));
+    const entry = await findMind(name);
+    if (!entry) return c.json({ error: "Mind not found" }, 404);
+    const config = readVoluteConfig(entry.dir ?? mindDir(name));
     return c.json(config?.sleep ?? { enabled: false });
   })
   // Update sleep config
@@ -140,7 +142,7 @@ const app = new Hono<AuthEnv>()
       }
     }
 
-    const dir = mindDir(name);
+    const dir = entry.dir ?? mindDir(name);
     const config = readVoluteConfig(dir) ?? {};
     const sleep = config.sleep ?? {};
 
@@ -158,8 +160,9 @@ const app = new Hono<AuthEnv>()
   // List schedules
   .get("/:name/schedules", async (c) => {
     const name = c.req.param("name");
-    if (!(await findMind(name))) return c.json({ error: "Mind not found" }, 404);
-    return c.json(readSchedules(name));
+    const entry = await findMind(name);
+    if (!entry) return c.json({ error: "Mind not found" }, 404);
+    return c.json(readSchedules(entry.dir ?? mindDir(name)));
   })
   // Add schedule
   .post("/:name/schedules", requireSelf(), async (c) => {
@@ -205,7 +208,8 @@ const app = new Hono<AuthEnv>()
       );
     }
 
-    const schedules = readSchedules(name);
+    const dir = entry.dir ?? mindDir(name);
+    const schedules = readSchedules(dir);
     const id = body.id;
 
     if (schedules.some((s) => s.id === id)) {
@@ -220,16 +224,18 @@ const app = new Hono<AuthEnv>()
     if (body.channel) schedule.channel = body.channel;
     if (body.whileSleeping) schedule.whileSleeping = body.whileSleeping;
     schedules.push(schedule);
-    writeSchedules(name, schedules);
+    writeSchedules(name, dir, schedules);
     return c.json({ ok: true, id }, 201);
   })
   // Update schedule
   .put("/:name/schedules/:id", requireSelf(), async (c) => {
     const name = c.req.param("name");
     const id = c.req.param("id");
-    if (!(await findMind(name))) return c.json({ error: "Mind not found" }, 404);
+    const entry = await findMind(name);
+    if (!entry) return c.json({ error: "Mind not found" }, 404);
+    const dir = entry.dir ?? mindDir(name);
 
-    const schedules = readSchedules(name);
+    const schedules = readSchedules(dir);
     const idx = schedules.findIndex((s) => s.id === id);
     if (idx === -1) return c.json({ error: "Schedule not found" }, 404);
 
@@ -274,22 +280,24 @@ const app = new Hono<AuthEnv>()
     if (body.whileSleeping !== undefined)
       schedules[idx].whileSleeping = body.whileSleeping || undefined;
 
-    writeSchedules(name, schedules);
+    writeSchedules(name, dir, schedules);
     return c.json({ ok: true });
   })
   // Delete schedule
   .delete("/:name/schedules/:id", requireSelf(), async (c) => {
     const name = c.req.param("name");
     const id = c.req.param("id");
-    if (!(await findMind(name))) return c.json({ error: "Mind not found" }, 404);
+    const entry = await findMind(name);
+    if (!entry) return c.json({ error: "Mind not found" }, 404);
+    const dir = entry.dir ?? mindDir(name);
 
-    const schedules = readSchedules(name);
+    const schedules = readSchedules(dir);
     const filtered = schedules.filter((s) => s.id !== id);
     if (filtered.length === schedules.length) {
       return c.json({ error: "Schedule not found" }, 404);
     }
 
-    writeSchedules(name, filtered);
+    writeSchedules(name, dir, filtered);
     return c.json({ ok: true });
   })
   // Webhook endpoint

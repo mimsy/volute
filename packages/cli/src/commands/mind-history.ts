@@ -5,6 +5,15 @@ import { daemonFetch } from "../lib/daemon-client.js";
 import { compactTime, isCompact } from "../lib/format-cli.js";
 import { resolveMindName } from "../lib/resolve-mind-name.js";
 
+type ActivityRow = {
+  id: number;
+  type: string;
+  mind: string;
+  summary: string;
+  metadata: Record<string, unknown> | null;
+  created_at: string;
+};
+
 type HistoryRow = {
   type: string;
   channel: string | null;
@@ -143,17 +152,54 @@ function formatRowCompact(row: HistoryRow): string {
   }
 }
 
+/**
+ * Convert a timestamp to a period key matching the summarizer's format.
+ * Uses local time to match getPeriodKey() in the daemon summarizer.
+ */
+function periodKeyFromTimestamp(dateStr: string, period: string): string {
+  const d = new Date(normalizeTimestamp(dateStr));
+  switch (period) {
+    case "hour": {
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, "0");
+      const day = String(d.getDate()).padStart(2, "0");
+      const h = String(d.getHours()).padStart(2, "0");
+      return `${y}-${m}-${day}T${h}`;
+    }
+    case "day": {
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, "0");
+      const day = String(d.getDate()).padStart(2, "0");
+      return `${y}-${m}-${day}`;
+    }
+    case "week": {
+      // ISO week calculation — matches daemon summarizer's getISOWeekKey()
+      const local = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+      local.setDate(local.getDate() + 4 - (local.getDay() || 7));
+      const yearStart = new Date(local.getFullYear(), 0, 1);
+      const weekNum = Math.ceil(((local.getTime() - yearStart.getTime()) / 86400000 + 1) / 7);
+      return `${local.getFullYear()}-W${String(weekNum).padStart(2, "0")}`;
+    }
+    case "month": {
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, "0");
+      return `${y}-${m}`;
+    }
+    default: {
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, "0");
+      const day = String(d.getDate()).padStart(2, "0");
+      return `${y}-${m}-${day}`;
+    }
+  }
+}
+
 const PERIOD_LABELS: Record<string, string> = {
   hour: "Hourly",
   day: "Daily",
   week: "Weekly",
   month: "Monthly",
 };
-
-function formatMetaSummary(row: SummaryRow): string {
-  const label = PERIOD_LABELS[row.period] ?? row.period;
-  return `\n=== ${row.period_key} (${label}) ===\n${row.content ?? ""}\n`;
-}
 
 function getDefaultRange(period: string): string {
   const now = new Date();
@@ -222,11 +268,22 @@ const cmd = command({
       if (flags.to) params.set("to", flags.to);
       if (flags.limit) params.set("limit", flags.limit);
 
-      const res = await daemonFetch(`/api/v1/history/summaries?${params}`);
-      if (!res.ok) {
-        let errorMsg = `Failed to get summaries: ${res.status}`;
+      // Fetch summaries and activity in parallel
+      const activityParams = new URLSearchParams();
+      activityParams.set("mind", name);
+      if (flags.from) activityParams.set("from", flags.from);
+      else activityParams.set("from", getDefaultRange(flags.period));
+      if (flags.to) activityParams.set("to", flags.to);
+
+      const [summaryRes, activityRes] = await Promise.all([
+        daemonFetch(`/api/v1/history/summaries?${params}`),
+        daemonFetch(`/api/v1/history/activity?${activityParams}`),
+      ]);
+
+      if (!summaryRes.ok) {
+        let errorMsg = `Failed to get summaries: ${summaryRes.status}`;
         try {
-          const data = (await res.json()) as { error?: string };
+          const data = (await summaryRes.json()) as { error?: string };
           if (data.error) errorMsg = data.error;
         } catch {
           // JSON body may not be present; fall through to status-code message
@@ -235,10 +292,45 @@ const cmd = command({
         process.exit(1);
       }
 
-      const rows = (await res.json()) as SummaryRow[];
+      const rows = (await summaryRes.json()) as SummaryRow[];
+      let activities: ActivityRow[] = [];
+      if (activityRes.ok) {
+        activities = (await activityRes.json()) as ActivityRow[];
+      } else {
+        console.error(
+          `Warning: could not fetch activity data (${activityRes.status}), showing summaries only`,
+        );
+      }
+
+      // Group activity by period key
+      const activityByPeriod = new Map<string, ActivityRow[]>();
+      for (const act of activities) {
+        const key = periodKeyFromTimestamp(act.created_at, flags.period);
+        if (!activityByPeriod.has(key)) activityByPeriod.set(key, []);
+        activityByPeriod.get(key)!.push(act);
+      }
+
       // Display in chronological order (API returns newest first)
-      for (const row of rows.reverse()) {
-        console.log(formatMetaSummary(row));
+      // Collect all period keys from both summaries and activities
+      const allKeys = new Set([...rows.map((r) => r.period_key), ...activityByPeriod.keys()]);
+      const sortedKeys = [...allKeys].sort();
+
+      const summaryByKey = new Map(rows.map((r) => [r.period_key, r]));
+      for (const key of sortedKeys) {
+        const summary = summaryByKey.get(key);
+        const periodActivities = activityByPeriod.get(key);
+
+        const label = PERIOD_LABELS[flags.period] ?? flags.period;
+        console.log(`\n=== ${key} (${label}) ===`);
+        if (summary?.content) console.log(summary.content);
+        if (periodActivities?.length) {
+          console.log("\nActivity:");
+          for (const act of periodActivities) {
+            const time = new Date(normalizeTimestamp(act.created_at)).toLocaleTimeString();
+            console.log(`  [${time}] ${act.summary}`);
+          }
+        }
+        console.log();
       }
       return;
     }
