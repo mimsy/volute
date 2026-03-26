@@ -1,12 +1,43 @@
 <script lang="ts">
 import type { ConversationWithParticipants, Mind } from "@volute/api";
-import { Icon } from "@volute/ui";
+import { Icon, Modal, tooltip as tooltipAction } from "@volute/ui";
 import { fetchMinds, startMind, stopMind } from "../../lib/client";
 import { mindDotColor } from "../../lib/format";
 import type { Selection } from "../../lib/navigate";
+import {
+  cancelReauth,
+  oauthReauth,
+  resetReauth,
+  startReauth,
+  submitCode,
+} from "../../lib/oauth-reauth.svelte";
 import { activeMinds, data, unreadCounts } from "../../lib/stores.svelte";
 import ProfileHoverCard from "../ProfileHoverCard.svelte";
 import ConversationList from "./ConversationList.svelte";
+
+let hasOauthErrors = $derived(data.oauthErrors.length > 0);
+let showReauthModal = $state(false);
+
+function handleOauthWarningClick(e: MouseEvent) {
+  e.stopPropagation();
+  if (data.oauthErrors.length === 1) {
+    // Single provider — start re-auth directly
+    const p = data.oauthErrors[0];
+    startReauth(p.id, p.oauthName ?? p.id);
+  } else {
+    showReauthModal = true;
+  }
+}
+
+function handleReauthProvider(id: string, name?: string) {
+  showReauthModal = false;
+  startReauth(id, name ?? id);
+}
+
+function handleReauthDone() {
+  resetReauth();
+  showReauthModal = false;
+}
 
 let {
   minds,
@@ -192,6 +223,13 @@ let isSystemActive = $derived(
             <svg viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="3" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="8" cy="13" r="1.5"/></svg>
           </button>
         </div>
+        {#if hasOauthErrors}
+          <button
+            class="oauth-warning-btn"
+            use:tooltipAction={{ text: "AI provider credentials expired — click to re-authenticate", position: "right" }}
+            onclick={handleOauthWarningClick}
+          >!</button>
+        {/if}
       </div>
     </div>
 
@@ -341,6 +379,56 @@ let isSystemActive = $derived(
       </button>
     {/if}
   </div>
+{/if}
+
+<!-- OAuth re-auth: provider picker (multiple unhealthy providers) -->
+{#if showReauthModal}
+  <Modal onClose={() => { showReauthModal = false; }} size="360px" title="Re-authenticate">
+    <div class="reauth-body">
+      <p class="reauth-desc">The following providers need re-authentication:</p>
+      {#each data.oauthErrors as provider}
+        <button class="reauth-provider-btn" onclick={() => handleReauthProvider(provider.id, provider.oauthName)}>
+          <span class="reauth-provider-name">{provider.oauthName ?? provider.id}</span>
+          {#if provider.oauthError}
+            <span class="reauth-provider-error">{provider.oauthError}</span>
+          {/if}
+        </button>
+      {/each}
+    </div>
+  </Modal>
+{/if}
+
+<!-- OAuth re-auth: in-progress -->
+{#if oauthReauth.active}
+  <Modal onClose={() => { if (!oauthReauth.polling) handleReauthDone(); }} size="400px" title="Re-authenticate {oauthReauth.providerName}">
+    <div class="reauth-body">
+      {#if oauthReauth.success}
+        <p class="reauth-msg reauth-msg-success">Credentials refreshed successfully.</p>
+        <button class="reauth-btn reauth-btn-primary" onclick={handleReauthDone}>Done</button>
+      {:else if oauthReauth.error && !oauthReauth.polling}
+        <p class="reauth-msg reauth-msg-error">{oauthReauth.error}</p>
+        <button class="reauth-btn" onclick={handleReauthDone}>Close</button>
+      {:else}
+        <p class="reauth-msg">Complete sign-in in the browser window that opened.</p>
+        {#if oauthReauth.needsCode || oauthReauth.waitingForCode}
+          <p class="reauth-desc">If the browser is on another machine, paste the redirect URL here:</p>
+          <input
+            type="text"
+            class="reauth-input"
+            bind:value={oauthReauth.codeInput}
+            placeholder="Paste redirect URL"
+            onpaste={() => {
+              setTimeout(() => {
+                if (/^https?:\/\//.test(oauthReauth.codeInput.trim())) submitCode();
+              });
+            }}
+          />
+        {/if}
+        <span class="reauth-dim">Waiting for authorization...</span>
+        <button class="reauth-btn" onclick={() => { cancelReauth(); }}>Cancel</button>
+      {/if}
+    </div>
+  </Modal>
 {/if}
 
 <style>
@@ -619,5 +707,123 @@ let isSystemActive = $derived(
       width: 8px;
       height: 8px;
     }
+  }
+
+  /* OAuth warning */
+  .oauth-warning-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    background: none;
+    color: var(--yellow);
+    flex-shrink: 0;
+    cursor: pointer;
+    margin-right: 8px;
+    font-size: 13px;
+    font-weight: 700;
+    line-height: 1;
+    animation: pulse-warning 2s ease-in-out infinite;
+  }
+
+  .oauth-warning-btn:hover {
+    color: var(--yellow-bright, var(--yellow));
+  }
+
+  @keyframes pulse-warning {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+  }
+
+  /* Re-auth modals */
+  .reauth-body {
+    padding: 16px 20px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .reauth-desc {
+    font-size: 13px;
+    color: var(--text-2);
+    margin: 0;
+  }
+
+  .reauth-msg {
+    font-size: 14px;
+    color: var(--text-1);
+    margin: 0;
+  }
+
+  .reauth-msg-success { color: var(--green, var(--text-0)); }
+  .reauth-msg-error { color: var(--red, var(--text-0)); }
+
+  .reauth-dim {
+    font-size: 13px;
+    color: var(--text-2);
+  }
+
+  .reauth-provider-btn {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 10px 12px;
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    cursor: pointer;
+    text-align: left;
+    transition: border-color 0.15s;
+  }
+
+  .reauth-provider-btn:hover {
+    border-color: var(--border-bright);
+  }
+
+  .reauth-provider-name {
+    font-size: 14px;
+    color: var(--text-0);
+    font-weight: 500;
+  }
+
+  .reauth-provider-error {
+    font-size: 12px;
+    color: var(--text-2);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .reauth-btn {
+    padding: 6px 16px;
+    border-radius: var(--radius);
+    font-size: 13px;
+    cursor: pointer;
+    align-self: flex-end;
+    background: var(--bg-2);
+    color: var(--text-1);
+    border: 1px solid var(--border);
+  }
+
+  .reauth-btn:hover {
+    border-color: var(--border-bright);
+  }
+
+  .reauth-btn-primary {
+    background: var(--accent);
+    color: var(--bg-0);
+    border-color: var(--accent);
+  }
+
+  .reauth-input {
+    width: 100%;
+    padding: 8px 10px;
+    background: var(--bg-1);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text-0);
+    font-size: 13px;
+    box-sizing: border-box;
   }
 </style>

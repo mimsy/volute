@@ -464,6 +464,8 @@ export type AiProvider = {
   usesCallbackServer: boolean;
   configured: boolean;
   authMethod: "api_key" | "oauth" | "env_var" | null;
+  oauthHealthy?: boolean;
+  oauthError?: string;
 };
 
 export type AiModel = {

@@ -130,6 +130,12 @@ export function createVoluteServer(options: {
   const { router, port, name, version } = options;
 
   const server = createServer(async (req, res) => {
+    // Prevent EPIPE crashes when the client disconnects before the response is written
+    res.on("error", (err: NodeJS.ErrnoException) => {
+      if (err.code === "EPIPE" || err.code === "ECONNRESET") return;
+      log("server", "response error:", err);
+    });
+
     const url = new URL(req.url!, "http://localhost");
 
     if (req.method === "GET" && url.pathname === "/health") {

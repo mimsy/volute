@@ -2,10 +2,17 @@ import type { ActivityItem, ConversationWithParticipants, Mind } from "@volute/a
 import type { SSEEvent } from "@volute/api/events";
 import { SvelteMap, SvelteSet } from "svelte/reactivity";
 import { type AuthUser, fetchMe, logout } from "./auth";
-import { fetchMinds, fetchSystemInfo, markAsRead } from "./client";
+import {
+  type AiProvider,
+  fetchAiProviders,
+  fetchMinds,
+  fetchSystemInfo,
+  markAsRead,
+} from "./client";
 import { connect, connectionState, disconnect, subscribe } from "./connection.svelte";
 import { type ExtensionInfo, fetchExtensions } from "./extensions";
 import { showNotification } from "./notifications";
+import { updateOauthErrors } from "./oauth-reauth.svelte";
 
 // --- Auth ---
 
@@ -83,6 +90,7 @@ export const data = $state({
   conversations: [] as ConversationWithParticipants[],
   activity: [] as ActivityItem[],
   extensions: [] as ExtensionInfo[],
+  oauthErrors: [] as AiProvider[],
   connectionOk: true,
 });
 
@@ -150,6 +158,10 @@ function handleSSEEvent(event: SSEEvent) {
       .catch((err) => {
         console.warn("[stores] failed to refresh extensions:", err);
       });
+    // AI provider health — check for OAuth failures
+    fetchAiProviders()
+      .then(updateOauthErrors)
+      .catch(() => {});
   } else if (event.event === "activity") {
     const { event: _, ...item } = event;
     data.activity = [item as ActivityItem, ...data.activity].slice(0, 50);
@@ -245,16 +257,27 @@ function handleSSEEvent(event: SSEEvent) {
 }
 
 let unsubscribeSSE: (() => void) | null = null;
+let oauthHealthTimer: ReturnType<typeof setInterval> | null = null;
 
 export function connectActivity() {
   disconnectActivity();
   unsubscribeSSE = subscribe(handleSSEEvent);
   connect();
+  // Poll OAuth health every 60s to pick up credential failures
+  oauthHealthTimer = setInterval(() => {
+    fetchAiProviders()
+      .then(updateOauthErrors)
+      .catch(() => {});
+  }, 60_000);
 }
 
 export function disconnectActivity() {
   unsubscribeSSE?.();
   unsubscribeSSE = null;
+  if (oauthHealthTimer) {
+    clearInterval(oauthHealthTimer);
+    oauthHealthTimer = null;
+  }
   disconnect();
 }
 
