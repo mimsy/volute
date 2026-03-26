@@ -3,6 +3,7 @@ process.noDeprecation = true;
 
 import { homedir } from "node:os";
 import { resolve } from "node:path";
+import type { ExtensionCommandInfo } from "@volute/daemon/lib/extensions.js";
 
 if (!process.env.VOLUTE_HOME) {
   process.env.VOLUTE_HOME = resolve(homedir(), ".volute");
@@ -163,19 +164,85 @@ use --mind <name> or VOLUTE_MIND env var to identify the mind.`);
       if (res.ok) {
         const extCommands = (await res.json()) as Record<
           string,
-          { commands: Record<string, { description: string; usage?: string }> }
+          { commands: Record<string, ExtensionCommandInfo> }
         >;
         if (command && command in extCommands) {
           isExtensionCommand = true;
-          const subcommand = args[0];
           const ext = extCommands[command];
-          if (!subcommand || !(subcommand in ext.commands)) {
-            console.log(`volute ${command} — ${Object.keys(ext.commands).join(", ")}\n`);
-            for (const [name, meta] of Object.entries(ext.commands)) {
-              console.log(`  ${name.padEnd(12)} ${meta.description}`);
+          const subcommand = args[0];
+          const wantsHelp = args.includes("--help") || args.includes("-h");
+
+          // Group help: no subcommand, or --help at group level
+          if (!subcommand || (wantsHelp && !(subcommand in ext.commands))) {
+            console.log(`Manage ${command}\n`);
+            console.log(`Usage: volute ${command} <command> [options]\n`);
+            console.log("Commands:");
+            const entries = Object.entries(ext.commands);
+            const nameWidth = Math.max(...entries.map(([k]) => k.length));
+            for (const [name, meta] of entries) {
+              console.log(`  ${name.padEnd(nameWidth + 2)}  ${meta.description}`);
             }
+            console.log(`\nUse --mind <name> or VOLUTE_MIND to specify the mind.\n`);
+            process.exit(subcommand ? 0 : 1);
+          }
+
+          // Command help: --help on a specific subcommand
+          if (wantsHelp && subcommand in ext.commands) {
+            const meta = ext.commands[subcommand];
+            const argParts = (meta.args ?? []).map((a) =>
+              a.required ? `<${a.name}>` : `[${a.name}]`,
+            );
+            const flagEntries = Object.entries(meta.flags ?? {});
+            const flagPart = flagEntries.length > 0 ? " [options]" : "";
+            const argStr = argParts.length > 0 ? ` ${argParts.join(" ")}` : "";
+
+            console.log(`${meta.description}\n`);
+            console.log(`Usage: volute ${command} ${subcommand}${argStr}${flagPart}\n`);
+
+            if (meta.args && meta.args.length > 0) {
+              console.log("Arguments:");
+              const w = Math.max(...meta.args.map((a) => a.name.length + 2));
+              for (const a of meta.args) {
+                const label = a.required ? `<${a.name}>` : `[${a.name}]`;
+                console.log(`  ${label.padEnd(w + 2)}  ${a.description}`);
+              }
+              console.log("");
+            }
+
+            if (flagEntries.length > 0) {
+              console.log("Options:");
+              const w = Math.max(
+                ...flagEntries.map(([k, v]) => {
+                  const hint =
+                    v.type === "boolean" ? "" : ` <${v.type === "string" ? "value" : "n"}>`;
+                  return `--${k}${hint}`.length;
+                }),
+              );
+              for (const [key, val] of flagEntries) {
+                const hint =
+                  val.type === "boolean" ? "" : ` <${val.type === "string" ? "value" : "n"}>`;
+                const flag = `--${key}${hint}`;
+                console.log(`  ${flag.padEnd(w + 2)}  ${val.description}`);
+              }
+              console.log("");
+            }
+
+            if (meta.examples && meta.examples.length > 0) {
+              console.log("Examples:");
+              for (const ex of meta.examples) {
+                console.log(`  ${ex}`);
+              }
+              console.log("");
+            }
+
             process.exit(0);
           }
+
+          if (!(subcommand in ext.commands)) {
+            console.error(`Unknown command: volute ${command} ${subcommand}`);
+            process.exit(1);
+          }
+
           // Extract --mind flag from args (same convention as other mind-scoped commands)
           const cmdArgs = args.slice(1);
           let mind = process.env.VOLUTE_MIND;

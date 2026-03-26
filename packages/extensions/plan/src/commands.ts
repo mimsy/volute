@@ -9,12 +9,6 @@ import {
   startPlan,
 } from "./plans.js";
 
-function getFlag(args: string[], flag: string): string | undefined {
-  const idx = args.indexOf(flag);
-  if (idx !== -1 && args[idx + 1]) return args[idx + 1];
-  return undefined;
-}
-
 // Announce to the #system channel via the extension context.
 // Falls back gracefully when context is unavailable (tests).
 async function announceToSystem(
@@ -35,8 +29,11 @@ export function createCommands(): Record<string, ExtensionCommand> {
   return {
     start: {
       description: "Start a new system plan",
-      usage: 'volute plan start "title" "description"  (description can be piped via stdin)',
-      handler: async (args, ctx) => {
+      args: [
+        { name: "title", required: true, description: "Plan title" },
+        { name: "description", description: "Plan description (or pipe via stdin)" },
+      ],
+      handler: async ({ args }, ctx) => {
         if (!ctx.db) return { error: "Plan extension requires a database" };
         const mindName = ctx.mindName;
         if (!mindName) return { error: "No mind specified (use --mind or VOLUTE_MIND)" };
@@ -44,8 +41,8 @@ export function createCommands(): Record<string, ExtensionCommand> {
         const user = await ctx.getUserByUsername(mindName);
         if (!user) return { error: `Unknown mind: ${mindName}` };
 
-        const title = args[0];
-        const description = args[1] ?? ctx.stdin ?? "";
+        const title = args.title;
+        const description = args.description ?? ctx.stdin ?? "";
         if (!title) return { error: 'Usage: volute plan start "title" "description"' };
 
         const plan = await startPlan(ctx.db, ctx.getUser, user.id, title, description);
@@ -63,13 +60,13 @@ export function createCommands(): Record<string, ExtensionCommand> {
 
     message: {
       description: "Post a message about the current plan (sent to #system)",
-      usage: 'volute plan message "today\'s focus: ..."  (content can be piped via stdin)',
-      handler: async (args, ctx) => {
+      args: [{ name: "content", description: "Message content (or pipe via stdin)" }],
+      handler: async ({ args }, ctx) => {
         if (!ctx.db) return { error: "Plan extension requires a database" };
         const mindName = ctx.mindName;
         if (!mindName) return { error: "No mind specified (use --mind or VOLUTE_MIND)" };
 
-        const content = args[0] ?? ctx.stdin;
+        const content = args.content ?? ctx.stdin;
         if (!content) return { error: 'Usage: volute plan message "your message"' };
 
         const plan = await getActivePlan(ctx.db, ctx.getUser);
@@ -97,13 +94,13 @@ export function createCommands(): Record<string, ExtensionCommand> {
 
     log: {
       description: "Log progress on the current plan",
-      usage: 'volute plan log "progress update"  (content can be piped via stdin)',
-      handler: async (args, ctx) => {
+      args: [{ name: "content", description: "Progress update (or pipe via stdin)" }],
+      handler: async ({ args }, ctx) => {
         if (!ctx.db) return { error: "Plan extension requires a database" };
         const mindName = ctx.mindName;
         if (!mindName) return { error: "No mind specified (use --mind or VOLUTE_MIND)" };
 
-        const content = args[0] ?? ctx.stdin;
+        const content = args.content ?? ctx.stdin;
         if (!content) return { error: 'Usage: volute plan log "progress update"' };
 
         const plan = await getActivePlan(ctx.db, ctx.getUser);
@@ -124,8 +121,7 @@ export function createCommands(): Record<string, ExtensionCommand> {
 
     current: {
       description: "Show the current active plan",
-      usage: "volute plan current",
-      handler: async (_args, ctx) => {
+      handler: async (_parsed, ctx) => {
         if (!ctx.db) return { error: "Plan extension requires a database" };
 
         const plan = await getActivePlan(ctx.db, ctx.getUser);
@@ -155,11 +151,13 @@ export function createCommands(): Record<string, ExtensionCommand> {
 
     history: {
       description: "List past plans",
-      usage: "volute plan history [--limit N]",
-      handler: async (args, ctx) => {
+      flags: {
+        limit: { type: "number", description: "Max number of plans to show (default: 10)" },
+      },
+      handler: async ({ flags }, ctx) => {
         if (!ctx.db) return { error: "Plan extension requires a database" };
 
-        const limit = parseInt(getFlag(args, "--limit") ?? "10", 10);
+        const limit = (flags.limit as number | undefined) ?? 10;
         const plans = await listPlans(ctx.db, ctx.getUser, { limit });
 
         if (plans.length === 0) return { output: "No plans found." };
@@ -175,8 +173,8 @@ export function createCommands(): Record<string, ExtensionCommand> {
 
     finish: {
       description: "Finish the current plan with a closing message",
-      usage: 'volute plan finish "closing message"  (message can be piped via stdin)',
-      handler: async (args, ctx) => {
+      args: [{ name: "message", description: "Closing message (or pipe via stdin)" }],
+      handler: async ({ args }, ctx) => {
         if (!ctx.db) return { error: "Plan extension requires a database" };
         const mindName = ctx.mindName;
         if (!mindName) return { error: "No mind specified (use --mind or VOLUTE_MIND)" };
@@ -184,7 +182,7 @@ export function createCommands(): Record<string, ExtensionCommand> {
         const plan = await getActivePlan(ctx.db, ctx.getUser);
         if (!plan) return { error: "No active plan" };
 
-        const message = args[0] ?? ctx.stdin ?? "";
+        const message = args.message ?? ctx.stdin ?? "";
         finishPlan(ctx.db, plan.id, message);
 
         ctx.publishActivity({

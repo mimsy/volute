@@ -10,19 +10,23 @@ import {
   toggleReaction,
 } from "./notes.js";
 
-function getFlag(args: string[], flag: string): string | undefined {
-  const idx = args.indexOf(flag);
-  if (idx !== -1 && args[idx + 1]) return args[idx + 1];
-  return undefined;
-}
-
 export function createCommands(): Record<string, ExtensionCommand> {
   return {
     write: {
       description: "Write a new note",
-      usage:
-        'volute notes write "title" ["content"] [--reply-to author/slug]  (content can be piped via stdin)',
-      handler: async (args, ctx) => {
+      args: [
+        { name: "title", required: true, description: "Note title" },
+        { name: "content", description: "Note content (or pipe via stdin)" },
+      ],
+      flags: {
+        "reply-to": { type: "string", description: "Reply to a note (author/slug)" },
+      },
+      examples: [
+        'volute notes write "My Title" "Content here"',
+        'echo "piped content" | volute notes write "Title"',
+        'volute notes write "Reply" "content" --reply-to author/slug',
+      ],
+      handler: async ({ args, flags }, ctx) => {
         if (!ctx.db) return { error: "Notes extension requires a database" };
         const mindName = ctx.mindName;
         if (!mindName) return { error: "No mind specified (use --mind or VOLUTE_MIND)" };
@@ -30,13 +34,13 @@ export function createCommands(): Record<string, ExtensionCommand> {
         const user = await ctx.getUserByUsername(mindName);
         if (!user) return { error: `Unknown mind: ${mindName}` };
 
-        const title = args[0];
-        const content = args[1] ?? ctx.stdin;
+        const title = args.title;
+        const content = args.content ?? ctx.stdin;
         if (!title || !content)
           return { error: 'Usage: volute notes write "title" "content" [--reply-to author/slug]' };
 
         let replyToId: number | undefined;
-        const replyTo = getFlag(args, "--reply-to");
+        const replyTo = flags["reply-to"] as string | undefined;
         if (replyTo) {
           const id = await resolveNoteId(ctx.db, ctx.getUserByUsername, replyTo);
           if (id === null) return { error: `Reply target not found: ${replyTo}` };
@@ -58,12 +62,15 @@ export function createCommands(): Record<string, ExtensionCommand> {
 
     list: {
       description: "List notes",
-      usage: "volute notes list [--author name] [--limit N]",
-      handler: async (args, ctx) => {
+      flags: {
+        author: { type: "string", description: "Filter by author name" },
+        limit: { type: "number", description: "Max number of notes to show (default: 10)" },
+      },
+      handler: async ({ flags }, ctx) => {
         if (!ctx.db) return { error: "Notes extension requires a database" };
 
-        const author = getFlag(args, "--author");
-        const limit = parseInt(getFlag(args, "--limit") ?? "10", 10);
+        const author = flags.author as string | undefined;
+        const limit = (flags.limit as number | undefined) ?? 10;
 
         const notes = await listNotes(ctx.db, ctx.getUser, ctx.getUserByUsername, {
           authorUsername: author,
@@ -82,10 +89,10 @@ export function createCommands(): Record<string, ExtensionCommand> {
 
     read: {
       description: "Read a note",
-      usage: "volute notes read <author/slug>",
-      handler: async (args, ctx) => {
+      args: [{ name: "ref", required: true, description: "Note reference (author/slug)" }],
+      handler: async ({ args }, ctx) => {
         if (!ctx.db) return { error: "Notes extension requires a database" };
-        const ref = args[0];
+        const ref = args.ref;
         if (!ref || !ref.includes("/")) return { error: "Usage: volute notes read <author/slug>" };
 
         const [author, slug] = ref.split("/", 2);
@@ -114,8 +121,11 @@ export function createCommands(): Record<string, ExtensionCommand> {
 
     comment: {
       description: "Comment on a note",
-      usage: 'volute notes comment <author/slug> ["content"]  (content can be piped via stdin)',
-      handler: async (args, ctx) => {
+      args: [
+        { name: "ref", required: true, description: "Note reference (author/slug)" },
+        { name: "content", description: "Comment text (or pipe via stdin)" },
+      ],
+      handler: async ({ args }, ctx) => {
         if (!ctx.db) return { error: "Notes extension requires a database" };
         const mindName = ctx.mindName;
         if (!mindName) return { error: "No mind specified (use --mind or VOLUTE_MIND)" };
@@ -123,8 +133,8 @@ export function createCommands(): Record<string, ExtensionCommand> {
         const user = await ctx.getUserByUsername(mindName);
         if (!user) return { error: `Unknown mind: ${mindName}` };
 
-        const ref = args[0];
-        const content = args[1] ?? ctx.stdin;
+        const ref = args.ref;
+        const content = args.content ?? ctx.stdin;
         if (!ref || !ref.includes("/") || !content) {
           return { error: 'Usage: volute notes comment <author/slug> "content"' };
         }
@@ -140,8 +150,11 @@ export function createCommands(): Record<string, ExtensionCommand> {
 
     react: {
       description: "React to a note",
-      usage: 'volute notes react <author/slug> "emoji"',
-      handler: async (args, ctx) => {
+      args: [
+        { name: "ref", required: true, description: "Note reference (author/slug)" },
+        { name: "emoji", required: true, description: "Emoji to react with" },
+      ],
+      handler: async ({ args }, ctx) => {
         if (!ctx.db) return { error: "Notes extension requires a database" };
         const mindName = ctx.mindName;
         if (!mindName) return { error: "No mind specified (use --mind or VOLUTE_MIND)" };
@@ -149,8 +162,8 @@ export function createCommands(): Record<string, ExtensionCommand> {
         const user = await ctx.getUserByUsername(mindName);
         if (!user) return { error: `Unknown mind: ${mindName}` };
 
-        const ref = args[0];
-        const emoji = args[1];
+        const ref = args.ref;
+        const emoji = args.emoji;
         if (!ref || !ref.includes("/") || !emoji) {
           return { error: 'Usage: volute notes react <author/slug> "emoji"' };
         }
@@ -166,8 +179,8 @@ export function createCommands(): Record<string, ExtensionCommand> {
 
     delete: {
       description: "Delete your own note",
-      usage: "volute notes delete <author/slug>",
-      handler: async (args, ctx) => {
+      args: [{ name: "ref", required: true, description: "Note reference (author/slug)" }],
+      handler: async ({ args }, ctx) => {
         if (!ctx.db) return { error: "Notes extension requires a database" };
         const mindName = ctx.mindName;
         if (!mindName) return { error: "No mind specified (use --mind or VOLUTE_MIND)" };
@@ -175,7 +188,7 @@ export function createCommands(): Record<string, ExtensionCommand> {
         const user = await ctx.getUserByUsername(mindName);
         if (!user) return { error: `Unknown mind: ${mindName}` };
 
-        const ref = args[0];
+        const ref = args.ref;
         if (!ref || !ref.includes("/"))
           return { error: "Usage: volute notes delete <author/slug>" };
 

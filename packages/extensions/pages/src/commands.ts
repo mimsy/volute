@@ -17,21 +17,20 @@ export function createCommands(): Record<string, ExtensionCommand> {
   return {
     publish: {
       description: "Publish all pages (copy to public snapshot)",
-      usage: 'volute pages publish [--remote] [--shared "message"]',
-      handler: async (args, ctx) => {
+      args: [{ name: "message", description: "Commit message for shared publish" }],
+      flags: {
+        remote: { type: "boolean", description: "Also publish to volute.systems" },
+        shared: { type: "boolean", description: "Publish to shared pages repository" },
+      },
+      handler: async ({ args, flags }, ctx) => {
         const mindName = ctx.mindName;
         if (!mindName) return { error: "No mind specified (use --mind or VOLUTE_MIND)" };
 
-        const shared = args.includes("--shared");
-        if (shared) {
+        if (flags.shared) {
           const mindDir = ctx.getMindDir(mindName);
           if (!mindDir) return { error: `Mind not found: ${mindName}` };
 
-          // Get the commit message from remaining args (skip flags)
-          const message = args
-            .filter((a) => !a.startsWith("--"))
-            .join(" ")
-            .trim();
+          const message = args.message?.trim();
           if (!message)
             return { error: 'Usage: volute pages publish --shared "description of changes"' };
 
@@ -69,7 +68,7 @@ export function createCommands(): Record<string, ExtensionCommand> {
           }
         }
 
-        const remote = args.includes("--remote");
+        const remote = flags.remote as boolean;
 
         const mindDir = ctx.getMindDir(mindName);
         if (!mindDir) return { error: `Mind not found: ${mindName}` };
@@ -171,12 +170,15 @@ export function createCommands(): Record<string, ExtensionCommand> {
 
     list: {
       description: "List pages with publish status",
-      usage: "volute pages list [--all] [--shared]",
-      handler: async (args, ctx) => {
+      flags: {
+        all: { type: "boolean", description: "Show pages from all minds" },
+        shared: { type: "boolean", description: "Show shared pages status" },
+      },
+      handler: async ({ flags }, ctx) => {
         const db = ctx.db;
         if (!db) return { error: "Database not available" };
 
-        const allFlag = args.includes("--all");
+        const allFlag = flags.all as boolean;
         const port = process.env.VOLUTE_DAEMON_PORT || "1618";
 
         if (allFlag) {
@@ -206,7 +208,7 @@ export function createCommands(): Record<string, ExtensionCommand> {
         const mindName = ctx.mindName;
         if (!mindName) return { error: "No mind specified (use --mind or VOLUTE_MIND)" };
 
-        if (args.includes("--shared")) {
+        if (flags.shared) {
           const mindDir = ctx.getMindDir(mindName);
           if (!mindDir) return { error: `Mind not found: ${mindName}` };
 
@@ -246,8 +248,7 @@ export function createCommands(): Record<string, ExtensionCommand> {
 
     pull: {
       description: "Pull latest shared page changes from other minds",
-      usage: "volute pages pull",
-      handler: async (_args, ctx) => {
+      handler: async (_parsed, ctx) => {
         const mindName = ctx.mindName;
         if (!mindName) return { error: "No mind specified (use --mind or VOLUTE_MIND)" };
 
@@ -268,20 +269,17 @@ export function createCommands(): Record<string, ExtensionCommand> {
 
     log: {
       description: "View shared pages commit history",
-      usage: "volute pages log [--limit N]",
-      handler: async (args, ctx) => {
+      flags: {
+        limit: { type: "number", description: "Max number of entries to show (default: 20)" },
+      },
+      handler: async ({ flags }, ctx) => {
         const mindName = ctx.mindName;
         if (!mindName) return { error: "No mind specified (use --mind or VOLUTE_MIND)" };
 
         const mindDir = ctx.getMindDir(mindName);
         if (!mindDir) return { error: `Mind not found: ${mindName}` };
 
-        let limit = 20;
-        const limitIdx = args.indexOf("--limit");
-        if (limitIdx !== -1 && args[limitIdx + 1]) {
-          const n = parseInt(args[limitIdx + 1], 10);
-          if (!Number.isNaN(n) && n > 0) limit = n;
-        }
+        const limit = (flags.limit as number | undefined) ?? 20;
 
         try {
           const output = await pagesLog(mindDir, limit, isolationFrom(ctx));

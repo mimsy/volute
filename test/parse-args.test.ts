@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { parseArgs } from "../packages/cli/src/lib/parse-args.js";
+import { parseCommandArgs } from "../packages/daemon/src/lib/extensions.js";
 
 describe("parseArgs", () => {
   it("extracts positional args", () => {
@@ -122,5 +123,108 @@ describe("parseArgs", () => {
     assert.equal(result.help, true);
     assert.ok(!result.positional.includes("--help"));
     assert.equal(result.flags.name, "bar");
+  });
+});
+
+describe("parseCommandArgs", () => {
+  it("maps positional args to named defs", () => {
+    const result = parseCommandArgs(
+      ["hello", "world"],
+      [
+        { name: "title", required: true, description: "Title" },
+        { name: "content", description: "Content" },
+      ],
+      {},
+    );
+    assert.equal(result.args.title, "hello");
+    assert.equal(result.args.content, "world");
+    assert.deepStrictEqual(result.rest, []);
+  });
+
+  it("collects excess positionals into rest", () => {
+    const result = parseCommandArgs(
+      ["hello", "extra1", "extra2"],
+      [{ name: "title", required: true, description: "Title" }],
+      {},
+    );
+    assert.equal(result.args.title, "hello");
+    assert.deepStrictEqual(result.rest, ["extra1", "extra2"]);
+  });
+
+  it("parses boolean flags", () => {
+    const result = parseCommandArgs(["--shared"], [], {
+      shared: { type: "boolean", description: "Shared" },
+    });
+    assert.equal(result.flags.shared, true);
+  });
+
+  it("defaults boolean flags to false", () => {
+    const result = parseCommandArgs([], [], { shared: { type: "boolean", description: "Shared" } });
+    assert.equal(result.flags.shared, false);
+  });
+
+  it("parses string flags", () => {
+    const result = parseCommandArgs(["--author", "alice"], [], {
+      author: { type: "string", description: "Author" },
+    });
+    assert.equal(result.flags.author, "alice");
+  });
+
+  it("parses number flags", () => {
+    const result = parseCommandArgs(["--limit", "5"], [], {
+      limit: { type: "number", description: "Limit" },
+    });
+    assert.equal(result.flags.limit, 5);
+  });
+
+  it("returns undefined for NaN number flags", () => {
+    const result = parseCommandArgs(["--limit", "abc"], [], {
+      limit: { type: "number", description: "Limit" },
+    });
+    assert.equal(result.flags.limit, undefined);
+  });
+
+  it("handles missing optional args as undefined", () => {
+    const result = parseCommandArgs(
+      ["hello"],
+      [
+        { name: "title", required: true, description: "Title" },
+        { name: "content", description: "Content" },
+      ],
+      {},
+    );
+    assert.equal(result.args.title, "hello");
+    assert.equal(result.args.content, undefined);
+  });
+
+  it("handles flag at end without value", () => {
+    const result = parseCommandArgs(["--limit"], [], {
+      limit: { type: "number", description: "Limit" },
+    });
+    assert.equal(result.flags.limit, undefined);
+  });
+
+  it("mixes positional args and flags", () => {
+    const result = parseCommandArgs(
+      ["my-title", "--limit", "10", "my-content"],
+      [
+        { name: "title", required: true, description: "Title" },
+        { name: "content", description: "Content" },
+      ],
+      { limit: { type: "number", description: "Limit" } },
+    );
+    assert.equal(result.args.title, "my-title");
+    assert.equal(result.args.content, "my-content");
+    assert.equal(result.flags.limit, 10);
+  });
+
+  it("skips unknown flags", () => {
+    const result = parseCommandArgs(
+      ["hello", "--unknown", "--shared"],
+      [{ name: "title", required: true, description: "Title" }],
+      { shared: { type: "boolean", description: "Shared" } },
+    );
+    assert.equal(result.args.title, "hello");
+    assert.equal(result.flags.shared, true);
   });
 });

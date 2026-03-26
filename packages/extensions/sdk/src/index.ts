@@ -1,5 +1,6 @@
 export type {
   ActivityEvent,
+  ArgDef,
   CommandHandler,
   Database,
   ExtensionCommand,
@@ -7,6 +8,7 @@ export type {
   ExtensionFeedItem,
   ExtensionManifest,
   FeedSource,
+  FlagDef,
   MindSection,
   SystemSection,
   User,
