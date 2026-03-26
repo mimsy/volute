@@ -46,7 +46,13 @@ export async function routeOutboundBridge(
 
     if (conv.type === "channel") {
       const channelName = await getChannelName(conversationId);
-      if (channelName) await routeChannelOutbound(channelName, senderName, contentBlocks);
+      if (channelName) {
+        await routeChannelOutbound(channelName, senderName, contentBlocks);
+      } else {
+        log.warn(
+          `channel conversation ${conversationId} has no channel name — skipping bridge outbound`,
+        );
+      }
     } else if (conv.type === "dm") {
       await routeDMOutbound(conversationId, senderName, contentBlocks);
     }

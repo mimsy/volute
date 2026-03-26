@@ -12,6 +12,7 @@ import {
   deleteConversation,
   findDMConversation,
   getChannelByName,
+  getChannelName,
   getConversation,
   getMessages,
   getParticipants,
@@ -320,6 +321,31 @@ describe("channels", () => {
   it("getChannelByName returns null for nonexistent", async () => {
     const found = await getChannelByName("nonexistent-ch");
     assert.equal(found, null);
+  });
+
+  it("getChannelName returns name for channel conversation", async () => {
+    const ch = await createChannel("lookup-test");
+    try {
+      const name = await getChannelName(ch.id);
+      assert.equal(name, "lookup-test");
+    } finally {
+      await deleteConversation(ch.id);
+    }
+  });
+
+  it("getChannelName returns null for DM conversation", async () => {
+    const dm = await createConversation("test-mind", "volute");
+    try {
+      const name = await getChannelName(dm.id);
+      assert.equal(name, null);
+    } finally {
+      await deleteConversation(dm.id);
+    }
+  });
+
+  it("getChannelName returns null for nonexistent conversation", async () => {
+    const name = await getChannelName("nonexistent-conv-id");
+    assert.equal(name, null);
   });
 
   it("listChannels returns only channels", async () => {

@@ -59,7 +59,7 @@ describe("web v1 channels routes", () => {
     const body = await res.json();
     assert.ok(Array.isArray(body));
     assert.equal(body.length, 1);
-    assert.equal(body[0].name, "general");
+    assert.equal(body[0].channel_name, "general");
     assert.equal(body[0].participantCount, 1);
     assert.equal(body[0].isMember, true);
 
@@ -100,7 +100,7 @@ describe("web v1 channels routes", () => {
     assert.equal(res.status, 201);
     const body = await res.json();
     assert.equal(body.type, "channel");
-    assert.equal(body.name, "dev");
+    assert.equal(body.channel_name, "dev");
 
     await deleteConversation(body.id);
   });
@@ -370,7 +370,7 @@ describe("web v1 channels routes", () => {
     });
     assert.equal(res.status, 201);
     const body = await res.json();
-    assert.equal(body.name, "configured");
+    assert.equal(body.channel_name, "configured");
 
     const settings = await getChannelSettings("configured");
     assert.ok(settings);

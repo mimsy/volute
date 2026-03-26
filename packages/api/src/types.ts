@@ -206,7 +206,7 @@ export type ChannelSettings = {
 };
 
 export type ChannelInfo = Conversation & {
-  name: string;
+  channel_name: string;
   participantCount: number;
   isMember: boolean;
   settings?: ChannelSettings;

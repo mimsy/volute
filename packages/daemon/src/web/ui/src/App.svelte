@@ -520,14 +520,13 @@ function handleNewChatCreated(name: string) {
   selection = { kind: "mind", name };
 }
 
-function handleChannelJoined(conv: Conversation & { name?: string; channel_name?: string | null }) {
+function handleChannelJoined(conv: Conversation & { channel_name: string }) {
   activeModal = null;
   selectedModalMind = null;
   closeSidebar();
   reconnectActivity();
-  const channelName = conv.channel_name ?? conv.name;
-  if (conv.type === "channel" && channelName) {
-    selection = { kind: "channel", slug: channelName };
+  if (conv.type === "channel" && conv.channel_name) {
+    selection = { kind: "channel", slug: conv.channel_name };
   }
 }
 
