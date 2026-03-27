@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.36.0](https://github.com/mimsy/volute/compare/volute-v0.35.0...volute-v0.36.0) (2026-03-26)
+
+
+### Features
+
+* add spirit tending system to encourage minds to use extensions ([#282](https://github.com/mimsy/volute/issues/282)) ([2cdf417](https://github.com/mimsy/volute/commit/2cdf417ae6ba678bfad61cc6a655fb9bdac32dde))
+
+
+### Bug Fixes
+
+* clean up leftover conversation columns after migration 0007 ([#283](https://github.com/mimsy/volute/issues/283)) ([6cb64b1](https://github.com/mimsy/volute/commit/6cb64b14d4b54a679128bfb666aaa36804807641))
+* use volute system dir for npm cache in spirit creation ([#279](https://github.com/mimsy/volute/issues/279)) ([f1600fe](https://github.com/mimsy/volute/commit/f1600fe91afadf9ef57b9593cdaa3fd856a4c018))
+
+
+### Performance Improvements
+
+* optimize database queries, add indexes, cache hot paths, async I/O ([#286](https://github.com/mimsy/volute/issues/286)) ([7cff6cf](https://github.com/mimsy/volute/commit/7cff6cff94d1a6cb640e56bba63c9e557909d695))
+
 ## [0.35.0](https://github.com/mimsy/volute/compare/volute-v0.34.0...volute-v0.35.0) (2026-03-26)
 
 
