@@ -16,6 +16,7 @@ export default defineConfig([
     banner: { js: "#!/usr/bin/env node" },
     external: [
       "libsql",
+      "sharp",
       "@mariozechner/pi-ai",
       "@mariozechner/pi-coding-agent",
       "@anthropic-ai/claude-agent-sdk",

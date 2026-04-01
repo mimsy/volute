@@ -4,23 +4,29 @@ import type { ContextBreakdown } from "./volute-server.js";
 
 // Lazy-loaded tokenizer — first call loads the encoding (~100ms), subsequent calls are fast
 let _countTokens: ((text: string) => number) | null = null;
+let _tokenizerLoaded = false;
+
+async function loadTokenizer(): Promise<void> {
+  if (_tokenizerLoaded) return;
+  _tokenizerLoaded = true;
+  try {
+    const mod = await import("@anthropic-ai/tokenizer");
+    _countTokens = mod.countTokens;
+  } catch (err) {
+    // Tokenizer not installed — fall back to character estimation
+    console.warn(
+      "context-breakdown: @anthropic-ai/tokenizer not available, using character estimation:",
+      err instanceof Error ? err.message : err,
+    );
+  }
+}
+
+// Kick off async tokenizer load at import time — by the time countTokens is called, it's ready
+loadTokenizer();
 
 function countTokens(text: string): number {
-  if (!_countTokens) {
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const mod = require("@anthropic-ai/tokenizer");
-      _countTokens = mod.countTokens;
-    } catch (err) {
-      // Tokenizer not installed — fall back to character estimation
-      console.warn(
-        "context-breakdown: @anthropic-ai/tokenizer not available, using character estimation:",
-        err instanceof Error ? err.message : err,
-      );
-      _countTokens = (t: string) => Math.round(t.length / 3.5);
-    }
-  }
-  return _countTokens!(text);
+  if (!_countTokens) return Math.round(text.length / 3.5);
+  return _countTokens(text);
 }
 
 // --- Claude JSONL parser ---
