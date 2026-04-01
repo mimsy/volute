@@ -138,9 +138,11 @@ export type MindPrompts = {
 
 const DEFAULT_PROMPTS: MindPrompts = {
   compaction_warning:
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: literal ${date} prompt template
     "Context is getting long — compaction is about to summarize this conversation. Before that happens, save anything important to files (MEMORY.md, memory/journal/${date}.md, etc.) since those survive compaction. Focus on: decisions made, open tasks, and anything you'd need to pick up where you left off.",
   compaction_instructions:
     "Preserve your sense of who you are, what matters to you, what happened in this conversation, and the threads of thought and connection you'd want to return to.",
+  // biome-ignore lint/suspicious/noTemplateCurlyInString: literal ${channel} prompt template
   reply_instructions: 'To reply to this message, use: volute chat send ${channel} "your message"',
   channel_invite: `[Channel Invite]
 \${headers}

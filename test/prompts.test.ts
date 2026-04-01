@@ -59,6 +59,7 @@ describe("prompts library", () => {
   it("getPrompt substitutes variables", async () => {
     const content = await getPrompt("merge_message", { name: "test-variant" });
     assert.ok(content.includes("test-variant"));
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: testing literal ${name} in prompt
     assert.ok(!content.includes("${name}"));
   });
 
@@ -66,6 +67,7 @@ describe("prompts library", () => {
     const db = await getDb();
     await db
       .insert(systemPrompts)
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: testing literal ${name} in prompt
       .values({ key: "merge_message", content: "Merged: ${name} done" });
 
     const content = await getPrompt("merge_message", { name: "my-variant" });
@@ -74,6 +76,7 @@ describe("prompts library", () => {
 
   it("getPrompt preserves unmatched variables", async () => {
     const content = await getPrompt("compaction_warning");
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: testing literal ${date} in prompt
     assert.ok(content.includes("${date}"));
   });
 

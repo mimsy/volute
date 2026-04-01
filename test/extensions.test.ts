@@ -112,7 +112,7 @@ describe("extension asset path traversal", () => {
     const assetsDir = "/path/to/assets";
 
     function isAllowed(filePath: string): boolean {
-      return filePath === assetsDir || filePath.startsWith(assetsDir + "/");
+      return filePath === assetsDir || filePath.startsWith(`${assetsDir}/`);
     }
 
     // Normal file access should be allowed

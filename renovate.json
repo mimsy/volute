@@ -1,0 +1,70 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "schedule": ["before 9am on Monday"],
+  "labels": ["dependencies"],
+  "packageRules": [
+    {
+      "description": "Auto-merge low-risk patches (types, linters, tools)",
+      "matchPackageNames": [
+        "@types/**",
+        "@biomejs/biome",
+        "lefthook",
+        "tsup",
+        "tsx",
+        "dompurify",
+        "marked",
+        "adm-zip",
+        "bcryptjs",
+        "cron-parser",
+        "zod"
+      ],
+      "matchUpdateTypes": ["patch", "minor"],
+      "automerge": true
+    },
+    {
+      "description": "Group Anthropic SDK packages",
+      "groupName": "anthropic",
+      "matchPackageNames": ["@anthropic-ai/**"]
+    },
+    {
+      "description": "Group pi-ai packages",
+      "groupName": "pi-ai",
+      "matchPackageNames": ["@mariozechner/pi-ai", "@mariozechner/pi-coding-agent"]
+    },
+    {
+      "description": "Group Svelte ecosystem",
+      "groupName": "svelte",
+      "matchPackageNames": ["svelte", "@sveltejs/**"]
+    },
+    {
+      "description": "Group Hono packages",
+      "groupName": "hono",
+      "matchPackageNames": ["hono", "@hono/**"]
+    },
+    {
+      "description": "Group Drizzle packages",
+      "groupName": "drizzle",
+      "matchPackageNames": ["drizzle-orm", "drizzle-kit"]
+    },
+    {
+      "description": "Group libsql packages",
+      "groupName": "libsql",
+      "matchPackageNames": ["libsql", "@libsql/**"]
+    },
+    {
+      "description": "Group build tools",
+      "groupName": "build-tools",
+      "matchPackageNames": ["vite", "tsup", "typescript"]
+    }
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "managerFilePatterns": ["templates/.+/package\\.json\\.tmpl$"],
+      "matchStrings": ["\"(?<depName>@?[^\"]+)\":\\s*\"(?<currentValue>[^\"]+)\""],
+      "datasourceTemplate": "npm",
+      "versioningTemplate": "npm"
+    }
+  ]
+}
