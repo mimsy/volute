@@ -2151,6 +2151,7 @@ const app = new Hono<AuthEnv>()
         tokenBudget: config?.tokenBudget ?? null,
         tokenBudgetPeriodMinutes: config?.tokenBudgetPeriodMinutes ?? null,
         compaction: templateConfig.compaction ?? null,
+        unescapeNewlines: config?.unescapeNewlines === true,
       },
     });
   })
@@ -2170,6 +2171,7 @@ const app = new Hono<AuthEnv>()
           .object({ maxContextTokens: z.number().int().positive().nullable().optional() })
           .nullable()
           .optional(),
+        unescapeNewlines: z.boolean().optional(),
       }),
     ),
     async (c) => {
@@ -2209,8 +2211,16 @@ const app = new Hono<AuthEnv>()
           existing.maxThinkingTokens = body.maxThinkingTokens;
         }
       }
+      if (body.unescapeNewlines !== undefined) {
+        existing.unescapeNewlines = body.unescapeNewlines;
+      }
 
       writeVoluteConfig(dir, existing);
+
+      if (body.unescapeNewlines !== undefined) {
+        const { clearEchoTextCache } = await import("../../lib/delivery/echo-text.js");
+        clearEchoTextCache(name);
+      }
 
       // Write template-level settings to config.json
       // Templates read thinking/model/compaction from config.json, not volute.json

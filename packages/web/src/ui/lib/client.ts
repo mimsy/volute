@@ -306,6 +306,7 @@ export function updateMindConfig(
     tokenBudget?: number | null;
     tokenBudgetPeriodMinutes?: number | null;
     compaction?: { maxContextTokens?: number | null } | null;
+    unescapeNewlines?: boolean;
   },
 ): Promise<void> {
   return put(`${V1}/minds/${enc(name)}/config`, updates);
