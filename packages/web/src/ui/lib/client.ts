@@ -501,9 +501,13 @@ export function startAiOAuth(
   return post(`${V1}/system/ai/oauth/start`, { provider });
 }
 
-export function pollAiOAuthStatus(
-  flowId: string,
-): Promise<{ status: "pending" | "complete" | "error"; error?: string; waitingForCode?: boolean }> {
+export function pollAiOAuthStatus(flowId: string): Promise<{
+  status: "pending" | "complete" | "error";
+  error?: string;
+  waitingForCode?: boolean;
+  url?: string;
+  instructions?: string;
+}> {
   return get(`${V1}/system/ai/oauth/status/${enc(flowId)}`);
 }
 

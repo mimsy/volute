@@ -417,9 +417,11 @@ const app = new Hono<AuthEnv>()
 
       const flowId = crypto.randomUUID();
       const needsManualCode = !!oauthProvider.usesCallbackServer;
+      const abortController = new AbortController();
       const flow: OAuthFlow = {
         status: "pending",
         needsManualCode,
+        abortController,
         createdAt: Date.now(),
       };
       oauthFlows.set(flowId, flow);
@@ -448,6 +450,7 @@ const app = new Hono<AuthEnv>()
             return "";
           },
           onManualCodeInput: needsManualCode ? () => promptPromise! : undefined,
+          signal: abortController.signal,
         })
         .then(async (credentials: OAuthCredentials) => {
           saveProviderConfig(provider, { oauth: credentials });
@@ -515,6 +518,8 @@ const app = new Hono<AuthEnv>()
       status: flow.status,
       waitingForCode: flow.waitingForCode,
     };
+    if (flow.url) result.url = flow.url;
+    if (flow.instructions) result.instructions = flow.instructions;
     if (flow.error) result.error = flow.error;
     if (flow.status !== "pending") {
       // Delay deletion so retried polls still get the final status
@@ -589,16 +594,18 @@ type OAuthFlow = {
   needsManualCode?: boolean;
   waitingForCode?: boolean;
   resolveCode?: (code: string) => void;
+  abortController?: AbortController;
   createdAt: number;
 };
 const oauthFlows = new Map<string, OAuthFlow>();
 
-// Clean up abandoned OAuth flows older than 10 minutes
-const OAUTH_FLOW_TTL_MS = 10 * 60 * 1000;
+// Abort and remove stale flows; abort ALL pending flows when starting fresh
 function cleanupOAuthFlows() {
-  const now = Date.now();
   for (const [id, flow] of oauthFlows) {
-    if (now - flow.createdAt > OAUTH_FLOW_TTL_MS) {
+    if (flow.status === "pending") {
+      flow.abortController?.abort();
+    }
+    if (flow.status !== "pending") {
       oauthFlows.delete(id);
     }
   }
