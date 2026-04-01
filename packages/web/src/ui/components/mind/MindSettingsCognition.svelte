@@ -1,6 +1,6 @@
 <script lang="ts">
 import type { MindConfig } from "@volute/api";
-import { ErrorMessage, Input, Select, SettingRow } from "@volute/ui";
+import { ErrorMessage, Input, Select, SettingRow, Toggle } from "@volute/ui";
 import { onMount } from "svelte";
 import { type AiModel, fetchAiModels, fetchMindConfig, updateMindConfig } from "../../lib/client";
 
@@ -18,6 +18,7 @@ let editMaxThinking = $state("");
 let editBudget = $state("");
 let editPeriod = $state("");
 let editCompaction = $state("");
+let unescapeNewlines = $state(false);
 let error = $state("");
 let saving: string | null = $state(null);
 
@@ -72,6 +73,7 @@ function loadEditFields(c: MindConfig) {
     c.config.compaction?.maxContextTokens != null
       ? String(c.config.compaction.maxContextTokens)
       : "";
+  unescapeNewlines = c.config.unescapeNewlines ?? false;
 }
 
 function parseBudgetInt(val: string): number | null {
@@ -132,6 +134,11 @@ function saveCompaction() {
       compaction: { maxContextTokens: parseBudgetInt(editCompaction) },
     }),
   );
+}
+
+function toggleUnescapeNewlines() {
+  unescapeNewlines = !unescapeNewlines;
+  saveField("unescapeNewlines", () => updateMindConfig(name, { unescapeNewlines }));
 }
 
 function handleModelSelect(e: Event) {
@@ -251,6 +258,10 @@ onMount(async () => {
       <span class="setting-hint">tokens</span>
     </SettingRow>
   {/if}
+
+  <SettingRow label="Fix newlines">
+    <Toggle checked={unescapeNewlines} onchange={toggleUnescapeNewlines} label="Unescape \\n in messages" />
+  </SettingRow>
 
   <ErrorMessage message={error} />
 {/if}

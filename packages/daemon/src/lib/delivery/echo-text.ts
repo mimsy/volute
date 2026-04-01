@@ -9,33 +9,38 @@ import { addMessage, findDMConversation, getChannelByName } from "../events/conv
 import { publish as publishMindEvent } from "../events/mind-events.js";
 import { mindDir } from "../mind/registry.js";
 import { readVoluteConfig } from "../mind/volute-config.js";
+import { fixModelEscapes } from "../util/fix-model-escapes.js";
 import log from "../util/logger.js";
 import { recordOutbound } from "./message-delivery.js";
 
 const dlog = log.child("echo-text");
 
-const echoTextCache = new Map<string, boolean>();
+type EchoConfig = { echoText: boolean; unescapeNewlines: boolean };
+const echoConfigCache = new Map<string, EchoConfig>();
 const channelConvCache = new Map<string, string | null>();
+
+function getEchoConfig(mind: string): EchoConfig {
+  const cached = echoConfigCache.get(mind);
+  if (cached) return cached;
+  const config = readVoluteConfig(mindDir(mind));
+  const result: EchoConfig = {
+    echoText: config?.echoText === true,
+    unescapeNewlines: config?.unescapeNewlines === true,
+  };
+  echoConfigCache.set(mind, result);
+  return result;
+}
 
 export function clearEchoTextCache(mind?: string): void {
   if (mind) {
-    echoTextCache.delete(mind);
+    echoConfigCache.delete(mind);
     for (const key of channelConvCache.keys()) {
       if (key.startsWith(`${mind}:`)) channelConvCache.delete(key);
     }
   } else {
-    echoTextCache.clear();
+    echoConfigCache.clear();
     channelConvCache.clear();
   }
-}
-
-function isEchoEnabled(mind: string): boolean {
-  const cached = echoTextCache.get(mind);
-  if (cached !== undefined) return cached;
-  const config = readVoluteConfig(mindDir(mind));
-  const enabled = config?.echoText === true;
-  echoTextCache.set(mind, enabled);
-  return enabled;
 }
 
 async function resolveConversationId(mind: string, channel: string): Promise<string | null> {
@@ -75,7 +80,8 @@ export async function echoTextToChannel(
   turnId: string | undefined,
   textEventId: number | undefined,
 ): Promise<number | undefined> {
-  if (!isEchoEnabled(mind)) return undefined;
+  const cfg = getEchoConfig(mind);
+  if (!cfg.echoText) return undefined;
   if (!text.trim()) return undefined;
 
   const conversationId = await resolveConversationId(mind, channel);
@@ -84,6 +90,7 @@ export async function echoTextToChannel(
     return undefined;
   }
 
+  text = fixModelEscapes(text, cfg.unescapeNewlines);
   const contentBlocks: ContentBlock[] = [{ type: "text", text }];
 
   const message = await addMessage(conversationId, "user", mind, contentBlocks, {

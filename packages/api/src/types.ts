@@ -188,6 +188,7 @@ export type MindConfig = {
     tokenBudget: number | null;
     tokenBudgetPeriodMinutes: number | null;
     compaction: { maxContextTokens?: number | null } | null;
+    unescapeNewlines: boolean;
   };
 };
 

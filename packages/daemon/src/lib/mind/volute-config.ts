@@ -46,6 +46,7 @@ export type VoluteConfig = CognitionConfig & {
   profile?: MindProfile;
   sleep?: SleepConfig;
   echoText?: boolean;
+  unescapeNewlines?: boolean;
   [key: string]: unknown;
 };
 

@@ -23,7 +23,9 @@ import {
   getParticipants,
   isParticipantOrOwner,
 } from "../../../lib/events/conversations.js";
-import { findMind, getBaseName } from "../../../lib/mind/registry.js";
+import { findMind, getBaseName, mindDir } from "../../../lib/mind/registry.js";
+import { readVoluteConfig } from "../../../lib/mind/volute-config.js";
+import { fixModelEscapes } from "../../../lib/util/fix-model-escapes.js";
 import log from "../../../lib/util/logger.js";
 import { buildVoluteSlug } from "../../../lib/util/slugify.js";
 import type { AuthEnv } from "../../middleware/auth.js";
@@ -267,6 +269,17 @@ export const unifiedChatApp = new Hono<AuthEnv>().post(
     if (body.images) {
       for (const img of body.images) {
         contentBlocks.push({ type: "image", media_type: img.media_type, data: img.data });
+      }
+    }
+
+    // Fix common model escape errors in mind-sent messages
+    if (senderIsMind) {
+      const vCfg = readVoluteConfig(mindDir(baseName ?? senderName));
+      const shouldUnescapeNewlines = vCfg?.unescapeNewlines === true;
+      for (const block of contentBlocks) {
+        if (block.type === "text") {
+          block.text = fixModelEscapes(block.text, shouldUnescapeNewlines);
+        }
       }
     }
 
