@@ -44,6 +44,7 @@ export type GlobalConfig = {
   description?: string;
   hostname?: string;
   port?: number;
+  tailscale?: boolean;
   setup?: SetupConfig;
   /** Skill IDs installed by default when a mind is created/sprouted */
   defaultSkills?: string[];

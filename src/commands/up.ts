@@ -73,8 +73,9 @@ const cmd = command({
     const pollHost = hostname === "0.0.0.0" || hostname === "::" ? "localhost" : hostname;
 
     // Resolve Tailscale hostname for display (certs are fetched by the daemon process)
+    const useTailscale = flags.tailscale || config.tailscale;
     let tailscaleHostname: string | undefined;
-    if (flags.tailscale) {
+    if (useTailscale) {
       try {
         const { execFile } = await import("node:child_process");
         const { promisify } = await import("node:util");
@@ -111,7 +112,7 @@ const cmd = command({
 
     if (flags.foreground) {
       const { startDaemon } = await import("@volute/daemon");
-      await startDaemon({ port, hostname, foreground: true, tailscale: flags.tailscale });
+      await startDaemon({ port, hostname, foreground: true, tailscale: useTailscale });
       return;
     }
 
@@ -129,7 +130,7 @@ const cmd = command({
     const logFd = openSync(logFile, "a");
 
     const daemonArgs = [daemonModule, "--port", String(port), "--host", hostname];
-    if (flags.tailscale) daemonArgs.push("--tailscale");
+    if (useTailscale) daemonArgs.push("--tailscale");
     if (flags["no-sandbox"]) daemonArgs.push("--no-sandbox");
 
     const child = spawn(process.execPath, daemonArgs, {
@@ -140,7 +141,7 @@ const cmd = command({
 
     // Poll health endpoint to confirm startup (always HTTP on localhost)
     // When TLS is enabled, the internal HTTP listener is on port + 1
-    const pollPort = flags.tailscale ? port + 1 : port;
+    const pollPort = useTailscale ? port + 1 : port;
     const url = `http://localhost:${pollPort}/api/health`;
     const maxWait = 30_000;
     const start = Date.now();
@@ -150,7 +151,7 @@ const cmd = command({
         const res = await fetch(url);
         if (res.ok) {
           const displayHost = tailscaleHostname ?? hostname;
-          const displayProto = flags.tailscale ? "https" : "http";
+          const displayProto = useTailscale ? "https" : "http";
           console.log(
             `Volute daemon running on ${displayProto}://${displayHost}:${port} (pid ${child.pid})`,
           );

@@ -23,7 +23,11 @@ export const auth = $state({
   localName: null as string | null,
   setupComplete: true,
   setupChecked: false,
-  setupProgress: null as { hasSystem?: boolean; hasAccount?: boolean } | null,
+  setupProgress: null as {
+    hasSystem?: boolean;
+    hasAccount?: boolean;
+    setupType?: string | null;
+  } | null,
 });
 
 export async function checkSetup() {
@@ -33,7 +37,11 @@ export async function checkSetup() {
       const data = await res.json();
       auth.setupComplete = data.complete;
       if (!data.complete) {
-        auth.setupProgress = { hasSystem: data.hasSystem, hasAccount: data.hasAccount };
+        auth.setupProgress = {
+          hasSystem: data.hasSystem,
+          hasAccount: data.hasAccount,
+          setupType: data.setupType,
+        };
       }
     }
   } catch {

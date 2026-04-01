@@ -63,7 +63,7 @@ setup.get("/status", async (c) => {
 
   // Check partial progress for resuming setup
   const config = readGlobalConfig();
-  const hasSystem = config.setup != null;
+  const hasSystem = config.setup != null && !!config.name;
 
   let hasAccount = false;
   if (hasSystem) {
@@ -76,7 +76,12 @@ setup.get("/status", async (c) => {
     }
   }
 
-  return c.json({ complete, hasSystem, hasAccount });
+  return c.json({
+    complete,
+    hasSystem,
+    hasAccount,
+    setupType: config.setup?.type ?? null,
+  });
 });
 
 // Legacy configure endpoint (kept for backwards compatibility with CLI setup)
@@ -118,7 +123,13 @@ setup.post("/system", async (c) => {
     return c.json({ error: "Setup already complete" }, 400);
   }
 
-  let body: { name: string; description?: string; remote?: boolean };
+  let body: {
+    name: string;
+    description?: string;
+    remote?: boolean;
+    service?: boolean;
+    tailscale?: boolean;
+  };
   try {
     body = await c.req.json();
   } catch {
@@ -130,14 +141,36 @@ setup.post("/system", async (c) => {
   }
 
   try {
-    const config = writeSetupConfig(body.name.trim(), body.description?.trim());
-
-    // Enable remote access: bind to all interfaces
-    if (body.remote) {
-      config.hostname = "0.0.0.0";
-      writeGlobalConfig(config);
+    // If setup config already exists (e.g. from `volute setup --system`), just update name/description
+    const existing = readGlobalConfig();
+    let config: GlobalConfig;
+    if (existing.setup) {
+      config = {
+        ...existing,
+        name: body.name.trim(),
+        description: body.description?.trim() || existing.description,
+        setupCompleted: false,
+      };
+    } else {
+      config = writeSetupConfig(body.name.trim(), body.description?.trim());
     }
 
+    // Enable remote access: bind to all interfaces (skip if already set, e.g. --system)
+    if (body.remote && !config.hostname) {
+      config.hostname = "0.0.0.0";
+    }
+
+    // Tailscale
+    if (body.tailscale) {
+      config.tailscale = true;
+    }
+
+    // Service preference (applied during /complete for local installs)
+    if (body.service && config.setup) {
+      config.setup.service = true;
+    }
+
+    writeGlobalConfig(config);
     return c.json({ ok: true });
   } catch (err) {
     return c.json({ error: `Failed to write configuration: ${(err as Error).message}` }, 500);
@@ -388,7 +421,7 @@ setup.post("/models", async (c) => {
   }
 });
 
-// Step 5: Complete setup — start spirit, create DM
+// Step 5: Complete setup — start spirit, create DM, optionally install service
 setup.post("/complete", async (c) => {
   if (isSetupComplete()) {
     return c.json({ error: "Setup already complete" }, 400);
@@ -402,6 +435,27 @@ setup.post("/complete", async (c) => {
     await syncSpiritTemplate();
 
     const warnings: string[] = [];
+
+    // Install user-level service if requested in system step (local installs only)
+    const config = readGlobalConfig();
+    if (config.setup?.service && config.setup?.type === "local") {
+      try {
+        const { installUserService } = await import("../../lib/config/service-install.js");
+        const installed = await installUserService(config.port, config.hostname);
+        if (!installed) {
+          warnings.push("Service installation is not supported on this platform.");
+          config.setup.service = false;
+          writeGlobalConfig(config);
+        }
+      } catch (err) {
+        log.warn("user service install failed during setup (non-fatal)", log.errorData(err));
+        warnings.push(
+          "Failed to install service — you can start Volute manually with `volute up`.",
+        );
+        config.setup.service = false;
+        writeGlobalConfig(config);
+      }
+    }
 
     // Start the spirit if the daemon is running
     let spiritStarted = false;
@@ -474,9 +528,9 @@ setup.post("/complete", async (c) => {
     }
 
     // Mark setup as fully completed
-    const config = readGlobalConfig();
-    config.setupCompleted = true;
-    writeGlobalConfig(config);
+    const finalConfig = readGlobalConfig();
+    finalConfig.setupCompleted = true;
+    writeGlobalConfig(finalConfig);
 
     return c.json({
       ok: true,

@@ -33,6 +33,10 @@ let showSystemsLogin = $state(false);
 let systemsError = $state("");
 let systemsLoading = $state(false);
 let remoteAccess = $state(false);
+let wantService = $state(false);
+let wantTailscale = $state(false);
+let showAdvanced = $state(false);
+let isSystemSetup = $derived(auth.setupProgress?.setupType === "system");
 
 // Step 3: Account
 let displayName = $state("");
@@ -131,6 +135,8 @@ async function handleSystemSubmit(e: Event) {
         name: systemName.trim(),
         description: systemDescription.trim() || undefined,
         remote: remoteAccess || undefined,
+        service: wantService || undefined,
+        tailscale: wantTailscale || undefined,
       }),
     });
     if (!res.ok) {
@@ -271,6 +277,7 @@ async function completeSetup() {
     const res = await fetch("/api/setup/complete", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
     });
     if (!res.ok) {
       const data = (await res.json().catch(() => ({}))) as { error?: string };
@@ -459,11 +466,33 @@ $effect(() => {
           {/if}
         </div>
 
-        <label class="remote-toggle">
-          <input type="checkbox" bind:checked={remoteAccess} />
-          <span>Allow access from other devices</span>
-        </label>
-        <div class="hint">Enable this to connect from other computers on your network.</div>
+        {#if !isSystemSetup}
+          <button type="button" class="advanced-toggle" onclick={() => showAdvanced = !showAdvanced}>
+            <span class="advanced-arrow" class:open={showAdvanced}>&#9654;</span>
+            Advanced
+          </button>
+          {#if showAdvanced}
+            <div class="advanced-section">
+              <label class="toggle-row">
+                <input type="checkbox" bind:checked={remoteAccess} />
+                <span>Allow access from other devices</span>
+              </label>
+              <div class="hint">Connect from other computers on your network.</div>
+
+              <label class="toggle-row">
+                <input type="checkbox" bind:checked={wantService} />
+                <span>Start on boot</span>
+              </label>
+              <div class="hint">Install as a service so Volute starts automatically.</div>
+
+              <label class="toggle-row">
+                <input type="checkbox" bind:checked={wantTailscale} />
+                <span>Enable Tailscale HTTPS</span>
+              </label>
+              <div class="hint">Serve over HTTPS using your Tailscale domain. Requires Tailscale to be running.</div>
+            </div>
+          {/if}
+        {/if}
 
         {#if error}
           <div class="error">{error}</div>
@@ -484,6 +513,9 @@ $effect(() => {
     {:else if step === "account"}
       <div class="step-title">Your account</div>
       <form onsubmit={handleAccountSubmit}>
+        <!-- Hidden username for password managers to save the correct login credential -->
+        <input type="hidden" name="username" autocomplete="username" value={username} />
+
         <label class="label" for="displayName">Display name</label>
         <Input
           inputSize="md"
@@ -492,7 +524,7 @@ $effect(() => {
           placeholder="Your name"
           bind:value={displayName}
           oninput={handleDisplayNameInput}
-          autocomplete="name"
+          autocomplete="off"
         />
 
         {#if usernameManuallyEdited}
@@ -502,7 +534,7 @@ $effect(() => {
             type="text"
             placeholder="username"
             bind:value={username}
-            autocomplete="username"
+            autocomplete="off"
           />
         {:else if username}
           <div class="username-preview">
@@ -543,6 +575,7 @@ $effect(() => {
       <AiProviders
         bind:this={aiProvidersRef}
         showModelDefaults
+        bind:spiritModel
         bind:utilityModel
         onLoad={handleProviderLoad}
       />
@@ -742,14 +775,56 @@ $effect(() => {
     margin-top: 6px;
   }
 
-  .remote-toggle {
+  .toggle-row {
     display: flex;
     align-items: center;
     gap: 8px;
-    margin-top: 16px;
+    margin-top: 12px;
     font-size: 14px;
     color: var(--text-1);
     cursor: pointer;
+  }
+
+  .toggle-row:first-child {
+    margin-top: 0;
+  }
+
+  .advanced-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 16px;
+    padding: 0;
+    font-family: inherit;
+    font-size: 13px;
+    color: var(--text-2);
+    background: none;
+    border: none;
+    cursor: pointer;
+  }
+
+  .advanced-toggle:hover {
+    color: var(--text-1);
+  }
+
+  .advanced-arrow {
+    font-size: 9px;
+    transition: transform 0.15s;
+  }
+
+  .advanced-arrow.open {
+    transform: rotate(90deg);
+  }
+
+  .advanced-section {
+    margin-top: 10px;
+    padding: 12px;
+    background: var(--bg-2);
+    border-radius: var(--radius);
+  }
+
+  .advanced-section .hint {
+    margin-bottom: 4px;
   }
 
   .error {
