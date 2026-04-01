@@ -45,6 +45,7 @@ export type VoluteConfig = CognitionConfig & {
   identity?: { privateKey: string; publicKey: string };
   profile?: MindProfile;
   sleep?: SleepConfig;
+  echoText?: boolean;
   [key: string]: unknown;
 };
 
