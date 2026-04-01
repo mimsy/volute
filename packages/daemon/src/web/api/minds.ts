@@ -35,6 +35,7 @@ import {
 } from "../../lib/daemon/turn-tracker.js";
 import { getDb } from "../../lib/db.js";
 import { getDeliveryManager } from "../../lib/delivery/delivery-manager.js";
+import { echoTextToChannel } from "../../lib/delivery/echo-text.js";
 import {
   linkToolResultToTurn,
   recordInbound,
@@ -2465,6 +2466,18 @@ const app = new Hono<AuthEnv>()
       metadata: body.metadata,
       turnId: turnId ?? undefined,
     });
+
+    if (body.type === "text" && body.channel && cleanContent) {
+      echoTextToChannel(
+        baseName,
+        body.channel,
+        cleanContent,
+        turnId ?? undefined,
+        insertedId,
+      ).catch((err) =>
+        log.error(`echo-text failed for ${baseName} on ${body.channel}`, log.errorData(err)),
+      );
+    }
 
     // Track mind activity for dashboard timeline
     onMindEvent(baseName, body.type, body.channel);
