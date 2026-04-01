@@ -128,8 +128,17 @@ describe("recordOutbound", () => {
     });
     const db = await getDb();
     const rows = await db.select().from(mindHistory).where(eq(mindHistory.mind, "test-out"));
-    assert.equal(rows[0].turn_id, null); // turn_id is always null — linked later via tool_result
+    assert.equal(rows[0].turn_id, null);
     assert.equal(rows[0].message_id, "msg-456");
+  });
+
+  it("stores turn_id when provided", async () => {
+    await recordOutbound("test-out", "dm:alice", "hi", {
+      turnId: "turn-789",
+    });
+    const db = await getDb();
+    const rows = await db.select().from(mindHistory).where(eq(mindHistory.mind, "test-out"));
+    assert.equal(rows[0].turn_id, "turn-789");
   });
 
   it("returns the inserted record id", async () => {

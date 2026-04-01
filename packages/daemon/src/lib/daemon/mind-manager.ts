@@ -529,6 +529,13 @@ export class MindManager {
         mlog.warn(`failed to clear delivery state for ${name} on stop`, log.errorData(err));
       }
     }
+    try {
+      const { clearEchoTextCache } = await import("../delivery/echo-text.js");
+      clearEchoTextCache(name);
+    } catch (err) {
+      mlog.debug(`failed to clear echo-text cache for ${name}`, log.errorData(err));
+    }
+
     if (this.restartTracker.reset(name)) this.saveCrashAttempts();
     rmSync(mindPidPath(name), { force: true });
 

@@ -80,7 +80,7 @@ export async function recordOutbound(
   mind: string,
   channel: string,
   content: string | null,
-  opts: { messageId?: string } = {},
+  opts: { messageId?: string; turnId?: string } = {},
 ): Promise<number | undefined> {
   try {
     const db = await getDb();
@@ -91,7 +91,7 @@ export async function recordOutbound(
         type: "outbound",
         channel,
         content,
-        turn_id: null,
+        turn_id: opts.turnId ?? null,
         message_id: opts.messageId ?? null,
       })
       .returning({ id: mindHistory.id });
