@@ -62,6 +62,7 @@ export function createMind(options: {
   const prompts = loadPrompts();
   const today = new Date().toLocaleDateString("en-CA");
   const compactionMessage =
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: literal ${date} in prompt template
     options.compactionMessage ?? prompts.compaction_warning.replace("${date}", today);
   const compactionInstructions = prompts.compaction_instructions;
   const maxContextTokens = options.maxContextTokens;
@@ -74,7 +75,7 @@ export function createMind(options: {
   const modelStr = options.model || process.env.PI_MODEL || "anthropic:claude-sonnet-4-20250514";
   const model = resolveModel(modelStr);
   const authStorage = AuthStorage.create();
-  const modelRegistry = new ModelRegistry(authStorage);
+  const modelRegistry = ModelRegistry.create(authStorage);
 
   // --- Subagents (config-driven) ---
 

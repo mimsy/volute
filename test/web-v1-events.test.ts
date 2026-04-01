@@ -140,7 +140,7 @@ describe("event sequencer", () => {
 
   it("handles conversation events in buffer", () => {
     resetSequencer();
-    const id = bufferEvent({
+    const _id = bufferEvent({
       event: "conversation",
       conversationId: "conv-123",
       type: "message",

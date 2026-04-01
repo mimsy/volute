@@ -11,8 +11,8 @@ import {
 import { readGlobalConfig } from "@volute/daemon/lib/config/setup.js";
 import { voluteHome, voluteSystemDir } from "@volute/daemon/lib/mind/registry.js";
 
-export { readGlobalConfig };
 export type { GlobalConfig } from "@volute/daemon/lib/config/setup.js";
+export { readGlobalConfig };
 
 const cmd = command({
   name: "volute up",

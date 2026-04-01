@@ -72,6 +72,7 @@ export function createMind(options: {
   const prompts = loadPrompts();
   const today = new Date().toLocaleDateString("en-CA");
   const compactionMessage =
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: literal ${date} in prompt template
     options.compactionMessage ?? prompts.compaction_warning.replace("${date}", today);
   const compactionInstructions = prompts.compaction_instructions;
   const maxContextTokens = options.maxContextTokens;

@@ -139,7 +139,7 @@ describe("command", () => {
   });
 
   it("includes examples in help output", async () => {
-    const exitMock = mock.method(process, "exit", () => {
+    const _exitMock = mock.method(process, "exit", () => {
       throw new Error("exit");
     });
     const cmd = command({

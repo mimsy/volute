@@ -64,7 +64,7 @@ describe("splitMessage", () => {
   });
 
   it("strips the split-point newline from the next chunk", () => {
-    const message = "a".repeat(1500) + "\n" + "b".repeat(500);
+    const message = `${"a".repeat(1500)}\n${"b".repeat(500)}`;
     const chunks = splitMessage(message, 1501);
     assert.equal(chunks.length, 2);
     assert.equal(chunks[0], "a".repeat(1500));
@@ -72,7 +72,7 @@ describe("splitMessage", () => {
   });
 
   it("uses newline at exactly the midpoint", () => {
-    const message = "a".repeat(1000) + "\n" + "b".repeat(1500);
+    const message = `${"a".repeat(1000)}\n${"b".repeat(1500)}`;
     const chunks = splitMessage(message, 2000);
     assert.equal(chunks.length, 2);
     assert.equal(chunks[0], "a".repeat(1000));
