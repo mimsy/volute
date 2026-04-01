@@ -175,14 +175,20 @@ export class MindManager {
       }
     }
 
-    // For codex minds, inject OpenAI API key. Try resolveApiKey which handles OAuth
-    // token refresh, then fall back to env var.
+    // For codex minds, inject OpenAI API key via resolveApiKey (handles OAuth + API key + env).
     if (target.template === "codex") {
-      const apiKey = await resolveApiKey("openai-codex");
-      if (apiKey) {
-        env.OPENAI_API_KEY = apiKey;
-      } else if (process.env.OPENAI_API_KEY) {
-        env.OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+      try {
+        const apiKey = await resolveApiKey("openai-codex");
+        if (apiKey) {
+          env.OPENAI_API_KEY = apiKey;
+        } else if (process.env.OPENAI_API_KEY) {
+          env.OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+        }
+      } catch (err) {
+        mlog.error(`failed to resolve OpenAI API key for ${name}`, log.errorData(err));
+        if (process.env.OPENAI_API_KEY) {
+          env.OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+        }
       }
 
       // Write .zshenv in the mind's home dir — the codex sandbox runs commands in

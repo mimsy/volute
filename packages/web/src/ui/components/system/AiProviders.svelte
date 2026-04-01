@@ -232,6 +232,7 @@ async function pollOAuth() {
         oauthPolling = false;
         oauthUrl = "";
         oauthWaitingForCode = false;
+        oauthCodeSubmitting = false;
         error = status.error ?? "OAuth failed";
         oauthProvider = "";
         return;
@@ -241,6 +242,7 @@ async function pollOAuth() {
       if (errors >= 5) {
         oauthPolling = false;
         oauthUrl = "";
+        oauthCodeSubmitting = false;
         error = "Lost connection while waiting for OAuth";
         oauthProvider = "";
         return;

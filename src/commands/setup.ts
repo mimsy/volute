@@ -458,19 +458,25 @@ const cmd = command({
     const displayPort = port ?? 1618;
     const displayHost = host ?? "127.0.0.1";
 
-    console.log("\nStarting daemon...");
-    const { run: runUp } = await import("./up.js");
-    await runUp([
-      ...(port != null ? ["--port", String(port)] : []),
-      ...(host ? ["--host", host] : []),
-    ]);
-
     const url = `http://${displayHost === "0.0.0.0" || displayHost === "::" ? "localhost" : displayHost}:${displayPort}`;
-    console.log(`\nOpen ${url} to continue setup.`);
 
-    // Open browser (best-effort)
-    const openCmd = process.platform === "darwin" ? "open" : "xdg-open";
-    spawn(openCmd, [url], { stdio: "ignore", detached: true }).unref();
+    console.log("\nStarting daemon...");
+    try {
+      const { run: runUp } = await import("./up.js");
+      await runUp([
+        ...(port != null ? ["--port", String(port)] : []),
+        ...(host ? ["--host", host] : []),
+      ]);
+
+      // Open browser (best-effort)
+      const openCmd = process.platform === "darwin" ? "open" : "xdg-open";
+      spawn(openCmd, [url], { stdio: "ignore", detached: true }).unref();
+    } catch (err) {
+      console.error(`\nFailed to start daemon: ${err instanceof Error ? err.message : err}`);
+      console.error("You can start it manually with: volute up");
+    }
+
+    console.log(`\nOpen ${url} to continue setup.`);
   },
 });
 

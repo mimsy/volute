@@ -2,13 +2,13 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import type { ContextBreakdown } from "./volute-server.js";
 
-// Lazy-loaded tokenizer — first call loads the encoding (~100ms), subsequent calls are fast
+// Async tokenizer — import fires at module load; falls back to character estimation if unavailable or still loading
 let _countTokens: ((text: string) => number) | null = null;
-let _tokenizerLoaded = false;
+let _tokenizerLoading = false;
 
 async function loadTokenizer(): Promise<void> {
-  if (_tokenizerLoaded) return;
-  _tokenizerLoaded = true;
+  if (_tokenizerLoading) return;
+  _tokenizerLoading = true;
   try {
     const mod = await import("@anthropic-ai/tokenizer");
     _countTokens = mod.countTokens;
@@ -21,7 +21,7 @@ async function loadTokenizer(): Promise<void> {
   }
 }
 
-// Kick off async tokenizer load at import time — by the time countTokens is called, it's ready
+// Kick off async tokenizer load at import time
 loadTokenizer();
 
 function countTokens(text: string): number {

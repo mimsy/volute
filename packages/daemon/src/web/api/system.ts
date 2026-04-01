@@ -599,15 +599,13 @@ type OAuthFlow = {
 };
 const oauthFlows = new Map<string, OAuthFlow>();
 
-// Abort and remove stale flows; abort ALL pending flows when starting fresh
+// Abort all pending flows and clear the map
 function cleanupOAuthFlows() {
   for (const [id, flow] of oauthFlows) {
     if (flow.status === "pending") {
       flow.abortController?.abort();
     }
-    if (flow.status !== "pending") {
-      oauthFlows.delete(id);
-    }
+    oauthFlows.delete(id);
   }
 }
 
