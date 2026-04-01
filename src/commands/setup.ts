@@ -1,4 +1,4 @@
-import { execFile, execFileSync } from "node:child_process";
+import { execFile, execFileSync, spawn } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
@@ -454,35 +454,23 @@ const cmd = command({
 
     writeGlobalConfig(config);
 
-    // Optional AI provider configuration (interactive only)
-    if (isInteractive) {
-      const wantAi = (await promptLine("\nConfigure an AI provider? (optional) [y/N]: "))
-        .trim()
-        .toLowerCase();
-      if (wantAi === "y" || wantAi === "yes") {
-        const aiProvider = (
-          await promptLine("Provider (anthropic, openai, google, etc.): ")
-        ).trim();
-        if (aiProvider) {
-          const aiApiKey = (await promptLine("API key (leave empty to use env var): ")).trim();
-          if (aiApiKey) {
-            const { saveProviderConfig } = await import("@volute/daemon/lib/ai-service.js");
-            saveProviderConfig(aiProvider, { apiKey: aiApiKey });
-            console.log(`  AI provider configured: ${aiProvider}`);
-          } else {
-            console.log(`  Using env var for ${aiProvider} (no explicit key saved)`);
-          }
-        }
-      }
-    }
+    // Start the daemon and open the web setup page
+    const displayPort = port ?? 1618;
+    const displayHost = host ?? "127.0.0.1";
 
-    console.log(`\nDone! Use \`volute mind create <name>\` to create your first mind.`);
+    console.log("\nStarting daemon...");
+    const { run: runUp } = await import("./up.js");
+    await runUp([
+      ...(port != null ? ["--port", String(port)] : []),
+      ...(host ? ["--host", host] : []),
+    ]);
 
-    if (wantRemote || host === "0.0.0.0" || host === "::") {
-      const displayPort = port ?? 1618;
-      console.log(`\nRemote access enabled. Connect from other devices at:`);
-      console.log(`  http://<this-machine-ip>:${displayPort}/`);
-    }
+    const url = `http://${displayHost === "0.0.0.0" || displayHost === "::" ? "localhost" : displayHost}:${displayPort}`;
+    console.log(`\nOpen ${url} to continue setup.`);
+
+    // Open browser (best-effort)
+    const openCmd = process.platform === "darwin" ? "open" : "xdg-open";
+    spawn(openCmd, [url], { stdio: "ignore", detached: true }).unref();
   },
 });
 
