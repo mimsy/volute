@@ -1,4 +1,4 @@
-import { execFile, execFileSync } from "node:child_process";
+import { execFile, execFileSync, spawn } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
@@ -62,7 +62,7 @@ function generatePlist(
       "    <key>VOLUTE_HOME</key>",
       "    <string>/var/lib/volute</string>",
       "    <key>VOLUTE_MINDS_DIR</key>",
-      "    <string>/minds</string>",
+      `    <string>${MINDS_DIR}</string>`,
       "    <key>VOLUTE_ISOLATION</key>",
       "    <string>user</string>",
     );
@@ -163,7 +163,7 @@ function generateSystemUnit(voluteBin: string, port?: number, host?: string): st
 // --- Setup steps ---
 
 const DATA_DIR = "/var/lib/volute";
-const MINDS_DIR = "/minds";
+const MINDS_DIR = process.platform === "darwin" ? "/var/lib/volute/minds" : "/minds";
 const PROFILE_PATH = "/etc/profile.d/volute.sh";
 const WRAPPER_PATH = "/usr/local/bin/volute";
 
@@ -331,7 +331,7 @@ const cmd = command({
 
       console.log("\nInstall type:");
       console.log("  1. Local (minds in ~/.volute/minds/, sandbox isolation)");
-      console.log("  2. System (minds in /minds, per-user isolation, requires sudo)");
+      console.log(`  2. System (minds in ${MINDS_DIR}, per-user isolation, requires sudo)`);
       const typeChoice = await promptLine("> ");
       setupType = typeChoice.trim() === "2" ? "system" : "local";
 
@@ -447,42 +447,36 @@ const cmd = command({
       ...existingConfig,
       name: systemName,
       setup,
-      setupCompleted: true,
+      setupCompleted: false,
     };
     if (port != null) config.port = port;
     if (host) config.hostname = host;
 
     writeGlobalConfig(config);
 
-    // Optional AI provider configuration (interactive only)
-    if (isInteractive) {
-      const wantAi = (await promptLine("\nConfigure an AI provider? (optional) [y/N]: "))
-        .trim()
-        .toLowerCase();
-      if (wantAi === "y" || wantAi === "yes") {
-        const aiProvider = (
-          await promptLine("Provider (anthropic, openai, google, etc.): ")
-        ).trim();
-        if (aiProvider) {
-          const aiApiKey = (await promptLine("API key (leave empty to use env var): ")).trim();
-          if (aiApiKey) {
-            const { saveProviderConfig } = await import("@volute/daemon/lib/ai-service.js");
-            saveProviderConfig(aiProvider, { apiKey: aiApiKey });
-            console.log(`  AI provider configured: ${aiProvider}`);
-          } else {
-            console.log(`  Using env var for ${aiProvider} (no explicit key saved)`);
-          }
-        }
-      }
+    // Start the daemon and open the web setup page
+    const displayPort = port ?? 1618;
+    const displayHost = host ?? "127.0.0.1";
+
+    const url = `http://${displayHost === "0.0.0.0" || displayHost === "::" ? "localhost" : displayHost}:${displayPort}`;
+
+    console.log("\nStarting daemon...");
+    try {
+      const { run: runUp } = await import("./up.js");
+      await runUp([
+        ...(port != null ? ["--port", String(port)] : []),
+        ...(host ? ["--host", host] : []),
+      ]);
+
+      // Open browser (best-effort)
+      const openCmd = process.platform === "darwin" ? "open" : "xdg-open";
+      spawn(openCmd, [url], { stdio: "ignore", detached: true }).unref();
+    } catch (err) {
+      console.error(`\nFailed to start daemon: ${err instanceof Error ? err.message : err}`);
+      console.error("You can start it manually with: volute up");
     }
 
-    console.log(`\nDone! Use \`volute mind create <name>\` to create your first mind.`);
-
-    if (wantRemote || host === "0.0.0.0" || host === "::") {
-      const displayPort = port ?? 1618;
-      console.log(`\nRemote access enabled. Connect from other devices at:`);
-      console.log(`  http://<this-machine-ip>:${displayPort}/`);
-    }
+    console.log(`\nOpen ${url} to continue setup.`);
   },
 });
 

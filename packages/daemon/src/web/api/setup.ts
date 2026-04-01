@@ -44,6 +44,7 @@ function writeSetupConfig(systemName: string, description?: string): GlobalConfi
     name: systemName,
     description: description || existingConfig.description,
     setup: setupConfig,
+    setupCompleted: false,
   };
 
   writeGlobalConfig(config);

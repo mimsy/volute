@@ -114,7 +114,7 @@ export async function ensureSpiritProject(): Promise<void> {
     }
 
     // npm install — must succeed before DB registration
-    await exec("npm", ["install", "--ignore-scripts"], { cwd: dir, env: npmEnv() });
+    await exec("npm", ["install"], { cwd: dir, env: npmEnv() });
 
     // git init (before skill install, which does git add)
     try {
@@ -194,7 +194,7 @@ export async function syncSpiritTemplate(): Promise<void> {
     const newPkg = resolve(newComposed.composedDir, "package.json");
     if (existsSync(newPkg)) {
       cpSync(newPkg, resolve(dir, "package.json"));
-      await exec("npm", ["install", "--ignore-scripts"], { cwd: dir, env: npmEnv() });
+      await exec("npm", ["install"], { cwd: dir, env: npmEnv() });
     }
     // Update DB template
     const db = await (await import("../db.js")).getDb();
@@ -257,10 +257,10 @@ export async function syncSpiritTemplate(): Promise<void> {
       if (composedContent !== currentContent) {
         cpSync(composedPkg, currentPkg);
       }
-      await exec("npm", ["install", "--ignore-scripts"], { cwd: dir, env: npmEnv() });
+      await exec("npm", ["install"], { cwd: dir, env: npmEnv() });
     }
   } else if (nodeModulesMissing) {
-    await exec("npm", ["install", "--ignore-scripts"], { cwd: dir, env: npmEnv() });
+    await exec("npm", ["install"], { cwd: dir, env: npmEnv() });
   }
 
   // Restore preserved files

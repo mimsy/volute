@@ -47,6 +47,7 @@ let oauthNeedsCode = $state(false);
 let oauthWaitingForCode = $state(false);
 let oauthCodeInput = $state("");
 let oauthCodeSubmitting = $state(false);
+let oauthInstructions = $state("");
 
 // Model search modal
 let showModelSearch = $state(false);
@@ -130,6 +131,7 @@ function resetAddProvider() {
   oauthWaitingForCode = false;
   oauthCodeInput = "";
   oauthCodeSubmitting = false;
+  oauthInstructions = "";
   addProviderMode = "oauth";
   providerSearch = "";
   selectedProviderId = "";
@@ -188,6 +190,7 @@ async function handleOAuth(providerId: string) {
       oauthUrl = result.url;
       oauthFlowId = result.flowId;
       oauthNeedsCode = !!result.needsManualCode;
+      oauthInstructions = result.instructions ?? "";
       oauthPolling = true;
       window.open(result.url, "_blank");
       pollOAuth();
@@ -206,6 +209,12 @@ async function pollOAuth() {
     try {
       const status = await pollAiOAuthStatus(oauthFlowId);
       errors = 0;
+      if (status.instructions && !oauthInstructions) {
+        oauthInstructions = status.instructions;
+      }
+      if (status.url && !oauthUrl) {
+        oauthUrl = status.url;
+      }
       if (status.waitingForCode) {
         oauthWaitingForCode = true;
       }
@@ -223,6 +232,7 @@ async function pollOAuth() {
         oauthPolling = false;
         oauthUrl = "";
         oauthWaitingForCode = false;
+        oauthCodeSubmitting = false;
         error = status.error ?? "OAuth failed";
         oauthProvider = "";
         return;
@@ -232,6 +242,7 @@ async function pollOAuth() {
       if (errors >= 5) {
         oauthPolling = false;
         oauthUrl = "";
+        oauthCodeSubmitting = false;
         error = "Lost connection while waiting for OAuth";
         oauthProvider = "";
         return;
@@ -247,10 +258,11 @@ async function handleOAuthCodeSubmit() {
   try {
     await submitAiOAuthCode(oauthFlowId, oauthCodeInput.trim());
     oauthCodeInput = "";
+    // Stay in "Verifying..." state — the poll loop will clean up on completion
   } catch (err) {
     error = err instanceof Error ? err.message : "Failed to submit code";
+    oauthCodeSubmitting = false;
   }
-  oauthCodeSubmitting = false;
 }
 
 function handleOAuthCodeInputChange() {
@@ -424,6 +436,9 @@ async function removeModel(modelId: string) {
       {:else if oauthUrl && !oauthNeedsCode}
         <p class="modal-text">Authorize at:</p>
         <a href={oauthUrl} target="_blank" rel="noopener" class="oauth-link">{oauthUrl}</a>
+        {#if oauthInstructions}
+          <p class="oauth-device-code">{oauthInstructions}</p>
+        {/if}
         {#if oauthPolling}
           <span class="dim">Waiting for authorization...</span>
         {/if}
@@ -800,6 +815,18 @@ async function removeModel(modelId: string) {
     color: var(--accent);
     font-size: 13px;
     word-break: break-all;
+  }
+
+  .oauth-device-code {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text-0);
+    background: var(--bg-3);
+    padding: 8px 12px;
+    border-radius: var(--radius);
+    text-align: center;
+    margin: 0;
+    letter-spacing: 0.05em;
   }
 
   /* --- Model search modal --- */
