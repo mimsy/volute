@@ -154,13 +154,22 @@ export async function startDaemon(opts: {
   // Use existing token if set (for testing), otherwise generate one
   const token = process.env.VOLUTE_DAEMON_TOKEN || randomBytes(32).toString("hex");
 
-  // Tailscale HTTPS setup
+  // Tailscale HTTPS setup (CLI flag or config)
+  const { readGlobalConfig } = await import("./lib/config/setup.js");
+  const globalCfg = readGlobalConfig();
   let tls: { key: Buffer; cert: Buffer } | undefined;
-  if (opts.tailscale) {
-    const { getTailscaleTls } = await import("./lib/tailscale.js");
-    const tlsConfig = await getTailscaleTls();
-    tls = { key: tlsConfig.key, cert: tlsConfig.cert };
-    log.info("Tailscale HTTPS enabled", { hostname: tlsConfig.hostname });
+  if (opts.tailscale || globalCfg.tailscale) {
+    try {
+      const { getTailscaleTls } = await import("./lib/tailscale.js");
+      const tlsConfig = await getTailscaleTls();
+      tls = { key: tlsConfig.key, cert: tlsConfig.cert };
+      log.info("Tailscale HTTPS enabled", { hostname: tlsConfig.hostname });
+    } catch (err) {
+      log.error(
+        "Tailscale TLS setup failed — starting without HTTPS. Ensure Tailscale is running, or disable tailscale in config.",
+        log.errorData(err),
+      );
+    }
   }
 
   // Start web server — must succeed before writing PID/config files,

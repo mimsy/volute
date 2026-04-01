@@ -16,10 +16,12 @@ import ModelSelect from "./ModelSelect.svelte";
 
 let {
   showModelDefaults = false,
+  spiritModel = $bindable(""),
   utilityModel = $bindable(""),
   onLoad,
 }: {
   showModelDefaults?: boolean;
+  spiritModel?: string;
   utilityModel?: string;
   onLoad?: (enabledModels: AiModel[]) => void;
 } = $props();
@@ -341,7 +343,15 @@ async function removeModel(modelId: string) {
   <!-- System / utility model selection -->
   {#if showModelDefaults && enabledModels.length > 0}
     <div class="model-defaults">
-      <span class="label">Utility model <span class="optional">(optional)</span></span>
+      <span class="label">Spirit model</span>
+      <ModelSelect
+        items={enabledModels.map((m) => ({ id: m.id, label: m.name }))}
+        bind:value={spiritModel}
+        placeholder="Search models..."
+      />
+      <div class="hint">The model that runs Volute's guiding spirit.</div>
+
+      <span class="label mt">Utility model <span class="optional">(optional)</span></span>
       <ModelSelect
         items={enabledModels.map((m) => ({ id: m.id, label: m.name }))}
         bind:value={utilityModel}
@@ -880,4 +890,6 @@ async function removeModel(modelId: string) {
     font-size: 12px;
     margin-top: 6px;
   }
+
+  .mt { margin-top: 14px; }
 </style>

@@ -134,7 +134,7 @@ Configuration:
   env       Manage environment variables
 
 System:
-  setup                            First-time setup
+  setup [--system] [--cli]          First-time setup
   up / down / restart              Daemon control
   status                           Show daemon & service status
   extension list/install/uninstall Manage extensions
