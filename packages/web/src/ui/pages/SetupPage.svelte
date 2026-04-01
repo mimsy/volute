@@ -296,7 +296,7 @@ async function completeSetup() {
 }
 
 async function waitForSpiritReply(conversationId: string) {
-  const timeout = 30_000;
+  const timeout = 60_000;
   const interval = 1_500;
   const start = Date.now();
   while (Date.now() - start < timeout) {
@@ -304,8 +304,9 @@ async function waitForSpiritReply(conversationId: string) {
     try {
       const res = await fetch(`/api/v1/conversations/${conversationId}/messages?limit=5`);
       if (res.ok) {
-        const messages = await res.json();
-        if (messages.some((m: any) => m.sender_name === "volute" && m.role === "user")) {
+        const data = await res.json();
+        const items: any[] = data.items ?? data;
+        if (items.some((m: any) => m.sender_name === "volute" && m.role === "user")) {
           return;
         }
       }
