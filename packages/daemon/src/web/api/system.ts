@@ -599,10 +599,13 @@ type OAuthFlow = {
 };
 const oauthFlows = new Map<string, OAuthFlow>();
 
-// Abort all pending flows and clear the map
+// Abort all pending flows and clear the map.
+// Resolving the code promise unblocks pi-ai's login function so it reaches
+// its finally{} block which closes the callback server (e.g. :1455).
 function cleanupOAuthFlows() {
   for (const [id, flow] of oauthFlows) {
     if (flow.status === "pending") {
+      flow.resolveCode?.("");
       flow.abortController?.abort();
     }
     oauthFlows.delete(id);
