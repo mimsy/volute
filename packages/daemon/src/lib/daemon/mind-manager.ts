@@ -175,14 +175,49 @@ export class MindManager {
       }
     }
 
-    // For codex minds, inject OpenAI API key via resolveApiKey (handles OAuth + API key + env).
+    // For codex minds, inject OpenAI credentials.
+    // OAuth: write codex CLI auth.json so it can do its own token exchange.
+    // API key: set OPENAI_API_KEY env var.
     if (target.template === "codex") {
       try {
-        const apiKey = await resolveApiKey("openai-codex");
-        if (apiKey) {
-          env.OPENAI_API_KEY = apiKey;
-        } else if (process.env.OPENAI_API_KEY) {
-          env.OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+        const ai = getAiConfig();
+        const codexConfig = ai?.providers["openai-codex"];
+        if (codexConfig?.oauth) {
+          // Write credentials in the format the codex CLI expects (auth.json).
+          // The codex CLI reads from CODEX_HOME/auth.json. We point CODEX_HOME to
+          // a per-mind .codex dir so credentials don't collide with the host user's.
+          const codexDir = resolve(dir, ".mind", "codex");
+          mkdirSync(codexDir, { recursive: true });
+          env.CODEX_HOME = codexDir;
+          const authPath = resolve(codexDir, "auth.json");
+          writeFileSync(
+            authPath,
+            JSON.stringify({
+              auth_mode: "chatgpt",
+              tokens: {
+                access_token: codexConfig.oauth.access,
+                refresh_token: codexConfig.oauth.refresh,
+                id_token: codexConfig.oauth.access,
+              },
+              last_refresh: new Date().toISOString(),
+            }),
+            { mode: 0o600 },
+          );
+          // Ensure codex uses file-based credential storage
+          const configTomlPath = resolve(codexDir, "config.toml");
+          if (!existsSync(configTomlPath)) {
+            writeFileSync(configTomlPath, 'cli_auth_credentials_store = "file"\n');
+          }
+          if (isIsolationEnabled()) {
+            chownMindDir(codexDir, baseName);
+          }
+        } else {
+          const apiKey = await resolveApiKey("openai-codex");
+          if (apiKey) {
+            env.OPENAI_API_KEY = apiKey;
+          } else if (process.env.OPENAI_API_KEY) {
+            env.OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+          }
         }
       } catch (err) {
         mlog.error(`failed to resolve OpenAI API key for ${name}`, log.errorData(err));
