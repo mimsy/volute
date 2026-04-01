@@ -62,7 +62,7 @@ function generatePlist(
       "    <key>VOLUTE_HOME</key>",
       "    <string>/var/lib/volute</string>",
       "    <key>VOLUTE_MINDS_DIR</key>",
-      "    <string>/minds</string>",
+      `    <string>${MINDS_DIR}</string>`,
       "    <key>VOLUTE_ISOLATION</key>",
       "    <string>user</string>",
     );
@@ -163,7 +163,7 @@ function generateSystemUnit(voluteBin: string, port?: number, host?: string): st
 // --- Setup steps ---
 
 const DATA_DIR = "/var/lib/volute";
-const MINDS_DIR = "/minds";
+const MINDS_DIR = process.platform === "darwin" ? "/var/lib/volute/minds" : "/minds";
 const PROFILE_PATH = "/etc/profile.d/volute.sh";
 const WRAPPER_PATH = "/usr/local/bin/volute";
 
@@ -331,7 +331,7 @@ const cmd = command({
 
       console.log("\nInstall type:");
       console.log("  1. Local (minds in ~/.volute/minds/, sandbox isolation)");
-      console.log("  2. System (minds in /minds, per-user isolation, requires sudo)");
+      console.log(`  2. System (minds in ${MINDS_DIR}, per-user isolation, requires sudo)`);
       const typeChoice = await promptLine("> ");
       setupType = typeChoice.trim() === "2" ? "system" : "local";
 
