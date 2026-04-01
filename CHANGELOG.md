@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.37.0](https://github.com/mimsy/volute/compare/volute-v0.36.0...volute-v0.37.0) (2026-04-01)
+
+
+### Features
+
+* add echoText option to send mind text outputs to triggering channel ([#287](https://github.com/mimsy/volute/issues/287)) ([8abba03](https://github.com/mimsy/volute/commit/8abba0373a325fe45c17bfbaaa41caaf2465d094))
+
+
+### Bug Fixes
+
+* setup flow, OAuth UX, and spirit startup issues ([#289](https://github.com/mimsy/volute/issues/289)) ([1a7d072](https://github.com/mimsy/volute/commit/1a7d07255fb7766088bb8a57d13f8ec7bd1ab352))
+
 ## [0.36.0](https://github.com/mimsy/volute/compare/volute-v0.35.0...volute-v0.36.0) (2026-03-26)
 
 
