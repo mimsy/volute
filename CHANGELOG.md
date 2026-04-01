@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.37.1](https://github.com/mimsy/volute/compare/volute-v0.37.0...volute-v0.37.1) (2026-04-01)
+
+
+### Bug Fixes
+
+* write codex CLI auth.json for OAuth instead of setting OPENAI_API_KEY ([14529f1](https://github.com/mimsy/volute/commit/14529f161f452996cbe1b23a65ad8c34dabdcc5a))
+
 ## [0.37.0](https://github.com/mimsy/volute/compare/volute-v0.36.0...volute-v0.37.0) (2026-04-01)
 
 
