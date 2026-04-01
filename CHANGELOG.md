@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.38.0](https://github.com/mimsy/volute/compare/volute-v0.37.1...volute-v0.38.0) (2026-04-01)
+
+
+### Features
+
+* default volute setup to web-based flow with advanced options ([#295](https://github.com/mimsy/volute/issues/295)) ([596ab17](https://github.com/mimsy/volute/commit/596ab173314e042e7885b5418a717ee57122c72a))
+* fix model escape errors in mind outbound messages ([#296](https://github.com/mimsy/volute/issues/296)) ([c293ffe](https://github.com/mimsy/volute/commit/c293ffe3f624f3c0a7f79786aa314ffc2018f461))
+
+
+### Bug Fixes
+
+* parse messages API response correctly in setup spirit reply polling ([5f59dfe](https://github.com/mimsy/volute/commit/5f59dfee2fbf7a082b616ba76e75a65ebe1b8240))
+* resolve stale OAuth code promise to unblock callback server cleanup ([ad6be47](https://github.com/mimsy/volute/commit/ad6be47f584068e15407d69fdc67e8950a28a016))
+
 ## [0.37.1](https://github.com/mimsy/volute/compare/volute-v0.37.0...volute-v0.37.1) (2026-04-01)
 
 
