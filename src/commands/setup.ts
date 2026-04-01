@@ -447,7 +447,7 @@ const cmd = command({
       ...existingConfig,
       name: systemName,
       setup,
-      setupCompleted: true,
+      setupCompleted: false,
     };
     if (port != null) config.port = port;
     if (host) config.hostname = host;
