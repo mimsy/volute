@@ -19,7 +19,7 @@ Setup configures one of three mind isolation modes:
 
 | Mode | When | How |
 |------|------|-----|
-| **sandbox** | Local installs (default) | Uses `@anthropic-ai/sandbox-runtime` to restrict mind filesystem access. Each mind can only write to its own directory; reads to other minds' dirs, system state, and sensitive user dirs are blocked. |
+| **sandbox** | Local installs (default) | Uses `@anthropic-ai/sandbox-runtime` to restrict mind filesystem access. Each mind can only write to its own directory; reads to other minds' dirs, system state, and sensitive user dirs are blocked. Codex template minds are excluded (see [deployment docs](/volute/docs/deployment/#mind-isolation)). |
 | **user** | System installs (`--system`) | Creates per-mind OS users (`mind-<name>`). On Linux, uses `useradd`/`runuser`; on macOS, uses `dscl`/`sudo -u`. Requires root. |
 | **none** | Development or legacy installs | No isolation. |
 
