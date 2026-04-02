@@ -3,9 +3,9 @@ import type { ContentBlock, Message, Mind, Participant } from "@volute/api";
 import { fetchConversationMessages, reportTyping, sendChat } from "../../lib/client";
 import { subscribe } from "../../lib/connection.svelte";
 import type { ChatEntry } from "../../lib/types";
+import ActivityIndicator from "./ActivityIndicator.svelte";
 import MessageInput from "./MessageInput.svelte";
 import MessageList from "./MessageList.svelte";
-import TypingIndicator from "./TypingIndicator.svelte";
 
 let {
   name,
@@ -43,6 +43,9 @@ let loadingOlder = $state(false);
 let currentConvId: string | null = null;
 let typingSafetyTimer = 0;
 let messageList: MessageList;
+let mindParticipants = $derived(
+  participants.filter((p) => p.userType === "mind").map((p) => p.username),
+);
 
 // Notify parent of typing names changes
 $effect(() => {
@@ -250,7 +253,7 @@ async function handleSend(
     {onOpenMind}
   />
 
-  <TypingIndicator names={typingNames} />
+  <ActivityIndicator {typingNames} {mindParticipants} {minds} {onOpenMind} />
 
   <MessageInput
     {sending}
