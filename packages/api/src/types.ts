@@ -21,6 +21,7 @@ export type Mind = {
   displayName?: string;
   description?: string;
   avatar?: string;
+  mindType?: "mind" | "spirit";
 };
 
 export type PlatformConnection = {

@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import { getDb } from "../db.js";
 import { minds } from "../schema.js";
 
@@ -96,13 +96,13 @@ function rowToEntry(row: RawMindRow): MindEntry {
   };
 }
 
-/** Read base minds (no parent, no spirits) from DB. */
+/** Read base minds and spirits (no variants) from DB. */
 export async function readRegistry(): Promise<MindEntry[]> {
   const db = await getDb();
   const rows = await db
     .select()
     .from(minds)
-    .where(and(isNull(minds.parent), eq(minds.mind_type, "mind")));
+    .where(and(isNull(minds.parent), inArray(minds.mind_type, ["mind", "spirit"])));
   return (rows as unknown as RawMindRow[]).map(rowToEntry);
 }
 

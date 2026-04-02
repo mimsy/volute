@@ -8,7 +8,6 @@ export type Selection =
       subpath?: string;
     }
   | { kind: "extension"; extensionId: string; path: string }
-  | { kind: "system-chat" }
   | { kind: "system-history" }
   | { kind: "channel"; slug: string };
 
@@ -83,7 +82,6 @@ export function parseSelection(extensions: ExtensionInfo[] = []): Selection {
   const path = window.location.pathname;
   const search = new URLSearchParams(window.location.search);
 
-  if (path === "/system/chat") return { kind: "system-chat" };
   if (path === "/history") return { kind: "system-history" };
   // Legacy settings URLs — these are now modals, redirect to home
   if (path === "/system/settings" || path === "/settings" || path.startsWith("/settings/"))
@@ -173,8 +171,6 @@ export function selectionToPath(selection: Selection, extensions: ExtensionInfo[
         ? `/ext/${selection.extensionId}/${selection.path}`
         : `/ext/${selection.extensionId}`;
     }
-    case "system-chat":
-      return "/system/chat";
     case "channel": {
       // Don't serialize backwards-compat conv IDs to URL
       if (selection.slug.startsWith("__conv:")) {
