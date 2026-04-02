@@ -4,6 +4,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { getTypingMap, publishTypingForChannels } from "../chat/typing.js";
 import { getDb } from "../db.js";
 import { getParticipants } from "../events/conversations.js";
+import { onMindEvent } from "../events/mind-activity-tracker.js";
 import { findMind, getBaseName, mindDir, voluteHome } from "../mind/registry.js";
 import { readVoluteConfig } from "../mind/volute-config.js";
 import { deliveryQueue } from "../schema.js";
@@ -394,6 +395,9 @@ export class DeliveryManager {
     if (payload.conversationId) {
       typingMap.set(payload.conversationId, baseName, { persistent: true });
     }
+
+    // Mark mind as active immediately at delivery time (before it emits events)
+    onMindEvent(baseName, "delivery", payload.channel);
 
     // Enrich with participant profiles on first encounter per channel
     const enrichedPayload = await this.enrichWithProfiles(baseName, session, payload);
