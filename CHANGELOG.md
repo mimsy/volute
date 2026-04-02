@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.39.0](https://github.com/mimsy/volute/compare/volute-v0.38.0...volute-v0.39.0) (2026-04-02)
+
+
+### Features
+
+* replace typing indicator with activity indicator in chat ([#297](https://github.com/mimsy/volute/issues/297)) ([068e8f6](https://github.com/mimsy/volute/commit/068e8f646798c6fe91e37f28d4d8f78516a08047))
+* show spirit in sidebar with own mind page ([#301](https://github.com/mimsy/volute/issues/301)) ([56b00cd](https://github.com/mimsy/volute/commit/56b00cd51e9de52c7b7d7452953cdd6a324b3fa4))
+
+
+### Bug Fixes
+
+* sandbox improvements and codex macOS crash fix ([#300](https://github.com/mimsy/volute/issues/300)) ([7324f6e](https://github.com/mimsy/volute/commit/7324f6ec6f7fc6229c83017402a2c9728ce89116))
+* setup provider crash and sandbox read isolation ([#298](https://github.com/mimsy/volute/issues/298)) ([09baee0](https://github.com/mimsy/volute/commit/09baee0f909e0e7ab52150f3e67f0add5ad76ab1))
+
 ## [0.38.0](https://github.com/mimsy/volute/compare/volute-v0.37.1...volute-v0.38.0) (2026-04-01)
 
 
