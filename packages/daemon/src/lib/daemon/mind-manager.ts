@@ -307,7 +307,10 @@ export class MindManager {
     let spawnArgs: string[];
     if (isIsolationEnabled()) {
       [spawnCmd, spawnArgs] = await wrapForIsolation(baseBin, baseArgs, name);
-    } else if (isSandboxEnabled()) {
+    } else if (isSandboxEnabled() && target.template !== "codex") {
+      // Codex minds use the Codex CLI's native sandbox (--sandbox workspace-write)
+      // instead of @anthropic-ai/sandbox-runtime, which blocks Mach IPC services
+      // that the Codex binary needs (e.g. SCDynamicStore for network config).
       [spawnCmd, spawnArgs] = await wrapForSandbox(baseBin, baseArgs, dir, name, [
         dir,
         mindStateDir,
