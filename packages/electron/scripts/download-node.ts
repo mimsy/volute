@@ -12,6 +12,7 @@ import { pipeline } from "node:stream/promises";
 
 // Match the project's engines requirement
 const NODE_VERSION = "24.2.0";
+const RIPGREP_VERSION = "14.1.1";
 const ARCH = process.arch === "x64" ? "x64" : "arm64";
 const PLATFORM = process.platform;
 
@@ -19,49 +20,76 @@ const cacheDir = resolve(import.meta.dirname, "..", ".cache");
 const resourcesDir = resolve(import.meta.dirname, "..", "resources");
 const binDir = resolve(resourcesDir, "bin");
 
-const tarballName = `node-v${NODE_VERSION}-${PLATFORM}-${ARCH}.tar.gz`;
-const tarballUrl = `https://nodejs.org/dist/v${NODE_VERSION}/${tarballName}`;
-const cachedTarball = resolve(cacheDir, tarballName);
+const nodeTarballName = `node-v${NODE_VERSION}-${PLATFORM}-${ARCH}.tar.gz`;
+const nodeTarballUrl = `https://nodejs.org/dist/v${NODE_VERSION}/${nodeTarballName}`;
+const cachedNodeTarball = resolve(cacheDir, nodeTarballName);
 
-async function downloadNode() {
+// Ripgrep uses different arch names
+const rgArch = ARCH === "arm64" ? "aarch64" : "x86_64";
+const rgPlatform = PLATFORM === "darwin" ? "apple-darwin" : "unknown-linux-musl";
+const rgTarballName = `ripgrep-${RIPGREP_VERSION}-${rgArch}-${rgPlatform}.tar.gz`;
+const rgTarballUrl = `https://github.com/BurntSushi/ripgrep/releases/download/${RIPGREP_VERSION}/${rgTarballName}`;
+const cachedRgTarball = resolve(cacheDir, rgTarballName);
+
+async function downloadAndExtract(
+  name: string,
+  url: string,
+  cachedPath: string,
+  extractArgs: string[],
+) {
+  if (!existsSync(cachedPath)) {
+    console.log(`Downloading ${name}...`);
+    const res = await fetch(url, { redirect: "follow" });
+    if (!res.ok || !res.body) {
+      throw new Error(`Failed to download ${name}: ${res.status} ${res.statusText}`);
+    }
+    const tmpPath = cachedPath + ".tmp";
+    const fileStream = createWriteStream(tmpPath);
+    await pipeline(res.body as any, fileStream);
+    renameSync(tmpPath, cachedPath);
+    console.log(`${name} download complete`);
+  } else {
+    console.log(`Using cached ${name} tarball`);
+  }
+
+  execFileSync("tar", ["xzf", cachedPath, "-C", binDir, ...extractArgs]);
+}
+
+async function downloadBinaries() {
   mkdirSync(cacheDir, { recursive: true });
   mkdirSync(binDir, { recursive: true });
 
+  // Download Node.js
   const nodeBin = resolve(binDir, "node");
   if (existsSync(nodeBin)) {
     console.log("Node binary already exists, skipping download");
-    return;
-  }
-
-  // Download tarball if not cached
-  if (!existsSync(cachedTarball)) {
-    console.log(`Downloading Node.js v${NODE_VERSION} for ${PLATFORM}-${ARCH}...`);
-    const res = await fetch(tarballUrl);
-    if (!res.ok || !res.body) {
-      throw new Error(`Failed to download: ${res.status} ${res.statusText}`);
-    }
-    const tmpTarball = cachedTarball + ".tmp";
-    const fileStream = createWriteStream(tmpTarball);
-    await pipeline(res.body as any, fileStream);
-    renameSync(tmpTarball, cachedTarball);
-    console.log("Download complete");
   } else {
-    console.log("Using cached tarball");
+    const prefix = `node-v${NODE_VERSION}-${PLATFORM}-${ARCH}`;
+    await downloadAndExtract(
+      `Node.js v${NODE_VERSION} for ${PLATFORM}-${ARCH}`,
+      nodeTarballUrl,
+      cachedNodeTarball,
+      ["--strip-components=2", `${prefix}/bin/node`],
+    );
+    chmodSync(nodeBin, 0o755);
+    console.log(`Extracted: ${nodeBin}`);
   }
 
-  // Extract just the node binary
-  console.log("Extracting node binary...");
-  const prefix = `node-v${NODE_VERSION}-${PLATFORM}-${ARCH}`;
-  execFileSync("tar", [
-    "xzf",
-    cachedTarball,
-    "-C",
-    binDir,
-    "--strip-components=2",
-    `${prefix}/bin/node`,
-  ]);
-  chmodSync(nodeBin, 0o755);
-  console.log(`Extracted: ${nodeBin}`);
+  // Download ripgrep
+  const rgBin = resolve(binDir, "rg");
+  if (existsSync(rgBin)) {
+    console.log("ripgrep binary already exists, skipping download");
+  } else {
+    const rgPrefix = `ripgrep-${RIPGREP_VERSION}-${rgArch}-${rgPlatform}`;
+    await downloadAndExtract(
+      `ripgrep v${RIPGREP_VERSION} for ${PLATFORM}-${ARCH}`,
+      rgTarballUrl,
+      cachedRgTarball,
+      ["--strip-components=1", `${rgPrefix}/rg`],
+    );
+    chmodSync(rgBin, 0o755);
+    console.log(`Extracted: ${rgBin}`);
+  }
 
   // Create volute wrapper script
   const voluteWrapper = resolve(binDir, "volute");
@@ -88,7 +116,7 @@ exec "$DIR/node" "$(dirname "$DIR")/node_modules/.bin/tsx" "$@"
   console.log(`Created: ${tsxWrapper}`);
 }
 
-downloadNode().catch((err) => {
-  console.error("Failed to download Node:", err);
+downloadBinaries().catch((err) => {
+  console.error("Failed to download binaries:", err);
   process.exit(1);
 });

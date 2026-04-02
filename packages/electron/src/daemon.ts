@@ -90,6 +90,7 @@ export class DaemonProcess {
   private async spawn(): Promise<void> {
     this.setState("starting");
 
+    const rgPath = resolve(this.opts.binDir, "rg");
     const env: Record<string, string> = {
       ...(process.env as Record<string, string>),
       VOLUTE_HOME: this.opts.voluteHome,
@@ -97,6 +98,7 @@ export class DaemonProcess {
       VOLUTE_DAEMON_TOKEN: this.token,
       PATH: `${this.opts.binDir}:${process.env.PATH ?? ""}`,
       NODE_PATH: this.opts.nodeModulesDir,
+      ...(existsSync(rgPath) ? { VOLUTE_RIPGREP_PATH: rgPath } : {}),
     };
 
     this.child = spawn(

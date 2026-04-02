@@ -120,6 +120,40 @@ install_git() {
   esac
 }
 
+# --- ripgrep installation (required for sandbox isolation) ---
+
+install_ripgrep() {
+  if command -v rg &>/dev/null; then
+    echo "ripgrep already installed, skipping."
+    return
+  fi
+  echo "Installing ripgrep..."
+  case "$DISTRO" in
+    debian|ubuntu)
+      apt-get update && apt-get install -y --no-install-recommends ripgrep
+      ;;
+    rhel|fedora|centos|amzn)
+      if command -v dnf &>/dev/null; then
+        dnf install -y ripgrep
+      else
+        yum install -y ripgrep
+      fi
+      ;;
+    arch)
+      pacman -S --noconfirm ripgrep
+      ;;
+    alpine)
+      apk add --no-cache ripgrep
+      ;;
+    sles|opensuse*)
+      zypper install -y ripgrep
+      ;;
+    *)
+      echo "Warning: could not install ripgrep for distro '$DISTRO' — sandbox isolation will be unavailable."
+      ;;
+  esac
+}
+
 # --- Main ---
 
 main() {
@@ -130,6 +164,7 @@ main() {
 
   install_node
   install_git
+  install_ripgrep
 
   # Set system-wide git identity for daemon commits if not already configured
   if ! git config --system user.name >/dev/null 2>&1; then

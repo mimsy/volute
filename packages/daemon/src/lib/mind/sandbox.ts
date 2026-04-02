@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
 import type { SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
 import { readGlobalConfig } from "../config/setup.js";
@@ -18,6 +19,10 @@ type SandboxManagerType = {
     customConfig?: Partial<SandboxRuntimeConfig>,
     abortSignal?: AbortSignal,
   ): Promise<string>;
+  checkDependencies(ripgrepConfig?: { command: string }): {
+    errors: string[];
+    warnings: string[];
+  };
 };
 
 const slog = log.child("sandbox");
@@ -30,13 +35,40 @@ export function isSandboxEnabled(): boolean {
   return readGlobalConfig().setup?.isolation === "sandbox";
 }
 
+/** Find a ripgrep binary: VOLUTE_RIPGREP_PATH env var, then system PATH. */
+function findRipgrep(): string | null {
+  if (process.env.VOLUTE_RIPGREP_PATH) return process.env.VOLUTE_RIPGREP_PATH;
+  try {
+    return execFileSync("which", ["rg"], { encoding: "utf-8" }).trim() || null;
+  } catch {
+    return null;
+  }
+}
+
 /** Initialize the sandbox runtime. Call once at daemon startup. */
 export async function initSandbox(): Promise<void> {
   if (!isSandboxEnabled()) return;
 
   try {
     const { SandboxManager } = await import("@anthropic-ai/sandbox-runtime");
-    // Initialize with permissive defaults — per-mind restrictions applied via wrapWithSandbox
+
+    const rgPath = findRipgrep();
+    const ripgrepConfig = rgPath ? { command: rgPath } : undefined;
+
+    // On Linux, ripgrep is required for filesystem deny scanning
+    const { errors } = SandboxManager.checkDependencies(ripgrepConfig);
+    if (errors.length > 0) {
+      if (process.platform === "darwin") {
+        // macOS sandbox profiles use native glob matching — ripgrep not needed
+        slog.warn(`sandbox dependency issues (non-fatal on macOS): ${errors.join(", ")}`);
+      } else {
+        slog.error(
+          `sandbox dependencies missing — minds will run without sandbox isolation: ${errors.join(", ")}`,
+        );
+        return;
+      }
+    }
+
     const config: SandboxRuntimeConfig = {
       network: {
         allowedDomains: ["*"],
@@ -49,6 +81,7 @@ export async function initSandbox(): Promise<void> {
         allowWrite: [],
         denyWrite: [],
       },
+      ...(ripgrepConfig ? { ripgrep: ripgrepConfig } : {}),
     };
     await SandboxManager.initialize(config);
     sandboxManager = SandboxManager;
