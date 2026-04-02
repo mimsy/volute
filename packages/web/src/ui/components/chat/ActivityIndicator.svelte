@@ -60,7 +60,7 @@ function handleMindClick(name: string) {
 
 <style>
   .indicator {
-    padding: 4px 0;
+    padding: 4px 16px;
     font-size: 13px;
     display: flex;
     align-items: center;
