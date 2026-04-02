@@ -1,6 +1,6 @@
 <script lang="ts">
 import type { ContentBlock, Message, Mind, Participant } from "@volute/api";
-import { fetchConversationMessages, reportTyping, sendChat } from "../../lib/client";
+import { fetchConversationMessages, sendChat } from "../../lib/client";
 import { subscribe } from "../../lib/connection.svelte";
 import type { ChatEntry } from "../../lib/types";
 import ActivityIndicator from "./ActivityIndicator.svelte";
