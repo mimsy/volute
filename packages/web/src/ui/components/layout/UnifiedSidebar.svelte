@@ -94,6 +94,9 @@ function toggleSection(section: Section) {
   localStorage.setItem("volute:sidebar-collapsed", JSON.stringify([...collapsed]));
 }
 
+let spirits = $derived(minds.filter((m) => m.mindType === "spirit"));
+let regularMinds = $derived(minds.filter((m) => m.mindType !== "spirit"));
+
 let mindNames = $derived(new Set(minds.map((m) => m.name)));
 
 let mindDmMap = $derived(
@@ -114,7 +117,7 @@ let mindDmMap = $derived(
 );
 
 let sortedMinds = $derived(
-  [...minds].sort((a, b) => {
+  [...regularMinds].sort((a, b) => {
     const aActive = activeMinds.has(a.name) ? 0 : a.status === "running" ? 1 : 2;
     const bActive = activeMinds.has(b.name) ? 0 : b.status === "running" ? 1 : 2;
     if (aActive !== bActive) return aActive - bActive;
@@ -189,9 +192,7 @@ let activeChannelId = $derived.by(() => {
 });
 
 let isSystemActive = $derived(
-  selection.kind === "system-history" ||
-    selection.kind === "system-chat" ||
-    selection.kind === "extension",
+  selection.kind === "system-history" || selection.kind === "extension",
 );
 </script>
 
@@ -228,6 +229,31 @@ let isSystemActive = $derived(
           >!</button>
         {/if}
       </div>
+      {#if spirits.length > 0}
+        <div class="item-list">
+          {#each spirits as spirit}
+            {@const dmId = mindDmMap.get(spirit.name)}
+            {@const spiritUnread = dmId ? (unreadCounts.get(dmId) ?? 0) : 0}
+            <div class="mind-item-row">
+              <button
+                class="nav-item"
+                class:active={selection.kind === "mind" && selection.name === spirit.name}
+                onclick={() => onSelectMind(spirit.name)}
+              >
+                <span
+                  class="status-dot"
+                  class:iridescent={activeMinds.has(spirit.name)}
+                  style:background={activeMinds.has(spirit.name) ? undefined : mindDotColor(spirit)}
+                ></span>
+                <span class="nav-label">{spirit.displayName ?? spirit.name}</span>
+                {#if spiritUnread > 0}
+                  <span class="unread-dot"></span>
+                {/if}
+              </button>
+            </div>
+          {/each}
+        </div>
+      {/if}
     </div>
 
     <!-- Minds -->

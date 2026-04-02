@@ -91,14 +91,10 @@ let onSystemPage = $derived(selection.kind !== "mind" && selection.kind !== "cha
 
 let activeSystemSection = $derived.by((): string | null => {
   if (!onSystemPage) return null;
-  if (selection.kind === "system-chat") return "system-chat";
   if (selection.kind === "system-history") return "system-history";
   if (selection.kind === "extension") return `ext:${selection.extensionId}`;
   return null;
 });
-
-// Spirit conversation ID from setup (used before SSE loads the conversation list)
-let initialSpiritConversationId = $state<string | null>(null);
 
 // Modals
 type ModalType =
@@ -158,14 +154,6 @@ let activeConversationId = $derived.by(() => {
     });
     return conv?.id ?? null;
   }
-  if (sel.kind === "system-chat") {
-    const conv = data.conversations.find((c) => {
-      if (c.type === "channel") return false;
-      const parts = c.participants ?? [];
-      return parts.length === 2 && parts.some((p) => p.username === "volute");
-    });
-    return conv?.id ?? initialSpiritConversationId;
-  }
   return null;
 });
 
@@ -188,6 +176,11 @@ let contextMind = $derived.by(() => {
   const sel = selection;
   if (sel.kind === "mind") return data.minds.find((m) => m.name === sel.name);
   return undefined;
+});
+
+let visibleMindSections = $derived.by(() => {
+  if (contextMind?.mindType === "spirit") return CORE_MIND_SECTIONS;
+  return allMindSections;
 });
 
 let rightPanelMind = $derived(
@@ -266,9 +259,6 @@ let breadcrumbs = $derived.by((): Breadcrumb[] => {
         });
       }
     }
-  } else if (sel.kind === "system-chat") {
-    crumbs.push({ label: "system", action: handleSystemHome });
-    crumbs.push({ label: "chat" });
   } else if (sel.kind === "system-history") {
     crumbs.push({ label: "system" });
   } else {
@@ -645,14 +635,11 @@ function handleGlobalClick(e: MouseEvent) {
   </div>
 {:else if !auth.setupComplete}
   <div class="app full-height">
-    <SetupPage onComplete={(spiritConversationId) => {
+    <SetupPage onComplete={() => {
       auth.setupComplete = true;
-      if (spiritConversationId) {
-        initialSpiritConversationId = spiritConversationId;
-      }
       connectActivity();
       requestAnimationFrame(() => {
-        selection = { kind: "system-chat" };
+        selection = { kind: "mind", name: "volute" };
       });
     }} />
   </div>
@@ -739,7 +726,7 @@ function handleGlobalClick(e: MouseEvent) {
             </div>
             {#if activeMindName}
               <div class="mind-section-tabs">
-                {#each allMindSections as sec}
+                {#each visibleMindSections as sec}
                   <button
                     class="mind-section-tab"
                     class:active={activeMindSection === sec.key}
@@ -760,15 +747,6 @@ function handleGlobalClick(e: MouseEvent) {
                   aria-label="History"
                 >
                   <span class="tab-icon">{@html icons.history}</span>
-                </button>
-                <button
-                  class="mind-section-tab"
-                  class:active={activeSystemSection === "system-chat"}
-                  onclick={() => { selection = { kind: "system-chat" }; }}
-                  use:tooltip={{ text: "Chat", position: "bottom" }}
-                  aria-label="Chat"
-                >
-                  <span class="tab-icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg></span>
                 </button>
                 {#each data.extensions as ext}
                   {#if ext.systemSection}
@@ -813,7 +791,6 @@ function handleGlobalClick(e: MouseEvent) {
               minds={data.minds}
               conversations={data.conversations}
               username={auth.user.username}
-              {initialSpiritConversationId}
               onConversationId={handleConversationId}
               onSelectConversation={handleSelectConversation}
               onOpenMind={handleOpenMindModal}

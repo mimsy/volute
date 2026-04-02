@@ -5,7 +5,7 @@ import { fetchMe } from "../lib/auth";
 import type { AiModel } from "../lib/client";
 import { auth, handleAuth } from "../lib/stores.svelte";
 
-let { onComplete }: { onComplete: (spiritConversationId?: string) => void } = $props();
+let { onComplete }: { onComplete: () => void } = $props();
 
 type Step = "welcome" | "system" | "account" | "provider" | "starting";
 
@@ -302,7 +302,7 @@ async function completeSetup() {
     }
 
     auth.setupComplete = true;
-    onComplete(data.spiritConversationId);
+    onComplete();
   } catch (err) {
     error = err instanceof Error ? err.message : "Something went wrong";
     step = "provider";

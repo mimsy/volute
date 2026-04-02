@@ -11,7 +11,6 @@ let {
   minds,
   conversations,
   username,
-  initialSpiritConversationId,
   onConversationId,
   onOpenMind,
   onSelectConversation,
@@ -23,7 +22,6 @@ let {
   minds: Mind[];
   conversations: ConversationWithParticipants[];
   username: string;
-  initialSpiritConversationId?: string | null;
   onConversationId: (id: string) => void;
   onOpenMind: (mind: Mind) => void;
   onSelectConversation: (id: string) => void;
@@ -118,25 +116,6 @@ let contextLabel = $derived.by(() => {
   {:else if selection.kind === "extension"}
     <div class="frame-content">
       <iframe src="/ext/{selection.extensionId}/#{selection.path ? '/' + selection.path : ''}" class="page-iframe" title="Extension"></iframe>
-    </div>
-  {:else if selection.kind === "system-chat"}
-    {@const spiritConv = conversations.find((c) => {
-      if (c.type === "channel") return false;
-      const parts = c.participants ?? [];
-      return parts.length === 2 && parts.some((p) => p.username === "volute");
-    })}
-    <div class="frame-content mind-frame">
-      <Chat
-        name="volute"
-        {username}
-        conversationId={spiritConv?.id ?? initialSpiritConversationId ?? null}
-        {onConversationId}
-        convType="dm"
-        {minds}
-        participants={spiritConv?.participants ?? []}
-        {onOpenMind}
-        {onTypingNames}
-      />
     </div>
   {:else if selection.kind === "system-history"}
     <div class="frame-content mind-frame">
