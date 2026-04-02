@@ -93,7 +93,15 @@ let utilityModel = $state("");
 let enabledModelIds = $state<string[]>([]);
 
 function handleProviderLoad(enabledModels: AiModel[]) {
-  enabledModelIds = enabledModels.map((m) => m.id);
+  const newIds = enabledModels.map((m) => m.id);
+  // Skip if nothing changed to avoid reactive loops
+  if (
+    newIds.length === enabledModelIds.length &&
+    newIds.every((id, i) => id === enabledModelIds[i])
+  ) {
+    return;
+  }
+  enabledModelIds = newIds;
   // Clear spirit model if it was removed, auto-select first available
   if (spiritModel && !enabledModelIds.includes(spiritModel)) {
     spiritModel = "";

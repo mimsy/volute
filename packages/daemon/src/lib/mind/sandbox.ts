@@ -1,14 +1,6 @@
-import { resolve } from "node:path";
 import type { SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
 import { readGlobalConfig } from "../config/setup.js";
 import log from "../util/logger.js";
-import {
-  getBaseName,
-  readRegistry,
-  voluteHome,
-  voluteSystemDir,
-  voluteUserHome,
-} from "./registry.js";
 
 type SandboxManagerType = {
   initialize(config: SandboxRuntimeConfig): Promise<void>;
@@ -61,48 +53,39 @@ export async function initSandbox(): Promise<void> {
 }
 
 /**
- * Build the deny-read list for a mind process.
- * Blocks access to other minds' dirs, system state, and sensitive user dirs.
+ * Build deny/allow read lists for a mind's sandbox.
+ * Strategy: deny the user's entire home directory, then re-allow just the mind's
+ * own directory via allowRead. This is much more restrictive than cherry-picking
+ * sensitive paths — the mind can only read its own files plus system paths
+ * (node, libraries, etc. outside $HOME).
  */
-export async function buildDenyRead(mindName: string, mindDir: string): Promise<string[]> {
-  const home = voluteHome();
+export async function buildSandboxReadConfig(
+  _mindName: string,
+  mindDir: string,
+): Promise<{ denyRead: string[]; allowRead: string[] }> {
   const userHome = process.env.HOME || "";
-  const mindsDir = process.env.VOLUTE_MINDS_DIR || resolve(home, "minds");
 
-  const deny: string[] = [];
+  const denyRead: string[] = [];
+  const allowRead: string[] = [mindDir];
 
-  // Block entire system directory (db, registry, daemon config, env, state, etc.)
-  deny.push(voluteSystemDir());
-
-  // Block user-specific files on system installs (where voluteUserHome != voluteHome)
-  const userVoluteHome = voluteUserHome();
-  if (userVoluteHome !== home) {
-    deny.push(userVoluteHome);
-  }
-
-  // Other minds — deny each individually since the mind's own dir is inside the same parent
-  try {
-    const entries = await readRegistry();
-    for (const entry of entries) {
-      if (entry.name === (await getBaseName(mindName))) continue;
-      const otherDir = resolve(mindsDir, entry.name);
-      if (otherDir !== mindDir) {
-        deny.push(otherDir);
-      }
-    }
-  } catch (err) {
-    slog.warn("failed to read minds registry for deny-read list", log.errorData(err));
-  }
-
-  // Sensitive user directories
+  // Block user's entire home directory — covers .ssh, .aws, .gnupg, .config,
+  // other projects, other minds, volute system state, etc.
   if (userHome) {
-    deny.push(resolve(userHome, ".ssh"));
-    deny.push(resolve(userHome, ".aws"));
-    deny.push(resolve(userHome, ".gnupg"));
-    deny.push(resolve(userHome, ".config"));
+    denyRead.push(userHome);
+  } else {
+    slog.warn("$HOME is not set — sandbox read restrictions will be limited");
   }
 
-  return deny;
+  // On system installs, also block /Users (macOS) or /home (Linux) to cover
+  // all user directories, not just the daemon's $HOME.
+  if (process.env.VOLUTE_ISOLATION === "user") {
+    const usersDir = process.platform === "darwin" ? "/Users" : "/home";
+    if (!denyRead.includes(usersDir)) {
+      denyRead.push(usersDir);
+    }
+  }
+
+  return { denyRead, allowRead };
 }
 
 export function shellEscape(s: string): string {
@@ -123,10 +106,11 @@ export async function wrapForSandbox(
 ): Promise<[string, string[]]> {
   if (!sandboxManager) return [cmd, args];
 
-  const denyRead = await buildDenyRead(mindName, mindDir);
+  const { denyRead, allowRead } = await buildSandboxReadConfig(mindName, mindDir);
   const customConfig: Partial<SandboxRuntimeConfig> = {
     filesystem: {
       denyRead,
+      allowRead,
       allowWrite: allowWrite ?? [mindDir],
       denyWrite: [],
     },
