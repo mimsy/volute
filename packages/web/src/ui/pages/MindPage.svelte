@@ -31,6 +31,7 @@ let {
 } = $props();
 
 let mind = $derived(data.minds.find((m) => m.name === name));
+let currentConv = $derived(conversations?.find((c) => c.id === conversationId));
 
 function handleIframeNav(e: Event) {
   const iframe = e.target as HTMLIFrameElement;
@@ -72,6 +73,7 @@ function handleIframeNav(e: Event) {
         onConversationId={onConversationId ?? (() => {})}
         stage={mind.stage}
         minds={minds ?? data.minds}
+        participants={currentConv?.participants ?? []}
         {onOpenMind}
         {onTypingNames}
       />

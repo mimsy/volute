@@ -43,9 +43,13 @@ let loadingOlder = $state(false);
 let currentConvId: string | null = null;
 let typingSafetyTimer = 0;
 let messageList: MessageList;
-let mindParticipants = $derived(
-  participants.filter((p) => p.userType === "mind").map((p) => p.username),
-);
+let mindParticipants = $derived.by(() => {
+  const fromParticipants = participants.filter((p) => p.userType === "mind").map((p) => p.username);
+  if (fromParticipants.length > 0) return fromParticipants;
+  // For DMs before conversation is created, use the target mind name
+  if (convType === "dm" && minds.some((m) => m.name === name)) return [name];
+  return [];
+});
 
 // Notify parent of typing names changes
 $effect(() => {
