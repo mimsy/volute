@@ -452,7 +452,7 @@ sudo volute setup --name myserver --system --host 0.0.0.0
 
 Three isolation modes, configured via `volute setup` (stored in `~/.volute/config.json` as `setup.isolation`):
 
-- **`sandbox`** — Local installs use `@anthropic-ai/sandbox-runtime` to sandbox mind processes. Each mind can only write to its own directory; reads to other minds' dirs, system state (`volute.db`, `env.json`), and sensitive user dirs (`.ssh`, `.aws`, `.gnupg`, `.config`) are blocked. Sandbox wrapping happens per-mind at spawn time. Disable at runtime with `volute up --no-sandbox` or `VOLUTE_SANDBOX=0`.
+- **`sandbox`** — Local installs use `@anthropic-ai/sandbox-runtime` to sandbox mind processes. Each mind can only write to its own directory; reads to other minds' dirs, system state (`volute.db`, `env.json`), and sensitive user dirs (`.ssh`, `.aws`, `.gnupg`, `.config`) are blocked. Sandbox wrapping happens per-mind at spawn time. Disable at runtime with `volute up --no-sandbox` or `VOLUTE_SANDBOX=0`. **Note:** Codex template minds are excluded from sandbox wrapping on macOS — the Anthropic sandbox blocks Mach IPC services the Codex binary needs, and Codex's own seatbelt sandbox has an upstream bug (`mullvad/system-configuration-rs#59`). Codex minds currently run without process-level sandbox isolation.
 - **`user`** — System installs create per-mind OS users (`mind-<name>`, prefix configurable via `VOLUTE_USER_PREFIX`). On Linux, uses `useradd`/`runuser`; on macOS, uses `dscl`/`sudo -u`. Mind and bridge processes spawn with the mind's uid/gid. Requires root.
 - **`none`** — No isolation. Used for development or when migrated from a pre-setup installation.
 

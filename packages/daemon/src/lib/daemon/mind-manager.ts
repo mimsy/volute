@@ -308,9 +308,10 @@ export class MindManager {
     if (isIsolationEnabled()) {
       [spawnCmd, spawnArgs] = await wrapForIsolation(baseBin, baseArgs, name);
     } else if (isSandboxEnabled() && target.template !== "codex") {
-      // Codex minds use the Codex CLI's native sandbox (--sandbox workspace-write)
-      // instead of @anthropic-ai/sandbox-runtime, which blocks Mach IPC services
-      // that the Codex binary needs (e.g. SCDynamicStore for network config).
+      // Codex minds can't use @anthropic-ai/sandbox-runtime — it blocks Mach IPC
+      // services the Codex binary needs (e.g. SCDynamicStore for network config).
+      // Codex's own seatbelt sandbox is also disabled due to a system-configuration
+      // Rust crate bug (mullvad/system-configuration-rs#59).
       [spawnCmd, spawnArgs] = await wrapForSandbox(baseBin, baseArgs, dir, name, [
         dir,
         mindStateDir,
