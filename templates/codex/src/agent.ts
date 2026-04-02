@@ -161,7 +161,10 @@ export function createMind(options: {
             model: options.model,
             modelReasoningEffort: options.reasoningEffort,
             skipGitRepoCheck: true,
-            sandboxMode: "workspace-write",
+            // Codex's native seatbelt sandbox panics on macOS due to a bug in the
+            // system-configuration Rust crate (SCDynamicStore NULL object). Use full
+            // access until upstream ships a fix (mullvad/system-configuration-rs#59).
+            sandboxMode: "danger-full-access",
             networkAccessEnabled: true,
           });
           return;
@@ -177,7 +180,8 @@ export function createMind(options: {
         model: options.model,
         modelReasoningEffort: options.reasoningEffort,
         skipGitRepoCheck: true,
-        sandboxMode: "workspace-write",
+        // See comment in resumeThread above
+        sandboxMode: "danger-full-access",
         networkAccessEnabled: true,
       });
       log("mind", `session "${session.name}": new thread started`);

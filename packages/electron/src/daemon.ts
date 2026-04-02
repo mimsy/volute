@@ -90,6 +90,13 @@ export class DaemonProcess {
   private async spawn(): Promise<void> {
     this.setState("starting");
 
+    const rgPath = resolve(this.opts.binDir, "rg");
+    const hasRg = existsSync(rgPath);
+    if (!hasRg) {
+      this.opts.onLog?.(
+        `Warning: bundled ripgrep not found at ${rgPath} — sandbox will use system ripgrep if available`,
+      );
+    }
     const env: Record<string, string> = {
       ...(process.env as Record<string, string>),
       VOLUTE_HOME: this.opts.voluteHome,
@@ -97,6 +104,7 @@ export class DaemonProcess {
       VOLUTE_DAEMON_TOKEN: this.token,
       PATH: `${this.opts.binDir}:${process.env.PATH ?? ""}`,
       NODE_PATH: this.opts.nodeModulesDir,
+      ...(hasRg ? { VOLUTE_RIPGREP_PATH: rgPath } : {}),
     };
 
     this.child = spawn(

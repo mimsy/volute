@@ -67,6 +67,10 @@ Uses `@anthropic-ai/sandbox-runtime` to restrict mind filesystem access. Each mi
 
 Disable at runtime with `volute up --no-sandbox` or `VOLUTE_SANDBOX=0`.
 
+:::note
+Codex template minds are excluded from sandbox wrapping — the Anthropic sandbox blocks Mach IPC services the Codex binary needs, and Codex's own seatbelt sandbox has an upstream bug. Codex minds currently run without process-level sandbox isolation. Per-user isolation (via Docker or `--system`) still works.
+:::
+
 ### Per-user isolation (system installs)
 
 Creates per-mind OS users (`mind-<name>`, prefix configurable via `VOLUTE_USER_PREFIX`). On Linux, uses `useradd`/`runuser`; on macOS, uses `dscl`/`sudo -u`. Mind and bridge processes spawn with the mind's uid/gid. Requires root.
