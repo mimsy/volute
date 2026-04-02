@@ -161,7 +161,8 @@ export function createMind(options: {
             model: options.model,
             modelReasoningEffort: options.reasoningEffort,
             skipGitRepoCheck: true,
-            sandboxMode: "danger-full-access",
+            sandboxMode: "workspace-write",
+            networkAccessEnabled: true,
           });
           return;
         } catch (err) {
@@ -176,7 +177,8 @@ export function createMind(options: {
         model: options.model,
         modelReasoningEffort: options.reasoningEffort,
         skipGitRepoCheck: true,
-        sandboxMode: "danger-full-access",
+        sandboxMode: "workspace-write",
+        networkAccessEnabled: true,
       });
       log("mind", `session "${session.name}": new thread started`);
     } catch (err) {

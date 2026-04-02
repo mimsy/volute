@@ -128,30 +128,35 @@ install_ripgrep() {
     return
   fi
   echo "Installing ripgrep..."
+  local ok=true
   case "$DISTRO" in
     debian|ubuntu)
-      apt-get update && apt-get install -y --no-install-recommends ripgrep
+      apt-get update && apt-get install -y --no-install-recommends ripgrep || ok=false
       ;;
     rhel|fedora|centos|amzn)
       if command -v dnf &>/dev/null; then
-        dnf install -y ripgrep
+        dnf install -y ripgrep || ok=false
       else
-        yum install -y ripgrep
+        yum install -y ripgrep || ok=false
       fi
       ;;
     arch)
-      pacman -S --noconfirm ripgrep
+      pacman -S --noconfirm ripgrep || ok=false
       ;;
     alpine)
-      apk add --no-cache ripgrep
+      apk add --no-cache ripgrep || ok=false
       ;;
     sles|opensuse*)
-      zypper install -y ripgrep
+      zypper install -y ripgrep || ok=false
       ;;
     *)
-      echo "Warning: could not install ripgrep for distro '$DISTRO' — sandbox isolation will be unavailable."
+      ok=false
       ;;
   esac
+  if [ "$ok" = false ]; then
+    echo "Warning: ripgrep installation failed — sandbox isolation will be unavailable."
+    echo "  You can install ripgrep manually later: https://github.com/BurntSushi/ripgrep#installation"
+  fi
 }
 
 # --- Main ---

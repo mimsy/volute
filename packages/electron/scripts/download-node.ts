@@ -75,9 +75,11 @@ async function downloadBinaries() {
     console.log(`Extracted: ${nodeBin}`);
   }
 
-  // Download ripgrep
+  // Download ripgrep (only on platforms with sandbox support)
   const rgBin = resolve(binDir, "rg");
-  if (existsSync(rgBin)) {
+  if (PLATFORM !== "darwin" && PLATFORM !== "linux") {
+    console.log(`Skipping ripgrep download: unsupported platform ${PLATFORM}`);
+  } else if (existsSync(rgBin)) {
     console.log("ripgrep binary already exists, skipping download");
   } else {
     const rgPrefix = `ripgrep-${RIPGREP_VERSION}-${rgArch}-${rgPlatform}`;
@@ -87,6 +89,11 @@ async function downloadBinaries() {
       cachedRgTarball,
       ["--strip-components=1", `${rgPrefix}/rg`],
     );
+    if (!existsSync(rgBin)) {
+      throw new Error(
+        `ripgrep binary not found at ${rgBin} after extraction — tarball structure may have changed`,
+      );
+    }
     chmodSync(rgBin, 0o755);
     console.log(`Extracted: ${rgBin}`);
   }
