@@ -76,20 +76,20 @@ export async function initSandbox(): Promise<void> {
       }
     }
 
-    const config: SandboxRuntimeConfig = {
-      network: {
-        allowedDomains: ["*"],
-        deniedDomains: [],
-        allowLocalBinding: true,
-        allowAllUnixSockets: true,
-      },
+    // Omit network config so the sandbox doesn't set up a proxy. All minds
+    // need direct API access and the proxy breaks clients that don't respect
+    // HTTP_PROXY (e.g. the claude subprocess spawned by the Agent SDK).
+    // Without network.allowedDomains, wrapWithSandbox generates a seatbelt
+    // profile with `(allow network*)` — unrestricted network while filesystem
+    // restrictions still apply.
+    const config = {
       filesystem: {
         denyRead: [],
         allowWrite: [],
         denyWrite: [],
       },
       ...(ripgrepConfig ? { ripgrep: ripgrepConfig } : {}),
-    };
+    } as unknown as SandboxRuntimeConfig;
     await SandboxManager.initialize(config);
     sandboxManager = SandboxManager;
   } catch (err) {

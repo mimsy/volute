@@ -1226,7 +1226,7 @@ const app = new Hono<AuthEnv>()
     }
     try {
       const res = await fetch(`http://127.0.0.1:${entry.port}/context`, {
-        signal: AbortSignal.timeout(3000),
+        signal: AbortSignal.timeout(10000),
       });
       if (!res.ok) {
         const status = res.status >= 500 ? 502 : 404;
