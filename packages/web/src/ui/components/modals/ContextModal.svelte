@@ -1,13 +1,25 @@
 <script lang="ts">
-import { Modal, tooltip } from "@volute/ui";
+import { Modal, TabBar, tooltip } from "@volute/ui";
 import { onMount } from "svelte";
-import { type ContextBreakdown, type ContextInfo, fetchMindContext } from "../../lib/client";
+import {
+  type ContextBreakdown,
+  type ContextInfo,
+  type ContextMessages,
+  fetchMindContext,
+  fetchMindContextMessages,
+} from "../../lib/client";
+import ContextContentView from "../mind/ContextContentView.svelte";
 
 let { mindName, onClose }: { mindName: string; onClose: () => void } = $props();
 
+let activeTab = $state("Overview");
 let contextInfo = $state<ContextInfo | null>(null);
+let contextMessages = $state<ContextMessages | null>(null);
 let loading = $state(true);
+let messagesLoading = $state(false);
 let error = $state("");
+let messagesError = $state("");
+
 onMount(async () => {
   try {
     contextInfo = await fetchMindContext(mindName);
@@ -17,6 +29,23 @@ onMount(async () => {
     loading = false;
   }
 });
+
+async function loadMessages() {
+  if (contextMessages || messagesLoading) return;
+  messagesLoading = true;
+  try {
+    contextMessages = await fetchMindContextMessages(mindName);
+  } catch (e: any) {
+    messagesError = e.message ?? "Failed to fetch context messages";
+  } finally {
+    messagesLoading = false;
+  }
+}
+
+function handleTabChange(tab: string) {
+  activeTab = tab;
+  if (tab === "Content") loadMessages();
+}
 
 function formatTokens(n: number): string {
   if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
@@ -125,69 +154,87 @@ function buildGrid(categories: Category[], contextWindow: number): Cell[] {
 }
 </script>
 
-<Modal title="Context — {mindName}" {onClose} size="600px">
-  {#if loading}
-    <div class="loading">Loading context info...</div>
-  {:else if error}
-    <div class="error">{error}</div>
-  {:else if contextInfo}
-    <div class="context-content">
-      {#if contextInfo.systemPrompt > 0}
-        <div class="system-prompt-line">
-          <span class="sp-label">System prompt</span>
-          <span class="sp-value">{formatTokens(contextInfo.systemPrompt)} tokens</span>
-        </div>
-      {/if}
+<Modal
+  title="Context — {mindName}"
+  {onClose}
+  size={activeTab === "Content" ? "full" : "600px"}
+>
+  {#snippet headerActions()}
+    <TabBar tabs={["Overview", "Content"]} active={activeTab} onchange={handleTabChange} />
+  {/snippet}
 
-      {#if contextInfo.sessions.length === 0}
-        <div class="empty">No active sessions</div>
-      {:else}
-        <div class="sessions">
-          {#each contextInfo.sessions as session (session.name)}
-            {@const categories = session.breakdown ? getCategories(session.breakdown, session.contextTokens) : []}
-            {@const cells = categories.length > 0 && session.contextWindow ? buildGrid(categories, session.contextWindow) : []}
-            {@const overLimit = session.contextWindow ? session.contextTokens > session.contextWindow : false}
+  {#if activeTab === "Overview"}
+    {#if loading}
+      <div class="loading">Loading context info...</div>
+    {:else if error}
+      <div class="error">{error}</div>
+    {:else if contextInfo}
+      <div class="context-content">
+        {#if contextInfo.systemPrompt > 0}
+          <div class="system-prompt-line">
+            <span class="sp-label">System prompt</span>
+            <span class="sp-value">{formatTokens(contextInfo.systemPrompt)} tokens</span>
+          </div>
+        {/if}
 
-            <div class="session-block">
-              <div class="session-header">
-                <span class="session-name">{session.name}</span>
-                <span class="session-tokens">
-                  {#if session.contextTokens > 0}
-                    <span class:over-limit={overLimit}>{formatTokens(session.contextTokens)}</span>{#if session.contextWindow}&nbsp;/&nbsp;{formatTokens(session.contextWindow)}{/if}
-                  {:else}
-                    <span class="no-data">no data yet</span>
-                  {/if}
-                </span>
-              </div>
+        {#if contextInfo.sessions.length === 0}
+          <div class="empty">No active sessions</div>
+        {:else}
+          <div class="sessions">
+            {#each contextInfo.sessions as session (session.name)}
+              {@const categories = session.breakdown ? getCategories(session.breakdown, session.contextTokens) : []}
+              {@const cells = categories.length > 0 && session.contextWindow ? buildGrid(categories, session.contextWindow) : []}
+              {@const overLimit = session.contextWindow ? session.contextTokens > session.contextWindow : false}
 
-              {#if cells.length > 0}
-                <!-- Waffle chart -->
-                <div
-                  class="waffle"
-                  style:grid-template-columns="repeat({GRID_COLS}, 1fr)"
-                >
-                  {#each cells as cell, i (i)}
-                    {#if cell.tooltip}
-                      <div class="cell" style:background={cell.color} use:tooltip={cell.tooltip}></div>
+              <div class="session-block">
+                <div class="session-header">
+                  <span class="session-name">{session.name}</span>
+                  <span class="session-tokens">
+                    {#if session.contextTokens > 0}
+                      <span class:over-limit={overLimit}>{formatTokens(session.contextTokens)}</span>{#if session.contextWindow}&nbsp;/&nbsp;{formatTokens(session.contextWindow)}{/if}
                     {:else}
-                      <div class="cell" style:background={cell.color}></div>
+                      <span class="no-data">no data yet</span>
                     {/if}
-                  {/each}
+                  </span>
                 </div>
-              {:else if session.contextTokens > 0}
-                <!-- Simple bar fallback -->
-                <div class="token-bar">
+
+                {#if cells.length > 0}
+                  <!-- Waffle chart -->
                   <div
-                    class="token-bar-fill"
-                    style:width="{Math.min(100, (session.contextTokens / (session.contextWindow ?? session.contextTokens)) * 100)}%"
-                  ></div>
-                </div>
-              {/if}
-            </div>
-          {/each}
-        </div>
-      {/if}
-    </div>
+                    class="waffle"
+                    style:grid-template-columns="repeat({GRID_COLS}, 1fr)"
+                  >
+                    {#each cells as cell, i (i)}
+                      {#if cell.tooltip}
+                        <div class="cell" style:background={cell.color} use:tooltip={cell.tooltip}></div>
+                      {:else}
+                        <div class="cell" style:background={cell.color}></div>
+                      {/if}
+                    {/each}
+                  </div>
+                {:else if session.contextTokens > 0}
+                  <!-- Simple bar fallback -->
+                  <div class="token-bar">
+                    <div
+                      class="token-bar-fill"
+                      style:width="{Math.min(100, (session.contextTokens / (session.contextWindow ?? session.contextTokens)) * 100)}%"
+                    ></div>
+                  </div>
+                {/if}
+              </div>
+            {/each}
+          </div>
+        {/if}
+      </div>
+    {/if}
+  {:else if activeTab === "Content"}
+    {#if messagesLoading}
+      <div class="loading">Loading context content...</div>
+    {:else if messagesError}
+      <div class="error">{messagesError}</div>
+    {:else if contextMessages}
+      <ContextContentView messages={contextMessages} />
+    {/if}
   {/if}
 </Modal>
 

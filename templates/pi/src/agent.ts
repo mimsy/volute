@@ -14,8 +14,11 @@ import {
   countSdkInstructionTokens,
   countSkillDescriptionTokens,
   countSystemPromptTokens,
+  extractPiSessionMessages,
   findPiSessionFile,
   parsePiSessionJSONL,
+  readSdkInstructions,
+  readSkillDescriptions,
 } from "./lib/context-breakdown.js";
 import { createEventHandler, emit } from "./lib/event-handler.js";
 import { runHooks } from "./lib/hook-loader.js";
@@ -32,7 +35,7 @@ import type {
   VoluteContentPart,
   VoluteEvent,
 } from "./lib/types.js";
-import type { ContextInfo } from "./lib/volute-server.js";
+import type { ContextInfo, ContextMessages } from "./lib/volute-server.js";
 
 type PiAgentSession = Awaited<ReturnType<typeof createAgentSession>>["session"];
 
@@ -57,7 +60,11 @@ export function createMind(options: {
   compactionMessage?: string;
   maxContextTokens?: number;
   subagents?: Record<string, SubagentConfig>;
-}): { resolve: HandlerResolver; getContextInfo: () => ContextInfo } {
+}): {
+  resolve: HandlerResolver;
+  getContextInfo: () => ContextInfo;
+  getContextMessages: () => ContextMessages;
+} {
   const sessions = new Map<string, PiSession>();
   const prompts = loadPrompts();
   const today = new Date().toLocaleDateString("en-CA");
@@ -513,5 +520,29 @@ export function createMind(options: {
     };
   }
 
-  return { resolve, getContextInfo };
+  const skillsDir = resolvePath(options.cwd, ".pi/skills");
+
+  function getContextMessages(): ContextMessages {
+    return {
+      preamble: {
+        systemPrompt: options.systemPrompt,
+        sdkInstructions: readSdkInstructions(options.cwd),
+        skillDescriptions: readSkillDescriptions([skillsDir]),
+      },
+      sessions: Array.from(sessions.values()).map((s) => {
+        try {
+          const jsonlPath = findPiSessionFile(piSessionsDir, s.name);
+          return {
+            name: s.name,
+            messages: jsonlPath ? extractPiSessionMessages(jsonlPath) : [],
+          };
+        } catch (err) {
+          log("mind", `failed to extract messages for session "${s.name}":`, err);
+          return { name: s.name, messages: [] };
+        }
+      }),
+    };
+  }
+
+  return { resolve, getContextInfo, getContextMessages };
 }

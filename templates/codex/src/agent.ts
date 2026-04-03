@@ -7,8 +7,11 @@ import {
   countSdkInstructionTokens,
   countSkillDescriptionTokens,
   countSystemPromptTokens,
+  extractCodexSessionMessages,
   findCodexSessionFile,
   parseCodexSessionJSONL,
+  readSdkInstructions,
+  readSkillDescriptions,
 } from "./lib/context-breakdown.js";
 import { daemonEmit, daemonRestart, type EventType } from "./lib/daemon-client.js";
 import { runHooks } from "./lib/hook-loader.js";
@@ -24,7 +27,7 @@ import type {
   VoluteContentPart,
   VoluteEvent,
 } from "./lib/types.js";
-import type { ContextInfo } from "./lib/volute-server.js";
+import type { ContextInfo, ContextMessages } from "./lib/volute-server.js";
 
 /** Minimal interface for a Codex SDK thread — typed to the methods we actually use */
 type CodexThread = {
@@ -73,7 +76,11 @@ export function createMind(options: {
   model?: string;
   reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh";
   maxContextTokens?: number;
-}): { resolve: HandlerResolver; getContextInfo: () => ContextInfo } {
+}): {
+  resolve: HandlerResolver;
+  getContextInfo: () => ContextInfo;
+  getContextMessages: () => ContextMessages;
+} {
   const sessions = new Map<string, CodexSession>();
   const prompts = loadPrompts();
   const maxContextTokens = options.maxContextTokens;
@@ -604,7 +611,7 @@ export function createMind(options: {
       sessions: Array.from(sessions.values()).map((s) => {
         try {
           const threadId = sessionStore.load(s.name);
-          const jsonlPath = threadId ? findCodexSessionFile(threadId) : null;
+          const jsonlPath = threadId ? findCodexSessionFile(threadId, options.mindDir) : null;
           const parsed = jsonlPath
             ? parseCodexSessionJSONL(jsonlPath, systemPromptTokens, claudeMdTokens, skillDescTokens)
             : null;
@@ -628,5 +635,30 @@ export function createMind(options: {
     };
   }
 
-  return { resolve, getContextInfo };
+  const skillsDir = resolvePath(options.cwd, ".agents/skills");
+
+  function getContextMessages(): ContextMessages {
+    return {
+      preamble: {
+        systemPrompt: options.systemPrompt,
+        sdkInstructions: readSdkInstructions(options.cwd),
+        skillDescriptions: readSkillDescriptions([skillsDir]),
+      },
+      sessions: Array.from(sessions.values()).map((s) => {
+        try {
+          const threadId = sessionStore.load(s.name);
+          const jsonlPath = threadId ? findCodexSessionFile(threadId, options.mindDir) : null;
+          return {
+            name: s.name,
+            messages: jsonlPath ? extractCodexSessionMessages(jsonlPath) : [],
+          };
+        } catch (err) {
+          log("mind", `failed to extract messages for session "${s.name}":`, err);
+          return { name: s.name, messages: [] };
+        }
+      }),
+    };
+  }
+
+  return { resolve, getContextInfo, getContextMessages };
 }

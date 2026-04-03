@@ -120,12 +120,27 @@ export type ContextInfo = {
   systemPrompt: number;
 };
 
+export type { ContextBlock, ContextMessage } from "./context-breakdown.js";
+
+export type ContextMessages = {
+  preamble: {
+    systemPrompt: string;
+    sdkInstructions: string;
+    skillDescriptions: Array<{ name: string; description: string }>;
+  };
+  sessions: Array<{
+    name: string;
+    messages: import("./context-breakdown.js").ContextMessage[];
+  }>;
+};
+
 export function createVoluteServer(options: {
   router: Router;
   port: number;
   name: string;
   version: string;
   getContextInfo?: () => ContextInfo | Promise<ContextInfo>;
+  getContextMessages?: () => ContextMessages | Promise<ContextMessages>;
 }): Server {
   const { router, port, name, version } = options;
 
@@ -156,6 +171,24 @@ export function createVoluteServer(options: {
         res.end(JSON.stringify(info));
       } catch (err) {
         log("server", "error in /context:", err);
+        res.writeHead(500);
+        res.end("Internal Server Error");
+      }
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/context/messages") {
+      if (!options.getContextMessages) {
+        res.writeHead(404);
+        res.end("Not Found");
+        return;
+      }
+      try {
+        const messages = await options.getContextMessages();
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(messages));
+      } catch (err) {
+        log("server", "error in /context/messages:", err);
         res.writeHead(500);
         res.end("Internal Server Error");
       }

@@ -7,8 +7,11 @@ import {
   countSdkInstructionTokens,
   countSkillDescriptionTokens,
   countSystemPromptTokens,
+  extractClaudeSessionMessages,
   findClaudeSessionFile,
   parseClaudeSessionJSONL,
+  readSdkInstructions,
+  readSkillDescriptions,
 } from "./lib/context-breakdown.js";
 import { daemonEmit } from "./lib/daemon-client.js";
 import { runHooks } from "./lib/hook-loader.js";
@@ -30,7 +33,7 @@ import type {
   VoluteContentPart,
   VoluteEvent,
 } from "./lib/types.js";
-import type { ContextInfo } from "./lib/volute-server.js";
+import type { ContextInfo, ContextMessages } from "./lib/volute-server.js";
 
 type Session = {
   name: string;
@@ -60,6 +63,7 @@ export function createMind(options: {
   resolve: HandlerResolver;
   waitForCommits: () => Promise<void>;
   getContextInfo: () => ContextInfo;
+  getContextMessages: () => ContextMessages;
 } {
   const autoCommit = createAutoCommitHook(options.cwd);
   const identityReload = createIdentityReloadHook(options.cwd);
@@ -573,5 +577,30 @@ export function createMind(options: {
     };
   }
 
-  return { resolve, waitForCommits: autoCommit.waitForCommits, getContextInfo };
+  const skillsDir = resolvePath(options.cwd, ".claude/skills");
+
+  function getContextMessages(): ContextMessages {
+    return {
+      preamble: {
+        systemPrompt: options.systemPrompt,
+        sdkInstructions: readSdkInstructions(options.cwd),
+        skillDescriptions: readSkillDescriptions([skillsDir]),
+      },
+      sessions: Array.from(sessions.values()).map((s) => {
+        try {
+          const sessionId = sessionStore.load(s.name);
+          const jsonlPath = sessionId ? findClaudeSessionFile(options.cwd, sessionId) : null;
+          return {
+            name: s.name,
+            messages: jsonlPath ? extractClaudeSessionMessages(jsonlPath) : [],
+          };
+        } catch (err) {
+          log("mind", `failed to extract messages for session "${s.name}":`, err);
+          return { name: s.name, messages: [] };
+        }
+      }),
+    };
+  }
+
+  return { resolve, waitForCommits: autoCommit.waitForCommits, getContextInfo, getContextMessages };
 }

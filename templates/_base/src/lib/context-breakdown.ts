@@ -328,6 +328,236 @@ export function parsePiSessionJSONL(
   };
 }
 
+// --- Message extraction types ---
+
+export type ContextBlock =
+  | { type: "text"; text: string }
+  | { type: "thinking"; text: string }
+  | { type: "tool_use"; name: string; input: string }
+  | { type: "tool_result"; text: string; isError?: boolean };
+
+export type ContextMessage = {
+  role: "user" | "assistant";
+  blocks: ContextBlock[];
+};
+
+// --- Claude message extraction ---
+
+export function extractClaudeSessionMessages(filePath: string): ContextMessage[] {
+  let data: string;
+  try {
+    data = readFileSync(filePath, "utf-8");
+  } catch {
+    return [];
+  }
+
+  const messages: ContextMessage[] = [];
+  for (const line of data.split("\n").filter((l) => l.trim())) {
+    let entry: ClaudeMessage;
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      continue;
+    }
+
+    if (entry.type === "assistant" && entry.message) {
+      const blocks: ContextBlock[] = [];
+      for (const block of entry.message.content ?? []) {
+        if (block.type === "thinking" && block.thinking) {
+          blocks.push({ type: "thinking", text: block.thinking });
+        } else if (block.type === "text" && block.text) {
+          blocks.push({ type: "text", text: block.text });
+        } else if (block.type === "tool_use") {
+          const input = block.input;
+          blocks.push({
+            type: "tool_use",
+            name: (block as any).name ?? "unknown",
+            input: typeof input === "string" ? input : JSON.stringify(input ?? {}, null, 2),
+          });
+        }
+      }
+      if (blocks.length > 0) messages.push({ role: "assistant", blocks });
+    } else if (entry.type === "user" && entry.message) {
+      const blocks: ContextBlock[] = [];
+      for (const block of entry.message.content ?? []) {
+        if (block.type === "tool_result") {
+          const content = block.content;
+          const isError = (block as any).is_error === true;
+          if (typeof content === "string") {
+            blocks.push({ type: "tool_result", text: content, isError });
+          } else if (Array.isArray(content)) {
+            for (const c of content) {
+              if (c && typeof c === "object" && "text" in c && typeof c.text === "string") {
+                blocks.push({ type: "tool_result", text: c.text, isError });
+              }
+            }
+          }
+        } else if (block.type === "text" && block.text) {
+          blocks.push({ type: "text", text: block.text });
+        }
+      }
+      if (blocks.length > 0) messages.push({ role: "user", blocks });
+    }
+  }
+  return messages;
+}
+
+// --- Codex message extraction ---
+
+export function extractCodexSessionMessages(filePath: string): ContextMessage[] {
+  let data: string;
+  try {
+    data = readFileSync(filePath, "utf-8");
+  } catch {
+    return [];
+  }
+
+  const messages: ContextMessage[] = [];
+  for (const line of data.split("\n").filter((l) => l.trim())) {
+    let entry: CodexEntry;
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      continue;
+    }
+
+    const payload = entry.payload;
+    if (!payload || entry.type !== "response_item") continue;
+
+    if (payload.type === "reasoning") {
+      const blocks: ContextBlock[] = [];
+      const summary = payload.summary;
+      if (Array.isArray(summary)) {
+        for (const s of summary) {
+          if (s && typeof s === "object" && s.text) blocks.push({ type: "thinking", text: s.text });
+        }
+      } else if (typeof summary === "string" && summary) {
+        blocks.push({ type: "thinking", text: summary });
+      }
+      if (blocks.length > 0) messages.push({ role: "assistant", blocks });
+    } else if (payload.type === "message") {
+      const text = payload.content?.map((c) => c.text ?? "").join("") ?? "";
+      if (text) {
+        const role = payload.role === "assistant" ? "assistant" : "user";
+        messages.push({ role, blocks: [{ type: "text", text }] });
+      }
+    } else if (payload.type === "function_call") {
+      const args = payload.arguments ?? "";
+      messages.push({
+        role: "assistant",
+        blocks: [{ type: "tool_use", name: payload.name ?? "unknown", input: args }],
+      });
+    } else if (payload.type === "function_call_output") {
+      const output = payload.output ?? "";
+      if (output) {
+        messages.push({ role: "user", blocks: [{ type: "tool_result", text: output }] });
+      }
+    }
+  }
+  return messages;
+}
+
+// --- Pi message extraction ---
+
+export function extractPiSessionMessages(filePath: string): ContextMessage[] {
+  let data: string;
+  try {
+    data = readFileSync(filePath, "utf-8");
+  } catch {
+    return [];
+  }
+
+  const messages: ContextMessage[] = [];
+  for (const line of data.split("\n").filter((l) => l.trim())) {
+    let entry: PiEntry;
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      continue;
+    }
+
+    if (entry.type === "custom_message" && entry.content) {
+      messages.push({ role: "user", blocks: [{ type: "text", text: entry.content }] });
+      continue;
+    }
+
+    if (entry.type !== "message" || !entry.message) continue;
+    const msg = entry.message;
+
+    if (msg.role === "assistant") {
+      const blocks: ContextBlock[] = [];
+      for (const block of msg.content ?? []) {
+        if (block.type === "thinking" && block.thinking) {
+          blocks.push({ type: "thinking", text: block.thinking });
+        } else if (block.type === "text" && block.text) {
+          blocks.push({ type: "text", text: block.text });
+        } else if (block.type === "toolCall") {
+          const args = block.arguments;
+          blocks.push({
+            type: "tool_use",
+            name: (block as any).name ?? "unknown",
+            input: typeof args === "string" ? args : JSON.stringify(args ?? {}, null, 2),
+          });
+        }
+      }
+      if (blocks.length > 0) messages.push({ role: "assistant", blocks });
+    } else if (msg.role === "toolResult") {
+      const blocks: ContextBlock[] = [];
+      for (const block of msg.content ?? []) {
+        if (block.text) blocks.push({ type: "tool_result", text: block.text });
+      }
+      if (blocks.length > 0) messages.push({ role: "user", blocks });
+    } else if (msg.role === "user") {
+      const blocks: ContextBlock[] = [];
+      for (const block of msg.content ?? []) {
+        if (block.type === "text" && block.text) {
+          blocks.push({ type: "text", text: block.text });
+        }
+      }
+      if (blocks.length > 0) messages.push({ role: "user", blocks });
+    }
+  }
+  return messages;
+}
+
+// --- Preamble text readers ---
+
+/** Read the SDK instruction file content (CLAUDE.md, MINDS.md, or AGENTS.md). */
+export function readSdkInstructions(cwd: string): string {
+  for (const name of ["CLAUDE.md", "MINDS.md", "AGENTS.md"]) {
+    try {
+      return readFileSync(resolve(cwd, name), "utf-8");
+    } catch {
+      // try next
+    }
+  }
+  return "";
+}
+
+/** Read skill names and descriptions from SKILL.md frontmatter. */
+export function readSkillDescriptions(
+  skillsDirs: string[],
+): Array<{ name: string; description: string }> {
+  const results: Array<{ name: string; description: string }> = [];
+  for (const dir of skillsDirs) {
+    try {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        if (!entry.isDirectory()) continue;
+        try {
+          const content = readFileSync(resolve(dir, entry.name, "SKILL.md"), "utf-8");
+          const match = content.match(/^description:\s*(.+?)$/m);
+          if (match) results.push({ name: entry.name, description: match[1] });
+        } catch {
+          // skip
+        }
+      }
+    } catch {
+      // skip
+    }
+  }
+  return results;
+}
+
 // --- Measure known SDK overhead ---
 
 /** Count tokens in the actual composed system prompt string. */
@@ -401,40 +631,46 @@ export function findClaudeSessionFile(cwd: string, sessionId: string): string | 
 }
 
 /** Find the Codex JSONL file for a thread ID. */
-export function findCodexSessionFile(threadId: string): string | null {
-  const codexDir = resolve(process.env.HOME ?? "", ".codex/sessions");
-  try {
-    for (const year of readdirSync(codexDir)) {
-      const yearDir = resolve(codexDir, year);
-      try {
-        if (!statSync(yearDir).isDirectory()) continue;
-      } catch {
-        continue;
-      }
-      for (const month of readdirSync(yearDir)) {
-        const monthDir = resolve(yearDir, month);
+export function findCodexSessionFile(threadId: string, mindDir?: string): string | null {
+  // Check mind-local Codex sessions first, then global ~/.codex/sessions
+  const searchDirs: string[] = [];
+  if (mindDir) searchDirs.push(resolve(mindDir, ".mind/codex/sessions"));
+  searchDirs.push(resolve(process.env.HOME ?? "", ".codex/sessions"));
+
+  for (const codexDir of searchDirs) {
+    try {
+      for (const year of readdirSync(codexDir)) {
+        const yearDir = resolve(codexDir, year);
         try {
-          if (!statSync(monthDir).isDirectory()) continue;
+          if (!statSync(yearDir).isDirectory()) continue;
         } catch {
           continue;
         }
-        for (const day of readdirSync(monthDir)) {
-          const dayDir = resolve(monthDir, day);
+        for (const month of readdirSync(yearDir)) {
+          const monthDir = resolve(yearDir, month);
           try {
-            if (!statSync(dayDir).isDirectory()) continue;
+            if (!statSync(monthDir).isDirectory()) continue;
           } catch {
             continue;
           }
-          for (const file of readdirSync(dayDir)) {
-            if (file.endsWith(".jsonl") && file.includes(threadId)) {
-              return resolve(dayDir, file);
+          for (const day of readdirSync(monthDir)) {
+            const dayDir = resolve(monthDir, day);
+            try {
+              if (!statSync(dayDir).isDirectory()) continue;
+            } catch {
+              continue;
+            }
+            for (const file of readdirSync(dayDir)) {
+              if (file.endsWith(".jsonl") && file.includes(threadId)) {
+                return resolve(dayDir, file);
+              }
             }
           }
         }
       }
+    } catch (err: any) {
+      if (err?.code !== "ENOENT") console.warn("context-breakdown: codex sessions:", err?.message);
     }
-  } catch (err: any) {
-    if (err?.code !== "ENOENT") console.warn("context-breakdown: codex sessions:", err?.message);
   }
   return null;
 }
