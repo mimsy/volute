@@ -628,5 +628,9 @@ export function createMind(options: {
     };
   }
 
+  // Pre-warm the main session so the thread is created immediately
+  // instead of waiting for the first message.
+  getOrCreateSession("main");
+
   return { resolve, getContextInfo };
 }

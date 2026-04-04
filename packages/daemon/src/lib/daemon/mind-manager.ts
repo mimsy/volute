@@ -163,6 +163,23 @@ export class MindManager {
                 chownMindDir(piAgentDir, baseName);
               }
               env.PI_CODING_AGENT_DIR = piAgentDir;
+
+              // Also set provider-specific env var as fallback — the sandbox may
+              // block proper-lockfile from reading auth.json, so the env var
+              // ensures getEnvApiKey() in pi-ai still resolves the key.
+              const providerEnvVars: Record<string, string> = {
+                openrouter: "OPENROUTER_API_KEY",
+                openai: "OPENAI_API_KEY",
+                anthropic: "ANTHROPIC_API_KEY",
+                google: "GEMINI_API_KEY",
+                groq: "GROQ_API_KEY",
+                cerebras: "CEREBRAS_API_KEY",
+                xai: "XAI_API_KEY",
+                mistral: "MISTRAL_API_KEY",
+                zai: "ZAI_API_KEY",
+              };
+              const providerEnv = providerEnvVars[provider];
+              if (providerEnv) env[providerEnv] = apiKey;
             } else {
               mlog.warn(
                 `no API key found for provider "${provider}" — mind ${name} may fail to start`,
