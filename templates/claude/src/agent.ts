@@ -602,5 +602,9 @@ export function createMind(options: {
     };
   }
 
+  // Pre-warm the main session so the SDK subprocess starts immediately
+  // instead of waiting for the first message (which adds minutes of latency).
+  getOrCreateSession("main");
+
   return { resolve, waitForCommits: autoCommit.waitForCommits, getContextInfo, getContextMessages };
 }
