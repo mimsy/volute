@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.39.1](https://github.com/mimsy/volute/compare/volute-v0.39.0...volute-v0.39.1) (2026-04-04)
+
+
+### Bug Fixes
+
+* pi template API key fallback, sandbox network fix, and pre-warm sessions ([#302](https://github.com/mimsy/volute/issues/302)) ([0de507b](https://github.com/mimsy/volute/commit/0de507b158f7590448bf958a45e31cdeae58a7bc))
+
 ## [0.39.0](https://github.com/mimsy/volute/compare/volute-v0.38.0...volute-v0.39.0) (2026-04-02)
 
 
