@@ -51,16 +51,20 @@ let { messages }: { messages: ContextMessages } = $props();
       {:else}
         <div class="messages">
           {#each session.messages as msg, i (i)}
-            <div class="message" class:user={msg.role === "user"} class:assistant={msg.role === "assistant"}>
-              <div class="role-label" class:user-label={msg.role === "user"} class:assistant-label={msg.role === "assistant"}>
+            <div class="message" class:user={msg.role === "user"} class:assistant={msg.role === "assistant"} class:system={msg.role === "system"}>
+              <div class="role-label" class:user-label={msg.role === "user"} class:assistant-label={msg.role === "assistant"} class:system-label={msg.role === "system"}>
                 {msg.role}
               </div>
               <div class="blocks">
                 {#each msg.blocks as block}
                   {#if block.type === "text"}
-                    <div class="block-text markdown-body">
-                      {@html renderMarkdown(block.text)}
-                    </div>
+                    {#if msg.role === "system"}
+                      <pre class="block-system-text">{block.text}</pre>
+                    {:else}
+                      <div class="block-text markdown-body">
+                        {@html renderMarkdown(block.text)}
+                      </div>
+                    {/if}
                   {:else if block.type === "thinking"}
                     <details class="block-thinking">
                       <summary class="thinking-header">Thinking</summary>
@@ -196,6 +200,11 @@ let { messages }: { messages: ContextMessages } = $props();
     background: transparent;
   }
 
+  .message.system {
+    background: var(--bg-2);
+    border-left: 2px solid var(--text-3);
+  }
+
   .role-label {
     font-size: 10px;
     font-weight: 700;
@@ -214,6 +223,10 @@ let { messages }: { messages: ContextMessages } = $props();
     color: var(--green, #22c55e);
   }
 
+  .system-label {
+    color: var(--text-3);
+  }
+
   .blocks {
     flex: 1;
     min-width: 0;
@@ -225,6 +238,15 @@ let { messages }: { messages: ContextMessages } = $props();
   .block-text {
     font-size: 13px;
     color: var(--text-1);
+    line-height: 1.5;
+  }
+
+  .block-system-text {
+    font-size: 12px;
+    color: var(--text-2);
+    white-space: pre-wrap;
+    font-family: var(--mono);
+    margin: 0;
     line-height: 1.5;
   }
 

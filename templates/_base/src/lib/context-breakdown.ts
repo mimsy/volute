@@ -337,7 +337,7 @@ export type ContextBlock =
   | { type: "tool_result"; text: string; isError?: boolean };
 
 export type ContextMessage = {
-  role: "user" | "assistant";
+  role: "user" | "assistant" | "system";
   blocks: ContextBlock[];
 };
 
@@ -438,7 +438,12 @@ export function extractCodexSessionMessages(filePath: string): ContextMessage[] 
     } else if (payload.type === "message") {
       const text = payload.content?.map((c) => c.text ?? "").join("") ?? "";
       if (text) {
-        const role = payload.role === "assistant" ? "assistant" : "user";
+        const role: ContextMessage["role"] =
+          payload.role === "assistant"
+            ? "assistant"
+            : payload.role === "developer"
+              ? "system"
+              : "user";
         messages.push({ role, blocks: [{ type: "text", text }] });
       }
     } else if (payload.type === "function_call") {

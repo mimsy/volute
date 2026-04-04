@@ -93,7 +93,7 @@ export type ContextBlock =
   | { type: "tool_result"; text: string; isError?: boolean };
 
 export type ContextMessage = {
-  role: "user" | "assistant";
+  role: "user" | "assistant" | "system";
   blocks: ContextBlock[];
 };
 
