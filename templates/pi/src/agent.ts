@@ -15,7 +15,9 @@ import {
   countSkillDescriptionTokens,
   countSystemPromptTokens,
   findPiSessionFile,
-  parsePiSessionJSONL,
+  processPiSession,
+  readSdkInstructions,
+  readSkillDescriptions,
 } from "./lib/context-breakdown.js";
 import { createEventHandler, emit } from "./lib/event-handler.js";
 import { runHooks } from "./lib/hook-loader.js";
@@ -32,7 +34,7 @@ import type {
   VoluteContentPart,
   VoluteEvent,
 } from "./lib/types.js";
-import type { ContextInfo } from "./lib/volute-server.js";
+import type { ContextInfo, ContextMessages } from "./lib/volute-server.js";
 
 type PiAgentSession = Awaited<ReturnType<typeof createAgentSession>>["session"];
 
@@ -57,7 +59,11 @@ export function createMind(options: {
   compactionMessage?: string;
   maxContextTokens?: number;
   subagents?: Record<string, SubagentConfig>;
-}): { resolve: HandlerResolver; getContextInfo: () => ContextInfo } {
+}): {
+  resolve: HandlerResolver;
+  getContextInfo: () => ContextInfo;
+  getContextMessages: () => ContextMessages;
+} {
   const sessions = new Map<string, PiSession>();
   const prompts = loadPrompts();
   const today = new Date().toLocaleDateString("en-CA");
@@ -489,20 +495,23 @@ export function createMind(options: {
   const claudeMdTokens = countSdkInstructionTokens(options.cwd);
   const skillDescTokens = countSkillDescriptionTokens([resolvePath(options.cwd, ".pi/skills")]);
 
+  function processSession(sessionName: string) {
+    const jsonlPath = findPiSessionFile(piSessionsDir, sessionName);
+    return jsonlPath
+      ? processPiSession(jsonlPath, systemPromptTokens, claudeMdTokens, skillDescTokens)
+      : null;
+  }
+
   function getContextInfo(): ContextInfo {
     return {
       sessions: Array.from(sessions.values()).map((s) => {
         try {
-          const jsonlPath = findPiSessionFile(piSessionsDir, s.name);
-          const parsed = jsonlPath
-            ? parsePiSessionJSONL(jsonlPath, systemPromptTokens, claudeMdTokens, skillDescTokens)
-            : null;
-
+          const result = processSession(s.name);
           return {
             name: s.name,
-            contextTokens: parsed?.contextTokens ?? s.contextTokens,
+            contextTokens: result?.parsed?.contextTokens ?? s.contextTokens,
             contextWindow: maxContextTokens,
-            breakdown: parsed?.breakdown,
+            breakdown: result?.parsed?.breakdown,
           };
         } catch (err) {
           log("mind", `failed to get context breakdown for session "${s.name}":`, err);
@@ -513,5 +522,25 @@ export function createMind(options: {
     };
   }
 
-  return { resolve, getContextInfo };
+  function getContextMessages(): ContextMessages {
+    const skillsDir = resolvePath(options.cwd, ".pi/skills");
+    return {
+      preamble: {
+        systemPrompt: options.systemPrompt,
+        sdkInstructions: readSdkInstructions(options.cwd),
+        skillDescriptions: readSkillDescriptions([skillsDir]),
+      },
+      sessions: Array.from(sessions.values()).map((s) => {
+        try {
+          const result = processSession(s.name);
+          return { name: s.name, messages: result?.messages ?? [] };
+        } catch (err) {
+          log("mind", `failed to extract messages for session "${s.name}":`, err);
+          return { name: s.name, messages: [] };
+        }
+      }),
+    };
+  }
+
+  return { resolve, getContextInfo, getContextMessages };
 }
