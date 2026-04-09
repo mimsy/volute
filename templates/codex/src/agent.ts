@@ -7,9 +7,8 @@ import {
   countSdkInstructionTokens,
   countSkillDescriptionTokens,
   countSystemPromptTokens,
-  extractCodexSessionMessages,
   findCodexSessionFile,
-  parseCodexSessionJSONL,
+  processCodexSession,
   readSdkInstructions,
   readSkillDescriptions,
 } from "./lib/context-breakdown.js";
@@ -606,21 +605,24 @@ export function createMind(options: {
   const claudeMdTokens = countSdkInstructionTokens(options.cwd);
   const skillDescTokens = countSkillDescriptionTokens([resolvePath(options.cwd, ".agents/skills")]);
 
+  function processSession(sessionName: string) {
+    const threadId = sessionStore.load(sessionName);
+    const jsonlPath = threadId ? findCodexSessionFile(threadId, options.mindDir) : null;
+    return jsonlPath
+      ? processCodexSession(jsonlPath, systemPromptTokens, claudeMdTokens, skillDescTokens)
+      : null;
+  }
+
   function getContextInfo(): ContextInfo {
     return {
       sessions: Array.from(sessions.values()).map((s) => {
         try {
-          const threadId = sessionStore.load(s.name);
-          const jsonlPath = threadId ? findCodexSessionFile(threadId, options.mindDir) : null;
-          const parsed = jsonlPath
-            ? parseCodexSessionJSONL(jsonlPath, systemPromptTokens, claudeMdTokens, skillDescTokens)
-            : null;
-
+          const result = processSession(s.name);
           return {
             name: s.name,
-            contextTokens: parsed?.contextTokens ?? s.cumulativeInputTokens,
+            contextTokens: result?.parsed?.contextTokens ?? s.cumulativeInputTokens,
             contextWindow: maxContextTokens,
-            breakdown: parsed?.breakdown,
+            breakdown: result?.parsed?.breakdown,
           };
         } catch (err) {
           log("mind", `failed to get context breakdown for session "${s.name}":`, err);
@@ -635,9 +637,8 @@ export function createMind(options: {
     };
   }
 
-  const skillsDir = resolvePath(options.cwd, ".agents/skills");
-
   function getContextMessages(): ContextMessages {
+    const skillsDir = resolvePath(options.cwd, ".agents/skills");
     return {
       preamble: {
         systemPrompt: options.systemPrompt,
@@ -646,12 +647,8 @@ export function createMind(options: {
       },
       sessions: Array.from(sessions.values()).map((s) => {
         try {
-          const threadId = sessionStore.load(s.name);
-          const jsonlPath = threadId ? findCodexSessionFile(threadId, options.mindDir) : null;
-          return {
-            name: s.name,
-            messages: jsonlPath ? extractCodexSessionMessages(jsonlPath) : [],
-          };
+          const result = processSession(s.name);
+          return { name: s.name, messages: result?.messages ?? [] };
         } catch (err) {
           log("mind", `failed to extract messages for session "${s.name}":`, err);
           return { name: s.name, messages: [] };

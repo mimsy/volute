@@ -10,7 +10,7 @@ import {
 import { resolve } from "node:path";
 import { zValidator } from "@hono/zod-validator";
 import { and, desc, eq, type SQL, sql } from "drizzle-orm";
-import { Hono } from "hono";
+import { type Context, Hono } from "hono";
 import { z } from "zod";
 import { qualifyModelId, resolveTemplate, unqualifyModelId } from "../../lib/ai-service.js";
 import { deleteMindUser } from "../../lib/auth.js";
@@ -742,6 +742,40 @@ function formatTimeAgo(date: Date): string {
   return `${days}d ago`;
 }
 
+async function proxyToMind(c: Context<AuthEnv>, path: string) {
+  const name = c.req.param("name")!;
+  const entry = await findMind(name);
+  if (!entry) return c.json({ error: "Mind not found" }, 404);
+  if (!getMindManager().isRunning(name)) {
+    return c.json({ error: "Mind is not running" }, 503);
+  }
+  try {
+    const res = await fetch(`http://127.0.0.1:${entry.port}/${path}`, {
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!res.ok) {
+      const status = res.status >= 500 ? 502 : 404;
+      return c.json(
+        {
+          error:
+            res.status >= 500 ? `Mind ${path} handler errored` : `${path} endpoint not available`,
+        },
+        status,
+      );
+    }
+    let data: unknown;
+    try {
+      data = await res.json();
+    } catch {
+      return c.json({ error: "Mind returned invalid response" }, 502);
+    }
+    return c.json(data);
+  } catch (err) {
+    console.error(`${path} proxy for ${name}:`, err);
+    return c.json({ error: "Failed to reach mind" }, 503);
+  }
+}
+
 const app = new Hono<AuthEnv>()
   .post("/", requireAdminOrSystem, zValidator("json", createMindSchema), async (c) => {
     const body = c.req.valid("json");
@@ -1217,65 +1251,9 @@ const app = new Hono<AuthEnv>()
     return c.json({ ...entry, ...mindStatus, variants: variantStatuses, hasPages });
   })
   // Context info — proxy to mind's /context endpoint
-  .get("/:name/context", async (c) => {
-    const name = c.req.param("name");
-    const entry = await findMind(name);
-    if (!entry) return c.json({ error: "Mind not found" }, 404);
-    if (!getMindManager().isRunning(name)) {
-      return c.json({ error: "Mind is not running" }, 503);
-    }
-    try {
-      const res = await fetch(`http://127.0.0.1:${entry.port}/context`, {
-        signal: AbortSignal.timeout(10000),
-      });
-      if (!res.ok) {
-        const status = res.status >= 500 ? 502 : 404;
-        return c.json(
-          {
-            error:
-              res.status >= 500 ? "Mind context handler errored" : "Context endpoint not available",
-          },
-          status,
-        );
-      }
-      const data = await res.json();
-      return c.json(data);
-    } catch (err) {
-      console.error(`context proxy for ${name}:`, err);
-      return c.json({ error: "Failed to reach mind" }, 503);
-    }
-  })
+  .get("/:name/context", async (c) => proxyToMind(c, "context"))
   // Context messages — proxy to mind's /context/messages endpoint
-  .get("/:name/context/messages", async (c) => {
-    const name = c.req.param("name");
-    const entry = await findMind(name);
-    if (!entry) return c.json({ error: "Mind not found" }, 404);
-    if (!getMindManager().isRunning(name)) {
-      return c.json({ error: "Mind is not running" }, 503);
-    }
-    try {
-      const res = await fetch(`http://127.0.0.1:${entry.port}/context/messages`, {
-        signal: AbortSignal.timeout(10000),
-      });
-      if (!res.ok) {
-        const status = res.status >= 500 ? 502 : 404;
-        return c.json(
-          {
-            error:
-              res.status >= 500
-                ? "Mind context messages handler errored"
-                : "Context messages endpoint not available",
-          },
-          status,
-        );
-      }
-      const data = await res.json();
-      return c.json(data);
-    } catch (err) {
-      console.error(`context/messages proxy for ${name}:`, err);
-      return c.json({ error: "Failed to reach mind" }, 503);
-    }
-  })
+  .get("/:name/context/messages", async (c) => proxyToMind(c, "context/messages"))
   // Start mind (supports variants) — admin only
   .post("/:name/start", requireSelf(), async (c) => {
     const name = c.req.param("name");

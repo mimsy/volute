@@ -29,6 +29,26 @@ function countTokens(text: string): number {
   return _countTokens(text);
 }
 
+// --- Shared JSONL reader ---
+
+function readJsonlEntries<T>(filePath: string): T[] | null {
+  let data: string;
+  try {
+    data = readFileSync(filePath, "utf-8");
+  } catch (err: any) {
+    if (err?.code !== "ENOENT") console.warn(`context-breakdown: ${filePath}:`, err?.message);
+    return null;
+  }
+
+  const entries: T[] = [];
+  for (const line of data.split("\n").filter((l) => l.trim())) {
+    try {
+      entries.push(JSON.parse(line));
+    } catch {}
+  }
+  return entries;
+}
+
 // --- Claude JSONL parser ---
 
 type ClaudeContentBlock = {
@@ -37,6 +57,8 @@ type ClaudeContentBlock = {
   thinking?: string;
   input?: unknown;
   content?: unknown;
+  name?: string;
+  is_error?: boolean;
 };
 
 type ClaudeMessage = {
@@ -57,32 +79,52 @@ export type ParsedContext = {
   breakdown: ContextBreakdown;
 };
 
-export function parseClaudeSessionJSONL(
+// --- Message extraction types ---
+
+export type ContextBlock =
+  | { type: "text"; text: string }
+  | { type: "thinking"; text: string }
+  | { type: "tool_use"; name: string; input: string }
+  | { type: "tool_result"; text: string; isError?: boolean };
+
+export type ContextMessage = {
+  role: "user" | "assistant" | "system";
+  blocks: ContextBlock[];
+};
+
+export type ContextMessages = {
+  preamble: {
+    systemPrompt: string;
+    sdkInstructions: string;
+    skillDescriptions: Array<{ name: string; description: string }>;
+  };
+  sessions: Array<{
+    name: string;
+    messages: ContextMessage[];
+  }>;
+};
+
+// --- Claude: combined parse + extract ---
+
+type SessionResult = {
+  parsed: ParsedContext | null;
+  messages: ContextMessage[];
+};
+
+export function processClaudeSession(
   filePath: string,
   systemPromptTokens: number,
   claudeMdTokens: number,
   skillDescriptionTokens: number,
-): ParsedContext | null {
-  let data: string;
-  try {
-    data = readFileSync(filePath, "utf-8");
-  } catch (err: any) {
-    if (err?.code !== "ENOENT") console.warn(`context-breakdown: ${filePath}:`, err?.message);
-    return null;
-  }
+): SessionResult {
+  const entries = readJsonlEntries<ClaudeMessage>(filePath);
+  if (!entries) return { parsed: null, messages: [] };
 
-  const lines = data.split("\n").filter((l) => l.trim());
   let lastContextTokens = 0;
   const conv = { userText: 0, assistantText: 0, thinking: 0, toolUse: 0, toolResult: 0 };
+  const messages: ContextMessage[] = [];
 
-  for (const line of lines) {
-    let entry: ClaudeMessage;
-    try {
-      entry = JSON.parse(line);
-    } catch {
-      continue;
-    }
-
+  for (const entry of entries) {
     if (entry.type === "assistant" && entry.message) {
       const usage = entry.message.usage;
       if (usage) {
@@ -92,49 +134,80 @@ export function parseClaudeSessionJSONL(
           (usage.cache_read_input_tokens ?? 0);
         if (ctx > 0) lastContextTokens = ctx;
       }
+      const blocks: ContextBlock[] = [];
       for (const block of entry.message.content ?? []) {
         if (block.type === "thinking" && block.thinking) {
           conv.thinking += countTokens(block.thinking);
+          blocks.push({ type: "thinking", text: block.thinking });
         } else if (block.type === "text" && block.text) {
           conv.assistantText += countTokens(block.text);
+          blocks.push({ type: "text", text: block.text });
         } else if (block.type === "tool_use") {
           const input = block.input;
+          const inputStr = typeof input === "string" ? input : JSON.stringify(input ?? {}, null, 2);
           conv.toolUse += countTokens(
             typeof input === "string" ? input : JSON.stringify(input ?? {}),
           );
+          blocks.push({ type: "tool_use", name: block.name ?? "unknown", input: inputStr });
         }
       }
+      if (blocks.length > 0) messages.push({ role: "assistant", blocks });
     } else if (entry.type === "user" && entry.message) {
+      const blocks: ContextBlock[] = [];
       for (const block of entry.message.content ?? []) {
         if (block.type === "tool_result") {
           const content = block.content;
+          const isError = block.is_error === true;
           if (typeof content === "string") {
             conv.toolResult += countTokens(content);
+            blocks.push({ type: "tool_result", text: content, isError });
           } else if (Array.isArray(content)) {
             for (const c of content) {
               if (c && typeof c === "object" && "text" in c && typeof c.text === "string") {
                 conv.toolResult += countTokens(c.text);
+                blocks.push({ type: "tool_result", text: c.text, isError });
               }
             }
           }
         } else if (block.type === "text" && block.text) {
           conv.userText += countTokens(block.text);
+          blocks.push({ type: "text", text: block.text });
         }
       }
+      if (blocks.length > 0) messages.push({ role: "user", blocks });
     }
   }
 
-  if (lastContextTokens === 0) return null;
+  const parsed =
+    lastContextTokens === 0
+      ? null
+      : {
+          contextTokens: lastContextTokens,
+          breakdown: {
+            systemPrompt: systemPromptTokens,
+            sdkInstructions: claudeMdTokens,
+            skillDescriptions: skillDescriptionTokens,
+            conversation: conv,
+          },
+        };
 
-  return {
-    contextTokens: lastContextTokens,
-    breakdown: {
-      systemPrompt: systemPromptTokens,
-      sdkInstructions: claudeMdTokens,
-      skillDescriptions: skillDescriptionTokens,
-      conversation: conv,
-    },
-  };
+  return { parsed, messages };
+}
+
+/** @deprecated Use processClaudeSession instead */
+export function parseClaudeSessionJSONL(
+  filePath: string,
+  systemPromptTokens: number,
+  claudeMdTokens: number,
+  skillDescriptionTokens: number,
+): ParsedContext | null {
+  return processClaudeSession(filePath, systemPromptTokens, claudeMdTokens, skillDescriptionTokens)
+    .parsed;
+}
+
+/** @deprecated Use processClaudeSession instead */
+export function extractClaudeSessionMessages(filePath: string): ContextMessage[] {
+  return processClaudeSession(filePath, 0, 0, 0).messages;
 }
 
 // --- Codex JSONL parser ---
@@ -160,32 +233,22 @@ type CodexEntry = {
   };
 };
 
-export function parseCodexSessionJSONL(
+// --- Codex: combined parse + extract ---
+
+export function processCodexSession(
   filePath: string,
   systemPromptTokens: number,
   claudeMdTokens: number,
   skillDescriptionTokens: number,
-): ParsedContext | null {
-  let data: string;
-  try {
-    data = readFileSync(filePath, "utf-8");
-  } catch (err: any) {
-    if (err?.code !== "ENOENT") console.warn(`context-breakdown: ${filePath}:`, err?.message);
-    return null;
-  }
+): SessionResult {
+  const entries = readJsonlEntries<CodexEntry>(filePath);
+  if (!entries) return { parsed: null, messages: [] };
 
-  const lines = data.split("\n").filter((l) => l.trim());
   let lastContextTokens = 0;
   const conv = { userText: 0, assistantText: 0, thinking: 0, toolUse: 0, toolResult: 0 };
+  const messages: ContextMessage[] = [];
 
-  for (const line of lines) {
-    let entry: CodexEntry;
-    try {
-      entry = JSON.parse(line);
-    } catch {
-      continue;
-    }
-
+  for (const entry of entries) {
     const payload = entry.payload;
     if (!payload) continue;
 
@@ -196,45 +259,83 @@ export function parseCodexSessionJSONL(
       }
     } else if (entry.type === "response_item") {
       if (payload.type === "reasoning") {
-        // Reasoning summaries are in the `summary` field (array of {text} objects)
         const summary = payload.summary;
+        const blocks: ContextBlock[] = [];
         if (Array.isArray(summary)) {
           for (const s of summary) {
-            if (s && typeof s === "object" && s.text) conv.thinking += countTokens(s.text);
+            if (s && typeof s === "object" && s.text) {
+              conv.thinking += countTokens(s.text);
+              blocks.push({ type: "thinking", text: s.text });
+            }
           }
         } else if (typeof summary === "string" && summary) {
           conv.thinking += countTokens(summary);
+          blocks.push({ type: "thinking", text: summary });
         }
+        if (blocks.length > 0) messages.push({ role: "assistant", blocks });
       } else if (payload.type === "message") {
         const text = payload.content?.map((c) => c.text ?? "").join("") ?? "";
         if (text) {
-          if (payload.role === "assistant") {
+          const role: ContextMessage["role"] =
+            payload.role === "assistant"
+              ? "assistant"
+              : payload.role === "developer"
+                ? "system"
+                : "user";
+          if (role === "assistant") {
             conv.assistantText += countTokens(text);
           } else {
             conv.userText += countTokens(text);
           }
+          messages.push({ role, blocks: [{ type: "text", text }] });
         }
       } else if (payload.type === "function_call") {
         const args = payload.arguments ?? "";
         if (args) conv.toolUse += countTokens(args);
+        messages.push({
+          role: "assistant",
+          blocks: [{ type: "tool_use", name: payload.name ?? "unknown", input: args }],
+        });
       } else if (payload.type === "function_call_output") {
         const output = payload.output ?? "";
-        if (output) conv.toolResult += countTokens(output);
+        if (output) {
+          conv.toolResult += countTokens(output);
+          messages.push({ role: "user", blocks: [{ type: "tool_result", text: output }] });
+        }
       }
     }
   }
 
-  if (lastContextTokens === 0) return null;
+  const parsed =
+    lastContextTokens === 0
+      ? null
+      : {
+          contextTokens: lastContextTokens,
+          breakdown: {
+            systemPrompt: systemPromptTokens,
+            sdkInstructions: claudeMdTokens,
+            skillDescriptions: skillDescriptionTokens,
+            conversation: conv,
+          },
+        };
 
-  return {
-    contextTokens: lastContextTokens,
-    breakdown: {
-      systemPrompt: systemPromptTokens,
-      sdkInstructions: claudeMdTokens,
-      skillDescriptions: skillDescriptionTokens,
-      conversation: conv,
-    },
-  };
+  return { parsed, messages };
+}
+
+/** @deprecated Use processCodexSession instead */
+export function parseCodexSessionJSONL(
+  filePath: string,
+  systemPromptTokens: number,
+  claudeMdTokens: number,
+  skillDescriptionTokens: number,
+): ParsedContext | null {
+  return processCodexSession(filePath, systemPromptTokens, claudeMdTokens, skillDescriptionTokens)
+    .parsed;
+}
+
+/** @deprecated Use processCodexSession instead */
+export function extractCodexSessionMessages(filePath: string): ContextMessage[] {
+  return processCodexSession(filePath, 0, 0, 0).messages;
 }
 
 // --- Pi JSONL parser ---
@@ -245,41 +346,38 @@ type PiEntry = {
   message?: {
     role?: string;
     usage?: { input?: number; cacheRead?: number; cacheWrite?: number };
-    content?: Array<{ type?: string; text?: string; thinking?: string; arguments?: unknown }>;
+    content?: Array<{
+      type?: string;
+      text?: string;
+      thinking?: string;
+      arguments?: unknown;
+      name?: string;
+    }>;
   };
   // custom_message entries (hook-injected context: reply-instructions, startup-context, etc.)
   content?: string;
 };
 
-export function parsePiSessionJSONL(
+// --- Pi: combined parse + extract ---
+
+export function processPiSession(
   filePath: string,
   systemPromptTokens: number,
   claudeMdTokens: number,
   skillDescriptionTokens: number,
-): ParsedContext | null {
-  let data: string;
-  try {
-    data = readFileSync(filePath, "utf-8");
-  } catch (err: any) {
-    if (err?.code !== "ENOENT") console.warn(`context-breakdown: ${filePath}:`, err?.message);
-    return null;
-  }
+): SessionResult {
+  const entries = readJsonlEntries<PiEntry>(filePath);
+  if (!entries) return { parsed: null, messages: [] };
 
-  const lines = data.split("\n").filter((l) => l.trim());
   let lastContextTokens = 0;
   const conv = { userText: 0, assistantText: 0, thinking: 0, toolUse: 0, toolResult: 0 };
+  const messages: ContextMessage[] = [];
 
-  for (const line of lines) {
-    let entry: PiEntry;
-    try {
-      entry = JSON.parse(line);
-    } catch {
-      continue;
-    }
-
+  for (const entry of entries) {
     // custom_message entries are hook-injected context (reply-instructions, startup-context)
     if (entry.type === "custom_message" && entry.content) {
       conv.userText += countTokens(entry.content);
+      messages.push({ role: "user", blocks: [{ type: "text", text: entry.content }] });
       continue;
     }
 
@@ -292,237 +390,73 @@ export function parsePiSessionJSONL(
         const ctx = (usage.input ?? 0) + (usage.cacheRead ?? 0) + (usage.cacheWrite ?? 0);
         if (ctx > 0) lastContextTokens = ctx;
       }
+      const blocks: ContextBlock[] = [];
       for (const block of msg.content ?? []) {
         if (block.type === "thinking" && block.thinking) {
           conv.thinking += countTokens(block.thinking);
+          blocks.push({ type: "thinking", text: block.thinking });
         } else if (block.type === "text" && block.text) {
           conv.assistantText += countTokens(block.text);
+          blocks.push({ type: "text", text: block.text });
         } else if (block.type === "toolCall") {
           const args = block.arguments;
+          const argsStr = typeof args === "string" ? args : JSON.stringify(args ?? {}, null, 2);
           conv.toolUse += countTokens(typeof args === "string" ? args : JSON.stringify(args ?? {}));
+          blocks.push({ type: "tool_use", name: block.name ?? "unknown", input: argsStr });
         }
       }
+      if (blocks.length > 0) messages.push({ role: "assistant", blocks });
     } else if (msg.role === "toolResult") {
+      const blocks: ContextBlock[] = [];
       for (const block of msg.content ?? []) {
-        if (block.text) conv.toolResult += countTokens(block.text);
+        if (block.text) {
+          conv.toolResult += countTokens(block.text);
+          blocks.push({ type: "tool_result", text: block.text });
+        }
       }
+      if (blocks.length > 0) messages.push({ role: "user", blocks });
     } else if (msg.role === "user") {
+      const blocks: ContextBlock[] = [];
       for (const block of msg.content ?? []) {
         if (block.type === "text" && block.text) {
           conv.userText += countTokens(block.text);
-        }
-      }
-    }
-  }
-
-  if (lastContextTokens === 0) return null;
-
-  return {
-    contextTokens: lastContextTokens,
-    breakdown: {
-      systemPrompt: systemPromptTokens,
-      sdkInstructions: claudeMdTokens,
-      skillDescriptions: skillDescriptionTokens,
-      conversation: conv,
-    },
-  };
-}
-
-// --- Message extraction types ---
-
-export type ContextBlock =
-  | { type: "text"; text: string }
-  | { type: "thinking"; text: string }
-  | { type: "tool_use"; name: string; input: string }
-  | { type: "tool_result"; text: string; isError?: boolean };
-
-export type ContextMessage = {
-  role: "user" | "assistant" | "system";
-  blocks: ContextBlock[];
-};
-
-// --- Claude message extraction ---
-
-export function extractClaudeSessionMessages(filePath: string): ContextMessage[] {
-  let data: string;
-  try {
-    data = readFileSync(filePath, "utf-8");
-  } catch {
-    return [];
-  }
-
-  const messages: ContextMessage[] = [];
-  for (const line of data.split("\n").filter((l) => l.trim())) {
-    let entry: ClaudeMessage;
-    try {
-      entry = JSON.parse(line);
-    } catch {
-      continue;
-    }
-
-    if (entry.type === "assistant" && entry.message) {
-      const blocks: ContextBlock[] = [];
-      for (const block of entry.message.content ?? []) {
-        if (block.type === "thinking" && block.thinking) {
-          blocks.push({ type: "thinking", text: block.thinking });
-        } else if (block.type === "text" && block.text) {
-          blocks.push({ type: "text", text: block.text });
-        } else if (block.type === "tool_use") {
-          const input = block.input;
-          blocks.push({
-            type: "tool_use",
-            name: (block as any).name ?? "unknown",
-            input: typeof input === "string" ? input : JSON.stringify(input ?? {}, null, 2),
-          });
-        }
-      }
-      if (blocks.length > 0) messages.push({ role: "assistant", blocks });
-    } else if (entry.type === "user" && entry.message) {
-      const blocks: ContextBlock[] = [];
-      for (const block of entry.message.content ?? []) {
-        if (block.type === "tool_result") {
-          const content = block.content;
-          const isError = (block as any).is_error === true;
-          if (typeof content === "string") {
-            blocks.push({ type: "tool_result", text: content, isError });
-          } else if (Array.isArray(content)) {
-            for (const c of content) {
-              if (c && typeof c === "object" && "text" in c && typeof c.text === "string") {
-                blocks.push({ type: "tool_result", text: c.text, isError });
-              }
-            }
-          }
-        } else if (block.type === "text" && block.text) {
           blocks.push({ type: "text", text: block.text });
         }
       }
       if (blocks.length > 0) messages.push({ role: "user", blocks });
     }
   }
-  return messages;
+
+  const parsed =
+    lastContextTokens === 0
+      ? null
+      : {
+          contextTokens: lastContextTokens,
+          breakdown: {
+            systemPrompt: systemPromptTokens,
+            sdkInstructions: claudeMdTokens,
+            skillDescriptions: skillDescriptionTokens,
+            conversation: conv,
+          },
+        };
+
+  return { parsed, messages };
 }
 
-// --- Codex message extraction ---
-
-export function extractCodexSessionMessages(filePath: string): ContextMessage[] {
-  let data: string;
-  try {
-    data = readFileSync(filePath, "utf-8");
-  } catch {
-    return [];
-  }
-
-  const messages: ContextMessage[] = [];
-  for (const line of data.split("\n").filter((l) => l.trim())) {
-    let entry: CodexEntry;
-    try {
-      entry = JSON.parse(line);
-    } catch {
-      continue;
-    }
-
-    const payload = entry.payload;
-    if (!payload || entry.type !== "response_item") continue;
-
-    if (payload.type === "reasoning") {
-      const blocks: ContextBlock[] = [];
-      const summary = payload.summary;
-      if (Array.isArray(summary)) {
-        for (const s of summary) {
-          if (s && typeof s === "object" && s.text) blocks.push({ type: "thinking", text: s.text });
-        }
-      } else if (typeof summary === "string" && summary) {
-        blocks.push({ type: "thinking", text: summary });
-      }
-      if (blocks.length > 0) messages.push({ role: "assistant", blocks });
-    } else if (payload.type === "message") {
-      const text = payload.content?.map((c) => c.text ?? "").join("") ?? "";
-      if (text) {
-        const role: ContextMessage["role"] =
-          payload.role === "assistant"
-            ? "assistant"
-            : payload.role === "developer"
-              ? "system"
-              : "user";
-        messages.push({ role, blocks: [{ type: "text", text }] });
-      }
-    } else if (payload.type === "function_call") {
-      const args = payload.arguments ?? "";
-      messages.push({
-        role: "assistant",
-        blocks: [{ type: "tool_use", name: payload.name ?? "unknown", input: args }],
-      });
-    } else if (payload.type === "function_call_output") {
-      const output = payload.output ?? "";
-      if (output) {
-        messages.push({ role: "user", blocks: [{ type: "tool_result", text: output }] });
-      }
-    }
-  }
-  return messages;
+/** @deprecated Use processPiSession instead */
+export function parsePiSessionJSONL(
+  filePath: string,
+  systemPromptTokens: number,
+  claudeMdTokens: number,
+  skillDescriptionTokens: number,
+): ParsedContext | null {
+  return processPiSession(filePath, systemPromptTokens, claudeMdTokens, skillDescriptionTokens)
+    .parsed;
 }
 
-// --- Pi message extraction ---
-
+/** @deprecated Use processPiSession instead */
 export function extractPiSessionMessages(filePath: string): ContextMessage[] {
-  let data: string;
-  try {
-    data = readFileSync(filePath, "utf-8");
-  } catch {
-    return [];
-  }
-
-  const messages: ContextMessage[] = [];
-  for (const line of data.split("\n").filter((l) => l.trim())) {
-    let entry: PiEntry;
-    try {
-      entry = JSON.parse(line);
-    } catch {
-      continue;
-    }
-
-    if (entry.type === "custom_message" && entry.content) {
-      messages.push({ role: "user", blocks: [{ type: "text", text: entry.content }] });
-      continue;
-    }
-
-    if (entry.type !== "message" || !entry.message) continue;
-    const msg = entry.message;
-
-    if (msg.role === "assistant") {
-      const blocks: ContextBlock[] = [];
-      for (const block of msg.content ?? []) {
-        if (block.type === "thinking" && block.thinking) {
-          blocks.push({ type: "thinking", text: block.thinking });
-        } else if (block.type === "text" && block.text) {
-          blocks.push({ type: "text", text: block.text });
-        } else if (block.type === "toolCall") {
-          const args = block.arguments;
-          blocks.push({
-            type: "tool_use",
-            name: (block as any).name ?? "unknown",
-            input: typeof args === "string" ? args : JSON.stringify(args ?? {}, null, 2),
-          });
-        }
-      }
-      if (blocks.length > 0) messages.push({ role: "assistant", blocks });
-    } else if (msg.role === "toolResult") {
-      const blocks: ContextBlock[] = [];
-      for (const block of msg.content ?? []) {
-        if (block.text) blocks.push({ type: "tool_result", text: block.text });
-      }
-      if (blocks.length > 0) messages.push({ role: "user", blocks });
-    } else if (msg.role === "user") {
-      const blocks: ContextBlock[] = [];
-      for (const block of msg.content ?? []) {
-        if (block.type === "text" && block.text) {
-          blocks.push({ type: "text", text: block.text });
-        }
-      }
-      if (blocks.length > 0) messages.push({ role: "user", blocks });
-    }
-  }
-  return messages;
+  return processPiSession(filePath, 0, 0, 0).messages;
 }
 
 // --- Preamble text readers ---
@@ -532,8 +466,9 @@ export function readSdkInstructions(cwd: string): string {
   for (const name of ["CLAUDE.md", "MINDS.md", "AGENTS.md"]) {
     try {
       return readFileSync(resolve(cwd, name), "utf-8");
-    } catch {
-      // try next
+    } catch (err: any) {
+      if (err?.code !== "ENOENT")
+        console.warn(`context-breakdown: ${resolve(cwd, name)}:`, err?.message);
     }
   }
   return "";
@@ -552,12 +487,14 @@ export function readSkillDescriptions(
           const content = readFileSync(resolve(dir, entry.name, "SKILL.md"), "utf-8");
           const match = content.match(/^description:\s*(.+?)$/m);
           if (match) results.push({ name: entry.name, description: match[1] });
-        } catch {
-          // skip
+        } catch (err: any) {
+          if (err?.code !== "ENOENT")
+            console.warn(`context-breakdown: SKILL.md in ${entry.name}:`, err?.message);
         }
       }
-    } catch {
-      // skip
+    } catch (err: any) {
+      if (err?.code !== "ENOENT")
+        console.warn(`context-breakdown: skills dir ${dir}:`, err?.message);
     }
   }
   return results;
@@ -572,39 +509,16 @@ export function countSystemPromptTokens(systemPrompt: string): number {
 
 /** Count tokens in the SDK instruction file (CLAUDE.md, MINDS.md, or AGENTS.md). */
 export function countSdkInstructionTokens(cwd: string): number {
-  for (const name of ["CLAUDE.md", "MINDS.md", "AGENTS.md"]) {
-    try {
-      const content = readFileSync(resolve(cwd, name), "utf-8");
-      return countTokens(content);
-    } catch (err: any) {
-      if (err?.code !== "ENOENT")
-        console.warn(`context-breakdown: ${resolve(cwd, name)}:`, err?.message);
-    }
-  }
-  return 0;
+  const content = readSdkInstructions(cwd);
+  return content ? countTokens(content) : 0;
 }
 
 /** Count tokens in skill description frontmatter (always in context). */
 export function countSkillDescriptionTokens(skillsDirs: string[]): number {
+  const skills = readSkillDescriptions(skillsDirs);
   let total = 0;
-  for (const dir of skillsDirs) {
-    try {
-      for (const entry of readdirSync(dir, { withFileTypes: true })) {
-        if (!entry.isDirectory()) continue;
-        try {
-          const content = readFileSync(resolve(dir, entry.name, "SKILL.md"), "utf-8");
-          // Extract just the frontmatter description — that's what's always in context
-          const match = content.match(/^description:\s*(.+?)$/m);
-          if (match) total += countTokens(match[1]);
-        } catch (err: any) {
-          if (err?.code !== "ENOENT")
-            console.warn(`context-breakdown: SKILL.md in ${entry.name}:`, err?.message);
-        }
-      }
-    } catch (err: any) {
-      if (err?.code !== "ENOENT")
-        console.warn(`context-breakdown: skills dir ${dir}:`, err?.message);
-    }
+  for (const skill of skills) {
+    total += countTokens(skill.description);
   }
   return total;
 }

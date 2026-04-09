@@ -120,19 +120,9 @@ export type ContextInfo = {
   systemPrompt: number;
 };
 
-export type { ContextBlock, ContextMessage } from "./context-breakdown.js";
+export type { ContextBlock, ContextMessage, ContextMessages } from "./context-breakdown.js";
 
-export type ContextMessages = {
-  preamble: {
-    systemPrompt: string;
-    sdkInstructions: string;
-    skillDescriptions: Array<{ name: string; description: string }>;
-  };
-  sessions: Array<{
-    name: string;
-    messages: import("./context-breakdown.js").ContextMessage[];
-  }>;
-};
+import type { ContextMessages } from "./context-breakdown.js";
 
 export function createVoluteServer(options: {
   router: Router;

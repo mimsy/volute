@@ -7,9 +7,8 @@ import {
   countSdkInstructionTokens,
   countSkillDescriptionTokens,
   countSystemPromptTokens,
-  extractClaudeSessionMessages,
   findClaudeSessionFile,
-  parseClaudeSessionJSONL,
+  processClaudeSession,
   readSdkInstructions,
   readSkillDescriptions,
 } from "./lib/context-breakdown.js";
@@ -547,26 +546,24 @@ export function createMind(options: {
   const claudeMdTokens = countSdkInstructionTokens(options.cwd);
   const skillDescTokens = countSkillDescriptionTokens([resolvePath(options.cwd, ".claude/skills")]);
 
+  function processSession(sessionName: string) {
+    const sessionId = sessionStore.load(sessionName);
+    const jsonlPath = sessionId ? findClaudeSessionFile(options.cwd, sessionId) : null;
+    return jsonlPath
+      ? processClaudeSession(jsonlPath, systemPromptTokens, claudeMdTokens, skillDescTokens)
+      : null;
+  }
+
   function getContextInfo(): ContextInfo {
     return {
       sessions: Array.from(sessions.values()).map((s) => {
         try {
-          const sessionId = sessionStore.load(s.name);
-          const jsonlPath = sessionId ? findClaudeSessionFile(options.cwd, sessionId) : null;
-          const parsed = jsonlPath
-            ? parseClaudeSessionJSONL(
-                jsonlPath,
-                systemPromptTokens,
-                claudeMdTokens,
-                skillDescTokens,
-              )
-            : null;
-
+          const result = processSession(s.name);
           return {
             name: s.name,
-            contextTokens: parsed?.contextTokens ?? s.contextTokens,
+            contextTokens: result?.parsed?.contextTokens ?? s.contextTokens,
             contextWindow: maxContextTokens,
-            breakdown: parsed?.breakdown,
+            breakdown: result?.parsed?.breakdown,
           };
         } catch (err) {
           log("mind", `failed to get context breakdown for session "${s.name}":`, err);
@@ -577,9 +574,8 @@ export function createMind(options: {
     };
   }
 
-  const skillsDir = resolvePath(options.cwd, ".claude/skills");
-
   function getContextMessages(): ContextMessages {
+    const skillsDir = resolvePath(options.cwd, ".claude/skills");
     return {
       preamble: {
         systemPrompt: options.systemPrompt,
@@ -588,12 +584,8 @@ export function createMind(options: {
       },
       sessions: Array.from(sessions.values()).map((s) => {
         try {
-          const sessionId = sessionStore.load(s.name);
-          const jsonlPath = sessionId ? findClaudeSessionFile(options.cwd, sessionId) : null;
-          return {
-            name: s.name,
-            messages: jsonlPath ? extractClaudeSessionMessages(jsonlPath) : [],
-          };
+          const result = processSession(s.name);
+          return { name: s.name, messages: result?.messages ?? [] };
         } catch (err) {
           log("mind", `failed to extract messages for session "${s.name}":`, err);
           return { name: s.name, messages: [] };
