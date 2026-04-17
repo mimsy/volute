@@ -86,6 +86,33 @@ export function fetchMindContext(name: string): Promise<ContextInfo> {
   return get(`${V1}/minds/${enc(name)}/context`);
 }
 
+export type ContextBlock =
+  | { type: "text"; text: string }
+  | { type: "thinking"; text: string }
+  | { type: "tool_use"; name: string; input: string }
+  | { type: "tool_result"; text: string; isError?: boolean };
+
+export type ContextMessage = {
+  role: "user" | "assistant" | "system";
+  blocks: ContextBlock[];
+};
+
+export type ContextMessages = {
+  preamble: {
+    systemPrompt: string;
+    sdkInstructions: string;
+    skillDescriptions: Array<{ name: string; description: string }>;
+  };
+  sessions: Array<{
+    name: string;
+    messages: ContextMessage[];
+  }>;
+};
+
+export function fetchMindContextMessages(name: string): Promise<ContextMessages> {
+  return get(`${V1}/minds/${enc(name)}/context/messages`);
+}
+
 export function startMind(name: string): Promise<void> {
   return post(`${V1}/minds/${enc(name)}/start`);
 }

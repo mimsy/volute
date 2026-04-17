@@ -53,6 +53,7 @@ const server = createVoluteServer({
   name: pkg.name,
   version: pkg.version,
   getContextInfo: mind.getContextInfo,
+  getContextMessages: mind.getContextMessages,
 });
 
 server.listen(port, () => {

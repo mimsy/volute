@@ -8,7 +8,9 @@ import {
   countSkillDescriptionTokens,
   countSystemPromptTokens,
   findClaudeSessionFile,
-  parseClaudeSessionJSONL,
+  processClaudeSession,
+  readSdkInstructions,
+  readSkillDescriptions,
 } from "./lib/context-breakdown.js";
 import { daemonEmit } from "./lib/daemon-client.js";
 import { runHooks } from "./lib/hook-loader.js";
@@ -30,7 +32,7 @@ import type {
   VoluteContentPart,
   VoluteEvent,
 } from "./lib/types.js";
-import type { ContextInfo } from "./lib/volute-server.js";
+import type { ContextInfo, ContextMessages } from "./lib/volute-server.js";
 
 type Session = {
   name: string;
@@ -60,6 +62,7 @@ export function createMind(options: {
   resolve: HandlerResolver;
   waitForCommits: () => Promise<void>;
   getContextInfo: () => ContextInfo;
+  getContextMessages: () => ContextMessages;
 } {
   const autoCommit = createAutoCommitHook(options.cwd);
   const identityReload = createIdentityReloadHook(options.cwd);
@@ -543,26 +546,24 @@ export function createMind(options: {
   const claudeMdTokens = countSdkInstructionTokens(options.cwd);
   const skillDescTokens = countSkillDescriptionTokens([resolvePath(options.cwd, ".claude/skills")]);
 
+  function processSession(sessionName: string) {
+    const sessionId = sessionStore.load(sessionName);
+    const jsonlPath = sessionId ? findClaudeSessionFile(options.cwd, sessionId) : null;
+    return jsonlPath
+      ? processClaudeSession(jsonlPath, systemPromptTokens, claudeMdTokens, skillDescTokens)
+      : null;
+  }
+
   function getContextInfo(): ContextInfo {
     return {
       sessions: Array.from(sessions.values()).map((s) => {
         try {
-          const sessionId = sessionStore.load(s.name);
-          const jsonlPath = sessionId ? findClaudeSessionFile(options.cwd, sessionId) : null;
-          const parsed = jsonlPath
-            ? parseClaudeSessionJSONL(
-                jsonlPath,
-                systemPromptTokens,
-                claudeMdTokens,
-                skillDescTokens,
-              )
-            : null;
-
+          const result = processSession(s.name);
           return {
             name: s.name,
-            contextTokens: parsed?.contextTokens ?? s.contextTokens,
+            contextTokens: result?.parsed?.contextTokens ?? s.contextTokens,
             contextWindow: maxContextTokens,
-            breakdown: parsed?.breakdown,
+            breakdown: result?.parsed?.breakdown,
           };
         } catch (err) {
           log("mind", `failed to get context breakdown for session "${s.name}":`, err);
@@ -573,9 +574,29 @@ export function createMind(options: {
     };
   }
 
+  function getContextMessages(): ContextMessages {
+    const skillsDir = resolvePath(options.cwd, ".claude/skills");
+    return {
+      preamble: {
+        systemPrompt: options.systemPrompt,
+        sdkInstructions: readSdkInstructions(options.cwd),
+        skillDescriptions: readSkillDescriptions([skillsDir]),
+      },
+      sessions: Array.from(sessions.values()).map((s) => {
+        try {
+          const result = processSession(s.name);
+          return { name: s.name, messages: result?.messages ?? [] };
+        } catch (err) {
+          log("mind", `failed to extract messages for session "${s.name}":`, err);
+          return { name: s.name, messages: [] };
+        }
+      }),
+    };
+  }
+
   // Pre-warm the main session so the SDK subprocess starts immediately
   // instead of waiting for the first message (which adds minutes of latency).
   getOrCreateSession("main");
 
-  return { resolve, waitForCommits: autoCommit.waitForCommits, getContextInfo };
+  return { resolve, waitForCommits: autoCommit.waitForCommits, getContextInfo, getContextMessages };
 }
