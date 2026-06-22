@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, watchFile } from "node:fs";
 import { resolve as resolvePath } from "node:path";
 import {
   AuthStorage,
@@ -82,6 +82,29 @@ export function createMind(options: {
   const model = resolveModel(modelStr);
   const authStorage = AuthStorage.create();
   const modelRegistry = ModelRegistry.create(authStorage);
+
+  // The daemon centrally refreshes the system OAuth token and rewrites auth.json
+  // with the fresh token. Watch the file and reload so a running mind adopts the
+  // new token without a restart (mirrors the Claude Agent SDK credential reload).
+  // This is why the mind itself does not refresh the rotating grant.
+  const piAuthPath = process.env.PI_CODING_AGENT_DIR
+    ? resolvePath(process.env.PI_CODING_AGENT_DIR, "auth.json")
+    : null;
+  if (piAuthPath) {
+    try {
+      watchFile(piAuthPath, { interval: 2000 }, (curr, prev) => {
+        if (curr.mtimeMs === prev.mtimeMs) return;
+        try {
+          authStorage.reload();
+          log("mind", "reloaded auth.json after credential refresh");
+        } catch (err) {
+          log("mind", "failed to reload auth.json:", err);
+        }
+      });
+    } catch (err) {
+      log("mind", "failed to watch auth.json for credential refresh:", err);
+    }
+  }
 
   // --- Subagents (config-driven) ---
 
