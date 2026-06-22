@@ -9,6 +9,8 @@ import {
   createTurn,
   getActiveTurnId,
   getLastToolUseEventId,
+  markErrored,
+  takeErrored,
   trackToolUse,
 } from "../packages/daemon/src/lib/daemon/turn-tracker.js";
 import { getDb } from "../packages/daemon/src/lib/db.js";
@@ -155,5 +157,26 @@ describe("turn-tracker", () => {
   it("completeOrphanedTurns returns empty array when no orphans exist", async () => {
     const result = await completeOrphanedTurns();
     assert.equal(result.length, 0);
+  });
+
+  it("takeErrored returns the flag once then clears it", () => {
+    markErrored("errmind", "s1");
+    assert.equal(takeErrored("errmind", "s1"), true);
+    assert.equal(takeErrored("errmind", "s1"), false);
+  });
+
+  it("errored flag is per (mind, session)", () => {
+    markErrored("errmind", "s1");
+    assert.equal(takeErrored("errmind", "s2"), false, "different session unaffected");
+    assert.equal(takeErrored("other", "s1"), false, "different mind unaffected");
+    assert.equal(takeErrored("errmind", "s1"), true);
+  });
+
+  it("clearMind drops a pending errored flag for that mind only", async () => {
+    markErrored("errmind", "s1");
+    markErrored("keepmind", "s1");
+    await clearMind("errmind");
+    assert.equal(takeErrored("errmind", "s1"), false, "cleared on crash/stop");
+    assert.equal(takeErrored("keepmind", "s1"), true, "other mind's flag intact");
   });
 });

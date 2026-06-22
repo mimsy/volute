@@ -4,7 +4,9 @@ import type { DaemonEvent, EventType } from "./daemon-client.js";
 
 export type TransparencyPreset = "transparent" | "standard" | "private" | "silent";
 
-type FilterableEventType = Exclude<EventType, "inbound" | "outbound" | "context">;
+// `error` is an internal daemon signal (emitted directly, never channel-facing), so it
+// isn't subject to transparency filtering — exclude it alongside the communication records.
+type FilterableEventType = Exclude<EventType, "inbound" | "outbound" | "context" | "error">;
 
 const PRESET_RULES: Record<
   TransparencyPreset,
@@ -52,8 +54,8 @@ const PRESET_RULES: Record<
   },
 };
 
-// Communication records are always emitted (bypass transparency filtering)
-const ALWAYS_ALLOWED: ReadonlySet<string> = new Set(["inbound", "outbound", "context"]);
+// Communication records and the internal error signal bypass transparency filtering
+const ALWAYS_ALLOWED: ReadonlySet<string> = new Set(["inbound", "outbound", "context", "error"]);
 
 export function loadTransparencyPreset(): TransparencyPreset {
   for (const file of ["home/.config/config.json", "home/.config/volute.json"]) {

@@ -17,12 +17,19 @@ import { deleteMindUser } from "../../lib/auth.js";
 import { announceToSystem } from "../../lib/chat/system-channel.js";
 import { getTypingMap, publishTypingForChannels } from "../../lib/chat/typing.js";
 import { readSystemsConfig } from "../../lib/config/systems-config.js";
+import { classify } from "../../lib/daemon/error-classify.js";
 import { getMindManager } from "../../lib/daemon/mind-manager.js";
 // Lifecycle functions from mind-service.ts
 import {
   startMindFull as startMindFullService,
   stopMindFull as stopMindFullService,
 } from "../../lib/daemon/mind-service.js";
+import {
+  clearDeliveredNotices,
+  drainNotices,
+  formatNotices,
+  recordNotice,
+} from "../../lib/daemon/notices.js";
 import { summarizeTurn } from "../../lib/daemon/summarizer.js";
 import { getTokenBudget } from "../../lib/daemon/token-budget.js";
 import {
@@ -31,6 +38,8 @@ import {
   createTurn,
   getActiveTurnId,
   getLastToolUseEventId,
+  markErrored,
+  takeErrored,
   trackToolUse,
 } from "../../lib/daemon/turn-tracker.js";
 import { getDb } from "../../lib/db.js";
@@ -125,6 +134,32 @@ import {
 
 /** Event types that trigger turn creation (hoisted for perf — avoid per-request allocation). */
 const SUBSTANTIVE_TYPES = new Set(["thinking", "text", "tool_use", "tool_result", "outbound"]);
+
+/**
+ * Highest notice id drained by the pre-prompt hook per `mind:session`. A clean turn
+ * only marks notices delivered up to this id, so a notice created mid-turn isn't lost
+ * before the mind reads it.
+ */
+const noticeDrainWatermarks = new Map<string, number>();
+
+/**
+ * On a turn that completed without an error event, mark the notices the mind actually
+ * drained this turn as delivered. If the turn errored, leave them queued so they reach
+ * the mind on its next genuinely successful turn. `takeErrored` both reads and clears
+ * the flag, so call it exactly once per completed turn.
+ */
+function markDeliveredOnCleanTurn(mind: string, session?: string | null): void {
+  if (!session) return;
+  const wmKey = `${mind}:${session}`;
+  const watermark = noticeDrainWatermarks.get(wmKey);
+  noticeDrainWatermarks.delete(wmKey);
+  const errored = takeErrored(mind, session);
+  if (!errored && watermark != null) {
+    clearDeliveredNotices(mind, session, watermark).catch((err) =>
+      log.warn(`failed to clear delivered notices for ${mind}:${session}`, log.errorData(err)),
+    );
+  }
+}
 
 const _lastActiveCache: { map: Map<string, string>; ts: number } = { map: new Map(), ts: 0 };
 const _LAST_ACTIVE_TTL = 60_000;
@@ -2509,6 +2544,23 @@ const app = new Hono<AuthEnv>()
       publishTypingForChannels(affected, map);
     }
 
+    // Turn failure: record a notice so the mind learns what went wrong on its
+    // next successful turn in this session, and flag the session as errored so the
+    // upcoming `done` does NOT mark notices delivered (failures accumulate until a
+    // clean turn, conveying the full scope of an outage).
+    if (body.type === "error" && body.session) {
+      markErrored(baseName, body.session);
+      const { reason, detail } = classify(body.content ?? "");
+      await recordNotice({
+        mind: baseName,
+        session: body.session,
+        kind: "turn_error",
+        reason,
+        detail,
+        raw: body.content ?? null,
+      });
+    }
+
     // Clear all typing + notify delivery manager when mind finishes processing
     if (body.type === "done") {
       const map = getTypingMap();
@@ -2542,6 +2594,7 @@ const app = new Hono<AuthEnv>()
               log.warn("failed to tag orphaned outbound records", log.errorData(err)),
             );
           }
+          markDeliveredOnCleanTurn(baseName, body.session);
           if (insertedId != null) {
             summarizeTurn(baseName, body.session, body.channel, insertedId, completedTurnId).catch(
               (err) => log.error("turn summarization failed", log.errorData(err)),
@@ -2559,6 +2612,7 @@ const app = new Hono<AuthEnv>()
             log.warn("failed to tag orphaned outbound records", log.errorData(err)),
           );
         }
+        markDeliveredOnCleanTurn(baseName, body.session);
         if (insertedId != null) {
           summarizeTurn(baseName, body.session, body.channel, insertedId, completedTurnId).catch(
             (err) => log.error("turn summarization failed", log.errorData(err)),
@@ -2571,7 +2625,19 @@ const app = new Hono<AuthEnv>()
     if (body.type === "usage" && body.metadata) {
       const inputTokens = (body.metadata.input_tokens as number) ?? 0;
       const outputTokens = (body.metadata.output_tokens as number) ?? 0;
-      getTokenBudget().recordUsage(baseName, inputTokens, outputTokens);
+      const tb = getTokenBudget();
+      tb.recordUsage(baseName, inputTokens, outputTokens);
+      // First time the mind crosses its budget this period, tell it on its next turn.
+      if (body.session && tb.noteExceeded(baseName)) {
+        void recordNotice({
+          mind: baseName,
+          session: body.session,
+          kind: "budget",
+          reason: "token_budget",
+          detail:
+            "You've reached your token budget for this period. Further activity may be paused until the budget resets — wrap up or prioritize accordingly.",
+        });
+      }
     }
 
     return c.json({ ok: true });
@@ -2839,6 +2905,25 @@ const app = new Hono<AuthEnv>()
     });
 
     return c.json({ context: `[Session Activity]\n${lines.join("\n")}` });
+  })
+  // Drain undelivered failure notices for a session. The pre-prompt hook calls this to
+  // whisper prior failures into the mind's next turn. Does not delete them (the DB rows
+  // are only removed once a turn completes cleanly, see markDeliveredOnCleanTurn); it
+  // does record an in-memory drain watermark so that clean turn clears exactly these.
+  .get("/:name/history/notices", requireSelf(), async (c) => {
+    const name = c.req.param("name");
+    const baseName = await getBaseName(name);
+    const session = c.req.query("session");
+    if (!session) return c.json({ context: null, notices: [] });
+
+    const notices = await drainNotices(baseName, session);
+    if (notices.length === 0) return c.json({ context: null, notices: [] });
+
+    // Remember the high-water id so a clean turn clears exactly these.
+    const maxId = notices.reduce((m, n) => Math.max(m, n.id), 0);
+    noticeDrainWatermarks.set(`${baseName}:${session}`, maxId);
+
+    return c.json({ context: formatNotices(notices), notices });
   })
   .get("/:name/history", async (c) => {
     const name = c.req.param("name");

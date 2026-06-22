@@ -57,6 +57,7 @@ export type EventType =
   | "usage"
   | "session_start"
   | "done"
+  | "error"
   | "inbound"
   | "outbound"
   | "context";
@@ -79,8 +80,10 @@ export async function daemonEmit(event: DaemonEvent): Promise<void> {
   }
   const url = `http://127.0.0.1:${port}/api/minds/${encodeURIComponent(mind)}/events`;
   const body = JSON.stringify(event);
-  // Critical events (done) get retries — if lost, turns stay stuck until daemon restart
-  const maxAttempts = event.type === "done" ? 3 : 1;
+  // Critical events get retries: `done` (else turns stay stuck) and `error` (else the
+  // mind never learns a failure happened). The daemon is local, so retrying against it
+  // is worthwhile even when the model provider is the thing that's failing.
+  const maxAttempts = event.type === "done" || event.type === "error" ? 3 : 1;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       const res = await fetch(url, { method: "POST", headers: headers(), body });

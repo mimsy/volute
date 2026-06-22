@@ -14,6 +14,7 @@ import log from "../util/logger.js";
 import { RotatingLog } from "../util/rotating-log.js";
 import { writeClaudeCredentials, writePiProviderKey } from "./credential-sync.js";
 import { generateMindToken, revokeMindToken } from "./mind-tokens.js";
+import { recordNotice } from "./notices.js";
 import { RestartTracker } from "./restart-tracker.js";
 import { clearMind as clearTurnState, summarizeOrphanedTurns } from "./turn-tracker.js";
 
@@ -482,7 +483,21 @@ export class MindManager {
       // Clear turn state and delivery session state so ghost counts don't accumulate.
       // Generate summaries for any orphaned turns before they're lost.
       clearTurnState(name)
-        .then((orphaned) => summarizeOrphanedTurns(orphaned))
+        .then((orphaned) => {
+          summarizeOrphanedTurns(orphaned);
+          // Tell the mind, on its next successful turn in each affected session, that it
+          // crashed mid-turn — so the scope of the interruption is clear.
+          for (const { session } of orphaned) {
+            void recordNotice({
+              mind: name,
+              session: session ?? "main",
+              kind: "crash",
+              reason: "process_crash",
+              detail:
+                "Your process crashed mid-turn and was automatically restarted. That turn was interrupted before it finished — check whether you left anything incomplete.",
+            });
+          }
+        })
         .catch((err) =>
           mlog.warn(`failed to clear turn state for ${name} after crash`, log.errorData(err)),
         );

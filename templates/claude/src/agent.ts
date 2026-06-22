@@ -372,6 +372,17 @@ export function createMind(options: {
         });
       }
 
+      /**
+       * Tell the daemon this turn failed so it can record a notice for the mind's next
+       * successful turn. Awaited before emitDone so the daemon flags the session errored
+       * (and thus won't mark notices delivered) before the done arrives.
+       */
+      async function emitError(err: unknown) {
+        await daemonEmit({ type: "error", session: session.name, content: String(err) }).catch(
+          (e) => log("mind", `session "${session.name}": failed to emit error to daemon:`, e),
+        );
+      }
+
       async function runStream(resume?: string) {
         const q = createStream(session, streamAbort, preCompact.hook, resume);
         session.currentQuery = q;
@@ -431,11 +442,13 @@ export function createMind(options: {
             await runStream();
           } catch (retryErr) {
             log("mind", `session "${session.name}": stream consumer error:`, retryErr);
+            await emitError(retryErr);
             emitDone();
             sessions.delete(session.name);
           }
         } else {
           log("mind", `session "${session.name}": stream consumer error:`, err);
+          await emitError(err);
           emitDone();
           sessions.delete(session.name);
         }

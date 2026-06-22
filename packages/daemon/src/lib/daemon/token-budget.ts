@@ -23,6 +23,7 @@ type BudgetState = {
   tokenLimit: number;
   queue: QueuedMessage[];
   warningInjected: boolean;
+  exceededNotified: boolean;
 };
 
 export class TokenBudget {
@@ -63,6 +64,7 @@ export class TokenBudget {
           tokenLimit,
           queue: [],
           warningInjected: false,
+          exceededNotified: false,
         });
       }
     }
@@ -94,6 +96,21 @@ export class TokenBudget {
   acknowledgeWarning(mind: string): void {
     const state = this.budgets.get(mind);
     if (state) state.warningInjected = true;
+  }
+
+  /**
+   * Returns true exactly once per budget period when the mind first crosses its limit,
+   * so callers can record a single "budget exceeded" notice without repeating it on
+   * every subsequent usage event. The flag resets when the period rolls over.
+   */
+  noteExceeded(mind: string): boolean {
+    const state = this.budgets.get(mind);
+    if (!state) return false;
+    if (state.tokensUsed < state.tokenLimit) return false;
+    if (state.exceededNotified) return false;
+    state.exceededNotified = true;
+    this.dirty.add(mind);
+    return true;
   }
 
   enqueue(mind: string, message: QueuedMessage): void {
@@ -141,6 +158,7 @@ export class TokenBudget {
         state.tokensUsed = 0;
         state.periodStart = now;
         state.warningInjected = false;
+        state.exceededNotified = false;
         this.dirty.add(mind);
 
         const queued = this.drain(mind);
@@ -178,6 +196,7 @@ export class TokenBudget {
         periodStart: state.periodStart,
         tokensUsed: state.tokensUsed,
         warningInjected: state.warningInjected,
+        exceededNotified: state.exceededNotified,
         queue: state.queue,
       };
       await writeFile(this.budgetStatePath(mind), `${JSON.stringify(data)}\n`);
@@ -196,6 +215,7 @@ export class TokenBudget {
         periodStart: data.periodStart,
         tokensUsed: data.tokensUsed,
         warningInjected: data.warningInjected ?? false,
+        exceededNotified: data.exceededNotified ?? false,
         queue: Array.isArray(data.queue) ? data.queue : [],
         periodMinutes: 0, // will be overwritten by caller
         tokenLimit: 0, // will be overwritten by caller

@@ -246,3 +246,31 @@ export const messages = sqliteTable(
     index("idx_messages_turn_id").on(table.turn_id),
   ],
 );
+
+// Failure notices: recorded by the daemon when a mind's turn fails (auth, rate-limit,
+// overloaded, network, crash, budget), keyed to the (mind, session) where it happened.
+// Drained into the mind's next successful turn in that session via a pre-prompt hook.
+export const mindNotices = sqliteTable(
+  "mind_notices",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    mind: text("mind").notNull(),
+    session: text("session").notNull(),
+    kind: text("kind").$type<"turn_error" | "crash" | "budget">().notNull(),
+    reason: text("reason")
+      .$type<
+        | "auth_error"
+        | "rate_limit"
+        | "overloaded"
+        | "network"
+        | "unknown"
+        | "process_crash"
+        | "token_budget"
+      >()
+      .notNull(),
+    detail: text("detail").notNull(),
+    raw: text("raw"),
+    created_at: text("created_at").notNull().default(sql`(datetime('now'))`),
+  },
+  (table) => [index("idx_mind_notices_mind_session").on(table.mind, table.session)],
+);
