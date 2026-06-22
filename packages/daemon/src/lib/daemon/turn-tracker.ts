@@ -20,6 +20,24 @@ function key(mind: string, session?: string | null): string {
 }
 
 /**
+ * Sessions (`mind:session`) that have seen an `error` event since their last `done`.
+ * Used to distinguish a failed turn from a clean one: failure notices are only marked
+ * delivered after a turn that completed WITHOUT an error, so they accumulate across a
+ * full outage and reach the mind on its next genuinely successful turn.
+ */
+const erroredSessions = new Set<string>();
+
+/** Flag that the current turn for a mind+session hit an error. */
+export function markErrored(mind: string, session?: string | null): void {
+  erroredSessions.add(key(mind, session));
+}
+
+/** Return whether the just-finished turn errored, clearing the flag. */
+export function takeErrored(mind: string, session?: string | null): boolean {
+  return erroredSessions.delete(key(mind, session));
+}
+
+/**
  * Create a turn for a mind (or reuse an existing active one).
  * Initially sessionless — keyed as `mind:*`.
  *
@@ -163,6 +181,10 @@ export async function clearMind(mind: string): Promise<OrphanedTurn[]> {
     }
   }
   for (const k of toDelete) activeTurns.delete(k);
+  // Drop any errored-session flags for this mind so a hard crash can't leave one stale.
+  for (const k of [...erroredSessions]) {
+    if (k.startsWith(`${mind}:`)) erroredSessions.delete(k);
+  }
   // Mark orphaned turns as complete in DB
   if (orphaned.length > 0) {
     try {

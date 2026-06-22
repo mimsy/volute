@@ -19,6 +19,7 @@ import {
   readSdkInstructions,
   readSkillDescriptions,
 } from "./lib/context-breakdown.js";
+import { daemonEmit } from "./lib/daemon-client.js";
 import { createEventHandler, emit } from "./lib/event-handler.js";
 import { runHooks } from "./lib/hook-loader.js";
 import { log } from "./lib/logger.js";
@@ -486,8 +487,14 @@ export function createMind(options: {
           } else {
             session.agentSession.prompt(text, opts);
           }
-        })().catch((err) => {
+        })().catch(async (err) => {
           log("mind", `session "${sessionName}": prompt failed:`, err);
+          // Tell the daemon the turn failed (so it records a notice for the mind's next
+          // successful turn) before done, then complete the turn locally and on the daemon.
+          await daemonEmit({ type: "error", session: sessionName, content: String(err) }).catch(
+            () => {},
+          );
+          await daemonEmit({ type: "done", session: sessionName }).catch(() => {});
           broadcast(session, { type: "done" });
         });
 

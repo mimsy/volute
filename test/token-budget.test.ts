@@ -293,4 +293,26 @@ describe("TokenBudget", () => {
     await tb.stop();
     assert.ok(true);
   });
+
+  it("noteExceeded returns false for an unconfigured mind", () => {
+    const tb = new TokenBudget();
+    assert.equal(tb.noteExceeded("nobudget"), false);
+  });
+
+  it("noteExceeded returns false while under budget", () => {
+    const tb = new TokenBudget();
+    tb.setBudget("m", 1000, 60);
+    tb.recordUsage("m", 400, 400); // 800 < 1000
+    assert.equal(tb.noteExceeded("m"), false);
+  });
+
+  it("noteExceeded fires exactly once when the limit is crossed", () => {
+    const tb = new TokenBudget();
+    tb.setBudget("m", 1000, 60);
+    tb.recordUsage("m", 600, 600); // 1200 >= 1000
+    assert.equal(tb.noteExceeded("m"), true, "first crossing");
+    assert.equal(tb.noteExceeded("m"), false, "not again this period");
+    tb.recordUsage("m", 100, 100); // still over
+    assert.equal(tb.noteExceeded("m"), false, "still suppressed");
+  });
 });

@@ -60,11 +60,15 @@ describe("daemon e2e", { timeout: 120000 }, () => {
     );
 
     // Start daemon
-    daemon = spawn("npx", ["tsx", "src/daemon.ts", "--port", String(PORT), "--foreground"], {
-      cwd: process.cwd(),
-      stdio: ["ignore", "pipe", "pipe"],
-      env: { ...cleanEnv, VOLUTE_DAEMON_TOKEN: TOKEN, VOLUTE_BASE_PORT: String(MIND_BASE_PORT) },
-    });
+    daemon = spawn(
+      "npx",
+      ["tsx", "packages/daemon/src/daemon.ts", "--port", String(PORT), "--foreground"],
+      {
+        cwd: process.cwd(),
+        stdio: ["ignore", "pipe", "pipe"],
+        env: { ...cleanEnv, VOLUTE_DAEMON_TOKEN: TOKEN, VOLUTE_BASE_PORT: String(MIND_BASE_PORT) },
+      },
+    );
 
     // Collect stderr for debugging
     daemon.stderr?.on("data", (data: Buffer) => {
@@ -233,11 +237,15 @@ describe("daemon e2e", { timeout: 120000 }, () => {
     assert.equal(entry.running, true, "Mind should still be marked as running in registry");
 
     // Start a new daemon
-    daemon = spawn("npx", ["tsx", "src/daemon.ts", "--port", String(PORT), "--foreground"], {
-      cwd: process.cwd(),
-      stdio: ["ignore", "pipe", "pipe"],
-      env: { ...cleanEnv, VOLUTE_DAEMON_TOKEN: TOKEN, VOLUTE_BASE_PORT: String(MIND_BASE_PORT) },
-    });
+    daemon = spawn(
+      "npx",
+      ["tsx", "packages/daemon/src/daemon.ts", "--port", String(PORT), "--foreground"],
+      {
+        cwd: process.cwd(),
+        stdio: ["ignore", "pipe", "pipe"],
+        env: { ...cleanEnv, VOLUTE_DAEMON_TOKEN: TOKEN, VOLUTE_BASE_PORT: String(MIND_BASE_PORT) },
+      },
+    );
     daemon.stderr?.on("data", (data: Buffer) => {
       process.stderr.write(`[daemon] ${data}`);
     });
@@ -291,11 +299,15 @@ describe("daemon e2e", { timeout: 120000 }, () => {
     assert.equal(entryAfter.running, false, "Stopped mind should remain not running in registry");
 
     // Start a new daemon
-    daemon = spawn("npx", ["tsx", "src/daemon.ts", "--port", String(PORT), "--foreground"], {
-      cwd: process.cwd(),
-      stdio: ["ignore", "pipe", "pipe"],
-      env: { ...cleanEnv, VOLUTE_DAEMON_TOKEN: TOKEN, VOLUTE_BASE_PORT: String(MIND_BASE_PORT) },
-    });
+    daemon = spawn(
+      "npx",
+      ["tsx", "packages/daemon/src/daemon.ts", "--port", String(PORT), "--foreground"],
+      {
+        cwd: process.cwd(),
+        stdio: ["ignore", "pipe", "pipe"],
+        env: { ...cleanEnv, VOLUTE_DAEMON_TOKEN: TOKEN, VOLUTE_BASE_PORT: String(MIND_BASE_PORT) },
+      },
+    );
     daemon.stderr?.on("data", (data: Buffer) => {
       process.stderr.write(`[daemon] ${data}`);
     });
@@ -1032,6 +1044,98 @@ describe("daemon e2e", { timeout: 120000 }, () => {
       body.context!.includes("New activity after turn boundary"),
       "Should include summaries from after the turn boundary",
     );
+  });
+
+  const emitEvent = (session: string, body: Record<string, unknown>) =>
+    daemonRequest(`/api/minds/${TEST_MIND}/events`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ session, ...body }),
+    });
+
+  it("failure notices: recorded on error, drained, delivered after a clean turn", async () => {
+    await ensureTestMind();
+    const session = "notices-401";
+
+    // Turn 1 fails with a 401 — the daemon records a notice, not delivered yet.
+    await emitEvent(session, { type: "error", content: "API Error: 401 authentication_error" });
+    await emitEvent(session, { type: "done" });
+
+    // The mind's next turn drains the notice (does not mark it delivered).
+    const drain1 = await daemonRequest(
+      `/api/minds/${TEST_MIND}/history/notices?session=${session}`,
+    );
+    assert.equal(drain1.status, 200);
+    const body1 = (await drain1.json()) as { context: string | null; notices: unknown[] };
+    assert.ok(body1.context, "should return notice context");
+    assert.match(body1.context!, /credential/i);
+    assert.equal(body1.notices.length, 1);
+
+    // That turn completes cleanly (no error) → notice is marked delivered.
+    await emitEvent(session, { type: "done" });
+    const drain2 = await daemonRequest(
+      `/api/minds/${TEST_MIND}/history/notices?session=${session}`,
+    );
+    const body2 = (await drain2.json()) as { context: string | null; notices: unknown[] };
+    assert.equal(body2.context, null);
+    assert.equal(body2.notices.length, 0);
+  });
+
+  it("failure notices: accumulate across an outage to convey full scope", async () => {
+    await ensureTestMind();
+    const session = "notices-outage";
+
+    // Three turns fail in a row before one succeeds.
+    for (let i = 0; i < 3; i++) {
+      await emitEvent(session, { type: "error", content: "fetch failed: ECONNRESET" });
+      await emitEvent(session, { type: "done" });
+    }
+
+    const drain = await daemonRequest(`/api/minds/${TEST_MIND}/history/notices?session=${session}`);
+    const body = (await drain.json()) as { context: string; notices: unknown[] };
+    assert.equal(body.notices.length, 3, "all three failures retained");
+    assert.match(body.context, /3 turns failed/);
+
+    // A clean turn clears them all.
+    await emitEvent(session, { type: "done" });
+    const after = await daemonRequest(`/api/minds/${TEST_MIND}/history/notices?session=${session}`);
+    assert.equal(((await after.json()) as { notices: unknown[] }).notices.length, 0);
+  });
+
+  it("failure notices: a drained-then-errored turn does NOT deliver them", async () => {
+    await ensureTestMind();
+    const session = "notices-errored-after-drain";
+
+    // Turn 1 fails → notice queued.
+    await emitEvent(session, { type: "error", content: "API Error: 401 authentication_error" });
+    await emitEvent(session, { type: "done" });
+
+    // Turn 2 drains it (the mind reads it)...
+    const drained = await daemonRequest(
+      `/api/minds/${TEST_MIND}/history/notices?session=${session}`,
+    );
+    assert.equal(((await drained.json()) as { notices: unknown[] }).notices.length, 1);
+
+    // ...but turn 2 itself ALSO fails before completing.
+    await emitEvent(session, { type: "error", content: "fetch failed: ECONNRESET" });
+    await emitEvent(session, { type: "done" });
+
+    // The drained notice must survive (the turn that read it failed), plus the new one.
+    const stillThere = await daemonRequest(
+      `/api/minds/${TEST_MIND}/history/notices?session=${session}`,
+    );
+    assert.equal(
+      ((await stillThere.json()) as { notices: unknown[] }).notices.length,
+      2,
+      "drained notice not cleared by a failed turn; new failure accumulated",
+    );
+
+    // Now a genuinely clean turn clears everything.
+    await emitEvent(session, { type: "done" });
+    const cleared = await daemonRequest(
+      `/api/minds/${TEST_MIND}/history/notices?session=${session}`,
+    );
+    assert.equal(((await cleared.json()) as { notices: unknown[] }).notices.length, 0);
   });
 
   it("message proxy returns JSON response", async () => {
