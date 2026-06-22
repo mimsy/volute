@@ -14,7 +14,7 @@
   "dependencies": {
     "@volute/extensions": "*",
     "@volute/ui": "*",
-    "marked": "^17.0.0"
+    "marked": "^18.0.0"
   },
   "peerDependencies": {
     "hono": "^4.0.0"
