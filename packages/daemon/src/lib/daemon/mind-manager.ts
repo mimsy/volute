@@ -12,6 +12,7 @@ import { getPrompt } from "../prompts.js";
 import { clearJsonMap, loadJsonMap, saveJsonMap } from "../util/json-state.js";
 import log from "../util/logger.js";
 import { RotatingLog } from "../util/rotating-log.js";
+import { writeClaudeCredentials, writePiProviderKey } from "./credential-sync.js";
 import { generateMindToken, revokeMindToken } from "./mind-tokens.js";
 import { RestartTracker } from "./restart-tracker.js";
 import { clearMind as clearTurnState, summarizeOrphanedTurns } from "./turn-tracker.js";
@@ -150,18 +151,11 @@ export class MindManager {
             const provider = modelStr.split(":")[0];
             const apiKey = await resolveApiKey(provider);
             if (apiKey) {
-              // Write API key to pi-coding-agent auth storage so the mind can use it
+              // Write API key to pi-coding-agent auth storage so the mind can use it.
+              // The pi template watches auth.json and reloads, so the daemon can
+              // push a refreshed OAuth token here without restarting the mind.
               const piAgentDir = resolve(dir, ".mind", "pi-agent");
-              mkdirSync(piAgentDir, { recursive: true });
-              const authPath = resolve(piAgentDir, "auth.json");
-              const authData: Record<string, unknown> = existsSync(authPath)
-                ? JSON.parse(readFileSync(authPath, "utf-8"))
-                : {};
-              authData[provider] = { type: "api_key", key: apiKey };
-              writeFileSync(authPath, JSON.stringify(authData, null, 2), { mode: 0o600 });
-              if (isIsolationEnabled()) {
-                chownMindDir(piAgentDir, baseName);
-              }
+              writePiProviderKey(piAgentDir, baseName, provider, apiKey);
               env.PI_CODING_AGENT_DIR = piAgentDir;
 
               // Also set provider-specific env var as fallback — the sandbox may
@@ -262,35 +256,17 @@ export class MindManager {
         const ai = getAiConfig();
         const anthropicConfig = ai?.providers.anthropic;
         if (anthropicConfig?.oauth) {
+          // Resolve once (refreshes + persists the rotated token to config if
+          // needed), then write the current credentials from config so the
+          // access/refresh/expires are consistent. We point CLAUDE_CONFIG_DIR to
+          // the mind's .claude dir so credentials are per-mind. The daemon keeps
+          // this file fresh (credential-sync) so the SDK never refreshes the
+          // rotating grant itself.
           const key = await resolveApiKey("anthropic");
-          if (key) {
-            // Write credentials in the format Claude Code's Agent SDK expects.
-            // The SDK reads from CLAUDE_CONFIG_DIR/.credentials.json (or
-            // ~/.claude/.credentials.json). We point CLAUDE_CONFIG_DIR to the
-            // mind's .claude dir so credentials are per-mind and don't collide
-            // with the host user's own Claude Code config.
-            const homeDir = resolve(dir, "home");
-            const claudeDir = resolve(homeDir, ".claude");
-            mkdirSync(claudeDir, { recursive: true });
+          const oauth = getAiConfig()?.providers.anthropic?.oauth;
+          if (key && oauth) {
+            const claudeDir = writeClaudeCredentials(resolve(dir, "home"), baseName, oauth);
             env.CLAUDE_CONFIG_DIR = claudeDir;
-            const credsPath = resolve(claudeDir, ".credentials.json");
-            writeFileSync(
-              credsPath,
-              JSON.stringify({
-                claudeAiOauth: {
-                  accessToken: key,
-                  refreshToken: anthropicConfig.oauth.refresh,
-                  expiresAt: anthropicConfig.oauth.expires
-                    ? new Date(anthropicConfig.oauth.expires).toISOString()
-                    : null,
-                  scopes: ["user:inference", "user:profile"],
-                },
-              }),
-              { mode: 0o600 },
-            );
-            if (isIsolationEnabled()) {
-              chownMindDir(claudeDir, baseName);
-            }
           }
         } else if (anthropicConfig?.apiKey) {
           env.ANTHROPIC_API_KEY = anthropicConfig.apiKey;

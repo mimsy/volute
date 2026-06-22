@@ -13,6 +13,28 @@ export type { AiConfig, AiProviderConfig } from "./config/setup.js";
 
 const aiLog = log.child("ai-service");
 
+/**
+ * Optional hook fired whenever a provider's OAuth credentials are rotated and
+ * persisted. The daemon registers this to fan the fresh token out to running
+ * minds (see credential-sync.ts), making the daemon the single refresh
+ * authority. Registered via setProviderRefreshHook to avoid an import cycle.
+ */
+type ProviderRefreshHook = (providerId: string) => void;
+let providerRefreshHook: ProviderRefreshHook | undefined;
+
+export function setProviderRefreshHook(hook: ProviderRefreshHook | undefined): void {
+  providerRefreshHook = hook;
+}
+
+/** Fire the registered refresh hook, swallowing/logging any error. */
+export function fireProviderRefreshHook(providerId: string): void {
+  try {
+    providerRefreshHook?.(providerId);
+  } catch (err) {
+    aiLog.warn(`provider refresh hook failed for ${providerId}`, log.errorData(err));
+  }
+}
+
 export function getAiConfig(): AiConfig | null {
   const config = readGlobalConfig();
   return config.ai ?? null;
@@ -175,6 +197,8 @@ export async function resolveApiKey(providerId: string): Promise<string | undefi
         // Persist refreshed credentials
         if (result.newCredentials.access !== providerConfig.oauth.access) {
           saveProviderConfig(providerId, { ...providerConfig, oauth: result.newCredentials });
+          // Fan the rotated token out to running minds (single refresh authority).
+          fireProviderRefreshHook(providerId);
         }
         return result.apiKey;
       }

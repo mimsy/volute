@@ -3,10 +3,12 @@ import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { format } from "node:util";
+import { setProviderRefreshHook } from "./lib/ai-service.js";
 import { ensureSystemChannel } from "./lib/chat/system-channel.js";
 import { initBridgeManager } from "./lib/daemon/bridge-manager.js";
+import { syncProviderToMinds } from "./lib/daemon/credential-sync.js";
 import { initMailPoller } from "./lib/daemon/mail-poller.js";
-import { initMindManager } from "./lib/daemon/mind-manager.js";
+import { getMindManager, initMindManager } from "./lib/daemon/mind-manager.js";
 import { startMindFull } from "./lib/daemon/mind-service.js";
 import { initScheduler } from "./lib/daemon/scheduler.js";
 import { initSleepManager } from "./lib/daemon/sleep-manager.js";
@@ -315,6 +317,15 @@ export async function startDaemon(opts: {
   });
   cleanExpiredLogs().catch((err) => {
     log.warn("failed to clean expired logs", log.errorData(err));
+  });
+
+  // When the daemon rotates a provider's OAuth token, push the fresh token into
+  // running minds so they don't refresh the rotating grant independently (which
+  // invalidated each other and caused recurring 401s).
+  setProviderRefreshHook((provider) => {
+    void syncProviderToMinds(provider, {
+      listRunning: () => getMindManager().getRunningMinds(),
+    }).catch((err) => log.warn("credential sync to minds failed", log.errorData(err)));
   });
 
   // Start periodic API key cache refresh for mind provider keys
