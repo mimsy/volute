@@ -87,8 +87,6 @@
     "@mariozechner/pi-coding-agent": "^0.73.1",
     "@sveltejs/vite-plugin-svelte": "^7.1.2",
     "@types/adm-zip": "^0.5.8",
-    "@types/bcryptjs": "^3.0.0",
-    "@types/dompurify": "^3.2.0",
     "@types/node": "^26.0.0",
     "dompurify": "^3.4.11",
     "drizzle-kit": "^0.31.10",

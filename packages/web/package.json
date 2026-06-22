@@ -21,7 +21,6 @@
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^7.1.2",
-    "@types/dompurify": "^3.2.0",
     "@types/node": "^26.0.0",
     "dompurify": "^3.4.11",
     "marked": "^18.0.5",
