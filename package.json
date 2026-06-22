@@ -83,7 +83,7 @@
   },
   "devDependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.89",
-    "@biomejs/biome": "2.4.10",
+    "@biomejs/biome": "2.5.0",
     "@mariozechner/pi-coding-agent": "^0.64.0",
     "@sveltejs/vite-plugin-svelte": "^7.1.2",
     "@types/adm-zip": "^0.5.8",
