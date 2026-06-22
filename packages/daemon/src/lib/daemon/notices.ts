@@ -113,7 +113,7 @@ export function formatNotices(notices: Notice[]): string | null {
 
   const groups = new Map<string, { count: number; detail: string; first: string; last: string }>();
   for (const n of notices) {
-    const time = n.created_at.slice(11, 16); // HH:MM (UTC)
+    const time = localHM(n.created_at);
     const g = groups.get(n.reason);
     if (g) {
       g.count += 1;
@@ -127,7 +127,16 @@ export function formatNotices(notices: Notice[]): string | null {
   const lines = [...groups.values()].map((g) => {
     const span = g.first === g.last ? g.first : `${g.first}–${g.last}`;
     const plural = g.count === 1 ? "turn" : "turns";
-    return `- ${g.count} ${plural} failed (${span} UTC): ${g.detail}`;
+    return `- ${g.count} ${plural} failed (${span}): ${g.detail}`;
   });
   return `${NOTICE_HEADER}\n${lines.join("\n")}`;
+}
+
+/**
+ * Format a stored `created_at` (UTC, `YYYY-MM-DD HH:MM:SS`) as 24-hour HH:MM in the
+ * daemon's local timezone — what the mind sees elsewhere, so no UTC math is needed.
+ */
+function localHM(createdAt: string): string {
+  const iso = createdAt.endsWith("Z") ? createdAt : `${createdAt.replace(" ", "T")}Z`;
+  return new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
 }

@@ -134,6 +134,12 @@ describe("formatNotices", () => {
     raw: null,
   };
   const at = (t: string) => `2026-06-22 ${t}:00`;
+  // Mirror formatNotices' UTC→local rendering so assertions hold in any timezone.
+  const localHM = (utc: string) =>
+    new Date(`${utc.replace(" ", "T")}Z`).toLocaleTimeString("en-GB", {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
 
   it("returns null for an empty list", () => {
     assert.equal(formatNotices([]), null);
@@ -148,13 +154,16 @@ describe("formatNotices", () => {
     assert.ok(!/1 turns/.test(out));
   });
 
-  it("groups same-reason failures with a count and time span", () => {
+  it("groups same-reason failures with a count and local time span", () => {
     const notices = [
       { ...base, id: 1, reason: "network", detail: "net", created_at: at("14:02") },
       { ...base, id: 2, reason: "network", detail: "net", created_at: at("14:31") },
     ] as Notice[];
     const out = formatNotices(notices)!;
-    assert.match(out, /2 turns failed \(14:02–14:31 UTC\)/);
+    assert.equal(out.split("\n").filter((l) => l.startsWith("- ")).length, 1);
+    assert.ok(
+      out.includes(`2 turns failed (${localHM(at("14:02"))}–${localHM(at("14:31"))}): net`),
+    );
   });
 
   it("renders one line per distinct reason", () => {
