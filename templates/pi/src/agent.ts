@@ -5,6 +5,7 @@ import {
   createAgentSession,
   DefaultResourceLoader,
   type ExtensionFactory,
+  getAgentDir,
   ModelRegistry,
   SessionManager,
   SettingsManager,
@@ -326,6 +327,7 @@ export function createMind(options: {
 
     const resourceLoader = new DefaultResourceLoader({
       cwd: options.cwd,
+      agentDir: getAgentDir(),
       settingsManager,
       systemPrompt: options.systemPrompt,
       extensionFactories: [

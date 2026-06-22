@@ -1,17 +1,13 @@
 import type { Model } from "@mariozechner/pi-ai";
 import {
   type AuthStorage,
-  bashTool,
-  codingTools,
   createAgentSession,
   DefaultResourceLoader,
   type ExtensionFactory,
-  editTool,
+  getAgentDir,
   type ModelRegistry,
-  readTool,
   SessionManager,
   SettingsManager,
-  writeTool,
 } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 import { log } from "./logger.js";
@@ -47,6 +43,7 @@ export function createSubagentExtension(
 
             const loader = new DefaultResourceLoader({
               cwd: context.cwd,
+              agentDir: getAgentDir(),
               systemPromptOverride: () => def.prompt,
               settingsManager: SettingsManager.inMemory({}),
             });
@@ -125,29 +122,34 @@ export function createSubagentExtension(
   };
 }
 
-const TOOL_MAP: Record<string, (typeof codingTools)[number]> = {
-  Read: readTool,
-  Write: writeTool,
-  Bash: bashTool,
-  Edit: editTool,
+// Maps subagent tool labels to pi's built-in coding tool names.
+const TOOL_NAME_MAP: Record<string, string> = {
+  Read: "read",
+  Write: "write",
+  Bash: "bash",
+  Edit: "edit",
 };
 
-function resolveTools(names: string[] | undefined) {
-  if (!names) return codingTools;
+// Resolves subagent tool labels to pi tool names for createAgentSession's
+// `tools` filter. Returns undefined to enable all built-in coding tools.
+function resolveTools(names: string[] | undefined): string[] | undefined {
+  if (!names) return undefined;
   const resolved = names
     .map((n) => {
-      if (!TOOL_MAP[n]) {
+      const toolName = TOOL_NAME_MAP[n];
+      if (!toolName) {
         log(
           "mind",
-          `unknown subagent tool "${n}" — available: ${Object.keys(TOOL_MAP).join(", ")}`,
+          `unknown subagent tool "${n}" — available: ${Object.keys(TOOL_NAME_MAP).join(", ")}`,
         );
+        return undefined;
       }
-      return TOOL_MAP[n];
+      return toolName;
     })
-    .filter(Boolean);
+    .filter((t) => t !== undefined);
   if (resolved.length === 0) {
     log("mind", "no valid tools resolved for subagent, falling back to all coding tools");
-    return codingTools;
+    return undefined;
   }
   return resolved;
 }
