@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.40.0](https://github.com/mimsy/volute/compare/volute-v0.39.0...volute-v0.40.0) (2026-06-22)
+
+
+### Features
+
+* notify minds of prior failures on their next successful turn ([#306](https://github.com/mimsy/volute/issues/306)) ([d609075](https://github.com/mimsy/volute/commit/d609075de81820d8a24eecac1a519c16f640c86a))
+
+
+### Bug Fixes
+
+* centralize Anthropic OAuth refresh to stop recurring 401s ([#305](https://github.com/mimsy/volute/issues/305)) ([9600ee5](https://github.com/mimsy/volute/commit/9600ee566c94644c4997a07ca8e66e1496ab27f3))
+* pi template API key fallback, sandbox network fix, and pre-warm sessions ([#302](https://github.com/mimsy/volute/issues/302)) ([0de507b](https://github.com/mimsy/volute/commit/0de507b158f7590448bf958a45e31cdeae58a7bc))
+
 ## [0.39.0](https://github.com/mimsy/volute/compare/volute-v0.38.0...volute-v0.39.0) (2026-04-02)
 
 
