@@ -85,14 +85,14 @@ const app = new Hono<AuthEnv>()
   })
 
   // List pending incoming files
-  .get("/:name/files/pending", async (c) => {
+  .get("/:name/files/pending", requireSelf(), async (c) => {
     const name = c.req.param("name");
     if (!(await findMind(name))) return c.json({ error: "Mind not found" }, 404);
     return c.json(listPending(name));
   })
 
   // Accept a pending file
-  .post("/:name/files/accept", async (c) => {
+  .post("/:name/files/accept", requireSelf(), async (c) => {
     const name = c.req.param("name");
     const entry = await findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
@@ -123,7 +123,7 @@ const app = new Hono<AuthEnv>()
   })
 
   // Reject a pending file
-  .post("/:name/files/reject", async (c) => {
+  .post("/:name/files/reject", requireSelf(), async (c) => {
     const name = c.req.param("name");
     if (!(await findMind(name))) return c.json({ error: "Mind not found" }, 404);
 
@@ -147,8 +147,10 @@ const app = new Hono<AuthEnv>()
     return c.json({ ok: true });
   })
 
-  // Stage a file from an external sender (CLI user, not a mind)
-  .post("/:name/files/stage", async (c) => {
+  // Stage a file from an external sender (CLI user, not a mind).
+  // requireSelf restricts staging into a mind's queue to that mind or an admin
+  // (the CLI human-sender path uses the daemon admin token, which is allowed).
+  .post("/:name/files/stage", requireSelf(), async (c) => {
     const receiverName = c.req.param("name");
     const receiverEntry = await findMind(receiverName);
     if (!receiverEntry) return c.json({ error: "Mind not found" }, 404);

@@ -396,4 +396,37 @@ describe("web env routes — shared", () => {
     assert.equal(res.status, 403);
     await deleteSession(cookie2);
   });
+
+  it("GET /:name/env — non-self user gets 403 (no cross-mind secret read)", async () => {
+    await setupAuth();
+    addMind(TEST_MIND, 4150);
+    writeEnv(mindEnvPath(TEST_MIND), { MIND_KEY: "secret_val" });
+    const user2 = await createUser("regular-env-user", "pass");
+    await approveUser(user2.id);
+    const cookie2 = await createSession(user2.id);
+
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
+
+    const res = await app.request(`/api/minds/${TEST_MIND}/env`, {
+      headers: getHeaders(cookie2),
+    });
+    assert.equal(res.status, 403);
+    await deleteSession(cookie2);
+  });
+
+  it("GET /api/env/ — non-admin user gets 403 (no shared secret read)", async () => {
+    await setupAuth();
+    writeEnv(sharedEnvPath(), { SHARED_KEY: "shared_secret" });
+    const user2 = await createUser("regular-shared-user", "pass");
+    await approveUser(user2.id);
+    const cookie2 = await createSession(user2.id);
+
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
+
+    const res = await app.request("/api/env", {
+      headers: getHeaders(cookie2),
+    });
+    assert.equal(res.status, 403);
+    await deleteSession(cookie2);
+  });
 });

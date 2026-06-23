@@ -33,7 +33,7 @@ function writeSchedules(name: string, dir: string, schedules: Schedule[]): void 
 
 const app = new Hono<AuthEnv>()
   // Clock status — combined sleep state + upcoming schedules
-  .get("/:name/clock/status", async (c) => {
+  .get("/:name/clock/status", requireSelf(), async (c) => {
     const name = c.req.param("name");
     const entry = await findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
@@ -105,7 +105,7 @@ const app = new Hono<AuthEnv>()
     return c.json({ sleep: sleepState, sleepConfig, schedules, upcoming, previous });
   })
   // Get sleep config
-  .get("/:name/sleep/config", async (c) => {
+  .get("/:name/sleep/config", requireSelf(), async (c) => {
     const name = c.req.param("name");
     const entry = await findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
@@ -158,7 +158,7 @@ const app = new Hono<AuthEnv>()
     return c.json({ ok: true });
   })
   // List schedules
-  .get("/:name/schedules", async (c) => {
+  .get("/:name/schedules", requireSelf(), async (c) => {
     const name = c.req.param("name");
     const entry = await findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
@@ -301,7 +301,7 @@ const app = new Hono<AuthEnv>()
     return c.json({ ok: true });
   })
   // Webhook endpoint
-  .post("/:name/webhook/:event", async (c) => {
+  .post("/:name/webhook/:event", requireSelf(), async (c) => {
     const name = c.req.param("name");
     const event = c.req.param("event");
     const entry = await findMind(name);

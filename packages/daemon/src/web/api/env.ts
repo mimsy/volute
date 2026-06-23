@@ -11,14 +11,14 @@ import { type AuthEnv, requireAdmin, requireSelf } from "../middleware/auth.js";
 
 // Mind-scoped env routes (mounted at /api/minds)
 const app = new Hono<AuthEnv>()
-  .get("/:name/env", async (c) => {
+  .get("/:name/env", requireSelf(), async (c) => {
     const name = c.req.param("name");
     if (!(await findMind(name))) return c.json({ error: "Mind not found" }, 404);
     const shared = readEnv(sharedEnvPath());
     const mind = readEnv(mindEnvPath(name));
     return c.json({ shared, mind });
   })
-  .get("/:name/env/:key", async (c) => {
+  .get("/:name/env/:key", requireSelf(), async (c) => {
     const name = c.req.param("name");
     if (!(await findMind(name))) return c.json({ error: "Mind not found" }, 404);
     const key = c.req.param("key");
@@ -60,7 +60,7 @@ const app = new Hono<AuthEnv>()
 
 // Shared env routes (mounted at /api/env)
 export const sharedEnvApp = new Hono<AuthEnv>()
-  .get("/", (c) => {
+  .get("/", requireAdmin, (c) => {
     return c.json(readEnv(sharedEnvPath()));
   })
   .put("/:key", requireAdmin, async (c) => {

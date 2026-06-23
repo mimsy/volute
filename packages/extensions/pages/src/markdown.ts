@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
+import DOMPurify from "isomorphic-dompurify";
 import { Marked } from "marked";
 
 const marked = new Marked({ gfm: true });
@@ -98,7 +99,11 @@ export async function renderMarkdownPage(
   body: string,
   opts: { title?: string; stylesheetUrl?: string },
 ): Promise<string> {
-  const html = await marked.parse(body);
+  // Mind-authored markdown may contain raw HTML. `marked` does NOT strip it,
+  // so sanitize the rendered output to remove <script>, event handlers, etc.
+  // before serving it on the dashboard's same origin. (Defense-in-depth with
+  // the Content-Security-Policy set on the public pages routes.)
+  const html = DOMPurify.sanitize(await marked.parse(body));
   const title = escapeHtml(opts.title || "Untitled");
   const linkTag = opts.stylesheetUrl
     ? `\n    <link rel="stylesheet" href="${escapeHtml(opts.stylesheetUrl)}">`

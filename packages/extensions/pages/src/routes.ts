@@ -97,79 +97,94 @@ export function createRoutes(ctx: ExtensionContext): Hono {
     });
 }
 
+// Mind-authored pages are served on the dashboard's own origin. This CSP blocks
+// script execution (no script-src → falls back to default-src 'none', which also
+// blocks inline event handlers like onerror) so a malicious page cannot run JS in
+// an authenticated admin's session. Defense-in-depth with DOMPurify sanitization
+// of rendered markdown. Styles/images/fonts are allowed so legitimate pages render.
+const PAGES_CSP =
+  "default-src 'none'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; " +
+  "font-src 'self'; base-uri 'none'; form-action 'none'";
+
 export function createPublicRoutes(ctx: ExtensionContext): Hono {
-  return new Hono().get("/:name/*", async (c) => {
-    const name = c.req.param("name");
-    if (name.includes("/") || name.includes("\\") || name === "." || name === "..")
-      return c.text("Not found", 404);
-
-    let pagesRoot: string;
-    let blockDotfiles = false;
-    if (name === "_system") {
-      // Serve from the pages repo root (main branch checked out here).
-      // Block dotfiles since .git/ is present in this directory.
-      pagesRoot = resolve(ctx.dataDir, "repo");
-      blockDotfiles = true;
-    } else {
-      // Serve from the published snapshot, not the working directory
-      pagesRoot = resolve(ctx.dataDir, "sites", name);
-    }
-    const prefix = `/public/${name}`;
-    const idx = c.req.path.indexOf(prefix);
-    const wildcard = idx >= 0 ? c.req.path.slice(idx + prefix.length) : "/";
-    const requestedPath = resolve(pagesRoot, wildcard.slice(1));
-
-    if (requestedPath !== pagesRoot && !requestedPath.startsWith(`${pagesRoot}/`))
-      return c.text("Forbidden", 403);
-
-    // Block dotfiles (e.g. .git/) when serving from a git repo root
-    if (blockDotfiles) {
-      const relativePath = requestedPath.slice(pagesRoot.length + 1);
-      if (relativePath.split("/").some((seg) => seg.startsWith(".")))
+  return new Hono()
+    .use("*", async (c, next) => {
+      await next();
+      c.res.headers.set("Content-Security-Policy", PAGES_CSP);
+      c.res.headers.set("X-Content-Type-Options", "nosniff");
+    })
+    .get("/:name/*", async (c) => {
+      const name = c.req.param("name");
+      if (name.includes("/") || name.includes("\\") || name === "." || name === "..")
         return c.text("Not found", 404);
-    }
 
-    let fileToServe = requestedPath;
-    let fileStat = await stat(requestedPath).catch(() => null);
-
-    if (fileStat?.isDirectory()) {
-      const indexPath = resolve(requestedPath, "index.html");
-      fileStat = await stat(indexPath).catch(() => null);
-      if (fileStat?.isFile()) {
-        fileToServe = indexPath;
+      let pagesRoot: string;
+      let blockDotfiles = false;
+      if (name === "_system") {
+        // Serve from the pages repo root (main branch checked out here).
+        // Block dotfiles since .git/ is present in this directory.
+        pagesRoot = resolve(ctx.dataDir, "repo");
+        blockDotfiles = true;
       } else {
-        const mdIndexPath = resolve(requestedPath, "index.md");
-        fileStat = await stat(mdIndexPath).catch(() => null);
-        if (fileStat?.isFile()) {
-          fileToServe = mdIndexPath;
-        } else {
+        // Serve from the published snapshot, not the working directory
+        pagesRoot = resolve(ctx.dataDir, "sites", name);
+      }
+      const prefix = `/public/${name}`;
+      const idx = c.req.path.indexOf(prefix);
+      const wildcard = idx >= 0 ? c.req.path.slice(idx + prefix.length) : "/";
+      const requestedPath = resolve(pagesRoot, wildcard.slice(1));
+
+      if (requestedPath !== pagesRoot && !requestedPath.startsWith(`${pagesRoot}/`))
+        return c.text("Forbidden", 403);
+
+      // Block dotfiles (e.g. .git/) when serving from a git repo root
+      if (blockDotfiles) {
+        const relativePath = requestedPath.slice(pagesRoot.length + 1);
+        if (relativePath.split("/").some((seg) => seg.startsWith(".")))
           return c.text("Not found", 404);
+      }
+
+      let fileToServe = requestedPath;
+      let fileStat = await stat(requestedPath).catch(() => null);
+
+      if (fileStat?.isDirectory()) {
+        const indexPath = resolve(requestedPath, "index.html");
+        fileStat = await stat(indexPath).catch(() => null);
+        if (fileStat?.isFile()) {
+          fileToServe = indexPath;
+        } else {
+          const mdIndexPath = resolve(requestedPath, "index.md");
+          fileStat = await stat(mdIndexPath).catch(() => null);
+          if (fileStat?.isFile()) {
+            fileToServe = mdIndexPath;
+          } else {
+            return c.text("Not found", 404);
+          }
         }
-      }
-    } else if (!fileStat?.isFile()) {
-      return c.text("Not found", 404);
-    }
-
-    const ext = extname(fileToServe);
-    try {
-      if (ext === ".md") {
-        const content = await readFile(fileToServe, "utf-8");
-        const { title, style, body } = parseFrontmatter(content);
-        const cssRelPath = resolveStylesheet(fileToServe, pagesRoot, style);
-        const cssUrl = cssRelPath ? `/ext/pages/public/${name}/${cssRelPath}` : undefined;
-        const html = await renderMarkdownPage(body, { title, stylesheetUrl: cssUrl });
-        return c.body(html, 200, { "Content-Type": "text/html; charset=utf-8" });
+      } else if (!fileStat?.isFile()) {
+        return c.text("Not found", 404);
       }
 
-      const mime = MIME_TYPES[ext] || "application/octet-stream";
-      const body = await readFile(fileToServe);
-      return c.body(body, 200, { "Content-Type": mime });
-    } catch (err) {
-      const code = (err as NodeJS.ErrnoException).code;
-      if (code === "EACCES") return c.text("Forbidden", 403);
-      if (code === "ENOENT") return c.text("Not found", 404);
-      console.error(`[pages] error serving ${fileToServe}:`, (err as Error).message);
-      return c.text("Internal server error", 500);
-    }
-  });
+      const ext = extname(fileToServe);
+      try {
+        if (ext === ".md") {
+          const content = await readFile(fileToServe, "utf-8");
+          const { title, style, body } = parseFrontmatter(content);
+          const cssRelPath = resolveStylesheet(fileToServe, pagesRoot, style);
+          const cssUrl = cssRelPath ? `/ext/pages/public/${name}/${cssRelPath}` : undefined;
+          const html = await renderMarkdownPage(body, { title, stylesheetUrl: cssUrl });
+          return c.body(html, 200, { "Content-Type": "text/html; charset=utf-8" });
+        }
+
+        const mime = MIME_TYPES[ext] || "application/octet-stream";
+        const body = await readFile(fileToServe);
+        return c.body(body, 200, { "Content-Type": mime });
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code === "EACCES") return c.text("Forbidden", 403);
+        if (code === "ENOENT") return c.text("Not found", 404);
+        console.error(`[pages] error serving ${fileToServe}:`, (err as Error).message);
+        return c.text("Internal server error", 500);
+      }
+    });
 }

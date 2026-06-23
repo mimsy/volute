@@ -4,9 +4,10 @@ import { resolve } from "node:path";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { findMind, stateDir } from "../../lib/mind/registry.js";
+import { type AuthEnv, requireSelf } from "../middleware/auth.js";
 
-const app = new Hono()
-  .get("/:name/logs", async (c) => {
+const app = new Hono<AuthEnv>()
+  .get("/:name/logs", requireSelf(), async (c) => {
     const name = c.req.param("name");
     const entry = await findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
@@ -43,7 +44,7 @@ const app = new Hono()
       });
     });
   })
-  .get("/:name/logs/tail", async (c) => {
+  .get("/:name/logs/tail", requireSelf(), async (c) => {
     const name = c.req.param("name");
     const entry = await findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
