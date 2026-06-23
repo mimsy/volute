@@ -1,6 +1,10 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { execFile as execFileCb, execFileSync } from "node:child_process";
+import { existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { basename, dirname, resolve, sep } from "node:path";
+import { promisify } from "node:util";
 import { voluteSystemDir } from "./mind/registry.js";
+
+const execFile = promisify(execFileCb);
 
 type UpdateCheckResult = {
   current: string;
@@ -107,6 +111,106 @@ export async function checkForUpdate(force = false): Promise<UpdateCheckResult> 
     return { current, latest, updateAvailable: isNewer(current, latest) };
   } catch {
     return { current, latest: current, updateAvailable: false, checkFailed: true };
+  }
+}
+
+export type VoluteInstall = {
+  /** Path resolved by `which volute` (may be a symlink, e.g. /opt/homebrew/bin/volute). */
+  binPath: string;
+  /** Symlinks resolved (e.g. /opt/homebrew/lib/node_modules/volute/dist/cli.js). */
+  realPath: string;
+  /** The `volute` package directory, or null for a linked/source checkout. */
+  packageRoot: string | null;
+  /** The npm global prefix that owns the running binary (e.g. /opt/homebrew), or null. */
+  prefix: string | null;
+  /** Version read from the running binary's package.json, or null if unreadable. */
+  version: string | null;
+  /** True when the binary is run from a source checkout / `npm link` rather than a real -g install. */
+  isLinked: boolean;
+};
+
+function readPackageVersion(pkgDir: string): string | null {
+  try {
+    return JSON.parse(readFileSync(resolve(pkgDir, "package.json"), "utf-8")).version ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Pure path analysis: given the (symlink-resolved) path of the running binary, work out the
+ * `volute` package dir and the npm global prefix that owns it. Returns isLinked=true when the
+ * binary is not inside a `node_modules/volute`, meaning it's a source checkout / `npm link`.
+ * Separated from IO so it can be unit-tested across platform layouts.
+ */
+export function analyzeInstallPath(realPath: string): {
+  packageRoot: string | null;
+  prefix: string | null;
+  isLinked: boolean;
+} {
+  const marker = `${sep}node_modules${sep}volute${sep}`;
+  const idx = realPath.indexOf(marker);
+  if (idx === -1) return { packageRoot: null, prefix: null, isLinked: true };
+
+  const packageRoot = `${realPath.slice(0, idx)}${sep}node_modules${sep}volute`;
+  const nodeModulesRoot = dirname(packageRoot); // <...>/node_modules
+  // Global installs live at <prefix>/lib/node_modules (unix) or <prefix>/node_modules (windows).
+  const libDir = dirname(nodeModulesRoot);
+  const prefix = basename(libDir) === "lib" ? dirname(libDir) : libDir;
+  return { packageRoot, prefix, isLinked: false };
+}
+
+/**
+ * Resolve where the `volute` binary that is actually on PATH lives, so updates can be
+ * installed into the prefix that owns it rather than whatever prefix the ambient npm
+ * happens to use. The two diverge under nvm/fnm/volta/Homebrew setups, which is the
+ * usual cause of "update succeeded but nothing changed".
+ */
+export function resolveVoluteInstall(): VoluteInstall | null {
+  let binPath: string;
+  try {
+    binPath = execFileSync("which", ["volute"], { encoding: "utf-8" }).trim();
+  } catch {
+    return null;
+  }
+  if (!binPath) return null;
+
+  let realPath = binPath;
+  try {
+    realPath = realpathSync(binPath);
+  } catch {}
+
+  const { packageRoot, prefix, isLinked } = analyzeInstallPath(realPath);
+  if (isLinked) {
+    // Running from a source checkout or `npm link`.
+    // Walk up from the binary to find its package.json for a best-effort version.
+    let dir = dirname(realPath);
+    let version: string | null = null;
+    for (let i = 0; i < 4 && dir !== dirname(dir); i++) {
+      version = readPackageVersion(dir);
+      if (version) break;
+      dir = dirname(dir);
+    }
+    return { binPath, realPath, packageRoot: null, prefix: null, version, isLinked: true };
+  }
+
+  return {
+    binPath,
+    realPath,
+    packageRoot,
+    prefix,
+    version: packageRoot ? readPackageVersion(packageRoot) : null,
+    isLinked: false,
+  };
+}
+
+/** Run the resolved volute binary in a fresh process and return the version it reports. */
+export async function getResolvedVersion(binPath: string): Promise<string | null> {
+  try {
+    const { stdout } = await execFile(binPath, ["--version"], { timeout: 15_000 });
+    return stdout.trim() || null;
+  } catch {
+    return null;
   }
 }
 
