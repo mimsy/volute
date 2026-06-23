@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { voluteSystemDir } from "../packages/daemon/src/lib/mind/registry.js";
 import {
+  analyzeInstallPath,
   checkForUpdate,
   checkForUpdateCached,
   getCurrentVersion,
@@ -42,6 +43,35 @@ describe("isNewer", () => {
 
   it("strips pre-release suffix (pre-release is not newer than release)", () => {
     assert.equal(isNewer("1.0.0", "1.0.0-rc.1"), false);
+  });
+});
+
+describe("analyzeInstallPath", () => {
+  it("derives prefix from a Homebrew-style global install", () => {
+    const r = analyzeInstallPath("/opt/homebrew/lib/node_modules/volute/dist/cli.js");
+    assert.equal(r.isLinked, false);
+    assert.equal(r.packageRoot, "/opt/homebrew/lib/node_modules/volute");
+    assert.equal(r.prefix, "/opt/homebrew");
+  });
+
+  it("derives prefix from an nvm-style global install", () => {
+    const r = analyzeInstallPath(
+      "/Users/me/.nvm/versions/node/v20.0.0/lib/node_modules/volute/dist/cli.js",
+    );
+    assert.equal(r.prefix, "/Users/me/.nvm/versions/node/v20.0.0");
+    assert.equal(r.packageRoot, "/Users/me/.nvm/versions/node/v20.0.0/lib/node_modules/volute");
+  });
+
+  it("handles a prefix without a lib/ directory (windows-style)", () => {
+    const r = analyzeInstallPath("/usr/local/node_modules/volute/dist/cli.js");
+    assert.equal(r.prefix, "/usr/local");
+  });
+
+  it("flags a source checkout / npm link as linked", () => {
+    const r = analyzeInstallPath("/Users/me/src/volute/dist/cli.js");
+    assert.equal(r.isLinked, true);
+    assert.equal(r.prefix, null);
+    assert.equal(r.packageRoot, null);
   });
 });
 
