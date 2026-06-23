@@ -7,6 +7,7 @@ import { syncMindProfile } from "../../lib/auth.js";
 import { broadcast } from "../../lib/events/activity-events.js";
 import { findMind, mindDir } from "../../lib/mind/registry.js";
 import { readVoluteConfig, writeVoluteConfig } from "../../lib/mind/volute-config.js";
+import { safeResolveWithinBase } from "../../lib/util/paths.js";
 import { type AuthEnv, requireAdmin, requireSelf } from "../middleware/auth.js";
 
 const AVATAR_MIME: Record<string, string> = {
@@ -63,11 +64,14 @@ const app = new Hono<AuthEnv>()
     const filename = `avatar${ext}`;
     const avatarPath = resolve(homeDir, filename);
 
-    // Delete old avatar if different extension
+    // Delete old avatar if different extension. The stored avatar value is
+    // mind-controllable (via volute.json / the profile PATCH), so contain the
+    // deletion to homeDir — never let a traversal value delete arbitrary files.
     const config = readVoluteConfig(dir) ?? {};
     const oldAvatar = config.profile?.avatar;
     if (oldAvatar && oldAvatar !== filename) {
-      rmSync(resolve(homeDir, oldAvatar), { force: true });
+      const oldAvatarPath = safeResolveWithinBase(homeDir, oldAvatar);
+      if (oldAvatarPath) rmSync(oldAvatarPath, { force: true });
     }
 
     const buffer = Buffer.from(await file.arrayBuffer());

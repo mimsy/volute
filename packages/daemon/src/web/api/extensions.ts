@@ -7,7 +7,7 @@ import {
   setExtensionEnabled,
   uninstallNpmExtension,
 } from "../../lib/extensions.js";
-import type { AuthEnv } from "../middleware/auth.js";
+import { type AuthEnv, requireAdmin } from "../middleware/auth.js";
 
 const app = new Hono<AuthEnv>()
   // Existing: returns loaded (active) extensions for sidebar/feed
@@ -22,7 +22,7 @@ const app = new Hono<AuthEnv>()
   })
 
   // Toggle enable/disable
-  .put("/:id/enabled", async (c) => {
+  .put("/:id/enabled", requireAdmin, async (c) => {
     const { id } = c.req.param();
     const body = await c.req.json<{ enabled: boolean }>().catch(() => null);
     if (!body || typeof body.enabled !== "boolean") {
@@ -37,7 +37,7 @@ const app = new Hono<AuthEnv>()
   })
 
   // Install npm extension
-  .post("/install", async (c) => {
+  .post("/install", requireAdmin, async (c) => {
     const body = await c.req.json<{ package: string }>();
     const pkg = body.package?.trim();
     if (!pkg) {
@@ -55,7 +55,7 @@ const app = new Hono<AuthEnv>()
   })
 
   // Uninstall npm extension
-  .delete("/uninstall/:package", async (c) => {
+  .delete("/uninstall/:package", requireAdmin, async (c) => {
     const pkg = c.req.param("package");
     try {
       await uninstallNpmExtension(pkg);

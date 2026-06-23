@@ -7,7 +7,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { resolve } from "node:path";
+import { basename, resolve } from "node:path";
 import { zValidator } from "@hono/zod-validator";
 import { and, desc, eq, type SQL, sql } from "drizzle-orm";
 import { type Context, Hono } from "hono";
@@ -1286,9 +1286,9 @@ const app = new Hono<AuthEnv>()
     return c.json({ ...entry, ...mindStatus, variants: variantStatuses, hasPages });
   })
   // Context info — proxy to mind's /context endpoint
-  .get("/:name/context", async (c) => proxyToMind(c, "context"))
+  .get("/:name/context", requireSelf(), async (c) => proxyToMind(c, "context"))
   // Context messages — proxy to mind's /context/messages endpoint
-  .get("/:name/context/messages", async (c) => proxyToMind(c, "context/messages"))
+  .get("/:name/context/messages", requireSelf(), async (c) => proxyToMind(c, "context/messages"))
   // Start mind (supports variants) — admin only
   .post("/:name/start", requireSelf(), async (c) => {
     const name = c.req.param("name");
@@ -1565,7 +1565,10 @@ const app = new Hono<AuthEnv>()
 
     if (body.displayName !== undefined) profile.displayName = body.displayName;
     if (body.description !== undefined) profile.description = body.description;
-    if (body.avatar !== undefined) profile.avatar = body.avatar;
+    // Store only a bare filename — avatars live directly in the mind's home dir.
+    // Prevents a traversal/absolute path from being persisted and later used in
+    // filesystem operations (e.g. avatar deletion).
+    if (body.avatar !== undefined) profile.avatar = basename(body.avatar);
 
     config.profile = profile;
     writeVoluteConfig(dir, config);
@@ -2120,7 +2123,7 @@ const app = new Hono<AuthEnv>()
     return c.json({ items: result.messages, hasMore: result.hasMore });
   })
   // Budget status
-  .get("/:name/budget", async (c) => {
+  .get("/:name/budget", requireSelf(), async (c) => {
     const name = c.req.param("name");
     const baseName = await getBaseName(name);
     const usage = getTokenBudget().getUsage(baseName);
@@ -2128,7 +2131,7 @@ const app = new Hono<AuthEnv>()
     return c.json(usage);
   })
   // Get mind config (registry + volute.json + env)
-  .get("/:name/config", async (c) => {
+  .get("/:name/config", requireSelf(), async (c) => {
     const name = c.req.param("name");
     const entry = await findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
@@ -2373,7 +2376,7 @@ const app = new Hono<AuthEnv>()
     },
   )
   // Get pending/gated delivery messages
-  .get("/:name/delivery/pending", async (c) => {
+  .get("/:name/delivery/pending", requireSelf(), async (c) => {
     const name = c.req.param("name");
     const baseName = await getBaseName(name);
     try {
@@ -2643,7 +2646,7 @@ const app = new Hono<AuthEnv>()
     return c.json({ ok: true });
   })
   // SSE endpoint for mind events
-  .get("/:name/events", async (c) => {
+  .get("/:name/events", requireSelf(), async (c) => {
     const name = c.req.param("name");
     const baseName = await getBaseName(name);
 
@@ -2747,7 +2750,7 @@ const app = new Hono<AuthEnv>()
     return c.json({ ok: true });
   })
   // Get sessions summary
-  .get("/:name/history/sessions", async (c) => {
+  .get("/:name/history/sessions", requireSelf(), async (c) => {
     const name = c.req.param("name");
     const db = await getDb();
     const rows = await db
@@ -2765,7 +2768,7 @@ const app = new Hono<AuthEnv>()
     return c.json(rows);
   })
   // Get message history
-  .get("/:name/history/channels", async (c) => {
+  .get("/:name/history/channels", requireSelf(), async (c) => {
     const name = c.req.param("name");
     const db = await getDb();
     const rows = await db
@@ -2774,7 +2777,7 @@ const app = new Hono<AuthEnv>()
       .where(eq(mindHistory.mind, name));
     return c.json(rows.map((r) => r.channel));
   })
-  .get("/:name/history/export", async (c) => {
+  .get("/:name/history/export", requireSelf(), async (c) => {
     const name = c.req.param("name");
     if (!(await findMind(name))) return c.json({ error: "Mind not found" }, 404);
 
@@ -2782,7 +2785,7 @@ const app = new Hono<AuthEnv>()
     const rows = await db.select().from(mindHistory).where(eq(mindHistory.mind, name));
     return c.json(rows);
   })
-  .get("/:name/history/turn", async (c) => {
+  .get("/:name/history/turn", requireSelf(), async (c) => {
     const name = c.req.param("name");
     const turnId = c.req.query("turn_id");
     const detail = c.req.query("detail") === "1";
@@ -2827,7 +2830,7 @@ const app = new Hono<AuthEnv>()
 
     return c.json(rows);
   })
-  .get("/:name/history/cross-session", async (c) => {
+  .get("/:name/history/cross-session", requireSelf(), async (c) => {
     const name = c.req.param("name");
     const currentSession = c.req.query("session");
 
@@ -2925,7 +2928,7 @@ const app = new Hono<AuthEnv>()
 
     return c.json({ context: formatNotices(notices), notices });
   })
-  .get("/:name/history", async (c) => {
+  .get("/:name/history", requireSelf(), async (c) => {
     const name = c.req.param("name");
     const channel = c.req.query("channel");
     const session = c.req.query("session");

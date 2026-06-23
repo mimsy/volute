@@ -442,6 +442,40 @@ describe("XSS prevention", () => {
     assert.ok(!body.includes("<script>"), "should not contain unescaped script tag");
     assert.ok(body.includes("&lt;script&gt;"), "should escape HTML entities in title");
   });
+
+  it("sanitizes raw HTML in mind-authored markdown body", async () => {
+    const dir = resolve(tmpdir(), `volute-test-xss-body-${Date.now()}`);
+    const sitesDir = resolve(dir, "sites", "test-mind");
+    mkdirSync(sitesDir, { recursive: true });
+    testDir = dir;
+    writeFileSync(
+      resolve(sitesDir, "evil.md"),
+      '# Title\n\n<img src=x onerror="alert(document.cookie)"><script>alert(1)</script>\n\n**ok**\n',
+    );
+
+    const { createPublicRoutes } = await import("../packages/extensions/pages/src/routes.js");
+    const publicApp = new Hono();
+    publicApp.route("/public", createPublicRoutes(makeCtx(dir)));
+
+    const res = await publicApp.request("/public/test-mind/evil.md");
+    const body = await res.text();
+    assert.ok(!body.includes("<script>alert"), "script tag should be stripped");
+    assert.ok(!body.includes("onerror"), "inline event handler should be stripped");
+    assert.ok(body.includes("<strong>ok</strong>"), "safe markdown should still render");
+  });
+
+  it("sets a restrictive Content-Security-Policy on public pages", async () => {
+    const dir = setupTestDir();
+    const { createPublicRoutes } = await import("../packages/extensions/pages/src/routes.js");
+    const publicApp = new Hono();
+    publicApp.route("/public", createPublicRoutes(makeCtx(dir)));
+
+    const res = await publicApp.request("/public/test-mind/hello.md");
+    const csp = res.headers.get("content-security-policy");
+    assert.ok(csp, "CSP header should be present");
+    assert.ok(csp.includes("default-src 'none'"), "CSP should default-deny (blocks script)");
+    assert.equal(res.headers.get("x-content-type-options"), "nosniff");
+  });
 });
 
 describe("resolveStylesheet", () => {
