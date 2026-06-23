@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.40.1](https://github.com/mimsy/volute/compare/volute-v0.40.0...volute-v0.40.1) (2026-06-23)
+
+
+### Bug Fixes
+
+* enforce per-route authorization and harden web API against cross-mind access ([#308](https://github.com/mimsy/volute/issues/308)) ([617dfa1](https://github.com/mimsy/volute/commit/617dfa1417299ecc5f23be491648a5ce8543ef09))
+* make volute update target the running binary's prefix and verify ([#310](https://github.com/mimsy/volute/issues/310)) ([4a19ab3](https://github.com/mimsy/volute/commit/4a19ab3eccccc95658516e90540a81e389be4d15))
+
 ## [0.40.0](https://github.com/mimsy/volute/compare/volute-v0.39.0...volute-v0.40.0) (2026-06-22)
 
 
