@@ -264,5 +264,84 @@ describe("turn-tracker", () => {
       assert.equal(row!.status, "active");
       await clearMind("sweep-mind");
     });
+
+    it("sweeps a sessionless wedged turn (null session)", async () => {
+      const id = await createTurn("sweep-nosess");
+      assert.ok(id);
+      const db = await getDb();
+      for (const e of [
+        { type: "text", msAgo: 30 * 60_000 },
+        { type: "done", msAgo: 20 * 60_000 },
+      ]) {
+        await db.insert(mindHistory).values({
+          mind: "sweep-nosess",
+          type: e.type,
+          session: null,
+          turn_id: id,
+          created_at: utcStamp(e.msAgo),
+        });
+      }
+
+      const swept = await sweepWedgedTurns(idleMs);
+      const mine = swept.find((t) => t.turnId === id);
+      assert.ok(mine, "sessionless wedged turn should be swept");
+      assert.equal(mine!.session, undefined, "null session maps to undefined");
+      assert.equal(getActiveTurnId("sweep-nosess"), undefined, "in-memory wildcard entry cleared");
+    });
+
+    it("does NOT clobber the in-memory slot when a newer turn reused the session key", async () => {
+      const oldId = await seedTurn("wsX", [
+        { type: "text", msAgo: 30 * 60_000 },
+        { type: "done", msAgo: 20 * 60_000 },
+      ]);
+      // A newer turn opens on the same session and reuses the mind:session slot.
+      const newId = await createTurn("sweep-mind");
+      assert.ok(newId);
+      await assignSession("sweep-mind", newId!, "wsX");
+      assert.equal(getActiveTurnId("sweep-mind", "wsX"), newId);
+
+      const swept = await sweepWedgedTurns(idleMs);
+      assert.ok(
+        swept.find((t) => t.turnId === oldId),
+        "old wedged turn swept",
+      );
+
+      const db = await getDb();
+      const oldRow = await db.select().from(turns).where(eq(turns.id, oldId)).get();
+      assert.equal(oldRow!.status, "complete");
+      assert.equal(
+        getActiveTurnId("sweep-mind", "wsX"),
+        newId,
+        "newer turn's in-memory entry must survive",
+      );
+      await clearMind("sweep-mind");
+    });
+
+    it("sweeps multiple wedged turns in one pass", async () => {
+      const id1 = await seedTurn("wsm1", [
+        { type: "text", msAgo: 40 * 60_000 },
+        { type: "done", msAgo: 30 * 60_000 },
+      ]);
+      const id2 = await seedTurn("wsm2", [
+        { type: "text", msAgo: 40 * 60_000 },
+        { type: "done", msAgo: 30 * 60_000 },
+      ]);
+
+      const swept = await sweepWedgedTurns(idleMs);
+      assert.ok(
+        swept.find((t) => t.turnId === id1),
+        "first turn swept",
+      );
+      assert.ok(
+        swept.find((t) => t.turnId === id2),
+        "second turn swept",
+      );
+
+      const db = await getDb();
+      for (const id of [id1, id2]) {
+        const row = await db.select().from(turns).where(eq(turns.id, id)).get();
+        assert.equal(row!.status, "complete");
+      }
+    });
   });
 });

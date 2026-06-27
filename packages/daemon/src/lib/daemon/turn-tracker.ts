@@ -202,11 +202,12 @@ export async function clearMind(mind: string): Promise<OrphanedTurn[]> {
 /**
  * Reconcile turns wedged in `active` despite already having received a `done`.
  *
- * A turn completes only when a `done` arrives AND the delivery manager reports the
- * session as not busy (activeCount === 0). That counter increments per delivery but
- * decrements per `done`; interrupts and maxWait flushes deliver mid-turn yet get folded
- * into fewer `done`s, so the counter can leak positive and gate completion forever — the
- * turn stays active, never summarized, and keeps absorbing later events.
+ * A turn with a session completes only when a `done` arrives AND the delivery manager
+ * reports the session as not busy (activeCount === 0). That counter increments per delivery
+ * and decrements per `done` (or failed delivery); interrupts and maxWait flushes deliver
+ * mid-turn yet get folded into fewer `done`s, so the counter can leak positive and gate
+ * completion indefinitely (until the mind stops or this sweep runs) — the turn stays active,
+ * never summarized, and keeps absorbing later events.
  *
  * This sweep catches that drift: an active turn that has seen ≥1 `done` and has had no
  * events for `idleMs` is genuinely finished. We mark it complete and drop any in-memory
@@ -221,13 +222,7 @@ export async function sweepWedgedTurns(idleMs: number): Promise<OrphanedTurn[]> 
   let rows: { id: string; mind: string; session: string | null }[];
   try {
     rows = await db
-      .select({
-        id: turns.id,
-        mind: turns.mind,
-        session: turns.session,
-        lastAt: sql<string>`max(${mindHistory.created_at})`,
-        doneCount: sql<number>`sum(case when ${mindHistory.type} = 'done' then 1 else 0 end)`,
-      })
+      .select({ id: turns.id, mind: turns.mind, session: turns.session })
       .from(turns)
       .innerJoin(mindHistory, eq(mindHistory.turn_id, turns.id))
       .where(eq(turns.status, "active"))

@@ -327,14 +327,22 @@ export class DeliveryManager {
    * Reset a single session's leaked active count back to zero.
    *
    * Used by the wedged-turn sweep: when a session's `activeCount` drifts above zero
-   * (deliveries outnumbering `done`s) it gates turn completion forever. Once the sweep
+   * (deliveries outnumbering `done`s) it gates turn completion indefinitely. Once the sweep
    * confirms the session is genuinely idle, this clears the stale count so the next turn
    * can complete normally. Batch buffers are left intact — their own maxWait timer flushes
    * any pending messages.
+   *
+   * `minIdleMs` guards against a race: if a delivery landed within that window, a fresh turn
+   * may legitimately be in flight (real `activeCount`), so zeroing would complete it early.
+   * In that case we skip — the next sweep retries if it's still wedged. Returns whether the
+   * count was reset.
    */
-  clearSessionActive(mindName: string, session: string): void {
+  clearSessionActive(mindName: string, session: string, minIdleMs: number): boolean {
     const state = this.sessionStates.get(mindName)?.get(session);
-    if (state) state.activeCount = 0;
+    if (!state) return false;
+    if (Date.now() - state.lastDeliveredAt < minIdleMs) return false;
+    state.activeCount = 0;
+    return true;
   }
 
   /**
@@ -974,5 +982,10 @@ export function getDeliveryManager(): DeliveryManager {
   if (!instance) {
     throw new Error("DeliveryManager not initialized — call initDeliveryManager() first");
   }
+  return instance;
+}
+
+/** Like getDeliveryManager but returns undefined instead of throwing when uninitialized. */
+export function tryGetDeliveryManager(): DeliveryManager | undefined {
   return instance;
 }

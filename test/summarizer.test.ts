@@ -6,11 +6,20 @@ import {
   getPreviousPeriodKey,
   getTimeRange,
   type Period,
+  reconcileWedgedTurns,
   summarizePeriod,
   summarizeTurn,
 } from "../packages/daemon/src/lib/daemon/summarizer.js";
-import { clearMind } from "../packages/daemon/src/lib/daemon/turn-tracker.js";
+import {
+  assignSession,
+  clearMind,
+  createTurn,
+} from "../packages/daemon/src/lib/daemon/turn-tracker.js";
 import { getDb } from "../packages/daemon/src/lib/db.js";
+import {
+  initDeliveryManager,
+  tryGetDeliveryManager,
+} from "../packages/daemon/src/lib/delivery/delivery-manager.js";
 import { mindHistory, summaries, turns } from "../packages/daemon/src/lib/schema.js";
 
 describe("summarizer", () => {
@@ -429,6 +438,51 @@ describe("summarizer", () => {
       assert.ok(row, "monthly summary should exist");
       const meta = JSON.parse(row!.metadata!);
       assert.equal(meta.source_count, 3);
+    });
+  });
+
+  describe("reconcileWedgedTurns", () => {
+    it("completes a wedged turn and resets its leaked session counter", async () => {
+      const mind = "reconcile-mind";
+      const session = "rs1";
+      const idleMs = 10 * 60_000;
+
+      // A wedged turn: has a `done`, last event well past the idle window.
+      const id = await createTurn(mind);
+      assert.ok(id);
+      await assignSession(mind, id!, session);
+      const db = await getDb();
+      for (const e of [
+        { type: "text", msAgo: 30 * 60_000 },
+        { type: "done", msAgo: 20 * 60_000 },
+      ]) {
+        await db.insert(mindHistory).values({
+          mind,
+          type: e.type,
+          session,
+          turn_id: id,
+          created_at: new Date(Date.now() - e.msAgo).toISOString().slice(0, 19).replace("T", " "),
+        });
+      }
+
+      // Stand up the delivery manager singleton with a leaked, idle counter for this session.
+      const dm = initDeliveryManager();
+      try {
+        (dm as any).sessionStates.set(
+          mind,
+          new Map([[session, { activeCount: 2, lastDeliveredAt: 0 }]]),
+        );
+        assert.equal(dm.isSessionBusy(mind, session), true);
+        assert.equal(tryGetDeliveryManager(), dm);
+
+        await reconcileWedgedTurns(idleMs);
+
+        const row = await db.select().from(turns).where(eq(turns.id, id)).get();
+        assert.equal(row!.status, "complete", "wedged turn should be completed");
+        assert.equal(dm.isSessionBusy(mind, session), false, "leaked counter should be reset");
+      } finally {
+        dm.dispose();
+      }
     });
   });
 });

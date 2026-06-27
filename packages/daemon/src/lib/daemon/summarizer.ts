@@ -20,7 +20,9 @@ export const SYSTEM_MIND = "_system";
 /**
  * A turn that has received a `done` but stayed `active` this long (no further events) is
  * treated as wedged by a leaked delivery counter and force-completed by the tick sweep.
- * Comfortably longer than any real turn, so genuine in-progress work is never cut short.
+ * The sweep also requires a prior `done`, so genuine in-progress work (no `done` yet) is
+ * never cut short regardless of duration; this threshold just bounds how stale a finished
+ * turn must look before we step in.
  */
 const WEDGED_TURN_IDLE_MS = 15 * 60_000;
 
@@ -935,7 +937,7 @@ export class Summarizer {
         this.hasBackfilled = true;
       }
 
-      await this.reconcileWedgedTurns();
+      await reconcileWedgedTurns(WEDGED_TURN_IDLE_MS);
 
       const now = new Date();
       const currentHourKey = getPeriodKey(now, "hour");
@@ -967,30 +969,29 @@ export class Summarizer {
       sLog.error("tick failed", log.errorData(err));
     }
   }
+}
 
-  /**
-   * Complete + summarize turns wedged in `active` despite already finishing, and reset the
-   * leaked delivery counter that gated them. Guards against a session's `activeCount`
-   * drifting positive (deliveries outnumbering `done`s) and blocking turn completion forever.
-   */
-  private async reconcileWedgedTurns(): Promise<void> {
-    const { sweepWedgedTurns, summarizeOrphanedTurns } = await import("./turn-tracker.js");
-    const wedged = await sweepWedgedTurns(WEDGED_TURN_IDLE_MS);
-    if (wedged.length === 0) return;
+/**
+ * Complete + summarize turns wedged in `active` despite already finishing, and reset the
+ * leaked delivery counter that gated them. Guards against a session's `activeCount`
+ * drifting positive (deliveries outnumbering `done`s) and blocking turn completion
+ * indefinitely. Run on the summarizer tick; exported for direct testing.
+ */
+export async function reconcileWedgedTurns(idleMs: number): Promise<void> {
+  const { sweepWedgedTurns, summarizeOrphanedTurns } = await import("./turn-tracker.js");
+  const wedged = await sweepWedgedTurns(idleMs);
+  if (wedged.length === 0) return;
 
-    summarizeOrphanedTurns(wedged);
+  summarizeOrphanedTurns(wedged);
 
-    try {
-      const { getDeliveryManager } = await import("../delivery/delivery-manager.js");
-      const dm = getDeliveryManager();
-      for (const t of wedged) {
-        if (t.session) dm.clearSessionActive(t.mind, t.session);
-      }
-    } catch (err) {
-      if (!(err instanceof Error && err.message.includes("not initialized"))) {
-        sLog.warn("failed to reset session counters after sweep", log.errorData(err));
-      }
-    }
+  // Reset the leaked counter so the next turn in each session can complete. If the delivery
+  // manager isn't up (startup ordering) there are no in-memory counters to leak, so skipping
+  // is correct. clearSessionActive itself no-ops if a fresh delivery raced in.
+  const { tryGetDeliveryManager } = await import("../delivery/delivery-manager.js");
+  const dm = tryGetDeliveryManager();
+  if (!dm) return;
+  for (const t of wedged) {
+    if (t.session) dm.clearSessionActive(t.mind, t.session, idleMs);
   }
 }
 
