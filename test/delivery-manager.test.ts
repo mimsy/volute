@@ -197,6 +197,30 @@ describe("DeliveryManager", () => {
       // Calling sessionDone on nonexistent session should not throw
       manager.sessionDone("nonexistent", "main");
     });
+
+    it("clearSessionActive resets a leaked active count to zero", () => {
+      manager = new DeliveryManager();
+      const states = (manager as any).sessionStates as Map<string, Map<string, any>>;
+      states.set(
+        "leakmind",
+        new Map([
+          [
+            "s1",
+            { activeCount: 3, lastDeliverySenders: new Set(), lastDeliveryChannels: new Set() },
+          ],
+        ]),
+      );
+      assert.equal(manager.isSessionBusy("leakmind", "s1"), true);
+
+      manager.clearSessionActive("leakmind", "s1");
+      assert.equal(manager.isSessionBusy("leakmind", "s1"), false, "count should be reset to 0");
+    });
+
+    it("clearSessionActive is a no-op for an unknown session", () => {
+      manager = new DeliveryManager();
+      // Should not throw
+      manager.clearSessionActive("nope", "main");
+    });
   });
 
   describe("new-speaker batch interrupt", () => {

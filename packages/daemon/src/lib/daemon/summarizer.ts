@@ -17,6 +17,13 @@ export type Period = "turn" | TimerPeriod;
 
 export const SYSTEM_MIND = "_system";
 
+/**
+ * A turn that has received a `done` but stayed `active` this long (no further events) is
+ * treated as wedged by a leaked delivery counter and force-completed by the tick sweep.
+ * Comfortably longer than any real turn, so genuine in-progress work is never cut short.
+ */
+const WEDGED_TURN_IDLE_MS = 15 * 60_000;
+
 // ── Period key helpers (local time) ──
 // Period keys use local time so summaries align with the user's day/hour boundaries.
 
@@ -928,6 +935,8 @@ export class Summarizer {
         this.hasBackfilled = true;
       }
 
+      await this.reconcileWedgedTurns();
+
       const now = new Date();
       const currentHourKey = getPeriodKey(now, "hour");
 
@@ -956,6 +965,31 @@ export class Summarizer {
       }
     } catch (err) {
       sLog.error("tick failed", log.errorData(err));
+    }
+  }
+
+  /**
+   * Complete + summarize turns wedged in `active` despite already finishing, and reset the
+   * leaked delivery counter that gated them. Guards against a session's `activeCount`
+   * drifting positive (deliveries outnumbering `done`s) and blocking turn completion forever.
+   */
+  private async reconcileWedgedTurns(): Promise<void> {
+    const { sweepWedgedTurns, summarizeOrphanedTurns } = await import("./turn-tracker.js");
+    const wedged = await sweepWedgedTurns(WEDGED_TURN_IDLE_MS);
+    if (wedged.length === 0) return;
+
+    summarizeOrphanedTurns(wedged);
+
+    try {
+      const { getDeliveryManager } = await import("../delivery/delivery-manager.js");
+      const dm = getDeliveryManager();
+      for (const t of wedged) {
+        if (t.session) dm.clearSessionActive(t.mind, t.session);
+      }
+    } catch (err) {
+      if (!(err instanceof Error && err.message.includes("not initialized"))) {
+        sLog.warn("failed to reset session counters after sweep", log.errorData(err));
+      }
     }
   }
 }

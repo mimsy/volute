@@ -10,11 +10,17 @@ import {
   getActiveTurnId,
   getLastToolUseEventId,
   markErrored,
+  sweepWedgedTurns,
   takeErrored,
   trackToolUse,
 } from "../packages/daemon/src/lib/daemon/turn-tracker.js";
 import { getDb } from "../packages/daemon/src/lib/db.js";
-import { turns } from "../packages/daemon/src/lib/schema.js";
+import { mindHistory, turns } from "../packages/daemon/src/lib/schema.js";
+
+/** UTC "YYYY-MM-DD HH:MM:SS" — matches the format SQLite's datetime('now') stores. */
+function utcStamp(msAgo: number): string {
+  return new Date(Date.now() - msAgo).toISOString().slice(0, 19).replace("T", " ");
+}
 
 describe("turn-tracker", () => {
   const mind = "test-turn-tracker";
@@ -178,5 +184,85 @@ describe("turn-tracker", () => {
     await clearMind("errmind");
     assert.equal(takeErrored("errmind", "s1"), false, "cleared on crash/stop");
     assert.equal(takeErrored("keepmind", "s1"), true, "other mind's flag intact");
+  });
+
+  describe("sweepWedgedTurns", () => {
+    const idleMs = 10 * 60_000;
+
+    // Create a real (in-memory + DB) turn for `sweep-mind`, assign it a session, and
+    // attach mind_history events at the given ages. Returns the real turn id.
+    async function seedTurn(
+      sess: string,
+      events: { type: string; msAgo: number }[],
+    ): Promise<string> {
+      const id = await createTurn("sweep-mind");
+      assert.ok(id);
+      await assignSession("sweep-mind", id!, sess);
+      const db = await getDb();
+      for (const e of events) {
+        await db.insert(mindHistory).values({
+          mind: "sweep-mind",
+          type: e.type,
+          session: sess,
+          turn_id: id,
+          created_at: utcStamp(e.msAgo),
+        });
+      }
+      return id!;
+    }
+
+    it("completes a turn that has a done event and is idle past the threshold", async () => {
+      const id = await seedTurn("ws1", [
+        { type: "text", msAgo: 30 * 60_000 },
+        { type: "done", msAgo: 20 * 60_000 },
+      ]);
+      assert.equal(getActiveTurnId("sweep-mind", "ws1"), id, "turn is active in memory");
+
+      const swept = await sweepWedgedTurns(idleMs);
+      const mine = swept.find((t) => t.turnId === id);
+      assert.ok(mine, "wedged turn should be swept");
+      assert.equal(mine!.mind, "sweep-mind");
+      assert.equal(mine!.session, "ws1");
+
+      const db = await getDb();
+      const row = await db.select().from(turns).where(eq(turns.id, id)).get();
+      assert.equal(row!.status, "complete", "turn should be marked complete");
+      assert.equal(getActiveTurnId("sweep-mind", "ws1"), undefined, "in-memory entry cleared");
+    });
+
+    it("does NOT sweep an active turn that never received a done", async () => {
+      const id = await seedTurn("ws2", [{ type: "tool_use", msAgo: 30 * 60_000 }]);
+
+      const swept = await sweepWedgedTurns(idleMs);
+      assert.equal(
+        swept.find((t) => t.turnId === id),
+        undefined,
+        "no done → not wedged",
+      );
+
+      const db = await getDb();
+      const row = await db.select().from(turns).where(eq(turns.id, id)).get();
+      assert.equal(row!.status, "active");
+      await clearMind("sweep-mind");
+    });
+
+    it("does NOT sweep a turn whose last event is within the threshold", async () => {
+      const id = await seedTurn("ws3", [
+        { type: "done", msAgo: 12 * 60_000 },
+        { type: "text", msAgo: 1 * 60_000 },
+      ]);
+
+      const swept = await sweepWedgedTurns(idleMs);
+      assert.equal(
+        swept.find((t) => t.turnId === id),
+        undefined,
+        "recent activity → not wedged",
+      );
+
+      const db = await getDb();
+      const row = await db.select().from(turns).where(eq(turns.id, id)).get();
+      assert.equal(row!.status, "active");
+      await clearMind("sweep-mind");
+    });
   });
 });

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { getDb } from "../db.js";
-import { turns } from "../schema.js";
+import { mindHistory, turns } from "../schema.js";
 import log from "../util/logger.js";
 import { summarizeTurn } from "./summarizer.js";
 
@@ -197,6 +197,66 @@ export async function clearMind(mind: string): Promise<OrphanedTurn[]> {
     }
   }
   return orphaned;
+}
+
+/**
+ * Reconcile turns wedged in `active` despite already having received a `done`.
+ *
+ * A turn completes only when a `done` arrives AND the delivery manager reports the
+ * session as not busy (activeCount === 0). That counter increments per delivery but
+ * decrements per `done`; interrupts and maxWait flushes deliver mid-turn yet get folded
+ * into fewer `done`s, so the counter can leak positive and gate completion forever — the
+ * turn stays active, never summarized, and keeps absorbing later events.
+ *
+ * This sweep catches that drift: an active turn that has seen ≥1 `done` and has had no
+ * events for `idleMs` is genuinely finished. We mark it complete and drop any in-memory
+ * entry so the next event opens a fresh turn. Callers summarize the returned turns and
+ * reset the leaked session counter. Idempotent and safe to run on a timer.
+ */
+export async function sweepWedgedTurns(idleMs: number): Promise<OrphanedTurn[]> {
+  const db = await getDb();
+  // UTC "YYYY-MM-DD HH:MM:SS" to match how mind_history.created_at is stored.
+  const cutoff = new Date(Date.now() - idleMs).toISOString().slice(0, 19).replace("T", " ");
+
+  let rows: { id: string; mind: string; session: string | null }[];
+  try {
+    rows = await db
+      .select({
+        id: turns.id,
+        mind: turns.mind,
+        session: turns.session,
+        lastAt: sql<string>`max(${mindHistory.created_at})`,
+        doneCount: sql<number>`sum(case when ${mindHistory.type} = 'done' then 1 else 0 end)`,
+      })
+      .from(turns)
+      .innerJoin(mindHistory, eq(mindHistory.turn_id, turns.id))
+      .where(eq(turns.status, "active"))
+      .groupBy(turns.id)
+      .having(
+        sql`max(${mindHistory.created_at}) < ${cutoff} and sum(case when ${mindHistory.type} = 'done' then 1 else 0 end) > 0`,
+      );
+  } catch (err) {
+    tlog.error("failed to query wedged turns", log.errorData(err));
+    return [];
+  }
+
+  const swept: OrphanedTurn[] = [];
+  for (const r of rows) {
+    try {
+      await db.update(turns).set({ status: "complete" }).where(eq(turns.id, r.id));
+    } catch (err) {
+      tlog.error(`failed to complete wedged turn ${r.id}`, log.errorData(err));
+      continue;
+    }
+    // Drop the matching in-memory entry so the next event opens a fresh turn instead
+    // of re-tagging onto a now-complete one. Only delete the slot if it still points at
+    // this turn — a newer turn may already have reused the session key.
+    const k = key(r.mind, r.session);
+    if (activeTurns.get(k)?.turnId === r.id) activeTurns.delete(k);
+    swept.push({ turnId: r.id, mind: r.mind, session: r.session ?? undefined });
+  }
+  if (swept.length > 0) tlog.info(`swept ${swept.length} wedged turn(s)`);
+  return swept;
 }
 
 /** Fire-and-forget summarization for a list of orphaned turns. */

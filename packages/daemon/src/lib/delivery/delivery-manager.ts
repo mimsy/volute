@@ -324,6 +324,20 @@ export class DeliveryManager {
   }
 
   /**
+   * Reset a single session's leaked active count back to zero.
+   *
+   * Used by the wedged-turn sweep: when a session's `activeCount` drifts above zero
+   * (deliveries outnumbering `done`s) it gates turn completion forever. Once the sweep
+   * confirms the session is genuinely idle, this clears the stale count so the next turn
+   * can complete normally. Batch buffers are left intact — their own maxWait timer flushes
+   * any pending messages.
+   */
+  clearSessionActive(mindName: string, session: string): void {
+    const state = this.sessionStates.get(mindName)?.get(session);
+    if (state) state.activeCount = 0;
+  }
+
+  /**
    * Cleanup all timers and subscriptions.
    */
   dispose(): void {
