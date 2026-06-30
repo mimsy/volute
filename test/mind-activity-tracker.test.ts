@@ -36,8 +36,8 @@ describe("mind-activity-tracker", () => {
     received.length = 0;
   });
 
-  test("session_start event transitions from idle to active", async () => {
-    onMindEvent("test-mind", "session_start");
+  test("delivery event transitions from idle to active", async () => {
+    onMindEvent("test-mind", "delivery", "@alice");
     await wait();
     const active = received.filter((e) => e.type === "mind_active" && e.mind === "test-mind");
     assert.equal(active.length, 1);
@@ -51,8 +51,18 @@ describe("mind-activity-tracker", () => {
     assert.equal(active.length, 1);
   });
 
-  test("repeated events do not re-publish active", async () => {
+  test("session_start does not mark the mind active", async () => {
+    // The persistent SDK stream opening (session_start) is not a turn — a mind
+    // that boots and sits idle must stay idle, not show as active.
     onMindEvent("test-mind", "session_start");
+    await wait();
+    const active = received.filter((e) => e.type === "mind_active" && e.mind === "test-mind");
+    assert.equal(active.length, 0);
+    assert.deepEqual(getActiveMinds(), []);
+  });
+
+  test("repeated events do not re-publish active", async () => {
+    onMindEvent("test-mind", "delivery");
     onMindEvent("test-mind", "text");
     onMindEvent("test-mind", "tool_use");
     await wait();
@@ -60,7 +70,8 @@ describe("mind-activity-tracker", () => {
     assert.equal(active.length, 1);
   });
 
-  test("log and usage events are ignored", async () => {
+  test("session_start, log and usage events are ignored", async () => {
+    onMindEvent("test-mind", "session_start");
     onMindEvent("test-mind", "log");
     onMindEvent("test-mind", "usage");
     await wait();
@@ -69,19 +80,19 @@ describe("mind-activity-tracker", () => {
   });
 
   test("done event starts idle timer, not immediate idle", async () => {
-    onMindEvent("test-mind", "session_start");
+    onMindEvent("test-mind", "delivery");
     await wait();
     received.length = 0;
 
     onMindEvent("test-mind", "done");
     await wait();
-    // Should NOT be idle yet — timer pending (2 min)
+    // Should NOT be idle yet — timer pending (IDLE_TIMEOUT_MS, 5 min)
     const idle = received.filter((e) => e.type === "mind_idle");
     assert.equal(idle.length, 0);
   });
 
   test("markIdle publishes mind_idle immediately", async () => {
-    onMindEvent("test-mind", "session_start");
+    onMindEvent("test-mind", "delivery");
     await wait();
     received.length = 0;
 
@@ -99,21 +110,91 @@ describe("mind-activity-tracker", () => {
   });
 
   test("new activity after done re-emits mind_active", async () => {
-    onMindEvent("test-mind", "session_start");
+    onMindEvent("test-mind", "delivery");
     await wait();
     received.length = 0;
 
     onMindEvent("test-mind", "done");
-    // New activity before idle fires — should re-emit mind_active
-    onMindEvent("test-mind", "session_start");
+    // New turn before idle fires — should re-emit mind_active
+    onMindEvent("test-mind", "delivery");
     await wait();
     const active = received.filter((e) => e.type === "mind_active" && e.mind === "test-mind");
     assert.equal(active.length, 1);
   });
 
+  test("an open turn with no following done self-heals to idle after timeout", async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+
+    // A turn opens (delivery) but the mind hangs and never emits `done`.
+    // It must not stay wedged active forever.
+    onMindEvent("wedge-mind", "delivery");
+    assert.deepEqual(getActiveMinds(), ["wedge-mind"]);
+
+    // After the idle window with no further activity, it should flip to idle.
+    t.mock.timers.tick(5 * 60 * 1000 + 1);
+    assert.deepEqual(getActiveMinds(), []);
+
+    // ...and publish a mind_idle transition so the timeline/dot clears.
+    t.mock.timers.reset();
+    await wait();
+    const idle = received.filter((e) => e.type === "mind_idle" && e.mind === "wedge-mind");
+    assert.equal(idle.length, 1);
+  });
+
+  test("done with no new activity still publishes idle cleanup after timeout", async (t) => {
+    onMindEvent("clean-mind", "delivery");
+    await wait();
+    received.length = 0;
+
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    onMindEvent("clean-mind", "done");
+    t.mock.timers.tick(5 * 60 * 1000 + 1);
+    t.mock.timers.reset();
+    await wait();
+    const idle = received.filter((e) => e.type === "mind_idle" && e.mind === "clean-mind");
+    assert.equal(idle.length, 1);
+  });
+
+  test("ongoing activity keeps the mind active past the idle window", async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+
+    onMindEvent("busy-mind", "delivery");
+    // Events keep arriving within the window — the watchdog must keep refreshing.
+    t.mock.timers.tick(4 * 60 * 1000);
+    onMindEvent("busy-mind", "tool_use");
+    t.mock.timers.tick(4 * 60 * 1000);
+    onMindEvent("busy-mind", "text");
+    t.mock.timers.tick(4 * 60 * 1000);
+    assert.deepEqual(getActiveMinds(), ["busy-mind"]);
+
+    // No idle flicker: the dot must not blink off while the mind is working.
+    t.mock.timers.reset();
+    await wait();
+    const idle = received.filter((e) => e.type === "mind_idle" && e.mind === "busy-mind");
+    assert.equal(idle.length, 0);
+  });
+
+  test("a healed mind re-emits mind_active when it next does work", async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+
+    onMindEvent("revived-mind", "delivery");
+    assert.deepEqual(getActiveMinds(), ["revived-mind"]);
+    t.mock.timers.tick(5 * 60 * 1000 + 1);
+    assert.deepEqual(getActiveMinds(), []);
+
+    // After self-healing to idle, a fresh event must bring it back to active.
+    onMindEvent("revived-mind", "delivery", "@alice");
+    assert.deepEqual(getActiveMinds(), ["revived-mind"]);
+
+    t.mock.timers.reset();
+    await wait();
+    const active = received.filter((e) => e.type === "mind_active" && e.mind === "revived-mind");
+    assert.equal(active.length, 2);
+  });
+
   test("getActiveMinds returns currently active minds", async () => {
     assert.deepEqual(getActiveMinds(), []);
-    onMindEvent("mind-a", "session_start");
+    onMindEvent("mind-a", "delivery");
     onMindEvent("mind-b", "text");
     await wait();
     assert.deepEqual(getActiveMinds().sort(), ["mind-a", "mind-b"]);
@@ -122,7 +203,7 @@ describe("mind-activity-tracker", () => {
   });
 
   test("stopAll cleans up timers", async () => {
-    onMindEvent("mind-a", "session_start");
+    onMindEvent("mind-a", "delivery");
     onMindEvent("mind-b", "text");
     await wait();
 
