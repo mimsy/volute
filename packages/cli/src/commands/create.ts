@@ -16,7 +16,7 @@ const cmd = command({
     let template = flags.template;
     if (!template) {
       const { resolveTemplate } = await import("@volute/daemon/lib/ai-service.js");
-      template = resolveTemplate();
+      template = await resolveTemplate();
     }
 
     const skills =

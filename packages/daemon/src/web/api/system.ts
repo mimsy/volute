@@ -5,8 +5,8 @@ import type {
   OAuthPrompt,
   OAuthSelectPrompt,
 } from "@earendil-works/pi-ai";
-import { getProviders } from "@earendil-works/pi-ai/compat";
 import { getOAuthProvider, getOAuthProviders } from "@earendil-works/pi-ai/oauth";
+import { getBuiltinProviders } from "@earendil-works/pi-ai/providers/all";
 import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
@@ -310,7 +310,7 @@ const app = new Hono<AuthEnv>()
     return c.json({ key });
   })
   .get("/ai/providers", requireAdmin, (c) => {
-    const allProviders = getProviders();
+    const allProviders = getBuiltinProviders();
     const oauthProviders = getOAuthProviders();
     const oauthMap = new Map(oauthProviders.map((p) => [p.id, p]));
     const ai = getAiConfig();
@@ -336,8 +336,8 @@ const app = new Hono<AuthEnv>()
     });
     return c.json(result);
   })
-  .get("/ai/models", requireAdmin, (c) => {
-    const models = getAvailableModels();
+  .get("/ai/models", requireAdmin, async (c) => {
+    const models = await getAvailableModels();
     const enabled = new Set(getEnabledModels());
     return c.json(
       models.map((m) => ({
@@ -681,7 +681,7 @@ export function needsRefresh(oauth: OAuthCredentials): boolean {
 
 export async function refreshApiKeyCache(): Promise<void> {
   const ai = getAiConfig();
-  const providers = getConfiguredProviders();
+  const providers = await getConfiguredProviders();
 
   // Clean stale health entries for providers no longer configured
   for (const id of oauthHealth.keys()) {
