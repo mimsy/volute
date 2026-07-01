@@ -13,6 +13,7 @@ import {
   readRegistry,
   removeMind,
   setMindRunning,
+  setMindTemplate,
   stateDir,
   validateMindName,
   voluteHome,
@@ -90,6 +91,13 @@ describe("registry", () => {
     assert.equal((await findMind(testMind))!.running, true);
     await setMindRunning(testMind, false);
     assert.equal((await findMind(testMind))!.running, false);
+  });
+
+  it("setMindTemplate updates the template field", async () => {
+    await addMind(testMind, 4100, undefined, "claude");
+    assert.equal((await findMind(testMind))!.template, "claude");
+    await setMindTemplate(testMind, "pi");
+    assert.equal((await findMind(testMind))!.template, "pi");
   });
 
   it("removeMind deletes entry", async () => {

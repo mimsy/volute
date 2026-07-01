@@ -88,6 +88,7 @@ import {
   readRegistry,
   removeMind,
   setMindStage,
+  setMindTemplate,
   setMindTemplateHash,
   stateDir,
   validateMindName,
@@ -113,9 +114,11 @@ import {
 } from "../../lib/template/import-utils.js";
 import {
   applyInitFiles,
+  applyTemplateHomeFiles,
   composeTemplate,
   copyTemplateToDir,
   findTemplatesRoot,
+  isKnownTemplate,
   listFiles,
   type TemplateManifest,
 } from "../../lib/template/template.js";
@@ -379,7 +382,9 @@ async function mergeUpgradeAndRestart(
   upgradeVariantName: string,
   upgradeBranch: string,
   template: string,
+  oldTemplate: string,
 ): Promise<{ ok: true; warning?: string }> {
+  const templateChanged = template !== oldTemplate;
   // Auto-commit any uncommitted changes in main worktree
   const mainStatus = (await gitExec(["status", "--porcelain"], { cwd: dir })).trim();
   if (mainStatus) {
@@ -401,10 +406,42 @@ async function mergeUpgradeAndRestart(
     // branch may already be deleted by cleanupVariant
   }
 
+  // On an actual template switch, swap the template-owned home/ files (mechanics
+  // doc, .claude/settings.json, config.json) which the merge never touches. This
+  // must succeed *before* the DB template field is advanced: that field drives
+  // credential injection at spawn (mind-manager), so it has to stay consistent
+  // with the on-disk config. On failure, leave the field at oldTemplate and
+  // surface the failure rather than reporting a clean success.
+  let switchWarning: string | undefined;
+  if (templateChanged) {
+    try {
+      applyTemplateHomeFiles(resolve(dir, "home"), template);
+      await gitExec(["add", "home/"], { cwd: dir });
+      try {
+        await gitExec(["diff", "--cached", "--quiet"], { cwd: dir });
+      } catch {
+        await gitExec(["commit", "-m", `swap template-owned home files for ${template}`], {
+          cwd: dir,
+        });
+      }
+      chownMindDir(dir, mindName);
+      switchWarning = `Switched ${oldTemplate}→${template}: config reset to ${template} defaults, mechanics doc replaced, conversation starts fresh (sessions aren't portable across runtimes).`;
+    } catch (err) {
+      log.warn(`failed to swap template home files for ${mindName}`, log.errorData(err));
+      return {
+        ok: true,
+        warning: `Upgrade merged but template switch ${oldTemplate}→${template} failed: ${err instanceof Error ? err.message : String(err)}. The mind is still registered as ${oldTemplate}; re-run the switch or fix home/ manually.`,
+      };
+    }
+  }
+
+  // Persist the template field only after any switch swap succeeded, so the DB
+  // stays consistent with the on-disk template files.
   try {
     await setMindTemplateHash(mindName, computeTemplateHash(template));
+    await setMindTemplate(mindName, template);
   } catch (err) {
-    log.warn(`failed to update template hash for ${mindName}`, log.errorData(err));
+    log.warn(`failed to update template for ${mindName}`, log.errorData(err));
   }
 
   try {
@@ -432,7 +469,7 @@ async function mergeUpgradeAndRestart(
     };
   }
 
-  return { ok: true };
+  return { ok: true, warning: switchWarning };
 }
 
 /** Import a mind from a .volute archive (extracted to tempDir by CLI). */
@@ -1786,7 +1823,14 @@ const app = new Hono<AuthEnv>()
       // Empty body is fine
     }
 
-    const template = body.template ?? entry.template ?? "claude";
+    const oldTemplate = entry.template ?? "claude";
+    const template = body.template ?? oldTemplate;
+    // `template` is request-controllable and flows into fs paths, composeTemplate
+    // (which process.exit()s on an unknown template), and the registry — validate
+    // against the known set before any of that.
+    if (!isKnownTemplate(template)) {
+      return c.json({ error: `Unknown template: ${template}` }, 400);
+    }
     const UPGRADE_BRANCH = "upgrade";
     const upgradeVariantName = `${mindName}-upgrade`;
     const worktreeDir = resolve(dir, ".variants", UPGRADE_BRANCH);
@@ -1880,6 +1924,7 @@ const app = new Hono<AuthEnv>()
           upgradeVariantName,
           UPGRADE_BRANCH,
           template,
+          oldTemplate,
         );
         return c.json(result);
       } catch (err) {
@@ -2050,6 +2095,7 @@ const app = new Hono<AuthEnv>()
         upgradeVariantName,
         UPGRADE_BRANCH,
         template,
+        oldTemplate,
       );
       return c.json(result);
     } catch (err) {

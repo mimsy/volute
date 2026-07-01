@@ -224,6 +224,11 @@ export async function setMindTemplateHash(name: string, hash: string) {
   await db.update(minds).set({ template_hash: hash }).where(eq(minds.name, name));
 }
 
+export async function setMindTemplate(name: string, template: string) {
+  const db = await getDb();
+  await db.update(minds).set({ template }).where(eq(minds.name, name));
+}
+
 export async function findMind(name: string): Promise<MindEntry | undefined> {
   const db = await getDb();
   const rows = await db.select().from(minds).where(eq(minds.name, name));

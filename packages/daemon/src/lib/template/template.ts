@@ -152,6 +152,62 @@ export function applyInitFiles(destDir: string) {
   rmSync(initDir, { recursive: true, force: true });
 }
 
+/** Per-runtime mechanics doc filename by template. */
+const MECHANICS_DOCS: Record<string, string> = {
+  claude: "CLAUDE.md",
+  pi: "MINDS.md",
+  codex: "AGENTS.md",
+};
+
+/** Whether `template` is a known built-in template. */
+export function isKnownTemplate(template: string): boolean {
+  return template in MECHANICS_DOCS;
+}
+
+/**
+ * Swap the template-owned files under home/ (mechanics doc, .claude/settings.json,
+ * and .config/config.json) to match a different template. Used when a mind switches
+ * templates (e.g. claude → pi) during upgrade: these files are written at creation
+ * time and excluded from the template branch (updateTemplateBranch strips all of
+ * home/ except VOLUTE.md), so the normal upgrade merge never updates them.
+ * Leaves mind-authored files (SOUL.md, MEMORY.md, memory/, etc.) untouched.
+ */
+export function applyTemplateHomeFiles(homeDir: string, template: string) {
+  const root = findTemplatesRoot();
+
+  // Resolve (and verify) the new mechanics doc before deleting the old one, so a
+  // failure can't leave the mind with no mechanics doc at all.
+  const newDoc = MECHANICS_DOCS[template];
+  const newDocSrc = newDoc ? resolve(root, template, ".init", newDoc) : undefined;
+  if (!newDocSrc || !existsSync(newDocSrc)) {
+    throw new Error(`No mechanics doc for template "${template}"`);
+  }
+
+  // Mechanics doc: remove any existing one, then write the target's.
+  for (const doc of Object.values(MECHANICS_DOCS)) {
+    rmSync(resolve(homeDir, doc), { force: true });
+  }
+  cpSync(newDocSrc, resolve(homeDir, newDoc));
+
+  // .claude/settings.json is claude-only.
+  const settingsDest = resolve(homeDir, ".claude", "settings.json");
+  if (template === "claude") {
+    mkdirSync(dirname(settingsDest), { recursive: true });
+    cpSync(resolve(root, "claude", ".init", ".claude", "settings.json"), settingsDest);
+  } else {
+    rmSync(settingsDest, { force: true });
+  }
+
+  // config.json: regenerate from the target's tmpl (template-specific overrides _base).
+  const templateConfig = resolve(root, template, "home", ".config", "config.json.tmpl");
+  const configTmpl = existsSync(templateConfig)
+    ? templateConfig
+    : resolve(root, "_base", "home", ".config", "config.json.tmpl");
+  const configDest = resolve(homeDir, ".config", "config.json");
+  mkdirSync(dirname(configDest), { recursive: true });
+  writeFileSync(configDest, readFileSync(configTmpl, "utf-8"));
+}
+
 /**
  * List all files in a directory recursively (relative paths).
  */
