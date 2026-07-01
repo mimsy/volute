@@ -17,6 +17,11 @@ export default defineConfig([
     external: [
       "libsql",
       "sharp",
+      // Pulls in jsdom, which does a dynamic require("path") at load time.
+      // tsup's ESM __require shim can't satisfy that, so bundling it makes the
+      // pages extension throw "Dynamic require of \"path\" is not supported" and
+      // silently fail to load. Keep it external and installed at runtime.
+      "isomorphic-dompurify",
       "@earendil-works/pi-ai",
       "@earendil-works/pi-coding-agent",
       "@anthropic-ai/claude-agent-sdk",
