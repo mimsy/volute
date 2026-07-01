@@ -1,6 +1,14 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
+import { Agent } from "undici";
+
+// Long-running daemon operations (upgrade, create, import) run `npm install`
+// synchronously before responding, which can exceed undici's default 5-minute
+// `headersTimeout` and abort the CLI's fetch with UND_ERR_HEADERS_TIMEOUT. The
+// daemon is a trusted process on localhost, so disable the headers/body timeouts
+// for CLI→daemon calls (a hung request can still be interrupted with Ctrl-C).
+export const daemonDispatcher = new Agent({ headersTimeout: 0, bodyTimeout: 0 });
 
 function voluteUserHome(): string {
   return process.env.VOLUTE_USER_HOME ?? resolve(homedir(), ".volute");
@@ -120,7 +128,12 @@ export async function daemonFetch(path: string, options?: RequestInit): Promise<
   }
 
   try {
-    const res = await fetch(`${url}${path}`, { ...options, headers });
+    // `dispatcher` is a valid Node fetch option but missing from the DOM RequestInit type.
+    const res = await fetch(`${url}${path}`, {
+      ...options,
+      headers,
+      dispatcher: daemonDispatcher,
+    } as RequestInit & { dispatcher: Agent });
     if (res.status === 401 && !path.startsWith("/api/auth/")) {
       if (cliSession) {
         console.error("Session expired. Run `volute login` again.");

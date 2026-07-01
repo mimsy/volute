@@ -25,6 +25,10 @@ export default defineConfig([
       "@earendil-works/pi-ai",
       "@earendil-works/pi-coding-agent",
       "@anthropic-ai/claude-agent-sdk",
+      // Used by the CLI's daemon-client to disable undici's default 5-min
+      // headers timeout on long-running local daemon calls (upgrade/create/import
+      // run npm install). Keep external so we reuse the installed copy.
+      "undici",
     ],
   },
   {
