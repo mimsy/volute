@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.41.0](https://github.com/mimsy/volute/compare/volute-v0.40.2...volute-v0.41.0) (2026-07-01)
+
+
+### Features
+
+* support switching a mind's template on upgrade ([#315](https://github.com/mimsy/volute/issues/315)) ([f01bfe9](https://github.com/mimsy/volute/commit/f01bfe9a8e7895e50000ada56d451674b090169b))
+
+
+### Bug Fixes
+
+* keep pages extension loadable in bundled builds ([#317](https://github.com/mimsy/volute/issues/317)) ([251a05e](https://github.com/mimsy/volute/commit/251a05e1a20983738ce5c11bd7ea7c74f4343478))
+
 ## [0.40.2](https://github.com/mimsy/volute/compare/volute-v0.40.1...volute-v0.40.2) (2026-07-01)
 
 
