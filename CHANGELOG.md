@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.40.2](https://github.com/mimsy/volute/compare/volute-v0.40.1...volute-v0.40.2) (2026-07-01)
+
+
+### Bug Fixes
+
+* reconcile turns wedged active by a leaked delivery counter ([#311](https://github.com/mimsy/volute/issues/311)) ([d4899f3](https://github.com/mimsy/volute/commit/d4899f341bdaf113bbc91ad346b6c71852649e70))
+* track mind "active" as an open turn, not stream setup ([#313](https://github.com/mimsy/volute/issues/313)) ([5f26234](https://github.com/mimsy/volute/commit/5f2623465f2a49cf44c30bf58b6e59c3b67097f4))
+
 ## [0.40.1](https://github.com/mimsy/volute/compare/volute-v0.40.0...volute-v0.40.1) (2026-06-23)
 
 
