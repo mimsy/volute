@@ -425,6 +425,23 @@ describe("daemon e2e", { timeout: 120000 }, () => {
     assert.ok(text.includes("hello from integration test"), `Message text: ${text}`);
   });
 
+  it("upgrade: rejects an unknown template with 400", async () => {
+    await ensureTestMind();
+
+    const res = await daemonRequest(`/api/minds/${TEST_MIND}/upgrade`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ template: "../../evil" }),
+    });
+    assert.equal(res.status, 400, `Expected 400, got ${res.status} ${await res.clone().text()}`);
+    const body = (await res.json()) as { error?: string };
+    assert.match(body.error ?? "", /unknown template/i);
+
+    // The bogus value must not have been written to the registry.
+    const entry = await findMind(TEST_MIND);
+    assert.notEqual(entry?.template, "../../evil");
+  });
+
   it("unified chat: send via /api/v1/chat", async () => {
     // Create a conversation first
     const createRes = await daemonRequest(`/api/minds/${TEST_MIND}/conversations`, {
