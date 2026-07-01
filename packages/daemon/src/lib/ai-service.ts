@@ -1,6 +1,12 @@
-import type { Api, Model } from "@mariozechner/pi-ai";
-import { complete, getEnvApiKey, getModel, getModels, getProviders } from "@mariozechner/pi-ai";
-import { getOAuthApiKey } from "@mariozechner/pi-ai/oauth";
+import type { Api, Model } from "@earendil-works/pi-ai";
+import {
+  complete,
+  getEnvApiKey,
+  getModel,
+  getModels,
+  getProviders,
+} from "@earendil-works/pi-ai/compat";
+import { getOAuthApiKey } from "@earendil-works/pi-ai/oauth";
 import {
   type AiConfig,
   type AiProviderConfig,

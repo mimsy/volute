@@ -30,7 +30,7 @@
     {
       "description": "Group pi-ai packages",
       "groupName": "pi-ai",
-      "matchPackageNames": ["@mariozechner/pi-ai", "@mariozechner/pi-coding-agent"]
+      "matchPackageNames": ["@earendil-works/pi-ai", "@earendil-works/pi-coding-agent"]
     },
     {
       "description": "Group Svelte ecosystem",

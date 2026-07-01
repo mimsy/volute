@@ -9,7 +9,7 @@ import {
   ModelRegistry,
   SessionManager,
   SettingsManager,
-} from "@mariozechner/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent";
 import { extractImages, extractText } from "./lib/content.js";
 import {
   countSdkInstructionTokens,

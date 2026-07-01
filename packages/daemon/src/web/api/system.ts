@@ -1,7 +1,13 @@
+import type {
+  OAuthAuthInfo,
+  OAuthCredentials,
+  OAuthDeviceCodeInfo,
+  OAuthPrompt,
+  OAuthSelectPrompt,
+} from "@earendil-works/pi-ai";
+import { getProviders } from "@earendil-works/pi-ai/compat";
+import { getOAuthProvider, getOAuthProviders } from "@earendil-works/pi-ai/oauth";
 import { zValidator } from "@hono/zod-validator";
-import type { OAuthAuthInfo, OAuthCredentials, OAuthPrompt } from "@mariozechner/pi-ai";
-import { getProviders } from "@mariozechner/pi-ai";
-import { getOAuthProvider, getOAuthProviders } from "@mariozechner/pi-ai/oauth";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
@@ -441,6 +447,15 @@ const app = new Hono<AuthEnv>()
             if (existing)
               Object.assign(existing, { url: info.url, instructions: info.instructions });
           },
+          onDeviceCode: (info: OAuthDeviceCodeInfo) => {
+            const existing = oauthFlows.get(flowId);
+            if (existing)
+              Object.assign(existing, {
+                url: info.verificationUri,
+                instructions: `Enter code: ${info.userCode}`,
+              });
+          },
+          onSelect: async (_prompt: OAuthSelectPrompt) => undefined,
           onPrompt: async (_prompt: OAuthPrompt) => {
             if (promptPromise) {
               const existing = oauthFlows.get(flowId);

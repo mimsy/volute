@@ -1,4 +1,4 @@
-import { getModel, getModels } from "@mariozechner/pi-ai";
+import { getModel, getModels } from "@earendil-works/pi-ai/compat";
 
 export function resolveModel(modelStr: string) {
   const [provider, ...rest] = modelStr.split(":");

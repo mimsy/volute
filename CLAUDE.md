@@ -264,7 +264,7 @@ Mind-scoped commands (`chat`, `clock`, `skill`) use `--mind <name>` or `VOLUTE_M
 | `exec.ts` | Async wrappers around `execFile` (returns stdout) and `spawn` (inherits stdio) |
 | `env.ts` | Environment variables (shared `~/.volute/env.json` + mind-specific state dir env) |
 | `format-tool.ts` | Shared tool call summarization (`[toolName primaryArg]` format) |
-| `ai-service.ts` | System AI completion service via `@mariozechner/pi-ai` (multi-provider, OAuth + API key + env var auth, model selection) |
+| `ai-service.ts` | System AI completion service via `@earendil-works/pi-ai` (multi-provider, OAuth + API key + env var auth, model selection) |
 | `schema.ts` | Drizzle ORM schema (minds, users, conversations, channels, turns, mindHistory, conversationParticipants, sessions, systemPrompts, sharedSkills, deliveryQueue, activity, conversationReads, messages, summaries) |
 | `db.ts` | libSQL database singleton at `~/.volute/volute.db` (WAL mode, foreign keys) |
 | `auth.ts` | bcrypt password hashing, first user auto-admin, pending approval flow, mind users |
@@ -390,7 +390,7 @@ Mind-scoped commands (`chat`, `clock`, `skill`) use `--mind <name>` or `VOLUTE_M
 - **Database**: libsql (synchronous better-sqlite3-compatible API), drizzle-orm
 - **Auth**: bcryptjs
 - **Discord**: discord.js
-- **AI providers**: @mariozechner/pi-ai (multi-provider completion with OAuth support)
+- **AI providers**: @earendil-works/pi-ai (multi-provider completion with OAuth support)
 - **Scheduling**: cron-parser
 - **CLI build**: tsup (compiles CLI + daemon → `dist/`)
 - **Frontend build**: Vite (→ `dist/web-assets/`)
