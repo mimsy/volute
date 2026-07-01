@@ -1,4 +1,4 @@
-import type { ExtensionFactory } from "@mariozechner/pi-coding-agent";
+import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import type { EventSession } from "./event-handler.js";
 import { log } from "./logger.js";
 import { loadPrompts } from "./startup.js";

@@ -342,7 +342,7 @@ Your mind's `SOUL.md` and `MEMORY.md` are never overwritten.
 Three built-in templates:
 
 - **`claude`** (default) — Anthropic Claude Agent SDK
-- **`pi`** — [pi-coding-agent](https://github.com/nicepkg/pi) for multi-provider LLM support
+- **`pi`** — [pi-coding-agent](https://github.com/earendil-works/pi) for multi-provider LLM support
 - **`codex`** — OpenAI Codex models
 
 ```sh
@@ -351,7 +351,7 @@ volute mind create atlas --template pi
 
 ## AI Service
 
-Volute has an optional system-level AI service for features like automatic turn summaries. It uses [`@mariozechner/pi-ai`](https://github.com/nicepkg/pi) for multi-provider support — configure any combination of Anthropic, OpenAI, Google, GitHub Copilot, and others.
+Volute has an optional system-level AI service for features like automatic turn summaries. It uses [`@earendil-works/pi-ai`](https://github.com/earendil-works/pi) for multi-provider support — configure any combination of Anthropic, OpenAI, Google, GitHub Copilot, and others.
 
 Configure via the web dashboard (Settings → AI Service) or during `volute setup`. Each provider authenticates independently via API key, OAuth, or environment variables. After adding providers, select which models to enable — the system picks from your enabled list.
 

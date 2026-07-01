@@ -8,9 +8,9 @@ import { readGlobalConfig } from "../../lib/config/setup.js";
 
 const config = new Hono();
 
-config.get("/models", (c) => {
+config.get("/models", async (c) => {
   const enabled = new Set(getEnabledModels());
-  const all = getAvailableModels();
+  const all = await getAvailableModels();
   const models = all.map((m) => ({
     id: m.id,
     name: m.name,
@@ -20,8 +20,8 @@ config.get("/models", (c) => {
   return c.json(models);
 });
 
-config.get("/providers", (c) => {
-  const configured = getConfiguredProviders();
+config.get("/providers", async (c) => {
+  const configured = await getConfiguredProviders();
   return c.json(configured.map((id) => ({ id, configured: true })));
 });
 

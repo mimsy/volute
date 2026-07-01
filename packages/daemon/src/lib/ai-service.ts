@@ -1,6 +1,11 @@
-import type { Api, Model } from "@mariozechner/pi-ai";
-import { complete, getEnvApiKey, getModel, getModels, getProviders } from "@mariozechner/pi-ai";
-import { getOAuthApiKey } from "@mariozechner/pi-ai/oauth";
+import { type Api, defaultProviderAuthContext, type Model } from "@earendil-works/pi-ai";
+import { getOAuthApiKey } from "@earendil-works/pi-ai/oauth";
+import {
+  builtinModels,
+  getBuiltinModel,
+  getBuiltinModels,
+  getBuiltinProviders,
+} from "@earendil-works/pi-ai/providers/all";
 import {
   type AiConfig,
   type AiProviderConfig,
@@ -12,6 +17,38 @@ import log from "./util/logger.js";
 export type { AiConfig, AiProviderConfig } from "./config/setup.js";
 
 const aiLog = log.child("ai-service");
+
+// One Models collection with every built-in provider registered. Used for
+// completion (auth resolved from the apiKey we pass in options) and for
+// provider auth introspection. Catalog reads go through the static
+// getBuiltin* helpers so they stay synchronous.
+const models = builtinModels();
+const authContext = defaultProviderAuthContext();
+
+/**
+ * Resolve a provider's API key from an optional stored config key merged with
+ * ambient sources (env vars, AWS profiles, ADC files) via the provider's own
+ * auth. Replaces the old getEnvApiKey/config lookups. Returns configKey as a
+ * fallback when the provider or a representative model is unavailable.
+ */
+async function resolveProviderKey(
+  providerId: string,
+  configKey?: string,
+): Promise<string | undefined> {
+  const provider = models.getProvider(providerId);
+  // Any model of the provider works — auth resolution only needs provider/baseUrl.
+  const model = getBuiltinModels(providerId as never)[0] as Model<Api> | undefined;
+  if (provider?.auth.apiKey && model) {
+    try {
+      const credential = configKey ? { type: "api_key" as const, key: configKey } : undefined;
+      const res = await provider.auth.apiKey.resolve({ model, ctx: authContext, credential });
+      if (res?.auth.apiKey) return res.auth.apiKey;
+    } catch (err) {
+      aiLog.debug(`api key resolution failed for ${providerId}`, log.errorData(err));
+    }
+  }
+  return configKey;
+}
 
 /**
  * Optional hook fired whenever a provider's OAuth credentials are rotated and
@@ -66,8 +103,8 @@ export function removeAiConfig(): void {
   writeGlobalConfig(config);
 }
 
-/** Returns provider IDs that have credentials (config or env var). */
-export function getConfiguredProviders(): string[] {
+/** Returns provider IDs that have credentials (config or ambient/env). */
+export async function getConfiguredProviders(): Promise<string[]> {
   const ai = getAiConfig();
   const configured = new Set<string>();
 
@@ -79,9 +116,9 @@ export function getConfiguredProviders(): string[] {
     }
   }
 
-  // Providers with env var credentials
-  for (const id of getProviders()) {
-    if (!configured.has(id) && getEnvApiKey(id)) {
+  // Providers with ambient/env credentials
+  for (const id of getBuiltinProviders()) {
+    if (!configured.has(id) && (await resolveProviderKey(id))) {
       configured.add(id);
     }
   }
@@ -127,7 +164,7 @@ function templateForProvider(provider: string): string {
  * Resolve the best template for a given model ID.
  * Anthropic models → "claude", OpenAI Codex models → "codex", everything else → "pi".
  */
-export function resolveTemplate(modelId?: string): string {
+export async function resolveTemplate(modelId?: string): Promise<string> {
   if (!modelId) {
     // Check first enabled model's provider
     const enabled = getEnabledModels();
@@ -136,7 +173,7 @@ export function resolveTemplate(modelId?: string): string {
       if (model) return templateForProvider(model.provider);
     }
     // Check configured providers
-    const providers = getConfiguredProviders();
+    const providers = await getConfiguredProviders();
     if (providers.length === 1) return templateForProvider(providers[0]);
     if (providers.length > 0 && !providers.includes("anthropic")) {
       return templateForProvider(providers[0]);
@@ -170,17 +207,13 @@ export function setEnabledModels(modelIds: string[]): void {
 }
 
 /** Returns all models from configured providers. */
-export function getAvailableModels(): Model<Api>[] {
-  const providers = getConfiguredProviders();
-  const models: Model<Api>[] = [];
+export async function getAvailableModels(): Promise<Model<Api>[]> {
+  const providers = await getConfiguredProviders();
+  const result: Model<Api>[] = [];
   for (const provider of providers) {
-    try {
-      models.push(...getModels(provider as any));
-    } catch (err) {
-      aiLog.warn(`failed to load models for provider ${provider}`, log.errorData(err));
-    }
+    result.push(...(getBuiltinModels(provider as never) as Model<Api>[]));
   }
-  return models;
+  return result;
 }
 
 /** Resolve API key for a provider, checking OAuth → config → env var. */
@@ -207,9 +240,7 @@ export async function resolveApiKey(providerId: string): Promise<string | undefi
     }
   }
 
-  if (providerConfig?.apiKey) return providerConfig.apiKey;
-
-  return getEnvApiKey(providerId) ?? undefined;
+  return resolveProviderKey(providerId, providerConfig?.apiKey);
 }
 
 /** Resolve a model ID to the full provider:model format needed by the pi template. */
@@ -227,23 +258,15 @@ export function unqualifyModelId(modelId: string): string {
 }
 
 function findModel(modelId: string): Model<Api> | undefined {
-  const providers = getConfiguredProviders();
-  for (const provider of providers) {
-    try {
-      const model = getModel(provider as any, modelId as any);
-      if (model) return model;
-    } catch (err) {
-      aiLog.debug(`model lookup failed for ${modelId} in ${provider}`, log.errorData(err));
-    }
+  // Exact match against the built-in catalog
+  for (const provider of getBuiltinProviders()) {
+    const model = getBuiltinModel(provider as never, modelId as never);
+    if (model) return model as Model<Api>;
   }
   // Prefix match fallback
-  for (const provider of providers) {
-    try {
-      const found = getModels(provider as any).find((m) => m.id.startsWith(modelId));
-      if (found) return found;
-    } catch (err) {
-      aiLog.debug(`prefix search failed for ${modelId} in ${provider}`, log.errorData(err));
-    }
+  for (const provider of getBuiltinProviders()) {
+    const found = getBuiltinModels(provider as never).find((m) => m.id.startsWith(modelId));
+    if (found) return found as Model<Api>;
   }
   return undefined;
 }
@@ -274,7 +297,7 @@ export async function aiComplete(
   try {
     const apiKey = await resolveApiKey(model.provider);
 
-    const response = await complete(
+    const response = await models.complete(
       model,
       {
         systemPrompt,

@@ -816,7 +816,7 @@ const app = new Hono<AuthEnv>()
     const body = c.req.valid("json");
 
     const { name } = body;
-    const template = body.template ?? resolveTemplate(body.model);
+    const template = body.template ?? (await resolveTemplate(body.model));
 
     const nameErr = validateMindName(name);
     if (nameErr) return c.json({ error: nameErr }, 400);

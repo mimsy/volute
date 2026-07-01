@@ -65,7 +65,7 @@ const cmd = command({
     let template = flags.template;
     if (!template) {
       const { resolveTemplate } = await import("@volute/daemon/lib/ai-service.js");
-      template = resolveTemplate(model);
+      template = await resolveTemplate(model);
     }
 
     // For non-claude templates, resolve model if not specified

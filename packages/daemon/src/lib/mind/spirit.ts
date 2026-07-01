@@ -75,7 +75,7 @@ export async function ensureSpiritProject(): Promise<void> {
 
   // Determine template from spirit model or system config
   const spiritModel = getSpiritModel();
-  const template = resolveTemplate(spiritModel);
+  const template = await resolveTemplate(spiritModel);
 
   const templatesRoot = findTemplatesRoot();
   const { composedDir, manifest } = composeTemplate(templatesRoot, template);
@@ -179,7 +179,7 @@ export async function syncSpiritTemplate(): Promise<void> {
 
   // Check if the template needs to change (e.g. user switched from Anthropic to another provider)
   const currentModel = getSpiritModel();
-  const expectedTemplate = resolveTemplate(currentModel);
+  const expectedTemplate = await resolveTemplate(currentModel);
   const currentTemplate = entry.template ?? "claude";
   if (expectedTemplate !== currentTemplate) {
     slog.info(`spirit template change: ${currentTemplate} → ${expectedTemplate}`);

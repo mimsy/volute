@@ -1,4 +1,4 @@
-import type { AgentSessionEvent } from "@mariozechner/pi-coding-agent";
+import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import { flushFileChanges, trackFileChange } from "./auto-commit.js";
 import { daemonEmit, type EventType } from "./daemon-client.js";
 import { log, warn } from "./logger.js";

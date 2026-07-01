@@ -17,8 +17,8 @@ export default defineConfig([
     external: [
       "libsql",
       "sharp",
-      "@mariozechner/pi-ai",
-      "@mariozechner/pi-coding-agent",
+      "@earendil-works/pi-ai",
+      "@earendil-works/pi-coding-agent",
       "@anthropic-ai/claude-agent-sdk",
     ],
   },

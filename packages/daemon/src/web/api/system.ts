@@ -1,7 +1,13 @@
+import type {
+  OAuthAuthInfo,
+  OAuthCredentials,
+  OAuthDeviceCodeInfo,
+  OAuthPrompt,
+  OAuthSelectPrompt,
+} from "@earendil-works/pi-ai";
+import { getOAuthProvider, getOAuthProviders } from "@earendil-works/pi-ai/oauth";
+import { getBuiltinProviders } from "@earendil-works/pi-ai/providers/all";
 import { zValidator } from "@hono/zod-validator";
-import type { OAuthAuthInfo, OAuthCredentials, OAuthPrompt } from "@mariozechner/pi-ai";
-import { getProviders } from "@mariozechner/pi-ai";
-import { getOAuthProvider, getOAuthProviders } from "@mariozechner/pi-ai/oauth";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
@@ -304,7 +310,7 @@ const app = new Hono<AuthEnv>()
     return c.json({ key });
   })
   .get("/ai/providers", requireAdmin, (c) => {
-    const allProviders = getProviders();
+    const allProviders = getBuiltinProviders();
     const oauthProviders = getOAuthProviders();
     const oauthMap = new Map(oauthProviders.map((p) => [p.id, p]));
     const ai = getAiConfig();
@@ -330,8 +336,8 @@ const app = new Hono<AuthEnv>()
     });
     return c.json(result);
   })
-  .get("/ai/models", requireAdmin, (c) => {
-    const models = getAvailableModels();
+  .get("/ai/models", requireAdmin, async (c) => {
+    const models = await getAvailableModels();
     const enabled = new Set(getEnabledModels());
     return c.json(
       models.map((m) => ({
@@ -441,6 +447,15 @@ const app = new Hono<AuthEnv>()
             if (existing)
               Object.assign(existing, { url: info.url, instructions: info.instructions });
           },
+          onDeviceCode: (info: OAuthDeviceCodeInfo) => {
+            const existing = oauthFlows.get(flowId);
+            if (existing)
+              Object.assign(existing, {
+                url: info.verificationUri,
+                instructions: `Enter code: ${info.userCode}`,
+              });
+          },
+          onSelect: async (_prompt: OAuthSelectPrompt) => undefined,
           onPrompt: async (_prompt: OAuthPrompt) => {
             if (promptPromise) {
               const existing = oauthFlows.get(flowId);
@@ -666,7 +681,7 @@ export function needsRefresh(oauth: OAuthCredentials): boolean {
 
 export async function refreshApiKeyCache(): Promise<void> {
   const ai = getAiConfig();
-  const providers = getConfiguredProviders();
+  const providers = await getConfiguredProviders();
 
   // Clean stale health entries for providers no longer configured
   for (const id of oauthHealth.keys()) {
