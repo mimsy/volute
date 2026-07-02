@@ -107,16 +107,19 @@ const app = new Hono<AuthEnv>().use("*", authMiddleware).get("/", async (c) => {
       });
 
       // Subscribe to activity events. Non-privileged callers only see their own
-      // mind's activity; the buffer still records every event globally so the
-      // audience filter is re-applied on reconnect replay too.
+      // mind's activity live; the buffer still records every event globally so
+      // the audience filter is re-applied on reconnect replay too.
       const unsubActivity = subscribeActivity((event) => {
-        if (activityMind !== undefined && event.mind !== activityMind) return;
         const data = {
           event: "activity" as const,
           ...event,
           metadata: event.metadata ?? null,
         };
+        // Buffer every event globally first so the audience filter is re-applied
+        // on reconnect replay (getEventsSince) rather than dropping events that
+        // this connection isn't entitled to see live.
         const eventId = bufferEvent(data);
+        if (activityMind !== undefined && event.mind !== activityMind) return;
         stream
           .writeSSE({
             id: String(eventId),

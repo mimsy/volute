@@ -1,13 +1,64 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { getOrCreateMindUser } from "../packages/daemon/src/lib/auth.js";
+import { publish } from "../packages/daemon/src/lib/events/activity-events.js";
 import {
   bufferEvent,
   getEventsSince,
   nextEventId,
   resetSequencer,
 } from "../packages/daemon/src/lib/events/event-sequencer.js";
+import eventsApp from "../packages/daemon/src/web/api/v1/events.js";
+import { createSession } from "../packages/daemon/src/web/middleware/auth.js";
 
 const NO_CONVS = new Set<string>();
+
+const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+// Open an in-process SSE connection to the events app and collect delivered
+// events in the background until closed. Lets a test publish activity while the
+// live subscription is active and observe exactly what gets delivered.
+async function openEventStream(authHeader: string) {
+  const res = await eventsApp.request("/", { headers: { Authorization: authHeader } });
+  assert.equal(res.status, 200, "events stream should connect");
+  const reader = res.body!.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  let active = true;
+  const events: any[] = [];
+  const loop = (async () => {
+    try {
+      while (active) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        for (;;) {
+          const sep = buf.indexOf("\n\n");
+          if (sep === -1) break;
+          const frame = buf.slice(0, sep);
+          buf = buf.slice(sep + 2);
+          const dataLine = frame.split("\n").find((l) => l.startsWith("data:"));
+          if (!dataLine) continue;
+          const json = dataLine.slice(dataLine.indexOf(":") + 1).trim();
+          if (!json) continue;
+          try {
+            events.push(JSON.parse(json));
+          } catch {}
+        }
+      }
+    } catch {}
+  })();
+  return {
+    events,
+    async close() {
+      active = false;
+      try {
+        await reader.cancel();
+      } catch {}
+      await loop;
+    },
+  };
+}
 
 describe("event sequencer", () => {
   it("assigns monotonically increasing IDs", () => {
@@ -240,5 +291,69 @@ describe("event sequencer", () => {
       created_at: "2024-01-01",
     });
     assert.ok(bufId > id);
+  });
+});
+
+describe("v1 events live activity delivery filter", () => {
+  it("does not deliver another mind's activity live to a scoped connection", async () => {
+    resetSequencer();
+    const alice = await getOrCreateMindUser("live-events-alice");
+    const aliceSession = await createSession(alice.id);
+
+    const stream = await openEventStream(`Bearer ${aliceSession}`);
+    // Let the snapshot flush and the live subscription register.
+    await delay(200);
+
+    const before = nextEventId();
+    await publish({ type: "mind_done", mind: "live-events-bob", summary: "bob-live-secret" });
+    await publish({ type: "mind_done", mind: "live-events-alice", summary: "alice-live-visible" });
+    await delay(200);
+    await stream.close();
+
+    const activityEvents = stream.events.filter((e) => e.event === "activity");
+
+    // The scoped connection sees its own mind's activity live.
+    assert.ok(
+      activityEvents.some(
+        (e) => e.mind === "live-events-alice" && e.summary === "alice-live-visible",
+      ),
+      "scoped connection should receive its own mind's activity live",
+    );
+    // But never another mind's activity — this is the live audience gate under test.
+    assert.ok(
+      !activityEvents.some((e) => e.mind === "live-events-bob"),
+      "scoped connection must not receive another mind's activity live",
+    );
+
+    // Buffer coverage: the other mind's event is still recorded globally, so a
+    // privileged reconnect replay (getEventsSince) can deliver it. This is the
+    // regression the buffer-before-gate ordering protects against.
+    const replay = getEventsSince(before, NO_CONVS, undefined);
+    assert.ok(
+      replay.some((e) => e.data.event === "activity" && e.data.mind === "live-events-bob"),
+      "buffer must still record another mind's activity globally for reconnect replay",
+    );
+  });
+
+  it("delivers any mind's activity live to a privileged connection", async () => {
+    resetSequencer();
+    const prevToken = process.env.VOLUTE_DAEMON_TOKEN;
+    process.env.VOLUTE_DAEMON_TOKEN = "live-events-admin-token";
+    try {
+      const stream = await openEventStream("Bearer live-events-admin-token");
+      await delay(200);
+      await publish({ type: "mind_done", mind: "live-events-charlie", summary: "charlie-live" });
+      await delay(200);
+      await stream.close();
+
+      const activityEvents = stream.events.filter((e) => e.event === "activity");
+      assert.ok(
+        activityEvents.some((e) => e.mind === "live-events-charlie"),
+        "privileged connection should receive any mind's activity live",
+      );
+    } finally {
+      if (prevToken === undefined) delete process.env.VOLUTE_DAEMON_TOKEN;
+      else process.env.VOLUTE_DAEMON_TOKEN = prevToken;
+    }
   });
 });
