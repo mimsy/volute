@@ -1500,7 +1500,7 @@ const app = new Hono<AuthEnv>()
         const stderr = startErr instanceof MindStartupError ? startErr.stderr : undefined;
         let rollback: { parked: boolean; branch?: string } = { parked: false };
         try {
-          rollback = await rollbackSrcChanges(repoDir);
+          rollback = await rollbackSrcChanges(repoDir, name);
         } catch (rbErr) {
           log.error(`failed to roll back src changes for ${name}`, log.errorData(rbErr));
         }
@@ -1512,8 +1512,11 @@ const app = new Hono<AuthEnv>()
 
         const startMsg = startErr instanceof Error ? startErr.message : String(startErr);
         const errLine = (stderr ?? startMsg).trim().split("\n").filter(Boolean).pop() ?? "";
+        // Attribute the notice to the mind/session that was actually restarted. For a
+        // variant restart `baseName` is the parent, so recording against it would notify
+        // the parent about code it didn't touch while the variant never sees it.
         await recordNotice({
-          mind: baseName,
+          mind: name,
           session: "main",
           kind: "startup",
           reason: "startup_failed",
@@ -1534,7 +1537,7 @@ const app = new Hono<AuthEnv>()
 
       // Startup succeeded — commit any src/ changes as the new known-good baseline so a
       // future bad edit has a clean point to roll back to.
-      await commitSrcChanges(repoDir).catch((e) =>
+      await commitSrcChanges(repoDir, name).catch((e) =>
         log.error(`failed to commit known-good src for ${name}`, log.errorData(e)),
       );
       return c.json({ ok: true, port: targetPort });

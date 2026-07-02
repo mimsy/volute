@@ -138,4 +138,70 @@ describe("last-known-good rollback", () => {
     await commitSrcChanges(repoDir);
     assert.equal(git(["rev-parse", "HEAD"]), before, "no commit should be created");
   });
+
+  it("parks on a collision-proof branch name (timestamp + random suffix)", async () => {
+    writeFileSync(join(repoDir, "src", "server.ts"), "broken\n");
+    const result = await rollbackSrcChanges(repoDir);
+    assert.equal(result.parked, true);
+    // A second-resolution timestamp alone can collide across concurrent variants, so the
+    // name must carry a random suffix (8 hex chars).
+    assert.match(
+      result.branch!,
+      /^broken\/.+-[0-9a-f]{8}$/,
+      `expected a random suffix, got ${result.branch}`,
+    );
+  });
+
+  it("rewinds HEAD before parking so a failed branch step stays recoverable", async () => {
+    // Occupy the `broken` ref name so `git branch broken/<...>` hits a D/F conflict and
+    // fails — simulating any transient failure of the fragile branch-creation step.
+    git(["branch", "broken"]);
+    const goodHead = git(["rev-parse", "HEAD"]);
+    writeFileSync(join(repoDir, "src", "server.ts"), "broken change\n");
+
+    await assert.rejects(rollbackSrcChanges(repoDir), "branch creation should fail");
+
+    // HEAD must be rewound to the good state — NOT left advanced on the broken commit,
+    // which would make hasSrcChanges() see a clean tree and skip rollback forever.
+    assert.equal(git(["rev-parse", "HEAD"]), goodHead, "HEAD should be back at the good commit");
+    assert.equal(git(["show", "HEAD:src/server.ts"]), GOOD_SERVER.trim());
+    // The broken change is still in the working tree, so the next restart retries rollback.
+    assert.equal(readFileSync(join(repoDir, "src", "server.ts"), "utf-8"), "broken change\n");
+  });
+
+  it("commitSrcChanges does not sweep in pre-staged non-src content", async () => {
+    // Something non-src is already staged in the index (e.g. a mid-turn home/ edit)
+    writeFileSync(join(repoDir, "home", "SOUL.md"), "staged identity\n");
+    git(["add", "--", "home/SOUL.md"]);
+    // A good src/ edit to commit as the new baseline
+    const NEW_GOOD = "console.log('v2');\n";
+    writeFileSync(join(repoDir, "src", "server.ts"), NEW_GOOD);
+
+    await commitSrcChanges(repoDir);
+
+    // The baseline commit captures src/ ...
+    assert.equal(git(["show", "HEAD:src/server.ts"]), NEW_GOOD.trim());
+    // ... but NOT the pre-staged home/ content
+    assert.equal(git(["show", "HEAD:home/SOUL.md"]), "soul", "home/ change must not be committed");
+    // ... which remains staged/uncommitted for the mind's own auto-commit to handle
+    assert.notEqual(
+      git(["status", "--porcelain", "--", "home/SOUL.md"]),
+      "",
+      "home/ change should still be pending",
+    );
+  });
+
+  it("rollbackSrcChanges does not sweep in pre-staged non-src content", async () => {
+    writeFileSync(join(repoDir, "home", "SOUL.md"), "staged identity\n");
+    git(["add", "--", "home/SOUL.md"]);
+    writeFileSync(join(repoDir, "src", "server.ts"), "broken\n");
+
+    const result = await rollbackSrcChanges(repoDir);
+    assert.equal(result.parked, true);
+
+    // The parked (broken) commit holds src/ but not the pre-staged home/ content
+    assert.equal(git(["show", `${result.branch}:home/SOUL.md`]), "soul");
+    // The home/ change survives untouched in the working tree
+    assert.equal(readFileSync(join(repoDir, "home", "SOUL.md"), "utf-8"), "staged identity\n");
+  });
 });
