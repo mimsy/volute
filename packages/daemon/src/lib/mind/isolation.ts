@@ -1,4 +1,7 @@
 import { execFileSync } from "node:child_process";
+import { existsSync, statSync } from "node:fs";
+import { resolve } from "node:path";
+import { exec } from "../util/exec.js";
 import { getBaseName, validateMindName } from "./registry.js";
 
 /** Returns true when per-mind user isolation is enabled. */
@@ -186,21 +189,70 @@ export async function wrapForIsolation(
   return ["runuser", ["-u", user, "--", cmd, ...args]];
 }
 
-/** Set ownership of a mind directory to its system user. */
-export function chownMindDir(dir: string, name: string): void {
+/** Resolve a user's numeric uid via `id -u`, or null if the lookup fails. */
+async function userUid(user: string): Promise<number | null> {
+  try {
+    const uid = parseInt((await exec("id", ["-u", user])).trim(), 10);
+    return Number.isNaN(uid) ? null : uid;
+  } catch {
+    return null;
+  }
+}
+
+/** True if `path` is already owned by `uid`. */
+function ownedBy(path: string, uid: number): boolean {
+  try {
+    return statSync(path).uid === uid;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Decide which paths `chownMindDir` should recurse. For a full mind project dir,
+ * node_modules dominates the tree; when it's already owned by the mind user (a
+ * re-run), recursing the whole project needlessly walks tens of thousands of
+ * files, so only the mutable runtime dirs (home/, .mind/) need re-chowning.
+ * Anything else (a state/tmp/credential dir with no node_modules) is recursed
+ * whole.
+ */
+export async function chownTargets(dir: string, user: string): Promise<string[]> {
+  const nodeModules = resolve(dir, "node_modules");
+  const home = resolve(dir, "home");
+  if (existsSync(nodeModules) && existsSync(home)) {
+    const uid = await userUid(user);
+    if (uid !== null && ownedBy(nodeModules, uid)) {
+      const targets = [home];
+      const runtime = resolve(dir, ".mind");
+      if (existsSync(runtime)) targets.push(runtime);
+      return targets;
+    }
+  }
+  return [dir];
+}
+
+/**
+ * Set ownership of a mind directory to its system user. Async so the recursive
+ * chown never blocks the daemon event loop (these run from request handlers).
+ */
+export async function chownMindDir(dir: string, name: string): Promise<void> {
   if (!isIsolationEnabled()) return;
   const user = mindUserName(name);
   const group = process.platform === "darwin" ? "volute" : user;
-  try {
-    execFileSync("chown", ["-R", `${user}:${group}`, dir], { stdio: ["ignore", "ignore", "pipe"] });
-  } catch (err) {
-    const stderr = (err as { stderr?: Buffer })?.stderr?.toString().trim();
-    throw new Error(`Failed to chown ${dir} to ${user}:${group}${stderr ? `: ${stderr}` : ""}`);
+  for (const target of await chownTargets(dir, user)) {
+    try {
+      await exec("chown", ["-R", `${user}:${group}`, target]);
+    } catch (err) {
+      const stderr = String((err as { stderr?: string })?.stderr ?? "").trim();
+      throw new Error(
+        `Failed to chown ${target} to ${user}:${group}${stderr ? `: ${stderr}` : ""}`,
+      );
+    }
   }
   try {
-    execFileSync("chmod", ["700", dir], { stdio: ["ignore", "ignore", "pipe"] });
+    await exec("chmod", ["700", dir]);
   } catch (err) {
-    const stderr = (err as { stderr?: Buffer })?.stderr?.toString().trim();
+    const stderr = String((err as { stderr?: string })?.stderr ?? "").trim();
     throw new Error(`Failed to chmod ${dir}${stderr ? `: ${stderr}` : ""}`);
   }
 }

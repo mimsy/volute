@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync } from "node:fs";
+import { tmpdir, userInfo } from "node:os";
+import { resolve } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import {
+  chownTargets,
   isIsolationEnabled,
   mindUserName,
   wrapForIsolation,
@@ -89,5 +93,30 @@ describe("isolation", () => {
     const expectedCmd = process.platform === "darwin" ? "sudo" : "runuser";
     assert.equal(cmd, expectedCmd);
     assert.deepEqual(args, ["-u", "volute-bob", "--", "node", "index.js"]);
+  });
+
+  it("chownTargets narrows to home/.mind when node_modules is already owned", async () => {
+    const dir = mkdtempSync(resolve(tmpdir(), "chown-narrow-"));
+    mkdirSync(resolve(dir, "node_modules"));
+    mkdirSync(resolve(dir, "home"));
+    mkdirSync(resolve(dir, ".mind"));
+    // node_modules was just created by this process, so it's owned by us.
+    const targets = await chownTargets(dir, userInfo().username);
+    assert.deepEqual(targets, [resolve(dir, "home"), resolve(dir, ".mind")]);
+  });
+
+  it("chownTargets recurses the whole dir when node_modules owner differs", async () => {
+    const dir = mkdtempSync(resolve(tmpdir(), "chown-owner-"));
+    mkdirSync(resolve(dir, "node_modules"));
+    mkdirSync(resolve(dir, "home"));
+    const targets = await chownTargets(dir, "no-such-user-xyz-123");
+    assert.deepEqual(targets, [dir]);
+  });
+
+  it("chownTargets recurses the whole dir when there is no node_modules", async () => {
+    const dir = mkdtempSync(resolve(tmpdir(), "chown-plain-"));
+    mkdirSync(resolve(dir, "home"));
+    const targets = await chownTargets(dir, userInfo().username);
+    assert.deepEqual(targets, [dir]);
   });
 });

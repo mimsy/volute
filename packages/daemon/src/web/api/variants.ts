@@ -94,7 +94,7 @@ const app = new Hono<AuthEnv>()
     }
 
     // Fix ownership before npm install so it runs as the mind user
-    chownMindDir(projectRoot, mindName);
+    await chownMindDir(projectRoot, mindName);
 
     // Install dependencies
     try {

@@ -153,6 +153,40 @@ export class SleepManager {
     slog.info(`${name} trigger-wake converted to full wake`);
   }
 
+  /**
+   * A trigger-woken mind's process crashed while still in the brief trigger-wake
+   * window. The mind-manager crash handler calls this to return it to sleep —
+   * archive the (now-dead) session and restore sleeping state — rather than
+   * leaving it in sleeping+wokenByTrigger limbo. Mirrors the idle-driven
+   * return-to-sleep in onActivityEvent, minus stopping an already-dead process.
+   */
+  async returnToSleepAfterCrash(name: string): Promise<void> {
+    const state = this.states.get(name);
+    if (!state?.sleeping || !state.wokenByTrigger) return;
+    if (this.transitioning.has(name)) return;
+    this.transitioning.add(name);
+    state.wokenByTrigger = false;
+    try {
+      // Process already crashed; sleepMind's stopMind is a no-op here, but it
+      // also marks idle and publishes the sleeping event for consistency.
+      try {
+        await sleepMind(name);
+      } catch (err) {
+        slog.warn(`sleepMind during crash-return failed for ${name}`, log.errorData(err));
+      }
+      await this.archiveSessions(name);
+      state.sleeping = true;
+      state.sleepingSince = new Date().toISOString();
+      state.scheduledWakeAt = this.getNextWakeTime(this.getSleepConfig(name));
+      this.saveState();
+      slog.info(`${name} returned to sleep after crashing during trigger wake`);
+    } catch (err) {
+      slog.error(`failed to return ${name} to sleep after crash`, log.errorData(err));
+    } finally {
+      this.transitioning.delete(name);
+    }
+  }
+
   getSleepConfig(name: string): SleepConfig | null {
     if (this.sleepConfigs.has(name)) {
       return this.sleepConfigs.get(name) ?? null;

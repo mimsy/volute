@@ -58,7 +58,7 @@ export async function cleanupVariant(
   }
 
   try {
-    chownMindDir(projectRoot, baseName);
+    await chownMindDir(projectRoot, baseName);
   } catch (err) {
     log.error(
       `failed to fix ownership during variant cleanup for ${variantName}`,

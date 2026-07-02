@@ -151,7 +151,7 @@ export async function ensureSpiritProject(): Promise<void> {
     const { createMindUser, chownMindDir, ensureVoluteGroup } = await import("./isolation.js");
     ensureVoluteGroup();
     createMindUser("volute", resolve(dir, "home"));
-    chownMindDir(dir, "volute");
+    await chownMindDir(dir, "volute");
 
     // Register in DB
     const port = await nextPort();

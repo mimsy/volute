@@ -744,4 +744,31 @@ describe("SleepManager.buildTriggerWakeSummary", () => {
     assert.ok(result.includes("system:dream"));
     assert.ok(result.includes("discord:server/general"));
   });
+
+  it("returnToSleepAfterCrash restores sleeping state and clears wokenByTrigger", async () => {
+    const sm = new TestSleepManager();
+    sm.setStateForTest(
+      "crasher",
+      sleepingState({
+        wokenByTrigger: true,
+        triggerWakeHistory: [{ channel: "@volute", at: new Date().toISOString() }],
+      }),
+    );
+    // sleepMind() throws (no MindManager in unit tests) but is tolerated; the
+    // mind must still end back asleep rather than in wokenByTrigger limbo.
+    await sm.returnToSleepAfterCrash("crasher");
+    const state = sm.getStateForTest("crasher");
+    assert.equal(state?.sleeping, true);
+    assert.equal(state?.wokenByTrigger, false);
+    assert.equal(sm.isTransitioning("crasher"), false);
+  });
+
+  it("returnToSleepAfterCrash is a no-op when the mind was not trigger-woken", async () => {
+    const sm = new TestSleepManager();
+    sm.setStateForTest("normal", sleepingState({ wokenByTrigger: false }));
+    await sm.returnToSleepAfterCrash("normal");
+    const state = sm.getStateForTest("normal");
+    assert.equal(state?.sleeping, true);
+    assert.equal(state?.wokenByTrigger, false);
+  });
 });
