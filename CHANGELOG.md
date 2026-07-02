@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.42.1](https://github.com/mimsy/volute/compare/volute-v0.42.0...volute-v0.42.1) (2026-07-02)
+
+
+### Bug Fixes
+
+* split daemon.json admin token into a 0600 file so the operator CLI can read it ([#354](https://github.com/mimsy/volute/issues/354)) ([060f82e](https://github.com/mimsy/volute/commit/060f82e2a7558d9759b4c2ac915cb57c26c3ca04))
+
 ## [0.42.0](https://github.com/mimsy/volute/compare/volute-v0.41.1...volute-v0.42.0) (2026-07-02)
 
 
