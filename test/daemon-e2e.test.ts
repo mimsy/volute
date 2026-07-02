@@ -1447,6 +1447,72 @@ describe("daemon e2e", { timeout: 120000 }, () => {
         "Admin should still be able to read Bob's turns",
       );
     });
+
+    // Open an SSE connection to /api/v1/events, return the first `snapshot`
+    // event, then abort. The snapshot's `activity` array is the vector at risk
+    // of a cross-tenant leak.
+    async function readEventsSnapshot(
+      authHeader: string,
+    ): Promise<{ activity: Array<{ mind: string }> }> {
+      const controller = new AbortController();
+      const res = await fetch(`${BASE_URL}/api/v1/events`, {
+        headers: { Authorization: authHeader, Origin: BASE_URL },
+        signal: controller.signal,
+      });
+      assert.equal(res.status, 200, "events stream should connect");
+      const reader = res.body!.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      try {
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          for (;;) {
+            const sep = buf.indexOf("\n\n");
+            if (sep === -1) break;
+            const frame = buf.slice(0, sep);
+            buf = buf.slice(sep + 2);
+            const dataLine = frame.split("\n").find((l) => l.startsWith("data:"));
+            if (!dataLine) continue;
+            const json = dataLine.slice(dataLine.indexOf(":") + 1).trim();
+            if (!json) continue;
+            const parsed = JSON.parse(json);
+            if (parsed.event === "snapshot") return parsed;
+          }
+        }
+      } finally {
+        controller.abort();
+        try {
+          await reader.cancel();
+        } catch {}
+      }
+      throw new Error("no snapshot event received");
+    }
+
+    it("/api/v1/events snapshot scopes activity to the caller's own mind", async () => {
+      const snap = await readEventsSnapshot(`Bearer ${aliceSession}`);
+      assert.ok(
+        snap.activity.every((a) => a.mind === ALICE),
+        "Alice's snapshot must only contain her own activity",
+      );
+      assert.ok(
+        !JSON.stringify(snap.activity).includes(BOB_SECRET),
+        "Alice's snapshot must not leak Bob's activity",
+      );
+      assert.ok(
+        snap.activity.some((a) => a.mind === ALICE),
+        "Alice should still see her own activity",
+      );
+    });
+
+    it("/api/v1/events snapshot keeps the global feed for admin/system", async () => {
+      const snap = await readEventsSnapshot(`Bearer ${TOKEN}`);
+      assert.ok(
+        snap.activity.some((a) => a.mind !== ALICE),
+        "Admin snapshot should include activity beyond a single mind (global feed)",
+      );
+    });
   });
 
   it("extension command endpoint ignores body.mind for non-admin callers", async () => {
