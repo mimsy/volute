@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
-import { existsSync, rmSync } from "node:fs";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, it } from "node:test";
 import {
   composeTemplate,
   findTemplatesRoot,
+  renderComposedPackageJson,
 } from "../packages/daemon/src/lib/template/template.js";
 
 describe("template composition", () => {
@@ -165,6 +166,32 @@ describe("template composition", () => {
 
       // Skills no longer bundled in template (managed via shared pool)
       assert.ok(!existsSync(resolve(composedDir, "_skills")), "_skills should not exist");
+    } finally {
+      rmSync(composedDir, { recursive: true, force: true });
+    }
+  });
+
+  it("renders package.json from the composed template's .tmpl", () => {
+    // Regression: composeTemplate() leaves package.json unrendered as
+    // package.json.tmpl (the rename happens only in copyTemplateToDir). Callers
+    // like syncSpiritTemplate that read composedDir/package.json directly get
+    // nothing, so a template switch never updates deps or runs npm install.
+    const { composedDir } = composeTemplate(templatesRoot, "pi");
+    try {
+      assert.ok(
+        !existsSync(resolve(composedDir, "package.json")),
+        "composeTemplate should not produce a plain package.json",
+      );
+
+      const pkgPath = renderComposedPackageJson(composedDir, "volute");
+      assert.ok(pkgPath && existsSync(pkgPath), "package.json should be rendered");
+
+      const pkg = JSON.parse(readFileSync(pkgPath, "utf-8"));
+      assert.equal(pkg.name, "volute", "{{name}} should be substituted");
+      assert.ok(
+        pkg.dependencies["@earendil-works/pi-coding-agent"],
+        "pi template deps should be present",
+      );
     } finally {
       rmSync(composedDir, { recursive: true, force: true });
     }
