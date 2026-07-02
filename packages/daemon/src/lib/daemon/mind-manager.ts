@@ -102,6 +102,26 @@ export class MindManager {
   private shuttingDown = false;
   private restartTracker = new RestartTracker();
   private pendingContext = new Map<string, Record<string, unknown>>();
+  // Per-name lifecycle mutex: start/stop/restart for a given mind serialize so
+  // concurrent callers can't double-spawn or have a loser's cleanup delete the
+  // winner's tracked child.
+  private locks = new Map<string, Promise<unknown>>();
+
+  /** Run `fn` after any in-flight lifecycle op for `name` settles, serializing per name. */
+  private withLock<T>(name: string, fn: () => Promise<T>): Promise<T> {
+    const prev = this.locks.get(name) ?? Promise.resolve();
+    const result = prev.then(fn, fn);
+    // Keep a non-rejecting tail so later callers chain cleanly regardless of outcome.
+    const tail = result.then(
+      () => {},
+      () => {},
+    );
+    this.locks.set(name, tail);
+    tail.finally(() => {
+      if (this.locks.get(name) === tail) this.locks.delete(name);
+    });
+    return result;
+  }
 
   private async resolveTarget(name: string): Promise<{
     dir: string;
@@ -124,6 +144,10 @@ export class MindManager {
   }
 
   async startMind(name: string): Promise<void> {
+    return this.withLock(name, () => this._startMind(name));
+  }
+
+  private async _startMind(name: string): Promise<void> {
     if (this.minds.has(name)) {
       throw new Error(`Mind ${name} is already running`);
     }
@@ -162,7 +186,9 @@ export class MindManager {
     }
 
     try {
-      const res = await fetch(`http://127.0.0.1:${port}/health`);
+      const res = await fetch(`http://127.0.0.1:${port}/health`, {
+        signal: AbortSignal.timeout(2000),
+      });
       if (res.ok) {
         mlog.warn(`killing orphan process on port ${port}`);
         await killProcessOnPort(port);
@@ -183,8 +209,8 @@ export class MindManager {
     // State dir is created by root — chown so the mind user can write to it.
     if (isIsolationEnabled()) {
       try {
-        chownMindDir(mindStateDir, baseName);
-        chownMindDir(mindTmp, baseName);
+        await chownMindDir(mindStateDir, baseName);
+        await chownMindDir(mindTmp, baseName);
       } catch (err) {
         throw new Error(
           `Cannot start mind ${name}: failed to set ownership on state directory ${mindStateDir}: ${err instanceof Error ? err.message : err}`,
@@ -227,7 +253,7 @@ export class MindManager {
               // The pi template watches auth.json and reloads, so the daemon can
               // push a refreshed OAuth token here without restarting the mind.
               const piAgentDir = resolve(dir, ".mind", "pi-agent");
-              writePiProviderKey(piAgentDir, baseName, provider, apiKey);
+              await writePiProviderKey(piAgentDir, baseName, provider, apiKey);
               env.PI_CODING_AGENT_DIR = piAgentDir;
 
               // Also set provider-specific env var as fallback — the sandbox may
@@ -292,7 +318,7 @@ export class MindManager {
             writeFileSync(configTomlPath, 'cli_auth_credentials_store = "file"\n');
           }
           if (isIsolationEnabled()) {
-            chownMindDir(codexDir, baseName);
+            await chownMindDir(codexDir, baseName);
           }
         } else {
           const apiKey = await resolveApiKey("openai-codex");
@@ -337,7 +363,7 @@ export class MindManager {
           const key = await resolveApiKey("anthropic");
           const oauth = getAiConfig()?.providers.anthropic?.oauth;
           if (key && oauth) {
-            const claudeDir = writeClaudeCredentials(resolve(dir, "home"), baseName, oauth);
+            const claudeDir = await writeClaudeCredentials(resolve(dir, "home"), baseName, oauth);
             env.CLAUDE_CONFIG_DIR = claudeDir;
           }
         } else {
@@ -529,6 +555,7 @@ export class MindManager {
           participantCount: 2,
           ...(conversationId ? { conversationId } : {}),
         }),
+        signal: AbortSignal.timeout(10_000),
       });
     } catch (err) {
       mlog.warn(`failed to deliver pending context to ${name}`, log.errorData(err));
@@ -537,6 +564,9 @@ export class MindManager {
 
   private setupCrashRecovery(name: string, child: ChildProcess): void {
     child.on("exit", async (code) => {
+      // Only react if this is still the tracked child. After a restart replaced
+      // it, an old child's delayed exit must not delete the new child's entry.
+      if (this.minds.get(name)?.child !== child) return;
       this.minds.delete(name);
       if (this.shuttingDown || this.stopping.has(name)) return;
 
@@ -546,9 +576,18 @@ export class MindManager {
       // During trigger-wakes, the sleep manager handles the process lifecycle.
       try {
         const { getSleepManagerIfReady } = await import("./sleep-manager.js");
-        const sleepState = getSleepManagerIfReady()?.getState(name);
+        const sleepMgr = getSleepManagerIfReady();
+        const sleepState = sleepMgr?.getState(name);
         if (sleepState?.sleeping) {
-          mlog.info(`${name} is sleeping — skipping crash recovery`);
+          if (sleepState.wokenByTrigger && sleepMgr) {
+            // A trigger-woken mind crashed mid-window. Don't leave it in
+            // sleeping+wokenByTrigger limbo (which gets neither crash recovery
+            // nor the idle-driven return-to-sleep) — return it to sleep now.
+            mlog.info(`${name} crashed during trigger wake — returning to sleep`);
+            void sleepMgr.returnToSleepAfterCrash(name);
+          } else {
+            mlog.info(`${name} is sleeping — skipping crash recovery`);
+          }
           return;
         }
       } catch (err) {
@@ -615,6 +654,10 @@ export class MindManager {
   }
 
   async stopMind(name: string): Promise<void> {
+    return this.withLock(name, () => this._stopMind(name));
+  }
+
+  private async _stopMind(name: string): Promise<void> {
     const tracked = this.minds.get(name);
     if (!tracked) return;
 
@@ -623,20 +666,25 @@ export class MindManager {
     this.minds.delete(name);
 
     await new Promise<void>((resolve) => {
-      child.on("exit", () => resolve());
-      try {
-        // Kill the entire process group (tsx + node child)
-        process.kill(-child.pid!, "SIGTERM");
-      } catch {
-        resolve();
-      }
-      // Force kill after 5s
-      setTimeout(() => {
+      // Force kill after 5s — but disarm it on a clean exit so a stray
+      // group-SIGKILL can't later fire against a reused pgid.
+      const killTimer = setTimeout(() => {
         try {
           process.kill(-child.pid!, "SIGKILL");
         } catch {}
         resolve();
       }, 5000);
+      child.on("exit", () => {
+        clearTimeout(killTimer);
+        resolve();
+      });
+      try {
+        // Kill the entire process group (tsx + node child)
+        process.kill(-child.pid!, "SIGTERM");
+      } catch {
+        clearTimeout(killTimer);
+        resolve();
+      }
     });
 
     this.stopping.delete(name);
@@ -673,8 +721,10 @@ export class MindManager {
   }
 
   async restartMind(name: string): Promise<void> {
-    await this.stopMind(name);
-    await this.startMind(name);
+    return this.withLock(name, async () => {
+      await this._stopMind(name);
+      await this._startMind(name);
+    });
   }
 
   async stopAll(): Promise<void> {

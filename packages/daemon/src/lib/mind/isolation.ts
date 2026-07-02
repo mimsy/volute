@@ -1,4 +1,7 @@
 import { execFileSync } from "node:child_process";
+import { existsSync, readdirSync, statSync } from "node:fs";
+import { resolve } from "node:path";
+import { exec } from "../util/exec.js";
 import { getBaseName, validateMindName } from "./registry.js";
 
 /** Returns true when per-mind user isolation is enabled. */
@@ -186,21 +189,80 @@ export async function wrapForIsolation(
   return ["runuser", ["-u", user, "--", cmd, ...args]];
 }
 
-/** Set ownership of a mind directory to its system user. */
-export function chownMindDir(dir: string, name: string): void {
+/** Resolve a user's numeric uid via `id -u`, or null if the lookup fails. */
+async function userUid(user: string): Promise<number | null> {
+  try {
+    const uid = parseInt((await exec("id", ["-u", user])).trim(), 10);
+    return Number.isNaN(uid) ? null : uid;
+  } catch {
+    return null;
+  }
+}
+
+/** True if `path` is already owned by `uid`. */
+function ownedBy(path: string, uid: number): boolean {
+  try {
+    return statSync(path).uid === uid;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Decide which paths `chownMindDir` should recurse. For a full mind project dir,
+ * node_modules dominates the tree; when it's already owned by the mind user (a
+ * re-run), recursing the whole project needlessly walks tens of thousands of
+ * files. In that case we skip node_modules but still recurse every other
+ * top-level entry (home/, .mind/, .git/, src/, package.json, …) — root-driven
+ * flows like merge/upgrade write into .git as root, and those paths must be
+ * re-chowned or the mind's own auto-commit later hits EACCES. Anything else (a
+ * state/tmp/credential dir with no node_modules) is recursed whole.
+ */
+export async function chownTargets(dir: string, user: string): Promise<string[]> {
+  const nodeModules = resolve(dir, "node_modules");
+  const home = resolve(dir, "home");
+  if (existsSync(nodeModules) && existsSync(home)) {
+    const uid = await userUid(user);
+    if (uid !== null && ownedBy(nodeModules, uid)) {
+      return readdirSync(dir)
+        .filter((entry) => entry !== "node_modules")
+        .map((entry) => resolve(dir, entry));
+    }
+  }
+  return [dir];
+}
+
+/**
+ * Set ownership of a mind directory to its system user. Async so the recursive
+ * chown never blocks the daemon event loop (these run from request handlers).
+ */
+export async function chownMindDir(dir: string, name: string): Promise<void> {
   if (!isIsolationEnabled()) return;
   const user = mindUserName(name);
   const group = process.platform === "darwin" ? "volute" : user;
+  for (const target of await chownTargets(dir, user)) {
+    try {
+      await exec("chown", ["-R", `${user}:${group}`, target]);
+    } catch (err) {
+      const stderr = String((err as { stderr?: string })?.stderr ?? "").trim();
+      throw new Error(
+        `Failed to chown ${target} to ${user}:${group}${stderr ? `: ${stderr}` : ""}`,
+      );
+    }
+  }
+  // The narrowed target list above chowns dir's children, not dir itself, so
+  // set the project root inode's owner non-recursively (a no-op when the loop
+  // already recursed dir directly).
   try {
-    execFileSync("chown", ["-R", `${user}:${group}`, dir], { stdio: ["ignore", "ignore", "pipe"] });
+    await exec("chown", [`${user}:${group}`, dir]);
   } catch (err) {
-    const stderr = (err as { stderr?: Buffer })?.stderr?.toString().trim();
+    const stderr = String((err as { stderr?: string })?.stderr ?? "").trim();
     throw new Error(`Failed to chown ${dir} to ${user}:${group}${stderr ? `: ${stderr}` : ""}`);
   }
   try {
-    execFileSync("chmod", ["700", dir], { stdio: ["ignore", "ignore", "pipe"] });
+    await exec("chmod", ["700", dir]);
   } catch (err) {
-    const stderr = (err as { stderr?: Buffer })?.stderr?.toString().trim();
+    const stderr = String((err as { stderr?: string })?.stderr ?? "").trim();
     throw new Error(`Failed to chmod ${dir}${stderr ? `: ${stderr}` : ""}`);
   }
 }

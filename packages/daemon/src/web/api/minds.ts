@@ -424,7 +424,7 @@ async function mergeUpgradeAndRestart(
           cwd: dir,
         });
       }
-      chownMindDir(dir, mindName);
+      await chownMindDir(dir, mindName);
       switchWarning = `Switched ${oldTemplate}→${template}: config reset to ${template} defaults, mechanics doc replaced, conversation starts fresh (sessions aren't portable across runtimes).`;
     } catch (err) {
       log.warn(`failed to swap template home files for ${mindName}`, log.errorData(err));
@@ -546,7 +546,7 @@ async function importFromFullArchive(
     const homeDir = resolve(dest, "home");
     ensureVoluteGroup();
     createMindUser(name, homeDir);
-    chownMindDir(dest, name);
+    await chownMindDir(dest, name);
 
     // Install dependencies
     await npmInstallAsMind(dest, name);
@@ -572,7 +572,7 @@ async function importFromFullArchive(
     }
 
     // Fix ownership
-    chownMindDir(dest, name);
+    await chownMindDir(dest, name);
 
     // Clean up temp dir
     rmSync(tempDir, { recursive: true, force: true });
@@ -665,7 +665,7 @@ async function importFromHomeOnlyArchive(
     const homeDir = resolve(dest, "home");
     ensureVoluteGroup();
     createMindUser(name, homeDir);
-    chownMindDir(dest, name);
+    await chownMindDir(dest, name);
 
     // 9. npm install
     await npmInstallAsMind(dest, name);
@@ -701,7 +701,7 @@ async function importFromHomeOnlyArchive(
     importSessionsFromArchive(dest, tempDir);
 
     // 14. Fix ownership, publish public key
-    chownMindDir(dest, name);
+    await chownMindDir(dest, name);
     publishPublicKey(name, publicKeyPem).catch((err: unknown) =>
       log.warn(`failed to publish key for ${name}`, { error: (err as Error).message }),
     );
@@ -955,7 +955,7 @@ const app = new Hono<AuthEnv>()
       const homeDir = resolve(dest, "home");
       ensureVoluteGroup();
       createMindUser(name, homeDir);
-      chownMindDir(dest, name);
+      await chownMindDir(dest, name);
 
       // Install dependencies as mind user (chown already ran above)
       await npmInstallAsMind(dest, name);
@@ -976,7 +976,7 @@ const app = new Hono<AuthEnv>()
       }
 
       // Fix ownership after root git/file operations
-      chownMindDir(dest, name);
+      await chownMindDir(dest, name);
 
       if (body.stage === "seed") {
         // Write orientation SOUL.md
@@ -1199,7 +1199,7 @@ const app = new Hono<AuthEnv>()
       const homeDir = resolve(dest, "home");
       ensureVoluteGroup();
       createMindUser(name, homeDir);
-      chownMindDir(dest, name);
+      await chownMindDir(dest, name);
 
       // Install dependencies as mind user (chown already ran above)
       await npmInstallAsMind(dest, name);
@@ -1235,7 +1235,7 @@ const app = new Hono<AuthEnv>()
       importOpenClawConnectors(name, dest);
 
       // Fix ownership after root git/file operations
-      chownMindDir(dest, name);
+      await chownMindDir(dest, name);
 
       // Auto-publish public key to volute.systems (non-blocking)
       publishPublicKey(name, importPublicKey).catch((err: unknown) =>
@@ -1913,7 +1913,7 @@ const app = new Hono<AuthEnv>()
       }
 
       // Fix ownership after root git operations
-      chownMindDir(dir, mindName);
+      await chownMindDir(dir, mindName);
 
       // Merge upgrade branch back to main, cleanup, and restart
       try {
@@ -1997,7 +1997,7 @@ const app = new Hono<AuthEnv>()
         await configureGitIdentity(mindName, { cwd: dir, mindName: mindName, env });
         await gitExec(["add", "-A"], { cwd: dir, mindName: mindName, env });
         await gitExec(["commit", "-m", "initial commit"], { cwd: dir, mindName: mindName, env });
-        chownMindDir(dir, mindName);
+        await chownMindDir(dir, mindName);
       } catch (err) {
         rmSync(resolve(dir, ".git"), { recursive: true, force: true });
         return c.json(
@@ -2075,7 +2075,7 @@ const app = new Hono<AuthEnv>()
     }
 
     // Fix ownership — daemon runs as root but mind needs to own its files
-    chownMindDir(dir, mindName);
+    await chownMindDir(dir, mindName);
 
     if (hasConflicts) {
       return c.json({

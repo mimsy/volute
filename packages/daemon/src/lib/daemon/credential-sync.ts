@@ -19,11 +19,11 @@ export type AnthropicOauth = {
  * reloads it when the file's mtime changes, so rewriting this file pushes a
  * fresh token into a running mind without a restart. Returns the config dir.
  */
-export function writeClaudeCredentials(
+export async function writeClaudeCredentials(
   homeDir: string,
   baseName: string,
   oauth: AnthropicOauth,
-): string {
+): Promise<string> {
   const claudeDir = resolve(homeDir, ".claude");
   mkdirSync(claudeDir, { recursive: true });
   writeFileSync(
@@ -39,7 +39,7 @@ export function writeClaudeCredentials(
     { mode: 0o600 },
   );
   if (isIsolationEnabled()) {
-    chownMindDir(claudeDir, baseName);
+    await chownMindDir(claudeDir, baseName);
   }
   return claudeDir;
 }
@@ -49,12 +49,12 @@ export function writeClaudeCredentials(
  * providers already present. Used both at mind startup and by the refresh
  * fan-out. The pi template watches this file and reloads on change.
  */
-export function writePiProviderKey(
+export async function writePiProviderKey(
   piAgentDir: string,
   baseName: string,
   provider: string,
   key: string,
-): void {
+): Promise<void> {
   mkdirSync(piAgentDir, { recursive: true });
   const authPath = resolve(piAgentDir, "auth.json");
   const authData: Record<string, unknown> = existsSync(authPath)
@@ -63,7 +63,7 @@ export function writePiProviderKey(
   authData[provider] = { type: "api_key", key };
   writeFileSync(authPath, JSON.stringify(authData, null, 2), { mode: 0o600 });
   if (isIsolationEnabled()) {
-    chownMindDir(piAgentDir, baseName);
+    await chownMindDir(piAgentDir, baseName);
   }
 }
 
@@ -121,11 +121,11 @@ export async function syncProviderToMinds(provider: string, deps: SyncDeps = {})
       const template = entry.template;
 
       if (template === "claude" || !template) {
-        writeClaudeCredentials(resolve(dir, "home"), baseName, oauth);
+        await writeClaudeCredentials(resolve(dir, "home"), baseName, oauth);
       } else if (template === "pi") {
         const piAgentDir = resolve(dir, ".mind", "pi-agent");
         if (piUsesProvider(piAgentDir, "anthropic")) {
-          writePiProviderKey(piAgentDir, baseName, "anthropic", oauth.access);
+          await writePiProviderKey(piAgentDir, baseName, "anthropic", oauth.access);
         }
       }
     } catch (err) {

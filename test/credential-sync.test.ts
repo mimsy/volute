@@ -21,12 +21,12 @@ function tmpRoot(label: string): string {
 const OAUTH = { access: "sk-ant-oat01-NEW", refresh: "sk-ant-ort01-NEW", expires: 1782152959152 };
 
 describe("writeClaudeCredentials", () => {
-  it("writes the claudeAiOauth credentials file and returns the config dir", () => {
+  it("writes the claudeAiOauth credentials file and returns the config dir", async () => {
     const dir = tmpRoot("claude");
     const homeDir = resolve(dir, "home");
     mkdirSync(homeDir, { recursive: true });
 
-    const claudeDir = writeClaudeCredentials(homeDir, "mymind", OAUTH);
+    const claudeDir = await writeClaudeCredentials(homeDir, "mymind", OAUTH);
 
     assert.equal(claudeDir, resolve(homeDir, ".claude"));
     const creds = JSON.parse(readFileSync(resolve(claudeDir, ".credentials.json"), "utf-8"));
@@ -42,7 +42,7 @@ describe("writeClaudeCredentials", () => {
 });
 
 describe("writePiProviderKey", () => {
-  it("sets the provider api_key entry while preserving other providers", () => {
+  it("sets the provider api_key entry while preserving other providers", async () => {
     const dir = tmpRoot("pi");
     const piAgentDir = resolve(dir, ".mind", "pi-agent");
     mkdirSync(piAgentDir, { recursive: true });
@@ -51,7 +51,7 @@ describe("writePiProviderKey", () => {
       JSON.stringify({ openai: { type: "api_key", key: "openai-key" } }),
     );
 
-    writePiProviderKey(piAgentDir, "mymind", "anthropic", OAUTH.access);
+    await writePiProviderKey(piAgentDir, "mymind", "anthropic", OAUTH.access);
 
     const auth = JSON.parse(readFileSync(resolve(piAgentDir, "auth.json"), "utf-8"));
     assert.deepEqual(auth, {
@@ -60,10 +60,10 @@ describe("writePiProviderKey", () => {
     });
   });
 
-  it("creates auth.json when none exists", () => {
+  it("creates auth.json when none exists", async () => {
     const dir = tmpRoot("pi-fresh");
     const piAgentDir = resolve(dir, ".mind", "pi-agent");
-    writePiProviderKey(piAgentDir, "mymind", "anthropic", OAUTH.access);
+    await writePiProviderKey(piAgentDir, "mymind", "anthropic", OAUTH.access);
     const auth = JSON.parse(readFileSync(resolve(piAgentDir, "auth.json"), "utf-8"));
     assert.deepEqual(auth, { anthropic: { type: "api_key", key: OAUTH.access } });
   });
