@@ -271,8 +271,12 @@ async function loadExtension(
         } catch {
           return c.json({ error: "Invalid JSON in request body" }, 400);
         }
-        const user = c.get("user") as { username: string } | undefined;
-        const mindName = body.mind || user?.username;
+        const user = c.get("user") as { username: string; role?: string } | undefined;
+        // Minds are untrusted principals — only privileged callers (admin/system)
+        // may target another mind via body.mind. Otherwise the acting mind is the
+        // authenticated identity, so a mind cannot impersonate another.
+        const privileged = user?.role === "admin" || user?.role === "system";
+        const mindName = privileged ? body.mind || user?.username : user?.username;
         const session = c.get("mindSession") as string | undefined;
         try {
           // Collect activity publish promises so we can append correlation markers
