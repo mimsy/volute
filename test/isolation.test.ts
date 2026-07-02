@@ -95,14 +95,29 @@ describe("isolation", () => {
     assert.deepEqual(args, ["-u", "volute-bob", "--", "node", "index.js"]);
   });
 
-  it("chownTargets narrows to home/.mind when node_modules is already owned", async () => {
+  it("chownTargets skips only node_modules when it is already owned", async () => {
     const dir = mkdtempSync(resolve(tmpdir(), "chown-narrow-"));
     mkdirSync(resolve(dir, "node_modules"));
     mkdirSync(resolve(dir, "home"));
     mkdirSync(resolve(dir, ".mind"));
+    mkdirSync(resolve(dir, ".git"));
+    mkdirSync(resolve(dir, "src"));
     // node_modules was just created by this process, so it's owned by us.
     const targets = await chownTargets(dir, userInfo().username);
-    assert.deepEqual(targets, [resolve(dir, "home"), resolve(dir, ".mind")]);
+    // Every top-level entry is recursed except the (already-owned) node_modules,
+    // so root-created files (e.g. merge/upgrade git objects under .git) still get
+    // re-chowned.
+    assert.ok(!targets.includes(resolve(dir, "node_modules")), "node_modules should be skipped");
+    assert.ok(targets.includes(resolve(dir, ".git")), ".git must be re-chowned");
+    assert.deepEqual(
+      [...targets].sort(),
+      [
+        resolve(dir, ".git"),
+        resolve(dir, ".mind"),
+        resolve(dir, "home"),
+        resolve(dir, "src"),
+      ].sort(),
+    );
   });
 
   it("chownTargets recurses the whole dir when node_modules owner differs", async () => {

@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, statSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { exec } from "../util/exec.js";
 import { getBaseName, validateMindName } from "./registry.js";
@@ -212,9 +212,11 @@ function ownedBy(path: string, uid: number): boolean {
  * Decide which paths `chownMindDir` should recurse. For a full mind project dir,
  * node_modules dominates the tree; when it's already owned by the mind user (a
  * re-run), recursing the whole project needlessly walks tens of thousands of
- * files, so only the mutable runtime dirs (home/, .mind/) need re-chowning.
- * Anything else (a state/tmp/credential dir with no node_modules) is recursed
- * whole.
+ * files. In that case we skip node_modules but still recurse every other
+ * top-level entry (home/, .mind/, .git/, src/, package.json, …) — root-driven
+ * flows like merge/upgrade write into .git as root, and those paths must be
+ * re-chowned or the mind's own auto-commit later hits EACCES. Anything else (a
+ * state/tmp/credential dir with no node_modules) is recursed whole.
  */
 export async function chownTargets(dir: string, user: string): Promise<string[]> {
   const nodeModules = resolve(dir, "node_modules");
@@ -222,10 +224,9 @@ export async function chownTargets(dir: string, user: string): Promise<string[]>
   if (existsSync(nodeModules) && existsSync(home)) {
     const uid = await userUid(user);
     if (uid !== null && ownedBy(nodeModules, uid)) {
-      const targets = [home];
-      const runtime = resolve(dir, ".mind");
-      if (existsSync(runtime)) targets.push(runtime);
-      return targets;
+      return readdirSync(dir)
+        .filter((entry) => entry !== "node_modules")
+        .map((entry) => resolve(dir, entry));
     }
   }
   return [dir];
@@ -248,6 +249,15 @@ export async function chownMindDir(dir: string, name: string): Promise<void> {
         `Failed to chown ${target} to ${user}:${group}${stderr ? `: ${stderr}` : ""}`,
       );
     }
+  }
+  // The narrowed target list above chowns dir's children, not dir itself, so
+  // set the project root inode's owner non-recursively (a no-op when the loop
+  // already recursed dir directly).
+  try {
+    await exec("chown", [`${user}:${group}`, dir]);
+  } catch (err) {
+    const stderr = String((err as { stderr?: string })?.stderr ?? "").trim();
+    throw new Error(`Failed to chown ${dir} to ${user}:${group}${stderr ? `: ${stderr}` : ""}`);
   }
   try {
     await exec("chmod", ["700", dir]);
