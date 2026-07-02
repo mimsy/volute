@@ -15,7 +15,7 @@ config.get("/models", async (c) => {
     id: m.id,
     name: m.name,
     provider: m.provider,
-    enabled: enabled.has(m.id),
+    enabled: enabled.has(`${m.provider}:${m.id}`),
   }));
   return c.json(models);
 });

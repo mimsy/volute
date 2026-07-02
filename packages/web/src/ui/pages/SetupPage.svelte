@@ -93,7 +93,7 @@ let utilityModel = $state("");
 let enabledModelIds = $state<string[]>([]);
 
 function handleProviderLoad(enabledModels: AiModel[]) {
-  const newIds = enabledModels.map((m) => m.id);
+  const newIds = enabledModels.map((m) => m.qualifiedId);
   // Skip if nothing changed to avoid reactive loops
   if (
     newIds.length === enabledModelIds.length &&
@@ -107,7 +107,7 @@ function handleProviderLoad(enabledModels: AiModel[]) {
     spiritModel = "";
   }
   if (enabledModels.length > 0 && !spiritModel) {
-    spiritModel = enabledModels[0].id;
+    spiritModel = enabledModels[0].qualifiedId;
   }
 }
 
