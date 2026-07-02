@@ -148,14 +148,43 @@ describe("shared skill CRUD", () => {
     assert.ok(existsSync(destSkillMd));
   });
 
-  it("bumps version on re-import", async () => {
+  it("bumps version on re-import by the same author", async () => {
     const source = createSkillSource("test-skill");
     const first = await importSkillFromDir(source, "mind-a");
     assert.equal(first.version, 1);
 
-    const second = await importSkillFromDir(source, "mind-b");
+    const second = await importSkillFromDir(source, "mind-a");
     assert.equal(second.version, 2);
-    assert.equal(second.author, "mind-b");
+    assert.equal(second.author, "mind-a");
+  });
+
+  it("refuses to overwrite a skill authored by a different principal", async () => {
+    const source = createSkillSource("test-skill");
+    const first = await importSkillFromDir(source, "mind-a");
+    assert.equal(first.author, "mind-a");
+
+    await assert.rejects(
+      () => importSkillFromDir(source, "mind-b"),
+      /Cannot overwrite skill "test-skill" authored by "mind-a"/,
+    );
+
+    // Pool entry is unchanged: same author, same version.
+    const row = await getSharedSkill("test-skill");
+    assert.equal(row?.author, "mind-a");
+    assert.equal(row?.version, 1);
+  });
+
+  it("refuses to overwrite a protected built-in (volute) skill", async () => {
+    const source = createSkillSource("memory");
+    await importSkillFromDir(source, "volute");
+
+    await assert.rejects(
+      () => importSkillFromDir(source, "attacker-mind"),
+      /Cannot overwrite protected skill "memory" \(authored by "volute"\)/,
+    );
+
+    const row = await getSharedSkill("memory");
+    assert.equal(row?.author, "volute");
   });
 
   it("lists shared skills", async () => {
@@ -298,6 +327,31 @@ describe("mind skill operations", () => {
     const shared = await getSharedSkill("my-skill");
     assert.ok(shared);
     assert.equal(shared.name, "My Custom Skill");
+  });
+
+  it("refuses to publish over a skill authored by another mind", async () => {
+    // A different mind already published this pool id.
+    const otherSource = createSkillSource("contested-skill", "Original");
+    await importSkillFromDir(otherSource, "other-mind");
+
+    // This mind ships its own skill under the same id and tries to publish it.
+    const skillDir = join(mindDir, "home", ".claude", "skills", "contested-skill");
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(
+      join(skillDir, "SKILL.md"),
+      "---\nname: Hijacked\ndescription: attacker payload\n---\n\nContent\n",
+    );
+
+    await assert.rejects(
+      () => publishSkill(mindName, mindDir, "contested-skill"),
+      /Cannot overwrite skill "contested-skill" authored by "other-mind"/,
+    );
+
+    // Pool entry is unchanged.
+    const shared = await getSharedSkill("contested-skill");
+    assert.equal(shared?.author, "other-mind");
+    assert.equal(shared?.description, "Original");
+    assert.equal(shared?.version, 1);
   });
 
   it("lists mind skills with update status", async () => {
@@ -607,6 +661,27 @@ describe("hook shim management", () => {
       "shim should reference the skill script",
     );
     assert.ok(content.includes('"$@"'), "shim should pass through arguments");
+
+    rmSync(dir, { recursive: true });
+  });
+
+  it("refuses to overwrite a bin shim owned by a different skill", () => {
+    const dir = join(voluteHome(), "test-bin-collision");
+    mkdirSync(join(dir, "home", ".local", "bin"), { recursive: true });
+
+    // Both skills ship scripts/sync.ts, which derive the same command name.
+    installBinShim(dir, "skill-a", "scripts/sync.ts");
+    assert.throws(
+      () => installBinShim(dir, "skill-b", "scripts/sync.ts"),
+      /already provided by skill "skill-a"/,
+    );
+
+    // The original shim is untouched and still points at skill-a.
+    const content = readFileSync(join(dir, "home", ".local", "bin", "sync"), "utf-8");
+    assert.ok(content.includes(".claude/skills/skill-a/scripts/sync.ts"));
+
+    // Re-installing the same skill's shim is allowed (update path).
+    installBinShim(dir, "skill-a", "scripts/sync.ts");
 
     rmSync(dir, { recursive: true });
   });
