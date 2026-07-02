@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.42.0](https://github.com/mimsy/volute/compare/volute-v0.41.1...volute-v0.42.0) (2026-07-02)
+
+
+### Features
+
+* allow adding custom (freeform) AI models ([#345](https://github.com/mimsy/volute/issues/345)) ([4e39057](https://github.com/mimsy/volute/commit/4e390577aa34ae0716ee2a3055ded0cab7b69c30))
+
+
+### Bug Fixes
+
+* restore operator CLI access broken by config.json 0600 lockdown ([#350](https://github.com/mimsy/volute/issues/350)) ([74e03bd](https://github.com/mimsy/volute/commit/74e03bd3ac72a2d402c9a80be784e5e84bea270d))
+* strip provider prefix from codex mind model ([#348](https://github.com/mimsy/volute/issues/348)) ([3e6c40b](https://github.com/mimsy/volute/commit/3e6c40ba2ae37773512792278987ea0f173ed3fc))
+
 ## [0.41.1](https://github.com/mimsy/volute/compare/volute-v0.41.0...volute-v0.41.1) (2026-07-02)
 
 
