@@ -265,6 +265,15 @@ export function stateDir(name: string): string {
   return resolve(voluteSystemDir(), "state", name);
 }
 
+/**
+ * Per-mind temp directory (inside the mind's own project dir so it's covered by
+ * the sandbox's allowRead/allowWrite and, under user isolation, chowned to the
+ * mind). Used as the mind's TMPDIR so minds never share a writable /tmp.
+ */
+export function mindTmpDir(dir: string): string {
+  return resolve(dir, ".mind", "tmp");
+}
+
 export async function nextPort(): Promise<number> {
   const db = await getDb();
   const rows = await db.select({ port: minds.port }).from(minds);

@@ -1,7 +1,8 @@
 import { resolve } from "node:path";
 import { CronExpressionParser } from "cron-parser";
 import { sendSystemMessage } from "../chat/system-chat.js";
-import { mindDir, voluteSystemDir } from "../mind/registry.js";
+import { mindDir, mindTmpDir, voluteSystemDir } from "../mind/registry.js";
+import { isSandboxEnabled, wrapForSandbox } from "../mind/sandbox.js";
 import { readVoluteConfig, type Schedule, writeVoluteConfig } from "../mind/volute-config.js";
 import { exec } from "../util/exec.js";
 import { clearJsonMap, loadJsonMap, saveJsonMapAsync } from "../util/json-state.js";
@@ -189,7 +190,19 @@ export class Scheduler {
     }
   }
 
-  protected runScript(script: string, cwd: string, mindName: string): Promise<string> {
+  protected async runScript(script: string, cwd: string, mindName: string): Promise<string> {
+    // Mind-authored scripts must never run in the daemon's trust domain. Under
+    // sandbox mode, wrap with the mind's sandbox (exec only applies user
+    // isolation, never the sandbox). Isolation and sandbox modes are mutually
+    // exclusive, so we pass mindName to exec only in the non-sandbox case.
+    if (isSandboxEnabled()) {
+      const dir = this.mindDirs.get(mindName) ?? mindDir(mindName);
+      const [cmd, args] = await wrapForSandbox("bash", ["-c", script], dir, mindName, [
+        dir,
+        mindTmpDir(dir),
+      ]);
+      return exec(cmd, args, { cwd });
+    }
     return exec("bash", ["-c", script], { cwd, mindName });
   }
 
