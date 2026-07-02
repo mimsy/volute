@@ -1,20 +1,36 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, statSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { describe, it } from "node:test";
 import { writeDaemonConfig } from "../packages/daemon/src/daemon.js";
 
 describe("writeDaemonConfig", () => {
-  it("locks daemon.json to owner-only (0600), even when pre-existing 0644", () => {
-    // daemon.json holds the daemon admin token — must never be world-readable.
+  it("keeps daemon.json operator-readable (0644) and puts the token in a 0600 file", () => {
+    // daemon.json (port/hostname) must be readable by a non-root operator CLI on a
+    // system install; the admin token must never be world-readable.
     const dir = mkdtempSync(resolve(tmpdir(), "volute-daemon-cfg-"));
-    const path = resolve(dir, "daemon.json");
-    // Pre-create with loose perms to prove the chmod tightens them (writeFileSync's
-    // `mode` only applies on creation).
-    writeFileSync(path, "{}", { mode: 0o644 });
-    writeDaemonConfig(path, { port: 1618, hostname: "127.0.0.1", token: "secret" });
-    const mode = statSync(path).mode & 0o777;
-    assert.equal(mode, 0o600, `expected 0600, got ${mode.toString(8)}`);
+    const configPath = resolve(dir, "daemon.json");
+    const tokenPath = resolve(dir, "daemon-token");
+    // Pre-create daemon.json at 0600 (as v0.41.1 left it) to prove the write relaxes it.
+    writeFileSync(configPath, "{}", { mode: 0o600 });
+
+    writeDaemonConfig(dir, { port: 1618, hostname: "127.0.0.1" }, "super-secret");
+
+    assert.equal(statSync(configPath).mode & 0o777, 0o644, "daemon.json should be 0644");
+    const config = readFileSync(configPath, "utf-8");
+    assert.ok(!config.includes("super-secret"), "daemon.json must not contain the token");
+    assert.ok(config.includes("1618"), "daemon.json keeps port/hostname");
+
+    assert.equal(statSync(tokenPath).mode & 0o777, 0o600, "daemon-token should be 0600");
+    assert.equal(readFileSync(tokenPath, "utf-8").trim(), "super-secret");
+  });
+
+  it("tightens a pre-existing token file left at loose perms", () => {
+    const dir = mkdtempSync(resolve(tmpdir(), "volute-daemon-cfg-"));
+    const tokenPath = resolve(dir, "daemon-token");
+    writeFileSync(tokenPath, "old", { mode: 0o644 });
+    writeDaemonConfig(dir, { port: 1618, hostname: "127.0.0.1" }, "new-token");
+    assert.equal(statSync(tokenPath).mode & 0o777, 0o600);
   });
 });

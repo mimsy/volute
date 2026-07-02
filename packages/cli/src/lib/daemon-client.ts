@@ -105,6 +105,11 @@ export function resolveDaemonUrl(): string {
   return buildUrl(readDaemonConfig());
 }
 
+/** The bearer token daemonFetch would use: mind token (in a mind) or CLI session (operator). */
+export function getAuthToken(): string | undefined {
+  return process.env.VOLUTE_MIND_TOKEN ?? readCliSession()?.sessionId;
+}
+
 export async function daemonFetch(path: string, options?: RequestInit): Promise<Response> {
   const url = resolveDaemonUrl();
   const headers = new Headers(options?.headers);

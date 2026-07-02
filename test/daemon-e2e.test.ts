@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { type ChildProcess, execFileSync, spawn } from "node:child_process";
-import { existsSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { eq } from "drizzle-orm";
@@ -137,11 +137,20 @@ describe("daemon e2e", { timeout: 120000 }, () => {
     assert.equal(body.ok, true);
   });
 
-  it("daemon.json (holds admin token) is written owner-only (0600)", () => {
+  it("daemon.json is operator-readable (0644) and the admin token is owner-only (0600)", () => {
+    // daemon.json (port/hostname) must be readable by a non-root operator CLI on a
+    // system install; the token lives in a separate 0600 file.
     const daemonJson = resolve(voluteSystemDir(), "daemon.json");
     assert.ok(existsSync(daemonJson), "daemon.json should exist");
-    const mode = statSync(daemonJson).mode & 0o777;
-    assert.equal(mode, 0o600, `expected 0600, got ${mode.toString(8)}`);
+    assert.equal(statSync(daemonJson).mode & 0o777, 0o644, "daemon.json should be 0644");
+    assert.ok(
+      !readFileSync(daemonJson, "utf-8").includes("token"),
+      "daemon.json must not hold the token",
+    );
+
+    const tokenFile = resolve(voluteSystemDir(), "daemon-token");
+    assert.ok(existsSync(tokenFile), "daemon-token should exist");
+    assert.equal(statSync(tokenFile).mode & 0o777, 0o600, "daemon-token should be 0600");
   });
 
   it("unauthenticated request returns 401", async () => {
