@@ -189,13 +189,24 @@ export async function importSkillFromDir(sourceDir: string, author: string): Pro
   // that later execute inside installers' processes, so a cross-author
   // overwrite is a code-execution boundary. Trusted callers pass their own
   // matching author (`volute`, `ext:<id>`), so their re-syncs still succeed.
+  //
+  // Exception: a PROTECTED caller (`volute` / `ext:*`, only reachable from
+  // built-in / extension sync — never from a mind, since a mind named "volute"
+  // is the trusted spirit) may RECLAIM an id currently squatted by a mind. A
+  // mind could otherwise pre-register an id Volute later ships as a built-in,
+  // permanently poisoning it: the sync would throw and fail open, and every
+  // installer would get the squatter's code.
   if (existing && existing.author !== author) {
-    const isProtected = existing.author === "volute" || existing.author.startsWith("ext:");
-    throw new Error(
-      isProtected
-        ? `Cannot overwrite protected skill "${id}" (authored by "${existing.author}")`
-        : `Cannot overwrite skill "${id}" authored by "${existing.author}"`,
-    );
+    const existingProtected = existing.author === "volute" || existing.author.startsWith("ext:");
+    const callerProtected = author === "volute" || author.startsWith("ext:");
+    const reclaim = callerProtected && !existingProtected;
+    if (!reclaim) {
+      throw new Error(
+        existingProtected
+          ? `Cannot overwrite protected skill "${id}" (authored by "${existing.author}")`
+          : `Cannot overwrite skill "${id}" authored by "${existing.author}"`,
+      );
+    }
   }
 
   const destDir = join(sharedSkillsDir(), id);
@@ -338,8 +349,17 @@ export async function installSkill(
         );
       }
     }
-    installHookShims(dir, skillId, hooks);
-    if (bin) installBinShim(dir, skillId, bin);
+    try {
+      installHookShims(dir, skillId, hooks);
+      if (bin) installBinShim(dir, skillId, bin);
+    } catch (e) {
+      // Clean up partial install (copied dir + any hook shims) so a failure
+      // here — e.g. a bin-shim collision with another skill — doesn't leave
+      // destDir behind and wedge every retry on the "already installed" guard.
+      removeHookShims(dir, skillId);
+      rmSync(destDir, { recursive: true });
+      throw e;
+    }
   }
 
   // Read install notes if present

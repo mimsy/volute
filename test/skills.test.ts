@@ -187,6 +187,46 @@ describe("shared skill CRUD", () => {
     assert.equal(row?.author, "volute");
   });
 
+  it("refuses to overwrite a protected extension (ext:*) skill", async () => {
+    const source = createSkillSource("pages");
+    await importSkillFromDir(source, "ext:pages");
+
+    await assert.rejects(
+      () => importSkillFromDir(source, "attacker-mind"),
+      /Cannot overwrite protected skill "pages" \(authored by "ext:pages"\)/,
+    );
+
+    const row = await getSharedSkill("pages");
+    assert.equal(row?.author, "ext:pages");
+  });
+
+  it("lets a protected (volute) sync reclaim an id squatted by a mind", async () => {
+    const source = createSkillSource("memory", "squatter payload");
+    const squat = await importSkillFromDir(source, "squatter-mind");
+    assert.equal(squat.author, "squatter-mind");
+    assert.equal(squat.version, 1);
+
+    // Built-in sync ships the real skill under the same id — must reclaim it,
+    // not fail open and leave the squatter's code in place.
+    const reclaimed = await importSkillFromDir(source, "volute");
+    assert.equal(reclaimed.author, "volute");
+    assert.equal(reclaimed.version, 2);
+
+    const row = await getSharedSkill("memory");
+    assert.equal(row?.author, "volute");
+  });
+
+  it("lets a protected (ext:*) sync reclaim an id squatted by a mind", async () => {
+    const source = createSkillSource("pages");
+    await importSkillFromDir(source, "squatter-mind");
+
+    const reclaimed = await importSkillFromDir(source, "ext:pages");
+    assert.equal(reclaimed.author, "ext:pages");
+
+    const row = await getSharedSkill("pages");
+    assert.equal(row?.author, "ext:pages");
+  });
+
   it("lists shared skills", async () => {
     const source1 = createSkillSource("skill-a");
     const source2 = createSkillSource("skill-b");
@@ -293,6 +333,38 @@ describe("mind skill operations", () => {
     // Verify git commit was made
     const log = await exec("git", ["log", "--oneline", "-1"], { cwd: mindDir });
     assert.ok(log.includes("Install shared skill: shared-skill"));
+  });
+
+  it("cleans up a partial install when a bin shim collides (no wedged retry)", async () => {
+    // Two shared skills that each ship scripts/sync.ts → same bin command "sync".
+    function makeBinSkill(id: string): string {
+      const dir = join(voluteHome(), "tmp-skill-source", id);
+      mkdirSync(join(dir, "scripts"), { recursive: true });
+      writeFileSync(
+        join(dir, "SKILL.md"),
+        `---\nname: ${id}\ndescription: ships a sync command\nmetadata:\n  bin: scripts/sync.ts\n---\n\nContent\n`,
+      );
+      writeFileSync(join(dir, "scripts", "sync.ts"), "console.log('sync');\n");
+      return dir;
+    }
+
+    await importSkillFromDir(makeBinSkill("skill-a"), "author");
+    await importSkillFromDir(makeBinSkill("skill-b"), "author");
+    await installSkill(mindName, mindDir, "skill-a");
+
+    // skill-b's bin command collides with skill-a's → install must fail...
+    await assert.rejects(
+      () => installSkill(mindName, mindDir, "skill-b"),
+      /already provided by skill "skill-a"/,
+    );
+
+    // ...and must NOT leave destDir behind (which would wedge every retry on the
+    // "Skill already installed" guard). Retry hits the same collision error.
+    assert.ok(!existsSync(join(mindDir, "home", ".claude", "skills", "skill-b")));
+    await assert.rejects(
+      () => installSkill(mindName, mindDir, "skill-b"),
+      /already provided by skill "skill-a"/,
+    );
   });
 
   it("uninstalls a skill from a mind", async () => {
