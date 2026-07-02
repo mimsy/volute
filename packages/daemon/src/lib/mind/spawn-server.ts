@@ -1,6 +1,9 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { closeSync, mkdirSync, openSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { isIsolationEnabled, wrapForIsolation } from "./isolation.js";
+import { mindTmpDir } from "./registry.js";
+import { isSandboxEnabled, wrapForSandbox } from "./sandbox.js";
 
 type SpawnResult = { child: ChildProcess; actualPort: number } | null;
 
@@ -16,20 +19,33 @@ function tsxBin(cwd: string): string {
  *
  * In attached mode (default): spawns with piped stdio and detects "listening on :PORT" in output.
  * Use this when the parent stays alive (e.g. within another server process).
+ *
+ * When `mindName` is given, the mind-authored server is wrapped with the same
+ * isolation/sandbox as `startMind` so it never runs in the daemon's trust domain
+ * (`template: "codex"` is excluded from sandbox wrapping, matching startMind).
  */
-export function spawnServer(
+export async function spawnServer(
   cwd: string,
   port: number,
-  options?: { detached?: boolean; logDir?: string },
+  options?: { detached?: boolean; logDir?: string; mindName?: string; template?: string },
 ): Promise<SpawnResult> {
-  if (options?.detached) {
-    return spawnDetached(cwd, port, options.logDir);
+  let cmd = tsxBin(cwd);
+  let args = ["src/server.ts", "--port", String(port)];
+  if (options?.mindName) {
+    if (isIsolationEnabled()) {
+      [cmd, args] = await wrapForIsolation(cmd, args, options.mindName);
+    } else if (isSandboxEnabled() && options.template !== "codex") {
+      [cmd, args] = await wrapForSandbox(cmd, args, cwd, options.mindName, [cwd, mindTmpDir(cwd)]);
+    }
   }
-  return spawnAttached(cwd, port);
+  if (options?.detached) {
+    return spawnDetached(cmd, args, cwd, options.logDir);
+  }
+  return spawnAttached(cmd, args, cwd);
 }
 
-function spawnAttached(cwd: string, port: number): Promise<SpawnResult> {
-  const child = spawn(tsxBin(cwd), ["src/server.ts", "--port", String(port)], {
+function spawnAttached(cmd: string, args: string[], cwd: string): Promise<SpawnResult> {
+  const child = spawn(cmd, args, {
     cwd,
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -64,13 +80,18 @@ function spawnAttached(cwd: string, port: number): Promise<SpawnResult> {
  * Spawn with stdout/stderr redirected to a log file, then detect the port
  * by reading the log. The child survives parent exit and continues logging.
  */
-function spawnDetached(cwd: string, port: number, logDir?: string): Promise<SpawnResult> {
+function spawnDetached(
+  cmd: string,
+  args: string[],
+  cwd: string,
+  logDir?: string,
+): Promise<SpawnResult> {
   const logsDir = logDir ?? resolve(cwd, ".mind", "logs");
   mkdirSync(logsDir, { recursive: true });
   const logPath = resolve(logsDir, "mind.log");
   const logFd = openSync(logPath, "a");
 
-  const child = spawn(tsxBin(cwd), ["src/server.ts", "--port", String(port)], {
+  const child = spawn(cmd, args, {
     cwd,
     stdio: ["ignore", logFd, logFd],
     detached: true,

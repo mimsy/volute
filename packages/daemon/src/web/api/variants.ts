@@ -189,7 +189,11 @@ const app = new Hono<AuthEnv>()
 
     // Verify variant before merge
     if (!body.skipVerify) {
-      const result = await spawnServer(variantEntry.dir, 0, { detached: true });
+      const result = await spawnServer(variantEntry.dir, 0, {
+        detached: true,
+        mindName: variantName,
+        template: variantEntry.template,
+      });
       if (!result) {
         return c.json(
           { error: "Failed to start server for verification. Use skipVerify to skip." },

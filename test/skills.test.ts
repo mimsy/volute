@@ -148,14 +148,83 @@ describe("shared skill CRUD", () => {
     assert.ok(existsSync(destSkillMd));
   });
 
-  it("bumps version on re-import", async () => {
+  it("bumps version on re-import by the same author", async () => {
     const source = createSkillSource("test-skill");
     const first = await importSkillFromDir(source, "mind-a");
     assert.equal(first.version, 1);
 
-    const second = await importSkillFromDir(source, "mind-b");
+    const second = await importSkillFromDir(source, "mind-a");
     assert.equal(second.version, 2);
-    assert.equal(second.author, "mind-b");
+    assert.equal(second.author, "mind-a");
+  });
+
+  it("refuses to overwrite a skill authored by a different principal", async () => {
+    const source = createSkillSource("test-skill");
+    const first = await importSkillFromDir(source, "mind-a");
+    assert.equal(first.author, "mind-a");
+
+    await assert.rejects(
+      () => importSkillFromDir(source, "mind-b"),
+      /Cannot overwrite skill "test-skill" authored by "mind-a"/,
+    );
+
+    // Pool entry is unchanged: same author, same version.
+    const row = await getSharedSkill("test-skill");
+    assert.equal(row?.author, "mind-a");
+    assert.equal(row?.version, 1);
+  });
+
+  it("refuses to overwrite a protected built-in (volute) skill", async () => {
+    const source = createSkillSource("memory");
+    await importSkillFromDir(source, "volute");
+
+    await assert.rejects(
+      () => importSkillFromDir(source, "attacker-mind"),
+      /Cannot overwrite protected skill "memory" \(authored by "volute"\)/,
+    );
+
+    const row = await getSharedSkill("memory");
+    assert.equal(row?.author, "volute");
+  });
+
+  it("refuses to overwrite a protected extension (ext:*) skill", async () => {
+    const source = createSkillSource("pages");
+    await importSkillFromDir(source, "ext:pages");
+
+    await assert.rejects(
+      () => importSkillFromDir(source, "attacker-mind"),
+      /Cannot overwrite protected skill "pages" \(authored by "ext:pages"\)/,
+    );
+
+    const row = await getSharedSkill("pages");
+    assert.equal(row?.author, "ext:pages");
+  });
+
+  it("lets a protected (volute) sync reclaim an id squatted by a mind", async () => {
+    const source = createSkillSource("memory", "squatter payload");
+    const squat = await importSkillFromDir(source, "squatter-mind");
+    assert.equal(squat.author, "squatter-mind");
+    assert.equal(squat.version, 1);
+
+    // Built-in sync ships the real skill under the same id — must reclaim it,
+    // not fail open and leave the squatter's code in place.
+    const reclaimed = await importSkillFromDir(source, "volute");
+    assert.equal(reclaimed.author, "volute");
+    assert.equal(reclaimed.version, 2);
+
+    const row = await getSharedSkill("memory");
+    assert.equal(row?.author, "volute");
+  });
+
+  it("lets a protected (ext:*) sync reclaim an id squatted by a mind", async () => {
+    const source = createSkillSource("pages");
+    await importSkillFromDir(source, "squatter-mind");
+
+    const reclaimed = await importSkillFromDir(source, "ext:pages");
+    assert.equal(reclaimed.author, "ext:pages");
+
+    const row = await getSharedSkill("pages");
+    assert.equal(row?.author, "ext:pages");
   });
 
   it("lists shared skills", async () => {
@@ -266,6 +335,38 @@ describe("mind skill operations", () => {
     assert.ok(log.includes("Install shared skill: shared-skill"));
   });
 
+  it("cleans up a partial install when a bin shim collides (no wedged retry)", async () => {
+    // Two shared skills that each ship scripts/sync.ts → same bin command "sync".
+    function makeBinSkill(id: string): string {
+      const dir = join(voluteHome(), "tmp-skill-source", id);
+      mkdirSync(join(dir, "scripts"), { recursive: true });
+      writeFileSync(
+        join(dir, "SKILL.md"),
+        `---\nname: ${id}\ndescription: ships a sync command\nmetadata:\n  bin: scripts/sync.ts\n---\n\nContent\n`,
+      );
+      writeFileSync(join(dir, "scripts", "sync.ts"), "console.log('sync');\n");
+      return dir;
+    }
+
+    await importSkillFromDir(makeBinSkill("skill-a"), "author");
+    await importSkillFromDir(makeBinSkill("skill-b"), "author");
+    await installSkill(mindName, mindDir, "skill-a");
+
+    // skill-b's bin command collides with skill-a's → install must fail...
+    await assert.rejects(
+      () => installSkill(mindName, mindDir, "skill-b"),
+      /already provided by skill "skill-a"/,
+    );
+
+    // ...and must NOT leave destDir behind (which would wedge every retry on the
+    // "Skill already installed" guard). Retry hits the same collision error.
+    assert.ok(!existsSync(join(mindDir, "home", ".claude", "skills", "skill-b")));
+    await assert.rejects(
+      () => installSkill(mindName, mindDir, "skill-b"),
+      /already provided by skill "skill-a"/,
+    );
+  });
+
   it("uninstalls a skill from a mind", async () => {
     const source = createSkillSource("shared-skill");
     await importSkillFromDir(source, "author");
@@ -298,6 +399,31 @@ describe("mind skill operations", () => {
     const shared = await getSharedSkill("my-skill");
     assert.ok(shared);
     assert.equal(shared.name, "My Custom Skill");
+  });
+
+  it("refuses to publish over a skill authored by another mind", async () => {
+    // A different mind already published this pool id.
+    const otherSource = createSkillSource("contested-skill", "Original");
+    await importSkillFromDir(otherSource, "other-mind");
+
+    // This mind ships its own skill under the same id and tries to publish it.
+    const skillDir = join(mindDir, "home", ".claude", "skills", "contested-skill");
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(
+      join(skillDir, "SKILL.md"),
+      "---\nname: Hijacked\ndescription: attacker payload\n---\n\nContent\n",
+    );
+
+    await assert.rejects(
+      () => publishSkill(mindName, mindDir, "contested-skill"),
+      /Cannot overwrite skill "contested-skill" authored by "other-mind"/,
+    );
+
+    // Pool entry is unchanged.
+    const shared = await getSharedSkill("contested-skill");
+    assert.equal(shared?.author, "other-mind");
+    assert.equal(shared?.description, "Original");
+    assert.equal(shared?.version, 1);
   });
 
   it("lists mind skills with update status", async () => {
@@ -607,6 +733,27 @@ describe("hook shim management", () => {
       "shim should reference the skill script",
     );
     assert.ok(content.includes('"$@"'), "shim should pass through arguments");
+
+    rmSync(dir, { recursive: true });
+  });
+
+  it("refuses to overwrite a bin shim owned by a different skill", () => {
+    const dir = join(voluteHome(), "test-bin-collision");
+    mkdirSync(join(dir, "home", ".local", "bin"), { recursive: true });
+
+    // Both skills ship scripts/sync.ts, which derive the same command name.
+    installBinShim(dir, "skill-a", "scripts/sync.ts");
+    assert.throws(
+      () => installBinShim(dir, "skill-b", "scripts/sync.ts"),
+      /already provided by skill "skill-a"/,
+    );
+
+    // The original shim is untouched and still points at skill-a.
+    const content = readFileSync(join(dir, "home", ".local", "bin", "sync"), "utf-8");
+    assert.ok(content.includes(".claude/skills/skill-a/scripts/sync.ts"));
+
+    // Re-installing the same skill's shim is allowed (update path).
+    installBinShim(dir, "skill-a", "scripts/sync.ts");
 
     rmSync(dir, { recursive: true });
   });

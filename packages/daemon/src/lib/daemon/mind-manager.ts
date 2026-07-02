@@ -6,7 +6,14 @@ import { getAiConfig, resolveApiKey } from "../ai-service.js";
 import { sendSystemMessageDirect } from "../chat/system-chat.js";
 import { loadMergedEnv } from "../config/env.js";
 import { chownMindDir, isIsolationEnabled, wrapForIsolation } from "../mind/isolation.js";
-import { findMind, mindDir, setMindRunning, stateDir, voluteSystemDir } from "../mind/registry.js";
+import {
+  findMind,
+  mindDir,
+  mindTmpDir,
+  setMindRunning,
+  stateDir,
+  voluteSystemDir,
+} from "../mind/registry.js";
 import { isSandboxEnabled, wrapForSandbox } from "../mind/sandbox.js";
 import { getPrompt } from "../prompts.js";
 import { clearJsonMap, loadJsonMap, saveJsonMap } from "../util/json-state.js";
@@ -111,10 +118,15 @@ export class MindManager {
     const logsDir = resolve(mindStateDir, "logs");
     mkdirSync(logsDir, { recursive: true });
 
+    // Per-mind tmp dir so minds never share a writable /tmp (a cross-mind channel).
+    const mindTmp = mindTmpDir(dir);
+    mkdirSync(mindTmp, { recursive: true });
+
     // State dir is created by root — chown so the mind user can write to it.
     if (isIsolationEnabled()) {
       try {
         chownMindDir(mindStateDir, baseName);
+        chownMindDir(mindTmp, baseName);
       } catch (err) {
         throw new Error(
           `Cannot start mind ${name}: failed to set ownership on state directory ${mindStateDir}: ${err instanceof Error ? err.message : err}`,
@@ -136,6 +148,7 @@ export class MindManager {
       VOLUTE_MIND_DIR: dir,
       VOLUTE_MIND_PORT: String(port),
       VOLUTE_DAEMON_TOKEN: mindToken,
+      TMPDIR: mindTmp,
       PATH: `${mindLocalBin}:${currentPath}`,
       // Strip CLAUDECODE so the Agent SDK can spawn Claude Code subprocesses
       CLAUDECODE: undefined,
@@ -309,7 +322,7 @@ export class MindManager {
       [spawnCmd, spawnArgs] = await wrapForSandbox(baseBin, baseArgs, dir, name, [
         dir,
         mindStateDir,
-        "/tmp",
+        mindTmp,
       ]);
     } else {
       spawnCmd = baseBin;
