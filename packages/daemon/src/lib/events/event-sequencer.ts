@@ -26,15 +26,35 @@ export function bufferEvent(data: SSEEvent): number {
   return id;
 }
 
-export function getEventsSince(sinceId: number): BufferedEvent[] {
+/** Allocate an event ID without buffering (for connection-specific events). */
+export function nextEventId(): number {
+  return nextId++;
+}
+
+/**
+ * Replay buffered events after `sinceId` that the caller is entitled to see.
+ * The buffer is global, so audience must be enforced here:
+ * - Snapshot events are connection-specific and never replayed to anyone.
+ * - Conversation events are only replayed to participants of that conversation.
+ * - Activity events are broadcast to all connections (matching the live path).
+ */
+export function getEventsSince(
+  sinceId: number,
+  allowedConversationIds: Set<string>,
+): BufferedEvent[] {
   const now = Date.now();
 
   // Find the index of the first event after sinceId
   const startIdx = buffer.findIndex((e) => e.id > sinceId);
   if (startIdx === -1) return [];
 
-  // Return events that aren't too old
-  return buffer.slice(startIdx).filter((e) => now - e.timestamp < MAX_AGE_MS);
+  return buffer.slice(startIdx).filter((e) => {
+    if (now - e.timestamp >= MAX_AGE_MS) return false;
+    const data = e.data;
+    if (data.event === "snapshot") return false;
+    if (data.event === "conversation") return allowedConversationIds.has(data.conversationId);
+    return true;
+  });
 }
 
 /** Reset state (for testing). */

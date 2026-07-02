@@ -3,12 +3,17 @@ import { type ChildProcess, execFileSync, spawn } from "node:child_process";
 import { existsSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { after, before, describe, it } from "node:test";
+import { eq } from "drizzle-orm";
+import { getOrCreateMindUser } from "../packages/daemon/src/lib/auth.js";
+import { getDb } from "../packages/daemon/src/lib/db.js";
 import {
   findMind,
   mindDir,
   removeMind,
   voluteSystemDir,
 } from "../packages/daemon/src/lib/mind/registry.js";
+import { activity, mindHistory, summaries, turns } from "../packages/daemon/src/lib/schema.js";
+import { createSession } from "../packages/daemon/src/web/middleware/auth.js";
 
 // Strip GIT_* env vars that hook runners (e.g. pre-push) inject, so that
 // spawned processes (like `volute create` which runs `git init`) don't
@@ -1274,6 +1279,115 @@ describe("daemon e2e", { timeout: 120000 }, () => {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({}),
+    });
+  });
+
+  describe("history API cross-tenant authorization", () => {
+    const ALICE = "e2e-hist-alice";
+    const BOB = "e2e-hist-bob";
+    const BOB_SECRET = "BOB-PRIVATE-DM-SECRET";
+    const ALICE_SECRET = "ALICE-PRIVATE-DM-SECRET";
+    let aliceSession: string;
+    let bobSummaryId: number;
+
+    // Request as mind Alice using a DB-backed session (the daemon shares this
+    // test's VOLUTE_HOME, so a session created here resolves to Alice's
+    // non-admin mind user inside the daemon).
+    function aliceRequest(path: string): Promise<Response> {
+      return fetch(`${BASE_URL}${path}`, {
+        headers: { Authorization: `Bearer ${aliceSession}`, Origin: BASE_URL },
+      });
+    }
+
+    before(async () => {
+      const db = await getDb();
+      const alice = await getOrCreateMindUser(ALICE);
+      await getOrCreateMindUser(BOB);
+      aliceSession = await createSession(alice.id);
+
+      // Seed a turn + private DM content + summary + activity for each mind.
+      for (const [mind, secret] of [
+        [ALICE, ALICE_SECRET],
+        [BOB, BOB_SECRET],
+      ] as const) {
+        const turnId = `${mind}-turn-1`;
+        await db.insert(turns).values({ id: turnId, mind, status: "done" });
+        await db.insert(mindHistory).values({
+          mind,
+          channel: "@partner",
+          sender: "partner",
+          type: "inbound",
+          content: secret,
+          turn_id: turnId,
+        });
+        await db
+          .insert(summaries)
+          .values({ mind, period: "turn", period_key: turnId, content: `${secret} summary` });
+        await db.insert(activity).values({ type: "message", mind, summary: `${secret} activity` });
+      }
+
+      const bobSummary = await db
+        .select({ id: summaries.id })
+        .from(summaries)
+        .where(eq(summaries.mind, BOB))
+        .get();
+      bobSummaryId = bobSummary!.id;
+    });
+
+    it("/turns ignores ?mind= for a mind principal and never leaks another mind", async () => {
+      const res = await aliceRequest(`/api/v1/history/turns?mind=${BOB}`);
+      assert.equal(res.status, 200);
+      const body = (await res.json()) as Array<Record<string, unknown>>;
+      const text = JSON.stringify(body);
+      assert.ok(!text.includes(BOB_SECRET), "Alice must not see Bob's private DM content");
+      assert.ok(
+        body.every((t) => t.mind === ALICE),
+        "Alice's turn query must only return Alice's turns",
+      );
+      // Alice still sees her own turn (filter forced to self, not denied).
+      assert.ok(
+        body.some((t) => t.id === `${ALICE}-turn-1`),
+        "Alice should see her own turn",
+      );
+    });
+
+    it("/summaries ignores ?mind= for a mind principal", async () => {
+      const res = await aliceRequest(`/api/v1/history/summaries?mind=${BOB}&period=turn`);
+      assert.equal(res.status, 200);
+      const body = (await res.json()) as Array<Record<string, unknown>>;
+      assert.ok(
+        body.every((s) => s.mind === ALICE),
+        "Alice must only receive her own summaries",
+      );
+      assert.ok(!JSON.stringify(body).includes(BOB_SECRET));
+    });
+
+    it("/summaries by ids cannot reach another mind's summary", async () => {
+      const res = await aliceRequest(`/api/v1/history/summaries?ids=${bobSummaryId}`);
+      assert.equal(res.status, 200);
+      const body = (await res.json()) as Array<Record<string, unknown>>;
+      assert.equal(body.length, 0, "Alice must not fetch Bob's summary by id");
+    });
+
+    it("/activity ignores ?mind= for a mind principal", async () => {
+      const res = await aliceRequest(`/api/v1/history/activity?mind=${BOB}`);
+      assert.equal(res.status, 200);
+      const body = (await res.json()) as Array<Record<string, unknown>>;
+      assert.ok(
+        body.every((a) => a.mind === ALICE),
+        "Alice must only receive her own activity",
+      );
+      assert.ok(!JSON.stringify(body).includes(BOB_SECRET));
+    });
+
+    it("admin/daemon token may still query another mind (behavior preserved)", async () => {
+      const res = await daemonRequest(`/api/v1/history/turns?mind=${BOB}`);
+      assert.equal(res.status, 200);
+      const body = (await res.json()) as Array<Record<string, unknown>>;
+      assert.ok(
+        body.some((t) => t.mind === BOB),
+        "Admin should still be able to read Bob's turns",
+      );
     });
   });
 

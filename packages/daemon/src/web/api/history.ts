@@ -1,7 +1,9 @@
 import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
+import type { Context } from "hono";
 import { Hono } from "hono";
 import { getDb } from "../../lib/db.js";
 import { subscribeAll, subscribe as subscribeMindEvent } from "../../lib/events/mind-events.js";
+import { getBaseName } from "../../lib/mind/registry.js";
 import {
   activity,
   channels,
@@ -13,10 +15,25 @@ import {
   users,
 } from "../../lib/schema.js";
 import log from "../../lib/util/logger.js";
+import type { AuthEnv } from "../middleware/auth.js";
 
-const history = new Hono()
+/**
+ * Resolve the mind whose history the caller may read. Minds are untrusted:
+ * a non-admin principal may only see its own history, so the client-supplied
+ * `?mind=` param is ignored and forced to the caller's own (base) name.
+ * Admin/system callers keep the requested filter.
+ */
+async function resolveMindFilter(c: Context<AuthEnv>): Promise<string | undefined> {
+  const user = c.get("user");
+  if (user.role === "admin" || user.role === "system") {
+    return c.req.query("mind") ?? undefined;
+  }
+  return getBaseName(user.username);
+}
+
+const history = new Hono<AuthEnv>()
   .get("/turns", async (c) => {
-    const mindFilter = c.req.query("mind");
+    const mindFilter = await resolveMindFilter(c);
     const turnIdFilter = c.req.query("turnId");
     const turnIdsFilter = c.req.query("turnIds");
     const limit = Math.min(Math.max(parseInt(c.req.query("limit") ?? "50", 10) || 50, 1), 200);
@@ -353,7 +370,7 @@ const history = new Hono()
     return c.json(result);
   })
   .get("/events", async (c) => {
-    const mindFilter = c.req.query("mind");
+    const mindFilter = await resolveMindFilter(c);
 
     const stream = new ReadableStream({
       start(controller) {
@@ -413,7 +430,10 @@ const history = new Hono()
     });
   })
   .get("/summaries", async (c) => {
-    const mind = c.req.query("mind") ?? "_system";
+    const user = c.get("user");
+    const privileged = user.role === "admin" || user.role === "system";
+    // Non-admin callers can only read their own summaries.
+    const mind = privileged ? (c.req.query("mind") ?? "_system") : await getBaseName(user.username);
     const period = c.req.query("period");
     const ids = c.req.query("ids"); // comma-separated summary IDs
     const from = c.req.query("from");
@@ -428,7 +448,13 @@ const history = new Hono()
         .map((s) => parseInt(s, 10))
         .filter((n) => !Number.isNaN(n));
       if (idList.length === 0) return c.json([]);
-      const rows = await db.select().from(summaries).where(inArray(summaries.id, idList));
+      // Non-admin callers are still constrained to their own mind's summaries.
+      const idConditions = [inArray(summaries.id, idList)];
+      if (!privileged) idConditions.push(eq(summaries.mind, mind));
+      const rows = await db
+        .select()
+        .from(summaries)
+        .where(and(...idConditions));
       const result = rows.map((r) => {
         let metadata: Record<string, unknown> | null = null;
         if (r.metadata) {
@@ -483,7 +509,7 @@ const history = new Hono()
     return c.json(result);
   })
   .get("/activity", async (c) => {
-    const mind = c.req.query("mind");
+    const mind = await resolveMindFilter(c);
     const from = c.req.query("from");
     const to = c.req.query("to");
     const limit = Math.min(Math.max(parseInt(c.req.query("limit") ?? "100", 10) || 100, 1), 500);

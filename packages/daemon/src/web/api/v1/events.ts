@@ -13,7 +13,7 @@ import {
   getUnreadCounts,
   listConversationsWithParticipants,
 } from "../../../lib/events/conversations.js";
-import { bufferEvent, getEventsSince } from "../../../lib/events/event-sequencer.js";
+import { bufferEvent, getEventsSince, nextEventId } from "../../../lib/events/event-sequencer.js";
 import { getActiveMinds } from "../../../lib/events/mind-activity-tracker.js";
 import { activity } from "../../../lib/schema.js";
 import log from "../../../lib/util/logger.js";
@@ -32,9 +32,28 @@ const app = new Hono<AuthEnv>().use("*", authMiddleware).get("/", async (c) => {
     }
 
     try {
-      // If reconnecting with a valid sinceId, replay buffered events
+      // Fetch the caller's conversations up front — needed for replay audience
+      // filtering, the snapshot, and the live conversation subscriptions.
+      let conversations: any[] = [];
+      try {
+        conversations = await listConversationsWithParticipants(user.id);
+        if (conversations.length > 0) {
+          const convIds = conversations.map((c: any) => c.id);
+          const unreads = await getUnreadCounts(user.id, convIds);
+          for (const conv of conversations) {
+            conv.unreadCount = unreads[conv.id] ?? 0;
+          }
+        }
+      } catch (err) {
+        log.error("[v1-events] failed to fetch conversations", log.errorData(err));
+      }
+      const allowedConversationIds = new Set<string>(conversations.map((c: any) => c.id));
+
+      // If reconnecting with a valid sinceId, replay only the buffered events
+      // the caller is entitled to (their own conversation events + global
+      // activity). Other users' events and per-connect snapshots are filtered out.
       if (sinceId > 0) {
-        const missed = getEventsSince(sinceId);
+        const missed = getEventsSince(sinceId, allowedConversationIds);
         for (const event of missed) {
           await stream.writeSSE({
             id: String(event.id),
@@ -60,20 +79,6 @@ const app = new Hono<AuthEnv>().use("*", authMiddleware).get("/", async (c) => {
         log.error("[v1-events] failed to fetch recent activity", log.errorData(err));
       }
 
-      let conversations: any[] = [];
-      try {
-        conversations = await listConversationsWithParticipants(user.id);
-        if (conversations.length > 0) {
-          const convIds = conversations.map((c: any) => c.id);
-          const unreads = await getUnreadCounts(user.id, convIds);
-          for (const conv of conversations) {
-            conv.unreadCount = unreads[conv.id] ?? 0;
-          }
-        }
-      } catch (err) {
-        log.error("[v1-events] failed to fetch conversations", log.errorData(err));
-      }
-
       const snapshotData = {
         event: "snapshot" as const,
         activity: recentActivity,
@@ -82,7 +87,10 @@ const app = new Hono<AuthEnv>().use("*", authMiddleware).get("/", async (c) => {
         onlineBrains: getOnlineBrains(),
       };
 
-      const snapshotId = bufferEvent(snapshotData);
+      // The snapshot is connection-specific (this user's conversations, unread
+      // counts, etc.) — allocate an ID but do NOT buffer it, so it can never be
+      // replayed to another connection.
+      const snapshotId = nextEventId();
 
       await stream.writeSSE({
         id: String(snapshotId),
