@@ -141,18 +141,29 @@ export const deliveryQueue = sqliteTable(
   "delivery_queue",
   {
     id: integer("id").primaryKey({ autoIncrement: true }),
+    // Keying/cleanup/dedup key: always the base (parent) name, so an insert under a
+    // variant name and the id-scoped cleanup share a key.
     mind: text("mind").notNull(),
+    // Original delivery target — may be a variant name. Used to resolve the port on
+    // redrive so a variant's stranded message is re-delivered to the variant, not the
+    // parent. Null on legacy rows → callers fall back to `mind`.
+    target_mind: text("target_mind"),
     session: text("session").notNull(),
     channel: text("channel"),
     sender: text("sender"),
     status: text("status").notNull().default("pending"),
     payload: text("payload").notNull(),
+    // Redrive bookkeeping: how many delivery attempts have been made, and the
+    // earliest time the row is eligible for a retry (null = deliver ASAP).
+    attempts: integer("attempts").notNull().default(0),
+    next_attempt_at: text("next_attempt_at"),
     created_at: text("created_at").notNull().default(sql`(datetime('now'))`),
   },
   (table) => [
     index("idx_delivery_queue_mind_session").on(table.mind, table.session),
     index("idx_delivery_queue_mind_status").on(table.mind, table.status),
     index("idx_delivery_queue_status").on(table.status),
+    index("idx_delivery_queue_status_next").on(table.status, table.next_attempt_at),
   ],
 );
 

@@ -798,3 +798,8 @@ export function getMindManager(): MindManager {
   if (!instance) throw new Error("MindManager not initialized — call initMindManager() first");
   return instance;
 }
+
+/** Like getMindManager but returns null instead of throwing when uninitialized. */
+export function tryGetMindManager(): MindManager | null {
+  return instance;
+}

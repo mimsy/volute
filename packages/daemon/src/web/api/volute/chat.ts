@@ -6,11 +6,9 @@ import { getOrCreateMindUser, getOrCreateSystemUser } from "../../../lib/auth.js
 import { routeOutboundBridge } from "../../../lib/bridges/bridge-outbound.js";
 import { formatFileSize, stageFile, validateFilePath } from "../../../lib/chat/file-sharing.js";
 import { generateSystemReply } from "../../../lib/chat/system-chat.js";
-import { getTypingMap } from "../../../lib/chat/typing.js";
-import { getMindManager } from "../../../lib/daemon/mind-manager.js";
-import { getSleepManagerIfReady } from "../../../lib/daemon/sleep-manager.js";
 import { extractTextContent } from "../../../lib/delivery/delivery-router.js";
-import { deliverMessage, recordOutbound } from "../../../lib/delivery/message-delivery.js";
+import { fanOutToMinds } from "../../../lib/delivery/fan-out.js";
+import { recordOutbound } from "../../../lib/delivery/message-delivery.js";
 import { subscribe } from "../../../lib/events/conversation-events.js";
 import {
   addMessage,
@@ -29,72 +27,6 @@ import { fixModelEscapes } from "../../../lib/util/fix-model-escapes.js";
 import log from "../../../lib/util/logger.js";
 import { buildVoluteSlug } from "../../../lib/util/slugify.js";
 import type { AuthEnv } from "../../middleware/auth.js";
-
-type SlugOpts = Parameters<typeof buildVoluteSlug>[0];
-
-async function fanOutToMinds(opts: {
-  conversationId: string;
-  contentBlocks: ContentBlock[];
-  senderName: string;
-  participants: Awaited<ReturnType<typeof getParticipants>>;
-  /** Override isDM (defaults to participants.length === 2) */
-  isDM?: boolean;
-  /** Extra fields passed to buildVoluteSlug (e.g. convType, convName) */
-  slugExtra?: Partial<SlugOpts>;
-  /** Maps mind username to delivery target name (for variant-aware targeting) */
-  targetName?: (username: string) => string;
-}): Promise<void> {
-  const participants = opts.participants;
-  const mindParticipants = participants.filter(
-    (p) => p.userType === "mind" || p.userType === "system",
-  );
-  const participantNames = participants.map((p) => p.username);
-  const isDM = opts.isDM ?? participants.length === 2;
-
-  const manager = getMindManager();
-  const sm = getSleepManagerIfReady();
-
-  // Include running minds AND sleeping minds (sleeping ones get routed through sleep queue)
-  const targetMinds = mindParticipants
-    .map((ap) => {
-      const key = opts.targetName ? opts.targetName(ap.username) : ap.username;
-      if (manager.isRunning(key) || sm?.isSleeping(ap.username)) return ap.username;
-      return null;
-    })
-    .filter((n): n is string => n !== null && n !== opts.senderName);
-
-  function slugForMind(mindUsername: string): string {
-    return buildVoluteSlug({
-      participants,
-      mindUsername,
-      conversationId: opts.conversationId,
-      ...opts.slugExtra,
-    });
-  }
-
-  // Fire-and-forget: deliver to all target minds (running or sleeping)
-  for (const mindName of targetMinds) {
-    const target = opts.targetName ? opts.targetName(mindName) : mindName;
-    const channel = slugForMind(mindName);
-    const typingMap = getTypingMap();
-    // Filter typing to only participants of this conversation (slugs are shared across DMs)
-    const currentlyTyping = typingMap
-      .get(channel)
-      .filter((name) => participantNames.includes(name));
-    deliverMessage(target, {
-      content: opts.contentBlocks,
-      channel,
-      conversationId: opts.conversationId,
-      sender: opts.senderName,
-      participants: participantNames,
-      participantCount: participants.length,
-      isDM,
-      ...(currentlyTyping.length > 0 ? { typing: currentlyTyping } : {}),
-    }).catch((err) => {
-      log.warn(`fan-out delivery failed for ${target}`, log.errorData(err));
-    });
-  }
-}
 
 const fileSchema = z.object({
   filename: z.string(),
@@ -336,6 +268,7 @@ export const unifiedChatApp = new Hono<AuthEnv>().post(
       conversationId: conversationId!,
       contentBlocks,
       senderName,
+      senderIsMind: !!senderIsMind,
       participants,
       isDM,
       slugExtra: { convType: conv.type as "dm" | "channel", convName },

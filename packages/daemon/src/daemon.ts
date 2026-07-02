@@ -333,10 +333,12 @@ export async function startDaemon(opts: {
     log.warn("failed to initialize version notifications", log.errorData(err));
   }
 
-  // Restore delivery queue from DB (non-blocking)
+  // Restore delivery queue from DB (non-blocking) and start the periodic redrive
+  // sweep so stranded/failed deliveries are retried at-least-once.
   delivery.restoreFromDb().catch((err) => {
     log.warn("failed to restore delivery queue", log.errorData(err));
   });
+  delivery.startRedrive();
 
   // Clean up expired sessions and old log entries (non-blocking)
   cleanExpiredSessions().catch((err) => {

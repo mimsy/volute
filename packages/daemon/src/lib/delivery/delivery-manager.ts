@@ -1,7 +1,8 @@
 import { readFile, realpath } from "node:fs/promises";
 import { extname, resolve } from "node:path";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { getTypingMap, publishTypingForChannels } from "../chat/typing.js";
+import { tryGetMindManager } from "../daemon/mind-manager.js";
 import { getDb } from "../db.js";
 import { getParticipants } from "../events/conversations.js";
 import { onMindEvent } from "../events/mind-activity-tracker.js";
@@ -19,12 +20,19 @@ import {
   type ResolvedSessionConfig,
   resolveDeliveryMode,
   resolveRoute,
+  setRoutesChangeListener,
 } from "./delivery-router.js";
 import { tagRecentInbound } from "./message-delivery.js";
 
 const dlog = log.child("delivery-manager");
 
 const MAX_BATCH_SIZE = 50;
+
+// --- Redrive / retry tuning ---
+const REDRIVE_INTERVAL_MS = 15_000;
+const RETRY_BASE_MS = 5_000;
+const RETRY_MAX_MS = 5 * 60_000;
+const REDRIVE_BATCH_LIMIT = 200;
 
 const mentionRegexCache = new Map<string, RegExp>();
 
@@ -60,6 +68,8 @@ type QueuedMessage = {
   channel: string;
   sender: string | null;
   createdAt: number;
+  /** delivery_queue row id backing this message (source of truth). */
+  queueId?: number;
 };
 
 // --- Delivery Manager ---
@@ -67,6 +77,39 @@ type QueuedMessage = {
 export class DeliveryManager {
   private sessionStates = new Map<string, Map<string, SessionState>>();
   private batchBuffers = new Map<string, BatchBuffer>();
+
+  /**
+   * delivery_queue row ids currently owned in-memory — either buffered in a batch
+   * buffer or actively being POSTed. The redrive sweep skips these so it never
+   * double-delivers a row that the normal path is already handling.
+   */
+  private inFlight = new Set<number>();
+
+  /**
+   * Per-`(baseName:session)` promise chain that serializes POSTs so two rapid
+   * messages to the same session can't be reordered by resolvePort/enrichment latency.
+   */
+  private drainChains = new Map<string, Promise<unknown>>();
+
+  private redriveTimer: ReturnType<typeof setInterval> | null = null;
+
+  /** Predicate for whether a mind is up; overridable in tests. */
+  private isMindRunning: (baseName: string) => boolean = (name) =>
+    tryGetMindManager()?.isRunning(name) ?? false;
+
+  constructor() {
+    // Release gated messages when a mind's routes.json changes.
+    setRoutesChangeListener((mind) => {
+      this.releaseGated(mind).catch((err) =>
+        dlog.warn(`failed to release gated messages for ${mind}`, log.errorData(err)),
+      );
+    });
+  }
+
+  /** Test seam: override the mind-running predicate. */
+  setRunningCheck(fn: (baseName: string) => boolean): void {
+    this.isMindRunning = fn;
+  }
 
   // --- Public API ---
 
@@ -104,7 +147,8 @@ export class DeliveryManager {
         await this.enqueueBatch(mindName, sessionName, payload, sessionConfig);
         return { routed: true, session: sessionName, destination: "mind", mode: "batch" };
       }
-      await this.deliverToMind(mindName, sessionName, payload, sessionConfig);
+      const queueId = await this.persistToQueue(mindName, sessionName, payload);
+      await this.deliverToMind(mindName, sessionName, payload, sessionConfig, queueId);
       return { routed: true, session: sessionName, destination: "mind", mode: "immediate" };
     }
 
@@ -170,8 +214,10 @@ export class DeliveryManager {
       return { routed: true, session: sessionName, destination: "mind", mode: "batch" };
     }
 
-    // Immediate delivery
-    await this.deliverToMind(mindName, sessionName, payload, sessionConfig);
+    // Immediate delivery — persist to the queue BEFORE the POST so a crash or a
+    // failed POST leaves an at-least-once record the redrive loop can re-deliver.
+    const queueId = await this.persistToQueue(mindName, sessionName, payload);
+    await this.deliverToMind(mindName, sessionName, payload, sessionConfig, queueId);
     return { routed: true, session: sessionName, destination: "mind", mode: "immediate" };
   }
 
@@ -199,49 +245,147 @@ export class DeliveryManager {
   }
 
   /**
-   * Restore queued messages from DB on daemon restart.
+   * Restore queued messages from DB on daemon restart — a single redrive pass.
+   * All accepted deliveries are persisted to delivery_queue before their POST and
+   * only deleted on mind-ack, so pending rows are exactly the undelivered messages.
    */
   async restoreFromDb(): Promise<void> {
+    await this.redrive();
+  }
+
+  /** Start the periodic redrive sweep (idempotent). */
+  startRedrive(): void {
+    if (this.redriveTimer) return;
+    this.redriveTimer = setInterval(() => {
+      this.redrive().catch((err) => dlog.warn("redrive sweep failed", log.errorData(err)));
+    }, REDRIVE_INTERVAL_MS);
+    this.redriveTimer.unref();
+  }
+
+  /**
+   * Re-read pending delivery_queue rows that are eligible (past their backoff window)
+   * and re-deliver them through the normal path. Rows already owned in-memory
+   * (`inFlight`) and minds that are down are skipped so we never hot-loop or double-send.
+   */
+  async redrive(): Promise<void> {
+    let rows: (typeof deliveryQueue.$inferSelect)[];
     try {
       const db = await getDb();
-      const rows = await db.select().from(deliveryQueue).where(eq(deliveryQueue.status, "pending"));
-
-      for (const row of rows) {
-        let payload: DeliveryPayload;
-        try {
-          payload = JSON.parse(row.payload) as DeliveryPayload;
-        } catch (parseErr) {
-          dlog.warn(
-            `corrupt payload in delivery queue row ${row.id}, skipping`,
-            log.errorData(parseErr),
-          );
-          continue;
-        }
-        const config = getRoutingConfig(row.mind);
-        const sessionConfig = resolveDeliveryMode(config, row.session);
-
-        if (sessionConfig.delivery.mode === "batch") {
-          this.addToBatchBuffer(row.mind, row.session, payload, sessionConfig);
-        } else {
-          // Immediate messages that were queued but not delivered — delete first
-          // to prevent re-delivery on daemon crash during replay
-          try {
-            await db.delete(deliveryQueue).where(eq(deliveryQueue.id, row.id));
-          } catch (err) {
-            dlog.warn(`failed to delete queue row ${row.id} for ${row.mind}`, log.errorData(err));
-          }
-          this.deliverToMind(row.mind, row.session, payload, sessionConfig).catch((err) => {
-            dlog.warn(`failed to restore delivery for ${row.mind}`, log.errorData(err));
-          });
-        }
-      }
-
-      if (rows.length > 0) {
-        dlog.info(`restored ${rows.length} queued messages from DB`);
-      }
+      rows = await db
+        .select()
+        .from(deliveryQueue)
+        .where(
+          and(
+            eq(deliveryQueue.status, "pending"),
+            sql`(${deliveryQueue.next_attempt_at} IS NULL OR ${deliveryQueue.next_attempt_at} <= datetime('now'))`,
+          ),
+        )
+        .orderBy(deliveryQueue.id)
+        .limit(REDRIVE_BATCH_LIMIT);
     } catch (err) {
-      dlog.warn("failed to restore delivery queue from DB", log.errorData(err));
+      dlog.warn("failed to read delivery queue for redrive", log.errorData(err));
+      return;
     }
+
+    let redriven = 0;
+    for (const row of rows) {
+      if (this.inFlight.has(row.id)) continue;
+      if (!this.isMindRunning(row.mind)) continue;
+
+      let payload: DeliveryPayload;
+      try {
+        payload = JSON.parse(row.payload) as DeliveryPayload;
+      } catch (parseErr) {
+        dlog.warn(
+          `corrupt payload in delivery queue row ${row.id}, dropping`,
+          log.errorData(parseErr),
+        );
+        await this.deleteQueueRows([row.id]);
+        continue;
+      }
+
+      const config = getRoutingConfig(row.mind);
+      const sessionConfig = resolveDeliveryMode(config, row.session);
+
+      // Resolve delivery from the original target (may be a variant) — the `mind`
+      // column is the base name, used only for keying/cleanup. Falls back to `mind`
+      // for legacy rows with no recorded target.
+      const target = row.target_mind ?? row.mind;
+
+      if (sessionConfig.delivery.mode === "batch") {
+        this.inFlight.add(row.id);
+        this.addToBatchBuffer(target, row.session, sessionConfig, {
+          payload,
+          channel: payload.channel,
+          sender: payload.sender ?? null,
+          createdAt: Date.now(),
+          queueId: row.id,
+        });
+      } else {
+        this.deliverToMind(target, row.session, payload, sessionConfig, row.id).catch((err) => {
+          dlog.warn(`failed to redrive delivery for ${target}`, log.errorData(err));
+        });
+      }
+      redriven++;
+    }
+
+    if (redriven > 0) dlog.info(`redrove ${redriven} pending delivery queue rows`);
+  }
+
+  /**
+   * Re-evaluate a mind's `gated` rows against its current routes.json and promote any
+   * that now match to `pending` (delivered by the next redrive sweep). Called when the
+   * routing config changes.
+   */
+  async releaseGated(mindName: string): Promise<void> {
+    const baseName = await getBaseName(mindName);
+    const config = getRoutingConfig(baseName);
+    let rows: (typeof deliveryQueue.$inferSelect)[];
+    try {
+      const db = await getDb();
+      rows = await db
+        .select()
+        .from(deliveryQueue)
+        .where(and(eq(deliveryQueue.mind, baseName), eq(deliveryQueue.status, "gated")));
+    } catch (err) {
+      dlog.warn(`failed to read gated rows for ${baseName}`, log.errorData(err));
+      return;
+    }
+
+    const promote: number[] = [];
+    for (const row of rows) {
+      let payload: DeliveryPayload;
+      try {
+        payload = JSON.parse(row.payload) as DeliveryPayload;
+      } catch {
+        continue;
+      }
+      const meta: MatchMeta = {
+        channel: payload.channel,
+        sender: payload.sender ?? undefined,
+        isDM: payload.isDM,
+        participantCount: payload.participantCount,
+      };
+      const route = resolveRoute(config, meta);
+      if (route.matched && route.destination === "mind") {
+        promote.push(row.id);
+      }
+    }
+
+    if (promote.length === 0) return;
+    try {
+      const db = await getDb();
+      await db
+        .update(deliveryQueue)
+        .set({ status: "pending", attempts: 0, next_attempt_at: null })
+        .where(inArray(deliveryQueue.id, promote));
+      dlog.info(`released ${promote.length} gated message(s) for ${baseName} after route change`);
+    } catch (err) {
+      dlog.warn(`failed to promote gated rows for ${baseName}`, log.errorData(err));
+      return;
+    }
+    // Deliver immediately rather than waiting for the next sweep.
+    await this.redrive();
   }
 
   /**
@@ -317,6 +461,11 @@ export class DeliveryManager {
       if (bufferKey.startsWith(`${mindName}:`)) {
         if (buffer.debounceTimer) clearTimeout(buffer.debounceTimer);
         if (buffer.maxWaitTimer) clearTimeout(buffer.maxWaitTimer);
+        // Release ownership of the buffered rows: their persisted queue rows remain
+        // pending, so the redrive loop can re-deliver them once the mind is back.
+        for (const msg of buffer.messages) {
+          if (msg.queueId != null) this.inFlight.delete(msg.queueId);
+        }
         toDelete.push(bufferKey);
       }
     }
@@ -355,6 +504,13 @@ export class DeliveryManager {
     }
     this.batchBuffers.clear();
     this.sessionStates.clear();
+    this.inFlight.clear();
+    this.drainChains.clear();
+    if (this.redriveTimer) {
+      clearInterval(this.redriveTimer);
+      this.redriveTimer = null;
+    }
+    setRoutesChangeListener(undefined);
     if (instance === this) instance = undefined;
   }
 
@@ -389,59 +545,131 @@ export class DeliveryManager {
     }
   }
 
+  /**
+   * Serialize `fn` on a per-key promise chain so calls for the same key run one at a
+   * time in submission order. Used to drain a `(mind, session)` sequentially.
+   */
+  private runSequential<T>(key: string, fn: () => Promise<T>): Promise<T> {
+    const prev = this.drainChains.get(key) ?? Promise.resolve();
+    const run = prev.then(fn, fn);
+    const tail = run.then(
+      () => {},
+      () => {},
+    );
+    this.drainChains.set(key, tail);
+    tail.then(() => {
+      if (this.drainChains.get(key) === tail) this.drainChains.delete(key);
+    });
+    return run;
+  }
+
+  /** Delete delivered queue rows by their specific ids. */
+  private async deleteQueueRows(ids: (number | undefined)[]): Promise<void> {
+    const valid = [...new Set(ids.filter((id): id is number => typeof id === "number"))];
+    if (valid.length === 0) return;
+    try {
+      const db = await getDb();
+      await db.delete(deliveryQueue).where(inArray(deliveryQueue.id, valid));
+    } catch (err) {
+      dlog.warn("failed to delete delivered delivery queue rows", log.errorData(err));
+    }
+  }
+
+  /** Bump attempt counters and set a backoff window so a down mind isn't hot-looped. */
+  private async scheduleRetry(ids: (number | undefined)[]): Promise<void> {
+    const valid = [...new Set(ids.filter((id): id is number => typeof id === "number"))];
+    if (valid.length === 0) return;
+    try {
+      const db = await getDb();
+      const rows = await db
+        .select({ id: deliveryQueue.id, attempts: deliveryQueue.attempts })
+        .from(deliveryQueue)
+        .where(inArray(deliveryQueue.id, valid));
+      for (const row of rows) {
+        const attempts = row.attempts + 1;
+        const backoffSec = Math.round(
+          Math.min(RETRY_MAX_MS, RETRY_BASE_MS * 2 ** Math.min(attempts, 20)) / 1000,
+        );
+        await db
+          .update(deliveryQueue)
+          .set({ attempts, next_attempt_at: sql`datetime('now', ${`+${backoffSec} seconds`})` })
+          .where(eq(deliveryQueue.id, row.id));
+      }
+    } catch (err) {
+      dlog.warn("failed to schedule delivery retry", log.errorData(err));
+    }
+  }
+
   private async deliverToMind(
     mindName: string,
     session: string,
     payload: DeliveryPayload,
     sessionConfig: ResolvedSessionConfig,
+    queueId?: number,
   ): Promise<void> {
-    const resolved = await this.resolvePort(mindName);
-    if (!resolved) {
-      dlog.warn(`cannot deliver to ${mindName}: mind not found`);
-      return;
-    }
-    const { baseName, port } = resolved;
+    if (queueId != null) this.inFlight.add(queueId);
 
-    // Increment active count before delivery with sender/channel metadata
-    const senders = new Set<string>();
-    if (payload.sender) senders.add(payload.sender);
-    const channels = new Set<string>();
-    if (payload.channel) channels.add(payload.channel);
-    this.incrementActive(baseName, session, senders, channels);
+    // Serialize the ENTIRE delivery (resolvePort + enrichment + POST) per
+    // (mind, session) so resolvePort/enrichment latency can't reorder two rapid
+    // messages — they POST in submission order.
+    await this.runSequential(`${mindName}:${session}`, async () => {
+      const resolved = await this.resolvePort(mindName);
+      if (!resolved) {
+        // Mind not found/running — leave the persisted row pending for the redrive loop.
+        dlog.warn(`cannot deliver to ${mindName}: mind not found`);
+        if (queueId != null) this.inFlight.delete(queueId);
+        return;
+      }
+      const { baseName, port } = resolved;
 
-    // Set typing indicator on both slug and conversationId keys
-    const typingMap = getTypingMap();
-    if (payload.channel) {
-      typingMap.set(payload.channel, baseName, { persistent: true });
-    }
-    if (payload.conversationId) {
-      typingMap.set(payload.conversationId, baseName, { persistent: true });
-    }
+      // Increment active count before delivery with sender/channel metadata
+      const senders = new Set<string>();
+      if (payload.sender) senders.add(payload.sender);
+      const channels = new Set<string>();
+      if (payload.channel) channels.add(payload.channel);
+      this.incrementActive(baseName, session, senders, channels);
 
-    // Mark mind as active immediately at delivery time (before it emits events)
-    onMindEvent(baseName, "delivery", payload.channel);
+      // Set typing indicator on both slug and conversationId keys
+      const typingMap = getTypingMap();
+      if (payload.channel) {
+        typingMap.set(payload.channel, baseName, { persistent: true });
+      }
+      if (payload.conversationId) {
+        typingMap.set(payload.conversationId, baseName, { persistent: true });
+      }
 
-    // Enrich with participant profiles on first encounter per channel
-    const enrichedPayload = await this.enrichWithProfiles(baseName, session, payload);
+      // Mark mind as active immediately at delivery time (before it emits events)
+      onMindEvent(baseName, "delivery", payload.channel);
 
-    const body = JSON.stringify({
-      ...enrichedPayload,
-      session,
-      interrupt: sessionConfig.interrupt,
-      instructions: sessionConfig.instructions,
-    });
+      // Enrich with participant profiles on first encounter per channel
+      const enrichedPayload = await this.enrichWithProfiles(baseName, session, payload);
 
-    try {
-      const ok = await this.postToMind(port, body);
-      if (!ok) {
+      const body = JSON.stringify({
+        ...enrichedPayload,
+        session,
+        interrupt: sessionConfig.interrupt,
+        instructions: sessionConfig.instructions,
+      });
+
+      try {
+        const ok = await this.postToMind(port, body);
+        if (!ok) {
+          this.decrementActive(baseName, session);
+          publishTypingForChannels(typingMap.deleteSender(baseName), typingMap);
+          await this.scheduleRetry([queueId]);
+        } else {
+          // Mark delivered ONLY on ack, by specific row id — never a broad DELETE.
+          await this.deleteQueueRows([queueId]);
+        }
+      } catch (err) {
+        dlog.warn(`failed to deliver to ${mindName}`, log.errorData(err));
         this.decrementActive(baseName, session);
         publishTypingForChannels(typingMap.deleteSender(baseName), typingMap);
+        await this.scheduleRetry([queueId]);
+      } finally {
+        if (queueId != null) this.inFlight.delete(queueId);
       }
-    } catch (err) {
-      dlog.warn(`failed to deliver to ${mindName}`, log.errorData(err));
-      this.decrementActive(baseName, session);
-      publishTypingForChannels(typingMap.deleteSender(baseName), typingMap);
-    }
+    });
   }
 
   private async deliverBatchToMind(
@@ -451,99 +679,99 @@ export class DeliveryManager {
     sessionConfig: ResolvedSessionConfig,
     interruptOverride?: boolean,
   ): Promise<void> {
-    const resolved = await this.resolvePort(mindName);
-    if (!resolved) {
-      dlog.warn(`cannot deliver batch to ${mindName}: mind not found`);
-      return;
-    }
-    const { baseName, port } = resolved;
+    const queueIds = messages
+      .map((m) => m.queueId)
+      .filter((id): id is number => typeof id === "number");
 
-    // Enrich first message per new channel with participant profiles
-    const firstPerChannel = new Set<string>();
-    const isFirstForChannel: boolean[] = [];
-    for (const msg of messages) {
-      const ch = msg.channel ?? "unknown";
-      isFirstForChannel.push(!firstPerChannel.has(ch));
-      firstPerChannel.add(ch);
-    }
-    const enrichedMessages = await Promise.all(
-      messages.map(async (msg, i) => {
-        if (!isFirstForChannel[i]) return msg;
-        const enrichedPayload = await this.enrichWithProfiles(baseName, session, msg.payload);
-        return { ...msg, payload: enrichedPayload };
-      }),
-    );
-
-    // Group messages by channel
-    const channels: Record<string, DeliveryPayload[]> = {};
-    for (const msg of enrichedMessages) {
-      const ch = msg.channel ?? "unknown";
-      if (!channels[ch]) channels[ch] = [];
-      channels[ch].push(msg.payload);
-    }
-
-    // Collect sender/channel metadata from messages
-    const senders = new Set<string>();
-    const channelSet = new Set<string>();
-    for (const msg of messages) {
-      if (msg.sender) senders.add(msg.sender);
-      if (msg.channel) channelSet.add(msg.channel);
-    }
-
-    // Increment active count with metadata
-    this.incrementActive(baseName, session, senders, channelSet);
-
-    // Set typing indicators for all real channels in the batch
-    const typingMap = getTypingMap();
-    for (const ch of Object.keys(channels)) {
-      if (ch !== "unknown") typingMap.set(ch, baseName, { persistent: true });
-    }
-    // Also set on conversationId keys for web UI typing
-    const seenConvIds = new Set<string>();
-    for (const msg of messages) {
-      if (msg.payload.conversationId && !seenConvIds.has(msg.payload.conversationId)) {
-        seenConvIds.add(msg.payload.conversationId);
-        typingMap.set(msg.payload.conversationId, baseName, { persistent: true });
+    // Serialize the whole batch delivery per (mind, session) so it can't be
+    // reordered against interleaving immediate deliveries to the same session.
+    await this.runSequential(`${mindName}:${session}`, async () => {
+      const resolved = await this.resolvePort(mindName);
+      if (!resolved) {
+        dlog.warn(`cannot deliver batch to ${mindName}: mind not found`);
+        // Leave rows pending for redrive; release ownership so the sweep can retry.
+        for (const id of queueIds) this.inFlight.delete(id);
+        return;
       }
-    }
+      const { baseName, port } = resolved;
 
-    const body = JSON.stringify({
-      session,
-      batch: { channels },
-      interrupt: interruptOverride ?? sessionConfig.interrupt,
-      instructions: sessionConfig.instructions,
-    });
+      // Enrich first message per new channel with participant profiles
+      const firstPerChannel = new Set<string>();
+      const isFirstForChannel: boolean[] = [];
+      for (const msg of messages) {
+        const ch = msg.channel ?? "unknown";
+        isFirstForChannel.push(!firstPerChannel.has(ch));
+        firstPerChannel.add(ch);
+      }
+      const enrichedMessages = await Promise.all(
+        messages.map(async (msg, i) => {
+          if (!isFirstForChannel[i]) return msg;
+          const enrichedPayload = await this.enrichWithProfiles(baseName, session, msg.payload);
+          return { ...msg, payload: enrichedPayload };
+        }),
+      );
 
-    try {
-      const ok = await this.postToMind(port, body);
-      if (!ok) {
-        this.decrementActive(baseName, session);
-        publishTypingForChannels(typingMap.deleteSender(baseName), typingMap);
-      } else {
-        // Clean up DB entries only after successful delivery
-        try {
-          const db = await getDb();
-          await db
-            .delete(deliveryQueue)
-            .where(
-              and(
-                eq(deliveryQueue.mind, baseName),
-                eq(deliveryQueue.session, session),
-                eq(deliveryQueue.status, "pending"),
-              ),
-            );
-        } catch (err) {
-          dlog.warn(
-            `failed to clean delivery queue for ${baseName}/${session}`,
-            log.errorData(err),
-          );
+      // Group messages by channel
+      const channels: Record<string, DeliveryPayload[]> = {};
+      for (const msg of enrichedMessages) {
+        const ch = msg.channel ?? "unknown";
+        if (!channels[ch]) channels[ch] = [];
+        channels[ch].push(msg.payload);
+      }
+
+      // Collect sender/channel metadata from messages
+      const senders = new Set<string>();
+      const channelSet = new Set<string>();
+      for (const msg of messages) {
+        if (msg.sender) senders.add(msg.sender);
+        if (msg.channel) channelSet.add(msg.channel);
+      }
+
+      // Increment active count with metadata
+      this.incrementActive(baseName, session, senders, channelSet);
+
+      // Set typing indicators for all real channels in the batch
+      const typingMap = getTypingMap();
+      for (const ch of Object.keys(channels)) {
+        if (ch !== "unknown") typingMap.set(ch, baseName, { persistent: true });
+      }
+      // Also set on conversationId keys for web UI typing
+      const seenConvIds = new Set<string>();
+      for (const msg of messages) {
+        if (msg.payload.conversationId && !seenConvIds.has(msg.payload.conversationId)) {
+          seenConvIds.add(msg.payload.conversationId);
+          typingMap.set(msg.payload.conversationId, baseName, { persistent: true });
         }
       }
-    } catch (err) {
-      dlog.warn(`failed to deliver batch to ${mindName}`, log.errorData(err));
-      this.decrementActive(baseName, session);
-      publishTypingForChannels(typingMap.deleteSender(baseName), typingMap);
-    }
+
+      const body = JSON.stringify({
+        session,
+        batch: { channels },
+        interrupt: interruptOverride ?? sessionConfig.interrupt,
+        instructions: sessionConfig.instructions,
+      });
+
+      try {
+        const ok = await this.postToMind(port, body);
+        if (!ok) {
+          this.decrementActive(baseName, session);
+          publishTypingForChannels(typingMap.deleteSender(baseName), typingMap);
+          await this.scheduleRetry(queueIds);
+        } else {
+          // Mark delivered ONLY on ack, and ONLY the specific rows in this batch —
+          // a broad (mind, session, pending) DELETE would race with rows enqueued
+          // concurrently during the flush.
+          await this.deleteQueueRows(queueIds);
+        }
+      } catch (err) {
+        dlog.warn(`failed to deliver batch to ${mindName}`, log.errorData(err));
+        this.decrementActive(baseName, session);
+        publishTypingForChannels(typingMap.deleteSender(baseName), typingMap);
+        await this.scheduleRetry(queueIds);
+      } finally {
+        for (const id of queueIds) this.inFlight.delete(id);
+      }
+    });
   }
 
   private async enqueueBatch(
@@ -554,20 +782,27 @@ export class DeliveryManager {
   ): Promise<void> {
     const delivery = sessionConfig.delivery as Extract<ResolvedDeliveryMode, { mode: "batch" }>;
 
+    // Persist to the queue FIRST (keyed by baseName) — the row is the source of truth;
+    // the in-memory buffer is a fast path reconciled against these rows on ack/redrive.
+    // The row is "owned" (inFlight) while buffered so the redrive sweep won't double-send.
+    const baseName = await getBaseName(mindName);
+    const queueId = await this.persistToQueue(mindName, session, payload);
+    if (queueId != null) this.inFlight.add(queueId);
+    const msg: QueuedMessage = {
+      payload,
+      channel: payload.channel,
+      sender: payload.sender ?? null,
+      createdAt: Date.now(),
+      queueId,
+    };
+
     // Check triggers — immediate flush if matched
     if (delivery.triggers?.length) {
       const text = extractTextContent(payload.content);
       const lower = text.toLowerCase();
       if (delivery.triggers.some((t) => lower.includes(t.toLowerCase()))) {
         // Flush existing buffer + this message immediately
-        await this.flushBatch(mindName, session, [
-          {
-            payload,
-            channel: payload.channel,
-            sender: payload.sender ?? null,
-            createdAt: Date.now(),
-          },
-        ]);
+        await this.flushBatch(mindName, session, [msg]);
         return;
       }
     }
@@ -575,7 +810,6 @@ export class DeliveryManager {
     // New-speaker interrupt: if mind is active on this channel and a different sender
     // arrives (within the maxWait window and past the debounce cooldown), force-flush
     // with interrupt so the mind can incorporate the new voice
-    const baseName = await getBaseName(mindName);
     const state = this.sessionStates.get(baseName)?.get(session);
     if (
       state &&
@@ -588,33 +822,18 @@ export class DeliveryManager {
       Date.now() - state.lastInterruptAt > delivery.debounce * 1000
     ) {
       state.lastInterruptAt = Date.now();
-      // Persist to DB (fire-and-forget) and flush immediately with interrupt override
-      this.persistToQueue(mindName, session, payload).catch((err) => {
-        dlog.warn(`failed to persist batch message for ${mindName}/${session}`, log.errorData(err));
-      });
-      await this.flushBatch(
-        mindName,
-        session,
-        [{ payload, channel: payload.channel, sender: payload.sender, createdAt: Date.now() }],
-        true,
-      );
+      await this.flushBatch(mindName, session, [msg], true);
       return;
     }
 
-    // Persist to DB (fire-and-forget): the in-memory buffer is primary for batches,
-    // DB persistence is for crash recovery only. Gated messages await because DB is their only store.
-    this.persistToQueue(mindName, session, payload).catch((err) => {
-      dlog.warn(`failed to persist batch message for ${mindName}/${session}`, log.errorData(err));
-    });
-
-    this.addToBatchBuffer(mindName, session, payload, sessionConfig);
+    this.addToBatchBuffer(mindName, session, sessionConfig, msg);
   }
 
   private addToBatchBuffer(
     mindName: string,
     session: string,
-    payload: DeliveryPayload,
     sessionConfig: ResolvedSessionConfig,
+    msg: QueuedMessage,
   ): void {
     const delivery = sessionConfig.delivery as Extract<ResolvedDeliveryMode, { mode: "batch" }>;
     const bufferKey = `${mindName}:${session}`;
@@ -630,12 +849,7 @@ export class DeliveryManager {
       this.batchBuffers.set(bufferKey, buffer);
     }
 
-    buffer.messages.push({
-      payload,
-      channel: payload.channel,
-      sender: payload.sender ?? null,
-      createdAt: Date.now(),
-    });
+    buffer.messages.push(msg);
 
     // Max batch size — force flush
     if (buffer.messages.length >= MAX_BATCH_SIZE) {
@@ -712,7 +926,7 @@ export class DeliveryManager {
     payload: DeliveryPayload,
   ): Promise<void> {
     const baseName = await getBaseName(mindName);
-    await this.persistToQueue(baseName, session, payload, "gated");
+    await this.persistToQueue(mindName, session, payload, "gated");
 
     // Check if this is the first gated message for this channel — send invite
     try {
@@ -760,27 +974,42 @@ export class DeliveryManager {
     await sendSystemMessage(mindName, notification);
   }
 
+  /**
+   * Insert a delivery_queue row and return its id. The `mind` column is always keyed by
+   * `baseName` so inserts under a variant name and the id-scoped cleanup use the same key
+   * (fixes the variant mismatch where variant-keyed rows were never matched by the base
+   * cleanup). `target_mind` records the original delivery target (`mindName`, which may be a
+   * variant) so redrive resolves the port from it — a variant's stranded row is re-delivered
+   * to the variant, not the parent.
+   */
   private async persistToQueue(
     mindName: string,
     session: string,
     payload: DeliveryPayload,
     status: "pending" | "gated" = "pending",
-  ): Promise<void> {
+  ): Promise<number | undefined> {
     try {
+      const baseName = await getBaseName(mindName);
       const db = await getDb();
-      await db.insert(deliveryQueue).values({
-        mind: mindName,
-        session,
-        channel: payload.channel ?? null,
-        sender: payload.sender ?? null,
-        status,
-        payload: JSON.stringify(payload),
-      });
+      const result = await db
+        .insert(deliveryQueue)
+        .values({
+          mind: baseName,
+          target_mind: mindName,
+          session,
+          channel: payload.channel ?? null,
+          sender: payload.sender ?? null,
+          status,
+          payload: JSON.stringify(payload),
+        })
+        .returning({ id: deliveryQueue.id });
+      return result[0]?.id;
     } catch (err) {
       dlog.warn(
         `failed to persist to delivery queue for ${mindName}/${session}`,
         log.errorData(err),
       );
+      return undefined;
     }
   }
 

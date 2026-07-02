@@ -107,6 +107,23 @@ const STAT_TTL_MS = 5_000;
 
 const dlog = log.child("delivery-router");
 
+// Notified when a mind's routes.json changes (explicit cache clear or detected mtime
+// change), so held (gated) messages can be re-evaluated against the new rules.
+let routesChangeListener: ((mind: string) => void) | undefined;
+
+export function setRoutesChangeListener(fn: ((mind: string) => void) | undefined): void {
+  routesChangeListener = fn;
+}
+
+function notifyRoutesChanged(mind: string): void {
+  if (!routesChangeListener) return;
+  try {
+    routesChangeListener(mind);
+  } catch (err) {
+    dlog.warn(`routes change listener failed for ${mind}`, log.errorData(err));
+  }
+}
+
 // Cache of mind name → directory overrides (e.g. spirits with custom dirs)
 const dirOverrides = new Map<string, string>();
 
@@ -149,7 +166,11 @@ export function getRoutingConfig(mindName: string): RoutingConfig {
 
   try {
     const config: RoutingConfig = JSON.parse(readFileSync(path, "utf-8"));
+    const changed = cached != null && cached.mtime !== mtime;
     configCache.set(mindName, { config, mtime });
+    // A pre-existing cached config with a different mtime means routes.json actually
+    // changed — release any gated messages that the new rules now match.
+    if (changed) notifyRoutesChanged(mindName);
     return config;
   } catch (err) {
     dlog.warn(`failed to load routes.json for ${mindName}`, log.errorData(err));
@@ -166,6 +187,9 @@ export function clearConfigCache(mindName?: string): void {
   if (mindName) {
     configCache.delete(mindName);
     statCheckCache.delete(mindName);
+    // An explicit invalidation typically follows a routes.json write — re-evaluate
+    // gated messages against the (about to be reloaded) rules.
+    notifyRoutesChanged(mindName);
   } else {
     configCache.clear();
     statCheckCache.clear();
