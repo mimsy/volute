@@ -67,18 +67,41 @@ const AUTHZ_EXEMPT: Record<string, string> = {
     "in-handler authz: add-member requires the caller be a channel member (or admin/system)",
 };
 
-const GUARDS = ["requireSelf", "requireAdmin", "requireAdminOrSystem"];
+// The route's mind identifier is the first :name/:mind/:author param in the path.
+const MIND_PARAM_RE = /:(name|mind|author)\b/;
+
+// A middleware window truly guards a mind-scoped route only if it carries a
+// system-wide guard (requireAdmin*) OR a requireSelf() whose param names the
+// route's actual mind param — `requireSelf("author")` on a `/:name` route must
+// NOT count. This is what makes presence-of-a-token load-bearing.
+function guardMatches(path: string, middlewareWindow: string): boolean {
+  if (middlewareWindow.includes("requireAdmin")) return true; // covers requireAdminOrSystem too
+  const self = middlewareWindow.match(/requireSelf\(\s*(?:"([^"]*)")?\s*\)/);
+  if (!self) return false;
+  const guardParam = self[1] ?? "name"; // requireSelf() defaults to the "name" param
+  const pathParam = path.match(MIND_PARAM_RE)?.[1];
+  // If the path has a mind param, the guard must name it; if not, any self-guard is fine.
+  return pathParam ? guardParam === pathParam : true;
+}
+
 // Capture group 3 = the middleware window between the path string and the start
 // of the handler arrow (`=>`). Middleware (requireSelf(), zValidator(...)) live
 // here, whether the route is written on one line or across several.
 const ROUTE_RE = /\.(get|post|put|patch|delete)\(\s*"(\/:(?:name|mind)[^"]*)"([\s\S]*?)=>/g;
 
+// Skip build artifacts and dependencies so compiled route copies can't pollute
+// the scan (route counts, exemption matching) with duplicates of source files.
+const SCAN_SKIP_DIRS = new Set(["dist", "node_modules", ".git"]);
+
 function listTsFiles(dir: string): string[] {
   const out: string[] = [];
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const full = `${dir}/${entry.name}`;
-    if (entry.isDirectory()) out.push(...listTsFiles(full));
-    else if (entry.name.endsWith(".ts")) out.push(full);
+    if (entry.isDirectory()) {
+      if (SCAN_SKIP_DIRS.has(entry.name)) continue;
+      out.push(...listTsFiles(`${dir}/${entry.name}`));
+    } else if (entry.name.endsWith(".ts")) {
+      out.push(`${dir}/${entry.name}`);
+    }
   }
   return out;
 }
@@ -94,7 +117,7 @@ function extractRoutes(): Route[] {
       const method = m[1].toUpperCase();
       const path = m[2];
       const middlewareWindow = m[3];
-      const guarded = GUARDS.some((g) => middlewareWindow.includes(g));
+      const guarded = guardMatches(path, middlewareWindow);
       routes.push({ key: `${rel} ${method} ${path}`, guarded });
     }
   }
@@ -143,16 +166,24 @@ describe("mind-scoped route authorization coverage", () => {
 // client-supplied query param (`?mind=`, `?name=`, `?author=`) — precisely the
 // blind spot behind the #320 cross-tenant history leak, where any mind could
 // read another mind's turns/summaries/activity via `?mind=`. This net flags any
-// handler that reads such a param unless its enclosing route carries an authz
-// signal: a middleware guard, OR an in-handler role/self check (`user.role`,
-// `.username`, `getBaseName`, `resolveMindFilter`, `privileged`).
+// handler that reads such a param unless it is authorized by EITHER a middleware
+// guard (tight path→=> window) OR a dataflow guard evaluated within the very
+// statement that reads the param (the value flows through getBaseName /
+// resolveMindFilter, or is gated behind a role check). The statement scope is
+// deliberate: a verbatim #320 regression — `const mindFilter = c.req.query("mind")`
+// with the guard stripped — must fail this net, and it does.
 // ---------------------------------------------------------------------------
 
 const QUERY_READ_RE = /c\.req\.query\(\s*"(mind|name|author)"\s*\)/g;
 const ROUTE_START_RE = /\.(get|post|put|patch|delete)\(\s*"([^"]*)"/g;
-// In-handler authorization signals: a role/self comparison or a shared resolver
-// that constrains the query to the caller's own mind.
-const INLINE_AUTHZ_RE = /\brole\b|\.username\b|resolveMindFilter|getBaseName|privileged/;
+// Dataflow authorization signals evaluated ONLY within the statement that reads
+// the query param: the read must be constrained to the caller's own mind
+// (getBaseName / resolveMindFilter) or gated behind a role check (privileged /
+// `.role`). Scoping to the statement — not the whole handler region — is what
+// makes this load-bearing: an incidental `role:`/`.username` token elsewhere in
+// the handler (a Drizzle column select, a response field) can no longer mask an
+// unguarded read like `const mindFilter = c.req.query("mind")`.
+const DATAFLOW_AUTHZ_RE = /resolveMindFilter|getBaseName|\bprivileged\b|\.role\b/;
 
 // Query-param reads that are genuinely public (feeds/listings of already-public
 // content) and therefore need no per-caller authorization. Documented, honest.
@@ -174,14 +205,26 @@ function scanFiles(dir: string): ScanFile[] {
   }));
 }
 
-type RouteStart = { idx: number; method: string; path: string };
+type RouteStart = { idx: number; afterIdx: number; method: string; path: string };
 
 function routeStarts(text: string): RouteStart[] {
   const starts: RouteStart[] = [];
   for (const m of text.matchAll(ROUTE_START_RE)) {
-    starts.push({ idx: m.index ?? 0, method: m[1].toUpperCase(), path: m[2] });
+    const idx = m.index ?? 0;
+    starts.push({ idx, afterIdx: idx + m[0].length, method: m[1].toUpperCase(), path: m[2] });
   }
   return starts;
+}
+
+// The single JS statement containing `idx` — from the previous statement
+// boundary (`;`/`{`/`}`) to the next `;`. Captures a whole assignment even when
+// prettier wraps a ternary across lines.
+function enclosingStatement(text: string, idx: number): string {
+  let start = idx;
+  while (start > 0 && !";{}".includes(text[start - 1])) start--;
+  let end = idx;
+  while (end < text.length && text[end] !== ";") end++;
+  return text.slice(start, end);
 }
 
 function extractQueryRoutes(): Route[] {
@@ -203,8 +246,14 @@ function extractQueryRoutes(): Route[] {
         if (!enclosing) continue;
         const endIdx = starts.find((s) => s.idx > enclosing!.idx)?.idx ?? text.length;
         if (qIdx >= endIdx) continue;
-        const region = text.slice(enclosing.idx, endIdx);
-        const guarded = INLINE_AUTHZ_RE.test(region) || GUARDS.some((g) => region.includes(g));
+        // A middleware guard (tight path→=> window, like Net 1) is sufficient...
+        const arrowIdx = text.indexOf("=>", enclosing.afterIdx);
+        const middlewareWindow =
+          arrowIdx > enclosing.afterIdx ? text.slice(enclosing.afterIdx, arrowIdx) : "";
+        // ...otherwise the query-reading statement itself must constrain the value.
+        const guarded =
+          guardMatches(enclosing.path, middlewareWindow) ||
+          DATAFLOW_AUTHZ_RE.test(enclosingStatement(text, qIdx));
         const key = `${rel} ${enclosing.method} ${enclosing.path} ?${param}`;
         merged.set(key, (merged.get(key) ?? false) || guarded);
       }
@@ -284,7 +333,9 @@ function extractExtensionRoutes(): Route[] {
       const method = m[1].toUpperCase();
       const path = m[2];
       const middlewareWindow = m[3];
-      const guarded = GUARDS.some((g) => middlewareWindow.includes(g));
+      // requireSelf("<param>") must name the route's actual mind param — e.g.
+      // requireSelf("name") on a `/:author/...` route does NOT count.
+      const guarded = guardMatches(path, middlewareWindow);
       routes.push({ key: `${rel} ${method} ${path}`, guarded });
     }
   }
