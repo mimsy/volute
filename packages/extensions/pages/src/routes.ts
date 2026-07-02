@@ -51,13 +51,8 @@ export function createRoutes(ctx: ExtensionContext): Hono {
         })),
       );
     })
-    .put("/publish/:name", async (c) => {
-      const user = ctx.resolveUser(c);
-      if (!user) return c.json({ error: "Unauthorized" }, 401);
+    .put("/publish/:name", ctx.requireSelf("name"), async (c) => {
       const name = c.req.param("name");
-      if (user.role !== "admin" && user.username !== name) {
-        return c.json({ error: "Forbidden" }, 403);
-      }
       const config = ctx.getSystemsConfig();
       if (!config) return c.json({ error: "Not connected to volute.systems" }, 400);
       const body = await c.req.text();
@@ -76,13 +71,8 @@ export function createRoutes(ctx: ExtensionContext): Hono {
         return c.json({ error: `Connection failed: ${(err as Error).message}` }, 502);
       }
     })
-    .get("/status/:name", async (c) => {
-      const user = ctx.resolveUser(c);
-      if (!user) return c.json({ error: "Unauthorized" }, 401);
+    .get("/status/:name", ctx.requireSelf("name"), async (c) => {
       const name = c.req.param("name");
-      if (user.role !== "admin" && user.username !== name) {
-        return c.json({ error: "Forbidden" }, 403);
-      }
       const config = ctx.getSystemsConfig();
       if (!config) return c.json({ error: "Not connected to volute.systems" }, 400);
       try {

@@ -90,10 +90,16 @@ const app = new Hono<AuthEnv>()
   })
   .patch("/:name", zValidator("json", channelSettingsSchema), async (c) => {
     const name = c.req.param("name");
+    const user = c.get("user");
     const body = c.req.valid("json");
 
     const ch = await getChannelByName(name);
     if (!ch) return c.json({ error: "Channel not found" }, 404);
+
+    // In-handler authz: only a channel member (or admin/system) may change settings.
+    if (user.role !== "admin" && user.role !== "system" && !(await isParticipant(ch.id, user.id))) {
+      return c.json({ error: "Forbidden" }, 403);
+    }
 
     await updateChannelSettings(name, body);
     const settings = await getChannelSettings(name);
@@ -135,6 +141,15 @@ const app = new Hono<AuthEnv>()
 
     const ch = await getChannelByName(name);
     if (!ch) return c.json({ error: "Channel not found" }, 404);
+
+    // In-handler authz: only a channel member (or admin/system) may add members.
+    if (
+      inviter.role !== "admin" &&
+      inviter.role !== "system" &&
+      !(await isParticipant(ch.id, inviter.id))
+    ) {
+      return c.json({ error: "Forbidden" }, 403);
+    }
 
     // Resolve the invitee: try as existing user first, then as a mind
     let user = await getUserByUsername(username);

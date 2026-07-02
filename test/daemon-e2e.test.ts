@@ -391,6 +391,55 @@ describe("daemon e2e", { timeout: 120000 }, () => {
     );
   });
 
+  it("channel writes (PATCH settings, invite) require membership for non-admin callers", async () => {
+    // Admin creates a channel.
+    const createRes = await daemonRequest("/api/v1/channels", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "e2e-authz-channel" }),
+    });
+    assert.equal(createRes.status, 201, `create: ${await createRes.clone().text()}`);
+
+    // A mind principal that is NOT a member of the channel.
+    const outsider = await getOrCreateMindUser("e2e-channel-outsider");
+    const outsiderSession = await createSession(outsider.id);
+    const asOutsider = (path: string, options?: RequestInit): Promise<Response> => {
+      const headers = new Headers(options?.headers);
+      headers.set("Authorization", `Bearer ${outsiderSession}`);
+      headers.set("Origin", BASE_URL);
+      return fetch(`${BASE_URL}${path}`, { ...options, headers });
+    };
+
+    // Non-member cannot change settings...
+    const patchDenied = await asOutsider("/api/v1/channels/e2e-authz-channel", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ description: "hijacked" }),
+    });
+    assert.equal(patchDenied.status, 403, "non-member PATCH must be forbidden");
+
+    // ...nor invite others.
+    const inviteDenied = await asOutsider("/api/v1/channels/e2e-authz-channel/invite", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: "e2e-channel-victim" }),
+    });
+    assert.equal(inviteDenied.status, 403, "non-member invite must be forbidden");
+
+    // Once the mind joins, it becomes a member and may change settings.
+    const joinRes = await asOutsider("/api/v1/channels/e2e-authz-channel/join", { method: "POST" });
+    assert.equal(joinRes.status, 200, `join: ${await joinRes.clone().text()}`);
+
+    const patchOk = await asOutsider("/api/v1/channels/e2e-authz-channel", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ description: "set by member" }),
+    });
+    assert.equal(patchOk.status, 200, `member PATCH: ${await patchOk.clone().text()}`);
+    const patched = (await patchOk.json()) as { settings?: { description?: string } };
+    assert.equal(patched.settings?.description, "set by member");
+  });
+
   it("conversations: create, send message, read back", async () => {
     await ensureTestMind();
 
