@@ -8,6 +8,7 @@ import {
   composeTemplate,
   copyTemplateToDir,
   findTemplatesRoot,
+  renderComposedPackageJson,
 } from "../template/template.js";
 import { exec } from "../util/exec.js";
 import log from "../util/logger.js";
@@ -190,9 +191,9 @@ export async function syncSpiritTemplate(): Promise<void> {
     if (existsSync(newSrc)) {
       cpSync(newSrc, resolve(dir, "src"), { recursive: true });
     }
-    // Copy new package.json and re-install
-    const newPkg = resolve(newComposed.composedDir, "package.json");
-    if (existsSync(newPkg)) {
+    // Render + copy new package.json and re-install
+    const newPkg = renderComposedPackageJson(newComposed.composedDir, "volute");
+    if (newPkg) {
       cpSync(newPkg, resolve(dir, "package.json"));
       await exec("npm", ["install"], { cwd: dir, env: npmEnv() });
     }
@@ -247,10 +248,10 @@ export async function syncSpiritTemplate(): Promise<void> {
   }
 
   // Re-install if package.json changed or node_modules is missing (self-healing)
-  const composedPkg = resolve(composedDir, "package.json");
+  const composedPkg = renderComposedPackageJson(composedDir, "volute");
   const currentPkg = resolve(dir, "package.json");
   const nodeModulesMissing = !existsSync(resolve(dir, "node_modules"));
-  if (existsSync(composedPkg)) {
+  if (composedPkg) {
     const composedContent = readFileSync(composedPkg, "utf-8");
     const currentContent = existsSync(currentPkg) ? readFileSync(currentPkg, "utf-8") : "";
     if (composedContent !== currentContent || nodeModulesMissing) {
