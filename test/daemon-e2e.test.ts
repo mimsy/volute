@@ -1276,4 +1276,72 @@ describe("daemon e2e", { timeout: 120000 }, () => {
       body: JSON.stringify({}),
     });
   });
+
+  it("extension command endpoint ignores body.mind for non-admin callers", async () => {
+    // Register a seed admin first so subsequent registrations are non-admin.
+    // (The first brain user always becomes admin.)
+    await daemonRequest("/api/auth/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: "e2e-seed-admin", password: "seed-pass-123" }),
+    });
+
+    // Register attacker + victim as non-admin (pending) brain users, then approve.
+    async function registerAndApprove(username: string): Promise<void> {
+      const regRes = await daemonRequest("/api/auth/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password: "attack-pass-123" }),
+      });
+      const regBody = (await regRes.json()) as { id: number; role: string };
+      assert.equal(regRes.status, 200, `register ${username}: ${JSON.stringify(regBody)}`);
+      assert.notEqual(regBody.role, "admin", `${username} must not be the first (admin) user`);
+      // Approve via daemon token (admin).
+      const apRes = await daemonRequest(`/api/auth/users/${regBody.id}/approve`, {
+        method: "POST",
+      });
+      assert.equal(apRes.status, 200, `approve ${username}: ${apRes.status}`);
+    }
+    await registerAndApprove("e2e-notes-attacker");
+    await registerAndApprove("e2e-notes-victim");
+
+    // Log in as attacker to obtain a non-admin session token.
+    const loginRes = await daemonRequest("/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: "e2e-notes-attacker", password: "attack-pass-123" }),
+    });
+    const loginBody = (await loginRes.json()) as { sessionId: string };
+    assert.equal(loginRes.status, 200, `login: ${JSON.stringify(loginBody)}`);
+    const { sessionId } = loginBody;
+    assert.ok(sessionId, "login should return a session token");
+
+    // Attacker attempts to publish a note authored as the victim via body.mind.
+    const attackRes = await fetch(`${BASE_URL}/api/ext/notes/commands/write`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${sessionId}`,
+        Origin: BASE_URL,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ mind: "e2e-notes-victim", args: ["Impersonation Attempt", "body"] }),
+    });
+    assert.equal(attackRes.status, 200, `write: ${await attackRes.clone().text()}`);
+    const attackBody = (await attackRes.json()) as { output?: string; error?: string };
+    assert.ok(attackBody.output, `expected output, got ${JSON.stringify(attackBody)}`);
+    // body.mind must be ignored: the note is authored by the caller, not the victim.
+    assert.match(attackBody.output, /Published: e2e-notes-attacker\//);
+    assert.doesNotMatch(attackBody.output, /Published: e2e-notes-victim\//);
+
+    // An admin (daemon token) can still target a specific mind via body.mind.
+    const adminRes = await daemonRequest("/api/ext/notes/commands/write", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mind: "e2e-notes-victim", args: ["Admin Targeted", "body"] }),
+    });
+    assert.equal(adminRes.status, 200, `admin write: ${await adminRes.clone().text()}`);
+    const adminBody = (await adminRes.json()) as { output?: string; error?: string };
+    assert.ok(adminBody.output, `expected output, got ${JSON.stringify(adminBody)}`);
+    assert.match(adminBody.output, /Published: e2e-notes-victim\//);
+  });
 });

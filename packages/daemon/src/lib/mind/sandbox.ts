@@ -21,10 +21,30 @@ const slog = log.child("sandbox");
 
 let sandboxManager: SandboxManagerType | null = null;
 
+/** Raised when sandbox isolation is required but unavailable, so callers fail closed. */
+export class SandboxUnavailableError extends Error {
+  constructor(reason: string, cause?: unknown) {
+    super(
+      `${reason} — refusing to run unsandboxed. Fix the sandbox runtime, or set VOLUTE_SANDBOX_OPTIONAL=1 to allow running without isolation.`,
+      cause ? { cause } : undefined,
+    );
+    this.name = "SandboxUnavailableError";
+  }
+}
+
 /** Check if sandbox isolation is enabled via config. */
 export function isSandboxEnabled(): boolean {
   if (process.env.VOLUTE_SANDBOX === "0") return false;
   return readGlobalConfig().setup?.isolation === "sandbox";
+}
+
+/**
+ * Explicit opt-out that lets a sandbox-mode daemon degrade to running minds
+ * WITHOUT isolation when the runtime can't be set up. For local dev only —
+ * never set this on a shared/system install.
+ */
+export function isSandboxOptional(): boolean {
+  return process.env.VOLUTE_SANDBOX_OPTIONAL === "1";
 }
 
 /** Find a ripgrep binary: VOLUTE_RIPGREP_PATH env var, then system PATH. */
@@ -69,10 +89,8 @@ export async function initSandbox(): Promise<void> {
         // macOS sandbox profiles use native glob matching — ripgrep not needed
         slog.warn(`sandbox dependency issues (non-fatal on macOS): ${errors.join(", ")}`);
       } else {
-        slog.error(
-          `sandbox dependencies missing — minds will run without sandbox isolation: ${errors.join(", ")}`,
-        );
-        return;
+        // Fail closed: without these deps the sandbox can't restrict minds.
+        throw new SandboxUnavailableError(`sandbox dependencies missing: ${errors.join(", ")}`);
       }
     }
 
@@ -93,10 +111,26 @@ export async function initSandbox(): Promise<void> {
     await SandboxManager.initialize(config);
     sandboxManager = SandboxManager;
   } catch (err) {
-    slog.error(
-      "sandbox runtime not available — minds will run without sandbox isolation",
-      log.errorData(err),
-    );
+    // A deliberate fail-closed signal — surface it as-is (or degrade if opted out).
+    if (err instanceof SandboxUnavailableError) {
+      if (isSandboxOptional()) {
+        slog.error(
+          "sandbox unavailable but VOLUTE_SANDBOX_OPTIONAL=1 — minds will run WITHOUT isolation",
+          log.errorData(err),
+        );
+        return;
+      }
+      throw err;
+    }
+    // Runtime import/initialize failure.
+    if (isSandboxOptional()) {
+      slog.error(
+        "sandbox runtime not available but VOLUTE_SANDBOX_OPTIONAL=1 — minds will run WITHOUT isolation",
+        log.errorData(err),
+      );
+      return;
+    }
+    throw new SandboxUnavailableError("sandbox runtime not available", err);
   }
 }
 
@@ -152,7 +186,13 @@ export async function wrapForSandbox(
   mindName: string,
   allowWrite?: string[],
 ): Promise<[string, string[]]> {
-  if (!sandboxManager) return [cmd, args];
+  if (!sandboxManager) {
+    // Fail closed unless explicitly opted out or sandbox mode is off entirely.
+    if (isSandboxEnabled() && !isSandboxOptional()) {
+      throw new SandboxUnavailableError(`cannot sandbox mind ${mindName}`);
+    }
+    return [cmd, args];
+  }
 
   const { denyRead, allowRead } = await buildSandboxReadConfig(mindName, mindDir);
   const customConfig: Partial<SandboxRuntimeConfig> = {
@@ -169,6 +209,10 @@ export async function wrapForSandbox(
     const wrapped = await sandboxManager.wrapWithSandbox(shellCmd, undefined, customConfig);
     return ["bash", ["-c", wrapped]];
   } catch (err) {
+    // Fail closed unless explicitly opted out.
+    if (isSandboxEnabled() && !isSandboxOptional()) {
+      throw new SandboxUnavailableError(`failed to sandbox mind ${mindName}`, err);
+    }
     slog.error(
       `failed to sandbox mind ${mindName} — running without isolation`,
       log.errorData(err),

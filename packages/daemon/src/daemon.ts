@@ -436,5 +436,8 @@ if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith
     process.env.VOLUTE_SANDBOX = "0";
   }
 
-  startDaemon({ port, hostname, foreground, tailscale });
+  startDaemon({ port, hostname, foreground, tailscale }).catch((err) => {
+    log.error("daemon failed to start", log.errorData(err));
+    process.exit(1);
+  });
 }
