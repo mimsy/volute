@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { and, eq, like } from "drizzle-orm";
-import { getOrCreateMindUser } from "../packages/daemon/src/lib/auth.js";
+import { createUser, getOrCreateMindUser } from "../packages/daemon/src/lib/auth.js";
 import { initMindManager } from "../packages/daemon/src/lib/daemon/mind-manager.js";
 import { getDb } from "../packages/daemon/src/lib/db.js";
 import {
@@ -23,6 +23,14 @@ async function makeMindDM(a: string, b: string): Promise<string> {
   const ua = await getOrCreateMindUser(a);
   const ub = await getOrCreateMindUser(b);
   const conv = await createConversation({ participantIds: [ua.id, ub.id] });
+  return conv.id;
+}
+
+/** A DM between one mind and one human (brain) user. */
+async function makeMindHumanDM(mind: string, human: string): Promise<string> {
+  const um = await getOrCreateMindUser(mind);
+  const uh = await createUser(human, "pw");
+  const conv = await createConversation({ participantIds: [um.id, uh.id] });
   return conv.id;
 }
 
@@ -65,6 +73,21 @@ describe("fan-out loop protection", () => {
     // Still paused — further mind turns don't spam additional notices.
     await mindTurn(conv, "loopB");
     assert.equal(await noticeCount(conv), 1, "no duplicate notices while paused");
+  });
+
+  it("never pauses or emits a notice when only one mind is in the conversation", async () => {
+    // A mind posting into a DM with a human (its only peer is non-mind) can't loop with
+    // anyone — the counter must not trip even well past the threshold.
+    const conv = await makeMindHumanDM("soloMind", "soloHuman");
+
+    for (let i = 0; i < MAX_CONSECUTIVE_MIND_TURNS + 5; i++) {
+      await mindTurn(conv, "soloMind");
+    }
+    assert.equal(
+      await noticeCount(conv),
+      0,
+      "no loop notice when the mind is the only mind present",
+    );
   });
 
   it("resets the loop counter on human (non-mind) input", async () => {

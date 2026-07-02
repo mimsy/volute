@@ -67,25 +67,31 @@ export async function fanOutToMinds(opts: FanOutOpts): Promise<void> {
   const isDM = opts.isDM ?? participants.length === 2;
 
   // --- Loop protection ---
-  if (opts.senderIsMind) {
-    const count = (consecutiveMindTurns.get(opts.conversationId) ?? 0) + 1;
-    consecutiveMindTurns.set(opts.conversationId, count);
-    if (count > MAX_CONSECUTIVE_MIND_TURNS) {
-      // Emit the notice once as we cross the threshold, then pause fan-out until a
-      // non-mind message resets the counter.
-      if (count === MAX_CONSECUTIVE_MIND_TURNS + 1) {
-        await emitLoopNotice(opts.conversationId).catch((err) =>
-          log.warn(`failed to emit loop notice for ${opts.conversationId}`, log.errorData(err)),
+  // Only meaningful when there's more than one mind in the conversation. fanOutToMinds
+  // runs for EVERY posted message, so a mind posting into a DM/channel where it's the
+  // only mind has no peer to loop with — it must not trip the counter or inject the
+  // "delivery paused" notice into a conversation with zero mind→mind delivery.
+  if (mindParticipants.length > 1) {
+    if (opts.senderIsMind) {
+      const count = (consecutiveMindTurns.get(opts.conversationId) ?? 0) + 1;
+      consecutiveMindTurns.set(opts.conversationId, count);
+      if (count > MAX_CONSECUTIVE_MIND_TURNS) {
+        // Emit the notice once as we cross the threshold, then pause fan-out until a
+        // non-mind message resets the counter.
+        if (count === MAX_CONSECUTIVE_MIND_TURNS + 1) {
+          await emitLoopNotice(opts.conversationId).catch((err) =>
+            log.warn(`failed to emit loop notice for ${opts.conversationId}`, log.errorData(err)),
+          );
+        }
+        log.warn(
+          `loop protection: paused mind fan-out for ${opts.conversationId} after ${count} consecutive mind turns`,
         );
+        return;
       }
-      log.warn(
-        `loop protection: paused mind fan-out for ${opts.conversationId} after ${count} consecutive mind turns`,
-      );
-      return;
+    } else {
+      // A human/bridge message breaks the chain.
+      consecutiveMindTurns.delete(opts.conversationId);
     }
-  } else {
-    // A human/bridge message breaks the chain.
-    consecutiveMindTurns.delete(opts.conversationId);
   }
 
   const manager = getMindManager();
