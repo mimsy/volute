@@ -180,6 +180,35 @@ export async function importSkillFromDir(sourceDir: string, author: string): Pro
   }
   validateSkillId(id);
 
+  const db = await getDb();
+  const existing = await db.select().from(sharedSkills).where(eq(sharedSkills.id, id)).get();
+
+  // A publisher may only overwrite a pool entry it already authors. This blocks
+  // one mind from hijacking another mind's skill (or a protected built-in
+  // `volute` / extension `ext:*` skill) — skills carry hooks and bin scripts
+  // that later execute inside installers' processes, so a cross-author
+  // overwrite is a code-execution boundary. Trusted callers pass their own
+  // matching author (`volute`, `ext:<id>`), so their re-syncs still succeed.
+  //
+  // Exception: a PROTECTED caller (`volute` / `ext:*`, only reachable from
+  // built-in / extension sync — never from a mind, since a mind named "volute"
+  // is the trusted spirit) may RECLAIM an id currently squatted by a mind. A
+  // mind could otherwise pre-register an id Volute later ships as a built-in,
+  // permanently poisoning it: the sync would throw and fail open, and every
+  // installer would get the squatter's code.
+  if (existing && existing.author !== author) {
+    const existingProtected = existing.author === "volute" || existing.author.startsWith("ext:");
+    const callerProtected = author === "volute" || author.startsWith("ext:");
+    const reclaim = callerProtected && !existingProtected;
+    if (!reclaim) {
+      throw new Error(
+        existingProtected
+          ? `Cannot overwrite protected skill "${id}" (authored by "${existing.author}")`
+          : `Cannot overwrite skill "${id}" authored by "${existing.author}"`,
+      );
+    }
+  }
+
   const destDir = join(sharedSkillsDir(), id);
   // Clean destination before copying to remove files deleted from source
   if (existsSync(destDir)) rmSync(destDir, { recursive: true });
@@ -191,8 +220,6 @@ export async function importSkillFromDir(sourceDir: string, author: string): Pro
   const upstreamPath = join(destDir, ".upstream.json");
   if (existsSync(upstreamPath)) rmSync(upstreamPath);
 
-  const db = await getDb();
-  const existing = await db.select().from(sharedSkills).where(eq(sharedSkills.id, id)).get();
   const version = existing ? existing.version + 1 : 1;
 
   await db
@@ -322,8 +349,17 @@ export async function installSkill(
         );
       }
     }
-    installHookShims(dir, skillId, hooks);
-    if (bin) installBinShim(dir, skillId, bin);
+    try {
+      installHookShims(dir, skillId, hooks);
+      if (bin) installBinShim(dir, skillId, bin);
+    } catch (e) {
+      // Clean up partial install (copied dir + any hook shims) so a failure
+      // here — e.g. a bin-shim collision with another skill — doesn't leave
+      // destDir behind and wedge every retry on the "already installed" guard.
+      removeHookShims(dir, skillId);
+      rmSync(destDir, { recursive: true });
+      throw e;
+    }
   }
 
   // Read install notes if present
@@ -647,21 +683,34 @@ export function removeHookShims(dir: string, skillId: string): void {
 
 // --- Bin shim management ---
 
+// Marker line embedded in generated bin shims so we can tell which skill owns
+// a `.local/bin` command and refuse to clobber another skill's shim.
+const BIN_SHIM_MARKER = "# volute-skill:";
+
 function binShimContent(skillId: string, scriptPath: string, skillsSubdir: string): string {
   const skillScriptPath = `${skillsSubdir}/${skillId}/${scriptPath}`;
   const ext = scriptPath.split(".").pop() ?? "sh";
+  const header = `#!/bin/bash\n${BIN_SHIM_MARKER} ${skillId}\n`;
   if (ext === "ts") {
-    return `#!/bin/bash\nexec node --import tsx ${skillScriptPath} "$@"\n`;
+    return `${header}exec node --import tsx ${skillScriptPath} "$@"\n`;
   }
   if (ext === "js") {
-    return `#!/bin/bash\nexec node ${skillScriptPath} "$@"\n`;
+    return `${header}exec node ${skillScriptPath} "$@"\n`;
   }
-  return `#!/bin/bash\nexec bash ${skillScriptPath} "$@"\n`;
+  return `${header}exec bash ${skillScriptPath} "$@"\n`;
 }
 
 /** Derive command name from script path: `scripts/dream.ts` → `dream` */
 function binCommandName(scriptPath: string): string {
   return basename(scriptPath).replace(/\.[^.]+$/, "");
+}
+
+/** Read the owning skill id from an existing bin shim, or undefined if unmarked. */
+function binShimOwner(shimPath: string): string | undefined {
+  const line = readFileSync(shimPath, "utf-8")
+    .split("\n")
+    .find((l) => l.startsWith(BIN_SHIM_MARKER));
+  return line?.slice(BIN_SHIM_MARKER.length).trim() || undefined;
 }
 
 export function installBinShim(dir: string, skillId: string, scriptPath: string): void {
@@ -671,6 +720,16 @@ export function installBinShim(dir: string, skillId: string, scriptPath: string)
   mkdirSync(binDir, { recursive: true });
   const cmdName = binCommandName(scriptPath);
   const shimPath = join(binDir, cmdName);
+  // Refuse to overwrite a shim owned by a different skill — two skills that each
+  // ship e.g. `scripts/sync.ts` must not silently clobber each other's command.
+  if (existsSync(shimPath)) {
+    const owner = binShimOwner(shimPath);
+    if (owner && owner !== skillId) {
+      throw new Error(
+        `Bin command "${cmdName}" is already provided by skill "${owner}"; skill "${skillId}" cannot overwrite it`,
+      );
+    }
+  }
   writeFileSync(shimPath, binShimContent(skillId, scriptPath, skillsSubdir), { mode: 0o755 });
 }
 
