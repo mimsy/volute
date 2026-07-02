@@ -23,9 +23,19 @@ export type AiProviderConfig = {
   };
 };
 
+/**
+ * An admin-defined model on an already-configured provider, for models not yet
+ * in pi-ai's built-in catalog. Only identity (provider + id, plus an optional
+ * display name) is stored; the heavy metadata (api/baseUrl/caps/cost) is cloned
+ * from a sibling built-in model of the same provider at resolution time so it
+ * never goes stale as the catalog evolves.
+ */
+export type CustomModel = { provider: string; id: string; name?: string };
+
 export type AiConfig = {
   providers: Record<string, AiProviderConfig>;
   models?: string[];
+  customModels?: CustomModel[];
   utilityModel?: string;
 };
 

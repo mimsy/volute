@@ -3,6 +3,8 @@ import { Modal } from "@volute/ui";
 import {
   type AiModel,
   type AiProvider,
+  addCustomModel,
+  deleteCustomModel,
   fetchAiModels,
   fetchAiProviders,
   pollAiOAuthStatus,
@@ -97,6 +99,16 @@ let modelSuggestions = $derived(
         )
         .slice(0, 12)
     : aiModels.filter((m) => !m.enabled && m.provider === modelSearchProvider).slice(0, 12),
+);
+
+// Offer a custom-model option when the typed id doesn't already exist for this provider.
+let canAddCustomModel = $derived(
+  modelSearch.trim().length > 0 &&
+    !aiModels.some(
+      (m) =>
+        m.provider === modelSearchProvider &&
+        m.id.toLowerCase() === modelSearch.trim().toLowerCase(),
+    ),
 );
 
 function authMethodLabel(method: string | null): string {
@@ -286,12 +298,37 @@ async function addModel(modelId: string) {
   }
 }
 
-async function removeModel(modelId: string) {
-  const updated = enabledModels.map((m) => m.id).filter((id) => id !== modelId);
+// Register a freeform model id (not in pi-ai's built-in catalog) for an already-configured provider.
+async function addCustom() {
+  const id = modelSearch.trim();
+  if (!id) return;
+  try {
+    await addCustomModel(modelSearchProvider, id);
+    modelSearch = "";
+    showModelSearch = false;
+    await load();
+  } catch (err) {
+    error = err instanceof Error ? err.message : "Failed to add custom model";
+  }
+}
+
+async function removeModel(model: AiModel) {
+  // Custom models are user-created: removing deletes them outright.
+  if (model.custom) {
+    try {
+      await deleteCustomModel(model.provider, model.id);
+      aiModels = aiModels.filter((m) => m.id !== model.id);
+      if (utilityModel === model.id) utilityModel = "";
+    } catch (err) {
+      error = err instanceof Error ? err.message : "Failed to remove custom model";
+    }
+    return;
+  }
+  const updated = enabledModels.map((m) => m.id).filter((id) => id !== model.id);
   try {
     await saveEnabledModels(updated);
-    aiModels = aiModels.map((m) => (m.id === modelId ? { ...m, enabled: false } : m));
-    if (utilityModel === modelId) utilityModel = "";
+    aiModels = aiModels.map((m) => (m.id === model.id ? { ...m, enabled: false } : m));
+    if (utilityModel === model.id) utilityModel = "";
   } catch (err) {
     error = err instanceof Error ? err.message : "Failed to remove model";
   }
@@ -319,16 +356,14 @@ async function removeModel(modelId: string) {
             {#each providerModels as model (model.id)}
               <span class="model-tag">
                 {model.id}
-                <button class="model-tag-remove" onclick={() => removeModel(model.id)}>×</button>
+                <button class="model-tag-remove" onclick={() => removeModel(model)}>×</button>
               </span>
             {/each}
           </div>
         {:else}
           <span class="dim">No models enabled</span>
         {/if}
-        {#if aiModels.some((m) => !m.enabled && m.provider === provider.id)}
-          <button class="add-model-btn" onclick={() => { modelSearchProvider = provider.id; modelSearch = ""; showModelSearch = true; }}>Add model</button>
-        {/if}
+        <button class="add-model-btn" onclick={() => { modelSearchProvider = provider.id; modelSearch = ""; error = ""; showModelSearch = true; }}>Add model</button>
       </div>
     </div>
   {/each}
@@ -471,7 +506,7 @@ async function removeModel(modelId: string) {
       <input
         type="text"
         bind:value={modelSearch}
-        placeholder="Search models..."
+        placeholder="Search or type a model id..."
         class="text-input"
       />
       {#if modelSuggestions.length > 0}
@@ -482,8 +517,17 @@ async function removeModel(modelId: string) {
             </button>
           {/each}
         </div>
-      {:else}
+      {/if}
+      {#if canAddCustomModel}
+        <button class="custom-add-btn" onclick={addCustom}>
+          Add “{modelSearch.trim()}” as a custom model
+        </button>
+        <span class="dim">For a model not yet in the catalog. Settings are inherited from a built-in model of this provider.</span>
+      {:else if modelSuggestions.length === 0}
         <span class="dim">No more models available</span>
+      {/if}
+      {#if error}
+        <div class="error">{error}</div>
       {/if}
     </div>
   </Modal>
@@ -864,6 +908,21 @@ async function removeModel(modelId: string) {
 
   .model-option:last-child { border-bottom: none; }
   .model-option:hover { background: var(--bg-3); }
+
+  .custom-add-btn {
+    width: 100%;
+    padding: 8px 12px;
+    font-family: inherit;
+    font-size: 13px;
+    text-align: left;
+    background: var(--accent-dim);
+    color: var(--accent);
+    border: 1px solid var(--accent-border);
+    border-radius: var(--radius);
+    cursor: pointer;
+  }
+
+  .custom-add-btn:hover { border-color: var(--accent); }
 
   /* --- Model defaults --- */
 

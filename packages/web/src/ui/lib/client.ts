@@ -505,6 +505,7 @@ export type AiModel = {
   contextWindow: number;
   maxTokens: number;
   enabled: boolean;
+  custom?: boolean;
 };
 
 export function fetchAiProviders(): Promise<AiProvider[]> {
@@ -545,6 +546,14 @@ export function submitAiOAuthCode(flowId: string, code: string): Promise<void> {
 
 export function saveEnabledModels(models: string[]): Promise<void> {
   return put(`${V1}/system/ai/models`, { models });
+}
+
+export function addCustomModel(provider: string, id: string, name?: string): Promise<void> {
+  return post(`${V1}/system/ai/models/custom`, { provider, id, ...(name ? { name } : {}) });
+}
+
+export function deleteCustomModel(provider: string, id: string): Promise<void> {
+  return del(`${V1}/system/ai/models/custom?provider=${enc(provider)}&id=${enc(id)}`);
 }
 
 export type AiDefaults = { spiritModel?: string | null; utilityModel: string | null };
