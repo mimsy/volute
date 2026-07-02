@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.41.1](https://github.com/mimsy/volute/compare/volute-v0.41.0...volute-v0.41.1) (2026-07-02)
+
+
+### Bug Fixes
+
+* cross-tenant data exposure via history API and SSE replay buffer ([#341](https://github.com/mimsy/volute/issues/341)) ([c2ad729](https://github.com/mimsy/volute/commit/c2ad729c5c11da345f158ec2f4d49317153b601c))
+* extension command endpoint trusts body.mind over authenticated identity ([#339](https://github.com/mimsy/volute/issues/339)) ([78583b1](https://github.com/mimsy/volute/commit/78583b18ed6bf0950ece20332fe585289f87c761))
+* install deps when spirit switches templates ([#344](https://github.com/mimsy/volute/issues/344)) ([1f32b5b](https://github.com/mimsy/volute/commit/1f32b5b651cce1d1d6ae4a799f7eb4201fdd75d7))
+* prevent CLI timeout on long-running daemon operations ([#318](https://github.com/mimsy/volute/issues/318)) ([1d2f131](https://github.com/mimsy/volute/commit/1d2f13135a13d077a7a7b4a6a1f47a56b2db4596))
+* sandbox and privileged script execution fail open ([#338](https://github.com/mimsy/volute/issues/338)) ([ba545d8](https://github.com/mimsy/volute/commit/ba545d817b79cbc4d4886442bf5719e0376664a7))
+* secret file permissions, mind token env naming, and env inheritance ([#340](https://github.com/mimsy/volute/issues/340)) ([7a5e3c8](https://github.com/mimsy/volute/commit/7a5e3c8e881dc4d537e5b7c363e7fb083e845493))
+* skill publishing lets a mind overwrite shared/built-in skills ([#337](https://github.com/mimsy/volute/issues/337)) ([27ed6ed](https://github.com/mimsy/volute/commit/27ed6ed764ce03aaad9d63fce082fd339b661a7d))
+
 ## [0.41.0](https://github.com/mimsy/volute/compare/volute-v0.40.2...volute-v0.41.0) (2026-07-01)
 
 
