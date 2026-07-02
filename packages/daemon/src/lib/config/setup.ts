@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { voluteSystemDir } from "../mind/registry.js";
 import type { CognitionConfig, Schedule, SleepConfig } from "../mind/volute-config.js";
@@ -108,7 +108,9 @@ export function readGlobalConfig(): GlobalConfig {
 export function writeGlobalConfig(config: GlobalConfig): void {
   const path = configPath();
   mkdirSync(voluteSystemDir(), { recursive: true });
-  writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`);
+  // 0600 — config holds provider API keys and OAuth refresh tokens; owner-only.
+  writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
+  chmodSync(path, 0o600); // enforce even if the file pre-existed with looser perms
   _cachedConfig = { config, ts: Date.now() };
 }
 

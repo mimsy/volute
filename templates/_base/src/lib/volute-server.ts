@@ -63,7 +63,7 @@ function verifySignature(
 /** Look up a mind's public key via the daemon API */
 async function fetchPublicKey(fingerprint: string): Promise<string | null> {
   const daemonPort = process.env.VOLUTE_DAEMON_PORT;
-  const daemonToken = process.env.VOLUTE_DAEMON_TOKEN;
+  const daemonToken = process.env.VOLUTE_MIND_TOKEN;
   if (!daemonPort || !daemonToken) return null;
 
   try {

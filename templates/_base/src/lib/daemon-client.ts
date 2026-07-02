@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 
 const port = process.env.VOLUTE_DAEMON_PORT;
 const mind = process.env.VOLUTE_MIND;
-const token = process.env.VOLUTE_DAEMON_TOKEN;
+const token = process.env.VOLUTE_MIND_TOKEN;
 
 /** Read session from file (fallback for sandbox where env vars don't propagate). */
 function readSessionFile(): string | undefined {

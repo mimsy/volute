@@ -2,14 +2,14 @@
 # Pre-prompt hook: injects current system plan as session context
 # Queries the daemon API via node's built-in fetch and outputs JSON with additionalContext
 
-if [ -z "$VOLUTE_DAEMON_PORT" ] || [ -z "$VOLUTE_DAEMON_TOKEN" ]; then
+if [ -z "$VOLUTE_DAEMON_PORT" ] || [ -z "$VOLUTE_MIND_TOKEN" ]; then
   echo '{}'
   exit 0
 fi
 
 exec node --input-type=module -e '
   const port = process.env.VOLUTE_DAEMON_PORT;
-  const token = process.env.VOLUTE_DAEMON_TOKEN;
+  const token = process.env.VOLUTE_MIND_TOKEN;
   try {
     const res = await fetch(
       `http://localhost:${port}/api/ext/plan/current`,

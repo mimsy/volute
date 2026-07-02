@@ -41,7 +41,7 @@ docker logs "$CONTAINER" 2>&1 | grep "exited with code 127"
 **Root causes:**
 1. **Missing API key** — `ANTHROPIC_API_KEY` not set as a global env var. The spirit's SDK process needs it to call the Claude API.
 2. **Setup incomplete** — `isSetupComplete()` returns false because config.json wasn't written before daemon start. Restart the container after setup.
-3. **CLI auth** — The spirit authenticates CLI commands via `VOLUTE_DAEMON_TOKEN` env var, which the daemon sets when spawning the mind process. If this is missing, the CLI falls back to `cli-session.json` which doesn't exist for the spirit.
+3. **CLI auth** — The spirit authenticates CLI commands via `VOLUTE_MIND_TOKEN` env var, which the daemon sets when spawning the mind process. If this is missing, the CLI falls back to `cli-session.json` which doesn't exist for the spirit.
 
 ## Extension Skills Not Syncing
 
