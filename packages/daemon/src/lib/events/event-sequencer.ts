@@ -33,14 +33,19 @@ export function nextEventId(): number {
 
 /**
  * Replay buffered events after `sinceId` that the caller is entitled to see.
- * The buffer is global, so audience must be enforced here:
+ * The buffer is global, so audience must be enforced here per event type:
  * - Snapshot events are connection-specific and never replayed to anyone.
  * - Conversation events are only replayed to participants of that conversation.
- * - Activity events are broadcast to all connections (matching the live path).
+ * - Activity events (which include another mind's AI-generated turn summaries)
+ *   are gated to the caller's own mind. `allowedActivityMind === undefined`
+ *   means a privileged caller (admin/system) who may see the global feed.
+ * The audience is decided explicitly per event type; unknown event types are
+ * denied so a newly-added type can never leak by default.
  */
 export function getEventsSince(
   sinceId: number,
   allowedConversationIds: Set<string>,
+  allowedActivityMind: string | undefined,
 ): BufferedEvent[] {
   const now = Date.now();
 
@@ -51,9 +56,16 @@ export function getEventsSince(
   return buffer.slice(startIdx).filter((e) => {
     if (now - e.timestamp >= MAX_AGE_MS) return false;
     const data = e.data;
-    if (data.event === "snapshot") return false;
-    if (data.event === "conversation") return allowedConversationIds.has(data.conversationId);
-    return true;
+    switch (data.event) {
+      case "snapshot":
+        return false;
+      case "conversation":
+        return allowedConversationIds.has(data.conversationId);
+      case "activity":
+        return allowedActivityMind === undefined || data.mind === allowedActivityMind;
+      default:
+        return false;
+    }
   });
 }
 

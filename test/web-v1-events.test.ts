@@ -63,7 +63,7 @@ describe("event sequencer", () => {
       created_at: "2024-01-01",
     });
 
-    const events = getEventsSince(id1, NO_CONVS);
+    const events = getEventsSince(id1, NO_CONVS, undefined);
     assert.equal(events.length, 2);
     assert.equal(events[0].id, id2);
     assert.equal(events[1].id, id3);
@@ -81,7 +81,7 @@ describe("event sequencer", () => {
       created_at: "2024-01-01",
     });
 
-    const events = getEventsSince(id, NO_CONVS);
+    const events = getEventsSince(id, NO_CONVS, undefined);
     assert.equal(events.length, 0);
   });
 
@@ -97,7 +97,7 @@ describe("event sequencer", () => {
       created_at: "2024-01-01",
     });
 
-    const events = getEventsSince(9999, NO_CONVS);
+    const events = getEventsSince(9999, NO_CONVS, undefined);
     assert.equal(events.length, 0);
   });
 
@@ -118,7 +118,7 @@ describe("event sequencer", () => {
 
     // Events with IDs 1-5 should have been trimmed
     // Trying to replay from 0 should only get ~1000 events
-    const events = getEventsSince(0, NO_CONVS);
+    const events = getEventsSince(0, NO_CONVS, undefined);
     assert.ok(events.length <= 1000);
     // First event should have ID > 5
     assert.ok(events[0].id > 5);
@@ -135,7 +135,7 @@ describe("event sequencer", () => {
     });
     assert.ok(id > 0);
 
-    const events = getEventsSince(0, NO_CONVS);
+    const events = getEventsSince(0, NO_CONVS, undefined);
     assert.equal(events.length, 0);
   });
 
@@ -153,11 +153,11 @@ describe("event sequencer", () => {
     });
 
     // A caller who is not a participant sees nothing.
-    assert.equal(getEventsSince(0, NO_CONVS).length, 0);
-    assert.equal(getEventsSince(0, new Set(["other-conv"])).length, 0);
+    assert.equal(getEventsSince(0, NO_CONVS, undefined).length, 0);
+    assert.equal(getEventsSince(0, new Set(["other-conv"]), undefined).length, 0);
 
     // A participant sees the event.
-    const events = getEventsSince(0, new Set(["conv-123"]));
+    const events = getEventsSince(0, new Set(["conv-123"]), undefined);
     assert.equal(events.length, 1);
     assert.equal(events[0].data.event, "conversation");
   });
@@ -185,9 +185,42 @@ describe("event sequencer", () => {
     });
 
     // Outsider gets only the global activity event, never the private message.
-    const events = getEventsSince(0, NO_CONVS);
+    const events = getEventsSince(0, NO_CONVS, undefined);
     assert.equal(events.length, 1);
     assert.equal(events[0].data.event, "activity");
+  });
+
+  it("gates activity events to the caller's own mind for non-privileged callers", () => {
+    resetSequencer();
+    bufferEvent({
+      event: "activity",
+      id: 1,
+      type: "mind_done",
+      mind: "mind-a",
+      summary: "a did a thing",
+      metadata: null,
+      created_at: "2024-01-01",
+    });
+    bufferEvent({
+      event: "activity",
+      id: 2,
+      type: "mind_done",
+      mind: "mind-b",
+      summary: "b did a thing",
+      metadata: null,
+      created_at: "2024-01-01",
+    });
+
+    // A non-privileged caller scoped to mind-a sees only mind-a's activity —
+    // mind-b's turn summary must never be replayed cross-tenant.
+    const scoped = getEventsSince(0, NO_CONVS, "mind-a");
+    assert.equal(scoped.length, 1);
+    assert.equal(scoped[0].data.event, "activity");
+    assert.equal(scoped[0].data.event === "activity" ? scoped[0].data.mind : null, "mind-a");
+
+    // A privileged caller (undefined) sees the global feed.
+    const global = getEventsSince(0, NO_CONVS, undefined);
+    assert.equal(global.length, 2);
   });
 
   it("nextEventId advances the counter without buffering", () => {
@@ -195,7 +228,7 @@ describe("event sequencer", () => {
     const id = nextEventId();
     assert.ok(id > 0);
     // Nothing buffered, so no replay.
-    assert.equal(getEventsSince(0, NO_CONVS).length, 0);
+    assert.equal(getEventsSince(0, NO_CONVS, undefined).length, 0);
     // Subsequent buffered events get higher IDs.
     const bufId = bufferEvent({
       event: "activity",

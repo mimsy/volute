@@ -1,4 +1,4 @@
-import { desc } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { getDb } from "../../../lib/db.js";
@@ -15,6 +15,7 @@ import {
 } from "../../../lib/events/conversations.js";
 import { bufferEvent, getEventsSince, nextEventId } from "../../../lib/events/event-sequencer.js";
 import { getActiveMinds } from "../../../lib/events/mind-activity-tracker.js";
+import { getBaseName } from "../../../lib/mind/registry.js";
 import { activity } from "../../../lib/schema.js";
 import log from "../../../lib/util/logger.js";
 import { type AuthEnv, authMiddleware } from "../../middleware/auth.js";
@@ -23,6 +24,12 @@ const app = new Hono<AuthEnv>().use("*", authMiddleware).get("/", async (c) => {
   const user = c.get("user");
   const since = c.req.query("since");
   const sinceId = since ? Number(since) : 0;
+
+  // Minds are untrusted: a non-admin/system principal may only see its own
+  // activity (activity.summary is an AI-generated summary of a mind's turn).
+  // `activityMind === undefined` means a privileged caller with the global feed.
+  const privileged = user.role === "admin" || user.role === "system";
+  const activityMind = privileged ? undefined : await getBaseName(user.username);
 
   return streamSSE(c, async (stream) => {
     const cleanups: (() => void)[] = [];
@@ -50,10 +57,11 @@ const app = new Hono<AuthEnv>().use("*", authMiddleware).get("/", async (c) => {
       const allowedConversationIds = new Set<string>(conversations.map((c: any) => c.id));
 
       // If reconnecting with a valid sinceId, replay only the buffered events
-      // the caller is entitled to (their own conversation events + global
-      // activity). Other users' events and per-connect snapshots are filtered out.
+      // the caller is entitled to (their own conversation events + their own
+      // mind's activity, or the global feed for privileged callers). Other
+      // users' events and per-connect snapshots are filtered out.
       if (sinceId > 0) {
-        const missed = getEventsSince(sinceId, allowedConversationIds);
+        const missed = getEventsSince(sinceId, allowedConversationIds, activityMind);
         for (const event of missed) {
           await stream.writeSSE({
             id: String(event.id),
@@ -69,6 +77,7 @@ const app = new Hono<AuthEnv>().use("*", authMiddleware).get("/", async (c) => {
         recentActivity = await db
           .select()
           .from(activity)
+          .where(activityMind ? eq(activity.mind, activityMind) : undefined)
           .orderBy(desc(activity.created_at))
           .limit(50);
         recentActivity = recentActivity.map((row) => ({
@@ -97,8 +106,11 @@ const app = new Hono<AuthEnv>().use("*", authMiddleware).get("/", async (c) => {
         data: JSON.stringify(snapshotData),
       });
 
-      // Subscribe to activity events
+      // Subscribe to activity events. Non-privileged callers only see their own
+      // mind's activity; the buffer still records every event globally so the
+      // audience filter is re-applied on reconnect replay too.
       const unsubActivity = subscribeActivity((event) => {
+        if (activityMind !== undefined && event.mind !== activityMind) return;
         const data = {
           event: "activity" as const,
           ...event,
