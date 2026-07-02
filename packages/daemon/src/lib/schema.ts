@@ -267,7 +267,7 @@ export const mindNotices = sqliteTable(
     id: integer("id").primaryKey({ autoIncrement: true }),
     mind: text("mind").notNull(),
     session: text("session").notNull(),
-    kind: text("kind").$type<"turn_error" | "crash" | "budget">().notNull(),
+    kind: text("kind").$type<"turn_error" | "crash" | "budget" | "startup">().notNull(),
     reason: text("reason")
       .$type<
         | "auth_error"
@@ -277,6 +277,7 @@ export const mindNotices = sqliteTable(
         | "unknown"
         | "process_crash"
         | "token_budget"
+        | "startup_failed"
       >()
       .notNull(),
     detail: text("detail").notNull(),

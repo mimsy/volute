@@ -16,6 +16,7 @@ import {
   activity,
   deliveryQueue,
   mindHistory,
+  mindNotices,
   summaries,
   turns,
 } from "../packages/daemon/src/lib/schema.js";
@@ -602,6 +603,87 @@ describe("daemon e2e", { timeout: 120000 }, () => {
     assert.equal(msgsRes.status, 200);
     const messages = (await msgsRes.json()) as { content: { type: string; text?: string }[] }[];
     assert.ok(messages.length >= 1);
+  });
+
+  it("last-known-good: recovers when a self-edit to src/ breaks startup", {
+    timeout: 90000,
+  }, async () => {
+    await ensureTestMind();
+    const dir = mindDir(TEST_MIND);
+
+    // Deps are installed by the "mind lifecycle" test; install as a fallback if missing.
+    if (!existsSync(resolve(dir, "node_modules"))) {
+      execFileSync("npm", ["install"], { cwd: dir, stdio: "pipe", timeout: 60000, env: cleanEnv });
+      await waitForHealth();
+    }
+
+    // Make sure the mind is running on good code.
+    const startRes = await daemonRequest(`/api/minds/${TEST_MIND}/start`, { method: "POST" });
+    assert.ok(
+      startRes.status === 200 || startRes.status === 409,
+      `Start: expected 200 or 409, got ${startRes.status} ${await startRes.clone().text()}`,
+    );
+
+    const serverPath = resolve(dir, "src", "server.ts");
+    const goodSource = readFileSync(serverPath, "utf-8");
+
+    // The mind edits its own server source and breaks it (uncommitted, as a real self-edit
+    // would be — the auto-commit hook only tracks home/).
+    writeFileSync(serverPath, `${goodSource}\nthis is not valid typescript !!! (((\n`);
+
+    // Restart: the daemon should detect the broken startup, park the change, restore the
+    // last known-good src/, and come back up rather than dying.
+    const restartRes = await daemonRequest(`/api/minds/${TEST_MIND}/restart`, { method: "POST" });
+    assert.equal(
+      restartRes.status,
+      200,
+      `Restart: ${restartRes.status} ${await restartRes.clone().text()}`,
+    );
+    const body = (await restartRes.json()) as { recovered?: boolean; brokenBranch?: string };
+    assert.equal(body.recovered, true, "restart should report last-known-good recovery");
+    assert.ok(
+      body.brokenBranch?.startsWith("broken/"),
+      `expected a broken/* branch, got ${body.brokenBranch}`,
+    );
+
+    // The working tree src/ is restored to the previous good code.
+    assert.equal(
+      readFileSync(serverPath, "utf-8"),
+      goodSource,
+      "src/server.ts should be restored to the good version",
+    );
+
+    // The mind is back up.
+    const statusRes = await daemonRequest(`/api/minds/${TEST_MIND}`);
+    const status = (await statusRes.json()) as { status: string };
+    assert.ok(
+      status.status === "running" || status.status === "starting",
+      `Expected running/starting after recovery, got ${status.status}`,
+    );
+
+    // The broken change is preserved on a broken/* branch.
+    const branches = execFileSync("git", ["branch", "--list", "broken/*"], {
+      cwd: dir,
+      encoding: "utf-8",
+      env: cleanEnv,
+    });
+    assert.ok(branches.includes("broken/"), `expected a broken/* branch, got: ${branches}`);
+
+    // A startup notice was recorded, carrying the failed child's stderr.
+    const db = await getDb();
+    const rows = await db.select().from(mindNotices).where(eq(mindNotices.mind, TEST_MIND));
+    const startupNotice = rows.find((r) => r.kind === "startup");
+    assert.ok(startupNotice, "a startup notice should be recorded");
+    assert.ok(
+      startupNotice.raw != null && startupNotice.raw.length > 0,
+      "startup notice should carry the failed process stderr",
+    );
+    assert.ok(
+      startupNotice.detail.includes(body.brokenBranch ?? "broken/"),
+      "notice should name the broken branch",
+    );
+
+    await daemonRequest(`/api/minds/${TEST_MIND}/stop`, { method: "POST" });
   });
 
   it("bridge config: set, mappings CRUD, remove", async () => {
