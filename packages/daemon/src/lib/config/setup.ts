@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { voluteSystemDir } from "../mind/registry.js";
 import type { CognitionConfig, Schedule, SleepConfig } from "../mind/volute-config.js";
@@ -89,6 +89,69 @@ export function configPath(): string {
   return resolve(voluteSystemDir(), "config.json");
 }
 
+/**
+ * Provider credentials live in a separate owner-only file. On a `--system`
+ * install the daemon runs as root while operators run CLI commands as their own
+ * (non-root) user; a single file mode cannot both hide secrets from untrusted
+ * minds and stay readable to the operator. So `config.json` keeps only
+ * non-secret operational state (0644, operator-readable) and this file holds the
+ * provider API keys / OAuth tokens (0600, root-only), mirroring env.json/volute.db.
+ */
+export function secretsPath(): string {
+  return resolve(voluteSystemDir(), "secrets.json");
+}
+
+/** The provider-credential subset of GlobalConfig persisted to secrets.json. */
+type ConfigSecrets = {
+  ai?: { providers: Record<string, AiProviderConfig> };
+  imagegen?: { providers: Record<string, ServiceProviderConfig> };
+};
+
+function hasEntries(obj: Record<string, unknown> | undefined): boolean {
+  return !!obj && Object.keys(obj).length > 0;
+}
+
+/** Split a full config into its operator-readable part and its secret part. */
+function splitConfig(config: GlobalConfig): { publicConfig: GlobalConfig; secrets: ConfigSecrets } {
+  const publicConfig: GlobalConfig = { ...config };
+  const secrets: ConfigSecrets = {};
+  if (config.ai) {
+    const { providers, ...rest } = config.ai;
+    publicConfig.ai = { ...rest, providers: {} };
+    if (hasEntries(providers)) secrets.ai = { providers };
+  }
+  if (config.imagegen) {
+    const { providers, ...rest } = config.imagegen;
+    publicConfig.imagegen = { ...rest };
+    if (providers && Object.keys(providers).length > 0) secrets.imagegen = { providers };
+  }
+  return { publicConfig, secrets };
+}
+
+/** Merge secrets.json provider credentials back onto the public config. */
+function mergeSecrets(publicConfig: GlobalConfig, secrets: ConfigSecrets): GlobalConfig {
+  const merged: GlobalConfig = { ...publicConfig };
+  if (secrets.ai?.providers) {
+    merged.ai = { ...(merged.ai ?? { providers: {} }), providers: secrets.ai.providers };
+  }
+  if (secrets.imagegen?.providers) {
+    merged.imagegen = { ...(merged.imagegen ?? {}), providers: secrets.imagegen.providers };
+  }
+  return merged;
+}
+
+/** Read secrets.json; returns {} when the file is missing or unreadable (e.g. a non-root operator). */
+function readSecrets(): ConfigSecrets {
+  const path = secretsPath();
+  if (!existsSync(path)) return {};
+  try {
+    return JSON.parse(readFileSync(path, "utf-8"));
+  } catch {
+    // EACCES for a non-root operator, or a corrupt file — proceed without secrets.
+    return {};
+  }
+}
+
 let _cachedConfig: { config: GlobalConfig; ts: number } | null = null;
 const CONFIG_CACHE_TTL = 2000;
 
@@ -105,23 +168,62 @@ export function readGlobalConfig(): GlobalConfig {
     _cachedConfig = null;
     return {};
   }
+  let publicConfig: GlobalConfig;
   try {
-    const config = JSON.parse(readFileSync(path, "utf-8"));
-    _cachedConfig = { config, ts: Date.now() };
-    return config;
+    publicConfig = JSON.parse(readFileSync(path, "utf-8"));
   } catch (err) {
     console.error(`Failed to parse ${path}: ${err instanceof Error ? err.message : err}`);
     return {};
   }
+  // Overlay provider credentials from secrets.json. A legacy (unsplit) config.json
+  // may still carry providers inline; those survive when secrets.json is absent.
+  const config = mergeSecrets(publicConfig, readSecrets());
+  _cachedConfig = { config, ts: Date.now() };
+  return config;
 }
 
 export function writeGlobalConfig(config: GlobalConfig): void {
-  const path = configPath();
   mkdirSync(voluteSystemDir(), { recursive: true });
-  // 0600 — config holds provider API keys and OAuth refresh tokens; owner-only.
-  writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
-  chmodSync(path, 0o600); // enforce even if the file pre-existed with looser perms
+  const { publicConfig, secrets } = splitConfig(config);
+  // 0644 — non-secret operational state; must stay readable by the operator's
+  // (possibly non-root) CLI on a system install.
+  const cfgPath = configPath();
+  writeFileSync(cfgPath, `${JSON.stringify(publicConfig, null, 2)}\n`, { mode: 0o644 });
+  chmodSync(cfgPath, 0o644); // relax even if the file pre-existed at 0600
+  // 0600 — provider API keys and OAuth refresh tokens; owner-only.
+  const secPath = secretsPath();
+  writeFileSync(secPath, `${JSON.stringify(secrets, null, 2)}\n`, { mode: 0o600 });
+  chmodSync(secPath, 0o600); // enforce even if the file pre-existed with looser perms
   _cachedConfig = { config, ts: Date.now() };
+}
+
+/**
+ * Move provider credentials out of a legacy single-file config.json (which
+ * v0.41.1 locked to 0600 root-only, breaking non-root operator CLI commands)
+ * into secrets.json, and relax config.json back to 0644. Idempotent; must run as
+ * the config owner (root on a system install), so it lives on the daemon startup
+ * path. A no-op once config.json is already split and 0644.
+ */
+export function migrateConfigSecrets(): void {
+  const path = configPath();
+  if (!existsSync(path)) return;
+  let raw: string;
+  try {
+    raw = readFileSync(path, "utf-8"); // skip silently if we're not the owner
+  } catch {
+    return;
+  }
+  let parsed: GlobalConfig;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return;
+  }
+  const embedsSecrets = hasEntries(parsed.ai?.providers) || hasEntries(parsed.imagegen?.providers);
+  const mode = statSync(path).mode & 0o777;
+  if (!embedsSecrets && mode === 0o644) return; // already migrated
+  _resetConfigCache();
+  writeGlobalConfig(readGlobalConfig()); // re-split with correct perms
 }
 
 /** Check if setup has been completed. Returns true once the full setup flow has finished. */

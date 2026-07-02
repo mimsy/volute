@@ -94,8 +94,12 @@ export async function startDaemon(opts: {
   mkdirSync(home, { recursive: true });
   ensureSystemDir();
 
+  // Split provider credentials into secrets.json and relax config.json to 0644 so
+  // non-root operator CLI commands can read it (v0.41.1 regression). Runs as root.
+  const { migrateConfigSecrets, migrateSetupCompleted } = await import("./lib/config/setup.js");
+  migrateConfigSecrets();
+
   // Migrate pre-existing installations (setup field without setupCompleted)
-  const { migrateSetupCompleted } = await import("./lib/config/setup.js");
   migrateSetupCompleted();
 
   // Initialize database (runs drizzle migrations + creates raw connection)
