@@ -4,7 +4,11 @@ import { and, eq } from "drizzle-orm";
 import { drainNotices } from "../packages/daemon/src/lib/daemon/notices.js";
 import { initTokenBudget } from "../packages/daemon/src/lib/daemon/token-budget.js";
 import { handleMindEvent } from "../packages/daemon/src/lib/daemon/turn-lifecycle.js";
-import { clearMind, getActiveTurnId } from "../packages/daemon/src/lib/daemon/turn-tracker.js";
+import {
+  clearMind,
+  getActiveTurnId,
+  linkInboundToActiveTurn,
+} from "../packages/daemon/src/lib/daemon/turn-tracker.js";
 import { getDb } from "../packages/daemon/src/lib/db.js";
 import {
   recordInbound,
@@ -144,6 +148,116 @@ describe("turn-lifecycle: handleMindEvent", () => {
     const db = await getDb();
     const row = await db.select().from(mindHistory).where(eq(mindHistory.id, outboundId!)).get();
     assert.equal(row!.turn_id, turnId, "marker fallback should attribute the outbound to the turn");
+    await cleanup(mind);
+  });
+});
+
+describe("turn-lifecycle: mid-turn inbound tagging", () => {
+  it("tags an inbound arriving mid-turn to the in-progress turn, without touching the trigger", async () => {
+    const mind = "tl-midturn";
+    // A turn is already active for (mind, s1, @alice), triggered by an earlier inbound.
+    const triggerId = await recordInbound(mind, "@alice", "alice", "first");
+    const { turnId } = await handleMindEvent(mind, {
+      type: "text",
+      session: "s1",
+      channel: "@alice",
+      content: "on it",
+    });
+    assert.ok(turnId);
+    assert.equal(getActiveTurnId(mind, "s1"), turnId, "turn should be active");
+
+    // A new inbound arrives on the same channel WHILE the turn is still active.
+    const interruptId = await recordInbound(mind, "@alice", "alice", "actually, wait");
+    const db = await getDb();
+    const before = await db
+      .select()
+      .from(mindHistory)
+      .where(eq(mindHistory.id, interruptId!))
+      .get();
+    assert.equal(before!.turn_id, null, "interrupt starts untagged");
+
+    // Delivery attributes it to the in-progress turn immediately.
+    await linkInboundToActiveTurn(mind, "s1", "@alice");
+
+    const after = await db.select().from(mindHistory).where(eq(mindHistory.id, interruptId!)).get();
+    assert.equal(after!.turn_id, turnId, "mid-turn inbound must be tagged to the active turn now");
+
+    // The turn's trigger stays the original triggering inbound — a mid-turn message is not a trigger.
+    const turn = await db.select().from(turns).where(eq(turns.id, turnId!)).get();
+    assert.equal(turn!.trigger_event_id, triggerId, "trigger_event_id must not be overwritten");
+    await cleanup(mind);
+  });
+
+  it("tags ALL mid-turn inbounds even when more than 5 accumulate (next-turn sweep would miss them)", async () => {
+    const mind = "tl-midturn-backlog";
+    // Open a turn on the channel.
+    const { turnId } = await handleMindEvent(mind, {
+      type: "text",
+      session: "s1",
+      channel: "@alice",
+      content: "working",
+    });
+    assert.ok(turnId);
+
+    // 7 inbounds pile up mid-turn — more than linkPendingInbound's bounded sweep of 5.
+    const ids: number[] = [];
+    for (let i = 0; i < 7; i++) {
+      const id = await recordInbound(mind, "@alice", "alice", `msg ${i}`);
+      ids.push(id!);
+    }
+
+    await linkInboundToActiveTurn(mind, "s1", "@alice");
+
+    const db = await getDb();
+    for (const id of ids) {
+      const row = await db.select().from(mindHistory).where(eq(mindHistory.id, id)).get();
+      assert.equal(row!.turn_id, turnId, `inbound ${id} must be tagged (not left NULL)`);
+    }
+    await cleanup(mind);
+  });
+
+  it("is a no-op when no turn is active — the turn-creation path tags it instead", async () => {
+    const mind = "tl-midturn-noturn";
+    // No active turn for this session yet.
+    const inboundId = await recordInbound(mind, "@alice", "alice", "hello");
+    await linkInboundToActiveTurn(mind, "s1", "@alice");
+
+    const db = await getDb();
+    const row = await db.select().from(mindHistory).where(eq(mindHistory.id, inboundId!)).get();
+    assert.equal(
+      row!.turn_id,
+      null,
+      "no active turn → inbound stays untagged for the creation path",
+    );
+
+    // The turn-creation path then tags it as the trigger.
+    const { turnId } = await handleMindEvent(mind, {
+      type: "text",
+      session: "s1",
+      channel: "@alice",
+      content: "hi",
+    });
+    const tagged = await db.select().from(mindHistory).where(eq(mindHistory.id, inboundId!)).get();
+    assert.equal(tagged!.turn_id, turnId, "creation path tags the pending inbound");
+    await cleanup(mind);
+  });
+
+  it("does not tag inbounds on a different channel", async () => {
+    const mind = "tl-midturn-otherchannel";
+    const { turnId } = await handleMindEvent(mind, {
+      type: "text",
+      session: "s1",
+      channel: "@alice",
+      content: "hi",
+    });
+    assert.ok(turnId);
+    // Inbound on a different channel must not be swept into this turn.
+    const otherId = await recordInbound(mind, "@bob", "bob", "unrelated");
+    await linkInboundToActiveTurn(mind, "s1", "@alice");
+
+    const db = await getDb();
+    const row = await db.select().from(mindHistory).where(eq(mindHistory.id, otherId!)).get();
+    assert.equal(row!.turn_id, null, "a different channel's inbound must stay untagged");
     await cleanup(mind);
   });
 });

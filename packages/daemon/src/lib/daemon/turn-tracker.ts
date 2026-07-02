@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { getDb } from "../db.js";
 import { mindHistory, turns } from "../schema.js";
 import log from "../util/logger.js";
@@ -71,6 +71,43 @@ export async function createTurn(mind: string): Promise<string | undefined> {
 /** Get the active turn ID for a mind+session, falling back to the sessionless `mind:*` key. */
 export function getActiveTurnId(mind: string, session?: string | null): string | undefined {
   return (activeTurns.get(key(mind, session)) ?? activeTurns.get(key(mind)))?.turnId;
+}
+
+/**
+ * Attribute an inbound that arrives mid-turn to the turn already in progress.
+ *
+ * `TurnLifecycle.linkPendingInbound` only runs at turn CREATION and sweeps a bounded set of
+ * the most-recent untagged inbounds. An inbound delivered while a turn is already active for
+ * the session would otherwise wait for the NEXT same-channel turn to sweep it — and be left
+ * `turn_id = NULL` forever if more than that bound accumulate or no later turn runs. Called
+ * per-delivery: when the mind has an active turn for (mind, session), every still-untagged
+ * inbound on that channel is attributed to it immediately.
+ *
+ * No-op when no turn is active yet — the turn-creation path (`linkPendingInbound`) tags the
+ * triggering inbound then. Only `turn_id` is set here: the turn's `trigger_event_id` stays
+ * the original triggering inbound, since a mid-turn message did not trigger the turn.
+ */
+export async function linkInboundToActiveTurn(
+  mind: string,
+  session: string | null | undefined,
+  channel?: string,
+): Promise<void> {
+  // Channel is required to prevent cross-session tagging (mirrors linkPendingInbound).
+  if (!channel) return;
+  const turnId = getActiveTurnId(mind, session);
+  if (!turnId) return;
+  const db = await getDb();
+  await db
+    .update(mindHistory)
+    .set({ turn_id: turnId })
+    .where(
+      and(
+        eq(mindHistory.mind, mind),
+        eq(mindHistory.type, "inbound"),
+        sql`${mindHistory.turn_id} IS NULL`,
+        eq(mindHistory.channel, channel),
+      ),
+    );
 }
 
 /** Record the last tool_use event ID for a mind+session. */

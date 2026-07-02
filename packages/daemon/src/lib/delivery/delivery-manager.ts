@@ -3,6 +3,7 @@ import { extname, resolve } from "node:path";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { getTypingMap, publishTypingForChannels } from "../chat/typing.js";
 import { tryGetMindManager } from "../daemon/mind-manager.js";
+import { linkInboundToActiveTurn } from "../daemon/turn-tracker.js";
 import { getDb } from "../db.js";
 import { getParticipants } from "../events/conversations.js";
 import { onMindEvent } from "../events/mind-activity-tracker.js";
@@ -625,6 +626,14 @@ export class DeliveryManager {
       if (payload.channel) channels.add(payload.channel);
       this.incrementActive(baseName, session, senders, channels);
 
+      // If a turn is already in progress for this session, attribute this mid-turn inbound to
+      // it now. linkPendingInbound only tags at turn creation (bounded sweep), so without this
+      // an interrupt/batched message arriving mid-turn — or a >5 backlog — would stay untagged.
+      // No-op when no turn is active yet; the turn-creation path tags the trigger then.
+      linkInboundToActiveTurn(baseName, session, payload.channel).catch((err) =>
+        dlog.warn(`failed to link mid-turn inbound for ${baseName}`, log.errorData(err)),
+      );
+
       // Set typing indicator on both slug and conversationId keys
       const typingMap = getTypingMap();
       if (payload.channel) {
@@ -725,6 +734,13 @@ export class DeliveryManager {
 
       // Increment active count with metadata
       this.incrementActive(baseName, session, senders, channelSet);
+
+      // Attribute any mid-turn inbounds in this batch to an in-progress turn (see deliverToMind).
+      for (const ch of channelSet) {
+        linkInboundToActiveTurn(baseName, session, ch).catch((err) =>
+          dlog.warn(`failed to link mid-turn inbound for ${baseName}`, log.errorData(err)),
+        );
+      }
 
       // Set typing indicators for all real channels in the batch
       const typingMap = getTypingMap();
