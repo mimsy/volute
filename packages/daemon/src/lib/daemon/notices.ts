@@ -6,10 +6,10 @@ import type { ErrorReason } from "./error-classify.js";
 
 const nlog = log.child("notices");
 
-export type NoticeKind = "turn_error" | "crash" | "budget";
+export type NoticeKind = "turn_error" | "crash" | "budget" | "startup";
 
 /** The full closed set of reasons; each kind constrains which reasons are legal. */
-export type NoticeReason = ErrorReason | "process_crash" | "token_budget";
+export type NoticeReason = ErrorReason | "process_crash" | "token_budget" | "startup_failed";
 
 /**
  * A notice to record. The union ties `kind` to its legal `reason`(s), so e.g.
@@ -24,6 +24,7 @@ export type RecordNoticeInput = {
   | { kind: "turn_error"; reason: ErrorReason }
   | { kind: "crash"; reason: "process_crash" }
   | { kind: "budget"; reason: "token_budget" }
+  | { kind: "startup"; reason: "startup_failed" }
 );
 
 /** A persisted notice row (kind/reason narrowed via the schema column $type). */

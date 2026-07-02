@@ -18,7 +18,7 @@ import { announceToSystem } from "../../lib/chat/system-channel.js";
 import { getTypingMap, publishTypingForChannels } from "../../lib/chat/typing.js";
 import { readSystemsConfig } from "../../lib/config/systems-config.js";
 import { classify } from "../../lib/daemon/error-classify.js";
-import { getMindManager } from "../../lib/daemon/mind-manager.js";
+import { getMindManager, MindStartupError } from "../../lib/daemon/mind-manager.js";
 // Lifecycle functions from mind-service.ts
 import {
   startMindFull as startMindFullService,
@@ -77,6 +77,7 @@ import {
   isIsolationEnabled,
   wrapForIsolation,
 } from "../../lib/mind/isolation.js";
+import { commitSrcChanges, rollbackSrcChanges } from "../../lib/mind/last-known-good.js";
 import {
   addMind,
   ensureVoluteHome,
@@ -1484,7 +1485,61 @@ const app = new Hono<AuthEnv>()
         }
       }
 
-      await startMindFullService(name);
+      // Resolve the mind's git repo dir (variant worktree or the base mind dir) so
+      // last-known-good recovery can operate on the right working tree.
+      const repoDir = entry.parent ? entry.dir! : mindDir(name);
+
+      try {
+        await startMindFullService(name);
+      } catch (startErr) {
+        // A mind can break its own startup by editing src/ (e.g. src/server.ts) then
+        // calling daemonRestart(). The auto-commit hook only tracks home/, so the bad
+        // src/ change is usually uncommitted. Park it on a broken/<ts> branch, revert
+        // src/ to the last known-good HEAD, and retry — turning a fatal self-edit into
+        // a recoverable one. If nothing was under src/, there's nothing to roll back.
+        const stderr = startErr instanceof MindStartupError ? startErr.stderr : undefined;
+        let rollback: { parked: boolean; branch?: string } = { parked: false };
+        try {
+          rollback = await rollbackSrcChanges(repoDir, name);
+        } catch (rbErr) {
+          log.error(`failed to roll back src changes for ${name}`, log.errorData(rbErr));
+        }
+
+        if (!rollback.parked) throw startErr;
+
+        // Retry on the restored (known-good) src/. If this also fails, give up.
+        await startMindFullService(name);
+
+        const startMsg = startErr instanceof Error ? startErr.message : String(startErr);
+        const errLine = (stderr ?? startMsg).trim().split("\n").filter(Boolean).pop() ?? "";
+        // Attribute the notice to the mind/session that was actually restarted. For a
+        // variant restart `baseName` is the parent, so recording against it would notify
+        // the parent about code it didn't touch while the variant never sees it.
+        await recordNotice({
+          mind: name,
+          session: "main",
+          kind: "startup",
+          reason: "startup_failed",
+          detail:
+            `Your last change to src/ broke startup, so it was rolled back and your previous ` +
+            `working code was restored. The broken change is preserved on branch ` +
+            `\`${rollback.branch}\` — check it out to inspect and fix it. Error: ${errLine}`,
+          raw: stderr ?? null,
+        });
+
+        return c.json({
+          ok: true,
+          recovered: true,
+          brokenBranch: rollback.branch,
+          port: targetPort,
+        });
+      }
+
+      // Startup succeeded — commit any src/ changes as the new known-good baseline so a
+      // future bad edit has a clean point to roll back to.
+      await commitSrcChanges(repoDir, name).catch((e) =>
+        log.error(`failed to commit known-good src for ${name}`, log.errorData(e)),
+      );
       return c.json({ ok: true, port: targetPort });
     } catch (err) {
       return c.json({ error: err instanceof Error ? err.message : "Failed to restart mind" }, 500);

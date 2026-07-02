@@ -16,6 +16,7 @@ import {
 } from "../mind/registry.js";
 import { isSandboxEnabled, wrapForSandbox } from "../mind/sandbox.js";
 import { getPrompt } from "../prompts.js";
+import { checkHealth } from "../util/health.js";
 import { clearJsonMap, loadJsonMap, saveJsonMap } from "../util/json-state.js";
 import log from "../util/logger.js";
 import { RotatingLog } from "../util/rotating-log.js";
@@ -91,6 +92,21 @@ type TrackedMind = {
   child: ChildProcess;
   port: number;
 };
+
+/**
+ * Thrown when a mind process fails to become ready during startup. Carries the
+ * child's recent stderr so callers (e.g. the restart route's last-known-good
+ * recovery) can surface the actual failure to the mind.
+ */
+export class MindStartupError extends Error {
+  constructor(
+    message: string,
+    readonly stderr: string,
+  ) {
+    super(message);
+    this.name = "MindStartupError";
+  }
+}
 
 function mindPidPath(name: string): string {
   return resolve(stateDir(name), "mind.pid");
@@ -441,37 +457,62 @@ export class MindManager {
       while (recentStderr.length > 20) recentStderr.shift();
     });
 
-    // Wait for "listening on :PORT" or timeout
+    // Poll /health until the server is ready, or reject on a startup budget timeout
+    // or an early child exit/error (e.g. a `tsx` syntax error from a self-edit). Polling
+    // /health is more robust than scraping stdout for "listening on :PORT".
     try {
       await new Promise<void>((resolve, reject) => {
-        const timeout = setTimeout(() => {
-          reject(new Error(`Mind ${name} did not start within 30s`));
-        }, 30000);
+        let settled = false;
+        const deadline = Date.now() + 30000;
 
-        function checkOutput(data: Buffer) {
-          if (data.toString().match(/listening on :\d+/)) {
-            clearTimeout(timeout);
-            resolve();
-          }
+        const onExit = (code: number | null) => {
+          // Extract the most useful error line from stderr
+          const errorLine = recentStderr.find((l) => l.includes("Error:"));
+          const detail = errorLine ? `: ${errorLine.trim()}` : "";
+          finish(() =>
+            reject(
+              new MindStartupError(
+                `Mind ${name} exited with code ${code} during startup${detail}`,
+                recentStderr.join("\n"),
+              ),
+            ),
+          );
+        };
+        const onError = (err: Error) => finish(() => reject(err));
+
+        function finish(action: () => void) {
+          if (settled) return;
+          settled = true;
+          child.off("exit", onExit);
+          child.off("error", onError);
+          action();
         }
 
-        child.stdout?.on("data", checkOutput);
-        child.stderr?.on("data", checkOutput);
+        child.on("exit", onExit);
+        child.on("error", onError);
 
-        child.on("error", (err) => {
-          clearTimeout(timeout);
-          reject(err);
-        });
-
-        child.on("exit", (code) => {
-          clearTimeout(timeout);
-          // Extract the most useful error line from stderr
-          const errorLine = recentStderr.find(
-            (l) => l.startsWith("Error:") || l.includes("Error:"),
-          );
-          const detail = errorLine ? `: ${errorLine.trim()}` : "";
-          reject(new Error(`Mind ${name} exited with code ${code} during startup${detail}`));
-        });
+        const poll = async () => {
+          if (settled) return;
+          const { ok } = await checkHealth(port);
+          if (settled) return;
+          if (ok) {
+            finish(() => resolve());
+            return;
+          }
+          if (Date.now() >= deadline) {
+            finish(() =>
+              reject(
+                new MindStartupError(
+                  `Mind ${name} did not become healthy within 30s`,
+                  recentStderr.join("\n"),
+                ),
+              ),
+            );
+            return;
+          }
+          setTimeout(poll, 250);
+        };
+        void poll();
       });
     } catch (err) {
       this.minds.delete(name);
