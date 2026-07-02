@@ -16,14 +16,13 @@ import { qualifyModelId, resolveTemplate, unqualifyModelId } from "../../lib/ai-
 import { deleteMindUser } from "../../lib/auth.js";
 import { announceToSystem } from "../../lib/chat/system-channel.js";
 import { readSystemsConfig } from "../../lib/config/systems-config.js";
-import { classify } from "../../lib/daemon/error-classify.js";
 import { getMindManager, MindStartupError } from "../../lib/daemon/mind-manager.js";
 // Lifecycle functions from mind-service.ts
 import {
   startMindFull as startMindFullService,
   stopMindFull as stopMindFullService,
 } from "../../lib/daemon/mind-service.js";
-import { drainNotices, formatNotices } from "../../lib/daemon/notices.js";
+import { drainNotices, formatNotices, recordNotice } from "../../lib/daemon/notices.js";
 import { getTokenBudget } from "../../lib/daemon/token-budget.js";
 import { handleMindEvent, setNoticeDrainWatermark } from "../../lib/daemon/turn-lifecycle.js";
 import { getActiveTurnId } from "../../lib/daemon/turn-tracker.js";
