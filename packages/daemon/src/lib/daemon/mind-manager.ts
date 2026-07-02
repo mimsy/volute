@@ -44,6 +44,18 @@ const MIND_ENV_ALLOWLIST = [
   "TZ",
   "NODE_ENV",
   "__CF_USER_TEXT_ENCODING",
+  // Outbound proxy / custom-CA config — required for minds' HTTPS calls (incl.
+  // the Anthropic API) to succeed on hosts that reach the internet only via a
+  // corporate proxy or custom CA bundle. Previously inherited via ...process.env.
+  "HTTP_PROXY",
+  "HTTPS_PROXY",
+  "NO_PROXY",
+  "http_proxy",
+  "https_proxy",
+  "no_proxy",
+  "NODE_EXTRA_CA_CERTS",
+  "SSL_CERT_FILE",
+  "SSL_CERT_DIR",
 ];
 
 /**

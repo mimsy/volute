@@ -45,6 +45,37 @@ describe("buildMindBaseEnv", () => {
     assert.equal(env.VOLUTE_ISOLATION, "user");
   });
 
+  it("passes through outbound proxy / custom-CA vars", () => {
+    const env = buildMindBaseEnv({
+      HTTP_PROXY: "http://proxy:8080",
+      HTTPS_PROXY: "http://proxy:8080",
+      NO_PROXY: "localhost,127.0.0.1",
+      http_proxy: "http://proxy:8080",
+      https_proxy: "http://proxy:8080",
+      no_proxy: "localhost,127.0.0.1",
+      NODE_EXTRA_CA_CERTS: "/etc/ssl/corp-ca.pem",
+      SSL_CERT_FILE: "/etc/ssl/cert.pem",
+      SSL_CERT_DIR: "/etc/ssl/certs",
+      // A secret alongside them must still be withheld.
+      AWS_SECRET_ACCESS_KEY: "aws-secret",
+      GITHUB_TOKEN: "gh-secret",
+      VOLUTE_DAEMON_TOKEN: "admin-secret",
+    });
+    assert.equal(env.HTTP_PROXY, "http://proxy:8080");
+    assert.equal(env.HTTPS_PROXY, "http://proxy:8080");
+    assert.equal(env.NO_PROXY, "localhost,127.0.0.1");
+    assert.equal(env.http_proxy, "http://proxy:8080");
+    assert.equal(env.https_proxy, "http://proxy:8080");
+    assert.equal(env.no_proxy, "localhost,127.0.0.1");
+    assert.equal(env.NODE_EXTRA_CA_CERTS, "/etc/ssl/corp-ca.pem");
+    assert.equal(env.SSL_CERT_FILE, "/etc/ssl/cert.pem");
+    assert.equal(env.SSL_CERT_DIR, "/etc/ssl/certs");
+    // Secrets remain withheld even in a proxied environment.
+    assert.equal(env.AWS_SECRET_ACCESS_KEY, undefined);
+    assert.equal(env.GITHUB_TOKEN, undefined);
+    assert.equal(env.VOLUTE_DAEMON_TOKEN, undefined);
+  });
+
   it("omits allowlisted vars that are unset in the source", () => {
     const env = buildMindBaseEnv({ PATH: "/usr/bin" });
     assert.ok(!("HOME" in env));

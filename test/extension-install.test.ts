@@ -3,7 +3,10 @@ import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { installNpmExtension } from "../packages/daemon/src/lib/extensions.js";
+import {
+  installNpmExtension,
+  uninstallNpmExtension,
+} from "../packages/daemon/src/lib/extensions.js";
 
 // Verifies `volute extension install` shells out to npm with --ignore-scripts,
 // so untrusted package lifecycle scripts never run as the daemon user.
@@ -31,5 +34,14 @@ describe("installNpmExtension", () => {
     await installNpmExtension("testpkg");
     const argv = readFileSync(argvLog, "utf-8").split("\n").filter(Boolean);
     assert.deepEqual(argv, ["install", "--ignore-scripts", "testpkg"]);
+  });
+
+  it("passes --ignore-scripts to npm uninstall", async () => {
+    // Must be installed first (uninstall throws otherwise). The install call
+    // overwrites argv.log; the uninstall call overwrites it again with its argv.
+    await installNpmExtension("uninstallpkg");
+    await uninstallNpmExtension("uninstallpkg");
+    const argv = readFileSync(argvLog, "utf-8").split("\n").filter(Boolean);
+    assert.deepEqual(argv, ["uninstall", "--ignore-scripts", "uninstallpkg"]);
   });
 });

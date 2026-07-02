@@ -54,6 +54,16 @@ if (process.env.VOLUTE_TIMEZONE && !process.env.TZ) {
   process.env.TZ = process.env.VOLUTE_TIMEZONE;
 }
 
+/**
+ * Write daemon.json (holds the daemon admin token) owner-only. The chmodSync
+ * enforces 0600 even when the file pre-existed with looser perms (writeFileSync's
+ * `mode` only applies on creation).
+ */
+export function writeDaemonConfig(path: string, config: Record<string, unknown>): void {
+  writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
+  chmodSync(path, 0o600);
+}
+
 export async function startDaemon(opts: {
   port: number;
   hostname: string;
@@ -203,8 +213,7 @@ export async function startDaemon(opts: {
   if (internalPort) daemonConfig.internalPort = internalPort;
   if (tls) daemonConfig.tls = true;
   // 0600 — daemon.json holds the daemon admin token; owner-only (matches env.json/volute.db).
-  writeFileSync(DAEMON_JSON_PATH, `${JSON.stringify(daemonConfig, null, 2)}\n`, { mode: 0o600 });
-  chmodSync(DAEMON_JSON_PATH, 0o600); // enforce even if the file pre-existed with looser perms
+  writeDaemonConfig(DAEMON_JSON_PATH, daemonConfig);
 
   // Start delivery manager, mind manager, bridge manager, and scheduler
   const delivery = initDeliveryManager();
