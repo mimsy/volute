@@ -9,8 +9,8 @@ const input = await new Promise<string>((resolve) => {
   process.stdin.on("end", () => resolve(data));
 });
 
-const { VOLUTE_DAEMON_PORT, VOLUTE_DAEMON_TOKEN, VOLUTE_MIND } = process.env;
-if (!VOLUTE_DAEMON_PORT || !VOLUTE_DAEMON_TOKEN || !VOLUTE_MIND) {
+const { VOLUTE_DAEMON_PORT, VOLUTE_MIND_TOKEN, VOLUTE_MIND } = process.env;
+if (!VOLUTE_DAEMON_PORT || !VOLUTE_MIND_TOKEN || !VOLUTE_MIND) {
   console.log("{}");
   process.exit(0);
 }
@@ -23,7 +23,7 @@ try {
 try {
   const res = await fetch(
     `http://127.0.0.1:${VOLUTE_DAEMON_PORT}/api/minds/${VOLUTE_MIND}/history/cross-session?session=${encodeURIComponent(session)}`,
-    { headers: { Authorization: `Bearer ${VOLUTE_DAEMON_TOKEN}` } },
+    { headers: { Authorization: `Bearer ${VOLUTE_MIND_TOKEN}` } },
   );
   if (!res.ok) {
     console.log("{}");

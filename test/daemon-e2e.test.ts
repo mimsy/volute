@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { type ChildProcess, execFileSync, spawn } from "node:child_process";
-import { existsSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { after, before, describe, it } from "node:test";
 import {
@@ -130,6 +130,13 @@ describe("daemon e2e", { timeout: 120000 }, () => {
     assert.equal(res.status, 200);
     const body = await res.json();
     assert.equal(body.ok, true);
+  });
+
+  it("daemon.json (holds admin token) is written owner-only (0600)", () => {
+    const daemonJson = resolve(voluteSystemDir(), "daemon.json");
+    assert.ok(existsSync(daemonJson), "daemon.json should exist");
+    const mode = statSync(daemonJson).mode & 0o777;
+    assert.equal(mode, 0o600, `expected 0600, got ${mode.toString(8)}`);
   });
 
   it("unauthenticated request returns 401", async () => {

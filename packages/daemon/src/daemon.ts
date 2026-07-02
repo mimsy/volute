@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { format } from "node:util";
@@ -52,6 +52,16 @@ if (!process.env.VOLUTE_HOME) {
 // Allow explicit timezone override — propagates to all child processes (minds, connectors)
 if (process.env.VOLUTE_TIMEZONE && !process.env.TZ) {
   process.env.TZ = process.env.VOLUTE_TIMEZONE;
+}
+
+/**
+ * Write daemon.json (holds the daemon admin token) owner-only. The chmodSync
+ * enforces 0600 even when the file pre-existed with looser perms (writeFileSync's
+ * `mode` only applies on creation).
+ */
+export function writeDaemonConfig(path: string, config: Record<string, unknown>): void {
+  writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
+  chmodSync(path, 0o600);
 }
 
 export async function startDaemon(opts: {
@@ -202,7 +212,8 @@ export async function startDaemon(opts: {
   const daemonConfig: Record<string, unknown> = { port, hostname, token };
   if (internalPort) daemonConfig.internalPort = internalPort;
   if (tls) daemonConfig.tls = true;
-  writeFileSync(DAEMON_JSON_PATH, `${JSON.stringify(daemonConfig, null, 2)}\n`, { mode: 0o644 });
+  // 0600 — daemon.json holds the daemon admin token; owner-only (matches env.json/volute.db).
+  writeDaemonConfig(DAEMON_JSON_PATH, daemonConfig);
 
   // Start delivery manager, mind manager, bridge manager, and scheduler
   const delivery = initDeliveryManager();

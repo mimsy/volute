@@ -41,7 +41,7 @@ function getDaemonUrl(): string | undefined {
 }
 
 function getDaemonToken(): string | undefined {
-  return process.env.VOLUTE_DAEMON_TOKEN;
+  return process.env.VOLUTE_MIND_TOKEN;
 }
 
 /** Returns null only when the daemon is unreachable or imagegen is not configured. */

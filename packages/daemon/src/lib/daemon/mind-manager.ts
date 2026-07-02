@@ -29,6 +29,64 @@ const mlog = log.child("minds");
 
 const execFileAsync = promisify(execFile);
 
+// Benign system env vars a mind's node/tsx process needs to run. Everything else
+// from the daemon environment (ambient AWS_*/GITHUB_TOKEN/etc.) is withheld.
+const MIND_ENV_ALLOWLIST = [
+  "PATH",
+  "HOME",
+  "USER",
+  "LOGNAME",
+  "SHELL",
+  "LANG",
+  "LANGUAGE",
+  "LC_ALL",
+  "LC_CTYPE",
+  "LC_MESSAGES",
+  "TERM",
+  "TERMINFO",
+  "COLORTERM",
+  "TMPDIR",
+  "TMP",
+  "TEMP",
+  "TZ",
+  "NODE_ENV",
+  "__CF_USER_TEXT_ENCODING",
+  // Outbound proxy / custom-CA config — required for minds' HTTPS calls (incl.
+  // the Anthropic API) to succeed on hosts that reach the internet only via a
+  // corporate proxy or custom CA bundle. Previously inherited via ...process.env.
+  "HTTP_PROXY",
+  "HTTPS_PROXY",
+  "NO_PROXY",
+  "http_proxy",
+  "https_proxy",
+  "no_proxy",
+  "NODE_EXTRA_CA_CERTS",
+  "SSL_CERT_FILE",
+  "SSL_CERT_DIR",
+];
+
+/**
+ * Build the base environment for a mind process from an allowlist instead of
+ * spreading the full daemon `process.env`. Copies benign system vars plus all
+ * `VOLUTE_*` vars the mind needs — but never the daemon admin token
+ * (`VOLUTE_DAEMON_TOKEN`), which the caller replaces with a per-mind
+ * `VOLUTE_MIND_TOKEN`.
+ */
+export function buildMindBaseEnv(
+  source: NodeJS.ProcessEnv = process.env,
+): Record<string, string | undefined> {
+  const base: Record<string, string | undefined> = {};
+  for (const key of MIND_ENV_ALLOWLIST) {
+    if (source[key] !== undefined) base[key] = source[key];
+  }
+  for (const [key, value] of Object.entries(source)) {
+    // Withhold the daemon admin token — minds get their own VOLUTE_MIND_TOKEN.
+    if (key === "VOLUTE_DAEMON_TOKEN") continue;
+    if (key.startsWith("VOLUTE_")) base[key] = value;
+  }
+  return base;
+}
+
 type TrackedMind = {
   child: ChildProcess;
   port: number;
@@ -141,13 +199,13 @@ export class MindManager {
     const mindLocalBin = resolve(dir, "home", ".local", "bin");
     const currentPath = process.env.PATH ?? "";
     const env: Record<string, string | undefined> = {
-      ...process.env,
+      ...buildMindBaseEnv(),
       ...mindEnv,
       VOLUTE_MIND: name,
       VOLUTE_STATE_DIR: stateDir(name),
       VOLUTE_MIND_DIR: dir,
       VOLUTE_MIND_PORT: String(port),
-      VOLUTE_DAEMON_TOKEN: mindToken,
+      VOLUTE_MIND_TOKEN: mindToken,
       TMPDIR: mindTmp,
       PATH: `${mindLocalBin}:${currentPath}`,
       // Strip CLAUDECODE so the Agent SDK can spawn Claude Code subprocesses
@@ -282,8 +340,12 @@ export class MindManager {
             const claudeDir = writeClaudeCredentials(resolve(dir, "home"), baseName, oauth);
             env.CLAUDE_CONFIG_DIR = claudeDir;
           }
-        } else if (anthropicConfig?.apiKey) {
-          env.ANTHROPIC_API_KEY = anthropicConfig.apiKey;
+        } else {
+          // resolveApiKey covers both the configured key and an ambient
+          // ANTHROPIC_API_KEY (via pi-ai). We inject it explicitly because the
+          // mind env is built from an allowlist and no longer inherits it.
+          const apiKey = await resolveApiKey("anthropic");
+          if (apiKey) env.ANTHROPIC_API_KEY = apiKey;
         }
       } catch (err) {
         mlog.error(`failed to inject Anthropic credentials for ${name}`, log.errorData(err));

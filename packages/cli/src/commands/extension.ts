@@ -67,6 +67,10 @@ async function installExtension(args: string[]) {
     process.exit(1);
   }
 
+  console.warn(
+    `Warning: "${pkg}" runs in the daemon's trust domain (root on system installs) ` +
+      `with full API access. Only install extensions you trust.`,
+  );
   console.log(`Installing "${pkg}"...`);
   const res = await daemonFetch("/api/extensions/install", {
     method: "POST",
