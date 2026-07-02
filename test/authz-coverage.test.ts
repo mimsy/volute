@@ -22,6 +22,7 @@ import { fileURLToPath } from "node:url";
  */
 
 const API_DIR = fileURLToPath(new URL("../packages/daemon/src/web/api", import.meta.url));
+const EXT_DIR = fileURLToPath(new URL("../packages/extensions", import.meta.url));
 
 // Routes intentionally without an inline middleware guard. Each MUST be either
 // non-sensitive ("public") or enforce authorization inside the handler.
@@ -60,13 +61,10 @@ const AUTHZ_EXEMPT: Record<string, string> = {
   "volute/channels.ts GET /:name/members": "channel participant list (membership metadata)",
   "volute/channels.ts POST /:name/join": "self-action: joins the caller (user.id) to the channel",
   "volute/channels.ts POST /:name/leave": "self-action: removes the caller (user.id) from channel",
-  // NOTE: the two writes below are KNOWN integrity gaps deferred to a product
-  // decision on the channel-membership model (see SECURITY follow-up). They are
-  // exempted here only to scope this PR; they should be revisited.
   "volute/channels.ts PATCH /:name":
-    "DEFERRED: no membership/owner check on channel settings write (product decision pending)",
+    "in-handler authz: settings write requires the caller be a channel member (or admin/system)",
   "volute/channels.ts POST /:name/invite":
-    "DEFERRED: no membership/owner check on add-member (product decision pending)",
+    "in-handler authz: add-member requires the caller be a channel member (or admin/system)",
 };
 
 const GUARDS = ["requireSelf", "requireAdmin", "requireAdminOrSystem"];
@@ -134,6 +132,197 @@ describe("mind-scoped route authorization coverage", () => {
       [],
       `Stale AUTHZ_EXEMPT entries (route now guarded or no longer exists) — remove them:\n` +
         stale.map((v) => `  - ${v}`).join("\n"),
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Net 2: query-param-scoped handlers.
+//
+// The path-param net above cannot see handlers that take the target mind from a
+// client-supplied query param (`?mind=`, `?name=`, `?author=`) — precisely the
+// blind spot behind the #320 cross-tenant history leak, where any mind could
+// read another mind's turns/summaries/activity via `?mind=`. This net flags any
+// handler that reads such a param unless its enclosing route carries an authz
+// signal: a middleware guard, OR an in-handler role/self check (`user.role`,
+// `.username`, `getBaseName`, `resolveMindFilter`, `privileged`).
+// ---------------------------------------------------------------------------
+
+const QUERY_READ_RE = /c\.req\.query\(\s*"(mind|name|author)"\s*\)/g;
+const ROUTE_START_RE = /\.(get|post|put|patch|delete)\(\s*"([^"]*)"/g;
+// In-handler authorization signals: a role/self comparison or a shared resolver
+// that constrains the query to the caller's own mind.
+const INLINE_AUTHZ_RE = /\brole\b|\.username\b|resolveMindFilter|getBaseName|privileged/;
+
+// Query-param reads that are genuinely public (feeds/listings of already-public
+// content) and therefore need no per-caller authorization. Documented, honest.
+const QUERY_AUTHZ_EXEMPT: Record<string, string> = {
+  "notes/src/routes.ts GET / ?author":
+    "public: lists published notes filtered by author; no private data",
+  "notes/src/routes.ts GET /feed ?mind":
+    "public: home/mind feed of published notes; no private data",
+  "pages/src/routes.ts GET /feed ?mind":
+    "public: home/mind feed of published pages; no private data",
+};
+
+type ScanFile = { rel: string; text: string };
+
+function scanFiles(dir: string): ScanFile[] {
+  return listTsFiles(dir).map((file) => ({
+    rel: file.slice(dir.length + 1),
+    text: readFileSync(file, "utf-8"),
+  }));
+}
+
+type RouteStart = { idx: number; method: string; path: string };
+
+function routeStarts(text: string): RouteStart[] {
+  const starts: RouteStart[] = [];
+  for (const m of text.matchAll(ROUTE_START_RE)) {
+    starts.push({ idx: m.index ?? 0, method: m[1].toUpperCase(), path: m[2] });
+  }
+  return starts;
+}
+
+function extractQueryRoutes(): Route[] {
+  const merged = new Map<string, boolean>();
+  for (const dir of [API_DIR, EXT_DIR]) {
+    for (const { rel, text } of scanFiles(dir)) {
+      const starts = routeStarts(text);
+      for (const q of text.matchAll(QUERY_READ_RE)) {
+        const qIdx = q.index ?? 0;
+        const param = q[1];
+        // Enclosing route = the nearest route registration before this read.
+        let enclosing: RouteStart | undefined;
+        for (const s of starts) {
+          if (s.idx < qIdx) enclosing = s;
+          else break;
+        }
+        // A read before any route (e.g. a top-level resolver) is not a route
+        // handler; the routes that call it are analyzed on their own merits.
+        if (!enclosing) continue;
+        const endIdx = starts.find((s) => s.idx > enclosing!.idx)?.idx ?? text.length;
+        if (qIdx >= endIdx) continue;
+        const region = text.slice(enclosing.idx, endIdx);
+        const guarded = INLINE_AUTHZ_RE.test(region) || GUARDS.some((g) => region.includes(g));
+        const key = `${rel} ${enclosing.method} ${enclosing.path} ?${param}`;
+        merged.set(key, (merged.get(key) ?? false) || guarded);
+      }
+    }
+  }
+  return [...merged].map(([key, guarded]) => ({ key, guarded }));
+}
+
+describe("query-param mind-scoped handler authorization coverage", () => {
+  const routes = extractQueryRoutes();
+
+  it("discovers query-param mind-scoped handlers (guards the regex itself)", () => {
+    assert.ok(routes.length >= 3, `expected >=3 query-param handlers, found ${routes.length}`);
+  });
+
+  it("guards or explicitly exempts every ?mind=/?name=/?author= handler", () => {
+    const violations = routes
+      .filter((r) => !r.guarded && !(r.key in QUERY_AUTHZ_EXEMPT))
+      .map((r) => r.key);
+    assert.deepEqual(
+      violations,
+      [],
+      `Query-param handler(s) that derive the target mind from a client-supplied param ` +
+        `without an authz check:\n` +
+        violations.map((v) => `  - ${v}`).join("\n") +
+        `\n\nConstrain the query to the caller's own mind (role/self check), or — only if ` +
+        `the data is genuinely public — add it to QUERY_AUTHZ_EXEMPT with a reason.`,
+    );
+  });
+
+  it("has no stale QUERY_AUTHZ_EXEMPT entries", () => {
+    const present = new Set(routes.map((r) => r.key));
+    const guarded = new Set(routes.filter((r) => r.guarded).map((r) => r.key));
+    const stale = Object.keys(QUERY_AUTHZ_EXEMPT).filter((k) => !present.has(k) || guarded.has(k));
+    assert.deepEqual(
+      stale,
+      [],
+      `Stale QUERY_AUTHZ_EXEMPT entries — remove them:\n${stale.join("\n")}`,
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Net 3: extension routes.
+//
+// Everything under packages/extensions/*/src is outside the daemon scan root,
+// yet extensions get only `authMiddleware` from the loader — per-resource authz
+// is per-handler (and, per #322, was sometimes wrong). This net enumerates
+// extension routes whose path contains a mind identifier (`:name`, `:mind`,
+// `:author`) anywhere and requires each to carry the canonical `requireSelf`
+// (or `requireAdmin`/`requireAdminOrSystem`) middleware, or be documented here.
+// ---------------------------------------------------------------------------
+
+const EXT_ROUTE_RE =
+  /\.(get|post|put|patch|delete)\(\s*"(\/[^"]*:(?:name|mind|author)[^"]*)"([\s\S]*?)=>/g;
+
+const EXT_AUTHZ_EXEMPT: Record<string, string> = {
+  // Public reads of already-published content.
+  "notes/src/routes.ts GET /:author/:slug": "public: reads a single published note",
+  "pages/src/routes.ts GET /:name/*":
+    "public route (createPublicRoutes, no auth): serves published page snapshots; " +
+    "path traversal contained by an in-handler prefix check",
+  // Interaction endpoints: any authenticated user may react/comment on any
+  // author's note; write ownership is enforced by actor.id, not the :author.
+  "notes/src/routes.ts POST /:author/:slug/reactions":
+    "interaction: any authenticated user may react; keyed by actor.id",
+  "notes/src/routes.ts POST /:author/:slug/comments":
+    "interaction: any authenticated user may comment; keyed by actor.id",
+  "notes/src/routes.ts DELETE /:author/:slug/comments/:id":
+    "in-handler authz: deletes the caller's own comment (actor.id ownership), not author-scoped",
+};
+
+function extractExtensionRoutes(): Route[] {
+  const routes: Route[] = [];
+  for (const { rel, text } of scanFiles(EXT_DIR)) {
+    for (const m of text.matchAll(EXT_ROUTE_RE)) {
+      const method = m[1].toUpperCase();
+      const path = m[2];
+      const middlewareWindow = m[3];
+      const guarded = GUARDS.some((g) => middlewareWindow.includes(g));
+      routes.push({ key: `${rel} ${method} ${path}`, guarded });
+    }
+  }
+  return routes;
+}
+
+describe("extension mind-scoped route authorization coverage", () => {
+  const routes = extractExtensionRoutes();
+
+  it("discovers extension mind-scoped routes (guards the regex itself)", () => {
+    assert.ok(
+      routes.length >= 5,
+      `expected >=5 extension mind-scoped routes, found ${routes.length}`,
+    );
+  });
+
+  it("guards or explicitly exempts every extension :name/:mind/:author route", () => {
+    const violations = routes
+      .filter((r) => !r.guarded && !(r.key in EXT_AUTHZ_EXEMPT))
+      .map((r) => r.key);
+    assert.deepEqual(
+      violations,
+      [],
+      `Extension route(s) scoped to a mind identifier without an authz guard:\n` +
+        violations.map((v) => `  - ${v}`).join("\n") +
+        `\n\nMount ctx.requireSelf("<param>") on the route, or — only if it is genuinely ` +
+        `public or an open interaction endpoint — add it to EXT_AUTHZ_EXEMPT with a reason.`,
+    );
+  });
+
+  it("has no stale EXT_AUTHZ_EXEMPT entries", () => {
+    const present = new Set(routes.map((r) => r.key));
+    const guarded = new Set(routes.filter((r) => r.guarded).map((r) => r.key));
+    const stale = Object.keys(EXT_AUTHZ_EXEMPT).filter((k) => !present.has(k) || guarded.has(k));
+    assert.deepEqual(
+      stale,
+      [],
+      `Stale EXT_AUTHZ_EXEMPT entries — remove them:\n${stale.join("\n")}`,
     );
   });
 });

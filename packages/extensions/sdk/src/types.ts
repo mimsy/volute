@@ -36,6 +36,15 @@ export type SystemsConfig = {
 export type ExtensionContext = {
   db: Database | null;
   authMiddleware: MiddlewareHandler;
+  /**
+   * Canonical per-resource authorization guard. Returns middleware that allows
+   * admin/system callers and the mind whose (base) name equals the value of the
+   * given route param; everyone else gets 403. Extensions should mount this on
+   * mind-scoped routes (e.g. `/:author/...`, `/publish/:name`) instead of
+   * hand-rolling `user.username === param` checks, so authorization is uniform
+   * and statically verifiable.
+   */
+  requireSelf: (paramName?: string) => MiddlewareHandler;
   resolveUser: (c: Context) => User | null;
   getUser: (id: number) => Promise<User | null>;
   getUserByUsername: (username: string) => Promise<User | null>;

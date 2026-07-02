@@ -99,14 +99,9 @@ export function createRoutes(ctx: ExtensionContext): Hono {
       return c.json(note);
     })
 
-    // Update note
-    .put("/:author/:slug", async (c) => {
-      const actor = resolveUserId(c);
-      if (!actor) return c.json({ error: "Unauthorized" }, 401);
-
+    // Update note (author-only via requireSelf)
+    .put("/:author/:slug", ctx.requireSelf("author"), async (c) => {
       const { author, slug } = c.req.param();
-      if (actor.username !== author) return c.json({ error: "Forbidden" }, 403);
-
       const body = await parseJson<{ title?: string; content?: string }>(c);
       if (!body) return c.json({ error: "Invalid JSON body" }, 400);
       const note = await updateNote(db, getUser, getUserByUsername, author, slug, body);
@@ -114,8 +109,8 @@ export function createRoutes(ctx: ExtensionContext): Hono {
       return c.json(note);
     })
 
-    // Delete note
-    .delete("/:author/:slug", async (c) => {
+    // Delete note (author-only via requireSelf; deleteNote still scopes to actor.id)
+    .delete("/:author/:slug", ctx.requireSelf("author"), async (c) => {
       const actor = resolveUserId(c);
       if (!actor) return c.json({ error: "Unauthorized" }, 401);
 

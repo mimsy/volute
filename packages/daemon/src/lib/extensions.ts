@@ -12,7 +12,7 @@ import type {
   SystemSection,
 } from "@volute/extensions";
 import type { Context, Hono, MiddlewareHandler } from "hono";
-import type { AuthEnv } from "../web/middleware/auth.js";
+import { type AuthEnv, requireSelf } from "../web/middleware/auth.js";
 import { getUser, getUserByUsername } from "./auth.js";
 import { announceToSystem } from "./chat/system-channel.js";
 import { readGlobalConfig, writeGlobalConfig } from "./config/setup.js";
@@ -189,6 +189,10 @@ async function buildContext(
   return {
     db,
     authMiddleware: authMw,
+    // Reuse the daemon's canonical guard so extension routes authorize the same
+    // way core routes do (admin/system or the mind whose base name matches the
+    // route param). Its type is compatible with the SDK MiddlewareHandler.
+    requireSelf: (paramName?: string) => requireSelf(paramName) as unknown as MiddlewareHandler,
     resolveUser: (c) => {
       const user = c.get("user");
       if (!user || typeof user !== "object") return null;
