@@ -13,12 +13,16 @@ import { streamSSE } from "hono/streaming";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { z } from "zod";
 import {
+  addCustomModel,
+  buildCustomModel,
   getAiConfig,
   getAvailableModels,
   getConfiguredProviders,
+  getCustomModels,
   getEnabledModels,
   getUtilityModel,
   removeAiConfig,
+  removeCustomModel,
   removeProviderConfig,
   resolveApiKey,
   saveProviderConfig,
@@ -339,6 +343,7 @@ const app = new Hono<AuthEnv>()
   .get("/ai/models", requireAdmin, async (c) => {
     const models = await getAvailableModels();
     const enabled = new Set(getEnabledModels());
+    const customIds = new Set(getCustomModels().map((m) => m.id));
     return c.json(
       models.map((m) => ({
         id: m.id,
@@ -347,6 +352,7 @@ const app = new Hono<AuthEnv>()
         contextWindow: m.contextWindow,
         maxTokens: m.maxTokens,
         enabled: enabled.has(m.id),
+        custom: customIds.has(m.id),
       })),
     );
   })
@@ -360,6 +366,44 @@ const app = new Hono<AuthEnv>()
       return c.json({ ok: true });
     },
   )
+  .post(
+    "/ai/models/custom",
+    requireAdmin,
+    zValidator(
+      "json",
+      z.object({ provider: z.string().min(1), id: z.string().min(1), name: z.string().optional() }),
+    ),
+    (c) => {
+      const { provider, id, name } = c.req.valid("json");
+      // Must be a provider we can clone metadata from, or the model would be
+      // stored but never resolve.
+      if (!buildCustomModel(provider, id)) {
+        return c.json(
+          { error: `No built-in model for provider "${provider}" to clone metadata from` },
+          400,
+        );
+      }
+      // The enabled list and resolution are keyed by bare id, so a custom id must
+      // be unique across providers to stay unambiguous.
+      if (getCustomModels().some((m) => m.id === id && m.provider !== provider)) {
+        return c.json(
+          { error: `A custom model "${id}" is already registered under another provider` },
+          400,
+        );
+      }
+      addCustomModel(provider, id, name);
+      // Enable it immediately (dedupe against already-enabled ids).
+      setEnabledModels([...new Set([...getEnabledModels(), id])]);
+      return c.json({ ok: true });
+    },
+  )
+  .delete("/ai/models/custom", requireAdmin, (c) => {
+    const provider = c.req.query("provider");
+    const id = c.req.query("id");
+    if (!provider || !id) return c.json({ error: "provider and id are required" }, 400);
+    removeCustomModel(provider, id);
+    return c.json({ ok: true });
+  })
   .get("/ai/defaults", requireAdmin, (c) => {
     const config = readGlobalConfig();
     return c.json({

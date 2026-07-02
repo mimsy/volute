@@ -9,12 +9,13 @@ import {
 import {
   type AiConfig,
   type AiProviderConfig,
+  type CustomModel,
   readGlobalConfig,
   writeGlobalConfig,
 } from "./config/setup.js";
 import log from "./util/logger.js";
 
-export type { AiConfig, AiProviderConfig } from "./config/setup.js";
+export type { AiConfig, AiProviderConfig, CustomModel } from "./config/setup.js";
 
 const aiLog = log.child("ai-service");
 
@@ -206,12 +207,135 @@ export function setEnabledModels(modelIds: string[]): void {
   writeGlobalConfig({ ...config, ai });
 }
 
-/** Returns all models from configured providers. */
+/** Get the admin-defined custom models (not in pi-ai's built-in catalog). */
+export function getCustomModels(): CustomModel[] {
+  return getAiConfig()?.customModels ?? [];
+}
+
+/** Register a custom model for a provider (no-op if it already exists). */
+export function addCustomModel(provider: string, id: string, name?: string): void {
+  const ai = getAiConfig() ?? { providers: {} };
+  const customModels = ai.customModels ?? [];
+  if (!customModels.some((m) => m.provider === provider && m.id === id)) {
+    customModels.push({ provider, id, ...(name ? { name } : {}) });
+  }
+  ai.customModels = customModels;
+  const config = readGlobalConfig();
+  writeGlobalConfig({ ...config, ai });
+}
+
+/** Remove a custom model and drop it from the enabled list. */
+export function removeCustomModel(provider: string, id: string): void {
+  const ai = getAiConfig();
+  if (!ai) return;
+  const customModels = (ai.customModels ?? []).filter(
+    (m) => !(m.provider === provider && m.id === id),
+  );
+  ai.customModels = customModels.length > 0 ? customModels : undefined;
+  if (!ai.customModels) delete ai.customModels;
+  if (ai.models) {
+    ai.models = ai.models.filter((mid) => mid !== id);
+    if (ai.models.length === 0) delete ai.models;
+  }
+  const config = readGlobalConfig();
+  writeGlobalConfig({ ...config, ai });
+}
+
+/** Length of the shared leading prefix of two strings. */
+function sharedPrefixLength(a: string, b: string): number {
+  let i = 0;
+  while (i < a.length && i < b.length && a[i] === b[i]) i++;
+  return i;
+}
+
+/**
+ * Pick the built-in model of `provider` that best represents a custom model
+ * `id`: the sibling sharing the longest id prefix (assumed same family, so
+ * likely matching api/compat/caps), breaking ties toward the largest context
+ * window. When no family overlaps, this selects the largest-context sibling.
+ * Returns undefined when the provider has no built-in models.
+ *
+ * NOTE: the pi template has its own copy of this heuristic in
+ * templates/pi/src/lib/resolve-model.ts (the template can't import daemon code);
+ * keep the two in sync.
+ */
+function pickSibling(provider: string, id: string): Model<Api> | undefined {
+  const siblings = getBuiltinModels(provider as never) as Model<Api>[];
+  if (siblings.length === 0) return undefined;
+  let best = siblings[0];
+  let bestPrefix = -1;
+  for (const s of siblings) {
+    const prefix = sharedPrefixLength(s.id, id);
+    if (prefix > bestPrefix || (prefix === bestPrefix && s.contextWindow > best.contextWindow)) {
+      bestPrefix = prefix;
+      best = s;
+    }
+  }
+  return best;
+}
+
+/**
+ * Build a usable Model for a custom id by cloning a sibling built-in model of
+ * the same provider (inherits api/baseUrl/compat/caps) and overriding id/name.
+ * Cost is zeroed since we don't know the real pricing. Returns undefined when
+ * the provider has no built-in template.
+ */
+export function buildCustomModel(
+  provider: string,
+  id: string,
+  name?: string,
+): Model<Api> | undefined {
+  const sibling = pickSibling(provider, id);
+  if (!sibling) return undefined;
+  return {
+    ...sibling,
+    id,
+    name: name ?? id,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+  };
+}
+
+/**
+ * Drop any custom models that pi-ai has since added to its built-in catalog
+ * (built-in always wins). Writes only when something is pruned. Returns the
+ * remaining custom models.
+ */
+function pruneAbsorbedCustomModels(): CustomModel[] {
+  const ai = getAiConfig();
+  const custom = ai?.customModels ?? [];
+  if (custom.length === 0 || !ai) return custom;
+  const kept = custom.filter((cm) => !getBuiltinModel(cm.provider as never, cm.id as never));
+  if (kept.length !== custom.length) {
+    ai.customModels = kept.length > 0 ? kept : undefined;
+    if (!ai.customModels) delete ai.customModels;
+    const config = readGlobalConfig();
+    writeGlobalConfig({ ...config, ai });
+  }
+  return kept;
+}
+
+/** Returns all models from configured providers, including custom models. */
 export async function getAvailableModels(): Promise<Model<Api>[]> {
   const providers = await getConfiguredProviders();
+  const configured = new Set(providers);
   const result: Model<Api>[] = [];
+  const seen = new Set<string>();
   for (const provider of providers) {
-    result.push(...(getBuiltinModels(provider as never) as Model<Api>[]));
+    for (const m of getBuiltinModels(provider as never) as Model<Api>[]) {
+      result.push(m);
+      seen.add(m.id);
+    }
+  }
+  // Custom models for configured providers, skipping ids the catalog now covers.
+  for (const cm of pruneAbsorbedCustomModels()) {
+    if (!configured.has(cm.provider) || seen.has(cm.id)) continue;
+    const built = buildCustomModel(cm.provider, cm.id, cm.name);
+    if (built) {
+      result.push(built);
+      seen.add(cm.id);
+    } else {
+      aiLog.warn(`custom model ${cm.provider}:${cm.id} has no sibling to clone from; skipping`);
+    }
   }
   return result;
 }
@@ -258,10 +382,17 @@ export function unqualifyModelId(modelId: string): string {
 }
 
 function findModel(modelId: string): Model<Api> | undefined {
-  // Exact match against the built-in catalog
+  // Exact match against the built-in catalog (built-in always wins)
   for (const provider of getBuiltinProviders()) {
     const model = getBuiltinModel(provider as never, modelId as never);
     if (model) return model as Model<Api>;
+  }
+  // Admin-defined custom models
+  for (const cm of getCustomModels()) {
+    if (cm.id === modelId) {
+      const built = buildCustomModel(cm.provider, cm.id, cm.name);
+      if (built) return built;
+    }
   }
   // Prefix match fallback
   for (const provider of getBuiltinProviders()) {
