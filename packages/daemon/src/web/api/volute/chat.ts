@@ -6,6 +6,7 @@ import { getOrCreateMindUser, getOrCreateSystemUser } from "../../../lib/auth.js
 import { routeOutboundBridge } from "../../../lib/bridges/bridge-outbound.js";
 import { formatFileSize, stageFile, validateFilePath } from "../../../lib/chat/file-sharing.js";
 import { generateSystemReply } from "../../../lib/chat/system-chat.js";
+import { getActiveTurnId } from "../../../lib/daemon/turn-tracker.js";
 import { extractTextContent } from "../../../lib/delivery/delivery-router.js";
 import { fanOutToMinds } from "../../../lib/delivery/fan-out.js";
 import { recordOutbound } from "../../../lib/delivery/message-delivery.js";
@@ -21,6 +22,7 @@ import {
   getParticipants,
   isParticipantOrOwner,
 } from "../../../lib/events/conversations.js";
+import { publish as publishMindEvent } from "../../../lib/events/mind-events.js";
 import { findMind, getBaseName, mindDir } from "../../../lib/mind/registry.js";
 import { readVoluteConfig } from "../../../lib/mind/volute-config.js";
 import { fixModelEscapes } from "../../../lib/util/fix-model-escapes.js";
@@ -236,16 +238,28 @@ export const unifiedChatApp = new Hono<AuthEnv>().post(
       }
     }
 
-    // Save message (turn_id and source_event_id are set to null for mind senders —
-    // they'll be linked when the tool_result event arrives with the outbound correlation ID)
-    const message = await addMessage(conversationId!, "user", senderName, contentBlocks);
+    // Resolve the sending mind's active turn from the per-request X-Volute-Session header
+    // (captured into context as `mindSession`). This is the primary turn-attribution path:
+    // it records turn_id directly on send, replacing the racy process-global VOLUTE_SESSION
+    // lookup and the marker-only correlation that ran after the fact.
+    let outboundTurnId: string | undefined;
+    let senderBase: string | undefined;
+    if (senderIsMind) {
+      senderBase = await getBaseName(senderName);
+      outboundTurnId = getActiveTurnId(senderBase, c.get("mindSession"));
+    }
+
+    // Save message. turn_id is attributed directly for mind senders (see above); when the
+    // turn can't be resolved it stays null and is linked later via the tool_result marker.
+    const message = await addMessage(conversationId!, "user", senderName, contentBlocks, {
+      turnId: outboundTurnId,
+    });
 
     let outboundId: number | undefined;
     if (senderIsMind) {
       routeOutboundBridge(conversationId!, senderName, contentBlocks).catch((err) => {
         log.warn("outbound bridge routing failed", log.errorData(err));
       });
-      // Record outbound event in mind_history (without turn_id — linked later via tool_result)
       const channel = buildVoluteSlug({
         participants,
         mindUsername: senderName,
@@ -253,10 +267,24 @@ export const unifiedChatApp = new Hono<AuthEnv>().post(
         convType: conv.type as "dm" | "channel",
         convName,
       });
+      const text = extractTextContent(contentBlocks);
       try {
-        outboundId = await recordOutbound(senderName, channel, extractTextContent(contentBlocks), {
+        outboundId = await recordOutbound(senderName, channel, text, {
           messageId: message?.id != null ? String(message.id) : undefined,
+          turnId: outboundTurnId,
         });
+        // When the turn is known, publish the outbound to SSE now (correctly tagged).
+        // Otherwise linkToolResultToTurn publishes it when the marker arrives.
+        if (outboundTurnId) {
+          const mindKey = senderBase ?? senderName;
+          publishMindEvent(mindKey, {
+            mind: mindKey,
+            type: "outbound",
+            channel,
+            content: text,
+            turnId: outboundTurnId,
+          });
+        }
       } catch (err) {
         log.warn(`recordOutbound failed for ${senderName}`, log.errorData(err));
       }

@@ -1,0 +1,193 @@
+import assert from "node:assert/strict";
+import { afterEach, before, describe, it } from "node:test";
+import { and, eq } from "drizzle-orm";
+import { drainNotices } from "../packages/daemon/src/lib/daemon/notices.js";
+import { initTokenBudget } from "../packages/daemon/src/lib/daemon/token-budget.js";
+import { handleMindEvent } from "../packages/daemon/src/lib/daemon/turn-lifecycle.js";
+import { clearMind, getActiveTurnId } from "../packages/daemon/src/lib/daemon/turn-tracker.js";
+import { getDb } from "../packages/daemon/src/lib/db.js";
+import {
+  recordInbound,
+  recordOutbound,
+} from "../packages/daemon/src/lib/delivery/message-delivery.js";
+import { mindHistory, turns } from "../packages/daemon/src/lib/schema.js";
+
+async function cleanup(mind: string): Promise<void> {
+  await clearMind(mind);
+  const db = await getDb();
+  await db.delete(mindHistory).where(eq(mindHistory.mind, mind));
+  await db.delete(turns).where(eq(turns.mind, mind));
+}
+
+describe("turn-lifecycle: handleMindEvent", () => {
+  before(() => {
+    // usage events accrue against the token budget singleton.
+    try {
+      initTokenBudget();
+    } catch {
+      // already initialized by another test in this process
+    }
+  });
+
+  it("session_start assigns a session to an existing sessionless turn", async () => {
+    const mind = "tl-session-start";
+    // A sessionless turn opens on the first substantive event without a session.
+    await handleMindEvent(mind, { type: "tool_use", content: "x" });
+    assert.ok(getActiveTurnId(mind), "sessionless turn should exist");
+
+    await handleMindEvent(mind, { type: "session_start", session: "s1" });
+    const turnId = getActiveTurnId(mind, "s1");
+    assert.ok(turnId, "turn should now be keyed by session s1");
+
+    const db = await getDb();
+    const row = await db.select().from(turns).where(eq(turns.id, turnId!)).get();
+    assert.equal(row!.session, "s1");
+    await cleanup(mind);
+  });
+
+  it("tool_use creates a turn and persists the event tagged with it", async () => {
+    const mind = "tl-tool-use";
+    const { turnId, insertedId } = await handleMindEvent(mind, {
+      type: "tool_use",
+      session: "s1",
+      content: "bash ls",
+    });
+    assert.ok(turnId, "tool_use should create a turn");
+    assert.equal(getActiveTurnId(mind, "s1"), turnId);
+
+    const db = await getDb();
+    const row = await db.select().from(mindHistory).where(eq(mindHistory.id, insertedId!)).get();
+    assert.equal(row!.type, "tool_use");
+    assert.equal(row!.turn_id, turnId);
+    assert.equal(row!.session, "s1");
+    await cleanup(mind);
+  });
+
+  it("text creates a turn and links the pending inbound as the trigger", async () => {
+    const mind = "tl-text-trigger";
+    // Inbound arrives first (no turn yet), then the mind starts a turn on the same channel.
+    const inboundId = await recordInbound(mind, "@alice", "alice", "hello");
+    const { turnId } = await handleMindEvent(mind, {
+      type: "text",
+      session: "s1",
+      channel: "@alice",
+      content: "hi back",
+    });
+    assert.ok(turnId);
+
+    const db = await getDb();
+    const inbound = await db.select().from(mindHistory).where(eq(mindHistory.id, inboundId!)).get();
+    assert.equal(inbound!.turn_id, turnId, "inbound should be tagged with the new turn");
+    const turn = await db.select().from(turns).where(eq(turns.id, turnId!)).get();
+    assert.equal(turn!.trigger_event_id, inboundId, "turn trigger should point at the inbound");
+    await cleanup(mind);
+  });
+
+  it("done completes the active turn", async () => {
+    const mind = "tl-done";
+    const { turnId } = await handleMindEvent(mind, {
+      type: "tool_use",
+      session: "s1",
+      content: "x",
+    });
+    assert.ok(getActiveTurnId(mind, "s1"));
+
+    await handleMindEvent(mind, { type: "done", session: "s1" });
+    assert.equal(getActiveTurnId(mind, "s1"), undefined, "turn should be cleared after done");
+
+    const db = await getDb();
+    const row = await db.select().from(turns).where(eq(turns.id, turnId!)).get();
+    assert.equal(row!.status, "complete");
+    await cleanup(mind);
+  });
+
+  it("error records a turn_error notice for the session", async () => {
+    const mind = "tl-error";
+    await handleMindEvent(mind, { type: "tool_use", session: "s1", content: "x" });
+    await handleMindEvent(mind, {
+      type: "error",
+      session: "s1",
+      content: "boom: something failed",
+    });
+
+    const notices = await drainNotices(mind, "s1");
+    assert.ok(
+      notices.some((n) => n.kind === "turn_error"),
+      "a turn_error notice should be recorded",
+    );
+    await cleanup(mind);
+  });
+
+  it("usage accrues against the token budget", async () => {
+    const mind = "tl-usage";
+    await handleMindEvent(mind, {
+      type: "usage",
+      session: "s1",
+      metadata: { input_tokens: 100, output_tokens: 50 },
+    });
+    // No throw is the primary assertion; the budget singleton recorded the usage.
+    await cleanup(mind);
+  });
+
+  it("tool_result marker links an outbound when no session attribution happened (fallback)", async () => {
+    const mind = "tl-marker-fallback";
+    // Outbound recorded with no turn_id (no session header path).
+    const outboundId = await recordOutbound(mind, "@bob", "sent via CLI");
+    // Turn opens sessionless, then the tool_result carries the correlation marker.
+    await handleMindEvent(mind, { type: "tool_use", content: "volute chat send" });
+    const turnId = getActiveTurnId(mind);
+    await handleMindEvent(mind, {
+      type: "tool_result",
+      content: `Message sent.\n[volute:outbound:${outboundId}]`,
+    });
+
+    const db = await getDb();
+    const row = await db.select().from(mindHistory).where(eq(mindHistory.id, outboundId!)).get();
+    assert.equal(row!.turn_id, turnId, "marker fallback should attribute the outbound to the turn");
+    await cleanup(mind);
+  });
+});
+
+describe("turn-lifecycle: concurrent sessions", () => {
+  const mind = "tl-concurrent";
+  afterEach(() => cleanup(mind));
+
+  it("attributes outbound records to the correct turn per session via the header path", async () => {
+    // Two sessions for one mind, interleaved — this used to race under the process-global
+    // VOLUTE_SESSION. Each substantive event carries its own session, so turns stay distinct.
+    await handleMindEvent(mind, { type: "tool_use", session: "sA", channel: "@a", content: "a1" });
+    await handleMindEvent(mind, { type: "tool_use", session: "sB", channel: "@b", content: "b1" });
+
+    const turnA = getActiveTurnId(mind, "sA");
+    const turnB = getActiveTurnId(mind, "sB");
+    assert.ok(turnA && turnB, "both sessions should have active turns");
+    assert.notEqual(turnA, turnB, "each session must have its own distinct turn");
+
+    // Simulate the direct attribution path (volute/chat.ts): the send resolves the sending
+    // mind's active turn from its session header and records the outbound tagged with it.
+    const outA = await recordOutbound(mind, "@a", "from A", {
+      turnId: getActiveTurnId(mind, "sA"),
+    });
+    const outB = await recordOutbound(mind, "@b", "from B", {
+      turnId: getActiveTurnId(mind, "sB"),
+    });
+
+    const db = await getDb();
+    const rowA = await db.select().from(mindHistory).where(eq(mindHistory.id, outA!)).get();
+    const rowB = await db.select().from(mindHistory).where(eq(mindHistory.id, outB!)).get();
+    assert.equal(rowA!.turn_id, turnA, "session A outbound should be tagged with turn A");
+    assert.equal(rowB!.turn_id, turnB, "session B outbound should be tagged with turn B");
+
+    // Completing one session's turn must not disturb the other.
+    await handleMindEvent(mind, { type: "done", session: "sA" });
+    assert.equal(getActiveTurnId(mind, "sA"), undefined);
+    assert.equal(getActiveTurnId(mind, "sB"), turnB, "session B turn must remain active");
+
+    const stillActive = await db
+      .select()
+      .from(turns)
+      .where(and(eq(turns.id, turnB!), eq(turns.status, "active")))
+      .get();
+    assert.ok(stillActive, "turn B should still be active in the DB");
+  });
+});

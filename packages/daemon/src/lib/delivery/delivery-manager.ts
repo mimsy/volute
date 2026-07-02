@@ -22,7 +22,6 @@ import {
   resolveRoute,
   setRoutesChangeListener,
 } from "./delivery-router.js";
-import { tagRecentInbound } from "./message-delivery.js";
 
 const dlog = log.child("delivery-manager");
 
@@ -198,12 +197,9 @@ export class DeliveryManager {
       sessionName = `new-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     }
 
-    // Tag the most recent untagged inbound with the active turn for this session.
-    // This links incoming messages to the current turn immediately so live streams
-    // can group them correctly, and handles interrupts (message arriving mid-turn).
-    tagRecentInbound(baseName, sessionName, payload.channel).catch((err) => {
-      dlog.warn(`tagRecentInbound failed for ${baseName}`, log.errorData(err));
-    });
+    // Inbound-to-turn linking happens deterministically at turn creation (see
+    // TurnLifecycle.linkPendingInbound), scoped by the turn's session and channel, so
+    // no proactive time-window tagging is needed here.
 
     // Resolve delivery mode for this session (pass matched rule for rule-level batch config)
     const sessionConfig = resolveDeliveryMode(config, sessionName, route.rule);

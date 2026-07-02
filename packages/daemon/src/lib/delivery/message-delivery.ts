@@ -1,17 +1,9 @@
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { getSleepManagerIfReady } from "../daemon/sleep-manager.js";
-import { getActiveTurnId } from "../daemon/turn-tracker.js";
 import { getDb } from "../db.js";
 import { publish as publishMindEvent } from "../events/mind-events.js";
 import { findMind, getBaseName } from "../mind/registry.js";
-import {
-  activity,
-  conversationParticipants,
-  messages,
-  mindHistory,
-  turns,
-  users,
-} from "../schema.js";
+import { activity, messages, mindHistory } from "../schema.js";
 import log from "../util/logger.js";
 import { getDeliveryManager } from "./delivery-manager.js";
 import { type DeliveryPayload, extractTextContent } from "./delivery-router.js";
@@ -29,8 +21,8 @@ export async function recordInbound(
   sender: string | null,
   content: string | null,
 ): Promise<number | undefined> {
-  // Record without turn_id initially. The turn will be linked either by
-  // tagRecentInbound (when session is known) or retroactively at turn creation.
+  // Record without turn_id initially. The inbound is linked to its turn when the turn is
+  // created (TurnLifecycle.linkPendingInbound), scoped by the turn's session and channel.
   // This avoids merging unrelated inbounds from different channels into one turn.
   let insertedId: number | undefined;
   try {
@@ -62,17 +54,14 @@ export async function recordInbound(
 }
 
 /**
- * Record an outbound message: persist to mind_history WITHOUT a turn_id.
+ * Record an outbound message: persist to mind_history.
  *
- * The turn association is deferred — concurrent sessions share a single process-level
- * env var (VOLUTE_SESSION) which races, so we don't attempt session-based turn lookup
- * here. Instead, the outbound record is linked to its turn when the corresponding
- * tool_result event arrives at the events endpoint (via `linkToolResultToTurn`).
- *
- * The outbound event is NOT published to SSE here; it is published by
- * `linkToolResultToTurn` once the correct turn_id is known, ensuring the stream
- * always contains correctly-tagged events. Any orphans are caught by
- * `tagUntaggedOutbound` on turn completion as a safety net.
+ * When the caller knows the sending mind's active turn (resolved from the per-request
+ * `X-Volute-Session` header — the primary attribution path), it passes `turnId` and is
+ * responsible for publishing the SSE event itself. When `turnId` is omitted (e.g. a
+ * sessionless path), the record is left untagged and its turn is resolved later when the
+ * corresponding tool_result event arrives with a `[volute:outbound:NNN]` marker (via
+ * `linkToolResultToTurn`), which also publishes the SSE event then.
  *
  * Returns the inserted mind_history record ID (used as a correlation key in tool output).
  */
@@ -139,6 +128,7 @@ export async function linkToolResultToTurn(
           channel: mindHistory.channel,
           content: mindHistory.content,
           message_id: mindHistory.message_id,
+          turn_id: mindHistory.turn_id,
         })
         .from(mindHistory)
         .where(and(eq(mindHistory.id, outboundId), eq(mindHistory.mind, mind)))
@@ -150,7 +140,13 @@ export async function linkToolResultToTurn(
         continue;
       }
 
-      await db.update(mindHistory).set({ turn_id: turnId }).where(eq(mindHistory.id, outboundId));
+      // Direct attribution (session header at send time) is the primary path: if the
+      // outbound already carries a turn_id, the sender already tagged and published it.
+      // Only fill in source_event_id on the linked message; don't re-tag or re-publish.
+      const alreadyTagged = row.turn_id != null;
+      if (!alreadyTagged) {
+        await db.update(mindHistory).set({ turn_id: turnId }).where(eq(mindHistory.id, outboundId));
+      }
 
       if (row.message_id) {
         await db
@@ -162,14 +158,17 @@ export async function linkToolResultToTurn(
           .where(eq(messages.id, Number(row.message_id)));
       }
 
-      // Publish the outbound event to SSE — correctly tagged
-      publishMindEvent(mind, {
-        mind,
-        type: "outbound",
-        channel: row.channel ?? undefined,
-        content: row.content ?? undefined,
-        turnId,
-      });
+      // Publish the outbound event to SSE — correctly tagged. Skipped when the sender
+      // already published it via direct attribution to avoid a duplicate stream event.
+      if (!alreadyTagged) {
+        publishMindEvent(mind, {
+          mind,
+          type: "outbound",
+          channel: row.channel ?? undefined,
+          content: row.content ?? undefined,
+          turnId,
+        });
+      }
     } catch (err) {
       dlog.warn(`failed to link outbound ${outboundId} to turn ${turnId}`, log.errorData(err));
     }
@@ -207,201 +206,6 @@ export async function linkToolResultToTurn(
     } catch (err) {
       dlog.warn(`failed to link activities to turn ${turnId}`, log.errorData(err));
     }
-  }
-}
-
-/**
- * Retroactively tag orphaned outbound records (and their linked messages) with the
- * correct turn_id. Called on turn completion, analogous to `tagUntaggedInbound`.
- *
- * Finds outbound records for this mind that have no turn_id and whose IDs fall within
- * the range of events already tagged with this turn. Also fixes the corresponding
- * messages in the conversations table (turn_id and source_event_id).
- */
-export async function tagUntaggedOutbound(mind: string, turnId: string): Promise<void> {
-  const db = await getDb();
-
-  // Find the event ID range for this turn
-  const range = await db
-    .select({
-      minId: sql<number>`MIN(${mindHistory.id})`,
-      maxId: sql<number>`MAX(${mindHistory.id})`,
-    })
-    .from(mindHistory)
-    .where(and(eq(mindHistory.mind, mind), eq(mindHistory.turn_id, turnId)));
-
-  const minId = range[0]?.minId;
-  const maxId = range[0]?.maxId;
-  if (minId == null || maxId == null) return;
-
-  // Find orphaned outbound records within this turn's event range
-  const orphans = await db
-    .select({ id: mindHistory.id, message_id: mindHistory.message_id })
-    .from(mindHistory)
-    .where(
-      and(
-        eq(mindHistory.mind, mind),
-        eq(mindHistory.type, "outbound"),
-        sql`${mindHistory.turn_id} IS NULL`,
-        sql`${mindHistory.id} >= ${minId}`,
-        sql`${mindHistory.id} <= ${maxId}`,
-      ),
-    );
-
-  if (orphans.length === 0) return;
-
-  // Tag the outbound records
-  const orphanIds = orphans.map((r) => r.id);
-  await db.update(mindHistory).set({ turn_id: turnId }).where(inArray(mindHistory.id, orphanIds));
-
-  // Fix linked messages: set turn_id and source_event_id
-  // Fetch all tool_use events for this turn in one query, then find nearest preceding in-memory
-  const orphansWithMessages = orphans.filter((o) => o.message_id);
-  if (orphansWithMessages.length > 0) {
-    const toolUseEvents = await db
-      .select({ id: mindHistory.id })
-      .from(mindHistory)
-      .where(
-        and(
-          eq(mindHistory.mind, mind),
-          eq(mindHistory.turn_id, turnId),
-          eq(mindHistory.type, "tool_use"),
-        ),
-      )
-      .orderBy(mindHistory.id);
-
-    for (const orphan of orphansWithMessages) {
-      // Find the nearest preceding tool_use from the in-memory array
-      let sourceEventId: number | null = null;
-      for (let i = toolUseEvents.length - 1; i >= 0; i--) {
-        if (toolUseEvents[i].id < orphan.id) {
-          sourceEventId = toolUseEvents[i].id;
-          break;
-        }
-      }
-      await db
-        .update(messages)
-        .set({
-          turn_id: turnId,
-          ...(sourceEventId != null ? { source_event_id: sourceEventId } : {}),
-        })
-        .where(eq(messages.id, Number(orphan.message_id)));
-    }
-  }
-
-  dlog.info(`tagged ${orphans.length} orphaned outbound record(s) for ${mind} with turn ${turnId}`);
-}
-
-/**
- * Tag recent untagged inbound events and messages for a mind with the given turn ID.
- * Used both proactively (on message delivery) and retroactively (on turn creation).
- * When `setTrigger` is true, also sets the turn's `trigger_event_id` to the most recent inbound.
- * When `channel` is provided, only tags inbounds on that channel (prevents cross-session leaks).
- */
-export async function tagUntaggedInbound(
-  mind: string,
-  turnId: string,
-  {
-    limit = 5,
-    setTrigger = false,
-    channel,
-  }: { limit?: number; setTrigger?: boolean; channel?: string } = {},
-): Promise<void> {
-  const db = await getDb();
-
-  // Run history inbound tagging and mind user lookup in parallel — they're independent
-  const tagHistoryPromise = (async () => {
-    // Tag recent untagged inbound events in mind_history.
-    // Channel is required to prevent cross-session tagging: without it, a turn on
-    // one session can steal inbound events meant for a different session/channel.
-    if (!channel) return;
-    const historyConditions = [
-      eq(mindHistory.mind, mind),
-      eq(mindHistory.type, "inbound"),
-      sql`${mindHistory.turn_id} IS NULL`,
-      sql`${mindHistory.created_at} > datetime('now', '-60 seconds')`,
-      eq(mindHistory.channel, channel),
-    ];
-    const recentInbounds = await db
-      .select({ id: mindHistory.id })
-      .from(mindHistory)
-      .where(and(...historyConditions))
-      .orderBy(desc(mindHistory.id))
-      .limit(limit);
-    if (recentInbounds.length > 0) {
-      const ids = recentInbounds.map((r) => r.id);
-      await db.update(mindHistory).set({ turn_id: turnId }).where(inArray(mindHistory.id, ids));
-      if (setTrigger) {
-        await db
-          .update(turns)
-          .set({ trigger_event_id: recentInbounds[0].id })
-          .where(eq(turns.id, turnId));
-      }
-    }
-  })();
-
-  const mindUserPromise = db
-    .select({ id: users.id })
-    .from(users)
-    .where(and(eq(users.username, mind), eq(users.user_type, "mind")))
-    .get();
-
-  // Tag recent untagged conversation messages (only inbound, i.e. not sent by the mind itself)
-  const [tagResult, mindUserResult] = await Promise.allSettled([
-    tagHistoryPromise,
-    mindUserPromise,
-  ]);
-  if (tagResult.status === "rejected") {
-    dlog.error("failed to tag history inbound", log.errorData(tagResult.reason));
-  }
-  const mindUser = mindUserResult.status === "fulfilled" ? mindUserResult.value : undefined;
-  const mindConvIds = mindUser
-    ? (
-        await db
-          .select({ conversation_id: conversationParticipants.conversation_id })
-          .from(conversationParticipants)
-          .where(eq(conversationParticipants.user_id, mindUser.id))
-      ).map((r) => r.conversation_id)
-    : [];
-  const recentMsgs =
-    mindConvIds.length > 0
-      ? await db
-          .select({ id: messages.id })
-          .from(messages)
-          .where(
-            and(
-              inArray(messages.conversation_id, mindConvIds),
-              sql`${messages.turn_id} IS NULL`,
-              sql`${messages.sender_name} != ${mind}`,
-              sql`${messages.created_at} > datetime('now', '-60 seconds')`,
-            ),
-          )
-          .orderBy(desc(messages.id))
-          .limit(limit)
-      : [];
-  if (recentMsgs.length > 0) {
-    const ids = recentMsgs.map((r) => r.id);
-    await db.update(messages).set({ turn_id: turnId }).where(inArray(messages.id, ids));
-  }
-}
-
-/**
- * Tag the most recent untagged inbound for a mind with the active turn for a session.
- * Called from the delivery manager after routing resolves the session, so incoming
- * messages are linked to the current turn immediately (enabling correct live streaming).
- * The channel parameter scopes the tagging to avoid cross-session leaks.
- */
-export async function tagRecentInbound(
-  mind: string,
-  session: string,
-  channel?: string,
-): Promise<void> {
-  const turnId = getActiveTurnId(mind, session);
-  if (!turnId) return;
-  try {
-    await tagUntaggedInbound(mind, turnId, { limit: 1, channel });
-  } catch (err) {
-    dlog.warn(`failed to tag recent inbound for ${mind} with turn ${turnId}`, log.errorData(err));
   }
 }
 

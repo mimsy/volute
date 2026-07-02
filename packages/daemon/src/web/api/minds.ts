@@ -15,7 +15,6 @@ import { z } from "zod";
 import { qualifyModelId, resolveTemplate, unqualifyModelId } from "../../lib/ai-service.js";
 import { deleteMindUser } from "../../lib/auth.js";
 import { announceToSystem } from "../../lib/chat/system-channel.js";
-import { getTypingMap, publishTypingForChannels } from "../../lib/chat/typing.js";
 import { readSystemsConfig } from "../../lib/config/systems-config.js";
 import { classify } from "../../lib/daemon/error-classify.js";
 import { getMindManager, MindStartupError } from "../../lib/daemon/mind-manager.js";
@@ -24,33 +23,13 @@ import {
   startMindFull as startMindFullService,
   stopMindFull as stopMindFullService,
 } from "../../lib/daemon/mind-service.js";
-import {
-  clearDeliveredNotices,
-  drainNotices,
-  formatNotices,
-  recordNotice,
-} from "../../lib/daemon/notices.js";
-import { summarizeTurn } from "../../lib/daemon/summarizer.js";
+import { drainNotices, formatNotices } from "../../lib/daemon/notices.js";
 import { getTokenBudget } from "../../lib/daemon/token-budget.js";
-import {
-  assignSession,
-  completeTurn,
-  createTurn,
-  getActiveTurnId,
-  getLastToolUseEventId,
-  markErrored,
-  takeErrored,
-  trackToolUse,
-} from "../../lib/daemon/turn-tracker.js";
+import { handleMindEvent, setNoticeDrainWatermark } from "../../lib/daemon/turn-lifecycle.js";
+import { getActiveTurnId } from "../../lib/daemon/turn-tracker.js";
 import { getDb } from "../../lib/db.js";
 import { getDeliveryManager } from "../../lib/delivery/delivery-manager.js";
-import { echoTextToChannel } from "../../lib/delivery/echo-text.js";
-import {
-  linkToolResultToTurn,
-  recordInbound,
-  tagUntaggedInbound,
-  tagUntaggedOutbound,
-} from "../../lib/delivery/message-delivery.js";
+import { recordInbound } from "../../lib/delivery/message-delivery.js";
 import { broadcast } from "../../lib/events/activity-events.js";
 import {
   addMessage,
@@ -61,11 +40,7 @@ import {
   isParticipant,
   listConversationsForMind,
 } from "../../lib/events/conversations.js";
-import { onMindEvent } from "../../lib/events/mind-activity-tracker.js";
-import {
-  publish as publishMindEvent,
-  subscribe as subscribeMindEvent,
-} from "../../lib/events/mind-events.js";
+import { subscribe as subscribeMindEvent } from "../../lib/events/mind-events.js";
 import { type ExportManifest, isHomeOnlyArchive } from "../../lib/mind/archive.js";
 import { consolidateMemory } from "../../lib/mind/consolidate.js";
 import { generateIdentity, publishPublicKey } from "../../lib/mind/identity.js";
@@ -135,35 +110,6 @@ import {
   requireAdminOrSystem,
   requireSelf,
 } from "../middleware/auth.js";
-
-/** Event types that trigger turn creation (hoisted for perf — avoid per-request allocation). */
-const SUBSTANTIVE_TYPES = new Set(["thinking", "text", "tool_use", "tool_result", "outbound"]);
-
-/**
- * Highest notice id drained by the pre-prompt hook per `mind:session`. A clean turn
- * only marks notices delivered up to this id, so a notice created mid-turn isn't lost
- * before the mind reads it.
- */
-const noticeDrainWatermarks = new Map<string, number>();
-
-/**
- * On a turn that completed without an error event, mark the notices the mind actually
- * drained this turn as delivered. If the turn errored, leave them queued so they reach
- * the mind on its next genuinely successful turn. `takeErrored` both reads and clears
- * the flag, so call it exactly once per completed turn.
- */
-function markDeliveredOnCleanTurn(mind: string, session?: string | null): void {
-  if (!session) return;
-  const wmKey = `${mind}:${session}`;
-  const watermark = noticeDrainWatermarks.get(wmKey);
-  noticeDrainWatermarks.delete(wmKey);
-  const errored = takeErrored(mind, session);
-  if (!errored && watermark != null) {
-    clearDeliveredNotices(mind, session, watermark).catch((err) =>
-      log.warn(`failed to clear delivered notices for ${mind}:${session}`, log.errorData(err)),
-    );
-  }
-}
 
 const _lastActiveCache: { map: Map<string, string>; ts: number } = { map: new Map(), ts: 0 };
 const _LAST_ACTIVE_TTL = 60_000;
@@ -2530,219 +2476,7 @@ const app = new Hono<AuthEnv>()
       return c.json({ error: "type required" }, 400);
     }
 
-    // Assign session to sessionless turn on first session_start
-    if (body.type === "session_start" && body.session) {
-      const activeTurnId = getActiveTurnId(baseName);
-      if (activeTurnId) {
-        await assignSession(baseName, activeTurnId, body.session);
-      }
-    }
-
-    // Look up active turn for this event; create one if missing for substantive events.
-    // Turns are created per-session when the mind starts processing, not when inbound arrives.
-    let turnId = getActiveTurnId(baseName, body.session);
-    if (!turnId && SUBSTANTIVE_TYPES.has(body.type)) {
-      turnId = await createTurn(baseName);
-      if (!turnId) {
-        // DB failure — skip turn tracking for this event
-        log.warn(`skipping turn tracking for ${baseName}: createTurn failed`);
-      } else {
-        publishMindEvent(baseName, { mind: baseName, type: "turn_created", turnId });
-        if (body.session) {
-          await assignSession(baseName, turnId, body.session);
-        }
-        // Link trigger and retroactively tag recent untagged inbound events/messages
-        try {
-          await tagUntaggedInbound(baseName, turnId, {
-            setTrigger: true,
-            channel: body.channel,
-          });
-        } catch (err) {
-          log.warn(
-            `failed to link trigger/tag inbounds for turn ${turnId} (mind: ${baseName})`,
-            log.errorData(err),
-          );
-        }
-      } // end if (turnId) after createTurn
-    }
-
-    // Strip correlation markers from tool_result content before persisting/publishing
-    const MARKER_RE = /\[volute:(?:outbound|activity):\d+\]/g;
-    const cleanContent =
-      body.type === "tool_result" && body.content
-        ? body.content.replace(MARKER_RE, "").trimEnd()
-        : body.content;
-
-    // Persist to mind_history
-    const db = await getDb();
-    let insertedId: number | undefined;
-    try {
-      const result = await db
-        .insert(mindHistory)
-        .values({
-          mind: baseName,
-          type: body.type,
-          session: body.session ?? null,
-          channel: body.channel ?? null,
-          message_id: body.messageId ?? null,
-          content: cleanContent ?? null,
-          metadata: body.metadata ? JSON.stringify(body.metadata) : null,
-          turn_id: turnId ?? null,
-        })
-        .returning({ id: mindHistory.id });
-      insertedId = result[0]?.id;
-    } catch (err) {
-      log.error(`failed to persist event for ${baseName}`, log.errorData(err));
-      // Continue — persistence is best-effort, don't block real-time streaming
-    }
-
-    // Track tool_use events for source_event_id linking
-    if (body.type === "tool_use" && insertedId != null) {
-      trackToolUse(baseName, body.session, insertedId);
-    }
-
-    // Link outbound records and extension activities to this turn via correlation markers.
-    // This runs BEFORE publishing to SSE so the outbound events are correctly tagged
-    // by the time they enter the stream.
-    if (body.type === "tool_result" && turnId && body.content) {
-      const toolUseEventId = getLastToolUseEventId(baseName, body.session);
-      try {
-        await linkToolResultToTurn(baseName, turnId, body.content, toolUseEventId);
-      } catch (err) {
-        log.error("failed to link outbound to turn", log.errorData(err));
-      }
-    }
-
-    // Publish to in-process pub-sub
-    publishMindEvent(baseName, {
-      mind: baseName,
-      type: body.type,
-      session: body.session,
-      channel: body.channel,
-      messageId: body.messageId,
-      content: cleanContent,
-      metadata: body.metadata,
-      turnId: turnId ?? undefined,
-    });
-
-    if (body.type === "text" && body.channel && cleanContent) {
-      echoTextToChannel(
-        baseName,
-        body.channel,
-        cleanContent,
-        turnId ?? undefined,
-        insertedId,
-      ).catch((err) =>
-        log.error(`echo-text failed for ${baseName} on ${body.channel}`, log.errorData(err)),
-      );
-    }
-
-    // Track mind activity for dashboard timeline
-    onMindEvent(baseName, body.type, body.channel);
-
-    // Clear typing on first outbound event for a channel (text, outbound)
-    // Use deleteSender to clear both slug and conversationId-based keys
-    if ((body.type === "text" || body.type === "outbound") && body.channel) {
-      const map = getTypingMap();
-      const affected = map.deleteSender(baseName);
-      publishTypingForChannels(affected, map);
-    }
-
-    // Turn failure: record a notice so the mind learns what went wrong on its
-    // next successful turn in this session, and flag the session as errored so the
-    // upcoming `done` does NOT mark notices delivered (failures accumulate until a
-    // clean turn, conveying the full scope of an outage).
-    if (body.type === "error" && body.session) {
-      markErrored(baseName, body.session);
-      const { reason, detail } = classify(body.content ?? "");
-      await recordNotice({
-        mind: baseName,
-        session: body.session,
-        kind: "turn_error",
-        reason,
-        detail,
-        raw: body.content ?? null,
-      });
-    }
-
-    // Clear all typing + notify delivery manager when mind finishes processing
-    if (body.type === "done") {
-      const map = getTypingMap();
-      const affected = map.deleteSender(baseName);
-      publishTypingForChannels(affected, map);
-      // Broadcast mind_done to SSE subscribers (ephemeral — not persisted to DB)
-      broadcast({ type: "mind_done", mind: baseName, summary: "Finished processing" });
-      // Notify delivery manager of session completion (synchronous — decrement
-      // must happen atomically before the busy check to avoid race conditions
-      // where a concurrent delivery's incrementActive interleaves)
-      try {
-        getDeliveryManager().sessionDone(baseName, body.session);
-      } catch (err) {
-        if (!(err instanceof Error && err.message.includes("not initialized"))) {
-          log.error(`delivery manager sessionDone failed for ${baseName}`, log.errorData(err));
-        }
-      }
-      // Complete the turn if the session has no more pending deliveries.
-      // When messages arrive mid-turn, their incrementActive() keeps the
-      // count > 0, so we skip here. The subsequent done will re-check.
-      try {
-        // Only gate on delivery busy state when we have a session to check.
-        // Sessionless done events (e.g., background/system work) complete immediately
-        // to avoid being blocked by unrelated active sessions.
-        const dm = getDeliveryManager();
-        const busy = body.session ? dm.isSessionBusy(baseName, body.session) : false;
-        if (!busy) {
-          const completedTurnId = await completeTurn(baseName, body.session);
-          if (completedTurnId) {
-            tagUntaggedOutbound(baseName, completedTurnId).catch((err) =>
-              log.warn("failed to tag orphaned outbound records", log.errorData(err)),
-            );
-          }
-          markDeliveredOnCleanTurn(baseName, body.session);
-          if (insertedId != null) {
-            summarizeTurn(baseName, body.session, body.channel, insertedId, completedTurnId).catch(
-              (err) => log.error("turn summarization failed", log.errorData(err)),
-            );
-          }
-        }
-      } catch (err) {
-        if (!(err instanceof Error && err.message.includes("not initialized"))) {
-          log.error("turn completion check failed", log.errorData(err));
-        }
-        // DM unavailable — complete immediately as fallback
-        const completedTurnId = await completeTurn(baseName, body.session);
-        if (completedTurnId) {
-          tagUntaggedOutbound(baseName, completedTurnId).catch((err) =>
-            log.warn("failed to tag orphaned outbound records", log.errorData(err)),
-          );
-        }
-        markDeliveredOnCleanTurn(baseName, body.session);
-        if (insertedId != null) {
-          summarizeTurn(baseName, body.session, body.channel, insertedId, completedTurnId).catch(
-            (err) => log.error("turn summarization failed", log.errorData(err)),
-          );
-        }
-      }
-    }
-
-    // Record usage against budget
-    if (body.type === "usage" && body.metadata) {
-      const inputTokens = (body.metadata.input_tokens as number) ?? 0;
-      const outputTokens = (body.metadata.output_tokens as number) ?? 0;
-      const tb = getTokenBudget();
-      tb.recordUsage(baseName, inputTokens, outputTokens);
-      // First time the mind crosses its budget this period, tell it on its next turn.
-      if (body.session && tb.noteExceeded(baseName)) {
-        void recordNotice({
-          mind: baseName,
-          session: body.session,
-          kind: "budget",
-          reason: "token_budget",
-          detail:
-            "You've reached your token budget for this period. Further activity may be paused until the budget resets — wrap up or prioritize accordingly.",
-        });
-      }
-    }
+    await handleMindEvent(baseName, body);
 
     return c.json({ ok: true });
   })
@@ -3012,8 +2746,8 @@ const app = new Hono<AuthEnv>()
   })
   // Drain undelivered failure notices for a session. The pre-prompt hook calls this to
   // whisper prior failures into the mind's next turn. Does not delete them (the DB rows
-  // are only removed once a turn completes cleanly, see markDeliveredOnCleanTurn); it
-  // does record an in-memory drain watermark so that clean turn clears exactly these.
+  // are only removed once a turn completes cleanly, see TurnLifecycle); it records an
+  // in-memory drain watermark (setNoticeDrainWatermark) so that clean turn clears these.
   .get("/:name/history/notices", requireSelf(), async (c) => {
     const name = c.req.param("name");
     const baseName = await getBaseName(name);
@@ -3025,7 +2759,7 @@ const app = new Hono<AuthEnv>()
 
     // Remember the high-water id so a clean turn clears exactly these.
     const maxId = notices.reduce((m, n) => Math.max(m, n.id), 0);
-    noticeDrainWatermarks.set(`${baseName}:${session}`, maxId);
+    setNoticeDrainWatermark(baseName, session, maxId);
 
     return c.json({ context: formatNotices(notices), notices });
   })
