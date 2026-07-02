@@ -7,6 +7,7 @@ import { voluteSystemDir } from "../packages/daemon/src/lib/mind/registry.js";
 import {
   buildSandboxReadConfig,
   isSandboxEnabled,
+  SandboxUnavailableError,
   shellEscape,
   wrapForSandbox,
 } from "../packages/daemon/src/lib/mind/sandbox.js";
@@ -146,6 +147,56 @@ describe("shellEscape", () => {
 
 describe("wrapForSandbox passthrough", () => {
   it("returns original command when sandbox is not initialized", async () => {
+    const [cmd, args] = await wrapForSandbox("/usr/bin/tsx", ["server.ts"], "/tmp/mind", "alice");
+    assert.equal(cmd, "/usr/bin/tsx");
+    assert.deepEqual(args, ["server.ts"]);
+  });
+});
+
+describe("wrapForSandbox fail-closed", () => {
+  const origSandbox = process.env.VOLUTE_SANDBOX;
+  const origOptional = process.env.VOLUTE_SANDBOX_OPTIONAL;
+
+  function enableSandboxMode() {
+    delete process.env.VOLUTE_SANDBOX;
+    mkdirSync(voluteSystemDir(), { recursive: true });
+    writeFileSync(configPath(), JSON.stringify({ setup: { isolation: "sandbox" } }));
+    _resetConfigCache();
+  }
+
+  afterEach(() => {
+    _resetConfigCache();
+    try {
+      unlinkSync(configPath());
+    } catch {}
+    if (origSandbox === undefined) delete process.env.VOLUTE_SANDBOX;
+    else process.env.VOLUTE_SANDBOX = origSandbox;
+    if (origOptional === undefined) delete process.env.VOLUTE_SANDBOX_OPTIONAL;
+    else process.env.VOLUTE_SANDBOX_OPTIONAL = origOptional;
+  });
+
+  it("throws when sandbox is enabled but unavailable and opt-out is unset", async () => {
+    // In unit tests the sandbox runtime is never initialized, so the manager is
+    // null — this is exactly the "enabled but unavailable" degrade case.
+    enableSandboxMode();
+    delete process.env.VOLUTE_SANDBOX_OPTIONAL;
+    await assert.rejects(
+      () => wrapForSandbox("/usr/bin/tsx", ["server.ts"], "/tmp/mind", "alice"),
+      SandboxUnavailableError,
+    );
+  });
+
+  it("passes through when VOLUTE_SANDBOX_OPTIONAL=1", async () => {
+    enableSandboxMode();
+    process.env.VOLUTE_SANDBOX_OPTIONAL = "1";
+    const [cmd, args] = await wrapForSandbox("/usr/bin/tsx", ["server.ts"], "/tmp/mind", "alice");
+    assert.equal(cmd, "/usr/bin/tsx");
+    assert.deepEqual(args, ["server.ts"]);
+  });
+
+  it("passes through when sandbox is disabled", async () => {
+    process.env.VOLUTE_SANDBOX = "0";
+    delete process.env.VOLUTE_SANDBOX_OPTIONAL;
     const [cmd, args] = await wrapForSandbox("/usr/bin/tsx", ["server.ts"], "/tmp/mind", "alice");
     assert.equal(cmd, "/usr/bin/tsx");
     assert.deepEqual(args, ["server.ts"]);

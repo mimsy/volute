@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
-import { describe, it } from "node:test";
+import { mkdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { afterEach, describe, it } from "node:test";
+import { _resetConfigCache } from "../packages/daemon/src/lib/config/setup.js";
 import { Scheduler } from "../packages/daemon/src/lib/daemon/scheduler.js";
+import { voluteSystemDir } from "../packages/daemon/src/lib/mind/registry.js";
+import { SandboxUnavailableError } from "../packages/daemon/src/lib/mind/sandbox.js";
 
 type SystemDelivery = {
   mindName: string;
@@ -234,6 +239,60 @@ describe("scheduler", () => {
     });
     assert.equal(scheduler.systemDeliveries.length, 1);
     assert.ok(scheduler.systemDeliveries[0].text.includes("timer fired"));
+  });
+});
+
+describe("scheduler runScript sandboxing", () => {
+  const origSandbox = process.env.VOLUTE_SANDBOX;
+  const origOptional = process.env.VOLUTE_SANDBOX_OPTIONAL;
+
+  function configPath() {
+    return resolve(voluteSystemDir(), "config.json");
+  }
+
+  afterEach(() => {
+    _resetConfigCache();
+    try {
+      unlinkSync(configPath());
+    } catch {}
+    if (origSandbox === undefined) delete process.env.VOLUTE_SANDBOX;
+    else process.env.VOLUTE_SANDBOX = origSandbox;
+    if (origOptional === undefined) delete process.env.VOLUTE_SANDBOX_OPTIONAL;
+    else process.env.VOLUTE_SANDBOX_OPTIONAL = origOptional;
+  });
+
+  it("routes scripts through the sandbox in sandbox mode (never bare bash)", async () => {
+    // Enable sandbox mode with no opt-out. The sandbox runtime is not initialized
+    // in unit tests, so a script that went through the sandbox path fails closed
+    // instead of running bare `bash` in the daemon's trust domain.
+    delete process.env.VOLUTE_SANDBOX;
+    delete process.env.VOLUTE_SANDBOX_OPTIONAL;
+    mkdirSync(voluteSystemDir(), { recursive: true });
+    writeFileSync(configPath(), JSON.stringify({ setup: { isolation: "sandbox" } }));
+    _resetConfigCache();
+
+    const scheduler = new Scheduler();
+    await assert.rejects(
+      () =>
+        (
+          scheduler as unknown as {
+            runScript: (s: string, cwd: string, m: string) => Promise<string>;
+          }
+        ).runScript("echo hi", "/tmp", "alice"),
+      SandboxUnavailableError,
+    );
+  });
+
+  it("runs scripts directly when sandbox is disabled", async () => {
+    process.env.VOLUTE_SANDBOX = "0";
+    delete process.env.VOLUTE_SANDBOX_OPTIONAL;
+    const scheduler = new Scheduler();
+    const out = await (
+      scheduler as unknown as {
+        runScript: (s: string, cwd: string, m: string) => Promise<string>;
+      }
+    ).runScript("echo scheduled-ok", "/tmp", "alice");
+    assert.ok(out.includes("scheduled-ok"));
   });
 });
 
