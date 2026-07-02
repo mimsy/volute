@@ -55,13 +55,24 @@ if (process.env.VOLUTE_TIMEZONE && !process.env.TZ) {
 }
 
 /**
- * Write daemon.json (holds the daemon admin token) owner-only. The chmodSync
- * enforces 0600 even when the file pre-existed with looser perms (writeFileSync's
- * `mode` only applies on creation).
+ * Persist daemon connection info, splitting the secret from the non-secret part:
+ * daemon.json (port/hostname) stays operator-readable at 0644 so a non-root CLI
+ * on a system install can find the daemon, while the admin token goes to a
+ * separate 0600 owner-only file. chmodSync enforces the mode even when a file
+ * pre-existed with looser/tighter perms (writeFileSync's `mode` only applies on
+ * creation) — this also relaxes a daemon.json left at 0600 by v0.41.1.
  */
-export function writeDaemonConfig(path: string, config: Record<string, unknown>): void {
-  writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
-  chmodSync(path, 0o600);
+export function writeDaemonConfig(
+  systemDir: string,
+  config: Record<string, unknown>,
+  token: string,
+): void {
+  const configPath = resolve(systemDir, "daemon.json");
+  writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o644 });
+  chmodSync(configPath, 0o644);
+  const tokenPath = resolve(systemDir, "daemon-token");
+  writeFileSync(tokenPath, `${token}\n`, { mode: 0o600 });
+  chmodSync(tokenPath, 0o600);
 }
 
 export async function startDaemon(opts: {
@@ -90,6 +101,7 @@ export async function startDaemon(opts: {
   }
   const DAEMON_PID_PATH = resolve(systemDir, "daemon.pid");
   const DAEMON_JSON_PATH = resolve(systemDir, "daemon.json");
+  const DAEMON_TOKEN_PATH = resolve(systemDir, "daemon-token");
 
   mkdirSync(home, { recursive: true });
   ensureSystemDir();
@@ -213,11 +225,11 @@ export async function startDaemon(opts: {
 
   // Server is listening — safe to write PID and config
   writeFileSync(DAEMON_PID_PATH, myPid, { mode: 0o644 });
-  const daemonConfig: Record<string, unknown> = { port, hostname, token };
+  const daemonConfig: Record<string, unknown> = { port, hostname };
   if (internalPort) daemonConfig.internalPort = internalPort;
   if (tls) daemonConfig.tls = true;
-  // 0600 — daemon.json holds the daemon admin token; owner-only (matches env.json/volute.db).
-  writeDaemonConfig(DAEMON_JSON_PATH, daemonConfig);
+  // daemon.json is operator-readable (0644); the admin token is written separately at 0600.
+  writeDaemonConfig(systemDir, daemonConfig, token);
 
   // Start delivery manager, mind manager, bridge manager, and scheduler
   const delivery = initDeliveryManager();
@@ -358,13 +370,18 @@ export async function startDaemon(opts: {
       // PID file may not exist or belong to another process — ignore
     }
     try {
-      // Only delete daemon.json if it belongs to this process
-      const data = JSON.parse(readFileSync(DAEMON_JSON_PATH, "utf-8"));
-      if (data.token === token) {
-        unlinkSync(DAEMON_JSON_PATH);
+      // Only delete daemon.json/token if they still belong to this process
+      // (the token file, 0600, is the ownership marker now that daemon.json is public).
+      if (readFileSync(DAEMON_TOKEN_PATH, "utf-8").trim() === token) {
+        unlinkSync(DAEMON_TOKEN_PATH);
+        try {
+          unlinkSync(DAEMON_JSON_PATH);
+        } catch {
+          // daemon.json may already be gone — ignore
+        }
       }
     } catch {
-      // Config file may not exist — ignore
+      // Token file may not exist or belong to another process — ignore
     }
   }
 

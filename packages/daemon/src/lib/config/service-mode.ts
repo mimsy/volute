@@ -211,14 +211,38 @@ export async function restartService(mode: ManagedServiceMode): Promise<void> {
   }
 }
 
-/** Read daemon.json for hostname, port, and token. Returns defaults if missing or corrupt. */
+export function daemonConfigPath(): string {
+  return resolve(voluteSystemDir(), "daemon.json");
+}
+
+/**
+ * The daemon admin token lives in its own owner-only file, split out from
+ * daemon.json so the latter (port/hostname) can stay operator-readable (0644)
+ * on a system install where the daemon runs as root. Only daemon-side code (also
+ * root) needs the token; the operator CLI authenticates via cli-session.json.
+ */
+export function daemonTokenPath(): string {
+  return resolve(voluteSystemDir(), "daemon-token");
+}
+
+/** Read the daemon admin token; undefined when missing or unreadable (e.g. a non-root caller). */
+export function readDaemonToken(): string | undefined {
+  const path = daemonTokenPath();
+  if (!existsSync(path)) return undefined;
+  try {
+    return readFileSync(path, "utf-8").trim() || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Read daemon.json for hostname and port. Returns defaults if missing or corrupt. */
 export function readDaemonConfig(): {
   hostname: string;
   port: number;
   internalPort?: number;
-  token?: string;
 } {
-  const configPath = resolve(voluteSystemDir(), "daemon.json");
+  const configPath = daemonConfigPath();
   if (!existsSync(configPath)) return { hostname: "127.0.0.1", port: 1618 };
   try {
     const config = JSON.parse(readFileSync(configPath, "utf-8"));
@@ -226,7 +250,6 @@ export function readDaemonConfig(): {
       hostname: config.hostname || "127.0.0.1",
       port: config.port ?? 1618,
       internalPort: config.internalPort,
-      token: config.token,
     };
   } catch {
     console.error("Warning: could not read daemon config, using defaults.");

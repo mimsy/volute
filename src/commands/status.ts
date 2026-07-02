@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { promisify } from "node:util";
 import { command } from "@volute/cli/lib/command.js";
+import { getAuthToken } from "@volute/cli/lib/daemon-client.js";
 import {
   getDaemonUrl,
   getServiceMode,
@@ -25,7 +26,7 @@ const cmd = command({
     const mode = getServiceMode();
     console.log(`Mode: ${modeLabel(mode)}`);
 
-    const { hostname, port, internalPort, token } = readDaemonConfig();
+    const { hostname, port, internalPort } = readDaemonConfig();
     // Use internal HTTP port for API calls, user-facing port for display
     const apiPort = internalPort ?? port;
     const baseUrl = getDaemonUrl("127.0.0.1", apiPort);
@@ -68,8 +69,9 @@ const cmd = command({
       }
     }
 
-    // List minds
+    // List minds (best-effort — authenticate as the operator via CLI session)
     const headers: Record<string, string> = {};
+    const token = getAuthToken();
     if (token) headers.Authorization = `Bearer ${token}`;
     headers.Origin = baseUrl;
 

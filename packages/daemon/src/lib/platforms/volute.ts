@@ -21,11 +21,11 @@ function readSessionFile(mindDir: string): string | undefined {
   return undefined;
 }
 
-import { voluteSystemDir } from "../mind/registry.js";
+import { daemonConfigPath, readDaemonToken } from "../config/service-mode.js";
 import { buildVoluteSlug } from "../util/slugify.js";
 
 function getDaemonConfig(): { url: string; token?: string } {
-  const configPath = resolve(voluteSystemDir(), "daemon.json");
+  const configPath = daemonConfigPath();
   if (!existsSync(configPath)) {
     throw new Error("Volute daemon is not running");
   }
@@ -41,7 +41,9 @@ function getDaemonConfig(): { url: string; token?: string } {
   const url = new URL("http://localhost");
   url.hostname = (config.hostname as string) || "localhost";
   url.port = String(config.port);
-  return { url: url.origin, token: config.token as string | undefined };
+  // The admin token lives in a separate 0600 file (daemon-token), readable by
+  // this daemon-side driver which runs as root.
+  return { url: url.origin, token: readDaemonToken() };
 }
 
 export async function read(
