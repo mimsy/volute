@@ -1,6 +1,6 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { qualifyModelId, resolveTemplate } from "../ai-service.js";
+import { qualifyModelId, resolveTemplate, unqualifyModelId } from "../ai-service.js";
 import { readGlobalConfig } from "../config/setup.js";
 import { getSharedSkill, installSkill, mindSkillsDir } from "../skills.js";
 import {
@@ -105,7 +105,8 @@ export async function ensureSpiritProject(): Promise<void> {
 
     // Set spirit model in mind config if available
     if (spiritModel) {
-      const modelForConfig = template === "pi" ? qualifyModelId(spiritModel) : spiritModel;
+      const modelForConfig =
+        template === "pi" ? qualifyModelId(spiritModel) : unqualifyModelId(spiritModel);
       const configPath = resolve(dir, "home/.config/config.json");
       const mindConfig = existsSync(configPath)
         ? JSON.parse(readFileSync(configPath, "utf-8"))
@@ -236,7 +237,8 @@ export async function syncSpiritTemplate(): Promise<void> {
   const spiritModel = config.spiritModel;
   if (spiritModel) {
     // Pi template needs provider:model format, claude template needs just the model ID
-    const modelForConfig = template === "pi" ? qualifyModelId(spiritModel) : spiritModel;
+    const modelForConfig =
+      template === "pi" ? qualifyModelId(spiritModel) : unqualifyModelId(spiritModel);
     const mindConfigPath = resolve(dir, "home/.config/config.json");
     const mindConfig = existsSync(mindConfigPath)
       ? JSON.parse(readFileSync(mindConfigPath, "utf-8"))

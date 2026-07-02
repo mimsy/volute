@@ -4,17 +4,23 @@ import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
 import {
   addCustomModel,
   buildCustomModel,
+  findModel,
   getAiConfig,
   getAvailableModels,
   getCustomModels,
   getEnabledModels,
+  getUtilityModel,
+  migrateAiModelQualification,
   qualifyModelId,
   removeAiConfig,
   removeCustomModel,
   removeProviderConfig,
   saveProviderConfig,
   setEnabledModels,
+  setUtilityModel,
+  unqualifyModelId,
 } from "../packages/daemon/src/lib/ai-service.js";
+import { readGlobalConfig, writeGlobalConfig } from "../packages/daemon/src/lib/config/setup.js";
 
 describe("ai-service config", () => {
   it("returns null when not configured", () => {
@@ -117,10 +123,10 @@ describe("custom models", () => {
     removeAiConfig();
     saveProviderConfig("anthropic", { apiKey: "sk-test" });
     addCustomModel("anthropic", "claude-future-4");
-    setEnabledModels(["claude-future-4"]);
+    setEnabledModels(["anthropic:claude-future-4"]);
     removeCustomModel("anthropic", "claude-future-4");
     assert.equal(getCustomModels().length, 0);
-    assert.equal(getEnabledModels().includes("claude-future-4"), false);
+    assert.equal(getEnabledModels().includes("anthropic:claude-future-4"), false);
   });
 
   it("built-in wins: getAvailableModels dedupes and prunes an absorbed custom id", async () => {
@@ -168,12 +174,114 @@ describe("custom models", () => {
     saveProviderConfig("anthropic", { apiKey: "sk-test" });
     addCustomModel("anthropic", "keep-me");
     addCustomModel("anthropic", "delete-me");
-    setEnabledModels(["keep-me", "delete-me"]);
+    setEnabledModels(["anthropic:keep-me", "anthropic:delete-me"]);
     removeCustomModel("anthropic", "delete-me");
     assert.deepEqual(
       getCustomModels().map((m) => m.id),
       ["keep-me"],
     );
-    assert.deepEqual(getEnabledModels(), ["keep-me"]);
+    assert.deepEqual(getEnabledModels(), ["anthropic:keep-me"]);
+  });
+});
+
+describe("findModel provider-qualified resolution", () => {
+  it("resolves a provider:model id within that provider only", () => {
+    removeAiConfig();
+    // gpt-5.5 is served by several providers; the prefix disambiguates.
+    const codex = findModel("openai-codex:gpt-5.5");
+    assert.ok(codex, "expected openai-codex:gpt-5.5 to resolve");
+    assert.equal(codex.provider, "openai-codex");
+
+    const copilot = findModel("github-copilot:gpt-5.5");
+    assert.ok(copilot, "expected github-copilot:gpt-5.5 to resolve");
+    assert.equal(copilot.provider, "github-copilot");
+  });
+
+  it("returns undefined when the provider does not serve the model", () => {
+    removeAiConfig();
+    assert.equal(findModel("anthropic:gpt-5.5"), undefined);
+  });
+
+  it("resolves a provider:model custom id within that provider", () => {
+    removeAiConfig();
+    saveProviderConfig("anthropic", { apiKey: "sk-test" });
+    addCustomModel("anthropic", "claude-future-pq");
+    const found = findModel("anthropic:claude-future-pq");
+    assert.ok(found);
+    assert.equal(found.provider, "anthropic");
+    // Wrong provider prefix must not resolve the custom model.
+    assert.equal(findModel("openai:claude-future-pq"), undefined);
+  });
+
+  it("still resolves a bare built-in id (legacy fallback)", () => {
+    removeAiConfig();
+    const builtin = getBuiltinModels("anthropic")[0];
+    const found = findModel(builtin.id);
+    assert.ok(found);
+    assert.equal(found.id, builtin.id);
+  });
+});
+
+describe("migrateAiModelQualification", () => {
+  it("expands a bare enabled id to every configured provider serving it", () => {
+    removeAiConfig();
+    saveProviderConfig("openai-codex", { apiKey: "sk-codex" });
+    saveProviderConfig("github-copilot", { apiKey: "sk-copilot" });
+    setEnabledModels(["gpt-5.5"]);
+
+    migrateAiModelQualification();
+
+    assert.deepEqual(getEnabledModels(), ["openai-codex:gpt-5.5", "github-copilot:gpt-5.5"]);
+  });
+
+  it("qualifies bare spiritModel and utilityModel to the first configured provider", () => {
+    removeAiConfig();
+    saveProviderConfig("openai-codex", { apiKey: "sk-codex" });
+    saveProviderConfig("github-copilot", { apiKey: "sk-copilot" });
+    setUtilityModel("gpt-5.5");
+    const cfg = readGlobalConfig();
+    writeGlobalConfig({ ...cfg, spiritModel: "gpt-5.5" });
+
+    migrateAiModelQualification();
+
+    assert.equal(readGlobalConfig().spiritModel, "openai-codex:gpt-5.5");
+    assert.equal(getUtilityModel(), "openai-codex:gpt-5.5");
+  });
+
+  it("leaves already-qualified values untouched and is idempotent", () => {
+    removeAiConfig();
+    saveProviderConfig("openai-codex", { apiKey: "sk-codex" });
+    setEnabledModels(["openai-codex:gpt-5.5"]);
+    const cfg = readGlobalConfig();
+    writeGlobalConfig({ ...cfg, spiritModel: "openai-codex:gpt-5.5" });
+
+    migrateAiModelQualification();
+    assert.deepEqual(getEnabledModels(), ["openai-codex:gpt-5.5"]);
+
+    // Second run is a no-op.
+    migrateAiModelQualification();
+    assert.deepEqual(getEnabledModels(), ["openai-codex:gpt-5.5"]);
+    assert.equal(readGlobalConfig().spiritModel, "openai-codex:gpt-5.5");
+  });
+
+  it("drops a bare enabled id no configured provider serves", () => {
+    removeAiConfig();
+    saveProviderConfig("anthropic", { apiKey: "sk-ant" });
+    setEnabledModels(["gpt-5.5"]); // anthropic does not serve gpt-5.5
+
+    migrateAiModelQualification();
+
+    assert.deepEqual(getEnabledModels(), []);
+  });
+});
+
+describe("spirit config.model derivation from a qualified spiritModel", () => {
+  // syncSpiritTemplate writes `template === "pi" ? qualifyModelId(m) : unqualifyModelId(m)`.
+  // With a provider-qualified spiritModel, pi keeps the qualified form and codex/claude
+  // get a bare slug — this covers that branch without a full sync harness.
+  it("pi keeps the qualified id; codex/claude get the bare slug", () => {
+    const qualified = "openai-codex:gpt-5.5";
+    assert.equal(qualifyModelId(qualified), "openai-codex:gpt-5.5");
+    assert.equal(unqualifyModelId(qualified), "gpt-5.5");
   });
 });

@@ -343,17 +343,21 @@ const app = new Hono<AuthEnv>()
   .get("/ai/models", requireAdmin, async (c) => {
     const models = await getAvailableModels();
     const enabled = new Set(getEnabledModels());
-    const customIds = new Set(getCustomModels().map((m) => m.id));
+    const customIds = new Set(getCustomModels().map((m) => `${m.provider}:${m.id}`));
     return c.json(
-      models.map((m) => ({
-        id: m.id,
-        name: m.name,
-        provider: m.provider,
-        contextWindow: m.contextWindow,
-        maxTokens: m.maxTokens,
-        enabled: enabled.has(m.id),
-        custom: customIds.has(m.id),
-      })),
+      models.map((m) => {
+        const qualifiedId = `${m.provider}:${m.id}`;
+        return {
+          id: m.id,
+          qualifiedId,
+          name: m.name,
+          provider: m.provider,
+          contextWindow: m.contextWindow,
+          maxTokens: m.maxTokens,
+          enabled: enabled.has(qualifiedId),
+          custom: customIds.has(qualifiedId),
+        };
+      }),
     );
   })
   .put(
@@ -383,17 +387,9 @@ const app = new Hono<AuthEnv>()
           400,
         );
       }
-      // The enabled list and resolution are keyed by bare id, so a custom id must
-      // be unique across providers to stay unambiguous.
-      if (getCustomModels().some((m) => m.id === id && m.provider !== provider)) {
-        return c.json(
-          { error: `A custom model "${id}" is already registered under another provider` },
-          400,
-        );
-      }
       addCustomModel(provider, id, name);
-      // Enable it immediately (dedupe against already-enabled ids).
-      setEnabledModels([...new Set([...getEnabledModels(), id])]);
+      // Enable it immediately as a provider-qualified id (dedupe against enabled).
+      setEnabledModels([...new Set([...getEnabledModels(), `${provider}:${id}`])]);
       return c.json({ ok: true });
     },
   )

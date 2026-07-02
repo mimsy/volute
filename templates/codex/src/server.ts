@@ -15,13 +15,7 @@ import { createVoluteServer } from "./lib/volute-server.js";
 const { port } = parseArgs();
 const config = loadConfig();
 if (config.logLevel) setLevel(config.logLevel);
-// The Codex SDK wants a bare model slug, but config.model may carry a pi-style
-// "provider:model" prefix (e.g. "openai-codex:gpt-5.5") when the spirit's model
-// is provider-qualified. Strip the prefix so the SDK gets just the model.
-const model = config.model?.includes(":")
-  ? config.model.slice(config.model.indexOf(":") + 1)
-  : config.model;
-if (config.model) log("server", `using model: ${model}`);
+if (config.model) log("server", `using model: ${config.model}`);
 if (config.reasoningEffort) log("server", `reasoning effort: ${config.reasoningEffort}`);
 
 const systemPrompt = loadSystemPrompt();
@@ -34,7 +28,7 @@ const mind = createMind({
   systemPrompt,
   cwd,
   mindDir,
-  model,
+  model: config.model,
   reasoningEffort: config.reasoningEffort,
   maxContextTokens: config.compaction?.maxContextTokens,
 });

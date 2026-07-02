@@ -500,6 +500,8 @@ export type AiProvider = {
 
 export type AiModel = {
   id: string;
+  /** Provider-qualified id ("provider:model") — the canonical selection/enable key. */
+  qualifiedId: string;
   name: string;
   provider: string;
   contextWindow: number;

@@ -114,6 +114,11 @@ export async function startDaemon(opts: {
   // Migrate pre-existing installations (setup field without setupCompleted)
   migrateSetupCompleted();
 
+  // Migrate bare model ids to provider-qualified form before the spirit starts,
+  // so syncSpiritTemplate reads a qualified spiritModel.
+  const { migrateAiModelQualification } = await import("./lib/ai-service.js");
+  migrateAiModelQualification();
+
   // Initialize database (runs drizzle migrations + creates raw connection)
   await (await import("./lib/db.js")).getDb();
 

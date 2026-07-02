@@ -185,7 +185,8 @@ async function handleProviderRemove(providerId: string) {
     // Clear utility model if it belonged to this provider
     const removedModels = aiModels.filter((m) => m.provider === providerId && m.enabled);
     for (const m of removedModels) {
-      if (utilityModel === m.id) utilityModel = "";
+      if (utilityModel === m.qualifiedId) utilityModel = "";
+      if (spiritModel === m.qualifiedId) spiritModel = "";
     }
     await load();
   } catch (err) {
@@ -286,11 +287,11 @@ function handleOAuthCodeInputChange() {
   }
 }
 
-async function addModel(modelId: string) {
-  const updated = [...enabledModels.map((m) => m.id), modelId];
+async function addModel(qualifiedId: string) {
+  const updated = [...enabledModels.map((m) => m.qualifiedId), qualifiedId];
   try {
     await saveEnabledModels(updated);
-    aiModels = aiModels.map((m) => (m.id === modelId ? { ...m, enabled: true } : m));
+    aiModels = aiModels.map((m) => (m.qualifiedId === qualifiedId ? { ...m, enabled: true } : m));
     modelSearch = "";
     showModelSearch = false;
   } catch (err) {
@@ -317,18 +318,22 @@ async function removeModel(model: AiModel) {
   if (model.custom) {
     try {
       await deleteCustomModel(model.provider, model.id);
-      aiModels = aiModels.filter((m) => m.id !== model.id);
-      if (utilityModel === model.id) utilityModel = "";
+      aiModels = aiModels.filter((m) => m.qualifiedId !== model.qualifiedId);
+      if (utilityModel === model.qualifiedId) utilityModel = "";
+      if (spiritModel === model.qualifiedId) spiritModel = "";
     } catch (err) {
       error = err instanceof Error ? err.message : "Failed to remove custom model";
     }
     return;
   }
-  const updated = enabledModels.map((m) => m.id).filter((id) => id !== model.id);
+  const updated = enabledModels.map((m) => m.qualifiedId).filter((id) => id !== model.qualifiedId);
   try {
     await saveEnabledModels(updated);
-    aiModels = aiModels.map((m) => (m.id === model.id ? { ...m, enabled: false } : m));
-    if (utilityModel === model.id) utilityModel = "";
+    aiModels = aiModels.map((m) =>
+      m.qualifiedId === model.qualifiedId ? { ...m, enabled: false } : m,
+    );
+    if (utilityModel === model.qualifiedId) utilityModel = "";
+    if (spiritModel === model.qualifiedId) spiritModel = "";
   } catch (err) {
     error = err instanceof Error ? err.message : "Failed to remove model";
   }
@@ -353,7 +358,7 @@ async function removeModel(model: AiModel) {
       <div class="provider-models">
         {#if providerModels.length > 0}
           <div class="model-tags">
-            {#each providerModels as model (model.id)}
+            {#each providerModels as model (model.qualifiedId)}
               <span class="model-tag">
                 {model.id}
                 <button class="model-tag-remove" onclick={() => removeModel(model)}>×</button>
@@ -380,7 +385,7 @@ async function removeModel(model: AiModel) {
     <div class="model-defaults">
       <span class="label">Spirit model</span>
       <ModelSelect
-        items={enabledModels.map((m) => ({ id: m.id, label: m.name }))}
+        items={enabledModels.map((m) => ({ id: m.qualifiedId, label: `${m.name} · ${m.provider}` }))}
         bind:value={spiritModel}
         placeholder="Search models..."
       />
@@ -388,7 +393,7 @@ async function removeModel(model: AiModel) {
 
       <span class="label mt">Utility model <span class="optional">(optional)</span></span>
       <ModelSelect
-        items={enabledModels.map((m) => ({ id: m.id, label: m.name }))}
+        items={enabledModels.map((m) => ({ id: m.qualifiedId, label: `${m.name} · ${m.provider}` }))}
         bind:value={utilityModel}
         placeholder="Search models..."
         emptyLabel="None"
@@ -511,8 +516,8 @@ async function removeModel(model: AiModel) {
       />
       {#if modelSuggestions.length > 0}
         <div class="model-list">
-          {#each modelSuggestions as model (model.id)}
-            <button class="model-option" onclick={() => addModel(model.id)}>
+          {#each modelSuggestions as model (model.qualifiedId)}
+            <button class="model-option" onclick={() => addModel(model.qualifiedId)}>
               {model.id}
             </button>
           {/each}

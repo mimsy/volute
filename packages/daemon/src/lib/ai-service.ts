@@ -207,6 +207,63 @@ export function setEnabledModels(modelIds: string[]): void {
   writeGlobalConfig({ ...config, ai });
 }
 
+/**
+ * One-time migration: convert bare model ids in `ai.models`, `spiritModel`, and
+ * `ai.utilityModel` to provider-qualified `provider:model` form. A bare id is
+ * ambiguous (many providers serve the same id), so this pins each to the
+ * explicitly-configured provider(s) that serve it: the enabled list expands to
+ * one entry per configured provider, and the single-value defaults qualify to
+ * the first configured provider that serves them. Idempotent — a no-op once
+ * every stored id already contains a ":".
+ */
+export function migrateAiModelQualification(): void {
+  const config = readGlobalConfig();
+  const ai = config.ai;
+  const isBare = (id?: string): id is string => id != null && !id.includes(":");
+
+  const hasBareInList = (ai?.models ?? []).some(isBare);
+  if (!hasBareInList && !isBare(config.spiritModel) && !isBare(ai?.utilityModel)) return;
+
+  // Only providers the admin explicitly added (with credentials) — not ambient
+  // env/OAuth providers — are candidates, matching what the user configured.
+  const providers = ai ? Object.keys(ai.providers) : [];
+  const customModels = ai?.customModels ?? [];
+  const providersServing = (bareId: string): string[] =>
+    providers.filter(
+      (p) =>
+        getBuiltinModel(p as never, bareId as never) != null ||
+        customModels.some((cm) => cm.provider === p && cm.id === bareId),
+    );
+
+  let changed = false;
+
+  if (ai?.models) {
+    const expanded: string[] = [];
+    for (const id of ai.models) {
+      if (!isBare(id)) {
+        expanded.push(id);
+        continue;
+      }
+      changed = true;
+      for (const p of providersServing(id)) expanded.push(`${p}:${id}`);
+    }
+    ai.models = expanded.length > 0 ? [...new Set(expanded)] : undefined;
+    if (!ai.models) delete ai.models;
+  }
+
+  const qualifyOne = (id: string | undefined): string | undefined => {
+    if (!isBare(id)) return id;
+    const [provider] = providersServing(id);
+    if (!provider) return id; // no configured provider serves it — leave as-is
+    changed = true;
+    return `${provider}:${id}`;
+  };
+  config.spiritModel = qualifyOne(config.spiritModel);
+  if (ai) ai.utilityModel = qualifyOne(ai.utilityModel);
+
+  if (changed) writeGlobalConfig(config);
+}
+
 /** Get the admin-defined custom models (not in pi-ai's built-in catalog). */
 export function getCustomModels(): CustomModel[] {
   return getAiConfig()?.customModels ?? [];
@@ -234,7 +291,9 @@ export function removeCustomModel(provider: string, id: string): void {
   ai.customModels = customModels.length > 0 ? customModels : undefined;
   if (!ai.customModels) delete ai.customModels;
   if (ai.models) {
-    ai.models = ai.models.filter((mid) => mid !== id);
+    // Enabled ids are provider-qualified ("provider:model").
+    const qualified = `${provider}:${id}`;
+    ai.models = ai.models.filter((mid) => mid !== qualified);
     if (ai.models.length === 0) delete ai.models;
   }
   const config = readGlobalConfig();
@@ -381,8 +440,25 @@ export function unqualifyModelId(modelId: string): string {
   return idx >= 0 ? modelId.slice(idx + 1) : modelId;
 }
 
-function findModel(modelId: string): Model<Api> | undefined {
-  // Exact match against the built-in catalog (built-in always wins)
+export function findModel(modelId: string): Model<Api> | undefined {
+  // Provider-qualified id ("provider:model") resolves within that provider only,
+  // so the same bare id under different providers stays unambiguous.
+  const colon = modelId.indexOf(":");
+  if (colon >= 0) {
+    const provider = modelId.slice(0, colon);
+    const bareId = modelId.slice(colon + 1);
+    const built = getBuiltinModel(provider as never, bareId as never);
+    if (built) return built as Model<Api>;
+    for (const cm of getCustomModels()) {
+      if (cm.provider === provider && cm.id === bareId) {
+        const model = buildCustomModel(cm.provider, cm.id, cm.name);
+        if (model) return model;
+      }
+    }
+    return undefined;
+  }
+  // Bare id (legacy / fallback): exact built-in match against the catalog
+  // (built-in always wins).
   for (const provider of getBuiltinProviders()) {
     const model = getBuiltinModel(provider as never, modelId as never);
     if (model) return model as Model<Api>;
