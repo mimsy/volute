@@ -14,7 +14,7 @@ import {
 } from "../../lib/bridges/bridges.js";
 import { findOrCreatePuppet } from "../../lib/chat/puppets.js";
 import { getBridgeManager } from "../../lib/daemon/bridge-manager.js";
-import { deliverMessage } from "../../lib/delivery/message-delivery.js";
+import { fanOutToMinds } from "../../lib/delivery/fan-out.js";
 import {
   addMessage,
   type ContentBlock,
@@ -25,7 +25,6 @@ import {
 } from "../../lib/events/conversations.js";
 import { findMind } from "../../lib/mind/registry.js";
 import log from "../../lib/util/logger.js";
-import { buildVoluteSlug } from "../../lib/util/slugify.js";
 import type { AuthEnv } from "../middleware/auth.js";
 import { requireAdmin } from "../middleware/auth.js";
 
@@ -249,7 +248,8 @@ const app = new Hono<AuthEnv>()
 
 /**
  * Fan out a message from a bridged conversation to all mind participants.
- * Reuses the existing delivery infrastructure.
+ * Bridge senders are external humans, so this is not a mind→mind turn (loop
+ * protection counter resets). Delegates to the shared fan-out path.
  */
 async function fanOutToBridgedMinds(opts: {
   conversationId: string;
@@ -258,43 +258,13 @@ async function fanOutToBridgedMinds(opts: {
   platform: string;
   isDM: boolean;
 }): Promise<void> {
-  const participants = await getParticipants(opts.conversationId);
-  const mindParticipants = participants.filter((p) => p.userType === "mind");
-  const participantNames = participants.map((p) => p.username);
-
-  const { getMindManager } = await import("../../lib/daemon/mind-manager.js");
-  const { getSleepManagerIfReady } = await import("../../lib/daemon/sleep-manager.js");
-  const manager = getMindManager();
-  const sm = getSleepManagerIfReady();
-
-  const targetMinds = mindParticipants
-    .filter((ap) => {
-      return (
-        (manager.isRunning(ap.username) || sm?.isSleeping(ap.username)) &&
-        ap.username !== opts.senderName
-      );
-    })
-    .map((ap) => ap.username);
-
-  for (const mindName of targetMinds) {
-    const channel = buildVoluteSlug({
-      participants,
-      mindUsername: mindName,
-      conversationId: opts.conversationId,
-    });
-
-    deliverMessage(mindName, {
-      content: opts.contentBlocks,
-      channel,
-      conversationId: opts.conversationId,
-      sender: opts.senderName,
-      participants: participantNames,
-      participantCount: participants.length,
-      isDM: opts.isDM,
-    }).catch((err) => {
-      log.warn(`bridge fan-out delivery failed for ${mindName}`, log.errorData(err));
-    });
-  }
+  await fanOutToMinds({
+    conversationId: opts.conversationId,
+    contentBlocks: opts.contentBlocks,
+    senderName: opts.senderName,
+    senderIsMind: false,
+    isDM: opts.isDM,
+  });
 }
 
 export default app;

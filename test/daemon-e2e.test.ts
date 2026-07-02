@@ -12,7 +12,13 @@ import {
   removeMind,
   voluteSystemDir,
 } from "../packages/daemon/src/lib/mind/registry.js";
-import { activity, mindHistory, summaries, turns } from "../packages/daemon/src/lib/schema.js";
+import {
+  activity,
+  deliveryQueue,
+  mindHistory,
+  summaries,
+  turns,
+} from "../packages/daemon/src/lib/schema.js";
 import { createSession } from "../packages/daemon/src/web/middleware/auth.js";
 
 // Strip GIT_* env vars that hook runners (e.g. pre-push) inject, so that
@@ -222,6 +228,59 @@ describe("daemon e2e", { timeout: 120000 }, () => {
     assert.equal(stoppedRes.status, 200);
     const stoppedStatus = (await stoppedRes.json()) as { status: string };
     assert.equal(stoppedStatus.status, "stopped");
+  });
+
+  it("GET /:name/delivery/pending previews gated messages and clears once released", async () => {
+    const db = await getDb();
+    // The daemon and this test share volute.db, so directly seeding gated rows is a
+    // deterministic way to exercise the pending-preview API without a real gating race.
+    await db.insert(deliveryQueue).values([
+      {
+        mind: TEST_MIND,
+        session: "main",
+        channel: "slack:random",
+        sender: "zoe",
+        status: "gated",
+        payload: JSON.stringify({
+          channel: "slack:random",
+          sender: "zoe",
+          content: "first held message",
+        }),
+      },
+      {
+        mind: TEST_MIND,
+        session: "main",
+        channel: "slack:random",
+        sender: "amp",
+        status: "gated",
+        payload: JSON.stringify({
+          channel: "slack:random",
+          sender: "amp",
+          content: "second held message",
+        }),
+      },
+    ]);
+
+    const res = await daemonRequest(`/api/minds/${TEST_MIND}/delivery/pending`);
+    assert.equal(res.status, 200);
+    const pending = (await res.json()) as Array<{
+      channel: string;
+      count: number;
+      preview: string;
+    }>;
+    const entry = pending.find((p) => p.channel === "slack:random");
+    assert.ok(entry, "gated channel should appear in pending preview");
+    assert.equal(entry.count, 2);
+    assert.match(entry.preview, /held message/);
+
+    // Releasing (delivering) the gated rows clears them from the preview.
+    await db.delete(deliveryQueue).where(eq(deliveryQueue.mind, TEST_MIND));
+    const res2 = await daemonRequest(`/api/minds/${TEST_MIND}/delivery/pending`);
+    const pending2 = (await res2.json()) as Array<{ channel: string }>;
+    assert.ok(
+      !pending2.find((p) => p.channel === "slack:random"),
+      "released messages should no longer be pending",
+    );
   });
 
   it("minds persist running state across daemon restart", async () => {
