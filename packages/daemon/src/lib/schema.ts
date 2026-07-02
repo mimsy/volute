@@ -141,7 +141,13 @@ export const deliveryQueue = sqliteTable(
   "delivery_queue",
   {
     id: integer("id").primaryKey({ autoIncrement: true }),
+    // Keying/cleanup/dedup key: always the base (parent) name, so an insert under a
+    // variant name and the id-scoped cleanup share a key.
     mind: text("mind").notNull(),
+    // Original delivery target — may be a variant name. Used to resolve the port on
+    // redrive so a variant's stranded message is re-delivered to the variant, not the
+    // parent. Null on legacy rows → callers fall back to `mind`.
+    target_mind: text("target_mind"),
     session: text("session").notNull(),
     channel: text("channel"),
     sender: text("sender"),

@@ -190,13 +190,15 @@ describe("DeliveryManager durability", () => {
     removeMind(name);
   });
 
-  it("keys queue rows by baseName for variants and cleans them by id (no restart replay)", async () => {
-    // Variant delivery goes to the variant's port (here: failing); redrive re-resolves
-    // the baseName and delivers to the parent's port.
+  it("keys variant rows by baseName but redrives to the variant's own port (no restart replay)", async () => {
+    // The live path delivers to the variant's port; if that POST transiently fails, the row
+    // is keyed by baseName (so id-scoped cleanup matches) but records target_mind=variant, so
+    // redrive re-delivers to the VARIANT — never the parent. The variant must durably receive
+    // its own stranded message.
     const parentSrv = await startMindServer();
     const variantSrv = await startMindServer();
     servers.push(parentSrv.server, variantSrv.server);
-    variantSrv.fail();
+    variantSrv.fail(); // first delivery to the variant fails → leaves a pending row
 
     const parent = `dur-parent-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     const variant = `${parent}-v1`;
@@ -216,8 +218,10 @@ describe("DeliveryManager durability", () => {
     const pending = await queueRows(parent, "pending");
     assert.equal(pending.length, 1, "row is keyed by the base name, not the variant");
     assert.equal((await queueRows(variant)).length, 0, "nothing is keyed under the variant name");
+    assert.equal(pending[0].target_mind, variant, "row records the variant as the delivery target");
 
-    // Restore-from-db (redrive): the row delivers (to the parent) and is cleaned, not replayed.
+    // The variant recovers. Redrive must deliver to the VARIANT's port, not the parent's.
+    variantSrv.ok();
     const db = await getDb();
     await db
       .update(deliveryQueue)
@@ -225,13 +229,14 @@ describe("DeliveryManager durability", () => {
       .where(eq(deliveryQueue.id, pending[0].id));
     await manager.restoreFromDb();
     await waitFor(async () => (await queueRows(parent)).length === 0);
-    assert.equal(parentSrv.received.length, 1);
+    assert.equal(variantSrv.received.length, 1, "redrive delivered to the variant's own port");
+    assert.equal(parentSrv.received.length, 0, "the parent never received the variant's message");
 
     // A second restore must NOT replay it.
-    parentSrv.received.length = 0;
+    variantSrv.received.length = 0;
     await manager.restoreFromDb();
     await new Promise((r) => setTimeout(r, 100));
-    assert.equal(parentSrv.received.length, 0, "cleaned row is not replayed on restart");
+    assert.equal(variantSrv.received.length, 0, "cleaned row is not replayed on restart");
 
     removeMind(variant);
     removeMind(parent);

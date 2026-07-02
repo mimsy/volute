@@ -147,7 +147,7 @@ export class DeliveryManager {
         await this.enqueueBatch(mindName, sessionName, payload, sessionConfig);
         return { routed: true, session: sessionName, destination: "mind", mode: "batch" };
       }
-      const queueId = await this.persistToQueue(baseName, sessionName, payload);
+      const queueId = await this.persistToQueue(mindName, sessionName, payload);
       await this.deliverToMind(mindName, sessionName, payload, sessionConfig, queueId);
       return { routed: true, session: sessionName, destination: "mind", mode: "immediate" };
     }
@@ -216,7 +216,7 @@ export class DeliveryManager {
 
     // Immediate delivery — persist to the queue BEFORE the POST so a crash or a
     // failed POST leaves an at-least-once record the redrive loop can re-deliver.
-    const queueId = await this.persistToQueue(baseName, sessionName, payload);
+    const queueId = await this.persistToQueue(mindName, sessionName, payload);
     await this.deliverToMind(mindName, sessionName, payload, sessionConfig, queueId);
     return { routed: true, session: sessionName, destination: "mind", mode: "immediate" };
   }
@@ -307,9 +307,14 @@ export class DeliveryManager {
       const config = getRoutingConfig(row.mind);
       const sessionConfig = resolveDeliveryMode(config, row.session);
 
+      // Resolve delivery from the original target (may be a variant) — the `mind`
+      // column is the base name, used only for keying/cleanup. Falls back to `mind`
+      // for legacy rows with no recorded target.
+      const target = row.target_mind ?? row.mind;
+
       if (sessionConfig.delivery.mode === "batch") {
         this.inFlight.add(row.id);
-        this.addToBatchBuffer(row.mind, row.session, sessionConfig, {
+        this.addToBatchBuffer(target, row.session, sessionConfig, {
           payload,
           channel: payload.channel,
           sender: payload.sender ?? null,
@@ -317,8 +322,8 @@ export class DeliveryManager {
           queueId: row.id,
         });
       } else {
-        this.deliverToMind(row.mind, row.session, payload, sessionConfig, row.id).catch((err) => {
-          dlog.warn(`failed to redrive delivery for ${row.mind}`, log.errorData(err));
+        this.deliverToMind(target, row.session, payload, sessionConfig, row.id).catch((err) => {
+          dlog.warn(`failed to redrive delivery for ${target}`, log.errorData(err));
         });
       }
       redriven++;
@@ -781,7 +786,7 @@ export class DeliveryManager {
     // the in-memory buffer is a fast path reconciled against these rows on ack/redrive.
     // The row is "owned" (inFlight) while buffered so the redrive sweep won't double-send.
     const baseName = await getBaseName(mindName);
-    const queueId = await this.persistToQueue(baseName, session, payload);
+    const queueId = await this.persistToQueue(mindName, session, payload);
     if (queueId != null) this.inFlight.add(queueId);
     const msg: QueuedMessage = {
       payload,
@@ -921,7 +926,7 @@ export class DeliveryManager {
     payload: DeliveryPayload,
   ): Promise<void> {
     const baseName = await getBaseName(mindName);
-    await this.persistToQueue(baseName, session, payload, "gated");
+    await this.persistToQueue(mindName, session, payload, "gated");
 
     // Check if this is the first gated message for this channel — send invite
     try {
@@ -970,9 +975,12 @@ export class DeliveryManager {
   }
 
   /**
-   * Insert a delivery_queue row and return its id. Always keyed by `baseName` so that
-   * inserts under a variant name and the id-scoped cleanup use the same key (fixes the
-   * variant mismatch where variant-keyed rows were never matched by the base cleanup).
+   * Insert a delivery_queue row and return its id. The `mind` column is always keyed by
+   * `baseName` so inserts under a variant name and the id-scoped cleanup use the same key
+   * (fixes the variant mismatch where variant-keyed rows were never matched by the base
+   * cleanup). `target_mind` records the original delivery target (`mindName`, which may be a
+   * variant) so redrive resolves the port from it — a variant's stranded row is re-delivered
+   * to the variant, not the parent.
    */
   private async persistToQueue(
     mindName: string,
@@ -987,6 +995,7 @@ export class DeliveryManager {
         .insert(deliveryQueue)
         .values({
           mind: baseName,
+          target_mind: mindName,
           session,
           channel: payload.channel ?? null,
           sender: payload.sender ?? null,
