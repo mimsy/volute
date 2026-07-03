@@ -439,8 +439,8 @@ describe("daemon e2e", { timeout: 120000 }, () => {
     // List channels — should include the new one
     const listRes = await daemonRequest("/api/v1/channels");
     assert.equal(listRes.status, 200);
-    const channels = (await listRes.json()) as { name: string; id: string }[];
-    assert.ok(channels.some((ch) => ch.name === "test-bridge-channel"));
+    const channels = (await listRes.json()) as { channel_name: string; id: string }[];
+    assert.ok(channels.some((ch) => ch.channel_name === "test-bridge-channel"));
 
     // Invite the test mind to the channel
     const inviteRes = await daemonRequest("/api/v1/channels/test-bridge-channel/invite", {
@@ -542,10 +542,9 @@ describe("daemon e2e", { timeout: 120000 }, () => {
       `/api/minds/${TEST_MIND}/conversations/${conv.id}/messages`,
     );
     assert.equal(msgsRes.status, 200);
-    const messages = (await msgsRes.json()) as {
-      content: { type: string; text?: string }[];
-      sender_name: string;
-    }[];
+    const { items: messages } = (await msgsRes.json()) as {
+      items: { content: { type: string; text?: string }[]; sender_name: string }[];
+    };
     assert.ok(messages.length >= 1);
     const lastMsg = messages[messages.length - 1];
     const text = lastMsg.content
@@ -601,7 +600,9 @@ describe("daemon e2e", { timeout: 120000 }, () => {
       `/api/minds/${TEST_MIND}/conversations/${conv.id}/messages`,
     );
     assert.equal(msgsRes.status, 200);
-    const messages = (await msgsRes.json()) as { content: { type: string; text?: string }[] }[];
+    const { items: messages } = (await msgsRes.json()) as {
+      items: { content: { type: string; text?: string }[] }[];
+    };
     assert.ok(messages.length >= 1);
   });
 
@@ -788,10 +789,9 @@ describe("daemon e2e", { timeout: 120000 }, () => {
       `/api/minds/${TEST_MIND}/conversations/${inboundBody.conversationId}/messages`,
     );
     assert.equal(msgsRes.status, 200);
-    const messages = (await msgsRes.json()) as {
-      content: { type: string; text?: string }[];
-      sender_name: string;
-    }[];
+    const { items: messages } = (await msgsRes.json()) as {
+      items: { content: { type: string; text?: string }[]; sender_name: string }[];
+    };
     const bridgedMsg = messages.find((m) => m.sender_name === "Alice");
     assert.ok(bridgedMsg, `Expected message from Alice, got: ${JSON.stringify(messages)}`);
 
@@ -849,7 +849,9 @@ describe("daemon e2e", { timeout: 120000 }, () => {
       `/api/minds/${TEST_MIND}/conversations/${body1.conversationId}/messages`,
     );
     assert.equal(msgsRes.status, 200);
-    const messages = (await msgsRes.json()) as { sender_name: string }[];
+    const { items: messages } = (await msgsRes.json()) as {
+      items: { sender_name: string }[];
+    };
     const bobMsgs = messages.filter((m) => m.sender_name === "Bob");
     assert.ok(bobMsgs.length >= 2, `Expected 2+ messages from Bob, got ${bobMsgs.length}`);
 
