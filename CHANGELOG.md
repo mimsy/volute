@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.43.1](https://github.com/mimsy/volute/compare/volute-v0.43.0...volute-v0.43.1) (2026-07-03)
+
+
+### Bug Fixes
+
+* chown parent pages dir to mind user under isolation ([#361](https://github.com/mimsy/volute/issues/361)) ([cdb6acf](https://github.com/mimsy/volute/commit/cdb6acfb9bb2e7c50a3cdd12e7ad0815d6591d0f))
+* recover in-flight messages dropped by compaction abort ([#362](https://github.com/mimsy/volute/issues/362)) ([3ac5732](https://github.com/mimsy/volute/commit/3ac5732b24864b6c4545c9bd654204539cb545d0))
+
 ## [0.43.0](https://github.com/mimsy/volute/compare/volute-v0.42.1...volute-v0.43.0) (2026-07-02)
 
 
