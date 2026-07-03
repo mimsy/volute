@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.43.0](https://github.com/mimsy/volute/compare/volute-v0.42.1...volute-v0.43.0) (2026-07-02)
+
+
+### Features
+
+* last-known-good restart protection for self-modifying minds ([#352](https://github.com/mimsy/volute/issues/352)) ([04da3a0](https://github.com/mimsy/volute/commit/04da3a0cc5aebf5f81c2d8fe5083dcae37b46942))
+* provider-qualified AI model identity ([#358](https://github.com/mimsy/volute/issues/358)) ([d6b437d](https://github.com/mimsy/volute/commit/d6b437dfa03b5369942739fa9ccc80d37f1ac0b7))
+
+
+### Bug Fixes
+
+* gate /api/v1/events activity feed to the calling mind ([#346](https://github.com/mimsy/volute/issues/346)) ([c7ec82f](https://github.com/mimsy/volute/commit/c7ec82f2b3e9551f5957bcaf8b78a9b71c1604ac))
+* make delivery_queue the source of truth for message delivery ([#351](https://github.com/mimsy/volute/issues/351)) ([1832582](https://github.com/mimsy/volute/commit/1832582349d0064244de57e82be445041d352e5d))
+* restore recordNotice import and drop dead classify import in minds.ts ([#360](https://github.com/mimsy/volute/issues/360)) ([0e791de](https://github.com/mimsy/volute/commit/0e791def5475d2657a05ef3116066fa6801d428e))
+* serialize MindManager lifecycle and make chown async ([#349](https://github.com/mimsy/volute/issues/349)) ([b830313](https://github.com/mimsy/volute/commit/b83031388705e32c02e8645eebc9d61a7a17be9d))
+
 ## [0.42.1](https://github.com/mimsy/volute/compare/volute-v0.42.0...volute-v0.42.1) (2026-07-02)
 
 
