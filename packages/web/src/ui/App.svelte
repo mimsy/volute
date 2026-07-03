@@ -766,7 +766,7 @@ function handleGlobalClick(e: MouseEvent) {
               <div class="user-menu-anchor">
                 <button class="user-avatar-btn" onclick={() => { showUserMenu = !showUserMenu; }} title={auth.user?.username}>
                   {#if userAvatar}
-                    <img src={userAvatar} alt="" class="user-avatar-img" />
+                    <img src={userAvatar} alt="" class="user-avatar-img" loading="lazy" decoding="async" />
                   {:else}
                     <Icon kind="brain" />
                   {/if}

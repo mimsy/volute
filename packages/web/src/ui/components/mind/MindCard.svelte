@@ -13,6 +13,8 @@ let { mind }: { mind: Mind } = $props();
           src={`/api/minds/${encodeURIComponent(mind.name)}/avatar`}
           alt=""
           class="card-avatar"
+          loading="lazy"
+          decoding="async"
         />
       {/if}
       <span class="name">{mind.displayName ?? mind.name}</span>

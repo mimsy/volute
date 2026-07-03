@@ -139,9 +139,9 @@ async function handleChangePassword(e: Event) {
       <div class="avatar-section">
         <div class="avatar-preview">
           {#if avatarPreview}
-            <img src={avatarPreview} alt="Avatar preview" class="avatar-img" />
+            <img src={avatarPreview} alt="Avatar preview" class="avatar-img" loading="lazy" decoding="async" />
           {:else if avatarUrl}
-            <img src={avatarUrl} alt="Avatar" class="avatar-img" />
+            <img src={avatarUrl} alt="Avatar" class="avatar-img" loading="lazy" decoding="async" />
           {:else}
             <div class="avatar-placeholder">?</div>
           {/if}

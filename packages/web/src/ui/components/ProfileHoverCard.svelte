@@ -100,6 +100,8 @@ function handleMouseLeave() {
         src={profile.avatarUrl}
         alt=""
         class="avatar"
+        loading="lazy"
+        decoding="async"
       />
     {/if}
     <div class="info">

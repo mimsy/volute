@@ -7,6 +7,8 @@ import { syncMindProfile } from "../../lib/auth.js";
 import { broadcast } from "../../lib/events/activity-events.js";
 import { findMind, mindDir } from "../../lib/mind/registry.js";
 import { readVoluteConfig, writeVoluteConfig } from "../../lib/mind/volute-config.js";
+import { normalizeAvatar } from "../../lib/util/avatar-image.js";
+import { fileEtag, isNotModified } from "../../lib/util/http-cache.js";
 import { safeResolveWithinBase } from "../../lib/util/paths.js";
 import { type AuthEnv, requireAdmin, requireSelf } from "../middleware/auth.js";
 
@@ -59,9 +61,18 @@ const app = new Hono<AuthEnv>()
       return c.json({ error: "Invalid file type (png, jpg, gif, webp only)" }, 400);
     }
 
+    // Downscale + re-encode as webp; fall back to original bytes if sharp is unavailable
+    let buffer: Buffer = Buffer.from(await file.arrayBuffer());
+    let finalExt = ext;
+    const normalized = await normalizeAvatar(buffer);
+    if (normalized) {
+      buffer = normalized.buffer;
+      finalExt = normalized.ext;
+    }
+
     const dir = entry.dir ?? mindDir(name);
     const homeDir = resolve(dir, "home");
-    const filename = `avatar${ext}`;
+    const filename = `avatar${finalExt}`;
     const avatarPath = resolve(homeDir, filename);
 
     // Delete old avatar if different extension. The stored avatar value is
@@ -74,7 +85,6 @@ const app = new Hono<AuthEnv>()
       if (oldAvatarPath) rmSync(oldAvatarPath, { force: true });
     }
 
-    const buffer = Buffer.from(await file.arrayBuffer());
     mkdirSync(homeDir, { recursive: true });
     writeFileSync(avatarPath, buffer);
 
@@ -124,11 +134,15 @@ const app = new Hono<AuthEnv>()
     try {
       const fileStat = await stat(realAvatarPath);
       if (fileStat.size > MAX_AVATAR_SIZE) return c.json({ error: "Avatar file too large" }, 400);
-      const body = await readFile(realAvatarPath);
-      return c.body(body, 200, {
+      const etag = fileEtag(fileStat);
+      const headers = {
         "Content-Type": mime,
         "Cache-Control": "public, max-age=300",
-      });
+        ETag: etag,
+      };
+      if (isNotModified(c, etag)) return c.body(null, 304, headers);
+      const body = await readFile(realAvatarPath);
+      return c.body(body, 200, headers);
     } catch {
       return c.json({ error: "Failed to read avatar file" }, 500);
     }
@@ -203,9 +217,12 @@ const app = new Hono<AuthEnv>()
 
     if (fileStat.size > MAX_FILE_SIZE) return c.text("File too large", 413);
 
-    const body = await readFile(resolvedPath);
     const mime = MIME_TYPES[extname(resolvedPath).toLowerCase()] || "application/octet-stream";
-    return c.body(body, 200, { "Content-Type": mime });
+    const etag = fileEtag(fileStat);
+    const headers = { "Content-Type": mime, "Cache-Control": "no-cache", ETag: etag };
+    if (isNotModified(c, etag)) return c.body(null, 304, headers);
+    const body = await readFile(resolvedPath);
+    return c.body(body, 200, headers);
   });
 
 export default app;
