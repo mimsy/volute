@@ -6,6 +6,7 @@ import type { ExtensionCommand } from "@volute/extensions";
 import { getPublishedPages, syncPublishedPages, syncSystemPages } from "./db.js";
 import {
   collectHtmlFiles,
+  hashFiles,
   isolationFrom,
   pagesLog,
   pagesPull,
@@ -54,7 +55,7 @@ export function createCommands(): Record<string, ExtensionCommand> {
             if (result.ok && ctx.db) {
               const repoDir = resolve(ctx.dataDir, "repo");
               try {
-                syncSystemPages(ctx.db, collectHtmlFiles(repoDir), mindName);
+                syncSystemPages(ctx.db, hashFiles(repoDir, collectHtmlFiles(repoDir)), mindName);
               } catch (err) {
                 console.error("[pages] failed to sync system pages to DB:", err);
                 syncWarning =
@@ -98,7 +99,7 @@ export function createCommands(): Record<string, ExtensionCommand> {
         // Sync DB and get diff
         let diff: { added: string[]; removed: string[]; updated: string[] };
         try {
-          diff = syncPublishedPages(db, mindName, pageFiles);
+          diff = syncPublishedPages(db, mindName, hashFiles(snapshotDir, pageFiles));
         } catch (err) {
           return { error: `Failed to update page database: ${(err as Error).message}` };
         }

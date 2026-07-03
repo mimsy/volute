@@ -52,9 +52,11 @@ $effect(() => {
 let allSites = $derived([...(systemSite ? [systemSite] : []), ...sites]);
 
 let selectedSite = $derived.by(() => {
-  if (route.view === "site") return allSites.find((s) => s.name === route.name);
-  if (route.view === "mind") return allSites.find((s) => s.name === route.name);
-  return undefined;
+  if (route.view !== "site" && route.view !== "mind") return undefined;
+  const name = route.name;
+  // Fall back to an empty site so a mind with no pages shows "no pages"
+  // instead of the system-wide dashboard.
+  return allSites.find((s) => s.name === name) ?? { name, label: name, pages: [] };
 });
 
 function navigateParent(path: string) {
@@ -70,7 +72,7 @@ function handleIframeNav(e: Event) {
     const match = path.match(/^\/ext\/pages\/public\/([^/]+)\/(.+)$/);
     if (!match) return;
     const [, mind, file] = match;
-    if (mind === route.name && file === (route as { path?: string }).path) return;
+    if (route.view === "page" && mind === route.name && file === route.path) return;
     if (mind === "_system") {
       navigateParent(`/pages/_system/${file}`);
     } else {

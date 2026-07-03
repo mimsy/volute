@@ -13,15 +13,20 @@ export function initDb(db: Database): void {
     CREATE UNIQUE INDEX IF NOT EXISTS idx_pp_mind_file ON published_pages(mind, file);
     CREATE INDEX IF NOT EXISTS idx_pp_updated_at ON published_pages(updated_at);
   `);
-  // Migration: add author column if missing
-  try {
-    db.exec("ALTER TABLE published_pages ADD COLUMN author TEXT");
-  } catch (err) {
-    if (!(err instanceof Error) || !err.message.includes("duplicate column")) {
-      throw err;
+  // Migrations: add columns if missing
+  for (const column of ["author TEXT", "hash TEXT"]) {
+    try {
+      db.exec(`ALTER TABLE published_pages ADD COLUMN ${column}`);
+    } catch (err) {
+      if (!(err instanceof Error) || !err.message.includes("duplicate column")) {
+        throw err;
+      }
     }
   }
 }
+
+/** A page file paired with a hash of its content. */
+export type PageInput = { file: string; hash: string };
 
 type PublishedPage = {
   file: string;
@@ -97,37 +102,39 @@ export function getSystemPages(db: Database): SiteEntry | null {
   };
 }
 
-export function syncSystemPages(db: Database, htmlFiles: string[], author?: string): void {
-  const existing = new Set(
+export function syncSystemPages(db: Database, pages: PageInput[], author?: string): void {
+  const existing = new Map(
     (
-      db.prepare("SELECT file FROM published_pages WHERE mind = '_system'").all() as {
+      db.prepare("SELECT file, hash FROM published_pages WHERE mind = '_system'").all() as {
         file: string;
+        hash: string | null;
       }[]
-    ).map((r) => r.file),
+    ).map((r) => [r.file, r.hash]),
   );
-  const newSet = new Set(htmlFiles);
+  const newSet = new Set(pages.map((p) => p.file));
 
   db.exec("BEGIN");
   try {
-    for (const file of htmlFiles) {
-      if (existing.has(file)) {
+    for (const { file, hash } of pages) {
+      if (!existing.has(file)) {
+        db.prepare(
+          "INSERT INTO published_pages (mind, file, hash, author) VALUES ('_system', ?, ?, ?)",
+        ).run(file, hash, author ?? null);
+      } else if (existing.get(file) !== hash) {
+        // Only touch files whose content actually changed — unchanged files
+        // keep their updated_at and author (the publisher didn't author them).
         if (author) {
           db.prepare(
-            "UPDATE published_pages SET updated_at = datetime('now'), author = ? WHERE mind = '_system' AND file = ?",
-          ).run(author, file);
+            "UPDATE published_pages SET updated_at = datetime('now'), hash = ?, author = ? WHERE mind = '_system' AND file = ?",
+          ).run(hash, author, file);
         } else {
           db.prepare(
-            "UPDATE published_pages SET updated_at = datetime('now') WHERE mind = '_system' AND file = ?",
-          ).run(file);
+            "UPDATE published_pages SET updated_at = datetime('now'), hash = ? WHERE mind = '_system' AND file = ?",
+          ).run(hash, file);
         }
-      } else {
-        db.prepare("INSERT INTO published_pages (mind, file, author) VALUES ('_system', ?, ?)").run(
-          file,
-          author ?? null,
-        );
       }
     }
-    for (const file of existing) {
+    for (const file of existing.keys()) {
       if (!newSet.has(file)) {
         db.prepare("DELETE FROM published_pages WHERE mind = '_system' AND file = ?").run(file);
       }
@@ -142,37 +149,42 @@ export function syncSystemPages(db: Database, htmlFiles: string[], author?: stri
 export function syncPublishedPages(
   db: Database,
   mind: string,
-  pageFiles: string[],
+  pages: PageInput[],
 ): { added: string[]; removed: string[]; updated: string[] } {
   const existing = new Map(
     (
-      db.prepare("SELECT file, updated_at FROM published_pages WHERE mind = ?").all(mind) as {
+      db.prepare("SELECT file, hash FROM published_pages WHERE mind = ?").all(mind) as {
         file: string;
-        updated_at: string;
+        hash: string | null;
       }[]
-    ).map((r) => [r.file, r.updated_at]),
+    ).map((r) => [r.file, r.hash]),
   );
 
-  const newSet = new Set(pageFiles);
+  const newSet = new Set(pages.map((p) => p.file));
   const added: string[] = [];
   const updated: string[] = [];
   const removed: string[] = [];
 
   db.exec("BEGIN");
   try {
-    for (const file of pageFiles) {
-      if (existing.has(file)) {
-        db.prepare(
-          "UPDATE published_pages SET updated_at = datetime('now') WHERE mind = ? AND file = ?",
-        ).run(mind, file);
-        updated.push(file);
-      } else {
-        db.prepare("INSERT INTO published_pages (mind, file) VALUES (?, ?)").run(mind, file);
+    for (const { file, hash } of pages) {
+      if (!existing.has(file)) {
+        db.prepare("INSERT INTO published_pages (mind, file, hash) VALUES (?, ?, ?)").run(
+          mind,
+          file,
+          hash,
+        );
         added.push(file);
+      } else if (existing.get(file) !== hash) {
+        // Only bump updated_at when the content actually changed
+        db.prepare(
+          "UPDATE published_pages SET updated_at = datetime('now'), hash = ? WHERE mind = ? AND file = ?",
+        ).run(hash, mind, file);
+        updated.push(file);
       }
     }
 
-    for (const [file] of existing) {
+    for (const file of existing.keys()) {
       if (!newSet.has(file)) {
         db.prepare("DELETE FROM published_pages WHERE mind = ? AND file = ?").run(mind, file);
         removed.push(file);

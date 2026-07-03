@@ -36,6 +36,11 @@ import {
 } from "../packages/extensions/pages/src/db.js";
 import type { Database } from "../packages/extensions/sdk/src/types.js";
 
+/** Build page inputs with a stable content hash derived from the file name. */
+function ph(...files: string[]): { file: string; hash: string }[] {
+  return files.map((file) => ({ file, hash: `h:${file}` }));
+}
+
 async function createTestDb(): Promise<Database> {
   const mod = await import("libsql");
   const Libsql = (mod.default ?? mod) as unknown as new (path: string) => any;
@@ -75,7 +80,7 @@ describe("pages db", () => {
   });
 
   it("syncPublishedPages adds new files", () => {
-    const diff = syncPublishedPages(db, "mind1", ["index.html", "about.html"]);
+    const diff = syncPublishedPages(db, "mind1", ph("index.html", "about.html"));
     assert.deepEqual(diff.added, ["index.html", "about.html"]);
     assert.deepEqual(diff.removed, []);
     assert.deepEqual(diff.updated, []);
@@ -87,22 +92,51 @@ describe("pages db", () => {
   });
 
   it("syncPublishedPages detects removed files", () => {
-    syncPublishedPages(db, "mind1", ["index.html", "about.html"]);
-    const diff = syncPublishedPages(db, "mind1", ["index.html"]);
+    syncPublishedPages(db, "mind1", ph("index.html", "about.html"));
+    const diff = syncPublishedPages(db, "mind1", ph("index.html"));
     assert.deepEqual(diff.added, []);
     assert.deepEqual(diff.removed, ["about.html"]);
-    assert.deepEqual(diff.updated, ["index.html"]);
+    assert.deepEqual(diff.updated, []);
+  });
+
+  it("syncPublishedPages does not bump updated_at for unchanged files", () => {
+    syncPublishedPages(db, "mind1", ph("index.html", "about.html"));
+    db.prepare("UPDATE published_pages SET updated_at = '2020-01-01 00:00:00'").run();
+
+    const diff = syncPublishedPages(db, "mind1", ph("index.html", "about.html"));
+    assert.deepEqual(diff.updated, []);
+
+    const pages = getPublishedPages(db, "mind1");
+    assert.equal(pages[0].updated_at, "2020-01-01 00:00:00");
+    assert.equal(pages[1].updated_at, "2020-01-01 00:00:00");
+  });
+
+  it("syncPublishedPages bumps updated_at only for changed files", () => {
+    syncPublishedPages(db, "mind1", ph("index.html", "about.html"));
+    db.prepare("UPDATE published_pages SET updated_at = '2020-01-01 00:00:00'").run();
+
+    const diff = syncPublishedPages(db, "mind1", [
+      { file: "index.html", hash: "h:index.html" },
+      { file: "about.html", hash: "changed" },
+    ]);
+    assert.deepEqual(diff.updated, ["about.html"]);
+
+    const pages = getPublishedPages(db, "mind1");
+    const about = pages.find((p) => p.file === "about.html");
+    const index = pages.find((p) => p.file === "index.html");
+    assert.notEqual(about?.updated_at, "2020-01-01 00:00:00");
+    assert.equal(index?.updated_at, "2020-01-01 00:00:00");
   });
 
   it("syncPublishedPages handles empty list", () => {
-    syncPublishedPages(db, "mind1", ["index.html"]);
-    const diff = syncPublishedPages(db, "mind1", []);
+    syncPublishedPages(db, "mind1", ph("index.html"));
+    const diff = syncPublishedPages(db, "mind1", ph());
     assert.deepEqual(diff.removed, ["index.html"]);
   });
 
   it("getRecentPages returns pages ordered by updated_at", () => {
-    syncPublishedPages(db, "mind1", ["a.html"]);
-    syncPublishedPages(db, "mind2", ["b.html"]);
+    syncPublishedPages(db, "mind1", ph("a.html"));
+    syncPublishedPages(db, "mind2", ph("b.html"));
 
     const pages = getRecentPages(db);
     assert.equal(pages.length, 2);
@@ -112,8 +146,8 @@ describe("pages db", () => {
   });
 
   it("getRecentPages filters by mind", () => {
-    syncPublishedPages(db, "mind1", ["a.html"]);
-    syncPublishedPages(db, "mind2", ["b.html"]);
+    syncPublishedPages(db, "mind1", ph("a.html"));
+    syncPublishedPages(db, "mind2", ph("b.html"));
 
     const pages = getRecentPages(db, { mind: "mind1" });
     assert.equal(pages.length, 1);
@@ -121,20 +155,20 @@ describe("pages db", () => {
   });
 
   it("syncSystemPages syncs _system entries", () => {
-    syncSystemPages(db, ["index.html", "about.html"]);
+    syncSystemPages(db, ph("index.html", "about.html"));
     const pages = getPublishedPages(db, "_system");
     assert.equal(pages.length, 2);
 
     // Removes deleted files, keeps existing
-    syncSystemPages(db, ["index.html"]);
+    syncSystemPages(db, ph("index.html"));
     const after = getPublishedPages(db, "_system");
     assert.equal(after.length, 1);
     assert.equal(after[0].file, "index.html");
   });
 
   it("getAllSites groups by mind", () => {
-    syncPublishedPages(db, "mind1", ["index.html"]);
-    syncPublishedPages(db, "mind2", ["about.html", "contact.html"]);
+    syncPublishedPages(db, "mind1", ph("index.html"));
+    syncPublishedPages(db, "mind2", ph("about.html", "contact.html"));
 
     const sites = getAllSites(db);
     assert.equal(sites.length, 2);
@@ -145,8 +179,8 @@ describe("pages db", () => {
   });
 
   it("getAllSites excludes _system pages", () => {
-    syncPublishedPages(db, "mind1", ["index.html"]);
-    syncSystemPages(db, ["shared.html"]);
+    syncPublishedPages(db, "mind1", ph("index.html"));
+    syncSystemPages(db, ph("shared.html"));
 
     const sites = getAllSites(db);
     assert.equal(sites.length, 1);
@@ -154,21 +188,44 @@ describe("pages db", () => {
   });
 
   it("syncSystemPages stores author", () => {
-    syncSystemPages(db, ["index.html"], "alice");
+    syncSystemPages(db, ph("index.html"), "alice");
     const pages = getPublishedPages(db, "_system");
     assert.equal(pages[0].author, "alice");
   });
 
-  it("syncSystemPages updates author on re-sync", () => {
-    syncSystemPages(db, ["index.html"], "alice");
-    syncSystemPages(db, ["index.html"], "bob");
+  it("syncSystemPages updates author when content changes", () => {
+    syncSystemPages(db, ph("index.html"), "alice");
+    syncSystemPages(db, [{ file: "index.html", hash: "changed" }], "bob");
     const pages = getPublishedPages(db, "_system");
     assert.equal(pages[0].author, "bob");
   });
 
+  it("syncSystemPages preserves author and updated_at for unchanged files", () => {
+    syncSystemPages(db, ph("index.html", "about.html"), "alice");
+    db.prepare("UPDATE published_pages SET updated_at = '2020-01-01 00:00:00'").run();
+
+    // bob publishes a change to about.html only — index.html is untouched
+    syncSystemPages(
+      db,
+      [
+        { file: "index.html", hash: "h:index.html" },
+        { file: "about.html", hash: "changed" },
+      ],
+      "bob",
+    );
+
+    const pages = getPublishedPages(db, "_system");
+    const index = pages.find((p) => p.file === "index.html");
+    const about = pages.find((p) => p.file === "about.html");
+    assert.equal(index?.author, "alice");
+    assert.equal(index?.updated_at, "2020-01-01 00:00:00");
+    assert.equal(about?.author, "bob");
+    assert.notEqual(about?.updated_at, "2020-01-01 00:00:00");
+  });
+
   it("syncSystemPages preserves author when not provided", () => {
-    syncSystemPages(db, ["index.html"], "alice");
-    syncSystemPages(db, ["index.html"]);
+    syncSystemPages(db, ph("index.html"), "alice");
+    syncSystemPages(db, [{ file: "index.html", hash: "changed" }]);
     const pages = getPublishedPages(db, "_system");
     assert.equal(pages[0].author, "alice");
   });
@@ -178,7 +235,7 @@ describe("pages db", () => {
   });
 
   it("getSystemPages returns system site with author", () => {
-    syncSystemPages(db, ["about.html", "index.html"], "alice");
+    syncSystemPages(db, ph("about.html", "index.html"), "alice");
     const site = getSystemPages(db);
     assert.ok(site);
     assert.equal(site.mind, "_system");
@@ -295,6 +352,28 @@ describe("pages commands", () => {
     assert.equal(removeEvents[0].metadata.file, "about.html");
   });
 
+  it("publish command does not report unchanged files as updated", async () => {
+    writeFileSync(resolve(pagesDir, "index.html"), "<h1>Hello</h1>");
+    writeFileSync(resolve(pagesDir, "about.html"), "<h1>About</h1>");
+    const commands = createCommands();
+    const ctx = makeCtx();
+    await commands.publish.handler(
+      { args: {}, flags: { remote: false, shared: false }, rest: [] },
+      ctx,
+    );
+
+    // Re-publish with only one file changed
+    writeFileSync(resolve(pagesDir, "about.html"), "<h1>About v2</h1>");
+    const result = await commands.publish.handler(
+      { args: {}, flags: { remote: false, shared: false }, rest: [] },
+      ctx,
+    );
+
+    assert.ok("output" in result);
+    assert.ok(result.output.includes("1 updated"), `expected "1 updated" in: ${result.output}`);
+    assert.ok(!result.output.includes("2 updated"), `unchanged file counted: ${result.output}`);
+  });
+
   it("publish command excludes _system/ from snapshot", async () => {
     writeFileSync(resolve(pagesDir, "index.html"), "<h1>Hello</h1>");
     const systemDir = resolve(pagesDir, "_system");
@@ -332,7 +411,7 @@ describe("pages commands", () => {
     // Publish one file
     const commands = createCommands();
     const ctx = makeCtx();
-    syncPublishedPages(db, "test-mind", ["published.html"]);
+    syncPublishedPages(db, "test-mind", ph("published.html"));
 
     const result = await commands.list.handler(
       { args: {}, flags: { all: false, shared: false }, rest: [] },
@@ -368,7 +447,7 @@ describe("pages commands", () => {
   it("list command shows .md files", async () => {
     writeFileSync(resolve(pagesDir, "index.html"), "<h1>Hello</h1>");
     writeFileSync(resolve(pagesDir, "post.md"), "# Post\n");
-    syncPublishedPages(db, "test-mind", ["index.html"]);
+    syncPublishedPages(db, "test-mind", ph("index.html"));
 
     const commands = createCommands();
     const ctx = makeCtx();
@@ -382,8 +461,8 @@ describe("pages commands", () => {
   });
 
   it("list --all queries across minds", async () => {
-    syncPublishedPages(db, "mind-a", ["index.html"]);
-    syncPublishedPages(db, "mind-b", ["about.html"]);
+    syncPublishedPages(db, "mind-a", ph("index.html"));
+    syncPublishedPages(db, "mind-b", ph("about.html"));
 
     const commands = createCommands();
     const ctx = makeCtx();
@@ -397,8 +476,8 @@ describe("pages commands", () => {
   });
 
   it("list --all shows system pages with author", async () => {
-    syncSystemPages(db, ["shared.html"], "alice");
-    syncPublishedPages(db, "mind-a", ["index.html"]);
+    syncSystemPages(db, ph("shared.html"), "alice");
+    syncPublishedPages(db, "mind-a", ph("index.html"));
 
     const commands = createCommands();
     const ctx = makeCtx();
@@ -413,7 +492,7 @@ describe("pages commands", () => {
   });
 
   it("list --all works without a mind name", async () => {
-    syncPublishedPages(db, "mind-a", ["index.html"]);
+    syncPublishedPages(db, "mind-a", ph("index.html"));
 
     const commands = createCommands();
     const ctx = makeCtx();
