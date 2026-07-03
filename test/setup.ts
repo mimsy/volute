@@ -11,7 +11,11 @@ for (const key of Object.keys(process.env)) {
 
 // Redirect all volute state to a temp directory so tests never touch
 // the live ~/.volute (registry, variants, database, env, etc.)
-const testHome = resolve(tmpdir(), `volute-test-${process.pid}`);
+// On macOS use /tmp rather than os.tmpdir()'s long /var/folders/... path:
+// minds get TMPDIR=<mindDir>/.mind/tmp, and tsx creates a unix socket there
+// whose path must stay under the 104-byte sun_path limit.
+const tmpRoot = process.platform === "darwin" ? "/tmp" : tmpdir();
+const testHome = resolve(tmpRoot, `volute-test-${process.pid}`);
 // Remove stale test dir from a prior run with the same PID to ensure
 // a clean database (avoids migration issues with leftover DB files)
 if (existsSync(testHome)) rmSync(testHome, { recursive: true, force: true });

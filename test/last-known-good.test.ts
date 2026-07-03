@@ -9,7 +9,7 @@ import {
   rollbackSrcChanges,
 } from "../packages/daemon/src/lib/mind/last-known-good.js";
 
-const tmpDir = join(tmpdir(), ".volute-lkg-test");
+const tmpDir = join(tmpdir(), `.volute-lkg-test-${process.pid}`);
 const repoDir = join(tmpDir, "mind-repo");
 
 function git(args: string[]): string {

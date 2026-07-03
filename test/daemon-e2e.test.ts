@@ -58,7 +58,7 @@ async function waitForHealth(timeoutMs = 15000): Promise<void> {
   throw new Error(`Daemon did not become healthy within ${timeoutMs}ms`);
 }
 
-describe("daemon e2e", { timeout: 120000 }, () => {
+describe("daemon e2e", { timeout: 420000 }, () => {
   let daemon: ChildProcess;
 
   before(async () => {
@@ -135,6 +135,46 @@ describe("daemon e2e", { timeout: 120000 }, () => {
         rmSync(dir, { recursive: true, force: true });
       }
     } catch {}
+  }
+
+  /** Poll `lsof` until a process (optionally different from `notPid`) listens on `port`. */
+  async function waitForListeningPid(
+    port: number,
+    timeoutMs: number,
+    notPid?: number,
+  ): Promise<number> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      try {
+        const out = execFileSync("lsof", ["-ti", `:${port}`, "-sTCP:LISTEN"], {
+          encoding: "utf-8",
+        }).trim();
+        const pid = out
+          .split("\n")
+          .filter(Boolean)
+          .map((p) => parseInt(p, 10))
+          .find((p) => p !== notPid);
+        if (pid) return pid;
+      } catch {
+        // lsof exits non-zero when nothing is listening — keep polling
+      }
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    throw new Error(
+      `No${notPid ? " new" : ""} process listening on :${port} within ${timeoutMs}ms`,
+    );
+  }
+
+  /** Poll the daemon API until the test mind reports status "running". */
+  async function waitForMindRunning(timeoutMs = 30000): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const res = await daemonRequest(`/api/minds/${TEST_MIND}`);
+      const s = (await res.json()) as { status: string };
+      if (s.status === "running") return;
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    throw new Error(`Mind did not reach running within ${timeoutMs}ms`);
   }
 
   it("health endpoint returns ok", async () => {
@@ -441,6 +481,92 @@ describe("daemon e2e", { timeout: 120000 }, () => {
     );
   });
 
+  it("crash recovery: daemon restarts a mind whose process dies", { timeout: 60000 }, async () => {
+    const entry = await findMind(TEST_MIND);
+    assert.ok(entry, "test mind should be registered");
+
+    const startRes = await daemonRequest(`/api/minds/${TEST_MIND}/start`, { method: "POST" });
+    assert.ok(
+      startRes.status === 200 || startRes.status === 409,
+      `Start: expected 200 or 409, got ${startRes.status} ${await startRes.clone().text()}`,
+    );
+    await waitForMindRunning();
+
+    // Kill the mind's server process out from under the daemon.
+    const oldPid = await waitForListeningPid(entry.port, 15000);
+    process.kill(oldPid, "SIGKILL");
+
+    // Crash recovery has a 3s first-attempt backoff, then respawns via tsx.
+    const newPid = await waitForListeningPid(entry.port, 30000, oldPid);
+    assert.notEqual(newPid, oldPid, "a new process should be listening after crash recovery");
+
+    await waitForMindRunning();
+
+    await daemonRequest(`/api/minds/${TEST_MIND}/stop`, { method: "POST" });
+  });
+
+  it("variants: split creates a worktree variant, merge folds it back into the parent", {
+    timeout: 300000,
+  }, async () => {
+    await ensureTestMind();
+    const parentDir = mindDir(TEST_MIND);
+
+    // Split: create the variant without starting its server.
+    const createRes = await daemonRequest(`/api/minds/${TEST_MIND}/variants`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "e2e-var", noStart: true }),
+    });
+    assert.equal(createRes.status, 200, `Split: ${await createRes.clone().text()}`);
+    const created = (await createRes.json()) as {
+      ok: boolean;
+      variant: { name: string; branch: string; path: string; port: number };
+    };
+    assert.equal(created.ok, true);
+    assert.ok(existsSync(created.variant.path), "variant worktree should exist");
+
+    // Variant is registered with the parent.
+    const listRes = await daemonRequest(`/api/minds/${TEST_MIND}/variants`);
+    assert.equal(listRes.status, 200);
+    const variants = (await listRes.json()) as { name: string }[];
+    assert.ok(
+      variants.some((v) => v.name === "e2e-var"),
+      `expected e2e-var in ${JSON.stringify(variants)}`,
+    );
+
+    // The variant does some work: a new tracked file in src/.
+    // (Merge auto-commits uncommitted worktree changes; src/ is always tracked.)
+    writeFileSync(
+      resolve(created.variant.path, "src", "e2e-merge-marker.ts"),
+      'export const marker = "e2e";\n',
+    );
+
+    // Join: merge the variant back. skipVerify avoids booting a verification server.
+    const mergeRes = await daemonRequest(`/api/minds/${TEST_MIND}/variants/e2e-var/merge`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ skipVerify: true, summary: "e2e merge test" }),
+    });
+    assert.equal(mergeRes.status, 200, `Merge: ${await mergeRes.clone().text()}`);
+    const mergeBody = (await mergeRes.json()) as { ok: boolean; warning?: string };
+    assert.equal(mergeBody.ok, true);
+    assert.equal(mergeBody.warning, undefined, `merge reported a warning: ${mergeBody.warning}`);
+
+    // The variant's change landed in the parent working tree.
+    assert.ok(
+      existsSync(resolve(parentDir, "src", "e2e-merge-marker.ts")),
+      "merged file should exist in the parent src/",
+    );
+
+    // The variant is cleaned up: gone from registry and disk.
+    assert.ok(!(await findMind("e2e-var")), "variant should be removed from the registry");
+    assert.ok(!existsSync(created.variant.path), "variant worktree should be removed");
+
+    // Merge restarts the parent — wait for it, then stop it for subsequent tests.
+    await waitForMindRunning(60000);
+    await daemonRequest(`/api/minds/${TEST_MIND}/stop`, { method: "POST" });
+  });
+
   // ── Bridge & Chat Integration Tests ──
 
   /** Ensure the test mind exists in the registry (creates via API if not). */
@@ -475,8 +601,8 @@ describe("daemon e2e", { timeout: 120000 }, () => {
     // List channels — should include the new one
     const listRes = await daemonRequest("/api/v1/channels");
     assert.equal(listRes.status, 200);
-    const channels = (await listRes.json()) as { name: string; id: string }[];
-    assert.ok(channels.some((ch) => ch.name === "test-bridge-channel"));
+    const channels = (await listRes.json()) as { channel_name: string; id: string }[];
+    assert.ok(channels.some((ch) => ch.channel_name === "test-bridge-channel"));
 
     // Invite the test mind to the channel
     const inviteRes = await daemonRequest("/api/v1/channels/test-bridge-channel/invite", {
@@ -578,10 +704,9 @@ describe("daemon e2e", { timeout: 120000 }, () => {
       `/api/minds/${TEST_MIND}/conversations/${conv.id}/messages`,
     );
     assert.equal(msgsRes.status, 200);
-    const messages = (await msgsRes.json()) as {
-      content: { type: string; text?: string }[];
-      sender_name: string;
-    }[];
+    const { items: messages } = (await msgsRes.json()) as {
+      items: { content: { type: string; text?: string }[]; sender_name: string }[];
+    };
     assert.ok(messages.length >= 1);
     const lastMsg = messages[messages.length - 1];
     const text = lastMsg.content
@@ -637,7 +762,9 @@ describe("daemon e2e", { timeout: 120000 }, () => {
       `/api/minds/${TEST_MIND}/conversations/${conv.id}/messages`,
     );
     assert.equal(msgsRes.status, 200);
-    const messages = (await msgsRes.json()) as { content: { type: string; text?: string }[] }[];
+    const { items: messages } = (await msgsRes.json()) as {
+      items: { content: { type: string; text?: string }[] }[];
+    };
     assert.ok(messages.length >= 1);
   });
 
@@ -824,10 +951,9 @@ describe("daemon e2e", { timeout: 120000 }, () => {
       `/api/minds/${TEST_MIND}/conversations/${inboundBody.conversationId}/messages`,
     );
     assert.equal(msgsRes.status, 200);
-    const messages = (await msgsRes.json()) as {
-      content: { type: string; text?: string }[];
-      sender_name: string;
-    }[];
+    const { items: messages } = (await msgsRes.json()) as {
+      items: { content: { type: string; text?: string }[]; sender_name: string }[];
+    };
     const bridgedMsg = messages.find((m) => m.sender_name === "Alice");
     assert.ok(bridgedMsg, `Expected message from Alice, got: ${JSON.stringify(messages)}`);
 
@@ -885,7 +1011,9 @@ describe("daemon e2e", { timeout: 120000 }, () => {
       `/api/minds/${TEST_MIND}/conversations/${body1.conversationId}/messages`,
     );
     assert.equal(msgsRes.status, 200);
-    const messages = (await msgsRes.json()) as { sender_name: string }[];
+    const { items: messages } = (await msgsRes.json()) as {
+      items: { sender_name: string }[];
+    };
     const bobMsgs = messages.filter((m) => m.sender_name === "Bob");
     assert.ok(bobMsgs.length >= 2, `Expected 2+ messages from Bob, got ${bobMsgs.length}`);
 
@@ -1402,61 +1530,49 @@ describe("daemon e2e", { timeout: 120000 }, () => {
     assert.equal(((await cleared.json()) as { notices: unknown[] }).notices.length, 0);
   });
 
-  it("message proxy returns JSON response", async () => {
-    if (!process.env.ANTHROPIC_API_KEY) {
-      console.log("Skipping message test: ANTHROPIC_API_KEY not set");
-      return;
-    }
+  it("chat delivery: message reaches a running mind and lands in history", {
+    timeout: 60000,
+  }, async () => {
+    await ensureTestMind();
 
-    // Start mind
     const startRes = await daemonRequest(`/api/minds/${TEST_MIND}/start`, { method: "POST" });
-    // May already be running from previous test or 409 if so
-    const startBody = (await startRes.json()) as { ok?: boolean; port?: number; error?: string };
     assert.ok(
       startRes.status === 200 || startRes.status === 409,
-      `Start: expected 200 or 409, got ${startRes.status}: ${JSON.stringify(startBody)}`,
+      `Start: expected 200 or 409, got ${startRes.status} ${await startRes.clone().text()}`,
     );
-    if (startRes.status === 200) {
-      assert.equal(typeof startBody.port, "number", "Start response should include port");
-    }
+    await waitForMindRunning();
 
-    // Wait for health
-    const healthDeadline = Date.now() + 30000;
-    let mindHealthy = false;
-    while (Date.now() < healthDeadline) {
-      const statusRes = await daemonRequest(`/api/minds/${TEST_MIND}`);
-      const status = (await statusRes.json()) as { status: string };
-      if (status.status === "running") {
-        mindHealthy = true;
-        break;
-      }
-      await new Promise((r) => setTimeout(r, 1000));
-    }
-    assert.ok(mindHealthy, "Mind should become healthy");
-
-    // Send message
-    const msgRes = await daemonRequest(`/api/minds/${TEST_MIND}/message`, {
+    // Send through the unified chat endpoint (the real CLI/web send path).
+    const createRes = await daemonRequest(`/api/minds/${TEST_MIND}/conversations`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        content: [{ type: "text", text: "Reply with just the word 'hello'" }],
-        channel: "cli",
-        sender: "e2e-test",
-      }),
+      body: JSON.stringify({ title: "delivery round-trip", participantNames: [TEST_MIND] }),
     });
+    assert.equal(createRes.status, 201, `Create conv: ${await createRes.clone().text()}`);
+    const conv = (await createRes.json()) as { id: string };
 
-    assert.equal(msgRes.status, 200, `Message failed: ${msgRes.status}`);
+    const probe = `delivery round-trip probe ${Date.now()}`;
+    const chatRes = await daemonRequest("/api/v1/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ conversationId: conv.id, message: probe, targetMind: TEST_MIND }),
+    });
+    assert.equal(chatRes.status, 200, `Chat: ${await chatRes.clone().text()}`);
 
-    const body = (await msgRes.json()) as { ok: boolean };
-    assert.equal(body.ok, true, "Response should have ok: true");
+    // Delivery is async (queue → HTTP POST to the mind → recordInbound). Inbound
+    // recording happens at delivery time, before the mind's model turn, so this
+    // works without ANTHROPIC_API_KEY. Poll history for the probe.
+    const deadline = Date.now() + 30000;
+    let delivered = false;
+    while (Date.now() < deadline && !delivered) {
+      const res = await daemonRequest(`/api/minds/${TEST_MIND}/history?full=true&limit=100`);
+      assert.equal(res.status, 200);
+      const rows = (await res.json()) as { type: string; content: string | null }[];
+      delivered = rows.some((r) => r.type === "inbound" && (r.content ?? "").includes(probe));
+      if (!delivered) await new Promise((r) => setTimeout(r, 500));
+    }
+    assert.ok(delivered, "inbound message should be recorded in mind_history after delivery");
 
-    // Check history
-    const historyRes = await daemonRequest(`/api/minds/${TEST_MIND}/history`);
-    assert.equal(historyRes.status, 200);
-    const history = (await historyRes.json()) as Array<Record<string, unknown>>;
-    assert.ok(history.length > 0, "History should have messages");
-
-    // Stop mind
     await daemonRequest(`/api/minds/${TEST_MIND}/stop`, { method: "POST" });
   });
 
