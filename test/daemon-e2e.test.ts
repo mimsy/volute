@@ -58,7 +58,7 @@ async function waitForHealth(timeoutMs = 15000): Promise<void> {
   throw new Error(`Daemon did not become healthy within ${timeoutMs}ms`);
 }
 
-describe("daemon e2e", { timeout: 120000 }, () => {
+describe("daemon e2e", { timeout: 420000 }, () => {
   let daemon: ChildProcess;
 
   before(async () => {
@@ -466,6 +466,68 @@ describe("daemon e2e", { timeout: 120000 }, () => {
 
     await waitForMindRunning();
 
+    await daemonRequest(`/api/minds/${TEST_MIND}/stop`, { method: "POST" });
+  });
+
+  it("variants: split creates a worktree variant, merge folds it back into the parent", {
+    timeout: 300000,
+  }, async () => {
+    await ensureTestMind();
+    const parentDir = mindDir(TEST_MIND);
+
+    // Split: create the variant without starting its server.
+    const createRes = await daemonRequest(`/api/minds/${TEST_MIND}/variants`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "e2e-var", noStart: true }),
+    });
+    assert.equal(createRes.status, 200, `Split: ${await createRes.clone().text()}`);
+    const created = (await createRes.json()) as {
+      ok: boolean;
+      variant: { name: string; branch: string; path: string; port: number };
+    };
+    assert.equal(created.ok, true);
+    assert.ok(existsSync(created.variant.path), "variant worktree should exist");
+
+    // Variant is registered with the parent.
+    const listRes = await daemonRequest(`/api/minds/${TEST_MIND}/variants`);
+    assert.equal(listRes.status, 200);
+    const variants = (await listRes.json()) as { name: string }[];
+    assert.ok(
+      variants.some((v) => v.name === "e2e-var"),
+      `expected e2e-var in ${JSON.stringify(variants)}`,
+    );
+
+    // The variant does some work: a new tracked file in src/.
+    // (Merge auto-commits uncommitted worktree changes; src/ is always tracked.)
+    writeFileSync(
+      resolve(created.variant.path, "src", "e2e-merge-marker.ts"),
+      'export const marker = "e2e";\n',
+    );
+
+    // Join: merge the variant back. skipVerify avoids booting a verification server.
+    const mergeRes = await daemonRequest(`/api/minds/${TEST_MIND}/variants/e2e-var/merge`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ skipVerify: true, summary: "e2e merge test" }),
+    });
+    assert.equal(mergeRes.status, 200, `Merge: ${await mergeRes.clone().text()}`);
+    const mergeBody = (await mergeRes.json()) as { ok: boolean; warning?: string };
+    assert.equal(mergeBody.ok, true);
+    assert.equal(mergeBody.warning, undefined, `merge reported a warning: ${mergeBody.warning}`);
+
+    // The variant's change landed in the parent working tree.
+    assert.ok(
+      existsSync(resolve(parentDir, "src", "e2e-merge-marker.ts")),
+      "merged file should exist in the parent src/",
+    );
+
+    // The variant is cleaned up: gone from registry and disk.
+    assert.ok(!(await findMind("e2e-var")), "variant should be removed from the registry");
+    assert.ok(!existsSync(created.variant.path), "variant worktree should be removed");
+
+    // Merge restarts the parent — wait for it, then stop it for subsequent tests.
+    await waitForMindRunning(60000);
     await daemonRequest(`/api/minds/${TEST_MIND}/stop`, { method: "POST" });
   });
 
