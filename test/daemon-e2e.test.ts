@@ -137,6 +137,46 @@ describe("daemon e2e", { timeout: 120000 }, () => {
     } catch {}
   }
 
+  /** Poll `lsof` until a process (optionally different from `notPid`) listens on `port`. */
+  async function waitForListeningPid(
+    port: number,
+    timeoutMs: number,
+    notPid?: number,
+  ): Promise<number> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      try {
+        const out = execFileSync("lsof", ["-ti", `:${port}`, "-sTCP:LISTEN"], {
+          encoding: "utf-8",
+        }).trim();
+        const pid = out
+          .split("\n")
+          .filter(Boolean)
+          .map((p) => parseInt(p, 10))
+          .find((p) => p !== notPid);
+        if (pid) return pid;
+      } catch {
+        // lsof exits non-zero when nothing is listening — keep polling
+      }
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    throw new Error(
+      `No${notPid ? " new" : ""} process listening on :${port} within ${timeoutMs}ms`,
+    );
+  }
+
+  /** Poll the daemon API until the test mind reports status "running". */
+  async function waitForMindRunning(timeoutMs = 30000): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const res = await daemonRequest(`/api/minds/${TEST_MIND}`);
+      const s = (await res.json()) as { status: string };
+      if (s.status === "running") return;
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    throw new Error(`Mind did not reach running within ${timeoutMs}ms`);
+  }
+
   it("health endpoint returns ok", async () => {
     const res = await fetch(`${BASE_URL}/api/health`);
     assert.equal(res.status, 200);
@@ -403,6 +443,30 @@ describe("daemon e2e", { timeout: 120000 }, () => {
       "stopped",
       "Stopped mind should not be auto-started after daemon restart",
     );
+  });
+
+  it("crash recovery: daemon restarts a mind whose process dies", { timeout: 60000 }, async () => {
+    const entry = await findMind(TEST_MIND);
+    assert.ok(entry, "test mind should be registered");
+
+    const startRes = await daemonRequest(`/api/minds/${TEST_MIND}/start`, { method: "POST" });
+    assert.ok(
+      startRes.status === 200 || startRes.status === 409,
+      `Start: expected 200 or 409, got ${startRes.status} ${await startRes.clone().text()}`,
+    );
+    await waitForMindRunning();
+
+    // Kill the mind's server process out from under the daemon.
+    const oldPid = await waitForListeningPid(entry.port, 15000);
+    process.kill(oldPid, "SIGKILL");
+
+    // Crash recovery has a 3s first-attempt backoff, then respawns via tsx.
+    const newPid = await waitForListeningPid(entry.port, 30000, oldPid);
+    assert.notEqual(newPid, oldPid, "a new process should be listening after crash recovery");
+
+    await waitForMindRunning();
+
+    await daemonRequest(`/api/minds/${TEST_MIND}/stop`, { method: "POST" });
   });
 
   // ── Bridge & Chat Integration Tests ──
