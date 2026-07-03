@@ -292,6 +292,9 @@ export function createMind(options: {
         },
         broadcast: (event: VoluteEvent) => broadcastToSession(session, event),
         onTurnEnd: async () => {
+          // This turn's message is fully processed — drop it from the channel's
+          // in-flight set so a later compaction abort won't re-feed it.
+          session.channel.ack();
           await autoCommit.flushFileChanges();
           const wasCompacting = compactionTriggered.get(session.name);
           compactionTriggered.set(session.name, false);
@@ -422,7 +425,11 @@ export function createMind(options: {
                 break;
               }
               streamAbort = new AbortController();
-              const pending = session.channel.drain();
+              // Recover input the aborted stream had already pulled but not
+              // finished (the compaction wrap-up plus any messages that arrived
+              // mid-turn) alongside anything queued during /compact, so nothing
+              // is dropped when the killed subprocess takes its buffer with it.
+              const pending = session.channel.recover();
               session.channel = createMessageChannel();
               for (const msg of pending) session.channel.push(msg);
               continue; // restart the stream loop
