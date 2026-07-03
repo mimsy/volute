@@ -487,7 +487,7 @@ Tests run via `npm test` which uses `node --import tsx --import ./test/setup.ts 
 ### Testing
 
 - **Unit tests** (`npm test`): Primary safety net. Run before every PR.
-- **Daemon e2e** (`test/daemon-e2e.test.ts`): Tests daemon API without Docker. Included in `npm test`. Add tests here for new API endpoints or daemon features.
+- **Daemon e2e** (`test/daemon-e2e.test.ts`): Tests daemon API without Docker, spawning a real daemon and mind. Runs via `npm run test:e2e` (also in CI). Add tests here for cross-process daemon behavior: lifecycle, crash recovery, delivery, variants.
 - **Docker e2e** (`test/docker-e2e.sh`): Full Docker lifecycle with user isolation. Run for PRs touching daemon, mind lifecycle, or Docker setup.
 - **Integration testing**: For manual testing with real minds in Docker — see `docs/integration-testing.md` for setup scripts, test mind fixtures, and interaction guidelines. Use `test/integration-setup.sh` to spin up an environment and `test/integration-teardown.sh` to clean up.
 
