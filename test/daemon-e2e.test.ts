@@ -1432,61 +1432,49 @@ describe("daemon e2e", { timeout: 120000 }, () => {
     assert.equal(((await cleared.json()) as { notices: unknown[] }).notices.length, 0);
   });
 
-  it("message proxy returns JSON response", async () => {
-    if (!process.env.ANTHROPIC_API_KEY) {
-      console.log("Skipping message test: ANTHROPIC_API_KEY not set");
-      return;
-    }
+  it("chat delivery: message reaches a running mind and lands in history", {
+    timeout: 60000,
+  }, async () => {
+    await ensureTestMind();
 
-    // Start mind
     const startRes = await daemonRequest(`/api/minds/${TEST_MIND}/start`, { method: "POST" });
-    // May already be running from previous test or 409 if so
-    const startBody = (await startRes.json()) as { ok?: boolean; port?: number; error?: string };
     assert.ok(
       startRes.status === 200 || startRes.status === 409,
-      `Start: expected 200 or 409, got ${startRes.status}: ${JSON.stringify(startBody)}`,
+      `Start: expected 200 or 409, got ${startRes.status} ${await startRes.clone().text()}`,
     );
-    if (startRes.status === 200) {
-      assert.equal(typeof startBody.port, "number", "Start response should include port");
-    }
+    await waitForMindRunning();
 
-    // Wait for health
-    const healthDeadline = Date.now() + 30000;
-    let mindHealthy = false;
-    while (Date.now() < healthDeadline) {
-      const statusRes = await daemonRequest(`/api/minds/${TEST_MIND}`);
-      const status = (await statusRes.json()) as { status: string };
-      if (status.status === "running") {
-        mindHealthy = true;
-        break;
-      }
-      await new Promise((r) => setTimeout(r, 1000));
-    }
-    assert.ok(mindHealthy, "Mind should become healthy");
-
-    // Send message
-    const msgRes = await daemonRequest(`/api/minds/${TEST_MIND}/message`, {
+    // Send through the unified chat endpoint (the real CLI/web send path).
+    const createRes = await daemonRequest(`/api/minds/${TEST_MIND}/conversations`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        content: [{ type: "text", text: "Reply with just the word 'hello'" }],
-        channel: "cli",
-        sender: "e2e-test",
-      }),
+      body: JSON.stringify({ title: "delivery round-trip", participantNames: [TEST_MIND] }),
     });
+    assert.equal(createRes.status, 201, `Create conv: ${await createRes.clone().text()}`);
+    const conv = (await createRes.json()) as { id: string };
 
-    assert.equal(msgRes.status, 200, `Message failed: ${msgRes.status}`);
+    const probe = `delivery round-trip probe ${Date.now()}`;
+    const chatRes = await daemonRequest("/api/v1/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ conversationId: conv.id, message: probe, targetMind: TEST_MIND }),
+    });
+    assert.equal(chatRes.status, 200, `Chat: ${await chatRes.clone().text()}`);
 
-    const body = (await msgRes.json()) as { ok: boolean };
-    assert.equal(body.ok, true, "Response should have ok: true");
+    // Delivery is async (queue → HTTP POST to the mind → recordInbound). Inbound
+    // recording happens at delivery time, before the mind's model turn, so this
+    // works without ANTHROPIC_API_KEY. Poll history for the probe.
+    const deadline = Date.now() + 30000;
+    let delivered = false;
+    while (Date.now() < deadline && !delivered) {
+      const res = await daemonRequest(`/api/minds/${TEST_MIND}/history?full=true&limit=100`);
+      assert.equal(res.status, 200);
+      const rows = (await res.json()) as { type: string; content: string | null }[];
+      delivered = rows.some((r) => r.type === "inbound" && (r.content ?? "").includes(probe));
+      if (!delivered) await new Promise((r) => setTimeout(r, 500));
+    }
+    assert.ok(delivered, "inbound message should be recorded in mind_history after delivery");
 
-    // Check history
-    const historyRes = await daemonRequest(`/api/minds/${TEST_MIND}/history`);
-    assert.equal(historyRes.status, 200);
-    const history = (await historyRes.json()) as Array<Record<string, unknown>>;
-    assert.ok(history.length > 0, "History should have messages");
-
-    // Stop mind
     await daemonRequest(`/api/minds/${TEST_MIND}/stop`, { method: "POST" });
   });
 
