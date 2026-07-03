@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 
-const tmpDir = join(tmpdir(), ".volute-autocommit-test");
+const tmpDir = join(tmpdir(), `.volute-autocommit-test-${process.pid}`);
 
 function git(args: string[], cwd: string): string {
   const env: Record<string, string> = { LEFTHOOK: "0" };

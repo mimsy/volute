@@ -13,7 +13,7 @@ import {
   listFiles,
 } from "../packages/daemon/src/lib/template/template.js";
 
-const tmpDir = join(tmpdir(), ".volute-upgrade-test");
+const tmpDir = join(tmpdir(), `.volute-upgrade-test-${process.pid}`);
 
 function git(args: string[], cwd: string): string {
   // Strip ALL GIT_* env vars set by hooks (e.g. pre-push) that override cwd-based repo discovery
