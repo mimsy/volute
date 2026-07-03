@@ -85,6 +85,20 @@ function worktreePath(mindDir: string): string {
   return resolve(mindDir, "home", "pages", "_system");
 }
 
+/**
+ * Paths that must be owned by the mind user when isolation is enabled.
+ * The daemon runs as root, so the parent home/pages directory it provisions is
+ * created root-owned — chowning only the _system worktree would leave the mind
+ * unable to write its own pages. The parent dir is chowned recursively (covering
+ * the _system worktree too); the worktree git dir lives outside pages/ and is
+ * chowned separately.
+ */
+export function pagesIsolationChownPaths(mindDir: string, wtGitDir: string | null): string[] {
+  const paths = [resolve(mindDir, "home", "pages")];
+  if (wtGitDir) paths.push(wtGitDir);
+  return paths;
+}
+
 /** Idempotently initialize the collaborative pages git repo. */
 export async function ensurePagesRepo(dataDir: string, isolation?: IsolationInfo): Promise<void> {
   const dir = pagesRepoDir(dataDir);
@@ -156,17 +170,12 @@ export async function addPagesWorktree(
 
   if (isolation?.isIsolationEnabled()) {
     const user = isolation.getMindUser(mindName);
-    try {
-      await execAsync("chown", ["-R", `${user}:volute`, wt]);
-    } catch {
-      console.warn(`[pages] failed to chown worktree for ${mindName}`);
-    }
     const wtGitDir = readWorktreeGitDir(wt);
-    if (wtGitDir) {
+    for (const target of pagesIsolationChownPaths(mindDir, wtGitDir)) {
       try {
-        await execAsync("chown", ["-R", `${user}:volute`, wtGitDir]);
+        await execAsync("chown", ["-R", `${user}:volute`, target]);
       } catch {
-        console.warn(`[pages] failed to chown worktree git dir for ${mindName}`);
+        console.warn(`[pages] failed to chown ${target} for ${mindName}`);
       }
     }
   }

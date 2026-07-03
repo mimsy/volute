@@ -193,6 +193,7 @@ describe("pages db", () => {
 // ---------------------------------------------------------------------------
 
 import { createCommands } from "../packages/extensions/pages/src/commands.js";
+import { pagesIsolationChownPaths } from "../packages/extensions/pages/src/shared-pages.js";
 
 describe("pages commands", () => {
   let mindDir: string;
@@ -814,5 +815,28 @@ describe("system API routes", () => {
       });
       assert.equal(res.status, 400);
     });
+  });
+});
+
+describe("pages isolation chown targets", () => {
+  it("includes the parent home/pages directory so the mind can write to it", () => {
+    const mindDir = "/minds/pip";
+    const targets = pagesIsolationChownPaths(mindDir, null);
+    assert.ok(
+      targets.includes(resolve(mindDir, "home", "pages")),
+      "parent pages dir must be chowned to the mind user",
+    );
+  });
+
+  it("includes the worktree git dir when present", () => {
+    const mindDir = "/minds/pip";
+    const wtGitDir = "/data/repo/.git/worktrees/pip";
+    const targets = pagesIsolationChownPaths(mindDir, wtGitDir);
+    assert.ok(targets.includes(wtGitDir), "worktree git dir must be chowned");
+  });
+
+  it("omits the git dir when it cannot be resolved", () => {
+    const targets = pagesIsolationChownPaths("/minds/pip", null);
+    assert.equal(targets.length, 1);
   });
 });
