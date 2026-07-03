@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { extname, resolve } from "node:path";
 import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
@@ -23,6 +23,8 @@ import {
 import { joinSystemChannel } from "../../lib/chat/system-channel.js";
 import { broadcast } from "../../lib/events/activity-events.js";
 import { readRegistry, voluteHome } from "../../lib/mind/registry.js";
+import { normalizeAvatar } from "../../lib/util/avatar-image.js";
+import { fileEtag, isNotModified } from "../../lib/util/http-cache.js";
 
 /** Only join system channel when running inside the daemon (not in tests). */
 function tryJoinSystem(userId: number): void {
@@ -114,11 +116,19 @@ const authenticated = new Hono<AuthEnv>()
       return c.json({ error: "Invalid file type (png, jpg, gif, webp only)" }, 400);
     }
 
+    // Downscale + re-encode as webp; fall back to original bytes if sharp is unavailable
+    let buffer: Buffer = Buffer.from(await file.arrayBuffer());
+    let finalExt = ext;
+    const normalized = await normalizeAvatar(buffer);
+    if (normalized) {
+      buffer = normalized.buffer;
+      finalExt = normalized.ext;
+    }
+
     const dir = avatarsDir();
     mkdirSync(dir, { recursive: true });
 
-    const filename = `avatar-${user.id}${ext}`;
-    const buffer = Buffer.from(await file.arrayBuffer());
+    const filename = `avatar-${user.id}${finalExt}`;
     writeFileSync(resolve(dir, filename), buffer);
 
     // Delete old avatar after writing new one (safe if same filename)
@@ -341,12 +351,17 @@ const app = new Hono()
     const mime = AVATAR_MIME[ext];
     if (!mime) return c.json({ error: "Invalid file type" }, 400);
 
-    const data = readFileSync(filePath);
-    return c.body(data, 200, {
+    const fileStat = statSync(filePath);
+    const etag = fileEtag(fileStat);
+    const headers = {
       "Content-Type": mime,
       "Cache-Control": "public, max-age=3600",
       "X-Content-Type-Options": "nosniff",
-    });
+      ETag: etag,
+    };
+    if (isNotModified(c, etag)) return c.body(null, 304, headers);
+    const data = readFileSync(filePath);
+    return c.body(data, 200, headers);
   })
   .route("/", admin)
   .route("/", authenticated);

@@ -42,6 +42,8 @@ let isActive = $derived(activeMinds.has(mind.name));
           src={`/api/minds/${encodeURIComponent(mind.name)}/avatar`}
           alt=""
           class="profile-avatar"
+          loading="lazy"
+          decoding="async"
         />
       {/if}
       <span class="profile-name">

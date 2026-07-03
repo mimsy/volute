@@ -76,7 +76,7 @@ function initial(name: string): string {
   <div class="compose">
     <div class="compose-avatar">
       {#if userAvatarUrl}
-        <img src={userAvatarUrl} alt="" class="avatar-img" />
+        <img src={userAvatarUrl} alt="" class="avatar-img" loading="lazy" decoding="async" />
       {:else}
         <div class="avatar-fallback">{initial(currentUsername)}</div>
       {/if}

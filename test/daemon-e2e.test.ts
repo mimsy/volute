@@ -231,6 +231,42 @@ describe("daemon e2e", { timeout: 120000 }, () => {
     assert.equal(stoppedStatus.status, "stopped");
   });
 
+  it("avatar upload: resized to webp, served with ETag, revalidates with 304", async () => {
+    const sharp = (await import("sharp")).default;
+    const bigPng = await sharp({
+      create: { width: 512, height: 512, channels: 3, background: { r: 40, g: 40, b: 200 } },
+    })
+      .png()
+      .toBuffer();
+
+    const form = new FormData();
+    form.append("file", new File([new Uint8Array(bigPng)], "big.png", { type: "image/png" }));
+    const uploadRes = await daemonRequest(`/api/minds/${TEST_MIND}/avatar`, {
+      method: "POST",
+      body: form,
+    });
+    const uploadText = await uploadRes.text();
+    assert.equal(uploadRes.status, 200, `Upload failed: ${uploadText}`);
+    const uploaded = JSON.parse(uploadText) as { avatar: string };
+    assert.equal(uploaded.avatar, "avatar.webp");
+
+    const getRes = await daemonRequest(`/api/minds/${TEST_MIND}/avatar`);
+    assert.equal(getRes.status, 200);
+    assert.equal(getRes.headers.get("content-type"), "image/webp");
+    const etag = getRes.headers.get("etag");
+    assert.ok(etag, "avatar response should carry an ETag");
+    const body = new Uint8Array(await getRes.arrayBuffer());
+    const meta = await sharp(Buffer.from(body)).metadata();
+    assert.equal(meta.format, "webp");
+    assert.equal(meta.width, 256);
+    assert.equal(meta.height, 256);
+
+    const revalidateRes = await daemonRequest(`/api/minds/${TEST_MIND}/avatar`, {
+      headers: { "If-None-Match": etag },
+    });
+    assert.equal(revalidateRes.status, 304);
+  });
+
   it("GET /:name/delivery/pending previews gated messages and clears once released", async () => {
     const db = await getDb();
     // The daemon and this test share volute.db, so directly seeding gated rows is a

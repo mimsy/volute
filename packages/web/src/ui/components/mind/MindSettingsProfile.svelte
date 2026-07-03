@@ -63,6 +63,8 @@ async function saveDescription() {
             src={`/api/minds/${encodeURIComponent(mind.name)}/avatar`}
             alt=""
             class="avatar-img"
+            loading="lazy"
+            decoding="async"
           />
         {:else}
           <div class="avatar-placeholder">?</div>

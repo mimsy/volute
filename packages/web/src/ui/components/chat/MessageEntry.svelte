@@ -3,6 +3,7 @@ import type { ContentBlock, Mind, Participant } from "@volute/api";
 import { renderMarkdown } from "@volute/ui/markdown";
 import { normalizeTimestamp } from "../../lib/format";
 import ProfileHoverCard, { type HoverProfile } from "../ProfileHoverCard.svelte";
+import ImageLightbox from "./ImageLightbox.svelte";
 import ToolBlock from "./ToolBlock.svelte";
 
 type ToolInfo = {
@@ -41,6 +42,8 @@ let {
   participants?: Participant[];
   onOpenMind?: (mind: Mind) => void;
 } = $props();
+
+let lightboxSrc = $state<string | null>(null);
 
 function profileForSender(name: string): HoverProfile | null {
   const mind = mindsByName.get(name);
@@ -153,7 +156,10 @@ function buildAssistantItems(
         {#if block.type === "text"}
           <div class="user-text">{block.text}</div>
         {:else if block.type === "image"}
-          <img src={`data:${block.media_type};base64,${block.data}`} alt="" class="chat-image" />
+          {@const imgSrc = `data:${block.media_type};base64,${block.data}`}
+          <button type="button" class="chat-image-btn" onclick={() => (lightboxSrc = imgSrc)}>
+            <img src={imgSrc} alt="" class="chat-image" loading="lazy" decoding="async" />
+          </button>
         {/if}
       {/each}
     {:else}
@@ -172,12 +178,19 @@ function buildAssistantItems(
             onToggle={() => onToggleTool(toolKey)}
           />
         {:else if item.kind === "image"}
-          <img src={`data:${item.media_type};base64,${item.data}`} alt="" class="chat-image" />
+          {@const imgSrc = `data:${item.media_type};base64,${item.data}`}
+          <button type="button" class="chat-image-btn" onclick={() => (lightboxSrc = imgSrc)}>
+            <img src={imgSrc} alt="" class="chat-image" loading="lazy" decoding="async" />
+          </button>
         {/if}
       {/each}
     {/if}
   </div>
 </div>
+
+{#if lightboxSrc}
+  <ImageLightbox src={lightboxSrc} onClose={() => (lightboxSrc = null)} />
+{/if}
 
 <style>
   .entry {
@@ -234,6 +247,14 @@ function buildAssistantItems(
   .user-text {
     color: var(--text-0);
     white-space: pre-wrap;
+  }
+
+  .chat-image-btn {
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: zoom-in;
+    display: block;
   }
 
   .chat-image {

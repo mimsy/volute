@@ -135,6 +135,14 @@ export async function startDaemon(opts: {
     log.warn("failed to migrate system user role", log.errorData(err));
   }
 
+  // Downscale oversized avatars uploaded before resize-on-upload existed (non-fatal)
+  try {
+    const { migrateAvatarSizes } = await import("./lib/util/avatar-image.js");
+    await migrateAvatarSizes();
+  } catch (err) {
+    log.warn("avatar size migration failed", log.errorData(err));
+  }
+
   // Initialize sandbox runtime for mind process isolation
   const { initSandbox } = await import("./lib/mind/sandbox.js");
   await initSandbox();
