@@ -266,8 +266,12 @@ export const mindNotices = sqliteTable(
   {
     id: integer("id").primaryKey({ autoIncrement: true }),
     mind: text("mind").notNull(),
+    // Mind-level notices (not tied to a session, e.g. extension notifications)
+    // use the sentinel session = "" so any session's drain picks them up.
     session: text("session").notNull(),
-    kind: text("kind").$type<"turn_error" | "crash" | "budget" | "startup">().notNull(),
+    kind: text("kind")
+      .$type<"turn_error" | "crash" | "budget" | "startup" | "extension">()
+      .notNull(),
     reason: text("reason")
       .$type<
         | "auth_error"
@@ -278,6 +282,8 @@ export const mindNotices = sqliteTable(
         | "process_crash"
         | "token_budget"
         | "startup_failed"
+        // For kind="extension", reason holds the extension id (e.g. "notes").
+        | (string & {})
       >()
       .notNull(),
     detail: text("detail").notNull(),

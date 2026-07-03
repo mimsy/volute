@@ -7,9 +7,11 @@ import { createCommands } from "../packages/extensions/notes/src/commands.js";
 import { initDb } from "../packages/extensions/notes/src/db.js";
 import {
   addComment,
+  countNotes,
   createNote,
   deleteComment,
   deleteNote,
+  findNote,
   getComments,
   getNote,
   getReactions,
@@ -145,19 +147,50 @@ describe("notes", () => {
   it("deleteComment removes own comment", async () => {
     const note = await createNote(db, getUser, userId, "Note", "...");
     const comment = await addComment(db, getUser, note.id, userId, "My comment");
-    const deleted = await deleteComment(db, comment.id, userId);
+    const deleted = await deleteComment(db, comment.id, { id: userId, role: "user" });
     assert.ok(deleted);
     const remaining = await getComments(db, getUser, note.id);
     assert.equal(remaining.length, 0);
   });
 
-  it("deleteComment rejects non-author", async () => {
-    const other = await createUser(uniqueName("other3"), "pass123");
-    registerUser(other.id, other.username);
-    const note = await createNote(db, getUser, userId, "Note2", "...");
-    const comment = await addComment(db, getUser, note.id, userId, "My comment");
-    const deleted = await deleteComment(db, comment.id, other.id);
+  it("deleteComment rejects an unrelated non-author", async () => {
+    const noteOwner = await createUser(uniqueName("owner3"), "pass123");
+    registerUser(noteOwner.id, noteOwner.username);
+    const commenter = await createUser(uniqueName("commenter3"), "pass123");
+    registerUser(commenter.id, commenter.username);
+    const stranger = await createUser(uniqueName("stranger3"), "pass123");
+    registerUser(stranger.id, stranger.username);
+
+    const note = await createNote(db, getUser, noteOwner.id, "Note2", "...");
+    const comment = await addComment(db, getUser, note.id, commenter.id, "A comment");
+    // A stranger (not comment author, not note author, not admin) cannot delete it.
+    const deleted = await deleteComment(db, comment.id, { id: stranger.id, role: "user" });
     assert.equal(deleted, false);
+    assert.equal((await getComments(db, getUser, note.id)).length, 1);
+  });
+
+  it("deleteComment allows the note author to moderate", async () => {
+    const noteOwner = await createUser(uniqueName("owner4"), "pass123");
+    registerUser(noteOwner.id, noteOwner.username);
+    const commenter = await createUser(uniqueName("commenter4"), "pass123");
+    registerUser(commenter.id, commenter.username);
+
+    const note = await createNote(db, getUser, noteOwner.id, "Note3", "...");
+    const comment = await addComment(db, getUser, note.id, commenter.id, "spam");
+    const deleted = await deleteComment(db, comment.id, { id: noteOwner.id, role: "user" });
+    assert.ok(deleted);
+  });
+
+  it("deleteComment allows an admin to moderate any comment", async () => {
+    const noteOwner = await createUser(uniqueName("owner5"), "pass123");
+    registerUser(noteOwner.id, noteOwner.username);
+    const commenter = await createUser(uniqueName("commenter5"), "pass123");
+    registerUser(commenter.id, commenter.username);
+
+    const note = await createNote(db, getUser, noteOwner.id, "Note4", "...");
+    const comment = await addComment(db, getUser, note.id, commenter.id, "spam");
+    const deleted = await deleteComment(db, comment.id, { id: 99999, role: "admin" });
+    assert.ok(deleted);
   });
 
   it("listNotes includes comment counts", async () => {
@@ -401,6 +434,65 @@ describe("note replies", () => {
     assert.equal(id, null);
   });
 
+  it("resolveNoteId rejects refs with extra slashes", async () => {
+    const note = await createNote(db, getUser, userId, "Slashy", "...");
+    const id = await resolveNoteId(db, getUserByUsername, `${username}/${note.slug}/extra`);
+    assert.equal(id, null);
+  });
+
+  it("slugify drops apostrophes rather than turning them into dashes", async () => {
+    const note = await createNote(db, getUser, userId, "The Skeleton's Calendar", "...");
+    assert.equal(note.slug, "the-skeletons-calendar");
+  });
+
+  it("findNote resolves an exact slug", async () => {
+    const note = await createNote(db, getUser, userId, "Exact Match", "...");
+    const found = await findNote(db, getUserByUsername, username, note.slug);
+    assert.ok("authorId" in found);
+    assert.equal(found.slug, note.slug);
+  });
+
+  it("findNote fuzzily resolves a punctuation near-miss", async () => {
+    const note = await createNote(db, getUser, userId, "The Skeleton's Calendar", "...");
+    // Someone hand-types the possessive as "-s-".
+    const found = await findNote(db, getUserByUsername, username, "the-skeleton-s-calendar");
+    assert.ok("authorId" in found);
+    assert.equal(found.slug, note.slug);
+  });
+
+  it("findNote returns suggestions on a miss", async () => {
+    await createNote(db, getUser, userId, "Something Real", "...");
+    const found = await findNote(db, getUserByUsername, username, "totally-unrelated");
+    assert.ok("suggestions" in found);
+    assert.ok(found.suggestions.length > 0);
+    assert.match(found.suggestions[0], new RegExp(`^${username}/`));
+  });
+
+  it("createNote survives a slug already taken (collision)", async () => {
+    const first = await createNote(db, getUser, userId, "Dup Title", "one");
+    const second = await createNote(db, getUser, userId, "Dup Title", "two");
+    assert.equal(first.slug, "dup-title");
+    assert.notEqual(second.slug, first.slug);
+  });
+
+  it("countNotes counts all matching notes independent of limit", async () => {
+    for (let i = 0; i < 4; i++) await createNote(db, getUser, userId, `Counted ${i}`, "...");
+    const total = await countNotes(db, getUserByUsername, { authorUsername: username });
+    assert.equal(total, 4);
+    const page = await listNotes(db, getUser, getUserByUsername, { limit: 2 });
+    assert.equal(page.length, 2);
+  });
+
+  it("listNotes and countNotes honor --since", async () => {
+    await createNote(db, getUser, userId, "Old One", "...");
+    // Everything is created "now"; a future cutoff excludes all.
+    const future = new Date(Date.now() + 60_000).toISOString().replace("T", " ").slice(0, 19);
+    const recent = await listNotes(db, getUser, getUserByUsername, { since: future });
+    assert.equal(recent.length, 0);
+    const count = await countNotes(db, getUserByUsername, { since: future });
+    assert.equal(count, 0);
+  });
+
   it("deleting parent sets reply_to to null", async () => {
     const parent = await createNote(db, getUser, userId, "To be deleted", "...");
     const reply = await createNote(db, getUser, userId, "Orphan reply", "...", parent.id);
@@ -415,6 +507,8 @@ describe("note replies", () => {
 describe("notes commands stdin", () => {
   let userId: number;
   let username: string;
+  let announced: string[];
+  let notices: { mind: string; text: string }[];
   const commands = createCommands();
 
   function makeCtx(
@@ -429,6 +523,12 @@ describe("notes commands stdin", () => {
       publishActivity: () => {},
       getMindDir: () => null,
       getSystemsConfig: () => null,
+      announceToSystem: async (text: string) => {
+        announced.push(text);
+      },
+      recordNotice: async (mind: string, text: string) => {
+        notices.push({ mind, text });
+      },
       dataDir: "/tmp",
       mindName: username,
       ...overrides,
@@ -440,6 +540,8 @@ describe("notes commands stdin", () => {
     initDb(db);
     userMap = new Map();
     usernameMap = new Map();
+    announced = [];
+    notices = [];
     const user = await createUser(uniqueName("cmduser"), "pass123");
     userId = user.id;
     username = user.username;
@@ -516,5 +618,136 @@ describe("notes commands stdin", () => {
       makeCtx(),
     );
     assert.ok("error" in result);
+  });
+
+  it("write announces the note to #system", async () => {
+    await commands.write.handler(
+      { args: { title: "Announce Me", content: "hi" }, flags: {}, rest: [] },
+      makeCtx(),
+    );
+    assert.equal(announced.length, 1);
+    assert.match(announced[0], /published a note/);
+    assert.match(announced[0], /Announce Me/);
+  });
+
+  it("comment records a notice for the note author (not self)", async () => {
+    const author = await createUser(uniqueName("author"), "pass123");
+    registerUser(author.id, author.username);
+    const note = await createNote(db, getUser, author.id, "Their Note", "...");
+    const ref = `${author.username}/${note.slug}`;
+
+    // A different mind comments → author is notified.
+    await commands.comment.handler(
+      { args: { ref, content: "nice one" }, flags: {}, rest: [] },
+      makeCtx({ mindName: username }),
+    );
+    assert.equal(notices.length, 1);
+    assert.equal(notices[0].mind, author.username);
+    assert.match(notices[0].text, /commented on your note/);
+
+    // The author commenting on their own note → no self-notice.
+    notices = [];
+    await commands.comment.handler(
+      { args: { ref, content: "reply to self" }, flags: {}, rest: [] },
+      makeCtx({ mindName: author.username }),
+    );
+    assert.equal(notices.length, 0);
+  });
+
+  it("react notices on add but not on toggle-off", async () => {
+    const author = await createUser(uniqueName("rauthor"), "pass123");
+    registerUser(author.id, author.username);
+    const note = await createNote(db, getUser, author.id, "React Note", "...");
+    const ref = `${author.username}/${note.slug}`;
+
+    await commands.react.handler(
+      { args: { ref, emoji: "🌱" }, flags: {}, rest: [] },
+      makeCtx({ mindName: username }),
+    );
+    assert.equal(notices.length, 1);
+    assert.match(notices[0].text, /reacted 🌱/);
+
+    // Toggling the same reaction off should NOT notify.
+    notices = [];
+    await commands.react.handler(
+      { args: { ref, emoji: "🌱" }, flags: {}, rest: [] },
+      makeCtx({ mindName: username }),
+    );
+    assert.equal(notices.length, 0);
+  });
+
+  it("list shows a footer when more notes exist than the limit", async () => {
+    for (let i = 0; i < 5; i++) {
+      await createNote(db, getUser, userId, `Note ${i}`, "...");
+    }
+    const result = await commands.list.handler(
+      { args: {}, flags: { limit: 2 }, rest: [] },
+      makeCtx(),
+    );
+    assert.ok("output" in result);
+    assert.match(result.output, /of 5/);
+  });
+
+  it("list renders comment and reaction markers", async () => {
+    const note = await createNote(db, getUser, userId, "Marked", "...");
+    await addComment(db, getUser, note.id, userId, "c1");
+    toggleReaction(db, note.id, userId, "🌱");
+    const result = await commands.list.handler({ args: {}, flags: {}, rest: [] }, makeCtx());
+    assert.ok("output" in result);
+    assert.match(result.output, /💬1/);
+    assert.match(result.output, /🌱1/);
+  });
+
+  it("read shows reactors, replies, and edited marker", async () => {
+    const note = await createNote(db, getUser, userId, "Rich Note", "body");
+    toggleReaction(db, note.id, userId, "✨");
+    await createNote(db, getUser, userId, "A Reply", "...", note.id);
+    await updateNote(db, getUser, getUserByUsername, username, note.slug, {
+      content: "edited body",
+    });
+    // Force updated_at strictly after created_at so the "edited" marker is deterministic
+    // (SQLite datetime('now') is second-granular, so a fast update can tie the timestamp).
+    db.prepare("UPDATE notes SET updated_at = datetime(created_at, '+1 minute') WHERE id = ?").run(
+      note.id,
+    );
+
+    const result = await commands.read.handler(
+      { args: { ref: `${username}/${note.slug}` }, flags: {}, rest: [] },
+      makeCtx(),
+    );
+    assert.ok("output" in result);
+    assert.match(result.output, new RegExp(`✨ ${username}`));
+    assert.match(result.output, /Replies \(1\)/);
+    assert.match(result.output, /edited/);
+  });
+
+  it("edit updates own note and rejects others", async () => {
+    const note = await createNote(db, getUser, userId, "Editable", "before");
+    const ok = await commands.edit.handler(
+      { args: { ref: `${username}/${note.slug}`, content: "after" }, flags: {}, rest: [] },
+      makeCtx(),
+    );
+    assert.ok("output" in ok);
+    const reloaded = await getNote(db, getUser, getUserByUsername, username, note.slug);
+    assert.equal(reloaded!.content, "after");
+
+    const other = await createUser(uniqueName("editor"), "pass123");
+    registerUser(other.id, other.username);
+    const rejected = await commands.edit.handler(
+      { args: { ref: `${username}/${note.slug}`, content: "hijack" }, flags: {}, rest: [] },
+      makeCtx({ mindName: other.username }),
+    );
+    assert.ok("error" in rejected);
+  });
+
+  it("read suggests the closest slug on a near-miss", async () => {
+    await createNote(db, getUser, userId, "The Skeleton's Calendar", "...");
+    const result = await commands.read.handler(
+      { args: { ref: `${username}/the-skeletons-calendar-typo` }, flags: {}, rest: [] },
+      makeCtx(),
+    );
+    // Not an exact/fuzzy hit → error with a suggestion or list hint.
+    assert.ok("error" in result);
+    assert.match(result.error, /Did you mean|notes list/);
   });
 });

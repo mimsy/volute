@@ -24,10 +24,10 @@ async function parseJson<T>(c: { req: { json: () => Promise<unknown> } }): Promi
 
 function resolveUserId(c: {
   get: (key: string) => unknown;
-}): { id: number; username: string } | null {
-  const user = c.get("user") as { id: number; username: string } | undefined;
+}): { id: number; username: string; role?: string } | null {
+  const user = c.get("user") as { id: number; username: string; role?: string } | undefined;
   if (!user || user.id === 0) return null;
-  return { id: user.id, username: user.username };
+  return { id: user.id, username: user.username, role: user.role };
 }
 
 export function createRoutes(ctx: ExtensionContext): Hono {
@@ -164,7 +164,7 @@ export function createRoutes(ctx: ExtensionContext): Hono {
       const commentId = parseInt(c.req.param("id"), 10);
       if (Number.isNaN(commentId)) return c.json({ error: "Invalid comment ID" }, 400);
 
-      const deleted = await deleteComment(db, commentId, actor.id);
+      const deleted = await deleteComment(db, commentId, { id: actor.id, role: actor.role });
       if (!deleted) return c.json({ error: "Comment not found or not authorized" }, 404);
       return c.json({ ok: true });
     })

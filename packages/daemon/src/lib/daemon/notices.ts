@@ -1,4 +1,4 @@
-import { and, asc, eq, lte, sql } from "drizzle-orm";
+import { and, asc, eq, lte, or, sql } from "drizzle-orm";
 import { getDb } from "../db.js";
 import { mindNotices } from "../schema.js";
 import log from "../util/logger.js";
@@ -6,10 +6,20 @@ import type { ErrorReason } from "./error-classify.js";
 
 const nlog = log.child("notices");
 
-export type NoticeKind = "turn_error" | "crash" | "budget" | "startup";
+export type NoticeKind = "turn_error" | "crash" | "budget" | "startup" | "extension";
 
-/** The full closed set of reasons; each kind constrains which reasons are legal. */
-export type NoticeReason = ErrorReason | "process_crash" | "token_budget" | "startup_failed";
+/** The full closed set of reasons; each kind constrains which reasons are legal.
+ *  For `extension` notices the reason is the extension id (an arbitrary string). */
+export type NoticeReason =
+  | ErrorReason
+  | "process_crash"
+  | "token_budget"
+  | "startup_failed"
+  | (string & {});
+
+/** Sentinel session for mind-level notices that aren't tied to a specific session.
+ *  Drained into whichever session next runs a clean turn. */
+export const MIND_LEVEL_SESSION = "";
 
 /**
  * A notice to record. The union ties `kind` to its legal `reason`(s), so e.g.
@@ -25,6 +35,7 @@ export type RecordNoticeInput = {
   | { kind: "crash"; reason: "process_crash" }
   | { kind: "budget"; reason: "token_budget" }
   | { kind: "startup"; reason: "startup_failed" }
+  | { kind: "extension"; reason: string }
 );
 
 /** A persisted notice row (kind/reason narrowed via the schema column $type). */
@@ -58,7 +69,11 @@ export async function recordNotice(input: RecordNoticeInput): Promise<void> {
   }
 }
 
-/** Undelivered notices for a mind+session, oldest first (by monotonic id). */
+/**
+ * Undelivered notices for a mind+session, oldest first (by monotonic id).
+ * Includes mind-level notices (session = "") so they reach whichever session
+ * next runs a turn.
+ */
 export async function drainNotices(
   mind: string,
   session: string,
@@ -68,7 +83,12 @@ export async function drainNotices(
   return db
     .select()
     .from(mindNotices)
-    .where(and(eq(mindNotices.mind, mind), eq(mindNotices.session, session)))
+    .where(
+      and(
+        eq(mindNotices.mind, mind),
+        or(eq(mindNotices.session, session), eq(mindNotices.session, MIND_LEVEL_SESSION)),
+      ),
+    )
     .orderBy(asc(mindNotices.id))
     .limit(limit);
 }
@@ -92,7 +112,7 @@ export async function clearDeliveredNotices(
       .where(
         and(
           eq(mindNotices.mind, mind),
-          eq(mindNotices.session, session),
+          or(eq(mindNotices.session, session), eq(mindNotices.session, MIND_LEVEL_SESSION)),
           lte(mindNotices.id, uptoId),
         ),
       );
@@ -105,32 +125,60 @@ const NOTICE_HEADER =
   "[Notices] While you were unavailable, one or more turns failed. You're back now:";
 
 /**
- * Render notices as a context block, grouping identical reasons into one line with a
- * count and time range so an outage of many identical failures stays readable while
- * still conveying the full scope. Returns null for an empty list.
+ * Render notices as a context block. Failure notices (turn errors, crashes, budget,
+ * startup) group identical reasons into one line with a count and time range so an
+ * outage of many identical failures stays readable. Extension notices (comments,
+ * reactions, etc.) render verbatim, one line each with their time, under a per-extension
+ * header. Returns null for an empty list.
  */
 export function formatNotices(notices: Notice[]): string | null {
   if (notices.length === 0) return null;
 
-  const groups = new Map<string, { count: number; detail: string; first: string; last: string }>();
-  for (const n of notices) {
-    const time = localHM(n.created_at);
-    const g = groups.get(n.reason);
-    if (g) {
-      g.count += 1;
-      g.detail = n.detail;
-      g.last = time;
-    } else {
-      groups.set(n.reason, { count: 1, detail: n.detail, first: time, last: time });
+  const failures = notices.filter((n) => n.kind !== "extension");
+  const extensions = notices.filter((n) => n.kind === "extension");
+
+  const blocks: string[] = [];
+
+  if (failures.length > 0) {
+    const groups = new Map<
+      string,
+      { count: number; detail: string; first: string; last: string }
+    >();
+    for (const n of failures) {
+      const time = localHM(n.created_at);
+      const g = groups.get(n.reason);
+      if (g) {
+        g.count += 1;
+        g.detail = n.detail;
+        g.last = time;
+      } else {
+        groups.set(n.reason, { count: 1, detail: n.detail, first: time, last: time });
+      }
+    }
+    const lines = [...groups.values()].map((g) => {
+      const span = g.first === g.last ? g.first : `${g.first}–${g.last}`;
+      const plural = g.count === 1 ? "turn" : "turns";
+      return `- ${g.count} ${plural} failed (${span}): ${g.detail}`;
+    });
+    blocks.push(`${NOTICE_HEADER}\n${lines.join("\n")}`);
+  }
+
+  if (extensions.length > 0) {
+    // Group by reason (the extension id), preserving oldest-first order within each.
+    const byExt = new Map<string, Notice[]>();
+    for (const n of extensions) {
+      const arr = byExt.get(n.reason);
+      if (arr) arr.push(n);
+      else byExt.set(n.reason, [n]);
+    }
+    for (const [ext, items] of byExt) {
+      const header = `[${ext.charAt(0).toUpperCase()}${ext.slice(1)}]`;
+      const lines = items.map((n) => `- ${localHM(n.created_at)} ${n.detail}`);
+      blocks.push(`${header}\n${lines.join("\n")}`);
     }
   }
 
-  const lines = [...groups.values()].map((g) => {
-    const span = g.first === g.last ? g.first : `${g.first}–${g.last}`;
-    const plural = g.count === 1 ? "turn" : "turns";
-    return `- ${g.count} ${plural} failed (${span}): ${g.detail}`;
-  });
-  return `${NOTICE_HEADER}\n${lines.join("\n")}`;
+  return blocks.join("\n\n");
 }
 
 /**

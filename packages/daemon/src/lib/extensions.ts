@@ -17,6 +17,7 @@ import { getUser, getUserByUsername } from "./auth.js";
 import { announceToSystem } from "./chat/system-channel.js";
 import { readGlobalConfig, writeGlobalConfig } from "./config/setup.js";
 import { readSystemsConfig } from "./config/systems-config.js";
+import { MIND_LEVEL_SESSION, recordNotice as recordMindNotice } from "./daemon/notices.js";
 import { publish } from "./events/activity-events.js";
 import { isIsolationEnabled, mindUserName } from "./mind/isolation.js";
 import { mindDir, voluteHome, voluteSystemDir } from "./mind/registry.js";
@@ -232,6 +233,24 @@ async function buildContext(
     },
     getSystemsConfig: () => readSystemsConfig(),
     announceToSystem: (text: string) => announceToSystem(text),
+    recordNotice: async (mindName: string, text: string) => {
+      try {
+        const user = await getUserByUsername(mindName);
+        if (user?.user_type !== "mind") return;
+        await recordMindNotice({
+          mind: mindName,
+          session: MIND_LEVEL_SESSION,
+          kind: "extension",
+          reason: manifest.id,
+          detail: text.slice(0, 500),
+        });
+      } catch (err) {
+        log.warn(
+          `extension ${manifest.id}: failed to record notice for ${mindName}`,
+          log.errorData(err),
+        );
+      }
+    },
     isIsolationEnabled,
     getMindUser: mindUserName,
     dataDir,
@@ -624,6 +643,21 @@ export async function loadAllExtensions(app: Hono, authMw: MiddlewareHandler): P
       }
       result[manifest.id] = { commands: cmds };
     }
+    return c.json(result);
+  });
+
+  // Mind-facing digest for session-start orientation: what extensions exist and how a
+  // mind reaches them. Reflects only what's actually loaded, so third-party and disabled
+  // extensions are handled automatically.
+  app.get("/api/extensions/mind-docs", (c) => {
+    const result = loaded
+      .filter(({ manifest }) => manifest.mindDoc || manifest.commands)
+      .map(({ manifest }) => ({
+        id: manifest.id,
+        name: manifest.name,
+        mindDoc: manifest.mindDoc ?? manifest.description ?? "",
+        commands: Object.keys(manifest.commands ?? {}),
+      }));
     return c.json(result);
   });
 }
