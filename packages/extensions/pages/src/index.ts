@@ -8,6 +8,7 @@ import {
   addPagesWorktree,
   collectHtmlFiles,
   ensurePagesRepo,
+  hashFiles,
   isolationFrom,
 } from "./shared-pages.js";
 
@@ -43,16 +44,14 @@ export default createExtension({
   onDaemonStart(ctx) {
     ensurePagesRepo(ctx.dataDir, isolationFrom(ctx))
       .then(() => {
-        // Sync system pages from the repo to the DB so they appear in the UI
+        // Sync system pages from the repo to the DB so they appear in the UI.
+        // Run even when the repo is empty so stale DB rows are removed.
         if (ctx.db) {
           const repoDir = resolve(ctx.dataDir, "repo");
-          const htmlFiles = collectHtmlFiles(repoDir);
-          if (htmlFiles.length > 0) {
-            try {
-              syncSystemPages(ctx.db, htmlFiles);
-            } catch (err) {
-              console.error("[pages] failed to sync system pages to DB:", err);
-            }
+          try {
+            syncSystemPages(ctx.db, hashFiles(repoDir, collectHtmlFiles(repoDir)));
+          } catch (err) {
+            console.error("[pages] failed to sync system pages to DB:", err);
           }
         }
       })
