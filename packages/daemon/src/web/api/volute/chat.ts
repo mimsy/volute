@@ -10,6 +10,7 @@ import { getActiveTurnId } from "../../../lib/daemon/turn-tracker.js";
 import { extractTextContent } from "../../../lib/delivery/delivery-router.js";
 import { fanOutToMinds } from "../../../lib/delivery/fan-out.js";
 import { recordOutbound } from "../../../lib/delivery/message-delivery.js";
+import { checkStaleSend, formatHoldNotice } from "../../../lib/delivery/send-gate.js";
 import { subscribe } from "../../../lib/events/conversation-events.js";
 import {
   addMessage,
@@ -247,6 +248,24 @@ export const unifiedChatApp = new Hono<AuthEnv>().post(
     if (senderIsMind) {
       senderBase = await getBaseName(senderName);
       outboundTurnId = getActiveTurnId(senderBase, c.get("mindSession"));
+    }
+
+    // Stale-send hold: if a peer posted to this conversation after this mind's turn began,
+    // don't post — return a plain notice (surfaced as the send command's stdout) so the mind
+    // can revise or re-send. Held at most once per turn. Replaces the destructive mid-turn
+    // interrupt that produced the "tool use rejected" message.
+    if (senderIsMind && senderBase) {
+      const gate = await checkStaleSend(senderBase, conversationId!, [senderName, senderBase]);
+      if (gate.held && gate.unseen) {
+        const label = buildVoluteSlug({
+          participants,
+          mindUsername: senderName,
+          conversationId: conversationId!,
+          convType: conv.type as "dm" | "channel",
+          convName,
+        });
+        return c.json({ ok: true, held: true, notice: formatHoldNotice(label, gate.unseen) });
+      }
     }
 
     // Save message. turn_id is attributed directly for mind senders (see above); when the

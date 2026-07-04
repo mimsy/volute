@@ -152,7 +152,6 @@ describe("resolveDeliveryMode", () => {
   it("returns immediate by default", () => {
     const r = resolveDeliveryMode({}, "main");
     assert.equal(r.delivery.mode, "immediate");
-    assert.equal(r.interrupt, true);
   });
 
   it("returns immediate when no sessions match", () => {

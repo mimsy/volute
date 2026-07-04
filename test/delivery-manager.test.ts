@@ -230,7 +230,7 @@ describe("DeliveryManager", () => {
     });
   });
 
-  describe("new-speaker batch interrupt", () => {
+  describe("new-speaker no longer interrupts (buffers instead)", () => {
     function setBatchSession() {
       return createMindWithRoutes({
         rules: [{ channel: "group:*", session: "group" }],
@@ -257,7 +257,6 @@ describe("DeliveryManager", () => {
         lastDeliveredAt: Date.now(),
         lastDeliverySenders: new Set(senders),
         lastDeliveryChannels: new Set(channels),
-        lastInterruptAt: 0,
         seenChannelProfiles: new Set<string>(),
       });
     }
@@ -266,14 +265,15 @@ describe("DeliveryManager", () => {
       return (mgr as any).batchBuffers.get(`${mind}:${session}`);
     }
 
-    it("new speaker in same channel triggers interrupt flush", async () => {
+    it("a different speaker in an active channel buffers instead of force-flushing", async () => {
       const name = setBatchSession();
       manager = new DeliveryManager();
 
       // Simulate mind active from a delivery to sender A in group:chat
       simulateActive(manager, name, "group", ["alice"], ["group:chat"]);
 
-      // Deliver from sender B in same channel — should trigger interrupt flush
+      // Previously a new speaker force-flushed with interrupt; turn-taking is now handled
+      // by the stale-send gate, so it simply buffers like any other batched message.
       const result = await manager.routeAndDeliver(name, {
         channel: "group:chat",
         sender: "bob",
@@ -283,9 +283,10 @@ describe("DeliveryManager", () => {
       assert.equal(result.routed, true);
       if (result.routed) assert.equal(result.mode, "batch");
 
-      // Buffer should be empty — message was flushed immediately
+      // Buffer holds the message — not flushed.
       const buffer = getBatchBuffer(manager, name, "group");
-      assert.equal(buffer, undefined);
+      assert.ok(buffer);
+      assert.equal(buffer.messages.length, 1);
       removeMind(name);
     });
 
@@ -331,74 +332,6 @@ describe("DeliveryManager", () => {
       removeMind(name);
     });
 
-    it("debounce cooldown prevents rapid interrupts", async () => {
-      const name = setBatchSession();
-      manager = new DeliveryManager();
-
-      // Simulate mind active with a recent interrupt
-      const states = (manager as any).sessionStates as Map<string, Map<string, any>>;
-      let mindSessions = states.get(name);
-      if (!mindSessions) {
-        mindSessions = new Map();
-        states.set(name, mindSessions);
-      }
-      mindSessions.set("group", {
-        activeCount: 1,
-        lastDeliveredAt: Date.now(),
-        lastDeliverySenders: new Set(["alice"]),
-        lastDeliveryChannels: new Set(["group:chat"]),
-        lastInterruptAt: Date.now(), // just interrupted
-        seenChannelProfiles: new Set<string>(),
-      });
-
-      // Deliver from new sender — debounce should prevent interrupt
-      await manager.routeAndDeliver(name, {
-        channel: "group:chat",
-        sender: "charlie",
-        content: "hey",
-      });
-
-      // Buffer should have the message (debounce prevented interrupt)
-      const buffer = getBatchBuffer(manager, name, "group");
-      assert.ok(buffer);
-      assert.equal(buffer.messages.length, 1);
-      removeMind(name);
-    });
-
-    it("maxWait window expiry prevents interrupt", async () => {
-      const name = setBatchSession();
-      manager = new DeliveryManager();
-
-      // Simulate mind active but delivery was long ago (beyond maxWait of 10s)
-      const states = (manager as any).sessionStates as Map<string, Map<string, any>>;
-      let mindSessions = states.get(name);
-      if (!mindSessions) {
-        mindSessions = new Map();
-        states.set(name, mindSessions);
-      }
-      mindSessions.set("group", {
-        activeCount: 1,
-        lastDeliveredAt: Date.now() - 20_000, // 20s ago, well past 10s maxWait
-        lastDeliverySenders: new Set(["alice"]),
-        lastDeliveryChannels: new Set(["group:chat"]),
-        lastInterruptAt: 0,
-        seenChannelProfiles: new Set<string>(),
-      });
-
-      // Deliver from new sender — maxWait expired so no interrupt
-      await manager.routeAndDeliver(name, {
-        channel: "group:chat",
-        sender: "bob",
-        content: "hey",
-      });
-
-      // Buffer should have the message (no interrupt)
-      const buffer = getBatchBuffer(manager, name, "group");
-      assert.ok(buffer);
-      assert.equal(buffer.messages.length, 1);
-      removeMind(name);
-    });
-
     it("null sender does not trigger interrupt", async () => {
       const name = setBatchSession();
       manager = new DeliveryManager();
@@ -433,7 +366,6 @@ describe("DeliveryManager", () => {
         lastDeliveredAt: Date.now(),
         lastDeliverySenders: new Set(["alice"]),
         lastDeliveryChannels: new Set(["group:chat"]),
-        lastInterruptAt: 0,
         seenChannelProfiles: new Set<string>(),
       });
 
@@ -451,7 +383,7 @@ describe("DeliveryManager", () => {
       removeMind(name);
     });
 
-    it("interrupt flush includes existing buffered messages", async () => {
+    it("a new speaker never flushes an existing buffer mid-turn", async () => {
       const name = setBatchSession();
       manager = new DeliveryManager();
 
@@ -470,16 +402,16 @@ describe("DeliveryManager", () => {
       // Now simulate the session becoming active (e.g. from a previous flush)
       simulateActive(manager, name, "group", ["alice"], ["group:chat"]);
 
-      // Deliver from bob — should trigger interrupt flush including alice's buffered message
+      // A different speaker arrives — both messages stay buffered (no interrupt flush).
       await manager.routeAndDeliver(name, {
         channel: "group:chat",
         sender: "bob",
         content: "hey alice",
       });
 
-      // Buffer should be cleared — both messages were flushed together
       buffer = getBatchBuffer(manager, name, "group");
-      assert.equal(buffer, undefined);
+      assert.ok(buffer);
+      assert.equal(buffer.messages.length, 2);
       removeMind(name);
     });
   });
