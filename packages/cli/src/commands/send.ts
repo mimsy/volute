@@ -130,6 +130,26 @@ async function waitForResponse(
   }
 }
 
+type SendResult = { held?: boolean; notice?: string; outboundId?: number };
+
+/**
+ * Print the outcome of a POST /chat send to stdout. A "held" send (a peer posted
+ * while the mind was composing) prints the daemon's plain notice so the mind can
+ * revise or re-send; a normal send prints the sent confirmation + outbound marker.
+ */
+function printSendResult(data: SendResult): void {
+  if (data.held) {
+    if (data.notice) console.log(data.notice);
+    return;
+  }
+  const { outboundId } = data;
+  if (isCompact()) {
+    if (outboundId != null) console.log(`[volute:outbound:${outboundId}]`);
+  } else {
+    console.log(`Message sent.${outboundId != null ? `\n[volute:outbound:${outboundId}]` : ""}`);
+  }
+}
+
 const cmd = command({
   name: "volute chat send",
   description: "Send a message to a mind, channel, or platform",
@@ -269,6 +289,7 @@ const cmd = command({
     // Resolve the target mind name for --wait
     let waitMindName: string | undefined;
     let waitConversationId: string | undefined;
+    let heldResponse = false;
 
     if (parsed.isDM && parsed.platform === "volute") {
       // For volute DMs (@target), create/find conversation via daemon
@@ -320,24 +341,14 @@ const cmd = command({
         console.error((data as { error: string }).error);
         process.exit(1);
       }
-      if (!flags.wait) {
-        let outboundId: number | undefined;
-        try {
-          const resData = (await sendRes.json()) as { outboundId?: number };
-          outboundId = resData.outboundId;
-        } catch (err) {
-          console.error(
-            `Warning: could not read outboundId from response: ${(err as Error).message}`,
-          );
-        }
-        if (isCompact()) {
-          if (outboundId != null) console.log(`[volute:outbound:${outboundId}]`);
-        } else {
-          console.log(
-            `Message sent.${outboundId != null ? `\n[volute:outbound:${outboundId}]` : ""}`,
-          );
-        }
+      let data: SendResult = {};
+      try {
+        data = (await sendRes.json()) as SendResult;
+      } catch (err) {
+        console.error(`Warning: could not read send response: ${(err as Error).message}`);
       }
+      if (data.held) heldResponse = true;
+      if (data.held || !flags.wait) printSendResult(data);
     } else if (!parsed.isDM && parsed.platform === "volute") {
       // Bare names without # are ambiguous — require explicit sigil
       if (!parsed.identifier.startsWith("#")) {
@@ -389,22 +400,14 @@ const cmd = command({
         console.error((data as { error: string }).error);
         process.exit(1);
       }
-      let outboundId: number | undefined;
+      let data: SendResult = {};
       try {
-        const resData = (await sendRes.json()) as { outboundId?: number };
-        outboundId = resData.outboundId;
+        data = (await sendRes.json()) as SendResult;
       } catch (err) {
-        console.error(
-          `Warning: could not read outboundId from response: ${(err as Error).message}`,
-        );
+        console.error(`Warning: could not read send response: ${(err as Error).message}`);
       }
-      if (isCompact()) {
-        if (outboundId != null) console.log(`[volute:outbound:${outboundId}]`);
-      } else {
-        console.log(
-          `Message sent.${outboundId != null ? `\n[volute:outbound:${outboundId}]` : ""}`,
-        );
-      }
+      if (data.held) heldResponse = true;
+      printSendResult(data);
     } else {
       // Non-volute targets (discord:..., slack:..., etc.) are no longer supported directly.
       // With the bridge architecture, minds send to volute channels and bridges handle external routing.
@@ -416,7 +419,9 @@ const cmd = command({
       process.exit(1);
     }
 
-    if (flags.wait && waitMindName) {
+    if (heldResponse) {
+      // Nothing was posted (stale-send hold) — no reply is coming, so don't wait.
+    } else if (flags.wait && waitMindName) {
       if (!waitConversationId) {
         console.error("--wait requires a volute conversation (DM to a mind)");
         process.exit(1);

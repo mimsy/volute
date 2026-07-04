@@ -23,6 +23,7 @@ import {
   resolveRoute,
   setRoutesChangeListener,
 } from "./delivery-router.js";
+import { onDeliveredToMind, resetTurn } from "./send-gate.js";
 
 const dlog = log.child("delivery-manager");
 
@@ -50,7 +51,6 @@ type SessionState = {
   lastDeliveredAt: number;
   lastDeliverySenders: Set<string>;
   lastDeliveryChannels: Set<string>;
-  lastInterruptAt: number;
   seenChannelProfiles: Set<string>;
 };
 
@@ -228,6 +228,8 @@ export class DeliveryManager {
    * causing isSessionBusy to return true even when no deliveries are pending.
    */
   sessionDone(baseName: string, session?: string): void {
+    // A completed turn closes the mind's stale-send baselines so the next delivery re-snapshots.
+    resetTurn(baseName);
     if (session) {
       this.decrementActive(baseName, session);
     } else {
@@ -626,9 +628,14 @@ export class DeliveryManager {
       if (payload.channel) channels.add(payload.channel);
       this.incrementActive(baseName, session, senders, channels);
 
+      // Snapshot the stale-send baseline: the latest message this mind has now seen in
+      // the conversation, so a reply it composes can be held if a peer posts after this.
+      // Awaited so the baseline is set before the mind can receive-and-reply.
+      await onDeliveredToMind(baseName, payload.conversationId);
+
       // If a turn is already in progress for this session, attribute this mid-turn inbound to
       // it now. linkPendingInbound only tags at turn creation (bounded sweep), so without this
-      // an interrupt/batched message arriving mid-turn — or a >5 backlog — would stay untagged.
+      // a batched message arriving mid-turn — or a >5 backlog — would stay untagged.
       // No-op when no turn is active yet; the turn-creation path tags the trigger then.
       linkInboundToActiveTurn(baseName, session, payload.channel).catch((err) =>
         dlog.warn(`failed to link mid-turn inbound for ${baseName}`, log.errorData(err)),
@@ -652,7 +659,6 @@ export class DeliveryManager {
       const body = JSON.stringify({
         ...enrichedPayload,
         session,
-        interrupt: sessionConfig.interrupt,
         instructions: sessionConfig.instructions,
       });
 
@@ -682,7 +688,6 @@ export class DeliveryManager {
     session: string,
     messages: QueuedMessage[],
     sessionConfig: ResolvedSessionConfig,
-    interruptOverride?: boolean,
   ): Promise<void> {
     const queueIds = messages
       .map((m) => m.queueId)
@@ -735,6 +740,15 @@ export class DeliveryManager {
       // Increment active count with metadata
       this.incrementActive(baseName, session, senders, channelSet);
 
+      // Snapshot the stale-send baseline per conversation in this batch (see deliverToMind).
+      const convIds = new Set<string>();
+      for (const msg of messages) {
+        if (msg.payload.conversationId) convIds.add(msg.payload.conversationId);
+      }
+      for (const convId of convIds) {
+        await onDeliveredToMind(baseName, convId);
+      }
+
       // Attribute any mid-turn inbounds in this batch to an in-progress turn (see deliverToMind).
       for (const ch of channelSet) {
         linkInboundToActiveTurn(baseName, session, ch).catch((err) =>
@@ -759,7 +773,6 @@ export class DeliveryManager {
       const body = JSON.stringify({
         session,
         batch: { channels },
-        interrupt: interruptOverride ?? sessionConfig.interrupt,
         instructions: sessionConfig.instructions,
       });
 
@@ -794,10 +807,9 @@ export class DeliveryManager {
   ): Promise<void> {
     const delivery = sessionConfig.delivery as Extract<ResolvedDeliveryMode, { mode: "batch" }>;
 
-    // Persist to the queue FIRST (keyed by baseName) — the row is the source of truth;
-    // the in-memory buffer is a fast path reconciled against these rows on ack/redrive.
-    // The row is "owned" (inFlight) while buffered so the redrive sweep won't double-send.
-    const baseName = await getBaseName(mindName);
+    // Persist to the queue FIRST — the row is the source of truth; the in-memory buffer is
+    // a fast path reconciled against these rows on ack/redrive. The row is "owned" (inFlight)
+    // while buffered so the redrive sweep won't double-send.
     const queueId = await this.persistToQueue(mindName, session, payload);
     if (queueId != null) this.inFlight.add(queueId);
     const msg: QueuedMessage = {
@@ -817,25 +829,6 @@ export class DeliveryManager {
         await this.flushBatch(mindName, session, [msg]);
         return;
       }
-    }
-
-    // New-speaker interrupt: if mind is active on this channel and a different sender
-    // arrives (within the maxWait window and past the debounce cooldown), force-flush
-    // with interrupt so the mind can incorporate the new voice
-    const state = this.sessionStates.get(baseName)?.get(session);
-    if (
-      state &&
-      state.activeCount > 0 &&
-      payload.sender &&
-      !state.lastDeliverySenders.has(payload.sender) &&
-      payload.channel &&
-      state.lastDeliveryChannels.has(payload.channel) &&
-      Date.now() - state.lastDeliveredAt < delivery.maxWait * 1000 &&
-      Date.now() - state.lastInterruptAt > delivery.debounce * 1000
-    ) {
-      state.lastInterruptAt = Date.now();
-      await this.flushBatch(mindName, session, [msg], true);
-      return;
     }
 
     this.addToBatchBuffer(mindName, session, sessionConfig, msg);
@@ -900,7 +893,6 @@ export class DeliveryManager {
     mindName: string,
     session: string,
     extra?: QueuedMessage[],
-    interruptOverride?: boolean,
   ): Promise<void> {
     const bufferKey = `${mindName}:${session}`;
     const buffer = this.batchBuffers.get(bufferKey);
@@ -922,14 +914,10 @@ export class DeliveryManager {
     const config = getRoutingConfig(baseName);
     const sessionConfig = resolveDeliveryMode(config, session);
 
-    dlog.info(
-      `flushing batch for ${mindName}/${session}: ${messages.length} messages${interruptOverride ? " (new-speaker interrupt)" : ""}`,
-    );
-    this.deliverBatchToMind(mindName, session, messages, sessionConfig, interruptOverride).catch(
-      (err) => {
-        dlog.warn(`failed to flush batch for ${mindName}/${session}`, log.errorData(err));
-      },
-    );
+    dlog.info(`flushing batch for ${mindName}/${session}: ${messages.length} messages`);
+    this.deliverBatchToMind(mindName, session, messages, sessionConfig).catch((err) => {
+      dlog.warn(`failed to flush batch for ${mindName}/${session}`, log.errorData(err));
+    });
   }
 
   private async gateMessage(
@@ -1179,7 +1167,6 @@ export class DeliveryManager {
       lastDeliveredAt: 0,
       lastDeliverySenders: new Set<string>(),
       lastDeliveryChannels: new Set<string>(),
-      lastInterruptAt: 0,
       seenChannelProfiles: new Set<string>(),
     };
     state.activeCount++;

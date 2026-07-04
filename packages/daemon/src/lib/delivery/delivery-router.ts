@@ -57,7 +57,6 @@ export type ResolvedDeliveryMode =
 
 export type ResolvedSessionConfig = {
   delivery: ResolvedDeliveryMode;
-  interrupt: boolean;
   instructions?: string;
 };
 
@@ -296,7 +295,6 @@ export function resolveDeliveryMode(
   const ruleBatch = rule?.batch;
   const defaults: ResolvedSessionConfig = {
     delivery: { mode: "immediate" },
-    interrupt: true,
   };
 
   if (!config.sessions) {
@@ -309,7 +307,6 @@ export function resolveDeliveryMode(
           maxWait: batch.maxWait ?? DEFAULT_BATCH_MAX_WAIT,
           triggers: batch.triggers,
         },
-        interrupt: true,
       };
     }
     return defaults;
@@ -337,7 +334,6 @@ export function resolveDeliveryMode(
 
       return {
         delivery,
-        interrupt: true,
         instructions: sessionConfig.instructions,
       };
     }
@@ -353,7 +349,6 @@ export function resolveDeliveryMode(
         maxWait: batch.maxWait ?? DEFAULT_BATCH_MAX_WAIT,
         triggers: batch.triggers,
       },
-      interrupt: true,
     };
   }
 
