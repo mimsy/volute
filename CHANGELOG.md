@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.44.0](https://github.com/mimsy/volute/compare/volute-v0.43.1...volute-v0.44.0) (2026-07-04)
+
+
+### Features
+
+* extension discovery, extension notices, and notes overhaul ([#385](https://github.com/mimsy/volute/issues/385)) ([a590d1c](https://github.com/mimsy/volute/commit/a590d1ceef668a372e0af271c7036ccf147b2cd2))
+
+
+### Bug Fixes
+
+* hold stale multi-mind sends instead of aborting turns mid-tool ([#387](https://github.com/mimsy/volute/issues/387)) ([28cc5ed](https://github.com/mimsy/volute/commit/28cc5ed86281e10767fa6627fcf04d4981e46107))
+* optimize web image serving (avatar resize, caching, lightbox) ([#375](https://github.com/mimsy/volute/issues/375)) ([9785fcf](https://github.com/mimsy/volute/commit/9785fcfd28df5f797781236a6a700f4bc6504799))
+* pages UI empty-mind dashboard fallthrough and publish resetting all page dates ([#377](https://github.com/mimsy/volute/issues/377)) ([b91c685](https://github.com/mimsy/volute/commit/b91c6853a38ab2e2c134bba554c71c22ba9c2baf))
+* remove mind→mind conversation turn cap ([#386](https://github.com/mimsy/volute/issues/386)) ([48cf010](https://github.com/mimsy/volute/commit/48cf01053e66630885911e6a4a528ad76391dcc6))
+* repair daemon e2e tests and run them in CI ([#378](https://github.com/mimsy/volute/issues/378)) ([e3c9efe](https://github.com/mimsy/volute/commit/e3c9efe90c16f769ef234feb4fb13f2df3248e2f))
+
 ## [0.43.1](https://github.com/mimsy/volute/compare/volute-v0.43.0...volute-v0.43.1) (2026-07-03)
 
 
