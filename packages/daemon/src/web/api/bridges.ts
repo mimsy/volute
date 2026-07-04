@@ -262,7 +262,6 @@ async function fanOutToBridgedMinds(opts: {
     conversationId: opts.conversationId,
     contentBlocks: opts.contentBlocks,
     senderName: opts.senderName,
-    senderIsMind: false,
     isDM: opts.isDM,
   });
 }

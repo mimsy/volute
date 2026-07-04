@@ -78,9 +78,9 @@ async function resolveConversationId(mind: string, channel: string): Promise<str
  * streams, so it is a real-time mirror to the human-facing conversation and external
  * bridges (`routeOutboundBridge`) — display surfaces, not interactive principals.
  * The authoritative mind→mind delivery path is the explicit chat send
- * (`/chat` → `fanOutToMinds`), which owns fan-out AND loop protection. Echoing raw
- * streamed text to peer minds would double-deliver every deliberate send and amplify
- * mind→mind loops, so peer-mind fan-out stays exclusively on the explicit send path.
+ * (`/chat` → `fanOutToMinds`), which owns fan-out. Echoing raw streamed text to peer
+ * minds would double-deliver every deliberate send, so peer-mind fan-out stays
+ * exclusively on the explicit send path.
  */
 export async function echoTextToChannel(
   mind: string,
