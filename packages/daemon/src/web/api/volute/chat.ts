@@ -296,7 +296,6 @@ export const unifiedChatApp = new Hono<AuthEnv>().post(
       conversationId: conversationId!,
       contentBlocks,
       senderName,
-      senderIsMind: !!senderIsMind,
       participants,
       isDM,
       slugExtra: { convType: conv.type as "dm" | "channel", convName },
