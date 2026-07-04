@@ -106,6 +106,37 @@ describe("notices", () => {
     assert.deepEqual(await drainNotices(mind, "main"), []);
   });
 
+  it("mind-level notices (session '') drain into any session and clear by watermark", async () => {
+    const mind = uniqueMind();
+    // A session-scoped notice and a mind-level (extension) notice.
+    await recordNotice({
+      mind,
+      session: "main",
+      kind: "turn_error",
+      reason: "unknown",
+      detail: "session-scoped",
+    });
+    await recordNotice({
+      mind,
+      session: "",
+      kind: "extension",
+      reason: "notes",
+      detail: "pip commented on your note",
+    });
+
+    // Draining "main" picks up both (mind-level included), oldest first.
+    const drained = await drainNotices(mind, "main");
+    assert.deepEqual(
+      drained.map((n) => n.detail),
+      ["session-scoped", "pip commented on your note"],
+    );
+
+    // A clean turn clears both by watermark — the "" row must not redeliver.
+    await clearDeliveredNotices(mind, "main", Math.max(...drained.map((n) => n.id)));
+    assert.deepEqual(await drainNotices(mind, "main"), []);
+    assert.deepEqual(await drainNotices(mind, "other"), []);
+  });
+
   it("caps retained notices per session", async () => {
     const mind = uniqueMind();
     for (let i = 0; i < 130; i++) {
@@ -177,5 +208,51 @@ describe("formatNotices", () => {
     assert.equal(lines.length, 2);
     assert.ok(lines.some((l) => /1 turn failed/.test(l) && /creds/.test(l)));
     assert.ok(lines.some((l) => /2 turns failed/.test(l) && /net/.test(l)));
+  });
+
+  it("renders extension notices verbatim under a per-extension header", () => {
+    const notices = [
+      {
+        ...base,
+        id: 1,
+        kind: "extension",
+        reason: "notes",
+        detail: "pip commented on whorl/one-macaroni",
+        created_at: at("14:02"),
+      },
+      {
+        ...base,
+        id: 2,
+        kind: "extension",
+        reason: "notes",
+        detail: "pip reacted 🌱 to whorl/calendar",
+        created_at: at("15:10"),
+      },
+    ] as Notice[];
+    const out = formatNotices(notices)!;
+    assert.match(out, /\[Notes\]/);
+    assert.match(out, /pip commented on whorl\/one-macaroni/);
+    assert.match(out, /pip reacted 🌱/);
+    // No "turns failed" framing for extension notices.
+    assert.ok(!/turn failed/.test(out));
+  });
+
+  it("keeps failure and extension notices in separate blocks", () => {
+    const notices = [
+      { ...base, id: 1, reason: "auth_error", detail: "creds", created_at: at("14:02") },
+      {
+        ...base,
+        id: 2,
+        kind: "extension",
+        reason: "notes",
+        detail: "someone commented",
+        created_at: at("14:05"),
+      },
+    ] as Notice[];
+    const out = formatNotices(notices)!;
+    assert.match(out, /turn failed/);
+    assert.match(out, /\[Notes\]/);
+    // The failure header precedes the extension block.
+    assert.ok(out.indexOf("[Notices]") < out.indexOf("[Notes]"));
   });
 });

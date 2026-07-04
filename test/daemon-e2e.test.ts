@@ -212,6 +212,27 @@ describe("daemon e2e", { timeout: 420000 }, () => {
     assert.ok(Array.isArray(body));
   });
 
+  it("GET /api/extensions/mind-docs lists notes with a mindDoc and commands", async () => {
+    const res = await daemonRequest("/api/extensions/mind-docs");
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as {
+      id: string;
+      name: string;
+      mindDoc: string;
+      commands: string[];
+    }[];
+    assert.ok(Array.isArray(body));
+    const notes = body.find((e) => e.id === "notes");
+    assert.ok(notes, "notes extension should be present in mind-docs");
+    assert.ok(notes.mindDoc.length > 0, "notes should expose a mindDoc");
+    assert.ok(notes.commands.includes("write"), "notes commands should include write");
+  });
+
+  it("unauthenticated mind-docs request returns 401", async () => {
+    const res = await fetch(`${BASE_URL}/api/extensions/mind-docs`);
+    assert.equal(res.status, 401);
+  });
+
   it("mind lifecycle: create, start, status, stop", async () => {
     // Create mind via daemon API
     const createRes = await daemonRequest("/api/minds", {

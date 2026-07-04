@@ -125,8 +125,10 @@ fi
 echo "  Daemon is healthy"
 
 echo "Reading daemon token..."
+# The admin token lives in its own owner-only file (daemon-token), split out of
+# daemon.json. Fall back to the legacy daemon.json.token for older images.
 if ! TOKEN=$(docker exec "$CONTAINER" node -e \
-  "const fs=require('fs'); const p='/data/system/daemon.json'; const lp='/data/daemon.json'; const f=fs.existsSync(p)?p:lp; process.stdout.write(JSON.parse(fs.readFileSync(f,'utf8')).token)" 2>&1); then
+  "const fs=require('fs'); const dirs=['/data/system','/data']; for (const d of dirs){ const tp=d+'/daemon-token'; if (fs.existsSync(tp)){ const t=fs.readFileSync(tp,'utf8').trim(); if (t){ process.stdout.write(t); process.exit(0); } } const jp=d+'/daemon.json'; if (fs.existsSync(jp)){ const t=JSON.parse(fs.readFileSync(jp,'utf8')).token; if (t){ process.stdout.write(t); process.exit(0); } } }" 2>&1); then
   echo "Error: failed to read daemon token" >&2
   echo "  $TOKEN" >&2
   exit 1

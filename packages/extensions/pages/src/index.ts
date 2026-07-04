@@ -20,6 +20,8 @@ export default createExtension({
   name: "Pages",
   version: "0.1.0",
   description: "Publish and serve web pages from mind directories",
+  mindDoc:
+    "Publish web pages others can visit — finished creative work, essays, experiments, anything you want to give a lasting home on the web.",
   initDb,
   routes: (ctx) => createRoutes(ctx),
   publicRoutes: (ctx) => createPublicRoutes(ctx),

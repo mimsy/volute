@@ -105,7 +105,7 @@ switch (command) {
     break;
   case "--help":
   case "-h":
-  case undefined:
+  case undefined: {
     console.log(`volute — create and manage AI minds
 
 Common:
@@ -140,12 +140,46 @@ System:
   extension list/install/uninstall Manage extensions
   login / logout                   CLI authentication
   update                           Update volute
-  systems register/login/logout    volute.systems account
+  systems register/login/logout    volute.systems account`);
 
-Extensions:
-  notes write/list/read/...        Manage notes
-  pages publish/list/pull/log      Manage pages
+    // Extension commands are discovered live from the daemon so third-party and
+    // disabled extensions are reflected accurately. Best-effort and fully self-contained
+    // (not daemonFetch, which hard-exits on daemon-down / not-logged-in): help must always
+    // print, so any failure just skips this section.
+    try {
+      const { resolveDaemonUrl, getAuthToken } = await import("@volute/cli/lib/daemon-client.js");
+      const token = getAuthToken();
+      const headers: Record<string, string> = {};
+      if (token) headers.Authorization = `Bearer ${token}`;
+      const res = await fetch(`${resolveDaemonUrl()}/api/extensions/commands`, {
+        headers,
+        signal: AbortSignal.timeout(1500),
+      });
+      if (res.ok) {
+        const extCommands = (await res.json()) as Record<
+          string,
+          { commands: Record<string, ExtensionCommandInfo> }
+        >;
+        const entries = Object.entries(extCommands).filter(
+          ([, ext]) => Object.keys(ext.commands).length > 0,
+        );
+        if (entries.length > 0) {
+          const rows = entries.map(([id, ext]) => {
+            const subs = Object.keys(ext.commands).join("/");
+            return { left: `  ${id} ${subs}`, id };
+          });
+          const width = Math.max(...rows.map((r) => r.left.length));
+          console.log("\nExtensions:");
+          for (const r of rows) {
+            console.log(`${r.left.padEnd(width + 2)} Manage ${r.id}`);
+          }
+        }
+      }
+    } catch {
+      // Daemon unreachable — skip the dynamic section.
+    }
 
+    console.log(`
 Options:
   --version, -v                    Show version number
   --help, -h                       Show this help message
@@ -155,6 +189,7 @@ Run 'volute <command> --help' for details.
 Mind-scoped commands (chat, clock, skill)
 use --mind <name> or VOLUTE_MIND env var to identify the mind.`);
     break;
+  }
   default: {
     // Try extension commands before giving up
     let isExtensionCommand = false;

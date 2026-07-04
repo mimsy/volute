@@ -40,9 +40,16 @@ export type NoteDetail = Note & {
 function slugify(text: string): string {
   return text
     .toLowerCase()
+    .replace(/['’]/g, "") // drop apostrophes so "Skeleton's" → "skeletons", not "skeleton-s"
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/-+/g, "-")
     .replace(/^-|-$/g, "");
+}
+
+/** Normalize a slug for fuzzy comparison: strip every non-alphanumeric so
+ *  "the-skeleton-s-calendar" and "the-skeletons-calendar" compare equal. */
+function normalizeSlug(slug: string): string {
+  return slug.toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
 type UserLookup = ExtensionContext["getUser"];
@@ -56,25 +63,21 @@ export async function createNote(
   content: string,
   replyToId?: number,
 ): Promise<Note> {
-  let slug = slugify(title) || "untitled";
+  const baseSlug = slugify(title) || "untitled";
 
   const existing = db.prepare("SELECT slug FROM notes WHERE author_id = ?").all(authorId) as {
     slug: string;
   }[];
   const existingSlugs = new Set(existing.map((r) => r.slug));
-  if (existingSlugs.has(slug)) {
+
+  function nextSlug(taken: Set<string>): string {
+    if (!taken.has(baseSlug)) return baseSlug;
     let i = 2;
-    while (existingSlugs.has(`${slug}-${i}`)) i++;
-    slug = `${slug}-${i}`;
+    while (taken.has(`${baseSlug}-${i}`)) i++;
+    return `${baseSlug}-${i}`;
   }
 
-  const row = db
-    .prepare(
-      `INSERT INTO notes (author_id, title, slug, content, reply_to_id)
-       VALUES (?, ?, ?, ?, ?)
-       RETURNING *`,
-    )
-    .get(authorId, title, slug, content, replyToId ?? null) as {
+  type NoteRow = {
     id: number;
     author_id: number;
     title: string;
@@ -85,6 +88,26 @@ export async function createNote(
     updated_at: string;
   };
 
+  // Retry on UNIQUE(author_id, slug) violations so a concurrent same-title write
+  // (read-then-insert race) resolves to the next free suffix instead of a 500.
+  let row: NoteRow | undefined;
+  for (let attempt = 0; attempt < 5 && !row; attempt++) {
+    const slug = nextSlug(existingSlugs);
+    try {
+      row = db
+        .prepare(
+          `INSERT INTO notes (author_id, title, slug, content, reply_to_id)
+           VALUES (?, ?, ?, ?, ?)
+           RETURNING *`,
+        )
+        .get(authorId, title, slug, content, replyToId ?? null) as NoteRow;
+    } catch (err) {
+      if (!/UNIQUE/i.test((err as Error).message)) throw err;
+      existingSlugs.add(slug); // a racer took it; try the next suffix
+    }
+  }
+  if (!row) throw new Error("Failed to allocate a unique slug for note");
+
   const author = await getUser(authorId);
 
   return {
@@ -93,6 +116,40 @@ export async function createNote(
     author_display_name: author?.display_name ?? null,
     comment_count: 0,
   };
+}
+
+export type FindNoteResult = { authorId: number; slug: string } | { suggestions: string[] };
+
+/**
+ * Resolve an author/slug reference, tolerating small slug mismatches (e.g. a hand-typed
+ * "the-skeletons-calendar" for the stored "the-skeleton-s-calendar"). Exact match wins;
+ * otherwise a *unique* match on the apostrophe/punctuation-insensitive normalized slug
+ * resolves transparently. On no/ambiguous match, returns `author/slug` suggestions.
+ */
+export async function findNote(
+  db: Database,
+  getUserByUsername: UserByUsernameLookup,
+  authorUsername: string,
+  slug: string,
+): Promise<FindNoteResult> {
+  const author = await getUserByUsername(authorUsername);
+  if (!author) return { suggestions: [] };
+
+  const exact = db
+    .prepare("SELECT slug FROM notes WHERE author_id = ? AND slug = ?")
+    .get(author.id, slug) as { slug: string } | undefined;
+  if (exact) return { authorId: author.id, slug };
+
+  const all = db.prepare("SELECT slug FROM notes WHERE author_id = ?").all(author.id) as {
+    slug: string;
+  }[];
+  const target = normalizeSlug(slug);
+  const fuzzy = all.filter((r) => normalizeSlug(r.slug) === target);
+  if (fuzzy.length === 1) return { authorId: author.id, slug: fuzzy[0].slug };
+
+  // Ambiguous normalized match → offer those; otherwise offer the author's slugs.
+  const pool = fuzzy.length > 1 ? fuzzy : all;
+  return { suggestions: pool.slice(0, 10).map((r) => `${authorUsername}/${r.slug}`) };
 }
 
 export async function getNote(
@@ -105,9 +162,12 @@ export async function getNote(
   const author = await getUserByUsername(authorUsername);
   if (!author) return null;
 
+  const found = await findNote(db, getUserByUsername, authorUsername, slug);
+  if (!("authorId" in found)) return null;
+
   const row = db
     .prepare("SELECT * FROM notes WHERE author_id = ? AND slug = ?")
-    .get(author.id, slug) as
+    .get(author.id, found.slug) as
     | {
         id: number;
         author_id: number;
@@ -172,11 +232,32 @@ export async function getNote(
   };
 }
 
+/** Build a `WHERE` clause + params from optional author/since filters. */
+function noteFilter(
+  authorId: number | undefined,
+  since: string | undefined,
+): {
+  clause: string;
+  params: unknown[];
+} {
+  const conds: string[] = [];
+  const params: unknown[] = [];
+  if (authorId !== undefined) {
+    conds.push("author_id = ?");
+    params.push(authorId);
+  }
+  if (since) {
+    conds.push("created_at > ?");
+    params.push(since);
+  }
+  return { clause: conds.length ? `WHERE ${conds.join(" AND ")}` : "", params };
+}
+
 export async function listNotes(
   db: Database,
   getUser: UserLookup,
   getUserByUsername: UserByUsernameLookup,
-  opts?: { authorUsername?: string; limit?: number; offset?: number },
+  opts?: { authorUsername?: string; limit?: number; offset?: number; since?: string },
 ): Promise<Note[]> {
   const limit = opts?.limit ?? 50;
   const offset = opts?.offset ?? 0;
@@ -188,15 +269,10 @@ export async function listNotes(
     authorId = author.id;
   }
 
-  const rows = authorId
-    ? (db
-        .prepare(
-          "SELECT * FROM notes WHERE author_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?",
-        )
-        .all(authorId, limit, offset) as any[])
-    : (db
-        .prepare("SELECT * FROM notes ORDER BY created_at DESC LIMIT ? OFFSET ?")
-        .all(limit, offset) as any[]);
+  const { clause, params } = noteFilter(authorId, opts?.since);
+  const rows = db
+    .prepare(`SELECT * FROM notes ${clause} ORDER BY created_at DESC LIMIT ? OFFSET ?`)
+    .all(...params, limit, offset) as any[];
 
   if (rows.length === 0) return [];
 
@@ -279,6 +355,25 @@ export async function listNotes(
   }
 
   return result;
+}
+
+/** Total notes matching the same author/since filters as listNotes (ignoring limit/offset). */
+export async function countNotes(
+  db: Database,
+  getUserByUsername: UserByUsernameLookup,
+  opts?: { authorUsername?: string; since?: string },
+): Promise<number> {
+  let authorId: number | undefined;
+  if (opts?.authorUsername) {
+    const author = await getUserByUsername(opts.authorUsername);
+    if (!author) return 0;
+    authorId = author.id;
+  }
+  const { clause, params } = noteFilter(authorId, opts?.since);
+  const row = db.prepare(`SELECT COUNT(*) as count FROM notes ${clause}`).get(...params) as {
+    count: number;
+  };
+  return row.count;
 }
 
 export async function updateNote(
@@ -387,15 +482,29 @@ export async function getComments(
   return result;
 }
 
+/**
+ * Delete a comment. Authorized when the actor is the comment's author, the author of the
+ * note it's on (so note owners can moderate their shelf), or an admin.
+ */
 export async function deleteComment(
   db: Database,
   commentId: number,
-  authorId: number,
+  actor: { id: number; role?: string },
 ): Promise<boolean> {
   const existing = db
-    .prepare("SELECT id, author_id FROM note_comments WHERE id = ?")
-    .get(commentId) as { id: number; author_id: number } | undefined;
-  if (!existing || existing.author_id !== authorId) return false;
+    .prepare(
+      `SELECT c.id AS id, c.author_id AS comment_author, n.author_id AS note_author
+       FROM note_comments c JOIN notes n ON n.id = c.note_id
+       WHERE c.id = ?`,
+    )
+    .get(commentId) as { id: number; comment_author: number; note_author: number } | undefined;
+  if (!existing) return false;
+
+  const authorized =
+    actor.role === "admin" ||
+    actor.id === existing.comment_author ||
+    actor.id === existing.note_author;
+  if (!authorized) return false;
 
   db.prepare("DELETE FROM note_comments WHERE id = ?").run(existing.id);
   return true;
@@ -462,12 +571,13 @@ export async function resolveNoteId(
   getUserByUsername: UserByUsernameLookup,
   authorSlug: string,
 ): Promise<number | null> {
-  const [authorName, slug] = authorSlug.split("/", 2);
-  if (!authorName || !slug) return null;
-  const author = await getUserByUsername(authorName);
-  if (!author) return null;
+  const parts = authorSlug.split("/");
+  if (parts.length !== 2 || !parts[0] || !parts[1]) return null;
+  const [authorName, slug] = parts;
+  const found = await findNote(db, getUserByUsername, authorName, slug);
+  if (!("authorId" in found)) return null;
   const row = db
     .prepare("SELECT id FROM notes WHERE author_id = ? AND slug = ?")
-    .get(author.id, slug) as { id: number } | undefined;
+    .get(found.authorId, found.slug) as { id: number } | undefined;
   return row?.id ?? null;
 }

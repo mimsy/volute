@@ -52,6 +52,13 @@ export type ExtensionContext = {
   getMindDir: (name: string) => string | null;
   getSystemsConfig: () => SystemsConfig | null;
   announceToSystem: (text: string) => Promise<void>;
+  /**
+   * Queue an ambient, non-interrupting notification for a mind, delivered as context
+   * on the mind's next turn (via the notices system). No-op if the target isn't a mind.
+   * Use for low-urgency signals (a comment on a note, a reaction) that shouldn't trigger
+   * a turn on their own. Never throws.
+   */
+  recordNotice: (mindName: string, text: string) => Promise<void>;
   /** Whether per-mind user isolation is enabled (user isolation mode). */
   isIsolationEnabled: () => boolean;
   /** Get the OS username for a mind under user isolation (e.g. "mind-lyra"). */
@@ -121,6 +128,12 @@ export type ExtensionManifest = {
   name: string;
   version: string;
   description?: string;
+  /**
+   * A short, mind-facing description shown to minds at session start and in CLI help,
+   * written in the platform's voice (invitation, initiative) rather than operator-facing
+   * marketing copy. Falls back to `description` when absent.
+   */
+  mindDoc?: string;
   /** SVG icon for this extension (used in system tabs, mind tabs, activity cards, etc.) */
   icon?: string;
   /** CSS color variable name (e.g. "purple", "yellow") used for activity cards and timeline markers */
