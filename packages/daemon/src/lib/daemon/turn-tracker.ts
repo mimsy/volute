@@ -10,6 +10,8 @@ const tlog = log.child("turn-tracker");
 type ActiveTurn = {
   turnId: string;
   lastToolUseEventId: number | undefined;
+  /** SDK tool_use id → mind_history event id, so a tool_result links to its own tool_use. */
+  toolUseEventIds: Map<string, number>;
 };
 
 /** In-memory map of active turns, keyed by `mind:session` (or `mind:*` for sessionless). */
@@ -51,7 +53,11 @@ export async function createTurn(mind: string): Promise<string | undefined> {
   if (existing) return existing.turnId;
 
   const turnId = randomUUID();
-  const entry: ActiveTurn = { turnId, lastToolUseEventId: undefined };
+  const entry: ActiveTurn = {
+    turnId,
+    lastToolUseEventId: undefined,
+    toolUseEventIds: new Map(),
+  };
   // Reserve the slot synchronously to prevent concurrent callers from creating duplicates
   activeTurns.set(k, entry);
 
@@ -110,19 +116,45 @@ export async function linkInboundToActiveTurn(
     );
 }
 
-/** Record the last tool_use event ID for a mind+session. */
+/**
+ * Record a tool_use event ID for a mind+session. When the SDK's `toolUseId` is known it's
+ * also indexed so the matching tool_result can resolve its exact source (parallel tool calls
+ * in one turn would otherwise all collapse onto "the last tool_use").
+ */
 export function trackToolUse(
   mind: string,
   session: string | null | undefined,
   eventId: number,
+  toolUseId?: string,
 ): void {
   const entry = activeTurns.get(key(mind, session)) ?? activeTurns.get(key(mind));
-  if (entry) entry.lastToolUseEventId = eventId;
+  if (!entry) return;
+  entry.lastToolUseEventId = eventId;
+  if (toolUseId) entry.toolUseEventIds.set(toolUseId, eventId);
 }
 
 /** Get the last tool_use event ID for a mind+session. */
 export function getLastToolUseEventId(mind: string, session?: string | null): number | undefined {
   return (activeTurns.get(key(mind, session)) ?? activeTurns.get(key(mind)))?.lastToolUseEventId;
+}
+
+/**
+ * Resolve the source tool_use event ID for a tool_result, preferring an exact match on the
+ * SDK `toolUseId`. Falls back to the last tool_use in the turn when the id is absent (older
+ * templates) or unknown, preserving prior behavior.
+ */
+export function getToolUseEventId(
+  mind: string,
+  session: string | null | undefined,
+  toolUseId?: string,
+): number | undefined {
+  const entry = activeTurns.get(key(mind, session)) ?? activeTurns.get(key(mind));
+  if (!entry) return undefined;
+  if (toolUseId) {
+    const id = entry.toolUseEventIds.get(toolUseId);
+    if (id != null) return id;
+  }
+  return entry.lastToolUseEventId;
 }
 
 /**

@@ -148,7 +148,7 @@ export function getTimeRange(
 
 // ── Turn summarization (event-driven) ──
 
-type HistoryRow = {
+export type HistoryRow = {
   id: number;
   type: string;
   channel: string | null;
@@ -288,7 +288,7 @@ function buildTurnDeterministicSummary(
   return parts.length > 0 ? `${parts.join(". ")}.` : "Turn completed.";
 }
 
-function buildTranscript(
+export function buildTranscript(
   events: HistoryRow[],
   parsedMeta: Map<number, Record<string, unknown>>,
 ): string {
@@ -317,7 +317,9 @@ function buildTranscript(
         const content = ev.content ?? "";
         const meta = parsedMeta.get(ev.id);
         const isError = !!meta?.is_error;
-        lines.push(isError ? "[result error]" : `[result] ${content.slice(0, 200)}`);
+        lines.push(
+          isError ? `[result error] ${content.slice(0, 200)}` : `[result] ${content.slice(0, 200)}`,
+        );
         break;
       }
       case "thinking":
