@@ -9,6 +9,7 @@ import {
   createTurn,
   getActiveTurnId,
   getLastToolUseEventId,
+  getToolUseEventId,
   markErrored,
   sweepWedgedTurns,
   takeErrored,
@@ -85,6 +86,34 @@ describe("turn-tracker", () => {
 
     trackToolUse(mind, null, 99);
     assert.equal(getLastToolUseEventId(mind), 99);
+
+    await clearMind(mind);
+  });
+
+  it("getToolUseEventId resolves the matching tool_use by SDK id", async () => {
+    await createTurn(mind);
+
+    // Two tool calls in one turn (e.g. parallel), tracked with their SDK ids.
+    trackToolUse(mind, null, 10, "toolu_a");
+    trackToolUse(mind, null, 11, "toolu_b");
+
+    // A result must link to its OWN tool_use, not just the most recent one.
+    assert.equal(getToolUseEventId(mind, null, "toolu_a"), 10);
+    assert.equal(getToolUseEventId(mind, null, "toolu_b"), 11);
+
+    await clearMind(mind);
+  });
+
+  it("getToolUseEventId falls back to the last tool_use when id is absent/unknown", async () => {
+    await createTurn(mind);
+
+    trackToolUse(mind, null, 10, "toolu_a");
+    trackToolUse(mind, null, 11, "toolu_b");
+
+    // No id (older template) → last tool_use.
+    assert.equal(getToolUseEventId(mind, null), 11);
+    // Unknown id → last tool_use.
+    assert.equal(getToolUseEventId(mind, null, "toolu_missing"), 11);
 
     await clearMind(mind);
   });

@@ -18,7 +18,7 @@ import {
   completeTurn,
   createTurn,
   getActiveTurnId,
-  getLastToolUseEventId,
+  getToolUseEventId,
   markErrored,
   takeErrored,
   trackToolUse,
@@ -173,13 +173,22 @@ export async function handleMindEvent(
       .returning({ id: mindHistory.id });
     insertedId = result[0]?.id;
   } catch (err) {
-    llog.error(`failed to persist event for ${mind}`, log.errorData(err));
-    // Continue — persistence is best-effort, don't block real-time streaming.
+    // A dropped event is a permanent gap in this mind's history/timeline — surface it
+    // with enough context to spot which mind/session/channel lost what, rather than
+    // failing silently. Persistence stays best-effort so real-time streaming continues.
+    llog.error(
+      `HISTORY GAP: failed to persist ${event.type} event for ${mind}` +
+        `${event.session ? ` (session ${event.session})` : ""}` +
+        `${event.channel ? ` on ${event.channel}` : ""}`,
+      log.errorData(err),
+    );
   }
 
-  // Track tool_use events for source_event_id linking.
+  // Track tool_use events for source_event_id linking, indexed by the SDK tool_use id
+  // (in metadata.id) so a parallel tool_result resolves to its own tool_use.
   if (event.type === "tool_use" && insertedId != null) {
-    trackToolUse(mind, event.session, insertedId);
+    const toolUseId = typeof event.metadata?.id === "string" ? event.metadata.id : undefined;
+    trackToolUse(mind, event.session, insertedId, toolUseId);
   }
 
   // Fallback/activity linking via correlation markers. Outbound turn attribution is now
@@ -187,7 +196,9 @@ export async function handleMindEvent(
   // is idempotent (won't re-publish an already-attributed outbound) and still links
   // extension activities and any outbound the direct path couldn't attribute.
   if (event.type === "tool_result" && turnId && event.content) {
-    const toolUseEventId = getLastToolUseEventId(mind, event.session);
+    const resultToolUseId =
+      typeof event.metadata?.tool_use_id === "string" ? event.metadata.tool_use_id : undefined;
+    const toolUseEventId = getToolUseEventId(mind, event.session, resultToolUseId);
     try {
       await linkToolResultToTurn(mind, turnId, event.content, toolUseEventId);
     } catch (err) {

@@ -2,9 +2,11 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { and, eq } from "drizzle-orm";
 import {
+  buildTranscript,
   getPeriodKey,
   getPreviousPeriodKey,
   getTimeRange,
+  type HistoryRow,
   type Period,
   reconcileWedgedTurns,
   summarizePeriod,
@@ -260,6 +262,37 @@ describe("summarizer", () => {
         .from(summaries)
         .where(and(eq(summaries.mind, mind3), eq(summaries.period, "turn")));
       assert.equal(rows.length, 0, "no summary should be inserted for empty turn");
+    });
+  });
+
+  // ── Transcript building ──
+
+  describe("buildTranscript", () => {
+    function row(id: number, type: string, content: string | null): HistoryRow {
+      return { id, type, channel: null, session: null, content, metadata: null, created_at: "" };
+    }
+
+    it("includes error result content so the summary can describe the failure", () => {
+      const events: HistoryRow[] = [
+        row(1, "tool_use", null),
+        row(2, "tool_result", "ENOENT: no such file or directory, open '/nope'"),
+      ];
+      const meta = new Map<number, Record<string, unknown>>([
+        [1, { name: "Read" }],
+        [2, { is_error: true }],
+      ]);
+
+      const transcript = buildTranscript(events, meta);
+      assert.match(transcript, /\[result error\] ENOENT: no such file/);
+    });
+
+    it("labels successful results distinctly from errors", () => {
+      const events: HistoryRow[] = [row(1, "tool_result", "ok, wrote 3 lines")];
+      const meta = new Map<number, Record<string, unknown>>([[1, { is_error: false }]]);
+
+      const transcript = buildTranscript(events, meta);
+      assert.match(transcript, /\[result\] ok, wrote 3 lines/);
+      assert.doesNotMatch(transcript, /result error/);
     });
   });
 

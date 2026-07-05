@@ -107,7 +107,7 @@ export function createEventHandler(session: EventSession, options: EventHandlerO
         emit(session, {
           type: "tool_use",
           content: JSON.stringify(event.args),
-          metadata: { name: event.toolName },
+          metadata: { name: event.toolName, id: event.toolCallId },
         });
       }
 
@@ -117,7 +117,11 @@ export function createEventHandler(session: EventSession, options: EventHandlerO
         emit(session, {
           type: "tool_result",
           content: output,
-          metadata: { name: event.toolName, is_error: event.isError },
+          metadata: {
+            name: event.toolName,
+            is_error: event.isError,
+            tool_use_id: event.toolCallId,
+          },
         });
 
         // Auto-commit file changes in home/

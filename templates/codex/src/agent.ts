@@ -323,6 +323,9 @@ export function createMind(options: {
             case "item.started": {
               const item = event.item;
               if (!item) break;
+              // Stable per-item id so a tool_result links to its own tool_use (see
+              // item.completed). Codex reuses this id across the item's start/end events.
+              const itemId = event.itemId ?? item.id;
 
               if (item.type === "agent_message" || item.type === "agentMessage") {
                 itemText.set(event.itemId ?? item.id, "");
@@ -335,7 +338,7 @@ export function createMind(options: {
                 emit(session, {
                   type: "tool_use",
                   content: JSON.stringify({ command: cmd }),
-                  metadata: { name: "command" },
+                  metadata: { name: "command", id: itemId },
                 });
                 broadcast(session, {
                   type: "tool_use",
@@ -347,7 +350,7 @@ export function createMind(options: {
                 emit(session, {
                   type: "tool_use",
                   content: JSON.stringify({ path: filePath }),
-                  metadata: { name: "file_change" },
+                  metadata: { name: "file_change", id: itemId },
                 });
                 broadcast(session, {
                   type: "tool_use",
@@ -359,7 +362,7 @@ export function createMind(options: {
                 emit(session, {
                   type: "tool_use",
                   content: JSON.stringify(item.input ?? item.arguments ?? {}),
-                  metadata: { name: toolName },
+                  metadata: { name: toolName, id: itemId },
                 });
                 broadcast(session, {
                   type: "tool_use",
@@ -370,7 +373,7 @@ export function createMind(options: {
                 emit(session, {
                   type: "tool_use",
                   content: JSON.stringify({ query: item.query ?? "" }),
-                  metadata: { name: "web_search" },
+                  metadata: { name: "web_search", id: itemId },
                 });
                 broadcast(session, {
                   type: "tool_use",
@@ -403,6 +406,8 @@ export function createMind(options: {
               const item = event.item;
               if (!item) break;
               const itemType = item.type;
+              // Same id emitted on item.started, so the daemon links this result to its tool_use.
+              const itemId = event.itemId ?? item.id;
 
               if (itemType === "reasoning") {
                 const text = item.text ?? item.content ?? "";
@@ -426,7 +431,7 @@ export function createMind(options: {
                 emit(session, {
                   type: "tool_result",
                   content: output,
-                  metadata: { name: "command", is_error: exitCode !== 0 },
+                  metadata: { name: "command", is_error: exitCode !== 0, tool_use_id: itemId },
                 });
                 broadcast(session, {
                   type: "tool_result",
@@ -446,7 +451,7 @@ export function createMind(options: {
                 emit(session, {
                   type: "tool_result",
                   content: item.diff ?? `changed: ${filePath}`,
-                  metadata: { name: "file_change" },
+                  metadata: { name: "file_change", tool_use_id: itemId },
                 });
                 broadcast(session, {
                   type: "tool_result",
@@ -460,6 +465,7 @@ export function createMind(options: {
                   content: output,
                   metadata: {
                     name: `mcp:${item.serverName ?? ""}/${item.toolName ?? item.name ?? ""}`,
+                    tool_use_id: itemId,
                   },
                 });
                 broadcast(session, { type: "tool_result", output });
@@ -467,7 +473,7 @@ export function createMind(options: {
                 emit(session, {
                   type: "tool_result",
                   content: "search completed",
-                  metadata: { name: "web_search" },
+                  metadata: { name: "web_search", tool_use_id: itemId },
                 });
                 broadcast(session, { type: "tool_result", output: "search completed" });
               }

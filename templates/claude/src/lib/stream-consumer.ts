@@ -65,11 +65,11 @@ export async function consumeStream(
           const text = (b as { text: string }).text;
           emit(session, { type: "text", content: text });
         } else if (b.type === "tool_use") {
-          const tb = b as { name: string; input: unknown };
+          const tb = b as { id: string; name: string; input: unknown };
           emit(session, {
             type: "tool_use",
             content: JSON.stringify(tb.input),
-            metadata: { name: tb.name },
+            metadata: { name: tb.name, id: tb.id },
           });
         }
       }
@@ -99,13 +99,16 @@ export async function consumeStream(
               : typeof b.content === "string"
                 ? b.content
                 : "";
-            if (resultContent) {
+            // A failed tool call must be recorded even when it produced no text
+            // body, so downstream (summary transcript + timeline UI) can flag it.
+            const isError = "is_error" in b && b.is_error === true;
+            if (resultContent || isError) {
               const toolUseId =
                 "tool_use_id" in b && typeof b.tool_use_id === "string" ? b.tool_use_id : "unknown";
               emit(session, {
                 type: "tool_result",
                 content: resultContent,
-                metadata: { tool_use_id: toolUseId },
+                metadata: { tool_use_id: toolUseId, is_error: isError },
               });
             }
           }
