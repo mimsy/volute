@@ -46,7 +46,7 @@ const app = new Hono<AuthEnv>().use("*", authMiddleware).get("/", async (c) => {
         conversations = await listConversationsWithParticipants(user.id);
         if (conversations.length > 0) {
           const convIds = conversations.map((c: any) => c.id);
-          const unreads = await getUnreadCounts(user.id, convIds);
+          const unreads = await getUnreadCounts(user.id, convIds, user.username);
           for (const conv of conversations) {
             conv.unreadCount = unreads[conv.id] ?? 0;
           }
