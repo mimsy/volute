@@ -7,7 +7,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { basename, resolve } from "node:path";
+import { relative, resolve } from "node:path";
 import { zValidator } from "@hono/zod-validator";
 import { and, desc, eq, type SQL, sql } from "drizzle-orm";
 import { type Context, Hono } from "hono";
@@ -101,6 +101,7 @@ import { computeTemplateHash } from "../../lib/template/template-hash.js";
 import { exec, gitExec } from "../../lib/util/exec.js";
 import { checkHealth } from "../../lib/util/health.js";
 import log from "../../lib/util/logger.js";
+import { safeResolveWithinBase } from "../../lib/util/paths.js";
 import { fireWebhook } from "../../lib/webhook.js";
 import {
   type AuthEnv,
@@ -1602,10 +1603,19 @@ const app = new Hono<AuthEnv>()
 
     if (body.displayName !== undefined) profile.displayName = body.displayName;
     if (body.description !== undefined) profile.description = body.description;
-    // Store only a bare filename — avatars live directly in the mind's home dir.
-    // Prevents a traversal/absolute path from being persisted and later used in
-    // filesystem operations (e.g. avatar deletion).
-    if (body.avatar !== undefined) profile.avatar = basename(body.avatar);
+    // Store a home-relative path — never persist a value that escapes home/,
+    // since it's later used in filesystem operations (avatar serving/deletion).
+    if (body.avatar !== undefined) {
+      const homeDir = resolve(dir, "home");
+      const avatarPath = safeResolveWithinBase(homeDir, body.avatar);
+      if (!avatarPath) {
+        return c.json({ error: "Avatar path must be inside the mind's home directory" }, 400);
+      }
+      if (!existsSync(avatarPath)) {
+        return c.json({ error: `Avatar file not found: ${relative(homeDir, avatarPath)}` }, 400);
+      }
+      profile.avatar = relative(homeDir, avatarPath);
+    }
 
     config.profile = profile;
     writeVoluteConfig(dir, config);
