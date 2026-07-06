@@ -594,6 +594,7 @@ export async function leaveChannel(conversationId: string, userId: number): Prom
 export async function getUnreadCounts(
   userId: number,
   conversationIds: string[],
+  username: string,
 ): Promise<Record<string, number>> {
   if (conversationIds.length === 0) return {};
   const db = await getDb();
@@ -614,6 +615,8 @@ export async function getUnreadCounts(
       and(
         inArray(messages.conversation_id, conversationIds),
         sql`${messages.id} > COALESCE(${conversationReads.last_read_message_id}, 0)`,
+        // A user's own messages are never "unread" for them
+        sql`(${messages.sender_name} IS NULL OR ${messages.sender_name} != ${username})`,
       ),
     )
     .groupBy(messages.conversation_id);

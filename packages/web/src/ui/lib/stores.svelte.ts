@@ -132,12 +132,28 @@ function getMentionPattern(username: string, displayName: string): RegExp {
   return regex;
 }
 
+/** Whether this tab is visible. Hidden tabs must not mark conversations read. */
+function isTabVisible(): boolean {
+  return typeof document === "undefined" || document.visibilityState !== "hidden";
+}
+
 export function setActiveConversation(id: string | null) {
   unreadState.activeConversationId = id;
-  if (id) {
+  if (id && isTabVisible()) {
     unreadCounts.set(id, 0);
     markAsRead(id).catch((err) => console.warn("[stores] markAsRead failed:", err));
   }
+}
+
+// When the tab becomes visible again, catch up on the conversation being viewed.
+if (typeof document !== "undefined") {
+  document.addEventListener("visibilitychange", () => {
+    const id = unreadState.activeConversationId;
+    if (document.visibilityState === "visible" && id) {
+      unreadCounts.set(id, 0);
+      markAsRead(id).catch((err) => console.warn("[stores] markAsRead failed:", err));
+    }
+  });
 }
 
 // --- Unified SSE via connection.svelte.ts ---
@@ -154,10 +170,17 @@ function handleSSEEvent(event: SSEEvent) {
     if (Array.isArray(event.onlineBrains)) {
       for (const name of event.onlineBrains) onlineBrains.add(name);
     }
-    // Populate unread counts from snapshot
+    // Populate unread counts from snapshot. Skip the conversation being
+    // viewed — its snapshot count races the markAsRead POST and would put a
+    // dot on the open conversation after every reconnect. Re-mark it read so
+    // the server cursor catches up to anything missed while disconnected.
+    const activeId = isTabVisible() ? unreadState.activeConversationId : null;
     unreadCounts.clear();
     for (const conv of data.conversations) {
-      if (conv.unreadCount) unreadCounts.set(conv.id, conv.unreadCount);
+      if (conv.unreadCount && conv.id !== activeId) unreadCounts.set(conv.id, conv.unreadCount);
+    }
+    if (activeId && data.conversations.some((c) => c.id === activeId && c.unreadCount)) {
+      markAsRead(activeId).catch((err) => console.warn("[stores] markAsRead failed:", err));
     }
     // Minds not in snapshot — fetch separately since they need health checks
     fetchMinds()
@@ -230,9 +253,11 @@ function handleSSEEvent(event: SSEEvent) {
       };
       (conv as any).updated_at = event.createdAt;
 
-      // Unread tracking + notifications
+      // Unread tracking + notifications. A hidden tab is not "viewing" its
+      // active conversation — treat it as inactive so it accrues a dot and
+      // never silently advances the read cursor for the whole account.
       const isFromSelf = event.senderName === auth.user?.username;
-      const isActive = event.conversationId === unreadState.activeConversationId;
+      const isActive = event.conversationId === unreadState.activeConversationId && isTabVisible();
       if (!isFromSelf && !isActive) {
         const current = unreadCounts.get(event.conversationId) ?? 0;
         unreadCounts.set(event.conversationId, current + 1);
