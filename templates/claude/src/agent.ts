@@ -133,6 +133,22 @@ export function createMind(options: {
 
   const agents = loadSubagents(options.subagents);
 
+  // --- Skill discovery ---
+  // The CLI only discovers skills through its user-scope ~/.claude/skills scan,
+  // so the "user" setting source is load-bearing and HOME must be the mind's
+  // home dir for the SDK subprocess (isolation modes already set it; pinning it
+  // here keeps non-isolated minds from loading the operator's ~/.claude). The
+  // explicit skills array grants the Skill tool for each installed skill — the
+  // SDK silently drops the documented `skills: 'all'` string form.
+  const mindHome = resolvePath(options.cwd);
+  const sdkEnv = { ...process.env, HOME: mindHome };
+  function installedSkills(): string[] | undefined {
+    const names = readSkillDescriptions([resolvePath(mindHome, ".claude/skills")]).map(
+      (s) => s.name,
+    );
+    return names.length > 0 ? names : undefined;
+  }
+
   // --- Event broadcasting ---
 
   function broadcastToSession(session: Session, event: VoluteEvent) {
@@ -241,7 +257,9 @@ export function createMind(options: {
         systemPrompt: options.systemPrompt,
         permissionMode: "bypassPermissions",
         allowDangerouslySkipPermissions: true,
-        settingSources: ["project"],
+        settingSources: ["project", "user"],
+        skills: installedSkills(),
+        env: sdkEnv,
         cwd: options.cwd,
         abortController: streamAbort,
         model: options.model,
@@ -352,7 +370,9 @@ export function createMind(options: {
             systemPrompt: options.systemPrompt,
             permissionMode: "bypassPermissions",
             allowDangerouslySkipPermissions: true,
-            settingSources: ["project"],
+            settingSources: ["project", "user"],
+            skills: installedSkills(),
+            env: sdkEnv,
             cwd: options.cwd,
             abortController: compactAbort,
             model: options.model,
