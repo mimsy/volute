@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { afterEach, before, describe, it } from "node:test";
+import { afterEach, describe, it } from "node:test";
 import {
   backupRoots,
   stageDatabases,
@@ -406,10 +406,6 @@ describe("backup manager scheduling", () => {
 // Round-trip against a real restic binary; skipped when restic is not on PATH.
 describe("restic round-trip", async () => {
   const available = (await resticVersion()) !== null;
-
-  before((t) => {
-    if (!available) t.skip("restic not installed");
-  });
 
   afterEach(() => {
     _resetConfigCache();
