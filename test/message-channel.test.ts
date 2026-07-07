@@ -130,6 +130,65 @@ describe("createMessageChannel", () => {
     });
   });
 
+  describe("isEmpty()", () => {
+    it("is true for a fresh channel", () => {
+      assert.equal(createMessageChannel().isEmpty(), true);
+    });
+
+    it("is false while a message is queued", () => {
+      const ch = createMessageChannel();
+      ch.push(msg("queued"));
+      assert.equal(ch.isEmpty(), false);
+    });
+
+    it("is false while a delivered message is unacked (in flight)", async () => {
+      const ch = createMessageChannel();
+      const iter = ch.iterable[Symbol.asyncIterator]();
+      const pending = iter.next();
+      ch.push(msg("inflight"));
+      await pending;
+      assert.equal(ch.isEmpty(), false);
+    });
+
+    it("is true again after the in-flight message is acked", async () => {
+      const ch = createMessageChannel();
+      const iter = ch.iterable[Symbol.asyncIterator]();
+      const pending = iter.next();
+      ch.push(msg("done"));
+      await pending;
+      ch.ack();
+      assert.equal(ch.isEmpty(), true);
+    });
+  });
+
+  describe("close()", () => {
+    it("resolves a pending next() with done:true", async () => {
+      const ch = createMessageChannel();
+      const iter = ch.iterable[Symbol.asyncIterator]();
+      const waiting = iter.next();
+      ch.close();
+      const result = await waiting;
+      assert.equal(result.done, true);
+    });
+
+    it("makes subsequent next() calls return done", async () => {
+      const ch = createMessageChannel();
+      ch.close();
+      const iter = ch.iterable[Symbol.asyncIterator]();
+      const result = await iter.next();
+      assert.equal(result.done, true);
+    });
+
+    it("leaves queued messages recoverable so nothing is dropped on reap", async () => {
+      // Mirrors the reaper: a message that raced in before close() must still be
+      // recoverable for re-dispatch into a fresh resumed session.
+      const ch = createMessageChannel();
+      ch.push(msg("raced"));
+      ch.close();
+      assert.deepEqual(ch.recover().map(text), ["raced"]);
+    });
+  });
+
   describe("ack()", () => {
     it("excludes an acknowledged message from recovery", async () => {
       const ch = createMessageChannel();
