@@ -39,6 +39,8 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      - name: Install restic (backup round-trip tests skip without it)
+        run: sudo apt-get update && sudo apt-get install -y restic
       - name: Configure git identity
         run: |
           git config --global user.email "ci@test.com"
@@ -54,6 +56,8 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      - name: Install restic (backup e2e test skips without it)
+        run: sudo apt-get update && sudo apt-get install -y restic
       - name: Configure git identity
         run: |
           git config --global user.email "ci@test.com"

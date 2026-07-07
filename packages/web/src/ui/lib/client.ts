@@ -648,6 +648,88 @@ export function searchImagegenModels(
   return get(`${V1}/system/imagegen/models/search?${params}`);
 }
 
+// --- Backup ---
+
+export type BackupKeep = { daily?: number; weekly?: number; monthly?: number };
+
+/** Server-redacted view: secrets appear only as hasPassword / env key names. */
+export type RedactedBackupConfig = {
+  repository?: string;
+  schedule?: string;
+  enabled?: boolean;
+  keep?: BackupKeep;
+  includeSessions?: boolean;
+  hasPassword: boolean;
+  envKeys: string[];
+};
+
+export type BackupState = {
+  /** Last successful run */
+  lastRun?: string;
+  lastSnapshotId?: string;
+  lastDurationMs?: number;
+  /** Last failed attempt */
+  lastAttempt?: string;
+  lastError?: string;
+  /** Snapshot succeeded but retention pruning failed */
+  pruneError?: string;
+};
+
+export type BackupStatus = {
+  resticInstalled: boolean;
+  resticVersion: string | null;
+  installHint: string | null;
+  config: RedactedBackupConfig;
+  state: BackupState;
+};
+
+export type BackupConfigUpdate = {
+  repository?: string;
+  schedule?: string;
+  enabled?: boolean;
+  keep?: BackupKeep;
+  includeSessions?: boolean;
+  password?: string;
+  env?: Record<string, string>;
+};
+
+export type BackupRunSummary = {
+  snapshotId: string;
+  filesNew: number;
+  filesChanged: number;
+  dataAdded: number;
+  totalFilesProcessed: number;
+  durationMs: number;
+};
+
+export type BackupSnapshot = {
+  id: string;
+  short_id: string;
+  time: string;
+  hostname: string;
+  paths: string[];
+};
+
+export function fetchBackupStatus(): Promise<BackupStatus> {
+  return get("/api/backup/status");
+}
+
+export function saveBackupConfig(config: BackupConfigUpdate): Promise<void> {
+  return put("/api/backup/config", config);
+}
+
+export function initBackupRepo(): Promise<{ ok: true; password: string | null }> {
+  return post("/api/backup/init");
+}
+
+export function runBackupNow(): Promise<BackupRunSummary> {
+  return post("/api/backup/run");
+}
+
+export function listBackupSnapshots(): Promise<BackupSnapshot[]> {
+  return get("/api/backup/snapshots");
+}
+
 // --- Auth (these stay on /api/ since they're not mind-scoped) ---
 
 export function fetchAvailableUsers(type?: string): Promise<AvailableUser[]> {

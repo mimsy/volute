@@ -37,6 +37,7 @@ A single daemon process (`volute up`) manages all minds, bridges, and schedules:
 - **Scheduler** (`packages/daemon/src/lib/daemon/scheduler.ts`) — Cron-based scheduled messages and scripts for minds
 - **SleepManager** (`packages/daemon/src/lib/daemon/sleep-manager.ts`) — Sleep/wake cycles: cron-based scheduling, pre-sleep ritual, session archival, message queuing, wake triggers, trigger-wake with return-to-sleep
 - **MailPoller** (`packages/daemon/src/lib/daemon/mail-poller.ts`) — System-wide email polling via volute.systems API (auto-activates when a systems account exists)
+- **BackupManager** (`packages/daemon/src/lib/daemon/backup-manager.ts`) — Cron-scheduled restic backups of the whole system
 - **DaemonClient** (`packages/cli/src/lib/daemon-client.ts`) — CLI commands talk to the daemon via HTTP API
 
 CLI commands like `mind start`, `mind stop`, `chat send`, `mind split`, `mind join` all proxy through the daemon API.
@@ -233,6 +234,12 @@ Extensions add functionality to Volute — custom UI sections, API routes, datab
 | `volute setup [--name N] [--system] [--service] [--dir D] [--port N] [--host H]` | Required first-run setup (interactive or non-interactive) |
 | `volute up [--port N] [--foreground] [--no-sandbox]` | Start the daemon (default: 1618) |
 | `volute down` | Stop the daemon |
+| `volute backup init [--repo R] [--password P]` | Configure and initialize the restic backup repository (prompts if flags omitted) |
+| `volute backup create` | Run a backup now (via daemon) |
+| `volute backup list` | List backup snapshots |
+| `volute backup schedule [--enable\|--disable] [--cron "..."]` | Manage scheduled backups |
+| `volute backup status` | Show backup config and last run |
+| `volute backup restore [--repo R] [--snapshot ID] [--target D] [--yes]` | Restore the system from a backup (in-place restore stops the daemon; --target inspects without touching it) |
 | `volute restart [--port N]` | Restart the daemon |
 | `volute status` | Show daemon status, service info, version, and minds |
 | `volute login` | CLI authentication to the daemon |
@@ -318,6 +325,7 @@ Mind-scoped commands (`chat`, `clock`, `skill`) use `--mind <name>` or `VOLUTE_M
 | `bridge-manager.ts` | Manages bridge processes per mind, resolves built-in → shared → mind-specific bridges |
 | `scheduler.ts` | Cron-based scheduled messages and scripts, per-mind schedule loading |
 | `mail-poller.ts` | Daemon-integrated mail polling (system-wide, uses volute.systems API) |
+| `backup-manager.ts` | Cron-scheduled restic backups (see `packages/daemon/src/lib/backup/`) |
 | `token-budget.ts` | Per-mind token budget enforcement |
 | `restart-tracker.ts` | Tracks mind restart state |
 | `sleep-manager.ts` | Sleep/wake cycles, cron scheduling, message queuing, wake triggers |

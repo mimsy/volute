@@ -30,6 +30,7 @@ const ungatedCommands = new Set([
   "update",
   "up",
   "down",
+  "backup", // `backup restore` must work on a fresh machine before setup
   "restart",
   "status",
   "login",
@@ -75,6 +76,9 @@ switch (command) {
     break;
   case "up":
     await import("./commands/up.js").then((m) => m.run(args));
+    break;
+  case "backup":
+    await import("./commands/backup.js").then((m) => m.run(args));
     break;
   case "down":
     await import("./commands/down.js").then((m) => m.run(args));
@@ -137,6 +141,7 @@ System:
   setup [--system] [--cli]          First-time setup
   up / down / restart              Daemon control
   status                           Show daemon & service status
+  backup init/create/list/restore  Back up and restore the system
   extension list/install/uninstall Manage extensions
   login / logout                   CLI authentication
   update                           Update volute

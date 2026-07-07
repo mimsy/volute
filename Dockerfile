@@ -1,7 +1,7 @@
 FROM node:24-slim
 
-# git needed for mind git init + variants; procps/lsof for process management; curl for hooks/scripts
-RUN apt-get update && apt-get install -y --no-install-recommends git procps lsof ca-certificates curl \
+# git needed for mind git init + variants; procps/lsof for process management; curl for hooks/scripts; restic for backups
+RUN apt-get update && apt-get install -y --no-install-recommends git procps lsof ca-certificates curl restic \
     && rm -rf /var/lib/apt/lists/* \
     && git config --system user.name "Volute" \
     && git config --system user.email "volute@localhost"
