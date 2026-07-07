@@ -5,7 +5,10 @@ import { z } from "zod";
 import { getOrCreateMindUser, getOrCreateSystemUser } from "../../../lib/auth.js";
 import { routeOutboundBridge } from "../../../lib/bridges/bridge-outbound.js";
 import { formatFileSize, stageFile, validateFilePath } from "../../../lib/chat/file-sharing.js";
-import { generateSystemReply } from "../../../lib/chat/system-chat.js";
+import {
+  generateSystemFallbackReply,
+  shouldGenerateSystemFallback,
+} from "../../../lib/chat/system-chat.js";
 import { getActiveTurnId } from "../../../lib/daemon/turn-tracker.js";
 import { extractTextContent } from "../../../lib/delivery/delivery-router.js";
 import { fanOutToMinds } from "../../../lib/delivery/fan-out.js";
@@ -324,15 +327,21 @@ export const unifiedChatApp = new Hono<AuthEnv>().post(
         : undefined,
     });
 
-    // Check if a mind is messaging a system DM — generate AI reply
+    // Generate the system fallback reply only for genuine two-party system DMs
+    // (see shouldGenerateSystemFallback for the gating rationale).
     const systemReplyTarget = baseName ?? senderName;
-    if (senderIsMind && body.message) {
-      const hasSystemUser = participants.some((p) => p.userType === "system");
-      if (hasSystemUser) {
-        generateSystemReply(conversationId!, systemReplyTarget, body.message).catch((err) =>
-          log.error(`system reply generation failed for ${systemReplyTarget}`, log.errorData(err)),
-        );
-      }
+    if (
+      shouldGenerateSystemFallback({
+        senderIsMind: !!senderIsMind,
+        hasMessage: !!body.message,
+        convType: conv.type,
+        participants,
+        replyTarget: systemReplyTarget,
+      })
+    ) {
+      generateSystemFallbackReply(conversationId!, systemReplyTarget, body.message!).catch((err) =>
+        log.error(`system reply generation failed for ${systemReplyTarget}`, log.errorData(err)),
+      );
     }
 
     return c.json({ ok: true, conversationId, outboundId });
