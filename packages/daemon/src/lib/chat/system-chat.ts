@@ -16,6 +16,32 @@ export function resetSystemDMCache(): void {
 }
 
 /**
+ * Decide whether a mind's message should trigger the system fallback reply.
+ *
+ * Only genuine two-party system DMs qualify. Channels and group DMs that include
+ * the system user are covered by fan-out to the running spirit (correctly
+ * labeled), so the utility fallback stays DM-only — this stops #system posts and
+ * group DMs from being treated as private DMs. The spirit shares the system user,
+ * so it must never be triggered to reply to its own message, which would loop.
+ */
+export function shouldGenerateSystemFallback(opts: {
+  senderIsMind: boolean;
+  hasMessage: boolean;
+  convType: string;
+  participants: { userType: string }[];
+  replyTarget: string;
+}): boolean {
+  const { senderIsMind, hasMessage, convType, participants, replyTarget } = opts;
+  if (!senderIsMind || !hasMessage) return false;
+  if (isSpiritName(replyTarget)) return false;
+  return (
+    convType === "dm" &&
+    participants.length === 2 &&
+    participants.some((p) => p.userType === "system")
+  );
+}
+
+/**
  * Ensure a DM conversation exists between the system user and a mind.
  * Caches per-mind to avoid repeated lookups.
  */
@@ -127,7 +153,7 @@ async function spiritWillHandle(): Promise<boolean> {
  * avoid a duplicate. Only when the spirit is stopped (and fan-out therefore
  * skipped it) does this generate a reply via the utility model.
  */
-export async function generateSystemReply(
+export async function generateSystemFallbackReply(
   conversationId: string,
   mindName: string,
   message: string,
