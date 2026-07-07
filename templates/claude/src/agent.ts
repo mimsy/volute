@@ -21,6 +21,7 @@ import { createPreCompactHook } from "./lib/hooks/pre-compact.js";
 import { createReplyInstructionsHook } from "./lib/hooks/reply-instructions.js";
 import { log } from "./lib/logger.js";
 import { createMessageChannel } from "./lib/message-channel.js";
+import { isSessionReapable } from "./lib/session-reaper.js";
 import { createSessionStore } from "./lib/session-store.js";
 import { loadPrompts, type SubagentConfig } from "./lib/startup.js";
 import { consumeStream } from "./lib/stream-consumer.js";
@@ -45,6 +46,8 @@ type Session = {
   replyInstructionsFired: boolean;
   replyInstructionsMode: "once" | "always" | "never";
   contextTokens: number;
+  /** Last inbound message or completed turn — drives idle reaping. */
+  lastActivityAt: number;
 };
 
 export function createMind(options: {
@@ -58,6 +61,8 @@ export function createMind(options: {
   maxContextTokens?: number;
   subagents?: Record<string, SubagentConfig>;
   onIdentityReload?: () => Promise<void>;
+  /** Idle minutes before a session's SDK subprocess is reaped. 0 disables. Default 30. */
+  sessionIdleMinutes?: number;
 }): {
   resolve: HandlerResolver;
   waitForCommits: () => Promise<void>;
@@ -320,6 +325,7 @@ export function createMind(options: {
           // This turn's message is fully processed — drop it from the channel's
           // in-flight set so a later compaction abort won't re-feed it.
           session.channel.ack();
+          session.lastActivityAt = Date.now();
           await autoCommit.flushFileChanges();
           const wasCompacting = compactionTriggered.get(session.name);
           compactionTriggered.set(session.name, false);
@@ -508,6 +514,7 @@ export function createMind(options: {
       replyInstructionsFired: false,
       replyInstructionsMode: "once",
       contextTokens: 0,
+      lastActivityAt: Date.now(),
     };
     sessions.set(name, session);
 
@@ -528,6 +535,45 @@ export function createMind(options: {
 
     startSession(session, savedSessionId);
     return session;
+  }
+
+  // --- Idle session reaping ---
+  // Each session holds a resident SDK subprocess (~250MB) for its whole life.
+  // After the idle timeout, shut the subprocess down while keeping the session
+  // resumable: the session id is persisted, so the next inbound message
+  // transparently re-creates the session via getOrCreateSession's resume path.
+  const idleTimeoutMs = (options.sessionIdleMinutes ?? 30) * 60_000;
+
+  function reapSession(session: Session) {
+    log("mind", `session "${session.name}": idle — reaping SDK subprocess (resumable)`);
+    // Delete first so a racing inbound message spins up a fresh resumed session
+    // instead of reusing the one we're tearing down.
+    sessions.delete(session.name);
+    compactionTriggered.delete(session.name);
+    // Terminate the subprocess and end the input iterable so the stream consumer
+    // unwinds (its finally block also deletes from the map, now a no-op).
+    session.currentQuery?.close();
+    session.channel.close();
+    // Nothing should have raced in (isSessionReapable checked isEmpty), but if it
+    // did, re-dispatch into a fresh session so no input is dropped.
+    const pending = session.channel.recover();
+    if (pending.length > 0) {
+      const fresh = getOrCreateSession(session.name);
+      for (const msg of pending) fresh.channel.push(msg);
+    }
+  }
+
+  if (idleTimeoutMs > 0) {
+    log("mind", `idle session reaper: ${idleTimeoutMs / 60_000} min timeout`);
+    const checkMs = Math.min(60_000, idleTimeoutMs);
+    const reaper = setInterval(() => {
+      const now = Date.now();
+      const stale = [...sessions.values()].filter((s) =>
+        isSessionReapable(s, now, idleTimeoutMs, (name) => !!compactionTriggered.get(name)),
+      );
+      for (const session of stale) reapSession(session);
+    }, checkMs);
+    reaper.unref?.();
   }
 
   // --- MessageHandler implementation ---
@@ -575,6 +621,7 @@ export function createMind(options: {
         }
 
         // Push message into SDK
+        session.lastActivityAt = Date.now();
         session.messageIds.push(meta.messageId);
         session.channel.push({
           type: "user",

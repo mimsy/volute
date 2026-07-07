@@ -11,6 +11,14 @@ export type MessageChannel = {
    * compaction abort so in-flight input is never lost.
    */
   recover: () => SDKUserMessage[];
+  /**
+   * Terminate the input iterable: resolve any pending `next()` with `done: true`
+   * and make subsequent `next()` calls return done. The SDK sees end-of-input and
+   * shuts the query down. Used by the idle reaper to release the SDK subprocess.
+   */
+  close: () => void;
+  /** True when nothing is queued or in flight (no pending work). */
+  isEmpty: () => boolean;
   iterable: AsyncIterable<SDKUserMessage>;
 };
 
@@ -23,6 +31,7 @@ export function createMessageChannel(): MessageChannel {
   // re-feed the unprocessed ones instead of dropping them.
   const inFlight: SDKUserMessage[] = [];
   let resolve: ((value: IteratorResult<SDKUserMessage>) => void) | null = null;
+  let closed = false;
 
   function deliver(msg: SDKUserMessage): IteratorResult<SDKUserMessage> {
     inFlight.push(msg);
@@ -52,10 +61,24 @@ export function createMessageChannel(): MessageChannel {
       }
       return [...inFlight.splice(0), ...queue.splice(0)];
     },
+    close() {
+      closed = true;
+      if (resolve) {
+        const r = resolve;
+        resolve = null;
+        r({ value: undefined as any, done: true });
+      }
+    },
+    isEmpty() {
+      return queue.length === 0 && inFlight.length === 0;
+    },
     iterable: {
       [Symbol.asyncIterator]() {
         return {
           next(): Promise<IteratorResult<SDKUserMessage>> {
+            if (closed) {
+              return Promise.resolve({ value: undefined as any, done: true });
+            }
             if (queue.length > 0) {
               return Promise.resolve(deliver(queue.shift()!));
             }
