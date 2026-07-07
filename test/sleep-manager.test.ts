@@ -10,7 +10,7 @@ import {
   type SleepState,
 } from "../packages/daemon/src/lib/daemon/sleep-manager.js";
 import { getDb } from "../packages/daemon/src/lib/db.js";
-import { deliveryQueue } from "../packages/daemon/src/lib/schema.js";
+import { activity, deliveryQueue, mindNotices } from "../packages/daemon/src/lib/schema.js";
 
 // We test the SleepManager's pure logic methods without starting the daemon.
 // The class methods like checkWakeTrigger, formatDuration, etc. are tested directly.
@@ -90,6 +90,15 @@ class TestSleepManager extends SleepManager {
     this.deliveredPayloads.push(payload);
     return this.deliverResult(payload);
   }
+
+  // Expose wake-failure handling for testing
+  testHandleWakeFailure(name: string, err: unknown): Promise<void> {
+    return (this as any).handleWakeFailure(name, err);
+  }
+
+  testResetWakeBackoff(name: string): void {
+    (this as any).resetWakeBackoff(name);
+  }
 }
 
 function sleepingState(overrides?: Partial<SleepState>): SleepState {
@@ -101,6 +110,8 @@ function sleepingState(overrides?: Partial<SleepState>): SleepState {
     voluntaryWakeAt: null,
     queuedMessageCount: 0,
     triggerWakeHistory: [],
+    wakeFailures: 0,
+    nextWakeAttemptAt: null,
     ...overrides,
   };
 }
@@ -114,6 +125,8 @@ function awakeState(): SleepState {
     voluntaryWakeAt: null,
     queuedMessageCount: 0,
     triggerWakeHistory: [],
+    wakeFailures: 0,
+    nextWakeAttemptAt: null,
   };
 }
 
@@ -887,5 +900,78 @@ describe("SleepManager.flushQueuedMessages", () => {
     assert.equal(flushed, 1, "the good message delivered");
     assert.equal(sm.deliveredPayloads.length, 1, "the unparseable row never reached delivery");
     assert.equal((await queuedRows(mind)).length, 0, "both rows cleared from the queue");
+  });
+});
+
+describe("SleepManager wake-failure handling", () => {
+  it("applies increasing backoff on consecutive failures instead of retrying every tick", async () => {
+    const sm = new TestSleepManager();
+    sm.setStateForTest("faily", sleepingState());
+    const err = new Error("boom");
+
+    await sm.testHandleWakeFailure("faily", err);
+    let state = sm.getStateForTest("faily");
+    assert.equal(state?.wakeFailures, 1);
+    assert.ok(state?.nextWakeAttemptAt, "first failure schedules a retry");
+    const wait1 = new Date(state!.nextWakeAttemptAt!).getTime() - Date.now();
+    assert.ok(wait1 > 30_000 && wait1 <= 61_000, `first backoff ~60s, got ${wait1}ms`);
+
+    await sm.testHandleWakeFailure("faily", err);
+    state = sm.getStateForTest("faily");
+    assert.equal(state?.wakeFailures, 2);
+    const wait2 = new Date(state!.nextWakeAttemptAt!).getTime() - Date.now();
+    assert.ok(wait2 > wait1, "second backoff is longer than the first");
+
+    // Still sleeping — hasn't given up yet.
+    assert.equal(sm.isSleeping("faily"), true);
+  });
+
+  it("gives up after MAX attempts, clears sleep state, and surfaces the failure", async () => {
+    const sm = new TestSleepManager();
+    sm.setStateForTest("broken", sleepingState());
+    const err = new Error("nonexistent model gpt-5.4");
+
+    for (let i = 0; i < 5; i++) {
+      await sm.testHandleWakeFailure("broken", err);
+    }
+
+    // It isn't asleep, it's broken — sleep state cleared so the tick stops retrying.
+    assert.equal(sm.isSleeping("broken"), false);
+    assert.equal(sm.getStateForTest("broken"), undefined);
+
+    const db = await getDb();
+
+    // Activity event surfaced for the web UI.
+    const events = await db.select().from(activity).where(eq(activity.mind, "broken")).all();
+    assert.ok(
+      events.some((e) => e.type === "mind_stopped" && e.summary.includes("failed to wake")),
+      "expected a mind_stopped wake-failure activity event",
+    );
+
+    // Notice recorded so the mind learns what happened on its next session.
+    const notices = await db.select().from(mindNotices).where(eq(mindNotices.mind, "broken")).all();
+    assert.ok(
+      notices.some((n) => n.kind === "startup" && n.detail.includes("gpt-5.4")),
+      "expected a startup notice carrying the wake error",
+    );
+  });
+
+  it("resetWakeBackoff clears the failure count and scheduled retry", () => {
+    const sm = new TestSleepManager();
+    sm.setStateForTest(
+      "recover",
+      sleepingState({ wakeFailures: 3, nextWakeAttemptAt: new Date().toISOString() }),
+    );
+    sm.testResetWakeBackoff("recover");
+    const state = sm.getStateForTest("recover");
+    assert.equal(state?.wakeFailures, 0);
+    assert.equal(state?.nextWakeAttemptAt, null);
+  });
+
+  it("handleWakeFailure is a no-op for a mind that is not sleeping", async () => {
+    const sm = new TestSleepManager();
+    sm.setStateForTest("awake", awakeState());
+    await sm.testHandleWakeFailure("awake", new Error("x"));
+    assert.equal(sm.getStateForTest("awake")?.wakeFailures, 0);
   });
 });
