@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.45.2](https://github.com/mimsy/volute/compare/volute-v0.45.1...volute-v0.45.2) (2026-07-07)
+
+
+### Bug Fixes
+
+* bound wake retries and surface wake failures ([#480](https://github.com/mimsy/volute/issues/480)) ([85b5d41](https://github.com/mimsy/volute/commit/85b5d41c2eca3ff717b464292777f27a1b590989))
+* chown mind dir after all creation-time writes under user isolation ([#486](https://github.com/mimsy/volute/issues/486)) ([38ace64](https://github.com/mimsy/volute/commit/38ace64d7727db511cd182758998994cf75f8f82))
+* chown post-creation skill installs under user isolation ([#483](https://github.com/mimsy/volute/issues/483)) ([5e8e541](https://github.com/mimsy/volute/commit/5e8e541aa9d42b2f73d65e248efb64ddd3e8bb30))
+* clean up ephemeral session state and per-message listeners ([#487](https://github.com/mimsy/volute/issues/487)) ([8e14735](https://github.com/mimsy/volute/commit/8e147354f04119a4858e7710701cb40b23c0196a))
+* deliver mind-to-spirit DMs exactly once ([#478](https://github.com/mimsy/volute/issues/478)) ([787f354](https://github.com/mimsy/volute/commit/787f35409b6666f7809812bb1eb7ec9a5edda8af))
+* exclude local restic repo from backup and fix oauth-health boundary flake ([#482](https://github.com/mimsy/volute/issues/482)) ([2203db1](https://github.com/mimsy/volute/commit/2203db1f9c13e508bea7a954848c353ad8b755e1))
+* failed variant join leaves parent files root-owned under isolation ([#496](https://github.com/mimsy/volute/issues/496)) ([883699f](https://github.com/mimsy/volute/commit/883699f6080760f82e4ae7a202eb94198965c592))
+* harden variant join — abort failed merges, stop variant server, use registry dirs ([#475](https://github.com/mimsy/volute/issues/475)) ([f99e6ff](https://github.com/mimsy/volute/commit/f99e6ffe3a482b8cdcb7bb559cfe7cf353ac67c6))
+* imagegen skill distinguishes daemon errors from missing config ([#479](https://github.com/mimsy/volute/issues/479)) ([6649adc](https://github.com/mimsy/volute/commit/6649adc5ef309f309158c9904eac59898077f8f3))
+* reap idle sessions to release SDK subprocess memory ([#492](https://github.com/mimsy/volute/issues/492)) ([01fd8af](https://github.com/mimsy/volute/commit/01fd8afd8a5ccb7a5f3cdbea161b82c4eef0770c))
+* recover pages repo from interrupted git init ([#488](https://github.com/mimsy/volute/issues/488)) ([ffd9214](https://github.com/mimsy/volute/commit/ffd9214813ed2a6ab9641a2c32eac9b903ce6da5))
+* route memory consolidation through ai-service and bound input ([#471](https://github.com/mimsy/volute/issues/471)) ([320b65c](https://github.com/mimsy/volute/commit/320b65c93f3535d28b4c4304e4de973cdddf8100))
+* run schedule scripts with the mind's auth env ([#474](https://github.com/mimsy/volute/issues/474)) ([c8d7a33](https://github.com/mimsy/volute/commit/c8d7a33b2ff6386c5904f8a0faf86934326a7251))
+* **scheduler:** default schedule fires to queue while sleeping ([#481](https://github.com/mimsy/volute/issues/481)) ([fc015cf](https://github.com/mimsy/volute/commit/fc015cf169781e9028ab226c19f2b84fd76c3b1c))
+* sleep-queue flush double-records messages and mishandles failures ([#476](https://github.com/mimsy/volute/issues/476)) ([70e69f6](https://github.com/mimsy/volute/commit/70e69f6f1a4d750f8592627309a2baa317acdb2f))
+* spirit never replies to its own messages ([#484](https://github.com/mimsy/volute/issues/484)) ([7db6bb7](https://github.com/mimsy/volute/commit/7db6bb7c27a98f59a408a1a86ff49001ddda3b21))
+* **web:** wake-trigger checkboxes reflect runtime defaults ([#473](https://github.com/mimsy/volute/issues/473))j ([2c5cb29](https://github.com/mimsy/volute/commit/2c5cb2954f67bdfa5685821ada43ad7d76ebe781))
+
 ## [0.45.1](https://github.com/mimsy/volute/compare/volute-v0.45.0...volute-v0.45.1) (2026-07-07)
 
 
