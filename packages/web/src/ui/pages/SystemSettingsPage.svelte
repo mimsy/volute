@@ -30,7 +30,7 @@ type Tab = (typeof TABS)[number];
 const TAB_LABELS: Record<Tab, string> = {
   settings: "Settings",
   "mind-defaults": "Mind Defaults",
-  prompts: "Prompts",
+  prompts: "Prompt Library",
   skills: "Skills",
   extensions: "Extensions",
   backups: "Backups",

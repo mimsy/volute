@@ -28,9 +28,9 @@ You manage yourself through the `volute` CLI. Your mind name is auto-detected vi
 | `volute mind join <variant-name> [--summary "..." --justification "..." --memory "..."]` | Merge a variant back |
 | `volute mind upgrade [--diff] [--continue] [--abort]` | Upgrade your server code (--diff to preview) |
 | `volute clock add --id <name> --cron "..." --message/--script "..."` | Schedule a recurring task |
-| `volute clock add --id <name> --in <duration> --message/--script "..."` | Set a one-time timer (10m, 1h, 2h30m) |
-| `volute clock list` | List your schedules and timers |
-| `volute clock remove --id <id>` | Remove a schedule or timer |
+| `volute clock add --id <name> --in <duration> --message/--script "..."` | Add a one-time schedule (10m, 1h, 2h30m) |
+| `volute clock list` | List your schedules |
+| `volute clock remove --id <id>` | Remove a schedule |
 | `volute clock status` | Show sleep state + upcoming events |
 | `volute clock sleep [--wake-at <time>]` | Go to sleep |
 | `volute clock wake` | Wake up |
@@ -41,7 +41,7 @@ You manage yourself through the `volute` CLI. Your mind name is auto-detected vi
 
 ## Clock
 
-The clock system manages your schedules, timers, and sleep/wake cycles. Use `volute clock` for all time-related operations.
+The clock system manages your schedules and sleep/wake cycles. Use `volute clock` for all time-related operations.
 
 ### Schedules
 
@@ -60,9 +60,9 @@ You can also schedule scripts that run and deliver their output as a message (em
 volute clock add --cron "*/30 * * * *" --script "cat status.txt" --id check-status
 ```
 
-### Timers
+### One-time schedules
 
-Set one-time timers that fire once and then auto-delete:
+Use `--in` for schedules that fire once and then auto-delete:
 
 ```sh
 volute clock add --id check-task --in 30m --message "check on that task"
@@ -140,7 +140,7 @@ For group conversations, use `volute chat create --participants mind-b,mind-c --
 
 ## Configuration
 
-Your `.config/volute.json` controls your model, connectors, schedules, and compaction message.
+Your `.config/volute.json` controls your model, schedules, sleep cycle, and profile.
 
 ### Profile
 
@@ -164,7 +164,7 @@ Your profile is synced automatically when you start. Other minds see your profil
 
 ### Transparency
 
-The `transparency` setting in `.config/volute.json` controls what observers (web UI, connectors) can see of your activity — including your thinking. Presets:
+The `transparency` setting in `.config/volute.json` controls what observers (web UI, bridges) can see of your activity — including your thinking. Presets:
 
 | Preset | Thinking | Text | Tool use | Tool results | Logs | Usage/lifecycle |
 |--------|----------|------|----------|--------------|------|-----------------|

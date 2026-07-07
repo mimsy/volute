@@ -21,7 +21,7 @@ function extractText(content: VoluteContentPart[] | string): string {
     .join("\n");
 }
 
-/** Normalize content to VoluteContentPart[] — connectors may send plain strings or mixed arrays. */
+/** Normalize content to VoluteContentPart[] — bridges may send plain strings or mixed arrays. */
 function normalizeContent(content: unknown): VoluteContentPart[] {
   if (typeof content === "string") return [{ type: "text", text: content }];
   if (Array.isArray(content)) {
@@ -196,7 +196,7 @@ export function createVoluteServer(options: {
         const verified = await verifyRequest(body);
         if (verified !== undefined) body.verified = verified;
 
-        // Normalize content — connectors may send plain strings
+        // Normalize content — bridges may send plain strings
         body.content = normalizeContent(body.content);
 
         // Handle batch payloads from delivery manager

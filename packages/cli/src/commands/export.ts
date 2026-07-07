@@ -11,7 +11,7 @@ const cmd = command({
   flags: {
     "include-env": { type: "boolean", description: "Include environment variables" },
     "include-identity": { type: "boolean", description: "Include identity keys" },
-    "include-connectors": { type: "boolean", description: "Include connector configs" },
+    "include-bridges": { type: "boolean", description: "Include bridge configs" },
     "include-history": { type: "boolean", description: "Include message history" },
     "include-sessions": { type: "boolean", description: "Include session data" },
     "include-src": { type: "boolean", description: "Include source code" },
@@ -36,7 +36,7 @@ const cmd = command({
     const includeAll = flags.all;
     const includeEnv = includeAll || flags["include-env"];
     const includeIdentity = includeAll || flags["include-identity"];
-    const includeConnectors = includeAll || flags["include-connectors"];
+    const includeConnectors = includeAll || flags["include-bridges"];
     const includeHistory = includeAll || flags["include-history"];
     const includeSessions = includeAll || flags["include-sessions"];
     const includeSrc = includeAll || flags["include-src"];
@@ -93,7 +93,7 @@ const cmd = command({
       ["src", includeSrc],
       ["env", includeEnv],
       ["identity", includeIdentity],
-      ["connectors", includeConnectors],
+      ["bridges", includeConnectors],
       ["history", includeHistory],
       ["sessions", includeSessions],
     ] as const) {

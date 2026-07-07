@@ -88,7 +88,7 @@ const clockStatusCmd = command({
       console.log("Upcoming (next 24h):");
       for (const u of status.upcoming) {
         const time = fmtTime(u.at);
-        const label = u.type === "timer" ? "[timer]" : "[cron]";
+        const label = u.type === "timer" ? "[once]" : "[cron]";
         console.log(`  ${u.id.padEnd(20)} ${label}  ${time}`);
       }
     } else {
@@ -105,7 +105,7 @@ const clockStatusCmd = command({
 
 const listSchedulesCmd = command({
   name: "volute clock list",
-  description: "List schedules and timers",
+  description: "List schedules",
   flags: {
     mind: { type: "string", description: "Mind name" },
   },
@@ -151,14 +151,14 @@ const listSchedulesCmd = command({
 
 const addScheduleCmd = command({
   name: "volute clock add",
-  description: "Add a schedule or timer",
+  description: "Add a schedule (recurring --cron or one-time --in)",
   flags: {
     mind: { type: "string", description: "Mind name" },
     cron: { type: "string", description: "Cron expression" },
     in: { type: "string", description: "Duration (e.g. 30s, 10m, 1h)" },
     message: { type: "string", description: "Message to send" },
     script: { type: "string", description: "Script to run" },
-    id: { type: "string", description: "Schedule ID (required)" },
+    id: { type: "string", description: "Unique name for this schedule (required)" },
     session: { type: "string", description: "Session name" },
     "while-sleeping": {
       type: "string",
@@ -244,7 +244,7 @@ const addScheduleCmd = command({
 
     const data = (await res.json()) as { id: string };
     if (flags.in) {
-      console.log(`Timer set: ${data.id} (fires in ${flags.in})`);
+      console.log(`Schedule added: ${data.id} (fires once in ${flags.in})`);
     } else {
       console.log(`Schedule added: ${data.id}`);
     }
@@ -253,7 +253,7 @@ const addScheduleCmd = command({
 
 const removeScheduleCmd = command({
   name: "volute clock remove",
-  description: "Remove a schedule or timer",
+  description: "Remove a schedule",
   flags: {
     mind: { type: "string", description: "Mind name" },
     id: { type: "string", description: "Schedule ID (required)" },
@@ -288,22 +288,22 @@ const removeScheduleCmd = command({
 
 const cmd = subcommands({
   name: "volute clock",
-  description: "Manage schedules, timers, and sleep/wake cycles",
+  description: "Manage schedules and sleep/wake cycles",
   commands: {
     status: {
       description: "Show sleep state and upcoming schedule fires",
       run: clockStatusCmd.execute,
     },
     list: {
-      description: "List schedules and timers",
+      description: "List schedules",
       run: listSchedulesCmd.execute,
     },
     add: {
-      description: "Add a schedule or timer",
+      description: "Add a schedule (recurring --cron or one-time --in)",
       run: addScheduleCmd.execute,
     },
     remove: {
-      description: "Remove a schedule or timer",
+      description: "Remove a schedule",
       run: removeScheduleCmd.execute,
     },
     sleep: {

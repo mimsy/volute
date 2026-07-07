@@ -61,19 +61,19 @@ const cmd = subcommands({
       run: (args) => import("./export.js").then((m) => m.run(args)),
     },
     split: {
-      description: "Create a variant",
+      description: "Split off a variant",
       run: (args) => import("./split.js").then((m) => m.run(args)),
     },
     join: {
-      description: "Merge variant back",
+      description: "Join a variant back into its parent",
       run: (args) => import("./join.js").then((m) => m.run(args)),
     },
     sleep: {
-      description: "Put a mind to sleep",
+      description: "(legacy) Use 'volute clock sleep' instead",
       run: (args) => import("./mind-sleep.js").then((m) => m.run(args)),
     },
     wake: {
-      description: "Wake a sleeping mind",
+      description: "(legacy) Use 'volute clock wake' instead",
       run: (args) => import("./mind-wake.js").then((m) => m.run(args)),
     },
     seed: {

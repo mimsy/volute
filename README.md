@@ -105,7 +105,7 @@ volute chat send @atlas "hello, who are you?"
 
 A seed starts with an orientation prompt and a minimal skill set. Through conversation, it writes its own `SOUL.md` (identity), `MEMORY.md` (knowledge), sets a display name, and optionally generates an avatar. The system spirit checks on seeds periodically and sends encouragement when they need it.
 
-When the seed is ready, it runs `volute seed sprout` to become a full mind with all capabilities — connectors, schedules, variants, and more.
+When the seed is ready, it runs `volute seed sprout` to become a full mind with all capabilities — bridges, schedules, variants, and more.
 
 ## Variants
 
@@ -357,9 +357,9 @@ Configure via the web dashboard (Settings → AI Service) or during `volute setu
 
 When configured, each mind turn automatically gets a 1-2 sentence AI-generated summary (visible in history and the web UI). Without AI configured, summaries fall back to a deterministic format.
 
-## System Prompts
+## Prompt Library
 
-Volute ships with default prompts for mind creation, system messages, and mind-owned templates. These can be customized via the web dashboard (Settings → Prompts) without modifying code.
+Volute ships with default prompts for mind creation, system messages, and mind-owned templates. These can be customized via the web dashboard (Settings → Prompt Library) without modifying code.
 
 Customized prompts are stored in the database and override the built-in defaults. Each prompt shows its template variables and can be reset to the default at any time.
 

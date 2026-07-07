@@ -150,14 +150,14 @@ volute mind import <path> [--name <name>] [--session <path>] [--template <name>]
 Export a mind as an archive.
 
 ```sh
-volute mind export <name> [--include-env] [--include-identity] [--include-connectors] [--include-history] [--include-sessions] [--include-src] [--all] [--output <path>]
+volute mind export <name> [--include-env] [--include-identity] [--include-bridges] [--include-history] [--include-sessions] [--include-src] [--all] [--output <path>]
 ```
 
 | Flag | Description |
 |------|-------------|
 | `--include-env` | Include environment variables |
 | `--include-identity` | Include identity keypair |
-| `--include-connectors` | Include connector configs |
+| `--include-bridges` | Include bridge configs |
 | `--include-history` | Include message history |
 | `--include-sessions` | Include session state |
 | `--include-src` | Include source code |

@@ -76,6 +76,7 @@ import {
   getMindPromptDefaults,
   getPrompt,
   getPromptIfCustom,
+  ORIENTATION_MARKER,
   substitute,
 } from "../../lib/prompts.js";
 import { mindHistory, summaries, turns } from "../../lib/schema.js";
@@ -928,7 +929,7 @@ const app = new Hono<AuthEnv>()
       if (body.stage === "seed") {
         // Write orientation SOUL.md
         const descLine = body.description
-          ? `\nThe human who planted you described you as: "${body.description}"\n`
+          ? `\nYour creator described you as: "${body.description}"\n`
           : "";
         const seedSoulRaw =
           body.seedSoul ?? (await getPrompt("seed_soul", { name, description: descLine }));
@@ -1637,7 +1638,6 @@ const app = new Hono<AuthEnv>()
     if (entry.stage !== "seed") return c.json({ output: "" });
 
     const db = await getDb();
-    const ORIENTATION_MARKER = "You don't have a soul yet";
     const rawCreator = Number(process.env.VOLUTE_NURTURE_CREATOR_MINUTES);
     const creatorThreshold = Number.isNaN(rawCreator) ? 5 : rawCreator;
     const rawSpirit = Number(process.env.VOLUTE_NURTURE_SPIRIT_MINUTES);

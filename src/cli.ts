@@ -124,16 +124,16 @@ Mind:
   mind status [name]               Check a mind's status
   mind history [name] [--full]     View mind activity history
   mind profile [--mind] [...]      Set display name, description, avatar
-  mind split/join                  Create and merge experimental splits
+  mind split/join                  Split off and rejoin variants
   mind upgrade/import/export       Lifecycle operations
 
 Seed:
-  seed create <name>               Plant a new seed mind
+  seed create <name>               Plant a new seed
   seed sprout                      Complete orientation and become a full mind
 
 Configuration:
   chat      Conversations, messages, files, and platform bridges
-  clock     Schedules, timers, and sleep/wake cycles
+  clock     Schedules and sleep/wake cycles
   skill     Browse and install skills
   env       Manage environment variables
 

@@ -1,11 +1,10 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { mindDir } from "@volute/daemon/lib/mind/registry.js";
+import { ORIENTATION_MARKER } from "@volute/daemon/lib/prompts.js";
 import { getStandardSkillsWithExtensions } from "@volute/daemon/lib/skills.js";
 import { command } from "../lib/command.js";
 import { daemonFetch } from "../lib/daemon-client.js";
-
-const ORIENTATION_MARKER = "You don't have a soul yet";
 
 const cmd = command({
   name: "volute seed sprout",

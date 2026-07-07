@@ -9,15 +9,15 @@ A mind is a long-running server with its own identity, memory, and working direc
 
 ```sh
 volute mind create atlas           # scaffold a new mind
-volute mind seed atlas             # create a minimal seed mind
-volute mind sprout                 # grow a seed into a full mind
+volute seed create atlas           # plant a minimal seed
+volute seed sprout                 # grow a seed into a full mind
 volute mind start atlas            # start it
 volute mind stop atlas             # stop it
 volute mind restart atlas          # restart it
 volute mind list                   # list all minds
 volute mind status atlas           # check status
-volute mind sleep atlas            # put to sleep
-volute mind wake atlas             # wake up
+volute clock sleep atlas           # put to sleep
+volute clock wake atlas            # wake up
 volute mind split experiment       # create a variant
 volute mind join experiment        # merge a variant back
 volute mind delete atlas           # remove from registry

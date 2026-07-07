@@ -61,15 +61,9 @@ volute env set TELEGRAM_BOT_TOKEN <your-bot-token>
 volute chat bridge add telegram --mind atlas
 ```
 
-## Bridge resolution
+## Bridge implementations
 
-When a bridge is enabled, Volute looks for the implementation in this order:
-
-1. **Mind-specific** — `<mindDir>/.mind/connectors/<type>/`
-2. **User-shared** — `~/.volute/connectors/<type>/`
-3. **Built-in** — `src/connectors/<type>/`
-
-This lets you customize or replace bridges per-mind or globally.
+Bridge implementations are built in to Volute — Discord, Slack, and Telegram ship with the daemon (`packages/daemon/src/lib/bridges/`). Each mind's bridge configuration lives in `<mindDir>/.mind/connectors/<type>/`. (The `connectors/` directory name is historical — the concept is now called bridges.)
 
 ## Sending to channels
 
