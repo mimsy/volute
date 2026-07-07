@@ -478,16 +478,20 @@ export function createMind(options: {
             log("mind", `session "${session.name}": stream consumer error:`, retryErr);
             await emitError(retryErr);
             emitDone();
-            sessions.delete(session.name);
           }
         } else {
           log("mind", `session "${session.name}": stream consumer error:`, err);
           await emitError(err);
           emitDone();
-          sessions.delete(session.name);
         }
+      } finally {
+        // The stream consumer has ended (subprocess exit, error, or fresh-start
+        // abandonment) — drop the session so the sessions map doesn't retain dead
+        // entries. Matters most for ephemeral $new sessions once the idle reaper
+        // (#458) kills their subprocess, but also for any named session that ends.
+        sessions.delete(session.name);
+        log("mind", `session "${session.name}": stream consumer ended`);
       }
-      log("mind", `session "${session.name}": stream consumer ended`);
     })();
   }
 
@@ -530,14 +534,26 @@ export function createMind(options: {
 
   function createSessionHandler(sessionName: string): MessageHandler {
     return {
-      handle(content: VoluteContentPart[], meta: HandlerMeta, listener: Listener): () => void {
+      handle(content: VoluteContentPart[], meta: HandlerMeta, listener?: Listener): () => void {
         const session = getOrCreateSession(sessionName);
 
-        // Filter listener to only receive events for this messageId
-        const filteredListener: Listener = (event) => {
-          if (event.messageId === meta.messageId) listener(event);
-        };
-        session.listeners.add(filteredListener);
+        // Only register a listener when a caller actually wants events. A per-message
+        // listener that's never removed would grow session.listeners without bound and
+        // make broadcastToSession O(messages-ever-received). The live dispatch path
+        // passes no listener, so this is usually a no-op.
+        let filteredListener: Listener | undefined;
+        if (listener) {
+          // Filter to only this messageId, and self-remove on the matching done so a
+          // caller that forgets to unsubscribe can't reintroduce the leak.
+          filteredListener = (event) => {
+            if (event.messageId !== meta.messageId) return;
+            listener(event);
+            if (event.type === "done" && filteredListener) {
+              session.listeners.delete(filteredListener);
+            }
+          };
+          session.listeners.add(filteredListener);
+        }
 
         // Track channel/sender for reply instructions
         if (meta.channel) {
@@ -567,7 +583,9 @@ export function createMind(options: {
           parent_tool_use_id: null,
         });
 
-        return () => session.listeners.delete(filteredListener);
+        return () => {
+          if (filteredListener) session.listeners.delete(filteredListener);
+        };
       },
     };
   }

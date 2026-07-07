@@ -1192,6 +1192,12 @@ export class DeliveryManager {
       if (buffer && buffer.messages.length > 0) {
         // Session idle + messages buffered → flush after debounce
         this.scheduleBatchTimers(mind, session, bufferKey);
+      } else if (session.startsWith("new-")) {
+        // Ephemeral $new sessions get a unique name per message and never recur,
+        // so their state would accumulate forever. Reclaim it once idle. Long-lived
+        // named sessions keep their entry (bounded by routing config).
+        mindSessions.delete(session);
+        if (mindSessions.size === 0) this.sessionStates.delete(mind);
       }
     }
   }

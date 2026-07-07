@@ -228,6 +228,46 @@ describe("DeliveryManager", () => {
       manager = new DeliveryManager();
       assert.equal(manager.clearSessionActive("nope", "main", 10 * 60_000), false);
     });
+
+    function seedActiveSession(mgr: DeliveryManager, mind: string, session: string) {
+      const states = (mgr as any).sessionStates as Map<string, Map<string, any>>;
+      let mindSessions = states.get(mind);
+      if (!mindSessions) {
+        mindSessions = new Map();
+        states.set(mind, mindSessions);
+      }
+      mindSessions.set(session, {
+        activeCount: 1,
+        lastDeliveredAt: Date.now(),
+        lastDeliverySenders: new Set<string>(),
+        lastDeliveryChannels: new Set<string>(),
+        seenChannelProfiles: new Set<string>(),
+      });
+      return states;
+    }
+
+    it("reclaims ephemeral new-* session state when it goes idle", () => {
+      manager = new DeliveryManager();
+      const states = seedActiveSession(manager, "emind", "new-123-abc");
+      assert.equal(manager.isSessionBusy("emind", "new-123-abc"), true);
+
+      // Turn completes → decrementActive drops the ephemeral entry (and empties the mind map).
+      manager.sessionDone("emind", "new-123-abc");
+
+      assert.equal(manager.isSessionBusy("emind", "new-123-abc"), false);
+      assert.equal(states.has("emind"), false, "empty mind map should be removed too");
+    });
+
+    it("retains named session state when it goes idle", () => {
+      manager = new DeliveryManager();
+      const states = seedActiveSession(manager, "nmind", "main");
+
+      manager.sessionDone("nmind", "main");
+
+      // Long-lived named sessions keep their entry (bounded by routing config).
+      assert.ok(states.get("nmind")?.has("main"), "named session entry should be retained");
+      assert.equal(manager.isSessionBusy("nmind", "main"), false);
+    });
   });
 
   describe("new-speaker no longer interrupts (buffers instead)", () => {

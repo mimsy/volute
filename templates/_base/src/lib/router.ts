@@ -191,7 +191,11 @@ export function createRouter(options: {
     instructions: string | undefined,
     sessionName: string,
   ): VoluteContentPart[] {
-    if (!instructions || instructedSessions.has(sessionName)) return content;
+    if (!instructions) return content;
+    // Ephemeral $new sessions get a unique name dispatched exactly once, so we
+    // always prepend and never track them — tracking would leak an entry per message.
+    if (sessionName.startsWith("new-")) return prependInstructions(content, instructions);
+    if (instructedSessions.has(sessionName)) return content;
     instructedSessions.add(sessionName);
     return prependInstructions(content, instructions);
   }
@@ -256,9 +260,9 @@ export function createRouter(options: {
     const messageId = generateMessageId();
     const handler = options.mindHandler(buffer.sessionName);
 
-    // Batch flushes are fire-and-forget — no HTTP response is waiting, so listener is a noop
+    // Batch flushes are fire-and-forget — no HTTP response is waiting, so no listener
     try {
-      handler.handle(content, { sessionName: buffer.sessionName, messageId }, () => {});
+      handler.handle(content, { sessionName: buffer.sessionName, messageId });
     } catch (err) {
       log("router", `error flushing batch for session ${buffer.sessionName}:`, err);
       return;
@@ -301,8 +305,6 @@ export function createRouter(options: {
     listener?: Listener,
   ): { messageId: string; unsubscribe: () => void } {
     const messageId = generateMessageId();
-    const noop = () => {};
-    const safeListener = listener ?? noop;
 
     // Expose session to child processes (daemon-client reads this for X-Volute-Session)
     process.env.VOLUTE_SESSION = session;
@@ -342,7 +344,7 @@ export function createRouter(options: {
         interrupt,
         replyInstructions: sessionConfig.replyInstructions,
       },
-      safeListener,
+      listener,
     );
     return { messageId, unsubscribe };
   }
@@ -368,7 +370,6 @@ export function createRouter(options: {
 
     const messageId = generateMessageId();
     const noop = () => {};
-    const safeListener = listener ?? noop;
 
     // Gate unmatched channels (default: gate unless explicitly disabled)
     if (!resolved.matched && config.gateUnmatched !== false) {
@@ -380,7 +381,7 @@ export function createRouter(options: {
       if (options.fileHandler) {
         const formatted = applyPrefix(content, meta);
         const fileHandler = options.fileHandler(filePath);
-        fileHandler.handle(formatted, { ...meta, messageId }, noop);
+        fileHandler.handle(formatted, { ...meta, messageId });
       }
 
       // First message from this channel — send invite notification
@@ -389,18 +390,14 @@ export function createRouter(options: {
         const notification = formatInviteNotification(meta, filePath, text);
         const notifContent: VoluteContentPart[] = [{ type: "text", text: notification }];
         const handler = options.mindHandler("main");
-        handler.handle(
-          notifContent,
-          {
-            sessionName: "main",
-            messageId: generateMessageId(),
-            interrupt: true,
-          },
-          noop,
-        );
+        handler.handle(notifContent, {
+          sessionName: "main",
+          messageId: generateMessageId(),
+          interrupt: true,
+        });
       }
 
-      queueMicrotask(() => safeListener({ type: "done", messageId }));
+      queueMicrotask(() => listener?.({ type: "done", messageId }));
       return { messageId, unsubscribe: noop };
     }
 
@@ -411,7 +408,7 @@ export function createRouter(options: {
         const escaped = mindName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
         const pattern = new RegExp(`\\b${escaped}\\b`, "i");
         if (!pattern.test(text)) {
-          queueMicrotask(() => safeListener({ type: "done", messageId }));
+          queueMicrotask(() => listener?.({ type: "done", messageId }));
           return { messageId, unsubscribe: noop };
         }
       } else {
@@ -424,12 +421,12 @@ export function createRouter(options: {
       if (options.fileHandler) {
         const formatted = applyPrefix(content, meta);
         const handler = options.fileHandler(resolved.path);
-        const unsubscribe = handler.handle(formatted, { ...meta, messageId }, safeListener);
+        const unsubscribe = handler.handle(formatted, { ...meta, messageId }, listener);
         return { messageId, unsubscribe };
       }
       // No file handler configured — emit done and discard
       log("router", `no file handler configured — discarding file-destined message`);
-      queueMicrotask(() => safeListener({ type: "done", messageId }));
+      queueMicrotask(() => listener?.({ type: "done", messageId }));
       return { messageId, unsubscribe: noop };
     }
 
@@ -473,7 +470,7 @@ export function createRouter(options: {
         scheduleBatchTimers(batchKey);
       }
 
-      queueMicrotask(() => safeListener({ type: "done", messageId }));
+      queueMicrotask(() => listener?.({ type: "done", messageId }));
       return { messageId, unsubscribe: noop };
     }
 
@@ -495,7 +492,7 @@ export function createRouter(options: {
         interrupt: sessionConfig.interrupt,
         replyInstructions: sessionConfig.replyInstructions,
       },
-      safeListener,
+      listener,
     );
     return { messageId, unsubscribe };
   }
@@ -562,10 +559,9 @@ export function createRouter(options: {
 
     const messageId = generateMessageId();
     const handler = options.mindHandler(session);
-    const noop = () => {};
 
     try {
-      handler.handle(withInstructions, { sessionName: session, messageId }, noop);
+      handler.handle(withInstructions, { sessionName: session, messageId });
       log("router", `dispatched batch for session ${session}: ${allMessages.length} messages`);
     } catch (err) {
       log("router", `error dispatching batch for session ${session}:`, err);
