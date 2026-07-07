@@ -20,6 +20,25 @@ export type WakeTriggerConfig = {
   senders?: string[];
 };
 
+/**
+ * Effective defaults for wake triggers when a mind hasn't configured them.
+ * Mentions and DMs wake a sleeping mind by default. This is the single source
+ * of truth for the runtime default; the web UI mirrors these values so the
+ * settings form reflects actual behavior.
+ */
+export const WAKE_TRIGGER_DEFAULTS = { mentions: true, dms: true } as const;
+
+/** Resolve the effective mentions/dms wake-trigger settings, applying defaults. */
+export function resolveWakeTriggers(triggers?: WakeTriggerConfig): {
+  mentions: boolean;
+  dms: boolean;
+} {
+  return {
+    mentions: triggers?.mentions ?? WAKE_TRIGGER_DEFAULTS.mentions,
+    dms: triggers?.dms ?? WAKE_TRIGGER_DEFAULTS.dms,
+  };
+}
+
 export type SleepConfig = {
   enabled?: boolean;
   schedule?: { sleep: string; wake: string };

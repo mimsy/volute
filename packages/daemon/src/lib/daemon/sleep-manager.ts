@@ -16,7 +16,7 @@ import { sendSystemMessageDirect } from "../chat/system-chat.js";
 import { getDb } from "../db.js";
 import { type ActivityEvent, subscribe } from "../events/activity-events.js";
 import { findMind, mindDir, voluteSystemDir } from "../mind/registry.js";
-import { readVoluteConfig, type SleepConfig } from "../mind/volute-config.js";
+import { readVoluteConfig, resolveWakeTriggers, type SleepConfig } from "../mind/volute-config.js";
 import { getPrompt } from "../prompts.js";
 import { deliveryQueue } from "../schema.js";
 import log from "../util/logger.js";
@@ -421,8 +421,7 @@ export class SleepManager {
     const triggers = config?.wakeTriggers;
 
     // Default: mentions and DMs wake the mind
-    const mentionsEnabled = triggers?.mentions !== false;
-    const dmsEnabled = triggers?.dms !== false;
+    const { mentions: mentionsEnabled, dms: dmsEnabled } = resolveWakeTriggers(triggers);
 
     // Check DM trigger
     if (dmsEnabled && payload.isDM) return true;
