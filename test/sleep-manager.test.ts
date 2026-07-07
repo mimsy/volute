@@ -3,11 +3,14 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { describe, it } from "node:test";
+import { and, eq } from "drizzle-orm";
 import {
   matchesGlob,
   SleepManager,
   type SleepState,
 } from "../packages/daemon/src/lib/daemon/sleep-manager.js";
+import { getDb } from "../packages/daemon/src/lib/db.js";
+import { deliveryQueue } from "../packages/daemon/src/lib/schema.js";
 
 // We test the SleepManager's pure logic methods without starting the daemon.
 // The class methods like checkWakeTrigger, formatDuration, etc. are tested directly.
@@ -76,6 +79,16 @@ class TestSleepManager extends SleepManager {
   // Expose buildTriggerWakeSummary for testing
   testBuildTriggerWakeSummary(state: SleepState): string {
     return (this as any).buildTriggerWakeSummary(state);
+  }
+
+  // Stub the delivery seam so flushQueuedMessages can be tested without the real delivery
+  // stack. `deliverResult` decides per-payload whether delivery "succeeds".
+  deliveredPayloads: unknown[] = [];
+  deliverResult: (payload: unknown) => boolean = () => true;
+
+  override async deliverQueued(_name: string, payload: unknown): Promise<boolean> {
+    this.deliveredPayloads.push(payload);
+    return this.deliverResult(payload);
   }
 }
 
@@ -770,5 +783,109 @@ describe("SleepManager.buildTriggerWakeSummary", () => {
     const state = sm.getStateForTest("normal");
     assert.equal(state?.sleeping, true);
     assert.equal(state?.wokenByTrigger, false);
+  });
+});
+
+describe("SleepManager.flushQueuedMessages", () => {
+  let counter = 0;
+  // Unique mind name per test so rows in the shared delivery_queue don't cross-contaminate.
+  function uniqueMind(): string {
+    return `flush-mind-${process.pid}-${counter++}`;
+  }
+
+  async function queue(mind: string, content: string): Promise<void> {
+    const db = await getDb();
+    await db.insert(deliveryQueue).values({
+      mind,
+      session: "sleep",
+      channel: "@volute",
+      sender: "volute",
+      status: "sleep-queued",
+      payload: JSON.stringify({ channel: "@volute", sender: "volute", content }),
+    });
+  }
+
+  async function queuedRows(mind: string) {
+    const db = await getDb();
+    return db
+      .select()
+      .from(deliveryQueue)
+      .where(and(eq(deliveryQueue.mind, mind), eq(deliveryQueue.status, "sleep-queued")))
+      .all();
+  }
+
+  it("delivers each queued message once and deletes delivered rows", async () => {
+    const mind = uniqueMind();
+    await queue(mind, "a");
+    await queue(mind, "b");
+    await queue(mind, "c");
+
+    const sm = new TestSleepManager();
+    sm.setStateForTest(mind, sleepingState({ queuedMessageCount: 3 }));
+
+    const flushed = await sm.flushQueuedMessages(mind);
+
+    assert.equal(flushed, 3);
+    assert.equal(sm.deliveredPayloads.length, 3, "each message delivered exactly once");
+    assert.equal((await queuedRows(mind)).length, 0, "all delivered rows deleted");
+    assert.equal(sm.getState(mind).queuedMessageCount, 0);
+  });
+
+  it("leaves the row queued when delivery fails (no silent drop)", async () => {
+    const mind = uniqueMind();
+    await queue(mind, "a");
+
+    const sm = new TestSleepManager();
+    sm.deliverResult = () => false; // delivery fails
+
+    const flushed = await sm.flushQueuedMessages(mind);
+
+    assert.equal(flushed, 0);
+    assert.equal((await queuedRows(mind)).length, 1, "failed delivery must not delete the row");
+  });
+
+  it("deletes per-row so a mid-flush failure replays only the undelivered tail", async () => {
+    const mind = uniqueMind();
+    await queue(mind, "first");
+    await queue(mind, "second");
+    await queue(mind, "third");
+
+    const sm = new TestSleepManager();
+    sm.setStateForTest(mind, sleepingState({ queuedMessageCount: 3 }));
+    // First delivery succeeds, then the mind "crashes" — the rest must survive.
+    let calls = 0;
+    sm.deliverResult = () => {
+      calls++;
+      return calls === 1;
+    };
+
+    const flushed = await sm.flushQueuedMessages(mind);
+
+    assert.equal(flushed, 1, "only the first row was delivered");
+    const remaining = await queuedRows(mind);
+    assert.equal(remaining.length, 2, "the undelivered tail stays queued for the next wake");
+    // The remaining rows are the tail (second, third), in order — the delivered head is gone.
+    const contents = remaining.map((r) => JSON.parse(r.payload).content).sort();
+    assert.deepEqual(contents, ["second", "third"]);
+    assert.equal(sm.getState(mind).queuedMessageCount, 2);
+  });
+
+  it("drops an unparseable payload instead of replaying it forever", async () => {
+    const mind = uniqueMind();
+    const db = await getDb();
+    await db.insert(deliveryQueue).values({
+      mind,
+      session: "sleep",
+      status: "sleep-queued",
+      payload: "not-json{{{",
+    });
+    await queue(mind, "good");
+
+    const sm = new TestSleepManager();
+    const flushed = await sm.flushQueuedMessages(mind);
+
+    assert.equal(flushed, 1, "the good message delivered");
+    assert.equal(sm.deliveredPayloads.length, 1, "the unparseable row never reached delivery");
+    assert.equal((await queuedRows(mind)).length, 0, "both rows cleared from the queue");
   });
 });

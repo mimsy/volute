@@ -226,49 +226,64 @@ export function resolveSleepAction(
 
 /**
  * Deliver a message to a mind via the delivery manager (routes, batches, gates).
- * Fire-and-forget — logs errors but does not throw.
+ * Fire-and-forget for normal callers — logs errors and returns `false` rather than throwing.
+ * Returns `true` when the message was handled (delivered, queued, or intentionally skipped).
+ *
+ * `isFlush` is set only by SleepManager.flushQueuedMessages when a mind wakes. On that path
+ * the inbound was already recorded (with its true arrival time) at queue time, and the sleep
+ * branch must be bypassed so the message is actually delivered to the now-waking mind rather
+ * than re-recorded and re-queued. The returned boolean lets the flush loop delete only
+ * genuinely-delivered rows.
  */
-export async function deliverMessage(mindName: string, payload: DeliveryPayload): Promise<void> {
+export async function deliverMessage(
+  mindName: string,
+  payload: DeliveryPayload,
+  opts: { isFlush?: boolean } = {},
+): Promise<boolean> {
   try {
     const baseName = await getBaseName(mindName);
     const entry = await findMind(baseName);
     if (!entry) {
       dlog.warn(`cannot deliver to ${mindName}: mind not found`);
-      return;
+      return false;
     }
 
-    const textContent = extractTextContent(payload.content);
-    await recordInbound(baseName, payload.channel, payload.sender ?? null, textContent);
+    if (!opts.isFlush) {
+      const textContent = extractTextContent(payload.content);
+      await recordInbound(baseName, payload.channel, payload.sender ?? null, textContent);
 
-    // Check if mind is sleeping — handle based on whileSleeping or wake triggers
-    const sleepManager = getSleepManagerIfReady();
-    if (sleepManager?.isSleeping(baseName)) {
-      const sleepState = sleepManager.getState(baseName);
-      const action = resolveSleepAction(
-        payload.whileSleeping,
-        sleepState.wokenByTrigger,
-        sleepManager.checkWakeTrigger(baseName, payload),
-      );
-
-      if (action === "skip") {
-        dlog.info(
-          `skipped delivery to ${baseName} (sleeping, whileSleeping=skip, channel=${payload.channel})`,
+      // Check if mind is sleeping — handle based on whileSleeping or wake triggers
+      const sleepManager = getSleepManagerIfReady();
+      if (sleepManager?.isSleeping(baseName)) {
+        const sleepState = sleepManager.getState(baseName);
+        const action = resolveSleepAction(
+          payload.whileSleeping,
+          sleepState.wokenByTrigger,
+          sleepManager.checkWakeTrigger(baseName, payload),
         );
-        return;
-      }
 
-      await sleepManager.queueSleepMessage(baseName, payload);
-      if (action === "queue-and-wake") {
-        sleepManager
-          .initiateWake(baseName, { trigger: { channel: payload.channel } })
-          .catch((err) => dlog.warn(`failed to trigger-wake ${baseName}`, log.errorData(err)));
+        if (action === "skip") {
+          dlog.info(
+            `skipped delivery to ${baseName} (sleeping, whileSleeping=skip, channel=${payload.channel})`,
+          );
+          return true;
+        }
+
+        await sleepManager.queueSleepMessage(baseName, payload);
+        if (action === "queue-and-wake") {
+          sleepManager
+            .initiateWake(baseName, { trigger: { channel: payload.channel } })
+            .catch((err) => dlog.warn(`failed to trigger-wake ${baseName}`, log.errorData(err)));
+        }
+        return true;
       }
-      return;
     }
 
     const manager = getDeliveryManager();
     await manager.routeAndDeliver(mindName, payload);
+    return true;
   } catch (err) {
     dlog.warn(`unexpected error delivering to ${mindName}`, log.errorData(err));
+    return false;
   }
 }
