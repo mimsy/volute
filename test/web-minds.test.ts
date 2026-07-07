@@ -1,8 +1,14 @@
 import assert from "node:assert/strict";
-import { afterEach, beforeEach, describe, it } from "node:test";
+import { afterEach, before, beforeEach, describe, it } from "node:test";
 import { eq } from "drizzle-orm";
-import { approveUser, createUser } from "../packages/daemon/src/lib/auth.js";
+import { approveUser, createUser, getOrCreateMindUser } from "../packages/daemon/src/lib/auth.js";
+import {
+  initMindManager,
+  tryGetMindManager,
+} from "../packages/daemon/src/lib/daemon/mind-manager.js";
+import { generateMindToken } from "../packages/daemon/src/lib/daemon/mind-tokens.js";
 import { getDb } from "../packages/daemon/src/lib/db.js";
+import { addMind, removeMind } from "../packages/daemon/src/lib/mind/registry.js";
 import { users } from "../packages/daemon/src/lib/schema.js";
 import { createSession, deleteSession } from "../packages/daemon/src/web/middleware/auth.js";
 
@@ -187,5 +193,75 @@ describe("web minds routes", () => {
     assert.ok(Array.isArray(body));
 
     await deleteSession(cookie2);
+  });
+});
+
+describe("web minds roster", () => {
+  const rosterMind = `roster-test-${Date.now()}`;
+
+  // getMindStatus() consults the MindManager for run state; the daemon always
+  // has it initialized before serving, so mirror that here.
+  before(() => {
+    if (!tryGetMindManager()) initMindManager();
+  });
+
+  async function rosterCleanup() {
+    const db = await getDb();
+    await db.delete(users).where(eq(users.username, rosterMind));
+    try {
+      await removeMind(rosterMind);
+    } catch {}
+  }
+
+  beforeEach(rosterCleanup);
+  afterEach(rosterCleanup);
+
+  // Only profile-level fields belong in the roster — anything else (ports,
+  // dirs, tokens, run internals) would leak system detail to untrusted minds.
+  const ALLOWED_MIND_KEYS = new Set(["name", "displayName", "description", "avatar", "status"]);
+
+  it("GET /roster — a mind can read the roster with its own token", async () => {
+    await addMind(rosterMind, 4600);
+    await getOrCreateMindUser(rosterMind);
+    const token = generateMindToken(rosterMind);
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
+
+    const res = await app.request("/api/minds/roster", {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as {
+      minds: Array<Record<string, unknown>>;
+      brains: Array<Record<string, unknown>>;
+    };
+    assert.ok(Array.isArray(body.minds));
+    assert.ok(Array.isArray(body.brains));
+
+    const entry = body.minds.find((m) => m.name === rosterMind);
+    assert.ok(entry, "roster should include the test mind");
+    assert.ok(typeof entry.status === "string");
+  });
+
+  it("GET /roster — exposes only profile-level fields, no ports/dirs/tokens", async () => {
+    await addMind(rosterMind, 4600);
+    await getOrCreateMindUser(rosterMind);
+    const token = generateMindToken(rosterMind);
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
+
+    const res = await app.request("/api/minds/roster", {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const body = (await res.json()) as { minds: Array<Record<string, unknown>> };
+    for (const entry of body.minds) {
+      for (const key of Object.keys(entry)) {
+        assert.ok(ALLOWED_MIND_KEYS.has(key), `roster mind entry leaked non-profile field: ${key}`);
+      }
+    }
+  });
+
+  it("GET /roster — requires auth (401 without credentials)", async () => {
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
+    const res = await app.request("/api/minds/roster");
+    assert.equal(res.status, 401);
   });
 });

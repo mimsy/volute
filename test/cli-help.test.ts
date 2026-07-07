@@ -111,6 +111,13 @@ describe("CLI --help", () => {
     assert.ok(out.includes("status"), "should list status");
   });
 
+  it("volute who --help shows description without contacting the daemon", async () => {
+    const r = await runCli("who", "--help");
+    const out = combined(r);
+    assert.ok(out.includes("who's on the system"), "should show description");
+    assert.ok(!out.includes("not running"), "should NOT try to reach the daemon");
+  });
+
   // Leaf commands — verify --help shows flags/args and does NOT execute
   it("volute mind create --help shows flags without executing", async () => {
     const r = await runCli("mind", "create", "--help");

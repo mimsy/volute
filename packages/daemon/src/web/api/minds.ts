@@ -13,7 +13,7 @@ import { and, desc, eq, type SQL, sql } from "drizzle-orm";
 import { type Context, Hono } from "hono";
 import { z } from "zod";
 import { qualifyModelId, resolveTemplate, unqualifyModelId } from "../../lib/ai-service.js";
-import { deleteMindUser } from "../../lib/auth.js";
+import { deleteMindUser, getUserByUsername } from "../../lib/auth.js";
 import { announceToSystem } from "../../lib/chat/system-channel.js";
 import { readSystemsConfig } from "../../lib/config/systems-config.js";
 import { getMindManager, MindStartupError } from "../../lib/daemon/mind-manager.js";
@@ -30,6 +30,7 @@ import { getDb } from "../../lib/db.js";
 import { getDeliveryManager } from "../../lib/delivery/delivery-manager.js";
 import { recordInbound } from "../../lib/delivery/message-delivery.js";
 import { broadcast } from "../../lib/events/activity-events.js";
+import { getOnlineBrains } from "../../lib/events/brain-presence.js";
 import {
   addMessage,
   getConversation,
@@ -1240,6 +1241,38 @@ const app = new Hono<AuthEnv>()
       }),
     );
     return c.json(minds);
+  })
+  // Roster — who's on the system: minds (display name + run state) and the
+  // brains currently online. Deliberately readable by any authenticated
+  // principal, minds included — discovering who you can reach is core to
+  // Volute's free-communication philosophy. Exposes only profile-level data
+  // (names, descriptions, avatar refs, run state); never ports, dirs, env,
+  // tokens, or config.
+  .get("/roster", async (c) => {
+    const entries = await readRegistry();
+    const minds = await Promise.all(
+      entries.map(async (entry) => {
+        const { status, displayName, description, avatar } = await getMindStatus(
+          entry.name,
+          entry.port,
+          entry.running,
+        );
+        return {
+          name: entry.name,
+          displayName: displayName ?? null,
+          description: description ?? null,
+          avatar: avatar ?? null,
+          status,
+        };
+      }),
+    );
+    const brains = await Promise.all(
+      getOnlineBrains().map(async (username) => {
+        const user = await getUserByUsername(username);
+        return { username, displayName: user?.display_name ?? null };
+      }),
+    );
+    return c.json({ minds, brains });
   })
   // Get single mind
   .get("/:name", async (c) => {

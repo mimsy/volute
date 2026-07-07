@@ -74,6 +74,9 @@ switch (command) {
   case "config":
     await import("@volute/cli/commands/config.js").then((m) => m.run(args));
     break;
+  case "who":
+    await import("@volute/cli/commands/who.js").then((m) => m.run(args));
+    break;
   case "up":
     await import("./commands/up.js").then((m) => m.run(args));
     break;
@@ -113,6 +116,7 @@ switch (command) {
     console.log(`volute — create and manage AI minds
 
 Common:
+  who                              See who's on the system
   chat send <target> "<msg>"       Send a message
   chat list / read / create        Manage conversations
   chat bridge                      Manage platform bridges
