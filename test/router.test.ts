@@ -15,14 +15,24 @@ import type {
 
 function mockMindHandler(): {
   resolver: HandlerResolver;
-  calls: { sessionName: string; content: VoluteContentPart[]; meta: HandlerMeta }[];
+  calls: {
+    sessionName: string;
+    content: VoluteContentPart[];
+    meta: HandlerMeta;
+    hadListener: boolean;
+  }[];
 } {
-  const calls: { sessionName: string; content: VoluteContentPart[]; meta: HandlerMeta }[] = [];
+  const calls: {
+    sessionName: string;
+    content: VoluteContentPart[];
+    meta: HandlerMeta;
+    hadListener: boolean;
+  }[] = [];
   const resolver: HandlerResolver = (sessionName: string): MessageHandler => ({
     handle(content, meta, listener) {
-      calls.push({ sessionName, content, meta });
+      calls.push({ sessionName, content, meta, hadListener: listener !== undefined });
       // Emit done async
-      queueMicrotask(() => listener({ type: "done", messageId: meta.messageId }));
+      queueMicrotask(() => listener?.({ type: "done", messageId: meta.messageId }));
       return () => {};
     },
   });
@@ -37,7 +47,7 @@ function mockFileHandler(): {
   const resolver: HandlerResolver = (path: string): MessageHandler => ({
     handle(content, meta, listener) {
       calls.push({ path, content });
-      queueMicrotask(() => listener({ type: "done", messageId: meta.messageId }));
+      queueMicrotask(() => listener?.({ type: "done", messageId: meta.messageId }));
       return () => {};
     },
   });
@@ -650,6 +660,76 @@ describe("router", () => {
     } finally {
       if (oldEnv === undefined) delete process.env.VOLUTE_MIND;
       else process.env.VOLUTE_MIND = oldEnv;
+    }
+  });
+
+  // --- Listener plumbing (leak avoidance, #459) ---
+
+  it("passes no listener to the handler when dispatched fire-and-forget", async () => {
+    const dir = makeTempDir();
+    const configPath = join(dir, "routes.json");
+    writeFileSync(configPath, JSON.stringify({ rules: [{ channel: "web", session: "main" }] }));
+
+    const mind = mockMindHandler();
+    const router = createRouter({ configPath, mindHandler: mind.resolver });
+
+    // dispatch() is the live path (daemon pre-routes) and passes no listener.
+    router.dispatch([{ type: "text", text: "hi" }], "main", { channel: "web" });
+
+    assert.equal(mind.calls.length, 1);
+    assert.equal(
+      mind.calls[0].hadListener,
+      false,
+      "handler must receive undefined (not a noop) so it won't register a per-message listener",
+    );
+  });
+
+  it("passes the listener through when one is provided", async () => {
+    const dir = makeTempDir();
+    const configPath = join(dir, "routes.json");
+    writeFileSync(configPath, JSON.stringify({ rules: [{ channel: "web", session: "main" }] }));
+
+    const mind = mockMindHandler();
+    const router = createRouter({ configPath, mindHandler: mind.resolver });
+
+    await waitForDone(router, [{ type: "text", text: "hi" }], { channel: "web" });
+
+    assert.equal(mind.calls.length, 1);
+    assert.equal(mind.calls[0].hadListener, true);
+  });
+
+  // --- Ephemeral $new instructions (leak avoidance, #463) ---
+
+  it("prepends instructions on every ephemeral $new dispatch (no per-session tracking)", async () => {
+    const dir = makeTempDir();
+    const configPath = join(dir, "routes.json");
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        rules: [{ channel: "system:*", session: "$new" }],
+        sessions: { "new-*": { instructions: "Be brief." } },
+      }),
+    );
+
+    const mind = mockMindHandler();
+    const router = createRouter({ configPath, mindHandler: mind.resolver });
+
+    // Each $new message gets a unique session name and is dispatched exactly once, so
+    // instructions are always prepended and never tracked (which would leak an entry
+    // per message in instructedSessions).
+    await waitForDone(router, [{ type: "text", text: "a" }], { channel: "system:scheduler" });
+    await waitForDone(router, [{ type: "text", text: "b" }], { channel: "system:scheduler" });
+
+    assert.equal(mind.calls.length, 2);
+    for (const call of mind.calls) {
+      const text = call.content
+        .filter((p): p is { type: "text"; text: string } => p.type === "text")
+        .map((p) => p.text)
+        .join("");
+      assert.ok(
+        text.includes("[Session instructions: Be brief.]"),
+        "every ephemeral dispatch should carry instructions",
+      );
     }
   });
 
