@@ -15,6 +15,11 @@ import {
 const assetsDir = resolve(import.meta.dirname, "../dist/ui");
 const skillsDir = resolve(import.meta.dirname, "../skills");
 
+// Resolves once the collaborative pages repo has been initialized by
+// onDaemonStart. onMindStart awaits it so worktree-add never races ahead of
+// init (which could shell into a half-built repo or collide with its rmSync).
+let repoReady: Promise<void> | null = null;
+
 export default createExtension({
   id: "pages",
   name: "Pages",
@@ -44,7 +49,8 @@ export default createExtension({
   },
 
   onDaemonStart(ctx) {
-    ensurePagesRepo(ctx.dataDir, isolationFrom(ctx))
+    repoReady = ensurePagesRepo(ctx.dataDir, isolationFrom(ctx));
+    repoReady
       .then(() => {
         // Sync system pages from the repo to the DB so they appear in the UI.
         // Run even when the repo is empty so stale DB rows are removed.
@@ -65,8 +71,15 @@ export default createExtension({
   onMindStart(mindName, ctx) {
     const mindDir = ctx.getMindDir(mindName);
     if (!mindDir) return;
-    addPagesWorktree(mindName, mindDir, ctx.dataDir, isolationFrom(ctx)).catch((err) => {
-      console.error(`[pages] failed to add pages worktree for ${mindName}:`, err);
-    });
+    // Wait for repo init; its failures are already logged in onDaemonStart, and
+    // addPagesWorktree self-skips if the repo is still unusable.
+    (repoReady ?? Promise.resolve())
+      .catch(() => {})
+      .then(() => addPagesWorktree(mindName, mindDir, ctx.dataDir, isolationFrom(ctx)))
+      .catch((err) => {
+        console.warn(
+          `[pages] failed to add pages worktree for ${mindName}: ${(err as Error).message}`,
+        );
+      });
   },
 });

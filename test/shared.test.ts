@@ -68,6 +68,49 @@ describe("pages collaborative repo", () => {
     assert.ok(existsSync(resolve(pagesRepoDir(dataDir), ".git")));
   });
 
+  it("ensurePagesRepo repairs a husk .git left by an interrupted init", async () => {
+    // Simulate the state a killed `git init` leaves behind: a .git dir with only
+    // a branches/ subdir, no HEAD/config/objects (the bardo failure mode).
+    const repoDir = pagesRepoDir(dataDir);
+    mkdirSync(resolve(repoDir, ".git", "branches"), { recursive: true });
+
+    // Before repair, the husk is not a usable repo.
+    await assert.rejects(gitExec(["rev-parse", "HEAD"], { cwd: repoDir }));
+
+    // ensurePagesRepo should wipe the husk and re-initialize.
+    await ensurePagesRepo(dataDir);
+    await gitExec(["rev-parse", "HEAD"], { cwd: repoDir });
+
+    // And a worktree can now be added on the repaired repo.
+    const mindDir = await createFakeMind("test-pages-husk");
+    await addPagesWorktree("test-pages-husk", mindDir, dataDir);
+    assert.ok(existsSync(resolve(mindDir, "home", "pages", "_system")));
+
+    await removePagesWorktree("test-pages-husk", mindDir, dataDir);
+  });
+
+  it("addPagesWorktree skips (no throw) when the repo is a husk", async () => {
+    // A husk repo that ensurePagesRepo hasn't repaired yet: worktree-add must
+    // not shell into it and must not throw — it leaves repair for next startup.
+    const repoDir = pagesRepoDir(dataDir);
+    mkdirSync(resolve(repoDir, ".git", "branches"), { recursive: true });
+
+    const mindDir = await createFakeMind("test-pages-husk-skip");
+    await addPagesWorktree("test-pages-husk-skip", mindDir, dataDir);
+    assert.ok(!existsSync(resolve(mindDir, "home", "pages", "_system")));
+  });
+
+  it("ensurePagesRepo commits with its own identity, independent of host config", async () => {
+    await ensurePagesRepo(dataDir);
+    const repoDir = pagesRepoDir(dataDir);
+    // The init commit's committer must be the built-in identity, not whatever
+    // (if anything) the host's global git config provides.
+    const committer = (
+      await gitExec(["log", "-1", "--format=%cn <%ce>", "main"], { cwd: repoDir })
+    ).trim();
+    assert.equal(committer, "volute <volute@localhost>");
+  });
+
   it("addPagesWorktree creates worktree on mind-named branch", async () => {
     await ensurePagesRepo(dataDir);
     const mindDir = await createFakeMind("test-pages-add");
