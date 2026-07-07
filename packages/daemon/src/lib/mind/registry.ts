@@ -8,6 +8,18 @@ import { minds } from "../schema.js";
 
 export type MindType = "mind" | "spirit";
 
+/**
+ * Reserved name of the system spirit. The spirit shares the system user account
+ * (see auth.ts `getOrCreateSystemUser`), so this name is used interchangeably as
+ * the mind name, the system user's username, and the "@volute" DM channel.
+ */
+export const SPIRIT_NAME = "volute";
+
+/** True when a mind/user name is the reserved spirit name. */
+export function isSpiritName(name: string): boolean {
+  return name === SPIRIT_NAME;
+}
+
 export type MindEntry = {
   name: string;
   port: number;

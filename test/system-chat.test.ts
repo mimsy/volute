@@ -9,11 +9,16 @@ import {
   sendSystemMessageDirect,
 } from "../packages/daemon/src/lib/chat/system-chat.js";
 import { getDb } from "../packages/daemon/src/lib/db.js";
-import { validateMindName } from "../packages/daemon/src/lib/mind/registry.js";
+import {
+  addSpirit,
+  setMindRunning,
+  validateMindName,
+} from "../packages/daemon/src/lib/mind/registry.js";
 import {
   conversationParticipants,
   conversations,
   messages,
+  minds,
   users,
 } from "../packages/daemon/src/lib/schema.js";
 
@@ -27,6 +32,7 @@ async function cleanup() {
   for (const username of TEST_USERNAMES) {
     await db.delete(users).where(eq(users.username, username));
   }
+  await db.delete(minds).where(eq(minds.name, "volute"));
 }
 
 describe("system user", () => {
@@ -166,5 +172,25 @@ describe("generateSystemReply", () => {
       fallback!.content.includes("no AI model is configured"),
       "fallback should explain the issue",
     );
+  });
+
+  it("skips the fallback when the spirit is running (fan-out owns delivery)", async () => {
+    const { conversationId } = await ensureSystemDM("testmind");
+
+    // Register a running spirit — fan-out has already delivered the mind's DM to it,
+    // so generateSystemReply must not deliver or reply again (issue #418).
+    await addSpirit("volute", 4099, "claude", "/tmp/volute-spirit-test");
+    await setMindRunning("volute", true);
+
+    await generateSystemReply(conversationId, "testmind", "hello volute");
+
+    const db = await getDb();
+    const msgs = await db
+      .select()
+      .from(messages)
+      .where(eq(messages.conversation_id, conversationId))
+      .all();
+    const reply = msgs.find((m) => m.role === "assistant" && m.sender_name === "volute");
+    assert.equal(reply, undefined, "should not persist any reply when the spirit is running");
   });
 });
