@@ -42,13 +42,27 @@ function execAsync(cmd: string, args: string[]): Promise<void> {
   });
 }
 
-/** Run a git command. Adds safe.directory when isolation is enabled. */
+/**
+ * Committer identity for pages commits. `--author` on the commit calls sets the
+ * author but not the committer, so without this a host lacking a global git
+ * identity fails at the commit step (leaving a partial repo). Setting it per
+ * invocation keeps commits independent of host git config.
+ */
+const IDENTITY_ARGS = ["-c", "user.name=volute", "-c", "user.email=volute@localhost"];
+
+/**
+ * Run a git command. Adds safe.directory when isolation is enabled, and a
+ * committer identity for `commit` so commits never depend on host git config.
+ */
 function gitExec(
   args: string[],
   opts: { cwd: string },
   isolation?: IsolationInfo,
 ): Promise<string> {
-  const fullArgs = isolation?.isIsolationEnabled() ? ["-c", "safe.directory=*", ...args] : args;
+  const prefix: string[] = [];
+  if (isolation?.isIsolationEnabled()) prefix.push("-c", "safe.directory=*");
+  if (args[0] === "commit") prefix.push(...IDENTITY_ARGS);
+  const fullArgs = prefix.length ? [...prefix, ...args] : args;
   return new Promise((resolve, reject) => {
     execFileCb("git", fullArgs, { cwd: opts.cwd }, (err, stdout, stderr) => {
       if (err) {
@@ -100,24 +114,33 @@ export function pagesIsolationChownPaths(mindDir: string, wtGitDir: string | nul
   return paths;
 }
 
+/**
+ * Whether `dir` is a usable pages repo: a valid git repository with at least one
+ * commit on HEAD. A husk `.git` left by an interrupted init (e.g. only a
+ * `branches/` subdir), or a valid-but-commitless repo, both fail this probe.
+ */
+async function isRepoValid(dir: string, isolation?: IsolationInfo): Promise<boolean> {
+  try {
+    await gitExec(["rev-parse", "HEAD"], { cwd: dir }, isolation);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Idempotently initialize the collaborative pages git repo. */
 export async function ensurePagesRepo(dataDir: string, isolation?: IsolationInfo): Promise<void> {
   const dir = pagesRepoDir(dataDir);
   mkdirSync(dir, { recursive: true });
 
   if (existsSync(resolve(dir, ".git"))) {
-    try {
-      await gitExec(["rev-parse", "HEAD"], { cwd: dir }, isolation);
-      return;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      if (msg.includes("unknown revision") || msg.includes("bad default revision")) {
-        console.warn("[pages] repo has no commits, re-initializing");
-        rmSync(resolve(dir, ".git"), { recursive: true, force: true });
-      } else {
-        throw err;
-      }
-    }
+    if (await isRepoValid(dir, isolation)) return;
+    // Any invalid or incomplete state — a husk .git from an interrupted init, or
+    // a repo with no commits — is wiped and re-initialized. The repo's content
+    // is regenerable (it's synced from minds' pages), so aggressive re-init is
+    // safe, and it self-heals boxes stuck with a broken repo on next daemon start.
+    console.warn("[pages] repo invalid or incomplete, re-initializing");
+    rmSync(resolve(dir, ".git"), { recursive: true, force: true });
   }
 
   const isIso = isolation?.isIsolationEnabled() ?? false;
@@ -147,7 +170,12 @@ export async function addPagesWorktree(
   isolation?: IsolationInfo,
 ): Promise<void> {
   const dir = pagesRepoDir(dataDir);
-  if (!existsSync(resolve(dir, ".git"))) return;
+  // Never shell into a broken repo: skip quietly and let ensurePagesRepo repair
+  // it on the next daemon start rather than failing every mind start noisily.
+  if (!(await isRepoValid(dir, isolation))) {
+    console.warn(`[pages] repo not usable, skipping worktree for ${mindName}`);
+    return;
+  }
 
   const wt = worktreePath(mindDir);
   if (existsSync(wt)) return;
