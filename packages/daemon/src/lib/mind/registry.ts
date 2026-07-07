@@ -1,6 +1,6 @@
 import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, resolve } from "node:path";
+import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import { getDb } from "../db.js";
@@ -28,9 +28,10 @@ export function voluteHome(): string {
 
   // When running from source (tsx), require explicit VOLUTE_HOME to prevent
   // tests from accidentally touching the real ~/.volute directory.
-  // Built code (dist/) falls through to the homedir() default.
-  const dir = dirname(fileURLToPath(import.meta.url));
-  if (dir.endsWith("/src/lib")) {
+  // Built code (dist/) is bundled to .js and falls through to the homedir()
+  // default. Keying off the file extension (rather than a directory segment)
+  // keeps this guard working even if the file moves within the source tree.
+  if (fileURLToPath(import.meta.url).endsWith(".ts")) {
     throw new Error(
       "VOLUTE_HOME must be set when running from source. " +
         'For tests, run via "npm test" or add "--import ./test/setup.ts".',
