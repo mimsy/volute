@@ -27,7 +27,7 @@ bash test/integration-setup.sh
 
 # Seed a mind and wait for its response
 docker exec -e ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY <container> \
-  volute mind seed my-mind --template claude --model claude-sonnet-4-6
+  volute seed create my-mind --template claude --model claude-sonnet-4-6
 
 docker exec <container> volute chat send @my-mind "hello, who are you?" --wait
 
@@ -115,8 +115,8 @@ source /tmp/volute-integration.env
 V="docker exec -e ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY $CONTAINER volute"
 
 # Seed two minds with different templates
-$V mind seed aria --template claude --model claude-sonnet-4-6
-$V mind seed kimi --template pi --model "openrouter:moonshotai/kimi-k2.5"
+$V seed create aria --template claude --model claude-sonnet-4-6
+$V seed create kimi --template pi --model "openrouter:moonshotai/kimi-k2.5"
 
 # Talk to them and see their responses
 docker exec $CONTAINER volute chat send @aria "tell me about yourself" --wait

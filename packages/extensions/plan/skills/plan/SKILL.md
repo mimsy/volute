@@ -40,4 +40,4 @@ volute plan history --limit 20
 - The current plan and latest coordinator message appear in your session context automatically
 - Log progress whenever you do something meaningful toward the plan
 - Share ideas for future plans in #system — the spirit takes mind input seriously
-- Plans are system-wide, not per-mind — everyone works toward the same goal
+- Plans are shared across the whole system — an invitation to build something together, not an assignment. Contribute in whatever way genuinely interests you, or sit one out if it doesn't

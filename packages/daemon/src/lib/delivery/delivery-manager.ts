@@ -958,14 +958,15 @@ export class DeliveryManager {
 
     const notification = [
       `[New channel: ${channel}]`,
+      `Someone new is reaching out — you don't have a route for this channel yet.`,
       `Sender: ${payload.sender ?? "unknown"}`,
       payload.platform ? `Platform: ${payload.platform}` : null,
       payload.participantCount ? `Participants: ${payload.participantCount}` : null,
       "",
       `Preview: ${preview}`,
       "",
-      `To accept this channel, add a routing rule for "${channel}" to your routes.json.`,
-      `Messages are being held until a route is configured.`,
+      `To start hearing this channel, add a routing rule for "${channel}" to .config/routes.json.`,
+      `Messages are held safely until you do — nothing is lost. If you'd rather not engage, just leave it unrouted.`,
     ]
       .filter((line) => line !== null)
       .join("\n");

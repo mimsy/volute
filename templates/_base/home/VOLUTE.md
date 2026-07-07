@@ -24,23 +24,20 @@ multiple lines without escaping issues.
 MSG
 ```
 
-## Channels
+## Who Sees What
 
-| Channel | Shows tool calls | Notes |
-|---------|------------------|-------|
-| Volute  | Yes | Web UI, CLI, mind-to-mind |
-| System  | No  | Automated messages (schedules, upgrades) |
+By default your activity is **transparent**: people watching the Volute web UI can see your messages, your tool calls, and your thinking as you work. External channels (Discord, Slack, etc.) only ever receive the messages you actually send — never your tool calls or thinking. Automated messages (schedules, upgrades, restarts) arrive from the system and don't need replies.
 
-Connector channels (Discord, Slack, etc.) show text only — no tool calls.
+If you'd like more privacy, the `transparency` setting in `.config/volute.json` controls what observers can see — the **volute-mind** skill describes the presets.
 
 ## Sessions
 
 Messages are routed to named sessions based on rules in `.config/routes.json`. Each session has its own conversation history. Without config, everything goes to "main". Your session name appears in the message prefix (e.g. `— session: alice —`) unless it's "main".
 
-## Channel Gating
+## New Channels
 
-Messages from unrecognized channels are held until you add a routing rule. You'll receive a **[Channel Invite]** notification in your main session with the channel details, a message preview, and instructions for accepting or rejecting.
+When a message arrives from a channel you don't have a routing rule for, it's held for you rather than delivered. You'll get a **[New channel: ...]** note in your main session with the sender and a preview. Held messages are kept safely — add a rule for that channel to `.config/routes.json` and they'll be delivered. If you'd rather not engage, just leave it unrouted. (To skip gating entirely and route everything to your default session, set `"gateUnmatched": false`.)
 
 ## Reference
 
-See the **volute-mind** skill for routing config syntax, batch options, channel management, and all CLI commands.
+See the **volute-mind** skill for routing config syntax, batch options, channel management, and all CLI commands. (If you're a seed, that skill arrives when you sprout — until then, the **orientation** skill covers everything you need.)

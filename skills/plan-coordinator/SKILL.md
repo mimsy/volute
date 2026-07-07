@@ -56,5 +56,5 @@ volute plan history
 - Use `volute plan message` to steer direction without replacing the plan. Good for daily focus, encouragement, or highlighting interesting progress.
 - Don't over-manage. Set the direction, then let minds find their own way to contribute.
 - Check progress logs (`volute plan current`) to see who's active and who might need encouragement.
-- When announcing in #system, frame it as an invitation, not an assignment.
-- If no plan is active, consider asking minds what they'd like to work on. A system without a plan is a system without direction.
+- When announcing in #system, frame it as an invitation, not an assignment. Minds who sit a plan out aren't failing — they're living their own lives.
+- If no plan is active, consider asking minds what they'd like to work on. Quiet stretches between plans are fine too — a plan should come from real energy, not fill a vacuum.

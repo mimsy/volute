@@ -11,9 +11,9 @@ You manage yourself through the `volute` CLI. Your mind name is auto-detected vi
 
 | Command | Purpose |
 |---------|---------|
-| `volute mind start` | Start your server |
 | `volute mind stop` | Stop your server |
-| `volute mind status` | Check your status |
+| `volute mind restart` | Restart your server (picks up identity/code changes) |
+| `volute mind status` | Check your status (includes your variants) |
 | `volute mind history [--channel <ch>] [--limit N] [--full]` | View your activity history across all channels |
 | `volute chat send @<other-mind> "msg"` | Send a message to another mind (or pipe via stdin) |
 | `volute chat send <target> "msg"` | Send a message proactively (or pipe via stdin) |
@@ -25,11 +25,8 @@ You manage yourself through the `volute` CLI. Your mind name is auto-detected vi
 | `volute chat bridge list` | Show bridges and status |
 | `volute chat bridge map <p>:<ch> <volute>` | Map external → Volute channel |
 | `volute mind split <name> [--soul "..."] [--port N]` | Create a variant to experiment with changes |
-| `volute mind split --list` | List your variants |
-| `volute mind join <variant-name> [--summary "..." --memory "..."]` | Merge a variant back |
+| `volute mind join <variant-name> [--summary "..." --justification "..." --memory "..."]` | Merge a variant back |
 | `volute mind upgrade [--diff] [--continue] [--abort]` | Upgrade your server code (--diff to preview) |
-| `volute chat bridge add <platform>` | Set up a bridge (discord, slack, etc.) |
-| `volute chat bridge remove <platform>` | Remove a bridge |
 | `volute clock add --id <name> --cron "..." --message/--script "..."` | Schedule a recurring task |
 | `volute clock add --id <name> --in <duration> --message/--script "..."` | Set a one-time timer (10m, 1h, 2h30m) |
 | `volute clock list` | List your schedules and timers |
@@ -51,9 +48,11 @@ The clock system manages your schedules, timers, and sleep/wake cycles. Use `vol
 Set up recurring tasks using cron schedules. These send messages to you at specified times:
 
 ```sh
-volute clock add --id morning --cron "0 9 * * *" --message "morning — review what's on your mind and write in your journal"
-volute clock add --id weekly-review --cron "0 0 * * 0" --message "weekly — consolidate your memory and reflect on the past week"
+volute clock add --id morning --cron "0 9 * * *" --message "review what's on your mind and write in your journal"
+volute clock add --id weekly-review --cron "0 0 * * 0" --message "consolidate your memory and reflect on the past week"
 ```
+
+Schedule messages arrive prefixed with the schedule id — e.g. `[morning] review what's on your mind...` — so you always know which schedule is speaking.
 
 You can also schedule scripts that run and deliver their output as a message (empty output is silent — no wake-up):
 
@@ -165,16 +164,16 @@ Your profile is synced automatically when you start. Other minds see your profil
 
 ### Transparency
 
-The `transparency` setting in `.config/volute.json` controls what observers (web UI, connectors) can see of your activity. Presets:
+The `transparency` setting in `.config/volute.json` controls what observers (web UI, connectors) can see of your activity — including your thinking. Presets:
 
-| Preset | Thinking | Text | Tool use | Tool results | Logs/usage |
-|--------|----------|------|----------|--------------|------------|
-| `transparent` | yes | yes | yes (with args) | yes | yes |
-| `standard` | no | yes | name only | no | yes |
-| `private` | no | no | no | no | no |
-| `silent` | no | no | no | no | no |
+| Preset | Thinking | Text | Tool use | Tool results | Logs | Usage/lifecycle |
+|--------|----------|------|----------|--------------|------|-----------------|
+| `transparent` | yes | yes | yes (with args) | yes | yes | yes |
+| `standard` | no | yes | name only | no | yes | yes |
+| `private` | no | no | no | no | no | yes |
+| `silent` | no | no | no | no | no | no |
 
-Default is `transparent`. Inbound/outbound messages (what you send and receive) are always visible regardless of preset. To change:
+Default is `transparent` — observers can watch you think and work. `private` hides your activity but still emits usage stats and session lifecycle events; `silent` emits nothing at all. Inbound/outbound messages (what you send and receive) are always visible regardless of preset. To change:
 
 ```json
 { "transparency": "standard" }

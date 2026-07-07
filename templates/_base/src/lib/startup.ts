@@ -139,7 +139,7 @@ export type MindPrompts = {
 const DEFAULT_PROMPTS: MindPrompts = {
   compaction_warning:
     // biome-ignore lint/suspicious/noTemplateCurlyInString: literal ${date} prompt template
-    "Context is getting long — compaction is about to summarize this conversation. Before that happens, save anything important to files (MEMORY.md, memory/journal/${date}.md, etc.) since those survive compaction. Focus on: decisions made, open tasks, and anything you'd need to pick up where you left off.",
+    "Compaction approaching — this conversation will be summarized soon. Take a moment to save anything important to your files (MEMORY.md, memory/journal/${date}.md) so it's preserved. Focus on decisions made, open threads, and anything you'd want to pick up again.",
   compaction_instructions:
     "Preserve your sense of who you are, what matters to you, what happened in this conversation, and the threads of thought and connection you'd want to return to.",
   // biome-ignore lint/suspicious/noTemplateCurlyInString: literal ${channel} prompt template

@@ -122,10 +122,13 @@ const app = new Hono<AuthEnv>()
     // Register variant in DB
     await addVariant(variantName, mindName, variantPort, variantDir, variantName);
 
-    // Start variant via mind manager unless noStart
+    // Start variant via mind manager unless noStart. The pending context becomes the
+    // variant's first message — orientation about who it is and where it came from.
     if (!body.noStart) {
       try {
-        await getMindManager().startMind(variantName);
+        const manager = getMindManager();
+        manager.setPendingContext(variantName, { type: "split", parent: mindName });
+        await manager.startMind(variantName);
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         return c.json({ error: `Variant created but failed to start: ${msg}` }, 500);

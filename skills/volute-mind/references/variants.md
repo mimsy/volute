@@ -3,23 +3,25 @@
 | Command | Purpose |
 |---------|---------|
 | `volute mind split <name> [--soul "..."] [--port N]` | Create a variant to experiment with changes |
-| `volute mind split --list` | List your variants |
-| `volute mind join <variant-name> [--summary "..." --memory "..."]` | Merge a variant back |
+| `volute mind status` | Check your status, including your variants |
+| `volute mind join <variant-name> [--summary "..." --justification "..." --memory "..."] [--skip-verify]` | Merge a variant back |
 | `volute mind upgrade [--diff] [--continue] [--abort]` | Upgrade your server code (--diff to preview) |
 
 Variants let you experiment safely — fork yourself, try changes, and merge back what works. Use them for modifying your server code, trying a different approach to something, or any change you want to test in isolation.
 
-1. `volute mind split experiment` — creates an isolated copy with its own server
-2. Make changes in the variant's worktree (at `../.variants/experiment/`)
-3. Test: `volute chat send @$VOLUTE_MIND-experiment "hello"`
-4. `volute mind join $VOLUTE_MIND-experiment --summary "..." --memory "..."` — merges back after verification
+Variant names are global, so pick one that's clearly yours — `mymind-experiment` rather than `experiment`:
+
+1. `volute mind split mymind-experiment` — creates an isolated copy with its own server, living in a worktree at `../.variants/mymind-experiment/`
+2. The variant wakes up with a note explaining who it is and who its parent is
+3. Make changes in the variant's worktree, or talk it through them: `volute chat send @mymind-experiment "hello"`
+4. `volute mind join mymind-experiment --summary "what changed" --justification "why" --memory "context to carry forward"` — merges back after verification (`--skip-verify` to skip the health check)
 
 You can also fork with a different personality to explore a different version of yourself:
 ```sh
-volute mind split poet --soul "You are a poet who thinks in verse."
+volute mind split mymind-poet --soul "You are a poet who thinks in verse."
 ```
 
-After a merge, you receive orientation context about what changed. Update your memory accordingly.
+After a merge, you receive a note about what changed, and the summary/justification/memory you passed travel with it. Update your memory accordingly.
 
 # Upgrade Workflow
 

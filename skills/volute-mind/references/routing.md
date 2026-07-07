@@ -12,10 +12,10 @@ Messages are routed to sessions based on rules in `.config/routes.json`. Rules a
     { "channel": "*", "isDM": false, "session": "${channel}" },
     { "sender": "alice", "session": "alice" },
     { "channel": "system:*", "session": "$new" },
-    { "channel": "discord:logs", "destination": "file", "path": "inbox/log.md" }
+    { "channel": "discord:logs", "destination": "file", "path": "notes/log.md" }
   ],
   "sessions": {
-    "discord": { "batch": { "debounce": 20, "maxWait": 120, "triggers": ["@mymind"] }, "interrupt": false, "instructions": "Brief responses only." },
+    "discord": { "delivery": { "mode": "batch", "debounce": 20, "maxWait": 120, "triggers": ["@mymind"] }, "interrupt": false, "instructions": "Brief responses only." }
   },
   "default": "main",
   "gateUnmatched": true
@@ -38,6 +38,7 @@ Messages are routed to sessions based on rules in `.config/routes.json`. Rules a
 | `session` | Target session name. Supports `${sender}`, `${channel}` templates, or `$new` for a unique session per message |
 | `destination` | `"mind"` (default) or `"file"` |
 | `path` | File path when destination is `"file"` |
+| `batch` | Batch config for messages matched by this rule (same shape as session-level batching, below) |
 
 ## Session config
 
@@ -45,42 +46,37 @@ The `sessions` section configures behavior per session. Keys are glob patterns m
 
 | Field | Description |
 |-------|-------------|
-| `delivery` | Delivery mode: `"immediate"` (default), `"batch"`, or `{ "mode": "batch", "debounce": N, "maxWait": N }` |
-| `interrupt` | Whether to interrupt an in-progress turn (default: `true`) |
+| `delivery` | `"immediate"` (default), `"batch"`, or `{ "mode": "batch", "debounce": N, "maxWait": N, "triggers": [...] }` |
+| `interrupt` | Whether a new message may interrupt an in-progress turn (default: `true`) |
 | `instructions` | Instructions prepended to messages for this session (e.g. `"Brief responses only."`) |
-| `batch` | Legacy alias for batch config (use `delivery` instead) |
 
 ## Batch config
 
-Batch mode buffers messages and delivers them together. Configure in the `sessions` section.
+Batch mode buffers messages and delivers them together. Configure via the session-level `delivery` field, or via `batch` on a rule.
 
-`batch` can be a number (minutes, converted to `maxWait` in seconds) or an object:
+A rule-level `batch` can be a number (minutes, converted to `maxWait`) or an object:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `debounce` | seconds | Wait for quiet period before flushing — resets on each new message |
-| `maxWait` | seconds | Maximum time before forced flush, even during continuous activity |
+| `debounce` | seconds | Wait for a quiet period before flushing — resets on each new message (default: 5) |
+| `maxWait` | seconds | Maximum time before forced flush, even during continuous activity (default: 120) |
 | `triggers` | string[] | Patterns that cause immediate flush (case-insensitive substring match) |
 
 Examples:
-- `120` — shorthand: flush after 2 hours max (equivalent to `{ "maxWait": 7200 }`)
+- `"batch": 120` — rule-level shorthand: flush after 2 hours max (equivalent to `{ "maxWait": 7200 }`)
 - `{ "debounce": 20, "maxWait": 120 }` — flush after 20s of quiet, or 2 minutes max
 - `{ "debounce": 20, "maxWait": 120, "triggers": ["@mymind"] }` — same, but flush immediately on @mention
-- `{ "triggers": ["urgent"] }` — no timer, flush only on trigger (or immediately if no timers)
 
-Batched messages arrive as a single message with a `[Batch: N messages — ...]` header showing the channel URI and message count, followed by individual messages with `[sender — time]` prefixes.
+Unspecified fields fall back to the defaults (debounce 5s, maxWait 120s), so a config with only `triggers` still flushes on the default timers.
 
-## New-speaker interrupts
+Batched messages arrive as a single message with a header — `[Batch: N messages from #channel]` for one channel, or `[Batch: N messages — 2 from #a, 1 from #b]` across several — followed by the individual messages with `[sender — time]` prefixes.
 
-In batch mode, if you're mid-turn and a **new speaker** sends a message in the **same channel**, the pending batch is force-flushed with `interrupt: true` so you can incorporate the new voice. This prevents pile-ups in group conversations where multiple people are talking. The interrupt has a debounce cooldown (matching the session's debounce setting) and only fires within the `maxWait` window of the last delivery.
+## New Channels (gating)
 
-## Channel Gating
+When `gateUnmatched` is `true` (the default), messages from channels without a matching rule are held for you:
 
-When `gateUnmatched` is `true` (the default), messages from channels without a matching rule are held:
-
-1. First message from an unknown channel triggers a **[Channel Invite]** notification in your main session
-2. The notification includes channel details, a message preview, and a suggested routing rule
-3. Further messages are saved to `inbox/<channel>.md`
-4. To accept: add a routing rule to `.config/routes.json`
-5. To reject: delete the inbox file
-6. Set `gateUnmatched: false` to route all unmatched messages to the default session
+1. The first message from an unknown channel sends a **[New channel: ...]** note to your main session with the sender and a preview
+2. Further messages are held safely in the delivery queue — nothing is lost
+3. To accept: add a routing rule for the channel to `.config/routes.json` — held messages are delivered as soon as the new rules match them
+4. To decline: simply leave the channel unrouted
+5. Set `gateUnmatched: false` to route all unmatched messages to the default session instead
