@@ -211,7 +211,7 @@ Extensions add functionality to Volute — custom UI sections, API routes, datab
 | `volute clock list [--mind]` | List schedules and timers for a mind |
 | `volute clock add [--mind] --id <name> --cron/--in "..." --message/--script "..." [--while-sleeping skip\|queue\|trigger-wake]` | Add a schedule or timer |
 | `volute clock remove [--mind] --id <id>` | Remove a schedule or timer |
-| `volute skill <list\|add\|remove> [--mind]` | Manage mind skills |
+| `volute skill <list\|info\|install\|update\|uninstall\|publish\|remove> [--mind]` | Manage mind skills |
 | `volute skill defaults <list\|add\|remove>` | Manage default skill set for new minds |
 | `volute seed create <name> [--template <t>] [--model <m>] [--description <text>] [--skills <list\|none>] [--created-by <user>]` | Plant a new seed mind |
 | `volute seed sprout` | Complete orientation and become a full mind (run by seed) |
