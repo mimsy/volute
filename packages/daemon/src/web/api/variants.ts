@@ -57,6 +57,11 @@ const app = new Hono<AuthEnv>()
     if (!entry) return c.json({ error: "Mind not found" }, 404);
     if (entry.stage === "seed")
       return c.json({ error: "Seed minds cannot create variants — sprout first" }, 403);
+    if (entry.parent)
+      return c.json(
+        { error: "Cannot split from a variant — split from the base mind instead" },
+        403,
+      );
 
     let body: { name: string; soul?: string; port?: number; noStart?: boolean };
     try {
@@ -76,7 +81,7 @@ const app = new Hono<AuthEnv>()
       return c.json({ error: `Name already in use: ${variantName}` }, 409);
     }
 
-    const projectRoot = mindDir(mindName);
+    const projectRoot = entry.dir ?? mindDir(mindName);
     const variantDir = resolve(projectRoot, ".variants", variantName);
 
     if (existsSync(variantDir)) {
@@ -167,7 +172,7 @@ const app = new Hono<AuthEnv>()
       // No body is fine — all fields optional
     }
 
-    const projectRoot = mindDir(mindName);
+    const projectRoot = parentEntry.dir ?? mindDir(mindName);
 
     // Auto-commit any uncommitted changes in the variant worktree
     if (existsSync(variantEntry.dir)) {
@@ -207,7 +212,10 @@ const app = new Hono<AuthEnv>()
       const verified = await verify(result.actualPort);
 
       try {
-        process.kill(result.child.pid!);
+        // The verify server is detached (its own process-group leader), so kill
+        // the whole group — under sandbox/isolation the real server is a wrapped
+        // grandchild that a single-PID SIGTERM would leave running.
+        process.kill(-result.child.pid!, "SIGTERM");
       } catch {}
 
       if (!verified) {
@@ -238,10 +246,36 @@ const app = new Hono<AuthEnv>()
     try {
       await gitExec(["merge", variantEntry.branch], { cwd: projectRoot });
     } catch (_e) {
-      return c.json({ error: "Merge failed. Resolve conflicts manually." }, 500);
+      // Collect the conflicting files before aborting so the caller/mind knows
+      // what collided.
+      let conflicts: string[] = [];
+      try {
+        const out = (
+          await gitExec(["diff", "--name-only", "--diff-filter=U"], { cwd: projectRoot })
+        ).trim();
+        conflicts = out ? out.split("\n") : [];
+      } catch (err) {
+        log.warn(`failed to list merge conflicts for ${mindName}`, log.errorData(err));
+      }
+      // Restore the parent worktree so the still-running parent mind never
+      // auto-commits conflict markers into SOUL.md/MEMORY.md.
+      try {
+        await gitExec(["merge", "--abort"], { cwd: projectRoot });
+      } catch (err) {
+        log.warn(`failed to abort merge for ${mindName}`, log.errorData(err));
+      }
+      // Leave the variant intact so the conflict can be resolved in the variant
+      // and the join retried.
+      return c.json(
+        {
+          error: "Merge failed. Resolve conflicts in the variant and retry the join.",
+          conflicts,
+        },
+        500,
+      );
     }
 
-    await cleanupVariant(variantName, projectRoot, variantEntry.dir);
+    await cleanupVariant(variantName, projectRoot, variantEntry.dir, { stop: true });
 
     // Update template hash after upgrade merge
     if (variantName.endsWith("-upgrade") || variantName === "upgrade") {
@@ -310,7 +344,7 @@ const app = new Hono<AuthEnv>()
 
     if (!variantEntry.dir) return c.json({ error: `Variant ${variantName} has no directory` }, 500);
 
-    const projectRoot = mindDir(mindName);
+    const projectRoot = parentEntry.dir ?? mindDir(mindName);
 
     await cleanupVariant(variantName, projectRoot, variantEntry.dir, { stop: true });
 
