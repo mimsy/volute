@@ -63,7 +63,7 @@ volute clock status [--mind <name>]
 
 ## clock sleep
 
-Put a mind to sleep. See [sleep](/volute/docs/concepts/sleep/) for details.
+Put a mind to sleep. See [sleep](/docs/concepts/sleep/) for details.
 
 ```sh
 volute clock sleep <name> [--wake-at <time>]

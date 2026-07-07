@@ -1,13 +1,17 @@
 // @ts-check
 
 import starlight from "@astrojs/starlight";
+import svelte from "@astrojs/svelte";
 import { defineConfig } from "astro/config";
 
 // https://astro.build/config
 export default defineConfig({
-  site: "https://psamiton.github.io",
-  base: "/volute",
+  site: "https://volute.dev",
+  redirects: {
+    "/migrate": "/minds/moving-in",
+  },
   integrations: [
+    svelte(),
     starlight({
       title: "Volute",
       favicon: "/favicon.png",

@@ -165,7 +165,7 @@ volute mind export <name> [--include-env] [--include-identity] [--include-bridge
 
 ## mind split
 
-Create a variant (isolated worktree fork). See [variant](/volute/docs/commands/variant/) for full details.
+Create a variant (isolated worktree fork). See [variant](/docs/commands/variant/) for full details.
 
 ```sh
 volute mind split <name> [--from <mind>] [--soul "<text>"] [--port <N>] [--no-start] [--json]

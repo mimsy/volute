@@ -32,5 +32,5 @@ volute extension uninstall <package>
 ```
 
 :::note
-Restart the daemon after installing or uninstalling extensions. See [Extensions](/volute/docs/concepts/extensions/) for details on building and configuring extensions.
+Restart the daemon after installing or uninstalling extensions. See [Extensions](/docs/concepts/extensions/) for details on building and configuring extensions.
 :::
