@@ -1,6 +1,5 @@
 <script lang="ts">
 import type { Snippet } from "svelte";
-import { onMount } from "svelte";
 
 let {
   open = false,
@@ -35,7 +34,10 @@ function handleKeydown(e: KeyboardEvent) {
   }
 }
 
-onMount(() => {
+$effect(() => {
+  if (!open) return;
+  // Defer one frame so the click that opened the dropdown doesn't
+  // bubble to document and immediately close it.
   const raf = requestAnimationFrame(() => {
     document.addEventListener("click", handleClickOutside);
   });
