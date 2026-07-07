@@ -49,6 +49,32 @@ export type ImagegenConfig = {
   defaultModel?: string;
 };
 
+export type BackupSettings = {
+  /** Restic repository string: a local path, `s3:...`, `b2:...`, `sftp:...`, etc. */
+  repository?: string;
+  /** Cron expression for scheduled backups (default "0 3 * * *") */
+  schedule?: string;
+  /** Whether scheduled backups run */
+  enabled?: boolean;
+  /** Retention policy passed to `restic forget` (default 7/4/12) */
+  keep?: { daily?: number; weekly?: number; monthly?: number };
+  /** Include session transcripts (claude/codex/pi) in backups (default false) */
+  includeSessions?: boolean;
+};
+
+/**
+ * Never written to config.json (0644) or returned by the API. A new secret
+ * field belongs here AND in splitConfig + redactedConfig (web/api/backup.ts).
+ */
+export type BackupSecrets = {
+  /** Restic repository passphrase */
+  password?: string;
+  /** Extra env vars for restic, e.g. AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY */
+  env?: Record<string, string>;
+};
+
+export type BackupConfig = BackupSettings & BackupSecrets;
+
 export type GlobalConfig = {
   name?: string;
   description?: string;
@@ -73,6 +99,8 @@ export type GlobalConfig = {
   disabledExtensions?: string[];
   /** Default settings applied when creating new minds */
   mindDefaults?: MindDefaults;
+  /** Restic-based system backup configuration */
+  backup?: BackupConfig;
 };
 
 export type MindDefaultsCognition = CognitionConfig & {
@@ -105,6 +133,7 @@ export function secretsPath(): string {
 type ConfigSecrets = {
   ai?: { providers: Record<string, AiProviderConfig> };
   imagegen?: { providers: Record<string, ServiceProviderConfig> };
+  backup?: BackupSecrets;
 };
 
 function hasEntries(obj: Record<string, unknown> | undefined): boolean {
@@ -125,6 +154,15 @@ function splitConfig(config: GlobalConfig): { publicConfig: GlobalConfig; secret
     publicConfig.imagegen = { ...rest };
     if (providers && Object.keys(providers).length > 0) secrets.imagegen = { providers };
   }
+  if (config.backup) {
+    const { password, env, ...rest } = config.backup;
+    publicConfig.backup = { ...rest };
+    if (password || hasEntries(env)) {
+      secrets.backup = {};
+      if (password) secrets.backup.password = password;
+      if (hasEntries(env)) secrets.backup.env = env;
+    }
+  }
   return { publicConfig, secrets };
 }
 
@@ -136,6 +174,9 @@ function mergeSecrets(publicConfig: GlobalConfig, secrets: ConfigSecrets): Globa
   }
   if (secrets.imagegen?.providers) {
     merged.imagegen = { ...(merged.imagegen ?? {}), providers: secrets.imagegen.providers };
+  }
+  if (secrets.backup) {
+    merged.backup = { ...(merged.backup ?? {}), ...secrets.backup };
   }
   return merged;
 }
@@ -219,7 +260,11 @@ export function migrateConfigSecrets(): void {
   } catch {
     return;
   }
-  const embedsSecrets = hasEntries(parsed.ai?.providers) || hasEntries(parsed.imagegen?.providers);
+  const embedsSecrets =
+    hasEntries(parsed.ai?.providers) ||
+    hasEntries(parsed.imagegen?.providers) ||
+    !!parsed.backup?.password ||
+    hasEntries(parsed.backup?.env);
   const mode = statSync(path).mode & 0o777;
   if (!embedsSecrets && mode === 0o644) return; // already migrated
   _resetConfigCache();

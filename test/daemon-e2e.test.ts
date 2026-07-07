@@ -1654,6 +1654,57 @@ describe("daemon e2e", { timeout: 420000 }, () => {
     });
   });
 
+  describe("backup API e2e", () => {
+    it("configures, initializes, runs, and lists a backup end-to-end", async (t) => {
+      // Requires the restic binary; skip (like the unit round-trip) when absent.
+      try {
+        execFileSync("restic", ["version"], { stdio: "ignore" });
+      } catch {
+        return t.skip("restic not installed");
+      }
+
+      const repo = resolve(voluteSystemDir(), "e2e-restic-repo");
+      rmSync(repo, { recursive: true, force: true });
+
+      const putRes = await daemonRequest("/api/backup/config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ repository: repo }),
+      });
+      assert.equal(putRes.status, 200);
+
+      // Init generates a passphrase and returns it exactly once.
+      const initRes = await daemonRequest("/api/backup/init", { method: "POST" });
+      assert.equal(initRes.status, 200, await initRes.clone().text());
+      const initBody = (await initRes.json()) as { password: string | null };
+      assert.ok(initBody.password, "generated passphrase must be returned at init");
+
+      const runRes = await daemonRequest("/api/backup/run", { method: "POST" });
+      assert.equal(runRes.status, 200, await runRes.clone().text());
+      const summary = (await runRes.json()) as { snapshotId: string; totalFilesProcessed: number };
+      assert.ok(summary.snapshotId);
+      assert.ok(summary.totalFilesProcessed > 0);
+
+      const listRes = await daemonRequest("/api/backup/snapshots");
+      assert.equal(listRes.status, 200);
+      const snapshots = (await listRes.json()) as { short_id: string }[];
+      assert.equal(snapshots.length, 1);
+
+      const statusRes = await daemonRequest("/api/backup/status");
+      assert.equal(statusRes.status, 200);
+      const status = (await statusRes.json()) as {
+        resticInstalled: boolean;
+        config: { hasPassword: boolean };
+        state: { lastSnapshotId?: string };
+      };
+      assert.equal(status.resticInstalled, true);
+      assert.equal(status.config.hasPassword, true);
+      assert.equal(status.state.lastSnapshotId, summary.snapshotId);
+
+      rmSync(repo, { recursive: true, force: true });
+    });
+  });
+
   describe("history API cross-tenant authorization", () => {
     const ALICE = "e2e-hist-alice";
     const BOB = "e2e-hist-bob";

@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import { format } from "node:util";
 import { setProviderRefreshHook } from "./lib/ai-service.js";
 import { ensureSystemChannel } from "./lib/chat/system-channel.js";
+import { initBackupManager } from "./lib/daemon/backup-manager.js";
 import { initBridgeManager } from "./lib/daemon/bridge-manager.js";
 import { syncProviderToMinds } from "./lib/daemon/credential-sync.js";
 import { initMailPoller } from "./lib/daemon/mail-poller.js";
@@ -259,6 +260,8 @@ export async function startDaemon(opts: {
   sleepManager.start();
   const summarizer = initSummarizer();
   summarizer.start();
+  const backupManager = initBackupManager();
+  backupManager.start();
   const unsubscribeWebhook = initWebhook();
 
   // Clean up any turns left active from a previous daemon session and generate their summaries
@@ -425,6 +428,7 @@ export async function startDaemon(opts: {
       safe("mailPoller.stop", () => mailPoller.stop());
       safe("tokenBudget.stop", () => tokenBudget.stop());
       safe("summarizer.stop", () => summarizer.stop());
+      safe("backupManager.stop", () => backupManager.stop());
       safe("stopApiKeyRefresh", stopApiKeyRefresh);
       safe("delivery.dispose", () => delivery.dispose());
       await safe("bridgeManager.stopAll", () => bridgeManager.stopAll());

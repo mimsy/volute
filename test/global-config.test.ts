@@ -98,6 +98,34 @@ describe("readGlobalConfig", () => {
     assert.equal(config.imagegen?.enabled, true);
   });
 
+  it("writes backup password and env to secrets.json, not config.json", () => {
+    mkdirSync(voluteSystemDir(), { recursive: true });
+    writeGlobalConfig({
+      backup: {
+        repository: "s3:s3.amazonaws.com/bucket/volute",
+        schedule: "0 3 * * *",
+        enabled: true,
+        password: "restic-passphrase",
+        env: { AWS_SECRET_ACCESS_KEY: "aws-secret" },
+      },
+    });
+    const configRaw = readFileSync(configPath(), "utf-8");
+    assert.ok(!configRaw.includes("restic-passphrase"), "config.json must not contain passphrase");
+    assert.ok(!configRaw.includes("aws-secret"), "config.json must not contain credentials");
+    assert.ok(configRaw.includes('"repository"'), "non-secret backup fields stay in config.json");
+    const secretsRaw = readFileSync(secretsPath(), "utf-8");
+    assert.ok(secretsRaw.includes("restic-passphrase"));
+    assert.ok(secretsRaw.includes("aws-secret"));
+    assert.equal(statSync(secretsPath()).mode & 0o777, 0o600);
+    // Round-trips on read.
+    _resetConfigCache();
+    const config = readGlobalConfig();
+    assert.equal(config.backup?.password, "restic-passphrase");
+    assert.equal(config.backup?.env?.AWS_SECRET_ACCESS_KEY, "aws-secret");
+    assert.equal(config.backup?.repository, "s3:s3.amazonaws.com/bucket/volute");
+    assert.equal(config.backup?.enabled, true);
+  });
+
   it("migrateConfigSecrets splits a legacy single-file config and relaxes perms", () => {
     // Simulate a v0.41.1 install: everything (incl. secrets) in a 0600 config.json.
     mkdirSync(voluteSystemDir(), { recursive: true });

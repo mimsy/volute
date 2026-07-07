@@ -7,6 +7,7 @@ import { checkForUpdateCached, getCurrentVersion } from "../lib/update-check.js"
 import log from "../lib/util/logger.js";
 import activityRoutes from "./api/activity.js";
 import auth from "./api/auth.js";
+import backupRoutes from "./api/backup.js";
 import bridges from "./api/bridges.js";
 import channels from "./api/channels.js";
 import configRoutes from "./api/config.js";
@@ -121,6 +122,7 @@ app.use("/api/skills/*", authMiddleware);
 app.use("/api/extensions/*", authMiddleware);
 app.use("/api/bridges/*", authMiddleware);
 app.use("/api/config/*", authMiddleware);
+app.use("/api/backup/*", authMiddleware);
 
 // v1 API auth
 app.use("/api/v1/*", authMiddleware);
@@ -138,6 +140,7 @@ const routes = app
   .route("/api/auth", auth)
   .route("/api/system", system)
   .route("/api/system", update)
+  .route("/api/backup", backupRoutes)
   .route("/api/minds", minds)
   .route("/api/minds", chat)
   .route("/api/minds", schedules)

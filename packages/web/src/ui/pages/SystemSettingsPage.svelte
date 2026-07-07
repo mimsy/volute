@@ -5,6 +5,7 @@ import MindSettingsCognition from "../components/mind/MindSettingsCognition.svel
 import MindSettingsEnv from "../components/mind/MindSettingsEnv.svelte";
 import MindSettingsProfile from "../components/mind/MindSettingsProfile.svelte";
 import MindSkills from "../components/mind/MindSkills.svelte";
+import Backups from "../components/system/Backups.svelte";
 import ExtensionManager from "../components/system/ExtensionManager.svelte";
 import MindDefaults from "../components/system/MindDefaults.svelte";
 import SharedSkills from "../components/system/SharedSkills.svelte";
@@ -20,6 +21,7 @@ const TABS = [
   "prompts",
   "skills",
   "extensions",
+  "backups",
   "users",
   "spirit",
 ] as const;
@@ -31,6 +33,7 @@ const TAB_LABELS: Record<Tab, string> = {
   prompts: "Prompts",
   skills: "Skills",
   extensions: "Extensions",
+  backups: "Backups",
   users: "Users",
   spirit: "Spirit",
 };
@@ -105,6 +108,8 @@ async function handleRestart() {
       <SharedSkills />
     {:else if activeTab === "extensions"}
       <ExtensionManager />
+    {:else if activeTab === "backups"}
+      <Backups />
     {:else if activeTab === "users"}
       <UserManagement minds={data.minds} />
     {:else if activeTab === "spirit"}
