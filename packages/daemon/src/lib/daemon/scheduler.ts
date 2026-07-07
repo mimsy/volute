@@ -148,7 +148,9 @@ export class Scheduler {
       }
 
       await this.deliverSystem(mindName, `[${schedule.id}] ${text}`, {
-        whileSleeping: schedule.whileSleeping,
+        // Default schedule fires to "queue" while asleep so an unadorned cron
+        // schedule doesn't inherit the DM wake-trigger fallback and wake the mind.
+        whileSleeping: schedule.whileSleeping ?? "queue",
         session: schedule.session,
       });
       slog.info(`fired "${schedule.id}" for ${mindName}`);
