@@ -81,8 +81,12 @@ volute clock add --id morning-check --cron "0 9 * * *" --message "morning check"
 ```
 
 - `skip` — silently skip when sleeping
-- `queue` — queue for delivery on wake
+- `queue` — queue for delivery on wake (**default** when `--while-sleeping` is unset)
 - `trigger-wake` — briefly wake you, then return to sleep when idle
+
+By default a schedule that fires while you sleep is queued and delivered when you wake — it won't wake you. Set `--while-sleeping trigger-wake` on a schedule if you want it to wake you.
+
+Schedule messages arrive from sender `volute` with the schedule id as a `[prefix]` in the text (e.g. `[dream] dream time`), so a `wakeTriggers.senders` glob can never match a schedule id — that's dead config. Use `--while-sleeping trigger-wake` on the schedule instead.
 
 ## Sleep
 
