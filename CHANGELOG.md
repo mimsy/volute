@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.45.1](https://github.com/mimsy/volute/compare/volute-v0.45.0...volute-v0.45.1) (2026-07-07)
+
+
+### Bug Fixes
+
+* skip restic round-trip cleanly when restic is not installed ([#469](https://github.com/mimsy/volute/issues/469)) ([718561b](https://github.com/mimsy/volute/commit/718561bdb14070b2d2122a522fe7e6b3740dff22))
+
 ## [0.45.0](https://github.com/mimsy/volute/compare/volute-v0.44.0...volute-v0.45.0) (2026-07-07)
 
 
