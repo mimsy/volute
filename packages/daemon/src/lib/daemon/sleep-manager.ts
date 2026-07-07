@@ -15,7 +15,11 @@ import { and, eq } from "drizzle-orm";
 import { sendSystemMessageDirect } from "../chat/system-chat.js";
 import { getDb } from "../db.js";
 import type { DeliveryPayload } from "../delivery/delivery-router.js";
-import { type ActivityEvent, subscribe } from "../events/activity-events.js";
+import {
+  type ActivityEvent,
+  publish as publishActivity,
+  subscribe,
+} from "../events/activity-events.js";
 import { findMind, mindDir, voluteSystemDir } from "../mind/registry.js";
 import { readVoluteConfig, resolveWakeTriggers, type SleepConfig } from "../mind/volute-config.js";
 import { getPrompt } from "../prompts.js";
@@ -23,8 +27,14 @@ import { deliveryQueue } from "../schema.js";
 import log from "../util/logger.js";
 import { getMindManager } from "./mind-manager.js";
 import { sleepMind, wakeMind } from "./mind-service.js";
+import { MIND_LEVEL_SESSION, recordNotice } from "./notices.js";
 
 const slog = log.child("sleep");
+
+/** Give up waking a mind after this many consecutive failures and mark it errored (#419). */
+const MAX_WAKE_ATTEMPTS = 5;
+/** Backoff before the next retry, indexed by (failures - 1) and capped at the last entry. */
+const WAKE_BACKOFF_MS = [60_000, 5 * 60_000, 15 * 60_000, 60 * 60_000];
 
 export type SleepState = {
   sleeping: boolean;
@@ -34,6 +44,10 @@ export type SleepState = {
   voluntaryWakeAt: string | null;
   queuedMessageCount: number;
   triggerWakeHistory: { channel: string; at: string }[];
+  /** Consecutive failed wake attempts; reset on a successful wake (#419). */
+  wakeFailures: number;
+  /** Earliest time the next wake retry may run, while backing off after failures. */
+  nextWakeAttemptAt: string | null;
 };
 
 type SleepStatePersisted = Record<string, SleepState>;
@@ -47,6 +61,8 @@ function defaultState(): SleepState {
     voluntaryWakeAt: null,
     queuedMessageCount: 0,
     triggerWakeHistory: [],
+    wakeFailures: 0,
+    nextWakeAttemptAt: null,
   };
 }
 
@@ -128,6 +144,8 @@ export class SleepManager {
         const data: SleepStatePersisted = JSON.parse(readFileSync(this.statePath, "utf-8"));
         for (const [name, state] of Object.entries(data)) {
           state.triggerWakeHistory ??= [];
+          state.wakeFailures ??= 0;
+          state.nextWakeAttemptAt ??= null;
           this.states.set(name, state);
         }
       }
@@ -318,7 +336,7 @@ export class SleepManager {
         try {
           await wakeMind(name);
         } catch (err) {
-          slog.error(`failed to wake ${name}`, log.errorData(err));
+          await this.handleWakeFailure(name, err);
           return;
         }
       }
@@ -326,6 +344,9 @@ export class SleepManager {
       // Wait for health check
       const entry = await findMind(name);
       if (!entry) return;
+
+      // Wake succeeded — clear any prior failure backoff so future failures start fresh.
+      this.resetWakeBackoff(name);
 
       if (opts?.trigger) {
         // Trigger-wakes are brief interruptions — the trigger message itself
@@ -550,6 +571,79 @@ export class SleepManager {
     return deliverMessage(name, payload, { isFlush: true });
   }
 
+  // --- Wake failure handling (#419) ---
+
+  /**
+   * Record a failed wake attempt. Applies exponential backoff between retries and,
+   * after MAX_WAKE_ATTEMPTS consecutive failures, gives up and marks the mind errored
+   * rather than retrying every tick forever.
+   */
+  protected async handleWakeFailure(name: string, err: unknown): Promise<void> {
+    const state = this.states.get(name);
+    if (!state?.sleeping) return;
+
+    state.wakeFailures = (state.wakeFailures ?? 0) + 1;
+
+    if (state.wakeFailures >= MAX_WAKE_ATTEMPTS) {
+      await this.markWakeErrored(name, err);
+      return;
+    }
+
+    const backoff = WAKE_BACKOFF_MS[Math.min(state.wakeFailures - 1, WAKE_BACKOFF_MS.length - 1)];
+    state.nextWakeAttemptAt = new Date(Date.now() + backoff).toISOString();
+    this.saveState();
+    slog.warn(
+      `failed to wake ${name} (attempt ${state.wakeFailures}/${MAX_WAKE_ATTEMPTS}); retrying in ${Math.round(backoff / 60_000)}m`,
+      log.errorData(err),
+    );
+  }
+
+  /** Clear wake-failure backoff after a successful wake. */
+  private resetWakeBackoff(name: string): void {
+    const state = this.states.get(name);
+    if (!state) return;
+    if (state.wakeFailures === 0 && state.nextWakeAttemptAt === null) return;
+    state.wakeFailures = 0;
+    state.nextWakeAttemptAt = null;
+    this.saveState();
+  }
+
+  /**
+   * A mind has failed to wake too many times — it isn't asleep, it's broken.
+   * Clear the sleep state (so the tick stops retrying) and surface the failure
+   * loudly: error log, activity event for the web UI, and a mind notice so the
+   * mind learns what happened on its next successful session. A manual
+   * `volute clock wake` / `volute mind start` is the recovery path.
+   */
+  protected async markWakeErrored(name: string, err: unknown): Promise<void> {
+    const detail = err instanceof Error ? err.message : String(err);
+    this.markAwake(name);
+
+    slog.error(
+      `${name} failed to wake ${MAX_WAKE_ATTEMPTS} times in a row; giving up and marking errored`,
+      log.errorData(err),
+    );
+
+    try {
+      await publishActivity({
+        type: "mind_stopped",
+        mind: name,
+        summary: `${name} failed to wake after ${MAX_WAKE_ATTEMPTS} attempts`,
+        metadata: { error: "wake_failed", detail },
+      });
+    } catch (e) {
+      slog.error(`failed to publish wake-failure activity for ${name}`, log.errorData(e));
+    }
+
+    await recordNotice({
+      mind: name,
+      session: MIND_LEVEL_SESSION,
+      kind: "startup",
+      reason: "startup_failed",
+      detail: `Wake failed ${MAX_WAKE_ATTEMPTS} times in a row and was given up. Last error: ${detail}`,
+    });
+  }
+
   // --- Internal methods ---
 
   private markSleeping(name: string, opts?: { voluntaryWakeAt?: string }): void {
@@ -562,6 +656,8 @@ export class SleepManager {
       voluntaryWakeAt: opts?.voluntaryWakeAt ?? null,
       queuedMessageCount: this.states.get(name)?.queuedMessageCount ?? 0,
       triggerWakeHistory: [],
+      wakeFailures: 0,
+      nextWakeAttemptAt: null,
     };
     this.states.set(name, state);
     this.saveState();
@@ -600,6 +696,12 @@ export class SleepManager {
       if (!config?.enabled || !config.schedule) continue;
 
       const state = this.states.get(name);
+
+      // In wake-failure backoff — wait before retrying rather than hammering
+      // wakeMind every tick (#419).
+      if (state?.sleeping && state.nextWakeAttemptAt && now < new Date(state.nextWakeAttemptAt)) {
+        continue;
+      }
 
       // Check voluntary wake time
       if (state?.sleeping && state.voluntaryWakeAt) {
