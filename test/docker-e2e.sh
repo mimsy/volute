@@ -204,6 +204,20 @@ assert_eq "$alice_owner" "mind-alice" "/minds/alice owned by mind-alice"
 bob_owner=$(docker exec "$CONTAINER" stat -c '%U' /minds/bob)
 assert_eq "$bob_owner" "mind-bob" "/minds/bob owned by mind-bob"
 
+# Creation-time writes (skills, SOUL.md/MEMORY.md, git objects) must also be
+# handed to the mind, not just the top-level dir — the chown has to run AFTER
+# all of them. Any root-owned path here means a creation-time write escaped the
+# ownership fixup and the mind can't modify its own files.
+alice_root_owned=$(docker exec "$CONTAINER" find /minds/alice -user root -print -quit 2>/dev/null)
+if [[ -z "$alice_root_owned" ]]; then
+  pass "no root-owned files under /minds/alice"
+else
+  fail "root-owned file under /minds/alice: $alice_root_owned"
+fi
+
+alice_skills_owner=$(docker exec "$CONTAINER" stat -c '%U' /minds/alice/home/.claude/skills 2>/dev/null || echo missing)
+assert_eq "$alice_skills_owner" "mind-alice" "/minds/alice skills dir owned by mind-alice"
+
 # ─── Phase 5: Start minds ────────────────────────────────────────────────────
 
 echo ""
