@@ -139,10 +139,15 @@ if [[ -z "$TOKEN" ]]; then
   exit 1
 fi
 
-# Write setup config so CLI commands work inside the container
+# Write setup config so CLI commands work inside the container. The `setupCompleted`
+# field is what `isSetupComplete()` checks; the container entrypoint never runs
+# `volute setup`, and `migrateSetupCompleted()` only runs at daemon startup (after
+# config.json already exists), so we must write the flag explicitly. config.json was
+# absent when the daemon started, so its config cache is empty and this fresh write
+# is picked up without a daemon restart.
 echo "Writing setup config..."
 docker exec "$CONTAINER" sh -c \
-  'mkdir -p /data/system && echo '"'"'{"setup":{"type":"system","isolation":"user"}}'"'"' > /data/system/config.json'
+  'mkdir -p /data/system && echo '"'"'{"setup":{"type":"system","isolation":"user"},"setupCompleted":true}'"'"' > /data/system/config.json'
 
 # Create a test user account (first user auto-becomes admin)
 echo "Creating test user account..."
@@ -263,10 +268,10 @@ echo "  # Shorthand"
 echo "  $VEXEC status"
 echo ""
 echo "  # Seed a mind"
-echo "  $VEXEC seed my-mind --template claude --model claude-sonnet-4-6"
+echo "  $VEXEC seed create my-mind --template claude --model claude-sonnet-4-6"
 echo ""
 echo "  # Send a message and wait for the response"
-echo "  $VEXEC send @my-mind \"hello, who are you?\" --wait"
+echo "  $VEXEC chat send @my-mind \"hello, who are you?\" --wait"
 echo ""
 echo "Teardown: bash test/integration-teardown.sh"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
