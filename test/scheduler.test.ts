@@ -3,6 +3,10 @@ import { mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { _resetConfigCache } from "../packages/daemon/src/lib/config/setup.js";
+import {
+  resolveMindToken,
+  revokeMindToken,
+} from "../packages/daemon/src/lib/daemon/mind-tokens.js";
 import { Scheduler } from "../packages/daemon/src/lib/daemon/scheduler.js";
 import { voluteSystemDir } from "../packages/daemon/src/lib/mind/registry.js";
 import { SandboxUnavailableError } from "../packages/daemon/src/lib/mind/sandbox.js";
@@ -293,6 +297,36 @@ describe("scheduler runScript sandboxing", () => {
       }
     ).runScript("echo scheduled-ok", "/tmp", "alice");
     assert.ok(out.includes("scheduled-ok"));
+  });
+
+  it("runs scripts with the mind's auth env and no daemon admin token", async () => {
+    process.env.VOLUTE_SANDBOX = "0";
+    delete process.env.VOLUTE_SANDBOX_OPTIONAL;
+    // A leaked daemon admin token would grant scripts admin privileges — it must
+    // be withheld and replaced by the mind's own non-admin token.
+    process.env.VOLUTE_DAEMON_TOKEN = "super-secret-admin";
+    try {
+      const scheduler = new Scheduler();
+      const out = await (
+        scheduler as unknown as {
+          runScript: (s: string, cwd: string, m: string) => Promise<string>;
+        }
+      ).runScript(
+        'printf "%s\\n%s\\n%s" "$VOLUTE_MIND" "$VOLUTE_MIND_TOKEN" "$VOLUTE_DAEMON_TOKEN"',
+        "/tmp",
+        "alice",
+      );
+      const [mind, token, admin] = out.split("\n");
+      assert.equal(mind, "alice");
+      assert.ok(token && token.length > 0, "script should receive a mind token");
+      // The token is non-admin and scoped to this mind.
+      assert.equal(resolveMindToken(token), "alice");
+      // The daemon admin token is never handed to the script (expands to empty).
+      assert.equal(admin, "");
+    } finally {
+      delete process.env.VOLUTE_DAEMON_TOKEN;
+      revokeMindToken("alice");
+    }
   });
 });
 
