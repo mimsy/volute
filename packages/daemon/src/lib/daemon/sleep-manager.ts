@@ -11,9 +11,10 @@ import {
 import { resolve } from "node:path";
 import { promisify } from "node:util";
 import { CronExpressionParser } from "cron-parser";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { sendSystemMessageDirect } from "../chat/system-chat.js";
 import { getDb } from "../db.js";
+import type { DeliveryPayload } from "../delivery/delivery-router.js";
 import { type ActivityEvent, subscribe } from "../events/activity-events.js";
 import { findMind, mindDir, voluteSystemDir } from "../mind/registry.js";
 import { readVoluteConfig, type SleepConfig } from "../mind/volute-config.js";
@@ -496,34 +497,58 @@ export class SleepManager {
 
       if (rows.length === 0) return 0;
 
-      // Import deliverMessage lazily to avoid circular deps
-      const { deliverMessage } = await import("../delivery/message-delivery.js");
-
-      const delivered: number[] = [];
+      let deliveredCount = 0;
       for (const row of rows) {
+        let payload: DeliveryPayload;
         try {
-          await deliverMessage(name, JSON.parse(row.payload));
-          delivered.push(row.id);
+          payload = JSON.parse(row.payload);
         } catch (err) {
-          slog.warn(`failed to flush queued message ${row.id} for ${name}`, log.errorData(err));
+          // An unparseable payload can never be delivered — drop it so it doesn't wedge the
+          // rest of the flush (and replay forever on every wake).
+          slog.warn(
+            `dropping unparseable queued message ${row.id} for ${name}`,
+            log.errorData(err),
+          );
+          await db.delete(deliveryQueue).where(eq(deliveryQueue.id, row.id));
+          continue;
         }
-      }
 
-      // Delete only successfully delivered messages
-      if (delivered.length > 0) {
-        await db.delete(deliveryQueue).where(inArray(deliveryQueue.id, delivered));
+        const delivered = await this.deliverQueued(name, payload);
+        if (!delivered) {
+          // Delivery genuinely failed. Leave this row (and the untouched tail) queued so they
+          // retry on the next wake in order, rather than being silently dropped.
+          slog.warn(`failed to flush queued message ${row.id} for ${name}; leaving it queued`);
+          break;
+        }
+
+        // Delete per-row immediately after each successful delivery so a crash mid-flush
+        // replays only the undelivered tail, not the whole backlog.
+        await db.delete(deliveryQueue).where(eq(deliveryQueue.id, row.id));
+        deliveredCount++;
       }
 
       const state = this.states.get(name);
       if (state) {
-        state.queuedMessageCount = Math.max(0, state.queuedMessageCount - delivered.length);
+        state.queuedMessageCount = Math.max(0, state.queuedMessageCount - deliveredCount);
       }
 
-      return delivered.length;
+      return deliveredCount;
     } catch (err) {
       slog.warn(`failed to flush queued messages for ${name}`, log.errorData(err));
       return 0;
     }
+  }
+
+  /**
+   * Deliver one queued message on the wake path. `isFlush` skips the queue-time inbound
+   * recording (kept once, at arrival) and bypasses the sleep re-queue so the now-waking mind
+   * actually receives it. Returns whether the message was handed off to the delivery manager.
+   * Extracted as a seam so the flush loop can be unit-tested without the real delivery stack.
+   */
+  protected async deliverQueued(name: string, payload: DeliveryPayload): Promise<boolean> {
+    // Import lazily to avoid a circular dependency with message-delivery.
+    const { deliverMessage } = await import("../delivery/message-delivery.js");
+    return deliverMessage(name, payload, { isFlush: true });
   }
 
   // --- Internal methods ---

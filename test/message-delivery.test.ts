@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { getDb } from "../packages/daemon/src/lib/db.js";
 import { extractTextContent } from "../packages/daemon/src/lib/delivery/delivery-router.js";
 import {
+  deliverMessage,
   linkToolResultToTurn,
   recordInbound,
   recordOutbound,
@@ -11,6 +12,7 @@ import {
 } from "../packages/daemon/src/lib/delivery/message-delivery.js";
 import { publish as publishActivity } from "../packages/daemon/src/lib/events/activity-events.js";
 import { type MindEvent, subscribe } from "../packages/daemon/src/lib/events/mind-events.js";
+import { addMind, removeMind } from "../packages/daemon/src/lib/mind/registry.js";
 import {
   activity,
   conversations,
@@ -97,6 +99,72 @@ describe("resolveSleepAction", () => {
 
   it("unknown behavior falls through to queue", () => {
     assert.equal(resolveSleepAction("invalid-value", false, true), "queue");
+  });
+});
+
+describe("deliverMessage flush recording", () => {
+  const FLUSH_MIND = "test-flush";
+  const FLUSH_PORT = 41999;
+
+  afterEach(async () => {
+    const db = await getDb();
+    await db.delete(mindHistory).where(eq(mindHistory.mind, FLUSH_MIND));
+    await removeMind(FLUSH_MIND);
+  });
+
+  it("records the inbound once on the normal (non-flush) path", async () => {
+    await addMind(FLUSH_MIND, FLUSH_PORT);
+    // No delivery manager is initialized, so routeAndDeliver throws and delivery reports
+    // failure — but the inbound must still have been recorded exactly once.
+    const ok = await deliverMessage(FLUSH_MIND, {
+      channel: "@volute",
+      sender: "volute",
+      content: "hi",
+    });
+    assert.equal(ok, false, "delivery fails without a delivery manager");
+
+    const db = await getDb();
+    const rows = await db
+      .select()
+      .from(mindHistory)
+      .where(and(eq(mindHistory.mind, FLUSH_MIND), eq(mindHistory.type, "inbound")));
+    assert.equal(rows.length, 1);
+  });
+
+  it("skips re-recording the inbound on the flush path (isFlush)", async () => {
+    await addMind(FLUSH_MIND, FLUSH_PORT);
+    const events: MindEvent[] = [];
+    const unsub = subscribe(FLUSH_MIND, (e) => events.push(e));
+    try {
+      const ok = await deliverMessage(
+        FLUSH_MIND,
+        { channel: "@volute", sender: "volute", content: "hi" },
+        { isFlush: true },
+      );
+      // Delivery fails (no manager) → returns false so the flush loop won't delete the row.
+      assert.equal(ok, false);
+    } finally {
+      unsub();
+    }
+
+    // The flush path must NOT create a second inbound row or publish a duplicate event —
+    // the queue-time recording (with the true arrival time) is the only one.
+    assert.equal(events.filter((e) => e.type === "inbound").length, 0);
+    const db = await getDb();
+    const rows = await db
+      .select()
+      .from(mindHistory)
+      .where(and(eq(mindHistory.mind, FLUSH_MIND), eq(mindHistory.type, "inbound")));
+    assert.equal(rows.length, 0);
+  });
+
+  it("returns false when the mind is not registered", async () => {
+    const ok = await deliverMessage(
+      "no-such-mind",
+      { channel: "@volute", sender: "volute", content: "hi" },
+      { isFlush: true },
+    );
+    assert.equal(ok, false);
   });
 });
 
