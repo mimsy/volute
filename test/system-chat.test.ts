@@ -3,10 +3,11 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 import { getOrCreateSystemUser, verifyUser } from "../packages/daemon/src/lib/auth.js";
 import {
   ensureSystemDM,
-  generateSystemReply,
+  generateSystemFallbackReply,
   resetSystemDMCache,
   sendSystemMessage,
   sendSystemMessageDirect,
+  shouldGenerateSystemFallback,
 } from "../packages/daemon/src/lib/chat/system-chat.js";
 import { getDb } from "../packages/daemon/src/lib/db.js";
 import {
@@ -150,7 +151,101 @@ describe("system messages", () => {
   });
 });
 
-describe("generateSystemReply", () => {
+describe("shouldGenerateSystemFallback", () => {
+  const systemDM = [{ userType: "system" }, { userType: "mind" }];
+
+  it("triggers for a two-party system DM from a mind", () => {
+    assert.equal(
+      shouldGenerateSystemFallback({
+        senderIsMind: true,
+        hasMessage: true,
+        convType: "dm",
+        participants: systemDM,
+        replyTarget: "testmind",
+      }),
+      true,
+    );
+  });
+
+  it("does not trigger for a channel with a system-user participant (fan-out owns it)", () => {
+    assert.equal(
+      shouldGenerateSystemFallback({
+        senderIsMind: true,
+        hasMessage: true,
+        convType: "channel",
+        participants: [{ userType: "system" }, { userType: "mind" }, { userType: "mind" }],
+        replyTarget: "testmind",
+      }),
+      false,
+    );
+  });
+
+  it("does not trigger for a group DM that includes the system user", () => {
+    assert.equal(
+      shouldGenerateSystemFallback({
+        senderIsMind: true,
+        hasMessage: true,
+        convType: "dm",
+        participants: [{ userType: "system" }, { userType: "mind" }, { userType: "mind" }],
+        replyTarget: "testmind",
+      }),
+      false,
+    );
+  });
+
+  it("does not trigger when the spirit is the reply target (self-reply loop guard)", () => {
+    // The spirit shares the system user; without this guard a spirit DM to itself
+    // would trigger the system to reply to the spirit, which would reply again — loop.
+    assert.equal(
+      shouldGenerateSystemFallback({
+        senderIsMind: true,
+        hasMessage: true,
+        convType: "dm",
+        participants: systemDM,
+        replyTarget: "volute",
+      }),
+      false,
+    );
+  });
+
+  it("does not trigger for a non-mind sender or an empty message", () => {
+    assert.equal(
+      shouldGenerateSystemFallback({
+        senderIsMind: false,
+        hasMessage: true,
+        convType: "dm",
+        participants: systemDM,
+        replyTarget: "testmind",
+      }),
+      false,
+    );
+    assert.equal(
+      shouldGenerateSystemFallback({
+        senderIsMind: true,
+        hasMessage: false,
+        convType: "dm",
+        participants: systemDM,
+        replyTarget: "testmind",
+      }),
+      false,
+    );
+  });
+
+  it("does not trigger for a DM without a system-user participant", () => {
+    assert.equal(
+      shouldGenerateSystemFallback({
+        senderIsMind: true,
+        hasMessage: true,
+        convType: "dm",
+        participants: [{ userType: "mind" }, { userType: "mind" }],
+        replyTarget: "testmind",
+      }),
+      false,
+    );
+  });
+});
+
+describe("generateSystemFallbackReply", () => {
   beforeEach(cleanup);
   afterEach(cleanup);
 
@@ -158,7 +253,7 @@ describe("generateSystemReply", () => {
     const { conversationId } = await ensureSystemDM("testmind");
 
     // No AI model configured in test env, so aiComplete returns null
-    await generateSystemReply(conversationId, "testmind", "hello volute");
+    await generateSystemFallbackReply(conversationId, "testmind", "hello volute");
 
     const db = await getDb();
     const msgs = await db
@@ -178,11 +273,11 @@ describe("generateSystemReply", () => {
     const { conversationId } = await ensureSystemDM("testmind");
 
     // Register a running spirit — fan-out has already delivered the mind's DM to it,
-    // so generateSystemReply must not deliver or reply again (issue #418).
+    // so generateSystemFallbackReply must not deliver or reply again (issue #418).
     await addSpirit("volute", 4099, "claude", "/tmp/volute-spirit-test");
     await setMindRunning("volute", true);
 
-    await generateSystemReply(conversationId, "testmind", "hello volute");
+    await generateSystemFallbackReply(conversationId, "testmind", "hello volute");
 
     const db = await getDb();
     const msgs = await db
