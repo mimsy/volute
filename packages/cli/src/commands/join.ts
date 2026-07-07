@@ -58,10 +58,14 @@ const cmd = command({
       },
     );
 
-    const data = (await res.json()) as { ok?: boolean; error?: string };
+    const data = (await res.json()) as { ok?: boolean; error?: string; conflicts?: string[] };
 
     if (!res.ok) {
       console.error(data.error ?? "Failed to join variant");
+      if (data.conflicts?.length) {
+        console.error("\nConflicting files:");
+        for (const file of data.conflicts) console.error(`  ${file}`);
+      }
       process.exit(1);
     }
 

@@ -264,6 +264,26 @@ const app = new Hono<AuthEnv>()
       } catch (err) {
         log.warn(`failed to abort merge for ${mindName}`, log.errorData(err));
       }
+      // The git ops above (auto-commit, merge, merge --abort) ran as the daemon
+      // (root). Under user isolation that leaves the parent worktree — including
+      // home/MEMORY.md and other identity files — owned root:root, so the
+      // still-running parent mind can no longer write its own files. Hand
+      // ownership back before returning.
+      try {
+        await chownMindDir(projectRoot, mindName);
+      } catch (err) {
+        log.warn(
+          `failed to restore ownership after aborted merge for ${mindName}`,
+          log.errorData(err),
+        );
+        return c.json(
+          {
+            error: `Merge failed and restoring parent ownership failed: ${err instanceof Error ? err.message : String(err)}`,
+            conflicts,
+          },
+          500,
+        );
+      }
       // Leave the variant intact so the conflict can be resolved in the variant
       // and the join retried.
       return c.json(
@@ -276,6 +296,12 @@ const app = new Hono<AuthEnv>()
     }
 
     await cleanupVariant(variantName, projectRoot, variantEntry.dir, { stop: true });
+
+    // The merge and cleanup git ops ran as the daemon (root). Hand ownership of
+    // the parent worktree back to the mind user before the wrapped npm install
+    // (which runs as that user) and the restart — otherwise the tree is left
+    // root-owned under isolation. Mirrors the split/create path.
+    await chownMindDir(projectRoot, mindName);
 
     // Update template hash after upgrade merge
     if (variantName.endsWith("-upgrade") || variantName === "upgrade") {
