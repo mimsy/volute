@@ -10,6 +10,7 @@ import {
   type SleepConfig,
   updateSchedule,
   updateSleepConfig,
+  WAKE_TRIGGER_DEFAULTS,
 } from "../../lib/client";
 import {
   fmtTime,
@@ -35,8 +36,8 @@ let wakeMinute = $state(0);
 let useCustomCron = $state(false);
 let editSleepCron = $state("");
 let editWakeCron = $state("");
-let wakeOnMentions = $state(false);
-let wakeOnDms = $state(false);
+let wakeOnMentions = $state(WAKE_TRIGGER_DEFAULTS.mentions);
+let wakeOnDms = $state(WAKE_TRIGGER_DEFAULTS.dms);
 let wakeChannels = $state("");
 let wakeSenders = $state("");
 
@@ -79,8 +80,8 @@ function syncSleepState(cfg: SleepConfig) {
   } else if (editSleepCron || editWakeCron) {
     useCustomCron = true;
   }
-  wakeOnMentions = cfg.wakeTriggers?.mentions ?? false;
-  wakeOnDms = cfg.wakeTriggers?.dms ?? false;
+  wakeOnMentions = cfg.wakeTriggers?.mentions ?? WAKE_TRIGGER_DEFAULTS.mentions;
+  wakeOnDms = cfg.wakeTriggers?.dms ?? WAKE_TRIGGER_DEFAULTS.dms;
   wakeChannels = (cfg.wakeTriggers?.channels ?? []).join(", ");
   wakeSenders = (cfg.wakeTriggers?.senders ?? []).join(", ");
 }
