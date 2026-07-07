@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.45.0](https://github.com/mimsy/volute/compare/volute-v0.44.0...volute-v0.45.0) (2026-07-07)
+
+
+### Features
+
+* restic-based system backups ([#457](https://github.com/mimsy/volute/issues/457)) ([802ef5f](https://github.com/mimsy/volute/commit/802ef5fb60c1b688c043c15bfd2c6c01548a7d5a))
+
+
+### Bug Fixes
+
+* accept home-relative avatar paths in mind profile updates ([#390](https://github.com/mimsy/volute/issues/390)) ([c94d416](https://github.com/mimsy/volute/commit/c94d416c7844ec1791589733f7aa694b673bf3e6))
+* align mind-facing docs and messages with actual behavior, warm system messages ([#439](https://github.com/mimsy/volute/issues/439)) ([483cee1](https://github.com/mimsy/volute/commit/483cee1cb928f654f5de8f5d0b9d2f9effee6ef5))
+* attach menu in web chat instantly self-closing ([#411](https://github.com/mimsy/volute/issues/411)) ([92c9b65](https://github.com/mimsy/volute/commit/92c9b65887f0c3c49de77fc3fb45e7047e671571))
+* enable skill discovery in claude template ([#391](https://github.com/mimsy/volute/issues/391)) ([8c4becc](https://github.com/mimsy/volute/commit/8c4becc5f5a87cd65b4e779f8b5dd3ba30e52eaa))
+* make unread message dots reliable ([#410](https://github.com/mimsy/volute/issues/410)) ([0855d7c](https://github.com/mimsy/volute/commit/0855d7cd529b2838d5936596ab5f4baa293a27d3))
+* record tool-call errors in mind history and link results by tool id ([#388](https://github.com/mimsy/volute/issues/388)) ([a95a32b](https://github.com/mimsy/volute/commit/a95a32b56f2c0e126d6dc90f65ef73f008108ec8))
+
 ## [0.44.0](https://github.com/mimsy/volute/compare/volute-v0.43.1...volute-v0.44.0) (2026-07-04)
 
 
