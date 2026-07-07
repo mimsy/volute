@@ -16,21 +16,21 @@ function createTestHandlers() {
   const fileCalls = new Map<string, HandlerCall[]>();
 
   const mindHandler = (session: string) => ({
-    handle(content: VoluteContentPart[], meta: HandlerMeta, listener: Listener) {
+    handle(content: VoluteContentPart[], meta: HandlerMeta, listener?: Listener) {
       const calls = mindCalls.get(session) ?? [];
       calls.push({ content, meta });
       mindCalls.set(session, calls);
-      queueMicrotask(() => listener({ type: "done", messageId: meta.messageId }));
+      queueMicrotask(() => listener?.({ type: "done", messageId: meta.messageId }));
       return () => {};
     },
   });
 
   const fileHandler = (path: string) => ({
-    handle(content: VoluteContentPart[], meta: HandlerMeta, listener: Listener) {
+    handle(content: VoluteContentPart[], meta: HandlerMeta, listener?: Listener) {
       const calls = fileCalls.get(path) ?? [];
       calls.push({ content, meta });
       fileCalls.set(path, calls);
-      queueMicrotask(() => listener({ type: "done", messageId: meta.messageId }));
+      queueMicrotask(() => listener?.({ type: "done", messageId: meta.messageId }));
       return () => {};
     },
   });

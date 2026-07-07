@@ -713,10 +713,10 @@ const slog = log.child("ai-keys");
 const oauthHealth = new Map<string, { healthy: boolean; error?: string; since?: number }>();
 
 /** Check whether an OAuth token needs refresh (expired or <15 min remaining). */
-export function needsRefresh(oauth: OAuthCredentials): boolean {
+export function needsRefresh(oauth: OAuthCredentials, now: number = Date.now()): boolean {
   const expires = oauth.expires;
-  if (!expires || Date.now() >= expires) return true;
-  return expires - Date.now() < 15 * 60 * 1000;
+  if (!expires || now >= expires) return true;
+  return expires - now < 15 * 60 * 1000;
 }
 
 export async function refreshApiKeyCache(): Promise<void> {

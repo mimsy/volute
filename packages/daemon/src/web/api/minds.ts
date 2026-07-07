@@ -923,9 +923,6 @@ const app = new Hono<AuthEnv>()
           "Git setup failed — variants and upgrades won't be available until git is initialized.";
       }
 
-      // Fix ownership after root git/file operations
-      await chownMindDir(dest, name);
-
       if (body.stage === "seed") {
         // Write orientation SOUL.md
         const descLine = body.description
@@ -1001,6 +998,11 @@ const app = new Hono<AuthEnv>()
           writeFileSync(resolve(dest, "home/MEMORY.md"), customMemory);
         }
       }
+
+      // Fix ownership after all root git/file operations (git objects, skill
+      // installs, and SOUL.md/MEMORY.md writes above must end up mind-owned so
+      // the mind can modify its own identity files under user isolation)
+      await chownMindDir(dest, name);
 
       // Auto-publish public key to volute.systems (non-blocking)
       publishPublicKey(name, publicKeyPem).catch((err: unknown) =>

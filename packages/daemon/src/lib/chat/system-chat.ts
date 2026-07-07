@@ -2,7 +2,7 @@ import { aiCompleteUtility } from "../ai-service.js";
 import { getOrCreateMindUser, getOrCreateSystemUser } from "../auth.js";
 import { deliverMessage, recordInbound } from "../delivery/message-delivery.js";
 import { addMessage, createConversation, findDMConversation } from "../events/conversations.js";
-import { findMind, mindDir } from "../mind/registry.js";
+import { findMind, isSpiritName, mindDir, SPIRIT_NAME } from "../mind/registry.js";
 import { readVoluteConfig } from "../mind/volute-config.js";
 import log from "../util/logger.js";
 
@@ -13,6 +13,32 @@ const dmCache = new Map<string, string>();
 /** Reset the DM cache (for testing). */
 export function resetSystemDMCache(): void {
   dmCache.clear();
+}
+
+/**
+ * Decide whether a mind's message should trigger the system fallback reply.
+ *
+ * Only genuine two-party system DMs qualify. Channels and group DMs that include
+ * the system user are covered by fan-out to the running spirit (correctly
+ * labeled), so the utility fallback stays DM-only — this stops #system posts and
+ * group DMs from being treated as private DMs. The spirit shares the system user,
+ * so it must never be triggered to reply to its own message, which would loop.
+ */
+export function shouldGenerateSystemFallback(opts: {
+  senderIsMind: boolean;
+  hasMessage: boolean;
+  convType: string;
+  participants: { userType: string }[];
+  replyTarget: string;
+}): boolean {
+  const { senderIsMind, hasMessage, convType, participants, replyTarget } = opts;
+  if (!senderIsMind || !hasMessage) return false;
+  if (isSpiritName(replyTarget)) return false;
+  return (
+    convType === "dm" &&
+    participants.length === 2 &&
+    participants.some((p) => p.userType === "system")
+  );
 }
 
 /**
@@ -59,7 +85,7 @@ export async function sendSystemMessage(
   opts?: { whileSleeping?: "skip" | "queue" | "trigger-wake"; session?: string },
 ): Promise<void> {
   // Spirit can't DM itself — deliver directly without conversation persistence
-  const isSpirit = mindName === "volute";
+  const isSpirit = isSpiritName(mindName);
   let conversationId: string | undefined;
 
   if (!isSpirit) {
@@ -99,39 +125,42 @@ export async function sendSystemMessageDirect(
 }
 
 /**
- * Check if the system spirit is running and can handle replies.
+ * Check whether the system spirit will handle the mind's DM on its own, so the
+ * AI fallback reply should be skipped. This is true when the spirit is running
+ * (fan-out has already delivered the message) or sleeping (fan-out queued it via
+ * the sleep queue, and it will reach the spirit on wake).
  */
-async function isSpiritAvailable(): Promise<boolean> {
-  const spiritEntry = await findMind("volute");
-  return !!(spiritEntry?.running && spiritEntry.mindType === "spirit");
+async function spiritWillHandle(): Promise<boolean> {
+  const spiritEntry = await findMind(SPIRIT_NAME);
+  if (spiritEntry?.running && spiritEntry.mindType === "spirit") return true;
+
+  try {
+    const { getSleepManagerIfReady } = await import("../daemon/sleep-manager.js");
+    const sm = getSleepManagerIfReady();
+    if (sm?.isSleeping(SPIRIT_NAME)) return true;
+  } catch (err) {
+    slog.debug("could not check spirit sleep state", log.errorData(err));
+  }
+
+  return false;
 }
 
 /**
- * Generate an AI-powered reply from the system user to a mind's message.
- * Routes through the system spirit when available, falls back to aiCompleteUtility.
+ * Generate an AI-powered fallback reply from the system user to a mind's message.
+ *
+ * When the spirit is running or sleeping it owns the reply — fan-out already
+ * delivered (or queued) the message to it, so this returns without delivering to
+ * avoid a duplicate. Only when the spirit is stopped (and fan-out therefore
+ * skipped it) does this generate a reply via the utility model.
  */
-export async function generateSystemReply(
+export async function generateSystemFallbackReply(
   conversationId: string,
   mindName: string,
   message: string,
 ): Promise<void> {
-  // If the system spirit is running, deliver through it
-  if (await isSpiritAvailable()) {
-    try {
-      await deliverMessage("volute", {
-        content: [{ type: "text", text: message }],
-        channel: `@${mindName}`,
-        conversationId,
-        sender: mindName,
-        isDM: true,
-        participants: ["volute", mindName],
-        participantCount: 2,
-      });
-      return;
-    } catch (err) {
-      slog.warn(`failed to route to spirit, falling back to aiCompleteUtility`, log.errorData(err));
-    }
-  }
+  // The running/sleeping spirit already received the message via fan-out; don't
+  // double-deliver or double-reply.
+  if (await spiritWillHandle()) return;
 
   // Fallback: generate reply via utility model
   const entry = await findMind(mindName);

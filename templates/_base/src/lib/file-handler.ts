@@ -25,11 +25,11 @@ export function createFileHandlerResolver(cwd: string): HandlerResolver {
   const resolvedCwd = resolve(cwd);
 
   return (filePath: string): MessageHandler => ({
-    handle(content: VoluteContentPart[], meta: HandlerMeta, listener: Listener): () => void {
+    handle(content: VoluteContentPart[], meta: HandlerMeta, listener?: Listener): () => void {
       const resolved = resolve(resolvedCwd, filePath);
       if (!resolved.startsWith(`${resolvedCwd}/`) && resolved !== resolvedCwd) {
         log("file", `rejected path traversal: ${filePath}`);
-        queueMicrotask(() => listener({ type: "done", messageId: meta.messageId }));
+        queueMicrotask(() => listener?.({ type: "done", messageId: meta.messageId }));
         return () => {};
       }
 
@@ -44,7 +44,7 @@ export function createFileHandlerResolver(cwd: string): HandlerResolver {
         }
       }
       // Emit done asynchronously so unsubscribe is assigned before listener fires
-      queueMicrotask(() => listener({ type: "done", messageId: meta.messageId }));
+      queueMicrotask(() => listener?.({ type: "done", messageId: meta.messageId }));
       return () => {};
     },
   });

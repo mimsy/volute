@@ -21,12 +21,17 @@ export function getAuthHeaders(): Record<string, string> {
   return headers;
 }
 
-export function fireWebhook(event: WebhookEvent): void {
+/**
+ * Fire-and-forget webhook delivery. Callers do not await the result; the
+ * returned promise (which always resolves, never rejects) exists so tests can
+ * deterministically wait for delivery to complete instead of sleeping.
+ */
+export function fireWebhook(event: WebhookEvent): Promise<void> {
   try {
     const url = getWebhookUrl();
-    if (!url) return;
+    if (!url) return Promise.resolve();
     const payload = { ...event, timestamp: event.timestamp ?? new Date().toISOString() };
-    fetch(url, {
+    return fetch(url, {
       method: "POST",
       headers: getAuthHeaders(),
       body: JSON.stringify(payload),
@@ -41,6 +46,7 @@ export function fireWebhook(event: WebhookEvent): void {
       });
   } catch (err) {
     slog.error(`webhook ${event.event} failed to serialize`, log.errorData(err));
+    return Promise.resolve();
   }
 }
 

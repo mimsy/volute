@@ -11,19 +11,30 @@ import {
 import { resolve } from "node:path";
 import { promisify } from "node:util";
 import { CronExpressionParser } from "cron-parser";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { sendSystemMessageDirect } from "../chat/system-chat.js";
 import { getDb } from "../db.js";
-import { type ActivityEvent, subscribe } from "../events/activity-events.js";
+import type { DeliveryPayload } from "../delivery/delivery-router.js";
+import {
+  type ActivityEvent,
+  publish as publishActivity,
+  subscribe,
+} from "../events/activity-events.js";
 import { findMind, mindDir, voluteSystemDir } from "../mind/registry.js";
-import { readVoluteConfig, type SleepConfig } from "../mind/volute-config.js";
+import { readVoluteConfig, resolveWakeTriggers, type SleepConfig } from "../mind/volute-config.js";
 import { getPrompt } from "../prompts.js";
 import { deliveryQueue } from "../schema.js";
 import log from "../util/logger.js";
 import { getMindManager } from "./mind-manager.js";
 import { sleepMind, wakeMind } from "./mind-service.js";
+import { MIND_LEVEL_SESSION, recordNotice } from "./notices.js";
 
 const slog = log.child("sleep");
+
+/** Give up waking a mind after this many consecutive failures and mark it errored (#419). */
+const MAX_WAKE_ATTEMPTS = 5;
+/** Backoff before the next retry, indexed by (failures - 1) and capped at the last entry. */
+const WAKE_BACKOFF_MS = [60_000, 5 * 60_000, 15 * 60_000, 60 * 60_000];
 
 export type SleepState = {
   sleeping: boolean;
@@ -33,6 +44,10 @@ export type SleepState = {
   voluntaryWakeAt: string | null;
   queuedMessageCount: number;
   triggerWakeHistory: { channel: string; at: string }[];
+  /** Consecutive failed wake attempts; reset on a successful wake (#419). */
+  wakeFailures: number;
+  /** Earliest time the next wake retry may run, while backing off after failures. */
+  nextWakeAttemptAt: string | null;
 };
 
 type SleepStatePersisted = Record<string, SleepState>;
@@ -46,6 +61,8 @@ function defaultState(): SleepState {
     voluntaryWakeAt: null,
     queuedMessageCount: 0,
     triggerWakeHistory: [],
+    wakeFailures: 0,
+    nextWakeAttemptAt: null,
   };
 }
 
@@ -127,6 +144,8 @@ export class SleepManager {
         const data: SleepStatePersisted = JSON.parse(readFileSync(this.statePath, "utf-8"));
         for (const [name, state] of Object.entries(data)) {
           state.triggerWakeHistory ??= [];
+          state.wakeFailures ??= 0;
+          state.nextWakeAttemptAt ??= null;
           this.states.set(name, state);
         }
       }
@@ -317,7 +336,7 @@ export class SleepManager {
         try {
           await wakeMind(name);
         } catch (err) {
-          slog.error(`failed to wake ${name}`, log.errorData(err));
+          await this.handleWakeFailure(name, err);
           return;
         }
       }
@@ -325,6 +344,9 @@ export class SleepManager {
       // Wait for health check
       const entry = await findMind(name);
       if (!entry) return;
+
+      // Wake succeeded — clear any prior failure backoff so future failures start fresh.
+      this.resetWakeBackoff(name);
 
       if (opts?.trigger) {
         // Trigger-wakes are brief interruptions — the trigger message itself
@@ -421,8 +443,7 @@ export class SleepManager {
     const triggers = config?.wakeTriggers;
 
     // Default: mentions and DMs wake the mind
-    const mentionsEnabled = triggers?.mentions !== false;
-    const dmsEnabled = triggers?.dms !== false;
+    const { mentions: mentionsEnabled, dms: dmsEnabled } = resolveWakeTriggers(triggers);
 
     // Check DM trigger
     if (dmsEnabled && payload.isDM) return true;
@@ -496,34 +517,131 @@ export class SleepManager {
 
       if (rows.length === 0) return 0;
 
-      // Import deliverMessage lazily to avoid circular deps
-      const { deliverMessage } = await import("../delivery/message-delivery.js");
-
-      const delivered: number[] = [];
+      let deliveredCount = 0;
       for (const row of rows) {
+        let payload: DeliveryPayload;
         try {
-          await deliverMessage(name, JSON.parse(row.payload));
-          delivered.push(row.id);
+          payload = JSON.parse(row.payload);
         } catch (err) {
-          slog.warn(`failed to flush queued message ${row.id} for ${name}`, log.errorData(err));
+          // An unparseable payload can never be delivered — drop it so it doesn't wedge the
+          // rest of the flush (and replay forever on every wake).
+          slog.warn(
+            `dropping unparseable queued message ${row.id} for ${name}`,
+            log.errorData(err),
+          );
+          await db.delete(deliveryQueue).where(eq(deliveryQueue.id, row.id));
+          continue;
         }
-      }
 
-      // Delete only successfully delivered messages
-      if (delivered.length > 0) {
-        await db.delete(deliveryQueue).where(inArray(deliveryQueue.id, delivered));
+        const delivered = await this.deliverQueued(name, payload);
+        if (!delivered) {
+          // Delivery genuinely failed. Leave this row (and the untouched tail) queued so they
+          // retry on the next wake in order, rather than being silently dropped.
+          slog.warn(`failed to flush queued message ${row.id} for ${name}; leaving it queued`);
+          break;
+        }
+
+        // Delete per-row immediately after each successful delivery so a crash mid-flush
+        // replays only the undelivered tail, not the whole backlog.
+        await db.delete(deliveryQueue).where(eq(deliveryQueue.id, row.id));
+        deliveredCount++;
       }
 
       const state = this.states.get(name);
       if (state) {
-        state.queuedMessageCount = Math.max(0, state.queuedMessageCount - delivered.length);
+        state.queuedMessageCount = Math.max(0, state.queuedMessageCount - deliveredCount);
       }
 
-      return delivered.length;
+      return deliveredCount;
     } catch (err) {
       slog.warn(`failed to flush queued messages for ${name}`, log.errorData(err));
       return 0;
     }
+  }
+
+  /**
+   * Deliver one queued message on the wake path. `isFlush` skips the queue-time inbound
+   * recording (kept once, at arrival) and bypasses the sleep re-queue so the now-waking mind
+   * actually receives it. Returns whether the message was handed off to the delivery manager.
+   * Extracted as a seam so the flush loop can be unit-tested without the real delivery stack.
+   */
+  protected async deliverQueued(name: string, payload: DeliveryPayload): Promise<boolean> {
+    // Import lazily to avoid a circular dependency with message-delivery.
+    const { deliverMessage } = await import("../delivery/message-delivery.js");
+    return deliverMessage(name, payload, { isFlush: true });
+  }
+
+  // --- Wake failure handling (#419) ---
+
+  /**
+   * Record a failed wake attempt. Applies exponential backoff between retries and,
+   * after MAX_WAKE_ATTEMPTS consecutive failures, gives up and marks the mind errored
+   * rather than retrying every tick forever.
+   */
+  protected async handleWakeFailure(name: string, err: unknown): Promise<void> {
+    const state = this.states.get(name);
+    if (!state?.sleeping) return;
+
+    state.wakeFailures = (state.wakeFailures ?? 0) + 1;
+
+    if (state.wakeFailures >= MAX_WAKE_ATTEMPTS) {
+      await this.markWakeErrored(name, err);
+      return;
+    }
+
+    const backoff = WAKE_BACKOFF_MS[Math.min(state.wakeFailures - 1, WAKE_BACKOFF_MS.length - 1)];
+    state.nextWakeAttemptAt = new Date(Date.now() + backoff).toISOString();
+    this.saveState();
+    slog.warn(
+      `failed to wake ${name} (attempt ${state.wakeFailures}/${MAX_WAKE_ATTEMPTS}); retrying in ${Math.round(backoff / 60_000)}m`,
+      log.errorData(err),
+    );
+  }
+
+  /** Clear wake-failure backoff after a successful wake. */
+  private resetWakeBackoff(name: string): void {
+    const state = this.states.get(name);
+    if (!state) return;
+    if (state.wakeFailures === 0 && state.nextWakeAttemptAt === null) return;
+    state.wakeFailures = 0;
+    state.nextWakeAttemptAt = null;
+    this.saveState();
+  }
+
+  /**
+   * A mind has failed to wake too many times — it isn't asleep, it's broken.
+   * Clear the sleep state (so the tick stops retrying) and surface the failure
+   * loudly: error log, activity event for the web UI, and a mind notice so the
+   * mind learns what happened on its next successful session. A manual
+   * `volute clock wake` / `volute mind start` is the recovery path.
+   */
+  protected async markWakeErrored(name: string, err: unknown): Promise<void> {
+    const detail = err instanceof Error ? err.message : String(err);
+    this.markAwake(name);
+
+    slog.error(
+      `${name} failed to wake ${MAX_WAKE_ATTEMPTS} times in a row; giving up and marking errored`,
+      log.errorData(err),
+    );
+
+    try {
+      await publishActivity({
+        type: "mind_stopped",
+        mind: name,
+        summary: `${name} failed to wake after ${MAX_WAKE_ATTEMPTS} attempts`,
+        metadata: { error: "wake_failed", detail },
+      });
+    } catch (e) {
+      slog.error(`failed to publish wake-failure activity for ${name}`, log.errorData(e));
+    }
+
+    await recordNotice({
+      mind: name,
+      session: MIND_LEVEL_SESSION,
+      kind: "startup",
+      reason: "startup_failed",
+      detail: `Wake failed ${MAX_WAKE_ATTEMPTS} times in a row and was given up. Last error: ${detail}`,
+    });
   }
 
   // --- Internal methods ---
@@ -538,6 +656,8 @@ export class SleepManager {
       voluntaryWakeAt: opts?.voluntaryWakeAt ?? null,
       queuedMessageCount: this.states.get(name)?.queuedMessageCount ?? 0,
       triggerWakeHistory: [],
+      wakeFailures: 0,
+      nextWakeAttemptAt: null,
     };
     this.states.set(name, state);
     this.saveState();
@@ -576,6 +696,12 @@ export class SleepManager {
       if (!config?.enabled || !config.schedule) continue;
 
       const state = this.states.get(name);
+
+      // In wake-failure backoff — wait before retrying rather than hammering
+      // wakeMind every tick (#419).
+      if (state?.sleeping && state.nextWakeAttemptAt && now < new Date(state.nextWakeAttemptAt)) {
+        continue;
+      }
 
       // Check voluntary wake time
       if (state?.sleeping && state.voluntaryWakeAt) {

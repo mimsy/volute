@@ -796,6 +796,16 @@ export type SleepConfig = {
   };
 };
 
+/**
+ * Effective defaults for wake triggers when unset. Mirrors the daemon's
+ * WAKE_TRIGGER_DEFAULTS (mind/volute-config.ts) so the settings UI reflects
+ * actual runtime behavior — mentions and DMs wake a sleeping mind by default.
+ */
+export const WAKE_TRIGGER_DEFAULTS: { mentions: boolean; dms: boolean } = {
+  mentions: true,
+  dms: true,
+};
+
 export type ScheduleEntry = {
   id: string;
   cron?: string;

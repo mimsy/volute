@@ -48,6 +48,21 @@ describe("backup exclude patterns", () => {
     assert.ok(patterns.includes(resolve(voluteSystemDir(), "volute.db")));
   });
 
+  it("excludes a local repository so restic can't back up its repo into itself", () => {
+    const repo = resolve(voluteSystemDir(), "e2e-restic-repo");
+    const patterns = buildExcludePatterns({ repository: repo });
+    assert.ok(
+      patterns.includes(repo),
+      "a local repo inside a backup root must be excluded to avoid racing restic's own pack files",
+    );
+  });
+
+  it("does not add an exclude for a remote (non-local) repository backend", () => {
+    const patterns = buildExcludePatterns({ repository: "s3:s3.amazonaws.com/my-bucket" });
+    const base = buildExcludePatterns({});
+    assert.deepEqual(patterns, base, "remote backends have nothing on the local tree to exclude");
+  });
+
   it("writes the exclude file into the system dir", () => {
     const path = writeExcludeFile({});
     assert.ok(existsSync(path));

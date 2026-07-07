@@ -25,7 +25,7 @@ class TestScheduler extends Scheduler {
 }
 
 describe("scheduler whileSleeping", () => {
-  it("delivers message with whileSleeping undefined by default", async () => {
+  it("defaults whileSleeping to queue when unset", async () => {
     const scheduler = new TestScheduler();
     await (scheduler as any).fire("test-mind", {
       id: "no-flag",
@@ -34,7 +34,7 @@ describe("scheduler whileSleeping", () => {
       enabled: true,
     });
     assert.equal(scheduler.systemDeliveries.length, 1);
-    assert.equal(scheduler.systemDeliveries[0].opts?.whileSleeping, undefined);
+    assert.equal(scheduler.systemDeliveries[0].opts?.whileSleeping, "queue");
   });
 
   it("passes whileSleeping: skip to delivery", async () => {

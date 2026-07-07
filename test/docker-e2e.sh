@@ -3,16 +3,12 @@ set -euo pipefail
 
 # Docker end-to-end integration test for Volute
 # Validates: image build, daemon startup, mind creation with user isolation,
-# mind lifecycle, and real Claude message exchange.
+# mind lifecycle, and (when a real key is present) a real Claude message exchange.
 #
-# Requirements: docker, ANTHROPIC_API_KEY
+# Requirements: docker. ANTHROPIC_API_KEY is optional — when set, Phase 6/7
+# exercise a real Claude round-trip; when absent, those phases skip loudly.
 #
 # Usage: bash test/docker-e2e.sh
-
-if [[ -z "${ANTHROPIC_API_KEY:-}" ]]; then
-  echo "Error: ANTHROPIC_API_KEY must be set" >&2
-  exit 1
-fi
 
 if ! command -v docker &>/dev/null; then
   echo "Error: docker is required" >&2
@@ -120,9 +116,13 @@ echo "Phase 1: Build & start container"
 docker build -t "$IMAGE" . >/dev/null 2>&1
 pass "Docker image built"
 
+# Pass the API key through only when present, so the suite is usable without one.
+RUN_ENV=()
+[[ -n "${ANTHROPIC_API_KEY:-}" ]] && RUN_ENV+=(-e "ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY")
+
 docker run -d --name "$CONTAINER" \
   -p "$HOST_PORT:1618" \
-  -e "ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY" \
+  ${RUN_ENV[@]+"${RUN_ENV[@]}"} \
   "$IMAGE" >/dev/null
 pass "Container started"
 
@@ -142,7 +142,9 @@ fi
 echo ""
 echo "Phase 2: Read daemon token"
 
-TOKEN=$(docker exec "$CONTAINER" node -e "process.stdout.write(JSON.parse(require('fs').readFileSync('/data/daemon.json','utf8')).token)")
+# Since PR #354 the admin token lives in its own 0600 file (plain token) and
+# daemon.json moved under /data/system/. Read the token file directly.
+TOKEN=$(docker exec "$CONTAINER" sh -c "cat /data/system/daemon-token" | tr -d '[:space:]')
 
 assert_not_empty "$TOKEN" "Daemon token is non-empty"
 
@@ -155,13 +157,49 @@ assert_contains "$health_resp" '"ok":true' "Token authenticates successfully"
 echo ""
 echo "Phase 3: Create two minds"
 
-docker exec -e "ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY" "$CONTAINER" \
-  node dist/cli.js mind create alice >/dev/null 2>&1
-pass "Mind alice created"
+# The container entrypoint never runs `volute setup`, but CLI commands are now
+# gated on setup completion. Write the setup config the container path expects
+# (system install, per-mind user isolation — matching VOLUTE_ISOLATION=user).
+docker exec "$CONTAINER" sh -c \
+  'mkdir -p /data/system && printf %s "{\"setup\":{\"type\":\"system\",\"isolation\":\"user\"},\"setupCompleted\":true}" > /data/system/config.json'
+pass "Setup config written"
 
-docker exec -e "ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY" "$CONTAINER" \
-  node dist/cli.js mind create bob >/dev/null 2>&1
-pass "Mind bob created"
+# CLI commands proxy through the daemon and need an operator session. Register
+# `root` (the container's OS user, so @-target sends resolve the right sender) as
+# the first user — auto-admin, auto-approved — then log in and drop its session
+# where the CLI looks for it.
+curl -sf -X POST \
+  -H "Content-Type: application/json" \
+  -H "Origin: http://localhost:$HOST_PORT" \
+  -d '{"username":"root","password":"root"}' \
+  "http://localhost:$HOST_PORT/api/auth/register" >/dev/null
+LOGIN_RESP=$(curl -sf -X POST \
+  -H "Content-Type: application/json" \
+  -H "Origin: http://localhost:$HOST_PORT" \
+  -d '{"username":"root","password":"root"}' \
+  "http://localhost:$HOST_PORT/api/auth/login")
+SESSION_ID=$(echo "$LOGIN_RESP" | node -e "
+  process.stdout.write(JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')).sessionId || '');
+")
+assert_not_empty "$SESSION_ID" "Operator session established"
+docker exec "$CONTAINER" sh -c \
+  "mkdir -p /root/.volute && printf '%s' '{\"sessionId\":\"$SESSION_ID\",\"username\":\"root\"}' > /root/.volute/cli-session.json && chmod 600 /root/.volute/cli-session.json"
+
+if create_out=$(docker exec "$CONTAINER" node dist/cli.js mind create alice 2>&1); then
+  pass "Mind alice created"
+else
+  fail "Mind alice creation failed"
+  echo "$create_out"
+  exit 1
+fi
+
+if create_out=$(docker exec "$CONTAINER" node dist/cli.js mind create bob 2>&1); then
+  pass "Mind bob created"
+else
+  fail "Mind bob creation failed"
+  echo "$create_out"
+  exit 1
+fi
 
 minds_resp=$(api GET /minds)
 assert_contains "$minds_resp" '"name":"alice"' "alice in mind list"
@@ -204,6 +242,20 @@ assert_eq "$alice_owner" "mind-alice" "/minds/alice owned by mind-alice"
 bob_owner=$(docker exec "$CONTAINER" stat -c '%U' /minds/bob)
 assert_eq "$bob_owner" "mind-bob" "/minds/bob owned by mind-bob"
 
+# Creation-time writes (skills, SOUL.md/MEMORY.md, git objects) must also be
+# handed to the mind, not just the top-level dir — the chown has to run AFTER
+# all of them. Any root-owned path here means a creation-time write escaped the
+# ownership fixup and the mind can't modify its own files.
+alice_root_owned=$(docker exec "$CONTAINER" find /minds/alice -user root -print -quit 2>/dev/null)
+if [[ -z "$alice_root_owned" ]]; then
+  pass "no root-owned files under /minds/alice"
+else
+  fail "root-owned file under /minds/alice: $alice_root_owned"
+fi
+
+alice_skills_owner=$(docker exec "$CONTAINER" stat -c '%U' /minds/alice/home/.claude/skills 2>/dev/null || echo missing)
+assert_eq "$alice_skills_owner" "mind-alice" "/minds/alice skills dir owned by mind-alice"
+
 # ─── Phase 5: Start minds ────────────────────────────────────────────────────
 
 echo ""
@@ -233,41 +285,47 @@ fi
 echo ""
 echo "Phase 6: Chat with minds"
 
-alice_msg_resp=$(api_raw POST /minds/alice/message -d '{
-  "content": [{"type":"text","text":"Reply with only the word pong"}],
-  "channel": "test",
-  "sender": "docker-test"
-}')
-assert_contains "$alice_msg_resp" '"ok":true' "alice message accepted"
-
-bob_msg_resp=$(api_raw POST /minds/bob/message -d '{
-  "content": [{"type":"text","text":"Reply with only the word ping"}],
-  "channel": "test",
-  "sender": "docker-test"
-}')
-assert_contains "$bob_msg_resp" '"ok":true' "bob message accepted"
-
-# Check history
-alice_history=$(api GET "/minds/alice/history?channel=test")
-alice_msg_count=$(echo "$alice_history" | node -e "
-  const d = JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
-  process.stdout.write(String(d.length));
-")
-if (( alice_msg_count >= 1 )); then
-  pass "alice history has messages ($alice_msg_count)"
+# A real chat round-trip needs a real Claude key. Run it when present; skip
+# loudly (non-fatal) when absent so the suite stays useful in both environments.
+CHAT_TESTED=false
+if [[ -z "${ANTHROPIC_API_KEY:-}" ]]; then
+  echo "  ⚠ SKIPPED: ANTHROPIC_API_KEY not set — no real Claude round-trip."
+  echo "  ⚠ Set ANTHROPIC_API_KEY to exercise Phases 6 & 7."
 else
-  fail "alice history is empty"
-fi
+  # Send a DM via the current chat flow (volute chat send @mind) and wait for the
+  # mind's reply, which the CLI prints to stdout.
+  alice_reply=$(docker exec "$CONTAINER" node dist/cli.js \
+    chat send @alice "Reply with only the word pong" --wait --timeout 90000 2>/dev/null || true)
+  assert_not_empty "$alice_reply" "alice replied to message"
 
-bob_history=$(api GET "/minds/bob/history?channel=test")
-bob_msg_count=$(echo "$bob_history" | node -e "
-  const d = JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
-  process.stdout.write(String(d.length));
-")
-if (( bob_msg_count >= 1 )); then
-  pass "bob history has messages ($bob_msg_count)"
-else
-  fail "bob history is empty"
+  bob_reply=$(docker exec "$CONTAINER" node dist/cli.js \
+    chat send @bob "Reply with only the word ping" --wait --timeout 90000 2>/dev/null || true)
+  assert_not_empty "$bob_reply" "bob replied to message"
+
+  # Check history (full preset returns raw mind_history rows tagged with `mind`)
+  alice_history=$(api GET "/minds/alice/history?full=true")
+  alice_msg_count=$(echo "$alice_history" | node -e "
+    const d = JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
+    process.stdout.write(String(d.length));
+  ")
+  if (( alice_msg_count >= 1 )); then
+    pass "alice history has messages ($alice_msg_count)"
+  else
+    fail "alice history is empty"
+  fi
+
+  bob_history=$(api GET "/minds/bob/history?full=true")
+  bob_msg_count=$(echo "$bob_history" | node -e "
+    const d = JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
+    process.stdout.write(String(d.length));
+  ")
+  if (( bob_msg_count >= 1 )); then
+    pass "bob history has messages ($bob_msg_count)"
+  else
+    fail "bob history is empty"
+  fi
+
+  CHAT_TESTED=true
 fi
 
 # ─── Phase 7: Cross-mind independence ─────────────────────────────────────────
@@ -275,21 +333,25 @@ fi
 echo ""
 echo "Phase 7: Cross-mind independence"
 
-# alice and bob both have messages in their own histories
-# Verify they don't share message stores
-alice_minds_in_history=$(echo "$alice_history" | node -e "
-  const d = JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
-  const minds = new Set(d.map(m => m.mind));
-  process.stdout.write([...minds].join(','));
-")
-assert_eq "$alice_minds_in_history" "alice" "alice history only contains alice messages"
+if [[ "$CHAT_TESTED" != "true" ]]; then
+  echo "  ⚠ SKIPPED: depends on Phase 6 chat round-trip (no ANTHROPIC_API_KEY)."
+else
+  # alice and bob both have messages in their own histories
+  # Verify they don't share message stores
+  alice_minds_in_history=$(echo "$alice_history" | node -e "
+    const d = JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
+    const minds = new Set(d.map(m => m.mind));
+    process.stdout.write([...minds].join(','));
+  ")
+  assert_eq "$alice_minds_in_history" "alice" "alice history only contains alice messages"
 
-bob_minds_in_history=$(echo "$bob_history" | node -e "
-  const d = JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
-  const minds = new Set(d.map(m => m.mind));
-  process.stdout.write([...minds].join(','));
-")
-assert_eq "$bob_minds_in_history" "bob" "bob history only contains bob messages"
+  bob_minds_in_history=$(echo "$bob_history" | node -e "
+    const d = JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
+    const minds = new Set(d.map(m => m.mind));
+    process.stdout.write([...minds].join(','));
+  ")
+  assert_eq "$bob_minds_in_history" "bob" "bob history only contains bob messages"
+fi
 
 # ─── Phase 8: Stop minds & final checks ──────────────────────────────────────
 
@@ -315,14 +377,14 @@ bob_final=$(api_raw GET /minds/bob | node -e "
 ")
 assert_eq "$bob_final" "stopped" "bob is stopped"
 
-# Check logs exist
-if docker exec "$CONTAINER" test -f /data/state/alice/logs/mind.log; then
+# Check logs exist (centralized state lives under /data/system/state/<mind>/)
+if docker exec "$CONTAINER" test -f /data/system/state/alice/logs/mind.log; then
   pass "alice mind log exists"
 else
   fail "alice mind log missing"
 fi
 
-if docker exec "$CONTAINER" test -f /data/state/bob/logs/mind.log; then
+if docker exec "$CONTAINER" test -f /data/system/state/bob/logs/mind.log; then
   pass "bob mind log exists"
 else
   fail "bob mind log missing"

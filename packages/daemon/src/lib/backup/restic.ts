@@ -116,8 +116,27 @@ const SESSION_EXCLUDES = [
   ".mind/pi-sessions",
 ];
 
+/**
+ * When the repository is a local filesystem path, return its absolute path so
+ * the backup can exclude it. A repo that lives inside a backup root (e.g. under
+ * ~/.volute) would otherwise be backed up into itself, racing restic against
+ * its own transient pack files. Remote backends (s3:, rest:, sftp:, b2:, …)
+ * return null — nothing on the local tree to exclude.
+ */
+export function localRepoPath(config: BackupConfig): string | null {
+  const repo = config.repository;
+  if (!repo) return null;
+  // restic identifies backends by a "scheme:" prefix; a bare path or an
+  // explicit "local:" path is a local filesystem repository.
+  const scheme = /^([a-z][a-z0-9]*):/i.exec(repo);
+  if (scheme && scheme[1].toLowerCase() !== "local") return null;
+  return resolve(scheme ? repo.slice(scheme[0].length) : repo);
+}
+
 export function buildExcludePatterns(config: BackupConfig): string[] {
   const patterns = [...BASE_EXCLUDES, ...systemExcludes()];
+  const repoPath = localRepoPath(config);
+  if (repoPath) patterns.push(repoPath);
   if (!config.includeSessions) patterns.push(...SESSION_EXCLUDES);
   return patterns;
 }

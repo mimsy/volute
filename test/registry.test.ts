@@ -170,6 +170,26 @@ describe("variants", () => {
   });
 });
 
+describe("voluteHome source-mode guard", () => {
+  const original = process.env.VOLUTE_HOME;
+  afterEach(() => {
+    if (original === undefined) delete process.env.VOLUTE_HOME;
+    else process.env.VOLUTE_HOME = original;
+  });
+
+  it("throws when VOLUTE_HOME is unset while running from source", () => {
+    // Tests run via tsx, so registry.ts resolves to a .ts file — the guard
+    // that protects the real ~/.volute must fire when VOLUTE_HOME is missing.
+    delete process.env.VOLUTE_HOME;
+    assert.throws(() => voluteHome(), /VOLUTE_HOME must be set/);
+  });
+
+  it("returns VOLUTE_HOME when it is set", () => {
+    process.env.VOLUTE_HOME = "/tmp/volute-guard-test";
+    assert.equal(voluteHome(), "/tmp/volute-guard-test");
+  });
+});
+
 describe("mindDir", () => {
   const originalMindsDir = process.env.VOLUTE_MINDS_DIR;
   afterEach(() => {

@@ -28,6 +28,8 @@ export type MindConfig = {
   logLevel?: "error" | "warn" | "info" | "debug";
   compactionMessage?: string;
   compaction?: { maxContextTokens?: number };
+  /** Idle minutes before a session's SDK subprocess is reaped. 0 disables. Default 30. */
+  sessionIdleMinutes?: number;
   subagents?: Record<string, SubagentConfig>;
   // Template-specific config fields (claude, pi, codex)
   maxThinkingTokens?: number;

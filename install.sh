@@ -172,7 +172,7 @@ main() {
   install_ripgrep
 
   # Set system-wide git identity for daemon commits if not already configured
-  if ! git config --system user.name >/dev/null 2>&1; then
+  if ! git config --system user.name >/dev/null 2>&1 || ! git config --system user.email >/dev/null 2>&1; then
     git config --system user.name "Volute" && \
     git config --system user.email "volute@localhost" || \
       echo "Warning: failed to set system git config — git commits may fail."

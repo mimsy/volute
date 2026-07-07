@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { type ChildProcess, execFileSync, spawn } from "node:child_process";
-import { existsSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { eq } from "drizzle-orm";
@@ -586,6 +586,98 @@ describe("daemon e2e", { timeout: 420000 }, () => {
     // Merge restarts the parent — wait for it, then stop it for subsequent tests.
     await waitForMindRunning(60000);
     await daemonRequest(`/api/minds/${TEST_MIND}/stop`, { method: "POST" });
+  });
+
+  it("variants: a merge conflict aborts cleanly and leaves the variant joinable", {
+    timeout: 300000,
+  }, async () => {
+    await ensureTestMind();
+    const parentDir = mindDir(TEST_MIND);
+
+    // Split without starting its server.
+    const createRes = await daemonRequest(`/api/minds/${TEST_MIND}/variants`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "e2e-conflict-var", noStart: true }),
+    });
+    assert.equal(createRes.status, 200, `Split: ${await createRes.clone().text()}`);
+    const created = (await createRes.json()) as { variant: { path: string } };
+
+    const gitCommit = (cwd: string, file: string, content: string, msg: string) => {
+      writeFileSync(resolve(cwd, file), content);
+      execFileSync(
+        "git",
+        ["-c", "user.name=e2e", "-c", "user.email=e2e@test", "commit", "-am", msg],
+        {
+          cwd,
+          env: cleanEnv,
+        },
+      );
+    };
+
+    // Conflicting edits to the same tracked file in both parent and variant.
+    const conflictFile = "home/MEMORY.md";
+    gitCommit(parentDir, conflictFile, "parent version of memory\n", "parent conflict edit");
+    gitCommit(
+      created.variant.path,
+      conflictFile,
+      "variant version of memory\n",
+      "variant conflict edit",
+    );
+
+    // Join must fail with a structured conflict error naming the file.
+    const mergeRes = await daemonRequest(
+      `/api/minds/${TEST_MIND}/variants/e2e-conflict-var/merge`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ skipVerify: true }),
+      },
+    );
+    assert.equal(mergeRes.status, 500, `Merge should fail: ${await mergeRes.clone().text()}`);
+    const mergeBody = (await mergeRes.json()) as { error: string; conflicts: string[] };
+    assert.ok(
+      mergeBody.conflicts.includes(conflictFile),
+      `expected ${conflictFile} in conflicts: ${JSON.stringify(mergeBody.conflicts)}`,
+    );
+
+    // Parent worktree is restored: no in-progress merge, working tree clean.
+    assert.ok(
+      !existsSync(resolve(parentDir, ".git", "MERGE_HEAD")),
+      "parent should not be left mid-merge",
+    );
+    const porcelain = execFileSync("git", ["status", "--porcelain"], {
+      cwd: parentDir,
+      encoding: "utf-8",
+    }).trim();
+    assert.equal(porcelain, "", `parent worktree should be clean, got: ${porcelain}`);
+
+    // The variant survives and is still joinable.
+    assert.ok(await findMind("e2e-conflict-var"), "variant should still be registered");
+    assert.ok(existsSync(created.variant.path), "variant worktree should still exist");
+
+    // The failed join must not leave root-owned files in the parent dir. Under
+    // real user isolation the merge git ops (run as the daemon) would otherwise
+    // orphan home/MEMORY.md as root:root, locking the parent mind out of its own
+    // identity files. (This harness runs the daemon as the test user, so this is
+    // a regression tripwire; the ownership-restore path itself is unit-tested in
+    // variant-join-isolation.test.ts.)
+    if (process.getuid && process.getuid() !== 0) {
+      const rootOwned: string[] = [];
+      const walk = (dir: string) => {
+        for (const entry of readdirSync(dir, { withFileTypes: true })) {
+          if (entry.name === "node_modules" || entry.name === ".git") continue;
+          const full = resolve(dir, entry.name);
+          if (statSync(full).uid === 0) rootOwned.push(full);
+          if (entry.isDirectory()) walk(full);
+        }
+      };
+      walk(parentDir);
+      assert.equal(rootOwned.length, 0, `parent dir has root-owned files: ${rootOwned.join(", ")}`);
+    }
+
+    // Clean up the variant so later tests aren't affected.
+    await daemonRequest(`/api/minds/${TEST_MIND}/variants/e2e-conflict-var`, { method: "DELETE" });
   });
 
   // ── Bridge & Chat Integration Tests ──

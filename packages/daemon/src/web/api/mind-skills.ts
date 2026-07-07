@@ -1,6 +1,7 @@
 import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
 import { z } from "zod";
+import { chownMindDir } from "../../lib/mind/isolation.js";
 import { findMind, mindDir } from "../../lib/mind/registry.js";
 import {
   installSkill,
@@ -35,6 +36,10 @@ const app = new Hono<AuthEnv>()
 
       try {
         const result = await installSkill(name, dir, skillId);
+        // installSkill writes files (and git objects) as the daemon (root under
+        // user isolation), so hand ownership to the mind — otherwise it can't
+        // modify or remove its own skill. No-op when isolation is disabled.
+        await chownMindDir(dir, name);
         return c.json({ ok: true, ...result });
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
@@ -56,6 +61,9 @@ const app = new Hono<AuthEnv>()
 
       try {
         const result = await updateSkill(name, dir, skillId);
+        // Newly written files land as root under user isolation — re-chown so
+        // the mind keeps ownership of its skill. No-op when isolation is off.
+        await chownMindDir(dir, name);
         return c.json(result);
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
@@ -94,6 +102,10 @@ const app = new Hono<AuthEnv>()
 
     try {
       await uninstallSkill(name, dir, skillName);
+      // The removal commit's git objects are written as root under user
+      // isolation — re-chown so the mind's later commits don't hit EACCES.
+      // No-op when isolation is off.
+      await chownMindDir(dir, name);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       return c.json({ error: msg }, 400);

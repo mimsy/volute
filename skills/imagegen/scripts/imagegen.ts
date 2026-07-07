@@ -44,14 +44,65 @@ function getDaemonToken(): string | undefined {
   return process.env.VOLUTE_MIND_TOKEN;
 }
 
-/** Returns null only when the daemon is unreachable or imagegen is not configured. */
-async function generateViaDaemon(model: string, prompt: string): Promise<Buffer | null> {
+/**
+ * Outcome of a daemon call, distinguishing the failure modes so the mind gets an
+ * accurate diagnosis instead of a misleading "not configured" message:
+ *  - no-env      — not running under a Volute mind environment (env vars unset)
+ *  - unreachable — daemon env is set but the connection failed (daemon down)
+ *  - auth        — daemon rejected the mind's token (401/403)
+ *  - fallback    — daemon can't serve this (imagegen not configured, or old daemon)
+ */
+export type DaemonFailure =
+  | { ok: false; reason: "no-env" }
+  | { ok: false; reason: "unreachable"; detail: string }
+  | { ok: false; reason: "auth"; status: number; detail: string }
+  | { ok: false; reason: "fallback" };
+export type DaemonResult<T> = { ok: true; value: T } | DaemonFailure;
+
+async function readDaemonError(res: Response): Promise<string> {
+  const body = (await res.json().catch(() => null)) as { error?: string } | null;
+  return body?.error || `HTTP ${res.status}`;
+}
+
+/**
+ * Acts on a daemon failure: prints an informational note and returns when the
+ * caller should fall back to a direct provider (no-env / fallback), or throws a
+ * clear diagnosis for local problems that direct fallback would only mask
+ * (unreachable / auth).
+ */
+export function handleDaemonFailure(failure: DaemonFailure): void {
+  switch (failure.reason) {
+    case "no-env":
+      console.error(
+        "Not running under a Volute mind environment; falling back to direct provider.",
+      );
+      return;
+    case "unreachable":
+      throw new Error(
+        `Could not reach the Volute daemon at ${getDaemonUrl()}: ${failure.detail}. ` +
+          "The daemon may be down — this is a local connection problem, not a provider-configuration issue.",
+      );
+    case "auth":
+      throw new Error(
+        `The Volute daemon rejected this mind's token (HTTP ${failure.status}: ${failure.detail}). ` +
+          "Check VOLUTE_MIND_TOKEN — this is an authentication problem, not a provider-configuration issue.",
+      );
+    case "fallback":
+      return;
+  }
+}
+
+export async function generateViaDaemon(
+  model: string,
+  prompt: string,
+): Promise<DaemonResult<Buffer>> {
   const base = getDaemonUrl();
   const token = getDaemonToken();
-  if (!base || !token) return null;
+  if (!base || !token) return { ok: false, reason: "no-env" };
 
+  let res: Response;
   try {
-    const res = await fetch(`${base}/api/v1/system/imagegen/generate`, {
+    res = await fetch(`${base}/api/v1/system/imagegen/generate`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -59,49 +110,51 @@ async function generateViaDaemon(model: string, prompt: string): Promise<Buffer 
       },
       body: JSON.stringify({ model, prompt }),
     });
-    if (!res.ok) {
-      const err = (await res.json().catch(() => ({ error: `HTTP ${res.status}` }))) as {
-        error: string;
-      };
-      // Not configured — fall back to direct Replicate
-      if (err.error?.includes("not configured") || err.error?.match(/No .* API key/)) return null;
-      throw new Error(err.error || `Daemon returned ${res.status}`);
-    }
-    return Buffer.from(await res.arrayBuffer());
   } catch (err) {
-    // Connection failure — daemon unreachable, fall back to direct
-    if (err instanceof TypeError) return null;
+    if (err instanceof TypeError) {
+      return { ok: false, reason: "unreachable", detail: err.message };
+    }
     throw err;
   }
+
+  if (res.status === 401 || res.status === 403) {
+    return { ok: false, reason: "auth", status: res.status, detail: await readDaemonError(res) };
+  }
+  if (!res.ok) {
+    const err = await readDaemonError(res);
+    // Genuinely not configured — fall back to direct provider.
+    if (/not configured/i.test(err) || /No .* API key/i.test(err)) {
+      return { ok: false, reason: "fallback" };
+    }
+    throw new Error(err);
+  }
+  return { ok: true, value: Buffer.from(await res.arrayBuffer()) };
 }
 
-/** Returns null only when the daemon is unreachable or endpoint doesn't exist. */
-async function searchViaDaemon(query: string): Promise<unknown[] | null> {
+export async function searchViaDaemon(query: string): Promise<DaemonResult<unknown[]>> {
   const base = getDaemonUrl();
   const token = getDaemonToken();
-  if (!base || !token) return null;
+  if (!base || !token) return { ok: false, reason: "no-env" };
 
+  let res: Response;
   try {
-    const res = await fetch(
+    res = await fetch(
       `${base}/api/v1/system/imagegen/models/search?q=${encodeURIComponent(query)}`,
       { headers: { Authorization: `Bearer ${token}` } },
     );
-    if (!res.ok) {
-      // 404 = older daemon without this endpoint — fall back silently
-      if (res.status === 404) return null;
-      const body = (await res.json().catch(() => ({ error: `HTTP ${res.status}` }))) as {
-        error: string;
-      };
-      console.error(`daemon model search failed: ${body.error || res.status}`);
-      return null;
-    }
-    return (await res.json()) as unknown[];
   } catch (err) {
-    // Connection failure — daemon unreachable
-    if (err instanceof TypeError) return null;
-    console.error(`daemon model search error: ${err instanceof Error ? err.message : err}`);
-    return null;
+    if (err instanceof TypeError) {
+      return { ok: false, reason: "unreachable", detail: err.message };
+    }
+    throw err;
   }
+
+  if (res.status === 401 || res.status === 403) {
+    return { ok: false, reason: "auth", status: res.status, detail: await readDaemonError(res) };
+  }
+  // 404 = older daemon without this endpoint; other non-ok — fall back to direct search.
+  if (!res.ok) return { ok: false, reason: "fallback" };
+  return { ok: true, value: (await res.json()) as unknown[] };
 }
 
 async function generateDirect(model: string, prompt: string): Promise<Buffer> {
@@ -169,9 +222,13 @@ async function generate(args: string[]): Promise<void> {
 
   console.log(`generating image with ${model}...`);
 
-  // Try daemon first, fall back to direct Replicate
-  let buf = await generateViaDaemon(model, prompt);
-  if (!buf) {
+  // Try daemon first, fall back to direct Replicate.
+  const daemonRes = await generateViaDaemon(model, prompt);
+  let buf: Buffer;
+  if (daemonRes.ok) {
+    buf = daemonRes.value;
+  } else {
+    handleDaemonFailure(daemonRes); // throws for unreachable/auth; returns to fall back otherwise
     buf = await generateDirect(model, prompt);
   }
 
@@ -190,14 +247,17 @@ async function models(args: string[]): Promise<void> {
     process.exit(1);
   }
 
-  // Try daemon first
-  const daemonResults = await searchViaDaemon(query);
-  if (daemonResults && daemonResults.length > 0) {
-    for (const m of daemonResults as Array<{ id: string; description?: string }>) {
+  // Try daemon first.
+  const daemonRes = await searchViaDaemon(query);
+  if (daemonRes.ok && daemonRes.value.length > 0) {
+    for (const m of daemonRes.value as Array<{ id: string; description?: string }>) {
       const desc = m.description ? ` — ${m.description.slice(0, 100)}` : "";
       console.log(`${m.id}${desc}`);
     }
     return;
+  }
+  if (!daemonRes.ok) {
+    handleDaemonFailure(daemonRes); // throws for unreachable/auth; returns to fall back otherwise
   }
 
   // Fall back to direct Replicate

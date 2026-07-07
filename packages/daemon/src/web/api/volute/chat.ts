@@ -5,7 +5,10 @@ import { z } from "zod";
 import { getOrCreateMindUser, getOrCreateSystemUser } from "../../../lib/auth.js";
 import { routeOutboundBridge } from "../../../lib/bridges/bridge-outbound.js";
 import { formatFileSize, stageFile, validateFilePath } from "../../../lib/chat/file-sharing.js";
-import { generateSystemReply } from "../../../lib/chat/system-chat.js";
+import {
+  generateSystemFallbackReply,
+  shouldGenerateSystemFallback,
+} from "../../../lib/chat/system-chat.js";
 import { getActiveTurnId } from "../../../lib/daemon/turn-tracker.js";
 import { extractTextContent } from "../../../lib/delivery/delivery-router.js";
 import { fanOutToMinds } from "../../../lib/delivery/fan-out.js";
@@ -24,7 +27,7 @@ import {
   isParticipantOrOwner,
 } from "../../../lib/events/conversations.js";
 import { publish as publishMindEvent } from "../../../lib/events/mind-events.js";
-import { findMind, getBaseName, mindDir } from "../../../lib/mind/registry.js";
+import { findMind, getBaseName, resolveMindDir } from "../../../lib/mind/registry.js";
 import { readVoluteConfig } from "../../../lib/mind/volute-config.js";
 import { fixModelEscapes } from "../../../lib/util/fix-model-escapes.js";
 import log from "../../../lib/util/logger.js";
@@ -108,9 +111,14 @@ export const unifiedChatApp = new Hono<AuthEnv>().post(
     // Resolve sender: daemon token + body.sender → override, else user.username
     const senderName = user.id === 0 && body.sender ? body.sender : user.username;
 
-    // Detect if sender is a mind
+    // Detect if sender is a mind. The spirit ("volute") authenticates with its
+    // mind token but resolves to the shared system user (user_type "system"), so
+    // classify a system principal whose username is a registered mind as a mind
+    // sender too — this matches only the spirit, never a plain system principal.
     const senderIsMind =
-      (user.id === 0 && body.sender && (await findMind(body.sender))) || user.user_type === "mind";
+      (user.id === 0 && body.sender && (await findMind(body.sender))) ||
+      user.user_type === "mind" ||
+      (user.user_type === "system" && !!(await findMind(user.username)));
 
     // Track baseName and variant-aware targetName callback for the targetMind flow
     let baseName: string | undefined;
@@ -209,7 +217,7 @@ export const unifiedChatApp = new Hono<AuthEnv>().post(
 
     // Fix common model escape errors in mind-sent messages
     if (senderIsMind) {
-      const vCfg = readVoluteConfig(mindDir(baseName ?? senderName));
+      const vCfg = readVoluteConfig(await resolveMindDir(baseName ?? senderName));
       const shouldUnescapeNewlines = vCfg?.unescapeNewlines === true;
       for (const block of contentBlocks) {
         if (block.type === "text") {
@@ -324,15 +332,21 @@ export const unifiedChatApp = new Hono<AuthEnv>().post(
         : undefined,
     });
 
-    // Check if a mind is messaging a system DM — generate AI reply
+    // Generate the system fallback reply only for genuine two-party system DMs
+    // (see shouldGenerateSystemFallback for the gating rationale).
     const systemReplyTarget = baseName ?? senderName;
-    if (senderIsMind && body.message) {
-      const hasSystemUser = participants.some((p) => p.userType === "system");
-      if (hasSystemUser) {
-        generateSystemReply(conversationId!, systemReplyTarget, body.message).catch((err) =>
-          log.error(`system reply generation failed for ${systemReplyTarget}`, log.errorData(err)),
-        );
-      }
+    if (
+      shouldGenerateSystemFallback({
+        senderIsMind: !!senderIsMind,
+        hasMessage: !!body.message,
+        convType: conv.type,
+        participants,
+        replyTarget: systemReplyTarget,
+      })
+    ) {
+      generateSystemFallbackReply(conversationId!, systemReplyTarget, body.message!).catch((err) =>
+        log.error(`system reply generation failed for ${systemReplyTarget}`, log.errorData(err)),
+      );
     }
 
     return c.json({ ok: true, conversationId, outboundId });

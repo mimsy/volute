@@ -18,6 +18,7 @@ import {
   type MindDefaults,
   type MindDefaultsSchedule,
   saveMindDefaults,
+  WAKE_TRIGGER_DEFAULTS,
 } from "../../lib/client";
 import {
   fmtTime,
@@ -48,8 +49,8 @@ let wakeMinute = $state(0);
 let useCustomCron = $state(false);
 let editSleepCron = $state("");
 let editWakeCron = $state("");
-let wakeOnMentions = $state(false);
-let wakeOnDms = $state(false);
+let wakeOnMentions = $state(WAKE_TRIGGER_DEFAULTS.mentions);
+let wakeOnDms = $state(WAKE_TRIGGER_DEFAULTS.dms);
 let wakeChannels = $state("");
 let wakeSenders = $state("");
 
@@ -282,8 +283,8 @@ onMount(async () => {
         editSleepCron = defaults.sleep.schedule.sleep;
         editWakeCron = defaults.sleep.schedule.wake;
       }
-      wakeOnMentions = defaults.sleep.wakeTriggers?.mentions ?? false;
-      wakeOnDms = defaults.sleep.wakeTriggers?.dms ?? false;
+      wakeOnMentions = defaults.sleep.wakeTriggers?.mentions ?? WAKE_TRIGGER_DEFAULTS.mentions;
+      wakeOnDms = defaults.sleep.wakeTriggers?.dms ?? WAKE_TRIGGER_DEFAULTS.dms;
       wakeChannels = (defaults.sleep.wakeTriggers?.channels ?? []).join(", ");
       wakeSenders = (defaults.sleep.wakeTriggers?.senders ?? []).join(", ");
     }

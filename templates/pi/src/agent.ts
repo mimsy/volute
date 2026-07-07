@@ -447,14 +447,23 @@ export function createMind(options: {
 
   function createSessionHandler(sessionName: string): MessageHandler {
     return {
-      handle(content: VoluteContentPart[], meta: HandlerMeta, listener: Listener): () => void {
+      handle(content: VoluteContentPart[], meta: HandlerMeta, listener?: Listener): () => void {
         const session = getOrCreateSession(sessionName);
 
-        // Filter listener to only receive events for this messageId
-        const filteredListener: Listener = (event) => {
-          if (event.messageId === meta.messageId) listener(event);
-        };
-        session.listeners.add(filteredListener);
+        // Only register a listener when a caller wants events. A per-message listener
+        // that's never removed grows session.listeners without bound and makes broadcast
+        // O(messages-ever-received). The live dispatch path passes no listener.
+        let filteredListener: Listener | undefined;
+        if (listener) {
+          filteredListener = (event) => {
+            if (event.messageId !== meta.messageId) return;
+            listener(event);
+            if (event.type === "done" && filteredListener) {
+              session.listeners.delete(filteredListener);
+            }
+          };
+          session.listeners.add(filteredListener);
+        }
 
         // Track channel for reply instructions
         if (meta.channel) {
@@ -500,7 +509,9 @@ export function createMind(options: {
           broadcast(session, { type: "done" });
         });
 
-        return () => session.listeners.delete(filteredListener);
+        return () => {
+          if (filteredListener) session.listeners.delete(filteredListener);
+        };
       },
     };
   }

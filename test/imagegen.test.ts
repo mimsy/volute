@@ -10,6 +10,11 @@ import {
   saveProviderConfig,
   setEnabledModels,
 } from "../packages/daemon/src/lib/services/imagegen.js";
+import {
+  generateViaDaemon,
+  handleDaemonFailure,
+  searchViaDaemon,
+} from "../skills/imagegen/scripts/imagegen.js";
 
 function resetImagegenConfig() {
   const config = readGlobalConfig();
@@ -240,6 +245,154 @@ describe("imagegen config", () => {
 
     it("throws on unknown provider", () => {
       assert.throws(() => parseModelId("badprovider:owner/model"), /Unknown imagegen provider/);
+    });
+  });
+});
+
+describe("imagegen skill daemon error reporting", () => {
+  const realFetch = globalThis.fetch;
+  const savedEnv = {
+    port: process.env.VOLUTE_DAEMON_PORT,
+    token: process.env.VOLUTE_MIND_TOKEN,
+  };
+
+  function setDaemonEnv(present: boolean) {
+    if (present) {
+      process.env.VOLUTE_DAEMON_PORT = "1618";
+      process.env.VOLUTE_MIND_TOKEN = "mind-token";
+    } else {
+      delete process.env.VOLUTE_DAEMON_PORT;
+      delete process.env.VOLUTE_MIND_TOKEN;
+    }
+  }
+
+  function mockFetch(fn: () => Promise<Response> | Response) {
+    globalThis.fetch = (async () => fn()) as typeof fetch;
+  }
+
+  function jsonResponse(status: number, body: unknown): Response {
+    return {
+      ok: status >= 200 && status < 300,
+      status,
+      json: async () => body,
+      arrayBuffer: async () => new ArrayBuffer(0),
+    } as unknown as Response;
+  }
+
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+    if (savedEnv.port !== undefined) process.env.VOLUTE_DAEMON_PORT = savedEnv.port;
+    else delete process.env.VOLUTE_DAEMON_PORT;
+    if (savedEnv.token !== undefined) process.env.VOLUTE_MIND_TOKEN = savedEnv.token;
+    else delete process.env.VOLUTE_MIND_TOKEN;
+  });
+
+  describe("generateViaDaemon", () => {
+    it("reports no-env when daemon env vars are unset", async () => {
+      setDaemonEnv(false);
+      const res = await generateViaDaemon("replicate:owner/model", "prompt");
+      assert.deepEqual(res, { ok: false, reason: "no-env" });
+    });
+
+    it("reports unreachable when the connection fails", async () => {
+      setDaemonEnv(true);
+      mockFetch(() => {
+        throw new TypeError("fetch failed");
+      });
+      const res = await generateViaDaemon("replicate:owner/model", "prompt");
+      assert.equal(res.ok, false);
+      assert.equal(res.ok === false && res.reason, "unreachable");
+    });
+
+    it("reports auth failure on 401", async () => {
+      setDaemonEnv(true);
+      mockFetch(() => jsonResponse(401, { error: "invalid token" }));
+      const res = await generateViaDaemon("replicate:owner/model", "prompt");
+      assert.equal(res.ok, false);
+      assert.equal(res.ok === false && res.reason, "auth");
+      assert.equal(res.ok === false && res.reason === "auth" && res.status, 401);
+    });
+
+    it("reports auth failure on 403", async () => {
+      setDaemonEnv(true);
+      mockFetch(() => jsonResponse(403, { error: "forbidden" }));
+      const res = await generateViaDaemon("replicate:owner/model", "prompt");
+      assert.equal(res.ok === false && res.reason, "auth");
+    });
+
+    it("reports fallback when imagegen is genuinely not configured", async () => {
+      setDaemonEnv(true);
+      mockFetch(() => jsonResponse(400, { error: "imagegen not configured" }));
+      const res = await generateViaDaemon("replicate:owner/model", "prompt");
+      assert.deepEqual(res, { ok: false, reason: "fallback" });
+    });
+
+    it("throws on an unexpected daemon error", async () => {
+      setDaemonEnv(true);
+      mockFetch(() => jsonResponse(500, { error: "boom" }));
+      await assert.rejects(generateViaDaemon("replicate:owner/model", "prompt"), /boom/);
+    });
+
+    it("returns the image buffer on success", async () => {
+      setDaemonEnv(true);
+      mockFetch(() => jsonResponse(200, {}));
+      const res = await generateViaDaemon("replicate:owner/model", "prompt");
+      assert.equal(res.ok, true);
+      assert.ok(res.ok && Buffer.isBuffer(res.value));
+    });
+  });
+
+  describe("searchViaDaemon", () => {
+    it("reports no-env when daemon env vars are unset", async () => {
+      setDaemonEnv(false);
+      const res = await searchViaDaemon("query");
+      assert.deepEqual(res, { ok: false, reason: "no-env" });
+    });
+
+    it("reports auth failure on 401", async () => {
+      setDaemonEnv(true);
+      mockFetch(() => jsonResponse(401, { error: "invalid token" }));
+      const res = await searchViaDaemon("query");
+      assert.equal(res.ok === false && res.reason, "auth");
+    });
+
+    it("reports fallback for older daemon without the endpoint (404)", async () => {
+      setDaemonEnv(true);
+      mockFetch(() => jsonResponse(404, { error: "not found" }));
+      const res = await searchViaDaemon("query");
+      assert.deepEqual(res, { ok: false, reason: "fallback" });
+    });
+
+    it("returns results on success", async () => {
+      setDaemonEnv(true);
+      mockFetch(() => jsonResponse(200, [{ id: "replicate:owner/model" }]));
+      const res = await searchViaDaemon("query");
+      assert.equal(res.ok, true);
+      assert.deepEqual(res.ok && res.value, [{ id: "replicate:owner/model" }]);
+    });
+  });
+
+  describe("handleDaemonFailure", () => {
+    it("returns (falls back) for no-env", () => {
+      assert.doesNotThrow(() => handleDaemonFailure({ ok: false, reason: "no-env" }));
+    });
+
+    it("returns (falls back) for fallback", () => {
+      assert.doesNotThrow(() => handleDaemonFailure({ ok: false, reason: "fallback" }));
+    });
+
+    it("throws a connection diagnosis for unreachable, not a config one", () => {
+      assert.throws(
+        () => handleDaemonFailure({ ok: false, reason: "unreachable", detail: "fetch failed" }),
+        /not a provider-configuration issue/,
+      );
+    });
+
+    it("throws an auth diagnosis for auth, not a config one", () => {
+      assert.throws(
+        () => handleDaemonFailure({ ok: false, reason: "auth", status: 401, detail: "bad token" }),
+        /authentication problem/,
+      );
     });
   });
 });
