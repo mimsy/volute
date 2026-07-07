@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { type ChildProcess, execFileSync, spawn } from "node:child_process";
-import { existsSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { eq } from "drizzle-orm";
@@ -655,6 +655,26 @@ describe("daemon e2e", { timeout: 420000 }, () => {
     // The variant survives and is still joinable.
     assert.ok(await findMind("e2e-conflict-var"), "variant should still be registered");
     assert.ok(existsSync(created.variant.path), "variant worktree should still exist");
+
+    // The failed join must not leave root-owned files in the parent dir. Under
+    // real user isolation the merge git ops (run as the daemon) would otherwise
+    // orphan home/MEMORY.md as root:root, locking the parent mind out of its own
+    // identity files. (This harness runs the daemon as the test user, so this is
+    // a regression tripwire; the ownership-restore path itself is unit-tested in
+    // variant-join-isolation.test.ts.)
+    if (process.getuid && process.getuid() !== 0) {
+      const rootOwned: string[] = [];
+      const walk = (dir: string) => {
+        for (const entry of readdirSync(dir, { withFileTypes: true })) {
+          if (entry.name === "node_modules" || entry.name === ".git") continue;
+          const full = resolve(dir, entry.name);
+          if (statSync(full).uid === 0) rootOwned.push(full);
+          if (entry.isDirectory()) walk(full);
+        }
+      };
+      walk(parentDir);
+      assert.equal(rootOwned.length, 0, `parent dir has root-owned files: ${rootOwned.join(", ")}`);
+    }
 
     // Clean up the variant so later tests aren't affected.
     await daemonRequest(`/api/minds/${TEST_MIND}/variants/e2e-conflict-var`, { method: "DELETE" });
