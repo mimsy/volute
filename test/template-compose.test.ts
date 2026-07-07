@@ -158,7 +158,7 @@ describe("template composition", () => {
       assert.ok(existsSync(resolve(composedDir, ".init/AGENTS.md")));
       assert.ok(existsSync(resolve(composedDir, ".init/.config/routes.json")));
       assert.ok(
-        existsSync(resolve(composedDir, ".init/.config/hooks/pre-prompt/session-activity.ts")),
+        existsSync(resolve(composedDir, ".init/.local/hooks/pre-prompt/session-activity.ts")),
       );
 
       // Codex overrides home/.config/config.json.tmpl with its own defaults

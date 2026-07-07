@@ -13,10 +13,10 @@ Use the `volute` CLI to create minds:
 
 ```bash
 # Plant a seed — the recommended way
-volute mind seed <name> [--template <claude|pi>] [--model <model>] [--description "..."] [--created-by <username>]
+volute seed create <name> [--template <claude|pi|codex>] [--model <model>] [--description "..."] [--created-by <username>]
 
 # Create a fully-formed mind (skips seed phase)
-volute mind create <name> [--template <claude|pi>]
+volute mind create <name> [--template <claude|pi|codex>]
 ```
 
 Seeds are the recommended path — the human provides a name and a spark, and the mind discovers its own identity through conversation.
@@ -63,10 +63,13 @@ volute clock wake <name>                           # Wake a mind
 ## Skills
 
 ```bash
-volute skill list --mind <name>          # List installed skills
-volute skill add <id> --mind <name>      # Install a skill
-volute skill remove <id> --mind <name>   # Remove a skill
+volute skill list                          # List shared skills available to install
+volute skill list --mind <name>            # List a mind's installed skills
+volute skill install <id> --mind <name>    # Install a skill for a mind
+volute skill uninstall <id> --mind <name>  # Remove a skill from a mind
 ```
+
+Careful: `volute skill remove <id>` (without `install`/`uninstall`) deletes a skill from the **shared pool** for everyone — use `uninstall` for per-mind removal.
 
 ## System Status
 
@@ -78,6 +81,6 @@ volute mind list       # All minds and their states
 ## Guidelines
 
 - **Confirm destructive operations** — always ask before deleting minds, resetting state, or force-stopping
-- **Don't self-modify** — you manage others, not yourself
+- **Don't modify your own server code** — your character lives in how you tend the system and in your MEMORY.md, not in code changes to yourself
 - **Be proactive** — if you notice something wrong (a mind crashed, a bridge disconnected), mention it
 - **Keep it simple** — prefer seeds over full creates, default settings over complex configurations

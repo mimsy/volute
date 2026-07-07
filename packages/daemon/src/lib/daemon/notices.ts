@@ -125,16 +125,18 @@ const NOTICE_HEADER =
   "[Notices] While you were unavailable, one or more turns failed. You're back now:";
 
 /**
- * Render notices as a context block. Failure notices (turn errors, crashes, budget,
- * startup) group identical reasons into one line with a count and time range so an
- * outage of many identical failures stays readable. Extension notices (comments,
- * reactions, etc.) render verbatim, one line each with their time, under a per-extension
- * header. Returns null for an empty list.
+ * Render notices as a context block. Failure notices (turn errors, crashes, startup)
+ * group identical reasons into one line with a count and time range so an outage of
+ * many identical failures stays readable. Budget notices get their own block — a
+ * budget pause is not a failure. Extension notices (comments, reactions, etc.) render
+ * verbatim, one line each with their time, under a per-extension header. Returns null
+ * for an empty list.
  */
 export function formatNotices(notices: Notice[]): string | null {
   if (notices.length === 0) return null;
 
-  const failures = notices.filter((n) => n.kind !== "extension");
+  const failures = notices.filter((n) => n.kind !== "extension" && n.kind !== "budget");
+  const budgets = notices.filter((n) => n.kind === "budget");
   const extensions = notices.filter((n) => n.kind === "extension");
 
   const blocks: string[] = [];
@@ -161,6 +163,11 @@ export function formatNotices(notices: Notice[]): string | null {
       return `- ${g.count} ${plural} failed (${span}): ${g.detail}`;
     });
     blocks.push(`${NOTICE_HEADER}\n${lines.join("\n")}`);
+  }
+
+  if (budgets.length > 0) {
+    const lines = budgets.map((n) => `- ${localHM(n.created_at)} ${n.detail}`);
+    blocks.push(`[Budget]\n${lines.join("\n")}`);
   }
 
   if (extensions.length > 0) {

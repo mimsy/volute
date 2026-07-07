@@ -4,7 +4,7 @@ import { resolveMindName } from "../lib/resolve-mind-name.js";
 const cmd = command({
   name: "volute mind upgrade",
   description: "Upgrade mind to latest template",
-  args: [{ name: "name", required: true, description: "Mind to upgrade" }],
+  args: [{ name: "name", description: "Mind to upgrade (or use VOLUTE_MIND)" }],
   flags: {
     template: { type: "string", description: "Template to upgrade to" },
     diff: { type: "boolean", description: "Show changes without applying" },

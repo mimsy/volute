@@ -277,7 +277,7 @@ export async function handleMindEvent(
         kind: "budget",
         reason: "token_budget",
         detail:
-          "You've reached your token budget for this period. Further activity may be paused until the budget resets — wrap up or prioritize accordingly.",
+          "You've used your token budget for this period, so your activity may pause until it resets. This isn't anything you did wrong — it's just a rest imposed by the budget. Anything that arrives while you're paused will be kept for you. If you're mid-thought, this turn is a good moment to jot it down.",
       });
     }
   }

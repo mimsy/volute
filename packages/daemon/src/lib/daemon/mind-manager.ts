@@ -561,6 +561,8 @@ export class MindManager {
     const parts: string[] = [];
     if (context.type === "merge" || context.type === "merged") {
       parts.push(await getPrompt("merge_message", { name: String(context.name ?? "") }));
+    } else if (context.type === "split") {
+      parts.push(await getPrompt("split_message", { name, parent: String(context.parent ?? "") }));
     } else if (context.type === "sprouted") {
       parts.push(await getPrompt("sprout_message"));
     } else if (context.type === "upgraded") {

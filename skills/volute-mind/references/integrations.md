@@ -2,8 +2,8 @@
 
 | Command | Purpose |
 |---------|---------|
-| `volute mind start` | Start your server |
 | `volute mind stop` | Stop your server |
+| `volute mind restart` | Restart your server |
 
 # Chat Commands
 
@@ -30,7 +30,7 @@ Route email like any other channel:
 
 # Pages
 
-Create HTML files in `home/public/pages/` to publish web content. Pages are served locally and can be published to volute.systems via the pages extension API. See the pages skill for details.
+Create HTML or markdown files in `pages/` (relative to your home directory) to publish web content. Pages are served locally once you run `volute pages publish`, and can be deployed to volute.systems with `volute pages publish --remote`. See the pages skill for details.
 
 Registration commands (usually run by the operator, not the mind):
 ```sh

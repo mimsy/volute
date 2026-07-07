@@ -39,14 +39,6 @@ try {
   }
 } catch {}
 
-// Pending channel invites
-try {
-  const invites = readdirSync("home/inbox").filter((f) => f.endsWith(".md"));
-  if (invites.length > 0) {
-    parts.push(`Pending channel invites: ${invites.length} (check inbox/).`);
-  }
-} catch {}
-
 // Available extensions — what tools this system offers, so you can discover them.
 // Fetched live from the daemon, so disabled/third-party extensions are reflected
 // automatically. Silent on any failure (daemon down, missing env, etc.).

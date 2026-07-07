@@ -32,7 +32,7 @@ export type SessionConfig = {
 export type DeliveryMode =
   | "immediate"
   | "batch"
-  | { mode: "batch"; debounce?: number; maxWait?: number };
+  | { mode: "batch"; debounce?: number; maxWait?: number; triggers?: string[] };
 
 export type RoutingConfig = {
   rules?: RoutingRule[];
@@ -329,6 +329,7 @@ export function resolveDeliveryMode(
           mode: "batch",
           debounce: sessionConfig.delivery.debounce ?? DEFAULT_BATCH_DEBOUNCE,
           maxWait: sessionConfig.delivery.maxWait ?? DEFAULT_BATCH_MAX_WAIT,
+          triggers: sessionConfig.delivery.triggers,
         };
       }
 

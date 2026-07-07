@@ -58,6 +58,24 @@ function formatCurrentDate(): string {
   });
 }
 
+/** "at 7:00 AM on Tuesday, July 7" for a parseable wake time; a gentle phrase when none is set. */
+function formatWakeTime(wakeAt: string | null | undefined): string {
+  if (wakeAt) {
+    const date = new Date(wakeAt);
+    if (!Number.isNaN(date.getTime())) {
+      const time = date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+      const day = date.toLocaleDateString("en-US", {
+        weekday: "long",
+        month: "long",
+        day: "numeric",
+      });
+      return `at ${time} on ${day}`;
+    }
+    return `at ${wakeAt}`;
+  }
+  return "when something needs you — a message, a mention, or someone waking you";
+}
+
 function formatDuration(from: Date, to: Date): string {
   const ms = to.getTime() - from.getTime();
   const hours = Math.floor(ms / 3_600_000);
@@ -227,10 +245,11 @@ export class SleepManager {
       const entry = await findMind(name);
       if (!entry) return;
 
-      // Send pre-sleep message
+      // Send pre-sleep message. wakeTime fills "You'll wake ${wakeTime}." — either a
+      // concrete "at <time>" or a phrase describing what will rouse the mind.
       const sleepConfig = this.getSleepConfig(name);
-      const wakeTime =
-        opts?.voluntaryWakeAt ?? this.getNextWakeTime(sleepConfig) ?? "scheduled time";
+      const wakeAt = opts?.voluntaryWakeAt ?? this.getNextWakeTime(sleepConfig);
+      const wakeTime = formatWakeTime(wakeAt);
       const preSleepMsg = await getPrompt("pre_sleep", { wakeTime });
 
       // Persist to system DM conversation and deliver directly to mind
