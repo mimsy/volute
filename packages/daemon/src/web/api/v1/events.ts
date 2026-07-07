@@ -88,12 +88,30 @@ const app = new Hono<AuthEnv>().use("*", authMiddleware).get("/", async (c) => {
         log.error("[v1-events] failed to fetch recent activity", log.errorData(err));
       }
 
+      // Presence scoping: minds are untrusted, so a mind only sees presence
+      // for users it shares a conversation with (plus itself). Admins, system,
+      // and brains keep the global view. Live presence events (brain_online,
+      // mind_active, ...) are already gated by the activity audience filter
+      // below; the snapshot must apply the same policy.
+      let activeMinds = getActiveMinds();
+      let onlineBrains = getOnlineBrains();
+      if (!privileged && user.user_type === "mind") {
+        const visible = new Set<string>(
+          conversations.flatMap((conv: any) =>
+            (conv.participants ?? []).map((p: any) => p.username),
+          ),
+        );
+        if (activityMind) visible.add(activityMind);
+        activeMinds = activeMinds.filter((m) => visible.has(m));
+        onlineBrains = onlineBrains.filter((b) => visible.has(b));
+      }
+
       const snapshotData = {
         event: "snapshot" as const,
         activity: recentActivity,
         conversations,
-        activeMinds: getActiveMinds(),
-        onlineBrains: getOnlineBrains(),
+        activeMinds,
+        onlineBrains,
       };
 
       // The snapshot is connection-specific (this user's conversations, unread

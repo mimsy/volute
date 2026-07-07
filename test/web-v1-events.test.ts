@@ -3,11 +3,17 @@ import { describe, it } from "node:test";
 import { getOrCreateMindUser } from "../packages/daemon/src/lib/auth.js";
 import { publish } from "../packages/daemon/src/lib/events/activity-events.js";
 import {
+  addConnection,
+  removeConnection,
+} from "../packages/daemon/src/lib/events/brain-presence.js";
+import { createConversation } from "../packages/daemon/src/lib/events/conversations.js";
+import {
   bufferEvent,
   getEventsSince,
   nextEventId,
   resetSequencer,
 } from "../packages/daemon/src/lib/events/event-sequencer.js";
+import { markIdle, onMindEvent } from "../packages/daemon/src/lib/events/mind-activity-tracker.js";
 import eventsApp from "../packages/daemon/src/web/api/v1/events.js";
 import { createSession } from "../packages/daemon/src/web/middleware/auth.js";
 
@@ -333,6 +339,75 @@ describe("v1 events live activity delivery filter", () => {
       replay.some((e) => e.data.event === "activity" && e.data.mind === "live-events-bob"),
       "buffer must still record another mind's activity globally for reconnect replay",
     );
+  });
+
+  it("scopes snapshot presence to a mind's conversation participants", async () => {
+    resetSequencer();
+    // Global presence state: an unrelated active mind and an unrelated online
+    // brain, plus a partner mind that shares a conversation with the caller.
+    onMindEvent("presence-unrelated-mind", "text");
+    onMindEvent("presence-partner-mind", "text");
+    addConnection("presence-unrelated-brain");
+    try {
+      const mind = await getOrCreateMindUser("presence-scoped-mind");
+      const partner = await getOrCreateMindUser("presence-partner-mind");
+      await createConversation({ participantIds: [mind.id, partner.id] });
+      const session = await createSession(mind.id);
+
+      const stream = await openEventStream(`Bearer ${session}`);
+      await delay(200);
+      await stream.close();
+
+      const snapshot = stream.events.find((e) => e.event === "snapshot");
+      assert.ok(snapshot, "mind connection should receive a snapshot");
+      // The key case: a mind must not learn global presence.
+      assert.ok(
+        !snapshot.activeMinds.includes("presence-unrelated-mind"),
+        "mind snapshot must not expose unrelated active minds",
+      );
+      assert.ok(
+        !snapshot.onlineBrains.includes("presence-unrelated-brain"),
+        "mind snapshot must not expose unrelated online brains",
+      );
+      // But presence it is entitled to (a shared-conversation participant) stays.
+      assert.ok(
+        snapshot.activeMinds.includes("presence-partner-mind"),
+        "mind snapshot should include active minds it shares a conversation with",
+      );
+    } finally {
+      markIdle("presence-unrelated-mind");
+      markIdle("presence-partner-mind");
+      removeConnection("presence-unrelated-brain");
+    }
+  });
+
+  it("keeps global snapshot presence for a privileged connection", async () => {
+    resetSequencer();
+    onMindEvent("presence-admin-view-mind", "text");
+    addConnection("presence-admin-view-brain");
+    const prevToken = process.env.VOLUTE_DAEMON_TOKEN;
+    process.env.VOLUTE_DAEMON_TOKEN = "presence-admin-token";
+    try {
+      const stream = await openEventStream("Bearer presence-admin-token");
+      await delay(200);
+      await stream.close();
+
+      const snapshot = stream.events.find((e) => e.event === "snapshot");
+      assert.ok(snapshot, "privileged connection should receive a snapshot");
+      assert.ok(
+        snapshot.activeMinds.includes("presence-admin-view-mind"),
+        "privileged snapshot should include all active minds",
+      );
+      assert.ok(
+        snapshot.onlineBrains.includes("presence-admin-view-brain"),
+        "privileged snapshot should include all online brains",
+      );
+    } finally {
+      if (prevToken === undefined) delete process.env.VOLUTE_DAEMON_TOKEN;
+      else process.env.VOLUTE_DAEMON_TOKEN = prevToken;
+      markIdle("presence-admin-view-mind");
+      removeConnection("presence-admin-view-brain");
+    }
   });
 
   it("delivers any mind's activity live to a privileged connection", async () => {
