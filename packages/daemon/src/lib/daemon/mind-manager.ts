@@ -398,22 +398,12 @@ export class MindManager {
       env.HOME = resolve(dir, "home");
     }
 
-    // When VOLUTE_NODE_PATH is set (e.g. Electron bundled Node), use it to run tsx explicitly
-    const customNode = process.env.VOLUTE_NODE_PATH;
-    let baseBin: string;
-    let baseArgs: string[];
-    if (customNode) {
-      baseBin = customNode;
-      baseArgs = [
-        resolve(dir, "node_modules", ".bin", "tsx"),
-        "src/server.ts",
-        "--port",
-        String(port),
-      ];
-    } else {
-      baseBin = resolve(dir, "node_modules", ".bin", "tsx");
-      baseArgs = ["src/server.ts", "--port", String(port)];
-    }
+    // Run node directly with tsx as an import loader instead of the tsx bin
+    // shim, which would fork a second node process (~60MB RSS) that does
+    // nothing. VOLUTE_NODE_PATH (e.g. Electron bundled Node) overrides the
+    // node binary. The bare `tsx` specifier resolves against the spawn cwd.
+    const baseBin = process.env.VOLUTE_NODE_PATH ?? process.execPath;
+    const baseArgs = ["--import", "tsx", "src/server.ts", "--port", String(port)];
     let spawnCmd: string;
     let spawnArgs: string[];
     if (isIsolationEnabled()) {
@@ -722,7 +712,7 @@ export class MindManager {
         resolve();
       });
       try {
-        // Kill the entire process group (tsx + node child)
+        // Kill the entire process group (node + any children it spawns)
         process.kill(-child.pid!, "SIGTERM");
       } catch {
         clearTimeout(killTimer);
