@@ -92,14 +92,16 @@ class TestSleepManager extends SleepManager {
     return (this as any).buildTriggerWakeSummary(state);
   }
 
-  // Stub the delivery seam so flushQueuedMessages can be tested without the real delivery
-  // stack. `deliverResult` decides per-payload whether delivery "succeeds".
-  deliveredPayloads: unknown[] = [];
-  deliverResult: (payload: unknown) => boolean = () => true;
+  // Stub the batch delivery seam so flushQueuedMessages can be tested without the real
+  // delivery stack. Each call is one channel's batch; `deliverResult` decides per-batch
+  // success (keyed off the batch's first payload's channel).
+  deliveredBatches: { channel: string; payloads: any[] }[] = [];
+  deliverResult: (channel: string, payloads: any[]) => boolean = () => true;
 
-  override async deliverQueued(_name: string, payload: unknown): Promise<boolean> {
-    this.deliveredPayloads.push(payload);
-    return this.deliverResult(payload);
+  override async deliverQueuedBatch(_name: string, payloads: any[]): Promise<boolean> {
+    const channel = (payloads[0]?.channel as string) ?? "unknown";
+    this.deliveredBatches.push({ channel, payloads });
+    return this.deliverResult(channel, payloads);
   }
 
   // Expose wake-failure handling for testing
@@ -1030,15 +1032,15 @@ describe("SleepManager.flushQueuedMessages", () => {
     return `flush-mind-${process.pid}-${counter++}`;
   }
 
-  async function queue(mind: string, content: string): Promise<void> {
+  async function queue(mind: string, content: string, channel = "@volute"): Promise<void> {
     const db = await getDb();
     await db.insert(deliveryQueue).values({
       mind,
       session: "sleep",
-      channel: "@volute",
+      channel,
       sender: "volute",
       status: "sleep-queued",
-      payload: JSON.stringify({ channel: "@volute", sender: "volute", content }),
+      payload: JSON.stringify({ channel, sender: "volute", content }),
     });
   }
 
@@ -1051,7 +1053,7 @@ describe("SleepManager.flushQueuedMessages", () => {
       .all();
   }
 
-  it("delivers each queued message once and deletes delivered rows", async () => {
+  it("delivers one batch per channel and deletes delivered rows (#382)", async () => {
     const mind = uniqueMind();
     await queue(mind, "a");
     await queue(mind, "b");
@@ -1063,47 +1065,77 @@ describe("SleepManager.flushQueuedMessages", () => {
     const flushed = await sm.flushQueuedMessages(mind);
 
     assert.equal(flushed, 3);
-    assert.equal(sm.deliveredPayloads.length, 3, "each message delivered exactly once");
+    // All three share a channel → ONE batch delivery, not three.
+    assert.equal(sm.deliveredBatches.length, 1, "single channel delivered as one batch");
+    assert.equal(sm.deliveredBatches[0].payloads.length, 3, "batch carries all three messages");
+    // Arrival order preserved within the channel batch.
+    assert.deepEqual(
+      sm.deliveredBatches[0].payloads.map((p) => p.content),
+      ["a", "b", "c"],
+    );
     assert.equal((await queuedRows(mind)).length, 0, "all delivered rows deleted");
     assert.equal(sm.getState(mind).queuedMessageCount, 0);
   });
 
-  it("leaves the row queued when delivery fails (no silent drop)", async () => {
+  it("groups by channel into one batch each", async () => {
     const mind = uniqueMind();
-    await queue(mind, "a");
+    await queue(mind, "a1", "#alpha");
+    await queue(mind, "b1", "#beta");
+    await queue(mind, "a2", "#alpha");
 
     const sm = new TestSleepManager();
-    sm.deliverResult = () => false; // delivery fails
+    sm.setStateForTest(mind, sleepingState({ queuedMessageCount: 3 }));
+
+    const flushed = await sm.flushQueuedMessages(mind);
+
+    assert.equal(flushed, 3);
+    assert.equal(sm.deliveredBatches.length, 2, "two channels → two batches");
+    const alpha = sm.deliveredBatches.find((b) => b.channel === "#alpha");
+    const beta = sm.deliveredBatches.find((b) => b.channel === "#beta");
+    assert.deepEqual(
+      alpha?.payloads.map((p) => p.content),
+      ["a1", "a2"],
+    );
+    assert.deepEqual(
+      beta?.payloads.map((p) => p.content),
+      ["b1"],
+    );
+    assert.equal((await queuedRows(mind)).length, 0);
+  });
+
+  it("leaves the whole channel group queued when its batch fails (no silent drop)", async () => {
+    const mind = uniqueMind();
+    await queue(mind, "a");
+    await queue(mind, "b");
+
+    const sm = new TestSleepManager();
+    sm.deliverResult = () => false; // batch delivery fails
 
     const flushed = await sm.flushQueuedMessages(mind);
 
     assert.equal(flushed, 0);
-    assert.equal((await queuedRows(mind)).length, 1, "failed delivery must not delete the row");
+    assert.equal((await queuedRows(mind)).length, 2, "failed batch must not delete its rows");
   });
 
-  it("deletes per-row so a mid-flush failure replays only the undelivered tail", async () => {
+  it("keeps a failed channel queued while other channels flush (#382)", async () => {
     const mind = uniqueMind();
-    await queue(mind, "first");
-    await queue(mind, "second");
-    await queue(mind, "third");
+    await queue(mind, "ok1", "#good");
+    await queue(mind, "ok2", "#good");
+    await queue(mind, "bad1", "#bad");
+    await queue(mind, "bad2", "#bad");
 
     const sm = new TestSleepManager();
-    sm.setStateForTest(mind, sleepingState({ queuedMessageCount: 3 }));
-    // First delivery succeeds, then the mind "crashes" — the rest must survive.
-    let calls = 0;
-    sm.deliverResult = () => {
-      calls++;
-      return calls === 1;
-    };
+    sm.setStateForTest(mind, sleepingState({ queuedMessageCount: 4 }));
+    // Only the #bad channel's batch fails.
+    sm.deliverResult = (channel) => channel !== "#bad";
 
     const flushed = await sm.flushQueuedMessages(mind);
 
-    assert.equal(flushed, 1, "only the first row was delivered");
+    assert.equal(flushed, 2, "the good channel's two messages delivered");
     const remaining = await queuedRows(mind);
-    assert.equal(remaining.length, 2, "the undelivered tail stays queued for the next wake");
-    // The remaining rows are the tail (second, third), in order — the delivered head is gone.
+    assert.equal(remaining.length, 2, "the failed channel's rows stay queued");
     const contents = remaining.map((r) => JSON.parse(r.payload).content).sort();
-    assert.deepEqual(contents, ["second", "third"]);
+    assert.deepEqual(contents, ["bad1", "bad2"]);
     assert.equal(sm.getState(mind).queuedMessageCount, 2);
   });
 
@@ -1122,7 +1154,12 @@ describe("SleepManager.flushQueuedMessages", () => {
     const flushed = await sm.flushQueuedMessages(mind);
 
     assert.equal(flushed, 1, "the good message delivered");
-    assert.equal(sm.deliveredPayloads.length, 1, "the unparseable row never reached delivery");
+    assert.equal(sm.deliveredBatches.length, 1, "one batch delivered");
+    assert.equal(
+      sm.deliveredBatches[0].payloads.length,
+      1,
+      "the unparseable row never reached delivery",
+    );
     assert.equal((await queuedRows(mind)).length, 0, "both rows cleared from the queue");
   });
 });

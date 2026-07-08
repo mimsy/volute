@@ -11,7 +11,7 @@ import {
 import { resolve } from "node:path";
 import { promisify } from "node:util";
 import { CronExpressionParser } from "cron-parser";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { sendSystemMessageDirect } from "../chat/system-chat.js";
 import { getDb } from "../db.js";
 import type { DeliveryPayload } from "../delivery/delivery-router.js";
@@ -428,9 +428,14 @@ export class SleepManager {
         } catch (err) {
           slog.warn(`failed to deliver wake summary to ${name}`, log.errorData(err));
         }
+
+        // Let the wake-summary turn finish before flushing the backlog (#382), so the
+        // summary and the per-channel batches arrive as separate, ordered turns rather
+        // than interleaving. Bounded so a stuck turn can't wedge the flush.
+        await this.waitForIdle(name, 120_000);
       }
 
-      // Flush queued messages
+      // Flush queued messages (grouped into one pre-batched turn per channel)
       const flushed = await this.flushQueuedMessages(name);
       if (flushed > 0) {
         slog.info(`flushed ${flushed} queued message(s) for ${name}`);
@@ -519,7 +524,11 @@ export class SleepManager {
   }
 
   /**
-   * Flush all queued sleep messages for a mind through the delivery manager.
+   * Flush all queued sleep messages for a mind on wake. Rows are grouped by channel
+   * and each channel group is delivered as ONE pre-batched turn (#382) — a night's
+   * backlog becomes one stack per channel, not N cold-start doorbells. Delivery is
+   * all-or-nothing per channel: a failed group's rows stay queued for the next wake,
+   * while other channels still flush.
    */
   async flushQueuedMessages(name: string): Promise<number> {
     try {
@@ -532,14 +541,15 @@ export class SleepManager {
 
       if (rows.length === 0) return 0;
 
-      let deliveredCount = 0;
+      // Parse payloads, dropping any that can never be delivered so they don't wedge
+      // the flush (or replay forever on every wake). Group survivors by channel,
+      // preserving arrival order within each channel.
+      const groups = new Map<string, { id: number; payload: DeliveryPayload }[]>();
       for (const row of rows) {
         let payload: DeliveryPayload;
         try {
           payload = JSON.parse(row.payload);
         } catch (err) {
-          // An unparseable payload can never be delivered — drop it so it doesn't wedge the
-          // rest of the flush (and replay forever on every wake).
           slog.warn(
             `dropping unparseable queued message ${row.id} for ${name}`,
             log.errorData(err),
@@ -547,19 +557,33 @@ export class SleepManager {
           await db.delete(deliveryQueue).where(eq(deliveryQueue.id, row.id));
           continue;
         }
+        const channel = payload.channel ?? "unknown";
+        if (!groups.has(channel)) groups.set(channel, []);
+        groups.get(channel)?.push({ id: row.id, payload });
+      }
 
-        const delivered = await this.deliverQueued(name, payload);
+      let deliveredCount = 0;
+      for (const [channel, items] of groups) {
+        const delivered = await this.deliverQueuedBatch(
+          name,
+          items.map((i) => i.payload),
+        );
         if (!delivered) {
-          // Delivery genuinely failed. Leave this row (and the untouched tail) queued so they
-          // retry on the next wake in order, rather than being silently dropped.
-          slog.warn(`failed to flush queued message ${row.id} for ${name}; leaving it queued`);
-          break;
+          // Whole-group failure: leave this channel's rows queued so they retry on the
+          // next wake, but keep flushing the other (independent) channels.
+          slog.warn(
+            `failed to flush ${items.length} queued message(s) on ${channel} for ${name}; leaving them queued`,
+          );
+          continue;
         }
-
-        // Delete per-row immediately after each successful delivery so a crash mid-flush
-        // replays only the undelivered tail, not the whole backlog.
-        await db.delete(deliveryQueue).where(eq(deliveryQueue.id, row.id));
-        deliveredCount++;
+        // Delete the group's rows only after a successful batch ack.
+        await db.delete(deliveryQueue).where(
+          inArray(
+            deliveryQueue.id,
+            items.map((i) => i.id),
+          ),
+        );
+        deliveredCount += items.length;
       }
 
       const state = this.states.get(name);
@@ -575,15 +599,14 @@ export class SleepManager {
   }
 
   /**
-   * Deliver one queued message on the wake path. `isFlush` skips the queue-time inbound
-   * recording (kept once, at arrival) and bypasses the sleep re-queue so the now-waking mind
-   * actually receives it. Returns whether the message was handed off to the delivery manager.
-   * Extracted as a seam so the flush loop can be unit-tested without the real delivery stack.
+   * Deliver one channel's worth of queued messages as a single pre-batched turn on
+   * the wake path. Extracted as a seam so the flush loop can be unit-tested without
+   * the real delivery stack. Returns whether the batch was handed off to the mind.
    */
-  protected async deliverQueued(name: string, payload: DeliveryPayload): Promise<boolean> {
+  protected async deliverQueuedBatch(name: string, payloads: DeliveryPayload[]): Promise<boolean> {
     // Import lazily to avoid a circular dependency with message-delivery.
-    const { deliverMessage } = await import("../delivery/message-delivery.js");
-    return deliverMessage(name, payload, { isFlush: true });
+    const { deliverBatch } = await import("../delivery/message-delivery.js");
+    return deliverBatch(name, payloads);
   }
 
   // --- Wake failure handling (#419) ---
