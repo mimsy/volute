@@ -95,8 +95,7 @@ export async function notifyVersionUpdate(): Promise<void> {
   const promises = runningMinds.map(async (entry) => {
     const tmpl = entry.template ?? "claude";
     const currentHash = templateHashes.get(tmpl);
-    const needsUpgrade =
-      entry.templateHash != null && currentHash != null && entry.templateHash !== currentHash;
+    const needsUpgrade = shouldSuggestUpgrade(entry, currentHash);
 
     const message = formatNotification(currentVersion, releaseNotes, needsUpgrade, entry.name);
 
@@ -111,6 +110,25 @@ export async function notifyVersionUpdate(): Promise<void> {
   }
 
   writeState({ lastNotifiedVersion: currentVersion });
+}
+
+/**
+ * Whether to suggest `volute mind upgrade` to a mind on a template-hash change.
+ *
+ * The spirit is excluded: it upgrades via syncSpiritTemplate() on daemon restart,
+ * not `volute mind upgrade`. It still receives the release notes (this only
+ * controls the upgrade hint).
+ */
+export function shouldSuggestUpgrade(
+  entry: { mindType: string; templateHash?: string | null },
+  currentHash: string | null | undefined,
+): boolean {
+  return (
+    entry.mindType !== "spirit" &&
+    entry.templateHash != null &&
+    currentHash != null &&
+    entry.templateHash !== currentHash
+  );
 }
 
 function formatNotification(

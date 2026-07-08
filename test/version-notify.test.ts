@@ -12,6 +12,7 @@ import {
 import {
   backfillTemplateHashes,
   notifyVersionUpdate,
+  shouldSuggestUpgrade,
 } from "../packages/daemon/src/lib/version-notify.js";
 
 const statePath = () => resolve(voluteSystemDir(), "version-notify.json");
@@ -97,5 +98,25 @@ describe("notifyVersionUpdate", () => {
     await notifyVersionUpdate();
     const state = readState();
     assert.equal(state!.lastNotifiedVersion, getCurrentVersion());
+  });
+});
+
+describe("shouldSuggestUpgrade", () => {
+  it("suggests upgrade for a regular mind whose template hash changed", () => {
+    assert.equal(shouldSuggestUpgrade({ mindType: "mind", templateHash: "old" }, "new"), true);
+  });
+
+  it("never suggests upgrade to the spirit, even on a hash change", () => {
+    // The spirit upgrades via syncSpiritTemplate() on restart, not `mind upgrade`.
+    assert.equal(shouldSuggestUpgrade({ mindType: "spirit", templateHash: "old" }, "new"), false);
+  });
+
+  it("does not suggest upgrade when the hash is unchanged", () => {
+    assert.equal(shouldSuggestUpgrade({ mindType: "mind", templateHash: "same" }, "same"), false);
+  });
+
+  it("does not suggest upgrade when a hash is missing", () => {
+    assert.equal(shouldSuggestUpgrade({ mindType: "mind", templateHash: null }, "new"), false);
+    assert.equal(shouldSuggestUpgrade({ mindType: "mind", templateHash: "old" }, null), false);
   });
 });
