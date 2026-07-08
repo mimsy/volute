@@ -38,6 +38,7 @@ const TEST_USERNAMES = [
   "other-user3",
   "group-member",
   "privacy-outsider",
+  "volute",
 ];
 
 async function cleanup() {
@@ -324,6 +325,30 @@ describe("web conversations routes", () => {
     assert.equal(res.status, 400);
     const body = await res.json();
     assert.ok(body.error.includes("channels"));
+  });
+
+  it("POST /:name/conversations — rejects a single-participant (self) conversation", async () => {
+    // The spirit shares the system user, so a "@volute" DM to itself resolves the
+    // mind user and the named participant to the same id — one distinct member.
+    const prev = process.env.VOLUTE_DAEMON_TOKEN;
+    process.env.VOLUTE_DAEMON_TOKEN = "conv-daemon-token";
+    try {
+      const app = createApp();
+      const res = await app.request("/api/minds/volute/conversations", {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer conv-daemon-token",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ participantNames: ["volute"] }),
+      });
+      assert.equal(res.status, 400);
+      const body = await res.json();
+      assert.ok(body.error.includes("two distinct participants"), body.error);
+    } finally {
+      if (prev === undefined) delete process.env.VOLUTE_DAEMON_TOKEN;
+      else process.env.VOLUTE_DAEMON_TOKEN = prev;
+    }
   });
 
   it("POST /:name/conversations — validates participant IDs", async () => {

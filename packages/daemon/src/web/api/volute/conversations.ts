@@ -91,6 +91,13 @@ const app = new Hono<AuthEnv>()
 
     const participantIds = [...participantSet];
 
+    // Reject degenerate conversations — a conversation needs at least two
+    // distinct members. Guards against e.g. the spirit (which shares the
+    // system user) creating a one-participant DM to itself.
+    if (participantIds.length < 2) {
+      return c.json({ error: "a conversation needs at least two distinct participants" }, 400);
+    }
+
     // Reject group DMs — use channels for 3+ participants
     if (participantIds.length > 2) {
       return c.json({ error: "Use channels for multi-participant conversations" }, 400);

@@ -297,6 +297,17 @@ const cmd = command({
       const mindSelf = process.env.VOLUTE_MIND;
       const sender = flags.sender || mindSelf || userInfo().username;
 
+      // Sending to yourself is a dead end: it would resolve to a
+      // one-participant conversation that reaches nobody. For the spirit this
+      // happens when it "replies" to its own system notices on @volute.
+      if (mindSelf && targetName === mindSelf) {
+        console.error(
+          `Can't send to @${targetName} — that's your own system channel. ` +
+            `System messages there are automated notices; they don't need a reply.`,
+        );
+        process.exit(1);
+      }
+
       const targetIsMind = await isMind(targetName);
       waitMindName = targetIsMind ? targetName : undefined;
 
