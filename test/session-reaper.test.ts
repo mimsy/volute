@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   isSessionReapable,
+  type ReapableQuery,
   type ReapableSession,
+  reapSessionQuery,
 } from "../templates/claude/src/lib/session-reaper.js";
 
 const TIMEOUT = 30 * 60_000; // 30 min
@@ -56,5 +58,61 @@ describe("isSessionReapable", () => {
   it("never reaps when reaping is disabled (timeout 0)", () => {
     const s = session({ lastActivityAt: 0 }); // ancient
     assert.equal(isSessionReapable(s, NOW, 0, notCompacting), false);
+  });
+});
+
+describe("reapSessionQuery", () => {
+  it("awaits query.return() so the subprocess exit is reaped (not fire-and-forget)", async () => {
+    let returned = false;
+    let resolveReturn: () => void = () => {};
+    const query: ReapableQuery = {
+      return() {
+        return new Promise<void>((resolve) => {
+          resolveReturn = () => {
+            returned = true;
+            resolve();
+          };
+        });
+      },
+    };
+
+    let done = false;
+    const p = reapSessionQuery(query, () => {}).then(() => {
+      done = true;
+    });
+
+    // return() is still pending, so reapSessionQuery must not have resolved yet.
+    await Promise.resolve();
+    assert.equal(done, false);
+    assert.equal(returned, false);
+
+    resolveReturn();
+    await p;
+    assert.equal(done, true);
+    assert.equal(returned, true);
+  });
+
+  it("no-ops when there is no query", async () => {
+    let errored = false;
+    await reapSessionQuery(undefined, () => {
+      errored = true;
+    });
+    assert.equal(errored, false);
+  });
+
+  it("reports errors via onError without throwing", async () => {
+    const boom = new Error("teardown failed");
+    let captured: unknown;
+    await reapSessionQuery(
+      {
+        return() {
+          return Promise.reject(boom);
+        },
+      },
+      (err) => {
+        captured = err;
+      },
+    );
+    assert.equal(captured, boom);
   });
 });
