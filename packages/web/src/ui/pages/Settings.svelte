@@ -146,7 +146,7 @@ async function handleSystemLogout() {
             <input
               type={systemAction === "login" ? "password" : "text"}
               bind:value={systemInput}
-              placeholder={systemAction === "register" ? "System name" : "API key"}
+              placeholder={systemAction === "register" ? "Name on volute.systems" : "API key"}
               class="system-input"
             />
             <button type="submit" class="btn btn-save" disabled={systemSaving || !systemInput.trim()}>

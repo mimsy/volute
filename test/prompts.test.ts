@@ -5,6 +5,7 @@ import {
   getMindPromptDefaults,
   getPrompt,
   getPromptIfCustom,
+  ORIENTATION_MARKER,
   PROMPT_DEFAULTS,
   PROMPT_KEYS,
 } from "../packages/daemon/src/lib/prompts.js";
@@ -41,6 +42,10 @@ describe("prompts library", () => {
       assert.ok(Array.isArray(meta.variables));
       assert.ok(["creation", "system", "mind"].includes(meta.category));
     }
+  });
+
+  it("seed_soul contains the orientation marker used by sprout and seed-check", () => {
+    assert.ok(PROMPT_DEFAULTS.seed_soul.content.includes(ORIENTATION_MARKER));
   });
 
   it("getPrompt returns default when no DB override", async () => {

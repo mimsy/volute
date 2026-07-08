@@ -389,7 +389,7 @@ onMount(async () => {
       </SettingRow>
     </SettingsSection>
 
-    <SettingsSection title="Rhythms">
+    <SettingsSection title="Clock">
       <!-- Sleep -->
       <div class="subsection">
         <div class="subsection-header">

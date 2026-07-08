@@ -138,7 +138,7 @@ describe("CLI --help", () => {
     const r = await runCli("mind", "export", "--help");
     const out = combined(r);
     assert.ok(out.includes("--include-src"), "should show --include-src");
-    assert.ok(out.includes("--include-connectors"), "should show --include-connectors");
+    assert.ok(out.includes("--include-bridges"), "should show --include-bridges");
     assert.ok(out.includes("--include-env"), "should show --include-env");
     assert.ok(out.includes("--all"), "should show --all");
   });

@@ -88,11 +88,11 @@ The mind's system prompt is built from: `SOUL.md` + `VOLUTE.md` + `MEMORY.md`
 
 ### Centralized state directory
 
-System state (logs, env, channel mappings, connector PIDs) lives in `~/.volute/state/<name>/`, separate from mind directories. This keeps mind projects portable. On daemon startup, state is migrated from legacy locations in the mind directory to the centralized state dir.
+System state (logs, env, channel mappings, bridge PIDs) lives in `~/.volute/state/<name>/`, separate from mind directories. This keeps mind projects portable. On daemon startup, state is migrated from legacy locations in the mind directory to the centralized state dir.
 
 ### Mind-internal state
 
-Runtime state specific to a mind lives in `<mindDir>/.mind/` — sessions, identity keypair, connector configs, variant metadata, and schedules.
+Runtime state specific to a mind lives in `<mindDir>/.mind/` — sessions, identity keypair, bridge configs (in `connectors/`), variant metadata, and schedules.
 
 ### Database
 
@@ -100,11 +100,7 @@ libSQL at `~/.volute/volute.db` (WAL mode, foreign keys) stores minds, users, co
 
 ## Bridge architecture
 
-Bridges are separate processes managed by the BridgeManager. Resolution order:
-
-1. Mind-specific — `<mindDir>/.mind/connectors/<type>/`
-2. User-shared — `~/.volute/connectors/<type>/`
-3. Built-in — `src/connectors/<type>/`
+Bridges are separate processes managed by the BridgeManager. Implementations are built in (Discord, Slack, Telegram); per-mind bridge configuration lives in `<mindDir>/.mind/connectors/<type>/`.
 
 ## Channel system
 

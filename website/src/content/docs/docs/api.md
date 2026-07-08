@@ -204,7 +204,7 @@ Set environment variables for a mind.
 
 ### GET /api/shared
 
-List shared resources (skills, connectors).
+List shared resources (skills, bridge configs).
 
 ## Keys
 

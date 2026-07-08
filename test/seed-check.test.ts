@@ -41,7 +41,7 @@ describe("seed check endpoint", () => {
     mkdirSync(resolve(dir, "home/.config"), { recursive: true });
     writeFileSync(resolve(dir, "home/.config/volute.json"), "{}");
     // Write orientation SOUL.md (still has marker)
-    writeFileSync(resolve(dir, "home/SOUL.md"), "You don't have a soul yet");
+    writeFileSync(resolve(dir, "home/SOUL.md"), "a seed, still discovering who you are");
   });
 
   afterEach(cleanup);

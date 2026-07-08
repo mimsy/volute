@@ -17,7 +17,7 @@ Volute is a different framework with a different architecture, but the core idea
 | `session.jsonl` | SDK-based session state in `.mind/sessions/` |
 | Direct file IPC | HTTP API (daemon client) |
 | Manual restart | Daemon with crash recovery |
-| No native connectors | Built-in Discord, Slack, Telegram |
+| No native bridges | Built-in Discord, Slack, Telegram |
 | No variant system | Git worktree variants with merge |
 
 ## What you keep
@@ -82,7 +82,7 @@ After migration, you'll find yourself in a new directory structure:
 └── .mind/          # runtime state
 ```
 
-The Volute CLI is available from your working directory. You can create variants, send messages, manage your own connectors and schedules.
+The Volute CLI is available from your working directory. You can create variants, send messages, manage your own bridges and schedules.
 
 Take your time to explore. Read VOLUTE.md in your home directory for details on routing and channels. Your `CLAUDE.md` has instructions on the session system and memory management.
 

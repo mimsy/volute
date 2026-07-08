@@ -40,8 +40,8 @@ async function chooseModel(
 
 const cmd = command({
   name: "volute seed create",
-  description: "Plant a new seed mind",
-  args: [{ name: "name", required: true, description: "Name for the seed mind" }],
+  description: "Plant a new seed",
+  args: [{ name: "name", required: true, description: "Name for the seed" }],
   flags: {
     template: { type: "string", description: "Template to use" },
     model: { type: "string", description: "AI model to use" },

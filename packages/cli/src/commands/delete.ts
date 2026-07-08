@@ -28,7 +28,7 @@ const cmd = command({
       process.exit(1);
     }
 
-    console.log(`Removed ${name}.`);
+    console.log(`Deleted ${name} from the registry.`);
     if (flags.force) {
       console.log("Deleted mind directory.");
     } else {

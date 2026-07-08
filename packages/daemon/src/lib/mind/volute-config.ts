@@ -4,7 +4,7 @@ import { dirname, resolve } from "node:path";
 export type Schedule = {
   id: string;
   cron?: string;
-  fireAt?: string; // ISO date for one-time timers
+  fireAt?: string; // ISO timestamp for one-time schedules
   message?: string;
   script?: string;
   enabled: boolean;

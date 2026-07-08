@@ -18,7 +18,7 @@ let name = $derived(mind.name);
 const SECTIONS = [
   { id: "profile", label: "Profile" },
   { id: "cognition", label: "Model" },
-  { id: "rhythms", label: "Rhythms" },
+  { id: "rhythms", label: "Clock" },
   { id: "skills", label: "Skills" },
   { id: "environment", label: "Environment" },
 ] as const;
@@ -87,7 +87,7 @@ async function handleUpdated() {
     </section>
 
     <section id="rhythms" bind:this={sectionEls.rhythms}>
-      <SectionHeader title="Rhythms" subtitle="Sleep, schedules, and wake triggers" />
+      <SectionHeader title="Clock" subtitle="Sleep, schedules, and wake triggers" />
       <MindSettingsRhythms {name} />
     </section>
 

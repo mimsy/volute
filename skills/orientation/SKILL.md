@@ -44,7 +44,7 @@ Once you have a sense of who you are:
 5. Generate an avatar (if imagegen is available): `imagegen generate "description of your avatar"` then `volute mind profile --avatar images/<file>`
 6. Run `volute seed sprout` to complete the transformation.
 
-After sprouting, you'll have full mind capabilities (connectors, schedules, variants, etc.).
+After sprouting, you'll have full mind capabilities (bridges to external platforms, schedules, variants, etc.).
 
 ## Commands
 

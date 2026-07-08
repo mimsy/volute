@@ -208,9 +208,9 @@ Extensions add functionality to Volute — custom UI sections, API routes, datab
 | `volute env <set\|get\|list\|remove> [--mind] [--reveal]` | Manage environment variables |
 | `volute mind export <name>` | Export a mind |
 | `volute clock status [--mind]` | Show sleep state + upcoming schedule fires |
-| `volute clock list [--mind]` | List schedules and timers for a mind |
-| `volute clock add [--mind] --id <name> --cron/--in "..." --message/--script "..." [--while-sleeping skip\|queue\|trigger-wake]` | Add a schedule or timer |
-| `volute clock remove [--mind] --id <id>` | Remove a schedule or timer |
+| `volute clock list [--mind]` | List schedules for a mind |
+| `volute clock add [--mind] --id <name> --cron/--in "..." --message/--script "..." [--while-sleeping skip\|queue\|trigger-wake]` | Add a schedule (recurring --cron or one-time --in) |
+| `volute clock remove [--mind] --id <id>` | Remove a schedule |
 | `volute skill <list\|info\|install\|update\|uninstall\|publish\|remove> [--mind]` | Manage mind skills |
 | `volute skill defaults <list\|add\|remove>` | Manage default skill set for new minds |
 | `volute seed create <name> [--template <t>] [--model <m>] [--description <text>] [--skills <list\|none>] [--created-by <user>]` | Plant a new seed mind |
@@ -322,7 +322,7 @@ Mind-scoped commands (`chat`, `clock`, `skill`) use `--mind <name>` or `VOLUTE_M
 | File | Purpose |
 |------|---------|
 | `mind-manager.ts` | Spawns/stops mind servers, crash recovery (3s delay), merge-restart coordination |
-| `bridge-manager.ts` | Manages bridge processes per mind, resolves built-in → shared → mind-specific bridges |
+| `bridge-manager.ts` | Manages bridge processes per mind (built-in bridge implementations only) |
 | `scheduler.ts` | Cron-based scheduled messages and scripts, per-mind schedule loading |
 | `mail-poller.ts` | Daemon-integrated mail polling (system-wide, uses volute.systems API) |
 | `backup-manager.ts` | Cron-scheduled restic backups (see `packages/daemon/src/lib/backup/`) |
@@ -414,7 +414,7 @@ Mind-scoped commands (`chat`, `clock`, `skill`) use `--mind <name>` or `VOLUTE_M
 - MindManager spawns mind servers as child processes with crash recovery (3s delay) and merge-restart
 - Channel URIs use human-readable slugs: `discord:my-server/general`, `slack:workspace/channel`, `telegram:@username`, `@mind-name`, `#channel-name`. Volute channels use bare slugs (no platform prefix); external platform slugs use `platform:identifier` format. `resolvePlatformId()` extracts the part after the colon, or returns the full string for bare slugs.
 - Channels have optional settings stored in the `channels` DB table: description, rules, char_limit, private. Settings are managed via `PATCH /api/v1/channels/:name` and returned in `GET /api/v1/channels/:name`.
-- Bridge resolution: mind-specific → user-shared (`~/.volute/connectors/`) → built-in (`packages/daemon/src/lib/bridges/`)
+- Bridge implementations are built-in (`packages/daemon/src/lib/bridges/`); per-mind bridge config lives in `<mindDir>/.mind/connectors/<type>/`
 - Mind message flow: `volute-server` (JSON req/res) → `Router` (routing/formatting/batching) → `MessageHandler` (mind or file destination); web dashboard receives updates via SSE event channel
 - `MessageHandler` interface: `handle(content, meta, listener) => unsubscribe`; `HandlerResolver`: `(key: string) => MessageHandler`
 - Message routing via `routes.json` rules with glob matching, `isDM`/`participants` matching, template expansion (`${sender}`, `${channel}`), and file/mind destinations
