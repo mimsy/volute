@@ -13,7 +13,7 @@ import {
   getUnreadCounts,
   listConversationsWithParticipants,
 } from "../../../lib/events/conversations.js";
-import { bufferEvent, getEventsSince, nextEventId } from "../../../lib/events/event-sequencer.js";
+import { getEventsSince, nextEventId } from "../../../lib/events/event-sequencer.js";
 import { getActiveMinds } from "../../../lib/events/mind-activity-tracker.js";
 import { getBaseName } from "../../../lib/mind/registry.js";
 import { activity } from "../../../lib/schema.js";
@@ -110,19 +110,20 @@ const app = new Hono<AuthEnv>().use("*", authMiddleware).get("/", async (c) => {
       // mind's activity live; the buffer still records every event globally so
       // the audience filter is re-applied on reconnect replay too.
       const unsubActivity = subscribeActivity((event) => {
+        // The event was already buffered exactly once at the publish site (activity-events
+        // notify), so we forward here using its shared `seq` rather than re-buffering per
+        // connection. The audience filter still gates live delivery; reconnect replay
+        // re-applies it via getEventsSince against the globally-buffered copy.
+        if (activityMind !== undefined && event.mind !== activityMind) return;
+        const { seq, ...rest } = event;
         const data = {
           event: "activity" as const,
-          ...event,
-          metadata: event.metadata ?? null,
+          ...rest,
+          metadata: rest.metadata ?? null,
         };
-        // Buffer every event globally first so the audience filter is re-applied
-        // on reconnect replay (getEventsSince) rather than dropping events that
-        // this connection isn't entitled to see live.
-        const eventId = bufferEvent(data);
-        if (activityMind !== undefined && event.mind !== activityMind) return;
         stream
           .writeSSE({
-            id: String(eventId),
+            id: String(seq),
             data: JSON.stringify(data),
           })
           .catch((err) => {
@@ -134,11 +135,13 @@ const app = new Hono<AuthEnv>().use("*", authMiddleware).get("/", async (c) => {
       // Subscribe to conversation events for each user conversation
       for (const conv of conversations) {
         const unsubConv = subscribeConversation(conv.id, (event) => {
-          const data = { event: "conversation" as const, conversationId: conv.id, ...event };
-          const eventId = bufferEvent(data);
+          // Buffered once at the publish site (conversation-events publish); forward
+          // using the shared `seq` instead of re-buffering per subscribed connection.
+          const { seq, ...rest } = event;
+          const data = { event: "conversation" as const, conversationId: conv.id, ...rest };
           stream
             .writeSSE({
-              id: String(eventId),
+              id: String(seq),
               data: JSON.stringify(data),
             })
             .catch((err) => {

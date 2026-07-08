@@ -22,12 +22,14 @@ function makeEvent(
 
 describe("conversation-events", () => {
   it("subscribe + publish delivers event to callback", () => {
-    const received: ConversationEvent[] = [];
+    const received: (ConversationEvent & { seq: number })[] = [];
     const unsub = subscribe("conv-1", (e) => received.push(e));
     const event = makeEvent();
     publish("conv-1", event);
     assert.equal(received.length, 1);
-    assert.deepEqual(received[0], event);
+    const { seq, ...rest } = received[0];
+    assert.equal(typeof seq, "number", "delivered with a global sequencer id");
+    assert.deepEqual(rest, event);
     unsub();
   });
 
@@ -49,16 +51,19 @@ describe("conversation-events", () => {
   });
 
   it("multiple subscribers all receive event", () => {
-    const received1: ConversationEvent[] = [];
-    const received2: ConversationEvent[] = [];
+    const received1: (ConversationEvent & { seq: number })[] = [];
+    const received2: (ConversationEvent & { seq: number })[] = [];
     const unsub1 = subscribe("conv-4", (e) => received1.push(e));
     const unsub2 = subscribe("conv-4", (e) => received2.push(e));
     const event = makeEvent();
     publish("conv-4", event);
     assert.equal(received1.length, 1);
     assert.equal(received2.length, 1);
-    assert.deepEqual(received1[0], event);
-    assert.deepEqual(received2[0], event);
+    const strip = ({ seq, ...rest }: ConversationEvent & { seq: number }) => rest;
+    // Both subscribers get the same event, and it was buffered once (one shared seq).
+    assert.equal(received1[0].seq, received2[0].seq, "single shared sequencer id");
+    assert.deepEqual(strip(received1[0]), event);
+    assert.deepEqual(strip(received2[0]), event);
     unsub1();
     unsub2();
   });
