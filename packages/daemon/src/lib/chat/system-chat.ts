@@ -111,11 +111,21 @@ export async function sendSystemMessage(
  * Persist a system message to the conversation and mind_history, but do NOT
  * call deliverMessage. For cases where the caller POSTs directly to the mind's
  * /message endpoint (sleep manager, mind manager).
+ *
+ * When the target is the spirit ("volute"), skips conversation persistence
+ * since the spirit cannot DM itself, but still records the inbound to
+ * mind_history and returns no conversationId.
  */
 export async function sendSystemMessageDirect(
   mindName: string,
   text: string,
-): Promise<{ conversationId: string }> {
+): Promise<{ conversationId?: string }> {
+  // Spirit can't DM itself — record inbound only, no conversation persistence
+  if (isSpiritName(mindName)) {
+    await recordInbound(mindName, "@volute", "volute", text);
+    return {};
+  }
+
   const { conversationId } = await ensureSystemDM(mindName);
 
   await addMessage(conversationId, "user", "volute", [{ type: "text", text }]);

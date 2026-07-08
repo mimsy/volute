@@ -19,6 +19,7 @@ import {
   conversationParticipants,
   conversations,
   messages,
+  mindHistory,
   minds,
   users,
 } from "../packages/daemon/src/lib/schema.js";
@@ -32,6 +33,7 @@ async function cleanup() {
   const db = await getDb();
   for (const username of TEST_USERNAMES) {
     await db.delete(users).where(eq(users.username, username));
+    await db.delete(mindHistory).where(eq(mindHistory.mind, username));
   }
   await db.delete(minds).where(eq(minds.name, "volute"));
 }
@@ -130,6 +132,21 @@ describe("system messages", () => {
     assert.equal(msgs[0].sender_name, "volute");
     assert.equal(msgs[0].role, "user");
     assert.ok(msgs[0].content.includes("hello from system"));
+  });
+
+  it("sendSystemMessageDirect does not throw for the spirit and records inbound only", async () => {
+    const result = await sendSystemMessageDirect("volute", "pre-sleep context");
+
+    assert.equal(result.conversationId, undefined, "spirit gets no conversationId");
+
+    const db = await getDb();
+
+    // The inbound is recorded in mind_history even though there's no conversation
+    const history = await db.select().from(mindHistory).where(eq(mindHistory.mind, "volute")).all();
+    const inbound = history.find((h) => h.content?.includes("pre-sleep context"));
+    assert.ok(inbound, "spirit inbound should be recorded in mind_history");
+    assert.equal(inbound!.type, "inbound");
+    assert.equal(inbound!.channel, "@volute");
   });
 
   it("sendSystemMessage persists message and calls delivery pipeline", async () => {
