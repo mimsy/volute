@@ -18,6 +18,91 @@ function readSchedules(dir: string): Schedule[] {
   return readVoluteConfig(dir)?.schedules ?? [];
 }
 
+export type ClockEvent = { id: string; at: string; type: "cron" | "timer" };
+export type ClockPrevious = { id: string; at: string };
+
+/** Minimal shape of the sleep state the clock/status view needs. */
+type ClockSleepState = {
+  sleeping: boolean;
+  scheduledWakeAt: string | null;
+  voluntaryWakeAt: string | null;
+  sleepingSince: string | null;
+};
+
+/**
+ * Compute the `upcoming` / `previous` clock events shown in the dashboard and
+ * `volute clock status`. Sleep/wake are surfaced with honest labels: a sleeping
+ * mind's next event is its `wake` (at the effective wake time — a voluntary
+ * `--wake-at` is authoritative), and an awake mind's most recent sleep event is
+ * the `wake` that ended the last night. The next sleep onset stays `sleep`.
+ */
+export function computeClockEvents(
+  schedules: Schedule[],
+  sleepState: ClockSleepState | null,
+  sleepConfig: { enabled?: boolean; schedule?: { sleep: string; wake: string } } | null,
+  now: Date,
+): { upcoming: ClockEvent[]; previous: ClockPrevious[] } {
+  const upcoming: ClockEvent[] = [];
+  const previous: ClockPrevious[] = [];
+
+  for (const s of schedules) {
+    if (!s.enabled) continue;
+    if (s.fireAt) {
+      const fireDate = new Date(s.fireAt);
+      if (fireDate >= now) {
+        upcoming.push({ id: s.id, at: fireDate.toISOString(), type: "timer" });
+      }
+    } else if (s.cron) {
+      try {
+        const next = CronExpressionParser.parse(s.cron, { currentDate: now }).next().toDate();
+        upcoming.push({ id: s.id, at: next.toISOString(), type: "cron" });
+      } catch {
+        slog.warn(`invalid cron "${s.cron}" for schedule "${s.id}"`);
+      }
+      try {
+        const prev = CronExpressionParser.parse(s.cron, { currentDate: now }).prev().toDate();
+        previous.push({ id: s.id, at: prev.toISOString() });
+      } catch {
+        // ignore — prev() can fail for some expressions
+      }
+    }
+  }
+
+  if (sleepState?.sleeping) {
+    // Next event is the wake, not "sleep". Effective wake favors the authoritative
+    // voluntary time (scheduledWakeAt is nulled when a --wake-at is pinned).
+    const effectiveWake = sleepState.scheduledWakeAt ?? sleepState.voluntaryWakeAt;
+    if (effectiveWake) {
+      upcoming.push({ id: "wake", at: effectiveWake, type: "cron" });
+    }
+    if (sleepState.sleepingSince) {
+      previous.push({ id: "sleep", at: sleepState.sleepingSince });
+    }
+  } else if (sleepConfig?.enabled && sleepConfig.schedule) {
+    try {
+      const nextSleep = CronExpressionParser.parse(sleepConfig.schedule.sleep, { currentDate: now })
+        .next()
+        .toDate();
+      upcoming.push({ id: "sleep", at: nextSleep.toISOString(), type: "cron" });
+    } catch {
+      /* ignore */
+    }
+    // Previous sleep-related event is the wake that ended the last night.
+    try {
+      const prevWake = CronExpressionParser.parse(sleepConfig.schedule.wake, { currentDate: now })
+        .prev()
+        .toDate();
+      previous.push({ id: "wake", at: prevWake.toISOString() });
+    } catch {
+      /* ignore */
+    }
+  }
+
+  upcoming.sort((a, b) => a.at.localeCompare(b.at));
+  previous.sort((a, b) => b.at.localeCompare(a.at)); // most recent first
+  return { upcoming, previous };
+}
+
 function writeSchedules(name: string, dir: string, schedules: Schedule[]): void {
   const config = readVoluteConfig(dir) ?? {};
   config.schedules = schedules.length > 0 ? schedules : undefined;
@@ -44,63 +129,9 @@ const app = new Hono<AuthEnv>()
     const sleepConfig = sleepManager?.getSleepConfig(name) ?? null;
     const schedules = readSchedules(dir);
 
-    // Compute upcoming and previous schedule fires
+    // Compute upcoming and previous schedule fires (incl. honest sleep/wake labels)
     const now = new Date();
-    const upcoming: { id: string; at: string; type: "cron" | "timer" }[] = [];
-    const previous: { id: string; at: string }[] = [];
-
-    for (const s of schedules) {
-      if (!s.enabled) continue;
-      if (s.fireAt) {
-        const fireDate = new Date(s.fireAt);
-        if (fireDate >= now) {
-          upcoming.push({ id: s.id, at: fireDate.toISOString(), type: "timer" });
-        }
-      } else if (s.cron) {
-        try {
-          const interval = CronExpressionParser.parse(s.cron);
-          const next = interval.next().toDate();
-          upcoming.push({ id: s.id, at: next.toISOString(), type: "cron" });
-        } catch {
-          slog.warn(`invalid cron "${s.cron}" for schedule "${s.id}" of ${name}`);
-        }
-        try {
-          const prevInterval = CronExpressionParser.parse(s.cron);
-          const prev = prevInterval.prev().toDate();
-          previous.push({ id: s.id, at: prev.toISOString() });
-        } catch {
-          // ignore — prev() can fail for some expressions
-        }
-      }
-    }
-    // Include sleep in upcoming and previous
-    if (sleepState?.sleeping) {
-      if (sleepState.scheduledWakeAt) {
-        upcoming.push({ id: "sleep", at: sleepState.scheduledWakeAt, type: "cron" as const });
-      }
-      if (sleepState.sleepingSince) {
-        previous.push({ id: "sleep", at: sleepState.sleepingSince });
-      }
-    } else if (sleepConfig?.enabled && sleepConfig.schedule) {
-      try {
-        const sleepInterval = CronExpressionParser.parse(sleepConfig.schedule.sleep);
-        const nextSleep = sleepInterval.next().toDate();
-        upcoming.push({ id: "sleep", at: nextSleep.toISOString(), type: "cron" as const });
-      } catch {
-        /* ignore */
-      }
-      // Use wake cron for previous — shows when sleep ended, not when it started
-      try {
-        const prevWakeInterval = CronExpressionParser.parse(sleepConfig.schedule.wake);
-        const prevWake = prevWakeInterval.prev().toDate();
-        previous.push({ id: "sleep", at: prevWake.toISOString() });
-      } catch {
-        /* ignore */
-      }
-    }
-
-    upcoming.sort((a, b) => a.at.localeCompare(b.at));
-    previous.sort((a, b) => b.at.localeCompare(a.at)); // most recent first
+    const { upcoming, previous } = computeClockEvents(schedules, sleepState, sleepConfig, now);
 
     return c.json({ sleep: sleepState, sleepConfig, schedules, upcoming, previous });
   })

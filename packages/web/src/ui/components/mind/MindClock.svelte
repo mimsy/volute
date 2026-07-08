@@ -14,6 +14,7 @@ const BUILTIN_COLORS: Record<string, string> = {
   dream: "var(--purple)",
   dreaming: "var(--purple)",
   sleep: "var(--blue)",
+  wake: "var(--blue)",
 };
 
 let { name }: { name: string } = $props();
@@ -37,6 +38,7 @@ function scheduleIcon(id: string): IconKind {
   if (lower === "heartbeat" || lower === "pulse") return "heartbeat";
   if (lower === "dream" || lower === "dreaming") return "dream";
   if (lower === "sleep") return "sleep";
+  if (lower === "wake") return "sleep";
   return "clock";
 }
 
@@ -185,7 +187,8 @@ let currentItem = $derived.by((): SummaryItem | null => {
 
 let nextItem = $derived.by((): SummaryItem | null => {
   if (!clock) return null;
-  const next = clock.upcoming[0];
+  const skipWake = clock.sleep?.sleeping;
+  const next = clock.upcoming.find((u) => !(skipWake && u.id === "wake"));
   if (!next) return null;
   return {
     icon: scheduleIcon(next.id),
