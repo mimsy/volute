@@ -6,7 +6,12 @@ import { findMind, getBaseName } from "../mind/registry.js";
 import { activity, messages, mindHistory } from "../schema.js";
 import log from "../util/logger.js";
 import { getDeliveryManager } from "./delivery-manager.js";
-import { type DeliveryPayload, extractTextContent } from "./delivery-router.js";
+import {
+  type DeliveryPayload,
+  extractTextContent,
+  getRoutingConfig,
+  resolveRoute,
+} from "./delivery-router.js";
 
 const dlog = log.child("delivery");
 
@@ -284,6 +289,61 @@ export async function deliverMessage(
     return true;
   } catch (err) {
     dlog.warn(`unexpected error delivering to ${mindName}`, log.errorData(err));
+    return false;
+  }
+}
+
+/**
+ * Deliver a group of already-queued messages to a mind as ONE pre-batched turn —
+ * the mind-side router's `dispatchBatch` path — rather than N individual sends.
+ * Used by the wake flush (#382): a night's backlog for a channel arrives as a
+ * single `[Batch: N messages from X]` turn instead of a burst of cold-start turns.
+ *
+ * Callers group by channel, so the payloads share a channel and resolve to one
+ * session. Returns true only when the mind acks the whole batch; on any failure
+ * the caller keeps the group's rows queued for the next wake.
+ */
+export async function deliverBatch(
+  mindName: string,
+  payloads: DeliveryPayload[],
+): Promise<boolean> {
+  if (payloads.length === 0) return true;
+  try {
+    const baseName = await getBaseName(mindName);
+    const entry = await findMind(baseName);
+    if (!entry) {
+      dlog.warn(`cannot deliver batch to ${mindName}: mind not found`);
+      return false;
+    }
+
+    // Build the batch payload shape the mind-side router expects.
+    const channels: Record<string, DeliveryPayload[]> = {};
+    for (const p of payloads) {
+      const ch = p.channel ?? "unknown";
+      if (!channels[ch]) channels[ch] = [];
+      channels[ch].push(p);
+    }
+
+    // Resolve the target session from routing (payloads share a channel, so one
+    // route/session applies). An explicit payload session wins; a file route (which
+    // sleep-queued mind messages never hit) falls back to the default session.
+    const first = payloads[0];
+    const route = resolveRoute(getRoutingConfig(baseName), {
+      channel: first.channel,
+      sender: first.sender ?? undefined,
+      isDM: first.isDM,
+      participantCount: first.participantCount,
+    });
+    const session = first.session ?? (route.destination === "mind" ? route.session : "main");
+
+    const res = await fetch(`http://127.0.0.1:${entry.port}/message`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ session, batch: { channels } }),
+    });
+    return res.ok;
+  } catch (err) {
+    dlog.warn(`unexpected error delivering batch to ${mindName}`, log.errorData(err));
     return false;
   }
 }

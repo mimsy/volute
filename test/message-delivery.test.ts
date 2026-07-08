@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
+import { createServer, type Server } from "node:http";
 import { afterEach, describe, it } from "node:test";
 import { and, eq } from "drizzle-orm";
 import { getDb } from "../packages/daemon/src/lib/db.js";
 import { extractTextContent } from "../packages/daemon/src/lib/delivery/delivery-router.js";
 import {
+  deliverBatch,
   deliverMessage,
   linkToolResultToTurn,
   recordInbound,
@@ -165,6 +167,81 @@ describe("deliverMessage flush recording", () => {
       { isFlush: true },
     );
     assert.equal(ok, false);
+  });
+});
+
+describe("deliverBatch (#382)", () => {
+  const BATCH_MIND = "test-batch";
+  const BATCH_PORT = 41998;
+
+  function startMindServer(onBody: (body: any) => void, status = 200): Promise<Server> {
+    const server = createServer((req, res) => {
+      let raw = "";
+      req.on("data", (c) => (raw += c));
+      req.on("end", () => {
+        try {
+          onBody(JSON.parse(raw));
+        } catch {
+          /* ignore */
+        }
+        res.writeHead(status, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: status === 200 }));
+      });
+    });
+    return new Promise((resolve) => server.listen(BATCH_PORT, () => resolve(server)));
+  }
+
+  afterEach(async () => {
+    await removeMind(BATCH_MIND);
+  });
+
+  it("returns true for an empty payload list without contacting the mind", async () => {
+    assert.equal(await deliverBatch(BATCH_MIND, []), true);
+  });
+
+  it("returns false when the mind is not registered", async () => {
+    const ok = await deliverBatch("no-such-mind", [
+      { channel: "@volute", sender: "x", content: "hi" },
+    ]);
+    assert.equal(ok, false);
+  });
+
+  it("POSTs one grouped batch payload per channel and returns true on ack", async () => {
+    let received: any;
+    const server = await startMindServer((b) => {
+      received = b;
+    });
+    await addMind(BATCH_MIND, BATCH_PORT);
+    try {
+      const ok = await deliverBatch(BATCH_MIND, [
+        { channel: "@volute", sender: "a", content: "one" },
+        { channel: "@volute", sender: "b", content: "two" },
+      ]);
+      assert.equal(ok, true);
+      assert.ok(received.batch, "body carries a batch payload");
+      assert.deepEqual(Object.keys(received.batch.channels), ["@volute"]);
+      assert.equal(
+        received.batch.channels["@volute"].length,
+        2,
+        "both messages in one channel batch",
+      );
+      assert.equal(typeof received.session, "string");
+    } finally {
+      await new Promise<void>((r) => server.close(() => r()));
+    }
+  });
+
+  it("returns false when the mind server rejects the batch", async () => {
+    const server = await startMindServer(() => {}, 500);
+    await addMind(BATCH_MIND, BATCH_PORT);
+    try {
+      const ok = await deliverBatch(BATCH_MIND, [
+        { channel: "@volute", sender: "a", content: "x" },
+      ]);
+      assert.equal(ok, false);
+    } finally {
+      await new Promise<void>((r) => server.close(() => r()));
+    }
   });
 });
 
