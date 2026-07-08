@@ -22,7 +22,7 @@ import { createPreCompactHook } from "./lib/hooks/pre-compact.js";
 import { createReplyInstructionsHook } from "./lib/hooks/reply-instructions.js";
 import { log } from "./lib/logger.js";
 import { createMessageChannel } from "./lib/message-channel.js";
-import { isSessionReapable } from "./lib/session-reaper.js";
+import { isSessionReapable, reapSessionQuery } from "./lib/session-reaper.js";
 import { createSessionStore } from "./lib/session-store.js";
 import { loadPrompts, type SubagentConfig } from "./lib/startup.js";
 import { consumeStream } from "./lib/stream-consumer.js";
@@ -545,16 +545,21 @@ export function createMind(options: {
   // transparently re-creates the session via getOrCreateSession's resume path.
   const idleTimeoutMs = (options.sessionIdleMinutes ?? 30) * 60_000;
 
-  function reapSession(session: Session) {
+  async function reapSession(session: Session) {
     log("mind", `session "${session.name}": idle — reaping SDK subprocess (resumable)`);
     // Delete first so a racing inbound message spins up a fresh resumed session
     // instead of reusing the one we're tearing down.
     sessions.delete(session.name);
     compactionTriggered.delete(session.name);
-    // Terminate the subprocess and end the input iterable so the stream consumer
-    // unwinds (its finally block also deletes from the map, now a no-op).
-    session.currentQuery?.close();
+    // End the input iterable so the stream consumer unwinds (its finally block
+    // also deletes from the map, now a no-op), then await the SDK's graceful
+    // shutdown via query.return() — unlike the fire-and-forget close(), this
+    // awaits the CLI subprocess's exit so the child is reaped instead of left
+    // as a <defunct> zombie.
     session.channel.close();
+    await reapSessionQuery(session.currentQuery, (err) =>
+      log("mind", `session "${session.name}": error reaping SDK subprocess:`, err),
+    );
     // Nothing should have raced in (isSessionReapable checked isEmpty), but if it
     // did, re-dispatch into a fresh session so no input is dropped.
     const pending = session.channel.recover();
@@ -572,7 +577,12 @@ export function createMind(options: {
       const stale = [...sessions.values()].filter((s) =>
         isSessionReapable(s, now, idleTimeoutMs, (name) => !!compactionTriggered.get(name)),
       );
-      for (const session of stale) reapSession(session);
+      // Reaps run independently; each awaits its own subprocess exit internally.
+      for (const session of stale) {
+        reapSession(session).catch((err) =>
+          log("mind", `session "${session.name}": reap failed:`, err),
+        );
+      }
     }, checkMs);
     reaper.unref?.();
   }
