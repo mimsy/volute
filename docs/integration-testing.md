@@ -16,6 +16,23 @@ Docker is the canonical path for integration testing. It gives you a clean, isol
 - `ANTHROPIC_API_KEY` environment variable
 - `OPENROUTER_API_KEY` (optional, for pi-template minds using OpenRouter models)
 
+#### Credentials via `.env` (recommended)
+
+Put the keys in a `.env` file at the repo root (it's gitignored):
+
+```sh
+# .env
+ANTHROPIC_API_KEY=sk-ant-...
+OPENROUTER_API_KEY=sk-or-...   # optional
+```
+
+`test/integration-setup.sh` and `test/docker-e2e.sh` auto-source this file, so
+the keys are always available without exporting them per shell. **Without a
+key, `docker-e2e.sh` Phases 6 & 7 (real Claude round-trip) skip** and the
+live-mind integration pass can't run — so the `.env` is what makes the full
+verification campaign self-serve. If you drive minds by hand with `docker exec`,
+source it yourself first: `set -a && . .env && set +a`.
+
 ### Quick start
 
 ```sh
