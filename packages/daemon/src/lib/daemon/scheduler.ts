@@ -13,6 +13,14 @@ import { generateMindToken, getMindToken } from "./mind-tokens.js";
 
 const slog = log.child("scheduler");
 
+/**
+ * Cap on how late a caught-up cron fire may be delivered. A schedule whose most
+ * recent cron minute is older than this (e.g. after long daemon downtime) is
+ * skipped rather than delivered stale — a 3am dream prompt at 5pm is worse than
+ * none — but `lastFired` still advances so it fires normally next time.
+ */
+const CATCHUP_STALE_MINUTES = 10;
+
 export class Scheduler {
   private schedules = new Map<string, Schedule[]>();
   private mindDirs = new Map<string, string>(); // mindName → dir override
@@ -56,6 +64,32 @@ export class Scheduler {
       this.schedules.set(mindName, schedules);
     } else {
       this.schedules.delete(mindName);
+    }
+
+    // Reconcile lastFired bookkeeping for this mind against its authoritative
+    // schedule list. Only touch this mind's keys — other minds may not be loaded
+    // yet, so a global sweep would drop live state.
+    const epochMinute = Math.floor(Date.now() / 60000);
+    const validKeys = new Set(schedules.map((s) => `${mindName}:${s.id}`));
+    let changed = false;
+    // Prune stale entries for removed schedules (#428).
+    for (const key of this.lastFired.keys()) {
+      if (key.startsWith(`${mindName}:`) && !validKeys.has(key)) {
+        this.lastFired.delete(key);
+        changed = true;
+      }
+    }
+    // Baseline-init newly-seen schedules so catch-up never replays history (#453).
+    for (const key of validKeys) {
+      if (!this.lastFired.has(key)) {
+        this.lastFired.set(key, epochMinute);
+        changed = true;
+      }
+    }
+    if (changed) {
+      this.saveState().catch((err) =>
+        slog.warn(`failed to persist scheduler state for ${mindName}`, log.errorData(err)),
+      );
     }
   }
 
@@ -119,11 +153,22 @@ export class Scheduler {
       }
     }
 
-    if (prevMinute === epochMinute) {
-      this.lastFired.set(key, epochMinute);
-      return true;
+    // Level-triggered catch-up: fire when the cron's most recent scheduled minute
+    // is newer than the last one we acted on — recovering fires missed while the
+    // daemon was down or a tick straddled the minute boundary. Unknown keys are
+    // baselined in loadSchedules, so this never replays history on first sight.
+    const lastFired = this.lastFired.get(key) ?? epochMinute;
+    if (prevMinute <= lastFired) return false;
+
+    // Advance regardless of whether we deliver, so a stale fire isn't retried.
+    this.lastFired.set(key, prevMinute);
+
+    // Staleness cap: skip (but don't re-attempt) a catch-up fire that's too old.
+    if (epochMinute - prevMinute > CATCHUP_STALE_MINUTES) {
+      slog.info(`skipping stale catch-up fire for ${key} (${epochMinute - prevMinute}min late)`);
+      return false;
     }
-    return false;
+    return true;
   }
 
   private async fire(mindName: string, schedule: Schedule): Promise<void> {

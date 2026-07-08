@@ -56,9 +56,20 @@ class TestSleepManager extends SleepManager {
     return null;
   }
 
-  // Expose shouldSleep for testing
-  testShouldSleep(cronExpr: string, epochMinute: number): boolean {
-    return (this as any).shouldSleep(cronExpr, epochMinute);
+  // Expose inSleepWindow / shouldSleepNow for testing
+  testInSleepWindow(
+    schedule: { sleep: string; wake: string },
+    now: Date,
+  ): { inWindow: boolean; windowStart: Date | null } {
+    return (this as any).inSleepWindow(schedule, now);
+  }
+
+  testShouldSleepNow(
+    schedule: { sleep: string; wake: string },
+    lastWakeAt: string | null,
+    now: Date,
+  ): boolean {
+    return (this as any).shouldSleepNow(schedule, lastWakeAt, now);
   }
 
   // Expose getNextWakeTime for testing
@@ -119,8 +130,8 @@ class TestSleepManager extends SleepManager {
   }
 
   // Expose evaluateMind for testing
-  testEvaluateMind(name: string, now: Date, epochMinute: number): Promise<void> {
-    return (this as any).evaluateMind(name, now, epochMinute);
+  testEvaluateMind(name: string, now: Date): Promise<void> {
+    return (this as any).evaluateMind(name, now);
   }
 }
 
@@ -135,11 +146,12 @@ function sleepingState(overrides?: Partial<SleepState>): SleepState {
     triggerWakeHistory: [],
     wakeFailures: 0,
     nextWakeAttemptAt: null,
+    lastWakeAt: null,
     ...overrides,
   };
 }
 
-function awakeState(): SleepState {
+function awakeState(overrides?: Partial<SleepState>): SleepState {
   return {
     sleeping: false,
     sleepingSince: null,
@@ -150,6 +162,8 @@ function awakeState(): SleepState {
     triggerWakeHistory: [],
     wakeFailures: 0,
     nextWakeAttemptAt: null,
+    lastWakeAt: null,
+    ...overrides,
   };
 }
 
@@ -562,15 +576,13 @@ describe("SleepManager state transitions", () => {
 // #450: waking a sleeping mind must not depend on a currently-enabled sleep
 // config — the wake times were persisted at bedtime.
 describe("SleepManager.evaluateMind wake without config", () => {
-  const epochMinute = Math.floor(Date.now() / 60_000);
-
   it("wakes a sleeping mind with a past voluntaryWakeAt even with no config", async () => {
     const sm = new TestSleepManager();
     // No sleep config set at all (getSleepConfig returns null).
     const past = new Date(Date.now() - 60_000).toISOString();
     sm.setStateForTest("test-mind", sleepingState({ voluntaryWakeAt: past }));
 
-    await sm.testEvaluateMind("test-mind", new Date(), epochMinute);
+    await sm.testEvaluateMind("test-mind", new Date());
 
     assert.deepEqual(sm.wakeCalls, ["test-mind"]);
   });
@@ -584,7 +596,7 @@ describe("SleepManager.evaluateMind wake without config", () => {
     const past = new Date(Date.now() - 60_000).toISOString();
     sm.setStateForTest("test-mind", sleepingState({ scheduledWakeAt: past }));
 
-    await sm.testEvaluateMind("test-mind", new Date(), epochMinute);
+    await sm.testEvaluateMind("test-mind", new Date());
 
     assert.deepEqual(sm.wakeCalls, ["test-mind"]);
   });
@@ -596,7 +608,7 @@ describe("SleepManager.evaluateMind wake without config", () => {
       sleepingState({ voluntaryWakeAt: null, scheduledWakeAt: null }),
     );
 
-    await sm.testEvaluateMind("test-mind", new Date(), epochMinute);
+    await sm.testEvaluateMind("test-mind", new Date());
 
     assert.deepEqual(sm.wakeCalls, []);
     assert.equal(sm.getState("test-mind").sleeping, true);
@@ -607,41 +619,80 @@ describe("SleepManager.evaluateMind wake without config", () => {
     const future = new Date(Date.now() + 3600_000).toISOString();
     sm.setStateForTest("test-mind", sleepingState({ scheduledWakeAt: future }));
 
-    await sm.testEvaluateMind("test-mind", new Date(), epochMinute);
+    await sm.testEvaluateMind("test-mind", new Date());
 
     assert.deepEqual(sm.wakeCalls, []);
   });
 });
 
-describe("SleepManager.shouldSleep (cron matching)", () => {
-  it("returns true when cron matches current epoch minute", () => {
-    const sm = new TestSleepManager();
-    // Use "every minute" cron — should always match
-    const now = new Date();
-    const epochMinute = Math.floor(now.getTime() / 60_000);
-    assert.equal(sm.testShouldSleep("* * * * *", epochMinute), true);
+// #453 Part 2: level-triggered sleep onset — "should this mind be asleep now"
+// rather than an exact-minute cron match.
+describe("SleepManager.inSleepWindow (level-triggered onset)", () => {
+  // Nightly window: asleep 00:00, awake 08:00.
+  const schedule = { sleep: "0 0 * * *", wake: "0 8 * * *" };
+  const at = (h: number, m = 0) => {
+    const d = new Date();
+    d.setHours(h, m, 0, 0);
+    return d;
+  };
+
+  it("is in-window across the midnight-spanning night (03:00)", () => {
+    const { inWindow, windowStart } = new TestSleepManager().testInSleepWindow(schedule, at(3));
+    assert.equal(inWindow, true);
+    assert.ok(windowStart);
   });
 
-  it("returns false when cron does not match current epoch minute", () => {
-    const sm = new TestSleepManager();
-    // Use a very specific time far in the future — won't match current minute
-    // "0 0 1 1 *" = midnight Jan 1st only
-    const now = new Date();
-    const epochMinute = Math.floor(now.getTime() / 60_000);
-    // This will only match if we happen to be at midnight Jan 1st
-    if (
-      now.getMonth() !== 0 ||
-      now.getDate() !== 1 ||
-      now.getHours() !== 0 ||
-      now.getMinutes() !== 0
-    ) {
-      assert.equal(sm.testShouldSleep("0 0 1 1 *", epochMinute), false);
-    }
+  it("is out of window during the day (12:00)", () => {
+    const { inWindow } = new TestSleepManager().testInSleepWindow(schedule, at(12));
+    assert.equal(inWindow, false);
   });
 
-  it("returns false for invalid cron expression", () => {
+  it("returns not-in-window for an invalid cron", () => {
+    const { inWindow, windowStart } = new TestSleepManager().testInSleepWindow(
+      { sleep: "not-a-cron", wake: "0 8 * * *" },
+      at(3),
+    );
+    assert.equal(inWindow, false);
+    assert.equal(windowStart, null);
+  });
+});
+
+describe("SleepManager.shouldSleepNow (onset decision)", () => {
+  const schedule = { sleep: "0 0 * * *", wake: "0 8 * * *" };
+  const at = (h: number, m = 0) => {
+    const d = new Date();
+    d.setHours(h, m, 0, 0);
+    return d;
+  };
+
+  it("sleeps on fresh state inside the window (daemon restart mid-window)", () => {
     const sm = new TestSleepManager();
-    assert.equal(sm.testShouldSleep("not-a-cron", 12345), false);
+    // No lastWakeAt — the mind restarted at 03:30 with no persisted awake info.
+    assert.equal(sm.testShouldSleepNow(schedule, null, at(3, 30)), true);
+  });
+
+  it("does not sleep outside the window (midday)", () => {
+    const sm = new TestSleepManager();
+    assert.equal(sm.testShouldSleepNow(schedule, null, at(12)), false);
+  });
+
+  it("exempts a mind manually woken inside the current window (no re-sleep)", () => {
+    const sm = new TestSleepManager();
+    // Woken at 03:00, evaluated at 03:30 — after the 00:00 window start.
+    const lastWakeAt = at(3).toISOString();
+    assert.equal(sm.testShouldSleepNow(schedule, lastWakeAt, at(3, 30)), false);
+  });
+
+  it("still sleeps when the last wake was before this window began", () => {
+    const sm = new TestSleepManager();
+    // Woken yesterday at 20:00, before the 00:00 window start.
+    const lastWakeAt = at(-4).toISOString(); // 20:00 previous day
+    assert.equal(sm.testShouldSleepNow(schedule, lastWakeAt, at(3, 30)), true);
+  });
+
+  it("does not sleep when the schedule cron is invalid", () => {
+    const sm = new TestSleepManager();
+    assert.equal(sm.testShouldSleepNow({ sleep: "nope", wake: "0 8 * * *" }, null, at(3)), false);
   });
 });
 
@@ -819,8 +870,19 @@ describe("SleepManager.convertTriggerToFullWake", () => {
 
     sm.convertTriggerToFullWake("test-mind");
 
-    // markAwake deletes the state, so getState returns default (not sleeping)
+    // markAwake records an awake state (lastWakeAt), so the mind is no longer sleeping
     assert.equal(sm.getState("test-mind").sleeping, false);
+  });
+
+  it("records lastWakeAt on full wake so onset can exempt it (#453)", () => {
+    const sm = new TestSleepManager();
+    sm.setStateForTest("test-mind", sleepingState({ wokenByTrigger: true }));
+
+    sm.convertTriggerToFullWake("test-mind");
+
+    const state = sm.getStateForTest("test-mind");
+    assert.ok(state?.lastWakeAt, "expected lastWakeAt to be recorded on full wake");
+    assert.equal(state?.sleeping, false);
   });
 
   it("is a no-op when sleeping but not trigger-woken", () => {
