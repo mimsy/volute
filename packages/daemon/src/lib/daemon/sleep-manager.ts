@@ -213,8 +213,12 @@ export class SleepManager {
       }
       await this.archiveSessions(name);
       state.sleeping = true;
-      state.sleepingSince = new Date().toISOString();
-      state.scheduledWakeAt = this.getNextWakeTime(this.getSleepConfig(name));
+      // Keep the original bedtime (sleepingSince) — sleep never actually ended
+      // during a trigger-wake. Only recompute the cron wake when no voluntary
+      // wake-at is pinned for the night (it stays authoritative).
+      if (!state.voluntaryWakeAt) {
+        state.scheduledWakeAt = this.getNextWakeTime(this.getSleepConfig(name));
+      }
       this.saveState();
       slog.info(`${name} returned to sleep after crashing during trigger wake`);
     } catch (err) {
@@ -651,7 +655,9 @@ export class SleepManager {
     const state: SleepState = {
       sleeping: true,
       sleepingSince: new Date().toISOString(),
-      scheduledWakeAt: this.getNextWakeTime(sleepConfig),
+      // An explicit voluntary wake-at is authoritative for the night — null out
+      // the cron wake so an earlier scheduled wake can't silently override it.
+      scheduledWakeAt: opts?.voluntaryWakeAt ? null : this.getNextWakeTime(sleepConfig),
       wokenByTrigger: false,
       voluntaryWakeAt: opts?.voluntaryWakeAt ?? null,
       queuedMessageCount: this.states.get(name)?.queuedMessageCount ?? 0,
@@ -975,9 +981,13 @@ export class SleepManager {
         .then(() => this.archiveSessions(event.mind))
         .then(() => {
           state.sleeping = true;
-          state.sleepingSince = new Date().toISOString();
-          const sleepConfig = this.getSleepConfig(event.mind);
-          state.scheduledWakeAt = this.getNextWakeTime(sleepConfig);
+          // Keep the original bedtime (sleepingSince) — sleep never actually
+          // ended during a trigger-wake. Only recompute the cron wake when no
+          // voluntary wake-at is pinned for the night (it stays authoritative).
+          if (!state.voluntaryWakeAt) {
+            const sleepConfig = this.getSleepConfig(event.mind);
+            state.scheduledWakeAt = this.getNextWakeTime(sleepConfig);
+          }
           this.saveState();
           slog.info(`${event.mind} returned to sleep`);
         })
