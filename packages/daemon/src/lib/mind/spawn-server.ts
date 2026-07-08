@@ -7,12 +7,8 @@ import { isSandboxEnabled, wrapForSandbox } from "./sandbox.js";
 
 type SpawnResult = { child: ChildProcess; actualPort: number } | null;
 
-function tsxBin(cwd: string): string {
-  return resolve(cwd, "node_modules", ".bin", "tsx");
-}
-
 /**
- * Spawn `tsx src/server.ts --port <port>` in the given path and wait for it to be listening.
+ * Spawn `node --import tsx src/server.ts --port <port>` in the given path and wait for it to be listening.
  *
  * In detached mode: spawns with stdout/stderr going to a log file. The child survives parent exit.
  * Use this when the CLI will exit immediately after (e.g. `volute fork`).
@@ -29,8 +25,11 @@ export async function spawnServer(
   port: number,
   options?: { detached?: boolean; logDir?: string; mindName?: string; template?: string },
 ): Promise<SpawnResult> {
-  let cmd = tsxBin(cwd);
-  let args = ["src/server.ts", "--port", String(port)];
+  // Run node directly with tsx as an import loader rather than the tsx bin
+  // shim, which forks a second idle node process (~60MB RSS). The bare `tsx`
+  // specifier resolves against the spawn cwd (the mind directory).
+  let cmd = process.env.VOLUTE_NODE_PATH ?? process.execPath;
+  let args = ["--import", "tsx", "src/server.ts", "--port", String(port)];
   if (options?.mindName) {
     if (isIsolationEnabled()) {
       [cmd, args] = await wrapForIsolation(cmd, args, options.mindName);
