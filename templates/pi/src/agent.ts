@@ -16,6 +16,7 @@ import {
   countSkillDescriptionTokens,
   countSystemPromptTokens,
   findPiSessionFile,
+  getCachedContextInfo,
   processPiSession,
   readSdkInstructions,
   readSkillDescriptions,
@@ -36,7 +37,7 @@ import type {
   VoluteContentPart,
   VoluteEvent,
 } from "./lib/types.js";
-import type { ContextInfo, ContextMessages } from "./lib/volute-server.js";
+import type { ContextInfo, ContextMessages, SessionContextInfo } from "./lib/volute-server.js";
 
 type PiAgentSession = Awaited<ReturnType<typeof createAgentSession>>["session"];
 
@@ -63,8 +64,8 @@ export function createMind(options: {
   subagents?: Record<string, SubagentConfig>;
 }): {
   resolve: HandlerResolver;
-  getContextInfo: () => ContextInfo;
-  getContextMessages: () => ContextMessages;
+  getContextInfo: () => Promise<ContextInfo>;
+  getContextMessages: () => Promise<ContextMessages>;
 } {
   const sessions = new Map<string, PiSession>();
   const prompts = loadPrompts();
@@ -538,50 +539,66 @@ export function createMind(options: {
   const claudeMdTokens = countSdkInstructionTokens(options.cwd);
   const skillDescTokens = countSkillDescriptionTokens([resolvePath(options.cwd, ".pi/skills")]);
 
-  function processSession(sessionName: string) {
-    const jsonlPath = findPiSessionFile(piSessionsDir, sessionName);
-    return jsonlPath
-      ? processPiSession(jsonlPath, systemPromptTokens, claudeMdTokens, skillDescTokens)
-      : null;
+  async function getContextInfo(): Promise<ContextInfo> {
+    const infos: SessionContextInfo[] = [];
+    for (const s of sessions.values()) {
+      try {
+        const jsonlPath = findPiSessionFile(piSessionsDir, s.name);
+        // Cache the computed breakdown by file identity: polls between turns are free.
+        const parsed = jsonlPath
+          ? await getCachedContextInfo(
+              jsonlPath,
+              async () =>
+                (
+                  await processPiSession(
+                    jsonlPath,
+                    systemPromptTokens,
+                    claudeMdTokens,
+                    skillDescTokens,
+                  )
+                ).parsed,
+            )
+          : null;
+        infos.push({
+          name: s.name,
+          contextTokens: parsed?.contextTokens ?? s.contextTokens,
+          contextWindow: maxContextTokens,
+          breakdown: parsed?.breakdown,
+        });
+      } catch (err) {
+        log("mind", `failed to get context breakdown for session "${s.name}":`, err);
+        infos.push({
+          name: s.name,
+          contextTokens: s.contextTokens,
+          contextWindow: maxContextTokens,
+        });
+      }
+    }
+    return { sessions: infos, systemPrompt: systemPromptTokens };
   }
 
-  function getContextInfo(): ContextInfo {
-    return {
-      sessions: Array.from(sessions.values()).map((s) => {
-        try {
-          const result = processSession(s.name);
-          return {
-            name: s.name,
-            contextTokens: result?.parsed?.contextTokens ?? s.contextTokens,
-            contextWindow: maxContextTokens,
-            breakdown: result?.parsed?.breakdown,
-          };
-        } catch (err) {
-          log("mind", `failed to get context breakdown for session "${s.name}":`, err);
-          return { name: s.name, contextTokens: s.contextTokens, contextWindow: maxContextTokens };
-        }
-      }),
-      systemPrompt: systemPromptTokens,
-    };
-  }
-
-  function getContextMessages(): ContextMessages {
+  async function getContextMessages(): Promise<ContextMessages> {
     const skillsDir = resolvePath(options.cwd, ".pi/skills");
+    const sessionMessages: ContextMessages["sessions"] = [];
+    for (const s of sessions.values()) {
+      try {
+        const jsonlPath = findPiSessionFile(piSessionsDir, s.name);
+        const result = jsonlPath
+          ? await processPiSession(jsonlPath, systemPromptTokens, claudeMdTokens, skillDescTokens)
+          : null;
+        sessionMessages.push({ name: s.name, messages: result?.messages ?? [] });
+      } catch (err) {
+        log("mind", `failed to extract messages for session "${s.name}":`, err);
+        sessionMessages.push({ name: s.name, messages: [] });
+      }
+    }
     return {
       preamble: {
         systemPrompt: options.systemPrompt,
         sdkInstructions: readSdkInstructions(options.cwd),
         skillDescriptions: readSkillDescriptions([skillsDir]),
       },
-      sessions: Array.from(sessions.values()).map((s) => {
-        try {
-          const result = processSession(s.name);
-          return { name: s.name, messages: result?.messages ?? [] };
-        } catch (err) {
-          log("mind", `failed to extract messages for session "${s.name}":`, err);
-          return { name: s.name, messages: [] };
-        }
-      }),
+      sessions: sessionMessages,
     };
   }
 

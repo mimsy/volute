@@ -1,5 +1,6 @@
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { createReadStream, readdirSync, readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
+import { createInterface } from "node:readline";
 import type { ContextBreakdown } from "./volute-server.js";
 
 // Async tokenizer — import fires at module load; falls back to character estimation if unavailable or still loading
@@ -31,22 +32,59 @@ function countTokens(text: string): number {
 
 // --- Shared JSONL reader ---
 
-function readJsonlEntries<T>(filePath: string): T[] | null {
-  let data: string;
+// Stream-parse the transcript line-by-line instead of slurping the whole file
+// into memory. Session transcripts run to tens of MB; readFileSync + split would
+// transiently allocate several times the file size and block the event loop.
+async function readJsonlEntries<T>(filePath: string): Promise<T[] | null> {
+  const stream = createReadStream(filePath, { encoding: "utf-8" });
+  const rl = createInterface({ input: stream, crlfDelay: Infinity });
+  const entries: T[] = [];
   try {
-    data = readFileSync(filePath, "utf-8");
+    for await (const line of rl) {
+      if (!line.trim()) continue;
+      try {
+        entries.push(JSON.parse(line));
+      } catch {}
+    }
   } catch (err: any) {
     if (err?.code !== "ENOENT") console.warn(`context-breakdown: ${filePath}:`, err?.message);
     return null;
-  }
-
-  const entries: T[] = [];
-  for (const line of data.split("\n").filter((l) => l.trim())) {
-    try {
-      entries.push(JSON.parse(line));
-    } catch {}
+  } finally {
+    rl.close();
+    stream.destroy();
   }
   return entries;
+}
+
+// --- Computed-info cache (keyed by file identity) ---
+
+// getContextInfo runs on every dashboard poll. A transcript only changes when the
+// mind takes a turn, so cache the computed breakdown keyed by (path, mtimeMs, size)
+// and serve polls between turns for free. Only the small ParsedContext is retained
+// — never the parsed messages.
+type InfoCacheEntry = { mtimeMs: number; size: number; parsed: ParsedContext | null };
+const infoCache = new Map<string, InfoCacheEntry>();
+
+export async function getCachedContextInfo(
+  filePath: string,
+  compute: () => Promise<ParsedContext | null>,
+): Promise<ParsedContext | null> {
+  let mtimeMs: number;
+  let size: number;
+  try {
+    const st = statSync(filePath);
+    mtimeMs = st.mtimeMs;
+    size = st.size;
+  } catch {
+    return null;
+  }
+  const cached = infoCache.get(filePath);
+  if (cached && cached.mtimeMs === mtimeMs && cached.size === size) {
+    return cached.parsed;
+  }
+  const parsed = await compute();
+  infoCache.set(filePath, { mtimeMs, size, parsed });
+  return parsed;
 }
 
 // --- Claude JSONL parser ---
@@ -111,13 +149,13 @@ type SessionResult = {
   messages: ContextMessage[];
 };
 
-export function processClaudeSession(
+export async function processClaudeSession(
   filePath: string,
   systemPromptTokens: number,
   claudeMdTokens: number,
   skillDescriptionTokens: number,
-): SessionResult {
-  const entries = readJsonlEntries<ClaudeMessage>(filePath);
+): Promise<SessionResult> {
+  const entries = await readJsonlEntries<ClaudeMessage>(filePath);
   if (!entries) return { parsed: null, messages: [] };
 
   let lastContextTokens = 0;
@@ -194,22 +232,6 @@ export function processClaudeSession(
   return { parsed, messages };
 }
 
-/** @deprecated Use processClaudeSession instead */
-export function parseClaudeSessionJSONL(
-  filePath: string,
-  systemPromptTokens: number,
-  claudeMdTokens: number,
-  skillDescriptionTokens: number,
-): ParsedContext | null {
-  return processClaudeSession(filePath, systemPromptTokens, claudeMdTokens, skillDescriptionTokens)
-    .parsed;
-}
-
-/** @deprecated Use processClaudeSession instead */
-export function extractClaudeSessionMessages(filePath: string): ContextMessage[] {
-  return processClaudeSession(filePath, 0, 0, 0).messages;
-}
-
 // --- Codex JSONL parser ---
 
 type CodexEntry = {
@@ -235,13 +257,13 @@ type CodexEntry = {
 
 // --- Codex: combined parse + extract ---
 
-export function processCodexSession(
+export async function processCodexSession(
   filePath: string,
   systemPromptTokens: number,
   claudeMdTokens: number,
   skillDescriptionTokens: number,
-): SessionResult {
-  const entries = readJsonlEntries<CodexEntry>(filePath);
+): Promise<SessionResult> {
+  const entries = await readJsonlEntries<CodexEntry>(filePath);
   if (!entries) return { parsed: null, messages: [] };
 
   let lastContextTokens = 0;
@@ -322,22 +344,6 @@ export function processCodexSession(
   return { parsed, messages };
 }
 
-/** @deprecated Use processCodexSession instead */
-export function parseCodexSessionJSONL(
-  filePath: string,
-  systemPromptTokens: number,
-  claudeMdTokens: number,
-  skillDescriptionTokens: number,
-): ParsedContext | null {
-  return processCodexSession(filePath, systemPromptTokens, claudeMdTokens, skillDescriptionTokens)
-    .parsed;
-}
-
-/** @deprecated Use processCodexSession instead */
-export function extractCodexSessionMessages(filePath: string): ContextMessage[] {
-  return processCodexSession(filePath, 0, 0, 0).messages;
-}
-
 // --- Pi JSONL parser ---
 
 type PiEntry = {
@@ -360,13 +366,13 @@ type PiEntry = {
 
 // --- Pi: combined parse + extract ---
 
-export function processPiSession(
+export async function processPiSession(
   filePath: string,
   systemPromptTokens: number,
   claudeMdTokens: number,
   skillDescriptionTokens: number,
-): SessionResult {
-  const entries = readJsonlEntries<PiEntry>(filePath);
+): Promise<SessionResult> {
+  const entries = await readJsonlEntries<PiEntry>(filePath);
   if (!entries) return { parsed: null, messages: [] };
 
   let lastContextTokens = 0;
@@ -441,22 +447,6 @@ export function processPiSession(
         };
 
   return { parsed, messages };
-}
-
-/** @deprecated Use processPiSession instead */
-export function parsePiSessionJSONL(
-  filePath: string,
-  systemPromptTokens: number,
-  claudeMdTokens: number,
-  skillDescriptionTokens: number,
-): ParsedContext | null {
-  return processPiSession(filePath, systemPromptTokens, claudeMdTokens, skillDescriptionTokens)
-    .parsed;
-}
-
-/** @deprecated Use processPiSession instead */
-export function extractPiSessionMessages(filePath: string): ContextMessage[] {
-  return processPiSession(filePath, 0, 0, 0).messages;
 }
 
 // --- Preamble text readers ---

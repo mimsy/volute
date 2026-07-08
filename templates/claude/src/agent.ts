@@ -8,6 +8,7 @@ import {
   countSkillDescriptionTokens,
   countSystemPromptTokens,
   findClaudeSessionFile,
+  getCachedContextInfo,
   processClaudeSession,
   readSdkInstructions,
   readSkillDescriptions,
@@ -33,7 +34,7 @@ import type {
   VoluteContentPart,
   VoluteEvent,
 } from "./lib/types.js";
-import type { ContextInfo, ContextMessages } from "./lib/volute-server.js";
+import type { ContextInfo, ContextMessages, SessionContextInfo } from "./lib/volute-server.js";
 
 type Session = {
   name: string;
@@ -66,8 +67,8 @@ export function createMind(options: {
 }): {
   resolve: HandlerResolver;
   waitForCommits: () => Promise<void>;
-  getContextInfo: () => ContextInfo;
-  getContextMessages: () => ContextMessages;
+  getContextInfo: () => Promise<ContextInfo>;
+  getContextMessages: () => Promise<ContextMessages>;
 } {
   const autoCommit = createAutoCommitHook(options.cwd);
   const identityReload = createIdentityReloadHook(options.cwd);
@@ -658,51 +659,76 @@ export function createMind(options: {
   const claudeMdTokens = countSdkInstructionTokens(options.cwd);
   const skillDescTokens = countSkillDescriptionTokens([resolvePath(options.cwd, ".claude/skills")]);
 
-  function processSession(sessionName: string) {
+  function jsonlPathFor(sessionName: string): string | null {
     const sessionId = sessionStore.load(sessionName);
-    const jsonlPath = sessionId ? findClaudeSessionFile(options.cwd, sessionId) : null;
-    return jsonlPath
-      ? processClaudeSession(jsonlPath, systemPromptTokens, claudeMdTokens, skillDescTokens)
-      : null;
+    return sessionId ? findClaudeSessionFile(options.cwd, sessionId) : null;
   }
 
-  function getContextInfo(): ContextInfo {
-    return {
-      sessions: Array.from(sessions.values()).map((s) => {
-        try {
-          const result = processSession(s.name);
-          return {
-            name: s.name,
-            contextTokens: result?.parsed?.contextTokens ?? s.contextTokens,
-            contextWindow: maxContextTokens,
-            breakdown: result?.parsed?.breakdown,
-          };
-        } catch (err) {
-          log("mind", `failed to get context breakdown for session "${s.name}":`, err);
-          return { name: s.name, contextTokens: s.contextTokens, contextWindow: maxContextTokens };
-        }
-      }),
-      systemPrompt: systemPromptTokens,
-    };
+  async function getContextInfo(): Promise<ContextInfo> {
+    const infos: SessionContextInfo[] = [];
+    for (const s of sessions.values()) {
+      try {
+        const jsonlPath = jsonlPathFor(s.name);
+        // Cache the computed breakdown by file identity: polls between turns are free.
+        const parsed = jsonlPath
+          ? await getCachedContextInfo(
+              jsonlPath,
+              async () =>
+                (
+                  await processClaudeSession(
+                    jsonlPath,
+                    systemPromptTokens,
+                    claudeMdTokens,
+                    skillDescTokens,
+                  )
+                ).parsed,
+            )
+          : null;
+        infos.push({
+          name: s.name,
+          contextTokens: parsed?.contextTokens ?? s.contextTokens,
+          contextWindow: maxContextTokens,
+          breakdown: parsed?.breakdown,
+        });
+      } catch (err) {
+        log("mind", `failed to get context breakdown for session "${s.name}":`, err);
+        infos.push({
+          name: s.name,
+          contextTokens: s.contextTokens,
+          contextWindow: maxContextTokens,
+        });
+      }
+    }
+    return { sessions: infos, systemPrompt: systemPromptTokens };
   }
 
-  function getContextMessages(): ContextMessages {
+  async function getContextMessages(): Promise<ContextMessages> {
     const skillsDir = resolvePath(options.cwd, ".claude/skills");
+    const sessionMessages: ContextMessages["sessions"] = [];
+    for (const s of sessions.values()) {
+      try {
+        const jsonlPath = jsonlPathFor(s.name);
+        const result = jsonlPath
+          ? await processClaudeSession(
+              jsonlPath,
+              systemPromptTokens,
+              claudeMdTokens,
+              skillDescTokens,
+            )
+          : null;
+        sessionMessages.push({ name: s.name, messages: result?.messages ?? [] });
+      } catch (err) {
+        log("mind", `failed to extract messages for session "${s.name}":`, err);
+        sessionMessages.push({ name: s.name, messages: [] });
+      }
+    }
     return {
       preamble: {
         systemPrompt: options.systemPrompt,
         sdkInstructions: readSdkInstructions(options.cwd),
         skillDescriptions: readSkillDescriptions([skillsDir]),
       },
-      sessions: Array.from(sessions.values()).map((s) => {
-        try {
-          const result = processSession(s.name);
-          return { name: s.name, messages: result?.messages ?? [] };
-        } catch (err) {
-          log("mind", `failed to extract messages for session "${s.name}":`, err);
-          return { name: s.name, messages: [] };
-        }
-      }),
+      sessions: sessionMessages,
     };
   }
 
