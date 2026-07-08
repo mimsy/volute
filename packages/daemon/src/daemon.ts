@@ -9,6 +9,7 @@ import { initBackupManager } from "./lib/daemon/backup-manager.js";
 import { initBridgeManager } from "./lib/daemon/bridge-manager.js";
 import { syncProviderToMinds } from "./lib/daemon/credential-sync.js";
 import { initMailPoller } from "./lib/daemon/mail-poller.js";
+import { startMaintenanceInterval } from "./lib/daemon/maintenance.js";
 import { getMindManager, initMindManager } from "./lib/daemon/mind-manager.js";
 import { startMindFull } from "./lib/daemon/mind-service.js";
 import { initScheduler } from "./lib/daemon/scheduler.js";
@@ -364,6 +365,10 @@ export async function startDaemon(opts: {
     log.warn("failed to clean expired logs", log.errorData(err));
   });
 
+  // ...and re-run that cleanup hourly so retention is actually enforced on a
+  // long-lived daemon, not just once at startup.
+  const maintenanceInterval = startMaintenanceInterval();
+
   // When the daemon rotates a provider's OAuth token, push the fresh token into
   // running minds so they don't refresh the rotating grant independently (which
   // invalidated each other and caused recurring 401s).
@@ -430,6 +435,7 @@ export async function startDaemon(opts: {
       safe("summarizer.stop", () => summarizer.stop());
       safe("backupManager.stop", () => backupManager.stop());
       safe("stopApiKeyRefresh", stopApiKeyRefresh);
+      safe("maintenanceInterval", () => clearInterval(maintenanceInterval));
       safe("delivery.dispose", () => delivery.dispose());
       await safe("bridgeManager.stopAll", () => bridgeManager.stopAll());
       await safe("manager.stopAll", () => manager.stopAll());
