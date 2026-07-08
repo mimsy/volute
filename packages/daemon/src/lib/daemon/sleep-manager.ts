@@ -693,52 +693,54 @@ export class SleepManager {
     const mindNames = new Set([...this.sleepConfigs.keys(), ...this.states.keys()]);
 
     for (const name of mindNames) {
-      if (!this.isSleeping(name)) {
-        const mind = await findMind(name);
-        if (!mind?.running) continue;
-      }
+      await this.evaluateMind(name, now, epochMinute);
+    }
+  }
 
-      const config = this.getSleepConfig(name);
-      if (!config?.enabled || !config.schedule) continue;
+  /**
+   * Per-mind tick evaluation. The wake checks depend only on the persisted sleep
+   * state — never on a currently-enabled sleep config — so a mind that was put to
+   * sleep with a wake time still wakes even if the schedule is later disabled or
+   * removed (or never existed, e.g. a bare `clock sleep --wake-at`). Only the
+   * sleep-onset check requires a running mind with an enabled schedule.
+   */
+  private async evaluateMind(name: string, now: Date, epochMinute: number): Promise<void> {
+    const state = this.states.get(name);
 
-      const state = this.states.get(name);
-
+    if (state?.sleeping) {
       // In wake-failure backoff — wait before retrying rather than hammering
       // wakeMind every tick (#419).
-      if (state?.sleeping && state.nextWakeAttemptAt && now < new Date(state.nextWakeAttemptAt)) {
-        continue;
+      if (state.nextWakeAttemptAt && now < new Date(state.nextWakeAttemptAt)) return;
+
+      // Voluntary wake time
+      if (state.voluntaryWakeAt && now >= new Date(state.voluntaryWakeAt)) {
+        this.initiateWake(name).catch((err) =>
+          slog.error(`failed voluntary wake for ${name}`, log.errorData(err)),
+        );
+        return;
       }
 
-      // Check voluntary wake time
-      if (state?.sleeping && state.voluntaryWakeAt) {
-        const wakeAt = new Date(state.voluntaryWakeAt);
-        if (now >= wakeAt) {
-          this.initiateWake(name).catch((err) =>
-            slog.error(`failed voluntary wake for ${name}`, log.errorData(err)),
-          );
-          continue;
-        }
+      // Scheduled wake time
+      if (state.scheduledWakeAt && now >= new Date(state.scheduledWakeAt)) {
+        this.initiateWake(name).catch((err) =>
+          slog.error(`failed scheduled wake for ${name}`, log.errorData(err)),
+        );
+        return;
       }
 
-      // Check scheduled wake time
-      if (state?.sleeping && state.scheduledWakeAt) {
-        const wakeAt = new Date(state.scheduledWakeAt);
-        if (now >= wakeAt) {
-          this.initiateWake(name).catch((err) =>
-            slog.error(`failed scheduled wake for ${name}`, log.errorData(err)),
-          );
-          continue;
-        }
-      }
+      // Sleeping but not yet time to wake (or intentionally indefinite) — done.
+      return;
+    }
 
-      // Check if it's time to sleep
-      if (!state?.sleeping) {
-        if (this.shouldSleep(config.schedule.sleep, epochMinute)) {
-          this.initiateSleep(name).catch((err) =>
-            slog.error(`failed to initiate sleep for ${name}`, log.errorData(err)),
-          );
-        }
-      }
+    // Sleep-onset — requires a running mind and an enabled schedule.
+    const mind = await findMind(name);
+    if (!mind?.running) return;
+    const config = this.getSleepConfig(name);
+    if (!config?.enabled || !config.schedule) return;
+    if (this.shouldSleep(config.schedule.sleep, epochMinute)) {
+      this.initiateSleep(name).catch((err) =>
+        slog.error(`failed to initiate sleep for ${name}`, log.errorData(err)),
+      );
     }
   }
 
