@@ -370,11 +370,20 @@ describe("backup API authorization", () => {
 });
 
 describe("backup manager scheduling", () => {
+  function writeLastRun(iso: string): void {
+    writeFileSync(
+      resolve(voluteSystemDir(), "backup-state.json"),
+      `${JSON.stringify({ lastRun: iso }, null, 2)}\n`,
+    );
+  }
+
   afterEach(() => {
     _resetConfigCache();
-    try {
-      unlinkSync(resolve(voluteSystemDir(), "config.json"));
-    } catch {}
+    for (const f of ["config.json", "backup-state.json"]) {
+      try {
+        unlinkSync(resolve(voluteSystemDir(), f));
+      } catch {}
+    }
     try {
       unlinkSync(secretsPath());
     } catch {}
@@ -415,6 +424,78 @@ describe("backup manager scheduling", () => {
     _resetConfigCache();
     const mgr = new BackupManager();
     assert.equal(mgr.isDue(new Date("2026-07-07T03:00:30")), false);
+  });
+
+  it("does not catch up without a prior successful run (fresh enable)", async () => {
+    const { BackupManager } = await import("../packages/daemon/src/lib/daemon/backup-manager.js");
+    const { writeGlobalConfig } = await import("../packages/daemon/src/lib/config/setup.js");
+    writeGlobalConfig({
+      backup: { repository: "/tmp/r", password: "p", enabled: true, schedule: "0 3 * * *" },
+    });
+    _resetConfigCache();
+    const mgr = new BackupManager();
+    // Well past 3am with no lastRun anchor → nothing to be behind on.
+    assert.equal(mgr.isDue(new Date("2026-07-07T08:15:00")), false);
+  });
+
+  it("catches up on a fire missed while asleep, once, when it falls after lastRun", async () => {
+    const { BackupManager } = await import("../packages/daemon/src/lib/daemon/backup-manager.js");
+    const { writeGlobalConfig } = await import("../packages/daemon/src/lib/config/setup.js");
+    writeGlobalConfig({
+      backup: { repository: "/tmp/r", password: "p", enabled: true, schedule: "0 3 * * *" },
+    });
+    _resetConfigCache();
+    // Last success was yesterday; today's 3am fire was missed (laptop asleep).
+    // Anchor in local time so it lines up with the local-time cron and `now`.
+    writeLastRun(new Date("2026-07-06T03:00:05").toISOString());
+    const mgr = new BackupManager();
+    // Daemon wakes at 08:15, well after the 03:00 fire it slept through.
+    assert.equal(mgr.isDue(new Date("2026-07-07T08:15:00")), true, "catches up on the missed fire");
+    assert.equal(
+      mgr.isDue(new Date("2026-07-07T08:16:00")),
+      false,
+      "does not re-fire the same missed fire",
+    );
+  });
+
+  it("does not catch up on a fire already covered by lastRun", async () => {
+    const { BackupManager } = await import("../packages/daemon/src/lib/daemon/backup-manager.js");
+    const { writeGlobalConfig } = await import("../packages/daemon/src/lib/config/setup.js");
+    writeGlobalConfig({
+      backup: { repository: "/tmp/r", password: "p", enabled: true, schedule: "0 3 * * *" },
+    });
+    _resetConfigCache();
+    // Today's 3am fire already ran successfully (local-time anchor).
+    writeLastRun(new Date("2026-07-07T03:00:04").toISOString());
+    const mgr = new BackupManager();
+    assert.equal(mgr.isDue(new Date("2026-07-07T08:15:00")), false);
+  });
+
+  it("notifies on the 1st failure and every Nth, resetting on success", async () => {
+    const { BackupManager } = await import("../packages/daemon/src/lib/daemon/backup-manager.js");
+    const { subscribe } = await import("../packages/daemon/src/lib/events/activity-events.js");
+    const mgr = new BackupManager();
+
+    const events: string[] = [];
+    const unsubscribe = subscribe((e) => {
+      if (e.type === "backup_failed") events.push(e.summary);
+    });
+    try {
+      const err = new Error("repo unreachable");
+      // 1st notifies; 2nd–4th are throttled; 5th notifies again.
+      assert.equal(await mgr.recordFailure(err), true, "1st failure notifies");
+      assert.equal(await mgr.recordFailure(err), false);
+      assert.equal(await mgr.recordFailure(err), false);
+      assert.equal(await mgr.recordFailure(err), false);
+      assert.equal(await mgr.recordFailure(err), true, "5th consecutive failure notifies");
+      assert.equal(events.length, 2, "one activity event per notification");
+
+      // A success resets the streak, so the next failure is a fresh 1st.
+      mgr.recordSuccess();
+      assert.equal(await mgr.recordFailure(err), true, "1st failure after recovery notifies");
+    } finally {
+      unsubscribe();
+    }
   });
 });
 
