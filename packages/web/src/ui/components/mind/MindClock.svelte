@@ -101,14 +101,13 @@ let rows = $derived.by(() => {
 
   // Sleep row
   if (clock.sleep?.sleeping) {
+    const effectiveWake = clock.sleep.scheduledWakeAt ?? clock.sleep.voluntaryWakeAt;
     result.push({
       id: "sleep",
       icon: "sleep",
       color: scheduleColor("sleep"),
       times: "sleeping now",
-      next: clock.sleep.scheduledWakeAt
-        ? `wake ${formatRelativeTime(clock.sleep.scheduledWakeAt)}`
-        : "",
+      next: effectiveWake ? `wake ${formatRelativeTime(effectiveWake)}` : "",
       disabled: false,
       tooltip: "",
     });
@@ -152,13 +151,12 @@ type SummaryItem = { icon: IconKind; label: string; detail: string; color: strin
 let currentItem = $derived.by((): SummaryItem | null => {
   if (!clock) return null;
   if (clock.sleep?.sleeping) {
+    const effectiveWake = clock.sleep.scheduledWakeAt ?? clock.sleep.voluntaryWakeAt;
     return {
       icon: "sleep",
       label: "Sleeping",
       color: scheduleColor("sleep"),
-      detail: clock.sleep.scheduledWakeAt
-        ? `wake ${formatRelativeTime(clock.sleep.scheduledWakeAt)}`
-        : "now",
+      detail: effectiveWake ? `wake ${formatRelativeTime(effectiveWake)}` : "now",
     };
   }
   if (activeMinds.has(name) && clock.previous?.length > 0) {

@@ -99,6 +99,11 @@ class TestSleepManager extends SleepManager {
   testResetWakeBackoff(name: string): void {
     (this as any).resetWakeBackoff(name);
   }
+
+  // Expose markSleeping for testing
+  testMarkSleeping(name: string, opts?: { voluntaryWakeAt?: string }): void {
+    (this as any).markSleeping(name, opts);
+  }
 }
 
 function sleepingState(overrides?: Partial<SleepState>): SleepState {
@@ -448,6 +453,91 @@ describe("SleepManager state transitions", () => {
     // Simulate incrementing
     state.queuedMessageCount++;
     assert.equal(sm.getState("test-mind").queuedMessageCount, 1);
+  });
+
+  // #451: an explicit voluntary wake-at is authoritative for the night.
+  it("markSleeping with voluntaryWakeAt nulls the cron scheduledWakeAt", () => {
+    const sm = new TestSleepManager();
+    sm.setSleepConfigForTest("test-mind", { schedule: { wake: "0 8 * * *" } });
+    const wakeAt = new Date(Date.now() + 12 * 3600_000).toISOString();
+    sm.testMarkSleeping("test-mind", { voluntaryWakeAt: wakeAt });
+
+    const state = sm.getState("test-mind");
+    assert.equal(state.scheduledWakeAt, null);
+    assert.equal(state.voluntaryWakeAt, wakeAt);
+  });
+
+  it("markSleeping without voluntaryWakeAt sets scheduledWakeAt from the cron", () => {
+    const sm = new TestSleepManager();
+    sm.setSleepConfigForTest("test-mind", { schedule: { wake: "0 8 * * *" } });
+    sm.testMarkSleeping("test-mind");
+
+    const state = sm.getState("test-mind");
+    assert.notEqual(state.scheduledWakeAt, null);
+    assert.equal(state.voluntaryWakeAt, null);
+  });
+
+  // #451: a voluntary wake later than the next cron wake must not be preempted.
+  // With scheduledWakeAt null, tick()'s cron branch can never fire early.
+  it("voluntary wake later than cron leaves no scheduled cron wake to fire", () => {
+    const sm = new TestSleepManager();
+    sm.setSleepConfigForTest("test-mind", { schedule: { wake: "0 8 * * *" } });
+    // Wake-at far in the future, likely later than the next 8am cron wake.
+    const wakeAt = new Date(Date.now() + 30 * 3600_000).toISOString();
+    sm.testMarkSleeping("test-mind", { voluntaryWakeAt: wakeAt });
+
+    const state = sm.getState("test-mind");
+    assert.equal(state.scheduledWakeAt, null);
+    assert.equal(state.voluntaryWakeAt, wakeAt);
+  });
+
+  // #449: return-to-sleep after a trigger-wake must not reset sleepingSince.
+  it("returnToSleepAfterCrash preserves the original bedtime (sleepingSince)", async () => {
+    const sm = new TestSleepManager();
+    const bedtime = new Date(Date.now() - 8 * 3600_000).toISOString();
+    sm.setStateForTest(
+      "test-mind",
+      sleepingState({ sleepingSince: bedtime, wokenByTrigger: true }),
+    );
+
+    await sm.returnToSleepAfterCrash("test-mind");
+
+    const state = sm.getState("test-mind");
+    assert.equal(state.sleeping, true);
+    assert.equal(state.sleepingSince, bedtime);
+    assert.equal(state.wokenByTrigger, false);
+  });
+
+  // #451: return-to-sleep must not resurrect a cron wake when a voluntary wake
+  // is pinned for the night.
+  it("returnToSleepAfterCrash keeps scheduledWakeAt null when voluntaryWakeAt is set", async () => {
+    const sm = new TestSleepManager();
+    sm.setSleepConfigForTest("test-mind", { schedule: { wake: "0 8 * * *" } });
+    const wakeAt = new Date(Date.now() + 12 * 3600_000).toISOString();
+    sm.setStateForTest(
+      "test-mind",
+      sleepingState({ scheduledWakeAt: null, voluntaryWakeAt: wakeAt, wokenByTrigger: true }),
+    );
+
+    await sm.returnToSleepAfterCrash("test-mind");
+
+    const state = sm.getState("test-mind");
+    assert.equal(state.scheduledWakeAt, null);
+    assert.equal(state.voluntaryWakeAt, wakeAt);
+  });
+
+  it("returnToSleepAfterCrash recomputes scheduledWakeAt when no voluntary wake", async () => {
+    const sm = new TestSleepManager();
+    sm.setSleepConfigForTest("test-mind", { schedule: { wake: "0 8 * * *" } });
+    sm.setStateForTest(
+      "test-mind",
+      sleepingState({ scheduledWakeAt: null, voluntaryWakeAt: null, wokenByTrigger: true }),
+    );
+
+    await sm.returnToSleepAfterCrash("test-mind");
+
+    const state = sm.getState("test-mind");
+    assert.notEqual(state.scheduledWakeAt, null);
   });
 });
 

@@ -31,3 +31,6 @@ You can go to sleep any time with `volute clock sleep`. Optionally set a wake ti
 ```sh
 volute clock sleep --wake-at "2025-01-15T07:00:00Z"
 ```
+
+A `--wake-at` overrides your wake schedule for that night — you will wake at the
+time you asked for, even if a scheduled wake cron would have fired earlier.
