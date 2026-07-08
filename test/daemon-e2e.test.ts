@@ -4,7 +4,12 @@ import { existsSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync 
 import { resolve } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { eq } from "drizzle-orm";
-import { getOrCreateMindUser } from "../packages/daemon/src/lib/auth.js";
+import {
+  approveUser,
+  createUser,
+  getOrCreateMindUser,
+  getUserByUsername,
+} from "../packages/daemon/src/lib/auth.js";
 import { getDb } from "../packages/daemon/src/lib/db.js";
 import {
   findMind,
@@ -698,6 +703,22 @@ describe("daemon e2e", { timeout: 420000 }, () => {
     );
   }
 
+  // A real (brain) second participant. A conversation needs at least two distinct
+  // members (see conversations POST guard); the daemon-token path does not add the
+  // caller, and participantNames:[TEST_MIND] alone dedupes to just the mind user.
+  // This mirrors how the web UI creates a conversation: a person plus the mind.
+  // Each test uses a distinct brain so its DM is new (DM reuse would return 200,
+  // not the 201 these tests assert).
+  async function ensureBrainParticipant(suffix: string): Promise<string> {
+    const username = `e2e-brain-${suffix}`;
+    let user = await getUserByUsername(username);
+    if (!user) {
+      user = await createUser(username, "e2e-brain-pass");
+      await approveUser(user.id);
+    }
+    return username;
+  }
+
   it("volute channels: create, list, invite mind, members", async () => {
     await ensureTestMind();
 
@@ -786,14 +807,15 @@ describe("daemon e2e", { timeout: 420000 }, () => {
 
   it("conversations: create, send message, read back", async () => {
     await ensureTestMind();
+    const brain = await ensureBrainParticipant("convo");
 
-    // Create a conversation with the test mind
+    // Create a conversation between the test mind and a real second participant.
     const createRes = await daemonRequest(`/api/minds/${TEST_MIND}/conversations`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         title: "e2e test conversation",
-        participantNames: [TEST_MIND],
+        participantNames: [TEST_MIND, brain],
       }),
     });
     assert.equal(createRes.status, 201, `Create conv: ${await createRes.clone().text()}`);
@@ -847,13 +869,16 @@ describe("daemon e2e", { timeout: 420000 }, () => {
   });
 
   it("unified chat: send via /api/v1/chat", async () => {
-    // Create a conversation first
+    await ensureTestMind();
+    const brain = await ensureBrainParticipant("unified");
+
+    // Create a conversation first (mind + a real second participant)
     const createRes = await daemonRequest(`/api/minds/${TEST_MIND}/conversations`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         title: "unified chat test",
-        participantNames: [TEST_MIND],
+        participantNames: [TEST_MIND, brain],
       }),
     });
     assert.equal(createRes.status, 201, `Create: ${await createRes.clone().text()}`);
@@ -1654,12 +1679,13 @@ describe("daemon e2e", { timeout: 420000 }, () => {
       `Start: expected 200 or 409, got ${startRes.status} ${await startRes.clone().text()}`,
     );
     await waitForMindRunning();
+    const brain = await ensureBrainParticipant("delivery");
 
     // Send through the unified chat endpoint (the real CLI/web send path).
     const createRes = await daemonRequest(`/api/minds/${TEST_MIND}/conversations`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title: "delivery round-trip", participantNames: [TEST_MIND] }),
+      body: JSON.stringify({ title: "delivery round-trip", participantNames: [TEST_MIND, brain] }),
     });
     assert.equal(createRes.status, 201, `Create conv: ${await createRes.clone().text()}`);
     const conv = (await createRes.json()) as { id: string };
