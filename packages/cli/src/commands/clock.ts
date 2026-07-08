@@ -22,10 +22,16 @@ type ClockStatus = {
     schedule?: { sleep: string; wake: string };
   } | null;
   schedules: Schedule[];
-  upcoming: { id: string; at: string; type: "cron" | "timer" }[];
+  upcoming: {
+    id: string;
+    at: string;
+    type: "cron" | "timer";
+    willSkip?: boolean;
+    willQueue?: boolean;
+  }[];
 };
 
-function parseDuration(input: string): number | null {
+export function parseDuration(input: string): number | null {
   const parts = input.match(/^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$/);
   if (!parts || parts[0] !== input) return null;
   const hours = parseInt(parts[1] || "0", 10);
@@ -60,8 +66,12 @@ const clockStatusCmd = command({
 
     // Sleep state
     if (status.sleep?.sleeping) {
-      const since = status.sleep.sleepingSince ? fmtTime(status.sleep.sleepingSince) : "unknown";
-      console.log(`Sleep: sleeping since ${since}`);
+      if (status.sleep.wokenByTrigger) {
+        console.log("Sleep: briefly awake (trigger) — returns to sleep when idle");
+      } else {
+        const since = status.sleep.sleepingSince ? fmtTime(status.sleep.sleepingSince) : "unknown";
+        console.log(`Sleep: sleeping since ${since}`);
+      }
       if (status.sleep.scheduledWakeAt) {
         console.log(`  Wake at: ${fmtTime(status.sleep.scheduledWakeAt)}`);
       }
@@ -89,7 +99,12 @@ const clockStatusCmd = command({
       for (const u of status.upcoming) {
         const time = fmtTime(u.at);
         const label = u.type === "timer" ? "[once]" : "[cron]";
-        console.log(`  ${u.id.padEnd(20)} ${label}  ${time}`);
+        const suffix = u.willSkip
+          ? "  [will skip: sleeping]"
+          : u.willQueue
+            ? "  [will queue: sleeping]"
+            : "";
+        console.log(`  ${u.id.padEnd(20)} ${label}  ${time}${suffix}`);
       }
     } else {
       if (!compact) console.log("");
