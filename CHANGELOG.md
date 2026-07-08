@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.46.0](https://github.com/mimsy/volute/compare/volute-v0.45.2...volute-v0.46.0) (2026-07-08)
+
+
+### Features
+
+* back up reliably — catch up on missed fires, notify on repeated failures ([#516](https://github.com/mimsy/volute/issues/516)) ([14c19be](https://github.com/mimsy/volute/commit/14c19beefe4d2273f693ea89854854f1e2ec7994))
+* flush a sleeping mind's queued backlog as one batched turn per channel ([#530](https://github.com/mimsy/volute/issues/530)) ([8b49001](https://github.com/mimsy/volute/commit/8b49001d25b071de18668dbf0c739629ea60cfbb))
+
+
+### Bug Fixes
+
+* catch up missed scheduler and sleep fires; prune stale lastFired entries ([#527](https://github.com/mimsy/volute/issues/527)) ([f2af707](https://github.com/mimsy/volute/commit/f2af707d54e6872b0d9688a5627596982a99b406))
+* don't throw when sending a direct system message to the spirit ([#522](https://github.com/mimsy/volute/issues/522)) ([4e9a3ab](https://github.com/mimsy/volute/commit/4e9a3ab92ddf3b974fa502761d8ec1f5b7386503))
+* label a sleeping mind's next clock event wake, not sleep ([#528](https://github.com/mimsy/volute/issues/528)) ([fb3fa29](https://github.com/mimsy/volute/commit/fb3fa29b0e480b3c2ee647898c93d4d2f2519746))
+* make clock sleep --wake-at authoritative and preserve bedtime across trigger-wake ([#525](https://github.com/mimsy/volute/issues/525)) ([3980af9](https://github.com/mimsy/volute/commit/3980af9f9f7ea752ac4f22066e70f858d4f3347d))
+* reap SDK subprocess on idle-session teardown (no defunct zombies) ([#521](https://github.com/mimsy/volute/issues/521)) ([8953022](https://github.com/mimsy/volute/commit/8953022c75768a3f6de4ba34264cbc75ef799276))
+* reject one-participant conversations so spirit self-replies fail loudly ([#523](https://github.com/mimsy/volute/issues/523)) ([afb76c3](https://github.com/mimsy/volute/commit/afb76c30b50eee5c1e270cedef6a0dfaeb212874))
+* run history/session cleanup hourly, not just at daemon startup ([#518](https://github.com/mimsy/volute/issues/518)) ([f1dd641](https://github.com/mimsy/volute/commit/f1dd641760a997d1dd5300ba5e8a6365d884de4e))
+* sweep unbounded daemon caches (session, send-gate, avatar, SSE ring) ([#519](https://github.com/mimsy/volute/issues/519)) ([2a09f1c](https://github.com/mimsy/volute/commit/2a09f1cb5157c18520b5532a6eab06141a3f7123))
+* unify terminology — bridges, schedules, prompt library ([#509](https://github.com/mimsy/volute/issues/509)) ([e9f89c8](https://github.com/mimsy/volute/commit/e9f89c8828b9b9b4487348137f1eb2b6e1cbf16b))
+* wake a sleeping mind even when its sleep config is disabled or missing ([#526](https://github.com/mimsy/volute/issues/526)) ([445fcc1](https://github.com/mimsy/volute/commit/445fcc1f817c23e57d5837eead89f06b342381cb))
+
+
+### Performance Improvements
+
+* spawn mind servers without the tsx wrapper process ([#517](https://github.com/mimsy/volute/issues/517)) ([e43da03](https://github.com/mimsy/volute/commit/e43da039821e8d66894942d74cabc2959b017515))
+* stream-parse session transcripts and cache context breakdown ([#520](https://github.com/mimsy/volute/issues/520)) ([c37999e](https://github.com/mimsy/volute/commit/c37999e85f2026c87ec14d8ab9d9e8a3b830bc2e))
+
 ## [0.45.2](https://github.com/mimsy/volute/compare/volute-v0.45.1...volute-v0.45.2) (2026-07-07)
 
 
