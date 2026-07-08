@@ -27,6 +27,7 @@ import {
   ensureSystemDir,
   findMind,
   readAllMinds,
+  SPIRIT_NAME,
   setMindRunning,
   voluteHome,
   voluteSystemDir,
@@ -308,10 +309,19 @@ export async function startDaemon(opts: {
       const { ensureSpiritProject, syncSpiritTemplate } = await import("./lib/mind/spirit.js");
       const { startSpiritFull } = await import("./lib/daemon/mind-service.js");
       await ensureSpiritProject();
+
+      // Register the spirit's custom dir for routing-config resolution now, so any
+      // resolution before startSpiritFull (e.g. syncSpiritTemplate, setup welcome)
+      // reads the spirit's routes.json rather than the (wrong) minds dir.
+      const spiritEntry = await findMind(SPIRIT_NAME);
+      if (spiritEntry?.dir) {
+        const { registerMindDir } = await import("./lib/delivery/delivery-router.js");
+        registerMindDir(SPIRIT_NAME, spiritEntry.dir);
+      }
+
       await syncSpiritTemplate();
-      const spiritEntry = await findMind("volute");
-      if (spiritEntry && !manager.isRunning("volute")) {
-        await startSpiritFull("volute");
+      if (spiritEntry && !manager.isRunning(SPIRIT_NAME)) {
+        await startSpiritFull(SPIRIT_NAME);
       }
     }
   } catch (err) {

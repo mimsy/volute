@@ -35,14 +35,8 @@ export async function startMindFull(name: string): Promise<void> {
   // Seed minds get the server + initial orientation, no schedules or budget
   if (!entry || entry.stage === "seed") {
     if (entry?.stage === "seed") {
-      const creatorNote = entry.createdBy
-        ? ` Your creator is ${entry.createdBy}. Send them a message to introduce yourself.`
-        : "";
-      // sendSystemMessage calls ensureSystemDM internally
-      sendSystemMessage(
-        baseName,
-        `You've just been created. A human planted you as a seed. Start a conversation with them — introduce yourself, ask questions, and begin exploring who you want to be.${creatorNote}`,
-      ).catch((err: unknown) =>
+      // sendSeedOrientation calls ensureSystemDM internally (via sendSystemMessage)
+      sendSeedOrientation(baseName, entry.createdBy).catch((err: unknown) =>
         log.error(`failed to send seed orientation for ${baseName}`, log.errorData(err)),
       );
 
@@ -160,6 +154,38 @@ export async function stopSpiritFull(name: string): Promise<void> {
     mind: name,
     summary: `${name} spirit stopped`,
   }).catch((err) => log.error("failed to publish spirit_stopped activity", log.errorData(err)));
+}
+
+/**
+ * Build a seed's first orientation message. The creator can be a human, another
+ * mind, or the spirit itself, so word the relationship from the creator's
+ * user_type rather than assuming a human planted the seed.
+ */
+export function buildSeedOrientation(
+  createdBy?: string | null,
+  creatorType?: "brain" | "mind" | "system",
+): string {
+  const intro =
+    "You've just been created as a seed. Start a conversation — introduce yourself, ask questions, and begin exploring who you want to be.";
+  if (!createdBy) return intro;
+
+  const who =
+    creatorType === "mind"
+      ? `another mind, ${createdBy}`
+      : creatorType === "system"
+        ? `the spirit of this system (${createdBy})`
+        : createdBy;
+  return `${intro} Your creator is ${who}. Send them a message to introduce yourself.`;
+}
+
+/** Look up the creator's user_type, build the orientation message, and send it. */
+async function sendSeedOrientation(mindName: string, createdBy?: string | null): Promise<void> {
+  let creatorType: "brain" | "mind" | "system" | undefined;
+  if (createdBy) {
+    const { getUserByUsername } = await import("../auth.js");
+    creatorType = (await getUserByUsername(createdBy))?.user_type;
+  }
+  await sendSystemMessage(mindName, buildSeedOrientation(createdBy, creatorType));
 }
 
 async function ensureCreatorDM(mindName: string, creatorUsername: string): Promise<void> {

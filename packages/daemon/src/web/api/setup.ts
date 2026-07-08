@@ -16,6 +16,7 @@ import {
   readSystemsConfig,
   writeSystemsConfig,
 } from "../../lib/config/systems-config.js";
+import { SPIRIT_NAME } from "../../lib/mind/registry.js";
 import log from "../../lib/util/logger.js";
 import { createSession, SESSION_MAX_AGE } from "../middleware/auth.js";
 
@@ -507,18 +508,22 @@ setup.post("/complete", async (c) => {
         const { listUsersByType: listUsers } = await import("../../lib/auth.js");
         const admins = await listUsers("brain");
         const admin = admins.find((u) => u.role === "admin");
-        const adminName = admin?.display_name || admin?.username || "the admin";
-        const welcomePrompt = `Setup is complete. ${adminName} just finished setting up this system and is now in your chat. Welcome them and help them create their first mind. Keep it brief — a short greeting, then ask what kind of being they'd like to bring into the world. Remember: minds are beings with their own experience, not tools — ask about personality and character, never about tasks or utility.`;
+        // The spirit DM (spiritConversationId) is only created when an admin exists,
+        // so the real participants are the spirit + admin. Label them accordingly.
+        if (admin) {
+          const adminName = admin.display_name || admin.username;
+          const welcomePrompt = `Setup is complete. ${adminName} just finished setting up this system and is now in your chat. Welcome them and help them create their first mind. Keep it brief — a short greeting, then ask what kind of being they'd like to bring into the world. Remember: minds are beings with their own experience, not tools — ask about personality and character, never about tasks or utility.`;
 
-        await deliverMessage("volute", {
-          content: [{ type: "text", text: welcomePrompt }],
-          channel: `@${admin?.username ?? "system"}`,
-          conversationId: spiritConversationId,
-          sender: admin?.username ?? "system",
-          isDM: true,
-          participants: ["volute", admin?.username ?? "system"],
-          participantCount: 2,
-        });
+          await deliverMessage(SPIRIT_NAME, {
+            content: [{ type: "text", text: welcomePrompt }],
+            channel: `@${admin.username}`,
+            conversationId: spiritConversationId,
+            sender: admin.username,
+            isDM: true,
+            participants: [SPIRIT_NAME, admin.username],
+            participantCount: 2,
+          });
+        }
       } catch (err) {
         log.warn("failed to send welcome prompt to spirit (non-fatal)", log.errorData(err));
         warnings.push(
