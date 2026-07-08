@@ -357,3 +357,41 @@ describe("v1 events live activity delivery filter", () => {
     }
   });
 });
+
+describe("v1 events replay ring buffers each event once", () => {
+  it("stores a single copy even with two subscribed clients", async () => {
+    resetSequencer();
+    const prevToken = process.env.VOLUTE_DAEMON_TOKEN;
+    process.env.VOLUTE_DAEMON_TOKEN = "ring-once-admin-token";
+    try {
+      const s1 = await openEventStream("Bearer ring-once-admin-token");
+      const s2 = await openEventStream("Bearer ring-once-admin-token");
+      await delay(200);
+
+      const before = nextEventId();
+      await publish({ type: "mind_done", mind: "ring-once-mind", summary: "ring-once-summary" });
+      await delay(200);
+      await s1.close();
+      await s2.close();
+
+      // Both clients still receive it live, each exactly once.
+      for (const s of [s1, s2]) {
+        const hits = s.events.filter(
+          (e) => e.event === "activity" && e.summary === "ring-once-summary",
+        );
+        assert.equal(hits.length, 1, "each client sees the event once live");
+      }
+
+      // But the global replay ring holds exactly one copy, not one per connected
+      // client — the regression this fix guards against. Reconnect replay still works.
+      const replay = getEventsSince(before, NO_CONVS, undefined);
+      const copies = replay.filter(
+        (e) => e.data.event === "activity" && e.data.summary === "ring-once-summary",
+      );
+      assert.equal(copies.length, 1, "event buffered exactly once globally");
+    } finally {
+      if (prevToken === undefined) delete process.env.VOLUTE_DAEMON_TOKEN;
+      else process.env.VOLUTE_DAEMON_TOKEN = prevToken;
+    }
+  });
+});

@@ -34,6 +34,9 @@ const SESSION_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 type CachedSession = { userId: number; user: User; expires: number };
 const sessionCache = new Map<string, CachedSession>();
 
+/** Test seam: direct access to the in-memory session cache. */
+export const _sessionCacheForTest = sessionCache;
+
 export function invalidateSessionCache(sessionId: string): void {
   sessionCache.delete(sessionId);
 }
@@ -63,6 +66,14 @@ export async function getSessionUserId(sessionId: string): Promise<number | unde
 }
 
 export async function cleanExpiredSessions(): Promise<void> {
+  // Sweep expired in-memory cache entries. They're only ever removed on read/logout
+  // otherwise, so every token that ever authenticated leaves a permanent entry
+  // (each holding a full User object). This runs on the daemon's maintenance timer.
+  const now = Date.now();
+  for (const [id, cached] of sessionCache) {
+    if (cached.expires <= now) sessionCache.delete(id);
+  }
+
   const db = await getDb();
   const cutoff = Date.now() - SESSION_MAX_AGE;
   await db.delete(sessions).where(lt(sessions.createdAt, cutoff));

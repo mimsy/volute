@@ -1,6 +1,8 @@
+import type { SSEActivityEvent } from "@volute/api/events";
 import { getDb } from "../db.js";
 import { activity } from "../schema.js";
 import log from "../util/logger.js";
+import { bufferEvent } from "./event-sequencer.js";
 
 export type ActivityEvent = {
   type:
@@ -27,7 +29,9 @@ export type ActivityEvent = {
   created_at?: string;
 };
 
-type Callback = (event: ActivityEvent & { id: number; created_at: string }) => void;
+// `seq` is the global sequencer id under which this event was buffered exactly once
+// (for reconnect replay); subscribers forward using it rather than re-buffering.
+type Callback = (event: ActivityEvent & { id: number; created_at: string; seq: number }) => void;
 
 const subscribers = new Set<Callback>();
 
@@ -70,9 +74,19 @@ export function broadcast(event: ActivityEvent): void {
 }
 
 function notify(event: ActivityEvent & { id: number; created_at: string }): void {
+  // Buffer once globally here, at the single publish site, so N connected clients
+  // don't each store a duplicate copy in the replay ring (which shrank the effective
+  // replay window by N×). Subscribers forward using the shared `seq`.
+  const data: SSEActivityEvent = {
+    event: "activity",
+    ...event,
+    metadata: event.metadata ?? null,
+  };
+  const seq = bufferEvent(data);
+  const delivered = { ...event, seq };
   for (const cb of subscribers) {
     try {
-      cb(event);
+      cb(delivered);
     } catch (err) {
       log.error("[activity-events] subscriber threw:", log.errorData(err));
       subscribers.delete(cb);

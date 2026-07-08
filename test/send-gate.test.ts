@@ -3,7 +3,9 @@ import { afterEach, describe, it } from "node:test";
 import { getOrCreateMindUser } from "../packages/daemon/src/lib/auth.js";
 import {
   _resetAllForTest,
+  _stateSizeForTest,
   checkStaleSend,
+  clearMind,
   formatHoldNotice,
   onDeliveredToMind,
   resetTurn,
@@ -116,6 +118,26 @@ describe("send-gate stale-send hold", () => {
       true,
       "a new message in the fresh turn holds again",
     );
+  });
+
+  it("resetTurn frees the mind's state instead of leaking an entry per conversation", async () => {
+    const conv1 = await makeMindDM("gateN", "gateO");
+    const conv2 = await makeMindDM("gateN", "gateP");
+    await onDeliveredToMind("gateN", conv1);
+    await onDeliveredToMind("gateN", conv2);
+    assert.equal(_stateSizeForTest(), 1, "one mind tracked");
+
+    resetTurn("gateN");
+    assert.equal(_stateSizeForTest(), 0, "state fully freed after the turn completes");
+  });
+
+  it("clearMind drops a mind's gate state (mind stop)", async () => {
+    const conv = await makeMindDM("gateQ", "gateR");
+    await onDeliveredToMind("gateQ", conv);
+    assert.equal(_stateSizeForTest(), 1);
+
+    clearMind("gateQ");
+    assert.equal(_stateSizeForTest(), 0);
   });
 
   it("formats a readable hold notice", () => {

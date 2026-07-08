@@ -5,7 +5,11 @@ import { Hono } from "hono";
 import { getDb } from "../packages/daemon/src/lib/db.js";
 import { users } from "../packages/daemon/src/lib/schema.js";
 import auth from "../packages/daemon/src/web/api/auth.js";
-import { deleteSession } from "../packages/daemon/src/web/middleware/auth.js";
+import {
+  _sessionCacheForTest,
+  cleanExpiredSessions,
+  deleteSession,
+} from "../packages/daemon/src/web/middleware/auth.js";
 
 const TEST_USERNAMES = ["admin", "dupe", "loginuser", "meuser", "logoutuser"];
 
@@ -159,5 +163,28 @@ describe("web auth routes", () => {
       headers: { Cookie: `volute_session=${cookie}` },
     });
     assert.equal(meRes.status, 401);
+  });
+});
+
+describe("cleanExpiredSessions cache sweep", () => {
+  it("evicts expired session-cache entries and keeps live ones", async () => {
+    const user = { id: 4242, username: "cache-sweep", role: "user" } as any;
+    _sessionCacheForTest.set("expired-sid", {
+      userId: user.id,
+      user,
+      expires: Date.now() - 1000,
+    });
+    _sessionCacheForTest.set("live-sid", {
+      userId: user.id,
+      user,
+      expires: Date.now() + 60_000,
+    });
+
+    await cleanExpiredSessions();
+
+    assert.equal(_sessionCacheForTest.has("expired-sid"), false, "expired entry swept");
+    assert.equal(_sessionCacheForTest.has("live-sid"), true, "live entry retained");
+
+    _sessionCacheForTest.delete("live-sid");
   });
 });

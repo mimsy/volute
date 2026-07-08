@@ -122,16 +122,21 @@ export async function checkStaleSend(
 }
 
 /**
+ * Drop all gate state for a mind. `onDeliveredToMind` re-snapshots a fresh baseline
+ * on the next delivery, so deleting the mind's inner map is behavior-equivalent to
+ * clearing the flags — and, unlike flipping flags, keeps `state` from growing one
+ * permanent entry per conversation the mind is ever delivered into.
+ */
+export function clearMind(mindBase: string): void {
+  state.delete(mindBase);
+}
+
+/**
  * Close all open turns for a mind (called on its `done` event) so the next delivery
  * re-snapshots a fresh baseline.
  */
 export function resetTurn(mindBase: string): void {
-  const conv = state.get(mindBase);
-  if (!conv) return;
-  for (const entry of conv.values()) {
-    entry.turnOpen = false;
-    entry.heldThisTurn = false;
-  }
+  clearMind(mindBase);
 }
 
 /** Build the notice the held mind reads as its send command output. */
@@ -151,4 +156,9 @@ export function formatHoldNotice(channelLabel: string, unseen: UnseenMessage[]):
 /** Test seam: clear all gate state. */
 export function _resetAllForTest(): void {
   state.clear();
+}
+
+/** Test seam: number of minds currently holding gate state. */
+export function _stateSizeForTest(): number {
+  return state.size;
 }

@@ -23,7 +23,7 @@ import {
   resolveRoute,
   setRoutesChangeListener,
 } from "./delivery-router.js";
-import { onDeliveredToMind, resetTurn } from "./send-gate.js";
+import { clearMind, onDeliveredToMind, resetTurn } from "./send-gate.js";
 
 const dlog = log.child("delivery-manager");
 
@@ -454,6 +454,8 @@ export class DeliveryManager {
    */
   clearMindSessions(mindName: string): void {
     this.sessionStates.delete(mindName);
+    // Free the mind's stale-send gate state so it doesn't linger after stop.
+    clearMind(mindName);
     // Clean up any batch buffers for this mind
     const toDelete: string[] = [];
     for (const [bufferKey, buffer] of this.batchBuffers) {
@@ -1148,7 +1150,14 @@ export class DeliveryManager {
       }
     }
 
-    avatarBlocksCache.set(cacheKey, { blocks, expiresAt: Date.now() + AVATAR_CACHE_TTL });
+    // Evict expired entries on insert. The map holds base64 image blocks keyed by
+    // participant-set permutation; without this sweep every distinct membership
+    // combination leaves a permanent entry. TTL-on-read alone never frees them.
+    const now = Date.now();
+    for (const [key, entry] of avatarBlocksCache) {
+      if (entry.expiresAt <= now) avatarBlocksCache.delete(key);
+    }
+    avatarBlocksCache.set(cacheKey, { blocks, expiresAt: now + AVATAR_CACHE_TTL });
     return blocks;
   }
 
