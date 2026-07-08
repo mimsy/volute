@@ -112,6 +112,53 @@ describe("computeClockEvents", () => {
     assert.ok(previous.some((e) => e.id === "heartbeat"));
   });
 
+  it("annotates fires that land during sleep by their whileSleeping fate", () => {
+    const wakeAt = new Date("2026-07-07T08:00:00").toISOString();
+    const schedules: Schedule[] = [
+      // Next fire 04:00 < 08:00 wake → annotated by whileSleeping.
+      { id: "skipme", cron: "0 * * * *", message: "x", enabled: true, whileSleeping: "skip" },
+      { id: "queueme", cron: "0 * * * *", message: "x", enabled: true, whileSleeping: "queue" },
+      { id: "defaultq", cron: "0 * * * *", message: "x", enabled: true }, // defaults to queue
+      {
+        id: "wakeme",
+        cron: "0 * * * *",
+        message: "x",
+        enabled: true,
+        whileSleeping: "trigger-wake",
+      },
+      // Next fire 09:00 > 08:00 wake → not annotated.
+      { id: "afterwake", cron: "0 9 * * *", message: "x", enabled: true, whileSleeping: "skip" },
+    ];
+    const { upcoming } = computeClockEvents(
+      schedules,
+      sleepState({ scheduledWakeAt: wakeAt }),
+      null,
+      now,
+    );
+    const byId = (id: string) => upcoming.find((e) => e.id === id);
+    assert.equal(byId("skipme")?.willSkip, true);
+    assert.equal(byId("queueme")?.willQueue, true);
+    assert.equal(byId("defaultq")?.willQueue, true);
+    // trigger-wake fires actually happen → no skip/queue annotation.
+    assert.equal(byId("wakeme")?.willSkip, undefined);
+    assert.equal(byId("wakeme")?.willQueue, undefined);
+    // A fire after wake isn't affected by sleep.
+    assert.equal(byId("afterwake")?.willSkip, undefined);
+  });
+
+  it("omits fires beyond the 24h horizon", () => {
+    const schedules: Schedule[] = [
+      { id: "soon", cron: "0 * * * *", message: "x", enabled: true }, // hourly → within 24h
+      { id: "faraway", cron: "0 0 1 1 *", message: "x", enabled: true }, // Jan 1 → months out
+    ];
+    const { upcoming } = computeClockEvents(schedules, sleepState({ sleeping: false }), null, now);
+    assert.ok(upcoming.some((e) => e.id === "soon"));
+    assert.equal(
+      upcoming.some((e) => e.id === "faraway"),
+      false,
+    );
+  });
+
   it("disabled and future/past timers behave correctly", () => {
     const schedules: Schedule[] = [
       { id: "off", cron: "0 * * * *", message: "x", enabled: false },

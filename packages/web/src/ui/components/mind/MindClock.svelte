@@ -153,6 +153,14 @@ type SummaryItem = { icon: IconKind; label: string; detail: string; color: strin
 let currentItem = $derived.by((): SummaryItem | null => {
   if (!clock) return null;
   if (clock.sleep?.sleeping) {
+    if (clock.sleep.wokenByTrigger) {
+      return {
+        icon: "sleep",
+        label: "Briefly awake",
+        color: scheduleColor("wake"),
+        detail: "trigger · sleeps when idle",
+      };
+    }
     const effectiveWake = clock.sleep.scheduledWakeAt ?? clock.sleep.voluntaryWakeAt;
     return {
       icon: "sleep",

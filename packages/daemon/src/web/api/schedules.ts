@@ -18,8 +18,19 @@ function readSchedules(dir: string): Schedule[] {
   return readVoluteConfig(dir)?.schedules ?? [];
 }
 
-export type ClockEvent = { id: string; at: string; type: "cron" | "timer" };
+export type ClockEvent = {
+  id: string;
+  at: string;
+  type: "cron" | "timer";
+  /** Sleeping mind: this fire lands before wake and its whileSleeping is "skip". */
+  willSkip?: boolean;
+  /** Sleeping mind: this fire lands before wake and will be queued until wake. */
+  willQueue?: boolean;
+};
 export type ClockPrevious = { id: string; at: string };
+
+/** Only surface fires within this window in the "upcoming (next 24h)" view. */
+const UPCOMING_HORIZON_MS = 24 * 60 * 60 * 1000;
 
 /** Minimal shape of the sleep state the clock/status view needs. */
 type ClockSleepState = {
@@ -45,17 +56,39 @@ export function computeClockEvents(
   const upcoming: ClockEvent[] = [];
   const previous: ClockPrevious[] = [];
 
+  // Effective wake for a sleeping mind — favors the authoritative voluntary time
+  // (scheduledWakeAt is nulled when a --wake-at is pinned). Used to annotate which
+  // schedule fires land before wake and will be skipped/queued.
+  const effectiveWake = sleepState?.sleeping
+    ? (sleepState.scheduledWakeAt ?? sleepState.voluntaryWakeAt)
+    : null;
+  const effectiveWakeDate = effectiveWake ? new Date(effectiveWake) : null;
+
+  // Annotate a fire that lands during sleep with its while-sleeping fate.
+  const sleepFate = (s: Schedule, fireDate: Date): Partial<ClockEvent> => {
+    if (!effectiveWakeDate || fireDate >= effectiveWakeDate) return {};
+    const ws = s.whileSleeping ?? "queue";
+    if (ws === "skip") return { willSkip: true };
+    if (ws === "trigger-wake") return {}; // wakes the mind — the fire happens
+    return { willQueue: true };
+  };
+
   for (const s of schedules) {
     if (!s.enabled) continue;
     if (s.fireAt) {
       const fireDate = new Date(s.fireAt);
       if (fireDate >= now) {
-        upcoming.push({ id: s.id, at: fireDate.toISOString(), type: "timer" });
+        upcoming.push({
+          id: s.id,
+          at: fireDate.toISOString(),
+          type: "timer",
+          ...sleepFate(s, fireDate),
+        });
       }
     } else if (s.cron) {
       try {
         const next = CronExpressionParser.parse(s.cron, { currentDate: now }).next().toDate();
-        upcoming.push({ id: s.id, at: next.toISOString(), type: "cron" });
+        upcoming.push({ id: s.id, at: next.toISOString(), type: "cron", ...sleepFate(s, next) });
       } catch {
         slog.warn(`invalid cron "${s.cron}" for schedule "${s.id}"`);
       }
@@ -69,9 +102,7 @@ export function computeClockEvents(
   }
 
   if (sleepState?.sleeping) {
-    // Next event is the wake, not "sleep". Effective wake favors the authoritative
-    // voluntary time (scheduledWakeAt is nulled when a --wake-at is pinned).
-    const effectiveWake = sleepState.scheduledWakeAt ?? sleepState.voluntaryWakeAt;
+    // Next event is the wake, not "sleep".
     if (effectiveWake) {
       upcoming.push({ id: "wake", at: effectiveWake, type: "cron" });
     }
@@ -98,9 +129,15 @@ export function computeClockEvents(
     }
   }
 
-  upcoming.sort((a, b) => a.at.localeCompare(b.at));
+  // "Upcoming (next 24h)" — drop fires beyond the horizon (e.g. a weekly cron
+  // days out). Sleeping-mind currentItem shows the wake separately, so filtering
+  // the wake entry here is harmless.
+  const horizon = now.getTime() + UPCOMING_HORIZON_MS;
+  const withinHorizon = upcoming.filter((e) => new Date(e.at).getTime() <= horizon);
+
+  withinHorizon.sort((a, b) => a.at.localeCompare(b.at));
   previous.sort((a, b) => b.at.localeCompare(a.at)); // most recent first
-  return { upcoming, previous };
+  return { upcoming: withinHorizon, previous };
 }
 
 function writeSchedules(name: string, dir: string, schedules: Schedule[]): void {

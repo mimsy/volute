@@ -775,7 +775,13 @@ export interface ClockStatus {
     whileSleeping?: string;
     channel?: string;
   }[];
-  upcoming: { id: string; at: string; type: "cron" | "timer" }[];
+  upcoming: {
+    id: string;
+    at: string;
+    type: "cron" | "timer";
+    willSkip?: boolean;
+    willQueue?: boolean;
+  }[];
   previous: { id: string; at: string }[];
 }
 
