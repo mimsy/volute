@@ -97,7 +97,8 @@ export type ActivityEventType =
   | "note_created"
   | "brain_online"
   | "brain_offline"
-  | "profile_updated";
+  | "profile_updated"
+  | "backup_failed";
 
 export type Variant = {
   name: string;

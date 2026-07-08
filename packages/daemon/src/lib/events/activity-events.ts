@@ -17,7 +17,8 @@ export type ActivityEvent = {
     | "note_created"
     | "brain_online"
     | "brain_offline"
-    | "profile_updated";
+    | "profile_updated"
+    | "backup_failed";
   mind: string;
   summary: string;
   metadata?: Record<string, unknown>;
