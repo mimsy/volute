@@ -7,8 +7,21 @@ set -euo pipefail
 #
 # Requirements: docker. ANTHROPIC_API_KEY is optional — when set, Phase 6/7
 # exercise a real Claude round-trip; when absent, those phases skip loudly.
+# The key is picked up from a repo-root .env if present (see below).
 #
 # Usage: bash test/docker-e2e.sh
+
+# Source .env from repo root if it exists (for API keys), matching
+# integration-setup.sh — otherwise Phase 6/7 silently skip when you forget to
+# export ANTHROPIC_API_KEY.
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+if [[ -f "$REPO_ROOT/.env" ]]; then
+  set -a
+  # shellcheck source=/dev/null
+  source "$REPO_ROOT/.env"
+  set +a
+fi
 
 if ! command -v docker &>/dev/null; then
   echo "Error: docker is required" >&2
