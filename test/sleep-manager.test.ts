@@ -104,6 +104,24 @@ class TestSleepManager extends SleepManager {
   testMarkSleeping(name: string, opts?: { voluntaryWakeAt?: string }): void {
     (this as any).markSleeping(name, opts);
   }
+
+  // Stub initiateWake/initiateSleep so evaluateMind can be tested without a live
+  // MindManager. Records the names it was asked to wake/sleep.
+  wakeCalls: string[] = [];
+  sleepCalls: string[] = [];
+
+  override async initiateWake(name: string): Promise<void> {
+    this.wakeCalls.push(name);
+  }
+
+  override async initiateSleep(name: string): Promise<void> {
+    this.sleepCalls.push(name);
+  }
+
+  // Expose evaluateMind for testing
+  testEvaluateMind(name: string, now: Date, epochMinute: number): Promise<void> {
+    return (this as any).evaluateMind(name, now, epochMinute);
+  }
 }
 
 function sleepingState(overrides?: Partial<SleepState>): SleepState {
@@ -538,6 +556,60 @@ describe("SleepManager state transitions", () => {
 
     const state = sm.getState("test-mind");
     assert.notEqual(state.scheduledWakeAt, null);
+  });
+});
+
+// #450: waking a sleeping mind must not depend on a currently-enabled sleep
+// config — the wake times were persisted at bedtime.
+describe("SleepManager.evaluateMind wake without config", () => {
+  const epochMinute = Math.floor(Date.now() / 60_000);
+
+  it("wakes a sleeping mind with a past voluntaryWakeAt even with no config", async () => {
+    const sm = new TestSleepManager();
+    // No sleep config set at all (getSleepConfig returns null).
+    const past = new Date(Date.now() - 60_000).toISOString();
+    sm.setStateForTest("test-mind", sleepingState({ voluntaryWakeAt: past }));
+
+    await sm.testEvaluateMind("test-mind", new Date(), epochMinute);
+
+    assert.deepEqual(sm.wakeCalls, ["test-mind"]);
+  });
+
+  it("wakes a sleeping mind with a past scheduledWakeAt when config is disabled", async () => {
+    const sm = new TestSleepManager();
+    sm.setSleepConfigForTest("test-mind", {
+      enabled: false,
+      schedule: { sleep: "0 23 * * *", wake: "0 8 * * *" },
+    });
+    const past = new Date(Date.now() - 60_000).toISOString();
+    sm.setStateForTest("test-mind", sleepingState({ scheduledWakeAt: past }));
+
+    await sm.testEvaluateMind("test-mind", new Date(), epochMinute);
+
+    assert.deepEqual(sm.wakeCalls, ["test-mind"]);
+  });
+
+  it("leaves a sleeping mind asleep when it has no wake times and no config", async () => {
+    const sm = new TestSleepManager();
+    sm.setStateForTest(
+      "test-mind",
+      sleepingState({ voluntaryWakeAt: null, scheduledWakeAt: null }),
+    );
+
+    await sm.testEvaluateMind("test-mind", new Date(), epochMinute);
+
+    assert.deepEqual(sm.wakeCalls, []);
+    assert.equal(sm.getState("test-mind").sleeping, true);
+  });
+
+  it("does not wake before the persisted wake time arrives", async () => {
+    const sm = new TestSleepManager();
+    const future = new Date(Date.now() + 3600_000).toISOString();
+    sm.setStateForTest("test-mind", sleepingState({ scheduledWakeAt: future }));
+
+    await sm.testEvaluateMind("test-mind", new Date(), epochMinute);
+
+    assert.deepEqual(sm.wakeCalls, []);
   });
 });
 
