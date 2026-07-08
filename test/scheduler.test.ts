@@ -370,6 +370,101 @@ describe("scheduler fireAt", () => {
   });
 });
 
+describe("scheduler catch-up (level-triggered cron)", () => {
+  const nowMin = () => Math.floor(Date.now() / 60000);
+  const heartbeat = { id: "heartbeat", cron: "* * * * *", enabled: true };
+
+  it("fires a caught-up cron once when a minute was skipped", () => {
+    const scheduler = new TestScheduler();
+    const epochMinute = nowMin();
+    const key = "test-mind:heartbeat";
+    // Last acted-on minute is 3 minutes stale (missed ticks).
+    (scheduler as any).lastFired.set(key, epochMinute - 3);
+
+    const first = (scheduler as any).shouldFire(heartbeat, epochMinute, "test-mind", new Map());
+    assert.equal(first, true);
+    // lastFired advances to the fired cron minute (== epochMinute for every-minute cron).
+    assert.equal((scheduler as any).lastFired.get(key), epochMinute);
+
+    // Same minute again → no double fire.
+    const second = (scheduler as any).shouldFire(heartbeat, epochMinute, "test-mind", new Map());
+    assert.equal(second, false);
+  });
+
+  it("does not fire when already up to date this minute", () => {
+    const scheduler = new TestScheduler();
+    const epochMinute = nowMin();
+    (scheduler as any).lastFired.set("test-mind:heartbeat", epochMinute);
+    const result = (scheduler as any).shouldFire(heartbeat, epochMinute, "test-mind", new Map());
+    assert.equal(result, false);
+  });
+
+  it("skips a stale catch-up fire but still advances lastFired", () => {
+    const scheduler = new TestScheduler();
+    const realMin = nowMin();
+    // Pretend we're evaluating 20 minutes after the cron minute (long downtime).
+    const epochMinute = realMin + 20;
+    const key = "test-mind:dream";
+    (scheduler as any).lastFired.set(key, realMin - 30);
+
+    const result = (scheduler as any).shouldFire(
+      { id: "dream", cron: "* * * * *", enabled: true },
+      epochMinute,
+      "test-mind",
+      new Map(),
+    );
+    // Too stale to deliver...
+    assert.equal(result, false);
+    // ...but lastFired advanced to the cron minute so it won't be retried.
+    assert.equal((scheduler as any).lastFired.get(key), realMin);
+  });
+});
+
+describe("scheduler loadSchedules bookkeeping", () => {
+  function writeConfig(dir: string, schedules: unknown[]) {
+    mkdirSync(resolve(dir, "home/.config"), { recursive: true });
+    writeFileSync(resolve(dir, "home/.config/volute.json"), JSON.stringify({ schedules }));
+  }
+
+  it("baseline-inits new schedules and prunes stale keys for the mind only (#428, #453)", () => {
+    const scheduler = new TestScheduler();
+    const dir = resolve(voluteSystemDir(), "sched-bookkeep-mind");
+    writeConfig(dir, [{ id: "heartbeat", cron: "* * * * *", message: "hi", enabled: true }]);
+
+    const lf = (scheduler as any).lastFired as Map<string, number>;
+    // Pre-seed: a stale key for this mind + a live key for another mind.
+    lf.set("sched-bookkeep-mind:old-removed", 100);
+    lf.set("other-mind:keepme", 200);
+
+    scheduler.loadSchedules("sched-bookkeep-mind", dir);
+
+    // Stale key for this mind pruned (#428).
+    assert.equal(lf.has("sched-bookkeep-mind:old-removed"), false);
+    // Other mind's key untouched — prune is per-mind only.
+    assert.equal(lf.get("other-mind:keepme"), 200);
+    // New schedule baselined to the current minute (#453) so no history replay.
+    assert.equal(lf.get("sched-bookkeep-mind:heartbeat"), Math.floor(Date.now() / 60000));
+  });
+
+  it("baseline prevents an immediate replay for a freshly loaded schedule", () => {
+    const scheduler = new TestScheduler();
+    const dir = resolve(voluteSystemDir(), "sched-fresh-mind");
+    writeConfig(dir, [{ id: "beat", cron: "* * * * *", message: "hi", enabled: true }]);
+
+    scheduler.loadSchedules("sched-fresh-mind", dir);
+
+    const epochMinute = Math.floor(Date.now() / 60000);
+    const result = (scheduler as any).shouldFire(
+      { id: "beat", cron: "* * * * *", enabled: true },
+      epochMinute,
+      "sched-fresh-mind",
+      new Map(),
+    );
+    // Baseline == epochMinute, so the current-minute cron fire is not replayed.
+    assert.equal(result, false);
+  });
+});
+
 describe("parseDuration", () => {
   // Import dynamically since it's in clock.ts — test the regex logic directly
   function parseDuration(input: string): number | null {

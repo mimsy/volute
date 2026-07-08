@@ -48,6 +48,13 @@ export type SleepState = {
   wakeFailures: number;
   /** Earliest time the next wake retry may run, while backing off after failures. */
   nextWakeAttemptAt: string | null;
+  /**
+   * Timestamp of the last full wake (manual `clock wake` or scheduled wake).
+   * Level-triggered sleep onset (#453) uses it to exempt a mind woken inside the
+   * current sleep window from being immediately re-slept. Persisted for awake
+   * minds so the exemption survives a daemon restart.
+   */
+  lastWakeAt: string | null;
 };
 
 type SleepStatePersisted = Record<string, SleepState>;
@@ -63,6 +70,7 @@ function defaultState(): SleepState {
     triggerWakeHistory: [],
     wakeFailures: 0,
     nextWakeAttemptAt: null,
+    lastWakeAt: null,
   };
 }
 
@@ -146,6 +154,7 @@ export class SleepManager {
           state.triggerWakeHistory ??= [];
           state.wakeFailures ??= 0;
           state.nextWakeAttemptAt ??= null;
+          state.lastWakeAt ??= null;
           this.states.set(name, state);
         }
       }
@@ -157,7 +166,9 @@ export class SleepManager {
   saveState(): void {
     const data: SleepStatePersisted = {};
     for (const [name, state] of this.states) {
-      if (state.sleeping) data[name] = state;
+      // Persist sleeping states, plus awake minds that carry a lastWakeAt so the
+      // manual-wake exemption for level-triggered sleep onset survives a restart.
+      if (state.sleeping || state.lastWakeAt) data[name] = state;
     }
     try {
       writeFileSync(this.statePath, `${JSON.stringify(data, null, 2)}\n`);
@@ -621,7 +632,10 @@ export class SleepManager {
    */
   protected async markWakeErrored(name: string, err: unknown): Promise<void> {
     const detail = err instanceof Error ? err.message : String(err);
-    this.markAwake(name);
+    // The mind never woke — clear its sleep state entirely (no lastWakeAt, unlike
+    // a successful markAwake) so the tick stops retrying and nothing lingers.
+    this.states.delete(name);
+    this.saveState();
 
     slog.error(
       `${name} failed to wake ${MAX_WAKE_ATTEMPTS} times in a row; giving up and marking errored`,
@@ -664,13 +678,17 @@ export class SleepManager {
       triggerWakeHistory: [],
       wakeFailures: 0,
       nextWakeAttemptAt: null,
+      lastWakeAt: this.states.get(name)?.lastWakeAt ?? null,
     };
     this.states.set(name, state);
     this.saveState();
   }
 
   private markAwake(name: string): void {
-    this.states.delete(name);
+    // Keep a minimal awake entry recording when the mind last fully woke, so
+    // level-triggered sleep onset (#453) won't immediately re-sleep a mind woken
+    // inside its own sleep window (manual `clock wake` or a scheduled wake).
+    this.states.set(name, { ...defaultState(), lastWakeAt: new Date().toISOString() });
     this.saveState();
   }
 
@@ -687,13 +705,12 @@ export class SleepManager {
 
   private async tick(): Promise<void> {
     const now = new Date();
-    const epochMinute = Math.floor(now.getTime() / 60_000);
 
     // Iterate minds that have sleep configs or sleep state, avoiding a full registry query
     const mindNames = new Set([...this.sleepConfigs.keys(), ...this.states.keys()]);
 
     for (const name of mindNames) {
-      await this.evaluateMind(name, now, epochMinute);
+      await this.evaluateMind(name, now);
     }
   }
 
@@ -704,7 +721,7 @@ export class SleepManager {
    * removed (or never existed, e.g. a bare `clock sleep --wake-at`). Only the
    * sleep-onset check requires a running mind with an enabled schedule.
    */
-  private async evaluateMind(name: string, now: Date, epochMinute: number): Promise<void> {
+  private async evaluateMind(name: string, now: Date): Promise<void> {
     const state = this.states.get(name);
 
     if (state?.sleeping) {
@@ -737,22 +754,58 @@ export class SleepManager {
     if (!mind?.running) return;
     const config = this.getSleepConfig(name);
     if (!config?.enabled || !config.schedule) return;
-    if (this.shouldSleep(config.schedule.sleep, epochMinute)) {
+
+    if (this.shouldSleepNow(config.schedule, state?.lastWakeAt ?? null, now)) {
       this.initiateSleep(name).catch((err) =>
         slog.error(`failed to initiate sleep for ${name}`, log.errorData(err)),
       );
     }
   }
 
-  private shouldSleep(cronExpr: string, epochMinute: number): boolean {
+  /**
+   * Level-triggered sleep-onset decision: sleep whenever we're inside the nightly
+   * window, not only on the exact sleep minute — so a daemon restart or a stalled
+   * tick across the sleep minute still puts the mind to bed on the next tick.
+   *
+   * Manual-wake exemption: a full wake inside the current window (human
+   * `clock wake`, or a scheduled wake) suppresses re-sleep until the next window
+   * begins, so `volute clock wake` at 3am sticks instead of being undone a minute
+   * later.
+   */
+  shouldSleepNow(
+    schedule: { sleep: string; wake: string },
+    lastWakeAt: string | null,
+    now: Date,
+  ): boolean {
+    const { inWindow, windowStart } = this.inSleepWindow(schedule, now);
+    if (!inWindow || !windowStart) return false;
+    if (lastWakeAt && new Date(lastWakeAt) >= windowStart) return false;
+    return true;
+  }
+
+  /**
+   * Whether `now` falls inside the mind's nightly sleep window: the most recent
+   * sleep-cron fire is more recent than the most recent wake-cron fire. Returns
+   * the window start (last sleep fire) for the manual-wake exemption check.
+   */
+  inSleepWindow(
+    schedule: { sleep: string; wake: string },
+    now: Date,
+  ): { inWindow: boolean; windowStart: Date | null } {
     try {
-      const interval = CronExpressionParser.parse(cronExpr);
-      const prev = interval.prev().toDate();
-      const prevMinute = Math.floor(prev.getTime() / 60_000);
-      return prevMinute === epochMinute;
+      const prevSleep = CronExpressionParser.parse(schedule.sleep, { currentDate: now })
+        .prev()
+        .toDate();
+      const prevWake = CronExpressionParser.parse(schedule.wake, { currentDate: now })
+        .prev()
+        .toDate();
+      return { inWindow: prevSleep > prevWake, windowStart: prevSleep };
     } catch (err) {
-      slog.warn(`invalid sleep cron "${cronExpr}"`, log.errorData(err));
-      return false;
+      slog.warn(
+        `invalid sleep/wake cron "${schedule.sleep}"/"${schedule.wake}"`,
+        log.errorData(err),
+      );
+      return { inWindow: false, windowStart: null };
     }
   }
 
