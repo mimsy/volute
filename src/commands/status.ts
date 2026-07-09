@@ -95,9 +95,10 @@ const cmd = command({
           }
           const stale = minds.filter((m) => m.templateStale).map((m) => m.name);
           if (stale.length > 0) {
-            const noun = stale.length === 1 ? "mind is" : "minds are";
+            const subject = stale.length === 1 ? "mind is" : "minds are";
+            const object = stale.length === 1 ? "an outdated template" : "outdated templates";
             console.log(
-              `\n⚠ ${stale.length} ${noun} running outdated templates: ${stale.join(", ")} — run 'volute mind upgrade <name>'`,
+              `\n⚠ ${stale.length} ${subject} running ${object}: ${stale.join(", ")} — run 'volute mind upgrade <name>'`,
             );
           }
         } else {

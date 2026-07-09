@@ -44,6 +44,35 @@ describe("computeMindTemplateHash", () => {
     }
   });
 
+  it("does not false-positive when the mind name is a substring of file content", () => {
+    // "dev" appears in package.json ("dev" script, "devDependencies"). A naive
+    // reverse-substitution of the mind name would mangle those and report a
+    // pristine mind as stale. Forward-rendering must keep it current.
+    const name = "dev";
+    const dir = resolve(mindDir(name));
+    buildPristineMind(dir, "claude", name);
+    try {
+      assert.equal(computeMindTemplateHash(dir, "claude", name), computeTemplateHash("claude"));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("differs when a non-sentinel template file drifts", () => {
+    // Drift a tracked file other than the src/agent.ts sentinel to confirm the
+    // measurement (and the isTemplateStale memo signal) covers the whole set.
+    const name = `stale-router-${Date.now()}`;
+    const dir = resolve(mindDir(name));
+    buildPristineMind(dir, "claude", name);
+    try {
+      const router = resolve(dir, "src", "lib", "router.ts");
+      writeFileSync(router, `${readFileSync(router, "utf-8")}\n// drift\n`);
+      assert.notEqual(computeMindTemplateHash(dir, "claude", name), computeTemplateHash("claude"));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("differs when a source file is mutated", () => {
     const name = `stale-mutated-${Date.now()}`;
     const dir = resolve(mindDir(name));
