@@ -1,6 +1,7 @@
 <script lang="ts">
 import type { HistoryMessage, SummaryRow, TurnRow } from "@volute/api";
 import { Icon } from "@volute/ui";
+import { renderMarkdown } from "@volute/ui/markdown";
 import type { SvelteMap } from "svelte/reactivity";
 import { groupToolEvents } from "../lib/tool-groups";
 import { getCategoryColor, getCategoryIcon } from "../lib/tool-names";
@@ -46,6 +47,16 @@ function collapseExpandedChild() {
     (c) => "period" in c && (expandedSummaries.has(c.id) || directEventsSummaries.has(c.id)),
   );
   if (expanded && "period" in expanded) toggleSummaryExpand(expanded as SummaryRow);
+}
+
+// Clamped previews render as plain text, so strip leading markdown sigils (headers,
+// emphasis, list bullets) that would otherwise show up literally in the 3-line clamp.
+function plainPreview(text: string): string {
+  return text
+    .replace(/^\s*#{1,6}\s+/gm, "")
+    .replace(/^\s*[-*+]\s+/gm, "")
+    .replace(/(\*\*|__|\*|_|`)/g, "")
+    .trim();
 }
 </script>
 
@@ -95,7 +106,7 @@ function collapseExpandedChild() {
               <div class="summary-child-body">
                 {#if !childExpanded}
                   <span class="summary-child-time">{formatPeriodTime(childSummary.period, childSummary.period_key)}</span>
-                  <span class="summary-text">{childSummary.content}</span>
+                  <span class="summary-text">{plainPreview(childSummary.content)}</span>
                 {/if}
               </div>
             </div>
@@ -140,9 +151,11 @@ function collapseExpandedChild() {
       {/if}
     {/snippet}
     {#snippet footer()}
-      <button class="summary-expand-collapse" onclick={(e) => e.stopPropagation()}>
-        <span class="summary-text">{summary.content}</span>
-      </button>
+      <!-- svelte-ignore a11y_click_events_have_key_events -->
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div class="summary-expand-collapse" onclick={(e) => e.stopPropagation()}>
+        <div class="summary-full markdown-body">{@html renderMarkdown(summary.content)}</div>
+      </div>
     {/snippet}
   </TimelineBranch>
 {:else}
@@ -150,7 +163,7 @@ function collapseExpandedChild() {
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="summary-collapsed" onclick={() => toggleSummaryExpand(summary)}>
     <span class="summary-collapsed-time">{formatPeriodTime(summary.period, summary.period_key)}</span>
-    <span class="summary-text">{summary.content}</span>
+    <span class="summary-text">{plainPreview(summary.content)}</span>
   </div>
 {/if}
 
@@ -182,6 +195,14 @@ function collapseExpandedChild() {
     text-align: left;
     font: inherit;
     color: inherit;
+  }
+  /* Expanded long-form summaries are prose: render markdown, and cap tall
+     week/month narratives with internal scroll so they don't push the rest
+     of the timeline off-screen. */
+  .summary-full {
+    font-size: 13px;
+    max-height: 420px;
+    overflow-y: auto;
   }
   .summary-expand-collapse::before {
     content: "";

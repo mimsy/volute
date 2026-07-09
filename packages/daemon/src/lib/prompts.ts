@@ -170,14 +170,14 @@ export const PROMPT_DEFAULTS: Record<PromptKey, PromptMeta> = {
   },
   meta_summary_week: {
     content:
-      "Summarize the following daily summaries from a single week into a reflective overview (~500-800 words). ${scope_instruction} Identify recurring patterns and themes across days, note growth or evolution in thinking, highlight significant accomplishments and relationships, and flag unresolved threads. The text below contains daily summaries — synthesize them into a weekly reflection.",
+      "Distill the following daily summaries from a single week into a reflective overview. ${scope_instruction} Open with a short overview, then use markdown headers (## Heading) for a few themed sections covering recurring patterns, growth in thinking, significant accomplishments and relationships, and any unresolved threads. Prefer omission over completeness — this is an orientation aid, not a record; the daily summaries hold the detail. Use markdown for structure. Hard cap: 600 words. The text below contains daily summaries — synthesize, don't concatenate.",
     description: "System prompt for weekly meta-summaries",
     variables: ["scope_instruction"],
     category: "system",
   },
   meta_summary_month: {
     content:
-      "Summarize the following daily summaries from a single month into a comprehensive narrative (~800-1500 words). ${scope_instruction} Paint the big picture: major milestones and accomplishments, how perspectives or identity evolved, key relationships and interactions, recurring themes, and the overall trajectory. The text below contains daily summaries — compose them into a monthly narrative.",
+      "Distill the following daily summaries from a single month into a brief orientation aid. ${scope_instruction} Open with a 3-5 sentence overview, then use markdown headers (## Heading) for a few short themed sections covering major milestones, how perspectives or identity evolved, key relationships, and recurring themes. Prefer omission over completeness — this is an orientation aid, not a record; the weekly and daily summaries hold the detail. Use markdown for structure. Hard cap: 800 words. The text below contains daily summaries — synthesize, don't concatenate.",
     description: "System prompt for monthly meta-summaries",
     variables: ["scope_instruction"],
     category: "system",
