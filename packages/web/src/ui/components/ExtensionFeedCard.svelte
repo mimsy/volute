@@ -1,5 +1,6 @@
 <script lang="ts">
 import { renderMarkdown } from "@volute/ui/markdown";
+import { sanitizeSvg } from "@volute/ui/sanitize";
 import { formatRelativeTime } from "../lib/format";
 
 let {
@@ -36,7 +37,7 @@ let iframeLoaded = $state(false);
 >
   <div class="feed-card-header" style:border-bottom-color="color-mix(in srgb, {cardColor} 25%, var(--border))">
     {#if icon}
-      <span class="feed-card-icon" style:color={cardColor}>{@html icon}</span>
+      <span class="feed-card-icon" style:color={cardColor}>{@html sanitizeSvg(icon)}</span>
     {/if}
     <span class="feed-card-label">{title}</span>
     {#if author}
