@@ -200,4 +200,96 @@ describe("groupToolEvents", () => {
     assert.equal(items[1].kind, "tool-group");
     assert.equal(items[2].kind, "event");
   });
+
+  it("pairs parallel tool calls by id (use A, use B, result B, result A)", () => {
+    const events = [
+      makeEvent({ id: 1, type: "tool_use", content: "{}", metadata: '{"name":"Bash","id":"a"}' }),
+      makeEvent({ id: 2, type: "tool_use", content: "{}", metadata: '{"name":"Read","id":"b"}' }),
+      makeEvent({ id: 3, type: "tool_result", content: "out B", metadata: '{"tool_use_id":"b"}' }),
+      makeEvent({ id: 4, type: "tool_result", content: "out A", metadata: '{"tool_use_id":"a"}' }),
+    ];
+    const items = groupToolEvents(events);
+    assert.equal(items.length, 2);
+    const g1 = items[0] as Extract<TimelineItem, { kind: "tool-group" }>;
+    const g2 = items[1] as Extract<TimelineItem, { kind: "tool-group" }>;
+    // Groups render at the tool_use position, results matched by id.
+    assert.equal(g1.toolUse.id, 1);
+    assert.equal(g1.toolName, "Bash");
+    assert.equal(g1.toolResult?.id, 4);
+    assert.equal(g2.toolUse.id, 2);
+    assert.equal(g2.toolName, "Read");
+    assert.equal(g2.toolResult?.id, 3);
+  });
+
+  it("matches by id even when the result precedes an intervening tool_use", () => {
+    const events = [
+      makeEvent({ id: 1, type: "tool_use", content: "{}", metadata: '{"name":"Bash","id":"a"}' }),
+      makeEvent({ id: 2, type: "tool_use", content: "{}", metadata: '{"name":"Read","id":"b"}' }),
+      makeEvent({ id: 3, type: "tool_result", content: "out A", metadata: '{"tool_use_id":"a"}' }),
+      makeEvent({ id: 4, type: "tool_result", content: "out B", metadata: '{"tool_use_id":"b"}' }),
+    ];
+    const items = groupToolEvents(events);
+    const g1 = items[0] as Extract<TimelineItem, { kind: "tool-group" }>;
+    const g2 = items[1] as Extract<TimelineItem, { kind: "tool-group" }>;
+    assert.equal(g1.toolResult?.id, 3);
+    assert.equal(g2.toolResult?.id, 4);
+  });
+
+  it("mixes legacy (no id) and modern (id) tool_use events", () => {
+    const events = [
+      // Legacy: no id, paired positionally with the next unclaimed result.
+      makeEvent({ id: 1, type: "tool_use", content: "{}", metadata: '{"name":"Bash"}' }),
+      makeEvent({ id: 2, type: "tool_result", content: "legacy out" }),
+      // Modern: paired by id across a reordered result stream.
+      makeEvent({ id: 3, type: "tool_use", content: "{}", metadata: '{"name":"Read","id":"m"}' }),
+      makeEvent({
+        id: 4,
+        type: "tool_result",
+        content: "modern out",
+        metadata: '{"tool_use_id":"m"}',
+      }),
+    ];
+    const items = groupToolEvents(events);
+    assert.equal(items.length, 2);
+    const g1 = items[0] as Extract<TimelineItem, { kind: "tool-group" }>;
+    const g2 = items[1] as Extract<TimelineItem, { kind: "tool-group" }>;
+    assert.equal(g1.toolResult?.id, 2);
+    assert.equal(g2.toolResult?.id, 4);
+  });
+
+  it("modern tool_use with no matching result gets null (no positional grab)", () => {
+    const events = [
+      makeEvent({ id: 1, type: "tool_use", content: "{}", metadata: '{"name":"Bash","id":"a"}' }),
+      // Result belongs to a different (later) call by id.
+      makeEvent({ id: 2, type: "tool_use", content: "{}", metadata: '{"name":"Read","id":"b"}' }),
+      makeEvent({ id: 3, type: "tool_result", content: "out B", metadata: '{"tool_use_id":"b"}' }),
+    ];
+    const items = groupToolEvents(events);
+    assert.equal(items.length, 2);
+    const g1 = items[0] as Extract<TimelineItem, { kind: "tool-group" }>;
+    const g2 = items[1] as Extract<TimelineItem, { kind: "tool-group" }>;
+    assert.equal(g1.toolResult, null);
+    assert.equal(g2.toolResult?.id, 3);
+  });
+
+  it("emits an orphaned result standalone", () => {
+    const events = [
+      makeEvent({ id: 1, type: "tool_use", content: "{}", metadata: '{"name":"Bash","id":"a"}' }),
+      makeEvent({ id: 2, type: "tool_result", content: "out A", metadata: '{"tool_use_id":"a"}' }),
+      // Result with no matching tool_use (e.g. tool_use_id "unknown").
+      makeEvent({
+        id: 3,
+        type: "tool_result",
+        content: "orphan",
+        metadata: '{"tool_use_id":"unknown"}',
+      }),
+    ];
+    const items = groupToolEvents(events);
+    assert.equal(items.length, 2);
+    const g1 = items[0] as Extract<TimelineItem, { kind: "tool-group" }>;
+    assert.equal(g1.toolResult?.id, 2);
+    const orphan = items[1] as Extract<TimelineItem, { kind: "event" }>;
+    assert.equal(orphan.kind, "event");
+    assert.equal(orphan.event.id, 3);
+  });
 });
