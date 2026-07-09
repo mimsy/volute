@@ -17,9 +17,10 @@ import {
   fetchTurns,
 } from "../lib/client";
 import { extractTextContent } from "../lib/feed-utils";
-import { formatRelativeTime, normalizeTimestamp } from "../lib/format";
+import { formatRelativeTime } from "../lib/format";
 import { navigate } from "../lib/navigate";
 import { activeMinds } from "../lib/stores.svelte";
+import { buildTodayItems } from "../lib/timeline-today";
 import { groupToolEvents } from "../lib/tool-groups";
 import { getCategoryColor, getCategoryIcon } from "../lib/tool-names";
 import ToolGroupComponent from "./chat/ToolGroup.svelte";
@@ -566,17 +567,6 @@ let timelineItems = $derived.by(() => {
   const items: TimelineItem[] = [];
   const now = new Date();
 
-  // Show turns individually if they completed during or after the current hour.
-  // Use the turn's completion time (summary_meta.to_time) rather than created_at,
-  // because a turn that started in the previous hour but completed in the current
-  // hour won't be included in the previous hour's summary (race condition).
-  const currentHourStart = new Date(now);
-  currentHourStart.setMinutes(0, 0, 0);
-  const hourCutoffMs = currentHourStart.getTime();
-
-  // But also include any turns from today that don't have an hourly summary yet
-  // (i.e., turns from the current in-progress hour)
-
   // Monthly summaries (oldest)
   for (const s of monthSummaries) items.push({ kind: "summary", summary: s });
 
@@ -591,36 +581,23 @@ let timelineItems = $derived.by(() => {
   // Daily summaries
   for (const s of daySummaries) items.push({ kind: "summary", summary: s });
 
-  // Separator before hourly
-  if ((daySummaries.length > 0 || items.length > 0) && hourSummaries.length > 0) {
+  // Today section: hour summaries interleaved chronologically with individual turns.
+  // Turns render individually when active/current-hour, or when they fall in an
+  // earlier-today hour that has no hour summary yet — so a missing summary degrades
+  // to more detail instead of a silent gap.
+  const todayItems = buildTodayItems({
+    now,
+    hourSummaries,
+    turnsData,
+    isActive: (t) => t.status === "active" || streamingEvents.has(t.id),
+  });
+
+  // Separator before the today section
+  if (items.length > 0 && todayItems.length > 0) {
     items.push({ kind: "separator", above: "earlier this week", below: "today" });
   }
 
-  // Hourly summaries
-  for (const s of hourSummaries) items.push({ kind: "summary", summary: s });
-
-  // Only turns that completed during/after the current hour (or active turns).
-  // Use to_time (completion time) from summary metadata when available, since a
-  // turn that started in the previous hour but completed in the current hour
-  // won't be covered by the previous hour's summary.
-  const recentTurns = turnsData.filter((t) => {
-    if (t.status === "active" || streamingEvents.has(t.id)) return true;
-    const toTime = (t.summary_meta as Record<string, unknown> | null)?.to_time as
-      | string
-      | undefined;
-    const timeStr = toTime ?? t.created_at;
-    const turnTime = new Date(normalizeTimestamp(timeStr)).getTime();
-    return turnTime >= hourCutoffMs;
-  });
-
-  // Separator before turns
-  if (items.length > 0 && recentTurns.length > 0) {
-    items.push({ kind: "separator", above: "earlier today", below: "this hour" });
-  }
-
-  for (const t of recentTurns) {
-    items.push({ kind: "turn", turn: t });
-  }
+  for (const t of todayItems) items.push(t);
 
   return items;
 });

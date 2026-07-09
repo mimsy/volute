@@ -111,6 +111,11 @@ function utcDateTimeStr(d: Date): string {
   return d.toISOString().replace("T", " ").slice(0, 19);
 }
 
+/** Parse a "YYYY-MM-DD HH:MM:SS" UTC datetime string (as stored via datetime('now')). */
+function parseUtcDateTime(s: string): Date {
+  return new Date(`${s.replace(" ", "T")}Z`);
+}
+
 export function getTimeRange(
   periodKey: string,
   period: TimerPeriod,
@@ -913,6 +918,141 @@ async function backfill(): Promise<void> {
   }
 }
 
+// ── Gap reconciliation ──
+
+/**
+ * Regenerate any period summary that has child material but no summary row of its own.
+ * `needed` maps periodKey → the minds that have child summaries for that key. A key is
+ * (re)processed when any mind is missing its summary OR the `_system` rollup is missing
+ * (per-mind children exist ⇒ a system rollup should too; `process` calls `summarizeSystem`).
+ * `process` re-derives minds and is idempotent (summaryExists + the unique
+ * (mind, period, period_key) index), so this is safe to run repeatedly.
+ */
+async function healMissing(
+  period: TimerPeriod,
+  needed: Map<string, Set<string>>,
+  process: (key: string) => Promise<void>,
+): Promise<void> {
+  if (needed.size === 0) return;
+  const db = await getDb();
+  const keys = [...needed.keys()];
+  const existing = await db
+    .select({ mind: summaries.mind, period_key: summaries.period_key })
+    .from(summaries)
+    .where(and(eq(summaries.period, period), inArray(summaries.period_key, keys)));
+  const have = new Set(existing.map((r) => `${r.mind}|${r.period_key}`));
+
+  for (const [key, minds] of needed) {
+    // A missing system rollup is itself a gap even when every per-mind summary exists.
+    let gap = !have.has(`${SYSTEM_MIND}|${key}`);
+    if (!gap) {
+      for (const mind of minds) {
+        if (!have.has(`${mind}|${key}`)) {
+          gap = true;
+          break;
+        }
+      }
+    }
+    if (!gap) continue;
+    try {
+      await process(key);
+    } catch (err) {
+      sLog.error(`reconcile ${period} ${key} failed`, log.errorData(err));
+    }
+  }
+}
+
+function addNeeded(map: Map<string, Set<string>>, key: string, mind: string): void {
+  let set = map.get(key);
+  if (!set) {
+    set = new Set();
+    map.set(key, set);
+  }
+  set.add(mind);
+}
+
+/**
+ * Heal historical gaps left by summarizer errors or daemon downtime: any period with child
+ * summaries but no summary of its own gets regenerated. Runs every tick, bounded to a recent
+ * lookback so silent gaps self-heal within a tick rather than staying invisible forever.
+ * The current in-progress period (hour/day/week/month) is skipped — those are summarized on
+ * rollover by the normal tick. Exported for testing.
+ */
+export async function reconcileMissingSummaries(lookbackDays = 7): Promise<void> {
+  const db = await getDb();
+  const now = new Date();
+  const windowStart = new Date(now);
+  windowStart.setDate(windowStart.getDate() - lookbackDays);
+
+  const currentHourKey = getPeriodKey(now, "hour");
+  const currentDayKey = getPeriodKey(now, "day");
+  const currentWeekKey = getPeriodKey(now, "week");
+  const currentMonthKey = getPeriodKey(now, "month");
+  const cutoffDayKey = getPeriodKey(windowStart, "day");
+
+  // ── Hours: turn summaries whose local hour lacks an hour summary ──
+  const turnRows = await db
+    .select({ mind: summaries.mind, created_at: summaries.created_at })
+    .from(summaries)
+    .where(
+      and(
+        eq(summaries.period, "turn"),
+        gte(summaries.created_at, utcDateTimeStr(windowStart)),
+        sql`${summaries.mind} != ${SYSTEM_MIND}`,
+      ),
+    );
+  const neededHours = new Map<string, Set<string>>();
+  for (const r of turnRows) {
+    const key = getPeriodKey(parseUtcDateTime(r.created_at), "hour");
+    if (key === currentHourKey) continue;
+    addNeeded(neededHours, key, r.mind);
+  }
+  await healMissing("hour", neededHours, processHour);
+
+  // ── Days: hour summaries whose day lacks a day summary ──
+  const hourRows = await db
+    .select({ mind: summaries.mind, period_key: summaries.period_key })
+    .from(summaries)
+    .where(
+      and(
+        eq(summaries.period, "hour"),
+        gte(summaries.period_key, cutoffDayKey),
+        sql`${summaries.mind} != ${SYSTEM_MIND}`,
+      ),
+    );
+  const neededDays = new Map<string, Set<string>>();
+  for (const r of hourRows) {
+    const key = r.period_key.slice(0, 10);
+    if (key === currentDayKey) continue;
+    addNeeded(neededDays, key, r.mind);
+  }
+  await healMissing("day", neededDays, processDay);
+
+  // ── Weeks & months: day summaries whose week/month lacks a summary ──
+  // Re-query day summaries so freshly-healed days are considered.
+  const dayRows = await db
+    .select({ mind: summaries.mind, period_key: summaries.period_key })
+    .from(summaries)
+    .where(
+      and(
+        eq(summaries.period, "day"),
+        gte(summaries.period_key, cutoffDayKey),
+        sql`${summaries.mind} != ${SYSTEM_MIND}`,
+      ),
+    );
+  const neededWeeks = new Map<string, Set<string>>();
+  const neededMonths = new Map<string, Set<string>>();
+  for (const r of dayRows) {
+    const d = new Date(`${r.period_key}T00:00:00`);
+    const weekKey = getPeriodKey(d, "week");
+    if (weekKey !== currentWeekKey) addNeeded(neededWeeks, weekKey, r.mind);
+    const monthKey = r.period_key.slice(0, 7);
+    if (monthKey !== currentMonthKey) addNeeded(neededMonths, monthKey, r.mind);
+  }
+  await healMissing("week", neededWeeks, processWeek);
+  await healMissing("month", neededMonths, processMonth);
+}
+
 // ── Summarizer class ──
 
 export class Summarizer {
@@ -940,6 +1080,7 @@ export class Summarizer {
       }
 
       await reconcileWedgedTurns(WEDGED_TURN_IDLE_MS);
+      await reconcileMissingSummaries();
 
       const now = new Date();
       const currentHourKey = getPeriodKey(now, "hour");
