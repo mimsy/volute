@@ -93,7 +93,9 @@ const history = new Hono<AuthEnv>()
           sql`${mindHistory.type} IN ('inbound', 'outbound')`,
         ),
       )
-      .orderBy(mindHistory.created_at);
+      // id tiebreaker: created_at is second-resolution, so a same-second inbound/outbound
+      // pair would otherwise flip and read as an answer-before-question exchange (#403).
+      .orderBy(mindHistory.created_at, mindHistory.id);
 
     // Group all events by turn and channel
     type ConvEvent = {
@@ -150,7 +152,9 @@ const history = new Hono<AuthEnv>()
       .select()
       .from(activity)
       .where(inArray(activity.turn_id, turnIds))
-      .orderBy(activity.created_at);
+      // id tiebreaker: created_at is second-resolution, so same-second activities within a
+      // turn would otherwise flip order (#403 — same missing tiebreaker as the message pairs).
+      .orderBy(activity.created_at, activity.id);
 
     const activitiesByTurn = new Map<string, typeof activityRows>();
     for (const a of activityRows) {

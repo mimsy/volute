@@ -160,6 +160,7 @@ export type HistoryRow = {
   session: string | null;
   content: string | null;
   metadata: string | null;
+  turn_id: string | null;
   created_at: string;
 };
 
@@ -200,6 +201,7 @@ async function gatherTurnEvents(
       session: mindHistory.session,
       content: mindHistory.content,
       metadata: mindHistory.metadata,
+      turn_id: mindHistory.turn_id,
       created_at: mindHistory.created_at,
     })
     .from(mindHistory)
@@ -225,6 +227,7 @@ async function gatherTurnEventsByTurnId(
       session: mindHistory.session,
       content: mindHistory.content,
       metadata: mindHistory.metadata,
+      turn_id: mindHistory.turn_id,
       created_at: mindHistory.created_at,
     })
     .from(mindHistory)
@@ -348,23 +351,40 @@ export async function summarizeTurn(
 
   if (events.length === 0) return;
 
+  // Resolve the turn this summary belongs to. When called without an explicit `turnId`
+  // (completeTurn returned undefined because a wedged-turn sweep already completed the turn),
+  // reuse the turn_id the events already carry so the summary keys on the turn UUID and
+  // dedupes — instead of minting a "<mind>-<doneId>" key that produces a SECOND summary for
+  // the same turn (see #395).
+  const effectiveTurnId = turnId ?? events.find((ev) => ev.turn_id)?.turn_id ?? undefined;
+
+  // If a summary for this turn already exists (the sweep summarized it first), stop here —
+  // this also short-circuits the redundant AI call.
+  if (effectiveTurnId && (await summaryExists(mind, "turn", effectiveTurnId))) return;
+
   // Detect interrupted turns
   const substantiveTypes = new Set(["text", "outbound", "tool_use", "tool_result", "thinking"]);
   const hasSubstantiveOutput = events.some((ev) => substantiveTypes.has(ev.type));
   if (!hasSubstantiveOutput) {
     sLog.info(
-      `skipping summary for interrupted turn ${turnId ?? "(no turn)"} (no substantive output)`,
+      `skipping summary for interrupted turn ${effectiveTurnId ?? "(no turn)"} (no substantive output)`,
     );
-    if (turnId) {
+    if (effectiveTurnId) {
       try {
         const db = await getDb();
         await db
           .update(mindHistory)
           .set({ turn_id: null })
-          .where(and(eq(mindHistory.turn_id, turnId), eq(mindHistory.type, "inbound")));
-        await db.update(messages).set({ turn_id: null }).where(eq(messages.turn_id, turnId));
+          .where(and(eq(mindHistory.turn_id, effectiveTurnId), eq(mindHistory.type, "inbound")));
+        await db
+          .update(messages)
+          .set({ turn_id: null })
+          .where(eq(messages.turn_id, effectiveTurnId));
+        // The turn produced nothing — no output, no summary. Delete the row so it can't come
+        // back from /history/turns as a junk "(no summary)" orphan (see #395).
+        await db.delete(turns).where(eq(turns.id, effectiveTurnId));
       } catch (err) {
-        sLog.error(`failed to un-tag events for interrupted turn ${turnId}`, log.errorData(err));
+        sLog.error(`failed to clean up interrupted turn ${effectiveTurnId}`, log.errorData(err));
       }
     }
     return;
@@ -413,7 +433,7 @@ export async function summarizeTurn(
   };
 
   // Write to unified summaries table
-  const periodKey = turnId ?? `${mind}-${doneId}`;
+  const periodKey = effectiveTurnId ?? `${mind}-${doneId}`;
   const db = await getDb();
   let summaryId: number | undefined;
   try {
@@ -454,9 +474,9 @@ export async function summarizeTurn(
   }
 
   // Link summary back to turn
-  if (turnId && summaryId != null) {
-    setSummaryId(turnId, summaryId).catch((err) => {
-      sLog.error(`failed to link summary to turn ${turnId}`, log.errorData(err));
+  if (effectiveTurnId && summaryId != null) {
+    setSummaryId(effectiveTurnId, summaryId).catch((err) => {
+      sLog.error(`failed to link summary to turn ${effectiveTurnId}`, log.errorData(err));
     });
   }
 
@@ -468,7 +488,7 @@ export async function summarizeTurn(
     channel,
     content: summaryText,
     metadata,
-    turnId,
+    turnId: effectiveTurnId,
   });
 }
 
@@ -846,11 +866,7 @@ async function processMonth(periodKey: string): Promise<void> {
   }
 }
 
-async function summaryExists(
-  mind: string,
-  period: TimerPeriod,
-  periodKey: string,
-): Promise<boolean> {
+async function summaryExists(mind: string, period: Period, periodKey: string): Promise<boolean> {
   const db = await getDb();
   const row = await db
     .select({ id: summaries.id })
