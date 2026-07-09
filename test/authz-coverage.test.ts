@@ -34,7 +34,9 @@ const AUTHZ_EXEMPT: Record<string, string> = {
   "files.ts GET /:name/avatar": "serves the mind's public profile avatar image",
   "mind-skills.ts GET /:name/skills": "lists installed skills (capability metadata, no secrets)",
   "variants.ts GET /:name/variants": "variant existence/status, same info as GET /:name",
-  "minds.ts GET /:name": "existence/status/public profile (display name, description, avatar)",
+  "minds.ts GET /:name":
+    "in-handler authz: non-privileged callers get existence/status/public profile only; " +
+    "port/dir/branch/variants (full registry entry) reserved for admin/system (#503)",
 
   // --- In-handler authorization (participant/owner/self checks) ---
   "minds.ts GET /:name/conversations":

@@ -10,7 +10,9 @@ export type ContentBlock =
 
 export type Mind = {
   name: string;
-  port: number;
+  // Omitted for non-privileged callers (mind tokens, non-admin users); only
+  // admin/system get the port. See #503.
+  port?: number;
   created: string;
   status: "running" | "stopped" | "starting" | "sleeping";
   stage?: "seed" | "sprouted";

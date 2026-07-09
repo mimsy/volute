@@ -58,6 +58,7 @@ import {
   findMind,
   findVariants,
   getBaseName,
+  type MindEntry,
   mindDir,
   nextPort,
   readRegistry,
@@ -157,6 +158,42 @@ async function getMindStatus(name: string, port: number, registryRunning?: boole
     displayName: config?.profile?.displayName,
     description: config?.profile?.description,
     avatar: config?.profile?.avatar,
+  };
+}
+
+type MindStatus = Awaited<ReturnType<typeof getMindStatus>>;
+
+/** True for the daemon's own privileged principals: admin users and the system spirit. */
+function isPrivileged(c: Context<AuthEnv>): boolean {
+  const role = c.get("user").role;
+  return role === "admin" || role === "system";
+}
+
+/**
+ * Reduce a registry entry to the profile-level fields safe to hand a
+ * non-privileged caller (a mind token or a non-admin user). Registry internals —
+ * port, dir, branch, template, hash, parent, createdBy, running — are withheld:
+ * minds are untrusted principals, and a mind's own port/dir aids lateral movement
+ * (direct connections to sibling mind servers that bypass the daemon, targeted
+ * filesystem probing). Only admin/system callers get the full entry. See #503.
+ */
+function toPublicMind(
+  entry: MindEntry,
+  status: MindStatus,
+  extras: { hasPages: boolean; lastActiveAt?: string | null },
+) {
+  return {
+    name: entry.name,
+    created: entry.created,
+    stage: entry.stage,
+    mindType: entry.mindType,
+    status: status.status,
+    channels: status.channels,
+    displayName: status.displayName,
+    description: status.description,
+    avatar: status.avatar,
+    hasPages: extras.hasPages,
+    lastActiveAt: extras.lastActiveAt ?? null,
   };
 }
 
@@ -1230,16 +1267,14 @@ const app = new Hono<AuthEnv>()
       }
     }
 
+    const privileged = isPrivileged(c);
     const minds = await Promise.all(
       entries.map(async (entry) => {
         const mindStatus = await getMindStatus(entry.name, entry.port, entry.running);
         const hasPages = existsSync(resolve(mindDir(entry.name), "home", "pages"));
-        return {
-          ...entry,
-          ...mindStatus,
-          hasPages,
-          lastActiveAt: lastActiveMap.get(entry.name) ?? null,
-        };
+        const lastActiveAt = lastActiveMap.get(entry.name) ?? null;
+        if (!privileged) return toPublicMind(entry, mindStatus, { hasPages, lastActiveAt });
+        return { ...entry, ...mindStatus, hasPages, lastActiveAt };
       }),
     );
     return c.json(minds);
@@ -1254,8 +1289,15 @@ const app = new Hono<AuthEnv>()
     if (!existsSync(dir)) return c.json({ error: "Mind directory missing" }, 404);
 
     const mindStatus = await getMindStatus(name, entry.port);
+    const hasPages = existsSync(resolve(mindDir(name), "home", "pages"));
 
-    // Include variant info
+    // Non-privileged callers (minds, non-admin users) get profile-level fields
+    // only — no port/dir/branch/variants that would aid lateral movement (#503).
+    if (!isPrivileged(c)) {
+      return c.json(toPublicMind(entry, mindStatus, { hasPages }));
+    }
+
+    // Include variant info (admin/system only — variant ports/names are internal)
     const variants = await findVariants(name);
     const manager = getMindManager();
     const variantStatuses = await Promise.all(
@@ -1269,7 +1311,6 @@ const app = new Hono<AuthEnv>()
       }),
     );
 
-    const hasPages = existsSync(resolve(mindDir(name), "home", "pages"));
     return c.json({ ...entry, ...mindStatus, variants: variantStatuses, hasPages });
   })
   // Context info — proxy to mind's /context endpoint
