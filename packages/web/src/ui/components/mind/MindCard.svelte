@@ -31,7 +31,9 @@ let { mind }: { mind: Mind } = $props();
     <p class="description">{mind.description}</p>
   {/if}
   <div class="meta">
-    <span>:{mind.port}</span>
+    {#if mind.port}
+      <span>:{mind.port}</span>
+    {/if}
     {#each mind.channels.filter(ch => ch.name !== "web" && ch.status === "connected") as ch}
       <span class="channel-badge">{ch.displayName || ch.name}</span>
     {/each}

@@ -805,6 +805,69 @@ describe("daemon e2e", { timeout: 420000 }, () => {
     assert.equal(patched.settings?.description, "set by member");
   });
 
+  it("GET /api/minds withholds port/dir from non-privileged (mind) callers (#503)", async () => {
+    await ensureTestMind();
+
+    // A mind principal (untrusted): resolves to a role:"user", user_type:"mind" account.
+    const mindUser = await getOrCreateMindUser("e2e-authz-mind-503");
+    const mindSession = await createSession(mindUser.id);
+    const asMind = (path: string): Promise<Response> => {
+      const headers = new Headers();
+      headers.set("Authorization", `Bearer ${mindSession}`);
+      headers.set("Origin", BASE_URL);
+      return fetch(`${BASE_URL}${path}`, { headers });
+    };
+
+    // Registry internals that aid lateral movement / fs probing — must never
+    // reach a mind token.
+    const SENSITIVE = ["port", "dir", "branch", "template", "templateHash", "parent", "createdBy"];
+
+    // List: a mind caller gets profile-level fields only.
+    const mindList = await asMind("/api/minds");
+    assert.equal(mindList.status, 200);
+    const minds = (await mindList.json()) as Record<string, unknown>[];
+    const mine = minds.find((m) => m.name === TEST_MIND);
+    assert.ok(mine, `expected ${TEST_MIND} in mind-facing list`);
+    for (const f of SENSITIVE) {
+      assert.ok(!(f in mine), `mind list leaked "${f}": ${JSON.stringify(mine)}`);
+    }
+    assert.ok("status" in mine && "channels" in mine, "reduced entry keeps profile/status fields");
+
+    // Detail: same reduction, and no variants array (variant ports are internal).
+    const mindDetail = await asMind(`/api/minds/${TEST_MIND}`);
+    assert.equal(mindDetail.status, 200);
+    const detail = (await mindDetail.json()) as Record<string, unknown>;
+    for (const f of [...SENSITIVE, "variants"]) {
+      assert.ok(!(f in detail), `mind detail leaked "${f}": ${JSON.stringify(detail)}`);
+    }
+    // Positively lock the reduced contract: the profile-level fields the UI/CLI
+    // consume must survive toPublicMind()'s hand-maintained allowlist. Only
+    // always-present fields are asserted — displayName/description/avatar come
+    // from an optional profile and JSON drops undefined-valued keys.
+    for (const f of ["name", "status", "channels", "stage", "hasPages", "lastActiveAt"]) {
+      assert.ok(f in detail, `reduced detail dropped "${f}": ${JSON.stringify(detail)}`);
+    }
+
+    // Admin (daemon token) still gets the full entry, including port.
+    const adminList = await daemonRequest("/api/minds");
+    const adminMinds = (await adminList.json()) as Record<string, unknown>[];
+    const adminMine = adminMinds.find((m) => m.name === TEST_MIND);
+    assert.ok(
+      adminMine && typeof adminMine.port === "number",
+      "admin list must still include port",
+    );
+
+    const adminDetail = await daemonRequest(`/api/minds/${TEST_MIND}`);
+    const adminDetailBody = (await adminDetail.json()) as Record<string, unknown>;
+    assert.equal(typeof adminDetailBody.port, "number", "admin detail must still include port");
+    // The other half of the preserved behavior: admins keep the variants array
+    // that minds are denied.
+    assert.ok(
+      Array.isArray(adminDetailBody.variants),
+      "admin detail must still include variants array",
+    );
+  });
+
   it("conversations: create, send message, read back", async () => {
     await ensureTestMind();
     const brain = await ensureBrainParticipant("convo");
