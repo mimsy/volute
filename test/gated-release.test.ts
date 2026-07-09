@@ -77,14 +77,30 @@ describe("gated-channel release (#537)", () => {
       const m = makeManager();
       manager = m.manager;
 
-      const fireCounts: number[] = [];
+      const fires: string[] = [];
       manager.setNotifier(async (_mind, text) => {
-        if (text.includes("[New channel:")) fireCounts.push(1);
+        if (text.includes("[New channel:")) fires.push(text);
       });
 
       for (let i = 0; i < 21; i++) await gate(manager, name, "discord:general");
       // counts 1..21 → notify at 1, 10, 20 → 3 fires
-      assert.equal(fireCounts.length, 3);
+      assert.equal(fires.length, 3);
+
+      // The first invite reads as "nobody has reached out here before"; later invites
+      // carry the held-count context so the mind can tell a fresh ping from months of
+      // silence (bug 3). Regressing heldLine back to one string must fail this.
+      assert.ok(
+        fires[0].includes("Someone new is reaching out"),
+        "first invite uses the fresh-contact wording",
+      );
+      assert.ok(
+        /\d+ messages from this channel are being held, unrouted/.test(fires[2]),
+        "a repeat invite reports how many messages are held, unrouted",
+      );
+      assert.ok(
+        !fires[2].includes("Someone new is reaching out"),
+        "a repeat invite drops the fresh-contact wording",
+      );
     });
 
     it("never notifies for a declined channel, but still records history", async () => {
@@ -103,11 +119,18 @@ describe("gated-channel release (#537)", () => {
         0,
         "declined channel never invites",
       );
-      // History still persisted as gated rows.
-      const gated = (await rows(name)).filter(
-        (r) => r.channel === "discord:spam" && r.status === "gated",
+      // History still persisted, but as inert archived rows (never re-surfaced as gated).
+      const all = (await rows(name)).filter((r) => r.channel === "discord:spam");
+      assert.equal(
+        all.filter((r) => r.status === "gated").length,
+        0,
+        "declined channel accumulates no live gated rows",
       );
-      assert.equal(gated.length, 15, "messages are still held (history preserved)");
+      assert.equal(
+        all.filter((r) => r.status === "archived").length,
+        15,
+        "messages are archived (history preserved)",
+      );
     });
   });
 
@@ -163,6 +186,28 @@ describe("gated-channel release (#537)", () => {
       assert.ok(row);
       assert.equal(row.status, "pending", "promoted to pending");
       assert.equal(row.session, "discord-inbox", "session rewritten to the current route");
+    });
+
+    it("expands a $new route to a generated session on release, not the literal '$new'", async () => {
+      const name = createMind({ rules: [], default: "main" });
+      cleanup.push(name);
+      const m = makeManager();
+      manager = m.manager;
+
+      await gate(manager, name, "discord:general");
+
+      writeRoutes(name, {
+        rules: [{ channel: "discord:*", session: "$new" }],
+        default: "main",
+      });
+      await manager.releaseGated(name);
+
+      const after = await rows(name);
+      const row = after.find((r) => r.channel === "discord:general");
+      assert.ok(row);
+      assert.equal(row.status, "pending", "promoted to pending");
+      assert.notEqual(row.session, "$new", "the literal '$new' is never persisted");
+      assert.match(row.session, /^new-/, "session expanded to a generated ephemeral name");
     });
 
     it("promotes at most N per channel (newest) and archives the remainder with one summary", async () => {
@@ -231,7 +276,8 @@ describe("gated-channel release (#537)", () => {
       manager = m.manager;
 
       for (let i = 0; i < 3; i++) await gate(manager, name, "discord:general");
-      // Decline archives the current 3; add 2 fresh gated rows after declining.
+      // Decline archives the current 3; the 2 fresh messages after declining are
+      // archived on arrival (never gated), so they never re-surface as actionable.
       await manager.declineChannel(name, "discord:general");
       for (let i = 0; i < 2; i++) await gate(manager, name, "discord:general");
 
@@ -246,8 +292,13 @@ describe("gated-channel release (#537)", () => {
       );
       assert.equal(
         after.filter((r) => r.status === "gated").length,
-        2,
-        "post-decline gated rows stay gated",
+        0,
+        "a declined channel accumulates no live gated rows",
+      );
+      assert.equal(
+        after.filter((r) => r.status === "archived").length,
+        5,
+        "all declined-channel messages are archived (inert)",
       );
     });
 

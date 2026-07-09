@@ -437,10 +437,14 @@ export class DeliveryManager {
     if (archiveIds.length > 0) {
       try {
         const db = await getDb();
-        await db
-          .update(deliveryQueue)
-          .set({ status: "archived" })
-          .where(inArray(deliveryQueue.id, archiveIds));
+        // Chunk the id list so a large sub-7-day backlog can't exceed SQLite's ~999
+        // bound-variable limit — this IS the flood-prevention path, so it must not throw.
+        for (let i = 0; i < archiveIds.length; i += 500) {
+          await db
+            .update(deliveryQueue)
+            .set({ status: "archived" })
+            .where(inArray(deliveryQueue.id, archiveIds.slice(i, i + 500)));
+        }
       } catch (err) {
         dlog.warn(`failed to archive gated rows for ${baseName}`, log.errorData(err));
       }
@@ -1083,9 +1087,11 @@ export class DeliveryManager {
     payload: DeliveryPayload,
   ): Promise<void> {
     const baseName = await getBaseName(mindName);
-    // A declined channel still persists history, but never notifies. #537
+    // A declined channel's messages are archived immediately (inert): history is still
+    // preserved, but they never notify, never surface in getPending/status, and never
+    // accumulate as live gated rows — matching declineChannel's own archiving. #537
     const declined = await this.isChannelDeclined(baseName, payload.channel);
-    await this.persistToQueue(mindName, session, payload, "gated");
+    await this.persistToQueue(mindName, session, payload, declined ? "archived" : "gated");
     if (declined) return;
 
     // Re-notify on a cadence, not just once, so a long silence stays visible. Count over
@@ -1158,7 +1164,7 @@ export class DeliveryManager {
     mindName: string,
     session: string,
     payload: DeliveryPayload,
-    status: "pending" | "gated" = "pending",
+    status: "pending" | "gated" | "archived" = "pending",
   ): Promise<number | undefined> {
     try {
       const baseName = await getBaseName(mindName);
