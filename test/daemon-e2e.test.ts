@@ -840,6 +840,13 @@ describe("daemon e2e", { timeout: 420000 }, () => {
     for (const f of [...SENSITIVE, "variants"]) {
       assert.ok(!(f in detail), `mind detail leaked "${f}": ${JSON.stringify(detail)}`);
     }
+    // Positively lock the reduced contract: the profile-level fields the UI/CLI
+    // consume must survive toPublicMind()'s hand-maintained allowlist. Only
+    // always-present fields are asserted — displayName/description/avatar come
+    // from an optional profile and JSON drops undefined-valued keys.
+    for (const f of ["name", "status", "channels", "stage", "hasPages", "lastActiveAt"]) {
+      assert.ok(f in detail, `reduced detail dropped "${f}": ${JSON.stringify(detail)}`);
+    }
 
     // Admin (daemon token) still gets the full entry, including port.
     const adminList = await daemonRequest("/api/minds");
@@ -853,6 +860,12 @@ describe("daemon e2e", { timeout: 420000 }, () => {
     const adminDetail = await daemonRequest(`/api/minds/${TEST_MIND}`);
     const adminDetailBody = (await adminDetail.json()) as Record<string, unknown>;
     assert.equal(typeof adminDetailBody.port, "number", "admin detail must still include port");
+    // The other half of the preserved behavior: admins keep the variants array
+    // that minds are denied.
+    assert.ok(
+      Array.isArray(adminDetailBody.variants),
+      "admin detail must still include variants array",
+    );
   });
 
   it("conversations: create, send message, read back", async () => {
