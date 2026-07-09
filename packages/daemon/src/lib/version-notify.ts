@@ -1,7 +1,8 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { sendSystemMessage } from "./chat/system-chat.js";
-import { readRegistry, setMindTemplateHash, voluteSystemDir } from "./mind/registry.js";
+import { mindDir, readRegistry, setMindTemplateHash, voluteSystemDir } from "./mind/registry.js";
+import { computeMindTemplateHash } from "./mind/template-staleness.js";
 import { parseReleaseNotes } from "./release-notes.js";
 import { computeTemplateHash } from "./template/template-hash.js";
 import { getCurrentVersion } from "./update-check.js";
@@ -29,8 +30,10 @@ function writeState(state: VersionNotifyState): void {
 }
 
 /**
- * Backfill templateHash for minds that don't have one.
- * Uses the current template hash so existing minds won't get a false upgrade notification.
+ * Backfill templateHash for minds that don't have one, measuring the mind's
+ * actual on-disk template rather than stamping the current hash. A mind that is
+ * genuinely stale is recorded as stale (not falsely current); if its files
+ * can't be read, the column is left null and null reads as unknown → stale.
  */
 export async function backfillTemplateHashes(): Promise<void> {
   const entries = await readRegistry();
@@ -41,11 +44,25 @@ export async function backfillTemplateHashes(): Promise<void> {
 
     const tmpl = entry.template ?? "claude";
     try {
-      const hash = computeTemplateHash(tmpl);
+      const hash = computeMindTemplateHash(mindDir(entry.name), tmpl, entry.name);
       await setMindTemplateHash(entry.name, hash);
     } catch (err) {
-      log.warn(`failed to compute template hash for ${entry.name}`, log.errorData(err));
+      // Leave the column null: null reads as unknown → stale, not fresh.
+      log.warn(`failed to compute on-disk template hash for ${entry.name}`, log.errorData(err));
     }
+  }
+}
+
+/**
+ * Log a warning at daemon start for each mind running an outdated template copy,
+ * so staleness is visible in the daemon log even when nobody runs `volute status`.
+ */
+export async function warnStaleTemplates(): Promise<void> {
+  const { isTemplateStale } = await import("./mind/template-staleness.js");
+  const entries = await readRegistry();
+  const stale = entries.filter((e) => isTemplateStale(e)).map((e) => e.name);
+  for (const name of stale) {
+    log.warn(`${name} is running an outdated template — run 'volute mind upgrade ${name}'`);
   }
 }
 

@@ -350,8 +350,15 @@ export async function startDaemon(opts: {
 
   // Backfill template hashes + notify minds about version updates
   try {
-    const { backfillTemplateHashes, notifyVersionUpdate } = await import("./lib/version-notify.js");
-    backfillTemplateHashes();
+    const { backfillTemplateHashes, notifyVersionUpdate, warnStaleTemplates } = await import(
+      "./lib/version-notify.js"
+    );
+    // Backfill first (measures on-disk hashes), then warn about stale minds.
+    backfillTemplateHashes()
+      .then(() => warnStaleTemplates())
+      .catch((err) => {
+        log.warn("failed to check template staleness", log.errorData(err));
+      });
     // Fire-and-forget notification (non-blocking)
     notifyVersionUpdate().catch((err) => {
       log.warn("failed to send version update notifications", log.errorData(err));

@@ -83,13 +83,22 @@ const cmd = command({
           running: boolean;
           status?: string;
           stage?: string;
+          templateStale?: boolean;
         }>;
         if (minds.length > 0) {
           console.log(`\nMinds (${minds.length}):`);
           for (const mind of minds) {
             const status = mind.status ?? (mind.running ? "running" : "stopped");
             const label = mind.stage === "seed" ? " (seed)" : "";
-            console.log(`  ${mind.name}: ${status}${label}`);
+            const template = mind.templateStale ? "  [template: outdated]" : "";
+            console.log(`  ${mind.name}: ${status}${label}${template}`);
+          }
+          const stale = minds.filter((m) => m.templateStale).map((m) => m.name);
+          if (stale.length > 0) {
+            const noun = stale.length === 1 ? "mind is" : "minds are";
+            console.log(
+              `\n⚠ ${stale.length} ${noun} running outdated templates: ${stale.join(", ")} — run 'volute mind upgrade <name>'`,
+            );
           }
         } else {
           console.log("\nNo minds configured.");

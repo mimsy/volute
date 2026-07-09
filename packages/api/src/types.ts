@@ -19,6 +19,7 @@ export type Mind = {
   template?: string;
   channels: PlatformConnection[];
   hasPages?: boolean;
+  templateStale?: boolean;
   lastActiveAt?: string | null;
   displayName?: string;
   description?: string;

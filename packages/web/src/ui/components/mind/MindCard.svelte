@@ -25,6 +25,9 @@ let { mind }: { mind: Mind } = $props();
     {#if mind.stage === "seed"}
       <span class="seed-badge">seed</span>
     {/if}
+    {#if mind.templateStale}
+      <span class="stale-badge" title="Running an outdated template — run 'volute mind upgrade {mind.name}'">outdated</span>
+    {/if}
     <StatusBadge status={mind.status} />
   </div>
   {#if mind.description}
@@ -109,6 +112,20 @@ let { mind }: { mind: Mind } = $props();
     font-weight: 500;
     letter-spacing: 0.02em;
     text-transform: uppercase;
+  }
+
+  .stale-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    border-radius: var(--radius);
+    background: var(--yellow-bg);
+    color: var(--yellow);
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    cursor: help;
   }
 
   .meta {

@@ -20,6 +20,7 @@ const cmd = command({
       running: boolean;
       status?: string;
       stage?: string;
+      templateStale?: boolean;
     }>;
 
     if (minds.length === 0) {
@@ -30,7 +31,8 @@ const cmd = command({
     for (const mind of minds) {
       const status = mind.status ?? (mind.running ? "running" : "stopped");
       const label = mind.stage === "seed" ? " (seed)" : "";
-      console.log(`  ${mind.name}: ${status}${label}`);
+      const template = mind.templateStale ? "  [template: outdated]" : "";
+      console.log(`  ${mind.name}: ${status}${label}${template}`);
     }
   },
 });
