@@ -1,13 +1,17 @@
 import assert from "node:assert/strict";
-import { mkdirSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, it } from "node:test";
+import { fileURLToPath } from "node:url";
 import sharp from "sharp";
 import { voluteHome } from "../packages/daemon/src/lib/mind/registry.js";
 import {
+  AVATAR_CONTEXT_DIM,
   AVATAR_DIM,
+  MAX_AVATAR_BLOCK_BYTES,
   migrateAvatarSizes,
   normalizeAvatar,
+  renderAvatarBlock,
 } from "../packages/daemon/src/lib/util/avatar-image.js";
 import { fileEtag, isNotModified } from "../packages/daemon/src/lib/util/http-cache.js";
 
@@ -45,6 +49,52 @@ describe("normalizeAvatar", () => {
   it("returns null for non-image input", async () => {
     const result = await normalizeAvatar(Buffer.from("not an image"));
     assert.equal(result, null);
+  });
+});
+
+describe("renderAvatarBlock", () => {
+  it("resizes an oversized avatar to AVATAR_CONTEXT_DIM and stays under the block ceiling", async () => {
+    const dir = resolve(voluteHome(), "render-avatars");
+    mkdirSync(dir, { recursive: true });
+    const path = resolve(dir, "render-big.png");
+    writeFileSync(path, await makePng(1024));
+
+    const blocks = await renderAvatarBlock(path, "someone");
+    assert.ok(blocks);
+    assert.equal(blocks.length, 2);
+    assert.deepEqual(blocks[0], { type: "text", text: "[Avatar for someone]" });
+
+    const image = blocks[1];
+    assert.ok(image.type === "image");
+    assert.equal(image.media_type, "image/png");
+    assert.ok(image.data.length <= MAX_AVATAR_BLOCK_BYTES);
+
+    const meta = await sharp(Buffer.from(image.data, "base64")).metadata();
+    assert.equal(meta.width, AVATAR_CONTEXT_DIM);
+    assert.equal(meta.height, AVATAR_CONTEXT_DIM);
+  });
+
+  it("returns null for an unsupported file extension", async () => {
+    const dir = resolve(voluteHome(), "render-avatars");
+    mkdirSync(dir, { recursive: true });
+    const path = resolve(dir, "render-note.txt");
+    writeFileSync(path, "not an image");
+    assert.equal(await renderAvatarBlock(path, "someone"), null);
+  });
+});
+
+describe("sharp packaging", () => {
+  // This class of bug — an optional dep present in dev but absent in prod with a
+  // silent fallback — is invisible to every other test. sharp must ship with the
+  // published package (dependencies), not only on dev machines (devDependencies).
+  it("declares sharp as a runtime dependency, not a devDependency", () => {
+    const pkgPath = fileURLToPath(new URL("../package.json", import.meta.url));
+    const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
+    assert.ok(pkg.dependencies?.sharp, "sharp must be listed in dependencies");
+    assert.ok(
+      !pkg.devDependencies?.sharp,
+      "sharp must not be in devDependencies (it no-ops silently in production)",
+    );
   });
 });
 

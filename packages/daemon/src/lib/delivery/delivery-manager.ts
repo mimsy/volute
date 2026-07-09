@@ -1,5 +1,5 @@
-import { readFile, realpath } from "node:fs/promises";
-import { extname, resolve } from "node:path";
+import { realpath } from "node:fs/promises";
+import { resolve } from "node:path";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { getTypingMap, publishTypingForChannels } from "../chat/typing.js";
 import { tryGetMindManager } from "../daemon/mind-manager.js";
@@ -10,6 +10,7 @@ import { onMindEvent } from "../events/mind-activity-tracker.js";
 import { findMind, getBaseName, mindDir, voluteHome } from "../mind/registry.js";
 import { readVoluteConfig } from "../mind/volute-config.js";
 import { deliveryQueue } from "../schema.js";
+import { type AvatarBlock, renderAvatarBlock } from "../util/avatar-image.js";
 import log from "../util/logger.js";
 import {
   type DeliveryPayload,
@@ -37,9 +38,6 @@ const REDRIVE_BATCH_LIMIT = 200;
 
 const mentionRegexCache = new Map<string, RegExp>();
 
-type AvatarBlock =
-  | { type: "text"; text: string }
-  | { type: "image"; media_type: string; data: string };
 type AvatarCacheEntry = { blocks: AvatarBlock[]; expiresAt: number };
 const avatarBlocksCache = new Map<string, AvatarCacheEntry>();
 const AVATAR_CACHE_TTL = 5 * 60 * 1000;
@@ -1070,19 +1068,6 @@ export class DeliveryManager {
 
     const blocks: AvatarBlock[] = [];
 
-    let sharpDefault: any = null;
-    try {
-      const mod = await import("sharp");
-      sharpDefault = mod.default ?? mod;
-    } catch (err) {
-      const code = (err as NodeJS.ErrnoException).code;
-      if (code === "MODULE_NOT_FOUND" || code === "ERR_MODULE_NOT_FOUND") {
-        dlog.debug("sharp not available, sending full-size avatars");
-      } else {
-        dlog.warn("sharp import failed, sending full-size avatars", log.errorData(err));
-      }
-    }
-
     for (const p of participants) {
       if (!p.avatar) continue;
 
@@ -1115,33 +1100,8 @@ export class DeliveryManager {
           filePath = resolve(voluteHome(), "avatars", p.avatar);
         }
 
-        const ext = extname(filePath).toLowerCase();
-        const mimeMap: Record<string, string> = {
-          ".png": "image/png",
-          ".jpg": "image/jpeg",
-          ".jpeg": "image/jpeg",
-          ".gif": "image/gif",
-          ".webp": "image/webp",
-        };
-        const mediaType = mimeMap[ext];
-        if (!mediaType) continue;
-
-        const data = await readFile(filePath);
-        let imageData: Buffer = data;
-        if (sharpDefault) {
-          try {
-            imageData = await sharpDefault(data).resize(128, 128, { fit: "cover" }).toBuffer();
-          } catch (err) {
-            dlog.warn(
-              `avatar resize failed for ${p.username}, sending original`,
-              log.errorData(err),
-            );
-          }
-        }
-        blocks.push(
-          { type: "text", text: `[Avatar for ${p.username}]` },
-          { type: "image", media_type: mediaType, data: imageData.toString("base64") },
-        );
+        const rendered = await renderAvatarBlock(filePath, p.username);
+        if (rendered) blocks.push(...rendered);
       } catch (err) {
         const code = (err as NodeJS.ErrnoException).code;
         if (code !== "ENOENT") {
