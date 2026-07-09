@@ -3,7 +3,7 @@ import { type ChildProcess, execFileSync, spawn } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { after, before, describe, it } from "node:test";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import {
   approveUser,
   createUser,
@@ -1711,6 +1711,168 @@ describe("daemon e2e", { timeout: 420000 }, () => {
       if (!delivered) await new Promise((r) => setTimeout(r, 500));
     }
     assert.ok(delivered, "inbound message should be recorded in mind_history after delivery");
+
+    await daemonRequest(`/api/minds/${TEST_MIND}/stop`, { method: "POST" });
+  });
+
+  // Regression guard for the batched queued-flush contract (#382, PR #530): a sleeping
+  // mind's backlog is queued per channel, and the wake flush delivers each channel group
+  // as one batched turn — all-or-nothing per group, so a failed delivery keeps the group
+  // queued rather than dropping it. This drives the real cross-process path (chat API →
+  // fan-out → sleep queue → flush → deliverBatch → mind's /message).
+  //
+  // The mind is slept from a stopped state (no pre-sleep ritual) and the flush is invoked
+  // directly, because CI runs without a model API key: the mind process exits the moment a
+  // real turn starts, so the pre-sleep/wake-summary turns can't be relied on here. The
+  // "exactly one dispatchBatch per channel" cardinality and per-channel failure isolation
+  // (one group fails while another flushes) are covered by the in-process unit tests
+  // (message-delivery / sleep-manager), which can observe them without a live model.
+  it("sleep→queue→flush: queues per channel, flush drains it, failed delivery keeps it queued", {
+    timeout: 120000,
+  }, async () => {
+    await ensureTestMind();
+
+    /** All still-queued sleep rows for the test mind. */
+    async function queuedRows(): Promise<{ channel: string | null }[]> {
+      const db = await getDb();
+      return db
+        .select({ channel: deliveryQueue.channel })
+        .from(deliveryQueue)
+        .where(and(eq(deliveryQueue.mind, TEST_MIND), eq(deliveryQueue.status, "sleep-queued")))
+        .all();
+    }
+
+    async function waitForStatus(target: string, timeoutMs = 30000): Promise<void> {
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline) {
+        const s = (await (await daemonRequest(`/api/minds/${TEST_MIND}`)).json()) as {
+          status: string;
+        };
+        if (s.status === target) return;
+        await new Promise((r) => setTimeout(r, 300));
+      }
+      throw new Error(`mind did not reach status ${target}`);
+    }
+
+    async function waitForSleeping(timeoutMs = 15000): Promise<void> {
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline) {
+        const res = await daemonRequest(`/api/minds/${TEST_MIND}/sleep`);
+        if (((await res.json()) as { sleeping: boolean }).sleeping) return;
+        await new Promise((r) => setTimeout(r, 300));
+      }
+      throw new Error("mind did not reach sleeping state");
+    }
+
+    async function waitForQueuedCount(count: number, timeoutMs = 30000): Promise<void> {
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline) {
+        if ((await queuedRows()).length >= count) return;
+        await new Promise((r) => setTimeout(r, 300));
+      }
+      throw new Error(`expected ${count} queued rows within ${timeoutMs}ms`);
+    }
+
+    async function flush(): Promise<number> {
+      const res = await daemonRequest(`/api/minds/${TEST_MIND}/sleep/messages`, { method: "POST" });
+      assert.equal(res.status, 200, `flush: ${await res.clone().text()}`);
+      return ((await res.json()) as { flushed: number }).flushed;
+    }
+
+    // Sleep from a stopped state so no model turn runs.
+    await daemonRequest(`/api/minds/${TEST_MIND}/stop`, { method: "POST" });
+    await waitForStatus("stopped");
+    const sleepRes = await daemonRequest(`/api/minds/${TEST_MIND}/sleep`, { method: "POST" });
+    assert.equal(sleepRes.status, 200, `sleep: ${await sleepRes.clone().text()}`);
+    await waitForSleeping();
+
+    // Two channels the mind belongs to. Channel (non-DM) messages don't match the default
+    // wake triggers, so they queue rather than trigger-waking the mind.
+    const suffix = Date.now();
+    const chans: Record<string, string> = {};
+    for (const label of ["a", "b"]) {
+      const name = `sleep-flush-${label}-${suffix}`;
+      const createRes = await daemonRequest("/api/v1/channels", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      assert.equal(createRes.status, 201, `create ${name}: ${await createRes.clone().text()}`);
+      chans[label] = ((await createRes.json()) as { id: string }).id;
+      const inviteRes = await daemonRequest(`/api/v1/channels/${name}/invite`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: TEST_MIND }),
+      });
+      assert.equal(inviteRes.status, 200, `invite ${name}: ${await inviteRes.clone().text()}`);
+    }
+    const sender = await ensureBrainParticipant(`flush-${suffix}`);
+
+    async function sendToChannel(convId: string, text: string): Promise<void> {
+      const res = await daemonRequest("/api/v1/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ conversationId: convId, message: text, sender }),
+      });
+      assert.equal(res.status, 200, `send: ${await res.clone().text()}`);
+    }
+
+    // While asleep: two messages on channel A, one on channel B.
+    await sendToChannel(chans.a, "first while you slept");
+    await sendToChannel(chans.a, "second while you slept");
+    await sendToChannel(chans.b, "a note on the other channel");
+    await waitForQueuedCount(3);
+
+    // The backlog is queued across exactly two distinct channels (2 + 1), and the sleep
+    // state counts it — the mind was never invoked during sleep.
+    const queued = await queuedRows();
+    assert.equal(queued.length, 3, "all three messages queued");
+    const byChannel = new Map<string, number>();
+    for (const row of queued)
+      byChannel.set(row.channel ?? "?", (byChannel.get(row.channel ?? "?") ?? 0) + 1);
+    assert.equal(byChannel.size, 2, `expected 2 distinct channels, got ${[...byChannel.keys()]}`);
+    assert.deepEqual([...byChannel.values()].sort(), [1, 2], "channels grouped 2 and 1");
+    // The channel that holds two messages — it must flush as one atomic group, below.
+    const twoMsgChannel = [...byChannel.entries()].find(([, n]) => n === 2)?.[0];
+    assert.ok(twoMsgChannel, "one channel should hold both of its messages");
+
+    const sleepState = (await (await daemonRequest(`/api/minds/${TEST_MIND}/sleep`)).json()) as {
+      queuedMessageCount: number;
+    };
+    assert.equal(sleepState.queuedMessageCount, 3, "sleep state counts the queued backlog");
+
+    // Flush while the mind is DOWN: deliverBatch can't reach it, so every group fails and
+    // its rows stay queued. The #382 contract is all-or-nothing per group — a failed flush
+    // never drops the backlog.
+    assert.equal(await flush(), 0, "nothing flushes to a down mind");
+    assert.equal((await queuedRows()).length, 3, "a failed flush leaves the backlog queued");
+
+    // Bring the mind's process up and flush again. The two-message channel is delivered
+    // first, to a freshly-live mind, so its group flushes as ONE atomic batch (2 messages,
+    // not 2 turns) and its rows are deleted together. (The keyless CI mind exits once that
+    // batch's turn starts, so a later channel's group may not reach it — which itself shows
+    // the per-group isolation: a group that can't be delivered stays queued. Its status also
+    // reads "sleeping" not "running", so wait on the port instead of status.)
+    const startRes = await daemonRequest(`/api/minds/${TEST_MIND}/start`, { method: "POST" });
+    assert.ok(
+      startRes.status === 200 || startRes.status === 409,
+      `start: ${startRes.status} ${await startRes.clone().text()}`,
+    );
+    const entry = await findMind(TEST_MIND);
+    assert.ok(entry, "test mind must be registered");
+    await waitForListeningPid(entry.port, 30000);
+
+    const flushed = await flush();
+    assert.ok(flushed >= 2, `the two-message group must flush atomically; flushed ${flushed}`);
+    const remaining = await queuedRows();
+    assert.ok(
+      !remaining.some((r) => r.channel === twoMsgChannel),
+      "the delivered channel's whole group was removed",
+    );
+    assert.ok(
+      remaining.length <= 1,
+      `at most the other channel's message remains: ${remaining.length}`,
+    );
 
     await daemonRequest(`/api/minds/${TEST_MIND}/stop`, { method: "POST" });
   });
