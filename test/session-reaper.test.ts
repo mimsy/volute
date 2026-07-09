@@ -5,6 +5,8 @@ import {
   type ReapableQuery,
   type ReapableSession,
   reapSessionQuery,
+  reapSessionsForShutdown,
+  type ShutdownReapable,
 } from "../templates/claude/src/lib/session-reaper.js";
 
 const TIMEOUT = 30 * 60_000; // 30 min
@@ -114,5 +116,84 @@ describe("reapSessionQuery", () => {
       },
     );
     assert.equal(captured, boom);
+  });
+});
+
+describe("reapSessionsForShutdown", () => {
+  function fakeSession(name: string): ShutdownReapable & {
+    closed: boolean;
+    returned: boolean;
+  } {
+    const s = {
+      name,
+      closed: false,
+      returned: false,
+      channel: {
+        close() {
+          s.closed = true;
+        },
+      },
+      currentQuery: {
+        return() {
+          s.returned = true;
+          return Promise.resolve();
+        },
+      } as ReapableQuery,
+    };
+    return s;
+  }
+
+  it("closes and reaps every live session (not just idle ones)", async () => {
+    const a = fakeSession("main");
+    const b = fakeSession("side");
+    await reapSessionsForShutdown([a, b], () => {});
+    assert.equal(a.closed, true);
+    assert.equal(a.returned, true);
+    assert.equal(b.closed, true);
+    assert.equal(b.returned, true);
+  });
+
+  it("still closes a session that has no live query", async () => {
+    const s: ShutdownReapable & { closed: boolean } = {
+      name: "main",
+      closed: false,
+      channel: {
+        close() {
+          s.closed = true;
+        },
+      },
+      currentQuery: undefined,
+    };
+    await reapSessionsForShutdown([s], () => {});
+    assert.equal(s.closed, true);
+  });
+
+  it("one wedged/failed reap doesn't block the others; errors go to onError", async () => {
+    const boom = new Error("stuck child");
+    const good = fakeSession("good");
+    const bad: ShutdownReapable & { closed: boolean } = {
+      name: "bad",
+      closed: false,
+      channel: {
+        close() {
+          bad.closed = true;
+        },
+      },
+      currentQuery: {
+        return() {
+          return Promise.reject(boom);
+        },
+      } as ReapableQuery,
+    };
+    const errors: [string, unknown][] = [];
+    await reapSessionsForShutdown([bad, good], (name, err) => errors.push([name, err]));
+    // The good session was reaped despite the bad one failing.
+    assert.equal(good.returned, true);
+    assert.equal(bad.closed, true);
+    assert.deepEqual(errors, [["bad", boom]]);
+  });
+
+  it("no-ops on an empty session set", async () => {
+    await assert.doesNotReject(() => reapSessionsForShutdown([], () => {}));
   });
 });

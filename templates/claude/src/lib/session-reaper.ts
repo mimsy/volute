@@ -66,3 +66,35 @@ export async function reapSessionQuery(
     onError(err);
   }
 }
+
+/** Minimal view of a live session needed to tear it down on shutdown. */
+export interface ShutdownReapable {
+  name: string;
+  /** Input iterable — closing it unwinds the stream consumer. */
+  channel: { close(): void };
+  /** The session's live SDK query, if it has one. */
+  currentQuery?: ReapableQuery;
+}
+
+/**
+ * Reap every live session's SDK subprocess on shutdown (SIGTERM/SIGINT).
+ *
+ * Unlike the idle reaper this ignores idle/reapable state — on the way out we
+ * want *all* children gone. For each session it closes the input channel so the
+ * stream consumer unwinds, then awaits `query.return()` so the CLI subprocess
+ * exits and its status is reaped, rather than being orphaned to PID 1 (the
+ * daemon, which doesn't reap reparented children) as a `<defunct>` zombie.
+ * Reaps run in parallel; a per-session failure is reported via `onError` and
+ * never rejects the batch, so one wedged child can't block the others.
+ */
+export async function reapSessionsForShutdown(
+  sessions: Iterable<ShutdownReapable>,
+  onError: (name: string, err: unknown) => void,
+): Promise<void> {
+  await Promise.all(
+    [...sessions].map(async (s) => {
+      s.channel.close();
+      await reapSessionQuery(s.currentQuery, (err) => onError(s.name, err));
+    }),
+  );
+}

@@ -373,7 +373,7 @@ Set the model via `home/.config/config.json` (SDK config) or `home/.config/volut
 
 ```sh
 docker build -t volute .
-docker run -d -p 1618:1618 -v volute-data:/data -v volute-minds:/minds volute
+docker run -d --init -p 1618:1618 -v volute-data:/data -v volute-minds:/minds volute
 ```
 
 Or with docker-compose:
