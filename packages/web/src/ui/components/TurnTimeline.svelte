@@ -14,13 +14,16 @@ import {
   fetchHistory,
   fetchSummaries,
   fetchSummaryByIds,
+  fetchSystemInfo,
   fetchTurnEvents,
   fetchTurns,
 } from "../lib/client";
 import { extractTextContent } from "../lib/feed-utils";
 import { formatRelativeTime } from "../lib/format";
 import { navigate } from "../lib/navigate";
+import { parseISOWeek, summaryBounds, wallNow } from "../lib/period-keys";
 import { activeMinds } from "../lib/stores.svelte";
+import { mergeOlderSummaries, nextSummaryPage } from "../lib/summary-paging";
 import {
   isRecentInbound,
   isTurnStale,
@@ -49,19 +52,7 @@ const CHILD_PERIOD: Record<string, "turn" | "hour" | "day" | "week" | "month"> =
   month: "week",
 };
 
-function parseISOWeek(weekKey: string): Date {
-  // weekKey format: "2026-W12" — returns the Monday of that week (local time)
-  const [yearStr, weekStr] = weekKey.split("-W");
-  const year = parseInt(yearStr, 10);
-  const week = parseInt(weekStr, 10);
-  const jan4 = new Date(year, 0, 4);
-  const dayOfWeek = jan4.getDay() || 7;
-  const monday = new Date(jan4);
-  monday.setDate(jan4.getDate() - dayOfWeek + 1 + (week - 1) * 7);
-  return monday;
-}
-
-// Period keys are local time. Parse without Z suffix.
+// Period keys are server-local wall-clock time. Parse without Z suffix.
 function periodKeyToDate(period: string, periodKey: string): Date {
   if (period === "hour")
     return new Date(`${periodKey.slice(0, 10)}T${periodKey.slice(11, 13)}:00:00`);
@@ -71,14 +62,17 @@ function periodKeyToDate(period: string, periodKey: string): Date {
   return new Date(periodKey);
 }
 
-function formatPeriodTime(period: string, periodKey: string): string {
-  const now = new Date();
-  const todayLocal = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+// `serverTz` anchors Today/Yesterday and the current-year comparison to the
+// daemon's timezone (period keys are server-local). Wall-clock labels
+// themselves format the key's own numbers, so they're already zone-agnostic.
+function formatPeriodTime(period: string, periodKey: string, serverTz?: string): string {
+  const w = wallNow(serverTz);
+  const todayLocal = new Date(w.year, w.month - 1, w.day);
   const yesterdayLocal = new Date(todayLocal);
   yesterdayLocal.setDate(todayLocal.getDate() - 1);
 
   if (period === "hour") {
-    // Period keys are local time — parse directly
+    // Period keys are server-local wall time — parse and render directly
     const start = periodKeyToDate("hour", periodKey);
     const end = new Date(start.getTime() + 3600000);
 
@@ -108,7 +102,7 @@ function formatPeriodTime(period: string, periodKey: string): string {
     end.setDate(start.getDate() + 6);
     const fmtDate = (d: Date) =>
       d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-    if (start.getFullYear() !== now.getFullYear()) {
+    if (start.getFullYear() !== w.year) {
       return `${fmtDate(start)} \u2013 ${fmtDate(end)}, ${start.getFullYear()}`;
     }
     return `${fmtDate(start)} \u2013 ${fmtDate(end)}`;
@@ -153,9 +147,12 @@ let { name, mindStatus }: { name?: string; mindStatus?: string } = $props();
 // --- Turns data ---
 const PAGE_SIZE = 100;
 let turnsData = $state<TurnRow[]>([]);
-let hasMore = $state(true);
 let loading = $state(false);
 let historyError = $state("");
+
+// Canonical timezone of the daemon host (period keys are computed in it).
+// Fetched once at load; undefined falls back to browser-local time.
+let serverTz = $state<string | undefined>(undefined);
 
 let readOnlyConv = $state<ConversationWithParticipants | null>(null);
 
@@ -165,6 +162,12 @@ let daySummaries = $state<SummaryRow[]>([]);
 let weekSummaries = $state<SummaryRow[]>([]);
 let monthSummaries = $state<SummaryRow[]>([]);
 let summariesLoaded = $state(false);
+// Backward summary paging (older history coarsens to week/month tiers).
+let hasMoreSummaries = $state(true);
+let loadingOlder = $state(false);
+let canLoadOlder = $derived(
+  hasMoreSummaries && (weekSummaries.length > 0 || monthSummaries.length > 0),
+);
 let expandedSummaries = $state(new SvelteMap<number, SummaryRow[] | TurnRow[]>());
 let loadingChildren = new SvelteSet<number>();
 // For single-turn hours: expand directly to raw events instead of showing the turn summary
@@ -454,21 +457,21 @@ function disconnectSSE() {
 }
 
 // --- Data loading ---
-async function loadTurns(offset: number) {
+// Turns are only ever displayed for the current hour (older turns are reached
+// through summaries), so a single page more than covers what's shown. There is
+// no offset paging — walking back in time happens via loadOlderSummaries. All
+// ingestion routes through upsertTurnRows, which dedups by id, so a re-fetch
+// never produces duplicate keys in the keyed {#each} (which would crash it).
+async function loadTurns() {
   loading = true;
   historyError = "";
   try {
-    const rows = await fetchTurns({ mind: name, limit: PAGE_SIZE, offset });
+    const rows = await fetchTurns({ mind: name, limit: PAGE_SIZE });
     const chronological = [...rows].reverse();
-    if (offset === 0) {
-      turnsData = chronological;
-    } else {
-      turnsData = [...chronological, ...turnsData];
-    }
-    hasMore = rows.length === PAGE_SIZE;
+    upsertTurnRows(chronological);
 
     // Check for recent untagged inbound events (message sent but turn not yet started)
-    if (offset === 0 && pendingInbounds.length === 0 && name) {
+    if (pendingInbounds.length === 0 && name) {
       fetchHistory(name, { preset: "all", limit: 10 })
         .then((recent) => {
           // Only promote recent untagged inbounds — an old inbound a stopped/sleeping
@@ -505,49 +508,84 @@ async function loadTurns(offset: number) {
 
 async function loadSummaries() {
   try {
-    const now = new Date();
-
-    // Period keys are local time. Build boundaries directly.
-    const pad2 = (n: number) => String(n).padStart(2, "0");
-    const todayKey = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`;
-    const hourCutoff = `${todayKey}T${pad2(now.getHours())}`;
-    const todayHourFrom = `${todayKey}T00`;
-    const todayDayKey = todayKey;
-
-    // Week boundary (7 days ago)
-    const weekAgo = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 7);
-    const weekCutoff = `${weekAgo.getFullYear()}-${pad2(weekAgo.getMonth() + 1)}-${pad2(weekAgo.getDate())}`;
-
-    const currentMonth = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}`;
+    // Boundaries are anchored to the server's timezone, since period keys are
+    // computed there (see period-keys.ts). weekCutoff/currentMonthKey are the
+    // date bounds for the tiers below "today"; the server translates the week
+    // date bound to the matching ISO-week key.
+    const bounds = summaryBounds(serverTz);
 
     // Fetch all summary periods in parallel
     const [hours, days, weeks, months] = await Promise.all([
       fetchSummaries({
         mind: name,
         period: "hour",
-        from: todayHourFrom,
-        to: hourCutoff,
+        from: bounds.todayHourFrom,
+        to: bounds.hourCutoff,
         limit: 24,
       }),
-      fetchSummaries({ mind: name, period: "day", from: weekCutoff, to: todayDayKey, limit: 7 }),
-      fetchSummaries({ mind: name, period: "week", to: weekCutoff, limit: 12 }),
-      fetchSummaries({ mind: name, period: "month", to: currentMonth, limit: 12 }),
+      fetchSummaries({
+        mind: name,
+        period: "day",
+        from: bounds.weekCutoff,
+        to: bounds.todayKey,
+        limit: 7,
+      }),
+      fetchSummaries({ mind: name, period: "week", to: bounds.weekCutoff, limit: 12 }),
+      fetchSummaries({ mind: name, period: "month", to: bounds.currentMonthKey, limit: 12 }),
     ]);
 
     hourSummaries = hours.sort((a, b) => a.period_key.localeCompare(b.period_key));
     daySummaries = days
-      .filter((d) => d.period_key < todayDayKey)
+      .filter((d) => d.period_key < bounds.todayKey)
       .sort((a, b) => a.period_key.localeCompare(b.period_key));
-    weekSummaries = weeks.sort((a, b) => a.period_key.localeCompare(b.period_key));
+    // Drop the current (partial) week so it doesn't show at both the week tier
+    // and the day tier — days already cover the last 7 days. The server maps
+    // weekCutoff (a date) to the week containing it, which may be the current
+    // week, so this client-side guard is what keeps the seam clean.
+    weekSummaries = weeks
+      .filter((w) => w.period_key < bounds.currentWeekKey)
+      .sort((a, b) => a.period_key.localeCompare(b.period_key));
     monthSummaries = months
-      .filter((m) => m.period_key < currentMonth)
+      .filter((m) => m.period_key < bounds.currentMonthKey)
       .sort((a, b) => a.period_key.localeCompare(b.period_key));
 
+    hasMoreSummaries = true;
     summariesLoaded = true;
   } catch (e) {
     console.warn("[TurnTimeline] Failed to load summaries:", e);
     summariesLoaded = true; // still mark loaded so we don't block the UI
   }
+}
+
+// Page backward through older summaries at the coarsest loaded tier.
+async function loadOlderSummaries() {
+  if (loadingOlder) return;
+  const next = nextSummaryPage(weekSummaries, monthSummaries);
+  if (!next) {
+    hasMoreSummaries = false;
+    return;
+  }
+  loadingOlder = true;
+  try {
+    const fetched = await fetchSummaries({
+      mind: name,
+      period: next.tier,
+      to: next.to,
+      limit: 12,
+    });
+    if (next.tier === "month") {
+      const { merged, exhausted } = mergeOlderSummaries(monthSummaries, fetched);
+      monthSummaries = merged;
+      if (exhausted) hasMoreSummaries = false;
+    } else {
+      const { merged, exhausted } = mergeOlderSummaries(weekSummaries, fetched);
+      weekSummaries = merged;
+      if (exhausted) hasMoreSummaries = false;
+    }
+  } catch (e) {
+    console.warn("[TurnTimeline] Failed to load older summaries:", e);
+  }
+  loadingOlder = false;
 }
 
 async function toggleSummaryExpand(summary: SummaryRow) {
@@ -629,9 +667,13 @@ async function toggleSummaryExpand(summary: SummaryRow) {
         from = `${monday.getFullYear()}-${pad2(monday.getMonth() + 1)}-${pad2(monday.getDate())}`;
         to = `${sunday.getFullYear()}-${pad2(sunday.getMonth() + 1)}-${pad2(sunday.getDate())}`;
       } else if (summary.period === "month") {
-        // Month "2026-03" → weeks/days within
+        // Month "2026-03" → weeks/days within. Use the real last day so the
+        // server's date→week-key mapping (for the week child tier) doesn't
+        // overflow into the next month and pull in a non-overlapping week.
+        const [my, mm] = summary.period_key.split("-").map(Number);
+        const lastDay = new Date(my, mm, 0).getDate();
         from = `${summary.period_key}-01`;
-        to = `${summary.period_key}-31`;
+        to = `${summary.period_key}-${String(lastDay).padStart(2, "0")}`;
       } else {
         from = summary.period_key;
         to = summary.period_key;
@@ -731,7 +773,6 @@ $effect(() => {
   if (n !== prevName) {
     prevName = n;
     turnsData = [];
-    hasMore = true;
     streamingEvents = new SvelteMap();
     nextSyntheticId = -1;
     pendingInbounds = [];
@@ -740,13 +781,14 @@ $effect(() => {
     weekSummaries = [];
     monthSummaries = [];
     summariesLoaded = false;
+    hasMoreSummaries = true;
     expandedSummaries = new SvelteMap();
     directEventsSummaries = new SvelteMap();
     reconnecting = false;
     reconnectAttempts = 0;
     lastEventAt.clear();
     startScrollToBottom();
-    loadTurns(0);
+    loadTurns();
   }
 });
 
@@ -777,6 +819,16 @@ $effect(() => {
     }
   }, 30_000);
   return () => clearInterval(interval);
+});
+
+// Fetch the daemon's canonical timezone once, so boundary math and labels
+// anchor to server-local time even when the browser is in another zone.
+$effect(() => {
+  fetchSystemInfo()
+    .then((info) => {
+      serverTz = info.timezone ?? undefined;
+    })
+    .catch(() => {});
 });
 
 // Load summaries once turns are available
@@ -813,15 +865,15 @@ function jumpToLatest() {
 
 <div class="turn-timeline">
   <div class="turn-scroll" bind:this={scrollContainer} onscroll={handleScroll} onwheel={() => stopScrollTimer()}>
-    {#if hasMore}
+    {#if canLoadOlder}
       <div class="load-older">
         <button
-          onclick={() => loadTurns(turnsData.length)}
-          disabled={loading}
+          onclick={loadOlderSummaries}
+          disabled={loadingOlder}
           class="load-older-btn"
-          style:opacity={loading ? 0.5 : 1}
+          style:opacity={loadingOlder ? 0.5 : 1}
         >
-          {loading ? "loading..." : "load older"}
+          {loadingOlder ? "loading..." : "load older"}
         </button>
       </div>
     {/if}
@@ -877,7 +929,7 @@ function jumpToLatest() {
                     {directEventsSummaries}
                     {loadingChildren}
                     {toggleSummaryExpand}
-                    {formatPeriodTime}
+                    formatPeriodTime={(p, k) => formatPeriodTime(p, k, serverTz)}
                   />
                 </div>
               </div>

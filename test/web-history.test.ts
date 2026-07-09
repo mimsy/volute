@@ -309,6 +309,101 @@ describe("web history routes", () => {
     assert.equal(body[0].period_key, "2026-03-22T14");
   });
 
+  it("GET /api/v1/history/summaries — week tier: date bounds match ISO week keys", async () => {
+    const cookie = await setupAuth();
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
+    const db = await getDb();
+
+    // Current-year week keys. Under binary collation "W" sorts above digits, so
+    // a raw date bound like "2026-06-29" would wrongly exclude "2026-W14".
+    await db.insert(summaries).values([
+      { mind: "test-history-weeks", period: "week", period_key: "2026-W12", content: "W12" },
+      { mind: "test-history-weeks", period: "week", period_key: "2026-W14", content: "W14" },
+      { mind: "test-history-weeks", period: "week", period_key: "2026-W27", content: "W27" },
+    ]);
+
+    // Top-level week fetch used to pass `to=<date>` only. 2026-06-29 is in W27,
+    // so weeks up to and including W27 should return.
+    const res = await app.request(
+      "/api/v1/history/summaries?period=week&mind=test-history-weeks&to=2026-06-29",
+      { headers: { Cookie: `volute_session=${cookie}` } },
+    );
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as Array<{ period_key: string }>;
+    const keys = body.map((r) => r.period_key).sort();
+    assert.deepEqual(keys, ["2026-W12", "2026-W14", "2026-W27"]);
+  });
+
+  it("GET /api/v1/history/summaries — week tier: month-shaped range returns overlapping weeks", async () => {
+    const cookie = await setupAuth();
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
+    const db = await getDb();
+
+    // March 2026: W09 (starts Feb 23, overlaps Mar 1) .. W14 (ends Apr 5).
+    await db.insert(summaries).values([
+      { mind: "test-history-weeks", period: "week", period_key: "2026-W08", content: "W08" },
+      { mind: "test-history-weeks", period: "week", period_key: "2026-W10", content: "W10" },
+      { mind: "test-history-weeks", period: "week", period_key: "2026-W13", content: "W13" },
+      { mind: "test-history-weeks", period: "week", period_key: "2026-W20", content: "W20" },
+    ]);
+
+    // Month drill-down passes from=YYYY-MM-01, to=<last day of month>.
+    const res = await app.request(
+      "/api/v1/history/summaries?period=week&mind=test-history-weeks&from=2026-03-01&to=2026-03-31",
+      { headers: { Cookie: `volute_session=${cookie}` } },
+    );
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as Array<{ period_key: string }>;
+    const keys = body.map((r) => r.period_key).sort();
+    // W08 (all February) and W20 (May) excluded; the March-overlapping weeks returned.
+    assert.deepEqual(keys, ["2026-W10", "2026-W13"]);
+  });
+
+  it("GET /api/v1/history/summaries — month tier pages backward with an inclusive `to` cursor", async () => {
+    const cookie = await setupAuth();
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
+    const db = await getDb();
+
+    await db.insert(summaries).values([
+      { mind: "test-history-page", period: "month", period_key: "2026-01", content: "Jan" },
+      { mind: "test-history-page", period: "month", period_key: "2026-02", content: "Feb" },
+      { mind: "test-history-page", period: "month", period_key: "2026-03", content: "Mar" },
+      { mind: "test-history-page", period: "month", period_key: "2026-04", content: "Apr" },
+    ]);
+
+    const fetchPage = async (to?: string) => {
+      const qs = new URLSearchParams({ period: "month", mind: "test-history-page", limit: "2" });
+      if (to) qs.set("to", to);
+      const res = await app.request(`/api/v1/history/summaries?${qs}`, {
+        headers: { Cookie: `volute_session=${cookie}` },
+      });
+      assert.equal(res.status, 200);
+      return (await res.json()) as Array<{ period_key: string }>;
+    };
+
+    // Page 1: newest two, returned descending.
+    const p1 = await fetchPage();
+    assert.deepEqual(
+      p1.map((r) => r.period_key),
+      ["2026-04", "2026-03"],
+    );
+
+    // Page 2: cursor = oldest loaded key (inclusive), so it re-returns "2026-03"
+    // (client dedups it) plus the next older month.
+    const p2 = await fetchPage("2026-03");
+    assert.deepEqual(
+      p2.map((r) => r.period_key),
+      ["2026-03", "2026-02"],
+    );
+
+    // Page 3: cursor = "2026-01" → only the terminal row, nothing older.
+    const p3 = await fetchPage("2026-01");
+    assert.deepEqual(
+      p3.map((r) => r.period_key),
+      ["2026-01"],
+    );
+  });
+
   it("GET /api/v1/history/summaries — caps limit at 200", async () => {
     const cookie = await setupAuth();
     const { default: app } = await import("../packages/daemon/src/web/app.js");
