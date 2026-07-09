@@ -14,6 +14,7 @@ import {
   repairProvisionalSummaries,
   SYSTEM_MIND,
   summarizePeriod,
+  summarizeSystem,
   summarizeTurn,
 } from "../packages/daemon/src/lib/daemon/summarizer.js";
 import {
@@ -916,6 +917,19 @@ describe("summarizer", () => {
         .get();
     }
 
+    // Push a provisional row's last_attempt_at into the past so the retry-spacing guard lets the
+    // next attempt through — the test-time stand-in for the ~1.4 days between real ticks.
+    async function agePastBackoff(mind: string, period: Period, periodKey: string) {
+      const db = await getDb();
+      const row = await getSummary(mind, period, periodKey);
+      const meta = JSON.parse(row!.metadata!);
+      meta.last_attempt_at = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
+      await db
+        .update(summaries)
+        .set({ metadata: JSON.stringify(meta) })
+        .where(eq(summaries.id, row!.id));
+    }
+
     const failAi = async () => null;
 
     it("bounds the month deterministic fallback to an index instead of concatenating", async () => {
@@ -951,6 +965,8 @@ describe("summarizer", () => {
       const provisional = await getSummary(mind, "month", "2026-04");
       assert.equal(JSON.parse(provisional!.metadata!).deterministic, true);
 
+      // A later tick (past the retry-spacing backoff) finds the AI healthy and heals the row.
+      await agePastBackoff(mind, "month", "2026-04");
       const healed = "# April\n\nA steady, productive month.";
       const second = await summarizePeriod(mind, "month", "2026-04", async () => healed);
       assert.equal(second, true);
@@ -1003,6 +1019,82 @@ describe("summarizer", () => {
       assert.equal(generated, false, "aged-out row should not be retried");
       const row = await getSummary(mind, "month", "2026-04");
       assert.equal(row!.content, "old blob");
+    });
+
+    it("does not retry a provisional again within the backoff interval", async () => {
+      const mind = "backoff-spacing-mind";
+      // Two children so the period isn't promoted from a single child (which skips the fallback).
+      await insertSummary(mind, "day", "2026-04-05", "A day.");
+      await insertSummary(mind, "day", "2026-04-06", "Another day.");
+
+      const first = await summarizePeriod(mind, "month", "2026-04", failAi);
+      assert.equal(first, true);
+      assert.equal(JSON.parse((await getSummary(mind, "month", "2026-04"))!.metadata!).attempts, 1);
+
+      // A retry on the very next tick (well within the backoff) must be skipped — otherwise the
+      // 5-minute tick cadence would burn the whole attempt budget in minutes.
+      const second = await summarizePeriod(mind, "month", "2026-04", async () => "healed");
+      assert.equal(second, false, "should not retry within the backoff interval");
+      const row = await getSummary(mind, "month", "2026-04");
+      assert.equal(JSON.parse(row!.metadata!).deterministic, true, "must stay provisional");
+      assert.equal(JSON.parse(row!.metadata!).attempts, 1, "attempts must not increment");
+    });
+
+    it("spaces attempts across the window and gives up only after the budget", async () => {
+      const mind = "spaced-budget-mind";
+      // Two children so the period isn't promoted from a single child (which skips the fallback).
+      await insertSummary(mind, "day", "2026-04-05", "A day.");
+      await insertSummary(mind, "day", "2026-04-06", "Another day.");
+
+      // First failure creates the provisional (attempts=1).
+      await summarizePeriod(mind, "month", "2026-04", failAi);
+      assert.equal(JSON.parse((await getSummary(mind, "month", "2026-04"))!.metadata!).attempts, 1);
+
+      // Each subsequent attempt only lands once the backoff has elapsed, so the budget genuinely
+      // spans the window rather than exhausting at tick cadence.
+      for (let expected = 2; expected <= 5; expected++) {
+        await agePastBackoff(mind, "month", "2026-04");
+        const retried = await summarizePeriod(mind, "month", "2026-04", failAi);
+        assert.equal(retried, true, `attempt ${expected} should run`);
+        assert.equal(
+          JSON.parse((await getSummary(mind, "month", "2026-04"))!.metadata!).attempts,
+          expected,
+        );
+      }
+
+      // Budget exhausted: even with the AI back and the backoff elapsed, no further retries.
+      await agePastBackoff(mind, "month", "2026-04");
+      const done = await summarizePeriod(mind, "month", "2026-04", async () => "healed");
+      assert.equal(done, false, "should stop after the attempt budget is exhausted");
+      assert.equal(
+        JSON.parse((await getSummary(mind, "month", "2026-04"))!.metadata!).deterministic,
+        true,
+      );
+    });
+
+    it("bounds the week deterministic fallback and labels it as a week", async () => {
+      const mind = "bounded-week-mind";
+      const child = `${"lorem ipsum ".repeat(500)}Done.`; // ~6k chars each
+      // Days 2026-03-09..13 fall inside ISO week 2026-W11.
+      for (let d = 9; d <= 13; d++) {
+        await insertSummary(
+          mind,
+          "day",
+          `2026-03-${String(d).padStart(2, "0")}`,
+          `Day ${d}: ${child}`,
+        );
+      }
+
+      const generated = await summarizePeriod(mind, "week", "2026-W11", failAi);
+      assert.equal(generated, true);
+
+      const row = await getSummary(mind, "week", "2026-W11");
+      assert.ok(row, "week summary should exist");
+      assert.ok(row!.content.length < 5000, `digest too large: ${row!.content.length}`);
+      assert.match(row!.content, /Week 2026-W11/, "should carry the week label");
+      assert.match(row!.content, /2026-03-09:/);
+      assert.match(row!.content, /AI summary pending/);
+      assert.equal(JSON.parse(row!.metadata!).attempts, 1);
     });
 
     it("truncates an oversized child before building the _system rollup", async () => {

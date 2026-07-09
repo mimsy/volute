@@ -540,6 +540,14 @@ const ROLLUP_CHILD_CHARS = 2000;
  */
 const PROVISIONAL_MAX_ATTEMPTS = 5;
 const PROVISIONAL_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+/**
+ * Minimum spacing between provisional retries. The summarizer tick runs every 5 minutes and
+ * `repairProvisionalSummaries` retries every due row on each tick, so without spacing the whole
+ * attempt budget would burn in ~25 minutes — the 7-day window would never bind and any AI outage
+ * longer than that would scar the summary permanently. Spacing the attempts (~1.4 days apart) makes
+ * the budget genuinely span the window, so the row heals whenever the AI recovers within a week.
+ */
+const PROVISIONAL_RETRY_BACKOFF_MS = PROVISIONAL_WINDOW_MS / PROVISIONAL_MAX_ATTEMPTS;
 
 type ChildEntry = { key: string; text: string };
 
@@ -614,6 +622,11 @@ function shouldRetry(period: TimerPeriod, meta: Record<string, unknown>): boolea
   if (attempts >= PROVISIONAL_MAX_ATTEMPTS) return false;
   const first = typeof meta.first_attempt_at === "string" ? Date.parse(meta.first_attempt_at) : NaN;
   if (!Number.isNaN(first) && Date.now() - first > PROVISIONAL_WINDOW_MS) return false;
+  // Space attempts across the window so the tick cadence can't burn the whole budget in minutes.
+  // A row with no `last_attempt_at` (a pre-feature blob, or one never retried) is eligible
+  // immediately — so upgrades heal on the next tick and only repeated *failures* get backed off.
+  const last = typeof meta.last_attempt_at === "string" ? Date.parse(meta.last_attempt_at) : NaN;
+  if (!Number.isNaN(last) && Date.now() - last < PROVISIONAL_RETRY_BACKOFF_MS) return false;
   return true;
 }
 
@@ -628,6 +641,7 @@ function trackProvisionalAttempt(
     prev && typeof prev.first_attempt_at === "string"
       ? prev.first_attempt_at
       : new Date().toISOString();
+  metadata.last_attempt_at = new Date().toISOString();
 }
 
 async function gatherChildSummaries(
