@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { before, describe, it } from "node:test";
 import { JSDOM } from "jsdom";
+import { enrichActivityMetadata } from "../packages/daemon/src/lib/extensions.js";
 import { sanitizeSvgIcon } from "../packages/daemon/src/lib/util/sanitize-svg.js";
 
 // The browser-side @volute/ui sanitizer runs on `dompurify`, which needs a DOM.
@@ -77,5 +78,34 @@ describe("svg icon sanitization", () => {
       "xlink:href",
       "javascript:",
     ]);
+  });
+});
+
+// The extension publishActivity enrichment is the write-time layer that keeps a
+// malicious icon out of the DB. Exercise it directly so a future refactor that drops
+// the sanitize step fails a test rather than silently disabling defense-in-depth.
+describe("extension activity metadata enrichment", () => {
+  it("sanitizes an event-supplied malicious icon before persisting", () => {
+    const out = enrichActivityMetadata(
+      { icon: undefined, color: undefined },
+      { icon: '<svg onload="alert(1)"><script>steal()</script><path d="M0 0"/></svg>' },
+    );
+    const icon = String(out.icon).toLowerCase();
+    assert.ok(!icon.includes("onload"), "strips inline handler");
+    assert.ok(!icon.includes("<script"), "strips script tag");
+    assert.ok(!icon.includes("alert"), "strips script body");
+    assert.ok(!icon.includes("steal"), "strips script body");
+    assert.ok(icon.includes("<path"), "keeps benign shape");
+  });
+
+  it("sanitizes a manifest-supplied fallback icon", () => {
+    const out = enrichActivityMetadata(
+      { icon: '<svg onload="evil()"><path d="M0 0"/></svg>', color: "purple" },
+      undefined,
+    );
+    const icon = String(out.icon).toLowerCase();
+    assert.ok(!icon.includes("onload"), "strips inline handler from manifest icon");
+    assert.ok(!icon.includes("evil"), "strips handler body");
+    assert.equal(out.color, "purple", "keeps color branding");
   });
 });
