@@ -50,8 +50,12 @@ export function groupToolEvents(events: HistoryMessage[]): TimelineItem[] {
       let result: HistoryMessage | null = null;
       if (id !== null) {
         // Modern event: claim the matching result by id, regardless of position.
-        result = resultsById.get(id) ?? null;
-        if (result) claimed.add(result);
+        // Skip a result a prior group already claimed so nothing renders twice.
+        const r = resultsById.get(id) ?? null;
+        if (r && !claimed.has(r)) {
+          result = r;
+          claimed.add(r);
+        }
       } else {
         // Legacy event (no id): pair with the next unclaimed tool_result
         // before the next tool_use.
