@@ -66,4 +66,10 @@ server.listen(port, () => {
 // Reap live SDK subprocesses on SIGTERM/SIGINT so `mind stop`/restart don't
 // orphan `<defunct>` claude children to PID 1 (the daemon, which isn't a
 // reaping init). Bounded so a wedged child can't block shutdown forever.
-setupShutdown(mind.reapAllSessions);
+// Stop accepting new messages first so a late request can't spawn a fresh
+// subprocess after reapAllSessions has snapshotted the live set (which would
+// re-orphan the very child we're reaping).
+setupShutdown(async () => {
+  server.close();
+  await mind.reapAllSessions();
+});

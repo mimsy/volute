@@ -198,7 +198,11 @@ export async function runShutdown(
   });
   try {
     await Promise.race([
-      onShutdown().catch((err) => log("server", "shutdown teardown failed:", err)),
+      // Normalize a synchronous throw into the logged/swallowed path so it can't
+      // escape runShutdown and prevent the caller's process.exit.
+      Promise.resolve()
+        .then(() => onShutdown())
+        .catch((err) => log("server", "shutdown teardown failed:", err)),
       timeout,
     ]);
   } finally {
