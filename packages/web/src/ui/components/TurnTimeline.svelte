@@ -21,6 +21,12 @@ import { extractTextContent } from "../lib/feed-utils";
 import { formatRelativeTime } from "../lib/format";
 import { navigate } from "../lib/navigate";
 import { activeMinds } from "../lib/stores.svelte";
+import {
+  isRecentInbound,
+  isTurnStale,
+  pruneExpiredInbounds,
+  reconnectDelay,
+} from "../lib/timeline-liveness";
 import { buildTodayItems } from "../lib/timeline-today";
 import { groupToolEvents } from "../lib/tool-groups";
 import { getCategoryColor, getCategoryIcon } from "../lib/tool-names";
@@ -242,6 +248,54 @@ function handleExpand(turnId: string, expanded: boolean) {
 let scrollContainer: HTMLDivElement | undefined = $state();
 let userScrolledUp = $state(false);
 let eventSource: EventSource | null = null;
+let reconnecting = $state(false);
+let reconnectAttempts = 0;
+let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+// Last streaming-event time per active turn, for the staleness guard
+const lastEventAt = new Map<string, number>();
+
+function clearReconnectTimer() {
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+}
+
+function scheduleReconnect() {
+  if (reconnectTimer) return;
+  const delay = reconnectDelay(reconnectAttempts);
+  reconnectAttempts++;
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    connectSSE();
+  }, delay);
+}
+
+// Refetch page 1 after a reconnect and reconcile turns/streaming state so events
+// missed while disconnected are recovered (turns completed, new turns, etc.).
+async function resync() {
+  if (!name) return;
+  try {
+    const rows = await fetchTurns({ mind: name, limit: PAGE_SIZE, offset: 0 });
+    upsertTurnRows([...rows].reverse());
+    for (const turn of turnsData) {
+      if (turn.status === "active") {
+        lastEventAt.set(turn.id, Date.now());
+        fetchTurnEvents(turn.mind, { turnId: turn.id })
+          .then((dbEvents) => {
+            streamingEvents.set(turn.id, dbEvents);
+          })
+          .catch((err) => console.warn("[TurnTimeline] Failed to resync active turn events:", err));
+      } else if (streamingEvents.has(turn.id)) {
+        // Turn completed while we were disconnected — drop the stale streaming view.
+        streamingEvents.delete(turn.id);
+        lastEventAt.delete(turn.id);
+      }
+    }
+  } catch (err) {
+    console.warn("[TurnTimeline] Failed to resync after reconnect:", err);
+  }
+}
 
 function connectSSE() {
   disconnectSSE();
@@ -289,6 +343,7 @@ function connectSSE() {
         streamingEvents.set(turnId, []);
       }
       pendingInbounds = [];
+      lastEventAt.set(turnId, Date.now());
       // Fetch turn events from DB after a short delay to allow retroactive inbound tagging.
       // DB events are authoritative — replace synthetic SSE events entirely.
       // Any SSE events arriving after this .then() runs are appended normally.
@@ -306,6 +361,7 @@ function connectSSE() {
       doneFallbackTimers.delete(turnId);
       const prevStreaming = streamingEvents.get(turnId);
       streamingEvents.delete(turnId);
+      lastEventAt.delete(turnId);
       fetchTurns({ mind: name, turnId })
         .then((rows) => {
           upsertTurnRows(rows);
@@ -348,6 +404,7 @@ function connectSSE() {
       // Create new array to trigger Svelte reactivity
       const prev = streamingEvents.get(turnId)!;
       streamingEvents.set(turnId, [...prev, buildHistoryMessage(d, { turn_id: turnId })]);
+      lastEventAt.set(turnId, Date.now());
     }
 
     if (!userScrolledUp) {
@@ -356,17 +413,30 @@ function connectSSE() {
       });
     }
   };
+  es.onopen = () => {
+    clearReconnectTimer();
+    const wasReconnecting = reconnecting;
+    reconnectAttempts = 0;
+    reconnecting = false;
+    // Recover anything missed while the stream was down.
+    if (wasReconnecting) resync();
+  };
   es.onerror = () => {
+    // EventSource auto-retries transient errors (CONNECTING). A permanent close
+    // (CLOSED — e.g. a daemon restart returning an error) needs a manual reconnect
+    // with backoff, or the timeline silently stops updating until a page reload.
     if (es.readyState === EventSource.CLOSED) {
-      console.warn("[TurnTimeline] SSE connection closed permanently");
+      reconnecting = true;
+      scheduleReconnect();
     } else if (es.readyState === EventSource.CONNECTING) {
-      console.warn("[TurnTimeline] SSE reconnecting...");
+      reconnecting = true;
     }
   };
   eventSource = es;
 }
 
 function disconnectSSE() {
+  clearReconnectTimer();
   if (eventSource) {
     eventSource.close();
     eventSource = null;
@@ -393,7 +463,11 @@ async function loadTurns(offset: number) {
     if (offset === 0 && pendingInbounds.length === 0 && name) {
       fetchHistory(name, { preset: "all", limit: 10 })
         .then((recent) => {
-          const untagged = recent.filter((e) => e.type === "inbound" && !e.turn_id);
+          // Only promote recent untagged inbounds — an old inbound a stopped/sleeping
+          // mind never processed must not render as a perpetually-active turn.
+          const untagged = recent.filter(
+            (e) => e.type === "inbound" && !e.turn_id && isRecentInbound(e.created_at),
+          );
           if (untagged.length > 0 && pendingInbounds.length === 0) {
             pendingInbounds = untagged;
           }
@@ -660,9 +734,41 @@ $effect(() => {
     summariesLoaded = false;
     expandedSummaries = new SvelteMap();
     directEventsSummaries = new SvelteMap();
+    reconnecting = false;
+    reconnectAttempts = 0;
+    lastEventAt.clear();
     startScrollToBottom();
     loadTurns(0);
   }
+});
+
+// Liveness sweep: expire stale provisional inbounds and reconcile active turns that
+// the server has likely finished (converges with the server's wedged-turn sweep).
+$effect(() => {
+  const interval = setInterval(() => {
+    if (pendingInbounds.length > 0) {
+      const pruned = pruneExpiredInbounds(pendingInbounds);
+      if (pruned.length !== pendingInbounds.length) pendingInbounds = pruned;
+    }
+    const now = Date.now();
+    for (const turn of turnsData) {
+      if (turn.status !== "active") continue;
+      const seen = lastEventAt.get(turn.id) ?? new Date(turn.created_at).getTime();
+      if (!isTurnStale(seen, now)) continue;
+      lastEventAt.set(turn.id, now); // avoid refetch storms while awaiting the response
+      fetchTurns({ mind: name, turnId: turn.id })
+        .then((rows) => {
+          const fresh = rows[0];
+          if (fresh && fresh.status !== "active") {
+            streamingEvents.delete(turn.id);
+            lastEventAt.delete(turn.id);
+          }
+          upsertTurnRows(rows);
+        })
+        .catch((err) => console.warn("[TurnTimeline] Failed to check stale turn:", err));
+    }
+  }, 30_000);
+  return () => clearInterval(interval);
 });
 
 // Load summaries once turns are available
@@ -955,7 +1061,7 @@ function jumpToLatest() {
         {#if pendingInbounds.length > 0}
           <div class="turn-row">
             <div class="turn-time">
-              just now
+              {formatRelativeTime(pendingInbounds[0].created_at)}
             </div>
             <div class="turn-rail turn-rail-expanded">
               <div class="turn-dot"></div>
@@ -991,6 +1097,9 @@ function jumpToLatest() {
             </div>
             <div class="turn-body">
               <span class="mind-status-text" style:color={activeMinds.has(name) ? 'var(--accent)' : statusColor}>{name} is {statusLabel}</span>
+              {#if reconnecting}
+                <span class="reconnecting-text">reconnecting…</span>
+              {/if}
             </div>
           </div>
         {/if}
@@ -1515,6 +1624,15 @@ function jumpToLatest() {
     font-style: italic;
     line-height: 8px;
     padding-left: 20px;
+  }
+
+  .reconnecting-text {
+    display: inline-block;
+    margin-top: 6px;
+    padding-left: 20px;
+    font-size: 12px;
+    color: var(--text-2);
+    animation: pulse 1.5s infinite;
   }
   /* Scale break: two diagonal lines on the rail with labels */
   .scale-break-row {
