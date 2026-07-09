@@ -519,29 +519,122 @@ function getScopeInstruction(mind: string): string {
   return 'Write in first person as the mind who performed the actions (e.g. "I explored...", "I worked on...").';
 }
 
+// ── Deterministic fallback bounding & provisional retry ──
+
+/**
+ * Week/month deterministic fallbacks are an *index* of their children, not a verbatim
+ * concatenation: one bounded line per child, capped in total. This keeps a failed AI call
+ * from producing a 100k+ char blob that then poisons the next period's rollup.
+ */
+const DIGEST_CHILD_CHARS = 200;
+const DIGEST_MAX_CHARS = 4000;
+const DIGEST_NOTICE = "(auto-generated digest — AI summary pending)";
+
+/** When rolling per-mind summaries into a _system summary, cap each child fed to the AI. */
+const ROLLUP_CHILD_CHARS = 2000;
+
+/**
+ * A deterministic week/month summary is *provisional*: the summarizer retries it on later
+ * ticks (replacing the row on AI success) until it heals or the budget runs out. This bounds
+ * the "one transient AI outage scars a month forever" failure mode and heals existing blobs.
+ */
+const PROVISIONAL_MAX_ATTEMPTS = 5;
+const PROVISIONAL_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+
+type ChildEntry = { key: string; text: string };
+
+function truncateChars(text: string, max: number): string {
+  const t = text.trim();
+  return t.length > max ? `${t.slice(0, max).trimEnd()}…` : t;
+}
+
+/** First sentence (or first ~200 chars) of a child summary, whitespace-flattened. */
+function digestLine(text: string): string {
+  const flat = text.trim().replace(/\s+/g, " ");
+  const match = flat.match(/^.*?[.!?](?=\s|$)/);
+  const line = match ? match[0] : flat;
+  return line.length > DIGEST_CHILD_CHARS
+    ? `${line.slice(0, DIGEST_CHILD_CHARS).trimEnd()}…`
+    : line;
+}
+
+function buildBoundedDigest(entries: ChildEntry[], period: TimerPeriod, periodKey: string): string {
+  const label = period === "week" ? `Week ${periodKey}` : periodKey;
+  const header = `${label} ${DIGEST_NOTICE}`;
+  const lines: string[] = [];
+  let total = header.length + 2;
+  for (let i = 0; i < entries.length; i++) {
+    const line = `${entries[i].key}: ${digestLine(entries[i].text)}`;
+    if (lines.length > 0 && total + line.length + 1 > DIGEST_MAX_CHARS) {
+      lines.push(`…and ${entries.length - i} more`);
+      break;
+    }
+    lines.push(line);
+    total += line.length + 1;
+  }
+  return `${header}\n\n${lines.join("\n")}`;
+}
+
 function buildPeriodicDeterministicSummary(
-  sources: string[],
+  entries: ChildEntry[],
   period: TimerPeriod,
   periodKey: string,
 ): string {
-  if (sources.length === 0) return "";
+  if (entries.length === 0) return "";
   switch (period) {
     case "hour":
-      return `Activity during ${periodKey.slice(11)}:00: ${sources.join(" ")}`;
+      return `Activity during ${periodKey.slice(11)}:00: ${entries.map((e) => e.text).join(" ")}`;
     case "day":
-      return `Activity on ${periodKey}:\n\n${sources.join("\n\n")}`;
+      return `Activity on ${periodKey}:\n\n${entries.map((e) => e.text).join("\n\n")}`;
     case "week":
-      return `Week ${periodKey} summary:\n\n${sources.join("\n\n")}`;
     case "month":
-      return `${periodKey} summary:\n\n${sources.join("\n\n")}`;
+      return buildBoundedDigest(entries, period, periodKey);
   }
+}
+
+function parseMeta(raw: string | null): Record<string, unknown> {
+  if (!raw) return {};
+  try {
+    return JSON.parse(raw) as Record<string, unknown>;
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Whether an existing deterministic week/month row should be retried. True while it's a
+ * provisional (deterministic) week/month summary that hasn't exhausted its attempt budget or
+ * aged out of the retry window. Rows written before this feature (no `attempts`/
+ * `first_attempt_at`) are treated as fresh, so upgrades heal them.
+ */
+function shouldRetry(period: TimerPeriod, meta: Record<string, unknown>): boolean {
+  if (period !== "week" && period !== "month") return false;
+  if (meta.deterministic !== true) return false;
+  const attempts = typeof meta.attempts === "number" ? meta.attempts : 0;
+  if (attempts >= PROVISIONAL_MAX_ATTEMPTS) return false;
+  const first = typeof meta.first_attempt_at === "string" ? Date.parse(meta.first_attempt_at) : NaN;
+  if (!Number.isNaN(first) && Date.now() - first > PROVISIONAL_WINDOW_MS) return false;
+  return true;
+}
+
+/** Fold retry-budget bookkeeping into a provisional (deterministic) week/month row's metadata. */
+function trackProvisionalAttempt(
+  metadata: Record<string, unknown>,
+  prev: Record<string, unknown> | null,
+): void {
+  const prevAttempts = prev && typeof prev.attempts === "number" ? prev.attempts : 0;
+  metadata.attempts = prevAttempts + 1;
+  metadata.first_attempt_at =
+    prev && typeof prev.first_attempt_at === "string"
+      ? prev.first_attempt_at
+      : new Date().toISOString();
 }
 
 async function gatherChildSummaries(
   mind: string,
   period: TimerPeriod,
   periodKey: string,
-): Promise<{ texts: string[]; sourceIds: number[] }> {
+): Promise<{ texts: string[]; sourceIds: number[]; keys: string[] }> {
   const db = await getDb();
   const childPeriod = getChildPeriod(period);
 
@@ -550,7 +643,7 @@ async function gatherChildSummaries(
     // so we filter by created_at time range instead
     const { start, end } = getTimeRange(periodKey, "hour");
     const rows = await db
-      .select({ id: summaries.id, content: summaries.content })
+      .select({ id: summaries.id, content: summaries.content, key: summaries.period_key })
       .from(summaries)
       .where(
         and(
@@ -564,13 +657,14 @@ async function gatherChildSummaries(
     return {
       texts: rows.map((r) => r.content),
       sourceIds: rows.map((r) => r.id),
+      keys: rows.map((r) => r.key),
     };
   }
 
   if (period === "day") {
     // Day reads hourly summaries whose period_key starts with the day
     const rows = await db
-      .select({ id: summaries.id, content: summaries.content })
+      .select({ id: summaries.id, content: summaries.content, key: summaries.period_key })
       .from(summaries)
       .where(
         and(
@@ -583,6 +677,7 @@ async function gatherChildSummaries(
     return {
       texts: rows.map((r) => r.content),
       sourceIds: rows.map((r) => r.id),
+      keys: rows.map((r) => r.key),
     };
   }
 
@@ -591,7 +686,7 @@ async function gatherChildSummaries(
   const startKey = start.slice(0, 10);
   const endKey = end.slice(0, 10);
   const rows = await db
-    .select({ id: summaries.id, content: summaries.content })
+    .select({ id: summaries.id, content: summaries.content, key: summaries.period_key })
     .from(summaries)
     .where(
       and(
@@ -605,6 +700,7 @@ async function gatherChildSummaries(
   return {
     texts: rows.map((r) => r.content),
     sourceIds: rows.map((r) => r.id),
+    keys: rows.map((r) => r.key),
   };
 }
 
@@ -612,17 +708,32 @@ export async function summarizePeriod(
   mind: string,
   period: TimerPeriod,
   periodKey: string,
+  complete: typeof aiCompleteUtility = aiCompleteUtility,
 ): Promise<boolean> {
-  if (await summaryExists(mind, period, periodKey)) return false;
-
   const db = await getDb();
+  const existing = await db
+    .select({ id: summaries.id, metadata: summaries.metadata })
+    .from(summaries)
+    .where(
+      and(
+        eq(summaries.mind, mind),
+        eq(summaries.period, period),
+        eq(summaries.period_key, periodKey),
+      ),
+    )
+    .get();
+  const existingMeta = existing ? parseMeta(existing.metadata) : null;
+  // A finished summary is skipped, but a provisional (deterministic) week/month is retried.
+  if (existing && !shouldRetry(period, existingMeta as Record<string, unknown>)) return false;
+
   const sources = await gatherChildSummaries(mind, period, periodKey);
   if (sources.texts.length === 0) return false;
 
   // If there's only one child summary, promote it directly instead of
   // generating a redundant wrapper. E.g. an hour with one turn doesn't
   // need a separate hourly summary — the turn summary *is* the hourly summary.
-  if (sources.texts.length === 1) {
+  // (Only for fresh summaries; a provisional retry falls through to the AI path.)
+  if (!existing && sources.texts.length === 1) {
     try {
       await db
         .insert(summaries)
@@ -650,6 +761,7 @@ export async function summarizePeriod(
     return true;
   }
 
+  const entries: ChildEntry[] = sources.texts.map((text, i) => ({ key: sources.keys[i], text }));
   const promptKey = `meta_summary_${period}` as const;
   const scopeInstruction = getScopeInstruction(mind);
   const systemPrompt = await getPrompt(promptKey, { scope_instruction: scopeInstruction });
@@ -658,32 +770,40 @@ export async function summarizePeriod(
   let content: string;
   let deterministic: boolean;
 
-  const aiResult = await aiCompleteUtility(systemPrompt, userMessage);
-  if (aiResult) {
-    content = aiResult;
-    deterministic = false;
-  } else {
-    content = buildPeriodicDeterministicSummary(sources.texts, period, periodKey);
-    deterministic = true;
-  }
-
   const metadata: Record<string, unknown> = {
-    deterministic,
     source_count: sources.texts.length,
     source_ids: sources.sourceIds,
   };
 
+  const aiResult = await complete(systemPrompt, userMessage);
+  if (aiResult) {
+    content = aiResult;
+    deterministic = false;
+  } else {
+    content = buildPeriodicDeterministicSummary(entries, period, periodKey);
+    deterministic = true;
+    if (period === "week" || period === "month") trackProvisionalAttempt(metadata, existingMeta);
+  }
+  metadata.deterministic = deterministic;
+
   try {
-    await db
-      .insert(summaries)
-      .values({
-        mind,
-        period,
-        period_key: periodKey,
-        content,
-        metadata: JSON.stringify(metadata),
-      })
-      .onConflictDoNothing();
+    if (existing) {
+      await db
+        .update(summaries)
+        .set({ content, metadata: JSON.stringify(metadata) })
+        .where(eq(summaries.id, existing.id));
+    } else {
+      await db
+        .insert(summaries)
+        .values({
+          mind,
+          period,
+          period_key: periodKey,
+          content,
+          metadata: JSON.stringify(metadata),
+        })
+        .onConflictDoNothing();
+    }
   } catch (err) {
     sLog.error(
       `failed to persist ${period} summary for ${mind} (${periodKey})`,
@@ -700,10 +820,26 @@ export async function summarizePeriod(
 
 // ── System-level summaries ──
 
-export async function summarizeSystem(period: TimerPeriod, periodKey: string): Promise<void> {
-  if (await summaryExists(SYSTEM_MIND, period, periodKey)) return;
-
+export async function summarizeSystem(
+  period: TimerPeriod,
+  periodKey: string,
+  complete: typeof aiCompleteUtility = aiCompleteUtility,
+): Promise<void> {
   const db = await getDb();
+  const existing = await db
+    .select({ id: summaries.id, metadata: summaries.metadata })
+    .from(summaries)
+    .where(
+      and(
+        eq(summaries.mind, SYSTEM_MIND),
+        eq(summaries.period, period),
+        eq(summaries.period_key, periodKey),
+      ),
+    )
+    .get();
+  const existingMeta = existing ? parseMeta(existing.metadata) : null;
+  if (existing && !shouldRetry(period, existingMeta as Record<string, unknown>)) return;
+
   const rows = await db
     .select({ mind: summaries.mind, content: summaries.content })
     .from(summaries)
@@ -719,7 +855,13 @@ export async function summarizeSystem(period: TimerPeriod, periodKey: string): P
   if (rows.length === 0) return;
 
   const minds = [...new Set(rows.map((r) => r.mind))];
-  const texts = rows.map((r) => `[${r.mind}] ${r.content}`);
+  // Cap each child so one pathological per-mind summary can't blow up the rollup's AI input
+  // (or its deterministic fallback).
+  const entries: ChildEntry[] = rows.map((r) => ({
+    key: r.mind,
+    text: truncateChars(r.content, ROLLUP_CHILD_CHARS),
+  }));
+  const texts = entries.map((e) => `[${e.key}] ${e.text}`);
 
   const promptKey = `meta_summary_${period}` as const;
   const scopeInstruction = getScopeInstruction(SYSTEM_MIND);
@@ -729,28 +871,74 @@ export async function summarizeSystem(period: TimerPeriod, periodKey: string): P
   let content: string;
   let deterministic: boolean;
 
-  const aiResult = await aiCompleteUtility(systemPrompt, userMessage);
+  const metadata: Record<string, unknown> = { minds, source_count: rows.length };
+
+  const aiResult = await complete(systemPrompt, userMessage);
   if (aiResult) {
     content = aiResult;
     deterministic = false;
   } else {
-    content = buildPeriodicDeterministicSummary(texts, period, periodKey);
+    content = buildPeriodicDeterministicSummary(entries, period, periodKey);
     deterministic = true;
+    if (period === "week" || period === "month") trackProvisionalAttempt(metadata, existingMeta);
   }
+  metadata.deterministic = deterministic;
 
   try {
-    await db
-      .insert(summaries)
-      .values({
-        mind: SYSTEM_MIND,
-        period,
-        period_key: periodKey,
-        content,
-        metadata: JSON.stringify({ deterministic, minds, source_count: rows.length }),
-      })
-      .onConflictDoNothing();
+    if (existing) {
+      await db
+        .update(summaries)
+        .set({ content, metadata: JSON.stringify(metadata) })
+        .where(eq(summaries.id, existing.id));
+    } else {
+      await db
+        .insert(summaries)
+        .values({
+          mind: SYSTEM_MIND,
+          period,
+          period_key: periodKey,
+          content,
+          metadata: JSON.stringify(metadata),
+        })
+        .onConflictDoNothing();
+    }
   } catch (err) {
     sLog.error(`failed to persist system ${period} summary (${periodKey})`, log.errorData(err));
+  }
+}
+
+/**
+ * Retry provisional (deterministic) week/month summaries that the tick guards would otherwise
+ * skip. Per-mind summaries are healed before `_system` so the rollup sees the improved children.
+ */
+export async function repairProvisionalSummaries(
+  complete: typeof aiCompleteUtility = aiCompleteUtility,
+): Promise<void> {
+  const db = await getDb();
+  const rows = await db
+    .select({
+      mind: summaries.mind,
+      period: summaries.period,
+      period_key: summaries.period_key,
+      metadata: summaries.metadata,
+    })
+    .from(summaries)
+    .where(inArray(summaries.period, ["week", "month"]));
+  const due = rows.filter((r) => shouldRetry(r.period as TimerPeriod, parseMeta(r.metadata)));
+  due.sort((a, b) => (a.mind === SYSTEM_MIND ? 1 : 0) - (b.mind === SYSTEM_MIND ? 1 : 0));
+  for (const r of due) {
+    try {
+      if (r.mind === SYSTEM_MIND) {
+        await summarizeSystem(r.period as TimerPeriod, r.period_key, complete);
+      } else {
+        await summarizePeriod(r.mind, r.period as TimerPeriod, r.period_key, complete);
+      }
+    } catch (err) {
+      sLog.error(
+        `failed to repair provisional ${r.period} summary for ${r.mind} (${r.period_key})`,
+        log.errorData(err),
+      );
+    }
   }
 }
 
@@ -1124,6 +1312,9 @@ export class Summarizer {
       if (!(await summaryExists(SYSTEM_MIND, "month", prevMonthKey))) {
         await processMonth(prevMonthKey);
       }
+
+      // Re-attempt provisional (deterministic) week/month summaries the guards above skip.
+      await repairProvisionalSummaries();
     } catch (err) {
       sLog.error("tick failed", log.errorData(err));
     }
