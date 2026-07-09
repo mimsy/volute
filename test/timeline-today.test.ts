@@ -93,6 +93,37 @@ describe("buildTodayItems", () => {
     );
   });
 
+  it("buckets a turn by completion time, not start (cross-hour turn)", () => {
+    // Started 10:55 (hour 10 is summarized) but completed 11:05 (hour 11 has no
+    // summary). It must bucket to the completion hour and render individually,
+    // not vanish into hour 10's summary.
+    const startTs = localTimeStr(10, 55);
+    const endTs = localTimeStr(11, 5);
+    const crossHourTurn: TurnRow = {
+      id: "cross",
+      mind: "m",
+      summary: "did a thing",
+      summary_meta: { to_time: endTs },
+      status: "complete",
+      created_at: startTs,
+      trigger: null,
+      conversations: [],
+      activities: [],
+    };
+    const items = buildTodayItems({
+      now: NOW,
+      hourSummaries: [hourSummary(10)],
+      turnsData: [crossHourTurn],
+      isActive: noneActive,
+    });
+    assert.deepEqual(
+      items.map((i) =>
+        i.kind === "summary" ? `s:${i.summary.period_key.slice(-2)}` : `t:${i.turn.id}`,
+      ),
+      ["s:10", "t:cross"],
+    );
+  });
+
   it("always shows active turns and sorts them last", () => {
     const items = buildTodayItems({
       now: NOW,

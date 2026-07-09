@@ -10,6 +10,7 @@ import {
   type Period,
   reconcileMissingSummaries,
   reconcileWedgedTurns,
+  SYSTEM_MIND,
   summarizePeriod,
   summarizeTurn,
 } from "../packages/daemon/src/lib/daemon/summarizer.js";
@@ -597,6 +598,147 @@ describe("summarizer", () => {
         )
         .get();
       assert.ok(weekRow, "missing week summary should be generated");
+    });
+
+    it("heals a missing system rollup even when all per-mind summaries exist", async () => {
+      const mind = "reconcile-sysgap-mind";
+      const db = await getDb();
+
+      // A per-mind hour summary already exists (with a turn in range) but the
+      // `_system` rollup for that same hour is missing — a system insert that
+      // failed once must still self-heal.
+      const base = new Date();
+      base.setDate(base.getDate() - 1);
+      base.setHours(9, 15, 0, 0);
+      const hourKey = getPeriodKey(base, "hour");
+
+      await db.insert(summaries).values([
+        {
+          mind,
+          period: "turn",
+          period_key: `${mind}-sysgap-t1`,
+          content: "I did some work.",
+          metadata: JSON.stringify({ deterministic: true }),
+          created_at: utcFmt(base),
+        },
+        {
+          mind,
+          period: "hour",
+          period_key: hourKey,
+          content: "An hour of work.",
+          metadata: JSON.stringify({ deterministic: true }),
+        },
+      ]);
+
+      const before = await db
+        .select()
+        .from(summaries)
+        .where(
+          and(
+            eq(summaries.mind, SYSTEM_MIND),
+            eq(summaries.period, "hour"),
+            eq(summaries.period_key, hourKey),
+          ),
+        )
+        .get();
+      assert.equal(before, undefined, "system rollup should not exist yet");
+
+      await reconcileMissingSummaries();
+
+      const sysRow = await db
+        .select()
+        .from(summaries)
+        .where(
+          and(
+            eq(summaries.mind, SYSTEM_MIND),
+            eq(summaries.period, "hour"),
+            eq(summaries.period_key, hourKey),
+          ),
+        )
+        .get();
+      assert.ok(sysRow, "missing system hour rollup should be healed");
+    });
+
+    it("skips the in-progress current hour and day", async () => {
+      const db = await getDb();
+      const now = new Date();
+      const currentHourKey = getPeriodKey(now, "hour");
+      const currentDayKey = getPeriodKey(now, "day");
+
+      // Mind A: a turn summary in the current hour → its hour must NOT be summarized.
+      const mindA = "reconcile-current-hour-mind";
+      await db.insert(summaries).values({
+        mind: mindA,
+        period: "turn",
+        period_key: `${mindA}-cur`,
+        content: "still going.",
+        metadata: JSON.stringify({ deterministic: true }),
+        created_at: utcFmt(now),
+      });
+
+      // Mind B: an hour summary in today's current hour → the current day must NOT
+      // be summarized (day is still in progress).
+      const mindB = "reconcile-current-day-mind";
+      await db.insert(summaries).values({
+        mind: mindB,
+        period: "hour",
+        period_key: currentHourKey,
+        content: "an hour today.",
+        metadata: JSON.stringify({ deterministic: true }),
+      });
+
+      await reconcileMissingSummaries();
+
+      assert.equal(
+        await countSummaries(mindA, "hour"),
+        0,
+        "current in-progress hour must not be summarized",
+      );
+
+      const dayRow = await db
+        .select()
+        .from(summaries)
+        .where(
+          and(
+            eq(summaries.mind, mindB),
+            eq(summaries.period, "day"),
+            eq(summaries.period_key, currentDayKey),
+          ),
+        )
+        .get();
+      assert.equal(dayRow, undefined, "current in-progress day must not be summarized");
+    });
+
+    it("leaves material older than the lookback window alone", async () => {
+      const mind = "reconcile-old-mind";
+      const db = await getDb();
+
+      // A turn summary 8 days ago — outside the 7-day reconciliation window.
+      const old = new Date();
+      old.setDate(old.getDate() - 8);
+      old.setHours(10, 0, 0, 0);
+
+      await db.insert(summaries).values({
+        mind,
+        period: "turn",
+        period_key: `${mind}-old`,
+        content: "old work.",
+        metadata: JSON.stringify({ deterministic: true }),
+        created_at: utcFmt(old),
+      });
+
+      await reconcileMissingSummaries();
+
+      assert.equal(
+        await countSummaries(mind, "hour"),
+        0,
+        "out-of-window material must not be summarized (hour)",
+      );
+      assert.equal(
+        await countSummaries(mind, "day"),
+        0,
+        "out-of-window material must not be summarized (day)",
+      );
     });
   });
 

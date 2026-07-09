@@ -922,10 +922,11 @@ async function backfill(): Promise<void> {
 
 /**
  * Regenerate any period summary that has child material but no summary row of its own.
- * `needed` maps periodKey → the minds that have child summaries for that key. A key with
- * any mind missing its summary is (re)processed; `process` re-derives minds and is
- * idempotent (summaryExists + the unique (mind, period, period_key) index), so this is
- * safe to run repeatedly.
+ * `needed` maps periodKey → the minds that have child summaries for that key. A key is
+ * (re)processed when any mind is missing its summary OR the `_system` rollup is missing
+ * (per-mind children exist ⇒ a system rollup should too; `process` calls `summarizeSystem`).
+ * `process` re-derives minds and is idempotent (summaryExists + the unique
+ * (mind, period, period_key) index), so this is safe to run repeatedly.
  */
 async function healMissing(
   period: TimerPeriod,
@@ -942,11 +943,14 @@ async function healMissing(
   const have = new Set(existing.map((r) => `${r.mind}|${r.period_key}`));
 
   for (const [key, minds] of needed) {
-    let gap = false;
-    for (const mind of minds) {
-      if (!have.has(`${mind}|${key}`)) {
-        gap = true;
-        break;
+    // A missing system rollup is itself a gap even when every per-mind summary exists.
+    let gap = !have.has(`${SYSTEM_MIND}|${key}`);
+    if (!gap) {
+      for (const mind of minds) {
+        if (!have.has(`${mind}|${key}`)) {
+          gap = true;
+          break;
+        }
       }
     }
     if (!gap) continue;
