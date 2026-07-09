@@ -1,6 +1,11 @@
 services:
   volute:
     build: .
+    # Run an init (tini) as PID 1 so orphaned mind grandchildren (e.g. a claude
+    # SDK subprocess whose mind server was killed) get reaped instead of piling
+    # up as <defunct> zombies under the daemon. Defense-in-depth for minds still
+    # running an older template whose server doesn't reap on shutdown.
+    init: true
     ports:
       - "1618:1618"
     environment:

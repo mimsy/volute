@@ -63,4 +63,7 @@ server.listen(port, () => {
   log("server", `listening on :${actualPort}`);
 });
 
-setupShutdown();
+// Reap live SDK subprocesses on SIGTERM/SIGINT so `mind stop`/restart don't
+// orphan `<defunct>` claude children to PID 1 (the daemon, which isn't a
+// reaping init). Bounded so a wedged child can't block shutdown forever.
+setupShutdown(mind.reapAllSessions);
