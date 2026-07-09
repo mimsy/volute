@@ -58,7 +58,6 @@ export const turns = sqliteTable(
     mind: text("mind").notNull(),
     session: text("session"),
     trigger_event_id: integer("trigger_event_id"),
-    summary_event_id: integer("summary_event_id"),
     summary_id: integer("summary_id"),
     status: text("status").notNull().default("active"),
     created_at: text("created_at").notNull().default(sql`(datetime('now'))`),

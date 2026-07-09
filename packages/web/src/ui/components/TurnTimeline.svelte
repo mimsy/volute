@@ -161,6 +161,11 @@ let loadingChildren = new SvelteSet<number>();
 // For single-turn hours: expand directly to raw events instead of showing the turn summary
 let directEventsSummaries = $state(new SvelteMap<number, HistoryMessage[]>());
 
+// A turn summary's period_key is the turn UUID. Legacy "<mind>-<doneId>" keys can't be
+// resolved to turn events, so the direct-events drill-down must skip them (see #395).
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const isTurnUuid = (key: string): boolean => UUID_RE.test(key);
+
 // --- Streaming events for active turns ---
 let streamingEvents = $state(new SvelteMap<string, HistoryMessage[]>());
 let nextSyntheticId = -1;
@@ -499,15 +504,21 @@ async function toggleSummaryExpand(summary: SummaryRow) {
 
       if (sourceIds.length > 0) {
         const turnSummaryRows = await fetchSummaryByIds(sourceIds);
-        const turnIds = turnSummaryRows.map((s) => s.period_key);
+        const uuidRows = turnSummaryRows.filter((s) => isTurnUuid(s.period_key));
 
-        if (turnIds.length === 1) {
-          const events = await fetchTurnEvents(turnSummaryRows[0].mind, {
-            turnId: turnIds[0],
+        if (uuidRows.length < turnSummaryRows.length) {
+          // One or more legacy keys can't be resolved to turns — render the summary rows
+          // themselves rather than an empty drill-down.
+          expandedSummaries.set(summary.id, turnSummaryRows);
+        } else if (uuidRows.length === 1) {
+          const events = await fetchTurnEvents(uuidRows[0].mind, {
+            turnId: uuidRows[0].period_key,
           });
           directEventsSummaries.set(summary.id, events);
-        } else if (turnIds.length > 0) {
-          const turns: TurnRow[] = await fetchTurns({ turnIds: turnIds });
+        } else if (uuidRows.length > 0) {
+          const turns: TurnRow[] = await fetchTurns({
+            turnIds: uuidRows.map((s) => s.period_key),
+          });
           turns.sort((a, b) => a.created_at.localeCompare(b.created_at));
           expandedSummaries.set(summary.id, turns);
         } else {

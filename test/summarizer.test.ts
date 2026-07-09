@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { describe, it } from "node:test";
 import { and, eq } from "drizzle-orm";
 import {
@@ -262,6 +263,96 @@ describe("summarizer", () => {
         .from(summaries)
         .where(and(eq(summaries.mind, mind3), eq(summaries.period, "turn")));
       assert.equal(rows.length, 0, "no summary should be inserted for empty turn");
+    });
+  });
+
+  // ── Wedged / interrupted turns (#395) ──
+
+  describe("summarizeTurn: wedged/interrupted", () => {
+    it("does not duplicate a summary when done arrives after a wedged-turn sweep", async () => {
+      const mind = "test-wedged-dedupe";
+      const session = "wd1";
+      const turnId = randomUUID();
+      const db = await getDb();
+      await db.insert(turns).values({ id: turnId, mind, session, status: "active" });
+      await db.insert(mindHistory).values({
+        mind,
+        type: "inbound",
+        session,
+        channel: "@c",
+        content: "hi",
+        turn_id: turnId,
+      });
+      await db.insert(mindHistory).values({
+        mind,
+        type: "text",
+        session,
+        content: "hello back",
+        turn_id: turnId,
+      });
+      const doneResult = await db
+        .insert(mindHistory)
+        .values({ mind, type: "done", session, turn_id: turnId })
+        .returning({ id: mindHistory.id });
+      const doneId = doneResult[0].id;
+
+      // The sweep summarizes the wedged turn under period_key = <turn uuid>.
+      await summarizeTurn(mind, session, "@c", doneId, turnId);
+      // Then the real `done` fires: completeTurn returned undefined, so no turnId is passed.
+      // The old fallback keyed on "<mind>-<doneId>" and produced a SECOND summary.
+      await summarizeTurn(mind, session, "@c", doneId, undefined);
+
+      const rows = await db
+        .select()
+        .from(summaries)
+        .where(and(eq(summaries.mind, mind), eq(summaries.period, "turn")));
+      assert.equal(rows.length, 1, "exactly one summary should exist for the turn");
+      assert.equal(rows[0].period_key, turnId, "summary must be keyed by the turn uuid");
+
+      await clearMind(mind);
+    });
+
+    it("deletes the turn row for an interrupted turn (no substantive output)", async () => {
+      const mind = "test-interrupted-delete";
+      const session = "id1";
+      const turnId = randomUUID();
+      const db = await getDb();
+      await db.insert(turns).values({ id: turnId, mind, session, status: "active" });
+      const inbound = await db
+        .insert(mindHistory)
+        .values({
+          mind,
+          type: "inbound",
+          session,
+          channel: "@c",
+          content: "you there?",
+          turn_id: turnId,
+        })
+        .returning({ id: mindHistory.id });
+      const doneResult = await db
+        .insert(mindHistory)
+        .values({ mind, type: "done", session, turn_id: turnId })
+        .returning({ id: mindHistory.id });
+
+      await summarizeTurn(mind, session, "@c", doneResult[0].id, turnId);
+
+      const summaryRows = await db
+        .select()
+        .from(summaries)
+        .where(and(eq(summaries.mind, mind), eq(summaries.period, "turn")));
+      assert.equal(summaryRows.length, 0, "no summary for an output-less turn");
+
+      const inboundRow = await db
+        .select()
+        .from(mindHistory)
+        .where(eq(mindHistory.id, inbound[0].id))
+        .get();
+      assert.equal(inboundRow!.turn_id, null, "inbound should be un-tagged");
+
+      const turnRow = await db.select().from(turns).where(eq(turns.id, turnId)).get();
+      assert.equal(turnRow, undefined, "the orphaned turn row must be deleted");
+
+      await clearMind(mind);
     });
   });
 

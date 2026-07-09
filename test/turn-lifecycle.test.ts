@@ -262,6 +262,140 @@ describe("turn-lifecycle: mid-turn inbound tagging", () => {
   });
 });
 
+describe("turn-lifecycle: trigger linking (#403)", () => {
+  it("links the trigger when the turn-creating event carries no channel (session fallback)", async () => {
+    const mind = "tl-channelless-trigger";
+    // Inbound arrives on the @alice DM (session is channel-shaped: session === channel).
+    const inboundId = await recordInbound(mind, "@alice", "alice", "hello~");
+    // The turn is created by a channel-less `thinking` event — the template's
+    // message→channel mapping hasn't been established yet (the race in #403).
+    const { turnId } = await handleMindEvent(mind, {
+      type: "thinking",
+      session: "@alice",
+      content: "let me look",
+    });
+    assert.ok(turnId);
+
+    const db = await getDb();
+    const inbound = await db.select().from(mindHistory).where(eq(mindHistory.id, inboundId!)).get();
+    assert.equal(inbound!.turn_id, turnId, "inbound should be tagged despite the missing channel");
+    const turn = await db.select().from(turns).where(eq(turns.id, turnId!)).get();
+    assert.equal(turn!.trigger_event_id, inboundId, "trigger should resolve via the session");
+    await cleanup(mind);
+  });
+
+  it("does not claim inbounds that predate the previous turn on the session (bounded sweep)", async () => {
+    const mind = "tl-bounded-sweep";
+    const db = await getDb();
+    // A prior turn on the @alice session, created at 01:00.
+    const priorTurn = "00000000-0000-0000-0000-000000000001";
+    await db.insert(turns).values({
+      id: priorTurn,
+      mind,
+      session: "@alice",
+      status: "complete",
+      created_at: "2020-01-01 01:00:00",
+    });
+    // A stale inbound that arrived BEFORE the prior turn and was never claimed — it must
+    // stay untagged rather than be hoovered by the next turn.
+    const stale = await db
+      .insert(mindHistory)
+      .values({
+        mind,
+        type: "inbound",
+        channel: "@alice",
+        sender: "alice",
+        content: "old ping",
+        created_at: "2020-01-01 00:30:00",
+      })
+      .returning({ id: mindHistory.id });
+    // A fresh inbound that arrived after the prior turn — this one belongs to the new turn.
+    const fresh = await db
+      .insert(mindHistory)
+      .values({
+        mind,
+        type: "inbound",
+        channel: "@alice",
+        sender: "alice",
+        content: "new ping",
+        created_at: "2020-01-01 02:00:00",
+      })
+      .returning({ id: mindHistory.id });
+
+    // The new turn is created channel-less (session fallback) on @alice.
+    const { turnId } = await handleMindEvent(mind, {
+      type: "thinking",
+      session: "@alice",
+      content: "on it",
+    });
+    assert.ok(turnId);
+
+    const staleRow = await db
+      .select()
+      .from(mindHistory)
+      .where(eq(mindHistory.id, stale[0].id))
+      .get();
+    const freshRow = await db
+      .select()
+      .from(mindHistory)
+      .where(eq(mindHistory.id, fresh[0].id))
+      .get();
+    assert.equal(staleRow!.turn_id, null, "stale pre-prior-turn inbound must stay untagged");
+    assert.equal(freshRow!.turn_id, turnId, "fresh inbound must be tagged to the new turn");
+    const turn = await db.select().from(turns).where(eq(turns.id, turnId!)).get();
+    assert.equal(
+      turn!.trigger_event_id,
+      fresh[0].id,
+      "trigger is the fresh inbound, not the stale",
+    );
+    await cleanup(mind);
+  });
+
+  it("each turn owns exactly its own inbounds across two turns (pip scenario)", async () => {
+    const mind = "tl-pip-scenario";
+    // Turn A: three inbounds arrive, then a channel-less first event opens the turn.
+    const a1 = await recordInbound(mind, "@pip", "pip", "hello~ seeing skills?");
+    const a2 = await recordInbound(mind, "@pip", "pip", "hello again");
+    const a3 = await recordInbound(mind, "@pip", "pip", "ping");
+    const { turnId: turnA } = await handleMindEvent(mind, {
+      type: "thinking",
+      session: "@pip",
+      content: "checking",
+    });
+    assert.ok(turnA);
+    await handleMindEvent(mind, {
+      type: "text",
+      session: "@pip",
+      channel: "@pip",
+      content: "fixed — all nine skills",
+    });
+    await handleMindEvent(mind, { type: "done", session: "@pip" });
+
+    // Turn B: a later inbound + turn. It must not re-claim turn A's inbounds.
+    const b1 = await recordInbound(mind, "@pip", "pip", "thanks!");
+    const { turnId: turnB } = await handleMindEvent(mind, {
+      type: "thinking",
+      session: "@pip",
+      content: "you're welcome",
+    });
+    assert.ok(turnB);
+    assert.notEqual(turnA, turnB);
+
+    const db = await getDb();
+    for (const id of [a1, a2, a3]) {
+      const row = await db.select().from(mindHistory).where(eq(mindHistory.id, id!)).get();
+      assert.equal(row!.turn_id, turnA, `inbound ${id} should belong to turn A`);
+    }
+    const bRow = await db.select().from(mindHistory).where(eq(mindHistory.id, b1!)).get();
+    assert.equal(bRow!.turn_id, turnB, "the later inbound should belong to turn B");
+    const tA = await db.select().from(turns).where(eq(turns.id, turnA!)).get();
+    const tB = await db.select().from(turns).where(eq(turns.id, turnB!)).get();
+    assert.equal(tA!.trigger_event_id, a1, "turn A trigger is its first inbound");
+    assert.equal(tB!.trigger_event_id, b1, "turn B trigger is its own inbound");
+    await cleanup(mind);
+  });
+});
+
 describe("turn-lifecycle: concurrent sessions", () => {
   const mind = "tl-concurrent";
   afterEach(() => cleanup(mind));

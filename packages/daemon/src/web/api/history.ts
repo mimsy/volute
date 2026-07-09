@@ -93,7 +93,9 @@ const history = new Hono<AuthEnv>()
           sql`${mindHistory.type} IN ('inbound', 'outbound')`,
         ),
       )
-      .orderBy(mindHistory.created_at);
+      // id tiebreaker: created_at is second-resolution, so a same-second inbound/outbound
+      // pair would otherwise flip and read as an answer-before-question exchange (#403).
+      .orderBy(mindHistory.created_at, mindHistory.id);
 
     // Group all events by turn and channel
     type ConvEvent = {

@@ -138,6 +138,53 @@ describe("web history routes", () => {
     assert.equal(body[0].summary, "Test summary content");
   });
 
+  it("GET /api/v1/history/turns — orders same-second messages by id (#403)", async () => {
+    const cookie = await setupAuth();
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
+    const db = await getDb();
+
+    const turnId = randomUUID();
+    await db.insert(turns).values({
+      id: turnId,
+      mind: "test-history-mind1",
+      status: "complete",
+    });
+    // Question and answer share the exact same created_at second. The inbound is recorded
+    // first (lower id); without the id tiebreaker the pair could flip and read as an
+    // answer-before-question exchange.
+    const ts = "2020-06-01 12:00:00";
+    await db.insert(mindHistory).values({
+      mind: "test-history-mind1",
+      type: "inbound",
+      channel: "@alice",
+      sender: "alice",
+      content: "question?",
+      turn_id: turnId,
+      created_at: ts,
+    });
+    await db.insert(mindHistory).values({
+      mind: "test-history-mind1",
+      type: "outbound",
+      channel: "@alice",
+      content: "answer.",
+      turn_id: turnId,
+      created_at: ts,
+    });
+
+    const res = await app.request(`/api/v1/history/turns?turnId=${turnId}`, {
+      headers: { Cookie: `volute_session=${cookie}` },
+    });
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as Array<{
+      conversations: Array<{ messages: Array<{ role: string }> }>;
+    }>;
+    assert.equal(body.length, 1);
+    const messages = body[0].conversations[0].messages;
+    assert.equal(messages.length, 2);
+    assert.equal(messages[0].role, "user", "the question (lower id) must come first");
+    assert.equal(messages[1].role, "assistant", "the answer (higher id) must come second");
+  });
+
   it("GET /api/v1/history/turns — requires auth", async () => {
     const { default: app } = await import("../packages/daemon/src/web/app.js");
     const res = await app.request("/api/v1/history/turns");
