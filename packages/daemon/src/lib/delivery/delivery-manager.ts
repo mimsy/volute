@@ -9,7 +9,7 @@ import { getParticipants } from "../events/conversations.js";
 import { onMindEvent } from "../events/mind-activity-tracker.js";
 import { findMind, getBaseName, mindDir, voluteHome } from "../mind/registry.js";
 import { readVoluteConfig } from "../mind/volute-config.js";
-import { deliveryQueue } from "../schema.js";
+import { channelGates, deliveryQueue } from "../schema.js";
 import { type AvatarBlock, renderAvatarBlock } from "../util/avatar-image.js";
 import log from "../util/logger.js";
 import {
@@ -35,6 +35,16 @@ const REDRIVE_INTERVAL_MS = 15_000;
 const RETRY_BASE_MS = 5_000;
 const RETRY_MAX_MS = 5 * 60_000;
 const REDRIVE_BATCH_LIMIT = 200;
+
+// --- Gated-channel release tuning ---
+// When a routing change matches a previously-gated channel, deliver at most this many
+// of the newest held messages per channel. The rest are archived (inert) so a
+// months-old backlog can't flood the mind's context in a single sweep. #537
+const GATED_RELEASE_LIMIT_PER_CHANNEL = 10;
+// Re-send the "new channel" invite every N held messages, not just on the first. A
+// mind should be able to tell "nobody is talking to me" from "I've been deaf for
+// months". #537
+const GATED_NOTIFY_EVERY = 10;
 
 const mentionRegexCache = new Map<string, RegExp>();
 
@@ -95,6 +105,12 @@ export class DeliveryManager {
   private isMindRunning: (baseName: string) => boolean = (name) =>
     tryGetMindManager()?.isRunning(name) ?? false;
 
+  /** Sends a system message to a mind (invites, release summaries); overridable in tests. */
+  private notify: (mindName: string, text: string) => Promise<void> = async (mindName, text) => {
+    const { sendSystemMessage } = await import("../chat/system-chat.js");
+    await sendSystemMessage(mindName, text);
+  };
+
   constructor() {
     // Release gated messages when a mind's routes.json changes.
     setRoutesChangeListener((mind) => {
@@ -107,6 +123,11 @@ export class DeliveryManager {
   /** Test seam: override the mind-running predicate. */
   setRunningCheck(fn: (baseName: string) => boolean): void {
     this.isMindRunning = fn;
+  }
+
+  /** Test seam: capture/override system notifications sent to minds. */
+  setNotifier(fn: (mindName: string, text: string) => Promise<void>): void {
+    this.notify = fn;
   }
 
   // --- Public API ---
@@ -330,9 +351,15 @@ export class DeliveryManager {
   }
 
   /**
-   * Re-evaluate a mind's `gated` rows against its current routes.json and promote any
-   * that now match to `pending` (delivered by the next redrive sweep). Called when the
-   * routing config changes.
+   * Re-evaluate a mind's `gated` rows against its current routes.json when the routing
+   * config changes. For each channel that now matches a `mind` route:
+   *  - the newest {@link GATED_RELEASE_LIMIT_PER_CHANNEL} rows are promoted to `pending`
+   *    and re-stamped with the freshly-resolved session (NOT the gate-time fallback), so
+   *    they land in the correct session instead of `main` (#537 bug 1);
+   *  - any older rows are `archived` (inert) so a long backlog can't flood the mind
+   *    in one sweep (#537 bug 2), and the mind gets one summary rather than a flood.
+   * Rows resolving to a `file` destination are archived (the delivery manager doesn't
+   * deliver file routes). Declined channels are skipped entirely — they stay gated.
    */
   async releaseGated(mindName: string): Promise<void> {
     const baseName = await getBaseName(mindName);
@@ -349,7 +376,12 @@ export class DeliveryManager {
       return;
     }
 
-    const promote: number[] = [];
+    // Group newly-matching mind-route rows by channel, recomputing the session so the
+    // release delivers to the CURRENT route. File-route matches are archived.
+    type Promotable = { id: number; session: string };
+    const byChannel = new Map<string, Promotable[]>();
+    const archiveIds: number[] = [];
+
     for (const row of rows) {
       let payload: DeliveryPayload;
       try {
@@ -364,25 +396,150 @@ export class DeliveryManager {
         participantCount: payload.participantCount,
       };
       const route = resolveRoute(config, meta);
-      if (route.matched && route.destination === "mind") {
-        promote.push(row.id);
+      if (!route.matched) continue; // still unrouted → leave gated
+      if (route.destination === "file") {
+        archiveIds.push(row.id); // not deliverable via the delivery manager
+        continue;
+      }
+      let session = route.session;
+      if (session === "$new") {
+        session = `new-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      }
+      const channel = row.channel ?? payload.channel ?? "unknown";
+      const list = byChannel.get(channel) ?? [];
+      list.push({ id: row.id, session });
+      byChannel.set(channel, list);
+    }
+
+    const promote: Promotable[] = [];
+    const truncationNotes: string[] = [];
+    for (const [channel, items] of byChannel) {
+      // A declined channel stays gated even if a rule now matches — the mind opted out.
+      if (await this.isChannelDeclined(baseName, channel)) continue;
+      // Newest-first so the release keeps the most recent context.
+      items.sort((a, b) => b.id - a.id);
+      const keep = items.slice(0, GATED_RELEASE_LIMIT_PER_CHANNEL);
+      const drop = items.slice(GATED_RELEASE_LIMIT_PER_CHANNEL);
+      promote.push(...keep);
+      for (const d of drop) archiveIds.push(d.id);
+      if (drop.length > 0) {
+        truncationNotes.push(
+          `${channel}: released the ${keep.length} most recent message(s); ${drop.length} earlier ` +
+            `message(s) were held while unrouted and remain in the channel history ` +
+            `(volute chat read ${channel}).`,
+        );
+        dlog.info(
+          `truncated gated release for ${baseName} on ${channel}: kept ${keep.length}, archived ${drop.length}`,
+        );
       }
     }
 
-    if (promote.length === 0) return;
+    if (archiveIds.length > 0) {
+      try {
+        const db = await getDb();
+        await db
+          .update(deliveryQueue)
+          .set({ status: "archived" })
+          .where(inArray(deliveryQueue.id, archiveIds));
+      } catch (err) {
+        dlog.warn(`failed to archive gated rows for ${baseName}`, log.errorData(err));
+      }
+    }
+
+    if (promote.length === 0) {
+      if (truncationNotes.length > 0) await this.sendReleaseSummary(mindName, truncationNotes);
+      return;
+    }
+
+    // Promote per-row so each carries its freshly-resolved session (bug 1 fix). Bounded
+    // to GATED_RELEASE_LIMIT_PER_CHANNEL per channel, so this loop is small.
     try {
       const db = await getDb();
-      await db
-        .update(deliveryQueue)
-        .set({ status: "pending", attempts: 0, next_attempt_at: null })
-        .where(inArray(deliveryQueue.id, promote));
+      for (const p of promote) {
+        await db
+          .update(deliveryQueue)
+          .set({ status: "pending", session: p.session, attempts: 0, next_attempt_at: null })
+          .where(eq(deliveryQueue.id, p.id));
+      }
       dlog.info(`released ${promote.length} gated message(s) for ${baseName} after route change`);
     } catch (err) {
       dlog.warn(`failed to promote gated rows for ${baseName}`, log.errorData(err));
       return;
     }
+
+    if (truncationNotes.length > 0) await this.sendReleaseSummary(mindName, truncationNotes);
     // Deliver immediately rather than waiting for the next sweep.
     await this.redrive();
+  }
+
+  /**
+   * Whether the mind has explicitly declined a channel. A declined channel keeps
+   * persisting history but never notifies and is never released. #537
+   */
+  private async isChannelDeclined(baseName: string, channel: string | null): Promise<boolean> {
+    if (!channel) return false;
+    try {
+      const db = await getDb();
+      const rows = await db
+        .select({ state: channelGates.state })
+        .from(channelGates)
+        .where(and(eq(channelGates.mind, baseName), eq(channelGates.channel, channel)));
+      return rows[0]?.state === "declined";
+    } catch (err) {
+      dlog.warn(`failed to read gate state for ${baseName}/${channel}`, log.errorData(err));
+      return false;
+    }
+  }
+
+  /**
+   * Record that a mind has declined an unrouted channel: future messages are still
+   * persisted (history is preserved) but never notify, and any currently-gated rows are
+   * archived so they're inert. Returns the number of held messages archived. #537
+   */
+  async declineChannel(mindName: string, channel: string): Promise<number> {
+    const baseName = await getBaseName(mindName);
+    const db = await getDb();
+    await db
+      .insert(channelGates)
+      .values({ mind: baseName, channel, state: "declined" })
+      .onConflictDoUpdate({
+        target: [channelGates.mind, channelGates.channel],
+        set: { state: "declined", updated_at: sql`(datetime('now'))` },
+      });
+    const archived = await db
+      .update(deliveryQueue)
+      .set({ status: "archived" })
+      .where(
+        and(
+          eq(deliveryQueue.mind, baseName),
+          eq(deliveryQueue.channel, channel),
+          eq(deliveryQueue.status, "gated"),
+        ),
+      )
+      .returning({ id: deliveryQueue.id });
+    dlog.info(
+      `declined channel ${channel} for ${baseName}; archived ${archived.length} held row(s)`,
+    );
+    return archived.length;
+  }
+
+  /**
+   * Send the mind a single summary when a routing change released a truncated backlog,
+   * rather than a flood of individual messages. #537
+   */
+  private async sendReleaseSummary(mindName: string, notes: string[]): Promise<void> {
+    const body = [
+      `[Channel backlog released]`,
+      `A routing change matched channel(s) that had held messages while unrouted. To avoid ` +
+        `flooding you, only the ${GATED_RELEASE_LIMIT_PER_CHANNEL} most recent per channel were delivered:`,
+      "",
+      ...notes.map((n) => `- ${n}`),
+    ].join("\n");
+    try {
+      await this.notify(mindName, body);
+    } catch (err) {
+      dlog.warn(`failed to send release summary for ${mindName}`, log.errorData(err));
+    }
   }
 
   /**
@@ -926,53 +1083,67 @@ export class DeliveryManager {
     payload: DeliveryPayload,
   ): Promise<void> {
     const baseName = await getBaseName(mindName);
+    // A declined channel still persists history, but never notifies. #537
+    const declined = await this.isChannelDeclined(baseName, payload.channel);
     await this.persistToQueue(mindName, session, payload, "gated");
+    if (declined) return;
 
-    // Check if this is the first gated message for this channel — send invite
+    // Re-notify on a cadence, not just once, so a long silence stays visible. Count over
+    // both gated AND archived rows so clearing/truncating the backlog doesn't silently
+    // re-arm the invite, and the cadence reflects total messages seen on the channel. #537
     try {
       const db = await getDb();
-      const count = await db
+      const rows = await db
         .select({ count: sql<number>`count(*)` })
         .from(deliveryQueue)
         .where(
           and(
             eq(deliveryQueue.mind, baseName),
             eq(deliveryQueue.channel, payload.channel),
-            eq(deliveryQueue.status, "gated"),
+            inArray(deliveryQueue.status, ["gated", "archived"]),
           ),
         );
-
-      // If this is the first (count === 1 after our insert), send invite
-      if ((count[0]?.count ?? 0) <= 1) {
-        await this.sendInviteNotification(mindName, payload);
+      const count = rows[0]?.count ?? 0;
+      if (count === 1 || count % GATED_NOTIFY_EVERY === 0) {
+        await this.sendInviteNotification(mindName, payload, count);
       }
     } catch (err) {
       dlog.warn(`failed to check gated count for ${baseName}`, log.errorData(err));
     }
   }
 
-  private async sendInviteNotification(mindName: string, payload: DeliveryPayload): Promise<void> {
+  private async sendInviteNotification(
+    mindName: string,
+    payload: DeliveryPayload,
+    gatedCount = 1,
+  ): Promise<void> {
     const text = extractTextContent(payload.content);
     const preview = text.length > 200 ? `${text.slice(0, 200)}...` : text;
     const channel = payload.channel ?? "unknown";
 
+    const heldLine =
+      gatedCount > 1
+        ? `${gatedCount} messages from this channel are being held, unrouted — you've not routed it yet.`
+        : `Someone new is reaching out — you don't have a route for this channel yet.`;
+
     const notification = [
       `[New channel: ${channel}]`,
-      `Someone new is reaching out — you don't have a route for this channel yet.`,
+      heldLine,
       `Sender: ${payload.sender ?? "unknown"}`,
       payload.platform ? `Platform: ${payload.platform}` : null,
       payload.participantCount ? `Participants: ${payload.participantCount}` : null,
       "",
       `Preview: ${preview}`,
       "",
-      `To start hearing this channel, add a routing rule for "${channel}" to .config/routes.json.`,
-      `Messages are held safely until you do — nothing is lost. If you'd rather not engage, just leave it unrouted.`,
+      `To start hearing this channel, add a routing rule for "${channel}" to .config/routes.json ` +
+        `— only the ${GATED_RELEASE_LIMIT_PER_CHANNEL} most recent held messages are replayed; older ` +
+        `ones stay in the channel history (volute chat read ${channel}).`,
+      `To stop hearing about it, decline the channel: volute chat channels decline ${channel}`,
     ]
       .filter((line) => line !== null)
       .join("\n");
 
-    const { sendSystemMessage } = await import("../chat/system-chat.js");
-    await sendSystemMessage(mindName, notification);
+    await this.notify(mindName, notification);
   }
 
   /**

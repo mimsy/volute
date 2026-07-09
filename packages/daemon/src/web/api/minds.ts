@@ -2502,6 +2502,25 @@ const app = new Hono<AuthEnv>()
       return c.json({ error: "Failed to retrieve pending messages" }, 500);
     }
   })
+  // Decline an unrouted (gated) channel: stops invites and archives the held backlog.
+  // The channel is passed in the body (not the path) since channel slugs can contain
+  // slashes (e.g. "discord:server/general") that a path param can't carry.
+  .post("/:name/gates/decline", requireSelf(), async (c) => {
+    const name = c.req.param("name");
+    const body = (await c.req.json().catch(() => ({}))) as { channel?: string };
+    const channel = body.channel?.trim();
+    if (!channel) return c.json({ error: "channel required" }, 400);
+    try {
+      const archived = await getDeliveryManager().declineChannel(name, channel);
+      return c.json({ ok: true, channel, archived });
+    } catch (err) {
+      if (err instanceof Error && err.message.includes("not initialized")) {
+        return c.json({ error: "Delivery manager not available" }, 503);
+      }
+      log.error(`failed to decline channel ${channel} for ${name}`, log.errorData(err));
+      return c.json({ error: "Failed to decline channel" }, 500);
+    }
+  })
   // AI completion proxy for minds
   .post("/:name/ai/complete", requireSelf(), async (c) => {
     const body = (await c.req.json()) as { systemPrompt: string; message: string; model?: string };
