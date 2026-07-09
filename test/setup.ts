@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
+import { sweepStaleTestHomes } from "./helpers/test-home.js";
 
 // Strip GIT_* env vars that are inherited when tests run inside git hooks
 // (e.g. pre-push). These vars cause git commands in test temp dirs to target
@@ -15,11 +16,30 @@ for (const key of Object.keys(process.env)) {
 // minds get TMPDIR=<mindDir>/.mind/tmp, and tsx creates a unix socket there
 // whose path must stay under the 104-byte sun_path limit.
 const tmpRoot = process.platform === "darwin" ? "/tmp" : tmpdir();
+
+// Sweep test homes leaked by prior runs that were force-killed before their exit
+// cleanup ran. Without this they piled up until they filled the disk (#502). The
+// 2h threshold is well past any real run, so a sibling test process running
+// concurrently right now keeps its fresh dir.
+sweepStaleTestHomes(tmpRoot, 2 * 60 * 60 * 1000);
+
 const testHome = resolve(tmpRoot, `volute-test-${process.pid}`);
 // Remove stale test dir from a prior run with the same PID to ensure
 // a clean database (avoids migration issues with leftover DB files)
 if (existsSync(testHome)) rmSync(testHome, { recursive: true, force: true });
 mkdirSync(testHome, { recursive: true });
+
+// Remove this run's test home when the process exits. `node --test --test-force-exit`
+// calls process.exit() once tests finish, which still fires synchronous 'exit'
+// handlers — so a sync rmSync here reliably cleans up (verified) where an async
+// after() hook would be skipped.
+process.on("exit", () => {
+  try {
+    rmSync(testHome, { recursive: true, force: true });
+  } catch {
+    // Best-effort — the sweep above catches anything left behind next run.
+  }
+});
 mkdirSync(resolve(testHome, "system"), { recursive: true });
 process.env.VOLUTE_HOME = testHome;
 process.env.VOLUTE_USER_HOME = testHome;
