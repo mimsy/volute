@@ -81,6 +81,18 @@ describe("renderAvatarBlock", () => {
     writeFileSync(path, "not an image");
     assert.equal(await renderAvatarBlock(path, "someone"), null);
   });
+
+  it("returns null (omits the image) when a supported-extension file is not a real image", async () => {
+    // The regression this fix guards against: on processing failure the old code
+    // inlined the original bytes into every mind's context. renderAvatarBlock must
+    // drop the block instead. A supported extension gets past the MIME check and
+    // into sharp, which throws on the garbage bytes.
+    const dir = resolve(voluteHome(), "render-avatars");
+    mkdirSync(dir, { recursive: true });
+    const path = resolve(dir, "render-corrupt.png");
+    writeFileSync(path, "this is not a png");
+    assert.equal(await renderAvatarBlock(path, "someone"), null);
+  });
 });
 
 describe("sharp packaging", () => {

@@ -32,24 +32,26 @@ const MIME_BY_EXT: Record<string, string> = {
   ".webp": "image/webp",
 };
 
-// Fire the "sharp missing" warning once per process rather than per avatar.
-let warnedSharpMissing = false;
+// Fire the "sharp unavailable" warning once per process rather than per avatar —
+// loadSharp() runs once per participant per delivery, so an unusable install
+// (missing package or broken native binary) would otherwise spam every message.
+let warnedSharpUnavailable = false;
 
 async function loadSharp(): Promise<any | null> {
   try {
     const mod = await import("sharp");
     return mod.default ?? mod;
   } catch (err) {
-    const code = (err as NodeJS.ErrnoException).code;
-    if (code === "MODULE_NOT_FOUND" || code === "ERR_MODULE_NOT_FOUND") {
-      if (!warnedSharpMissing) {
-        warnedSharpMissing = true;
+    if (!warnedSharpUnavailable) {
+      warnedSharpUnavailable = true;
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === "MODULE_NOT_FOUND" || code === "ERR_MODULE_NOT_FOUND") {
         alog.warn(
           "sharp is not installed — avatars will not be downscaled or inlined into mind context. Install the 'sharp' dependency to restore avatar image support.",
         );
+      } else {
+        alog.warn("sharp import failed, avatar image support disabled", log.errorData(err));
       }
-    } else {
-      alog.warn("sharp import failed, avatar image support disabled", log.errorData(err));
     }
     return null;
   }
