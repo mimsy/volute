@@ -8,6 +8,7 @@ import type {
 } from "@volute/api";
 import { Icon } from "@volute/ui";
 import { renderMarkdown } from "@volute/ui/markdown";
+import { sanitizeSvg } from "@volute/ui/sanitize";
 import { SvelteMap, SvelteSet } from "svelte/reactivity";
 import {
   fetchHistory,
@@ -827,7 +828,7 @@ function jumpToLatest() {
                   {/each}
                   {#each turn.activities as act (act.id)}
                     {@const actColor = typeof act.metadata?.color === 'string' ? act.metadata.color : 'yellow'}
-                    {@const actIcon = typeof act.metadata?.icon === 'string' ? act.metadata.icon : ''}
+                    {@const actIcon = typeof act.metadata?.icon === 'string' ? sanitizeSvg(act.metadata.icon) : ''}
                     {@const actUrl = typeof act.metadata?.iframeUrl === 'string' ? act.metadata.iframeUrl : typeof act.metadata?.slug === 'string' ? `/minds/${typeof act.metadata?.author === 'string' ? act.metadata.author : turn.mind}/notes/${act.metadata.slug}` : ''}
                     <div class="peek-anchor">
                       <button class="peek-btn" style:color="var(--{actColor})" aria-label="View activity" onclick={(e) => { e.stopPropagation(); if (actUrl) navigate(actUrl); }}>

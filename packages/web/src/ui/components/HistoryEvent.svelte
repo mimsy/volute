@@ -2,6 +2,7 @@
 import type { HistoryMessage, TurnActivity, TurnConversation } from "@volute/api";
 import { Icon, tooltip as tooltipAction } from "@volute/ui";
 import { renderMarkdown } from "@volute/ui/markdown";
+import { sanitizeSvg } from "@volute/ui/sanitize";
 import { tick } from "svelte";
 import { fetchTurnEvents } from "../lib/client";
 import { normalizeTimestamp } from "../lib/format";
@@ -214,7 +215,7 @@ async function handleClick() {
     {@const actColor = typeof actMeta?.color === "string" ? `var(--${actMeta.color})` : "var(--yellow)"}
     <div class="marker marker-icon" style:color={actColor} use:tooltipAction={{ text: tooltip, position: "left" }}>
       {#if typeof actMeta?.icon === "string"}
-        {@html actMeta.icon}
+        {@html sanitizeSvg(actMeta.icon)}
       {:else}
         <Icon kind="document-lines" />
       {/if}

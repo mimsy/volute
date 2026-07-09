@@ -18,22 +18,36 @@ import log from "../../lib/util/logger.js";
 import type { AuthEnv } from "../middleware/auth.js";
 
 /**
+ * Env for the history router. `mindFilter` is resolved once by router-level
+ * middleware and read by every handler, so new routes inherit cross-mind
+ * scoping by default instead of by discipline.
+ */
+type HistoryEnv = {
+  Variables: AuthEnv["Variables"] & { mindFilter: string | undefined };
+};
+
+/**
  * Resolve the mind whose history the caller may read. Minds are untrusted:
  * a non-admin principal may only see its own history, so the client-supplied
  * `?mind=` param is ignored and forced to the caller's own (base) name.
  * Admin/system callers keep the requested filter.
  */
-async function resolveMindFilter(c: Context<AuthEnv>): Promise<string | undefined> {
+async function resolveMindFilter(c: Context<HistoryEnv>): Promise<string | undefined> {
   const user = c.get("user");
-  if (user.role === "admin" || user.role === "system") {
-    return c.req.query("mind") ?? undefined;
-  }
-  return getBaseName(user.username);
+  const privileged = user.role === "admin" || user.role === "system";
+  return privileged ? (c.req.query("mind") ?? undefined) : getBaseName(user.username);
 }
 
-const history = new Hono<AuthEnv>()
+const history = new Hono<HistoryEnv>()
+  // Backstop: compute the caller's allowed mind scope once, up front. Handlers
+  // read c.get("mindFilter") rather than each remembering to call the helper, so
+  // a future route that forgets still can't leak another mind's history.
+  .use("*", async (c, next) => {
+    c.set("mindFilter", await resolveMindFilter(c));
+    await next();
+  })
   .get("/turns", async (c) => {
-    const mindFilter = await resolveMindFilter(c);
+    const mindFilter = c.get("mindFilter");
     const turnIdFilter = c.req.query("turnId");
     const turnIdsFilter = c.req.query("turnIds");
     const limit = Math.min(Math.max(parseInt(c.req.query("limit") ?? "50", 10) || 50, 1), 200);
@@ -374,7 +388,7 @@ const history = new Hono<AuthEnv>()
     return c.json(result);
   })
   .get("/events", async (c) => {
-    const mindFilter = await resolveMindFilter(c);
+    const mindFilter = c.get("mindFilter");
 
     const stream = new ReadableStream({
       start(controller) {
@@ -436,8 +450,12 @@ const history = new Hono<AuthEnv>()
   .get("/summaries", async (c) => {
     const user = c.get("user");
     const privileged = user.role === "admin" || user.role === "system";
-    // Non-admin callers can only read their own summaries.
-    const mind = privileged ? (c.req.query("mind") ?? "_system") : await getBaseName(user.username);
+    // mindFilter is the caller's allowed scope: the requested mind for
+    // privileged callers (undefined if none), or the caller's own base name for
+    // minds. Summaries default an unscoped privileged read to the system
+    // timeline (`_system`) rather than all minds — this asymmetry is
+    // intentional and load-bearing for the system timeline view.
+    const mind = c.get("mindFilter") ?? "_system";
     const period = c.req.query("period");
     const ids = c.req.query("ids"); // comma-separated summary IDs
     const from = c.req.query("from");
@@ -513,7 +531,7 @@ const history = new Hono<AuthEnv>()
     return c.json(result);
   })
   .get("/activity", async (c) => {
-    const mind = await resolveMindFilter(c);
+    const mind = c.get("mindFilter");
     const from = c.req.query("from");
     const to = c.req.query("to");
     const limit = Math.min(Math.max(parseInt(c.req.query("limit") ?? "100", 10) || 100, 1), 500);
