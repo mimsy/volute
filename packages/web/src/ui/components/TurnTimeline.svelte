@@ -153,6 +153,10 @@ let historyError = $state("");
 // Canonical timezone of the daemon host (period keys are computed in it).
 // Fetched once at load; undefined falls back to browser-local time.
 let serverTz = $state<string | undefined>(undefined);
+// True once the timezone fetch has settled (resolved or failed). The initial
+// summary load waits on this so cross-timezone viewers fetch server-anchored
+// buckets on first paint instead of racing the fetch and using browser-local.
+let serverTzResolved = $state(false);
 
 let readOnlyConv = $state<ConversationWithParticipants | null>(null);
 
@@ -828,12 +832,16 @@ $effect(() => {
     .then((info) => {
       serverTz = info.timezone ?? undefined;
     })
-    .catch(() => {});
+    .catch(() => {})
+    .finally(() => {
+      serverTzResolved = true;
+    });
 });
 
-// Load summaries once turns are available
+// Load summaries once turns are available AND the timezone fetch has settled,
+// so boundary math is anchored to the server zone on first paint.
 $effect(() => {
-  if (turnsData.length > 0 && !summariesLoaded && !loading) {
+  if (serverTzResolved && turnsData.length > 0 && !summariesLoaded && !loading) {
     loadSummaries();
   }
 });

@@ -120,6 +120,10 @@ async function discoverPeriodKeys(period: TimerPeriod): Promise<string[]> {
         cursor.setDate(cursor.getDate() + 7);
         break;
       case "month":
+        // Normalize to the 1st before stepping so a start day of 29-31 doesn't
+        // overflow and skip a shorter month (e.g. Jan 31 → Mar 3, losing Feb).
+        // Day-of-month is irrelevant to the "YYYY-MM" key.
+        cursor.setDate(1);
         cursor.setMonth(cursor.getMonth() + 1);
         break;
     }

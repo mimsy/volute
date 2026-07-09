@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { describe, it } from "node:test";
 import {
   getISOWeekKey,
@@ -7,6 +8,17 @@ import {
   isoWeekKeyForDateStr,
   isoWeekToDate,
 } from "../packages/daemon/src/lib/util/period-keys.js";
+
+// Node resolves the process timezone once at startup, so DST-boundary behavior
+// can only be exercised by re-invoking a child process with a fixed TZ. This
+// runs the period-key module under a DST-observing zone and returns stdout.
+function runUnderTz(tz: string, script: string): string {
+  return execFileSync(process.execPath, ["--import", "tsx", "--input-type=module", "-"], {
+    input: script,
+    env: { ...process.env, TZ: tz },
+    encoding: "utf8",
+  }).trim();
+}
 
 describe("period-keys", () => {
   describe("getISOWeekKey", () => {
@@ -67,6 +79,18 @@ describe("period-keys", () => {
 
     it("crosses a day boundary", () => {
       assert.equal(getPreviousPeriodKey("2026-03-22T00", "hour"), "2026-03-21T23");
+    });
+
+    it("skips the nonexistent spring-forward hour under a DST zone", () => {
+      // 2026-03-08 02:00 America/New_York does not exist (clocks jump to 3 AM).
+      // The previous hour of 3 AM local must be 1 AM local — a naive
+      // setHours(h-1) would produce 2 AM (or loop back to 3 AM), which is wrong.
+      const out = runUnderTz(
+        "America/New_York",
+        `import { getPreviousPeriodKey } from "${new URL("../packages/daemon/src/lib/util/period-keys.ts", import.meta.url).pathname}";
+         process.stdout.write(getPreviousPeriodKey("2026-03-08T03", "hour"));`,
+      );
+      assert.equal(out, "2026-03-08T01");
     });
   });
 
