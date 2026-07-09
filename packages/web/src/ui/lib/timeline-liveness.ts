@@ -58,3 +58,12 @@ export const STALE_TURN_IDLE_MS = 15 * 60_000;
 export function isTurnStale(lastEventAtMs: number, now: number = Date.now()): boolean {
   return now - lastEventAtMs >= STALE_TURN_IDLE_MS;
 }
+
+/**
+ * Milliseconds of a turn's last observed activity: its last streaming event if we saw one,
+ * else its DB `created_at`. `created_at` is normalized so no-Z (UTC) DB timestamps parse
+ * correctly regardless of the browser's local offset.
+ */
+export function turnLastSeenMs(createdAt: string, lastEventAtMs?: number): number {
+  return lastEventAtMs ?? timestampMs(createdAt);
+}

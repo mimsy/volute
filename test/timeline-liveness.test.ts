@@ -10,6 +10,7 @@ import {
   RECONNECT_BACKOFF_MS,
   reconnectDelay,
   STALE_TURN_IDLE_MS,
+  turnLastSeenMs,
 } from "../packages/web/src/ui/lib/timeline-liveness";
 
 function inbound(createdAt: string, id = 1): HistoryMessage {
@@ -110,5 +111,24 @@ describe("isTurnStale", () => {
   it("is true once idle beyond the wedged-turn threshold", () => {
     assert.equal(isTurnStale(now - STALE_TURN_IDLE_MS, now), true);
     assert.equal(isTurnStale(now - (STALE_TURN_IDLE_MS + 60_000), now), true);
+  });
+});
+
+describe("turnLastSeenMs", () => {
+  const now = Date.UTC(2026, 6, 9, 12, 0, 0);
+
+  it("prefers the last streaming-event time when present", () => {
+    assert.equal(turnLastSeenMs(agoNoZ(60 * 60_000, now), now - 1000), now - 1000);
+  });
+
+  it("falls back to a normalized created_at when no event was seen", () => {
+    // No-Z (UTC) DB timestamps must parse the same as their Z counterpart, so a turn
+    // that just loaded is not miscomputed as stale (or future) by the browser's offset.
+    const withZ = new Date(now - 30_000).toISOString();
+    const withoutZ = withZ.replace("Z", "");
+    assert.equal(turnLastSeenMs(withoutZ), turnLastSeenMs(withZ));
+    assert.equal(turnLastSeenMs(withoutZ), now - 30_000);
+    // The fallback of a freshly-created turn is not stale.
+    assert.equal(isTurnStale(turnLastSeenMs(withoutZ), now), false);
   });
 });

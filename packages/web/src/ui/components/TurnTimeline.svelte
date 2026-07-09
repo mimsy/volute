@@ -26,6 +26,7 @@ import {
   isTurnStale,
   pruneExpiredInbounds,
   reconnectDelay,
+  turnLastSeenMs,
 } from "../lib/timeline-liveness";
 import { buildTodayItems } from "../lib/timeline-today";
 import { groupToolEvents } from "../lib/tool-groups";
@@ -280,10 +281,17 @@ async function resync() {
     upsertTurnRows([...rows].reverse());
     for (const turn of turnsData) {
       if (turn.status === "active") {
-        lastEventAt.set(turn.id, Date.now());
-        fetchTurnEvents(turn.mind, { turnId: turn.id })
+        const turnId = turn.id;
+        const turnMind = turn.mind;
+        lastEventAt.set(turnId, Date.now());
+        // Mark as streaming synchronously so a newly-discovered active turn renders live,
+        // and so the completion guard below has a placeholder to observe.
+        if (!streamingEvents.has(turnId)) streamingEvents.set(turnId, []);
+        fetchTurnEvents(turnMind, { turnId })
           .then((dbEvents) => {
-            streamingEvents.set(turn.id, dbEvents);
+            // A summary/done landing mid-fetch deletes streaming state; don't resurrect it.
+            if (!streamingEvents.has(turnId)) return;
+            streamingEvents.set(turnId, dbEvents);
           })
           .catch((err) => console.warn("[TurnTimeline] Failed to resync active turn events:", err));
       } else if (streamingEvents.has(turn.id)) {
@@ -753,7 +761,7 @@ $effect(() => {
     const now = Date.now();
     for (const turn of turnsData) {
       if (turn.status !== "active") continue;
-      const seen = lastEventAt.get(turn.id) ?? new Date(turn.created_at).getTime();
+      const seen = turnLastSeenMs(turn.created_at, lastEventAt.get(turn.id));
       if (!isTurnStale(seen, now)) continue;
       lastEventAt.set(turn.id, now); // avoid refetch storms while awaiting the response
       fetchTurns({ mind: name, turnId: turn.id })
