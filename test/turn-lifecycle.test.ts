@@ -351,6 +351,28 @@ describe("turn-lifecycle: trigger linking (#403)", () => {
     await cleanup(mind);
   });
 
+  it("a channel-less turn on a non-channel-shaped session claims nothing (no cross-channel over-reach)", async () => {
+    const mind = "tl-nonchannel-session";
+    // Session is a plain name (e.g. the `main` default), NOT a channel slug. An untagged
+    // inbound sits on an unrelated channel. The session→channel fallback scopes the sweep
+    // to channel === "main", which matches no inbound — the safety property the removed
+    // `if (!channel) return` guard used to provide now rests on channel-equality.
+    const orphan = await recordInbound(mind, "@bob", "bob", "unrelated ping");
+    const { turnId } = await handleMindEvent(mind, {
+      type: "thinking",
+      session: "main",
+      content: "thinking to myself",
+    });
+    assert.ok(turnId);
+
+    const db = await getDb();
+    const row = await db.select().from(mindHistory).where(eq(mindHistory.id, orphan!)).get();
+    assert.equal(row!.turn_id, null, "inbound on a different channel must stay untagged");
+    const turn = await db.select().from(turns).where(eq(turns.id, turnId!)).get();
+    assert.equal(turn!.trigger_event_id, null, "trigger must stay null — nothing was claimed");
+    await cleanup(mind);
+  });
+
   it("each turn owns exactly its own inbounds across two turns (pip scenario)", async () => {
     const mind = "tl-pip-scenario";
     // Turn A: three inbounds arrive, then a channel-less first event opens the turn.

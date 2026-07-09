@@ -354,6 +354,53 @@ describe("summarizer", () => {
 
       await clearMind(mind);
     });
+
+    it("deletes an interrupted turn resolved via events' turn_id when called with turnId=undefined", async () => {
+      // The #395 path: completeTurn returned undefined (a wedged-turn sweep already ran), so
+      // `done` fires summarizeTurn with no explicit turnId. The id must be recovered from the
+      // events' own turn_id column, then the output-less turn deleted.
+      const mind = "test-interrupted-from-events";
+      const session = "ie1";
+      const turnId = randomUUID();
+      const db = await getDb();
+      await db.insert(turns).values({ id: turnId, mind, session, status: "active" });
+      const inbound = await db
+        .insert(mindHistory)
+        .values({
+          mind,
+          type: "inbound",
+          session,
+          channel: "@c",
+          content: "still there?",
+          turn_id: turnId,
+        })
+        .returning({ id: mindHistory.id });
+      const doneResult = await db
+        .insert(mindHistory)
+        .values({ mind, type: "done", session, turn_id: turnId })
+        .returning({ id: mindHistory.id });
+
+      // No explicit turnId — it must be resolved from the events' turn_id.
+      await summarizeTurn(mind, session, "@c", doneResult[0].id, undefined);
+
+      const summaryRows = await db
+        .select()
+        .from(summaries)
+        .where(and(eq(summaries.mind, mind), eq(summaries.period, "turn")));
+      assert.equal(summaryRows.length, 0, "no summary for an output-less turn");
+
+      const inboundRow = await db
+        .select()
+        .from(mindHistory)
+        .where(eq(mindHistory.id, inbound[0].id))
+        .get();
+      assert.equal(inboundRow!.turn_id, null, "inbound should be un-tagged");
+
+      const turnRow = await db.select().from(turns).where(eq(turns.id, turnId)).get();
+      assert.equal(turnRow, undefined, "turn resolved from events must be deleted");
+
+      await clearMind(mind);
+    });
   });
 
   // ── Transcript building ──

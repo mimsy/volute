@@ -152,7 +152,9 @@ const history = new Hono<AuthEnv>()
       .select()
       .from(activity)
       .where(inArray(activity.turn_id, turnIds))
-      .orderBy(activity.created_at);
+      // id tiebreaker: created_at is second-resolution, so same-second activities within a
+      // turn would otherwise flip order (#403 — same missing tiebreaker as the message pairs).
+      .orderBy(activity.created_at, activity.id);
 
     const activitiesByTurn = new Map<string, typeof activityRows>();
     for (const a of activityRows) {
