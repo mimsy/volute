@@ -23,6 +23,20 @@ export type SubagentConfig = {
   maxTurns?: number;
 };
 
+/** Extended-thinking config, passed through to the Claude Agent SDK's `thinking` option.
+ * `adaptive` on current models (Opus 4.6+, Sonnet 5, Fable); `enabled` for older models
+ * that take a fixed budget. `display: "summarized"` returns readable reasoning summaries;
+ * `"omitted"` (the API default on Opus 4.7+/Sonnet 5) returns empty thinking blocks. */
+export type ThinkingConfig =
+  | { type: "adaptive"; display?: "summarized" | "omitted" }
+  | { type: "enabled"; budgetTokens?: number; display?: "summarized" | "omitted" }
+  | { type: "disabled" };
+
+/** Reasoning depth, passed through to the Claude Agent SDK's `effort` option (the analog
+ * of Claude Code's thinking level). `xhigh` needs Fable 5/Opus 4.7+/Sonnet 5, `max` needs
+ * Fable 5/Opus 4.6+/Sonnet 4.6+; the SDK silently downgrades on models that lack a level. */
+export type EffortLevel = "low" | "medium" | "high" | "xhigh" | "max";
+
 export type MindConfig = {
   model?: string;
   logLevel?: "error" | "warn" | "info" | "debug";
@@ -32,7 +46,8 @@ export type MindConfig = {
   sessionIdleMinutes?: number;
   subagents?: Record<string, SubagentConfig>;
   // Template-specific config fields (claude, pi, codex)
-  maxThinkingTokens?: number;
+  thinking?: ThinkingConfig;
+  effort?: EffortLevel;
   thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
   reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh";
 };

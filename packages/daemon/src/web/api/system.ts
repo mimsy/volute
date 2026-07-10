@@ -596,7 +596,6 @@ const app = new Hono<AuthEnv>()
           .object({
             model: z.string().optional(),
             thinkingLevel: z.enum(["off", "minimal", "low", "medium", "high", "xhigh"]).optional(),
-            maxThinkingTokens: z.number().nonnegative().optional(),
             tokenBudget: z.number().nonnegative().optional(),
             tokenBudgetPeriodMinutes: z.number().positive().optional(),
             compaction: z.object({ maxContextTokens: z.number().positive().optional() }).optional(),

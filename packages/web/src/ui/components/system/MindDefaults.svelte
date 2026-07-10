@@ -35,7 +35,6 @@ const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"] as 
 let models: AiModel[] = $state([]);
 let editModel = $state("");
 let thinkingIndex = $state(0);
-let editMaxThinking = $state("");
 let editBudget = $state("");
 let editPeriod = $state("");
 let editCompaction = $state("");
@@ -113,7 +112,6 @@ async function save() {
         model: editModel || undefined,
         thinkingLevel:
           THINKING_LEVELS[thinkingIndex] !== "off" ? THINKING_LEVELS[thinkingIndex] : undefined,
-        maxThinkingTokens: parseBudgetInt(editMaxThinking) ?? undefined,
         tokenBudget: parseBudgetInt(editBudget) ?? undefined,
         tokenBudgetPeriodMinutes: parseBudgetInt(editPeriod) ?? undefined,
         compaction:
@@ -250,10 +248,6 @@ onMount(async () => {
       editModel = defaults.cognition.model ?? "";
       const level = defaults.cognition.thinkingLevel ?? "off";
       thinkingIndex = Math.max(0, THINKING_LEVELS.indexOf(level));
-      editMaxThinking =
-        defaults.cognition.maxThinkingTokens != null
-          ? String(defaults.cognition.maxThinkingTokens)
-          : "";
       editBudget =
         defaults.cognition.tokenBudget != null ? String(defaults.cognition.tokenBudget) : "";
       editPeriod =
@@ -345,18 +339,6 @@ onMount(async () => {
           <span class="slider-label" class:off={thinkingIndex === 0}>{thinkingLabel}</span>
         </div>
       </SettingRow>
-
-      {#if thinkingIndex > 0}
-        <SettingRow label="Max tokens">
-          <Input
-            type="number"
-            width="80px"
-            bind:value={editMaxThinking}
-            onblur={() => save()}
-            placeholder="default"
-          />
-        </SettingRow>
-      {/if}
 
       <SettingRow label="Budget">
         <Input

@@ -24,6 +24,7 @@ import { log } from "./lib/logger.js";
 import { createMessageChannel } from "./lib/message-channel.js";
 import { isSessionReapable, reapSessionQuery } from "./lib/session-reaper.js";
 import { createSessionStore } from "./lib/session-store.js";
+import type { EffortLevel, ThinkingConfig } from "./lib/startup.js";
 import { loadPrompts, type SubagentConfig } from "./lib/startup.js";
 import { consumeStream } from "./lib/stream-consumer.js";
 import type {
@@ -56,7 +57,8 @@ export function createMind(options: {
   cwd: string;
   abortController: AbortController;
   model?: string;
-  maxThinkingTokens?: number;
+  thinking?: ThinkingConfig;
+  effort?: EffortLevel;
   sessionsDir: string;
   compactionMessage?: string;
   maxContextTokens?: number;
@@ -269,7 +271,12 @@ export function createMind(options: {
         cwd: options.cwd,
         abortController: streamAbort,
         model: options.model,
-        maxThinkingTokens: options.maxThinkingTokens,
+        // Default to visible reasoning: on Opus 4.7+/Sonnet 5 the API omits thinking
+        // text unless display is "summarized", so minds' reasoning would otherwise be
+        // invisible. A mind can override (e.g. omitted, or enabled+budgetTokens for
+        // older models) via `thinking` in config.json.
+        thinking: options.thinking ?? { type: "adaptive", display: "summarized" },
+        effort: options.effort,
         resume,
         agents,
         hooks: {

@@ -186,7 +186,6 @@ export type MindConfig = {
   config: {
     model: string | null;
     thinkingLevel: string | null;
-    maxThinkingTokens: number | null;
     tokenBudget: number | null;
     tokenBudgetPeriodMinutes: number | null;
     compaction: { maxContextTokens?: number | null } | null;

@@ -14,7 +14,6 @@ let config: MindConfig | null = $state(null);
 let models: AiModel[] = $state([]);
 let editModel = $state("");
 let thinkingIndex = $state(0);
-let editMaxThinking = $state("");
 let editBudget = $state("");
 let editPeriod = $state("");
 let editCompaction = $state("");
@@ -59,13 +58,11 @@ $effect(() => {
 
 let isOtherModel = $derived(editModel !== "" && !enabledModels.some((m) => m.id === editModel));
 let thinkingLabel = $derived(THINKING_LEVELS[thinkingIndex]);
-let showMaxThinking = $derived(template === "claude" && thinkingIndex > 0);
 
 function loadEditFields(c: MindConfig) {
   editModel = c.config.model ?? "";
   const level = c.config.thinkingLevel ?? "off";
   thinkingIndex = Math.max(0, THINKING_LEVELS.indexOf(level as (typeof THINKING_LEVELS)[number]));
-  editMaxThinking = c.config.maxThinkingTokens != null ? String(c.config.maxThinkingTokens) : "";
   editBudget = c.config.tokenBudget != null ? String(c.config.tokenBudget) : "";
   editPeriod =
     c.config.tokenBudgetPeriodMinutes != null ? String(c.config.tokenBudgetPeriodMinutes) : "";
@@ -105,14 +102,6 @@ function saveModel(value: string) {
 function saveThinking() {
   saveField("thinking", () =>
     updateMindConfig(name, { thinkingLevel: THINKING_LEVELS[thinkingIndex] }),
-  );
-}
-
-function saveMaxThinking() {
-  saveField("maxThinking", () =>
-    updateMindConfig(name, {
-      maxThinkingTokens: parseBudgetInt(editMaxThinking),
-    }),
   );
 }
 
@@ -214,18 +203,6 @@ onMount(async () => {
       <span class="slider-label" class:off={thinkingIndex === 0}>{thinkingLabel}</span>
     </div>
   </SettingRow>
-
-  {#if showMaxThinking}
-    <SettingRow label="Max tokens">
-      <Input
-        type="number"
-        width="80px"
-        bind:value={editMaxThinking}
-        onblur={saveMaxThinking}
-        placeholder="default"
-      />
-    </SettingRow>
-  {/if}
 
   {#if !hideBudget}
     <SettingRow label="Budget">

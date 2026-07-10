@@ -17,7 +17,8 @@ const { port } = parseArgs();
 const config = loadConfig();
 if (config.logLevel) setLevel(config.logLevel);
 if (config.model) log("server", `using model: ${config.model}`);
-if (config.maxThinkingTokens) log("server", `max thinking tokens: ${config.maxThinkingTokens}`);
+if (config.thinking) log("server", `thinking: ${JSON.stringify(config.thinking)}`);
+if (config.effort) log("server", `effort: ${config.effort}`);
 
 const systemPrompt = loadSystemPrompt();
 const sessionsDir = resolve(".mind/sessions");
@@ -29,7 +30,8 @@ const mind = createMind({
   cwd: resolve("home"),
   abortController,
   model: config.model,
-  maxThinkingTokens: config.maxThinkingTokens,
+  thinking: config.thinking,
+  effort: config.effort,
   sessionsDir,
   compactionMessage: config.compactionMessage,
   maxContextTokens: config.compaction?.maxContextTokens,
