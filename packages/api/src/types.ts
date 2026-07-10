@@ -102,6 +102,17 @@ export type ActivityItem = {
   created_at: string;
 };
 
+/** One item in the "while you were away" home feed: a self-directed turn summary. */
+export type AwayFeedItem = {
+  /** The summary row id. */
+  id: number;
+  mind: string;
+  summary: string;
+  /** The turn this summary describes. */
+  turnId: string;
+  created_at: string;
+};
+
 export type ActivityEventType =
   | "mind_started"
   | "mind_stopped"

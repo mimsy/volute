@@ -15,8 +15,11 @@ import {
   users,
 } from "../../lib/schema.js";
 import log from "../../lib/util/logger.js";
-import { isoWeekKeyForDateStr } from "../../lib/util/period-keys.js";
+import { isoWeekKeyForDateStr, utcDateTimeStr } from "../../lib/util/period-keys.js";
 import type { AuthEnv } from "../middleware/auth.js";
+
+/** Soft age cap for away-feed items. */
+const AWAY_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 
 /**
  * Env for the history router. `mindFilter` is resolved once by router-level
@@ -584,6 +587,55 @@ const history = new Hono<HistoryEnv>()
     });
 
     return c.json(result);
+  })
+  // "While you were away": summaries of self-directed turns for the home feed —
+  // turns NOT triggered by a human message (heartbeats, schedules, dreams,
+  // spirit/mind-initiated, mind-to-mind), newest first. Artifact activity
+  // (pages, notes) is not duplicated here; extension feedSources already
+  // surface those on the home feed. Inherits the router's mindFilter scoping:
+  // minds see only their own activity, admins see all.
+  .get("/away", async (c) => {
+    const mindFilter = c.get("mindFilter");
+    const limit = Math.min(Math.max(parseInt(c.req.query("limit") ?? "50", 10) || 50, 1), 100);
+
+    const db = await getDb();
+    const cutoff = utcDateTimeStr(new Date(Date.now() - AWAY_WINDOW_MS));
+
+    // A turn is self-directed when its trigger inbound is absent, senderless, or
+    // sent by a mind/system user. Senders that don't resolve to a users row
+    // (humans on external platforms like Discord) are treated as human-triggered.
+    const conditions = [
+      eq(summaries.period, "turn"),
+      gte(summaries.created_at, cutoff),
+      sql`(${turns.trigger_event_id} IS NULL OR ${mindHistory.sender} IS NULL OR ${users.user_type} IN ('mind', 'system'))`,
+    ];
+    if (mindFilter) conditions.push(eq(summaries.mind, mindFilter));
+
+    const rows = await db
+      .select({
+        id: summaries.id,
+        mind: summaries.mind,
+        content: summaries.content,
+        created_at: summaries.created_at,
+        turn_id: turns.id,
+      })
+      .from(summaries)
+      .innerJoin(turns, eq(turns.id, summaries.period_key))
+      .leftJoin(mindHistory, eq(mindHistory.id, turns.trigger_event_id))
+      .leftJoin(users, eq(users.username, mindHistory.sender))
+      .where(and(...conditions))
+      .orderBy(desc(summaries.created_at))
+      .limit(limit);
+
+    return c.json(
+      rows.map((r) => ({
+        id: r.id,
+        mind: r.mind,
+        summary: r.content,
+        turnId: r.turn_id,
+        created_at: r.created_at,
+      })),
+    );
   });
 
 export default history;

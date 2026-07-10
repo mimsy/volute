@@ -1,9 +1,10 @@
 <script lang="ts">
 import type { ConversationWithParticipants, Mind } from "@volute/api";
 import { Icon, Modal, tooltip as tooltipAction } from "@volute/ui";
+import { icons } from "@volute/ui/icons";
 import { startMind, stopMind } from "../../lib/client";
 import { mindDotColor } from "../../lib/format";
-import type { Selection } from "../../lib/navigate";
+import { navigate, type Selection } from "../../lib/navigate";
 import {
   cancelReauth,
   oauthReauth,
@@ -193,7 +194,9 @@ let activeChannelId = $derived.by(() => {
 });
 
 let isSystemActive = $derived(
-  selection.kind === "system-history" || selection.kind === "extension",
+  selection.kind === "home" ||
+    selection.kind === "system-history" ||
+    selection.kind === "extension",
 );
 </script>
 
@@ -229,6 +232,18 @@ let isSystemActive = $derived(
             onclick={handleOauthWarningClick}
           >!</button>
         {/if}
+      </div>
+      <div class="item-list">
+        <div class="mind-item-row">
+          <button
+            class="nav-item"
+            class:active={selection.kind === "system-history"}
+            onclick={() => navigate("/history")}
+          >
+            <span class="nav-icon">{@html icons.history}</span>
+            <span class="nav-label">Timeline</span>
+          </button>
+        </div>
       </div>
       {#if spirits.length > 0}
         <div class="item-list">
@@ -595,6 +610,17 @@ let isSystemActive = $derived(
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .nav-icon {
+    display: flex;
+    flex-shrink: 0;
+    color: var(--text-2);
+  }
+
+  .nav-icon :global(svg) {
+    width: 12px;
+    height: 12px;
   }
 
   .item-list {

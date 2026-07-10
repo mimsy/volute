@@ -4,6 +4,7 @@
 
 import type {
   AvailableUser,
+  AwayFeedItem,
   ChannelInfo,
   Conversation,
   ConversationWithParticipants,
@@ -310,6 +311,11 @@ export function fetchSummaries(opts: {
 export function fetchSummaryByIds(ids: number[]): Promise<SummaryRow[]> {
   if (ids.length === 0) return Promise.resolve([]);
   return get(`${V1}/history/summaries?ids=${ids.join(",")}`);
+}
+
+/** Fetch the "while you were away" feed: self-directed turn summaries (artifact activity is surfaced separately via extension feedSources). */
+export function fetchAwayFeed(limit?: number): Promise<AwayFeedItem[]> {
+  return get(`${V1}/history/away${limit !== undefined ? `?limit=${limit}` : ""}`);
 }
 
 // --- Variants ---
