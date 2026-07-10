@@ -8,6 +8,7 @@ export type Selection =
       subpath?: string;
     }
   | { kind: "extension"; extensionId: string; path: string }
+  | { kind: "home" }
   | { kind: "system-history" }
   | { kind: "channel"; slug: string };
 
@@ -85,7 +86,7 @@ export function parseSelection(extensions: ExtensionInfo[] = []): Selection {
   if (path === "/history") return { kind: "system-history" };
   // Legacy settings URLs — these are now modals, redirect to home
   if (path === "/system/settings" || path === "/settings" || path.startsWith("/settings/"))
-    return { kind: "system-history" };
+    return { kind: "home" };
 
   // Mind detail pages — must be checked before extension URL patterns
   // because /minds/:name/:section could overlap
@@ -130,11 +131,11 @@ export function parseSelection(extensions: ExtensionInfo[] = []): Selection {
   if (path === "/chat") {
     const mind = search.get("mind");
     if (mind) return { kind: "mind", name: mind };
-    return { kind: "system-history" };
+    return { kind: "home" };
   }
 
-  // Default: history landing page
-  return { kind: "system-history" };
+  // Default: home feed landing page
+  return { kind: "home" };
 }
 
 /**
@@ -144,8 +145,10 @@ export function parseSelection(extensions: ExtensionInfo[] = []): Selection {
  */
 export function selectionToPath(selection: Selection, extensions: ExtensionInfo[] = []): string {
   switch (selection.kind) {
-    case "system-history":
+    case "home":
       return "/";
+    case "system-history":
+      return "/history";
     case "mind": {
       let section = selection.section;
       // Convert ext:pages:pages → pages for clean URLs

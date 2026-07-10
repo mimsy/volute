@@ -581,4 +581,136 @@ describe("web history routes", () => {
     assert.ok(received.includes("alice-visible"), "caller's own event is streamed");
     assert.ok(!received.includes("bob-secret"), "another mind's event must not be streamed");
   });
+
+  describe("GET /api/v1/history/away", () => {
+    type AwayItem = { id: number; mind: string; summary: string; turnId: string };
+
+    /**
+     * Insert a completed turn with a turn summary. When `sender` is given, an
+     * inbound trigger event from that sender is recorded and linked.
+     * `sender: null` records a senderless trigger.
+     */
+    async function insertSummarizedTurn(
+      mind: string,
+      summary: string,
+      opts: { sender?: string | null; summaryCreatedAt?: string } = {},
+    ): Promise<string> {
+      const db = await getDb();
+      const turnId = randomUUID();
+      let triggerEventId: number | undefined;
+      if (opts.sender !== undefined) {
+        const [row] = await db
+          .insert(mindHistory)
+          .values({
+            mind,
+            type: "inbound",
+            channel: "@whoever",
+            sender: opts.sender,
+            content: "hello",
+            turn_id: turnId,
+          })
+          .returning({ id: mindHistory.id });
+        triggerEventId = row.id;
+      }
+      await db.insert(turns).values({
+        id: turnId,
+        mind,
+        status: "complete",
+        trigger_event_id: triggerEventId,
+      });
+      await db.insert(summaries).values({
+        mind,
+        period: "turn",
+        period_key: turnId,
+        content: summary,
+        ...(opts.summaryCreatedAt ? { created_at: opts.summaryCreatedAt } : {}),
+      });
+      return turnId;
+    }
+
+    it("includes self-directed turns, excludes human-triggered ones", async () => {
+      const cookie = await setupAuth();
+      // A human (brain) user and a mind user to trigger turns with
+      await createUser("test-history-human", "pass");
+      await getOrCreateMindUser("test-history-peer");
+
+      const untriggered = await insertSummarizedTurn("test-history-away1", "wrote a journal entry");
+      const senderless = await insertSummarizedTurn("test-history-away1", "woke from a schedule", {
+        sender: null,
+      });
+      const mindTriggered = await insertSummarizedTurn(
+        "test-history-away1",
+        "chatted with a peer",
+        {
+          sender: "test-history-peer",
+        },
+      );
+      const humanTriggered = await insertSummarizedTurn("test-history-away1", "replied to james", {
+        sender: "test-history-human",
+      });
+      const externalTriggered = await insertSummarizedTurn(
+        "test-history-away1",
+        "replied on discord",
+        { sender: "some-discord-person" },
+      );
+
+      const { default: app } = await import("../packages/daemon/src/web/app.js");
+      const res = await app.request("/api/v1/history/away", {
+        headers: { Cookie: `volute_session=${cookie}` },
+      });
+      assert.equal(res.status, 200);
+      const body = (await res.json()) as AwayItem[];
+      const turnIds = new Set(body.map((i) => i.turnId));
+
+      assert.ok(turnIds.has(untriggered), "turn with no trigger is self-directed");
+      assert.ok(turnIds.has(senderless), "turn with senderless trigger is self-directed");
+      assert.ok(turnIds.has(mindTriggered), "mind-to-mind turn is self-directed");
+      assert.ok(!turnIds.has(humanTriggered), "human-triggered turn is excluded");
+      assert.ok(
+        !turnIds.has(externalTriggered),
+        "unknown (external platform) sender is treated as human",
+      );
+    });
+
+    it("excludes items older than the 7-day window", async () => {
+      const cookie = await setupAuth();
+      const fresh = await insertSummarizedTurn("test-history-away1", "recent thought");
+      const stale = await insertSummarizedTurn("test-history-away1", "ancient thought", {
+        summaryCreatedAt: "2020-01-01 00:00:00",
+      });
+
+      const { default: app } = await import("../packages/daemon/src/web/app.js");
+      const res = await app.request("/api/v1/history/away", {
+        headers: { Cookie: `volute_session=${cookie}` },
+      });
+      assert.equal(res.status, 200);
+      const body = (await res.json()) as AwayItem[];
+      const turnIds = new Set(body.map((i) => i.turnId));
+      assert.ok(turnIds.has(fresh));
+      assert.ok(!turnIds.has(stale));
+    });
+
+    it("scopes a mind caller to its own turns, ignoring ?mind=", async () => {
+      await setupAuth();
+      const mine = await insertSummarizedTurn("test-history-away1", "my own turn");
+      const other = await insertSummarizedTurn("test-history-away2", "someone else's turn");
+
+      const cookie = await mindSession("test-history-away1");
+      const { default: app } = await import("../packages/daemon/src/web/app.js");
+      const res = await app.request("/api/v1/history/away?mind=test-history-away2", {
+        headers: { Cookie: `volute_session=${cookie}` },
+      });
+      assert.equal(res.status, 200);
+      const body = (await res.json()) as AwayItem[];
+      const turnIds = new Set(body.map((i) => i.turnId));
+      assert.ok(turnIds.has(mine), "mind sees its own self-directed turns");
+      assert.ok(!turnIds.has(other), "?mind= must not leak another mind's turns");
+    });
+
+    it("requires authentication", async () => {
+      const { default: app } = await import("../packages/daemon/src/web/app.js");
+      const res = await app.request("/api/v1/history/away");
+      assert.equal(res.status, 401);
+    });
+  });
 });

@@ -1,8 +1,15 @@
 <script lang="ts">
-import type { ConversationWithParticipants, LastMessageSummary, Message } from "@volute/api";
+import type {
+  AwayFeedItem,
+  ConversationWithParticipants,
+  LastMessageSummary,
+  Message,
+} from "@volute/api";
+import { icons } from "@volute/ui/icons";
 import { renderMarkdown } from "@volute/ui/markdown";
 import ExtensionFeedCard from "../components/ExtensionFeedCard.svelte";
-import { fetchConversationMessages } from "../lib/client";
+import { AWAY_SEEN_KEY, dividerIndex } from "../lib/away-feed";
+import { fetchAwayFeed, fetchConversationMessages } from "../lib/client";
 import { extractTextContent, formatTime, showSenderHeader } from "../lib/feed-utils";
 import { formatRelativeTime, normalizeTimestamp } from "../lib/format";
 
@@ -37,6 +44,41 @@ type ExtFeedItem = {
 };
 
 let extensionFeedItems = $state<ExtFeedItem[]>([]);
+let awayItems = $state<AwayFeedItem[]>([]);
+
+// "While you were away": read the previous visit's watermark once, then
+// advance it to now. Items newer than it sit above the divider.
+function readLastSeen(): number | null {
+  try {
+    const v = localStorage.getItem(AWAY_SEEN_KEY);
+    if (!v) return null;
+    const ms = Date.parse(v);
+    return Number.isNaN(ms) ? null : ms;
+  } catch {
+    return null;
+  }
+}
+const lastSeenMs = readLastSeen();
+try {
+  localStorage.setItem(AWAY_SEEN_KEY, new Date().toISOString());
+} catch {
+  // localStorage unavailable — the divider just won't show
+}
+
+// Fetch self-directed turn summaries (heartbeats, schedules, mind-to-mind)
+$effect(() => {
+  fetchAwayFeed()
+    .then((items) => {
+      awayItems = items;
+    })
+    .catch((err) => {
+      console.warn("Failed to fetch away feed:", err);
+    });
+});
+
+function mindLabel(name: string): string {
+  return storeData.minds.find((m) => m.name === name)?.displayName ?? name;
+}
 
 // Fetch extension feed items from all extensions with feedSource
 $effect(() => {
@@ -95,7 +137,8 @@ $effect(() => {
 
 type FeedItem =
   | { kind: "message"; conv: ConversationWithDetails; date: string }
-  | { kind: "extension"; item: ExtFeedItem; date: string };
+  | { kind: "extension"; item: ExtFeedItem; date: string }
+  | { kind: "away"; item: AwayFeedItem; date: string };
 
 let feedItems = $derived.by(() => {
   const items: FeedItem[] = [];
@@ -105,6 +148,9 @@ let feedItems = $derived.by(() => {
   for (const extItem of extensionFeedItems) {
     items.push({ kind: "extension", item: extItem, date: extItem.date });
   }
+  for (const awayItem of awayItems) {
+    items.push({ kind: "away", item: awayItem, date: awayItem.created_at });
+  }
   items.sort((a, b) => {
     const aTime = new Date(normalizeTimestamp(a.date)).getTime();
     const bTime = new Date(normalizeTimestamp(b.date)).getTime();
@@ -112,6 +158,14 @@ let feedItems = $derived.by(() => {
   });
   return items;
 });
+
+// Where the "new since your last visit" divider goes in the newest-first feed
+let dividerAt = $derived(
+  dividerIndex(
+    feedItems.map((i) => new Date(normalizeTimestamp(i.date)).getTime()),
+    lastSeenMs,
+  ),
+);
 
 function getConvLabel(conv: ConversationWithDetails): string {
   if (conv.type === "channel" && conv.channel_name) return `#${conv.channel_name}`;
@@ -129,10 +183,15 @@ function getConvLabel(conv: ConversationWithDetails): string {
 
 <div class="home">
   {#if feedItems.length === 0}
-    <div class="empty-hint">Nothing here yet.</div>
+    <div class="empty-hint">
+      Nothing here yet. When your minds do things on their own, it shows up here.
+    </div>
   {:else}
     <div class="feed-grid">
-      {#each feedItems as item (item.kind === "extension" ? `ext-${item.item.id}` : `msg-${item.conv.id}`)}
+      {#each feedItems as item, i (item.kind === "extension" ? `ext-${item.item.id}` : item.kind === "away" ? `away-${item.item.id}` : `msg-${item.conv.id}`)}
+        {#if i === dividerAt}
+          <div class="feed-divider"><span class="feed-divider-label">new since your last visit ↑</span></div>
+        {/if}
         {#if item.kind === "extension"}
           <div class="feed-item">
             <ExtensionFeedCard
@@ -145,6 +204,19 @@ function getConvLabel(conv: ConversationWithDetails): string {
               icon={item.item.icon}
               color={item.item.color}
               onclick={() => navigate(item.item.url)}
+            />
+          </div>
+        {:else if item.kind === "away"}
+          {@const away = item.item}
+          <div class="feed-item">
+            <ExtensionFeedCard
+              title={mindLabel(away.mind)}
+              url={`/minds/${away.mind}`}
+              date={away.created_at}
+              bodyHtml={away.summary}
+              icon={icons.mind}
+              color="purple"
+              onclick={() => navigate(`/minds/${away.mind}`)}
             />
           </div>
         {:else}
@@ -218,6 +290,28 @@ function getConvLabel(conv: ConversationWithDetails): string {
 
   .feed-item {
     min-width: 0;
+  }
+
+  .feed-divider {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 2px 0;
+  }
+
+  .feed-divider::before,
+  .feed-divider::after {
+    content: "";
+    flex: 1;
+    height: 1px;
+    background: color-mix(in srgb, var(--accent) 35%, var(--border));
+  }
+
+  .feed-divider-label {
+    font-size: 11px;
+    color: var(--text-2);
+    white-space: nowrap;
   }
 
   /* Unified card */
