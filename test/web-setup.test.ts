@@ -101,4 +101,24 @@ describe("web setup routes", () => {
     });
     assert.equal(res.status, 400);
   });
+
+  it("POST /api/setup/models — rejects empty model list", async () => {
+    const app = createApp();
+    const res = await app.request("/api/setup/models", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ models: [], spiritModel: "anthropic:claude-sonnet-4" }),
+    });
+    assert.equal(res.status, 400);
+  });
+
+  it("POST /api/setup/models — rejects missing spirit model", async () => {
+    const app = createApp();
+    const res = await app.request("/api/setup/models", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ models: ["anthropic:claude-sonnet-4"], spiritModel: "" }),
+    });
+    assert.equal(res.status, 400);
+  });
 });

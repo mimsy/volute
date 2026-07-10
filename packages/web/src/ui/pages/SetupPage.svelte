@@ -19,6 +19,7 @@ function initialStep(): Step {
 let step = $state<Step>(initialStep());
 let error = $state("");
 let loading = $state(false);
+let warnings = $state<string[]>([]);
 
 // Step 2: System
 let systemName = $state("");
@@ -280,6 +281,7 @@ async function handleFinish(e: Event) {
 
 async function completeSetup() {
   error = "";
+  warnings = [];
   loading = true;
   try {
     const res = await fetch("/api/setup/complete", {
@@ -294,6 +296,7 @@ async function completeSetup() {
     const data = (await res.json().catch(() => ({}))) as {
       spiritConversationId?: string;
       spiritStarted?: boolean;
+      warnings?: string[];
     };
 
     // Wait for the spirit's welcome message before transitioning
@@ -301,13 +304,23 @@ async function completeSetup() {
       await waitForSpiritReply(data.spiritConversationId);
     }
 
-    auth.setupComplete = true;
-    onComplete();
+    // Setup completed, but individual steps (spirit start, service install, etc.) may
+    // have failed non-fatally. Surface those warnings rather than silently claiming
+    // full success — then let the user proceed. With no warnings, proceed immediately.
+    warnings = data.warnings ?? [];
+    loading = false;
+    if (warnings.length === 0) finishSetup();
+    return;
   } catch (err) {
     error = err instanceof Error ? err.message : "Something went wrong";
     step = "provider";
   }
   loading = false;
+}
+
+function finishSetup() {
+  auth.setupComplete = true;
+  onComplete();
 }
 
 async function waitForSpiritReply(conversationId: string) {
@@ -578,7 +591,13 @@ $effect(() => {
 
     {:else if step === "provider"}
       <div class="step-title">AI providers</div>
-      <div class="step-desc">Connect a provider and choose models for your minds.</div>
+      <div class="step-desc">
+        An AI provider is the engine your minds think with. Connect one and choose which
+        models they can use. Get a key from
+        <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noreferrer">Anthropic</a>,
+        <a href="https://platform.openai.com/api-keys" target="_blank" rel="noreferrer">OpenAI</a>,
+        or another provider.
+      </div>
 
       <AiProviders
         bind:this={aiProvidersRef}
@@ -607,11 +626,20 @@ $effect(() => {
 
     {:else if step === "starting"}
       <div class="finishing">
-        <div class="spinner"></div>
-        <div class="finishing-text">Setting things up...</div>
-        {#if error}
+        {#if warnings.length > 0}
+          <div class="finishing-text">Setup finished, with some warnings:</div>
+          <ul class="warnings">
+            {#each warnings as w}
+              <li>{w}</li>
+            {/each}
+          </ul>
+          <button class="submit-btn" onclick={finishSetup}>Continue to dashboard</button>
+        {:else if error}
           <div class="error">{error}</div>
           <button class="submit-btn" onclick={completeSetup}>Retry</button>
+        {:else}
+          <div class="spinner"></div>
+          <div class="finishing-text">Setting things up...</div>
         {/if}
       </div>
     {/if}
@@ -734,6 +762,15 @@ $effect(() => {
     color: var(--text-2);
     font-size: 13px;
     margin-bottom: 16px;
+  }
+
+  .step-desc a {
+    color: var(--accent);
+    text-decoration: none;
+  }
+
+  .step-desc a:hover {
+    text-decoration: underline;
   }
 
   /* Forms */
@@ -937,6 +974,15 @@ $effect(() => {
     color: var(--text-1);
     font-size: 14px;
     margin-top: 16px;
+  }
+
+  .warnings {
+    text-align: left;
+    margin: 12px 0 20px;
+    padding-left: 20px;
+    color: var(--text-2);
+    font-size: 13px;
+    line-height: 1.6;
   }
 
   .spinner {
