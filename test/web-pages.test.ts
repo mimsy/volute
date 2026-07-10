@@ -439,7 +439,9 @@ describe("XSS prevention", () => {
 
     const res = await publicApp.request("/public/test-mind/xss.md");
     const body = await res.text();
-    assert.ok(!body.includes("<script>"), "should not contain unescaped script tag");
+    // The malicious title payload must not survive as a live script (the benign
+    // nav shim adds its own <script>, so target the injected alert specifically).
+    assert.ok(!body.includes("<script>alert(1)"), "should not contain unescaped script tag");
     assert.ok(body.includes("&lt;script&gt;"), "should escape HTML entities in title");
   });
 
@@ -464,7 +466,7 @@ describe("XSS prevention", () => {
     assert.ok(body.includes("<strong>ok</strong>"), "safe markdown should still render");
   });
 
-  it("sets a restrictive Content-Security-Policy on public pages", async () => {
+  it("sandboxes public pages so scripts run in an opaque origin", async () => {
     const dir = setupTestDir();
     const { createPublicRoutes } = await import("../packages/extensions/pages/src/routes.js");
     const publicApp = new Hono();
@@ -473,8 +475,53 @@ describe("XSS prevention", () => {
     const res = await publicApp.request("/public/test-mind/hello.md");
     const csp = res.headers.get("content-security-policy");
     assert.ok(csp, "CSP header should be present");
-    assert.ok(csp.includes("default-src 'none'"), "CSP should default-deny (blocks script)");
+    // Scripts are allowed to run...
+    assert.ok(csp.includes("sandbox allow-scripts"), "pages should be sandboxed with scripts");
+    assert.ok(csp.includes("script-src 'self' 'unsafe-inline' https:"), "scripts allowed");
+    // ...but the sandbox must NOT grant same-origin — that's what keeps the page
+    // in an opaque origin and unable to ride the admin's SameSite=Lax session.
+    assert.ok(!csp.includes("allow-same-origin"), "must not grant same-origin access");
     assert.equal(res.headers.get("x-content-type-options"), "nosniff");
+  });
+});
+
+describe("nav shim injection", () => {
+  beforeEach(cleanup);
+  afterEach(cleanup);
+
+  it("injects the postMessage nav shim into served HTML", async () => {
+    const dir = setupTestDir();
+    const { createPublicRoutes } = await import("../packages/extensions/pages/src/routes.js");
+    const publicApp = new Hono();
+    publicApp.route("/public", createPublicRoutes(makeCtx(dir)));
+
+    const res = await publicApp.request("/public/test-mind/index.html");
+    const body = await res.text();
+    assert.ok(body.includes('type:"volute-pages-nav"'), "HTML should carry the nav shim");
+    assert.ok(body.includes("<h1>Hello</h1>"), "original content is preserved");
+  });
+
+  it("injects the nav shim into rendered markdown pages", async () => {
+    const dir = setupTestDir();
+    const { createPublicRoutes } = await import("../packages/extensions/pages/src/routes.js");
+    const publicApp = new Hono();
+    publicApp.route("/public", createPublicRoutes(makeCtx(dir)));
+
+    const res = await publicApp.request("/public/test-mind/hello.md");
+    const body = await res.text();
+    assert.ok(body.includes('type:"volute-pages-nav"'), "markdown page should carry the nav shim");
+  });
+
+  it("does not inject the shim into non-HTML assets", async () => {
+    const dir = setupTestDir();
+    const { createPublicRoutes } = await import("../packages/extensions/pages/src/routes.js");
+    const publicApp = new Hono();
+    publicApp.route("/public", createPublicRoutes(makeCtx(dir)));
+
+    const js = await (await publicApp.request("/public/test-mind/app.js")).text();
+    const css = await (await publicApp.request("/public/test-mind/style.css")).text();
+    assert.ok(!js.includes("volute-pages-nav"), "JS asset must be served verbatim");
+    assert.ok(!css.includes("volute-pages-nav"), "CSS asset must be served verbatim");
   });
 });
 

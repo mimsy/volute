@@ -22,6 +22,12 @@ let {
   site: Site;
   onSelectPage: (mind: string, path: string) => void;
 } = $props();
+
+const isIndex = (file: string) => file === "index.html" || file === "index.md";
+
+// The index is the site's front door — feature it as a hero, list the rest.
+let hero = $derived(site.pages.find((p) => isIndex(p.file)));
+let rest = $derived(site.pages.filter((p) => p !== hero));
 </script>
 
 <div class="site-view">
@@ -30,16 +36,29 @@ let {
     <span class="page-count">{site.pages.length} {site.pages.length === 1 ? "page" : "pages"}</span>
   </div>
 
-  <div class="thumbnail-grid">
-    {#each site.pages as page}
-      <PageThumbnail
-        url={`/ext/pages/public/${site.name}/${page.file}`}
-        label={page.file}
-        sublabel={formatRelativeTime(page.modified)}
-        onclick={() => onSelectPage(site.name, page.file)}
-      />
-    {/each}
-  </div>
+  {#if hero}
+    <PageThumbnail
+      url={`/ext/pages/public/${site.name}/${hero.file}`}
+      label={hero.file}
+      sublabel={`home · ${formatRelativeTime(hero.modified)}`}
+      onclick={() => onSelectPage(site.name, hero.file)}
+      width={600}
+      height={340}
+    />
+  {/if}
+
+  {#if rest.length > 0}
+    <div class="thumbnail-grid" class:with-hero={hero}>
+      {#each rest as page}
+        <PageThumbnail
+          url={`/ext/pages/public/${site.name}/${page.file}`}
+          label={page.file}
+          sublabel={formatRelativeTime(page.modified)}
+          onclick={() => onSelectPage(site.name, page.file)}
+        />
+      {/each}
+    </div>
+  {/if}
 
   {#if site.pages.length === 0}
     <div class="empty">No pages in this site.</div>
@@ -52,5 +71,6 @@ let {
   .site-name { font-size: 16px; font-weight: 500; color: var(--text-0); }
   .page-count { font-size: 12px; color: var(--text-2); }
   .thumbnail-grid { display: flex; flex-wrap: wrap; gap: 16px; }
+  .thumbnail-grid.with-hero { margin-top: 20px; }
   .empty { color: var(--text-2); font-size: 13px; }
 </style>

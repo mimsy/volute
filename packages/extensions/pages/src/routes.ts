@@ -28,7 +28,7 @@ export function createRoutes(ctx: ExtensionContext): Hono {
     .get("/", async (c) => {
       if (!ctx.db) return c.json({ error: "Pages database not available" }, 503);
       const { sites, systemSite } = getSites(ctx.db);
-      const recentPages = getRecentPagesList(ctx.db);
+      const recentPages = getRecentPagesList(ctx.db, { limit: 12 });
       return c.json({ sites, systemSite, recentPages });
     })
     .get("/feed", async (c) => {
@@ -87,14 +87,36 @@ export function createRoutes(ctx: ExtensionContext): Hono {
     });
 }
 
-// Mind-authored pages are served on the dashboard's own origin. This CSP blocks
-// script execution (no script-src → falls back to default-src 'none', which also
-// blocks inline event handlers like onerror) so a malicious page cannot run JS in
-// an authenticated admin's session. Defense-in-depth with DOMPurify sanitization
-// of rendered markdown. Styles/images/fonts are allowed so legitimate pages render.
+// Mind-authored pages are served on the dashboard's own origin, but minds are
+// untrusted — a page's JS must not be able to ride the viewing admin's session.
+// `sandbox allow-scripts` (crucially WITHOUT allow-same-origin) runs the page in
+// an opaque origin: scripts execute, but the document's origin is `null`, so any
+// fetch() to /api/* is cross-site and the SameSite=Lax `volute_session` cookie is
+// never sent. This holds whether the page is viewed in the dashboard iframe or
+// opened directly. https: sources let pages pull CDN libraries/fonts; the opaque
+// origin means external calls carry nothing sensitive. Markdown pages are still
+// DOMPurify-sanitized (defense-in-depth). Omitting allow-forms/allow-popups keeps
+// the sandbox tight.
 const PAGES_CSP =
-  "default-src 'none'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; " +
-  "font-src 'self'; base-uri 'none'; form-action 'none'";
+  "sandbox allow-scripts; default-src 'self' https:; " +
+  "script-src 'self' 'unsafe-inline' https:; style-src 'self' 'unsafe-inline' https:; " +
+  "img-src 'self' data: https:; font-src 'self' data: https:; connect-src 'self' https:; " +
+  "base-uri 'none'";
+
+// Sandboxed pages run in an opaque origin, so the dashboard iframe can't read
+// their location to keep the breadcrumb in sync when a visitor follows an
+// in-page link. Instead every served HTML page reports its own path to the
+// parent on load. The script is a constant (no interpolation of the request
+// path), so it adds no injection surface, and it only posts when framed — a
+// directly-opened page has no parent and stays silent.
+const NAV_SHIM =
+  "<script>if(window.parent!==window){window.parent.postMessage(" +
+  '{type:"volute-pages-nav",path:location.pathname},"*")}</script>';
+
+function injectNavShim(html: string): string {
+  const idx = html.lastIndexOf("</body>");
+  return idx >= 0 ? html.slice(0, idx) + NAV_SHIM + html.slice(idx) : html + NAV_SHIM;
+}
 
 export function createPublicRoutes(ctx: ExtensionContext): Hono {
   return new Hono()
@@ -163,7 +185,12 @@ export function createPublicRoutes(ctx: ExtensionContext): Hono {
           const cssRelPath = resolveStylesheet(fileToServe, pagesRoot, style);
           const cssUrl = cssRelPath ? `/ext/pages/public/${name}/${cssRelPath}` : undefined;
           const html = await renderMarkdownPage(body, { title, stylesheetUrl: cssUrl });
-          return c.body(html, 200, { "Content-Type": "text/html; charset=utf-8" });
+          return c.body(injectNavShim(html), 200, { "Content-Type": "text/html; charset=utf-8" });
+        }
+
+        if (ext === ".html") {
+          const html = await readFile(fileToServe, "utf-8");
+          return c.body(injectNavShim(html), 200, { "Content-Type": "text/html; charset=utf-8" });
         }
 
         const mime = MIME_TYPES[ext] || "application/octet-stream";

@@ -4,20 +4,29 @@ let {
   label,
   sublabel,
   onclick,
+  width = 280,
+  height = 180,
 }: {
   url: string;
   label: string;
   sublabel?: string;
   onclick?: () => void;
+  width?: number;
+  height?: number;
 } = $props();
 
 let loaded = $state(false);
+
+// The page renders at desktop width (1280px) and is scaled down to fit the frame.
+const RENDER_WIDTH = 1280;
+let scale = $derived(width / RENDER_WIDTH);
 </script>
 
-<button class="thumbnail-card" {onclick}>
-  <div class="thumbnail-frame">
+<button class="thumbnail-card" {onclick} style="--card-w: {width}px">
+  <div class="thumbnail-frame" style="width: {width}px; height: {height}px">
     <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-    <iframe src={url} loading="lazy" sandbox="allow-same-origin" tabindex={-1} title={label} class:loaded onload={() => loaded = true}></iframe>
+    <iframe src={url} loading="lazy" sandbox="allow-same-origin" tabindex={-1} title={label} class:loaded onload={() => loaded = true}
+      style="width: {RENDER_WIDTH}px; height: {height / scale}px; transform: scale({scale})"></iframe>
   </div>
   <div class="thumbnail-label">{label}</div>
   {#if sublabel}<div class="thumbnail-sublabel">{sublabel}</div>{/if}
@@ -36,8 +45,6 @@ let loaded = $state(false);
   }
 
   .thumbnail-frame {
-    width: 280px;
-    height: 180px;
     overflow: hidden;
     border-radius: var(--radius-lg);
     border: 1px solid var(--border);
@@ -50,9 +57,6 @@ let loaded = $state(false);
   }
 
   iframe {
-    width: 1280px;
-    height: 960px;
-    transform: scale(0.219);
     transform-origin: top left;
     pointer-events: none;
     border: none;
@@ -73,7 +77,7 @@ let loaded = $state(false);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    max-width: 280px;
+    max-width: var(--card-w);
   }
 
   .thumbnail-sublabel {
@@ -83,6 +87,6 @@ let loaded = $state(false);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    max-width: 280px;
+    max-width: var(--card-w);
   }
 </style>
