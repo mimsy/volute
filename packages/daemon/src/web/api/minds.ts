@@ -82,6 +82,7 @@ import {
   validateMindName,
 } from "../../lib/mind/registry.js";
 import { isTemplateStale } from "../../lib/mind/template-staleness.js";
+import { applyThinkingLevel, deriveThinkingLevel } from "../../lib/mind/thinking-config.js";
 import { cleanupVariant } from "../../lib/mind/variant-cleanup.js";
 import { validateBranchName } from "../../lib/mind/variants.js";
 import { readVoluteConfig, writeVoluteConfig } from "../../lib/mind/volute-config.js";
@@ -922,8 +923,6 @@ const app = new Hono<AuthEnv>()
         if (cog) {
           if (cog.thinkingLevel != null && !config.thinkingLevel)
             config.thinkingLevel = cog.thinkingLevel;
-          if (cog.maxThinkingTokens != null && config.maxThinkingTokens == null)
-            config.maxThinkingTokens = cog.maxThinkingTokens;
           if (cog.tokenBudget != null && config.tokenBudget == null)
             config.tokenBudget = cog.tokenBudget;
           if (cog.tokenBudgetPeriodMinutes != null && config.tokenBudgetPeriodMinutes == null)
@@ -2375,26 +2374,8 @@ const app = new Hono<AuthEnv>()
       },
       config: {
         model: config?.model ?? templateConfig.model ?? null,
-        thinkingLevel: (() => {
-          if (config?.thinkingLevel) return config.thinkingLevel;
-          const tc = templateConfig as Record<string, unknown>;
-          if (tc.thinkingLevel) return tc.thinkingLevel;
-          if (tc.reasoningEffort) return tc.reasoningEffort;
-          // Claude: reverse-map maxThinkingTokens → level
-          const mtt = tc.maxThinkingTokens as number | undefined;
-          if (mtt) {
-            if (mtt <= 1024) return "minimal";
-            if (mtt <= 4096) return "low";
-            if (mtt <= 10000) return "medium";
-            if (mtt <= 32000) return "high";
-            return "xhigh";
-          }
-          return null;
-        })(),
-        maxThinkingTokens:
-          config?.maxThinkingTokens ??
-          ((templateConfig as Record<string, unknown>).maxThinkingTokens as number | undefined) ??
-          null,
+        thinkingLevel:
+          config?.thinkingLevel ?? deriveThinkingLevel(templateConfig as Record<string, unknown>),
         tokenBudget: config?.tokenBudget ?? null,
         tokenBudgetPeriodMinutes: config?.tokenBudgetPeriodMinutes ?? null,
         compaction: templateConfig.compaction ?? null,
@@ -2411,7 +2392,6 @@ const app = new Hono<AuthEnv>()
       z.object({
         model: z.string().optional(),
         thinkingLevel: z.enum(["off", "minimal", "low", "medium", "high", "xhigh"]).optional(),
-        maxThinkingTokens: z.number().int().positive().nullable().optional(),
         tokenBudget: z.number().int().positive().nullable().optional(),
         tokenBudgetPeriodMinutes: z.number().int().positive().nullable().optional(),
         compaction: z
@@ -2451,13 +2431,6 @@ const app = new Hono<AuthEnv>()
           existing.tokenBudgetPeriodMinutes = body.tokenBudgetPeriodMinutes;
         }
       }
-      if (body.maxThinkingTokens !== undefined) {
-        if (body.maxThinkingTokens === null) {
-          delete existing.maxThinkingTokens;
-        } else {
-          existing.maxThinkingTokens = body.maxThinkingTokens;
-        }
-      }
       if (body.unescapeNewlines !== undefined) {
         existing.unescapeNewlines = body.unescapeNewlines;
       }
@@ -2474,7 +2447,6 @@ const app = new Hono<AuthEnv>()
       const needsConfigJson =
         body.model !== undefined ||
         body.thinkingLevel !== undefined ||
-        body.maxThinkingTokens !== undefined ||
         body.compaction !== undefined;
 
       if (needsConfigJson) {
@@ -2492,55 +2464,9 @@ const app = new Hono<AuthEnv>()
           templateConfig.model = body.model;
         }
 
-        // Thinking settings: write the correct field per template
-        // claude → maxThinkingTokens; pi → thinkingLevel; codex → reasoningEffort
-        const tmpl = entry.template ?? "claude";
+        // Thinking level maps onto each template's own config shape.
         if (body.thinkingLevel !== undefined) {
-          if (tmpl === "claude") {
-            // Claude uses maxThinkingTokens — map unified levels to token budgets
-            const claudeThinkingTokens: Record<string, number | null> = {
-              off: null,
-              minimal: 1024,
-              low: 4096,
-              medium: 10000,
-              high: 32000,
-              xhigh: 128000,
-            };
-            const tokens = claudeThinkingTokens[body.thinkingLevel] ?? null;
-            if (tokens === null) {
-              delete templateConfig.maxThinkingTokens;
-            } else {
-              templateConfig.maxThinkingTokens = tokens;
-            }
-          } else if (tmpl === "codex") {
-            // Codex SDK accepts: minimal, low, medium, high, xhigh
-            // "off" removes the setting (codex always reasons, defaults to medium)
-            const codexMap: Record<string, string | null> = {
-              off: null,
-              minimal: "minimal",
-              low: "low",
-              medium: "medium",
-              high: "high",
-              xhigh: "xhigh",
-            };
-            const effort = codexMap[body.thinkingLevel] ?? null;
-            if (effort === null) {
-              delete templateConfig.reasoningEffort;
-            } else {
-              templateConfig.reasoningEffort = effort;
-            }
-          } else {
-            // Pi uses thinkingLevel directly
-            templateConfig.thinkingLevel = body.thinkingLevel;
-          }
-        }
-
-        if (body.maxThinkingTokens !== undefined) {
-          if (body.maxThinkingTokens === null) {
-            delete templateConfig.maxThinkingTokens;
-          } else {
-            templateConfig.maxThinkingTokens = body.maxThinkingTokens;
-          }
+          applyThinkingLevel(templateConfig, entry.template ?? "claude", body.thinkingLevel);
         }
 
         if (body.compaction !== undefined) {

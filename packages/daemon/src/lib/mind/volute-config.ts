@@ -55,7 +55,6 @@ export type MindProfile = {
 export type CognitionConfig = {
   model?: string;
   thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
-  maxThinkingTokens?: number;
   tokenBudget?: number;
   tokenBudgetPeriodMinutes?: number;
 };

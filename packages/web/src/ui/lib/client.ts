@@ -335,7 +335,6 @@ export function updateMindConfig(
   updates: {
     model?: string;
     thinkingLevel?: string;
-    maxThinkingTokens?: number | null;
     tokenBudget?: number | null;
     tokenBudgetPeriodMinutes?: number | null;
     compaction?: { maxContextTokens?: number | null } | null;
@@ -585,7 +584,6 @@ export function saveAiDefaults(defaults: AiDefaults): Promise<void> {
 export type MindDefaultsCognition = {
   model?: string;
   thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
-  maxThinkingTokens?: number;
   tokenBudget?: number;
   tokenBudgetPeriodMinutes?: number;
   compaction?: { maxContextTokens?: number };
