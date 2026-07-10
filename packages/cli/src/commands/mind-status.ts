@@ -35,6 +35,7 @@ const cmd = command({
       stage?: string;
       parent?: string;
       model?: string;
+      templateStale?: boolean;
       channels?: Array<{ type: string; status: string }>;
       variants?: Array<{ name: string; status: string }>;
       hasPages?: boolean;
@@ -47,6 +48,9 @@ const cmd = command({
     if (mind.stage) console.log(`Stage:   ${mind.stage}`);
     if (mind.parent) console.log(`Parent:  ${mind.parent}`);
     if (mind.model) console.log(`Model:   ${mind.model}`);
+    if (mind.templateStale) {
+      console.log(`Template: outdated — run 'volute mind upgrade ${mind.name}'`);
+    }
 
     if (mind.channels && mind.channels.length > 0) {
       console.log(`\nChannels:`);

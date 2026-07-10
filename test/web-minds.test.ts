@@ -188,4 +188,56 @@ describe("web minds routes", () => {
 
     await deleteSession(cookie2);
   });
+
+  it("GET / — exposes templateStale for each mind", async () => {
+    const { mkdirSync, readFileSync, rmSync, writeFileSync } = await import("node:fs");
+    const { resolve } = await import("node:path");
+    const { addMind, mindDir, removeMind } = await import(
+      "../packages/daemon/src/lib/mind/registry.js"
+    );
+    const { composeTemplate, copyTemplateToDir, findTemplatesRoot } = await import(
+      "../packages/daemon/src/lib/template/template.js"
+    );
+    const { initMindManager, tryGetMindManager } = await import(
+      "../packages/daemon/src/lib/daemon/mind-manager.js"
+    );
+    if (!tryGetMindManager()) initMindManager();
+
+    const name = `web-stale-${Date.now()}`;
+    const dir = resolve(mindDir(name));
+    rmSync(dir, { recursive: true, force: true });
+    mkdirSync(dir, { recursive: true });
+    const { composedDir, manifest } = composeTemplate(findTemplatesRoot(), "claude");
+    try {
+      copyTemplateToDir(composedDir, dir, name, manifest);
+    } finally {
+      rmSync(composedDir, { recursive: true, force: true });
+    }
+    await addMind(name, 4199, undefined, "claude");
+
+    try {
+      const cookie = await setupAuth();
+      const { default: app } = await import("../packages/daemon/src/web/app.js");
+      const res = await app.request("/api/minds", {
+        headers: { Cookie: `volute_session=${cookie}` },
+      });
+      assert.equal(res.status, 200);
+      const body = (await res.json()) as Array<{ name: string; templateStale?: boolean }>;
+      const pristine = body.find((m) => m.name === name);
+      assert.ok(pristine, "created mind should be listed");
+      assert.equal(pristine.templateStale, false, "a pristine mind is current");
+
+      // Drift the mind's framework code and confirm the API flips to stale.
+      const agent = resolve(dir, "src", "agent.ts");
+      writeFileSync(agent, `${readFileSync(agent, "utf-8")}\n// drift\n`);
+      const res2 = await app.request("/api/minds", {
+        headers: { Cookie: `volute_session=${cookie}` },
+      });
+      const body2 = (await res2.json()) as Array<{ name: string; templateStale?: boolean }>;
+      assert.equal(body2.find((m) => m.name === name)?.templateStale, true);
+    } finally {
+      await removeMind(name);
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });

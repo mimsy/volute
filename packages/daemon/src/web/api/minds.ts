@@ -69,6 +69,7 @@ import {
   stateDir,
   validateMindName,
 } from "../../lib/mind/registry.js";
+import { isTemplateStale } from "../../lib/mind/template-staleness.js";
 import { cleanupVariant } from "../../lib/mind/variant-cleanup.js";
 import { validateBranchName } from "../../lib/mind/variants.js";
 import { readVoluteConfig, writeVoluteConfig } from "../../lib/mind/volute-config.js";
@@ -1274,7 +1275,13 @@ const app = new Hono<AuthEnv>()
         const hasPages = existsSync(resolve(mindDir(entry.name), "home", "pages"));
         const lastActiveAt = lastActiveMap.get(entry.name) ?? null;
         if (!privileged) return toPublicMind(entry, mindStatus, { hasPages, lastActiveAt });
-        return { ...entry, ...mindStatus, hasPages, lastActiveAt };
+        return {
+          ...entry,
+          ...mindStatus,
+          hasPages,
+          templateStale: isTemplateStale(entry),
+          lastActiveAt,
+        };
       }),
     );
     return c.json(minds);
@@ -1311,7 +1318,13 @@ const app = new Hono<AuthEnv>()
       }),
     );
 
-    return c.json({ ...entry, ...mindStatus, variants: variantStatuses, hasPages });
+    return c.json({
+      ...entry,
+      ...mindStatus,
+      variants: variantStatuses,
+      hasPages,
+      templateStale: isTemplateStale(entry),
+    });
   })
   // Context info — proxy to mind's /context endpoint
   .get("/:name/context", requireSelf(), async (c) => proxyToMind(c, "context"))
