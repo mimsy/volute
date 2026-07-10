@@ -34,7 +34,7 @@ export type RecordNoticeInput = {
   | { kind: "turn_error"; reason: ErrorReason }
   | { kind: "crash"; reason: "process_crash" }
   | { kind: "budget"; reason: "token_budget" }
-  | { kind: "startup"; reason: "startup_failed" }
+  | { kind: "startup"; reason: "startup_failed" | "no_credentials" }
   | { kind: "extension"; reason: string }
 );
 
@@ -157,6 +157,36 @@ export async function latestFailureNotice(mind: string): Promise<FailureNotice |
     }
     return null;
   }
+}
+
+/**
+ * The most recent undelivered notice for a mind across all sessions, or null.
+ * Every row in the table is undelivered (delivered notices are deleted), so the
+ * highest-id row is the latest issue. Used by `mind status` to surface the newest
+ * failure without the mind having to drain it.
+ */
+export async function latestNotice(mind: string): Promise<Notice | null> {
+  const db = await getDb();
+  const row = await db
+    .select()
+    .from(mindNotices)
+    .where(eq(mindNotices.mind, mind))
+    .orderBy(desc(mindNotices.id))
+    .limit(1)
+    .get();
+  return row ?? null;
+}
+
+/** True if the mind has an undelivered notice with this reason (any session). */
+export async function hasUndeliveredNotice(mind: string, reason: NoticeReason): Promise<boolean> {
+  const db = await getDb();
+  const row = await db
+    .select({ id: mindNotices.id })
+    .from(mindNotices)
+    .where(and(eq(mindNotices.mind, mind), eq(mindNotices.reason, reason)))
+    .limit(1)
+    .get();
+  return row != null;
 }
 
 /**

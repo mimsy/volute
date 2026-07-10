@@ -39,6 +39,7 @@ const cmd = command({
       channels?: Array<{ type: string; status: string }>;
       variants?: Array<{ name: string; status: string }>;
       hasPages?: boolean;
+      lastNotice?: { kind: string; reason: string; detail: string; created_at: string };
     };
 
     const status = mind.status ?? (mind.running ? "running" : "stopped");
@@ -50,6 +51,13 @@ const cmd = command({
     if (mind.model) console.log(`Model:   ${mind.model}`);
     if (mind.templateStale) {
       console.log(`Template: outdated — run 'volute mind upgrade ${mind.name}'`);
+    }
+
+    // Surface the newest un-drained failure notice so a silent mind explains itself
+    // (e.g. missing credentials, a failed turn) without reading the DB or logs. #573
+    if (mind.lastNotice) {
+      const label = mind.lastNotice.kind === "turn_error" ? "Last turn failed" : "Last issue";
+      console.log(`\n${label}: ${mind.lastNotice.detail}`);
     }
 
     if (mind.channels && mind.channels.length > 0) {

@@ -1,3 +1,6 @@
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { missingCredentialWarning } from "../ai-service.js";
 import { syncMindProfile } from "../auth.js";
 import { joinSystemChannelForMind, joinSystemChannelForSpirit } from "../chat/system-channel.js";
 import { ensureSystemDM, sendSystemMessage } from "../chat/system-chat.js";
@@ -31,6 +34,14 @@ export async function startMindFull(name: string): Promise<void> {
   }).catch((err) => log.error("failed to publish mind_started activity", log.errorData(err)));
 
   if (entry?.parent) return;
+
+  // Missing model credentials make a mind mute — its first turn fails silently inside
+  // its own SDK process (#573). Record a notice so the failure is visible in
+  // `mind status` and the web chat status rather than only in the mind's log. Deduped
+  // per mind so repeated starts don't pile up identical notices.
+  recordMissingCredentialsNotice(baseName, entry?.template).catch((err) =>
+    log.error(`failed to check credentials for ${baseName}`, log.errorData(err)),
+  );
 
   // Seed minds get the server + initial orientation, no schedules or budget
   if (!entry || entry.stage === "seed") {
@@ -88,6 +99,50 @@ export async function startMindFull(name: string): Promise<void> {
   }
 
   notifyExtensionsMindStart(baseName);
+}
+
+/**
+ * If a mind spawned without usable model credentials, record a `no_credentials`
+ * startup notice (deduped so it isn't re-added on every start). This is the
+ * authoritative detection: the mind's own turn error is an opaque "process exited"
+ * string, so the daemon — which knows the credentials are missing — surfaces the
+ * real cause. For pi minds the provider comes from the model in the mind's SDK
+ * config; if that can't be read the check is skipped rather than guessed.
+ * Exported for tests.
+ */
+export async function recordMissingCredentialsNotice(
+  mind: string,
+  template: string | undefined,
+): Promise<void> {
+  const { hasUndeliveredNotice, recordNotice, MIND_LEVEL_SESSION } = await import("./notices.js");
+  const warning = await missingCredentialWarning(template, readMindModel(mind, template), mind);
+  if (!warning) return;
+  if (await hasUndeliveredNotice(mind, "no_credentials")) return;
+  await recordNotice({
+    mind,
+    session: MIND_LEVEL_SESSION,
+    kind: "startup",
+    reason: "no_credentials",
+    detail: warning,
+  });
+}
+
+/**
+ * The model a pi mind will actually run — from `home/.config/config.json`, the same
+ * file mind-manager reads for key injection. Only pi needs it (its provider is the
+ * `provider:` prefix of the model id); claude/codex resolve provider from template.
+ */
+function readMindModel(mind: string, template: string | undefined): string | undefined {
+  if (template !== "pi") return undefined;
+  try {
+    const configPath = resolve(mindDir(mind), "home/.config/config.json");
+    if (!existsSync(configPath)) return undefined;
+    const model: unknown = JSON.parse(readFileSync(configPath, "utf-8")).model;
+    return typeof model === "string" ? model : undefined;
+  } catch (err) {
+    log.warn(`failed to read model for ${mind}`, log.errorData(err));
+    return undefined;
+  }
 }
 
 /**

@@ -5,7 +5,10 @@ import {
   clearDeliveredNotices,
   drainNotices,
   formatNotices,
+  hasUndeliveredNotice,
   latestFailureNotice,
+  latestNotice,
+  MIND_LEVEL_SESSION,
   type Notice,
   recordNotice,
 } from "../packages/daemon/src/lib/daemon/notices.js";
@@ -395,5 +398,42 @@ describe("formatNotices", () => {
     assert.match(out, /\[Notes\]/);
     // The failure header precedes the extension block.
     assert.ok(out.indexOf("[Notices]") < out.indexOf("[Notes]"));
+  });
+
+  it("latestNotice returns the newest un-drained notice across sessions", async () => {
+    const mind = uniqueMind();
+    assert.equal(await latestNotice(mind), null);
+    await recordNotice({
+      mind,
+      session: "main",
+      kind: "turn_error",
+      reason: "auth_error",
+      detail: "older",
+    });
+    await recordNotice({
+      mind,
+      session: MIND_LEVEL_SESSION,
+      kind: "startup",
+      reason: "no_credentials",
+      detail: "newest",
+    });
+    const latest = await latestNotice(mind);
+    assert.equal(latest?.detail, "newest");
+    assert.equal(latest?.reason, "no_credentials");
+  });
+
+  it("hasUndeliveredNotice detects (and dedupes) a reason for a mind", async () => {
+    const mind = uniqueMind();
+    assert.equal(await hasUndeliveredNotice(mind, "no_credentials"), false);
+    await recordNotice({
+      mind,
+      session: MIND_LEVEL_SESSION,
+      kind: "startup",
+      reason: "no_credentials",
+      detail: "mute",
+    });
+    assert.equal(await hasUndeliveredNotice(mind, "no_credentials"), true);
+    // A different reason is not matched.
+    assert.equal(await hasUndeliveredNotice(mind, "process_crash"), false);
   });
 });
