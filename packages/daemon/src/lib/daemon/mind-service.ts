@@ -1,5 +1,5 @@
 import { syncMindProfile } from "../auth.js";
-import { joinSystemChannelForMind } from "../chat/system-channel.js";
+import { joinSystemChannelForMind, joinSystemChannelForSpirit } from "../chat/system-channel.js";
 import { ensureSystemDM, sendSystemMessage } from "../chat/system-chat.js";
 import { publish as publishActivity } from "../events/activity-events.js";
 import { markIdle } from "../events/mind-activity-tracker.js";
@@ -130,6 +130,11 @@ export async function startSpiritFull(name: string): Promise<void> {
   }
 
   await getMindManager().startMind(name);
+
+  // The spirit shares the commons with the minds it tends
+  joinSystemChannelForSpirit().catch((err: unknown) =>
+    log.error(`failed to join #system for ${name}`, log.errorData(err)),
+  );
 
   // Load spirit schedules with explicit dir (spirit lives outside ~/.volute/minds/)
   getScheduler().loadSchedules(name, entry?.dir ?? spiritDir());
