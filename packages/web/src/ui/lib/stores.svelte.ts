@@ -95,6 +95,8 @@ export async function handleAuth(u: AuthUser) {
 
 export const data = $state({
   minds: [] as Mind[],
+  /** True once the first minds fetch has resolved — distinguishes "no minds" from "not loaded yet". */
+  mindsLoaded: false,
   conversations: [] as ConversationWithParticipants[],
   activity: [] as ActivityItem[],
   extensions: [] as ExtensionInfo[],
@@ -186,6 +188,7 @@ function handleSSEEvent(event: SSEEvent) {
     fetchMinds()
       .then((m) => {
         data.minds = m;
+        data.mindsLoaded = true;
       })
       .catch((err) => {
         console.warn("[stores] failed to refresh minds:", err);
@@ -230,6 +233,7 @@ function handleSSEEvent(event: SSEEvent) {
       fetchMinds()
         .then((m) => {
           data.minds = m;
+          data.mindsLoaded = true;
         })
         .catch((err) => {
           console.warn("[stores] failed to refresh minds:", err);
