@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { HistoryMessage } from "@volute/api";
-import { groupToolEvents, type TimelineItem } from "../packages/web/src/ui/lib/tool-groups";
+import {
+  appendStreamingGroups,
+  appendToGroups,
+  groupToolEvents,
+  type TimelineItem,
+} from "../packages/web/src/ui/lib/tool-groups";
 import {
   getToolCategory,
   getToolLabel,
@@ -357,5 +362,151 @@ describe("groupToolEvents", () => {
     const orphan = items[1] as Extract<TimelineItem, { kind: "event" }>;
     assert.equal(orphan.kind, "event");
     assert.equal(orphan.event.id, 3);
+  });
+});
+
+describe("appendToGroups (incremental streaming fold)", () => {
+  const use = (id: number, meta?: Record<string, unknown>) =>
+    makeEvent({
+      id,
+      type: "tool_use",
+      content: "{}",
+      metadata: JSON.stringify({ name: "Bash", ...meta }),
+    });
+  const result = (id: number, meta?: Record<string, unknown>) =>
+    makeEvent({
+      id,
+      type: "tool_result",
+      content: "out",
+      metadata: meta ? JSON.stringify(meta) : null,
+    });
+  const text = (id: number) => makeEvent({ id, type: "text", content: "hi" });
+  const thinking = (id: number) => makeEvent({ id, type: "thinking", content: "hmm" });
+
+  const fold = (events: HistoryMessage[]): TimelineItem[] =>
+    events.reduce<TimelineItem[]>((acc, e) => appendToGroups(acc, e), []);
+
+  // In-order live-stream sequences: a tool_use always precedes its tool_result,
+  // and a stream is homogeneous (all-modern with ids, or all-legacy without) per
+  // #388. appendToGroups is only claimed equivalent to groupToolEvents for these;
+  // mixed/out-of-order streams are groupToolEvents' domain (see its docstring).
+  const sequences: Record<string, HistoryMessage[]> = {
+    empty: [],
+    textOnly: [text(1), text(2)],
+    modernPair: [use(1, { id: "a" }), result(2, { tool_use_id: "a" })],
+    openTool: [use(1, { id: "a" })],
+    textBetween: [use(1, { id: "a" }), text(2), result(3, { tool_use_id: "a" })],
+    thinkingMix: [thinking(1), use(2, { id: "a" }), result(3, { tool_use_id: "a" }), text(4)],
+    parallel: [
+      use(1, { id: "a" }),
+      use(2, { id: "b" }),
+      result(3, { tool_use_id: "b" }),
+      result(4, { tool_use_id: "a" }),
+    ],
+    parallelResultsInOrder: [
+      use(1, { id: "a" }),
+      use(2, { id: "b" }),
+      result(3, { tool_use_id: "a" }),
+      result(4, { tool_use_id: "b" }),
+    ],
+    modernPendingResult: [
+      use(1, { id: "a" }),
+      use(2, { id: "b" }),
+      result(3, { tool_use_id: "b" }),
+    ],
+    multiResultSameId: [
+      use(1, { id: "a" }),
+      use(2, { id: "b" }),
+      result(3, { tool_use_id: "a" }),
+      result(4, { tool_use_id: "a" }),
+      result(5, { tool_use_id: "b" }),
+    ],
+    orphanResult: [
+      use(1, { id: "a" }),
+      result(2, { tool_use_id: "a" }),
+      result(3, { tool_use_id: "z" }),
+    ],
+    legacyPair: [use(1), result(2)],
+    legacyDoubleUse: [use(1), use(2), result(3)],
+    legacyExtraResult: [use(1), result(2), result(3)],
+  };
+
+  it("folding from empty matches groupToolEvents for in-order streaming sequences", () => {
+    for (const [label, events] of Object.entries(sequences)) {
+      assert.deepEqual(fold(events), groupToolEvents(events), `mismatch for "${label}"`);
+    }
+  });
+
+  it("matches groupToolEvents when appending onto a groupToolEvents-seeded base", () => {
+    // Production shape: setStreaming seeds streamingGroups with groupToolEvents(prefix)
+    // (resync/backfill/pending-inbound), then live events land via appendToGroups.
+    // The real invariant is therefore per split point, not just the empty-seed fold:
+    //   appendToGroups(groupToolEvents(prefix), ev) === groupToolEvents([...prefix, ev]).
+    for (const [label, events] of Object.entries(sequences)) {
+      for (let split = 0; split < events.length; split++) {
+        const prefix = events.slice(0, split);
+        const ev = events[split];
+        assert.deepEqual(
+          appendToGroups(groupToolEvents(prefix), ev),
+          groupToolEvents([...prefix, ev]),
+          `seeded mismatch for "${label}" at split ${split}`,
+        );
+      }
+    }
+  });
+
+  // The live append path (appendStreamingEvent) uses appendStreamingGroups, which
+  // keeps the raw event array and re-groups in full for legacy (id-less) results.
+  // This makes it fully equivalent to groupToolEvents for ANY in-order stream —
+  // including legacy interleaved-parallel results, which the O(1) appendToGroups
+  // primitive alone groups differently (LIFO vs. forward pairing).
+  const foldStreaming = (events: HistoryMessage[]): TimelineItem[] => {
+    let groups: TimelineItem[] = [];
+    const seen: HistoryMessage[] = [];
+    for (const e of events) {
+      seen.push(e);
+      groups = appendStreamingGroups(groups, seen, e);
+    }
+    return groups;
+  };
+
+  it("appendStreamingGroups matches groupToolEvents for every in-order stream", () => {
+    const all: Record<string, HistoryMessage[]> = {
+      ...sequences,
+      // Legacy parallel results: appendToGroups alone diverges here (attaches the
+      // second result LIFO to the first open group); the full re-group fallback
+      // must match groupToolEvents, which pairs forward and emits result4 standalone.
+      legacyParallelResults: [use(1), use(2), result(3), result(4)],
+    };
+    for (const [label, events] of Object.entries(all)) {
+      assert.deepEqual(foldStreaming(events), groupToolEvents(events), `mismatch for "${label}"`);
+    }
+  });
+
+  it("appends a tool_use without rebuilding prior items (structural sharing)", () => {
+    const groups = fold([use(1, { id: "a" }), result(2, { tool_use_id: "a" }), text(3)]);
+    const after = appendToGroups(groups, use(4, { id: "b" }));
+    assert.equal(after.length, groups.length + 1);
+    for (let i = 0; i < groups.length; i++) {
+      assert.equal(after[i], groups[i], `item ${i} reference should be reused`);
+    }
+  });
+
+  it("replaces only the group a tool_result attaches to", () => {
+    const groups = fold([use(1, { id: "a" }), text(2), use(3, { id: "b" })]);
+    const after = appendToGroups(groups, result(4, { tool_use_id: "a" }));
+    assert.equal(after.length, groups.length);
+    assert.notEqual(after[0], groups[0], "matched group is a fresh object");
+    assert.equal(after[1], groups[1], "unrelated event reused");
+    assert.equal(after[2], groups[2], "unrelated open group reused");
+    const g0 = after[0] as Extract<TimelineItem, { kind: "tool-group" }>;
+    assert.equal(g0.toolResult?.id, 4);
+  });
+
+  it("does not mutate the input array or its groups", () => {
+    const groups = fold([use(1, { id: "a" })]);
+    const snapshot = JSON.stringify(groups);
+    appendToGroups(groups, result(2, { tool_use_id: "a" }));
+    assert.equal(JSON.stringify(groups), snapshot);
   });
 });

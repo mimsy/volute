@@ -32,7 +32,11 @@ import {
   turnLastSeenMs,
 } from "../lib/timeline-liveness";
 import { buildTodayItems } from "../lib/timeline-today";
-import { groupToolEvents } from "../lib/tool-groups";
+import {
+  appendStreamingGroups,
+  groupToolEvents,
+  type TimelineItem as ToolTimelineItem,
+} from "../lib/tool-groups";
 import { getCategoryColor, getCategoryIcon } from "../lib/tool-names";
 import ToolGroupComponent from "./chat/ToolGroup.svelte";
 import HistoryEvent from "./HistoryEvent.svelte";
@@ -146,7 +150,9 @@ let { name, mindStatus }: { name?: string; mindStatus?: string } = $props();
 
 // --- Turns data ---
 const PAGE_SIZE = 100;
-let turnsData = $state<TurnRow[]>([]);
+// Replace-only arrays (all mutation sites reassign) → raw state avoids the cost
+// of deep-proxying every row/summary on each update.
+let turnsData = $state.raw<TurnRow[]>([]);
 let loading = $state(false);
 let historyError = $state("");
 
@@ -161,10 +167,10 @@ let serverTzResolved = $state(false);
 let readOnlyConv = $state<ConversationWithParticipants | null>(null);
 
 // --- Summaries data ---
-let hourSummaries = $state<SummaryRow[]>([]);
-let daySummaries = $state<SummaryRow[]>([]);
-let weekSummaries = $state<SummaryRow[]>([]);
-let monthSummaries = $state<SummaryRow[]>([]);
+let hourSummaries = $state.raw<SummaryRow[]>([]);
+let daySummaries = $state.raw<SummaryRow[]>([]);
+let weekSummaries = $state.raw<SummaryRow[]>([]);
+let monthSummaries = $state.raw<SummaryRow[]>([]);
 let summariesLoaded = $state(false);
 // Backward summary paging (older history coarsens to week/month tiers).
 let hasMoreSummaries = $state(true);
@@ -183,7 +189,36 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const isTurnUuid = (key: string): boolean => UUID_RE.test(key);
 
 // --- Streaming events for active turns ---
-let streamingEvents = $state(new SvelteMap<string, HistoryMessage[]>());
+// Raw events are the source of truth but non-reactive: rendering reads the
+// pre-grouped `streamingGroups` instead, so a per-event append is O(1) DOM work
+// and never re-derives `timelineItems`. `activeTurnIds` tracks streaming
+// membership separately (only changes on turn start/complete) so appends — which
+// leave membership untouched — don't invalidate the `timelineItems` derived.
+const streamingEvents = new Map<string, HistoryMessage[]>();
+const streamingGroups = new SvelteMap<string, ToolTimelineItem[]>();
+const activeTurnIds = new SvelteSet<string>();
+
+function setStreaming(turnId: string, events: HistoryMessage[]) {
+  streamingEvents.set(turnId, events);
+  streamingGroups.set(turnId, groupToolEvents(events));
+  activeTurnIds.add(turnId);
+}
+
+function appendStreamingEvent(turnId: string, event: HistoryMessage) {
+  const events = [...(streamingEvents.get(turnId) ?? []), event];
+  streamingEvents.set(turnId, events);
+  streamingGroups.set(
+    turnId,
+    appendStreamingGroups(streamingGroups.get(turnId) ?? [], events, event),
+  );
+}
+
+function deleteStreaming(turnId: string) {
+  streamingEvents.delete(turnId);
+  streamingGroups.delete(turnId);
+  activeTurnIds.delete(turnId);
+}
+
 let nextSyntheticId = -1;
 // Inbound events that arrived before any turn_created — shown as provisional turn
 let pendingInbounds = $state<HistoryMessage[]>([]);
@@ -293,17 +328,17 @@ async function resync() {
         lastEventAt.set(turnId, Date.now());
         // Mark as streaming synchronously so a newly-discovered active turn renders live,
         // and so the completion guard below has a placeholder to observe.
-        if (!streamingEvents.has(turnId)) streamingEvents.set(turnId, []);
+        if (!streamingEvents.has(turnId)) setStreaming(turnId, []);
         fetchTurnEvents(turnMind, { turnId })
           .then((dbEvents) => {
             // A summary/done landing mid-fetch deletes streaming state; don't resurrect it.
             if (!streamingEvents.has(turnId)) return;
-            streamingEvents.set(turnId, dbEvents);
+            setStreaming(turnId, dbEvents);
           })
           .catch((err) => console.warn("[TurnTimeline] Failed to resync active turn events:", err));
       } else if (streamingEvents.has(turn.id)) {
         // Turn completed while we were disconnected — drop the stale streaming view.
-        streamingEvents.delete(turn.id);
+        deleteStreaming(turn.id);
         lastEventAt.delete(turn.id);
       }
     }
@@ -353,9 +388,9 @@ function connectSSE() {
       if (pendingInbounds.length > 0) {
         const seeded = pendingInbounds.map((ev) => ({ ...ev, turn_id: turnId }));
         const prev = streamingEvents.get(turnId) ?? [];
-        streamingEvents.set(turnId, [...seeded, ...prev]);
+        setStreaming(turnId, [...seeded, ...prev]);
       } else if (!streamingEvents.has(turnId)) {
-        streamingEvents.set(turnId, []);
+        setStreaming(turnId, []);
       }
       pendingInbounds = [];
       lastEventAt.set(turnId, Date.now());
@@ -367,7 +402,7 @@ function connectSSE() {
         .then(() => fetchTurnEvents(turnMind, { turnId }))
         .then((dbEvents) => {
           if (!streamingEvents.has(turnId)) return; // turn already completed
-          streamingEvents.set(turnId, dbEvents);
+          setStreaming(turnId, dbEvents);
         })
         .catch((err) => console.warn("[TurnTimeline] Failed to fetch turn events:", err));
     } else if (eventType === "summary" && turnId) {
@@ -375,7 +410,7 @@ function connectSSE() {
       clearTimeout(doneFallbackTimers.get(turnId));
       doneFallbackTimers.delete(turnId);
       const prevStreaming = streamingEvents.get(turnId);
-      streamingEvents.delete(turnId);
+      deleteStreaming(turnId);
       lastEventAt.delete(turnId);
       fetchTurns({ mind: name, turnId })
         .then((rows) => {
@@ -390,7 +425,7 @@ function connectSSE() {
           console.warn("[TurnTimeline] Failed to fetch completed turn:", err);
           // Restore streaming state so the turn doesn't vanish
           if (!streamingEvents.has(turnId)) {
-            streamingEvents.set(turnId, prevStreaming ?? []);
+            setStreaming(turnId, prevStreaming ?? []);
           }
         });
     } else if (eventType === "done" && turnId) {
@@ -403,7 +438,7 @@ function connectSSE() {
           setTimeout(() => {
             doneFallbackTimers.delete(tid);
             if (streamingEvents.has(tid)) {
-              streamingEvents.delete(tid);
+              deleteStreaming(tid);
               // Refresh the turn from the server
               fetchTurns({ mind: name, turnId: tid })
                 .then((rows) => upsertTurnRows(rows))
@@ -415,18 +450,12 @@ function connectSSE() {
         );
       }
     } else if (turnId && streamingEvents.has(turnId)) {
-      // Substantive event — accumulate for streaming display
-      // Create new array to trigger Svelte reactivity
-      const prev = streamingEvents.get(turnId)!;
-      streamingEvents.set(turnId, [...prev, buildHistoryMessage(d, { turn_id: turnId })]);
+      // Substantive event — append to the streaming view incrementally (O(1)).
+      appendStreamingEvent(turnId, buildHistoryMessage(d, { turn_id: turnId }));
       lastEventAt.set(turnId, Date.now());
     }
 
-    if (!userScrolledUp) {
-      requestAnimationFrame(() => {
-        scrollContainer?.scrollTo({ top: scrollContainer.scrollHeight, behavior: "smooth" });
-      });
-    }
+    scheduleScrollToBottom();
   };
   es.onopen = () => {
     clearReconnectTimer();
@@ -493,11 +522,11 @@ async function loadTurns() {
     // Backfill streaming events for any active turns
     for (const turn of turnsData) {
       if (turn.status === "active" && !streamingEvents.has(turn.id)) {
-        streamingEvents.set(turn.id, []);
+        setStreaming(turn.id, []);
         fetchTurnEvents(turn.mind, { turnId: turn.id })
           .then((dbEvents) => {
             if (!streamingEvents.has(turn.id)) return; // turn completed while fetching
-            streamingEvents.set(turn.id, dbEvents);
+            setStreaming(turn.id, dbEvents);
           })
           .catch((err) =>
             console.warn("[TurnTimeline] Failed to backfill active turn events:", err),
@@ -702,10 +731,16 @@ async function toggleSummaryExpand(summary: SummaryRow) {
   loadingChildren.delete(summary.id);
 }
 
+// Wall-clock anchor for the Today/this-hour boundaries. Held in state and
+// refreshed on a coarse cadence (the liveness sweep + tab focus) so the derived
+// isn't re-reading `new Date()` on unrelated invalidations and the "this hour"
+// cutoff can't go stale while the view sits open.
+let nowMs = $state(Date.now());
+
 // Build the combined timeline items list
 let timelineItems = $derived.by(() => {
   const items: TimelineItem[] = [];
-  const now = new Date();
+  const now = new Date(nowMs);
 
   // Monthly summaries (oldest)
   for (const s of monthSummaries) items.push({ kind: "summary", summary: s });
@@ -729,7 +764,7 @@ let timelineItems = $derived.by(() => {
     now,
     hourSummaries,
     turnsData,
-    isActive: (t) => t.status === "active" || streamingEvents.has(t.id),
+    isActive: (t) => t.status === "active" || activeTurnIds.has(t.id),
   });
 
   // Separator before the today section
@@ -741,6 +776,22 @@ let timelineItems = $derived.by(() => {
 
   return items;
 });
+
+// Trailing-edge auto-scroll: at most one instant jump per animation frame while
+// events stream, instead of a smooth-animated scrollTo per event (which kept the
+// view perpetually animating). Smooth scrolling is reserved for discrete actions
+// (jump-to-latest, completed-turn reveal).
+let scrollRafPending = false;
+function scheduleScrollToBottom() {
+  if (userScrolledUp || scrollRafPending) return;
+  scrollRafPending = true;
+  requestAnimationFrame(() => {
+    scrollRafPending = false;
+    if (!userScrolledUp && scrollContainer) {
+      scrollContainer.scrollTop = scrollContainer.scrollHeight;
+    }
+  });
+}
 
 // Scroll to bottom on initial load -- keep nudging for a few seconds
 let scrollTimer: ReturnType<typeof setInterval> | null = null;
@@ -777,7 +828,9 @@ $effect(() => {
   if (n !== prevName) {
     prevName = n;
     turnsData = [];
-    streamingEvents = new SvelteMap();
+    streamingEvents.clear();
+    streamingGroups.clear();
+    activeTurnIds.clear();
     nextSyntheticId = -1;
     pendingInbounds = [];
     hourSummaries = [];
@@ -799,7 +852,12 @@ $effect(() => {
 // Liveness sweep: expire stale provisional inbounds and reconcile active turns that
 // the server has likely finished (converges with the server's wedged-turn sweep).
 $effect(() => {
+  const onVisible = () => {
+    if (document.visibilityState === "visible") nowMs = Date.now();
+  };
+  document.addEventListener("visibilitychange", onVisible);
   const interval = setInterval(() => {
+    nowMs = Date.now();
     if (pendingInbounds.length > 0) {
       const pruned = pruneExpiredInbounds(pendingInbounds);
       if (pruned.length !== pendingInbounds.length) pendingInbounds = pruned;
@@ -814,7 +872,7 @@ $effect(() => {
         .then((rows) => {
           const fresh = rows[0];
           if (fresh && fresh.status !== "active") {
-            streamingEvents.delete(turn.id);
+            deleteStreaming(turn.id);
             lastEventAt.delete(turn.id);
           }
           upsertTurnRows(rows);
@@ -822,7 +880,10 @@ $effect(() => {
         .catch((err) => console.warn("[TurnTimeline] Failed to check stale turn:", err));
     }
   }, 30_000);
-  return () => clearInterval(interval);
+  return () => {
+    clearInterval(interval);
+    document.removeEventListener("visibilitychange", onVisible);
+  };
 });
 
 // Fetch the daemon's canonical timezone once, so boundary math and labels
@@ -1089,7 +1150,7 @@ function jumpToLatest() {
                     onexpand={(expanded) => handleExpand(turn.id, expanded)}
                   />
                 {:else}
-                  {@const events = streamingEvents.get(turn.id) ?? []}
+                  {@const groups = streamingGroups.get(turn.id) ?? []}
                   {@const startTime = new Date(turn.created_at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
                   <TimelineBranch gap={24} reach={11} noReturn>
                     {#snippet header()}
@@ -1098,8 +1159,7 @@ function jumpToLatest() {
                       </div>
                     {/snippet}
                     {#snippet children()}
-                      {#if events.length > 0}
-                        {@const groups = groupToolEvents(events)}
+                      {#if groups.length > 0}
                         {#each groups as groupItem (groupItem.kind === "tool-group" ? `tg-${groupItem.toolUse.id}` : `ev-${groupItem.event.id}`)}
                           {#if groupItem.kind === "tool-group"}
                             {@const catColor = getCategoryColor(groupItem.category)}
