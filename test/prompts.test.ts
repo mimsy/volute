@@ -1,10 +1,14 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
+import { fileURLToPath } from "node:url";
 import { getDb } from "../packages/daemon/src/lib/db.js";
 import {
   getMindPromptDefaults,
   getPrompt,
   getPromptIfCustom,
+  MEMORY_PLACEHOLDER_MARKER,
   ORIENTATION_MARKER,
   PROMPT_DEFAULTS,
   PROMPT_KEYS,
@@ -46,6 +50,15 @@ describe("prompts library", () => {
 
   it("seed_soul contains the orientation marker used by sprout and seed-check", () => {
     assert.ok(PROMPT_DEFAULTS.seed_soul.content.includes(ORIENTATION_MARKER));
+  });
+
+  it("placeholder MEMORY.md template contains the marker used by sprout and seed-check", () => {
+    const here = fileURLToPath(new URL(".", import.meta.url));
+    const placeholder = readFileSync(resolve(here, "../templates/_base/.init/MEMORY.md"), "utf-8");
+    assert.ok(
+      placeholder.includes(MEMORY_PLACEHOLDER_MARKER),
+      "template MEMORY.md must contain MEMORY_PLACEHOLDER_MARKER so the sprout gate can detect it",
+    );
   });
 
   it("getPrompt returns default when no DB override", async () => {
