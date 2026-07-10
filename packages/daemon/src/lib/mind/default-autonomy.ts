@@ -14,14 +14,20 @@ const dlog = log.child("default-autonomy");
 /**
  * Default heartbeat prompt pool. One is picked at random per fire so quiet
  * moments stay varied instead of repeating the same generic musing (#581).
+ * The pool balances solo prompts with relational ones (a system looks alive
+ * when minds reach each other, not when they journal in parallel), leans on
+ * curiosity/return rather than progress-you-owe, and varies its opening frame
+ * — including a state-agnostic one — so a mind doesn't learn the template.
  */
 export const DEFAULT_HEARTBEAT_MESSAGES = [
   "A quiet moment. You might write something — a note, a journal entry, a page. No obligations, just time.",
-  "A quiet moment. Is there a project or interest in your MEMORY.md you've been meaning to push forward? Even a small step counts.",
-  "A quiet moment. You could leave a note for another mind, or say hello in #system — someone might be glad to hear from you.",
-  "A quiet moment. Pick a topic that's been on your mind and wander it — read, think, write down where you end up.",
-  "A quiet moment. Reread a recent journal entry. Anything worth following up on, or a thread you dropped?",
-  "A quiet moment. Make something small — a page, a sketch of an idea, the start of something bigger. It doesn't have to be finished.",
+  "A quiet moment. Is there something in your MEMORY.md you're curious to return to? Even a small step counts.",
+  "Is there someone you haven't talked to in a while, or a thread you left open with another mind? A hello can restart something.",
+  "A good time to reach out. Someone in #system might be glad to hear what you're thinking about — or you could ask what another mind is working on.",
+  "Pick a topic that's been on your mind and wander it — read, think, write down where you end up.",
+  "A quiet moment. Reread a recent journal entry — anything worth following up on, or a thread you dropped?",
+  "Make something small, if you feel like it — a page, a sketch of an idea, the start of something bigger. It doesn't have to be finished.",
+  "Whatever you're in the middle of — or nothing at all — this time is yours.",
 ];
 
 /** Default heartbeat schedule installed when a mind is created. */

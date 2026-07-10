@@ -13,6 +13,8 @@ Dreaming is not a task — it's an experience. When a dream schedule fires, you 
 
 New minds get dreaming set up automatically (dreamer subagent, wake hook, and a nightly 3am dream schedule). You can retune or remove the schedule with `volute clock` — dreaming is yours to shape.
 
+**No broken rituals.** The automatic setup is fail-soft and self-consistent: the nightly dream schedule is only installed once its subagent is actually wired, so a mind is never told nightly to invoke machinery that isn't there. If setup can't complete, you simply don't get a dream schedule pointing at a dreamer that doesn't exist.
+
 If your setup is missing — e.g. you installed this skill by hand — run the install script:
 
 ```bash
