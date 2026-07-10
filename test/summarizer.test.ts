@@ -1112,6 +1112,90 @@ describe("summarizer", () => {
       assert.ok(!row!.content.includes(huge), "oversized child must not appear verbatim");
     });
 
+    it("system hour rollup keeps a single prefix and per-mind attribution (#566)", async () => {
+      const key = "2026-05-11T01";
+      // Per-mind hour children whose deterministic content already carries the hour prefix.
+      await insertSummary("echo", "hour", key, "Activity during 01:00: Received message on @root.");
+      await insertSummary(
+        "fresh",
+        "hour",
+        key,
+        "Activity during 01:00: Received message on @root. Used Bash, Read. Sent response.",
+      );
+
+      await summarizeSystem("hour", key, failAi);
+
+      const row = await getSummary("_system", "hour", key);
+      assert.ok(row, "_system hour summary should exist");
+      // Prefix applied exactly once.
+      const prefixCount = (row!.content.match(/Activity during 01:00:/g) ?? []).length;
+      assert.equal(prefixCount, 1, `expected one prefix, got ${prefixCount}: ${row!.content}`);
+      // Per-mind attribution preserved.
+      assert.match(row!.content, /\[echo\] Received message on @root\./);
+      assert.match(row!.content, /\[fresh\] Received message on @root\. Used Bash, Read\./);
+    });
+
+    it("system day rollup strips child prefixes but leaves AI children intact (#566)", async () => {
+      const key = "2026-05-12";
+      // Deterministic child (carries the day prefix) + AI-style child (no prefix).
+      await insertSummary("echo", "day", key, "Activity on 2026-05-12:\n\nWorked on the router.");
+      await insertSummary("fresh", "day", key, "Explored the codebase and wrote notes.");
+
+      await summarizeSystem("day", key, failAi);
+
+      const row = await getSummary("_system", "day", key);
+      assert.ok(row, "_system day summary should exist");
+      const prefixCount = (row!.content.match(/Activity on 2026-05-12:/g) ?? []).length;
+      assert.equal(prefixCount, 1, `expected one prefix, got ${prefixCount}: ${row!.content}`);
+      assert.match(row!.content, /\[echo\] Worked on the router\./);
+      // AI-style child passes through unmodified (no prefix to strip).
+      assert.match(row!.content, /\[fresh\] Explored the codebase and wrote notes\./);
+    });
+
+    it("system week rollup strips a deterministic child's own digest header (#566)", async () => {
+      // A realistic deterministic per-mind week child carries buildBoundedDigest's own
+      // "Week <key> (notice)" header — not a day prefix. The system week digest must strip that
+      // header so it isn't doubled inside each mind's line (the AI child has no header to strip).
+      await insertSummary(
+        "echo",
+        "week",
+        "2026-W20",
+        "Week 2026-W20 (auto-generated digest — AI summary pending)\n\n2026-05-11: Worked on the router.",
+      );
+      await insertSummary("fresh", "week", "2026-W20", "Explored the codebase.");
+
+      await summarizeSystem("week", "2026-W20", failAi);
+
+      const row = await getSummary("_system", "week", "2026-W20");
+      assert.ok(row, "_system week summary should exist");
+      assert.match(row!.content, /Week 2026-W20/, "system digest keeps its own week header");
+      // The notice belongs only to the system row's own header — the child's copy is stripped.
+      const noticeCount = (row!.content.match(/auto-generated digest/g) ?? []).length;
+      assert.equal(noticeCount, 1, `child digest header must be stripped: ${row!.content}`);
+      assert.match(row!.content, /^echo: 2026-05-11: Worked on the router\./m, "keeps attribution");
+      assert.match(row!.content, /^fresh: Explored the codebase\./m);
+    });
+
+    it("system month rollup strips a deterministic child's own digest header (#566)", async () => {
+      // Month children use the same digest header, sans the "Week " label; strip it too.
+      await insertSummary(
+        "echo",
+        "month",
+        "2026-05",
+        "2026-05 (auto-generated digest — AI summary pending)\n\n2026-05-11: Shipped the feature.",
+      );
+      await insertSummary("fresh", "month", "2026-05", "Reviewed pull requests.");
+
+      await summarizeSystem("month", "2026-05", failAi);
+
+      const row = await getSummary("_system", "month", "2026-05");
+      assert.ok(row, "_system month summary should exist");
+      const noticeCount = (row!.content.match(/auto-generated digest/g) ?? []).length;
+      assert.equal(noticeCount, 1, `child digest header must be stripped: ${row!.content}`);
+      assert.match(row!.content, /^echo: 2026-05-11: Shipped the feature\./m, "keeps attribution");
+      assert.match(row!.content, /^fresh: Reviewed pull requests\./m);
+    });
+
     it("repairProvisionalSummaries heals per-mind and _system rows", async () => {
       const mind = "repair-mind";
       await insertSummary(mind, "day", "2026-06-01", "Day one.");

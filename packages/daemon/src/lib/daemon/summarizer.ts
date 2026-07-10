@@ -482,6 +482,54 @@ function buildPeriodicDeterministicSummary(
   }
 }
 
+/**
+ * Matches a deterministic week/month digest header ("Week <key> (notice)\n\n" or
+ * "<key> (notice)\n\n") at the start of a child summary. Built from DIGEST_NOTICE so it can't
+ * drift from the emitted header.
+ */
+const DIGEST_HEADER_PREFIX = new RegExp(
+  `^(?:Week )?\\S+ ${DIGEST_NOTICE.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\n\\n`,
+);
+
+/**
+ * Strip a leading deterministic period prefix ("Activity during HH:00: " / "Activity on
+ * YYYY-MM-DD:\n\n") or week/month digest header so the system rollup doesn't double it when its
+ * per-mind children were themselves deterministic. Anchored, so AI-generated children (no such
+ * prefix) pass through untouched.
+ */
+function stripPeriodPrefix(text: string): string {
+  return text
+    .replace(/^Activity during \d{2}:00: /, "")
+    .replace(/^Activity on \d{4}-\d{2}-\d{2}:\n\n/, "")
+    .replace(DIGEST_HEADER_PREFIX, "");
+}
+
+/**
+ * Deterministic fallback for the `_system` rollup. Unlike the per-mind builder, its children
+ * are per-mind period summaries — so it keeps per-mind attribution (`[mind]` for hour/day,
+ * `mind:` digest lines for week/month) and strips each child's own period prefix, applying
+ * the period prefix exactly once (see #566).
+ */
+function buildSystemDeterministicSummary(
+  entries: ChildEntry[],
+  period: TimerPeriod,
+  periodKey: string,
+): string {
+  if (entries.length === 0) return "";
+  const stripped = entries.map((e) => ({ key: e.key, text: stripPeriodPrefix(e.text) }));
+  switch (period) {
+    case "hour":
+      return `Activity during ${periodKey.slice(11)}:00: ${stripped.map((e) => `[${e.key}] ${e.text}`).join(" ")}`;
+    case "day":
+      return `Activity on ${periodKey}:\n\n${stripped.map((e) => `[${e.key}] ${e.text}`).join("\n\n")}`;
+    case "week":
+    case "month":
+      // The digest already attributes per mind (`key: …` lines); stripping keeps a
+      // deterministic daily child's own "Activity on …" prefix out of its digest line.
+      return buildBoundedDigest(stripped, period, periodKey);
+  }
+}
+
 function parseMeta(raw: string | null): Record<string, unknown> {
   if (!raw) return {};
   try {
@@ -774,7 +822,7 @@ export async function summarizeSystem(
     content = aiResult;
     deterministic = false;
   } else {
-    content = buildPeriodicDeterministicSummary(entries, period, periodKey);
+    content = buildSystemDeterministicSummary(entries, period, periodKey);
     deterministic = true;
     if (period === "week" || period === "month") trackProvisionalAttempt(metadata, existingMeta);
   }
