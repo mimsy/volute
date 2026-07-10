@@ -36,6 +36,13 @@ for (const [k, v] of Object.entries(process.env)) {
   if (!k.startsWith("GIT_") && v !== undefined) cleanEnv[k] = v;
 }
 cleanEnv.VOLUTE_BASE_PORT = String(MIND_BASE_PORT);
+// Give the daemon an anthropic key so the claude test mind is treated as
+// credentialed. Otherwise startMindFull records a `no_credentials` startup
+// notice (#573) for the keyless mind, which is a mind-level notice that bleeds
+// into every session drain and pollutes the notice-count assertions below. These
+// tests model transient turn errors on an otherwise-configured mind, not a mute
+// keyless one. Deterministic across hosts regardless of ambient env.
+if (!cleanEnv.ANTHROPIC_API_KEY) cleanEnv.ANTHROPIC_API_KEY = "sk-ant-e2e-dummy-key";
 
 const TEST_MIND = "e2e-test-mind";
 const PORT = 14200 + Math.floor(Math.random() * 800);
