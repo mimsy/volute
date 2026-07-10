@@ -5,6 +5,7 @@ import { getOrCreateMindUser, getUserByUsername } from "../../../lib/auth.js";
 import {
   addMessage,
   createChannel,
+  deleteConversation,
   formatChannelSettings,
   getChannelByName,
   getChannelSettings,
@@ -32,6 +33,7 @@ const createSchema = z
       .min(1)
       .max(50)
       .regex(/^[a-z0-9][a-z0-9-]*$/, "Channel names must be lowercase alphanumeric with hyphens"),
+    participantNames: z.array(z.string().min(1)).optional(),
   })
   .merge(channelSettingsSchema);
 
@@ -56,10 +58,25 @@ const app = new Hono<AuthEnv>()
     const user = c.get("user");
     const body = c.req.valid("json");
 
+    const { name, participantNames, ...settings } = body;
+
+    // Resolve every requested participant up front so an unknown name fails
+    // cleanly instead of silently dropping members after the channel exists.
+    const participantIds: number[] = [];
+    for (const username of participantNames ?? []) {
+      let member = await getUserByUsername(username);
+      if (!member && (await findMind(username))) {
+        member = await getOrCreateMindUser(username);
+      }
+      if (!member) {
+        return c.json({ error: `User not found: ${username}` }, 404);
+      }
+      participantIds.push(member.id);
+    }
+
+    let ch: Awaited<ReturnType<typeof createChannel>>;
     try {
-      const { name, ...settings } = body;
-      const ch = await createChannel(name, user.id, settings);
-      return c.json({ ...ch, channel_name: name }, 201);
+      ch = await createChannel(name, user.id, settings);
     } catch (err: unknown) {
       const cause =
         err instanceof Error
@@ -70,6 +87,26 @@ const app = new Hono<AuthEnv>()
       }
       throw err;
     }
+
+    try {
+      for (const id of participantIds) {
+        await joinChannel(ch.id, id);
+      }
+    } catch (err) {
+      console.error("[channels] join failed during channel create:", err);
+      // Don't leave a half-populated channel behind on a join failure.
+      try {
+        await deleteConversation(ch.id);
+      } catch (cleanupErr) {
+        console.error(
+          `[channels] failed to roll back channel ${ch.id} after join failure:`,
+          cleanupErr,
+        );
+      }
+      throw err;
+    }
+
+    return c.json({ ...ch, channel_name: name }, 201);
   })
   .get("/:name", async (c) => {
     const name = c.req.param("name");

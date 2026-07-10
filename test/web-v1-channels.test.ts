@@ -7,10 +7,12 @@ import { getDb } from "../packages/daemon/src/lib/db.js";
 import {
   createChannel,
   deleteConversation,
+  getChannelByName,
   getChannelSettings,
   getMessages,
   getParticipants,
 } from "../packages/daemon/src/lib/events/conversations.js";
+import { addMind, removeMind } from "../packages/daemon/src/lib/mind/registry.js";
 import { users } from "../packages/daemon/src/lib/schema.js";
 import channelsRoute from "../packages/daemon/src/web/api/volute/channels.js";
 import { authMiddleware, createSession } from "../packages/daemon/src/web/middleware/auth.js";
@@ -103,6 +105,94 @@ describe("web v1 channels routes", () => {
     assert.equal(body.channel_name, "dev");
 
     await deleteConversation(body.id);
+  });
+
+  it("POST /api/v1/channels — adds participantNames (users and minds) as members", async () => {
+    const cookie = await setupAuth();
+    const app = createApp();
+
+    const bob = await createUser("bob", "pass");
+    // Register a mind with no pre-existing users row, so the route must
+    // resolve it via the registry fallback (findMind → getOrCreateMindUser).
+    await addMind("test-mind", 4999);
+
+    try {
+      const res = await app.request("/api/v1/channels", {
+        method: "POST",
+        headers: {
+          Cookie: `volute_session=${cookie}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ name: "squad", participantNames: ["bob", "test-mind"] }),
+      });
+      assert.equal(res.status, 201);
+      const body = await res.json();
+
+      // The mind's user row was created on demand by the route.
+      const mindUser = await getOrCreateMindUser("test-mind");
+
+      const participants = await getParticipants(body.id);
+      // Creator + the two requested participants.
+      assert.equal(participants.length, 3);
+      assert.ok(participants.some((p) => p.userId === userId));
+      assert.ok(participants.some((p) => p.userId === bob.id));
+      assert.ok(participants.some((p) => p.userId === mindUser.id));
+
+      await deleteConversation(body.id);
+    } finally {
+      await removeMind("test-mind");
+    }
+  });
+
+  it("POST /api/v1/channels — dedupes the creator and repeated participant names", async () => {
+    const cookie = await setupAuth();
+    const app = createApp();
+
+    const bob = await createUser("bob", "pass");
+
+    const res = await app.request("/api/v1/channels", {
+      method: "POST",
+      headers: {
+        Cookie: `volute_session=${cookie}`,
+        "Content-Type": "application/json",
+      },
+      // Include the creator and a duplicate name; joins are idempotent so this
+      // must succeed with a single row each — not roll the channel back.
+      body: JSON.stringify({ name: "dupes", participantNames: ["ch-admin", "bob", "bob"] }),
+    });
+    assert.equal(res.status, 201);
+    const body = await res.json();
+
+    const participants = await getParticipants(body.id);
+    // Creator + bob, each exactly once.
+    assert.equal(participants.length, 2);
+    assert.ok(participants.some((p) => p.userId === userId));
+    assert.ok(participants.some((p) => p.userId === bob.id));
+
+    await deleteConversation(body.id);
+  });
+
+  it("POST /api/v1/channels — 404 for unknown participant, channel not created", async () => {
+    const cookie = await setupAuth();
+    const app = createApp();
+
+    await createUser("bob", "pass");
+
+    const res = await app.request("/api/v1/channels", {
+      method: "POST",
+      headers: {
+        Cookie: `volute_session=${cookie}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ name: "ghosted", participantNames: ["bob", "ghost"] }),
+    });
+    assert.equal(res.status, 404);
+    const body = await res.json();
+    assert.match(body.error, /ghost/);
+
+    // The channel must not have been created, even though "bob" resolved.
+    const ch = await getChannelByName("ghosted");
+    assert.equal(ch, null);
   });
 
   it("POST /api/v1/channels — 409 for duplicate name", async () => {
