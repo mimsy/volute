@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
-import { after, before, describe, it } from "node:test";
+import { resolve } from "node:path";
+import { after, afterEach, before, describe, it } from "node:test";
 import { Agent } from "undici";
-import { daemonDispatcher } from "../packages/cli/src/lib/daemon-client.js";
+import { daemonDispatcher, resolveWebUrl } from "../packages/cli/src/lib/daemon-client.js";
 
 // A server that waits before sending any response headers, simulating a
 // long-running daemon operation (e.g. upgrade running `npm install`).
@@ -51,5 +53,37 @@ describe("daemonDispatcher", () => {
     const res = await fetch(url, { dispatcher: daemonDispatcher });
     assert.equal(res.status, 200);
     assert.deepEqual(await res.json(), { ok: true });
+  });
+});
+
+describe("resolveWebUrl", () => {
+  const systemDir = resolve(process.env.VOLUTE_HOME!, "system");
+  const configPath = resolve(systemDir, "daemon.json");
+
+  function writeDaemonConfig(config: Record<string, unknown>) {
+    mkdirSync(systemDir, { recursive: true });
+    writeFileSync(configPath, JSON.stringify(config));
+  }
+
+  afterEach(() => {
+    rmSync(configPath, { force: true });
+    delete process.env.VOLUTE_DAEMON_URL;
+  });
+
+  it("builds an http URL from the public port and hostname", () => {
+    writeDaemonConfig({ port: 1618, hostname: "0.0.0.0" });
+    assert.equal(resolveWebUrl(), "http://localhost:1618");
+  });
+
+  it("uses https and the public port when TLS is enabled", () => {
+    // With TLS, CLI traffic goes to internalPort, but the browser-facing URL
+    // must stay on the public https port.
+    writeDaemonConfig({ port: 1618, internalPort: 1619, hostname: "myhost.ts.net", tls: true });
+    assert.equal(resolveWebUrl(), "https://myhost.ts.net:1618");
+  });
+
+  it("prefers VOLUTE_DAEMON_URL when set", () => {
+    process.env.VOLUTE_DAEMON_URL = "https://remote.example:8443";
+    assert.equal(resolveWebUrl(), "https://remote.example:8443");
   });
 });

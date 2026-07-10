@@ -2,7 +2,7 @@ import { writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { voluteUserHome } from "@volute/daemon/lib/mind/registry.js";
 import { command } from "../lib/command.js";
-import { daemonFetch } from "../lib/daemon-client.js";
+import { daemonFetch, resolveWebUrl } from "../lib/daemon-client.js";
 import { promptLine, promptPassword } from "../lib/prompt.js";
 
 const cmd = command({
@@ -10,6 +10,21 @@ const cmd = command({
   description: "Log in to the daemon",
   flags: {},
   run: async () => {
+    // The first account is created in the browser setup wizard. If no account
+    // exists yet, there is nothing to log in as — steer the user there instead
+    // of prompting for credentials that can't work.
+    const statusRes = await daemonFetch("/api/setup/status");
+    if (statusRes.ok) {
+      const status = (await statusRes.json().catch(() => ({}))) as {
+        complete?: boolean;
+        hasAccount?: boolean;
+      };
+      if (status.complete === false && status.hasAccount === false) {
+        console.error(`No account exists yet — finish setup at ${resolveWebUrl()} first.`);
+        process.exit(1);
+      }
+    }
+
     const username = await promptLine("Username: ");
     const password = await promptPassword("Password: ");
 

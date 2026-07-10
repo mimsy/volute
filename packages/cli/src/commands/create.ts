@@ -2,7 +2,7 @@ import { command } from "../lib/command.js";
 
 const cmd = command({
   name: "volute mind create",
-  description: "Create a new mind",
+  description: "Create a new mind (see 'volute seed create' for the recommended path)",
   args: [{ name: "name", required: true, description: "Name for the new mind" }],
   flags: {
     template: { type: "string", description: "Template to use (claude, pi, codex)" },
@@ -45,8 +45,14 @@ const cmd = command({
       process.exit(1);
     }
 
-    console.log(`\n${data.message ?? `Created mind: ${data.name} (port ${data.port})`}`);
-    console.log(`\n  volute mind start ${data.name ?? name}`);
+    const created = data.name ?? name;
+    console.log(`\n${data.message ?? `Created mind: ${created} (port ${data.port})`}`);
+    console.log(`\nStart it, then say hello:`);
+    console.log(`  volute mind start ${created}`);
+    console.log(`  volute chat send @${created} "hello"`);
+    console.log(
+      `\nTip: 'volute seed create' grows a mind that shapes its own identity — the recommended way to start.`,
+    );
   },
 });
 
