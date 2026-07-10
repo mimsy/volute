@@ -108,6 +108,12 @@ describe("sprout swaps nurture for the first-week arc", () => {
           script: `volute seed check ${seedName}`,
           enabled: true,
         },
+        {
+          id: "nurture-otherseed",
+          cron: "*/5 * * * *",
+          script: "volute seed check otherseed",
+          enabled: true,
+        },
       ],
     });
 
@@ -120,6 +126,12 @@ describe("sprout swaps nurture for the first-week arc", () => {
     assert.ok(
       schedules.some((s) => s.id === "tending"),
       "unrelated schedule kept",
+    );
+    // Only this seed's nurture is removed — a sibling seed's nurture schedule
+    // survives (guards against a regression to a startsWith("nurture-") filter).
+    assert.ok(
+      schedules.some((s) => s.id === "nurture-otherseed"),
+      "another seed's nurture schedule survives",
     );
 
     const arc = schedules.filter((s) => s.id.startsWith(`firstweek-${seedName}-`));

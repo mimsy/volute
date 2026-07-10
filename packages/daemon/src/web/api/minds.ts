@@ -1885,8 +1885,18 @@ const app = new Hono<AuthEnv>()
           );
           spiritConfig.schedules = schedules;
           writeVoluteConfig(sDir, spiritConfig);
-          const { getScheduler } = await import("../../lib/daemon/scheduler.js");
-          getScheduler().loadSchedules("volute", sDir);
+          // Reload separately: if the write succeeded but the reload throws, the
+          // change is on disk and takes effect on the spirit's next restart —
+          // that's a different situation from the write itself failing.
+          try {
+            const { getScheduler } = await import("../../lib/daemon/scheduler.js");
+            getScheduler().loadSchedules("volute", sDir);
+          } catch (err) {
+            log.warn(
+              `spirit schedules for sprout of ${name} written to disk but not reloaded into the running scheduler (effective on next spirit restart)`,
+              log.errorData(err),
+            );
+          }
         } else {
           log.warn(
             `spirit config at ${sDir} missing or unparseable — first-week arc for ${name} not scheduled, nurture-${name} not removed`,
