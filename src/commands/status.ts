@@ -4,6 +4,7 @@ import { promisify } from "node:util";
 import { command } from "@volute/cli/lib/command.js";
 import { getAuthToken } from "@volute/cli/lib/daemon-client.js";
 import {
+  daemonLogReport,
   getDaemonUrl,
   getServiceMode,
   LAUNCHD_PLIST_LABEL,
@@ -49,6 +50,9 @@ const cmd = command({
 
     if (!running) {
       console.log("Status: not running");
+      // Surface where the daemon log lives (and a tail of it, for file-backed modes)
+      // so a crash cause is visible without hunting for the path.
+      for (const line of daemonLogReport(mode, 15)) console.log(line);
       return;
     }
 

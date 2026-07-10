@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { createServer, type Server } from "node:http";
 import { describe, it } from "node:test";
 import {
+  daemonLogReport,
+  daemonLogSource,
   getDaemonUrl,
   getServiceMode,
   HEALTH_POLL_TIMEOUT,
@@ -137,6 +139,41 @@ describe("modeLabel", () => {
     assert.equal(modeLabel("user-systemd"), "user service (systemd)");
     assert.equal(modeLabel("user-launchd"), "user service (launchd)");
     assert.equal(modeLabel("manual"), "manual");
+  });
+});
+
+describe("daemonLogSource", () => {
+  it("points systemd modes at the journal, not daemon.log", () => {
+    const sys = daemonLogSource("system");
+    assert.equal(sys.kind, "journal");
+    assert.match((sys as { command: string }).command, /journalctl -u volute/);
+
+    const userSys = daemonLogSource("user-systemd");
+    assert.equal(userSys.kind, "journal");
+    assert.match((userSys as { command: string }).command, /journalctl --user -u volute/);
+  });
+
+  it("uses daemon.log for manual and launchd modes", () => {
+    for (const mode of ["manual", "user-launchd", "system-launchd"] as ServiceMode[]) {
+      const src = daemonLogSource(mode);
+      assert.equal(src.kind, "file", `${mode} should be file-backed`);
+      assert.ok((src as { path: string }).path.endsWith("daemon.log"));
+    }
+  });
+});
+
+describe("daemonLogReport", () => {
+  it("returns a journalctl pointer for systemd modes", () => {
+    const lines = daemonLogReport("system");
+    assert.equal(lines[0], "To see the daemon log:");
+    assert.match(lines[1], /journalctl -u volute/);
+  });
+
+  it("falls back to a log path when the file is absent", () => {
+    // In the test harness VOLUTE_HOME is a fresh temp dir, so daemon.log doesn't exist.
+    const lines = daemonLogReport("manual");
+    assert.equal(lines.length, 1);
+    assert.match(lines[0], /^Check logs: .*daemon\.log$/);
   });
 });
 

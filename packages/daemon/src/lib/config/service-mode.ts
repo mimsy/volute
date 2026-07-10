@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { voluteSystemDir } from "../mind/registry.js";
 import { exec, execInherit } from "../util/exec.js";
+import { readLogTail } from "../util/log-tail.js";
 
 // --- Constants ---
 
@@ -255,6 +256,39 @@ export function readDaemonConfig(): {
     console.error("Warning: could not read daemon config, using defaults.");
     return { hostname: "127.0.0.1", port: 1618 };
   }
+}
+
+/**
+ * Where the daemon writes its output for a given service mode. Background (`manual`)
+ * and both launchd modes redirect stdio to `daemon.log`; Linux systemd modes send it
+ * to the journal, so tailing `daemon.log` there would surface stale/unrelated content.
+ */
+export function daemonLogSource(
+  mode: ServiceMode,
+): { kind: "file"; path: string } | { kind: "journal"; command: string } {
+  switch (mode) {
+    case "system":
+      return { kind: "journal", command: "journalctl -u volute -n 30 --no-pager" };
+    case "user-systemd":
+      return { kind: "journal", command: "journalctl --user -u volute -n 30 --no-pager" };
+    default:
+      return { kind: "file", path: resolve(voluteSystemDir(), "daemon.log") };
+  }
+}
+
+/**
+ * Lines describing where to find the daemon's log (and, for file-backed modes, a
+ * tail of it) — used by `volute up`/`volute status` to surface a crash cause inline
+ * instead of only printing a path. Each caller prints these on its own stream.
+ */
+export function daemonLogReport(mode: ServiceMode, maxLines = 20): string[] {
+  const src = daemonLogSource(mode);
+  if (src.kind === "journal") {
+    return ["To see the daemon log:", `  ${src.command}`];
+  }
+  const tail = readLogTail(src.path, maxLines);
+  if (tail.length === 0) return [`Check logs: ${src.path}`];
+  return [`Last ${tail.length} lines of ${src.path}:`, ...tail.map((l) => `  ${l}`)];
 }
 
 /** Human-readable label for the service mode */
