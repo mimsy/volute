@@ -62,7 +62,8 @@ const lastSeenMs = readLastSeen();
 try {
   localStorage.setItem(AWAY_SEEN_KEY, new Date().toISOString());
 } catch {
-  // localStorage unavailable — the divider just won't show
+  // Can't advance the watermark — the divider still shows against the last
+  // stored visit (or stays hidden if there was never one); it just won't move.
 }
 
 // Fetch self-directed turn summaries (heartbeats, schedules, mind-to-mind)

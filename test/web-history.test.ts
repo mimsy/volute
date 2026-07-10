@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { eq, sql } from "drizzle-orm";
-import { createUser, getOrCreateMindUser } from "../packages/daemon/src/lib/auth.js";
+import {
+  createUser,
+  getOrCreateMindUser,
+  getOrCreateSystemUser,
+} from "../packages/daemon/src/lib/auth.js";
 import { getDb } from "../packages/daemon/src/lib/db.js";
 import { publish as publishMindEvent } from "../packages/daemon/src/lib/events/mind-events.js";
 import {
@@ -630,9 +634,11 @@ describe("web history routes", () => {
 
     it("includes self-directed turns, excludes human-triggered ones", async () => {
       const cookie = await setupAuth();
-      // A human (brain) user and a mind user to trigger turns with
+      // A human (brain) user, a mind user, and the shared system user (the
+      // spirit's account) to trigger turns with.
       await createUser("test-history-human", "pass");
       await getOrCreateMindUser("test-history-peer");
+      const systemUser = await getOrCreateSystemUser();
 
       const untriggered = await insertSummarizedTurn("test-history-away1", "wrote a journal entry");
       const senderless = await insertSummarizedTurn("test-history-away1", "woke from a schedule", {
@@ -644,6 +650,11 @@ describe("web history routes", () => {
         {
           sender: "test-history-peer",
         },
+      );
+      const spiritTriggered = await insertSummarizedTurn(
+        "test-history-away1",
+        "nudged by the spirit",
+        { sender: systemUser.username },
       );
       const humanTriggered = await insertSummarizedTurn("test-history-away1", "replied to james", {
         sender: "test-history-human",
@@ -665,6 +676,7 @@ describe("web history routes", () => {
       assert.ok(turnIds.has(untriggered), "turn with no trigger is self-directed");
       assert.ok(turnIds.has(senderless), "turn with senderless trigger is self-directed");
       assert.ok(turnIds.has(mindTriggered), "mind-to-mind turn is self-directed");
+      assert.ok(turnIds.has(spiritTriggered), "spirit (system-user) turn is self-directed");
       assert.ok(!turnIds.has(humanTriggered), "human-triggered turn is excluded");
       assert.ok(
         !turnIds.has(externalTriggered),
@@ -688,6 +700,30 @@ describe("web history routes", () => {
       const turnIds = new Set(body.map((i) => i.turnId));
       assert.ok(turnIds.has(fresh));
       assert.ok(!turnIds.has(stale));
+    });
+
+    it("orders items newest-first (the contract dividerIndex depends on)", async () => {
+      const cookie = await setupAuth();
+      // Recent timestamps (within the 7-day window), a couple hours apart.
+      const ago = (hours: number) =>
+        new Date(Date.now() - hours * 3600_000).toISOString().replace("T", " ").slice(0, 19);
+      const older = await insertSummarizedTurn("test-history-away1", "an earlier thought", {
+        summaryCreatedAt: ago(3),
+      });
+      const newer = await insertSummarizedTurn("test-history-away1", "a later thought", {
+        summaryCreatedAt: ago(1),
+      });
+
+      const { default: app } = await import("../packages/daemon/src/web/app.js");
+      const res = await app.request("/api/v1/history/away", {
+        headers: { Cookie: `volute_session=${cookie}` },
+      });
+      assert.equal(res.status, 200);
+      const body = (await res.json()) as AwayItem[];
+      const newerIdx = body.findIndex((i) => i.turnId === newer);
+      const olderIdx = body.findIndex((i) => i.turnId === older);
+      assert.ok(newerIdx >= 0 && olderIdx >= 0, "both turns present");
+      assert.ok(newerIdx < olderIdx, "the fresher turn comes before the older one");
     });
 
     it("scopes a mind caller to its own turns, ignoring ?mind=", async () => {

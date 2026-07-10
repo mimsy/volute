@@ -313,7 +313,7 @@ export function fetchSummaryByIds(ids: number[]): Promise<SummaryRow[]> {
   return get(`${V1}/history/summaries?ids=${ids.join(",")}`);
 }
 
-/** Fetch the "while you were away" feed: self-directed turn summaries + artifact activity. */
+/** Fetch the "while you were away" feed: self-directed turn summaries (artifact activity is surfaced separately via extension feedSources). */
 export function fetchAwayFeed(limit?: number): Promise<AwayFeedItem[]> {
   return get(`${V1}/history/away${limit !== undefined ? `?limit=${limit}` : ""}`);
 }
