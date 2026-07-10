@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { format } from "node:util";
 import { setProviderRefreshHook } from "./lib/ai-service.js";
-import { ensureSystemChannel } from "./lib/chat/system-channel.js";
+import { backfillSystemChannelMembers, ensureSystemChannel } from "./lib/chat/system-channel.js";
 import { initBackupManager } from "./lib/daemon/backup-manager.js";
 import { initBridgeManager } from "./lib/daemon/bridge-manager.js";
 import { syncProviderToMinds } from "./lib/daemon/credential-sync.js";
@@ -177,9 +177,10 @@ export async function startDaemon(opts: {
     }
   }
 
-  // Ensure #system channel exists (non-fatal)
+  // Ensure #system channel exists and registered minds are members (non-fatal)
   try {
     await ensureSystemChannel();
+    await backfillSystemChannelMembers();
   } catch (err) {
     log.warn("failed to ensure #system channel", log.errorData(err));
   }
