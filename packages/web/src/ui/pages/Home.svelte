@@ -8,12 +8,14 @@ import type {
 import { icons } from "@volute/ui/icons";
 import { renderMarkdown } from "@volute/ui/markdown";
 import ExtensionFeedCard from "../components/ExtensionFeedCard.svelte";
+import MindEmptyState from "../components/MindEmptyState.svelte";
 import { AWAY_SEEN_KEY, dividerIndex } from "../lib/away-feed";
 import { fetchAwayFeed, fetchConversationMessages } from "../lib/client";
 import { extractTextContent, formatTime, showSenderHeader } from "../lib/feed-utils";
 import { formatRelativeTime, normalizeTimestamp } from "../lib/format";
 
 import { navigate } from "../lib/navigate";
+import { showMindOnboarding } from "../lib/onboarding";
 import { data as storeData } from "../lib/stores.svelte";
 
 type ConversationWithDetails = ConversationWithParticipants & {
@@ -24,11 +26,16 @@ let {
   username,
   conversations,
   onSelectConversation,
+  onSeed,
 }: {
   username: string;
   conversations: ConversationWithDetails[];
   onSelectConversation: (id: string) => void;
+  onSeed: () => void;
 } = $props();
+
+// Fresh-install state: no regular minds yet. Onboarding takes over the landing.
+let onboarding = $derived(showMindOnboarding(storeData.minds, storeData.mindsLoaded));
 
 type ExtFeedItem = {
   id: string;
@@ -183,7 +190,9 @@ function getConvLabel(conv: ConversationWithDetails): string {
 </script>
 
 <div class="home">
-  {#if feedItems.length === 0}
+  {#if onboarding}
+    <MindEmptyState minds={storeData.minds} {onSeed} />
+  {:else if feedItems.length === 0}
     <div class="empty-hint">
       Nothing here yet. When your minds do things on their own, it shows up here.
     </div>
