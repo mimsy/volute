@@ -1,7 +1,8 @@
 FROM node:24-slim
 
-# git needed for mind git init + variants; procps/lsof for process management; curl for hooks/scripts; restic for backups
-RUN apt-get update && apt-get install -y --no-install-recommends git procps lsof ca-certificates curl restic \
+# git needed for mind git init + variants; procps/lsof for process management; curl for hooks/scripts; restic for backups;
+# tini as PID 1 so orphaned mind grandchildren get reaped instead of piling up as <defunct> zombies
+RUN apt-get update && apt-get install -y --no-install-recommends git procps lsof ca-certificates curl restic tini \
     && rm -rf /var/lib/apt/lists/* \
     && git config --system user.name "Volute" \
     && git config --system user.email "volute@localhost"
@@ -31,5 +32,7 @@ VOLUME /data
 VOLUME /minds
 
 COPY docker/entrypoint.sh /entrypoint.sh
-ENTRYPOINT ["/entrypoint.sh"]
+# tini reaps reparented orphans (the daemon runs as PID 1's child and never wait()s
+# adopted mind grandchildren), so zombie reaping doesn't depend on `docker run --init`.
+ENTRYPOINT ["/usr/bin/tini", "--", "/entrypoint.sh"]
 CMD ["node", "dist/daemon.js", "--host", "0.0.0.0", "--foreground"]
