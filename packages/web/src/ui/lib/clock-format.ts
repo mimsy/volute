@@ -126,3 +126,22 @@ export function freqToCron(
   if (type === "daily") return `${opts.minute ?? 0} ${opts.hour ?? 12} * * *`;
   return opts.cron ?? "";
 }
+
+/** Join a schedule's rotating messages (or single message) for a textarea. */
+export function messagesToText(s: { message?: string; messages?: string[] }): string {
+  return s.messages?.length ? s.messages.join("\n") : (s.message ?? "");
+}
+
+/**
+ * Parse newline-separated textarea input into schedule action fields:
+ * one line → single `message`, several → rotating `messages` pool.
+ */
+export function textToMessages(text: string): { message?: string; messages?: string[] } {
+  const lines = text
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
+  if (lines.length === 0) return {};
+  if (lines.length === 1) return { message: lines[0] };
+  return { messages: lines };
+}

@@ -62,12 +62,14 @@ function scheduleColor(id: string): string {
 
 function formatAction(s: {
   message?: string;
+  messages?: string[];
   script?: string;
   channel?: string;
   whileSleeping?: string;
 }): string {
   const lines: string[] = [];
   if (s.script) lines.push(`Script: ${s.script}`);
+  else if (s.messages?.length) lines.push(`Messages (rotating):\n${s.messages.join("\n")}`);
   else if (s.message) lines.push(`Message: ${s.message}`);
   if (s.channel) lines.push(`Channel: ${s.channel}`);
   if (s.whileSleeping) lines.push(`While sleeping: ${s.whileSleeping}`);
