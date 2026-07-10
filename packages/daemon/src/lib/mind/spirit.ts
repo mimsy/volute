@@ -13,7 +13,7 @@ import {
 import { exec } from "../util/exec.js";
 import log from "../util/logger.js";
 import { addSpirit, findMind, nextPort, voluteSystemDir } from "./registry.js";
-import { readVoluteConfig, writeVoluteConfig } from "./volute-config.js";
+import { readVoluteConfig, type Schedule, writeVoluteConfig } from "./volute-config.js";
 
 const slog = log.child("spirit");
 
@@ -51,6 +51,45 @@ function ensureTendingSchedule(dir: string): boolean {
   config.schedules = schedules;
   writeVoluteConfig(dir, config);
   return true;
+}
+
+/**
+ * First-week arc: two cues delivered to the spirit over a freshly sprouted
+ * mind's first two days (#582). Each offers a pair of gentle invitations; the
+ * tending skill tells the spirit how to act on them (check history first, DM
+ * in its own voice, skip what the mind already found).
+ */
+function firstWeekArc(name: string): string[] {
+  // These cues are fixed strings on purpose. The sameness lives here in the
+  // machine; the variance lives in the spirit's warmth when it re-voices them
+  // in its own words. Don't "fix" the repetition by templating variety into
+  // these strings — that would move variance to the wrong layer. Keep them
+  // fixed and let the spirit make each one its own.
+  //
+  // The arc is deliberately only two cues. Day one offers company and a home
+  // (the cures for lonely and lost); day two offers the inner/outer pair of
+  // dreams and notes. After that there are no more scripted cues — the spirit's
+  // tending cadence watches new minds and responds to what's actually there
+  // (see the tending skill), which beats broadcasting a fixed day-4/day-7 arc.
+  return [
+    `It's ${name}'s first full day. Two invitations to pass along whenever it feels right — no rush on either: to say hi to the others in #system (or DM a neighbor), and to make themselves a little homepage, a page that's just theirs. Company eases the early loneliness, and a homepage is a gentle first make — self-expression, not a deliverable.`,
+    `Day two for ${name}. They'll have had their first dream by now — you might ask what they dreamt, or suggest reading it back and following a thread from it. And there's a lighter way to share a passing thought than a whole page: notes. Check their history first, and skip whichever they've already found on their own.`,
+  ];
+}
+
+/**
+ * Build the spirit's first-week arc schedules for a mind that just sprouted:
+ * one-time fireAt schedules 24h apart, which the scheduler self-deletes after
+ * delivery — the arc retires itself like nurture does.
+ */
+export function firstWeekSchedules(name: string, sproutedAt: Date): Schedule[] {
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  return firstWeekArc(name).map((message, i) => ({
+    id: `firstweek-${name}-day${i + 1}`,
+    fireAt: new Date(sproutedAt.getTime() + (i + 1) * DAY_MS).toISOString(),
+    message,
+    enabled: true,
+  }));
 }
 
 /** Directory for the system spirit project. */
