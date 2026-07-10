@@ -216,8 +216,12 @@ async function handleSend(
       files: files.length > 0 ? files : undefined,
     });
     const resultConvId = result.conversationId;
+    // Only notify the parent when the conversation is actually new. Firing on
+    // every send used to rebuild the whole realtime layer (SSE reconnect +
+    // full refetch); the live stream already delivers messages incrementally.
+    const isNewConversation = resultConvId !== currentConvId;
     currentConvId = resultConvId;
-    onConversationId(resultConvId);
+    if (isNewConversation) onConversationId(resultConvId);
   } catch (err) {
     console.error("Failed to send message:", err);
     entries = [
