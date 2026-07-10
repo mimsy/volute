@@ -293,6 +293,12 @@ let isSystemActive = $derived(
                       style:background={activeMinds.has(mind.name) ? undefined : mindDotColor(mind)}
                     ></span>
                     <span class="nav-label">{mind.displayName ?? mind.name}</span>
+                    {#if mind.templateStale}
+                      <span
+                        class="stale-badge"
+                        use:tooltipAction={{ text: `Running an outdated template — run 'volute mind upgrade ${mind.name}'`, position: "right" }}
+                      >outdated</span>
+                    {/if}
                     {#if mindUnread > 0}
                       <span class="unread-dot"></span>
                     {/if}
@@ -594,6 +600,16 @@ let isSystemActive = $derived(
     height: 6px;
     border-radius: 50%;
     background: var(--accent);
+    flex-shrink: 0;
+  }
+
+  .stale-badge {
+    padding: 1px 6px;
+    border-radius: var(--radius);
+    background: var(--yellow-bg);
+    color: var(--yellow);
+    font-size: 10px;
+    font-weight: 500;
     flex-shrink: 0;
   }
 
