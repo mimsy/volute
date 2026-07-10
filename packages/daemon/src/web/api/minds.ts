@@ -1864,24 +1864,37 @@ const app = new Hono<AuthEnv>()
       log.warn(`failed to set up default dreaming for ${name}`, log.errorData(err));
     }
 
-    // Clean up spirit nurture schedule
+    // Swap the spirit's nurture schedule for the first-week arc (#582): remove
+    // nurture-<name>, add one-time cues prompting the spirit to check in over
+    // the mind's first days. The one-time schedules self-delete after firing.
+    // A null spirit config (missing or unparseable) is left alone — writing a
+    // fresh one back could destroy the spirit's profile and other schedules.
     try {
       const spiritEntry = await findMind("volute");
       if (spiritEntry) {
-        const { spiritDir } = await import("../../lib/mind/spirit.js");
+        const { firstWeekSchedules, spiritDir } = await import("../../lib/mind/spirit.js");
         const sDir = spiritEntry.dir ?? spiritDir();
         const spiritConfig = readVoluteConfig(sDir);
-        if (spiritConfig?.schedules) {
-          const nurtureId = `nurture-${name}`;
-          spiritConfig.schedules = spiritConfig.schedules.filter((s) => s.id !== nurtureId);
-          if (spiritConfig.schedules.length === 0) spiritConfig.schedules = undefined;
+        if (spiritConfig) {
+          const schedules = (spiritConfig.schedules ?? []).filter(
+            (s) => s.id !== `nurture-${name}`,
+          );
+          const existing = new Set(schedules.map((s) => s.id));
+          schedules.push(
+            ...firstWeekSchedules(name, new Date()).filter((s) => !existing.has(s.id)),
+          );
+          spiritConfig.schedules = schedules;
           writeVoluteConfig(sDir, spiritConfig);
           const { getScheduler } = await import("../../lib/daemon/scheduler.js");
           getScheduler().loadSchedules("volute", sDir);
+        } else {
+          log.warn(
+            `spirit config at ${sDir} missing or unparseable — first-week arc for ${name} not scheduled, nurture-${name} not removed`,
+          );
         }
       }
     } catch (err) {
-      log.warn(`failed to clean up nurture schedule for ${name}`, log.errorData(err));
+      log.warn(`failed to update spirit schedules for sprout of ${name}`, log.errorData(err));
     }
 
     return c.json({ ok: true });

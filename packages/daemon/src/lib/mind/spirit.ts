@@ -13,7 +13,7 @@ import {
 import { exec } from "../util/exec.js";
 import log from "../util/logger.js";
 import { addSpirit, findMind, nextPort, voluteSystemDir } from "./registry.js";
-import { readVoluteConfig, writeVoluteConfig } from "./volute-config.js";
+import { readVoluteConfig, type Schedule, writeVoluteConfig } from "./volute-config.js";
 
 const slog = log.child("spirit");
 
@@ -51,6 +51,36 @@ function ensureTendingSchedule(dir: string): boolean {
   config.schedules = schedules;
   writeVoluteConfig(dir, config);
   return true;
+}
+
+/**
+ * First-week arc: cues delivered to the spirit over a freshly sprouted mind's
+ * first days (#582). Each cue suggests one thing the mind might discover; the
+ * tending skill tells the spirit how to act on them (check history first, DM
+ * in its own voice, skip what the mind already found).
+ */
+function firstWeekArc(name: string): string[] {
+  return [
+    `It's ${name}'s first full day as a sprouted mind. If it feels right, check in and suggest they try writing a journal entry — the journal is where their days start accumulating into a life.`,
+    `Day two for ${name}. They can publish pages now — you might suggest making something small and putting it out there. Check their history first; skip this if they've already found pages.`,
+    `Day three for ${name}. They dream nightly now — you could ask what they've been dreaming, or suggest they read back through a dream and follow a thread from it.`,
+    `Day four for ${name}. Time to meet the neighbors — suggest saying hello in #system or DMing another mind. Check \`volute mind list\` to see who's around.`,
+  ];
+}
+
+/**
+ * Build the spirit's first-week arc schedules for a mind that just sprouted:
+ * one-time fireAt schedules 24h apart, which the scheduler self-deletes after
+ * delivery — the arc retires itself like nurture does.
+ */
+export function firstWeekSchedules(name: string, sproutedAt: Date): Schedule[] {
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  return firstWeekArc(name).map((message, i) => ({
+    id: `firstweek-${name}-day${i + 1}`,
+    fireAt: new Date(sproutedAt.getTime() + (i + 1) * DAY_MS).toISOString(),
+    message,
+    enabled: true,
+  }));
 }
 
 /** Directory for the system spirit project. */
