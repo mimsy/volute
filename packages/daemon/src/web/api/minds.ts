@@ -894,6 +894,10 @@ const app = new Hono<AuthEnv>()
       // Generate Ed25519 keypair for mind identity
       const { publicKeyPem } = generateIdentity(dest);
 
+      // The model the mind will actually run (request, or default cognition model),
+      // provider-qualified — feeds the credential warning below so pi minds created
+      // from defaults are checked too.
+      let effectiveModel: string | undefined = body.model;
       // Merge default settings into volute.json and config.json
       {
         const { readGlobalConfig: readGlobal } = await import("../../lib/config/setup.js");
@@ -937,6 +941,7 @@ const app = new Hono<AuthEnv>()
 
         // Apply model (and compaction) to SDK config.json
         const modelId = body.model ?? cog?.model;
+        effectiveModel = modelId ? qualifyModelId(modelId) : undefined;
         const sdkConfigPath = resolve(dest, "home/.config/config.json");
         if (modelId || cog?.compaction) {
           const existing = existsSync(sdkConfigPath)
@@ -1099,12 +1104,14 @@ const app = new Hono<AuthEnv>()
       // so a mute-on-first-turn mind is caught at creation rather than in silence (#573).
       // The mind is already created — an advisory check must never fail creation, so
       // swallow any hiccup and just omit the warning.
-      const credentialWarning = await missingCredentialWarning(template, body.model, name).catch(
-        (err) => {
-          log.warn(`credential check failed for ${name}`, log.errorData(err));
-          return null;
-        },
-      );
+      const credentialWarning = await missingCredentialWarning(
+        template,
+        effectiveModel,
+        name,
+      ).catch((err) => {
+        log.warn(`credential check failed for ${name}`, log.errorData(err));
+        return null;
+      });
 
       return c.json({
         ok: true,

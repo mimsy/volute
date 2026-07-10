@@ -288,6 +288,7 @@ export const mindNotices = sqliteTable(
         | "process_crash"
         | "token_budget"
         | "startup_failed"
+        | "no_credentials"
         // For kind="extension", reason holds the extension id (e.g. "notes").
         | (string & {})
       >()

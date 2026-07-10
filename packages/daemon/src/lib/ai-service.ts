@@ -195,9 +195,12 @@ export function providerForMindTemplate(
 /**
  * If a mind of this template/model would spawn without usable model credentials,
  * return an operator-actionable warning explaining it will stay silent and how to
- * fix it; otherwise null. Checks the same sources the daemon injects at spawn
- * (OAuth, stored key, ambient env), so it reflects what the mind will actually get.
- * Non-blocking by design: creation still proceeds, the mind just can't reply yet.
+ * fix it; otherwise null. Checks the same sources the mind's spawn env is built
+ * from: provider OAuth/stored key/ambient env (what the daemon injects), plus the
+ * shared and per-mind env.json — which survive into the mind env, and which the
+ * warning's own remediation (`volute env set`) writes to, so the recommended fix
+ * clears the alarm. Non-blocking by design: creation still proceeds, the mind just
+ * can't reply yet.
  */
 export async function missingCredentialWarning(
   template: string | undefined,
@@ -206,11 +209,16 @@ export async function missingCredentialWarning(
 ): Promise<string | null> {
   const provider = providerForMindTemplate(template, model);
   if (!provider) return null; // provider undeterminable — don't warn on the unverifiable
+  const envVar =
+    PROVIDER_ENV_VAR[provider] ?? `${provider.toUpperCase().replace(/-/g, "_")}_API_KEY`;
   if (await resolveApiKey(provider)) return null;
   // Codex also honors an ambient OPENAI_API_KEY that resolveApiKey may not surface.
   if (provider === "openai-codex" && process.env.OPENAI_API_KEY) return null;
-  const envVar =
-    PROVIDER_ENV_VAR[provider] ?? `${provider.toUpperCase().replace(/-/g, "_")}_API_KEY`;
+  // A key set via `volute env set` (shared or per-mind env.json) is spread into the
+  // mind's spawn env and works without a configured provider. Safe pre-create too:
+  // a missing per-mind env.json reads as empty and the shared env still applies.
+  const { loadMergedEnv } = await import("./config/env.js");
+  if (loadMergedEnv(mindName)[envVar]) return null;
   return (
     `No ${provider} credentials are configured, so ${mindName} will start but stay silent ` +
     `until a key is available. Set one with \`volute env set ${envVar} <key> --mind ${mindName}\`, ` +

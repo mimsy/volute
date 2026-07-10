@@ -1,3 +1,5 @@
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { missingCredentialWarning } from "../ai-service.js";
 import { syncMindProfile } from "../auth.js";
 import { joinSystemChannelForMind, joinSystemChannelForSpirit } from "../chat/system-channel.js";
@@ -104,15 +106,16 @@ export async function startMindFull(name: string): Promise<void> {
  * startup notice (deduped so it isn't re-added on every start). This is the
  * authoritative detection: the mind's own turn error is an opaque "process exited"
  * string, so the daemon — which knows the credentials are missing — surfaces the
- * real cause. Template is used to pick the provider; a pi mind's model isn't passed,
- * so pi minds (already guarded at create) are skipped when the provider is ambiguous.
+ * real cause. For pi minds the provider comes from the model in the mind's SDK
+ * config; if that can't be read the check is skipped rather than guessed.
+ * Exported for tests.
  */
-async function recordMissingCredentialsNotice(
+export async function recordMissingCredentialsNotice(
   mind: string,
   template: string | undefined,
 ): Promise<void> {
   const { hasUndeliveredNotice, recordNotice, MIND_LEVEL_SESSION } = await import("./notices.js");
-  const warning = await missingCredentialWarning(template, undefined, mind);
+  const warning = await missingCredentialWarning(template, readMindModel(mind, template), mind);
   if (!warning) return;
   if (await hasUndeliveredNotice(mind, "no_credentials")) return;
   await recordNotice({
@@ -122,6 +125,24 @@ async function recordMissingCredentialsNotice(
     reason: "no_credentials",
     detail: warning,
   });
+}
+
+/**
+ * The model a pi mind will actually run — from `home/.config/config.json`, the same
+ * file mind-manager reads for key injection. Only pi needs it (its provider is the
+ * `provider:` prefix of the model id); claude/codex resolve provider from template.
+ */
+function readMindModel(mind: string, template: string | undefined): string | undefined {
+  if (template !== "pi") return undefined;
+  try {
+    const configPath = resolve(mindDir(mind), "home/.config/config.json");
+    if (!existsSync(configPath)) return undefined;
+    const model: unknown = JSON.parse(readFileSync(configPath, "utf-8")).model;
+    return typeof model === "string" ? model : undefined;
+  } catch (err) {
+    log.warn(`failed to read model for ${mind}`, log.errorData(err));
+    return undefined;
+  }
 }
 
 /**

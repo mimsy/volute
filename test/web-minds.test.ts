@@ -240,6 +240,63 @@ describe("web minds routes", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it("GET /:name — surfaces lastNotice to admins only (#573)", async () => {
+    const { mkdirSync, rmSync } = await import("node:fs");
+    const { resolve } = await import("node:path");
+    const { addMind, mindDir, removeMind } = await import(
+      "../packages/daemon/src/lib/mind/registry.js"
+    );
+    const { recordNotice } = await import("../packages/daemon/src/lib/daemon/notices.js");
+    const { initMindManager, tryGetMindManager } = await import(
+      "../packages/daemon/src/lib/daemon/mind-manager.js"
+    );
+    if (!tryGetMindManager()) initMindManager();
+
+    const name = `web-notice-${Date.now()}`;
+    const dir = resolve(mindDir(name));
+    mkdirSync(dir, { recursive: true });
+    await addMind(name, 4198, undefined, "claude");
+    await recordNotice({
+      mind: name,
+      session: "",
+      kind: "startup",
+      reason: "no_credentials",
+      detail: "no anthropic key — mind will stay silent",
+    });
+
+    try {
+      const cookie = await setupAuth();
+      const { default: app } = await import("../packages/daemon/src/web/app.js");
+      const res = await app.request(`/api/minds/${name}`, {
+        headers: { Cookie: `volute_session=${cookie}` },
+      });
+      assert.equal(res.status, 200);
+      const body = (await res.json()) as {
+        lastNotice?: { kind: string; reason: string; detail: string; created_at: string };
+      };
+      assert.ok(body.lastNotice, "admin sees lastNotice");
+      assert.equal(body.lastNotice.kind, "startup");
+      assert.equal(body.lastNotice.reason, "no_credentials");
+      assert.match(body.lastNotice.detail, /stay silent/);
+      assert.ok(body.lastNotice.created_at);
+
+      // Non-privileged callers get profile-level fields only — no lastNotice.
+      const user2 = await createUser("regular-user2", "pass");
+      await approveUser(user2.id);
+      const cookie2 = await createSession(user2.id);
+      const res2 = await app.request(`/api/minds/${name}`, {
+        headers: { Cookie: `volute_session=${cookie2}` },
+      });
+      assert.equal(res2.status, 200);
+      const body2 = (await res2.json()) as { lastNotice?: unknown };
+      assert.equal(body2.lastNotice, undefined);
+      await deleteSession(cookie2);
+    } finally {
+      await removeMind(name);
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("toPublicMind", () => {
