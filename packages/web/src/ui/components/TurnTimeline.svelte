@@ -21,6 +21,13 @@ import {
 import { extractTextContent } from "../lib/feed-utils";
 import { formatRelativeTime } from "../lib/format";
 import { navigate } from "../lib/navigate";
+import {
+  activityColor,
+  activityNavUrl,
+  activityPeekBody,
+  peekKey,
+  shouldRenderPeek,
+} from "../lib/peek";
 import { parseISOWeek, summaryBounds, wallNow } from "../lib/period-keys";
 import { activeMinds } from "../lib/stores.svelte";
 import { mergeOlderSummaries, nextSummaryPage } from "../lib/summary-paging";
@@ -190,6 +197,13 @@ let pendingInbounds = $state<HistoryMessage[]>([]);
 // Fallback timers for done events that may not be followed by a summary
 const doneFallbackTimers = new Map<string, ReturnType<typeof setTimeout>>();
 let expandedTurns = $state(new Set<string>());
+// Peek popovers (collapsed-turn hover cards) render markdown / mount live iframes,
+// so their content is mounted lazily on first hover and then kept (frozen) to avoid
+// eagerly rendering hundreds of hidden popovers on the initial timeline paint (#541).
+let revealedPeeks = new SvelteSet<string>();
+function revealPeek(key: string) {
+  revealedPeeks.add(key);
+}
 
 function buildHistoryMessage(
   d: Record<string, unknown>,
@@ -970,42 +984,46 @@ function jumpToLatest() {
               {#if !expandedTurns.has(turn.id) && turn.status !== "active" && (turn.conversations.length > 0 || turn.activities.length > 0)}
                 <div class="turn-peek-icons">
                   {#each turn.conversations as conv (conv.id)}
+                    {@const chatKey = peekKey("chat", turn.id, conv.id)}
                     <div class="peek-anchor">
-                      <button class="peek-btn" aria-label="View conversation" onclick={(e) => e.stopPropagation()}>
+                      <button class="peek-btn" aria-label="View conversation" onmouseenter={() => revealPeek(chatKey)} onfocus={() => revealPeek(chatKey)} onclick={(e) => e.stopPropagation()}>
                         <Icon kind="chat" />
                       </button>
                       <div class="peek-popover" role="button" tabindex="0"
                         onclick={(e) => { e.stopPropagation(); openConversation(conv, turn); }}
                         onkeydown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); openConversation(conv, turn); } }}
                       >
-                        <div class="peek-card peek-card-chat">
-                          <div class="peek-card-header">
-                            <Icon kind="chat" class="peek-card-icon" />
-                            <span class="peek-card-label">{conv.label}</span>
-                            <span class="peek-card-meta">{conv.messages.length} msg{conv.messages.length === 1 ? '' : 's'}</span>
+                        {#if shouldRenderPeek(revealedPeeks, chatKey)}
+                          <div class="peek-card peek-card-chat">
+                            <div class="peek-card-header">
+                              <Icon kind="chat" class="peek-card-icon" />
+                              <span class="peek-card-label">{conv.label}</span>
+                              <span class="peek-card-meta">{conv.messages.length} msg{conv.messages.length === 1 ? '' : 's'}</span>
+                            </div>
+                            <div class="peek-card-body">
+                              {#each conv.messages.slice(-5) as msg (msg.id)}
+                                <div class="peek-msg">
+                                  <span class="peek-msg-sender" class:peek-msg-sender-user={msg.role === "user"}>{msg.sender_name ?? (msg.role === "user" ? "user" : turn.mind)}</span>
+                                  {#if msg.role === "assistant"}
+                                    <span class="peek-msg-md markdown-body">{@html renderMarkdown(extractTextContent(msg.content))}</span>
+                                  {:else}
+                                    <span>{extractTextContent(msg.content)}</span>
+                                  {/if}
+                                </div>
+                              {/each}
+                            </div>
                           </div>
-                          <div class="peek-card-body">
-                            {#each conv.messages.slice(-5) as msg (msg.id)}
-                              <div class="peek-msg">
-                                <span class="peek-msg-sender" class:peek-msg-sender-user={msg.role === "user"}>{msg.sender_name ?? (msg.role === "user" ? "user" : turn.mind)}</span>
-                                {#if msg.role === "assistant"}
-                                  <span class="peek-msg-md markdown-body">{@html renderMarkdown(extractTextContent(msg.content))}</span>
-                                {:else}
-                                  <span>{extractTextContent(msg.content)}</span>
-                                {/if}
-                              </div>
-                            {/each}
-                          </div>
-                        </div>
+                        {/if}
                       </div>
                     </div>
                   {/each}
                   {#each turn.activities as act (act.id)}
-                    {@const actColor = typeof act.metadata?.color === 'string' ? act.metadata.color : 'yellow'}
+                    {@const actKey = peekKey("activity", turn.id, act.id)}
+                    {@const actColor = activityColor(act.metadata)}
                     {@const actIcon = typeof act.metadata?.icon === 'string' ? sanitizeSvg(act.metadata.icon) : ''}
-                    {@const actUrl = typeof act.metadata?.iframeUrl === 'string' ? act.metadata.iframeUrl : typeof act.metadata?.slug === 'string' ? `/minds/${typeof act.metadata?.author === 'string' ? act.metadata.author : turn.mind}/notes/${act.metadata.slug}` : ''}
+                    {@const actUrl = activityNavUrl(act.metadata, turn.mind)}
                     <div class="peek-anchor">
-                      <button class="peek-btn" style:color="var(--{actColor})" aria-label="View activity" onclick={(e) => { e.stopPropagation(); if (actUrl) navigate(actUrl); }}>
+                      <button class="peek-btn" style:color="var(--{actColor})" aria-label="View activity" onmouseenter={() => revealPeek(actKey)} onfocus={() => revealPeek(actKey)} onclick={(e) => { e.stopPropagation(); if (actUrl) navigate(actUrl); }}>
                         {#if actIcon}
                           {@html actIcon}
                         {:else}
@@ -1013,28 +1031,31 @@ function jumpToLatest() {
                         {/if}
                       </button>
                       <div class="peek-popover">
-                        <div class="peek-card" style:border-color="color-mix(in srgb, var(--{actColor}) 25%, var(--border))">
-                          <div class="peek-card-header" style:border-bottom-color="color-mix(in srgb, var(--{actColor}) 25%, var(--border))">
-                            {#if actIcon}
-                              <span class="peek-card-icon" style:color="var(--{actColor})">{@html actIcon}</span>
-                            {:else}
-                              <Icon kind="document-lines" class="peek-card-icon" />
-                            {/if}
-                            <span class="peek-card-label">{act.summary}</span>
-                          </div>
-                          {#if typeof act.metadata?.iframeUrl === 'string' && act.metadata.iframeUrl}
-                            <div class="peek-card-body peek-card-iframe">
-                              <iframe
-                                src={act.metadata.iframeUrl}
-                                title={act.summary}
-                                sandbox="allow-same-origin"
-                                role="presentation"
-                              ></iframe>
+                        {#if shouldRenderPeek(revealedPeeks, actKey)}
+                          {@const actBody = activityPeekBody(act.metadata)}
+                          <div class="peek-card" style:border-color="color-mix(in srgb, var(--{actColor}) 25%, var(--border))">
+                            <div class="peek-card-header" style:border-bottom-color="color-mix(in srgb, var(--{actColor}) 25%, var(--border))">
+                              {#if actIcon}
+                                <span class="peek-card-icon" style:color="var(--{actColor})">{@html actIcon}</span>
+                              {:else}
+                                <Icon kind="document-lines" class="peek-card-icon" />
+                              {/if}
+                              <span class="peek-card-label">{act.summary}</span>
                             </div>
-                          {:else if typeof act.metadata?.bodyHtml === 'string' && act.metadata.bodyHtml}
-                            <div class="peek-card-body markdown-body">{@html renderMarkdown(act.metadata.bodyHtml)}</div>
-                          {/if}
-                        </div>
+                            {#if actBody.kind === "iframe"}
+                              <div class="peek-card-body peek-card-iframe">
+                                <iframe
+                                  src={actBody.url}
+                                  title={act.summary}
+                                  sandbox="allow-same-origin"
+                                  role="presentation"
+                                ></iframe>
+                              </div>
+                            {:else if actBody.kind === "markdown"}
+                              <div class="peek-card-body markdown-body">{@html renderMarkdown(actBody.source)}</div>
+                            {/if}
+                          </div>
+                        {/if}
                       </div>
                     </div>
                   {/each}
