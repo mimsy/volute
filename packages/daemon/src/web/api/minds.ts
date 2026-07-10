@@ -78,7 +78,6 @@ import {
   getMindPromptDefaults,
   getPrompt,
   getPromptIfCustom,
-  ORIENTATION_MARKER,
   substitute,
 } from "../../lib/prompts.js";
 import { mindHistory, summaries, turns } from "../../lib/schema.js";
@@ -1740,33 +1739,21 @@ const app = new Hono<AuthEnv>()
       return c.json({ output: "" });
     }
 
-    // Collect state
+    // Collect state — shared with the sprout gate so the two always agree.
     const dir = entry.dir ?? mindDir(name);
-    const soulPath = resolve(dir, "home/SOUL.md");
-    const memoryPath = resolve(dir, "home/MEMORY.md");
-
-    const soulCustom =
-      existsSync(soulPath) && !readFileSync(soulPath, "utf-8").includes(ORIENTATION_MARKER);
-    const memoryWritten =
-      existsSync(memoryPath) && readFileSync(memoryPath, "utf-8").trim().length > 0;
-
-    const config = readVoluteConfig(dir);
-    const displayNameSet = !!config?.profile?.displayName;
-    const avatarSet = !!config?.profile?.avatar;
-
-    const { isImagegenEnabled } = await import("../../lib/config/setup.js");
-    const imagegenEnabled = isImagegenEnabled();
+    const { evaluateSeedChecklist } = await import("../../lib/mind/seed-readiness.js");
+    const checklist = evaluateSeedChecklist(dir);
 
     const done: string[] = [];
     const remaining: string[] = [];
-    if (soulCustom) done.push("SOUL.md written");
+    if (checklist.soulWritten) done.push("SOUL.md written");
     else remaining.push("Write SOUL.md");
-    if (memoryWritten) done.push("MEMORY.md written");
+    if (checklist.memoryWritten) done.push("MEMORY.md written");
     else remaining.push("Write MEMORY.md");
-    if (displayNameSet) done.push("Display name set");
+    if (checklist.displayNameSet) done.push("Display name set");
     else remaining.push("Set display name");
-    if (imagegenEnabled) {
-      if (avatarSet) done.push("Avatar set");
+    if (checklist.imagegenEnabled) {
+      if (checklist.avatarSet) done.push("Avatar set");
       else remaining.push("Generate and set avatar");
     }
 

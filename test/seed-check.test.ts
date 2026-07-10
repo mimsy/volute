@@ -90,6 +90,45 @@ describe("seed check endpoint", () => {
     assert.ok(body.output.includes("Display name set"));
   });
 
+  it("does not count the placeholder MEMORY.md as written", async () => {
+    const { MEMORY_PLACEHOLDER_MARKER } = await import("../packages/daemon/src/lib/prompts.js");
+    const dir = resolve(voluteHome(), "minds", seedName);
+    // Custom SOUL, but MEMORY.md is still the starter placeholder.
+    writeFileSync(resolve(dir, "home/SOUL.md"), "# My Soul\nI am a test mind.");
+    writeFileSync(
+      resolve(dir, "home/MEMORY.md"),
+      `# Memory\n\nSome starter text — ${MEMORY_PLACEHOLDER_MARKER}.`,
+    );
+    writeFileSync(
+      resolve(dir, "home/.config/volute.json"),
+      JSON.stringify({ profile: { displayName: "Test Mind" } }),
+    );
+
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
+    const res = await app.request(`http://localhost/api/minds/${seedName}/seed-check`, {
+      headers: postHeaders(cookie),
+    });
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as { output: string };
+    assert.ok(body.output.includes("Write MEMORY.md"), "placeholder MEMORY.md is still remaining");
+    assert.ok(!body.output.includes("MEMORY.md written"));
+  });
+
+  it("does not count an empty MEMORY.md as written", async () => {
+    const dir = resolve(voluteHome(), "minds", seedName);
+    writeFileSync(resolve(dir, "home/SOUL.md"), "# My Soul\nI am a test mind.");
+    writeFileSync(resolve(dir, "home/MEMORY.md"), "   \n");
+
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
+    const res = await app.request(`http://localhost/api/minds/${seedName}/seed-check`, {
+      headers: postHeaders(cookie),
+    });
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as { output: string };
+    assert.ok(body.output.includes("Write MEMORY.md"));
+    assert.ok(!body.output.includes("MEMORY.md written"));
+  });
+
   it("returns 404 for unknown mind", async () => {
     const { default: app } = await import("../packages/daemon/src/web/app.js");
     const res = await app.request("http://localhost/api/minds/nonexistent-xyz/seed-check", {

@@ -1,7 +1,7 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { mindDir } from "@volute/daemon/lib/mind/registry.js";
-import { ORIENTATION_MARKER } from "@volute/daemon/lib/prompts.js";
+import { evaluateSeedChecklist } from "@volute/daemon/lib/mind/seed-readiness.js";
 import { getStandardSkillsWithExtensions } from "@volute/daemon/lib/skills.js";
 import { command } from "../lib/command.js";
 import { daemonFetch } from "../lib/daemon-client.js";
@@ -30,40 +30,33 @@ const cmd = command({
     }
 
     const dir = mindDir(mindName);
-    const soulPath = resolve(dir, "home/SOUL.md");
-    const memoryPath = resolve(dir, "home/MEMORY.md");
 
-    // Validate SOUL.md
-    if (!existsSync(soulPath)) {
-      console.error("Write your SOUL.md before sprouting.");
-      process.exit(1);
-    }
-    const soul = readFileSync(soulPath, "utf-8");
-    if (soul.includes(ORIENTATION_MARKER)) {
+    // Gate on the same checklist the spirit's seed-check and the orientation
+    // skill describe — evaluated from one shared source so they can't drift.
+    const checklist = evaluateSeedChecklist(dir);
+    if (!checklist.soulWritten) {
       console.error(
-        "Your SOUL.md still contains the orientation template. Write your own identity first.",
+        "Your SOUL.md is still the orientation template (or unwritten). Write your own identity first.",
       );
       process.exit(1);
     }
-
-    // Validate MEMORY.md
-    if (!existsSync(memoryPath)) {
-      console.error("Write your MEMORY.md before sprouting.");
+    if (!checklist.memoryWritten) {
+      console.error(
+        "Your MEMORY.md is still empty or the starter placeholder. Write your own memory first.",
+      );
       process.exit(1);
     }
-
-    // Validate avatar if imagegen is enabled
-    const { isImagegenEnabled } = await import("@volute/daemon/lib/config/setup.js");
-    if (isImagegenEnabled()) {
-      const { readVoluteConfig } = await import("@volute/daemon/lib/mind/volute-config.js");
-      const config = readVoluteConfig(dir);
-      const avatarPath = config?.profile?.avatar;
-      if (!avatarPath || !existsSync(resolve(dir, "home", avatarPath))) {
-        console.error(
-          "Generate an avatar before sprouting. Use `imagegen generate` to create one, then `volute mind profile --avatar <path>` to set it.",
-        );
-        process.exit(1);
-      }
+    if (!checklist.displayNameSet) {
+      console.error(
+        'Set your display name before sprouting: volute mind profile --display-name "Your Name"',
+      );
+      process.exit(1);
+    }
+    if (checklist.imagegenEnabled && !checklist.avatarSet) {
+      console.error(
+        "Generate an avatar before sprouting. Use `imagegen generate` to create one, then `volute mind profile --avatar <path>` to set it.",
+      );
+      process.exit(1);
     }
 
     // Set up API client for typed URL helpers
