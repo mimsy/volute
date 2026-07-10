@@ -6,6 +6,7 @@ export type Schedule = {
   cron?: string;
   fireAt?: string; // ISO timestamp for one-time schedules
   message?: string;
+  messages?: string[]; // rotating pool — one is picked at random per fire
   script?: string;
   enabled: boolean;
   whileSleeping?: "skip" | "queue" | "trigger-wake";

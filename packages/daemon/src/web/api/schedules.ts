@@ -18,6 +18,15 @@ function readSchedules(dir: string): Schedule[] {
   return readVoluteConfig(dir)?.schedules ?? [];
 }
 
+/** Validate a rotating-messages pool: must be an array of non-empty strings. */
+function validateMessages(messages: unknown): string | null {
+  if (messages === undefined) return null;
+  if (!Array.isArray(messages) || messages.some((m) => typeof m !== "string" || !m.trim())) {
+    return "messages must be an array of non-empty strings";
+  }
+  return null;
+}
+
 export type ClockEvent = {
   id: string;
   at: string;
@@ -250,11 +259,13 @@ const app = new Hono<AuthEnv>()
     if (body.cron && body.fireAt) {
       return c.json({ error: "cron and fireAt are mutually exclusive" }, 400);
     }
-    if (!body.message && !body.script) {
-      return c.json({ error: "message or script is required" }, 400);
+    const messagesErr = validateMessages(body.messages);
+    if (messagesErr) return c.json({ error: messagesErr }, 400);
+    if (!body.message && !body.messages?.length && !body.script) {
+      return c.json({ error: "message, messages, or script is required" }, 400);
     }
-    if (body.message && body.script) {
-      return c.json({ error: "message and script are mutually exclusive" }, 400);
+    if ([body.message, body.messages?.length, body.script].filter(Boolean).length > 1) {
+      return c.json({ error: "message, messages, and script are mutually exclusive" }, 400);
     }
 
     if (body.cron) {
@@ -288,6 +299,7 @@ const app = new Hono<AuthEnv>()
     if (body.cron) schedule.cron = body.cron;
     if (body.fireAt) schedule.fireAt = body.fireAt;
     if (body.message) schedule.message = body.message;
+    if (body.messages?.length) schedule.messages = body.messages;
     if (body.script) schedule.script = body.script;
     if (body.channel) schedule.channel = body.channel;
     if (body.whileSleeping) schedule.whileSleeping = body.whileSleeping;
@@ -308,8 +320,10 @@ const app = new Hono<AuthEnv>()
     if (idx === -1) return c.json({ error: "Schedule not found" }, 404);
 
     const body = (await c.req.json()) as Partial<Schedule>;
-    if (body.message && body.script) {
-      return c.json({ error: "message and script are mutually exclusive" }, 400);
+    const messagesErr = validateMessages(body.messages);
+    if (messagesErr) return c.json({ error: messagesErr }, 400);
+    if ([body.message, body.messages?.length, body.script].filter(Boolean).length > 1) {
+      return c.json({ error: "message, messages, and script are mutually exclusive" }, 400);
     }
     if (body.cron !== undefined) {
       try {
@@ -330,10 +344,21 @@ const app = new Hono<AuthEnv>()
     if (body.message !== undefined) {
       schedules[idx].message = body.message;
       delete schedules[idx].script;
+      delete schedules[idx].messages;
+    }
+    if (body.messages !== undefined) {
+      if (body.messages.length > 0) {
+        schedules[idx].messages = body.messages;
+        delete schedules[idx].message;
+        delete schedules[idx].script;
+      } else {
+        delete schedules[idx].messages;
+      }
     }
     if (body.script !== undefined) {
       schedules[idx].script = body.script;
       delete schedules[idx].message;
+      delete schedules[idx].messages;
     }
     if (body.whileSleeping && !["skip", "queue", "trigger-wake"].includes(body.whileSleeping)) {
       return c.json(
@@ -347,6 +372,15 @@ const app = new Hono<AuthEnv>()
     if (body.channel !== undefined) schedules[idx].channel = body.channel || undefined;
     if (body.whileSleeping !== undefined)
       schedules[idx].whileSleeping = body.whileSleeping || undefined;
+
+    // An action-field edit must not strip the schedule down to nothing — an
+    // actionless schedule would silently warn+skip on every fire.
+    const touchedAction =
+      body.message !== undefined || body.messages !== undefined || body.script !== undefined;
+    const result = schedules[idx];
+    if (touchedAction && !result.message && !result.messages?.length && !result.script) {
+      return c.json({ error: "schedule must keep a message, messages, or script" }, 400);
+    }
 
     writeSchedules(name, dir, schedules);
     return c.json({ ok: true });

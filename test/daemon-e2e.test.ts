@@ -1262,6 +1262,20 @@ describe("daemon e2e", { timeout: 420000 }, () => {
 
   // ── Clock & Schedule Integration Tests ──
 
+  it("fresh mind gets the default rotating heartbeat", async () => {
+    await ensureTestMind();
+
+    const res = await daemonRequest(`/api/minds/${TEST_MIND}/schedules`);
+    assert.equal(res.status, 200);
+    const schedules = (await res.json()) as { id: string; messages?: string[] }[];
+    const heartbeat = schedules.find((s) => s.id === "heartbeat");
+    assert.ok(heartbeat, "default heartbeat schedule installed at creation");
+    assert.ok(
+      (heartbeat.messages?.length ?? 0) > 1,
+      "default heartbeat carries a rotating message pool",
+    );
+  });
+
   it("schedule CRUD: add cron schedule, list, update, remove", async () => {
     await ensureTestMind();
 

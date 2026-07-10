@@ -41,7 +41,11 @@ function install() {
           resolve(".claude/skills/dreaming/scripts/wake-context-dreams.sh"),
           "utf-8",
         );
-        writeFileSync(hookPath, `${hookContent.trimEnd()}\n\n${dreamScript}`);
+        // Marker line makes the check above (and Volute's automatic setup) idempotent
+        writeFileSync(
+          hookPath,
+          `${hookContent.trimEnd()}\n\n# wake-context-dreams.sh\n${dreamScript}`,
+        );
         console.log("appended dream checker to .local/hooks/wake-context.sh");
         actions++;
       }

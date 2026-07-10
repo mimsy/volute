@@ -42,6 +42,7 @@ import {
 import { subscribe as subscribeMindEvent } from "../../lib/events/mind-events.js";
 import { type ExportManifest, isHomeOnlyArchive } from "../../lib/mind/archive.js";
 import { consolidateMemory } from "../../lib/mind/consolidate.js";
+import { defaultHeartbeatSchedule, setupDefaultDreaming } from "../../lib/mind/default-autonomy.js";
 import { generateIdentity, publishPublicKey } from "../../lib/mind/identity.js";
 import {
   chownMindDir,
@@ -876,16 +877,7 @@ const app = new Hono<AuthEnv>()
           };
         }
         if (!config.schedules || config.schedules.length === 0) {
-          config.schedules = mindDefaults?.schedules ?? [
-            {
-              id: "heartbeat",
-              cron: "0 12,16,20 * * *",
-              message:
-                "A quiet moment. You might write something — a note, a journal entry, a page. You could explore a topic that interests you, check in on #system, or just think. No obligations, just time.",
-              enabled: true,
-              whileSleeping: "skip",
-            },
-          ];
+          config.schedules = mindDefaults?.schedules ?? [defaultHeartbeatSchedule()];
         }
         // Apply cognition defaults
         const cog = mindDefaults?.cognition;
@@ -993,6 +985,12 @@ const app = new Hono<AuthEnv>()
           log.error(`failed to install skill ${skillId} for ${name}`, log.errorData(err));
           skillWarnings.push(`Failed to install skill: ${skillId}`);
         }
+      }
+
+      // Default autonomy: minds created directly as full minds get working
+      // dreaming out of the box; seeds get it at sprout (#581)
+      if (body.stage !== "seed") {
+        skillWarnings.push(...setupDefaultDreaming(dest).warnings);
       }
 
       // Add nurture schedule to spirit if this is a seed
@@ -1785,6 +1783,21 @@ const app = new Hono<AuthEnv>()
       return c.json({ error: `Mind is not a seed (stage: ${entry.stage})` }, 409);
     }
     await setMindStage(name, "sprouted");
+
+    // Default autonomy: working dreaming out of the box (#581). The seed-sprout
+    // CLI installs the standard skills — including dreaming — before calling
+    // this endpoint, so the skill dir is present here on the normal path. The
+    // mind is already running, so reload its schedules when the dream schedule
+    // lands. Fail soft: sprouting must not break over dreaming wiring.
+    try {
+      const sproutedDir = entry.dir ?? mindDir(name);
+      if (setupDefaultDreaming(sproutedDir).schedulesChanged) {
+        const { getScheduler } = await import("../../lib/daemon/scheduler.js");
+        getScheduler().loadSchedules(name, sproutedDir);
+      }
+    } catch (err) {
+      log.warn(`failed to set up default dreaming for ${name}`, log.errorData(err));
+    }
 
     // Clean up spirit nurture schedule
     try {

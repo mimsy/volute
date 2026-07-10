@@ -630,6 +630,7 @@ const app = new Hono<AuthEnv>()
               id: z.string().min(1),
               cron: z.string().optional(),
               message: z.string().optional(),
+              messages: z.array(z.string().min(1)).optional(),
               script: z.string().optional(),
               session: z.string().optional(),
               enabled: z.boolean(),

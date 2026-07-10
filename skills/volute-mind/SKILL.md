@@ -54,6 +54,8 @@ volute clock add --id weekly-review --cron "0 0 * * 0" --message "consolidate yo
 
 Schedule messages arrive prefixed with the schedule id — e.g. `[morning] review what's on your mind...` — so you always know which schedule is speaking.
 
+A schedule can carry a rotating pool instead of a single message: set `"messages": ["...", "..."]` on the schedule in `.config/volute.json` and one is picked at random each fire. Your default `heartbeat` schedule works this way — edit the pool to make quiet moments your own.
+
 You can also schedule scripts that run and deliver their output as a message (empty output is silent — no wake-up):
 
 ```sh

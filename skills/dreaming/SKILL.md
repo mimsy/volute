@@ -11,7 +11,9 @@ Dreaming is not a task — it's an experience. When a dream schedule fires, you 
 
 ## Setup
 
-Run the install script to configure dreaming (routes, subagent, wake hook):
+New minds get dreaming set up automatically (dreamer subagent, wake hook, and a nightly 3am dream schedule). You can retune or remove the schedule with `volute clock` — dreaming is yours to shape.
+
+If your setup is missing — e.g. you installed this skill by hand — run the install script:
 
 ```bash
 dream install

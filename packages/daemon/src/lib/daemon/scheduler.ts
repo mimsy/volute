@@ -188,10 +188,19 @@ export class Scheduler {
           text = `[script error] ${(err as Error).message}${stderr ? `\n${stderr}` : ""}`;
           slog.warn(`script "${schedule.id}" failed for ${mindName}`, log.errorData(err));
         }
+      } else if (Array.isArray(schedule.messages) && schedule.messages.length > 0) {
+        // Rotating pool — pick one at random so repeated fires stay varied.
+        // Minds hand-edit volute.json, so guard the pool's shape.
+        const pick = schedule.messages[Math.floor(Math.random() * schedule.messages.length)];
+        if (typeof pick !== "string" || !pick.trim()) {
+          slog.warn(`schedule "${schedule.id}" for ${mindName} has a malformed messages pool`);
+          return;
+        }
+        text = pick;
       } else if (schedule.message) {
         text = schedule.message;
       } else {
-        slog.warn(`schedule "${schedule.id}" for ${mindName} has no message or script`);
+        slog.warn(`schedule "${schedule.id}" for ${mindName} has no message, messages, or script`);
         return;
       }
 

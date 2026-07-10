@@ -588,7 +588,7 @@ export type MindDefaultsCognition = {
 // UI-relevant subset of ScheduleEntry (omits deprecated channel, fireAt timers)
 export type MindDefaultsSchedule = Pick<
   ScheduleEntry,
-  "id" | "cron" | "message" | "script" | "session" | "enabled"
+  "id" | "cron" | "message" | "messages" | "script" | "session" | "enabled"
 > & {
   whileSleeping?: "skip" | "queue" | "trigger-wake";
 };
@@ -823,6 +823,7 @@ export type ScheduleEntry = {
   cron?: string;
   fireAt?: string;
   message?: string;
+  messages?: string[];
   script?: string;
   enabled: boolean;
   whileSleeping?: string;
