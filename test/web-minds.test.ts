@@ -241,3 +241,39 @@ describe("web minds routes", () => {
     }
   });
 });
+
+describe("toPublicMind", () => {
+  it("strips lastError.detail from the non-privileged projection", async () => {
+    // detail can embed the raw error string (unknown classifications), which is
+    // mind-private — non-admin callers get kind/reason/at only.
+    const { toPublicMind } = await import("../packages/daemon/src/web/api/minds.js");
+    const entry = {
+      name: "proj-test",
+      port: 4100,
+      created: "2026-01-01",
+      running: true,
+      mindType: "mind" as const,
+    };
+    const status = {
+      status: "running" as const,
+      wakeAt: null,
+      lastError: {
+        kind: "turn_error" as const,
+        reason: "unknown",
+        detail: "Your last turn failed with an error: raw-private-text",
+        at: "2026-07-10 12:00:00",
+      },
+      channels: [],
+      displayName: undefined,
+      description: undefined,
+      avatar: undefined,
+    };
+    const pub = toPublicMind(entry, status, { hasPages: false });
+    assert.deepEqual(pub.lastError, {
+      kind: "turn_error",
+      reason: "unknown",
+      at: "2026-07-10 12:00:00",
+    });
+    assert.ok(!JSON.stringify(pub).includes("raw-private-text"));
+  });
+});

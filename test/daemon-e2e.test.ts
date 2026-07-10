@@ -1674,6 +1674,38 @@ describe("daemon e2e", { timeout: 420000 }, () => {
     assert.equal(body2.notices.length, 0);
   });
 
+  it("mind status: GET /api/minds/:name surfaces lastError until recovery (#574)", async () => {
+    await ensureTestMind();
+    const session = "notices-status-surface";
+
+    // A turn starts (text opens a real turn), fails, and completes.
+    await emitEvent(session, { type: "text", content: "attempting a reply" });
+    await emitEvent(session, { type: "error", content: "API Error: 401 authentication_error" });
+    await emitEvent(session, { type: "done" });
+
+    const res1 = await daemonRequest(`/api/minds/${TEST_MIND}`);
+    assert.equal(res1.status, 200);
+    const mind1 = (await res1.json()) as {
+      lastError?: { kind: string; reason: string; detail?: string } | null;
+    };
+    assert.equal(mind1.lastError?.kind, "turn_error");
+    assert.equal(mind1.lastError?.reason, "auth_error");
+    // Privileged (admin) callers get the full detail.
+    assert.ok(mind1.lastError?.detail, "admin projection should include detail");
+
+    // Drain, then a clean turn completes after the failure → recovered.
+    await daemonRequest(`/api/minds/${TEST_MIND}/history/notices?session=${session}`);
+    // A completed turn strictly after the notice is what marks recovery; the
+    // notice timestamps have 1s resolution, so make sure the clock ticks over.
+    await new Promise((r) => setTimeout(r, 1100));
+    await emitEvent(session, { type: "text", content: "recovered reply" });
+    await emitEvent(session, { type: "done" });
+
+    const res2 = await daemonRequest(`/api/minds/${TEST_MIND}`);
+    const mind2 = (await res2.json()) as { lastError?: unknown };
+    assert.equal(mind2.lastError, null, "lastError should clear after a clean turn");
+  });
+
   it("failure notices: accumulate across an outage to convey full scope", async () => {
     await ensureTestMind();
     const session = "notices-outage";

@@ -15,6 +15,10 @@ export type Mind = {
   port?: number;
   created: string;
   status: "running" | "stopped" | "starting" | "sleeping";
+  /** When status is "sleeping": ISO time of the scheduled wake, if one is set. */
+  wakeAt?: string | null;
+  /** Most recent failure the mind hasn't recovered from (cleared on the next clean turn). */
+  lastError?: MindLastError | null;
   stage?: "seed" | "sprouted";
   template?: string;
   channels: PlatformConnection[];
@@ -25,6 +29,18 @@ export type Mind = {
   description?: string;
   avatar?: string;
   mindType?: "mind" | "spirit";
+};
+
+export type MindLastError = {
+  kind: "turn_error" | "crash" | "startup";
+  reason: string;
+  /**
+   * Full failure detail. Admin/system callers only — omitted for non-privileged
+   * callers because unknown-reason details embed the raw error string, which is
+   * otherwise mind-private (served behind requireSelf).
+   */
+  detail?: string;
+  at: string;
 };
 
 export type PlatformConnection = {
@@ -92,6 +108,7 @@ export type ActivityEventType =
   | "mind_active"
   | "mind_idle"
   | "mind_done"
+  | "mind_error"
   | "mind_sleeping"
   | "mind_waking"
   | "page_updated"

@@ -22,7 +22,12 @@ import {
   startMindFull as startMindFullService,
   stopMindFull as stopMindFullService,
 } from "../../lib/daemon/mind-service.js";
-import { drainNotices, formatNotices, recordNotice } from "../../lib/daemon/notices.js";
+import {
+  drainNotices,
+  formatNotices,
+  latestFailureNotice,
+  recordNotice,
+} from "../../lib/daemon/notices.js";
 import { getTokenBudget } from "../../lib/daemon/token-budget.js";
 import { handleMindEvent, setNoticeDrainWatermark } from "../../lib/daemon/turn-lifecycle.js";
 import { getActiveTurnId } from "../../lib/daemon/turn-tracker.js";
@@ -125,14 +130,24 @@ type ChannelStatus = {
 async function getMindStatus(name: string, port: number, registryRunning?: boolean) {
   const manager = getMindManager();
   let status: "running" | "stopped" | "starting" | "sleeping" = "stopped";
+  let wakeAt: string | null = null;
 
   // Check sleep state first
   try {
     const { getSleepManagerIfReady } = await import("../../lib/daemon/sleep-manager.js");
-    if (getSleepManagerIfReady()?.isSleeping(name)) {
+    const sleepManager = getSleepManagerIfReady();
+    if (sleepManager?.isSleeping(name)) {
       status = "sleeping";
+      const sleepState = sleepManager.getState(name);
+      // A voluntary wake-at is authoritative for the night (initiateSleep nulls
+      // the cron wake when one is set), so prefer it.
+      wakeAt = sleepState.voluntaryWakeAt ?? sleepState.scheduledWakeAt;
     }
-  } catch {}
+  } catch (err) {
+    // A swallowed failure here misreports a sleeping mind as stopped (and chat
+    // would offer Start for a mind that is asleep) — leave a trace.
+    log.warn(`failed to check sleep state for ${name}`, log.errorData(err));
+  }
 
   if (status !== "sleeping" && registryRunning !== false && manager.isRunning(name)) {
     const health = await checkHealth(port);
@@ -152,8 +167,15 @@ async function getMindStatus(name: string, port: number, registryRunning?: boole
     });
   }
 
+  // Undelivered failure notice = the mind failed and hasn't completed a clean
+  // turn since. Chat surfaces this as "last turn failed" (#574); it clears
+  // automatically once the notice drains on the next clean turn.
+  const lastError = await latestFailureNotice(name);
+
   return {
     status,
+    wakeAt,
+    lastError,
     channels,
     displayName: config?.profile?.displayName,
     description: config?.profile?.description,
@@ -177,7 +199,7 @@ function isPrivileged(c: Context<AuthEnv>): boolean {
  * (direct connections to sibling mind servers that bypass the daemon, targeted
  * filesystem probing). Only admin/system callers get the full entry. See #503.
  */
-function toPublicMind(
+export function toPublicMind(
   entry: MindEntry,
   status: MindStatus,
   extras: { hasPages: boolean; lastActiveAt?: string | null },
@@ -188,6 +210,12 @@ function toPublicMind(
     stage: entry.stage,
     mindType: entry.mindType,
     status: status.status,
+    wakeAt: status.wakeAt,
+    // Kind/reason/at only — `detail` can embed the raw error string (unknown
+    // classifications), which is mind-private (served behind requireSelf).
+    lastError: status.lastError
+      ? { kind: status.lastError.kind, reason: status.lastError.reason, at: status.lastError.at }
+      : null,
     channels: status.channels,
     displayName: status.displayName,
     description: status.description,

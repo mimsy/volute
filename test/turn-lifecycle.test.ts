@@ -14,6 +14,7 @@ import {
   recordInbound,
   recordOutbound,
 } from "../packages/daemon/src/lib/delivery/message-delivery.js";
+import { subscribe as subscribeActivity } from "../packages/daemon/src/lib/events/activity-events.js";
 import { mindHistory, turns } from "../packages/daemon/src/lib/schema.js";
 
 async function cleanup(mind: string): Promise<void> {
@@ -118,6 +119,28 @@ describe("turn-lifecycle: handleMindEvent", () => {
     assert.ok(
       notices.some((n) => n.kind === "turn_error"),
       "a turn_error notice should be recorded",
+    );
+    await cleanup(mind);
+  });
+
+  it("error broadcasts a mind_error activity event", async () => {
+    const mind = "tl-error-broadcast";
+    const received: { type: string; mind: string }[] = [];
+    const unsubscribe = subscribeActivity((e) => {
+      received.push({ type: e.type, mind: e.mind });
+    });
+    try {
+      await handleMindEvent(mind, {
+        type: "error",
+        session: "s1",
+        content: "boom: something failed",
+      });
+    } finally {
+      unsubscribe();
+    }
+    assert.ok(
+      received.some((e) => e.type === "mind_error" && e.mind === mind),
+      "a mind_error event should be broadcast so web chat can refresh status",
     );
     await cleanup(mind);
   });
