@@ -177,12 +177,18 @@ export async function startDaemon(opts: {
     }
   }
 
-  // Ensure #system channel exists and registered minds are members (non-fatal)
+  // Ensure #system channel exists (non-fatal)
   try {
     await ensureSystemChannel();
-    await backfillSystemChannelMembers();
   } catch (err) {
     log.warn("failed to ensure #system channel", log.errorData(err));
+  }
+
+  // Backfill registered minds into #system (non-fatal)
+  try {
+    await backfillSystemChannelMembers();
+  } catch (err) {
+    log.warn("failed to backfill minds into #system", log.errorData(err));
   }
 
   // Ensure system user exists (non-fatal)

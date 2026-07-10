@@ -4,8 +4,10 @@ import {
   addMessage,
   createChannel,
   getChannelByName,
+  getChannelSettings,
   getParticipants,
   joinChannel,
+  updateChannelSettings,
 } from "../events/conversations.js";
 import { readRegistry } from "../mind/registry.js";
 import log from "../util/logger.js";
@@ -29,6 +31,14 @@ export async function ensureSystemChannel(): Promise<string> {
   const existing = await getChannelByName(SYSTEM_CHANNEL_NAME);
   if (existing) {
     cachedChannelId = existing.id;
+    // Channels created before the default description existed have none; fill it
+    // in (only when unset, so an operator-edited description is never clobbered).
+    const settings = await getChannelSettings(SYSTEM_CHANNEL_NAME);
+    if (settings && settings.description == null) {
+      await updateChannelSettings(SYSTEM_CHANNEL_NAME, {
+        description: SYSTEM_CHANNEL_DESCRIPTION,
+      });
+    }
     return existing.id;
   }
 
@@ -74,7 +84,7 @@ export async function backfillSystemChannelMembers(): Promise<void> {
         await joinSystemChannelForMind(entry.name);
       }
     } catch (err) {
-      log.warn(`failed to backfill ${entry.name} into #system`, log.errorData(err));
+      log.error(`failed to backfill ${entry.name} into #system`, log.errorData(err));
     }
   }
 }
