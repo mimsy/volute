@@ -1,5 +1,12 @@
 import { sql } from "drizzle-orm";
-import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import {
+  index,
+  integer,
+  primaryKey,
+  sqliteTable,
+  text,
+  uniqueIndex,
+} from "drizzle-orm/sqlite-core";
 
 export const minds = sqliteTable(
   "minds",
@@ -290,4 +297,20 @@ export const mindNotices = sqliteTable(
     created_at: text("created_at").notNull().default(sql`(datetime('now'))`),
   },
   (table) => [index("idx_mind_notices_mind_session").on(table.mind, table.session)],
+);
+
+// Per-(mind, channel) gate state for unrouted channels. A row exists once a mind
+// has taken an explicit position on a gated channel; the only non-default state is
+// "declined" (the mind has said it does not want this channel). Absence of a row
+// means "pending" — the mind hasn't decided, so invites keep arriving on the
+// notify cadence. Declined channels are never released and never re-notify.
+export const channelGates = sqliteTable(
+  "channel_gates",
+  {
+    mind: text("mind").notNull(),
+    channel: text("channel").notNull(),
+    state: text("state").$type<"pending" | "declined">().notNull(),
+    updated_at: text("updated_at").notNull().default(sql`(datetime('now'))`),
+  },
+  (table) => [primaryKey({ columns: [table.mind, table.channel] })],
 );

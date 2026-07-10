@@ -24,6 +24,10 @@ const cmd = subcommands({
       description: "Manage platform bridges",
       run: (args) => import("./chat/bridge.js").then((m) => m.run(args)),
     },
+    channels: {
+      description: "Manage unrouted (gated) channels",
+      run: (args) => import("./chat/channels.js").then((m) => m.run(args)),
+    },
     files: {
       description: "List pending incoming files",
       run: (args) => import("./chat/files.js").then((m) => m.run(args)),
