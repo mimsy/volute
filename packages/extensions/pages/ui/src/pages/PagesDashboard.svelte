@@ -37,24 +37,6 @@ let {
 </script>
 
 <div class="dashboard">
-  {#if systemSite}
-    <div class="section">
-      <div class="section-header">
-        <span class="section-title">shared pages</span>
-      </div>
-      <div class="thumbnail-grid">
-        {#each systemSite.pages as page}
-          <PageThumbnail
-            url={page.url}
-            label={page.file}
-            sublabel={page.author ?? undefined}
-            onclick={() => onSelectPage("_system", page.file)}
-          />
-        {/each}
-      </div>
-    </div>
-  {/if}
-
   {#if sites.length > 0}
     <div class="section">
       <div class="section-header">
@@ -75,7 +57,7 @@ let {
   {#if recentPages.length > 0}
     <div class="section">
       <div class="section-header">
-        <span class="section-title">recently modified</span>
+        <span class="section-title">recently updated</span>
       </div>
       <div class="thumbnail-grid">
         {#each recentPages as page}
@@ -84,6 +66,24 @@ let {
             label={page.file}
             sublabel={recentSublabel(page)}
             onclick={() => onSelectPage(page.mind, page.file)}
+          />
+        {/each}
+      </div>
+    </div>
+  {/if}
+
+  {#if systemSite}
+    <div class="section">
+      <div class="section-header">
+        <span class="section-title">shared pages</span>
+      </div>
+      <div class="thumbnail-grid">
+        {#each systemSite.pages as page}
+          <PageThumbnail
+            url={page.url}
+            label={page.file}
+            sublabel={page.author ?? undefined}
+            onclick={() => onSelectPage("_system", page.file)}
           />
         {/each}
       </div>

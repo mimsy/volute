@@ -166,16 +166,37 @@ describe("pages db", () => {
     assert.equal(after[0].file, "index.html");
   });
 
-  it("getAllSites groups by mind", () => {
-    syncPublishedPages(db, "mind1", ph("index.html"));
-    syncPublishedPages(db, "mind2", ph("about.html", "contact.html"));
+  it("getAllSites ranks sites by most-recent update, not insertion order", () => {
+    syncPublishedPages(db, "mind1", ph("a.html")); // lower id
+    syncPublishedPages(db, "mind2", ph("b.html", "c.html")); // higher id
+
+    // Without touching timestamps, mind2 leads only via the id tiebreak. Make
+    // mind1 strictly newer so real recency (updated_at) must decide the order.
+    db.prepare(
+      "UPDATE published_pages SET updated_at = '2999-01-01 00:00:00' WHERE mind = 'mind1'",
+    ).run();
 
     const sites = getAllSites(db);
     assert.equal(sites.length, 2);
+    // mind1 now ranks first purely on updated_at — this fails if the query drops
+    // `updated_at DESC` and orders by id alone.
     assert.equal(sites[0].mind, "mind1");
     assert.equal(sites[0].files.length, 1);
     assert.equal(sites[1].mind, "mind2");
     assert.equal(sites[1].files.length, 2);
+  });
+
+  it("getAllSites puts a site's index first even when another page is newer", () => {
+    syncPublishedPages(db, "mind1", ph("index.html", "about.html"));
+    // Make about.html strictly newer than the index; index must still lead.
+    db.prepare(
+      "UPDATE published_pages SET updated_at = '2999-01-01 00:00:00' WHERE mind = 'mind1' AND file = 'about.html'",
+    ).run();
+
+    const sites = getAllSites(db);
+    // Fails if sortSiteFiles' index-first branch is removed (about would lead on recency).
+    assert.equal(sites[0].files[0].file, "index.html");
+    assert.equal(sites[0].files[1].file, "about.html");
   });
 
   it("getAllSites excludes _system pages", () => {
@@ -234,13 +255,21 @@ describe("pages db", () => {
     assert.equal(getSystemPages(db), null);
   });
 
-  it("getSystemPages returns system site with author", () => {
-    syncSystemPages(db, ph("about.html", "index.html"), "alice");
+  it("getSystemPages returns system site with author, index first", () => {
+    // index.html inserted first (lower id); without index-first logic the id
+    // tiebreak would bury it behind about.html.
+    syncSystemPages(db, ph("index.html", "about.html"), "alice");
+    // ...and make about.html strictly newer, so recency alone would rank it first.
+    db.prepare(
+      "UPDATE published_pages SET updated_at = '2999-01-01 00:00:00' WHERE mind = '_system' AND file = 'about.html'",
+    ).run();
+
     const site = getSystemPages(db);
     assert.ok(site);
     assert.equal(site.mind, "_system");
     assert.equal(site.files.length, 2);
-    assert.equal(site.files[0].file, "about.html");
+    // index leads despite about.html being both newer and higher-id
+    assert.equal(site.files[0].file, "index.html");
     assert.equal(site.files[0].author, "alice");
   });
 });

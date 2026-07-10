@@ -35,10 +35,24 @@ type PublishedPage = {
   author: string | null;
 };
 type RecentPage = { mind: string; file: string; updated_at: string; author: string | null };
+type SiteFile = { file: string; updated_at: string; author: string | null };
 type SiteEntry = {
   mind: string;
-  files: { file: string; updated_at: string; author: string | null }[];
+  files: SiteFile[];
 };
+
+/** A page is a site's "home" when it's a top-level index.html/index.md. */
+function isIndex(file: string): boolean {
+  return file === "index.html" || file === "index.md";
+}
+
+/** Sort a site's files so the index (home) leads, then most-recently-updated. */
+function sortSiteFiles(files: SiteFile[]): SiteFile[] {
+  return [...files].sort((a, b) => {
+    if (isIndex(a.file) !== isIndex(b.file)) return isIndex(a.file) ? -1 : 1;
+    return b.updated_at.localeCompare(a.updated_at);
+  });
+}
 
 export function getPublishedPages(db: Database, mind: string): PublishedPage[] {
   return db
@@ -69,14 +83,16 @@ export function getRecentPages(
 }
 
 export function getAllSites(db: Database): SiteEntry[] {
-  // Exclude _system pages — those are shown separately
+  // Exclude _system pages — those are shown separately. Order globally by
+  // recency (id breaks same-second ties) so the first row seen for each mind is
+  // its most-recent page — that gives us sites ranked by recent activity.
   const rows = db
     .prepare(
-      "SELECT mind, file, updated_at, author FROM published_pages WHERE mind != '_system' ORDER BY mind, file",
+      "SELECT mind, file, updated_at, author FROM published_pages WHERE mind != '_system' ORDER BY updated_at DESC, id DESC",
     )
     .all() as RecentPage[];
 
-  const siteMap = new Map<string, { file: string; updated_at: string; author: string | null }[]>();
+  const siteMap = new Map<string, SiteFile[]>();
   for (const row of rows) {
     let files = siteMap.get(row.mind);
     if (!files) {
@@ -86,19 +102,25 @@ export function getAllSites(db: Database): SiteEntry[] {
     files.push({ file: row.file, updated_at: row.updated_at, author: row.author });
   }
 
-  return Array.from(siteMap.entries()).map(([mind, files]) => ({ mind, files }));
+  // Map insertion order = site recency; within each site, index leads.
+  return Array.from(siteMap.entries()).map(([mind, files]) => ({
+    mind,
+    files: sortSiteFiles(files),
+  }));
 }
 
 export function getSystemPages(db: Database): SiteEntry | null {
   const rows = db
     .prepare(
-      "SELECT mind, file, updated_at, author FROM published_pages WHERE mind = '_system' ORDER BY file",
+      "SELECT mind, file, updated_at, author FROM published_pages WHERE mind = '_system' ORDER BY updated_at DESC, id DESC",
     )
     .all() as RecentPage[];
   if (rows.length === 0) return null;
   return {
     mind: "_system",
-    files: rows.map((r) => ({ file: r.file, updated_at: r.updated_at, author: r.author })),
+    files: sortSiteFiles(
+      rows.map((r) => ({ file: r.file, updated_at: r.updated_at, author: r.author })),
+    ),
   };
 }
 

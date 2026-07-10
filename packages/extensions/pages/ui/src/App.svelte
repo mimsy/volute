@@ -5,13 +5,18 @@ import PagesDashboard from "./pages/PagesDashboard.svelte";
 import SiteView from "./pages/SiteView.svelte";
 
 let hash = $state(window.location.hash);
+let pageIframe = $state<HTMLIFrameElement>();
 
 onMount(() => {
   const handler = () => {
     hash = window.location.hash;
   };
   window.addEventListener("hashchange", handler);
-  return () => window.removeEventListener("hashchange", handler);
+  window.addEventListener("message", handlePageMessage);
+  return () => {
+    window.removeEventListener("hashchange", handler);
+    window.removeEventListener("message", handlePageMessage);
+  };
 });
 
 type Route =
@@ -63,26 +68,29 @@ function navigateParent(path: string) {
   window.parent.postMessage({ type: "navigate", path }, "*");
 }
 
-function handleIframeNav(e: Event) {
-  const iframe = e.target as HTMLIFrameElement;
-  try {
-    const path = iframe.contentWindow?.location.pathname;
-    if (!path) return;
-    // Match /ext/pages/public/{name}/{file...}
-    const match = path.match(/^\/ext\/pages\/public\/([^/]+)\/(.+)$/);
-    if (!match) return;
-    const [, mind, file] = match;
-    if (route.view === "page" && mind === route.name && file === route.path) return;
-    if (mind === "_system") {
-      navigateParent(`/pages/_system/${file}`);
-    } else {
-      navigateParent(`/minds/${mind}/pages/${file}`);
-    }
-  } catch (err) {
-    if (!(err instanceof DOMException)) {
-      console.error("[pages] unexpected error in iframe nav handler:", err);
-    }
+// Sync the outer breadcrumb from a page path (`/ext/pages/public/{mind}/{file}`).
+// The path is untrusted — we only ever derive a pages route from it, never an
+// arbitrary app route.
+function syncBreadcrumbFromPath(path: string) {
+  const match = path.match(/^\/ext\/pages\/public\/([^/]+)\/(.+)$/);
+  if (!match) return;
+  const [, mind, file] = match;
+  if (route.view === "page" && mind === route.name && file === route.path) return;
+  if (mind === "_system") {
+    navigateParent(`/pages/_system/${file}`);
+  } else {
+    navigateParent(`/minds/${mind}/pages/${file}`);
   }
+}
+
+// Sandboxed pages can't have their location read cross-origin, so they report it
+// to us via postMessage (see NAV_SHIM in the pages server). Only trust messages
+// coming from the page iframe we mounted.
+function handlePageMessage(e: MessageEvent) {
+  if (e.source !== pageIframe?.contentWindow) return;
+  const data = e.data;
+  if (data?.type !== "volute-pages-nav" || typeof data.path !== "string") return;
+  syncBreadcrumbFromPath(data.path);
 }
 
 function handleSelectPage(mind: string, path: string) {
@@ -105,10 +113,10 @@ function handleSelectSite(name: string) {
 <div class="ext-app" class:full-page={route.view === "page"}>
   {#if route.view === "page"}
     <iframe
+      bind:this={pageIframe}
       src="/ext/pages/public/{route.name}/{route.path}"
       class="full-page-iframe"
       title="{route.name}/{route.path}"
-      onload={handleIframeNav}
     ></iframe>
   {:else if (route.view === "site" || route.view === "mind") && selectedSite}
     <SiteView site={selectedSite} onSelectPage={handleSelectPage} />
