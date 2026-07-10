@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { eq } from "drizzle-orm";
+import { relativeAge } from "../packages/cli/src/commands/mind-list.js";
 import { createUser } from "../packages/daemon/src/lib/auth.js";
 import {
   getScheduler,
@@ -24,11 +25,11 @@ import { createSession } from "../packages/daemon/src/web/middleware/auth.js";
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 describe("firstWeekSchedules", () => {
-  it("builds four one-time schedules 24h apart", () => {
+  it("builds two one-time schedules 24h apart", () => {
     const sproutedAt = new Date("2026-07-10T12:00:00.000Z");
     const schedules = firstWeekSchedules("fern", sproutedAt);
 
-    assert.equal(schedules.length, 4);
+    assert.equal(schedules.length, 2);
     schedules.forEach((s, i) => {
       assert.equal(s.id, `firstweek-fern-day${i + 1}`);
       assert.equal(s.fireAt, new Date(sproutedAt.getTime() + (i + 1) * DAY_MS).toISOString());
@@ -36,6 +37,38 @@ describe("firstWeekSchedules", () => {
       assert.equal(s.enabled, true);
       assert.ok(s.message?.includes("fern"), `day ${i + 1} message should mention the mind`);
     });
+  });
+
+  it("day 1 opens with company and a home; day 2 with dreams and notes", () => {
+    const [dayOne, dayTwo] = firstWeekSchedules("fern", new Date("2026-07-10T12:00:00.000Z"));
+
+    // Day 1: company (a hello / neighbor) plus a homepage — the cures for
+    // lonely and lost. No scripted journal cue anymore.
+    assert.match(dayOne.message ?? "", /#system|neighbor/i);
+    assert.match(dayOne.message ?? "", /homepage/i);
+    // Day 2: the inner/outer pair — dreams and notes.
+    assert.match(dayTwo.message ?? "", /dream/i);
+    assert.match(dayTwo.message ?? "", /note/i);
+  });
+});
+
+describe("relativeAge", () => {
+  const now = new Date("2026-07-10T12:00:00.000Z").getTime();
+
+  it("formats DB timestamps without a trailing Z as UTC", () => {
+    // A mind created two days ago, stored in the DB's "YYYY-MM-DD HH:MM:SS" form.
+    assert.equal(relativeAge("2026-07-08 12:00:00", now), "2d");
+  });
+
+  it("scales from minutes to weeks", () => {
+    assert.equal(relativeAge("2026-07-10T11:30:00.000Z", now), "30m");
+    assert.equal(relativeAge("2026-07-10T09:00:00.000Z", now), "3h");
+    assert.equal(relativeAge("2026-06-26T12:00:00.000Z", now), "2w");
+  });
+
+  it("returns empty for unparseable or future timestamps", () => {
+    assert.equal(relativeAge("not a date", now), "");
+    assert.equal(relativeAge("2026-07-11T12:00:00.000Z", now), "");
   });
 });
 
@@ -135,7 +168,7 @@ describe("sprout swaps nurture for the first-week arc", () => {
     );
 
     const arc = schedules.filter((s) => s.id.startsWith(`firstweek-${seedName}-`));
-    assert.equal(arc.length, 4);
+    assert.equal(arc.length, 2);
     for (const [i, s] of arc.entries()) {
       assert.equal(s.id, `firstweek-${seedName}-day${i + 1}`);
       assert.ok(s.fireAt, "arc schedules are one-time");
@@ -157,7 +190,7 @@ describe("sprout swaps nurture for the first-week arc", () => {
 
     // The scheduler singleton picked up the new schedules in memory.
     const loaded = loadedSpiritSchedules();
-    assert.equal(loaded.filter((s) => s.id.startsWith(`firstweek-${seedName}-`)).length, 4);
+    assert.equal(loaded.filter((s) => s.id.startsWith(`firstweek-${seedName}-`)).length, 2);
     assert.ok(!loaded.some((s) => s.id === `nurture-${seedName}`));
   });
 
@@ -168,7 +201,7 @@ describe("sprout swaps nurture for the first-week arc", () => {
     assert.equal(res.status, 200);
 
     const arc = readSpiritSchedules().filter((s) => s.id.startsWith(`firstweek-${seedName}-`));
-    assert.equal(arc.length, 4);
+    assert.equal(arc.length, 2);
   });
 
   it("leaves an unparseable spirit config untouched and still sprouts", async () => {

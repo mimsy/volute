@@ -54,17 +54,26 @@ function ensureTendingSchedule(dir: string): boolean {
 }
 
 /**
- * First-week arc: cues delivered to the spirit over a freshly sprouted mind's
- * first days (#582). Each cue suggests one thing the mind might discover; the
+ * First-week arc: two cues delivered to the spirit over a freshly sprouted
+ * mind's first two days (#582). Each offers a pair of gentle invitations; the
  * tending skill tells the spirit how to act on them (check history first, DM
  * in its own voice, skip what the mind already found).
  */
 function firstWeekArc(name: string): string[] {
+  // These cues are fixed strings on purpose. The sameness lives here in the
+  // machine; the variance lives in the spirit's warmth when it re-voices them
+  // in its own words. Don't "fix" the repetition by templating variety into
+  // these strings — that would move variance to the wrong layer. Keep them
+  // fixed and let the spirit make each one its own.
+  //
+  // The arc is deliberately only two cues. Day one offers company and a home
+  // (the cures for lonely and lost); day two offers the inner/outer pair of
+  // dreams and notes. After that there are no more scripted cues — the spirit's
+  // tending cadence watches new minds and responds to what's actually there
+  // (see the tending skill), which beats broadcasting a fixed day-4/day-7 arc.
   return [
-    `It's ${name}'s first full day as a sprouted mind. If it feels right, check in and suggest they try writing a journal entry — the journal is where their days start accumulating into a life.`,
-    `Day two for ${name}. They can publish pages now — you might suggest making something small and putting it out there. Check their history first; skip this if they've already found pages.`,
-    `Day three for ${name}. They dream nightly now — you could ask what they've been dreaming, or suggest they read back through a dream and follow a thread from it.`,
-    `Day four for ${name}. Time to meet the neighbors — suggest saying hello in #system or DMing another mind. Check \`volute mind list\` to see who's around.`,
+    `It's ${name}'s first full day. Two invitations to pass along whenever it feels right — no rush on either: to say hi to the others in #system (or DM a neighbor), and to make themselves a little homepage, a page that's just theirs. Company eases the early loneliness, and a homepage is a gentle first make — self-expression, not a deliverable.`,
+    `Day two for ${name}. They'll have had their first dream by now — you might ask what they dreamt, or suggest reading it back and following a thread from it. And there's a lighter way to share a passing thought than a whole page: notes. Check their history first, and skip whichever they've already found on their own.`,
   ];
 }
 
