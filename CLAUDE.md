@@ -452,10 +452,10 @@ The daemon is a single privileged process (root on `--system`/Docker) that expos
 
 ```sh
 docker build -t volute .
-docker run -d --init -p 1618:1618 -v volute-data:/data -v volute-minds:/minds volute
+docker run -d -p 1618:1618 -v volute-data:/data -v volute-minds:/minds volute
 ```
 
-`--init` runs tini as PID 1 so orphaned mind grandchildren get reaped instead of accumulating as `<defunct>` zombies (the daemon is PID 1 otherwise and does not reap reparented orphans). The compose file sets `init: true` for the same reason.
+The image bakes tini in as its `ENTRYPOINT` (PID 1) so orphaned mind grandchildren get reaped instead of accumulating as `<defunct>` zombies (the daemon does not reap reparented orphans). This works for every launch path — plain `docker run`, compose, or the e2e scripts — with no `--init` flag or `init: true` needed.
 
 Or with docker-compose: `docker compose up -d`. The container runs with `VOLUTE_ISOLATION=user` enabled, so each mind gets its own Linux user inside the container.
 
