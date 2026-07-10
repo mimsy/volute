@@ -225,7 +225,10 @@ function handleSSEEvent(event: SSEEvent) {
       item.type === "mind_stopped" ||
       item.type === "mind_sleeping" ||
       item.type === "mind_waking" ||
-      item.type === "profile_updated"
+      item.type === "mind_error" ||
+      item.type === "profile_updated" ||
+      // A clean turn clears a lingering lastError — refresh only when one is showing.
+      (item.type === "mind_done" && data.minds.some((m) => m.name === item.mind && m.lastError))
     ) {
       fetchMinds()
         .then((m) => {

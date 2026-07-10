@@ -275,6 +275,9 @@ export async function handleMindEvent(
       detail,
       raw: event.content ?? null,
     });
+    // Nudge connected web clients to refresh mind status so chat surfaces the
+    // failure immediately (#574).
+    broadcast({ type: "mind_error", mind, summary: detail });
   }
 
   if (event.type === "done") {
