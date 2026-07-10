@@ -2,6 +2,7 @@ import {
   cpSync,
   existsSync,
   mkdirSync,
+  mkdtempSync,
   readdirSync,
   readFileSync,
   renameSync,
@@ -70,10 +71,10 @@ export function composeTemplate(
     process.exit(1);
   }
 
-  // Create temp staging directory (include template name to avoid collisions when
-  // composing multiple templates in quick succession, e.g. in tests)
-  const composedDir = resolve(tmpdir(), `volute-template-${templateName}-${Date.now()}`);
-  mkdirSync(composedDir, { recursive: true });
+  // Create a unique temp staging directory. A timestamp suffix is not enough: two
+  // concurrent compositions of the same template in the same millisecond would share
+  // the dir, and one's cleanup rmSync yanks it out from under the other (test flake).
+  const composedDir = mkdtempSync(resolve(tmpdir(), `volute-template-${templateName}-`));
 
   // Copy _base first
   cpSync(baseDir, composedDir, { recursive: true });
