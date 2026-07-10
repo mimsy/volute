@@ -44,6 +44,10 @@ const cmd = subcommands({
       description: "View mind activity history",
       run: (args) => import("./mind-history.js").then((m) => m.run(transformMindFlag(args))),
     },
+    contacts: {
+      description: "Who a mind has recently been in contact with",
+      run: (args) => import("./mind-contacts.js").then((m) => m.run(transformMindFlag(args))),
+    },
     profile: {
       description: "Update mind profile",
       run: (args) => import("./mind-profile.js").then((m) => m.run(args)),

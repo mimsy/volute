@@ -2710,6 +2710,58 @@ const app = new Hono<AuthEnv>()
       .where(eq(mindHistory.mind, name));
     return c.json(rows.map((r) => r.channel));
   })
+  // Freshness-independent "who has this mind talked to lately" view. Reads raw
+  // mind_history (NOT the rolled-up summaries table), so it never trails the
+  // summarizer — the spirit uses it while tending so a first-week cue doesn't
+  // suggest a mind greet a neighbor it has been DMing for the last 20 minutes.
+  // Aggregates inbound/outbound rows per channel over a recent window.
+  .get("/:name/history/contacts", requireSelf(), async (c) => {
+    const name = c.req.param("name");
+    const rawHours = parseInt(c.req.query("hours") ?? "48", 10);
+    const hours = Math.min(Math.max(Number.isNaN(rawHours) ? 48 : rawHours, 1), 168);
+    const cutoff = new Date(Date.now() - hours * 3600_000)
+      .toISOString()
+      .replace("T", " ")
+      .slice(0, 19);
+
+    const db = await getDb();
+    const contacts = await db
+      .select({
+        channel: mindHistory.channel,
+        last_at: sql<string>`MAX(${mindHistory.created_at})`,
+        last_inbound_at: sql<
+          string | null
+        >`MAX(CASE WHEN ${mindHistory.type} = 'inbound' THEN ${mindHistory.created_at} END)`,
+        last_outbound_at: sql<
+          string | null
+        >`MAX(CASE WHEN ${mindHistory.type} = 'outbound' THEN ${mindHistory.created_at} END)`,
+        message_count: sql<number>`COUNT(*)`,
+        // The counterparty: most recent inbound sender on this channel. For a
+        // DM the channel name already carries it (e.g. @atlas), but this also
+        // covers shared channels (#system) and rows where the channel is opaque.
+        last_sender: sql<string | null>`(
+          SELECT sender FROM mind_history h2
+          WHERE h2.mind = ${name}
+            AND h2.channel = ${mindHistory.channel}
+            AND h2.type = 'inbound'
+            AND h2.sender IS NOT NULL
+          ORDER BY h2.created_at DESC, h2.id DESC LIMIT 1
+        )`,
+      })
+      .from(mindHistory)
+      .where(
+        and(
+          eq(mindHistory.mind, name),
+          sql`${mindHistory.type} IN ('inbound','outbound')`,
+          sql`${mindHistory.channel} IS NOT NULL`,
+          sql`${mindHistory.created_at} >= ${cutoff}`,
+        ),
+      )
+      .groupBy(mindHistory.channel)
+      .orderBy(sql`MAX(${mindHistory.created_at}) DESC`);
+
+    return c.json({ hours, contacts });
+  })
   .get("/:name/history/export", requireSelf(), async (c) => {
     const name = c.req.param("name");
     if (!(await findMind(name))) return c.json({ error: "Mind not found" }, 404);
