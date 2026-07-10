@@ -1,9 +1,12 @@
 <script lang="ts">
 import type { ConversationWithParticipants, Mind } from "@volute/api";
 import type { Selection } from "../../lib/navigate";
+import { showMindOnboarding } from "../../lib/onboarding";
+import { data } from "../../lib/stores.svelte";
 import Home from "../../pages/Home.svelte";
 import MindPage from "../../pages/MindPage.svelte";
 import Chat from "../chat/Chat.svelte";
+import MindEmptyState from "../MindEmptyState.svelte";
 import TurnTimeline from "../TurnTimeline.svelte";
 
 let {
@@ -14,6 +17,7 @@ let {
   onConversationId,
   onOpenMind,
   onSelectConversation,
+  onSeed,
   onTypingNames,
   onToggleSidebar,
   onOpenRightPanel,
@@ -25,6 +29,7 @@ let {
   onConversationId: (id: string) => void;
   onOpenMind: (mind: Mind) => void;
   onSelectConversation: (id: string) => void;
+  onSeed: () => void;
   onTypingNames?: (names: string[]) => void;
   onToggleSidebar?: () => void;
   onOpenRightPanel?: () => void;
@@ -118,8 +123,13 @@ let contextLabel = $derived.by(() => {
       <iframe src="/ext/{selection.extensionId}/#{selection.path ? '/' + selection.path : ''}" class="page-iframe" title="Extension"></iframe>
     </div>
   {:else if selection.kind === "system-history"}
-    <div class="frame-content mind-frame">
-      <TurnTimeline />
+    <div class="frame-content mind-frame timeline-frame">
+      {#if showMindOnboarding(minds, data.mindsLoaded)}
+        <MindEmptyState {minds} {onSeed} />
+      {/if}
+      <div class="timeline-wrap">
+        <TurnTimeline />
+      </div>
     </div>
   {:else}
     <div class="frame-content padded">
@@ -148,6 +158,16 @@ let contextLabel = $derived.by(() => {
 
   .frame-content.mind-frame {
     overflow: hidden;
+  }
+
+  .timeline-frame {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .timeline-wrap {
+    flex: 1;
+    min-height: 0;
   }
 
   .page-iframe {

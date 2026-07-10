@@ -794,6 +794,7 @@ function handleGlobalClick(e: MouseEvent) {
               onConversationId={handleConversationId}
               onSelectConversation={handleSelectConversation}
               onOpenMind={handleOpenMindModal}
+              onSeed={() => (activeModal = "seed")}
               onTypingNames={(names) => { typingNames = names; }}
               onToggleSidebar={toggleSidebar}
               onOpenRightPanel={hasRightPanel ? openRightPanel : undefined}

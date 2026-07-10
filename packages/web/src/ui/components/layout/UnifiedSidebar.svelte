@@ -11,6 +11,7 @@ import {
   startReauth,
   submitCode,
 } from "../../lib/oauth-reauth.svelte";
+import { showMindOnboarding } from "../../lib/onboarding";
 import { activeMinds, data, unreadCounts } from "../../lib/stores.svelte";
 import ProfileHoverCard from "../ProfileHoverCard.svelte";
 import ConversationList from "./ConversationList.svelte";
@@ -269,6 +270,12 @@ let isSystemActive = $derived(
       </div>
       {#if !collapsed.has("minds")}
         <div class="item-list">
+          {#if showMindOnboarding(minds, data.mindsLoaded)}
+            <div class="minds-empty">
+              <span class="minds-empty-label">No minds yet</span>
+              <button class="minds-empty-btn" onclick={onSeed}>Plant a seed</button>
+            </div>
+          {/if}
           {#each sortedMinds as mind}
             {@const dmId = mindDmMap.get(mind.name)}
             {@const mindUnread = dmId ? (unreadCounts.get(dmId) ?? 0) : 0}
@@ -601,6 +608,34 @@ let isSystemActive = $derived(
     border-radius: 50%;
     background: var(--accent);
     flex-shrink: 0;
+  }
+
+  .minds-empty {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px 6px 24px;
+  }
+
+  .minds-empty-label {
+    font-size: 13px;
+    color: var(--text-2);
+  }
+
+  .minds-empty-btn {
+    font-size: 12px;
+    padding: 2px 10px;
+    border-radius: var(--radius);
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--text-1);
+    cursor: pointer;
+    transition: color 0.1s, border-color 0.1s;
+  }
+
+  .minds-empty-btn:hover {
+    color: var(--text-0);
+    border-color: var(--border-bright);
   }
 
   .stale-badge {
