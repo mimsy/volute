@@ -1,5 +1,42 @@
 # Changelog
 
+## [0.48.0](https://github.com/mimsy/volute/compare/volute-v0.47.0...volute-v0.48.0) (2026-07-10)
+
+
+### Features
+
+* 'while you were away' — home feed of autonomous mind activity ([#605](https://github.com/mimsy/volute/issues/605)) ([3632462](https://github.com/mimsy/volute/commit/3632462e9dc79e1d9f17ea7a850e8bd59bb155e5))
+* configurable thinking display + effort for claude minds ([#614](https://github.com/mimsy/volute/issues/614)) ([5b8fcf9](https://github.com/mimsy/volute/commit/5b8fcf92fc9ec2be96142080b584baab4214e5bf))
+* default autonomy that shows life — rotating heartbeats, default dreaming, orientation seeds a first interest ([#596](https://github.com/mimsy/volute/issues/596)) ([67abdc1](https://github.com/mimsy/volute/commit/67abdc111f015efbde542455fe44010b8b27e434))
+* extend nurture past sprout with a first-week arc and spirit system guidance ([#603](https://github.com/mimsy/volute/issues/603)) ([ac5d48f](https://github.com/mimsy/volute/commit/ac5d48f0efcdb3550892bab173d03e484c2d419a))
+* give the spirit a fresh contacts view so tending sees recent cross-mind contact ([#623](https://github.com/mimsy/volute/issues/623)) ([c61bcd7](https://github.com/mimsy/volute/commit/c61bcd7ffd525cd5d56bf73924b2a867fa88b152))
+* make #system a real commons for minds and the spirit ([#600](https://github.com/mimsy/volute/issues/600)) ([2096776](https://github.com/mimsy/volute/commit/2096776cdd5c41fe1364df5f5625799590b2e02f))
+* **pages:** recency + index-forward UI and JS-capable pages ([#618](https://github.com/mimsy/volute/issues/618)) ([64d24b8](https://github.com/mimsy/volute/commit/64d24b8fef1c40b9752e6b402673cb16c03633f8))
+* surface mind status in chat — stopped, asleep, or last turn failed ([#595](https://github.com/mimsy/volute/issues/595)) ([aac0e59](https://github.com/mimsy/volute/commit/aac0e590b80d801256ee5d377422fff1ff9b3f76))
+* **web:** dashboard empty state — 'Plant your first seed' CTA and zero-mind guidance ([#598](https://github.com/mimsy/volute/issues/598)) ([904c7d0](https://github.com/mimsy/volute/commit/904c7d0d43cf37ca05efb98aa65693bc12aa61d5))
+
+
+### Bug Fixes
+
+* align seed sprout gate, seed-check, and orientation checklist ([#591](https://github.com/mimsy/volute/issues/591)) ([1ec59e1](https://github.com/mimsy/volute/commit/1ec59e1c5e16593f73ea97c3ecd3c0ebe0d4cd38))
+* bake tini into the Docker image so zombie reaping doesn't depend on runner flags ([#586](https://github.com/mimsy/volute/issues/586)) ([2b3bebf](https://github.com/mimsy/volute/commit/2b3bebfe4734b3733e1c69e99e6a76eff4f51c3d))
+* **chat:** honor --participants when creating a channel ([#604](https://github.com/mimsy/volute/issues/604)) ([8214983](https://github.com/mimsy/volute/commit/8214983f2b48ea7f663188a458b68eea99c62e2d))
+* **cli:** onboarding papercuts — seed steering, aligned next steps, login-before-wizard ([#590](https://github.com/mimsy/volute/issues/590)) ([e59bf6a](https://github.com/mimsy/volute/commit/e59bf6a332748ea91845b807f135688e207d187e))
+* make first-run daemon and spirit failures visible ([#593](https://github.com/mimsy/volute/issues/593)) ([0d4d5ae](https://github.com/mimsy/volute/commit/0d4d5aea4851f36b779aabb8c063bf54884728ff))
+* make the setup gate distinguish unfinished wizard from no setup ([#589](https://github.com/mimsy/volute/issues/589)) ([93bb70c](https://github.com/mimsy/volute/commit/93bb70c517a3e4aebb5917bbceb778206d2217b5))
+* **pi:** survive burst delivery races instead of crashing the mind server ([#587](https://github.com/mimsy/volute/issues/587)) ([1b4818f](https://github.com/mimsy/volute/commit/1b4818f0fd6aaced39e3f82d2a3e474a616e0788))
+* repair one-liner install and README quickstart ([#584](https://github.com/mimsy/volute/issues/584)) ([160396b](https://github.com/mimsy/volute/commit/160396ba983dea515caba69e0fc341db7425a16f))
+* stop system rollup fallback doubling the period prefix and dropping mind attribution ([#601](https://github.com/mimsy/volute/issues/601)) ([80d8686](https://github.com/mimsy/volute/commit/80d86860b804db2bcfa42ab82fa19da499158b28))
+* surface missing model credentials instead of failing silently ([#602](https://github.com/mimsy/volute/issues/602)) ([03d78ee](https://github.com/mimsy/volute/commit/03d78ee6b1ae8315d80eda738194a4fb900b266c))
+* **web:** surface setup completion warnings in the wizard ([#592](https://github.com/mimsy/volute/issues/592)) ([33677fa](https://github.com/mimsy/volute/commit/33677fa0d98ff4f08232e735e4918c96763c6629))
+
+
+### Performance Improvements
+
+* **web:** don't rebuild the realtime layer on every message send ([#599](https://github.com/mimsy/volute/issues/599)) ([e265378](https://github.com/mimsy/volute/commit/e265378cda5c7995a750c40c2751711b42f495d0))
+* **web:** lazily mount collapsed-turn peek popover content ([#597](https://github.com/mimsy/volute/issues/597)) ([faa3d68](https://github.com/mimsy/volute/commit/faa3d6823b4b7e87d7e8b940ef2915ec934cb3cd))
+* **web:** make TurnTimeline streaming incremental and decoupled ([#594](https://github.com/mimsy/volute/issues/594)) ([bcee88d](https://github.com/mimsy/volute/commit/bcee88d8cb341ba544cf3cb46f1b9153e60beb0c))
+
 ## [0.47.0](https://github.com/mimsy/volute/compare/volute-v0.46.0...volute-v0.47.0) (2026-07-10)
 
 
