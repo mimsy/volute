@@ -6,11 +6,18 @@ import { getPrompt } from "../prompts.js";
 import { messages, mindHistory, summaries, turns } from "../schema.js";
 import { summarizeTool } from "../util/format-tool.js";
 import log from "../util/logger.js";
+import {
+  getPeriodKey,
+  getPreviousPeriodKey,
+  getTimeRange,
+  parseUtcDateTime,
+  type TimerPeriod,
+  utcDateTimeStr,
+} from "../util/period-keys.js";
 
 const sLog = log.child("summarizer");
 
-/** Periods that participate in timer-driven periodic summarization */
-export type TimerPeriod = "hour" | "day" | "week" | "month";
+export { getPeriodKey, getPreviousPeriodKey, getTimeRange, type TimerPeriod };
 
 /** All summary periods including event-driven turn summaries */
 export type Period = "turn" | TimerPeriod;
@@ -25,131 +32,6 @@ export const SYSTEM_MIND = "_system";
  * turn must look before we step in.
  */
 const WEDGED_TURN_IDLE_MS = 15 * 60_000;
-
-// ── Period key helpers (local time) ──
-// Period keys use local time so summaries align with the user's day/hour boundaries.
-
-export function getPeriodKey(date: Date, period: TimerPeriod): string {
-  switch (period) {
-    case "hour": {
-      const y = date.getFullYear();
-      const m = String(date.getMonth() + 1).padStart(2, "0");
-      const d = String(date.getDate()).padStart(2, "0");
-      const h = String(date.getHours()).padStart(2, "0");
-      return `${y}-${m}-${d}T${h}`;
-    }
-    case "day": {
-      const y = date.getFullYear();
-      const m = String(date.getMonth() + 1).padStart(2, "0");
-      const d = String(date.getDate()).padStart(2, "0");
-      return `${y}-${m}-${d}`;
-    }
-    case "week":
-      return getISOWeekKey(date);
-    case "month": {
-      const y = date.getFullYear();
-      const m = String(date.getMonth() + 1).padStart(2, "0");
-      return `${y}-${m}`;
-    }
-  }
-}
-
-function getISOWeekKey(date: Date): string {
-  // Use local date for week calculation
-  const d = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-  d.setDate(d.getDate() + 4 - (d.getDay() || 7));
-  const yearStart = new Date(d.getFullYear(), 0, 1);
-  const weekNum = Math.ceil(((d.getTime() - yearStart.getTime()) / 86400000 + 1) / 7);
-  return `${d.getFullYear()}-W${String(weekNum).padStart(2, "0")}`;
-}
-
-export function getPreviousPeriodKey(key: string, period: TimerPeriod): string {
-  switch (period) {
-    case "hour": {
-      const d = new Date(`${key.slice(0, 10)}T${key.slice(11)}:00:00`);
-      d.setHours(d.getHours() - 1);
-      return getPeriodKey(d, "hour");
-    }
-    case "day": {
-      const d = new Date(`${key}T00:00:00`);
-      d.setDate(d.getDate() - 1);
-      return getPeriodKey(d, "day");
-    }
-    case "week": {
-      const d = isoWeekToDate(key);
-      d.setDate(d.getDate() - 7);
-      return getPeriodKey(d, "week");
-    }
-    case "month": {
-      const [y, m] = key.split("-").map(Number);
-      const d = new Date(y, m - 2, 1);
-      return getPeriodKey(d, "month");
-    }
-  }
-}
-
-function isoWeekToDate(weekKey: string): Date {
-  const [yearStr, weekStr] = weekKey.split("-W");
-  const year = parseInt(yearStr, 10);
-  const week = parseInt(weekStr, 10);
-  const jan4 = new Date(year, 0, 4);
-  const dayOfWeek = jan4.getDay() || 7;
-  const monday = new Date(jan4);
-  monday.setDate(jan4.getDate() - dayOfWeek + 1 + (week - 1) * 7);
-  return monday;
-}
-
-function localDateStr(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-}
-
-/** Format a Date as "YYYY-MM-DD HH:MM:SS" in UTC (matching SQLite datetime('now') format) */
-function utcDateTimeStr(d: Date): string {
-  return d.toISOString().replace("T", " ").slice(0, 19);
-}
-
-/** Parse a "YYYY-MM-DD HH:MM:SS" UTC datetime string (as stored via datetime('now')). */
-function parseUtcDateTime(s: string): Date {
-  return new Date(`${s.replace(" ", "T")}Z`);
-}
-
-export function getTimeRange(
-  periodKey: string,
-  period: TimerPeriod,
-): { start: string; end: string } {
-  // Hour: convert local period key to UTC for comparison against created_at
-  // (stored as UTC via datetime('now')). Other periods return local-time
-  // strings for comparison against period_key columns (which are local).
-  switch (period) {
-    case "hour": {
-      const d = new Date(`${periodKey.slice(0, 10)}T${periodKey.slice(11)}:00:00`);
-      const dEnd = new Date(d.getTime() + 3600000);
-      return { start: utcDateTimeStr(d), end: utcDateTimeStr(dEnd) };
-    }
-    case "day":
-      return { start: `${periodKey} 00:00:00`, end: `${periodKey} 23:59:59` };
-    case "week": {
-      const monday = isoWeekToDate(periodKey);
-      const sunday = new Date(monday);
-      sunday.setDate(monday.getDate() + 6);
-      return {
-        start: `${localDateStr(monday)} 00:00:00`,
-        end: `${localDateStr(sunday)} 23:59:59`,
-      };
-    }
-    case "month": {
-      const [y, m] = periodKey.split("-").map(Number);
-      const lastDay = new Date(y, m, 0).getDate();
-      return {
-        start: `${periodKey}-01 00:00:00`,
-        end: `${periodKey}-${String(lastDay).padStart(2, "0")} 23:59:59`,
-      };
-    }
-  }
-}
 
 // ── Turn summarization (event-driven) ──
 

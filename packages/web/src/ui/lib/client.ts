@@ -461,11 +461,17 @@ export function restartDaemon(): Promise<void> {
   return post(`${V1}/system/restart`);
 }
 
-export async function fetchSystemInfo(): Promise<{ system: string | null; name: string | null }> {
+export async function fetchSystemInfo(): Promise<{
+  system: string | null;
+  name: string | null;
+  timezone: string | null;
+}> {
   try {
-    return await get<{ system: string | null; name: string | null }>(`${V1}/system/info`);
+    return await get<{ system: string | null; name: string | null; timezone: string | null }>(
+      `${V1}/system/info`,
+    );
   } catch {
-    return { system: null, name: null };
+    return { system: null, name: null, timezone: null };
   }
 }
 

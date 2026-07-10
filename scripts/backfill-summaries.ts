@@ -14,9 +14,9 @@ import {
   summarizePeriod,
   summarizeSystem,
   type TimerPeriod,
-} from "../src/lib/daemon/summarizer.js";
-import { getDb } from "../src/lib/db.js";
-import { mindHistory, summaries, turns } from "../src/lib/schema.js";
+} from "../packages/daemon/src/lib/daemon/summarizer.js";
+import { getDb } from "../packages/daemon/src/lib/db.js";
+import { mindHistory, summaries, turns } from "../packages/daemon/src/lib/schema.js";
 
 async function migrateTurnSummaries() {
   const db = await getDb();
@@ -98,26 +98,33 @@ async function discoverPeriodKeys(period: TimerPeriod): Promise<string[]> {
 
   if (!range?.min || !range?.max) return [];
 
+  // created_at is stored as UTC (datetime('now')), so parse the endpoints as
+  // UTC instants — but step the cursor in *local* calendar units so it matches
+  // getPeriodKey, which derives keys from local fields. Mixing UTC steps with
+  // local keys skips or duplicates the edge bucket around DST transitions.
   const start = new Date(range.min + "Z");
   const end = new Date(range.max + "Z");
   const keys = new Set<string>();
 
-  // Walk from start to end generating period keys
   const cursor = new Date(start);
   while (cursor <= end) {
     keys.add(getPeriodKey(cursor, period));
     switch (period) {
       case "hour":
-        cursor.setUTCHours(cursor.getUTCHours() + 1);
+        cursor.setHours(cursor.getHours() + 1);
         break;
       case "day":
-        cursor.setUTCDate(cursor.getUTCDate() + 1);
+        cursor.setDate(cursor.getDate() + 1);
         break;
       case "week":
-        cursor.setUTCDate(cursor.getUTCDate() + 7);
+        cursor.setDate(cursor.getDate() + 7);
         break;
       case "month":
-        cursor.setUTCMonth(cursor.getUTCMonth() + 1);
+        // Normalize to the 1st before stepping so a start day of 29-31 doesn't
+        // overflow and skip a shorter month (e.g. Jan 31 → Mar 3, losing Feb).
+        // Day-of-month is irrelevant to the "YYYY-MM" key.
+        cursor.setDate(1);
+        cursor.setMonth(cursor.getMonth() + 1);
         break;
     }
   }

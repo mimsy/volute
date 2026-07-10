@@ -15,6 +15,7 @@ import {
   users,
 } from "../../lib/schema.js";
 import log from "../../lib/util/logger.js";
+import { isoWeekKeyForDateStr } from "../../lib/util/period-keys.js";
 import type { AuthEnv } from "../middleware/auth.js";
 
 /**
@@ -498,8 +499,17 @@ const history = new Hono<HistoryEnv>()
     const db = await getDb();
     const conditions = [eq(summaries.mind, mind), eq(summaries.period, period)];
 
-    if (from) conditions.push(gte(summaries.period_key, from));
-    if (to) conditions.push(sql`${summaries.period_key} <= ${to}`);
+    // Week period keys are ISO-week format ("YYYY-Www"), which does not sort
+    // against date-format ("YYYY-MM-DD") bounds under binary collation. When a
+    // caller passes date bounds for the week tier, translate them to the ISO
+    // week key of the week *containing* that date so the string comparison is
+    // correct (a week straddling the bound is included when any day falls in
+    // range). Other tiers already use prefix-compatible date keys.
+    const normalizeBound = (bound: string) =>
+      period === "week" ? isoWeekKeyForDateStr(bound) : bound;
+
+    if (from) conditions.push(gte(summaries.period_key, normalizeBound(from)));
+    if (to) conditions.push(sql`${summaries.period_key} <= ${normalizeBound(to)}`);
 
     const rows = await db
       .select({

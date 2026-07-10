@@ -93,7 +93,15 @@ const app = new Hono<AuthEnv>()
   .get("/info", (c) => {
     const config = readSystemsConfig();
     const globalConfig = readGlobalConfig();
-    return c.json({ system: config?.system ?? null, name: globalConfig.name ?? null });
+    // The daemon host's timezone is the canonical timeline timezone: period
+    // keys are computed in server-local time, so remote viewers anchor their
+    // boundary math and labels to it rather than the browser's zone.
+    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone ?? null;
+    return c.json({
+      system: config?.system ?? null,
+      name: globalConfig.name ?? null,
+      timezone,
+    });
   })
   .put("/info", requireAdmin, zValidator("json", z.object({ name: z.string() })), (c) => {
     const { name } = c.req.valid("json");
