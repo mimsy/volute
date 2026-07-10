@@ -189,21 +189,24 @@ main() {
   echo "Installing volute..."
   /usr/bin/npm install -g volute
 
-  # Run setup (writes /etc/profile.d/volute.sh for CLI env vars)
-  echo "Running volute service install --system..."
-  /usr/bin/volute service install --system --host 0.0.0.0
+  # Run setup (installs the service, starts the daemon, writes /etc/profile.d/volute.sh)
+  echo "Running volute setup --system..."
+  /usr/bin/volute setup --system --host 0.0.0.0
 
   # Source the profile so env vars are available in this session
   # shellcheck disable=SC1091
   [ -f /etc/profile.d/volute.sh ] && . /etc/profile.d/volute.sh
 
+  HOST_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
+  [ -n "$HOST_IP" ] || HOST_IP="<this-server>"
+
   echo ""
-  echo "Volute is installed and running."
+  echo "Volute is installed and the daemon is running."
+  echo "  Finish setup in your browser at http://${HOST_IP}:1618"
+  echo "  (create your admin account and connect an AI provider)"
+  echo ""
   echo "  Run 'source /etc/profile.d/volute.sh' or start a new shell to use volute CLI commands."
-  echo ""
   echo "  systemctl status volute      Check daemon status"
-  echo "  volute mind create <name>    Create a new mind"
-  echo "  volute mind start <name>     Start a mind"
 }
 
 main "$@"
