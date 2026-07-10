@@ -13,7 +13,7 @@ const cmd = subcommands({
   description: "Manage minds",
   commands: {
     create: {
-      description: "Create a new mind",
+      description: "Create a new mind (see 'volute seed create' for the recommended path)",
       run: (args) => import("./create.js").then((m) => m.run(args)),
     },
     start: {
