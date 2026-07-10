@@ -1,12 +1,19 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { eq } from "drizzle-orm";
 import {
   clearDeliveredNotices,
   drainNotices,
   formatNotices,
+  hasUndeliveredNotice,
+  latestFailureNotice,
+  latestNotice,
+  MIND_LEVEL_SESSION,
   type Notice,
   recordNotice,
 } from "../packages/daemon/src/lib/daemon/notices.js";
+import { getDb } from "../packages/daemon/src/lib/db.js";
+import { turns } from "../packages/daemon/src/lib/schema.js";
 
 let counter = 0;
 function uniqueMind(): string {
@@ -156,6 +163,143 @@ describe("notices", () => {
   });
 });
 
+describe("latestFailureNotice", () => {
+  it("returns null when the mind has no notices", async () => {
+    assert.equal(await latestFailureNotice(uniqueMind()), null);
+  });
+
+  it("returns the newest failure across sessions", async () => {
+    const mind = uniqueMind();
+    await recordNotice({
+      mind,
+      session: "main",
+      kind: "turn_error",
+      reason: "network",
+      detail: "older",
+    });
+    await recordNotice({
+      mind,
+      session: "other",
+      kind: "crash",
+      reason: "process_crash",
+      detail: "newer",
+    });
+
+    const failure = await latestFailureNotice(mind);
+    assert.equal(failure?.kind, "crash");
+    assert.equal(failure?.reason, "process_crash");
+    assert.equal(failure?.detail, "newer");
+    assert.ok(failure?.at, "should carry the notice timestamp");
+  });
+
+  it("ignores budget and extension notices", async () => {
+    const mind = uniqueMind();
+    await recordNotice({
+      mind,
+      session: "main",
+      kind: "turn_error",
+      reason: "auth_error",
+      detail: "the failure",
+    });
+    await recordNotice({
+      mind,
+      session: "main",
+      kind: "budget",
+      reason: "token_budget",
+      detail: "budget pause",
+    });
+    await recordNotice({
+      mind,
+      session: "",
+      kind: "extension",
+      reason: "notes",
+      detail: "someone commented",
+    });
+
+    const failure = await latestFailureNotice(mind);
+    assert.equal(failure?.detail, "the failure");
+
+    const budgetOnly = uniqueMind();
+    await recordNotice({
+      mind: budgetOnly,
+      session: "main",
+      kind: "budget",
+      reason: "token_budget",
+      detail: "budget pause",
+    });
+    assert.equal(await latestFailureNotice(budgetOnly), null);
+  });
+
+  it("clears once delivered notices are deleted (recovery on a clean turn)", async () => {
+    const mind = uniqueMind();
+    await recordNotice({
+      mind,
+      session: "main",
+      kind: "turn_error",
+      reason: "overloaded",
+      detail: "a 529",
+    });
+    assert.ok(await latestFailureNotice(mind));
+
+    const drained = await drainNotices(mind, "main");
+    await clearDeliveredNotices(mind, "main", Math.max(...drained.map((n) => n.id)));
+    assert.equal(await latestFailureNotice(mind), null);
+  });
+
+  it("clears when another session completes a turn after the failure (cross-session recovery)", async () => {
+    // A failure in a session that never runs again must not pin the status
+    // bar forever: any turn completed after the notice counts as recovery.
+    const mind = uniqueMind();
+    await recordNotice({
+      mind,
+      session: "quiet-channel",
+      kind: "crash",
+      reason: "process_crash",
+      detail: "crashed",
+    });
+    assert.ok(await latestFailureNotice(mind));
+
+    const db = await getDb();
+    await db.insert(turns).values({
+      id: `${mind}-turn-1`,
+      mind,
+      session: "main",
+      status: "complete",
+      created_at: "2999-01-01 00:00:00",
+    });
+    try {
+      assert.equal(await latestFailureNotice(mind), null);
+    } finally {
+      await db.delete(turns).where(eq(turns.mind, mind));
+    }
+  });
+
+  it("a turn completed before the failure does not count as recovery", async () => {
+    const mind = uniqueMind();
+    const db = await getDb();
+    await db.insert(turns).values({
+      id: `${mind}-turn-0`,
+      mind,
+      session: "main",
+      status: "complete",
+      created_at: "2000-01-01 00:00:00",
+    });
+    try {
+      await recordNotice({
+        mind,
+        session: "main",
+        kind: "turn_error",
+        reason: "network",
+        detail: "still broken",
+      });
+      const failure = await latestFailureNotice(mind);
+      assert.equal(failure?.detail, "still broken");
+    } finally {
+      await db.delete(turns).where(eq(turns.mind, mind));
+    }
+  });
+});
+
 describe("formatNotices", () => {
   const base = {
     id: 1,
@@ -254,5 +398,42 @@ describe("formatNotices", () => {
     assert.match(out, /\[Notes\]/);
     // The failure header precedes the extension block.
     assert.ok(out.indexOf("[Notices]") < out.indexOf("[Notes]"));
+  });
+
+  it("latestNotice returns the newest un-drained notice across sessions", async () => {
+    const mind = uniqueMind();
+    assert.equal(await latestNotice(mind), null);
+    await recordNotice({
+      mind,
+      session: "main",
+      kind: "turn_error",
+      reason: "auth_error",
+      detail: "older",
+    });
+    await recordNotice({
+      mind,
+      session: MIND_LEVEL_SESSION,
+      kind: "startup",
+      reason: "no_credentials",
+      detail: "newest",
+    });
+    const latest = await latestNotice(mind);
+    assert.equal(latest?.detail, "newest");
+    assert.equal(latest?.reason, "no_credentials");
+  });
+
+  it("hasUndeliveredNotice detects (and dedupes) a reason for a mind", async () => {
+    const mind = uniqueMind();
+    assert.equal(await hasUndeliveredNotice(mind, "no_credentials"), false);
+    await recordNotice({
+      mind,
+      session: MIND_LEVEL_SESSION,
+      kind: "startup",
+      reason: "no_credentials",
+      detail: "mute",
+    });
+    assert.equal(await hasUndeliveredNotice(mind, "no_credentials"), true);
+    // A different reason is not matched.
+    assert.equal(await hasUndeliveredNotice(mind, "process_crash"), false);
   });
 });

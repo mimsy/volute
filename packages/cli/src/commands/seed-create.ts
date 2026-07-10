@@ -109,12 +109,15 @@ const cmd = command({
       error?: string;
       name?: string;
       port?: number;
+      credentialWarning?: string;
     };
 
     if (!createRes.ok) {
       console.error(createData.error ?? "Failed to create mind");
       process.exit(1);
     }
+
+    if (createData.credentialWarning) console.warn(`\n⚠ ${createData.credentialWarning}`);
 
     // Start the mind
     const startRes = await daemonFetch(

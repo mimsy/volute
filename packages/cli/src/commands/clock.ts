@@ -143,7 +143,12 @@ const listSchedulesCmd = command({
       return;
     }
 
-    const actionLabel = (s: Schedule) => (s.script ? `[script] ${s.script}` : (s.message ?? ""));
+    const actionLabel = (s: Schedule) =>
+      s.script
+        ? `[script] ${s.script}`
+        : s.messages?.length
+          ? `[rotating x${s.messages.length}] ${s.messages[0]}`
+          : (s.message ?? "");
 
     if (isCompact()) {
       for (const s of schedules) {

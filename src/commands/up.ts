@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, openSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { command } from "@volute/cli/lib/command.js";
 import {
+  daemonLogReport,
   getServiceMode,
   modeLabel,
   pollHealth,
@@ -13,6 +14,20 @@ import { voluteHome, voluteSystemDir } from "@volute/daemon/lib/mind/registry.js
 
 export type { GlobalConfig } from "@volute/daemon/lib/config/setup.js";
 export { readGlobalConfig };
+
+export type DaemonExit = { code: number | null; signal: NodeJS.Signals | null };
+
+/**
+ * Build the message shown when the daemon never becomes healthy. When the child
+ * process exited early we name the signal/exit code; otherwise it's a timeout.
+ */
+export function formatStartupFailure(exit: DaemonExit | null, timeoutMs: number): string {
+  if (exit) {
+    const cause = exit.signal ? `signal ${exit.signal}` : `exit code ${exit.code}`;
+    return `Daemon exited (${cause}) before becoming healthy.`;
+  }
+  return `Daemon started but did not become healthy within ${Math.round(timeoutMs / 1000)}s.`;
+}
 
 const cmd = command({
   name: "volute up",
@@ -41,6 +56,7 @@ const cmd = command({
         console.log(`Volute daemon running on ${h}:${p}`);
       } else {
         console.error("Service started but daemon did not become healthy within 30s.");
+        for (const line of daemonLogReport(mode)) console.error(line);
         process.exit(1);
       }
       return;
@@ -139,6 +155,21 @@ const cmd = command({
     });
     child.unref();
 
+    // A spawn failure (e.g. the node binary is unlaunchable) emits 'error'; without a
+    // listener Node re-throws it as an unhandled crash — the exact ugly first-run
+    // failure #575 is about. Surface it cleanly instead.
+    child.on("error", (err) => {
+      console.error(`Failed to launch daemon: ${err.message}`);
+      process.exit(1);
+    });
+
+    // Track an early exit so we can report a daemon that dies immediately instead of
+    // waiting out the full health-poll timeout.
+    let exitInfo: DaemonExit | null = null;
+    child.on("exit", (code, signal) => {
+      exitInfo = { code, signal };
+    });
+
     // Poll health endpoint to confirm startup (always HTTP on localhost)
     // When TLS is enabled, the internal HTTP listener is on port + 1
     const pollPort = useTailscale ? port + 1 : port;
@@ -147,6 +178,7 @@ const cmd = command({
     const start = Date.now();
 
     while (Date.now() - start < maxWait) {
+      if (exitInfo) break; // daemon died before becoming healthy — stop waiting
       try {
         const res = await fetch(url);
         if (res.ok) {
@@ -164,8 +196,8 @@ const cmd = command({
       await new Promise((r) => setTimeout(r, 500));
     }
 
-    // Kill the daemon since it never became healthy
-    if (child.pid) {
+    // Kill the daemon if it's still alive but never became healthy.
+    if (!exitInfo && child.pid) {
       try {
         process.kill(-child.pid, "SIGTERM");
       } catch {
@@ -175,8 +207,14 @@ const cmd = command({
       }
     }
 
-    console.error("Daemon started but did not become healthy within 30s.");
-    console.error(`Check logs: ${logFile}`);
+    // exitInfo is only ever assigned inside the child's `exit` callback, which
+    // TypeScript's control-flow analysis can't track — hence the explicit read.
+    const exited = exitInfo as DaemonExit | null;
+    console.error(formatStartupFailure(exited, maxWait));
+
+    // Surface the actual failure (npm/permission/port errors) inline instead of only a path.
+    // This path only runs in `manual` mode, so the log is always daemon.log (== logFile).
+    for (const line of daemonLogReport(mode)) console.error(line);
     process.exit(1);
   },
 });

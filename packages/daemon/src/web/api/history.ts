@@ -15,7 +15,20 @@ import {
   users,
 } from "../../lib/schema.js";
 import log from "../../lib/util/logger.js";
+import { isoWeekKeyForDateStr, utcDateTimeStr } from "../../lib/util/period-keys.js";
 import type { AuthEnv } from "../middleware/auth.js";
+
+/** Soft age cap for away-feed items. */
+const AWAY_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * Env for the history router. `mindFilter` is resolved once by router-level
+ * middleware and read by every handler, so new routes inherit cross-mind
+ * scoping by default instead of by discipline.
+ */
+type HistoryEnv = {
+  Variables: AuthEnv["Variables"] & { mindFilter: string | undefined };
+};
 
 /**
  * Resolve the mind whose history the caller may read. Minds are untrusted:
@@ -23,17 +36,22 @@ import type { AuthEnv } from "../middleware/auth.js";
  * `?mind=` param is ignored and forced to the caller's own (base) name.
  * Admin/system callers keep the requested filter.
  */
-async function resolveMindFilter(c: Context<AuthEnv>): Promise<string | undefined> {
+async function resolveMindFilter(c: Context<HistoryEnv>): Promise<string | undefined> {
   const user = c.get("user");
-  if (user.role === "admin" || user.role === "system") {
-    return c.req.query("mind") ?? undefined;
-  }
-  return getBaseName(user.username);
+  const privileged = user.role === "admin" || user.role === "system";
+  return privileged ? (c.req.query("mind") ?? undefined) : getBaseName(user.username);
 }
 
-const history = new Hono<AuthEnv>()
+const history = new Hono<HistoryEnv>()
+  // Backstop: compute the caller's allowed mind scope once, up front. Handlers
+  // read c.get("mindFilter") rather than each remembering to call the helper, so
+  // a future route that forgets still can't leak another mind's history.
+  .use("*", async (c, next) => {
+    c.set("mindFilter", await resolveMindFilter(c));
+    await next();
+  })
   .get("/turns", async (c) => {
-    const mindFilter = await resolveMindFilter(c);
+    const mindFilter = c.get("mindFilter");
     const turnIdFilter = c.req.query("turnId");
     const turnIdsFilter = c.req.query("turnIds");
     const limit = Math.min(Math.max(parseInt(c.req.query("limit") ?? "50", 10) || 50, 1), 200);
@@ -93,7 +111,9 @@ const history = new Hono<AuthEnv>()
           sql`${mindHistory.type} IN ('inbound', 'outbound')`,
         ),
       )
-      .orderBy(mindHistory.created_at);
+      // id tiebreaker: created_at is second-resolution, so a same-second inbound/outbound
+      // pair would otherwise flip and read as an answer-before-question exchange (#403).
+      .orderBy(mindHistory.created_at, mindHistory.id);
 
     // Group all events by turn and channel
     type ConvEvent = {
@@ -150,7 +170,9 @@ const history = new Hono<AuthEnv>()
       .select()
       .from(activity)
       .where(inArray(activity.turn_id, turnIds))
-      .orderBy(activity.created_at);
+      // id tiebreaker: created_at is second-resolution, so same-second activities within a
+      // turn would otherwise flip order (#403 — same missing tiebreaker as the message pairs).
+      .orderBy(activity.created_at, activity.id);
 
     const activitiesByTurn = new Map<string, typeof activityRows>();
     for (const a of activityRows) {
@@ -370,7 +392,7 @@ const history = new Hono<AuthEnv>()
     return c.json(result);
   })
   .get("/events", async (c) => {
-    const mindFilter = await resolveMindFilter(c);
+    const mindFilter = c.get("mindFilter");
 
     const stream = new ReadableStream({
       start(controller) {
@@ -432,8 +454,12 @@ const history = new Hono<AuthEnv>()
   .get("/summaries", async (c) => {
     const user = c.get("user");
     const privileged = user.role === "admin" || user.role === "system";
-    // Non-admin callers can only read their own summaries.
-    const mind = privileged ? (c.req.query("mind") ?? "_system") : await getBaseName(user.username);
+    // mindFilter is the caller's allowed scope: the requested mind for
+    // privileged callers (undefined if none), or the caller's own base name for
+    // minds. Summaries default an unscoped privileged read to the system
+    // timeline (`_system`) rather than all minds — this asymmetry is
+    // intentional and load-bearing for the system timeline view.
+    const mind = c.get("mindFilter") ?? "_system";
     const period = c.req.query("period");
     const ids = c.req.query("ids"); // comma-separated summary IDs
     const from = c.req.query("from");
@@ -476,8 +502,17 @@ const history = new Hono<AuthEnv>()
     const db = await getDb();
     const conditions = [eq(summaries.mind, mind), eq(summaries.period, period)];
 
-    if (from) conditions.push(gte(summaries.period_key, from));
-    if (to) conditions.push(sql`${summaries.period_key} <= ${to}`);
+    // Week period keys are ISO-week format ("YYYY-Www"), which does not sort
+    // against date-format ("YYYY-MM-DD") bounds under binary collation. When a
+    // caller passes date bounds for the week tier, translate them to the ISO
+    // week key of the week *containing* that date so the string comparison is
+    // correct (a week straddling the bound is included when any day falls in
+    // range). Other tiers already use prefix-compatible date keys.
+    const normalizeBound = (bound: string) =>
+      period === "week" ? isoWeekKeyForDateStr(bound) : bound;
+
+    if (from) conditions.push(gte(summaries.period_key, normalizeBound(from)));
+    if (to) conditions.push(sql`${summaries.period_key} <= ${normalizeBound(to)}`);
 
     const rows = await db
       .select({
@@ -509,7 +544,7 @@ const history = new Hono<AuthEnv>()
     return c.json(result);
   })
   .get("/activity", async (c) => {
-    const mind = await resolveMindFilter(c);
+    const mind = c.get("mindFilter");
     const from = c.req.query("from");
     const to = c.req.query("to");
     const limit = Math.min(Math.max(parseInt(c.req.query("limit") ?? "100", 10) || 100, 1), 500);
@@ -552,6 +587,55 @@ const history = new Hono<AuthEnv>()
     });
 
     return c.json(result);
+  })
+  // "While you were away": summaries of self-directed turns for the home feed —
+  // turns NOT triggered by a human message (heartbeats, schedules, dreams,
+  // spirit/mind-initiated, mind-to-mind), newest first. Artifact activity
+  // (pages, notes) is not duplicated here; extension feedSources already
+  // surface those on the home feed. Inherits the router's mindFilter scoping:
+  // minds see only their own activity, admins see all.
+  .get("/away", async (c) => {
+    const mindFilter = c.get("mindFilter");
+    const limit = Math.min(Math.max(parseInt(c.req.query("limit") ?? "50", 10) || 50, 1), 100);
+
+    const db = await getDb();
+    const cutoff = utcDateTimeStr(new Date(Date.now() - AWAY_WINDOW_MS));
+
+    // A turn is self-directed when its trigger inbound is absent, senderless, or
+    // sent by a mind/system user. Senders that don't resolve to a users row
+    // (humans on external platforms like Discord) are treated as human-triggered.
+    const conditions = [
+      eq(summaries.period, "turn"),
+      gte(summaries.created_at, cutoff),
+      sql`(${turns.trigger_event_id} IS NULL OR ${mindHistory.sender} IS NULL OR ${users.user_type} IN ('mind', 'system'))`,
+    ];
+    if (mindFilter) conditions.push(eq(summaries.mind, mindFilter));
+
+    const rows = await db
+      .select({
+        id: summaries.id,
+        mind: summaries.mind,
+        content: summaries.content,
+        created_at: summaries.created_at,
+        turn_id: turns.id,
+      })
+      .from(summaries)
+      .innerJoin(turns, eq(turns.id, summaries.period_key))
+      .leftJoin(mindHistory, eq(mindHistory.id, turns.trigger_event_id))
+      .leftJoin(users, eq(users.username, mindHistory.sender))
+      .where(and(...conditions))
+      .orderBy(desc(summaries.created_at))
+      .limit(limit);
+
+    return c.json(
+      rows.map((r) => ({
+        id: r.id,
+        mind: r.mind,
+        summary: r.content,
+        turnId: r.turn_id,
+        created_at: r.created_at,
+      })),
+    );
   });
 
 export default history;

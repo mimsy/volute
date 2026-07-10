@@ -39,9 +39,19 @@ const ungatedCommands = new Set([
   undefined,
 ]);
 if (!ungatedCommands.has(command)) {
-  const { isSetupComplete } = await import("@volute/daemon/lib/config/setup.js");
-  if (!isSetupComplete()) {
-    console.error("Volute is not set up. Run `volute setup` first.");
+  const { setupStatus, setupUrl } = await import("@volute/daemon/lib/config/setup.js");
+  const status = setupStatus();
+  if (status !== "complete") {
+    if (status === "in-progress") {
+      // Setup was started but the browser wizard hasn't been finished. Re-running
+      // `volute setup` won't advance it — point the user at the wizard instead.
+      console.error("Volute setup isn't finished yet.");
+      console.error(`Open ${setupUrl()} in your browser to complete it.`);
+      console.error("(If the daemon isn't running, start it with `volute up` first.)");
+    } else {
+      console.error("Volute is not set up. Run `volute setup` to get started.");
+      console.error("It starts the daemon and opens a browser wizard to finish configuration.");
+    }
     process.exit(1);
   }
 }

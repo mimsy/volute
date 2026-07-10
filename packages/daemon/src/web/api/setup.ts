@@ -467,7 +467,8 @@ setup.post("/complete", async (c) => {
       log.info("spirit started successfully during setup");
     } catch (err) {
       log.warn("spirit start failed during setup (non-fatal)", log.errorData(err));
-      warnings.push("Spirit failed to start — it will retry on next daemon restart.");
+      const reason = err instanceof Error ? err.message : String(err);
+      warnings.push(`The spirit couldn't start: ${reason} — it will retry on next daemon restart.`);
     }
 
     // Create DM between admin and spirit

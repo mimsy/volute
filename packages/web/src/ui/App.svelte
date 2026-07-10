@@ -260,7 +260,8 @@ let breadcrumbs = $derived.by((): Breadcrumb[] => {
       }
     }
   } else if (sel.kind === "system-history") {
-    crumbs.push({ label: "system" });
+    crumbs.push({ label: "system", action: handleSystemHome });
+    crumbs.push({ label: "timeline" });
   } else {
     crumbs.push({ label: "system" });
   }
@@ -351,7 +352,7 @@ $effect(() => {
 $effect(() => {
   if (data.extensions.length > 0) {
     const fresh = parseSelection(data.extensions);
-    if (fresh.kind === "extension" && selection.kind === "system-history") {
+    if (fresh.kind === "extension" && selection.kind === "home") {
       selection = fresh;
     }
     if (
@@ -399,7 +400,7 @@ $effect(() => {
   const expected = selectionToPath(selection, data.extensions);
   const current = window.location.pathname + window.location.search;
   if (current !== expected) {
-    if (selection.kind === "system-history" && data.extensions.length === 0 && current !== "/") {
+    if (selection.kind === "home" && data.extensions.length === 0 && current !== "/") {
       // Skip — wait for extensions to load before deciding
     } else if (fromPopstate) {
       window.history.replaceState(null, "", expected);
@@ -489,7 +490,7 @@ async function handleDeleteConversation(id: string) {
   }
   connectActivity();
   if (activeConversationId === id) {
-    selection = { kind: "system-history" };
+    selection = { kind: "home" };
   }
 }
 
@@ -529,12 +530,12 @@ function onAuth(u: AuthUser) {
 function handleHideConversation(id: string) {
   hideConversation(id);
   if (activeConversationId === id) {
-    selection = { kind: "system-history" };
+    selection = { kind: "home" };
   }
 }
 
 function handleSystemHome() {
-  selection = { kind: "system-history" };
+  selection = { kind: "home" };
 }
 
 function handleSelectMind(name: string) {
@@ -794,6 +795,7 @@ function handleGlobalClick(e: MouseEvent) {
               onConversationId={handleConversationId}
               onSelectConversation={handleSelectConversation}
               onOpenMind={handleOpenMindModal}
+              onSeed={() => (activeModal = "seed")}
               onTypingNames={(names) => { typingNames = names; }}
               onToggleSidebar={toggleSidebar}
               onOpenRightPanel={hasRightPanel ? openRightPanel : undefined}

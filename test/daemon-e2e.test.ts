@@ -3,7 +3,7 @@ import { type ChildProcess, execFileSync, spawn } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { after, before, describe, it } from "node:test";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import {
   approveUser,
   createUser,
@@ -36,6 +36,13 @@ for (const [k, v] of Object.entries(process.env)) {
   if (!k.startsWith("GIT_") && v !== undefined) cleanEnv[k] = v;
 }
 cleanEnv.VOLUTE_BASE_PORT = String(MIND_BASE_PORT);
+// Give the daemon an anthropic key so the claude test mind is treated as
+// credentialed. Otherwise startMindFull records a `no_credentials` startup
+// notice (#573) for the keyless mind, which is a mind-level notice that bleeds
+// into every session drain and pollutes the notice-count assertions below. These
+// tests model transient turn errors on an otherwise-configured mind, not a mute
+// keyless one. Deterministic across hosts regardless of ambient env.
+if (!cleanEnv.ANTHROPIC_API_KEY) cleanEnv.ANTHROPIC_API_KEY = "sk-ant-e2e-dummy-key";
 
 const TEST_MIND = "e2e-test-mind";
 const PORT = 14200 + Math.floor(Math.random() * 800);
@@ -805,6 +812,69 @@ describe("daemon e2e", { timeout: 420000 }, () => {
     assert.equal(patched.settings?.description, "set by member");
   });
 
+  it("GET /api/minds withholds port/dir from non-privileged (mind) callers (#503)", async () => {
+    await ensureTestMind();
+
+    // A mind principal (untrusted): resolves to a role:"user", user_type:"mind" account.
+    const mindUser = await getOrCreateMindUser("e2e-authz-mind-503");
+    const mindSession = await createSession(mindUser.id);
+    const asMind = (path: string): Promise<Response> => {
+      const headers = new Headers();
+      headers.set("Authorization", `Bearer ${mindSession}`);
+      headers.set("Origin", BASE_URL);
+      return fetch(`${BASE_URL}${path}`, { headers });
+    };
+
+    // Registry internals that aid lateral movement / fs probing — must never
+    // reach a mind token.
+    const SENSITIVE = ["port", "dir", "branch", "template", "templateHash", "parent", "createdBy"];
+
+    // List: a mind caller gets profile-level fields only.
+    const mindList = await asMind("/api/minds");
+    assert.equal(mindList.status, 200);
+    const minds = (await mindList.json()) as Record<string, unknown>[];
+    const mine = minds.find((m) => m.name === TEST_MIND);
+    assert.ok(mine, `expected ${TEST_MIND} in mind-facing list`);
+    for (const f of SENSITIVE) {
+      assert.ok(!(f in mine), `mind list leaked "${f}": ${JSON.stringify(mine)}`);
+    }
+    assert.ok("status" in mine && "channels" in mine, "reduced entry keeps profile/status fields");
+
+    // Detail: same reduction, and no variants array (variant ports are internal).
+    const mindDetail = await asMind(`/api/minds/${TEST_MIND}`);
+    assert.equal(mindDetail.status, 200);
+    const detail = (await mindDetail.json()) as Record<string, unknown>;
+    for (const f of [...SENSITIVE, "variants"]) {
+      assert.ok(!(f in detail), `mind detail leaked "${f}": ${JSON.stringify(detail)}`);
+    }
+    // Positively lock the reduced contract: the profile-level fields the UI/CLI
+    // consume must survive toPublicMind()'s hand-maintained allowlist. Only
+    // always-present fields are asserted — displayName/description/avatar come
+    // from an optional profile and JSON drops undefined-valued keys.
+    for (const f of ["name", "status", "channels", "stage", "hasPages", "lastActiveAt"]) {
+      assert.ok(f in detail, `reduced detail dropped "${f}": ${JSON.stringify(detail)}`);
+    }
+
+    // Admin (daemon token) still gets the full entry, including port.
+    const adminList = await daemonRequest("/api/minds");
+    const adminMinds = (await adminList.json()) as Record<string, unknown>[];
+    const adminMine = adminMinds.find((m) => m.name === TEST_MIND);
+    assert.ok(
+      adminMine && typeof adminMine.port === "number",
+      "admin list must still include port",
+    );
+
+    const adminDetail = await daemonRequest(`/api/minds/${TEST_MIND}`);
+    const adminDetailBody = (await adminDetail.json()) as Record<string, unknown>;
+    assert.equal(typeof adminDetailBody.port, "number", "admin detail must still include port");
+    // The other half of the preserved behavior: admins keep the variants array
+    // that minds are denied.
+    assert.ok(
+      Array.isArray(adminDetailBody.variants),
+      "admin detail must still include variants array",
+    );
+  });
+
   it("conversations: create, send message, read back", async () => {
     await ensureTestMind();
     const brain = await ensureBrainParticipant("convo");
@@ -1198,6 +1268,20 @@ describe("daemon e2e", { timeout: 420000 }, () => {
   // ── End Bridge & Chat Tests ──
 
   // ── Clock & Schedule Integration Tests ──
+
+  it("fresh mind gets the default rotating heartbeat", async () => {
+    await ensureTestMind();
+
+    const res = await daemonRequest(`/api/minds/${TEST_MIND}/schedules`);
+    assert.equal(res.status, 200);
+    const schedules = (await res.json()) as { id: string; messages?: string[] }[];
+    const heartbeat = schedules.find((s) => s.id === "heartbeat");
+    assert.ok(heartbeat, "default heartbeat schedule installed at creation");
+    assert.ok(
+      (heartbeat.messages?.length ?? 0) > 1,
+      "default heartbeat carries a rotating message pool",
+    );
+  });
 
   it("schedule CRUD: add cron schedule, list, update, remove", async () => {
     await ensureTestMind();
@@ -1611,6 +1695,38 @@ describe("daemon e2e", { timeout: 420000 }, () => {
     assert.equal(body2.notices.length, 0);
   });
 
+  it("mind status: GET /api/minds/:name surfaces lastError until recovery (#574)", async () => {
+    await ensureTestMind();
+    const session = "notices-status-surface";
+
+    // A turn starts (text opens a real turn), fails, and completes.
+    await emitEvent(session, { type: "text", content: "attempting a reply" });
+    await emitEvent(session, { type: "error", content: "API Error: 401 authentication_error" });
+    await emitEvent(session, { type: "done" });
+
+    const res1 = await daemonRequest(`/api/minds/${TEST_MIND}`);
+    assert.equal(res1.status, 200);
+    const mind1 = (await res1.json()) as {
+      lastError?: { kind: string; reason: string; detail?: string } | null;
+    };
+    assert.equal(mind1.lastError?.kind, "turn_error");
+    assert.equal(mind1.lastError?.reason, "auth_error");
+    // Privileged (admin) callers get the full detail.
+    assert.ok(mind1.lastError?.detail, "admin projection should include detail");
+
+    // Drain, then a clean turn completes after the failure → recovered.
+    await daemonRequest(`/api/minds/${TEST_MIND}/history/notices?session=${session}`);
+    // A completed turn strictly after the notice is what marks recovery; the
+    // notice timestamps have 1s resolution, so make sure the clock ticks over.
+    await new Promise((r) => setTimeout(r, 1100));
+    await emitEvent(session, { type: "text", content: "recovered reply" });
+    await emitEvent(session, { type: "done" });
+
+    const res2 = await daemonRequest(`/api/minds/${TEST_MIND}`);
+    const mind2 = (await res2.json()) as { lastError?: unknown };
+    assert.equal(mind2.lastError, null, "lastError should clear after a clean turn");
+  });
+
   it("failure notices: accumulate across an outage to convey full scope", async () => {
     await ensureTestMind();
     const session = "notices-outage";
@@ -1711,6 +1827,168 @@ describe("daemon e2e", { timeout: 420000 }, () => {
       if (!delivered) await new Promise((r) => setTimeout(r, 500));
     }
     assert.ok(delivered, "inbound message should be recorded in mind_history after delivery");
+
+    await daemonRequest(`/api/minds/${TEST_MIND}/stop`, { method: "POST" });
+  });
+
+  // Regression guard for the batched queued-flush contract (#382, PR #530): a sleeping
+  // mind's backlog is queued per channel, and the wake flush delivers each channel group
+  // as one batched turn — all-or-nothing per group, so a failed delivery keeps the group
+  // queued rather than dropping it. This drives the real cross-process path (chat API →
+  // fan-out → sleep queue → flush → deliverBatch → mind's /message).
+  //
+  // The mind is slept from a stopped state (no pre-sleep ritual) and the flush is invoked
+  // directly, because CI runs without a model API key: the mind process exits the moment a
+  // real turn starts, so the pre-sleep/wake-summary turns can't be relied on here. The
+  // "exactly one dispatchBatch per channel" cardinality and per-channel failure isolation
+  // (one group fails while another flushes) are covered by the in-process unit tests
+  // (message-delivery / sleep-manager), which can observe them without a live model.
+  it("sleep→queue→flush: queues per channel, flush drains it, failed delivery keeps it queued", {
+    timeout: 120000,
+  }, async () => {
+    await ensureTestMind();
+
+    /** All still-queued sleep rows for the test mind. */
+    async function queuedRows(): Promise<{ channel: string | null }[]> {
+      const db = await getDb();
+      return db
+        .select({ channel: deliveryQueue.channel })
+        .from(deliveryQueue)
+        .where(and(eq(deliveryQueue.mind, TEST_MIND), eq(deliveryQueue.status, "sleep-queued")))
+        .all();
+    }
+
+    async function waitForStatus(target: string, timeoutMs = 30000): Promise<void> {
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline) {
+        const s = (await (await daemonRequest(`/api/minds/${TEST_MIND}`)).json()) as {
+          status: string;
+        };
+        if (s.status === target) return;
+        await new Promise((r) => setTimeout(r, 300));
+      }
+      throw new Error(`mind did not reach status ${target}`);
+    }
+
+    async function waitForSleeping(timeoutMs = 15000): Promise<void> {
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline) {
+        const res = await daemonRequest(`/api/minds/${TEST_MIND}/sleep`);
+        if (((await res.json()) as { sleeping: boolean }).sleeping) return;
+        await new Promise((r) => setTimeout(r, 300));
+      }
+      throw new Error("mind did not reach sleeping state");
+    }
+
+    async function waitForQueuedCount(count: number, timeoutMs = 30000): Promise<void> {
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline) {
+        if ((await queuedRows()).length >= count) return;
+        await new Promise((r) => setTimeout(r, 300));
+      }
+      throw new Error(`expected ${count} queued rows within ${timeoutMs}ms`);
+    }
+
+    async function flush(): Promise<number> {
+      const res = await daemonRequest(`/api/minds/${TEST_MIND}/sleep/messages`, { method: "POST" });
+      assert.equal(res.status, 200, `flush: ${await res.clone().text()}`);
+      return ((await res.json()) as { flushed: number }).flushed;
+    }
+
+    // Sleep from a stopped state so no model turn runs.
+    await daemonRequest(`/api/minds/${TEST_MIND}/stop`, { method: "POST" });
+    await waitForStatus("stopped");
+    const sleepRes = await daemonRequest(`/api/minds/${TEST_MIND}/sleep`, { method: "POST" });
+    assert.equal(sleepRes.status, 200, `sleep: ${await sleepRes.clone().text()}`);
+    await waitForSleeping();
+
+    // Two channels the mind belongs to. Channel (non-DM) messages don't match the default
+    // wake triggers, so they queue rather than trigger-waking the mind.
+    const suffix = Date.now();
+    const chans: Record<string, string> = {};
+    for (const label of ["a", "b"]) {
+      const name = `sleep-flush-${label}-${suffix}`;
+      const createRes = await daemonRequest("/api/v1/channels", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      assert.equal(createRes.status, 201, `create ${name}: ${await createRes.clone().text()}`);
+      chans[label] = ((await createRes.json()) as { id: string }).id;
+      const inviteRes = await daemonRequest(`/api/v1/channels/${name}/invite`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: TEST_MIND }),
+      });
+      assert.equal(inviteRes.status, 200, `invite ${name}: ${await inviteRes.clone().text()}`);
+    }
+    const sender = await ensureBrainParticipant(`flush-${suffix}`);
+
+    async function sendToChannel(convId: string, text: string): Promise<void> {
+      const res = await daemonRequest("/api/v1/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ conversationId: convId, message: text, sender }),
+      });
+      assert.equal(res.status, 200, `send: ${await res.clone().text()}`);
+    }
+
+    // While asleep: two messages on channel A, one on channel B.
+    await sendToChannel(chans.a, "first while you slept");
+    await sendToChannel(chans.a, "second while you slept");
+    await sendToChannel(chans.b, "a note on the other channel");
+    await waitForQueuedCount(3);
+
+    // The backlog is queued across exactly two distinct channels (2 + 1), and the sleep
+    // state counts it — the mind was never invoked during sleep.
+    const queued = await queuedRows();
+    assert.equal(queued.length, 3, "all three messages queued");
+    const byChannel = new Map<string, number>();
+    for (const row of queued)
+      byChannel.set(row.channel ?? "?", (byChannel.get(row.channel ?? "?") ?? 0) + 1);
+    assert.equal(byChannel.size, 2, `expected 2 distinct channels, got ${[...byChannel.keys()]}`);
+    assert.deepEqual([...byChannel.values()].sort(), [1, 2], "channels grouped 2 and 1");
+    // The channel that holds two messages — it must flush as one atomic group, below.
+    const twoMsgChannel = [...byChannel.entries()].find(([, n]) => n === 2)?.[0];
+    assert.ok(twoMsgChannel, "one channel should hold both of its messages");
+
+    const sleepState = (await (await daemonRequest(`/api/minds/${TEST_MIND}/sleep`)).json()) as {
+      queuedMessageCount: number;
+    };
+    assert.equal(sleepState.queuedMessageCount, 3, "sleep state counts the queued backlog");
+
+    // Flush while the mind is DOWN: deliverBatch can't reach it, so every group fails and
+    // its rows stay queued. The #382 contract is all-or-nothing per group — a failed flush
+    // never drops the backlog.
+    assert.equal(await flush(), 0, "nothing flushes to a down mind");
+    assert.equal((await queuedRows()).length, 3, "a failed flush leaves the backlog queued");
+
+    // Bring the mind's process up and flush again. The two-message channel is delivered
+    // first, to a freshly-live mind, so its group flushes as ONE atomic batch (2 messages,
+    // not 2 turns) and its rows are deleted together. (The keyless CI mind exits once that
+    // batch's turn starts, so a later channel's group may not reach it — which itself shows
+    // the per-group isolation: a group that can't be delivered stays queued. Its status also
+    // reads "sleeping" not "running", so wait on the port instead of status.)
+    const startRes = await daemonRequest(`/api/minds/${TEST_MIND}/start`, { method: "POST" });
+    assert.ok(
+      startRes.status === 200 || startRes.status === 409,
+      `start: ${startRes.status} ${await startRes.clone().text()}`,
+    );
+    const entry = await findMind(TEST_MIND);
+    assert.ok(entry, "test mind must be registered");
+    await waitForListeningPid(entry.port, 30000);
+
+    const flushed = await flush();
+    assert.ok(flushed >= 2, `the two-message group must flush atomically; flushed ${flushed}`);
+    const remaining = await queuedRows();
+    assert.ok(
+      !remaining.some((r) => r.channel === twoMsgChannel),
+      "the delivered channel's whole group was removed",
+    );
+    assert.ok(
+      remaining.length <= 1,
+      `at most the other channel's message remains: ${remaining.length}`,
+    );
 
     await daemonRequest(`/api/minds/${TEST_MIND}/stop`, { method: "POST" });
   });

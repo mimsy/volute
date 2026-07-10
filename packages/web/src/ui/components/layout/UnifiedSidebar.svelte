@@ -1,9 +1,10 @@
 <script lang="ts">
 import type { ConversationWithParticipants, Mind } from "@volute/api";
 import { Icon, Modal, tooltip as tooltipAction } from "@volute/ui";
+import { icons } from "@volute/ui/icons";
 import { startMind, stopMind } from "../../lib/client";
 import { mindDotColor } from "../../lib/format";
-import type { Selection } from "../../lib/navigate";
+import { navigate, type Selection } from "../../lib/navigate";
 import {
   cancelReauth,
   oauthReauth,
@@ -11,6 +12,7 @@ import {
   startReauth,
   submitCode,
 } from "../../lib/oauth-reauth.svelte";
+import { showMindOnboarding } from "../../lib/onboarding";
 import { activeMinds, data, unreadCounts } from "../../lib/stores.svelte";
 import ProfileHoverCard from "../ProfileHoverCard.svelte";
 import ConversationList from "./ConversationList.svelte";
@@ -192,7 +194,9 @@ let activeChannelId = $derived.by(() => {
 });
 
 let isSystemActive = $derived(
-  selection.kind === "system-history" || selection.kind === "extension",
+  selection.kind === "home" ||
+    selection.kind === "system-history" ||
+    selection.kind === "extension",
 );
 </script>
 
@@ -228,6 +232,18 @@ let isSystemActive = $derived(
             onclick={handleOauthWarningClick}
           >!</button>
         {/if}
+      </div>
+      <div class="item-list">
+        <div class="mind-item-row">
+          <button
+            class="nav-item"
+            class:active={selection.kind === "system-history"}
+            onclick={() => navigate("/history")}
+          >
+            <span class="nav-icon">{@html icons.history}</span>
+            <span class="nav-label">Timeline</span>
+          </button>
+        </div>
       </div>
       {#if spirits.length > 0}
         <div class="item-list">
@@ -269,6 +285,12 @@ let isSystemActive = $derived(
       </div>
       {#if !collapsed.has("minds")}
         <div class="item-list">
+          {#if showMindOnboarding(minds, data.mindsLoaded)}
+            <div class="minds-empty">
+              <span class="minds-empty-label">No minds yet</span>
+              <button class="minds-empty-btn" onclick={onSeed}>Plant a seed</button>
+            </div>
+          {/if}
           {#each sortedMinds as mind}
             {@const dmId = mindDmMap.get(mind.name)}
             {@const mindUnread = dmId ? (unreadCounts.get(dmId) ?? 0) : 0}
@@ -293,6 +315,12 @@ let isSystemActive = $derived(
                       style:background={activeMinds.has(mind.name) ? undefined : mindDotColor(mind)}
                     ></span>
                     <span class="nav-label">{mind.displayName ?? mind.name}</span>
+                    {#if mind.templateStale}
+                      <span
+                        class="stale-badge"
+                        use:tooltipAction={{ text: `Running an outdated template — run 'volute mind upgrade ${mind.name}'`, position: "right" }}
+                      >outdated</span>
+                    {/if}
                     {#if mindUnread > 0}
                       <span class="unread-dot"></span>
                     {/if}
@@ -584,6 +612,17 @@ let isSystemActive = $derived(
     white-space: nowrap;
   }
 
+  .nav-icon {
+    display: flex;
+    flex-shrink: 0;
+    color: var(--text-2);
+  }
+
+  .nav-icon :global(svg) {
+    width: 12px;
+    height: 12px;
+  }
+
   .item-list {
     display: flex;
     flex-direction: column;
@@ -594,6 +633,44 @@ let isSystemActive = $derived(
     height: 6px;
     border-radius: 50%;
     background: var(--accent);
+    flex-shrink: 0;
+  }
+
+  .minds-empty {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px 6px 24px;
+  }
+
+  .minds-empty-label {
+    font-size: 13px;
+    color: var(--text-2);
+  }
+
+  .minds-empty-btn {
+    font-size: 12px;
+    padding: 2px 10px;
+    border-radius: var(--radius);
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--text-1);
+    cursor: pointer;
+    transition: color 0.1s, border-color 0.1s;
+  }
+
+  .minds-empty-btn:hover {
+    color: var(--text-0);
+    border-color: var(--border-bright);
+  }
+
+  .stale-badge {
+    padding: 1px 6px;
+    border-radius: var(--radius);
+    background: var(--yellow-bg);
+    color: var(--yellow);
+    font-size: 10px;
+    font-weight: 500;
     flex-shrink: 0;
   }
 

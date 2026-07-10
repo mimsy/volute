@@ -194,9 +194,50 @@ export function loadPrompts(): MindPrompts {
   }
 }
 
-export function setupShutdown(): void {
-  function shutdown() {
+/**
+ * Run the optional teardown before exit, bounded by a timeout so a wedged child
+ * (e.g. an SDK subprocess that won't exit) can't block shutdown forever. Teardown
+ * errors are logged, never thrown, so a failing hook still lets the process exit.
+ */
+export async function runShutdown(
+  onShutdown: (() => Promise<void>) | undefined,
+  timeoutMs: number,
+): Promise<void> {
+  if (!onShutdown) return;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<void>((resolve) => {
+    timer = setTimeout(() => {
+      log("server", `shutdown teardown timed out after ${timeoutMs}ms — exiting anyway`);
+      resolve();
+    }, timeoutMs);
+  });
+  try {
+    await Promise.race([
+      // Normalize a synchronous throw into the logged/swallowed path so it can't
+      // escape runShutdown and prevent the caller's process.exit.
+      Promise.resolve()
+        .then(() => onShutdown())
+        .catch((err) => log("server", "shutdown teardown failed:", err)),
+      timeout,
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+/**
+ * Wire SIGINT/SIGTERM to a graceful shutdown. Without `onShutdown` this exits
+ * immediately (as before); pass a teardown to reap live SDK subprocesses before
+ * exit so they aren't orphaned to PID 1 as `<defunct>` zombies. The handler is
+ * idempotent so a second signal during teardown doesn't double-run it.
+ */
+export function setupShutdown(onShutdown?: () => Promise<void>, timeoutMs = 10_000): void {
+  let shuttingDown = false;
+  async function shutdown() {
+    if (shuttingDown) return;
+    shuttingDown = true;
     log("server", "shutdown signal received");
+    await runShutdown(onShutdown, timeoutMs);
     process.exit(0);
   }
   process.on("SIGINT", shutdown);

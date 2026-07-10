@@ -24,8 +24,10 @@ import {
   fmtTime,
   formatCron,
   freqToCron,
+  messagesToText,
   parseCronToFreq,
   parseCronToTime,
+  textToMessages,
   timeToCron,
 } from "../../lib/clock-format";
 
@@ -172,7 +174,7 @@ function startEditSchedule(sched: MindDefaultsSchedule) {
   editDailyHour = freq.hour ?? 12;
   editDailyMinute = freq.minute ?? 0;
   editCronExpr = sched.cron ?? "";
-  editMessage = sched.message ?? "";
+  editMessage = messagesToText(sched);
   editIfSleeping = sched.whileSleeping ?? "skip";
   editEnabled = sched.enabled;
 }
@@ -190,7 +192,9 @@ function saveScheduleEdit() {
       ? {
           ...s,
           cron: cron || undefined,
-          message: editMessage || undefined,
+          message: undefined,
+          messages: undefined,
+          ...textToMessages(editMessage),
           whileSleeping: editIfSleeping as MindDefaultsSchedule["whileSleeping"],
           enabled: editEnabled,
         }
@@ -213,7 +217,7 @@ function handleAddSchedule() {
     {
       id: newName.trim(),
       cron: cron || undefined,
-      message: newMessage || undefined,
+      ...textToMessages(newMessage),
       enabled: true,
       whileSleeping: newIfSleeping as MindDefaultsSchedule["whileSleeping"],
     },
@@ -482,7 +486,12 @@ onMount(async () => {
             {/if}
             <div class="form-row">
               <span class="form-label">Message</span>
-              <Input type="text" style="flex:1" bind:value={newMessage} placeholder="What to tell the mind" />
+              <textarea
+                class="message-input"
+                rows="2"
+                bind:value={newMessage}
+                placeholder="What to tell the mind — several lines rotate at random"
+              ></textarea>
             </div>
             <div class="form-row">
               <span class="form-label">If sleeping</span>
@@ -535,7 +544,12 @@ onMount(async () => {
                   {/if}
                   <div class="form-row">
                     <span class="form-label">Message</span>
-                    <Input type="text" style="flex:1" bind:value={editMessage} placeholder="What to tell the mind" />
+                    <textarea
+                      class="message-input"
+                      rows="2"
+                      bind:value={editMessage}
+                      placeholder="What to tell the mind — several lines rotate at random"
+                    ></textarea>
                   </div>
                   <div class="form-row">
                     <span class="form-label">If sleeping</span>
@@ -567,8 +581,8 @@ onMount(async () => {
                       <Button variant="danger" size="sm" onclick={() => handleDeleteSchedule(sched.id)}>Del</Button>
                     </div>
                   </div>
-                  {#if sched.message}
-                    <div class="schedule-message">{sched.message}</div>
+                  {#if sched.message || sched.messages?.length}
+                    <div class="schedule-message">{messagesToText(sched)}</div>
                   {/if}
                 </div>
               {/if}
@@ -783,6 +797,23 @@ onMount(async () => {
     font-size: 13px;
     color: var(--text-2);
     flex-shrink: 0;
+  }
+
+  .message-input {
+    flex: 1;
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 4px 8px;
+    font-size: 14px;
+    font-family: inherit;
+    color: var(--text-0);
+    resize: vertical;
+  }
+
+  .message-input:focus {
+    border-color: var(--accent);
+    outline: none;
   }
 
   .form-actions {

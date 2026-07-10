@@ -271,10 +271,44 @@ export function migrateConfigSecrets(): void {
   writeGlobalConfig(readGlobalConfig()); // re-split with correct perms
 }
 
+/**
+ * Setup lifecycle state:
+ * - `complete` — the full flow finished (or a legacy install predating the flag).
+ * - `in-progress` — a setup entry point ran (`volute setup` CLI or a wizard step)
+ *   but the browser wizard hasn't been completed. Re-running `volute setup` won't
+ *   advance this; the user must finish in the browser.
+ * - `none` — setup has never been started.
+ */
+export type SetupStatus = "complete" | "in-progress" | "none";
+
+export function setupStatus(): SetupStatus {
+  const config = readGlobalConfig();
+  if (config.setupCompleted === true) return "complete";
+  // Legacy install: has a setup block but predates the `setupCompleted` flag.
+  // migrateSetupCompleted() persists these as complete on daemon start; the CLI
+  // gate must agree even before the daemon has run that migration.
+  if (config.setup != null && config.setupCompleted == null) return "complete";
+  // A setup entry point ran but the browser wizard hasn't finished.
+  if (config.setup != null) return "in-progress";
+  return "none";
+}
+
 /** Check if setup has been completed. Returns true once the full setup flow has finished. */
 export function isSetupComplete(): boolean {
+  return setupStatus() === "complete";
+}
+
+/**
+ * Best-effort URL for finishing setup in the browser wizard, derived from the
+ * saved config (no dependency on the daemon running). Falls back to localhost:1618.
+ */
+export function setupUrl(): string {
   const config = readGlobalConfig();
-  return config.setupCompleted === true;
+  const port = config.port || 1618;
+  let host = config.hostname || "127.0.0.1";
+  if (host === "0.0.0.0" || host === "::") host = "localhost";
+  if (host.includes(":") && !host.startsWith("[")) host = `[${host}]`; // bracket bare IPv6
+  return `http://${host}:${port}`;
 }
 
 export function isImagegenEnabled(): boolean {

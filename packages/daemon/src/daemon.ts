@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { format } from "node:util";
 import { setProviderRefreshHook } from "./lib/ai-service.js";
-import { ensureSystemChannel } from "./lib/chat/system-channel.js";
+import { backfillSystemChannelMembers, ensureSystemChannel } from "./lib/chat/system-channel.js";
 import { initBackupManager } from "./lib/daemon/backup-manager.js";
 import { initBridgeManager } from "./lib/daemon/bridge-manager.js";
 import { syncProviderToMinds } from "./lib/daemon/credential-sync.js";
@@ -184,6 +184,13 @@ export async function startDaemon(opts: {
     log.warn("failed to ensure #system channel", log.errorData(err));
   }
 
+  // Backfill registered minds into #system (non-fatal)
+  try {
+    await backfillSystemChannelMembers();
+  } catch (err) {
+    log.warn("failed to backfill minds into #system", log.errorData(err));
+  }
+
   // Ensure system user exists (non-fatal)
   try {
     const { getOrCreateSystemUser } = await import("./lib/auth.js");
@@ -350,8 +357,15 @@ export async function startDaemon(opts: {
 
   // Backfill template hashes + notify minds about version updates
   try {
-    const { backfillTemplateHashes, notifyVersionUpdate } = await import("./lib/version-notify.js");
-    backfillTemplateHashes();
+    const { backfillTemplateHashes, notifyVersionUpdate, warnStaleTemplates } = await import(
+      "./lib/version-notify.js"
+    );
+    // Backfill first (measures on-disk hashes), then warn about stale minds.
+    backfillTemplateHashes()
+      .then(() => warnStaleTemplates())
+      .catch((err) => {
+        log.warn("failed to check template staleness", log.errorData(err));
+      });
     // Fire-and-forget notification (non-blocking)
     notifyVersionUpdate().catch((err) => {
       log.warn("failed to send version update notifications", log.errorData(err));

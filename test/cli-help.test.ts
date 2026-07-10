@@ -117,6 +117,7 @@ describe("CLI --help", () => {
     const out = combined(r);
     assert.ok(out.includes("--template"), "should show --template flag");
     assert.ok(out.includes("Create a new mind"), "should show description");
+    assert.ok(out.includes("seed create"), "should steer toward 'seed create'");
     assert.ok(!out.includes("Missing required"), "should NOT show missing arg error");
   });
 

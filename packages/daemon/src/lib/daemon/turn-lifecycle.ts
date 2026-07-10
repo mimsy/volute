@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, sql } from "drizzle-orm";
 import { getTypingMap, publishTypingForChannels } from "../chat/typing.js";
 import { getDb } from "../db.js";
 import { getDeliveryManager } from "../delivery/delivery-manager.js";
@@ -79,32 +79,61 @@ function markDeliveredOnCleanTurn(mind: string, session?: string | null): void {
 
 /**
  * Link the inbound message(s) that triggered a turn to that turn, and set the turn's
- * `trigger_event_id`. Session-scoped replacement for the removed time-window heuristic:
- * a turn is per-session and this only tags inbound events on the turn's own channel that
- * are still untagged, so it's deterministic (no 60s window, no id-range guessing).
+ * `trigger_event_id`. Runs once, at turn creation.
+ *
+ * Two failure modes this guards against (see #403):
+ *
+ * 1. **Channel race.** The turn-creating event (`thinking`/`text`/…) only carries a channel
+ *    once the template's message→channel mapping is established — a timing race. When it's
+ *    absent we fall back to the turn's `session`, which is channel-shaped for the default
+ *    routes (`session = ${channel}`, so a DM session *is* the `@handle` slug). A session that
+ *    isn't a channel slug (e.g. the `main` default) simply matches no inbound rows — a safe
+ *    no-op rather than a mis-tag.
+ * 2. **Unbounded sweep.** We only claim untagged inbounds that arrived at/after the previous
+ *    turn on this session was created. Without that bound a late turn hoovers stale inbounds
+ *    that belonged to (or were abandoned by) an earlier turn. Inbounds older than the bound
+ *    stay untagged — they genuinely never got their own turn.
  */
-async function linkPendingInbound(mind: string, turnId: string, channel?: string): Promise<void> {
-  // Channel is required to prevent cross-session tagging: without it a turn on one
-  // session could steal inbound events meant for a different session/channel.
-  if (!channel) return;
+async function linkPendingInbound(
+  mind: string,
+  turnId: string,
+  channel: string | undefined,
+  session: string | undefined,
+): Promise<void> {
+  const scopeChannel = channel ?? session;
+  if (!scopeChannel) return;
   const db = await getDb();
-  const recent = await db
+
+  // Lower-bound the sweep by the previous turn on this session (assignSession has already
+  // written this turn's `session`, so `id != turnId` excludes it from the max).
+  let lowerBound: string | undefined;
+  if (session) {
+    const prev = await db
+      .select({ max: sql<string | null>`max(${turns.created_at})` })
+      .from(turns)
+      .where(and(eq(turns.mind, mind), eq(turns.session, session), sql`${turns.id} != ${turnId}`))
+      .get();
+    lowerBound = prev?.max ?? undefined;
+  }
+
+  const conditions = [
+    eq(mindHistory.mind, mind),
+    eq(mindHistory.type, "inbound"),
+    sql`${mindHistory.turn_id} IS NULL`,
+    eq(mindHistory.channel, scopeChannel),
+  ];
+  if (lowerBound) conditions.push(gte(mindHistory.created_at, lowerBound));
+
+  const pending = await db
     .select({ id: mindHistory.id })
     .from(mindHistory)
-    .where(
-      and(
-        eq(mindHistory.mind, mind),
-        eq(mindHistory.type, "inbound"),
-        sql`${mindHistory.turn_id} IS NULL`,
-        eq(mindHistory.channel, channel),
-      ),
-    )
-    .orderBy(desc(mindHistory.id))
-    .limit(5);
-  if (recent.length === 0) return;
-  const ids = recent.map((r) => r.id);
+    .where(and(...conditions))
+    .orderBy(mindHistory.id);
+  if (pending.length === 0) return;
+  const ids = pending.map((r) => r.id);
   await db.update(mindHistory).set({ turn_id: turnId }).where(inArray(mindHistory.id, ids));
-  await db.update(turns).set({ trigger_event_id: recent[0].id }).where(eq(turns.id, turnId));
+  // Trigger is the earliest inbound in the window — the message that started the turn.
+  await db.update(turns).set({ trigger_event_id: ids[0] }).where(eq(turns.id, turnId));
 }
 
 /**
@@ -139,7 +168,7 @@ export async function handleMindEvent(
       if (event.session) await assignSession(mind, turnId, event.session);
       // Link the triggering inbound(s) and set the turn's trigger_event_id.
       try {
-        await linkPendingInbound(mind, turnId, event.channel);
+        await linkPendingInbound(mind, turnId, event.channel, event.session);
       } catch (err) {
         llog.warn(
           `failed to link trigger inbound for turn ${turnId} (mind: ${mind})`,
@@ -246,6 +275,9 @@ export async function handleMindEvent(
       detail,
       raw: event.content ?? null,
     });
+    // Nudge connected web clients to refresh mind status so chat surfaces the
+    // failure immediately (#574).
+    broadcast({ type: "mind_error", mind, summary: detail });
   }
 
   if (event.type === "done") {

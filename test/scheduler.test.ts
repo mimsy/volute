@@ -97,6 +97,71 @@ describe("scheduler", () => {
     assert.equal(scheduler.scriptCalls.length, 0);
   });
 
+  it("fire picks a message from a rotating pool", async () => {
+    const scheduler = new TestScheduler();
+    const schedule = {
+      id: "heartbeat",
+      cron: "* * * * *",
+      messages: ["first", "second", "third"],
+      enabled: true,
+    };
+    const originalRandom = Math.random;
+    try {
+      Math.random = () => 0;
+      await (scheduler as any).fire("test-mind", schedule);
+      Math.random = () => 0.999;
+      await (scheduler as any).fire("test-mind", schedule);
+    } finally {
+      Math.random = originalRandom;
+    }
+    assert.equal(scheduler.systemDeliveries.length, 2);
+    assert.equal(scheduler.systemDeliveries[0].text, "[heartbeat] first");
+    assert.equal(scheduler.systemDeliveries[1].text, "[heartbeat] third");
+  });
+
+  it("fire falls back to message when messages pool is empty", async () => {
+    const scheduler = new TestScheduler();
+    await (scheduler as any).fire("test-mind", {
+      id: "hb",
+      cron: "* * * * *",
+      messages: [],
+      message: "fallback",
+      enabled: true,
+    });
+    assert.equal(scheduler.systemDeliveries.length, 1);
+    assert.equal(scheduler.systemDeliveries[0].text, "[hb] fallback");
+  });
+
+  it("fire skips schedule with empty messages and no message or script", async () => {
+    const scheduler = new TestScheduler();
+    await (scheduler as any).fire("test-mind", {
+      id: "hb",
+      cron: "* * * * *",
+      messages: [],
+      enabled: true,
+    });
+    assert.equal(scheduler.systemDeliveries.length, 0);
+  });
+
+  it("fire skips malformed messages pools from hand-edited config", async () => {
+    const scheduler = new TestScheduler();
+    // Not an array — must not index into the string
+    await (scheduler as any).fire("test-mind", {
+      id: "hb",
+      cron: "* * * * *",
+      messages: "hello",
+      enabled: true,
+    });
+    // Non-string entry — must not deliver "undefined"/"[object Object]"
+    await (scheduler as any).fire("test-mind", {
+      id: "hb2",
+      cron: "* * * * *",
+      messages: [42],
+      enabled: true,
+    });
+    assert.equal(scheduler.systemDeliveries.length, 0);
+  });
+
   it("fire passes session from schedule config", async () => {
     const scheduler = new TestScheduler();
     await (scheduler as any).fire("test-mind", {

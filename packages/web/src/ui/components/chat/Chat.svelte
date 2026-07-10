@@ -2,8 +2,10 @@
 import type { ContentBlock, Message, Mind, Participant } from "@volute/api";
 import { fetchConversationMessages, sendChat } from "../../lib/client";
 import { subscribe } from "../../lib/connection.svelte";
+import { auth } from "../../lib/stores.svelte";
 import type { ChatEntry } from "../../lib/types";
 import ActivityIndicator from "./ActivityIndicator.svelte";
+import ChatStatusBar from "./ChatStatusBar.svelte";
 import MessageInput from "./MessageInput.svelte";
 import MessageList from "./MessageList.svelte";
 
@@ -43,6 +45,8 @@ let loadingOlder = $state(false);
 let currentConvId: string | null = null;
 let typingSafetyTimer = 0;
 let messageList: MessageList;
+// The DM's target mind, for the status bar (#574). Channels show nothing.
+let dmMind = $derived(convType === "dm" ? minds.find((m) => m.name === name) : undefined);
 let mindParticipants = $derived.by(() => {
   const fromParticipants = participants.filter((p) => p.userType === "mind").map((p) => p.username);
   if (fromParticipants.length > 0) return fromParticipants;
@@ -216,8 +220,12 @@ async function handleSend(
       files: files.length > 0 ? files : undefined,
     });
     const resultConvId = result.conversationId;
+    // Only notify the parent when the conversation is actually new. Firing on
+    // every send used to rebuild the whole realtime layer (SSE reconnect +
+    // full refetch); the live stream already delivers messages incrementally.
+    const isNewConversation = resultConvId !== currentConvId;
     currentConvId = resultConvId;
-    onConversationId(resultConvId);
+    if (isNewConversation) onConversationId(resultConvId);
   } catch (err) {
     console.error("Failed to send message:", err);
     entries = [
@@ -258,6 +266,12 @@ async function handleSend(
   />
 
   <ActivityIndicator {typingNames} {mindParticipants} {minds} {onOpenMind} />
+
+  <!-- Keyed on the mind name so switching DMs resets in-flight Start state;
+       minds refreshes replace objects but keep the name, so no remount then. -->
+  {#key dmMind?.name}
+    <ChatStatusBar mind={dmMind} isAdmin={auth.user?.role === "admin"} />
+  {/key}
 
   <MessageInput
     {sending}

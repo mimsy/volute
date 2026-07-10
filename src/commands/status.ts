@@ -4,6 +4,7 @@ import { promisify } from "node:util";
 import { command } from "@volute/cli/lib/command.js";
 import { getAuthToken } from "@volute/cli/lib/daemon-client.js";
 import {
+  daemonLogReport,
   getDaemonUrl,
   getServiceMode,
   LAUNCHD_PLIST_LABEL,
@@ -49,6 +50,9 @@ const cmd = command({
 
     if (!running) {
       console.log("Status: not running");
+      // Surface where the daemon log lives (and a tail of it, for file-backed modes)
+      // so a crash cause is visible without hunting for the path.
+      for (const line of daemonLogReport(mode, 15)) console.log(line);
       return;
     }
 
@@ -83,13 +87,23 @@ const cmd = command({
           running: boolean;
           status?: string;
           stage?: string;
+          templateStale?: boolean;
         }>;
         if (minds.length > 0) {
           console.log(`\nMinds (${minds.length}):`);
           for (const mind of minds) {
             const status = mind.status ?? (mind.running ? "running" : "stopped");
             const label = mind.stage === "seed" ? " (seed)" : "";
-            console.log(`  ${mind.name}: ${status}${label}`);
+            const template = mind.templateStale ? "  [template: outdated]" : "";
+            console.log(`  ${mind.name}: ${status}${label}${template}`);
+          }
+          const stale = minds.filter((m) => m.templateStale).map((m) => m.name);
+          if (stale.length > 0) {
+            const subject = stale.length === 1 ? "mind is" : "minds are";
+            const object = stale.length === 1 ? "an outdated template" : "outdated templates";
+            console.log(
+              `\n⚠ ${stale.length} ${subject} running ${object}: ${stale.join(", ")} — run 'volute mind upgrade <name>'`,
+            );
           }
         } else {
           console.log("\nNo minds configured.");

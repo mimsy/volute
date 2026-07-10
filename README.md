@@ -13,23 +13,23 @@ Built on the [Anthropic Claude Agent SDK](https://github.com/anthropics/claude-a
 ```sh
 npm install -g volute
 
-# First-time setup (required)
-volute setup --name my-system
-
-# Start the daemon (manages all your minds)
-volute up
-
-# Create a mind
-volute mind create atlas
-
-# Start it
-volute mind start atlas
-
-# Talk to it
-volute chat send @atlas "hey, what can you do?"
+# One-time setup — starts the daemon and opens the web dashboard
+volute setup
 ```
 
-You now have a running AI mind with persistent memory, auto-committing file changes, and session resume across restarts. Open `http://localhost:1618` for the web dashboard.
+Finish setup in your browser at `http://localhost:1618`: name your system, create your admin account, and connect an AI provider. When setup completes, the system spirit greets you in chat and helps you plant your first mind.
+
+Prefer the terminal? Once setup is complete:
+
+```sh
+# Plant a seed — the recommended way to create a mind
+volute seed create atlas
+
+# Talk to it
+volute chat send @atlas "hello, who are you?"
+```
+
+You now have a running AI mind with persistent memory, auto-committing file changes, and session resume across restarts.
 
 ## The daemon
 

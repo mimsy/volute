@@ -8,19 +8,42 @@ import type {
 } from "@volute/api";
 import { Icon } from "@volute/ui";
 import { renderMarkdown } from "@volute/ui/markdown";
+import { sanitizeSvg } from "@volute/ui/sanitize";
 import { SvelteMap, SvelteSet } from "svelte/reactivity";
 import {
   fetchHistory,
   fetchSummaries,
   fetchSummaryByIds,
+  fetchSystemInfo,
   fetchTurnEvents,
   fetchTurns,
 } from "../lib/client";
 import { extractTextContent } from "../lib/feed-utils";
-import { formatRelativeTime, normalizeTimestamp } from "../lib/format";
+import { formatRelativeTime } from "../lib/format";
 import { navigate } from "../lib/navigate";
+import {
+  activityColor,
+  activityNavUrl,
+  activityPeekBody,
+  peekKey,
+  shouldRenderPeek,
+} from "../lib/peek";
+import { parseISOWeek, summaryBounds, wallNow } from "../lib/period-keys";
 import { activeMinds } from "../lib/stores.svelte";
-import { groupToolEvents } from "../lib/tool-groups";
+import { mergeOlderSummaries, nextSummaryPage } from "../lib/summary-paging";
+import {
+  isRecentInbound,
+  isTurnStale,
+  pruneExpiredInbounds,
+  reconnectDelay,
+  turnLastSeenMs,
+} from "../lib/timeline-liveness";
+import { buildTodayItems } from "../lib/timeline-today";
+import {
+  appendStreamingGroups,
+  groupToolEvents,
+  type TimelineItem as ToolTimelineItem,
+} from "../lib/tool-groups";
 import { getCategoryColor, getCategoryIcon } from "../lib/tool-names";
 import ToolGroupComponent from "./chat/ToolGroup.svelte";
 import HistoryEvent from "./HistoryEvent.svelte";
@@ -40,19 +63,7 @@ const CHILD_PERIOD: Record<string, "turn" | "hour" | "day" | "week" | "month"> =
   month: "week",
 };
 
-function parseISOWeek(weekKey: string): Date {
-  // weekKey format: "2026-W12" — returns the Monday of that week (local time)
-  const [yearStr, weekStr] = weekKey.split("-W");
-  const year = parseInt(yearStr, 10);
-  const week = parseInt(weekStr, 10);
-  const jan4 = new Date(year, 0, 4);
-  const dayOfWeek = jan4.getDay() || 7;
-  const monday = new Date(jan4);
-  monday.setDate(jan4.getDate() - dayOfWeek + 1 + (week - 1) * 7);
-  return monday;
-}
-
-// Period keys are local time. Parse without Z suffix.
+// Period keys are server-local wall-clock time. Parse without Z suffix.
 function periodKeyToDate(period: string, periodKey: string): Date {
   if (period === "hour")
     return new Date(`${periodKey.slice(0, 10)}T${periodKey.slice(11, 13)}:00:00`);
@@ -62,14 +73,17 @@ function periodKeyToDate(period: string, periodKey: string): Date {
   return new Date(periodKey);
 }
 
-function formatPeriodTime(period: string, periodKey: string): string {
-  const now = new Date();
-  const todayLocal = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+// `serverTz` anchors Today/Yesterday and the current-year comparison to the
+// daemon's timezone (period keys are server-local). Wall-clock labels
+// themselves format the key's own numbers, so they're already zone-agnostic.
+function formatPeriodTime(period: string, periodKey: string, serverTz?: string): string {
+  const w = wallNow(serverTz);
+  const todayLocal = new Date(w.year, w.month - 1, w.day);
   const yesterdayLocal = new Date(todayLocal);
   yesterdayLocal.setDate(todayLocal.getDate() - 1);
 
   if (period === "hour") {
-    // Period keys are local time — parse directly
+    // Period keys are server-local wall time — parse and render directly
     const start = periodKeyToDate("hour", periodKey);
     const end = new Date(start.getTime() + 3600000);
 
@@ -99,7 +113,7 @@ function formatPeriodTime(period: string, periodKey: string): string {
     end.setDate(start.getDate() + 6);
     const fmtDate = (d: Date) =>
       d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-    if (start.getFullYear() !== now.getFullYear()) {
+    if (start.getFullYear() !== w.year) {
       return `${fmtDate(start)} \u2013 ${fmtDate(end)}, ${start.getFullYear()}`;
     }
     return `${fmtDate(start)} \u2013 ${fmtDate(end)}`;
@@ -143,32 +157,88 @@ let { name, mindStatus }: { name?: string; mindStatus?: string } = $props();
 
 // --- Turns data ---
 const PAGE_SIZE = 100;
-let turnsData = $state<TurnRow[]>([]);
-let hasMore = $state(true);
+// Replace-only arrays (all mutation sites reassign) → raw state avoids the cost
+// of deep-proxying every row/summary on each update.
+let turnsData = $state.raw<TurnRow[]>([]);
 let loading = $state(false);
 let historyError = $state("");
+
+// Canonical timezone of the daemon host (period keys are computed in it).
+// Fetched once at load; undefined falls back to browser-local time.
+let serverTz = $state<string | undefined>(undefined);
+// True once the timezone fetch has settled (resolved or failed). The initial
+// summary load waits on this so cross-timezone viewers fetch server-anchored
+// buckets on first paint instead of racing the fetch and using browser-local.
+let serverTzResolved = $state(false);
 
 let readOnlyConv = $state<ConversationWithParticipants | null>(null);
 
 // --- Summaries data ---
-let hourSummaries = $state<SummaryRow[]>([]);
-let daySummaries = $state<SummaryRow[]>([]);
-let weekSummaries = $state<SummaryRow[]>([]);
-let monthSummaries = $state<SummaryRow[]>([]);
+let hourSummaries = $state.raw<SummaryRow[]>([]);
+let daySummaries = $state.raw<SummaryRow[]>([]);
+let weekSummaries = $state.raw<SummaryRow[]>([]);
+let monthSummaries = $state.raw<SummaryRow[]>([]);
 let summariesLoaded = $state(false);
+// Backward summary paging (older history coarsens to week/month tiers).
+let hasMoreSummaries = $state(true);
+let loadingOlder = $state(false);
+let canLoadOlder = $derived(
+  hasMoreSummaries && (weekSummaries.length > 0 || monthSummaries.length > 0),
+);
 let expandedSummaries = $state(new SvelteMap<number, SummaryRow[] | TurnRow[]>());
 let loadingChildren = new SvelteSet<number>();
 // For single-turn hours: expand directly to raw events instead of showing the turn summary
 let directEventsSummaries = $state(new SvelteMap<number, HistoryMessage[]>());
 
+// A turn summary's period_key is the turn UUID. Legacy "<mind>-<doneId>" keys can't be
+// resolved to turn events, so the direct-events drill-down must skip them (see #395).
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const isTurnUuid = (key: string): boolean => UUID_RE.test(key);
+
 // --- Streaming events for active turns ---
-let streamingEvents = $state(new SvelteMap<string, HistoryMessage[]>());
+// Raw events are the source of truth but non-reactive: rendering reads the
+// pre-grouped `streamingGroups` instead, so a per-event append is O(1) DOM work
+// and never re-derives `timelineItems`. `activeTurnIds` tracks streaming
+// membership separately (only changes on turn start/complete) so appends — which
+// leave membership untouched — don't invalidate the `timelineItems` derived.
+const streamingEvents = new Map<string, HistoryMessage[]>();
+const streamingGroups = new SvelteMap<string, ToolTimelineItem[]>();
+const activeTurnIds = new SvelteSet<string>();
+
+function setStreaming(turnId: string, events: HistoryMessage[]) {
+  streamingEvents.set(turnId, events);
+  streamingGroups.set(turnId, groupToolEvents(events));
+  activeTurnIds.add(turnId);
+}
+
+function appendStreamingEvent(turnId: string, event: HistoryMessage) {
+  const events = [...(streamingEvents.get(turnId) ?? []), event];
+  streamingEvents.set(turnId, events);
+  streamingGroups.set(
+    turnId,
+    appendStreamingGroups(streamingGroups.get(turnId) ?? [], events, event),
+  );
+}
+
+function deleteStreaming(turnId: string) {
+  streamingEvents.delete(turnId);
+  streamingGroups.delete(turnId);
+  activeTurnIds.delete(turnId);
+}
+
 let nextSyntheticId = -1;
 // Inbound events that arrived before any turn_created — shown as provisional turn
 let pendingInbounds = $state<HistoryMessage[]>([]);
 // Fallback timers for done events that may not be followed by a summary
 const doneFallbackTimers = new Map<string, ReturnType<typeof setTimeout>>();
 let expandedTurns = $state(new Set<string>());
+// Peek popovers (collapsed-turn hover cards) render markdown / mount live iframes,
+// so their content is mounted lazily on first hover and then kept (frozen) to avoid
+// eagerly rendering hundreds of hidden popovers on the initial timeline paint (#541).
+let revealedPeeks = new SvelteSet<string>();
+function revealPeek(key: string) {
+  revealedPeeks.add(key);
+}
 
 function buildHistoryMessage(
   d: Record<string, unknown>,
@@ -235,6 +305,61 @@ function handleExpand(turnId: string, expanded: boolean) {
 let scrollContainer: HTMLDivElement | undefined = $state();
 let userScrolledUp = $state(false);
 let eventSource: EventSource | null = null;
+let reconnecting = $state(false);
+let reconnectAttempts = 0;
+let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+// Last streaming-event time per active turn, for the staleness guard
+const lastEventAt = new Map<string, number>();
+
+function clearReconnectTimer() {
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+}
+
+function scheduleReconnect() {
+  if (reconnectTimer) return;
+  const delay = reconnectDelay(reconnectAttempts);
+  reconnectAttempts++;
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    connectSSE();
+  }, delay);
+}
+
+// Refetch page 1 after a reconnect and reconcile turns/streaming state so events
+// missed while disconnected are recovered (turns completed, new turns, etc.).
+async function resync() {
+  if (!name) return;
+  try {
+    const rows = await fetchTurns({ mind: name, limit: PAGE_SIZE, offset: 0 });
+    upsertTurnRows([...rows].reverse());
+    for (const turn of turnsData) {
+      if (turn.status === "active") {
+        const turnId = turn.id;
+        const turnMind = turn.mind;
+        lastEventAt.set(turnId, Date.now());
+        // Mark as streaming synchronously so a newly-discovered active turn renders live,
+        // and so the completion guard below has a placeholder to observe.
+        if (!streamingEvents.has(turnId)) setStreaming(turnId, []);
+        fetchTurnEvents(turnMind, { turnId })
+          .then((dbEvents) => {
+            // A summary/done landing mid-fetch deletes streaming state; don't resurrect it.
+            if (!streamingEvents.has(turnId)) return;
+            setStreaming(turnId, dbEvents);
+          })
+          .catch((err) => console.warn("[TurnTimeline] Failed to resync active turn events:", err));
+      } else if (streamingEvents.has(turn.id)) {
+        // Turn completed while we were disconnected — drop the stale streaming view.
+        deleteStreaming(turn.id);
+        lastEventAt.delete(turn.id);
+      }
+    }
+  } catch (err) {
+    console.warn("[TurnTimeline] Failed to resync after reconnect:", err);
+  }
+}
 
 function connectSSE() {
   disconnectSSE();
@@ -277,11 +402,12 @@ function connectSSE() {
       if (pendingInbounds.length > 0) {
         const seeded = pendingInbounds.map((ev) => ({ ...ev, turn_id: turnId }));
         const prev = streamingEvents.get(turnId) ?? [];
-        streamingEvents.set(turnId, [...seeded, ...prev]);
+        setStreaming(turnId, [...seeded, ...prev]);
       } else if (!streamingEvents.has(turnId)) {
-        streamingEvents.set(turnId, []);
+        setStreaming(turnId, []);
       }
       pendingInbounds = [];
+      lastEventAt.set(turnId, Date.now());
       // Fetch turn events from DB after a short delay to allow retroactive inbound tagging.
       // DB events are authoritative — replace synthetic SSE events entirely.
       // Any SSE events arriving after this .then() runs are appended normally.
@@ -290,7 +416,7 @@ function connectSSE() {
         .then(() => fetchTurnEvents(turnMind, { turnId }))
         .then((dbEvents) => {
           if (!streamingEvents.has(turnId)) return; // turn already completed
-          streamingEvents.set(turnId, dbEvents);
+          setStreaming(turnId, dbEvents);
         })
         .catch((err) => console.warn("[TurnTimeline] Failed to fetch turn events:", err));
     } else if (eventType === "summary" && turnId) {
@@ -298,7 +424,8 @@ function connectSSE() {
       clearTimeout(doneFallbackTimers.get(turnId));
       doneFallbackTimers.delete(turnId);
       const prevStreaming = streamingEvents.get(turnId);
-      streamingEvents.delete(turnId);
+      deleteStreaming(turnId);
+      lastEventAt.delete(turnId);
       fetchTurns({ mind: name, turnId })
         .then((rows) => {
           upsertTurnRows(rows);
@@ -312,7 +439,7 @@ function connectSSE() {
           console.warn("[TurnTimeline] Failed to fetch completed turn:", err);
           // Restore streaming state so the turn doesn't vanish
           if (!streamingEvents.has(turnId)) {
-            streamingEvents.set(turnId, prevStreaming ?? []);
+            setStreaming(turnId, prevStreaming ?? []);
           }
         });
     } else if (eventType === "done" && turnId) {
@@ -325,7 +452,7 @@ function connectSSE() {
           setTimeout(() => {
             doneFallbackTimers.delete(tid);
             if (streamingEvents.has(tid)) {
-              streamingEvents.delete(tid);
+              deleteStreaming(tid);
               // Refresh the turn from the server
               fetchTurns({ mind: name, turnId: tid })
                 .then((rows) => upsertTurnRows(rows))
@@ -337,29 +464,37 @@ function connectSSE() {
         );
       }
     } else if (turnId && streamingEvents.has(turnId)) {
-      // Substantive event — accumulate for streaming display
-      // Create new array to trigger Svelte reactivity
-      const prev = streamingEvents.get(turnId)!;
-      streamingEvents.set(turnId, [...prev, buildHistoryMessage(d, { turn_id: turnId })]);
+      // Substantive event — append to the streaming view incrementally (O(1)).
+      appendStreamingEvent(turnId, buildHistoryMessage(d, { turn_id: turnId }));
+      lastEventAt.set(turnId, Date.now());
     }
 
-    if (!userScrolledUp) {
-      requestAnimationFrame(() => {
-        scrollContainer?.scrollTo({ top: scrollContainer.scrollHeight, behavior: "smooth" });
-      });
-    }
+    scheduleScrollToBottom();
+  };
+  es.onopen = () => {
+    clearReconnectTimer();
+    const wasReconnecting = reconnecting;
+    reconnectAttempts = 0;
+    reconnecting = false;
+    // Recover anything missed while the stream was down.
+    if (wasReconnecting) resync();
   };
   es.onerror = () => {
+    // EventSource auto-retries transient errors (CONNECTING). A permanent close
+    // (CLOSED — e.g. a daemon restart returning an error) needs a manual reconnect
+    // with backoff, or the timeline silently stops updating until a page reload.
     if (es.readyState === EventSource.CLOSED) {
-      console.warn("[TurnTimeline] SSE connection closed permanently");
+      reconnecting = true;
+      scheduleReconnect();
     } else if (es.readyState === EventSource.CONNECTING) {
-      console.warn("[TurnTimeline] SSE reconnecting...");
+      reconnecting = true;
     }
   };
   eventSource = es;
 }
 
 function disconnectSSE() {
+  clearReconnectTimer();
   if (eventSource) {
     eventSource.close();
     eventSource = null;
@@ -369,24 +504,28 @@ function disconnectSSE() {
 }
 
 // --- Data loading ---
-async function loadTurns(offset: number) {
+// Turns are only ever displayed for the current hour (older turns are reached
+// through summaries), so a single page more than covers what's shown. There is
+// no offset paging — walking back in time happens via loadOlderSummaries. All
+// ingestion routes through upsertTurnRows, which dedups by id, so a re-fetch
+// never produces duplicate keys in the keyed {#each} (which would crash it).
+async function loadTurns() {
   loading = true;
   historyError = "";
   try {
-    const rows = await fetchTurns({ mind: name, limit: PAGE_SIZE, offset });
+    const rows = await fetchTurns({ mind: name, limit: PAGE_SIZE });
     const chronological = [...rows].reverse();
-    if (offset === 0) {
-      turnsData = chronological;
-    } else {
-      turnsData = [...chronological, ...turnsData];
-    }
-    hasMore = rows.length === PAGE_SIZE;
+    upsertTurnRows(chronological);
 
     // Check for recent untagged inbound events (message sent but turn not yet started)
-    if (offset === 0 && pendingInbounds.length === 0 && name) {
+    if (pendingInbounds.length === 0 && name) {
       fetchHistory(name, { preset: "all", limit: 10 })
         .then((recent) => {
-          const untagged = recent.filter((e) => e.type === "inbound" && !e.turn_id);
+          // Only promote recent untagged inbounds — an old inbound a stopped/sleeping
+          // mind never processed must not render as a perpetually-active turn.
+          const untagged = recent.filter(
+            (e) => e.type === "inbound" && !e.turn_id && isRecentInbound(e.created_at),
+          );
           if (untagged.length > 0 && pendingInbounds.length === 0) {
             pendingInbounds = untagged;
           }
@@ -397,11 +536,11 @@ async function loadTurns(offset: number) {
     // Backfill streaming events for any active turns
     for (const turn of turnsData) {
       if (turn.status === "active" && !streamingEvents.has(turn.id)) {
-        streamingEvents.set(turn.id, []);
+        setStreaming(turn.id, []);
         fetchTurnEvents(turn.mind, { turnId: turn.id })
           .then((dbEvents) => {
             if (!streamingEvents.has(turn.id)) return; // turn completed while fetching
-            streamingEvents.set(turn.id, dbEvents);
+            setStreaming(turn.id, dbEvents);
           })
           .catch((err) =>
             console.warn("[TurnTimeline] Failed to backfill active turn events:", err),
@@ -416,49 +555,84 @@ async function loadTurns(offset: number) {
 
 async function loadSummaries() {
   try {
-    const now = new Date();
-
-    // Period keys are local time. Build boundaries directly.
-    const pad2 = (n: number) => String(n).padStart(2, "0");
-    const todayKey = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`;
-    const hourCutoff = `${todayKey}T${pad2(now.getHours())}`;
-    const todayHourFrom = `${todayKey}T00`;
-    const todayDayKey = todayKey;
-
-    // Week boundary (7 days ago)
-    const weekAgo = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 7);
-    const weekCutoff = `${weekAgo.getFullYear()}-${pad2(weekAgo.getMonth() + 1)}-${pad2(weekAgo.getDate())}`;
-
-    const currentMonth = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}`;
+    // Boundaries are anchored to the server's timezone, since period keys are
+    // computed there (see period-keys.ts). weekCutoff/currentMonthKey are the
+    // date bounds for the tiers below "today"; the server translates the week
+    // date bound to the matching ISO-week key.
+    const bounds = summaryBounds(serverTz);
 
     // Fetch all summary periods in parallel
     const [hours, days, weeks, months] = await Promise.all([
       fetchSummaries({
         mind: name,
         period: "hour",
-        from: todayHourFrom,
-        to: hourCutoff,
+        from: bounds.todayHourFrom,
+        to: bounds.hourCutoff,
         limit: 24,
       }),
-      fetchSummaries({ mind: name, period: "day", from: weekCutoff, to: todayDayKey, limit: 7 }),
-      fetchSummaries({ mind: name, period: "week", to: weekCutoff, limit: 12 }),
-      fetchSummaries({ mind: name, period: "month", to: currentMonth, limit: 12 }),
+      fetchSummaries({
+        mind: name,
+        period: "day",
+        from: bounds.weekCutoff,
+        to: bounds.todayKey,
+        limit: 7,
+      }),
+      fetchSummaries({ mind: name, period: "week", to: bounds.weekCutoff, limit: 12 }),
+      fetchSummaries({ mind: name, period: "month", to: bounds.currentMonthKey, limit: 12 }),
     ]);
 
     hourSummaries = hours.sort((a, b) => a.period_key.localeCompare(b.period_key));
     daySummaries = days
-      .filter((d) => d.period_key < todayDayKey)
+      .filter((d) => d.period_key < bounds.todayKey)
       .sort((a, b) => a.period_key.localeCompare(b.period_key));
-    weekSummaries = weeks.sort((a, b) => a.period_key.localeCompare(b.period_key));
+    // Drop the current (partial) week so it doesn't show at both the week tier
+    // and the day tier — days already cover the last 7 days. The server maps
+    // weekCutoff (a date) to the week containing it, which may be the current
+    // week, so this client-side guard is what keeps the seam clean.
+    weekSummaries = weeks
+      .filter((w) => w.period_key < bounds.currentWeekKey)
+      .sort((a, b) => a.period_key.localeCompare(b.period_key));
     monthSummaries = months
-      .filter((m) => m.period_key < currentMonth)
+      .filter((m) => m.period_key < bounds.currentMonthKey)
       .sort((a, b) => a.period_key.localeCompare(b.period_key));
 
+    hasMoreSummaries = true;
     summariesLoaded = true;
   } catch (e) {
     console.warn("[TurnTimeline] Failed to load summaries:", e);
     summariesLoaded = true; // still mark loaded so we don't block the UI
   }
+}
+
+// Page backward through older summaries at the coarsest loaded tier.
+async function loadOlderSummaries() {
+  if (loadingOlder) return;
+  const next = nextSummaryPage(weekSummaries, monthSummaries);
+  if (!next) {
+    hasMoreSummaries = false;
+    return;
+  }
+  loadingOlder = true;
+  try {
+    const fetched = await fetchSummaries({
+      mind: name,
+      period: next.tier,
+      to: next.to,
+      limit: 12,
+    });
+    if (next.tier === "month") {
+      const { merged, exhausted } = mergeOlderSummaries(monthSummaries, fetched);
+      monthSummaries = merged;
+      if (exhausted) hasMoreSummaries = false;
+    } else {
+      const { merged, exhausted } = mergeOlderSummaries(weekSummaries, fetched);
+      weekSummaries = merged;
+      if (exhausted) hasMoreSummaries = false;
+    }
+  } catch (e) {
+    console.warn("[TurnTimeline] Failed to load older summaries:", e);
+  }
+  loadingOlder = false;
 }
 
 async function toggleSummaryExpand(summary: SummaryRow) {
@@ -499,15 +673,21 @@ async function toggleSummaryExpand(summary: SummaryRow) {
 
       if (sourceIds.length > 0) {
         const turnSummaryRows = await fetchSummaryByIds(sourceIds);
-        const turnIds = turnSummaryRows.map((s) => s.period_key);
+        const uuidRows = turnSummaryRows.filter((s) => isTurnUuid(s.period_key));
 
-        if (turnIds.length === 1) {
-          const events = await fetchTurnEvents(turnSummaryRows[0].mind, {
-            turnId: turnIds[0],
+        if (uuidRows.length < turnSummaryRows.length) {
+          // One or more legacy keys can't be resolved to turns — render the summary rows
+          // themselves rather than an empty drill-down.
+          expandedSummaries.set(summary.id, turnSummaryRows);
+        } else if (uuidRows.length === 1) {
+          const events = await fetchTurnEvents(uuidRows[0].mind, {
+            turnId: uuidRows[0].period_key,
           });
           directEventsSummaries.set(summary.id, events);
-        } else if (turnIds.length > 0) {
-          const turns: TurnRow[] = await fetchTurns({ turnIds: turnIds });
+        } else if (uuidRows.length > 0) {
+          const turns: TurnRow[] = await fetchTurns({
+            turnIds: uuidRows.map((s) => s.period_key),
+          });
           turns.sort((a, b) => a.created_at.localeCompare(b.created_at));
           expandedSummaries.set(summary.id, turns);
         } else {
@@ -534,9 +714,13 @@ async function toggleSummaryExpand(summary: SummaryRow) {
         from = `${monday.getFullYear()}-${pad2(monday.getMonth() + 1)}-${pad2(monday.getDate())}`;
         to = `${sunday.getFullYear()}-${pad2(sunday.getMonth() + 1)}-${pad2(sunday.getDate())}`;
       } else if (summary.period === "month") {
-        // Month "2026-03" → weeks/days within
+        // Month "2026-03" → weeks/days within. Use the real last day so the
+        // server's date→week-key mapping (for the week child tier) doesn't
+        // overflow into the next month and pull in a non-overlapping week.
+        const [my, mm] = summary.period_key.split("-").map(Number);
+        const lastDay = new Date(my, mm, 0).getDate();
         from = `${summary.period_key}-01`;
-        to = `${summary.period_key}-31`;
+        to = `${summary.period_key}-${String(lastDay).padStart(2, "0")}`;
       } else {
         from = summary.period_key;
         to = summary.period_key;
@@ -561,21 +745,16 @@ async function toggleSummaryExpand(summary: SummaryRow) {
   loadingChildren.delete(summary.id);
 }
 
+// Wall-clock anchor for the Today/this-hour boundaries. Held in state and
+// refreshed on a coarse cadence (the liveness sweep + tab focus) so the derived
+// isn't re-reading `new Date()` on unrelated invalidations and the "this hour"
+// cutoff can't go stale while the view sits open.
+let nowMs = $state(Date.now());
+
 // Build the combined timeline items list
 let timelineItems = $derived.by(() => {
   const items: TimelineItem[] = [];
-  const now = new Date();
-
-  // Show turns individually if they completed during or after the current hour.
-  // Use the turn's completion time (summary_meta.to_time) rather than created_at,
-  // because a turn that started in the previous hour but completed in the current
-  // hour won't be included in the previous hour's summary (race condition).
-  const currentHourStart = new Date(now);
-  currentHourStart.setMinutes(0, 0, 0);
-  const hourCutoffMs = currentHourStart.getTime();
-
-  // But also include any turns from today that don't have an hourly summary yet
-  // (i.e., turns from the current in-progress hour)
+  const now = new Date(nowMs);
 
   // Monthly summaries (oldest)
   for (const s of monthSummaries) items.push({ kind: "summary", summary: s });
@@ -591,39 +770,42 @@ let timelineItems = $derived.by(() => {
   // Daily summaries
   for (const s of daySummaries) items.push({ kind: "summary", summary: s });
 
-  // Separator before hourly
-  if ((daySummaries.length > 0 || items.length > 0) && hourSummaries.length > 0) {
+  // Today section: hour summaries interleaved chronologically with individual turns.
+  // Turns render individually when active/current-hour, or when they fall in an
+  // earlier-today hour that has no hour summary yet — so a missing summary degrades
+  // to more detail instead of a silent gap.
+  const todayItems = buildTodayItems({
+    now,
+    hourSummaries,
+    turnsData,
+    isActive: (t) => t.status === "active" || activeTurnIds.has(t.id),
+  });
+
+  // Separator before the today section
+  if (items.length > 0 && todayItems.length > 0) {
     items.push({ kind: "separator", above: "earlier this week", below: "today" });
   }
 
-  // Hourly summaries
-  for (const s of hourSummaries) items.push({ kind: "summary", summary: s });
-
-  // Only turns that completed during/after the current hour (or active turns).
-  // Use to_time (completion time) from summary metadata when available, since a
-  // turn that started in the previous hour but completed in the current hour
-  // won't be covered by the previous hour's summary.
-  const recentTurns = turnsData.filter((t) => {
-    if (t.status === "active" || streamingEvents.has(t.id)) return true;
-    const toTime = (t.summary_meta as Record<string, unknown> | null)?.to_time as
-      | string
-      | undefined;
-    const timeStr = toTime ?? t.created_at;
-    const turnTime = new Date(normalizeTimestamp(timeStr)).getTime();
-    return turnTime >= hourCutoffMs;
-  });
-
-  // Separator before turns
-  if (items.length > 0 && recentTurns.length > 0) {
-    items.push({ kind: "separator", above: "earlier today", below: "this hour" });
-  }
-
-  for (const t of recentTurns) {
-    items.push({ kind: "turn", turn: t });
-  }
+  for (const t of todayItems) items.push(t);
 
   return items;
 });
+
+// Trailing-edge auto-scroll: at most one instant jump per animation frame while
+// events stream, instead of a smooth-animated scrollTo per event (which kept the
+// view perpetually animating). Smooth scrolling is reserved for discrete actions
+// (jump-to-latest, completed-turn reveal).
+let scrollRafPending = false;
+function scheduleScrollToBottom() {
+  if (userScrolledUp || scrollRafPending) return;
+  scrollRafPending = true;
+  requestAnimationFrame(() => {
+    scrollRafPending = false;
+    if (!userScrolledUp && scrollContainer) {
+      scrollContainer.scrollTop = scrollContainer.scrollHeight;
+    }
+  });
+}
 
 // Scroll to bottom on initial load -- keep nudging for a few seconds
 let scrollTimer: ReturnType<typeof setInterval> | null = null;
@@ -660,8 +842,9 @@ $effect(() => {
   if (n !== prevName) {
     prevName = n;
     turnsData = [];
-    hasMore = true;
-    streamingEvents = new SvelteMap();
+    streamingEvents.clear();
+    streamingGroups.clear();
+    activeTurnIds.clear();
     nextSyntheticId = -1;
     pendingInbounds = [];
     hourSummaries = [];
@@ -669,16 +852,71 @@ $effect(() => {
     weekSummaries = [];
     monthSummaries = [];
     summariesLoaded = false;
+    hasMoreSummaries = true;
     expandedSummaries = new SvelteMap();
     directEventsSummaries = new SvelteMap();
+    reconnecting = false;
+    reconnectAttempts = 0;
+    lastEventAt.clear();
     startScrollToBottom();
-    loadTurns(0);
+    loadTurns();
   }
 });
 
-// Load summaries once turns are available
+// Liveness sweep: expire stale provisional inbounds and reconcile active turns that
+// the server has likely finished (converges with the server's wedged-turn sweep).
 $effect(() => {
-  if (turnsData.length > 0 && !summariesLoaded && !loading) {
+  const onVisible = () => {
+    if (document.visibilityState === "visible") nowMs = Date.now();
+  };
+  document.addEventListener("visibilitychange", onVisible);
+  const interval = setInterval(() => {
+    nowMs = Date.now();
+    if (pendingInbounds.length > 0) {
+      const pruned = pruneExpiredInbounds(pendingInbounds);
+      if (pruned.length !== pendingInbounds.length) pendingInbounds = pruned;
+    }
+    const now = Date.now();
+    for (const turn of turnsData) {
+      if (turn.status !== "active") continue;
+      const seen = turnLastSeenMs(turn.created_at, lastEventAt.get(turn.id));
+      if (!isTurnStale(seen, now)) continue;
+      lastEventAt.set(turn.id, now); // avoid refetch storms while awaiting the response
+      fetchTurns({ mind: name, turnId: turn.id })
+        .then((rows) => {
+          const fresh = rows[0];
+          if (fresh && fresh.status !== "active") {
+            deleteStreaming(turn.id);
+            lastEventAt.delete(turn.id);
+          }
+          upsertTurnRows(rows);
+        })
+        .catch((err) => console.warn("[TurnTimeline] Failed to check stale turn:", err));
+    }
+  }, 30_000);
+  return () => {
+    clearInterval(interval);
+    document.removeEventListener("visibilitychange", onVisible);
+  };
+});
+
+// Fetch the daemon's canonical timezone once, so boundary math and labels
+// anchor to server-local time even when the browser is in another zone.
+$effect(() => {
+  fetchSystemInfo()
+    .then((info) => {
+      serverTz = info.timezone ?? undefined;
+    })
+    .catch(() => {})
+    .finally(() => {
+      serverTzResolved = true;
+    });
+});
+
+// Load summaries once turns are available AND the timezone fetch has settled,
+// so boundary math is anchored to the server zone on first paint.
+$effect(() => {
+  if (serverTzResolved && turnsData.length > 0 && !summariesLoaded && !loading) {
     loadSummaries();
   }
 });
@@ -710,15 +948,15 @@ function jumpToLatest() {
 
 <div class="turn-timeline">
   <div class="turn-scroll" bind:this={scrollContainer} onscroll={handleScroll} onwheel={() => stopScrollTimer()}>
-    {#if hasMore}
+    {#if canLoadOlder}
       <div class="load-older">
         <button
-          onclick={() => loadTurns(turnsData.length)}
-          disabled={loading}
+          onclick={loadOlderSummaries}
+          disabled={loadingOlder}
           class="load-older-btn"
-          style:opacity={loading ? 0.5 : 1}
+          style:opacity={loadingOlder ? 0.5 : 1}
         >
-          {loading ? "loading..." : "load older"}
+          {loadingOlder ? "loading..." : "load older"}
         </button>
       </div>
     {/if}
@@ -774,7 +1012,7 @@ function jumpToLatest() {
                     {directEventsSummaries}
                     {loadingChildren}
                     {toggleSummaryExpand}
-                    {formatPeriodTime}
+                    formatPeriodTime={(p, k) => formatPeriodTime(p, k, serverTz)}
                   />
                 </div>
               </div>
@@ -807,42 +1045,46 @@ function jumpToLatest() {
               {#if !expandedTurns.has(turn.id) && turn.status !== "active" && (turn.conversations.length > 0 || turn.activities.length > 0)}
                 <div class="turn-peek-icons">
                   {#each turn.conversations as conv (conv.id)}
+                    {@const chatKey = peekKey("chat", turn.id, conv.id)}
                     <div class="peek-anchor">
-                      <button class="peek-btn" aria-label="View conversation" onclick={(e) => e.stopPropagation()}>
+                      <button class="peek-btn" aria-label="View conversation" onmouseenter={() => revealPeek(chatKey)} onfocus={() => revealPeek(chatKey)} onclick={(e) => e.stopPropagation()}>
                         <Icon kind="chat" />
                       </button>
                       <div class="peek-popover" role="button" tabindex="0"
                         onclick={(e) => { e.stopPropagation(); openConversation(conv, turn); }}
                         onkeydown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); openConversation(conv, turn); } }}
                       >
-                        <div class="peek-card peek-card-chat">
-                          <div class="peek-card-header">
-                            <Icon kind="chat" class="peek-card-icon" />
-                            <span class="peek-card-label">{conv.label}</span>
-                            <span class="peek-card-meta">{conv.messages.length} msg{conv.messages.length === 1 ? '' : 's'}</span>
+                        {#if shouldRenderPeek(revealedPeeks, chatKey)}
+                          <div class="peek-card peek-card-chat">
+                            <div class="peek-card-header">
+                              <Icon kind="chat" class="peek-card-icon" />
+                              <span class="peek-card-label">{conv.label}</span>
+                              <span class="peek-card-meta">{conv.messages.length} msg{conv.messages.length === 1 ? '' : 's'}</span>
+                            </div>
+                            <div class="peek-card-body">
+                              {#each conv.messages.slice(-5) as msg (msg.id)}
+                                <div class="peek-msg">
+                                  <span class="peek-msg-sender" class:peek-msg-sender-user={msg.role === "user"}>{msg.sender_name ?? (msg.role === "user" ? "user" : turn.mind)}</span>
+                                  {#if msg.role === "assistant"}
+                                    <span class="peek-msg-md markdown-body">{@html renderMarkdown(extractTextContent(msg.content))}</span>
+                                  {:else}
+                                    <span>{extractTextContent(msg.content)}</span>
+                                  {/if}
+                                </div>
+                              {/each}
+                            </div>
                           </div>
-                          <div class="peek-card-body">
-                            {#each conv.messages.slice(-5) as msg (msg.id)}
-                              <div class="peek-msg">
-                                <span class="peek-msg-sender" class:peek-msg-sender-user={msg.role === "user"}>{msg.sender_name ?? (msg.role === "user" ? "user" : turn.mind)}</span>
-                                {#if msg.role === "assistant"}
-                                  <span class="peek-msg-md markdown-body">{@html renderMarkdown(extractTextContent(msg.content))}</span>
-                                {:else}
-                                  <span>{extractTextContent(msg.content)}</span>
-                                {/if}
-                              </div>
-                            {/each}
-                          </div>
-                        </div>
+                        {/if}
                       </div>
                     </div>
                   {/each}
                   {#each turn.activities as act (act.id)}
-                    {@const actColor = typeof act.metadata?.color === 'string' ? act.metadata.color : 'yellow'}
-                    {@const actIcon = typeof act.metadata?.icon === 'string' ? act.metadata.icon : ''}
-                    {@const actUrl = typeof act.metadata?.iframeUrl === 'string' ? act.metadata.iframeUrl : typeof act.metadata?.slug === 'string' ? `/minds/${typeof act.metadata?.author === 'string' ? act.metadata.author : turn.mind}/notes/${act.metadata.slug}` : ''}
+                    {@const actKey = peekKey("activity", turn.id, act.id)}
+                    {@const actColor = activityColor(act.metadata)}
+                    {@const actIcon = typeof act.metadata?.icon === 'string' ? sanitizeSvg(act.metadata.icon) : ''}
+                    {@const actUrl = activityNavUrl(act.metadata, turn.mind)}
                     <div class="peek-anchor">
-                      <button class="peek-btn" style:color="var(--{actColor})" aria-label="View activity" onclick={(e) => { e.stopPropagation(); if (actUrl) navigate(actUrl); }}>
+                      <button class="peek-btn" style:color="var(--{actColor})" aria-label="View activity" onmouseenter={() => revealPeek(actKey)} onfocus={() => revealPeek(actKey)} onclick={(e) => { e.stopPropagation(); if (actUrl) navigate(actUrl); }}>
                         {#if actIcon}
                           {@html actIcon}
                         {:else}
@@ -850,28 +1092,31 @@ function jumpToLatest() {
                         {/if}
                       </button>
                       <div class="peek-popover">
-                        <div class="peek-card" style:border-color="color-mix(in srgb, var(--{actColor}) 25%, var(--border))">
-                          <div class="peek-card-header" style:border-bottom-color="color-mix(in srgb, var(--{actColor}) 25%, var(--border))">
-                            {#if actIcon}
-                              <span class="peek-card-icon" style:color="var(--{actColor})">{@html actIcon}</span>
-                            {:else}
-                              <Icon kind="document-lines" class="peek-card-icon" />
-                            {/if}
-                            <span class="peek-card-label">{act.summary}</span>
-                          </div>
-                          {#if typeof act.metadata?.iframeUrl === 'string' && act.metadata.iframeUrl}
-                            <div class="peek-card-body peek-card-iframe">
-                              <iframe
-                                src={act.metadata.iframeUrl}
-                                title={act.summary}
-                                sandbox="allow-same-origin"
-                                role="presentation"
-                              ></iframe>
+                        {#if shouldRenderPeek(revealedPeeks, actKey)}
+                          {@const actBody = activityPeekBody(act.metadata)}
+                          <div class="peek-card" style:border-color="color-mix(in srgb, var(--{actColor}) 25%, var(--border))">
+                            <div class="peek-card-header" style:border-bottom-color="color-mix(in srgb, var(--{actColor}) 25%, var(--border))">
+                              {#if actIcon}
+                                <span class="peek-card-icon" style:color="var(--{actColor})">{@html actIcon}</span>
+                              {:else}
+                                <Icon kind="document-lines" class="peek-card-icon" />
+                              {/if}
+                              <span class="peek-card-label">{act.summary}</span>
                             </div>
-                          {:else if typeof act.metadata?.bodyHtml === 'string' && act.metadata.bodyHtml}
-                            <div class="peek-card-body markdown-body">{@html renderMarkdown(act.metadata.bodyHtml)}</div>
-                          {/if}
-                        </div>
+                            {#if actBody.kind === "iframe"}
+                              <div class="peek-card-body peek-card-iframe">
+                                <iframe
+                                  src={actBody.url}
+                                  title={act.summary}
+                                  sandbox="allow-same-origin"
+                                  role="presentation"
+                                ></iframe>
+                              </div>
+                            {:else if actBody.kind === "markdown"}
+                              <div class="peek-card-body markdown-body">{@html renderMarkdown(actBody.source)}</div>
+                            {/if}
+                          </div>
+                        {/if}
                       </div>
                     </div>
                   {/each}
@@ -926,7 +1171,7 @@ function jumpToLatest() {
                     onexpand={(expanded) => handleExpand(turn.id, expanded)}
                   />
                 {:else}
-                  {@const events = streamingEvents.get(turn.id) ?? []}
+                  {@const groups = streamingGroups.get(turn.id) ?? []}
                   {@const startTime = new Date(turn.created_at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
                   <TimelineBranch gap={24} reach={11} noReturn>
                     {#snippet header()}
@@ -935,8 +1180,7 @@ function jumpToLatest() {
                       </div>
                     {/snippet}
                     {#snippet children()}
-                      {#if events.length > 0}
-                        {@const groups = groupToolEvents(events)}
+                      {#if groups.length > 0}
                         {#each groups as groupItem (groupItem.kind === "tool-group" ? `tg-${groupItem.toolUse.id}` : `ev-${groupItem.event.id}`)}
                           {#if groupItem.kind === "tool-group"}
                             {@const catColor = getCategoryColor(groupItem.category)}
@@ -966,7 +1210,7 @@ function jumpToLatest() {
         {#if pendingInbounds.length > 0}
           <div class="turn-row">
             <div class="turn-time">
-              just now
+              {formatRelativeTime(pendingInbounds[0].created_at)}
             </div>
             <div class="turn-rail turn-rail-expanded">
               <div class="turn-dot"></div>
@@ -1002,6 +1246,9 @@ function jumpToLatest() {
             </div>
             <div class="turn-body">
               <span class="mind-status-text" style:color={activeMinds.has(name) ? 'var(--accent)' : statusColor}>{name} is {statusLabel}</span>
+              {#if reconnecting}
+                <span class="reconnecting-text">reconnecting…</span>
+              {/if}
             </div>
           </div>
         {/if}
@@ -1526,6 +1773,15 @@ function jumpToLatest() {
     font-style: italic;
     line-height: 8px;
     padding-left: 20px;
+  }
+
+  .reconnecting-text {
+    display: inline-block;
+    margin-top: 6px;
+    padding-left: 20px;
+    font-size: 12px;
+    color: var(--text-2);
+    animation: pulse 1.5s infinite;
   }
   /* Scale break: two diagonal lines on the rail with labels */
   .scale-break-row {

@@ -4,6 +4,7 @@
 
 import type {
   AvailableUser,
+  AwayFeedItem,
   ChannelInfo,
   Conversation,
   ConversationWithParticipants,
@@ -312,6 +313,11 @@ export function fetchSummaryByIds(ids: number[]): Promise<SummaryRow[]> {
   return get(`${V1}/history/summaries?ids=${ids.join(",")}`);
 }
 
+/** Fetch the "while you were away" feed: self-directed turn summaries (artifact activity is surfaced separately via extension feedSources). */
+export function fetchAwayFeed(limit?: number): Promise<AwayFeedItem[]> {
+  return get(`${V1}/history/away${limit !== undefined ? `?limit=${limit}` : ""}`);
+}
+
 // --- Variants ---
 
 export function fetchVariants(name: string): Promise<Variant[]> {
@@ -460,11 +466,17 @@ export function restartDaemon(): Promise<void> {
   return post(`${V1}/system/restart`);
 }
 
-export async function fetchSystemInfo(): Promise<{ system: string | null; name: string | null }> {
+export async function fetchSystemInfo(): Promise<{
+  system: string | null;
+  name: string | null;
+  timezone: string | null;
+}> {
   try {
-    return await get<{ system: string | null; name: string | null }>(`${V1}/system/info`);
+    return await get<{ system: string | null; name: string | null; timezone: string | null }>(
+      `${V1}/system/info`,
+    );
   } catch {
-    return { system: null, name: null };
+    return { system: null, name: null, timezone: null };
   }
 }
 
@@ -580,7 +592,7 @@ export type MindDefaultsCognition = {
 // UI-relevant subset of ScheduleEntry (omits deprecated channel, fireAt timers)
 export type MindDefaultsSchedule = Pick<
   ScheduleEntry,
-  "id" | "cron" | "message" | "script" | "session" | "enabled"
+  "id" | "cron" | "message" | "messages" | "script" | "session" | "enabled"
 > & {
   whileSleeping?: "skip" | "queue" | "trigger-wake";
 };
@@ -815,6 +827,7 @@ export type ScheduleEntry = {
   cron?: string;
   fireAt?: string;
   message?: string;
+  messages?: string[];
   script?: string;
   enabled: boolean;
   whileSleeping?: string;

@@ -12,7 +12,12 @@ import { zValidator } from "@hono/zod-validator";
 import { and, desc, eq, type SQL, sql } from "drizzle-orm";
 import { type Context, Hono } from "hono";
 import { z } from "zod";
-import { qualifyModelId, resolveTemplate, unqualifyModelId } from "../../lib/ai-service.js";
+import {
+  missingCredentialWarning,
+  qualifyModelId,
+  resolveTemplate,
+  unqualifyModelId,
+} from "../../lib/ai-service.js";
 import { deleteMindUser } from "../../lib/auth.js";
 import { announceToSystem } from "../../lib/chat/system-channel.js";
 import { readSystemsConfig } from "../../lib/config/systems-config.js";
@@ -22,7 +27,13 @@ import {
   startMindFull as startMindFullService,
   stopMindFull as stopMindFullService,
 } from "../../lib/daemon/mind-service.js";
-import { drainNotices, formatNotices, recordNotice } from "../../lib/daemon/notices.js";
+import {
+  drainNotices,
+  formatNotices,
+  latestFailureNotice,
+  latestNotice,
+  recordNotice,
+} from "../../lib/daemon/notices.js";
 import { getTokenBudget } from "../../lib/daemon/token-budget.js";
 import { handleMindEvent, setNoticeDrainWatermark } from "../../lib/daemon/turn-lifecycle.js";
 import { getActiveTurnId } from "../../lib/daemon/turn-tracker.js";
@@ -42,6 +53,7 @@ import {
 import { subscribe as subscribeMindEvent } from "../../lib/events/mind-events.js";
 import { type ExportManifest, isHomeOnlyArchive } from "../../lib/mind/archive.js";
 import { consolidateMemory } from "../../lib/mind/consolidate.js";
+import { defaultHeartbeatSchedule, setupDefaultDreaming } from "../../lib/mind/default-autonomy.js";
 import { generateIdentity, publishPublicKey } from "../../lib/mind/identity.js";
 import {
   chownMindDir,
@@ -58,6 +70,7 @@ import {
   findMind,
   findVariants,
   getBaseName,
+  type MindEntry,
   mindDir,
   nextPort,
   readRegistry,
@@ -68,6 +81,7 @@ import {
   stateDir,
   validateMindName,
 } from "../../lib/mind/registry.js";
+import { isTemplateStale } from "../../lib/mind/template-staleness.js";
 import { applyThinkingLevel, deriveThinkingLevel } from "../../lib/mind/thinking-config.js";
 import { cleanupVariant } from "../../lib/mind/variant-cleanup.js";
 import { validateBranchName } from "../../lib/mind/variants.js";
@@ -77,7 +91,6 @@ import {
   getMindPromptDefaults,
   getPrompt,
   getPromptIfCustom,
-  ORIENTATION_MARKER,
   substitute,
 } from "../../lib/prompts.js";
 import { mindHistory, summaries, turns } from "../../lib/schema.js";
@@ -125,14 +138,24 @@ type ChannelStatus = {
 async function getMindStatus(name: string, port: number, registryRunning?: boolean) {
   const manager = getMindManager();
   let status: "running" | "stopped" | "starting" | "sleeping" = "stopped";
+  let wakeAt: string | null = null;
 
   // Check sleep state first
   try {
     const { getSleepManagerIfReady } = await import("../../lib/daemon/sleep-manager.js");
-    if (getSleepManagerIfReady()?.isSleeping(name)) {
+    const sleepManager = getSleepManagerIfReady();
+    if (sleepManager?.isSleeping(name)) {
       status = "sleeping";
+      const sleepState = sleepManager.getState(name);
+      // A voluntary wake-at is authoritative for the night (initiateSleep nulls
+      // the cron wake when one is set), so prefer it.
+      wakeAt = sleepState.voluntaryWakeAt ?? sleepState.scheduledWakeAt;
     }
-  } catch {}
+  } catch (err) {
+    // A swallowed failure here misreports a sleeping mind as stopped (and chat
+    // would offer Start for a mind that is asleep) — leave a trace.
+    log.warn(`failed to check sleep state for ${name}`, log.errorData(err));
+  }
 
   if (status !== "sleeping" && registryRunning !== false && manager.isRunning(name)) {
     const health = await checkHealth(port);
@@ -152,12 +175,61 @@ async function getMindStatus(name: string, port: number, registryRunning?: boole
     });
   }
 
+  // Undelivered failure notice = the mind failed and hasn't completed a clean
+  // turn since. Chat surfaces this as "last turn failed" (#574); it clears
+  // automatically once the notice drains on the next clean turn.
+  const lastError = await latestFailureNotice(name);
+
   return {
     status,
+    wakeAt,
+    lastError,
     channels,
     displayName: config?.profile?.displayName,
     description: config?.profile?.description,
     avatar: config?.profile?.avatar,
+  };
+}
+
+type MindStatus = Awaited<ReturnType<typeof getMindStatus>>;
+
+/** True for the daemon's own privileged principals: admin users and the system spirit. */
+function isPrivileged(c: Context<AuthEnv>): boolean {
+  const role = c.get("user").role;
+  return role === "admin" || role === "system";
+}
+
+/**
+ * Reduce a registry entry to the profile-level fields safe to hand a
+ * non-privileged caller (a mind token or a non-admin user). Registry internals —
+ * port, dir, branch, template, hash, parent, createdBy, running — are withheld:
+ * minds are untrusted principals, and a mind's own port/dir aids lateral movement
+ * (direct connections to sibling mind servers that bypass the daemon, targeted
+ * filesystem probing). Only admin/system callers get the full entry. See #503.
+ */
+export function toPublicMind(
+  entry: MindEntry,
+  status: MindStatus,
+  extras: { hasPages: boolean; lastActiveAt?: string | null },
+) {
+  return {
+    name: entry.name,
+    created: entry.created,
+    stage: entry.stage,
+    mindType: entry.mindType,
+    status: status.status,
+    wakeAt: status.wakeAt,
+    // Kind/reason/at only — `detail` can embed the raw error string (unknown
+    // classifications), which is mind-private (served behind requireSelf).
+    lastError: status.lastError
+      ? { kind: status.lastError.kind, reason: status.lastError.reason, at: status.lastError.at }
+      : null,
+    channels: status.channels,
+    displayName: status.displayName,
+    description: status.description,
+    avatar: status.avatar,
+    hasPages: extras.hasPages,
+    lastActiveAt: extras.lastActiveAt ?? null,
   };
 }
 
@@ -824,6 +896,10 @@ const app = new Hono<AuthEnv>()
       // Generate Ed25519 keypair for mind identity
       const { publicKeyPem } = generateIdentity(dest);
 
+      // The model the mind will actually run (request, or default cognition model),
+      // provider-qualified — feeds the credential warning below so pi minds created
+      // from defaults are checked too.
+      let effectiveModel: string | undefined = body.model;
       // Merge default settings into volute.json and config.json
       {
         const { readGlobalConfig: readGlobal } = await import("../../lib/config/setup.js");
@@ -840,16 +916,7 @@ const app = new Hono<AuthEnv>()
           };
         }
         if (!config.schedules || config.schedules.length === 0) {
-          config.schedules = mindDefaults?.schedules ?? [
-            {
-              id: "heartbeat",
-              cron: "0 12,16,20 * * *",
-              message:
-                "A quiet moment. You might write something — a note, a journal entry, a page. You could explore a topic that interests you, check in on #system, or just think. No obligations, just time.",
-              enabled: true,
-              whileSleeping: "skip",
-            },
-          ];
+          config.schedules = mindDefaults?.schedules ?? [defaultHeartbeatSchedule()];
         }
         // Apply cognition defaults
         const cog = mindDefaults?.cognition;
@@ -865,6 +932,7 @@ const app = new Hono<AuthEnv>()
 
         // Apply model (and compaction) to SDK config.json
         const modelId = body.model ?? cog?.model;
+        effectiveModel = modelId ? qualifyModelId(modelId) : undefined;
         const sdkConfigPath = resolve(dest, "home/.config/config.json");
         if (modelId || cog?.compaction) {
           const existing = existsSync(sdkConfigPath)
@@ -957,6 +1025,12 @@ const app = new Hono<AuthEnv>()
         }
       }
 
+      // Default autonomy: minds created directly as full minds get working
+      // dreaming out of the box; seeds get it at sprout (#581)
+      if (body.stage !== "seed") {
+        skillWarnings.push(...setupDefaultDreaming(dest).warnings);
+      }
+
       // Add nurture schedule to spirit if this is a seed
       if (body.stage === "seed") {
         try {
@@ -1023,6 +1097,19 @@ const app = new Hono<AuthEnv>()
       // Announce to #system channel
       announceToSystem(`${name} has joined`).catch(() => {});
 
+      // Warn (don't block) when the mind will spawn without usable model credentials,
+      // so a mute-on-first-turn mind is caught at creation rather than in silence (#573).
+      // The mind is already created — an advisory check must never fail creation, so
+      // swallow any hiccup and just omit the warning.
+      const credentialWarning = await missingCredentialWarning(
+        template,
+        effectiveModel,
+        name,
+      ).catch((err) => {
+        log.warn(`credential check failed for ${name}`, log.errorData(err));
+        return null;
+      });
+
       return c.json({
         ok: true,
         name,
@@ -1030,6 +1117,7 @@ const app = new Hono<AuthEnv>()
         stage: body.stage ?? "sprouted",
         message: `Created mind: ${name} (port ${port})`,
         ...(gitWarning && { warning: gitWarning }),
+        ...(credentialWarning && { credentialWarning }),
         ...(skillWarnings.length > 0 && { skillWarnings }),
       });
     } catch (err) {
@@ -1229,15 +1317,19 @@ const app = new Hono<AuthEnv>()
       }
     }
 
+    const privileged = isPrivileged(c);
     const minds = await Promise.all(
       entries.map(async (entry) => {
         const mindStatus = await getMindStatus(entry.name, entry.port, entry.running);
         const hasPages = existsSync(resolve(mindDir(entry.name), "home", "pages"));
+        const lastActiveAt = lastActiveMap.get(entry.name) ?? null;
+        if (!privileged) return toPublicMind(entry, mindStatus, { hasPages, lastActiveAt });
         return {
           ...entry,
           ...mindStatus,
           hasPages,
-          lastActiveAt: lastActiveMap.get(entry.name) ?? null,
+          templateStale: isTemplateStale(entry),
+          lastActiveAt,
         };
       }),
     );
@@ -1253,8 +1345,15 @@ const app = new Hono<AuthEnv>()
     if (!existsSync(dir)) return c.json({ error: "Mind directory missing" }, 404);
 
     const mindStatus = await getMindStatus(name, entry.port);
+    const hasPages = existsSync(resolve(mindDir(name), "home", "pages"));
 
-    // Include variant info
+    // Non-privileged callers (minds, non-admin users) get profile-level fields
+    // only — no port/dir/branch/variants that would aid lateral movement (#503).
+    if (!isPrivileged(c)) {
+      return c.json(toPublicMind(entry, mindStatus, { hasPages }));
+    }
+
+    // Include variant info (admin/system only — variant ports/names are internal)
     const variants = await findVariants(name);
     const manager = getMindManager();
     const variantStatuses = await Promise.all(
@@ -1268,8 +1367,25 @@ const app = new Hono<AuthEnv>()
       }),
     );
 
-    const hasPages = existsSync(resolve(mindDir(name), "home", "pages"));
-    return c.json({ ...entry, ...mindStatus, variants: variantStatuses, hasPages });
+    // Surface the newest un-drained notice (turn error, crash, missing credentials)
+    // so `mind status` can show why a mind is silent (#573). Admin/system only.
+    const notice = await latestNotice(name);
+
+    return c.json({
+      ...entry,
+      ...mindStatus,
+      variants: variantStatuses,
+      hasPages,
+      templateStale: isTemplateStale(entry),
+      ...(notice && {
+        lastNotice: {
+          kind: notice.kind,
+          reason: notice.reason,
+          detail: notice.detail,
+          created_at: notice.created_at,
+        },
+      }),
+    });
   })
   // Context info — proxy to mind's /context endpoint
   .get("/:name/context", requireSelf(), async (c) => proxyToMind(c, "context"))
@@ -1685,33 +1801,21 @@ const app = new Hono<AuthEnv>()
       return c.json({ output: "" });
     }
 
-    // Collect state
+    // Collect state — shared with the sprout gate so the two always agree.
     const dir = entry.dir ?? mindDir(name);
-    const soulPath = resolve(dir, "home/SOUL.md");
-    const memoryPath = resolve(dir, "home/MEMORY.md");
-
-    const soulCustom =
-      existsSync(soulPath) && !readFileSync(soulPath, "utf-8").includes(ORIENTATION_MARKER);
-    const memoryWritten =
-      existsSync(memoryPath) && readFileSync(memoryPath, "utf-8").trim().length > 0;
-
-    const config = readVoluteConfig(dir);
-    const displayNameSet = !!config?.profile?.displayName;
-    const avatarSet = !!config?.profile?.avatar;
-
-    const { isImagegenEnabled } = await import("../../lib/config/setup.js");
-    const imagegenEnabled = isImagegenEnabled();
+    const { evaluateSeedChecklist } = await import("../../lib/mind/seed-readiness.js");
+    const checklist = evaluateSeedChecklist(dir);
 
     const done: string[] = [];
     const remaining: string[] = [];
-    if (soulCustom) done.push("SOUL.md written");
+    if (checklist.soulWritten) done.push("SOUL.md written");
     else remaining.push("Write SOUL.md");
-    if (memoryWritten) done.push("MEMORY.md written");
+    if (checklist.memoryWritten) done.push("MEMORY.md written");
     else remaining.push("Write MEMORY.md");
-    if (displayNameSet) done.push("Display name set");
+    if (checklist.displayNameSet) done.push("Display name set");
     else remaining.push("Set display name");
-    if (imagegenEnabled) {
-      if (avatarSet) done.push("Avatar set");
+    if (checklist.imagegenEnabled) {
+      if (checklist.avatarSet) done.push("Avatar set");
       else remaining.push("Generate and set avatar");
     }
 
@@ -1744,24 +1848,62 @@ const app = new Hono<AuthEnv>()
     }
     await setMindStage(name, "sprouted");
 
-    // Clean up spirit nurture schedule
+    // Default autonomy: working dreaming out of the box (#581). The seed-sprout
+    // CLI installs the standard skills — including dreaming — before calling
+    // this endpoint, so the skill dir is present here on the normal path. The
+    // mind is already running, so reload its schedules when the dream schedule
+    // lands. Fail soft: sprouting must not break over dreaming wiring.
+    try {
+      const sproutedDir = entry.dir ?? mindDir(name);
+      if (setupDefaultDreaming(sproutedDir).schedulesChanged) {
+        const { getScheduler } = await import("../../lib/daemon/scheduler.js");
+        getScheduler().loadSchedules(name, sproutedDir);
+      }
+    } catch (err) {
+      log.warn(`failed to set up default dreaming for ${name}`, log.errorData(err));
+    }
+
+    // Swap the spirit's nurture schedule for the first-week arc (#582): remove
+    // nurture-<name>, add one-time cues prompting the spirit to check in over
+    // the mind's first days. The one-time schedules self-delete after firing.
+    // A null spirit config (missing or unparseable) is left alone — writing a
+    // fresh one back could destroy the spirit's profile and other schedules.
     try {
       const spiritEntry = await findMind("volute");
       if (spiritEntry) {
-        const { spiritDir } = await import("../../lib/mind/spirit.js");
+        const { firstWeekSchedules, spiritDir } = await import("../../lib/mind/spirit.js");
         const sDir = spiritEntry.dir ?? spiritDir();
         const spiritConfig = readVoluteConfig(sDir);
-        if (spiritConfig?.schedules) {
-          const nurtureId = `nurture-${name}`;
-          spiritConfig.schedules = spiritConfig.schedules.filter((s) => s.id !== nurtureId);
-          if (spiritConfig.schedules.length === 0) spiritConfig.schedules = undefined;
+        if (spiritConfig) {
+          const schedules = (spiritConfig.schedules ?? []).filter(
+            (s) => s.id !== `nurture-${name}`,
+          );
+          const existing = new Set(schedules.map((s) => s.id));
+          schedules.push(
+            ...firstWeekSchedules(name, new Date()).filter((s) => !existing.has(s.id)),
+          );
+          spiritConfig.schedules = schedules;
           writeVoluteConfig(sDir, spiritConfig);
-          const { getScheduler } = await import("../../lib/daemon/scheduler.js");
-          getScheduler().loadSchedules("volute", sDir);
+          // Reload separately: if the write succeeded but the reload throws, the
+          // change is on disk and takes effect on the spirit's next restart —
+          // that's a different situation from the write itself failing.
+          try {
+            const { getScheduler } = await import("../../lib/daemon/scheduler.js");
+            getScheduler().loadSchedules("volute", sDir);
+          } catch (err) {
+            log.warn(
+              `spirit schedules for sprout of ${name} written to disk but not reloaded into the running scheduler (effective on next spirit restart)`,
+              log.errorData(err),
+            );
+          }
+        } else {
+          log.warn(
+            `spirit config at ${sDir} missing or unparseable — first-week arc for ${name} not scheduled, nurture-${name} not removed`,
+          );
         }
       }
     } catch (err) {
-      log.warn(`failed to clean up nurture schedule for ${name}`, log.errorData(err));
+      log.warn(`failed to update spirit schedules for sprout of ${name}`, log.errorData(err));
     }
 
     return c.json({ ok: true });
@@ -2372,6 +2514,25 @@ const app = new Hono<AuthEnv>()
       }
       log.error(`failed to get pending deliveries for ${baseName}`, log.errorData(err));
       return c.json({ error: "Failed to retrieve pending messages" }, 500);
+    }
+  })
+  // Decline an unrouted (gated) channel: stops invites and archives the held backlog.
+  // The channel is passed in the body (not the path) since channel slugs can contain
+  // slashes (e.g. "discord:server/general") that a path param can't carry.
+  .post("/:name/gates/decline", requireSelf(), async (c) => {
+    const name = c.req.param("name");
+    const body = (await c.req.json().catch(() => ({}))) as { channel?: string };
+    const channel = body.channel?.trim();
+    if (!channel) return c.json({ error: "channel required" }, 400);
+    try {
+      const archived = await getDeliveryManager().declineChannel(name, channel);
+      return c.json({ ok: true, channel, archived });
+    } catch (err) {
+      if (err instanceof Error && err.message.includes("not initialized")) {
+        return c.json({ error: "Delivery manager not available" }, 503);
+      }
+      log.error(`failed to decline channel ${channel} for ${name}`, log.errorData(err));
+      return c.json({ error: "Failed to decline channel" }, 500);
     }
   })
   // AI completion proxy for minds

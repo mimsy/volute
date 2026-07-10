@@ -14,6 +14,7 @@ let {
   onConversationId,
   onOpenMind,
   onSelectConversation,
+  onSeed,
   onTypingNames,
   onToggleSidebar,
   onOpenRightPanel,
@@ -25,6 +26,7 @@ let {
   onConversationId: (id: string) => void;
   onOpenMind: (mind: Mind) => void;
   onSelectConversation: (id: string) => void;
+  onSeed: () => void;
   onTypingNames?: (names: string[]) => void;
   onToggleSidebar?: () => void;
   onOpenRightPanel?: () => void;
@@ -123,7 +125,7 @@ let contextLabel = $derived.by(() => {
     </div>
   {:else}
     <div class="frame-content padded">
-      <Home {username} {conversations} {onSelectConversation} />
+      <Home {username} {conversations} {onSelectConversation} {onSeed} />
     </div>
   {/if}
 </div>

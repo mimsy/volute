@@ -7,6 +7,8 @@ import {
   type GlobalConfig,
   isSetupComplete,
   readGlobalConfig,
+  setupStatus,
+  setupUrl,
   writeGlobalConfig,
 } from "../packages/daemon/src/lib/config/setup.js";
 import { voluteSystemDir } from "../packages/daemon/src/lib/mind/registry.js";
@@ -76,12 +78,14 @@ describe("setup config", () => {
     assert.equal(isSetupComplete(), false);
   });
 
-  it("isSetupComplete returns false when setup field exists but setupCompleted is not set", () => {
+  it("isSetupComplete treats a legacy config (setup block, no setupCompleted flag) as complete", () => {
+    // Predates the setupCompleted flag; migrateSetupCompleted() persists these as
+    // complete on daemon start, so the CLI gate must agree even before that runs.
     writeGlobalConfig({
       name: "test",
       setup: { type: "local", mindsDir: "/tmp", isolation: "sandbox", service: false },
     });
-    assert.equal(isSetupComplete(), false);
+    assert.equal(isSetupComplete(), true);
   });
 
   it("isSetupComplete returns true when setupCompleted is true", () => {
@@ -91,5 +95,83 @@ describe("setup config", () => {
       setupCompleted: true,
     });
     assert.equal(isSetupComplete(), true);
+  });
+
+  it("isSetupComplete returns false while setup is in progress (setupCompleted === false)", () => {
+    writeGlobalConfig({
+      name: "test",
+      setup: { type: "local", mindsDir: "/tmp", isolation: "sandbox", service: false },
+      setupCompleted: false,
+    });
+    assert.equal(isSetupComplete(), false);
+  });
+});
+
+describe("setupStatus", () => {
+  afterEach(cleanup);
+
+  it("returns 'none' when no config exists", () => {
+    assert.equal(setupStatus(), "none");
+  });
+
+  it("returns 'none' when config has no setup field", () => {
+    writeGlobalConfig({ name: "test" });
+    assert.equal(setupStatus(), "none");
+  });
+
+  it("returns 'in-progress' after `volute setup` ran but the wizard is unfinished", () => {
+    // This is the state `volute setup` leaves behind: config written, browser
+    // wizard not yet completed. The old strict gate misreported it as "not set up".
+    writeGlobalConfig({
+      name: "test",
+      setup: { type: "local", mindsDir: "/tmp", isolation: "sandbox", service: false },
+      setupCompleted: false,
+    });
+    assert.equal(setupStatus(), "in-progress");
+  });
+
+  it("returns 'complete' for a legacy config missing the setupCompleted flag", () => {
+    writeGlobalConfig({
+      name: "test",
+      setup: { type: "local", mindsDir: "/tmp", isolation: "sandbox", service: false },
+    });
+    assert.equal(setupStatus(), "complete");
+  });
+
+  it("returns 'complete' when setupCompleted is true", () => {
+    writeGlobalConfig({
+      name: "test",
+      setup: { type: "local", mindsDir: "/tmp", isolation: "sandbox", service: false },
+      setupCompleted: true,
+    });
+    assert.equal(setupStatus(), "complete");
+  });
+});
+
+describe("setupUrl", () => {
+  afterEach(cleanup);
+
+  it("defaults to 127.0.0.1:1618 when config is empty", () => {
+    assert.equal(setupUrl(), "http://127.0.0.1:1618");
+  });
+
+  it("uses the configured port and rewrites a wildcard host to localhost", () => {
+    writeGlobalConfig({ hostname: "0.0.0.0", port: 9000 });
+    assert.equal(setupUrl(), "http://localhost:9000");
+  });
+
+  it("preserves a concrete hostname", () => {
+    writeGlobalConfig({ hostname: "myhost.local", port: 1618 });
+    assert.equal(setupUrl(), "http://myhost.local:1618");
+  });
+
+  it("rewrites the IPv6 wildcard host to localhost", () => {
+    writeGlobalConfig({ hostname: "::", port: 1618 });
+    assert.equal(setupUrl(), "http://localhost:1618");
+  });
+
+  it("brackets a bare IPv6 hostname", () => {
+    writeGlobalConfig({ hostname: "::1", port: 1618 });
+    assert.equal(setupUrl(), "http://[::1]:1618");
   });
 });

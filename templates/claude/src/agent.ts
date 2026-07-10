@@ -22,7 +22,11 @@ import { createPreCompactHook } from "./lib/hooks/pre-compact.js";
 import { createReplyInstructionsHook } from "./lib/hooks/reply-instructions.js";
 import { log } from "./lib/logger.js";
 import { createMessageChannel } from "./lib/message-channel.js";
-import { isSessionReapable, reapSessionQuery } from "./lib/session-reaper.js";
+import {
+  isSessionReapable,
+  reapSessionQuery,
+  reapSessionsForShutdown,
+} from "./lib/session-reaper.js";
 import { createSessionStore } from "./lib/session-store.js";
 import type { EffortLevel, ThinkingConfig } from "./lib/startup.js";
 import { loadPrompts, type SubagentConfig } from "./lib/startup.js";
@@ -71,6 +75,7 @@ export function createMind(options: {
   waitForCommits: () => Promise<void>;
   getContextInfo: () => Promise<ContextInfo>;
   getContextMessages: () => Promise<ContextMessages>;
+  reapAllSessions: () => Promise<void>;
 } {
   const autoCommit = createAutoCommitHook(options.cwd);
   const identityReload = createIdentityReloadHook(options.cwd);
@@ -576,6 +581,21 @@ export function createMind(options: {
     }
   }
 
+  /**
+   * Reap every live session's SDK subprocess on shutdown so `mind stop`/restart
+   * don't orphan `<defunct>` claude children to PID 1. Delegates the teardown to
+   * reapSessionsForShutdown; bounded externally by setupShutdown's timeout.
+   */
+  async function reapAllSessions(): Promise<void> {
+    const live = [...sessions.values()];
+    if (live.length === 0) return;
+    log("mind", `shutdown: reaping ${live.length} live SDK subprocess(es)`);
+    for (const s of live) sessions.delete(s.name);
+    await reapSessionsForShutdown(live, (name, err) =>
+      log("mind", `session "${name}": shutdown reap failed:`, err),
+    );
+  }
+
   if (idleTimeoutMs > 0) {
     log("mind", `idle session reaper: ${idleTimeoutMs / 60_000} min timeout`);
     const checkMs = Math.min(60_000, idleTimeoutMs);
@@ -753,5 +773,11 @@ export function createMind(options: {
   // instead of waiting for the first message (which adds minutes of latency).
   getOrCreateSession("main");
 
-  return { resolve, waitForCommits: autoCommit.waitForCommits, getContextInfo, getContextMessages };
+  return {
+    resolve,
+    waitForCommits: autoCommit.waitForCommits,
+    getContextInfo,
+    getContextMessages,
+    reapAllSessions,
+  };
 }

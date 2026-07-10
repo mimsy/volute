@@ -23,6 +23,7 @@ import { isIsolationEnabled, mindUserName } from "./mind/isolation.js";
 import { mindDir, voluteHome, voluteSystemDir } from "./mind/registry.js";
 import { hashSkillDir, importSkillFromDir, removeSharedSkill, sharedSkillsDir } from "./skills.js";
 import log from "./util/logger.js";
+import { sanitizeSvgIcon } from "./util/sanitize-svg.js";
 
 const VALID_EXTENSION_ID = /^[a-z0-9][a-z0-9_-]*$/;
 
@@ -57,6 +58,26 @@ export type DiscoveredExtensionInfo = {
 };
 
 export type ExtensionCommandInfo = Omit<ExtensionCommand, "handler">;
+
+/**
+ * Enrich an activity event's metadata with the extension's icon/color branding and
+ * sanitize the resulting icon before it reaches the DB. Activity icons round-trip to
+ * the operator dashboard where they render as raw HTML, so the write-time sanitize is
+ * the belt-and-braces layer that keeps a malicious `metadata.icon` from becoming stored
+ * XSS even if a render-time sanitizer is ever missed.
+ */
+export function enrichActivityMetadata(
+  manifest: Pick<ExtensionManifest, "icon" | "color">,
+  metadata: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+  const enriched: Record<string, unknown> = {
+    ...metadata,
+    ...(manifest.icon && !metadata?.icon ? { icon: manifest.icon } : {}),
+    ...(manifest.color && !metadata?.color ? { color: manifest.color } : {}),
+  };
+  if (typeof enriched.icon === "string") enriched.icon = sanitizeSvgIcon(enriched.icon);
+  return enriched;
+}
 
 function toCommandInfo(cmd: ExtensionCommand): ExtensionCommandInfo {
   const { handler: _, ...info } = cmd;
@@ -202,16 +223,10 @@ async function buildContext(
     getUser: async (id: number) => getUser(id),
     getUserByUsername: async (username: string) => getUserByUsername(username),
     publishActivity: (event) => {
-      // Inject extension icon/color into metadata so the UI can render
-      // activity cards with the correct branding without hardcoding extension IDs.
-      const enriched = {
-        ...event,
-        metadata: {
-          ...event.metadata,
-          ...(manifest.icon && !event.metadata?.icon ? { icon: manifest.icon } : {}),
-          ...(manifest.color && !event.metadata?.color ? { color: manifest.color } : {}),
-        },
-      };
+      // Inject extension icon/color branding and sanitize the icon before it reaches
+      // the DB (the dashboard renders it raw).
+      const metadata = enrichActivityMetadata(manifest, event.metadata);
+      const enriched = { ...event, metadata };
       // Insert without turn linkage — when called from skill command handlers, the
       // activity is linked to the correct turn via correlation markers in tool_result.
       // When called from route handlers or lifecycle hooks, the record stays unlinked.
@@ -310,14 +325,8 @@ async function loadExtension(
           const result = await cmd.handler(parsed, {
             ...context,
             publishActivity: (rawEvent) => {
-              const event = {
-                ...rawEvent,
-                metadata: {
-                  ...rawEvent.metadata,
-                  ...(manifest.icon && !rawEvent.metadata?.icon ? { icon: manifest.icon } : {}),
-                  ...(manifest.color && !rawEvent.metadata?.color ? { color: manifest.color } : {}),
-                },
-              };
+              const metadata = enrichActivityMetadata(manifest, rawEvent.metadata);
+              const event = { ...rawEvent, metadata };
               activityPromises.push(
                 publish(event as Parameters<typeof publish>[0]).catch((err) => {
                   log.error(

@@ -10,18 +10,37 @@ export type ContentBlock =
 
 export type Mind = {
   name: string;
-  port: number;
+  // Omitted for non-privileged callers (mind tokens, non-admin users); only
+  // admin/system get the port. See #503.
+  port?: number;
   created: string;
   status: "running" | "stopped" | "starting" | "sleeping";
+  /** When status is "sleeping": ISO time of the scheduled wake, if one is set. */
+  wakeAt?: string | null;
+  /** Most recent failure the mind hasn't recovered from (cleared on the next clean turn). */
+  lastError?: MindLastError | null;
   stage?: "seed" | "sprouted";
   template?: string;
   channels: PlatformConnection[];
   hasPages?: boolean;
+  templateStale?: boolean;
   lastActiveAt?: string | null;
   displayName?: string;
   description?: string;
   avatar?: string;
   mindType?: "mind" | "spirit";
+};
+
+export type MindLastError = {
+  kind: "turn_error" | "crash" | "startup";
+  reason: string;
+  /**
+   * Full failure detail. Admin/system callers only — omitted for non-privileged
+   * callers because unknown-reason details embed the raw error string, which is
+   * otherwise mind-private (served behind requireSelf).
+   */
+  detail?: string;
+  at: string;
 };
 
 export type PlatformConnection = {
@@ -83,12 +102,24 @@ export type ActivityItem = {
   created_at: string;
 };
 
+/** One item in the "while you were away" home feed: a self-directed turn summary. */
+export type AwayFeedItem = {
+  /** The summary row id. */
+  id: number;
+  mind: string;
+  summary: string;
+  /** The turn this summary describes. */
+  turnId: string;
+  created_at: string;
+};
+
 export type ActivityEventType =
   | "mind_started"
   | "mind_stopped"
   | "mind_active"
   | "mind_idle"
   | "mind_done"
+  | "mind_error"
   | "mind_sleeping"
   | "mind_waking"
   | "page_updated"

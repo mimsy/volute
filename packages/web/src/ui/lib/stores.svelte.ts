@@ -95,6 +95,8 @@ export async function handleAuth(u: AuthUser) {
 
 export const data = $state({
   minds: [] as Mind[],
+  /** True once the first minds fetch has resolved — distinguishes "no minds" from "not loaded yet". */
+  mindsLoaded: false,
   conversations: [] as ConversationWithParticipants[],
   activity: [] as ActivityItem[],
   extensions: [] as ExtensionInfo[],
@@ -186,6 +188,7 @@ function handleSSEEvent(event: SSEEvent) {
     fetchMinds()
       .then((m) => {
         data.minds = m;
+        data.mindsLoaded = true;
       })
       .catch((err) => {
         console.warn("[stores] failed to refresh minds:", err);
@@ -225,11 +228,15 @@ function handleSSEEvent(event: SSEEvent) {
       item.type === "mind_stopped" ||
       item.type === "mind_sleeping" ||
       item.type === "mind_waking" ||
-      item.type === "profile_updated"
+      item.type === "mind_error" ||
+      item.type === "profile_updated" ||
+      // A clean turn clears a lingering lastError — refresh only when one is showing.
+      (item.type === "mind_done" && data.minds.some((m) => m.name === item.mind && m.lastError))
     ) {
       fetchMinds()
         .then((m) => {
           data.minds = m;
+          data.mindsLoaded = true;
         })
         .catch((err) => {
           console.warn("[stores] failed to refresh minds:", err);

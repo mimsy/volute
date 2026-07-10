@@ -22,6 +22,7 @@ import {
   readSkillDescriptions,
 } from "./lib/context-breakdown.js";
 import { daemonEmit } from "./lib/daemon-client.js";
+import { dispatchPrompt } from "./lib/dispatch.js";
 import { createEventHandler, emit } from "./lib/event-handler.js";
 import { runHooks } from "./lib/hook-loader.js";
 import { log } from "./lib/logger.js";
@@ -489,16 +490,12 @@ export function createMind(options: {
             broadcast(session, { type: "done" });
             return;
           }
-          if (session.agentSession.isStreaming) {
-            if (meta.interrupt) {
-              interruptSession(sessionName);
-              session.agentSession.prompt(text, { streamingBehavior: "steer", ...opts });
-            } else {
-              session.agentSession.prompt(text, { streamingBehavior: "followUp", ...opts });
-            }
-          } else {
-            session.agentSession.prompt(text, opts);
-          }
+          // This await is load-bearing: without it a prompt rejection (burst race,
+          // auth failure, ...) floats as an unhandled rejection and crashes the
+          // mind server instead of landing in the .catch below (issue #565).
+          await dispatchPrompt(session.agentSession, text, opts, meta.interrupt === true, () =>
+            interruptSession(sessionName),
+          );
         })().catch(async (err) => {
           log("mind", `session "${sessionName}": prompt failed:`, err);
           // Tell the daemon the turn failed (so it records a notice for the mind's next

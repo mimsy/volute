@@ -52,7 +52,13 @@ function readCliSession(): CliSession | null {
   }
 }
 
-type DaemonConfig = { port: number; internalPort?: number; hostname?: string; token?: string };
+type DaemonConfig = {
+  port: number;
+  internalPort?: number;
+  hostname?: string;
+  token?: string;
+  tls?: boolean;
+};
 
 // This module is CLI-only (imported by src/commands/). process.exit() is intentional —
 // CLI commands should terminate immediately with a clear error when the daemon is unreachable.
@@ -105,6 +111,21 @@ export function resolveDaemonUrl(): string {
   return buildUrl(readDaemonConfig());
 }
 
+/** Browser-facing dashboard URL (public port, https when TLS is enabled). */
+export function resolveWebUrl(): string {
+  if (process.env.VOLUTE_DAEMON_URL) return process.env.VOLUTE_DAEMON_URL;
+  const session = readCliSession();
+  if (session?.daemonUrl) return session.daemonUrl;
+  const config = readDaemonConfig();
+  const url = new URL(config.tls ? "https://localhost" : "http://localhost");
+  url.port = String(config.port);
+  let hostname = config.hostname || "localhost";
+  if (hostname === "0.0.0.0") hostname = "localhost";
+  if (hostname === "::") hostname = "localhost";
+  url.hostname = hostname;
+  return url.origin;
+}
+
 /** The bearer token daemonFetch would use: mind token (in a mind) or CLI session (operator). */
 export function getAuthToken(): string | undefined {
   return process.env.VOLUTE_MIND_TOKEN ?? readCliSession()?.sessionId;
@@ -139,7 +160,9 @@ export async function daemonFetch(path: string, options?: RequestInit): Promise<
       headers,
       dispatcher: daemonDispatcher,
     } as RequestInit & { dispatcher: Agent });
-    if (res.status === 401 && !path.startsWith("/api/auth/")) {
+    // /api/auth/ and /api/setup/ are public endpoints — a 401 from them is not
+    // a session problem, and "run `volute login`" would be nonsense mid-login.
+    if (res.status === 401 && !path.startsWith("/api/auth/") && !path.startsWith("/api/setup/")) {
       if (cliSession) {
         console.error("Session expired. Run `volute login` again.");
       } else {

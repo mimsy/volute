@@ -16,6 +16,22 @@ describe("error classify", () => {
     }
   });
 
+  it("classifies missing / invalid API key errors as actionable auth_error", () => {
+    const cases = [
+      "Invalid API key",
+      "missing API key",
+      "no API key provided",
+      "x-api-key header is required",
+      "Could not resolve authentication method",
+      "Please run /login",
+    ];
+    for (const c of cases) {
+      assert.equal(classify(c).reason, "auth_error", c);
+      // Actionable: points the operator at setting a key / reconnecting the provider.
+      assert.match(classify(c).detail, /volute env set|provider/i, c);
+    }
+  });
+
   it("classifies rate limit and overload errors", () => {
     assert.equal(classify("429 Too Many Requests").reason, "rate_limit");
     assert.equal(classify("rate limit exceeded").reason, "rate_limit");

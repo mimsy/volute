@@ -1,5 +1,5 @@
 import { readdir, readFile, writeFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { extname, resolve } from "node:path";
 import { mindDir, readAllMinds, voluteHome } from "../mind/registry.js";
 import { readVoluteConfig } from "../mind/volute-config.js";
 import log from "./logger.js";
@@ -10,16 +10,48 @@ const alog = log.child("avatar-image");
 /** Max avatar dimension — covers the largest display size (96px) at retina density. */
 export const AVATAR_DIM = 256;
 
+/** Max avatar dimension for images inlined into a mind's context. */
+export const AVATAR_CONTEXT_DIM = 128;
+
+/**
+ * Hard ceiling on the base64 size of an avatar image block. A correctly resized
+ * 128×128 avatar is a few KB; anything above this means the resize regressed or
+ * was skipped, and we refuse to inline it into every participant mind's context.
+ */
+export const MAX_AVATAR_BLOCK_BYTES = 64 * 1024;
+
+export type AvatarBlock =
+  | { type: "text"; text: string }
+  | { type: "image"; media_type: string; data: string };
+
+const MIME_BY_EXT: Record<string, string> = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+};
+
+// Fire the "sharp unavailable" warning once per process rather than per avatar —
+// loadSharp() runs once per participant per delivery, so an unusable install
+// (missing package or broken native binary) would otherwise spam every message.
+let warnedSharpUnavailable = false;
+
 async function loadSharp(): Promise<any | null> {
   try {
     const mod = await import("sharp");
     return mod.default ?? mod;
   } catch (err) {
-    const code = (err as NodeJS.ErrnoException).code;
-    if (code === "MODULE_NOT_FOUND" || code === "ERR_MODULE_NOT_FOUND") {
-      alog.debug("sharp not available, keeping original avatars");
-    } else {
-      alog.warn("sharp import failed, keeping original avatars", log.errorData(err));
+    if (!warnedSharpUnavailable) {
+      warnedSharpUnavailable = true;
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === "MODULE_NOT_FOUND" || code === "ERR_MODULE_NOT_FOUND") {
+        alog.warn(
+          "sharp is not installed — avatars will not be downscaled or inlined into mind context. Install the 'sharp' dependency to restore avatar image support.",
+        );
+      } else {
+        alog.warn("sharp import failed, avatar image support disabled", log.errorData(err));
+      }
     }
     return null;
   }
@@ -104,4 +136,50 @@ export async function migrateAvatarSizes(): Promise<void> {
       }
     }
   }
+}
+
+/**
+ * Read an avatar file and render it as a `[text, image]` block pair for inlining
+ * into a mind's context, resized to AVATAR_CONTEXT_DIM.
+ *
+ * Returns null (omitting the avatar entirely) when the format is unsupported,
+ * sharp is unavailable, or the resized block would still exceed
+ * MAX_AVATAR_BLOCK_BYTES. Inlining an unbounded image into every participant's
+ * context is strictly worse than showing no avatar, so we drop the pair rather
+ * than fall back to the original bytes. File-read errors propagate to the caller.
+ */
+export async function renderAvatarBlock(
+  filePath: string,
+  label: string,
+): Promise<AvatarBlock[] | null> {
+  const ext = extname(filePath).toLowerCase();
+  const mediaType = MIME_BY_EXT[ext];
+  if (!mediaType) return null;
+
+  const sharp = await loadSharp();
+  if (!sharp) return null;
+
+  const data = await readFile(filePath);
+  let imageData: Buffer;
+  try {
+    imageData = await sharp(data, { animated: true })
+      .resize(AVATAR_CONTEXT_DIM, AVATAR_CONTEXT_DIM, { fit: "cover" })
+      .toBuffer();
+  } catch (err) {
+    alog.warn(`avatar resize failed for ${label}, omitting image`, log.errorData(err));
+    return null;
+  }
+
+  const base64 = imageData.toString("base64");
+  if (base64.length > MAX_AVATAR_BLOCK_BYTES) {
+    alog.warn(
+      `avatar for ${label} is ${base64.length} bytes after resize (> ${MAX_AVATAR_BLOCK_BYTES}), omitting image`,
+    );
+    return null;
+  }
+
+  return [
+    { type: "text", text: `[Avatar for ${label}]` },
+    { type: "image", media_type: mediaType, data: base64 },
+  ];
 }

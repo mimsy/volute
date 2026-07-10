@@ -1,6 +1,9 @@
 services:
   volute:
     build: .
+    # The image bakes in tini as PID 1 (see Dockerfile ENTRYPOINT) so orphaned
+    # mind grandchildren get reaped instead of piling up as <defunct> zombies —
+    # no `init: true` needed here.
     ports:
       - "1618:1618"
     environment:

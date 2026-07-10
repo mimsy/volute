@@ -78,6 +78,20 @@
       "when": 1775500000000,
       "tag": "0010_delivery_queue_redrive",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1775600000000,
+      "tag": "0011_drop_turn_summary_event_id",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1775700000000,
+      "tag": "0012_channel_gates",
+      "breakpoints": true
     }
   ]
 }

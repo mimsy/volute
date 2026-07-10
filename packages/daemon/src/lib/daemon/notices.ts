@@ -1,6 +1,6 @@
-import { and, asc, eq, lte, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, lte, or, sql } from "drizzle-orm";
 import { getDb } from "../db.js";
-import { mindNotices } from "../schema.js";
+import { mindNotices, turns } from "../schema.js";
 import log from "../util/logger.js";
 import type { ErrorReason } from "./error-classify.js";
 
@@ -34,7 +34,7 @@ export type RecordNoticeInput = {
   | { kind: "turn_error"; reason: ErrorReason }
   | { kind: "crash"; reason: "process_crash" }
   | { kind: "budget"; reason: "token_budget" }
-  | { kind: "startup"; reason: "startup_failed" }
+  | { kind: "startup"; reason: "startup_failed" | "no_credentials" }
   | { kind: "extension"; reason: string }
 );
 
@@ -91,6 +91,102 @@ export async function drainNotices(
     )
     .orderBy(asc(mindNotices.id))
     .limit(limit);
+}
+
+/** Notice kinds that represent failures (as opposed to budget pauses or extension chatter). */
+const FAILURE_KINDS = ["turn_error", "crash", "startup"] as const;
+
+export type FailureNotice = {
+  kind: "turn_error" | "crash" | "startup";
+  reason: string;
+  detail: string;
+  at: string;
+};
+
+// A persistent read failure silently disables the #574 status surface for every
+// mind (same defect class recordNotice logs at error), but this runs on every
+// minds-list fetch — log once per process instead of spamming.
+let failureReadErrorLogged = false;
+
+/**
+ * The most recent failure notice for a mind with no turn completed since,
+ * across all sessions. Budget and extension notices don't count — they aren't
+ * failures. (The table is a delete-on-clear queue, so rows are pending by
+ * construction; don't add a "delivered" filter.)
+ *
+ * Notice deletion is per-session (a session must drain the notice and then run
+ * a clean turn), so a failure in a session that never runs again would linger
+ * forever. The completed-turn check bounds that: any turn completed after the
+ * notice means the mind is demonstrably able to finish turns, so chat stops
+ * showing the failure (#574). A turn that errors records a fresh notice, which
+ * postdates that turn's own row and keeps the signal up.
+ *
+ * Returns null on DB errors: status enrichment must not take down the minds list.
+ */
+export async function latestFailureNotice(mind: string): Promise<FailureNotice | null> {
+  try {
+    const db = await getDb();
+    const rows = await db
+      .select()
+      .from(mindNotices)
+      .where(and(eq(mindNotices.mind, mind), inArray(mindNotices.kind, [...FAILURE_KINDS])))
+      .orderBy(desc(mindNotices.id))
+      .limit(1);
+    const n = rows[0];
+    if (!n) return null;
+
+    const recovered = await db
+      .select({ id: turns.id })
+      .from(turns)
+      .where(
+        and(eq(turns.mind, mind), eq(turns.status, "complete"), gt(turns.created_at, n.created_at)),
+      )
+      .limit(1);
+    if (recovered.length > 0) return null;
+
+    return {
+      kind: n.kind as FailureNotice["kind"],
+      reason: n.reason,
+      detail: n.detail,
+      at: n.created_at,
+    };
+  } catch (err) {
+    if (!failureReadErrorLogged) {
+      failureReadErrorLogged = true;
+      nlog.error(`failed to read latest failure notice for ${mind}`, log.errorData(err));
+    }
+    return null;
+  }
+}
+
+/**
+ * The most recent undelivered notice for a mind across all sessions, or null.
+ * Every row in the table is undelivered (delivered notices are deleted), so the
+ * highest-id row is the latest issue. Used by `mind status` to surface the newest
+ * failure without the mind having to drain it.
+ */
+export async function latestNotice(mind: string): Promise<Notice | null> {
+  const db = await getDb();
+  const row = await db
+    .select()
+    .from(mindNotices)
+    .where(eq(mindNotices.mind, mind))
+    .orderBy(desc(mindNotices.id))
+    .limit(1)
+    .get();
+  return row ?? null;
+}
+
+/** True if the mind has an undelivered notice with this reason (any session). */
+export async function hasUndeliveredNotice(mind: string, reason: NoticeReason): Promise<boolean> {
+  const db = await getDb();
+  const row = await db
+    .select({ id: mindNotices.id })
+    .from(mindNotices)
+    .where(and(eq(mindNotices.mind, mind), eq(mindNotices.reason, reason)))
+    .limit(1)
+    .get();
+  return row != null;
 }
 
 /**

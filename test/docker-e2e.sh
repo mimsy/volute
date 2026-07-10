@@ -403,6 +403,39 @@ else
   fail "bob mind log missing"
 fi
 
+# ─── Phase: Zombie reaping (tini as PID 1) ───────────────────────────────────
+#
+# The image bakes tini in as ENTRYPOINT so reparented orphans get reaped
+# instead of piling up as <defunct> zombies under the daemon (issue #563).
+
+# Direct guard against an ENTRYPOINT regression: PID 1 must be tini.
+pid1=$(docker exec "$CONTAINER" cat /proc/1/comm | tr -d '[:space:]')
+assert_eq "$pid1" "tini" "PID 1 is tini"
+
+# Deliberately orphan a short-lived process: the sh parent exits immediately,
+# the sleep reparents to PID 1 and must be reaped when it exits — without tini
+# it would stay <defunct> forever. This guarantees the zombie check below
+# exercises reaping even if the mind-stop path happened to leave no orphans.
+docker exec "$CONTAINER" sh -c 'sleep 1 >/dev/null 2>&1 & exit 0'
+sleep 3
+
+# After stopping both minds (and the orphan above exiting), no <defunct>
+# entries may remain. Capture the process list first so a ps failure is a
+# loud test failure rather than being laundered into a passing "0".
+if ! ps_out=$(docker exec "$CONTAINER" ps -eo pid,ppid,stat,comm); then
+  fail "ps failed in container — zombie check did not run"
+elif [[ -z "$ps_out" ]]; then
+  fail "ps produced no output — zombie check did not run"
+else
+  zombie_count=$(printf '%s\n' "$ps_out" | grep -cE '^[[:space:]]*[0-9]+[[:space:]]+[0-9]+[[:space:]]+Z' || true)
+  if [[ "$zombie_count" == "0" ]]; then
+    pass "no <defunct> zombie processes"
+  else
+    fail "found $zombie_count zombie process(es)"
+    printf '%s\n' "$ps_out" | grep -E '^[[:space:]]*[0-9]+[[:space:]]+[0-9]+[[:space:]]+Z'
+  fi
+fi
+
 # ─── Summary ──────────────────────────────────────────────────────────────────
 
 echo ""
