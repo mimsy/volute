@@ -38,6 +38,8 @@ const cmd = command({
       name?: string;
       port?: number;
       message?: string;
+      warning?: string;
+      credentialWarning?: string;
     };
 
     if (!res.ok) {
@@ -47,6 +49,8 @@ const cmd = command({
 
     const created = data.name ?? name;
     console.log(`\n${data.message ?? `Created mind: ${created} (port ${data.port})`}`);
+    if (data.warning) console.warn(`\n⚠ ${data.warning}`);
+    if (data.credentialWarning) console.warn(`\n⚠ ${data.credentialWarning}`);
     console.log(`\nStart it, then say hello:`);
     console.log(`  volute mind start ${created}`);
     console.log(`  volute chat send @${created} "hello"`);

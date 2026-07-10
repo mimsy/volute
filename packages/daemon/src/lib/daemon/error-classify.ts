@@ -12,14 +12,14 @@ export function classify(raw: string): Classified {
   const s = (raw ?? "").toLowerCase();
 
   if (
-    /\b(401|403)\b|authentication_error|invalid authentication|invalid x-api-key|unauthorized|permission_error/.test(
+    /\b(401|403)\b|authentication_error|invalid authentication|invalid x-api-key|invalid api key|missing api key|no api key|x-api-key header|could not resolve authentication|unauthorized|permission_error|please run \/login/.test(
       s,
     )
   ) {
     return {
       reason: "auth_error",
       detail:
-        "Your last turn failed because your model credentials were rejected (most often an expired token). The daemon refreshes them automatically, so this is normally transient — you're fine to continue.",
+        "Your last turn failed because the model provider rejected your credentials. A one-off is usually a briefly-expired token that the daemon refreshes automatically. If it keeps happening, your API key is likely missing or invalid — an operator needs to set a valid key (e.g. `volute env set ANTHROPIC_API_KEY <key>`) or reconnect the provider in the dashboard.",
     };
   }
 

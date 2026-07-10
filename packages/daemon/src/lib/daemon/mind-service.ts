@@ -1,3 +1,4 @@
+import { missingCredentialWarning } from "../ai-service.js";
 import { syncMindProfile } from "../auth.js";
 import { joinSystemChannelForMind, joinSystemChannelForSpirit } from "../chat/system-channel.js";
 import { ensureSystemDM, sendSystemMessage } from "../chat/system-chat.js";
@@ -31,6 +32,14 @@ export async function startMindFull(name: string): Promise<void> {
   }).catch((err) => log.error("failed to publish mind_started activity", log.errorData(err)));
 
   if (entry?.parent) return;
+
+  // Missing model credentials make a mind mute — its first turn fails silently inside
+  // its own SDK process (#573). Record a notice so the failure is visible in
+  // `mind status` and the web chat status rather than only in the mind's log. Deduped
+  // per mind so repeated starts don't pile up identical notices.
+  recordMissingCredentialsNotice(baseName, entry?.template).catch((err) =>
+    log.error(`failed to check credentials for ${baseName}`, log.errorData(err)),
+  );
 
   // Seed minds get the server + initial orientation, no schedules or budget
   if (!entry || entry.stage === "seed") {
@@ -88,6 +97,31 @@ export async function startMindFull(name: string): Promise<void> {
   }
 
   notifyExtensionsMindStart(baseName);
+}
+
+/**
+ * If a mind spawned without usable model credentials, record a `no_credentials`
+ * startup notice (deduped so it isn't re-added on every start). This is the
+ * authoritative detection: the mind's own turn error is an opaque "process exited"
+ * string, so the daemon — which knows the credentials are missing — surfaces the
+ * real cause. Template is used to pick the provider; a pi mind's model isn't passed,
+ * so pi minds (already guarded at create) are skipped when the provider is ambiguous.
+ */
+async function recordMissingCredentialsNotice(
+  mind: string,
+  template: string | undefined,
+): Promise<void> {
+  const { hasUndeliveredNotice, recordNotice, MIND_LEVEL_SESSION } = await import("./notices.js");
+  const warning = await missingCredentialWarning(template, undefined, mind);
+  if (!warning) return;
+  if (await hasUndeliveredNotice(mind, "no_credentials")) return;
+  await recordNotice({
+    mind,
+    session: MIND_LEVEL_SESSION,
+    kind: "startup",
+    reason: "no_credentials",
+    detail: warning,
+  });
 }
 
 /**

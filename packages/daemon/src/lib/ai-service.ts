@@ -161,6 +161,63 @@ function templateForProvider(provider: string): string {
   return "pi";
 }
 
+/** Env var each provider's key is injected under (mirrors mind-manager injection). */
+const PROVIDER_ENV_VAR: Record<string, string> = {
+  anthropic: "ANTHROPIC_API_KEY",
+  "openai-codex": "OPENAI_API_KEY",
+  openrouter: "OPENROUTER_API_KEY",
+  openai: "OPENAI_API_KEY",
+  google: "GEMINI_API_KEY",
+  groq: "GROQ_API_KEY",
+  cerebras: "CEREBRAS_API_KEY",
+  xai: "XAI_API_KEY",
+  mistral: "MISTRAL_API_KEY",
+  zai: "ZAI_API_KEY",
+};
+
+/**
+ * The provider whose credentials a mind of this template needs at spawn. Mirrors
+ * the credential injection in `MindManager.startMind`: claude → anthropic, codex →
+ * openai-codex, pi → the provider prefix of its `provider:model` id. Returns
+ * undefined when the provider can't be determined (a pi mind whose model we don't
+ * have) — callers treat that as "can't verify, don't warn".
+ */
+export function providerForMindTemplate(
+  template: string | undefined,
+  model?: string,
+): string | undefined {
+  if (!template || template === "claude") return "anthropic";
+  if (template === "codex") return "openai-codex";
+  if (model?.includes(":")) return model.split(":")[0];
+  return undefined;
+}
+
+/**
+ * If a mind of this template/model would spawn without usable model credentials,
+ * return an operator-actionable warning explaining it will stay silent and how to
+ * fix it; otherwise null. Checks the same sources the daemon injects at spawn
+ * (OAuth, stored key, ambient env), so it reflects what the mind will actually get.
+ * Non-blocking by design: creation still proceeds, the mind just can't reply yet.
+ */
+export async function missingCredentialWarning(
+  template: string | undefined,
+  model: string | undefined,
+  mindName: string,
+): Promise<string | null> {
+  const provider = providerForMindTemplate(template, model);
+  if (!provider) return null; // provider undeterminable — don't warn on the unverifiable
+  if (await resolveApiKey(provider)) return null;
+  // Codex also honors an ambient OPENAI_API_KEY that resolveApiKey may not surface.
+  if (provider === "openai-codex" && process.env.OPENAI_API_KEY) return null;
+  const envVar =
+    PROVIDER_ENV_VAR[provider] ?? `${provider.toUpperCase().replace(/-/g, "_")}_API_KEY`;
+  return (
+    `No ${provider} credentials are configured, so ${mindName} will start but stay silent ` +
+    `until a key is available. Set one with \`volute env set ${envVar} <key> --mind ${mindName}\`, ` +
+    `or configure the ${provider} provider in the web dashboard (Settings → Providers).`
+  );
+}
+
 /**
  * Resolve the best template for a given model ID.
  * Anthropic models → "claude", OpenAI Codex models → "codex", everything else → "pi".

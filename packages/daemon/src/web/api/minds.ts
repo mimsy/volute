@@ -12,7 +12,12 @@ import { zValidator } from "@hono/zod-validator";
 import { and, desc, eq, type SQL, sql } from "drizzle-orm";
 import { type Context, Hono } from "hono";
 import { z } from "zod";
-import { qualifyModelId, resolveTemplate, unqualifyModelId } from "../../lib/ai-service.js";
+import {
+  missingCredentialWarning,
+  qualifyModelId,
+  resolveTemplate,
+  unqualifyModelId,
+} from "../../lib/ai-service.js";
 import { deleteMindUser } from "../../lib/auth.js";
 import { announceToSystem } from "../../lib/chat/system-channel.js";
 import { readSystemsConfig } from "../../lib/config/systems-config.js";
@@ -26,6 +31,7 @@ import {
   drainNotices,
   formatNotices,
   latestFailureNotice,
+  latestNotice,
   recordNotice,
 } from "../../lib/daemon/notices.js";
 import { getTokenBudget } from "../../lib/daemon/token-budget.js";
@@ -1089,6 +1095,17 @@ const app = new Hono<AuthEnv>()
       // Announce to #system channel
       announceToSystem(`${name} has joined`).catch(() => {});
 
+      // Warn (don't block) when the mind will spawn without usable model credentials,
+      // so a mute-on-first-turn mind is caught at creation rather than in silence (#573).
+      // The mind is already created — an advisory check must never fail creation, so
+      // swallow any hiccup and just omit the warning.
+      const credentialWarning = await missingCredentialWarning(template, body.model, name).catch(
+        (err) => {
+          log.warn(`credential check failed for ${name}`, log.errorData(err));
+          return null;
+        },
+      );
+
       return c.json({
         ok: true,
         name,
@@ -1096,6 +1113,7 @@ const app = new Hono<AuthEnv>()
         stage: body.stage ?? "sprouted",
         message: `Created mind: ${name} (port ${port})`,
         ...(gitWarning && { warning: gitWarning }),
+        ...(credentialWarning && { credentialWarning }),
         ...(skillWarnings.length > 0 && { skillWarnings }),
       });
     } catch (err) {
@@ -1345,12 +1363,24 @@ const app = new Hono<AuthEnv>()
       }),
     );
 
+    // Surface the newest un-drained notice (turn error, crash, missing credentials)
+    // so `mind status` can show why a mind is silent (#573). Admin/system only.
+    const notice = await latestNotice(name);
+
     return c.json({
       ...entry,
       ...mindStatus,
       variants: variantStatuses,
       hasPages,
       templateStale: isTemplateStale(entry),
+      ...(notice && {
+        lastNotice: {
+          kind: notice.kind,
+          reason: notice.reason,
+          detail: notice.detail,
+          created_at: notice.created_at,
+        },
+      }),
     });
   })
   // Context info — proxy to mind's /context endpoint
