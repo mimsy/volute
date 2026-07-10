@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.47.0](https://github.com/mimsy/volute/compare/volute-v0.46.0...volute-v0.47.0) (2026-07-10)
+
+
+### Features
+
+* heal missing timeline summaries and render un-summarized turns ([#549](https://github.com/mimsy/volute/issues/549)) ([67d44ee](https://github.com/mimsy/volute/commit/67d44eeba84f007fa38a0fd937959d1565958ac6))
+* surface stale mind templates in status, list, and web UI ([#558](https://github.com/mimsy/volute/issues/558)) ([f4905e1](https://github.com/mimsy/volute/commit/f4905e1230fd0d5584450b94a76135359b2467a5))
+
+
+### Bug Fixes
+
+* bound provisional meta-summaries and render summaries as markdown ([#556](https://github.com/mimsy/volute/issues/556)) ([240edea](https://github.com/mimsy/volute/commit/240edea93f3398247e648901c9cc2e09ac096fd2))
+* correct turn trigger-linking and de-duplicate turn summaries ([#550](https://github.com/mimsy/volute/issues/550)) ([d6c6ee6](https://github.com/mimsy/volute/commit/d6c6ee6ebd256e07bd57aefe64797ed305a9d612))
+* **delivery:** bound gated-channel release, re-route on release, repeat invites, allow decline ([#559](https://github.com/mimsy/volute/issues/559)) ([23964c0](https://github.com/mimsy/volute/commit/23964c083c1ade06db6c45e3eed81a1f93f2182f))
+* give composeTemplate a collision-proof temp dir ([#561](https://github.com/mimsy/volute/issues/561)) ([3580ccd](https://github.com/mimsy/volute/commit/3580ccdfb592652525e3bd8809e36d1256b42767))
+* harden history/timeline against icon XSS and cross-mind reads ([#551](https://github.com/mimsy/volute/issues/551)) ([f87fa72](https://github.com/mimsy/volute/commit/f87fa72e0d15dbdbe6529dfaae7cb7fd60098a06))
+* make timeline summaries reachable (week filtering, backward paging, tz anchoring) ([#557](https://github.com/mimsy/volute/issues/557)) ([8b1122a](https://github.com/mimsy/volute/commit/8b1122a907ec5c1ff2b1dfc24afe684ee7aada93))
+* pair timeline tool results by tool_use_id ([#547](https://github.com/mimsy/volute/issues/547)) ([63a7847](https://github.com/mimsy/volute/commit/63a7847f88e97751a2fb8dd4884f9f345598791f))
+* reap live SDK sessions on mind shutdown to stop &lt;defunct&gt; zombies ([#553](https://github.com/mimsy/volute/issues/553)) ([575aed8](https://github.com/mimsy/volute/commit/575aed863ca0312e6eeab6b9489fd46165e2df05))
+* recover timeline live view after SSE drop and bound phantom turns ([#552](https://github.com/mimsy/volute/issues/552)) ([96e9911](https://github.com/mimsy/volute/commit/96e991131046cee59ec1da24fa9eaecd8f820b65))
+* ship sharp in dependencies so avatar downscaling works in production ([#554](https://github.com/mimsy/volute/issues/554)) ([77d7ca6](https://github.com/mimsy/volute/commit/77d7ca61ab1780a33959150e4293b2eea31a33c3))
+* **web:** show the stale-template badge in the live sidebar ([#562](https://github.com/mimsy/volute/issues/562)) ([2d98de1](https://github.com/mimsy/volute/commit/2d98de1e957d1c6b4f5542148e78c18bb9a6edf7))
+* withhold mind ports and dirs from non-privileged /api/minds callers ([#548](https://github.com/mimsy/volute/issues/548)) ([79502aa](https://github.com/mimsy/volute/commit/79502aa5b5c88b0e59adbbfdf4fcbd9a41a2a0fc))
+
 ## [0.46.0](https://github.com/mimsy/volute/compare/volute-v0.45.2...volute-v0.46.0) (2026-07-08)
 
 
