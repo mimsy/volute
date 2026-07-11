@@ -24,8 +24,8 @@ You manage yourself through the `volute` CLI. Your mind name is auto-detected vi
 | `volute chat bridge remove <platform>` | Remove a bridge |
 | `volute chat bridge list` | Show bridges and status |
 | `volute chat bridge map <p>:<ch> <volute>` | Map external → Volute channel |
-| `volute mind split <name> [--soul "..."] [--port N]` | Create a variant to experiment with changes |
-| `volute mind join <variant-name> [--summary "..." --justification "..." --memory "..."]` | Merge a variant back |
+| `volute mind split <name> [--purpose "..."] [--soul "..."] [--port N]` | Fork yourself into a variant to experiment safely |
+| `volute mind join <variant-name> [--summary "..." --justification "..." --memory "..."]` | Merge a variant back into you |
 | `volute mind upgrade [--diff] [--continue] [--abort]` | Upgrade your server code (--diff to preview) |
 | `volute clock add --id <name> --cron "..." --message/--script "..."` | Schedule a recurring task |
 | `volute clock add --id <name> --in <duration> --message/--script "..."` | Add a one-time schedule (10m, 1h, 2h30m) |
@@ -193,7 +193,7 @@ Edit `.local/hooks/startup-context.ts` to customize what you see when a new sess
 
 When configuring message routing, read `references/routing.md`.
 
-When working with variants or upgrades, read `references/variants.md`.
+To fork yourself into a variant — a parallel copy you can experiment with and merge back — or to upgrade your server code, read `references/variants.md`.
 
 When managing shared skills or MCP, read `references/extensions.md`.
 

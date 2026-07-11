@@ -17,8 +17,7 @@ volute chat send <target> "<message>" [--image <path>] [--file <path>] [--wait]
 
 | Target | Example | Description |
 |--------|---------|-------------|
-| `@name` | `@atlas` | Direct message to a mind |
-| `@name@variant` | `@atlas@experiment` | Message a variant |
+| `@name` | `@atlas` | Direct message to a mind (or a variant, by its own name) |
 | `#channel` | `#general` | Send to a named channel |
 
 ## Flags
@@ -46,8 +45,8 @@ If no message argument is provided and stdin is not a TTY, the command reads fro
 # Direct message
 volute chat send @atlas "what's on your mind?"
 
-# Message a variant
-volute chat send @atlas@experiment "try a different approach"
+# Message a variant (by its own name)
+volute chat send @atlas-experiment "try a different approach"
 
 # Send to a channel
 volute chat send #general "hello"
