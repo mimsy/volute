@@ -33,6 +33,14 @@ function child(cat: string): ChildLogger {
 /** Extract error info preserving stack traces for structured logging. */
 function errorData(err: unknown): Record<string, unknown> {
   if (err instanceof Error) return { error: err.stack ?? err.message };
+  // WHATWG ErrorEvent-shaped objects (e.g. WebSocket `onerror`) are not Error
+  // instances; unwrap their `.error`/`.message` so we don't log "[object ErrorEvent]".
+  if (err && typeof err === "object") {
+    const e = err as { error?: unknown; message?: unknown };
+    if (e.error instanceof Error) return { error: e.error.stack ?? e.error.message };
+    if (typeof e.error === "string" && e.error) return { error: e.error };
+    if (typeof e.message === "string" && e.message) return { error: e.message };
+  }
   return { error: String(err) };
 }
 

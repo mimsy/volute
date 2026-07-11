@@ -115,10 +115,11 @@ export class MailPoller {
       this.reconnectAttempts = 0;
       this.reconnectDelay = INITIAL_RECONNECT_MS;
 
-      // Catch up on emails missed during disconnection
+      // Catch up on emails missed during disconnection. The watermark is only
+      // cleared once catch-up fully succeeds (see catchUpAndClear), so a failed
+      // fetch retries on the next reconnect instead of silently dropping mail.
       if (this.disconnectedAt) {
-        this.catchUp(this.disconnectedAt);
-        this.disconnectedAt = null;
+        void this.catchUpAndClear(this.disconnectedAt);
       }
 
       // Periodic keepalive
@@ -139,7 +140,9 @@ export class MailPoller {
     };
 
     this.ws.onclose = () => {
-      mlog.warn("disconnected");
+      // Routine on a box where the upstream recycles connections every 20–40min;
+      // logged at info so a healthy flap cadence doesn't read as a warning stream.
+      mlog.info("disconnected");
       if (!this.disconnectedAt) {
         this.disconnectedAt = new Date().toISOString();
       }
@@ -148,8 +151,9 @@ export class MailPoller {
     };
 
     this.ws.onerror = (err) => {
-      mlog.warn("WebSocket error", log.errorData(err));
-      // onclose will fire after this
+      // onclose fires after this; the every-10th-attempt warn in scheduleReconnect
+      // escalates a genuinely stuck connection. errorData unwraps the ErrorEvent.
+      mlog.info("WebSocket error", log.errorData(err));
     };
   }
 
@@ -178,31 +182,45 @@ export class MailPoller {
     this.reconnectDelay = Math.min(this.reconnectDelay * 2, MAX_RECONNECT_MS);
   }
 
-  /** Fetch emails that arrived while disconnected */
-  private catchUp(since: string): void {
-    if (!this.config) return;
+  /**
+   * Run catch-up and advance the watermark only on full success. On any failure
+   * (fetch error, non-OK response, delivery throw) the watermark is retained so
+   * the next reconnect re-fetches the gap — at-least-once, never dropped.
+   */
+  private async catchUpAndClear(since: string): Promise<void> {
+    try {
+      await this.catchUp(since);
+    } catch (err) {
+      mlog.info("catch-up failed — will retry on next reconnect", log.errorData(err));
+      return;
+    }
+    // Only clear if still on the same connection and no newer disconnect happened
+    // during catch-up; otherwise the fresh gap keeps its watermark for retry.
+    if (this.disconnectedAt === since && this.ws?.readyState === WebSocket.OPEN) {
+      this.disconnectedAt = null;
+    }
+  }
+
+  /** Fetch and deliver emails that arrived while disconnected. Throws on failure. */
+  private async catchUp(since: string): Promise<void> {
+    if (!this.config) throw new Error("systems config missing");
 
     const url = `${this.config.apiUrl}/api/mail/system/poll?since=${encodeURIComponent(since)}`;
 
-    fetch(url, {
+    const res = await fetch(url, {
       headers: { Authorization: `Bearer ${this.config.apiKey}` },
-    })
-      .then(async (res) => {
-        if (!res.ok) {
-          mlog.warn(`catch-up poll failed: HTTP ${res.status}`);
-          return;
-        }
-        const data = (await res.json()) as { emails?: Email[] };
-        if (!Array.isArray(data.emails) || data.emails.length === 0) return;
+    });
+    if (!res.ok) {
+      throw new Error(`catch-up poll failed: HTTP ${res.status}`);
+    }
 
-        mlog.info(`catching up on ${data.emails.length} missed emails`);
-        for (const email of data.emails) {
-          await this.deliver(email.mind, email);
-        }
-      })
-      .catch((err) => {
-        mlog.warn("catch-up error", log.errorData(err));
-      });
+    const data = (await res.json()) as { emails?: Email[] };
+    if (!Array.isArray(data.emails) || data.emails.length === 0) return;
+
+    mlog.info(`catching up on ${data.emails.length} missed emails`);
+    for (const email of data.emails) {
+      await this.deliver(email.mind, email);
+    }
   }
 
   private handleMessage(data: string): void {
@@ -261,18 +279,16 @@ export class MailPoller {
 
     const text = formatEmailContent(email);
 
-    try {
-      await deliverMessage(mind, {
-        content: [{ type: "text", text }],
-        channel: `mail:${email.from.address}`,
-        sender: email.from.name || email.from.address,
-        platform: "Email",
-        isDM: true,
-      });
-      mlog.info(`delivered email from ${email.from.address} to ${mind}`);
-    } catch (err) {
-      mlog.warn(`failed to deliver to ${mind}`, log.errorData(err));
-    }
+    // Let delivery failures propagate: the catch-up path relies on them to retain
+    // its watermark, and the live path logs them at its call site.
+    await deliverMessage(mind, {
+      content: [{ type: "text", text }],
+      channel: `mail:${email.from.address}`,
+      sender: email.from.name || email.from.address,
+      platform: "Email",
+      isDM: true,
+    });
+    mlog.info(`delivered email from ${email.from.address} to ${mind}`);
   }
 }
 
