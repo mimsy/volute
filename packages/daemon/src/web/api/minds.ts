@@ -1427,11 +1427,13 @@ const app = new Hono<AuthEnv>()
 
     const baseName = entry.parent ?? name;
     const targetPort = entry.port;
+    // Variants and spirits store their project dir in the DB (worktree /
+    // ~/.volute/system/spirit); only plain minds live at mindDir(name).
+    const projectDir = entry.dir ?? mindDir(name);
     if (entry.parent) {
       if (!entry.dir) return c.json({ error: `Variant ${name} has no directory` }, 404);
-    } else {
-      const dir = mindDir(name);
-      if (!existsSync(dir)) return c.json({ error: "Mind directory missing" }, 404);
+    } else if (!existsSync(projectDir)) {
+      return c.json({ error: "Mind directory missing" }, 404);
     }
 
     // Parse optional context from request body
@@ -1549,9 +1551,9 @@ const app = new Hono<AuthEnv>()
         }
       }
 
-      // Resolve the mind's git repo dir (variant worktree or the base mind dir) so
-      // last-known-good recovery can operate on the right working tree.
-      const repoDir = entry.parent ? entry.dir! : mindDir(name);
+      // Resolve the mind's git repo dir (variant worktree, spirit dir, or the base
+      // mind dir) so last-known-good recovery can operate on the right working tree.
+      const repoDir = projectDir;
 
       try {
         await startMindFullService(name);

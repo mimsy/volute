@@ -38,11 +38,21 @@ export async function daemonRestart(context?: {
     return;
   }
   try {
-    await fetch(`http://127.0.0.1:${port}/api/minds/${encodeURIComponent(mind)}/restart`, {
-      method: "POST",
-      headers: headers(),
-      body: JSON.stringify({ context }),
-    });
+    const res = await fetch(
+      `http://127.0.0.1:${port}/api/minds/${encodeURIComponent(mind)}/restart`,
+      {
+        method: "POST",
+        headers: headers(),
+        body: JSON.stringify({ context }),
+      },
+    );
+    // A successful restart usually kills us before this runs. If we get here with a
+    // non-ok status, the restart didn't happen — surface it instead of silently looping.
+    if (!res.ok) {
+      console.error(
+        `[volute] daemonRestart failed: ${res.status} ${await res.text().catch(() => "")}`,
+      );
+    }
   } catch {
     // Daemon may kill us before response arrives — expected
   }
