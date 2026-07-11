@@ -49,6 +49,27 @@ describe("logger", () => {
     );
   });
 
+  it("errorData unwraps ErrorEvent-shaped objects instead of [object ErrorEvent]", async () => {
+    const log = (await import("../packages/daemon/src/lib/util/logger.js")).default;
+
+    // Plain Error → stack/message
+    assert.match(log.errorData(new Error("boom")).error as string, /boom/);
+
+    // ErrorEvent-shaped with an inner Error (WebSocket onerror on Node)
+    const withInner = log.errorData({ error: new Error("socket hang up"), message: "" });
+    assert.match(withInner.error as string, /socket hang up/);
+
+    // ErrorEvent-shaped with only a message string
+    const withMessage = log.errorData({ message: "connection reset" });
+    assert.equal(withMessage.error, "connection reset");
+
+    // The regression itself: an object that stringifies to "[object ...]" must
+    // not surface that useless value when it carries a usable message.
+    const eventLike = { type: "error", message: "handshake failed" };
+    assert.equal(log.errorData(eventLike).error, "handshake failed");
+    assert.notEqual(log.errorData(eventLike).error, "[object Object]");
+  });
+
   it("log writes structured JSON to stderr", async () => {
     // Dynamically import to test the actual log module
     const log = (await import("../packages/daemon/src/lib/util/logger.js")).default;
