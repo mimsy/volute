@@ -542,16 +542,38 @@ describe("deliverSproutedNotice", () => {
     assert.equal(historyRows.length, 1, "sprouted notice must appear in history exactly once");
     assert.equal(historyRows[0].content, "[seed has sprouted]");
 
-    // The notice still fans out to each conversation.
+    // The notice still fans out to each conversation, as an assistant/system message.
     for (const conv of [convA, convB]) {
       const msgs = await getMessages(conv.id);
       const sprouted = msgs.filter(
         (m) => (m.content[0] as { text?: string })?.text === "[seed has sprouted]",
       );
       assert.equal(sprouted.length, 1, "each conversation gets the notice once");
+      assert.equal(sprouted[0].role, "assistant");
+      assert.equal(sprouted[0].sender_name, "system");
     }
 
     await deleteConversation(convA.id);
     await deleteConversation(convB.id);
+  });
+
+  it("records the notice once even when the mind has no conversations", async () => {
+    // History is conversation-agnostic: a sprout is logged once regardless of whether
+    // the mind is in any conversation yet. The old per-conversation loop recorded none.
+    await getOrCreateMindUser(SPROUT_MIND);
+
+    await deliverSproutedNotice(SPROUT_MIND);
+
+    const db = await getDb();
+    const historyRows = await db
+      .select()
+      .from(mindHistory)
+      .where(and(eq(mindHistory.mind, SPROUT_MIND), eq(mindHistory.type, "inbound")));
+    assert.equal(
+      historyRows.length,
+      1,
+      "sprouted notice must be recorded once with no conversations",
+    );
+    assert.equal(historyRows[0].content, "[seed has sprouted]");
   });
 });
