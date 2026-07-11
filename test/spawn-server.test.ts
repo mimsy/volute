@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
-import { mkdirSync, unlinkSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { _resetConfigCache } from "../packages/daemon/src/lib/config/setup.js";
 import { voluteSystemDir } from "../packages/daemon/src/lib/mind/registry.js";
@@ -51,6 +52,43 @@ describe("spawnServer verification wrapping", () => {
     // spawned, so the attached spawn resolves null rather than throwing.
     const result = await spawnServer("/tmp/nonexistent-spawn-dir", 0);
     assert.equal(result, null);
+  });
+
+  it("detached spawn ignores stale 'listening on' lines from earlier attempts (#654)", async () => {
+    // The verify path appends every attempt's output to the same
+    // .mind/logs/mind.log; matching the first "listening on :PORT" in the file
+    // returned a previous (dead) server's port, failing every re-verify.
+    const dir = mkdtempSync(join(tmpdir(), "spawn-detached-"));
+    try {
+      mkdirSync(join(dir, "src"), { recursive: true });
+      writeFileSync(
+        join(dir, "src", "server.ts"),
+        'console.log("listening on :43219");\nsetTimeout(() => {}, 15000);\n',
+      );
+      // `node --import tsx` resolves tsx from the spawn cwd
+      symlinkSync(resolve(process.cwd(), "node_modules"), join(dir, "node_modules"), "dir");
+      // Seed the log with a prior attempt's line
+      mkdirSync(join(dir, ".mind", "logs"), { recursive: true });
+      writeFileSync(join(dir, ".mind", "logs", "mind.log"), "listening on :1\n");
+
+      const result = await spawnServer(dir, 0, { detached: true });
+      try {
+        assert.ok(result, "spawn should succeed");
+        assert.equal(result.actualPort, 43219);
+      } finally {
+        if (result?.child.pid) {
+          try {
+            process.kill(-result.child.pid, "SIGKILL");
+          } catch {
+            try {
+              process.kill(result.child.pid, "SIGKILL");
+            } catch {}
+          }
+        }
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("skips sandbox wrap for codex-template minds", async () => {
