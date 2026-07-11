@@ -25,7 +25,8 @@ let {
     | "folder"
     | "play"
     | "stop"
-    | "restart";
+    | "restart"
+    | "fork";
   class?: string;
 } = $props();
 </script>
@@ -74,4 +75,6 @@ let {
   <svg class={className} viewBox="0 0 16 16" fill="currentColor" stroke="none"><rect x="3" y="3" width="10" height="10" rx="1"/></svg>
 {:else if kind === "restart"}
   <svg class={className} viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 8a6 6 0 0 1 10.3-4.2L14 2v4h-4l1.7-1.7A4.5 4.5 0 0 0 3.5 8"/><path d="M14 8a6 6 0 0 1-10.3 4.2L2 14v-4h4l-1.7 1.7A4.5 4.5 0 0 0 12.5 8"/></svg>
+{:else if kind === "fork"}
+  <svg class={className} viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="4" cy="3.5" r="1.5"/><circle cx="12" cy="3.5" r="1.5"/><circle cx="4" cy="12.5" r="1.5"/><path d="M4 5v7"/><path d="M12 5v1.5a3 3 0 0 1-3 3H4"/></svg>
 {/if}

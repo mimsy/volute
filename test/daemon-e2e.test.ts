@@ -688,8 +688,18 @@ describe("daemon e2e", { timeout: 420000 }, () => {
       assert.equal(rootOwned.length, 0, `parent dir has root-owned files: ${rootOwned.join(", ")}`);
     }
 
-    // Clean up the variant so later tests aren't affected.
-    await daemonRequest(`/api/minds/${TEST_MIND}/variants/e2e-conflict-var`, { method: "DELETE" });
+    // Standalone delete — the "Discard" action the web dashboard now exposes.
+    // The variant is removed from the registry and disk. Doubles as cleanup so
+    // later tests aren't affected.
+    const deleteRes = await daemonRequest(`/api/minds/${TEST_MIND}/variants/e2e-conflict-var`, {
+      method: "DELETE",
+    });
+    assert.equal(deleteRes.status, 200, `Delete: ${await deleteRes.clone().text()}`);
+    assert.ok(
+      !(await findMind("e2e-conflict-var")),
+      "deleted variant should be gone from the registry",
+    );
+    assert.ok(!existsSync(created.variant.path), "deleted variant worktree should be removed");
   });
 
   // ── Bridge & Chat Integration Tests ──
