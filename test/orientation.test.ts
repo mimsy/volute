@@ -4,7 +4,21 @@ import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { eq } from "drizzle-orm";
 import { createUser } from "../packages/daemon/src/lib/auth.js";
+import {
+  ensureSystemChannel,
+  resetSystemChannelCache,
+} from "../packages/daemon/src/lib/chat/system-channel.js";
+import {
+  initMindManager,
+  tryGetMindManager,
+} from "../packages/daemon/src/lib/daemon/mind-manager.js";
+import { startMindFull } from "../packages/daemon/src/lib/daemon/mind-service.js";
 import { getDb } from "../packages/daemon/src/lib/db.js";
+import {
+  deleteConversation,
+  getChannelSettings,
+  getParticipants,
+} from "../packages/daemon/src/lib/events/conversations.js";
 import {
   addMind,
   findMind,
@@ -15,6 +29,19 @@ import {
 } from "../packages/daemon/src/lib/mind/registry.js";
 import { users } from "../packages/daemon/src/lib/schema.js";
 import { createSession } from "../packages/daemon/src/web/middleware/auth.js";
+
+/** Usernames present in the #system channel, for membership assertions. */
+async function systemChannelMembers(): Promise<string[]> {
+  const id = await ensureSystemChannel();
+  return (await getParticipants(id)).map((p) => p.username);
+}
+
+/** Remove the #system channel so each test exercises fresh membership. */
+async function resetSystemChannel(): Promise<void> {
+  resetSystemChannelCache();
+  const ch = await getChannelSettings("system");
+  if (ch) await deleteConversation(ch.conversation_id);
+}
 
 function postHeaders(cookie: string) {
   return {
@@ -167,5 +194,71 @@ describe("seed gating", () => {
     assert.equal(res.status, 403);
     const body = (await res.json()) as { error: string };
     assert.ok(body.error.includes("Seed"));
+  });
+});
+
+// #617: seeds must stay out of the #system commons until they sprout. The spawn
+// path (startMindFull) excludes seeds; the sprout endpoint is the moment a mind
+// joins. These lock both halves of that invariant.
+describe("system commons sprout gate", () => {
+  let cookie: string;
+  const mindName = `commons-gate-${Date.now()}`;
+
+  async function cleanup() {
+    const db = await getDb();
+    await db.delete(users).where(eq(users.username, "commons-gate-admin"));
+    await db.delete(users).where(eq(users.username, mindName));
+    await removeMind(mindName);
+    await resetSystemChannel();
+  }
+
+  beforeEach(async () => {
+    await cleanup();
+    const user = await createUser("commons-gate-admin", "pass");
+    cookie = await createSession(user.id);
+  });
+  afterEach(cleanup);
+
+  it("startMindFull does not join a seed to #system", async () => {
+    // Stub the mind manager so startMind is a no-op — we exercise startMindFull's
+    // membership logic, not a real process spawn.
+    const mgr = tryGetMindManager() ?? initMindManager();
+    const origStart = mgr.startMind;
+    const origRunning = mgr.isRunning;
+    mgr.startMind = async () => {};
+    mgr.isRunning = () => false;
+    try {
+      await addMind(mindName, 4198, "seed");
+      await startMindFull(mindName);
+      // let fire-and-forget seed orientation settle before asserting
+      await new Promise((r) => setTimeout(r, 300));
+      const members = await systemChannelMembers();
+      assert.ok(!members.includes(mindName), "seed must not be a #system member on spawn");
+    } finally {
+      mgr.startMind = origStart;
+      mgr.isRunning = origRunning;
+    }
+  });
+
+  it("sprouting joins the mind to #system", async () => {
+    await addMind(mindName, 4198, "seed");
+    // Minimal mind dir so the sprout endpoint's dreaming/config steps have a home
+    const dir = resolve(voluteHome(), "minds", mindName);
+    mkdirSync(resolve(dir, "home/.config"), { recursive: true });
+    writeFileSync(resolve(dir, "home/.config/volute.json"), "{}");
+
+    // Not in the commons while still a seed
+    let members = await systemChannelMembers();
+    assert.ok(!members.includes(mindName), "seed should not be in #system before sprout");
+
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
+    const res = await app.request(`http://localhost/api/minds/${mindName}/sprout`, {
+      method: "POST",
+      headers: postHeaders(cookie),
+    });
+    assert.equal(res.status, 200);
+
+    members = await systemChannelMembers();
+    assert.ok(members.includes(mindName), "sprouted mind should join #system");
   });
 });
