@@ -890,21 +890,26 @@ describe("migrateSkillsToTemplate", () => {
    * and a bin command, plus an .upstream.json and regenerated shims pointing at
    * `subdir`.
    */
-  function seedInstalledSkill(dir: string, subdir: string, skillId: string): void {
+  function seedInstalledSkill(
+    dir: string,
+    subdir: string,
+    skillId: string,
+    binScript = "scripts/run.ts",
+  ): void {
     const skillDir = join(dir, "home", subdir, skillId);
     mkdirSync(join(skillDir, "scripts"), { recursive: true });
     writeFileSync(
       join(skillDir, "SKILL.md"),
-      `---\nname: ${skillId}\ndescription: A skill\nmetadata:\n  bin: scripts/run.ts\n  hooks:\n    pre-prompt: scripts/hook.sh\n---\n\nContent\n`,
+      `---\nname: ${skillId}\ndescription: A skill\nmetadata:\n  bin: ${binScript}\n  hooks:\n    pre-prompt: scripts/hook.sh\n---\n\nContent\n`,
     );
-    writeFileSync(join(skillDir, "scripts", "run.ts"), "console.log('run');\n");
+    writeFileSync(join(skillDir, binScript), "console.log('run');\n");
     writeFileSync(join(skillDir, "scripts", "hook.sh"), "echo hook\n");
     writeFileSync(
       join(skillDir, ".upstream.json"),
       JSON.stringify({ source: skillId, version: 3, baseCommit: "abc123" }, null, 2),
     );
     installHookShims(dir, skillId, { "pre-prompt": "scripts/hook.sh" }, subdir);
-    installBinShim(dir, skillId, "scripts/run.ts", subdir);
+    installBinShim(dir, skillId, binScript, subdir);
   }
 
   it("moves installed skills to the new template dir and rewrites shims", () => {
@@ -917,8 +922,9 @@ describe("migrateSkillsToTemplate", () => {
     assert.ok(readFileSync(hookShim, "utf-8").includes(".claude/skills/my-skill"));
     assert.ok(readFileSync(binShim, "utf-8").includes(".claude/skills/my-skill"));
 
-    const migrated = migrateSkillsToTemplate(dir, "claude", "pi");
+    const { migrated, failed } = migrateSkillsToTemplate(dir, "claude", "pi");
     assert.deepEqual(migrated, ["my-skill"]);
+    assert.deepEqual(failed, []);
 
     // Skill moved to .pi/skills, old dir removed.
     assert.ok(!existsSync(join(dir, "home", ".claude", "skills")), "old skills dir removed");
@@ -942,12 +948,118 @@ describe("migrateSkillsToTemplate", () => {
     rmSync(dir, { recursive: true });
   });
 
+  it("migrates every installed skill, not just the last", () => {
+    const dir = join(voluteHome(), `test-migrate-multi-${Date.now()}`);
+    seedInstalledSkill(dir, ".claude/skills", "skill-a", "scripts/a.ts");
+    seedInstalledSkill(dir, ".claude/skills", "skill-b", "scripts/b.ts");
+
+    const { migrated, failed } = migrateSkillsToTemplate(dir, "claude", "pi");
+    assert.deepEqual(migrated.sort(), ["skill-a", "skill-b"]);
+    assert.deepEqual(failed, []);
+
+    assert.ok(!existsSync(join(dir, "home", ".claude", "skills")), "old skills dir removed");
+    for (const id of ["skill-a", "skill-b"]) {
+      assert.ok(
+        existsSync(join(dir, "home", ".pi", "skills", id, "SKILL.md")),
+        `${id} moved to new dir`,
+      );
+      const hook = readFileSync(
+        join(dir, "home", ".local", "hooks", "pre-prompt", `50-${id}.sh`),
+        "utf-8",
+      );
+      assert.ok(hook.includes(`.pi/skills/${id}`), `${id} hook shim rewritten`);
+      assert.ok(!hook.includes(".claude/skills"), `${id} hook shim has no stale path`);
+    }
+
+    rmSync(dir, { recursive: true });
+  });
+
+  it("rewrites the hook shim and creates no bin shim for a hooks-only skill", () => {
+    const dir = join(voluteHome(), `test-migrate-hooksonly-${Date.now()}`);
+    const skillDir = join(dir, "home", ".claude", "skills", "hooks-only");
+    mkdirSync(join(skillDir, "scripts"), { recursive: true });
+    writeFileSync(
+      join(skillDir, "SKILL.md"),
+      "---\nname: hooks-only\ndescription: no bin\nmetadata:\n  hooks:\n    pre-prompt: scripts/hook.sh\n---\n\nContent\n",
+    );
+    writeFileSync(join(skillDir, "scripts", "hook.sh"), "echo hook\n");
+    installHookShims(dir, "hooks-only", { "pre-prompt": "scripts/hook.sh" }, ".claude/skills");
+
+    const { migrated } = migrateSkillsToTemplate(dir, "claude", "pi");
+    assert.deepEqual(migrated, ["hooks-only"]);
+
+    const hook = readFileSync(
+      join(dir, "home", ".local", "hooks", "pre-prompt", "50-hooks-only.sh"),
+      "utf-8",
+    );
+    assert.ok(hook.includes(".pi/skills/hooks-only/scripts/hook.sh"));
+    assert.ok(!existsSync(join(dir, "home", ".local", "bin")), "no bin shim created");
+
+    rmSync(dir, { recursive: true });
+  });
+
+  it("clears a stale bin shim when a skill's newer version dropped its bin", () => {
+    const dir = join(voluteHome(), `test-migrate-dropbin-${Date.now()}`);
+    // Simulate a skill that used to ship a bin (stale shim still present) but
+    // whose current SKILL.md no longer declares one — updateSkill doesn't manage
+    // shims, so the stale shim lingers. Migration must clear it, not carry a
+    // shim pointing at the old template dir forward.
+    const skillDir = join(dir, "home", ".claude", "skills", "shrunk");
+    mkdirSync(join(skillDir, "scripts"), { recursive: true });
+    writeFileSync(
+      join(skillDir, "SKILL.md"),
+      "---\nname: shrunk\ndescription: dropped its bin\nmetadata:\n  hooks:\n    pre-prompt: scripts/hook.sh\n---\n\nContent\n",
+    );
+    writeFileSync(join(skillDir, "scripts", "hook.sh"), "echo hook\n");
+    installHookShims(dir, "shrunk", { "pre-prompt": "scripts/hook.sh" }, ".claude/skills");
+    // The stale bin shim left over from when the skill still shipped one.
+    installBinShim(dir, "shrunk", "scripts/run.ts", ".claude/skills");
+    assert.ok(existsSync(join(dir, "home", ".local", "bin", "run")));
+
+    const { migrated } = migrateSkillsToTemplate(dir, "claude", "pi");
+    assert.deepEqual(migrated, ["shrunk"]);
+    assert.ok(
+      !existsSync(join(dir, "home", ".local", "bin", "run")),
+      "stale bin shim pointing at old template dir must be removed",
+    );
+
+    rmSync(dir, { recursive: true });
+  });
+
+  it("reports a skill that fails to migrate and keeps the old dir for a retry", () => {
+    const dir = join(voluteHome(), `test-migrate-fail-${Date.now()}`);
+    seedInstalledSkill(dir, ".claude/skills", "good", "scripts/good.ts");
+    // A second skill whose bin command "run" is already claimed by a foreign
+    // skill, so reinstalling its bin shim during migration throws.
+    const badDir = join(dir, "home", ".claude", "skills", "bad");
+    mkdirSync(join(badDir, "scripts"), { recursive: true });
+    writeFileSync(
+      join(badDir, "SKILL.md"),
+      "---\nname: bad\ndescription: colliding bin\nmetadata:\n  bin: scripts/run.ts\n---\n\nContent\n",
+    );
+    writeFileSync(join(badDir, "scripts", "run.ts"), "console.log('run');\n");
+    installBinShim(dir, "blocker", "scripts/run.ts", ".claude/skills");
+
+    const { migrated, failed } = migrateSkillsToTemplate(dir, "claude", "pi");
+    assert.deepEqual(migrated, ["good"]);
+    assert.deepEqual(failed, ["bad"]);
+
+    // The old skills dir is preserved when anything failed, so a re-run can retry.
+    assert.ok(
+      existsSync(join(dir, "home", ".claude", "skills")),
+      "old skills dir kept after a partial failure",
+    );
+
+    rmSync(dir, { recursive: true });
+  });
+
   it("is a no-op when the template is unchanged", () => {
     const dir = join(voluteHome(), `test-migrate-noop-${Date.now()}`);
     seedInstalledSkill(dir, ".claude/skills", "my-skill");
 
-    const migrated = migrateSkillsToTemplate(dir, "claude", "claude");
+    const { migrated, failed } = migrateSkillsToTemplate(dir, "claude", "claude");
     assert.deepEqual(migrated, []);
+    assert.deepEqual(failed, []);
     assert.ok(existsSync(join(dir, "home", ".claude", "skills", "my-skill", "SKILL.md")));
 
     rmSync(dir, { recursive: true });
@@ -957,7 +1069,7 @@ describe("migrateSkillsToTemplate", () => {
     const dir = join(voluteHome(), `test-migrate-empty-${Date.now()}`);
     mkdirSync(join(dir, "home", ".claude", "skills"), { recursive: true });
 
-    const migrated = migrateSkillsToTemplate(dir, "claude", "codex");
+    const { migrated } = migrateSkillsToTemplate(dir, "claude", "codex");
     assert.deepEqual(migrated, []);
     assert.ok(!existsSync(join(dir, "home", ".claude", "skills")), "empty old dir removed");
 
@@ -968,7 +1080,7 @@ describe("migrateSkillsToTemplate", () => {
     const dir = join(voluteHome(), `test-migrate-absent-${Date.now()}`);
     mkdirSync(join(dir, "home"), { recursive: true });
 
-    const migrated = migrateSkillsToTemplate(dir, "claude", "pi");
+    const { migrated } = migrateSkillsToTemplate(dir, "claude", "pi");
     assert.deepEqual(migrated, []);
 
     rmSync(dir, { recursive: true });

@@ -445,7 +445,11 @@ async function mergeUpgradeAndRestart(
       // Move installed skills into the new template's skills dir and regenerate
       // their shims, so they aren't stranded (invisible + shims pointing at the
       // old path) after the switch.
-      const migratedSkills = migrateSkillsToTemplate(dir, oldTemplate, template);
+      const { migrated: migratedSkills, failed: failedSkills } = migrateSkillsToTemplate(
+        dir,
+        oldTemplate,
+        template,
+      );
       await gitExec(["add", "home/"], { cwd: dir });
       try {
         await gitExec(["diff", "--cached", "--quiet"], { cwd: dir });
@@ -455,10 +459,13 @@ async function mergeUpgradeAndRestart(
         });
       }
       await chownMindDir(dir, mindName);
-      const skillNote =
+      let skillNote =
         migratedSkills.length > 0
           ? ` Migrated skills to the ${template} skills dir: ${migratedSkills.join(", ")}.`
           : "";
+      if (failedSkills.length > 0) {
+        skillNote += ` These skills could not be migrated and may need to be reinstalled: ${failedSkills.join(", ")}.`;
+      }
       switchWarning = `Switched ${oldTemplate}→${template}: config reset to ${template} defaults, mechanics doc replaced, conversation starts fresh (sessions aren't portable across runtimes).${skillNote}`;
     } catch (err) {
       log.warn(`failed to swap template home files for ${mindName}`, log.errorData(err));

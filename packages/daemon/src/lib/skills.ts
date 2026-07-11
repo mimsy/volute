@@ -747,7 +747,30 @@ export function removeBinShim(dir: string, scriptPath: string): void {
   if (existsSync(shimPath)) rmSync(shimPath);
 }
 
+/**
+ * Remove every bin shim in .local/bin owned by `skillId` (identified by the
+ * embedded marker). Unlike removeBinShim, this needs no SKILL.md/scriptPath, so
+ * it can clear a stale shim even when the skill ships none — used by migration
+ * to keep hook and bin shim cleanup symmetric.
+ */
+function removeOwnedBinShims(dir: string, skillId: string): void {
+  const binDir = join(dir, "home", ".local", "bin");
+  if (!existsSync(binDir)) return;
+  for (const entry of readdirSync(binDir, { withFileTypes: true })) {
+    if (!entry.isFile()) continue;
+    const shimPath = join(binDir, entry.name);
+    if (binShimOwner(shimPath) === skillId) rmSync(shimPath);
+  }
+}
+
 // --- Template switch migration ---
+
+export type SkillMigrationResult = {
+  /** Skills successfully moved into the new template's skills dir. */
+  migrated: string[];
+  /** Skills that could not be moved (left in the old dir for a retry). */
+  failed: string[];
+};
 
 /**
  * When a mind switches templates during upgrade, installed skills would otherwise
@@ -755,54 +778,87 @@ export function removeBinShim(dir: string, scriptPath: string): void {
  * skill discovery and to `volute skill list` (which reads the new, empty dir),
  * while their bin/hook shims keep pointing at the old path. Move each installed
  * skill directory (preserving .upstream.json) into the new template's skills dir
- * and regenerate its shims so their embedded paths match. Returns migrated ids.
+ * and regenerate its shims so their embedded paths match.
+ *
+ * Each skill is migrated independently: a failure on one (e.g. a bin-shim owner
+ * collision, or a rename error under per-user isolation) is caught and reported
+ * rather than aborting the loop and stranding the rest. The old skills dir is
+ * only removed once every skill migrated cleanly, so a re-run still finds any
+ * that failed.
  */
 export function migrateSkillsToTemplate(
   dir: string,
   oldTemplate: string,
   newTemplate: string,
-): string[] {
+): SkillMigrationResult {
   const home = resolve(dir, "home");
   const oldSubdir = TEMPLATE_SKILLS_DIR[oldTemplate] ?? TEMPLATE_SKILLS_DIR.claude;
   const newSubdir = TEMPLATE_SKILLS_DIR[newTemplate] ?? TEMPLATE_SKILLS_DIR.claude;
-  if (oldSubdir === newSubdir) return [];
+  if (oldSubdir === newSubdir) return { migrated: [], failed: [] };
 
   const oldDir = resolve(home, oldSubdir);
   const newDir = resolve(home, newSubdir);
-  if (!existsSync(oldDir)) return [];
+  if (!existsSync(oldDir)) return { migrated: [], failed: [] };
 
   const skillIds = readdirSync(oldDir, { withFileTypes: true })
     .filter((e) => e.isDirectory())
     .map((e) => e.name);
 
   const migrated: string[] = [];
+  const failed: string[] = [];
   if (skillIds.length > 0) {
     mkdirSync(newDir, { recursive: true });
     for (const skillId of skillIds) {
-      const from = join(oldDir, skillId);
-      const to = join(newDir, skillId);
-      // The new template starts with no skills, so a collision is unexpected —
-      // but be safe and let the migrated copy win.
-      if (existsSync(to)) rmSync(to, { recursive: true, force: true });
-      renameSync(from, to);
-
-      // Regenerate shims with the new skills subdir. The shim files live at the
-      // same .local/hooks|bin paths regardless of template, so reinstalling
-      // overwrites the stale ones in place.
-      removeHookShims(dir, skillId);
-      const skillMdPath = join(to, "SKILL.md");
-      if (existsSync(skillMdPath)) {
-        const { hooks, bin } = parseSkillMd(readFileSync(skillMdPath, "utf-8"));
-        installHookShims(dir, skillId, hooks, newSubdir);
-        if (bin) installBinShim(dir, skillId, bin, newSubdir);
+      try {
+        migrateOneSkill(dir, oldDir, newDir, newSubdir, skillId);
+        migrated.push(skillId);
+      } catch (err) {
+        // Leave this skill in the old dir (or wherever the failure left it) and
+        // keep going. We skip the old-dir cleanup below so a re-run can retry.
+        log.warn(`failed to migrate skill ${skillId} to ${newTemplate}`, log.errorData(err));
+        failed.push(skillId);
       }
-      migrated.push(skillId);
     }
   }
 
-  // Remove the now-empty old skills dir so marker-based detection stays clean.
-  rmSync(oldDir, { recursive: true, force: true });
-  return migrated;
+  // Only drop the old skills dir if every skill made it across — otherwise a
+  // straggler (and the chance to retry it) would be deleted.
+  if (failed.length === 0) rmSync(oldDir, { recursive: true, force: true });
+  return { migrated, failed };
+}
+
+/** Move one skill dir into the new template's skills dir and rebuild its shims. */
+function migrateOneSkill(
+  dir: string,
+  oldDir: string,
+  newDir: string,
+  newSubdir: string,
+  skillId: string,
+): void {
+  const from = join(oldDir, skillId);
+  const to = join(newDir, skillId);
+  // The new template starts with no skills, so a collision is unexpected —
+  // but be safe and let the migrated copy win.
+  if (existsSync(to)) rmSync(to, { recursive: true, force: true });
+  renameSync(from, to);
+
+  // Regenerate shims with the new skills subdir. Clear this skill's existing
+  // hook and bin shims first (both point at the old path), then reinstall
+  // from the current SKILL.md. Clearing both unconditionally keeps them
+  // symmetric — a stale bin shim isn't left behind if the skill no longer
+  // ships one (e.g. a version dropped its `bin`).
+  removeHookShims(dir, skillId);
+  removeOwnedBinShims(dir, skillId);
+  const skillMdPath = join(to, "SKILL.md");
+  if (existsSync(skillMdPath)) {
+    const { hooks, bin } = parseSkillMd(readFileSync(skillMdPath, "utf-8"));
+    installHookShims(dir, skillId, hooks, newSubdir);
+    if (bin) installBinShim(dir, skillId, bin, newSubdir);
+  } else {
+    // An installed skill always ships a SKILL.md; without one we can't rebuild
+    // shims, so we've stripped the stale ones and leave the skill shim-less.
+    log.warn(`migrated skill ${skillId} has no SKILL.md; shims not regenerated`);
+  }
 }
 
 // --- Helpers ---
