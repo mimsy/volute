@@ -61,4 +61,25 @@ describe("buildPendingContextMessage", () => {
     });
     assert.doesNotMatch(content, /not merged/);
   });
+
+  it("folds the variant's farewell note into the merge message", async () => {
+    const content = await buildPendingContextMessage("parent", {
+      type: "merged",
+      name: "variant",
+      summary: "did some work",
+      farewell: "Tell parent I found the answer in the margins.",
+    });
+    assert.match(content, /parting note/i);
+    assert.match(content, /found the answer in the margins/);
+    assert.match(content, /Changes: did some work/);
+  });
+
+  it("omits the parting-note section when there is no farewell", async () => {
+    const content = await buildPendingContextMessage("parent", {
+      type: "merged",
+      name: "variant",
+      summary: "did some work",
+    });
+    assert.doesNotMatch(content, /parting note/i);
+  });
 });

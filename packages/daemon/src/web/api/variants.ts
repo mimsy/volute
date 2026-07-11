@@ -3,8 +3,9 @@ import { resolve } from "node:path";
 import { Hono } from "hono";
 import { getOrCreateMindUser } from "../../lib/auth.js";
 import { sendSystemMessage } from "../../lib/chat/system-chat.js";
-import { getMindManager } from "../../lib/daemon/mind-manager.js";
+import { getMindManager, tryGetMindManager } from "../../lib/daemon/mind-manager.js";
 import { createConversation, findDMConversation } from "../../lib/events/conversations.js";
+import { runFarewellTurn } from "../../lib/mind/farewell.js";
 import { chownMindDir, isIsolationEnabled, wrapForIsolation } from "../../lib/mind/isolation.js";
 import {
   addVariant,
@@ -309,6 +310,26 @@ const app = new Hono<AuthEnv>()
       return c.json({ error: message, ...extra }, 500);
     };
 
+    // Give the variant one final turn to wind down before it's merged and
+    // destroyed. Runs before the first git write below (the variant auto-commit)
+    // so any home/ files it edits as it says goodbye are captured in the merge.
+    // Bounded internally — a hung variant can't block the join. Wrapped so the
+    // farewell can never fail the join: winding down is a courtesy, losing the
+    // merge is not. The parting note (if any) is folded into the merge context
+    // the parent receives below.
+    let farewell: string | undefined;
+    try {
+      farewell = await runFarewellTurn({
+        variantName,
+        parentName: mindName,
+        variantDir: variantEntry.dir,
+        port: variantEntry.port,
+        running: tryGetMindManager()?.isRunning(variantName) ?? false,
+      });
+    } catch (err) {
+      log.warn(`farewell turn failed for ${variantName}`, log.errorData(err));
+    }
+
     // From the first git write below through the restart, wrap everything in one
     // try/catch. The named early returns already route through failAfterGitWrite,
     // but an *uncaught* throw past the first write — spawnServer's isolation wrap,
@@ -447,6 +468,7 @@ const app = new Hono<AuthEnv>()
         ...(justification && { justification }),
         ...(body.memory && { memory: body.memory }),
         ...(memoryDelta && { memoryDelta }),
+        ...(farewell && { farewell }),
       };
 
       try {
