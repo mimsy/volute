@@ -27,7 +27,7 @@ import {
   isParticipantOrOwner,
 } from "../../../lib/events/conversations.js";
 import { publish as publishMindEvent } from "../../../lib/events/mind-events.js";
-import { findMind, getBaseName, resolveMindDir } from "../../../lib/mind/registry.js";
+import { findMind, getBaseName, isSpiritName, resolveMindDir } from "../../../lib/mind/registry.js";
 import { readVoluteConfig } from "../../../lib/mind/volute-config.js";
 import { fixModelEscapes } from "../../../lib/util/fix-model-escapes.js";
 import log from "../../../lib/util/logger.js";
@@ -111,7 +111,7 @@ export const unifiedChatApp = new Hono<AuthEnv>().post(
     // Resolve sender: daemon token + body.sender → override, else user.username
     const senderName = user.id === 0 && body.sender ? body.sender : user.username;
 
-    // Detect if sender is a mind. The spirit ("volute") authenticates with its
+    // Detect if sender is a mind. The spirit authenticates with its
     // mind token but resolves to the shared system user (user_type "system"), so
     // classify a system principal whose username is a registered mind as a mind
     // sender too — this matches only the spirit, never a plain system principal.
@@ -146,7 +146,7 @@ export const unifiedChatApp = new Hono<AuthEnv>().post(
         if (user.id !== 0) {
           participantIds.push(user.id);
         } else if (body.sender) {
-          if (body.sender === "volute") {
+          if (isSpiritName(body.sender)) {
             const systemUser = await getOrCreateSystemUser();
             participantIds.push(systemUser.id);
           } else {

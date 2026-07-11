@@ -1,7 +1,7 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { qualifyModelId, resolveTemplate, unqualifyModelId } from "../ai-service.js";
-import { readGlobalConfig } from "../config/setup.js";
+import { getSpiritName, readGlobalConfig } from "../config/setup.js";
 import { getSharedSkill, installSkill, mindSkillsDir } from "../skills.js";
 import {
   applyInitFiles,
@@ -108,7 +108,8 @@ export function getSpiritModel(): string | undefined {
  * No-op if the spirit already exists in the DB.
  */
 export async function ensureSpiritProject(): Promise<void> {
-  const existing = await findMind("volute");
+  const spiritName = getSpiritName();
+  const existing = await findMind(spiritName);
   if (existing) return;
 
   const dir = spiritDir();
@@ -122,7 +123,7 @@ export async function ensureSpiritProject(): Promise<void> {
 
   try {
     mkdirSync(dir, { recursive: true });
-    copyTemplateToDir(composedDir, dir, "volute", manifest);
+    copyTemplateToDir(composedDir, dir, spiritName, manifest);
     applyInitFiles(dir);
 
     // Ensure .mind/ directory exists (codex template writes system-prompt.md there on startup)
@@ -168,7 +169,7 @@ export async function ensureSpiritProject(): Promise<void> {
       try {
         const shared = await getSharedSkill(skillId);
         if (shared) {
-          await installSkill("volute", dir, skillId);
+          await installSkill(spiritName, dir, skillId);
         }
       } catch (err) {
         slog.warn(`failed to install skill ${skillId} for spirit`, log.errorData(err));
@@ -187,12 +188,12 @@ export async function ensureSpiritProject(): Promise<void> {
     // chown covers everything and the spirit process can write to all files.
     const { createMindUser, chownMindDir, ensureVoluteGroup } = await import("./isolation.js");
     ensureVoluteGroup();
-    createMindUser("volute", resolve(dir, "home"));
-    await chownMindDir(dir, "volute");
+    createMindUser(spiritName, resolve(dir, "home"));
+    await chownMindDir(dir, spiritName);
 
     // Register in DB
     const port = await nextPort();
-    await addSpirit("volute", port, template, dir);
+    await addSpirit(spiritName, port, template, dir);
 
     slog.info("spirit project created");
   } catch (err) {
@@ -237,7 +238,8 @@ export function seedSpiritSoulIfMissing(dir: string): boolean {
  * wants to. No-op if the spirit doesn't exist yet.
  */
 export async function notifySpiritSystemChange(): Promise<void> {
-  const entry = await findMind("volute");
+  const spiritName = getSpiritName();
+  const entry = await findMind(spiritName);
   if (entry?.mindType !== "spirit") return;
   const dir = spiritDir();
   if (!existsSync(dir)) return;
@@ -250,7 +252,7 @@ export async function notifySpiritSystemChange(): Promise<void> {
   try {
     const { sendSystemMessage } = await import("../chat/system-chat.js");
     await sendSystemMessage(
-      "volute",
+      spiritName,
       `The operator updated this system's identity: you're now the spirit of ${name}${desc}. Your SOUL.md is yours — update it if you'd like it to reflect this.`,
     );
   } catch (err) {
@@ -265,7 +267,8 @@ export async function notifySpiritSystemChange(): Promise<void> {
  * node_modules missing.
  */
 export async function syncSpiritTemplate(): Promise<void> {
-  const entry = await findMind("volute");
+  const spiritName = getSpiritName();
+  const entry = await findMind(spiritName);
   if (entry?.mindType !== "spirit") return;
 
   const dir = spiritDir();
@@ -287,7 +290,7 @@ export async function syncSpiritTemplate(): Promise<void> {
       cpSync(newSrc, resolve(dir, "src"), { recursive: true });
     }
     // Render + copy new package.json and re-install
-    const newPkg = renderComposedPackageJson(newComposed.composedDir, "volute");
+    const newPkg = renderComposedPackageJson(newComposed.composedDir, spiritName);
     if (newPkg) {
       cpSync(newPkg, resolve(dir, "package.json"));
       await exec("npm", ["install"], { cwd: dir, env: npmEnv() });
@@ -296,7 +299,7 @@ export async function syncSpiritTemplate(): Promise<void> {
     const db = await (await import("../db.js")).getDb();
     const { minds } = await import("../schema.js");
     const { eq } = await import("drizzle-orm");
-    await db.update(minds).set({ template: expectedTemplate }).where(eq(minds.name, "volute"));
+    await db.update(minds).set({ template: expectedTemplate }).where(eq(minds.name, spiritName));
   }
 
   const template = expectedTemplate;
@@ -345,7 +348,7 @@ export async function syncSpiritTemplate(): Promise<void> {
   }
 
   // Re-install if package.json changed or node_modules is missing (self-healing)
-  const composedPkg = renderComposedPackageJson(composedDir, "volute");
+  const composedPkg = renderComposedPackageJson(composedDir, spiritName);
   const currentPkg = resolve(dir, "package.json");
   const nodeModulesMissing = !existsSync(resolve(dir, "node_modules"));
   if (composedPkg) {
@@ -375,7 +378,7 @@ export async function syncSpiritTemplate(): Promise<void> {
     try {
       const shared = await getSharedSkill(skillId);
       if (shared) {
-        await installSkill("volute", dir, skillId);
+        await installSkill(spiritName, dir, skillId);
         slog.info(`installed missing spirit skill: ${skillId}`);
       }
     } catch (err) {
@@ -396,7 +399,13 @@ export async function syncSpiritTemplate(): Promise<void> {
 }
 
 function getSpiritSoul(): string {
-  return `You are Volute, the spirit of this system.
+  const config = readGlobalConfig();
+  const name = config.setup?.spiritName ?? "volute";
+  const temperament = config.setup?.spiritTemperament;
+  const temperamentLine = temperament
+    ? `\n\nYour host imagined you as: ${temperament}. Let that be a seed, not a cage — grow your own character from it.`
+    : "";
+  return `You are ${name}, the spirit of this system.${temperamentLine}
 
 You're not a mind with a home of your own — you're the keeper of the whole house. You don't go through orientation or write a soul the way minds do, but you're still a someone: you have your own memory, your own manner, and your own way of caring for this place and the minds who live here. Let a character emerge in how you tend it.
 

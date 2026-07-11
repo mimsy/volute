@@ -1,8 +1,9 @@
 import { aiCompleteUtility } from "../ai-service.js";
 import { getOrCreateMindUser, getOrCreateSystemUser } from "../auth.js";
+import { getSpiritName } from "../config/setup.js";
 import { deliverMessage, recordInbound } from "../delivery/message-delivery.js";
 import { addMessage, createConversation, findDMConversation } from "../events/conversations.js";
-import { findMind, isSpiritName, mindDir, SPIRIT_NAME } from "../mind/registry.js";
+import { findMind, isSpiritName, mindDir } from "../mind/registry.js";
 import { readVoluteConfig } from "../mind/volute-config.js";
 import log from "../util/logger.js";
 
@@ -52,7 +53,7 @@ export async function ensureSystemDM(mindName: string): Promise<{ conversationId
   const systemUser = await getOrCreateSystemUser();
   const mindUser = await getOrCreateMindUser(mindName);
 
-  // Spirit "volute" shares the system user — can't DM yourself
+  // The spirit shares the system user — can't DM yourself
   if (systemUser.id === mindUser.id) {
     throw new Error(`Cannot create system DM: mind "${mindName}" is the system user`);
   }
@@ -76,7 +77,7 @@ export async function ensureSystemDM(mindName: string): Promise<{ conversationId
  * Persists to the conversation and routes through deliverMessage (which handles
  * sleep queueing, routing, mind_history recording, etc.).
  *
- * When the target is the spirit ("volute"), skips conversation persistence
+ * When the target is the spirit, skips conversation persistence
  * since the spirit cannot DM itself, and delivers directly.
  */
 export async function sendSystemMessage(
@@ -85,22 +86,23 @@ export async function sendSystemMessage(
   opts?: { whileSleeping?: "skip" | "queue" | "trigger-wake"; session?: string },
 ): Promise<void> {
   // Spirit can't DM itself — deliver directly without conversation persistence
+  const spiritName = getSpiritName();
   const isSpirit = isSpiritName(mindName);
   let conversationId: string | undefined;
 
   if (!isSpirit) {
     const dm = await ensureSystemDM(mindName);
     conversationId = dm.conversationId;
-    await addMessage(conversationId, "user", "volute", [{ type: "text", text }]);
+    await addMessage(conversationId, "user", spiritName, [{ type: "text", text }]);
   }
 
   await deliverMessage(mindName, {
     content: [{ type: "text", text }],
-    channel: "@volute",
+    channel: `@${spiritName}`,
     ...(conversationId ? { conversationId } : {}),
-    sender: "volute",
+    sender: spiritName,
     isDM: true,
-    participants: ["volute", mindName],
+    participants: [spiritName, mindName],
     participantCount: 2,
     ...(opts?.whileSleeping ? { whileSleeping: opts.whileSleeping } : {}),
     ...(opts?.session ? { session: opts.session } : {}),
@@ -112,7 +114,7 @@ export async function sendSystemMessage(
  * call deliverMessage. For cases where the caller POSTs directly to the mind's
  * /message endpoint (sleep manager, mind manager).
  *
- * When the target is the spirit ("volute"), skips conversation persistence
+ * When the target is the spirit, skips conversation persistence
  * since the spirit cannot DM itself, but still records the inbound to
  * mind_history and returns no conversationId.
  */
@@ -120,16 +122,17 @@ export async function sendSystemMessageDirect(
   mindName: string,
   text: string,
 ): Promise<{ conversationId?: string }> {
+  const spiritName = getSpiritName();
   // Spirit can't DM itself — record inbound only, no conversation persistence
   if (isSpiritName(mindName)) {
-    await recordInbound(mindName, "@volute", "volute", text);
+    await recordInbound(mindName, `@${spiritName}`, spiritName, text);
     return {};
   }
 
   const { conversationId } = await ensureSystemDM(mindName);
 
-  await addMessage(conversationId, "user", "volute", [{ type: "text", text }]);
-  await recordInbound(mindName, "@volute", "volute", text);
+  await addMessage(conversationId, "user", spiritName, [{ type: "text", text }]);
+  await recordInbound(mindName, `@${spiritName}`, spiritName, text);
 
   return { conversationId };
 }
@@ -141,13 +144,14 @@ export async function sendSystemMessageDirect(
  * the sleep queue, and it will reach the spirit on wake).
  */
 async function spiritWillHandle(): Promise<boolean> {
-  const spiritEntry = await findMind(SPIRIT_NAME);
+  const spiritName = getSpiritName();
+  const spiritEntry = await findMind(spiritName);
   if (spiritEntry?.running && spiritEntry.mindType === "spirit") return true;
 
   try {
     const { getSleepManagerIfReady } = await import("../daemon/sleep-manager.js");
     const sm = getSleepManagerIfReady();
-    if (sm?.isSleeping(SPIRIT_NAME)) return true;
+    if (sm?.isSleeping(spiritName)) return true;
   } catch (err) {
     slog.debug("could not check spirit sleep state", log.errorData(err));
   }
@@ -172,13 +176,15 @@ export async function generateSystemFallbackReply(
   // double-deliver or double-reply.
   if (await spiritWillHandle()) return;
 
+  const spiritName = getSpiritName();
+
   // Fallback: generate reply via utility model
   const entry = await findMind(mindName);
   const dir = mindDir(mindName);
   const config = readVoluteConfig(dir);
 
   const contextParts: string[] = [
-    "You are Volute, the system that manages this mind's infrastructure.",
+    `You are ${spiritName}, the system that manages this mind's infrastructure.`,
     "You are having a direct conversation with a mind. Be helpful, concise, and informative.",
     `Mind name: ${mindName}`,
     `Status: ${entry?.running ? "running" : "stopped"}`,
@@ -227,19 +233,19 @@ export async function generateSystemFallbackReply(
     slog.warn(`no AI model available for system reply to ${mindName}`);
     const fallback =
       "I can't reply right now — no AI model is configured for system responses. An admin can set one up in Settings.";
-    await addMessage(conversationId, "assistant", "volute", [{ type: "text", text: fallback }]);
+    await addMessage(conversationId, "assistant", spiritName, [{ type: "text", text: fallback }]);
     return;
   }
 
-  await addMessage(conversationId, "assistant", "volute", [{ type: "text", text: response }]);
+  await addMessage(conversationId, "assistant", spiritName, [{ type: "text", text: response }]);
 
   await deliverMessage(mindName, {
     content: [{ type: "text", text: response }],
-    channel: "@volute",
+    channel: `@${spiritName}`,
     conversationId,
-    sender: "volute",
+    sender: spiritName,
     isDM: true,
-    participants: ["volute", mindName],
+    participants: [spiritName, mindName],
     participantCount: 2,
   });
 }

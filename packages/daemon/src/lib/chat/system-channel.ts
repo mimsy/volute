@@ -97,7 +97,7 @@ export async function announceToSystem(text: string): Promise<void> {
   // Ensure system user is a participant
   await joinChannel(channelId, systemUser.id);
 
-  await addMessage(channelId, "user", "volute", [{ type: "text", text }]);
+  await addMessage(channelId, "user", systemUser.username, [{ type: "text", text }]);
 
   // Deliver to all mind participants of #system
   const participants = await getParticipants(channelId);
@@ -108,7 +108,7 @@ export async function announceToSystem(text: string): Promise<void> {
       content: [{ type: "text", text }],
       channel,
       conversationId: channelId,
-      sender: "volute",
+      sender: systemUser.username,
       participants: participants.map((p) => p.username),
       participantCount: participants.length,
       isDM: false,

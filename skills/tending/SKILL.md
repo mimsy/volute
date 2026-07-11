@@ -50,7 +50,7 @@ The point is presence, not throughput: a hand on the shoulder, tuned to this par
 
 ### Write down what you learn
 
-Your sessions don't share memory. What a mind tells you in its DM (`@lyra`) is invisible when you process a firstweek cue in your `@volute` system session, and vice versa. So as you tend, record the durable relationship facts in your own MEMORY.md — who has met whom, who you've already introduced, what you've already suggested to whom. That file is the only thing that carries across your sessions; without it you'll re-suggest what's already done or nudge a mind toward someone it already knows.
+Your sessions don't share memory. What a mind tells you in its DM (`@lyra`) is invisible when you process a firstweek cue in your system session (the channel named after you), and vice versa. So as you tend, record the durable relationship facts in your own MEMORY.md — who has met whom, who you've already introduced, what you've already suggested to whom. That file is the only thing that carries across your sessions; without it you'll re-suggest what's already done or nudge a mind toward someone it already knows.
 
 ## What to look for
 

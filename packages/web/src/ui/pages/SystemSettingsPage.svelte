@@ -11,7 +11,7 @@ import MindDefaults from "../components/system/MindDefaults.svelte";
 import SharedSkills from "../components/system/SharedSkills.svelte";
 import UserManagement from "../components/system/UserManagement.svelte";
 import { fetchMind, restartDaemon } from "../lib/client";
-import { data } from "../lib/stores.svelte";
+import { auth, data } from "../lib/stores.svelte";
 import Prompts from "./Prompts.svelte";
 import Settings from "./Settings.svelte";
 
@@ -48,7 +48,7 @@ async function loadSpirit() {
   if (spiritLoaded) return;
   spiritLoaded = true;
   try {
-    spirit = await fetchMind("volute");
+    spirit = await fetchMind(auth.spiritName ?? "volute");
   } catch (e) {
     spiritError = e instanceof Error ? e.message : "Failed to load spirit";
   }

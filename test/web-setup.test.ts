@@ -102,6 +102,72 @@ describe("web setup routes", () => {
     assert.equal(res.status, 400);
   });
 
+  it("POST /api/setup/spirit — stores name and temperament", async () => {
+    writeGlobalConfig({
+      name: "test",
+      setup: { type: "local", mindsDir: "/tmp/minds", isolation: "sandbox", service: false },
+      setupCompleted: false,
+    });
+    const app = createApp();
+    const res = await app.request("/api/setup/spirit", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "iris", temperament: "warm, wry" }),
+    });
+    assert.equal(res.status, 200);
+
+    const config = readGlobalConfig();
+    assert.equal(config.setup?.spiritName, "iris");
+    assert.equal(config.setup?.spiritTemperament, "warm, wry");
+
+    // Status now offers the name for wizard resume
+    const status = await app.request("/api/setup/status");
+    const body = await status.json();
+    assert.equal(body.spiritName, "iris");
+  });
+
+  it("POST /api/setup/spirit — rejects invalid names", async () => {
+    writeGlobalConfig({
+      name: "test",
+      setup: { type: "local", mindsDir: "/tmp/minds", isolation: "sandbox", service: false },
+      setupCompleted: false,
+    });
+    const app = createApp();
+    for (const name of ["", "system", "has spaces", "-dash"]) {
+      const res = await app.request("/api/setup/spirit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      assert.equal(res.status, 400, `expected 400 for ${JSON.stringify(name)}`);
+    }
+  });
+
+  it("POST /api/setup/spirit — requires the system step first", async () => {
+    const app = createApp();
+    const res = await app.request("/api/setup/spirit", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "iris" }),
+    });
+    assert.equal(res.status, 400);
+  });
+
+  it("POST /api/setup/spirit — rejects after setup is complete", async () => {
+    writeGlobalConfig({
+      name: "test",
+      setup: { type: "local", mindsDir: "/tmp/minds", isolation: "sandbox", service: false },
+      setupCompleted: true,
+    });
+    const app = createApp();
+    const res = await app.request("/api/setup/spirit", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "iris" }),
+    });
+    assert.equal(res.status, 400);
+  });
+
   it("POST /api/setup/models — rejects empty model list", async () => {
     const app = createApp();
     const res = await app.request("/api/setup/models", {

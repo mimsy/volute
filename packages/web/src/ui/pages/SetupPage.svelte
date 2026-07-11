@@ -5,9 +5,9 @@ import { fetchMe } from "../lib/auth";
 import type { AiModel } from "../lib/client";
 import { auth, handleAuth } from "../lib/stores.svelte";
 
-let { onComplete }: { onComplete: () => void } = $props();
+let { onComplete }: { onComplete: (spiritName: string) => void } = $props();
 
-type Step = "welcome" | "system" | "account" | "provider" | "starting";
+type Step = "welcome" | "system" | "account" | "provider" | "spirit" | "waking";
 
 function initialStep(): Step {
   const p = auth.setupProgress;
@@ -112,7 +112,47 @@ function handleProviderLoad(enabledModels: AiModel[]) {
   }
 }
 
-const STEP_ORDER: Step[] = ["welcome", "system", "account", "provider", "starting"];
+// Step 5: Spirit
+const SPIRIT_SUGGESTIONS = [
+  "iris",
+  "wren",
+  "juniper",
+  "vesper",
+  "halcyon",
+  "sable",
+  "meridian",
+  "ember",
+  "lumen",
+  "thistle",
+];
+let spiritName = $state(auth.setupProgress?.spiritName ?? "");
+let spiritTemperament = $state("");
+let spiritGreeting = $state("");
+let spiritTimedOut = $state(false);
+
+const SPIRIT_NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
+let spiritNameValid = $derived(
+  spiritName.trim().length > 0 &&
+    spiritName.trim().length <= 64 &&
+    SPIRIT_NAME_RE.test(spiritName.trim()) &&
+    spiritName.trim().toLowerCase() !== "system",
+);
+let spiritNameError = $derived(
+  spiritName.trim().length === 0 || spiritNameValid
+    ? ""
+    : spiritName.trim().toLowerCase() === "system"
+      ? `"system" is a reserved name`
+      : spiritName.trim().length > 64
+        ? "Must be 64 characters or fewer"
+        : "Must start with a letter or number; letters, numbers, dots, dashes, and underscores only",
+);
+
+function shuffleSpiritName() {
+  const options = SPIRIT_SUGGESTIONS.filter((s) => s !== spiritName);
+  spiritName = options[Math.floor(Math.random() * options.length)];
+}
+
+const STEP_ORDER: Step[] = ["welcome", "system", "account", "provider", "spirit", "waking"];
 let stepIndex = $derived(STEP_ORDER.indexOf(step));
 
 function canAdvance(): boolean {
@@ -120,6 +160,7 @@ function canAdvance(): boolean {
   if (step === "system") return !!systemName.trim();
   if (step === "account") return !!displayName.trim() && !!username.trim() && !!password;
   if (step === "provider") return enabledModelIds.length > 0 && !!spiritModel;
+  if (step === "spirit") return spiritNameValid;
   return false;
 }
 
@@ -251,7 +292,7 @@ async function handleSystemsDisconnect() {
   systemsLoading = false;
 }
 
-async function handleFinish(e: Event) {
+async function handleModelsSubmit(e: Event) {
   e.preventDefault();
   if (!canAdvance()) return;
   error = "";
@@ -271,7 +312,33 @@ async function handleFinish(e: Event) {
       const data = (await res.json().catch(() => ({}))) as { error?: string };
       throw new Error(data.error || `Model setup failed: ${res.status}`);
     }
-    step = "starting";
+    step = "spirit";
+  } catch (err) {
+    error = err instanceof Error ? err.message : "Something went wrong";
+  }
+  loading = false;
+}
+
+async function handleSpiritSubmit(e: Event) {
+  e.preventDefault();
+  if (!canAdvance()) return;
+  error = "";
+  loading = true;
+  try {
+    const res = await fetch("/api/setup/spirit", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: spiritName.trim(),
+        temperament: spiritTemperament.trim() || undefined,
+      }),
+    });
+    if (!res.ok) {
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      throw new Error(data.error || `Naming the spirit failed: ${res.status}`);
+    }
+    spiritName = spiritName.trim();
+    step = "waking";
     await completeSetup();
   } catch (err) {
     error = err instanceof Error ? err.message : "Something went wrong";
@@ -282,6 +349,8 @@ async function handleFinish(e: Event) {
 async function completeSetup() {
   error = "";
   warnings = [];
+  spiritGreeting = "";
+  spiritTimedOut = false;
   loading = true;
   try {
     const res = await fetch("/api/setup/complete", {
@@ -299,31 +368,31 @@ async function completeSetup() {
       warnings?: string[];
     };
 
-    // Wait for the spirit's welcome message before transitioning
-    if (data.spiritConversationId && data.spiritStarted) {
-      await waitForSpiritReply(data.spiritConversationId);
-    }
-
     // Setup completed, but individual steps (spirit start, service install, etc.) may
     // have failed non-fatally. Surface those warnings rather than silently claiming
-    // full success — then let the user proceed. With no warnings, proceed immediately.
+    // full success.
     warnings = data.warnings ?? [];
-    loading = false;
-    if (warnings.length === 0) finishSetup();
-    return;
+
+    // Wait for the spirit's first greeting — the waking moment renders it in place.
+    if (data.spiritConversationId && data.spiritStarted) {
+      spiritGreeting = await waitForSpiritReply(data.spiritConversationId);
+      if (!spiritGreeting) spiritTimedOut = true;
+    } else {
+      spiritTimedOut = true;
+    }
   } catch (err) {
     error = err instanceof Error ? err.message : "Something went wrong";
-    step = "provider";
   }
   loading = false;
 }
 
 function finishSetup() {
   auth.setupComplete = true;
-  onComplete();
+  onComplete(spiritName || "volute");
 }
 
-async function waitForSpiritReply(conversationId: string) {
+/** Poll for the spirit's first message; returns its text, or "" on timeout. */
+async function waitForSpiritReply(conversationId: string): Promise<string> {
   const timeout = 60_000;
   const interval = 1_500;
   const start = Date.now();
@@ -334,15 +403,25 @@ async function waitForSpiritReply(conversationId: string) {
       if (res.ok) {
         const data = await res.json();
         const items: any[] = data.items ?? data;
-        if (items.some((m: any) => m.sender_name === "volute" && m.role === "user")) {
-          return;
+        const reply = items.find((m: any) => m.sender_name === spiritName && m.role === "user");
+        if (reply) {
+          const content = reply.content;
+          if (typeof content === "string") return content;
+          if (Array.isArray(content)) {
+            const text = content
+              .filter((part: any) => part.type === "text" && part.text)
+              .map((part: any) => part.text)
+              .join("\n");
+            if (text) return text;
+          }
+          return "";
         }
       }
     } catch {
       // Keep polling
     }
   }
-  // Timed out — proceed anyway
+  return "";
 }
 
 // Load systems status when entering the system step
@@ -593,7 +672,8 @@ $effect(() => {
       <div class="step-title">AI providers</div>
       <div class="step-desc">
         An AI provider is the engine your minds think with. Connect one and choose which
-        models they can use. Get a key from
+        models they can use — the spirit model is what your system's spirit will think with.
+        Get a key from
         <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noreferrer">Anthropic</a>,
         <a href="https://platform.openai.com/api-keys" target="_blank" rel="noreferrer">OpenAI</a>,
         or another provider.
@@ -610,7 +690,7 @@ $effect(() => {
       {#if error}
         <div class="error">{error}</div>
       {/if}
-      <form onsubmit={handleFinish}>
+      <form onsubmit={handleModelsSubmit}>
         <div class="button-row">
           <button type="button" class="back-btn" onclick={goBack}>Back</button>
           <button
@@ -619,27 +699,89 @@ $effect(() => {
             class="submit-btn flex-1"
 
           >
-            {loading ? "Setting up..." : "Finish setup"}
+            {loading ? "Saving..." : "Continue"}
           </button>
         </div>
       </form>
 
-    {:else if step === "starting"}
+    {:else if step === "spirit"}
+      <div class="step-title">Your spirit</div>
+      <div class="step-desc">
+        Every Volute system has a spirit — a caretaker mind that arrives with the system,
+        tends it, and helps new minds find their footing. Yours needs a name.
+      </div>
+      <form onsubmit={handleSpiritSubmit}>
+        <label class="label" for="spiritName">Name</label>
+        <div class="slug-row">
+          <Input
+            inputSize="md"
+            id="spiritName"
+            type="text"
+            placeholder="e.g. iris"
+            bind:value={spiritName}
+          />
+          <button type="button" class="save-btn" onclick={shuffleSpiritName} title="Suggest a name">
+            Suggest
+          </button>
+        </div>
+        {#if spiritNameError}
+          <div class="error">{spiritNameError}</div>
+        {:else}
+          <div class="hint">Minds will know it by this name.</div>
+        {/if}
+
+        <label class="label mt" for="spiritTemperament">Temperament <span class="optional">(optional)</span></label>
+        <Input
+          inputSize="md"
+          id="spiritTemperament"
+          type="text"
+          placeholder="warm, wry, a little formal"
+          bind:value={spiritTemperament}
+        />
+        <div class="hint">A line about who they are. It becomes part of their soul — a seed they'll grow from.</div>
+
+        {#if error}
+          <div class="error">{error}</div>
+        {/if}
+        <div class="button-row">
+          <button type="button" class="back-btn" onclick={goBack}>Back</button>
+          <button
+            type="submit"
+            disabled={loading || !canAdvance()}
+            class="submit-btn flex-1"
+          >
+            {loading ? "Finishing..." : "Finish setup"}
+          </button>
+        </div>
+      </form>
+
+    {:else if step === "waking"}
       <div class="finishing">
-        {#if warnings.length > 0}
-          <div class="finishing-text">Setup finished, with some warnings:</div>
-          <ul class="warnings">
-            {#each warnings as w}
-              <li>{w}</li>
-            {/each}
-          </ul>
-          <button class="submit-btn" onclick={finishSetup}>Continue to dashboard</button>
+        {#if loading}
+          <div class="spinner"></div>
+          <div class="finishing-text">Waking {spiritName}...</div>
         {:else if error}
           <div class="error">{error}</div>
-          <button class="submit-btn" onclick={completeSetup}>Retry</button>
+          <button class="submit-btn mt" onclick={completeSetup}>Retry</button>
         {:else}
-          <div class="spinner"></div>
-          <div class="finishing-text">Setting things up...</div>
+          {#if spiritGreeting}
+            <div class="greeting">
+              <div class="greeting-sender">{spiritName}</div>
+              <div class="greeting-text">{spiritGreeting}</div>
+            </div>
+          {:else if spiritTimedOut}
+            <div class="finishing-text">
+              {spiritName} is still waking — you'll find them in your messages.
+            </div>
+          {/if}
+          {#if warnings.length > 0}
+            <ul class="warnings">
+              {#each warnings as w}
+                <li>{w}</li>
+              {/each}
+            </ul>
+          {/if}
+          <button class="submit-btn mt" onclick={finishSetup}>Enter your system</button>
         {/if}
       </div>
     {/if}
@@ -983,6 +1125,28 @@ $effect(() => {
     color: var(--text-2);
     font-size: 13px;
     line-height: 1.6;
+  }
+
+  .greeting {
+    text-align: left;
+    padding: 14px 16px;
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+  }
+
+  .greeting-sender {
+    color: var(--accent);
+    font-size: 13px;
+    font-weight: 500;
+    margin-bottom: 6px;
+  }
+
+  .greeting-text {
+    color: var(--text-0);
+    font-size: 14px;
+    line-height: 1.6;
+    white-space: pre-wrap;
   }
 
   .spinner {

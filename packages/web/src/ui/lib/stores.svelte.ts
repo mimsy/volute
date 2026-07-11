@@ -21,12 +21,14 @@ export const auth = $state({
   checked: false,
   systemName: null as string | null,
   localName: null as string | null,
+  spiritName: null as string | null,
   setupComplete: true,
   setupChecked: false,
   setupProgress: null as {
     hasSystem?: boolean;
     hasAccount?: boolean;
     setupType?: string | null;
+    spiritName?: string | null;
   } | null,
 });
 
@@ -41,6 +43,7 @@ export async function checkSetup() {
           hasSystem: data.hasSystem,
           hasAccount: data.hasAccount,
           setupType: data.setupType,
+          spiritName: data.spiritName,
         };
       }
     }
@@ -65,6 +68,7 @@ export async function checkAuth() {
       const info = await fetchSystemInfo();
       auth.systemName = info.system;
       auth.localName = info.name;
+      auth.spiritName = info.spiritName;
     }
   } catch {
     auth.checked = true;
@@ -86,6 +90,7 @@ export async function handleAuth(u: AuthUser) {
     const info = await fetchSystemInfo();
     auth.systemName = info.system;
     auth.localName = info.name;
+    auth.spiritName = info.spiritName;
   } catch {
     // systemName remains null — non-critical
   }

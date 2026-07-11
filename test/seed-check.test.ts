@@ -136,6 +136,65 @@ describe("seed check endpoint", () => {
     });
     assert.equal(res.status, 404);
   });
+
+  describe("with a named spirit", () => {
+    async function setSpiritName(name: string | undefined) {
+      const { readGlobalConfig, writeGlobalConfig } = await import(
+        "../packages/daemon/src/lib/config/setup.js"
+      );
+      const config = readGlobalConfig();
+      writeGlobalConfig({
+        ...config,
+        setup: {
+          type: "local",
+          mindsDir: "/tmp/minds",
+          isolation: "none",
+          service: false,
+          spiritName: name,
+        },
+      });
+    }
+
+    afterEach(async () => {
+      await setSpiritName(undefined);
+    });
+
+    it("gates on the configured spirit name, not volute", async () => {
+      await setSpiritName("iris");
+      const db = await getDb();
+
+      // Recent creator message + recent message from the named spirit → nurture-gated
+      await db.insert(mindHistory).values([
+        { mind: seedName, type: "inbound", sender: "check-admin" },
+        { mind: seedName, type: "inbound", sender: "iris" },
+      ]);
+
+      const { default: app } = await import("../packages/daemon/src/web/app.js");
+      const res = await app.request(`http://localhost/api/minds/${seedName}/seed-check`, {
+        headers: postHeaders(cookie),
+      });
+      assert.equal(res.status, 200);
+      const body = (await res.json()) as { output: string };
+      assert.equal(body.output, "", "recent creator + spirit activity should gate the check");
+    });
+
+    it("no longer counts volute as the spirit once renamed", async () => {
+      await setSpiritName("iris");
+      const db = await getDb();
+
+      // A recent "volute" message is just another sender now — the spirit
+      // ("iris") has never messaged, so the check must fire.
+      await db.insert(mindHistory).values([{ mind: seedName, type: "inbound", sender: "volute" }]);
+
+      const { default: app } = await import("../packages/daemon/src/web/app.js");
+      const res = await app.request(`http://localhost/api/minds/${seedName}/seed-check`, {
+        headers: postHeaders(cookie),
+      });
+      assert.equal(res.status, 200);
+      const body = (await res.json()) as { output: string };
+      assert.ok(body.output.includes(`Seed: ${seedName}`));
+    });
+  });
 });
 
 describe("sprout endpoint cleans up nurture schedule", () => {
