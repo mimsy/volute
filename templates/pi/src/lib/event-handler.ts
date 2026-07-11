@@ -141,11 +141,18 @@ export function createEventHandler(session: EventSession, options: EventHandlerO
           session.messageChannels.delete(session.currentMessageId);
         }
         log("mind", `session "${session.name}": turn done`);
-        // Log any error messages from the agent
+        // Surface any agent-level errors (e.g. a provider 401 reported inside agent_end).
+        // Warn-logging alone left the failure invisible at every operator surface (#619):
+        // emit a turn_error to the daemon too — mirroring the dispatch-rejection path in
+        // agent.ts — so classify() tags it and chat status + lastError surface it. Dedupe
+        // identical messages so a turn with several failed messages records one notice.
         if (event.messages) {
+          const seen = new Set<string>();
           for (const msg of event.messages as AgentEndMessage[]) {
-            if (msg.errorMessage) {
+            if (msg.errorMessage && !seen.has(msg.errorMessage)) {
+              seen.add(msg.errorMessage);
               warn("mind", `session "${session.name}": agent error: ${msg.errorMessage}`);
+              emit(session, { type: "error", content: msg.errorMessage });
             }
           }
         }
