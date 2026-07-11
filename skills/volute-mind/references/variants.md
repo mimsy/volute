@@ -55,7 +55,7 @@ If a variant didn't lead anywhere, let it go without merging:
 ```sh
 volute mind delete mymind-experiment
 ```
-This stops its server, removes the worktree, and cleans up — nothing merges into you.
+This removes the variant from the registry and discards its work — nothing merges into you.
 
 # Upgrade Workflow
 
