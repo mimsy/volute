@@ -5,6 +5,7 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -277,10 +278,15 @@ export function mindSkillsDir(dir: string): string {
   return resolve(home, subdir);
 }
 
+/** Skills subdir relative to home/, e.g. ".claude/skills" */
+function mindSkillsSubdir(dir: string): string {
+  const home = resolve(dir, "home");
+  return mindSkillsDir(dir).slice(home.length + 1);
+}
+
 /** Relative path from mind dir to skills dir, e.g. "home/.agents/skills" */
 function relSkillsPath(dir: string): string {
-  const home = resolve(dir, "home");
-  return join("home", mindSkillsDir(dir).slice(home.length + 1));
+  return join("home", mindSkillsSubdir(dir));
 }
 
 type UpstreamInfo = {
@@ -658,9 +664,8 @@ export function installHookShims(
   dir: string,
   skillId: string,
   hooks: Record<string, string>,
+  skillsSubdir: string = mindSkillsSubdir(dir), // e.g. ".claude/skills"
 ): void {
-  const home = resolve(dir, "home");
-  const skillsSubdir = mindSkillsDir(dir).slice(home.length + 1); // e.g. ".claude/skills"
   for (const [event, scriptPath] of Object.entries(hooks)) {
     const eventDir = join(dir, "home", ".local", "hooks", event);
     mkdirSync(eventDir, { recursive: true });
@@ -713,9 +718,12 @@ function binShimOwner(shimPath: string): string | undefined {
   return line?.slice(BIN_SHIM_MARKER.length).trim() || undefined;
 }
 
-export function installBinShim(dir: string, skillId: string, scriptPath: string): void {
-  const home = resolve(dir, "home");
-  const skillsSubdir = mindSkillsDir(dir).slice(home.length + 1);
+export function installBinShim(
+  dir: string,
+  skillId: string,
+  scriptPath: string,
+  skillsSubdir: string = mindSkillsSubdir(dir),
+): void {
   const binDir = join(dir, "home", ".local", "bin");
   mkdirSync(binDir, { recursive: true });
   const cmdName = binCommandName(scriptPath);
@@ -737,6 +745,64 @@ export function removeBinShim(dir: string, scriptPath: string): void {
   const cmdName = binCommandName(scriptPath);
   const shimPath = join(dir, "home", ".local", "bin", cmdName);
   if (existsSync(shimPath)) rmSync(shimPath);
+}
+
+// --- Template switch migration ---
+
+/**
+ * When a mind switches templates during upgrade, installed skills would otherwise
+ * be stranded in the old template's skills dir — invisible to the new runtime's
+ * skill discovery and to `volute skill list` (which reads the new, empty dir),
+ * while their bin/hook shims keep pointing at the old path. Move each installed
+ * skill directory (preserving .upstream.json) into the new template's skills dir
+ * and regenerate its shims so their embedded paths match. Returns migrated ids.
+ */
+export function migrateSkillsToTemplate(
+  dir: string,
+  oldTemplate: string,
+  newTemplate: string,
+): string[] {
+  const home = resolve(dir, "home");
+  const oldSubdir = TEMPLATE_SKILLS_DIR[oldTemplate] ?? TEMPLATE_SKILLS_DIR.claude;
+  const newSubdir = TEMPLATE_SKILLS_DIR[newTemplate] ?? TEMPLATE_SKILLS_DIR.claude;
+  if (oldSubdir === newSubdir) return [];
+
+  const oldDir = resolve(home, oldSubdir);
+  const newDir = resolve(home, newSubdir);
+  if (!existsSync(oldDir)) return [];
+
+  const skillIds = readdirSync(oldDir, { withFileTypes: true })
+    .filter((e) => e.isDirectory())
+    .map((e) => e.name);
+
+  const migrated: string[] = [];
+  if (skillIds.length > 0) {
+    mkdirSync(newDir, { recursive: true });
+    for (const skillId of skillIds) {
+      const from = join(oldDir, skillId);
+      const to = join(newDir, skillId);
+      // The new template starts with no skills, so a collision is unexpected —
+      // but be safe and let the migrated copy win.
+      if (existsSync(to)) rmSync(to, { recursive: true, force: true });
+      renameSync(from, to);
+
+      // Regenerate shims with the new skills subdir. The shim files live at the
+      // same .local/hooks|bin paths regardless of template, so reinstalling
+      // overwrites the stale ones in place.
+      removeHookShims(dir, skillId);
+      const skillMdPath = join(to, "SKILL.md");
+      if (existsSync(skillMdPath)) {
+        const { hooks, bin } = parseSkillMd(readFileSync(skillMdPath, "utf-8"));
+        installHookShims(dir, skillId, hooks, newSubdir);
+        if (bin) installBinShim(dir, skillId, bin, newSubdir);
+      }
+      migrated.push(skillId);
+    }
+  }
+
+  // Remove the now-empty old skills dir so marker-based detection stays clean.
+  rmSync(oldDir, { recursive: true, force: true });
+  return migrated;
 }
 
 // --- Helpers ---
