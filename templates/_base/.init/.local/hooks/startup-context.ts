@@ -4,7 +4,8 @@
 // Output: JSON with hookSpecificOutput.additionalContext (for SessionStart hook)
 //         or plain text (for direct execution by pi template)
 
-import { readdirSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
 
 const input = await new Promise<string>((resolve) => {
   let data = "";
@@ -19,7 +20,23 @@ try {
   source = JSON.parse(input).source ?? "startup";
 } catch {}
 
-const parts: string[] = [`Session ${source} at ${new Date().toLocaleString()}.`];
+const parts: string[] = [];
+
+// System identity — only the spirit has this file (home/.config/system.json,
+// synced by the daemon). It keeps the spirit's system name/description current
+// without the daemon rewriting its self-owned SOUL.md. Silent for regular minds.
+try {
+  const mindDir = process.env.VOLUTE_MIND_DIR;
+  if (mindDir) {
+    const raw = readFileSync(resolve(mindDir, "home/.config/system.json"), "utf-8");
+    const { name, description } = JSON.parse(raw) as { name?: string; description?: string };
+    if (name) {
+      parts.push(`You are the spirit of ${name}${description ? ` — ${description}` : ""}.`);
+    }
+  }
+} catch {}
+
+parts.push(`Session ${source} at ${new Date().toLocaleString()}.`);
 
 // Active sessions
 try {

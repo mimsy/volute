@@ -19,7 +19,7 @@ import {
   unqualifyModelId,
 } from "../../lib/ai-service.js";
 import { deleteMindUser } from "../../lib/auth.js";
-import { announceToSystem } from "../../lib/chat/system-channel.js";
+import { announceToSystem, joinSystemChannelForMind } from "../../lib/chat/system-channel.js";
 import { readSystemsConfig } from "../../lib/config/systems-config.js";
 import { getMindManager, MindStartupError } from "../../lib/daemon/mind-manager.js";
 // Lifecycle functions from mind-service.ts
@@ -39,10 +39,9 @@ import { handleMindEvent, setNoticeDrainWatermark } from "../../lib/daemon/turn-
 import { getActiveTurnId } from "../../lib/daemon/turn-tracker.js";
 import { getDb } from "../../lib/db.js";
 import { getDeliveryManager } from "../../lib/delivery/delivery-manager.js";
-import { recordInbound } from "../../lib/delivery/message-delivery.js";
+import { deliverSproutedNotice } from "../../lib/delivery/message-delivery.js";
 import { broadcast } from "../../lib/events/activity-events.js";
 import {
-  addMessage,
   getConversation,
   getMessages,
   getMessagesPaginated,
@@ -66,6 +65,7 @@ import {
 import { commitSrcChanges, rollbackSrcChanges } from "../../lib/mind/last-known-good.js";
 import {
   addMind,
+  countCappedMinds,
   ensureVoluteHome,
   findMind,
   findVariants,
@@ -94,7 +94,12 @@ import {
   substitute,
 } from "../../lib/prompts.js";
 import { mindHistory, summaries, turns } from "../../lib/schema.js";
-import { getStandardSkillsWithExtensions, installSkill, SEED_SKILLS } from "../../lib/skills.js";
+import {
+  getStandardSkillsWithExtensions,
+  installSkill,
+  migrateSkillsToTemplate,
+  SEED_SKILLS,
+} from "../../lib/skills.js";
 import { convertSession } from "../../lib/template/convert-session.js";
 import {
   findOpenClawSession,
@@ -437,6 +442,10 @@ async function mergeUpgradeAndRestart(
   if (templateChanged) {
     try {
       applyTemplateHomeFiles(resolve(dir, "home"), template);
+      // Move installed skills into the new template's skills dir and regenerate
+      // their shims, so they aren't stranded (invisible + shims pointing at the
+      // old path) after the switch.
+      const migratedSkills = migrateSkillsToTemplate(dir, oldTemplate, template);
       await gitExec(["add", "home/"], { cwd: dir });
       try {
         await gitExec(["diff", "--cached", "--quiet"], { cwd: dir });
@@ -446,7 +455,11 @@ async function mergeUpgradeAndRestart(
         });
       }
       await chownMindDir(dir, mindName);
-      switchWarning = `Switched ${oldTemplate}→${template}: config reset to ${template} defaults, mechanics doc replaced, conversation starts fresh (sessions aren't portable across runtimes).`;
+      const skillNote =
+        migratedSkills.length > 0
+          ? ` Migrated skills to the ${template} skills dir: ${migratedSkills.join(", ")}.`
+          : "";
+      switchWarning = `Switched ${oldTemplate}→${template}: config reset to ${template} defaults, mechanics doc replaced, conversation starts fresh (sessions aren't portable across runtimes).${skillNote}`;
     } catch (err) {
       log.warn(`failed to swap template home files for ${mindName}`, log.errorData(err));
       return {
@@ -880,6 +893,15 @@ const app = new Hono<AuthEnv>()
     if (nameErr) return c.json({ error: nameErr }, 400);
 
     if (await findMind(name)) return c.json({ error: `Mind already exists: ${name}` }, 409);
+
+    // Cap total minds to protect host resources. Central enforcement here covers
+    // `volute mind create`, `volute seed create`, and spirit-driven seeds alike;
+    // the error text is relayed verbatim to whoever asked.
+    {
+      const { mindLimitError, readGlobalConfig } = await import("../../lib/config/setup.js");
+      const limitError = mindLimitError(await countCappedMinds(), readGlobalConfig().maxMinds);
+      if (limitError) return c.json({ error: limitError }, 409);
+    }
 
     ensureVoluteHome();
     const dest = mindDir(name);
@@ -1399,11 +1421,13 @@ const app = new Hono<AuthEnv>()
     if (!entry) return c.json({ error: "Mind not found" }, 404);
 
     const targetPort = entry.port;
+    // Variants and spirits store their project dir in the DB (worktree /
+    // ~/.volute/system/spirit); only plain minds live at mindDir(name).
+    const projectDir = entry.dir ?? mindDir(name);
     if (entry.parent) {
       if (!entry.dir) return c.json({ error: `Variant ${name} has no directory` }, 404);
-    } else {
-      const dir = mindDir(name);
-      if (!existsSync(dir)) return c.json({ error: "Mind directory missing" }, 404);
+    } else if (!existsSync(projectDir)) {
+      return c.json({ error: "Mind directory missing" }, 404);
     }
 
     if (getMindManager().isRunning(name)) {
@@ -1427,11 +1451,13 @@ const app = new Hono<AuthEnv>()
 
     const baseName = entry.parent ?? name;
     const targetPort = entry.port;
+    // Variants and spirits store their project dir in the DB (worktree /
+    // ~/.volute/system/spirit); only plain minds live at mindDir(name).
+    const projectDir = entry.dir ?? mindDir(name);
     if (entry.parent) {
       if (!entry.dir) return c.json({ error: `Variant ${name} has no directory` }, 404);
-    } else {
-      const dir = mindDir(name);
-      if (!existsSync(dir)) return c.json({ error: "Mind directory missing" }, 404);
+    } else if (!existsSync(projectDir)) {
+      return c.json({ error: "Mind directory missing" }, 404);
     }
 
     // Parse optional context from request body
@@ -1534,24 +1560,18 @@ const app = new Hono<AuthEnv>()
         manager.setPendingContext(name, context);
       }
 
-      // Inject "[seed has sprouted]" system message into active volute conversations
+      // Inject "[seed has sprouted]" system message into active volute conversations.
       if (context?.type === "sprouted" && !entry.parent) {
         try {
-          const mindConvs = await listConversationsForMind(baseName);
-          for (const conv of mindConvs) {
-            await recordInbound(baseName, "system", "system", "[seed has sprouted]");
-            await addMessage(conv.id, "assistant", "system", [
-              { type: "text", text: "[seed has sprouted]" },
-            ]);
-          }
+          await deliverSproutedNotice(baseName);
         } catch (err) {
           log.error(`failed to inject sprouted message for ${baseName}`, log.errorData(err));
         }
       }
 
-      // Resolve the mind's git repo dir (variant worktree or the base mind dir) so
-      // last-known-good recovery can operate on the right working tree.
-      const repoDir = entry.parent ? entry.dir! : mindDir(name);
+      // Resolve the mind's git repo dir (variant worktree, spirit dir, or the base
+      // mind dir) so last-known-good recovery can operate on the right working tree.
+      const repoDir = projectDir;
 
       try {
         await startMindFullService(name);
@@ -1640,7 +1660,7 @@ const app = new Hono<AuthEnv>()
 
     return c.json(sm.getState(name));
   })
-  // Initiate sleep — admin only
+  // Initiate sleep — mind-or-admin (requireSelf: the mind itself or an admin/system user)
   .post("/:name/sleep", requireSelf(), async (c) => {
     const name = c.req.param("name");
     const entry = await findMind(name);
@@ -1668,7 +1688,7 @@ const app = new Hono<AuthEnv>()
 
     return c.json({ ok: true });
   })
-  // Wake a sleeping mind — admin only
+  // Wake a sleeping mind — mind-or-admin (requireSelf: the mind itself or an admin/system user)
   .post("/:name/wake", requireSelf(), async (c) => {
     const name = c.req.param("name");
     const entry = await findMind(name);
@@ -1690,7 +1710,7 @@ const app = new Hono<AuthEnv>()
 
     return c.json({ ok: true });
   })
-  // Flush queued sleep messages — admin only
+  // Flush queued sleep messages — mind-or-admin (requireSelf: the mind itself or an admin/system user)
   .post("/:name/sleep/messages", requireSelf(), async (c) => {
     const name = c.req.param("name");
     const entry = await findMind(name);
@@ -1847,6 +1867,16 @@ const app = new Hono<AuthEnv>()
       return c.json({ error: `Mind is not a seed (stage: ${entry.stage})` }, 409);
     }
     await setMindStage(name, "sprouted");
+
+    // Join the #system commons now. Seeds are deliberately kept out until they
+    // sprout (backfill and the spawn path both exclude stage="seed"), so sprouting
+    // is the moment a mind enters the commons. Joining here — rather than relying on
+    // the incidental restart that follows — makes membership a direct consequence of
+    // sprouting for every caller. Idempotent; fail-soft so a join hiccup can't block
+    // the sprout itself.
+    await joinSystemChannelForMind(name).catch((err) =>
+      log.warn(`failed to join #system on sprout for ${name}`, log.errorData(err)),
+    );
 
     // Default autonomy: working dreaming out of the box (#581). The seed-sprout
     // CLI installs the standard skills — including dreaming — before calling

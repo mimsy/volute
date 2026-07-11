@@ -484,6 +484,17 @@ export async function updateSystemName(name: string): Promise<void> {
   await put(`${V1}/system/info`, { name });
 }
 
+export type MaxMinds = { maxMinds: number | null; count: number };
+
+export function fetchMaxMinds(): Promise<MaxMinds> {
+  return get(`${V1}/system/max-minds`);
+}
+
+export async function saveMaxMinds(maxMinds: number | null): Promise<MaxMinds> {
+  await put(`${V1}/system/max-minds`, { maxMinds });
+  return fetchMaxMinds();
+}
+
 export function systemRegister(name: string): Promise<{ system: string }> {
   return post(`${V1}/system/register`, { name });
 }
@@ -793,6 +804,8 @@ export interface ClockStatus {
     willQueue?: boolean;
   }[];
   previous: { id: string; at: string }[];
+  /** Daemon host IANA timezone — cron wall times are interpreted in it. */
+  timezone: string | null;
 }
 
 export function fetchClockStatus(name: string): Promise<ClockStatus> {

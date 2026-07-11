@@ -6,7 +6,10 @@ export function loadJsonMap(path: string): Map<string, number> {
   const map = new Map<string, number>();
   try {
     if (existsSync(path)) {
-      const data = JSON.parse(readFileSync(path, "utf-8"));
+      const raw = readFileSync(path, "utf-8").trim();
+      // An empty/zero-length file is an expected condition (fresh install), not corruption.
+      if (!raw) return map;
+      const data = JSON.parse(raw);
       for (const [key, value] of Object.entries(data)) {
         if (typeof value === "number") map.set(key, value);
       }

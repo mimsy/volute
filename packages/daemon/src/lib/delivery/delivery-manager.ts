@@ -23,6 +23,7 @@ import {
   resolveDeliveryMode,
   resolveRoute,
   setRoutesChangeListener,
+  shouldGate,
 } from "./delivery-router.js";
 import { clearMind, onDeliveredToMind, resetTurn } from "./send-gate.js";
 
@@ -190,7 +191,7 @@ export class DeliveryManager {
     }
 
     // Gating: unmatched channels with gateUnmatched enabled
-    if (!route.matched && config.gateUnmatched !== false) {
+    if (shouldGate(config, route)) {
       dlog.debug(`gating unmatched channel ${payload.channel} for ${mindName}`);
       await this.gateMessage(mindName, route.session, payload);
       return { routed: true, session: route.session, destination: "mind", mode: "gated" };
@@ -377,8 +378,17 @@ export class DeliveryManager {
     }
 
     // Group newly-matching mind-route rows by channel, recomputing the session so the
-    // release delivers to the CURRENT route. File-route matches are archived.
-    type Promotable = { id: number; session: string };
+    // release delivers to the CURRENT route. File-route matches are archived. Each row
+    // carries the fields needed to record its inbound history at release time — gated
+    // messages are NOT recorded on arrival (the mind never saw them, #420), so the real
+    // inbound row is written here, when the message is finally delivered.
+    type Promotable = {
+      id: number;
+      session: string;
+      channel: string;
+      sender: string | null;
+      content: string | null;
+    };
     const byChannel = new Map<string, Promotable[]>();
     const archiveIds: number[] = [];
 
@@ -407,7 +417,13 @@ export class DeliveryManager {
       }
       const channel = row.channel ?? payload.channel ?? "unknown";
       const list = byChannel.get(channel) ?? [];
-      list.push({ id: row.id, session });
+      list.push({
+        id: row.id,
+        session,
+        channel,
+        sender: payload.sender ?? row.sender ?? null,
+        content: extractTextContent(payload.content),
+      });
       byChannel.set(channel, list);
     }
 
@@ -469,6 +485,16 @@ export class DeliveryManager {
     } catch (err) {
       dlog.warn(`failed to promote gated rows for ${baseName}`, log.errorData(err));
       return;
+    }
+
+    // Now that these messages are actually being delivered, record their inbound history —
+    // gated messages are never recorded on arrival (#420), so this is where the truthful
+    // "the mind received this" row is written. Oldest-first so history reads in order; the
+    // next turn's linkPendingInbound tags them to the turn they trigger. Recorded before
+    // redrive so the rows exist before the mind processes the delivery.
+    const { recordInbound } = await import("./message-delivery.js");
+    for (const p of [...promote].sort((a, b) => a.id - b.id)) {
+      await recordInbound(baseName, p.channel, p.sender, p.content);
     }
 
     if (truncationNotes.length > 0) await this.sendReleaseSummary(mindName, truncationNotes);
@@ -1132,22 +1158,23 @@ export class DeliveryManager {
         ? `${gatedCount} messages from this channel are being held, unrouted — you've not routed it yet.`
         : `Someone new is reaching out — you don't have a route for this channel yet.`;
 
-    const notification = [
-      `[New channel: ${channel}]`,
-      heldLine,
-      `Sender: ${payload.sender ?? "unknown"}`,
+    // Optional platform/participant lines, each with a trailing newline so the template's
+    // fixed line before "Preview:" reads correctly whether or not they're present.
+    const detailLines = [
       payload.platform ? `Platform: ${payload.platform}` : null,
       payload.participantCount ? `Participants: ${payload.participantCount}` : null,
-      "",
-      `Preview: ${preview}`,
-      "",
-      `To start hearing this channel, add a routing rule for "${channel}" to .config/routes.json ` +
-        `— only the ${GATED_RELEASE_LIMIT_PER_CHANNEL} most recent held messages are replayed; older ` +
-        `ones stay in the channel history (volute chat read ${channel}).`,
-      `To stop hearing about it, decline the channel: volute chat channels decline ${channel}`,
-    ]
-      .filter((line) => line !== null)
-      .join("\n");
+    ].filter((l): l is string => l !== null);
+    const details = detailLines.length > 0 ? `${detailLines.join("\n")}\n\n` : "\n";
+
+    const { getPrompt } = await import("../prompts.js");
+    const notification = await getPrompt("channel_invite", {
+      channel,
+      heldLine,
+      sender: payload.sender ?? "unknown",
+      details,
+      preview,
+      limit: String(GATED_RELEASE_LIMIT_PER_CHANNEL),
+    });
 
     await this.notify(mindName, notification);
   }

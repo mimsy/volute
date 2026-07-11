@@ -1,18 +1,30 @@
 import assert from "node:assert/strict";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
+import { resolve } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { and, eq } from "drizzle-orm";
+import { getOrCreateMindUser } from "../packages/daemon/src/lib/auth.js";
 import { getDb } from "../packages/daemon/src/lib/db.js";
-import { extractTextContent } from "../packages/daemon/src/lib/delivery/delivery-router.js";
+import {
+  clearConfigCache,
+  extractTextContent,
+} from "../packages/daemon/src/lib/delivery/delivery-router.js";
 import {
   deliverBatch,
   deliverMessage,
+  deliverSproutedNotice,
   linkToolResultToTurn,
   recordInbound,
   recordOutbound,
   resolveSleepAction,
 } from "../packages/daemon/src/lib/delivery/message-delivery.js";
 import { publish as publishActivity } from "../packages/daemon/src/lib/events/activity-events.js";
+import {
+  createConversation,
+  deleteConversation,
+  getMessages,
+} from "../packages/daemon/src/lib/events/conversations.js";
 import { type MindEvent, subscribe } from "../packages/daemon/src/lib/events/mind-events.js";
 import { addMind, removeMind } from "../packages/daemon/src/lib/mind/registry.js";
 import {
@@ -21,6 +33,7 @@ import {
   messages,
   mindHistory,
   turns,
+  users,
 } from "../packages/daemon/src/lib/schema.js";
 
 describe("extractTextContent", () => {
@@ -108,14 +121,31 @@ describe("deliverMessage flush recording", () => {
   const FLUSH_MIND = "test-flush";
   const FLUSH_PORT = 41999;
 
+  function mindConfigDir(name: string): string {
+    return resolve(process.env.VOLUTE_HOME!, "minds", name, "home/.config");
+  }
+
+  // Write an explicit routes.json so the routing decision is deterministic regardless of
+  // any file a previous test left behind.
+  function writeRoutes(name: string, config: object): void {
+    const configDir = mindConfigDir(name);
+    mkdirSync(configDir, { recursive: true });
+    writeFileSync(resolve(configDir, "routes.json"), JSON.stringify(config));
+    clearConfigCache(name);
+  }
+
   afterEach(async () => {
     const db = await getDb();
     await db.delete(mindHistory).where(eq(mindHistory.mind, FLUSH_MIND));
     await removeMind(FLUSH_MIND);
+    rmSync(resolve(mindConfigDir(FLUSH_MIND), "routes.json"), { force: true });
+    clearConfigCache();
   });
 
   it("records the inbound once on the normal (non-flush) path", async () => {
     await addMind(FLUSH_MIND, FLUSH_PORT);
+    // No gating: unmatched channels route to the default session and are delivered.
+    writeRoutes(FLUSH_MIND, { gateUnmatched: false });
     // No delivery manager is initialized, so routeAndDeliver throws and delivery reports
     // failure — but the inbound must still have been recorded exactly once.
     const ok = await deliverMessage(FLUSH_MIND, {
@@ -131,6 +161,37 @@ describe("deliverMessage flush recording", () => {
       .from(mindHistory)
       .where(and(eq(mindHistory.mind, FLUSH_MIND), eq(mindHistory.type, "inbound")));
     assert.equal(rows.length, 1);
+  });
+
+  it("does NOT record an inbound for a gated (unrouted) channel (#420)", async () => {
+    await addMind(FLUSH_MIND, FLUSH_PORT);
+    // Gating on, no matching rule → #unrouted is gated. The mind never sees the message,
+    // so no inbound history row may be written — otherwise counts and history would claim
+    // the mind heard something it didn't.
+    writeRoutes(FLUSH_MIND, { gateUnmatched: true, rules: [] });
+    const events: MindEvent[] = [];
+    const unsub = subscribe(FLUSH_MIND, (e) => events.push(e));
+    try {
+      await deliverMessage(FLUSH_MIND, {
+        channel: "#unrouted",
+        sender: "alice",
+        content: "hi",
+      });
+    } finally {
+      unsub();
+    }
+
+    assert.equal(
+      events.filter((e) => e.type === "inbound").length,
+      0,
+      "no inbound event is published for a gated message",
+    );
+    const db = await getDb();
+    const rows = await db
+      .select()
+      .from(mindHistory)
+      .where(and(eq(mindHistory.mind, FLUSH_MIND), eq(mindHistory.type, "inbound")));
+    assert.equal(rows.length, 0, "no inbound history row for a gated message");
   });
 
   it("skips re-recording the inbound on the flush path (isFlush)", async () => {
@@ -505,5 +566,67 @@ describe("linkToolResultToTurn", () => {
     const db = await getDb();
     const row = await db.select().from(mindHistory).where(eq(mindHistory.id, outId!)).get();
     assert.equal(row!.turn_id, LINK_TURN_ID, "existing turn_id must be preserved");
+  });
+});
+
+describe("deliverSproutedNotice", () => {
+  const SPROUT_MIND = "sprout-notice-mind";
+
+  afterEach(async () => {
+    const db = await getDb();
+    await db.delete(mindHistory).where(eq(mindHistory.mind, SPROUT_MIND));
+    await db.delete(users).where(eq(users.username, SPROUT_MIND));
+  });
+
+  it("records the notice in mind history exactly once regardless of conversation count", async () => {
+    const mindUser = await getOrCreateMindUser(SPROUT_MIND);
+    // The mind participates in two active conversations — the source of the earlier
+    // double-injection bug (recordInbound was called once per conversation).
+    const convA = await createConversation({ participantIds: [mindUser.id] });
+    const convB = await createConversation({ participantIds: [mindUser.id] });
+
+    await deliverSproutedNotice(SPROUT_MIND);
+
+    const db = await getDb();
+    const historyRows = await db
+      .select()
+      .from(mindHistory)
+      .where(and(eq(mindHistory.mind, SPROUT_MIND), eq(mindHistory.type, "inbound")));
+    assert.equal(historyRows.length, 1, "sprouted notice must appear in history exactly once");
+    assert.equal(historyRows[0].content, "[seed has sprouted]");
+
+    // The notice still fans out to each conversation, as an assistant/system message.
+    for (const conv of [convA, convB]) {
+      const msgs = await getMessages(conv.id);
+      const sprouted = msgs.filter(
+        (m) => (m.content[0] as { text?: string })?.text === "[seed has sprouted]",
+      );
+      assert.equal(sprouted.length, 1, "each conversation gets the notice once");
+      assert.equal(sprouted[0].role, "assistant");
+      assert.equal(sprouted[0].sender_name, "system");
+    }
+
+    await deleteConversation(convA.id);
+    await deleteConversation(convB.id);
+  });
+
+  it("records the notice once even when the mind has no conversations", async () => {
+    // History is conversation-agnostic: a sprout is logged once regardless of whether
+    // the mind is in any conversation yet. The old per-conversation loop recorded none.
+    await getOrCreateMindUser(SPROUT_MIND);
+
+    await deliverSproutedNotice(SPROUT_MIND);
+
+    const db = await getDb();
+    const historyRows = await db
+      .select()
+      .from(mindHistory)
+      .where(and(eq(mindHistory.mind, SPROUT_MIND), eq(mindHistory.type, "inbound")));
+    assert.equal(
+      historyRows.length,
+      1,
+      "sprouted notice must be recorded once with no conversations",
+    );
+    assert.equal(historyRows[0].content, "[seed has sprouted]");
   });
 });

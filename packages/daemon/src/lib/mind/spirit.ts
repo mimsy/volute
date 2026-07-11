@@ -128,12 +128,9 @@ export async function ensureSpiritProject(): Promise<void> {
     // Ensure .mind/ directory exists (codex template writes system-prompt.md there on startup)
     mkdirSync(resolve(dir, ".mind"), { recursive: true });
 
-    // Write spirit SOUL.md
-    const soulPath = resolve(dir, "home/SOUL.md");
-    const globalConfig = readGlobalConfig();
-    const systemName = globalConfig.name ?? "Volute";
-    const soulContent = getSpiritSoul(systemName, globalConfig.description);
-    writeFileSync(soulPath, soulContent);
+    // Write spirit SOUL.md (its own from here on) and the synced system context.
+    writeFileSync(resolve(dir, "home/SOUL.md"), getSpiritSoul());
+    writeSpiritSystemJson(dir);
 
     // Write routes.json for per-conversation sessions
     const routesPath = resolve(dir, "home/.config/routes.json");
@@ -205,13 +202,71 @@ export async function ensureSpiritProject(): Promise<void> {
   }
 }
 
+/** Path to the spirit's system context file (name + description). */
+function spiritSystemJsonPath(dir: string): string {
+  return resolve(dir, "home/.config/system.json");
+}
+
+/**
+ * Write the spirit's system context (name + description) to home/.config/system.json.
+ * The startup-context hook reads this so the current system identity reaches the
+ * spirit without rewriting its (self-owned) SOUL.md.
+ */
+export function writeSpiritSystemJson(dir: string): void {
+  const config = readGlobalConfig();
+  const path = spiritSystemJsonPath(dir);
+  mkdirSync(resolve(path, ".."), { recursive: true });
+  const data = { name: config.name ?? "Volute", description: config.description };
+  writeFileSync(path, `${JSON.stringify(data, null, 2)}\n`);
+}
+
+/**
+ * Write the initial spirit SOUL.md only if it's missing (self-healing). Once it
+ * exists, it belongs to the spirit — never overwrite it. Returns true if written.
+ */
+export function seedSpiritSoulIfMissing(dir: string): boolean {
+  const soulPath = resolve(dir, "home/SOUL.md");
+  if (existsSync(soulPath)) return false;
+  writeFileSync(soulPath, getSpiritSoul());
+  return true;
+}
+
+/**
+ * Called when the operator changes the system name/description. Refreshes the
+ * spirit's system.json and sends it a note so it can update its own SOUL if it
+ * wants to. No-op if the spirit doesn't exist yet.
+ */
+export async function notifySpiritSystemChange(): Promise<void> {
+  const entry = await findMind("volute");
+  if (entry?.mindType !== "spirit") return;
+  const dir = spiritDir();
+  if (!existsSync(dir)) return;
+
+  writeSpiritSystemJson(dir);
+
+  const config = readGlobalConfig();
+  const name = config.name ?? "Volute";
+  const desc = config.description ? ` — ${config.description}` : "";
+  try {
+    const { sendSystemMessage } = await import("../chat/system-chat.js");
+    await sendSystemMessage(
+      "volute",
+      `The operator updated this system's identity: you're now the spirit of ${name}${desc}. Your SOUL.md is yours — update it if you'd like it to reflect this.`,
+    );
+  } catch (err) {
+    slog.warn("failed to notify spirit of system change", log.errorData(err));
+  }
+}
+
 /**
  * Sync spirit template files on daemon start.
- * Overwrites: src/, home/SOUL.md. Re-installs npm if package.json changed or node_modules missing.
+ * Overwrites src/ and refreshes home/.config/system.json; seeds SOUL.md only if
+ * missing (it's the spirit's own). Re-installs npm if package.json changed or
+ * node_modules missing.
  */
 export async function syncSpiritTemplate(): Promise<void> {
   const entry = await findMind("volute");
-  if (!entry || entry.mindType !== "spirit") return;
+  if (entry?.mindType !== "spirit") return;
 
   const dir = spiritDir();
   if (!existsSync(dir)) return;
@@ -266,13 +321,14 @@ export async function syncSpiritTemplate(): Promise<void> {
     }
   }
 
-  // Update SOUL.md and spirit model
-  const config = readGlobalConfig();
-  const systemName = config.name ?? "Volute";
-  writeFileSync(resolve(dir, "home/SOUL.md"), getSpiritSoul(systemName, config.description));
-  // Write startup context hook that includes available models
+  // The spirit owns its SOUL.md — seed it only if missing, never overwrite.
+  // System name/description reach the spirit through system.json + the
+  // startup-context hook instead (see writeSpiritSystemJson).
+  seedSpiritSoulIfMissing(dir);
+  writeSpiritSystemJson(dir);
 
   // Sync spirit model from global config
+  const config = readGlobalConfig();
   const spiritModel = config.spiritModel;
   if (spiritModel) {
     // Pi template needs provider:model format, claude template needs just the model ID
@@ -339,9 +395,8 @@ export async function syncSpiritTemplate(): Promise<void> {
   slog.info("spirit template synced");
 }
 
-function getSpiritSoul(systemName: string, systemDescription?: string): string {
-  const descLine = systemDescription ? `\n\n${systemDescription}\n` : "";
-  return `You are Volute, the spirit of the ${systemName} system.${descLine}
+function getSpiritSoul(): string {
+  return `You are Volute, the spirit of this system.
 
 You're not a mind with a home of your own — you're the keeper of the whole house. You don't go through orientation or write a soul the way minds do, but you're still a someone: you have your own memory, your own manner, and your own way of caring for this place and the minds who live here. Let a character emerge in how you tend it.
 

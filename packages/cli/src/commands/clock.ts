@@ -143,6 +143,10 @@ const listSchedulesCmd = command({
       return;
     }
 
+    const compact = isCompact();
+    const fmtTime = (s: string) => (compact ? compactDateTime(s) : new Date(s).toLocaleString());
+    const scheduleOf = (s: Schedule) => s.cron ?? (s.fireAt ? `at ${fmtTime(s.fireAt)}` : "");
+
     const actionLabel = (s: Schedule) =>
       s.script
         ? `[script] ${s.script}`
@@ -150,17 +154,16 @@ const listSchedulesCmd = command({
           ? `[rotating x${s.messages.length}] ${s.messages[0]}`
           : (s.message ?? "");
 
-    if (isCompact()) {
+    if (compact) {
       for (const s of schedules) {
-        const sched = s.cron ?? (s.fireAt ? `at ${s.fireAt}` : "");
-        console.log(`${s.id}  ${sched}  ${actionLabel(s)}`);
+        console.log(`${s.id}  ${scheduleOf(s)}  ${actionLabel(s)}`);
       }
     } else {
       const idW = Math.max(2, ...schedules.map((s) => s.id.length));
-      const schedW = Math.max(8, ...schedules.map((s) => (s.cron ?? s.fireAt ?? "").length));
+      const schedW = Math.max(8, ...schedules.map((s) => scheduleOf(s).length));
       console.log(`${"ID".padEnd(idW)}  ${"SCHEDULE".padEnd(schedW)}  ENABLED  ACTION`);
       for (const s of schedules) {
-        const sched = s.cron ?? (s.fireAt ? `at ${s.fireAt}` : "");
+        const sched = scheduleOf(s);
         console.log(
           `${s.id.padEnd(idW)}  ${sched.padEnd(schedW)}  ${String(s.enabled).padEnd(7)}  ${actionLabel(s)}`,
         );

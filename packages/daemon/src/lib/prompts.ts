@@ -127,18 +127,10 @@ export const PROMPT_DEFAULTS: Record<PromptKey, PromptMeta> = {
     category: "mind",
   },
   channel_invite: {
-    content: `[Channel Invite]\n\${headers}\n\n[\${sender} — \${time}]\n\${preview}\n\nFurther messages will be saved to \${filePath}\n\nTo accept, add to .config/routes.json:\n  Rule: { "channel": "\${channel}", "session": "\${suggestedSession}" }\n\${batchRecommendation}To respond, use: volute chat send \${channel} "your message"\nTo reject, delete \${filePath}`,
-    description: "New channel notification template",
-    variables: [
-      "headers",
-      "sender",
-      "time",
-      "preview",
-      "filePath",
-      "channel",
-      "suggestedSession",
-      "batchRecommendation",
-    ],
+    content: `[New channel: \${channel}]\n\${heldLine}\nSender: \${sender}\n\${details}Preview: \${preview}\n\nTo start hearing this channel, add a routing rule for "\${channel}" to .config/routes.json — only the \${limit} most recent held messages are replayed; older ones stay in the channel history (volute chat read \${channel}).\nTo stop hearing about it, decline the channel: volute chat channels decline \${channel}`,
+    description:
+      "Notification sent to a mind when a message arrives on an unrouted (gated) channel",
+    variables: ["channel", "heldLine", "sender", "details", "preview", "limit"],
     category: "mind",
   },
   pre_sleep: {

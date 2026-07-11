@@ -119,6 +119,16 @@ export async function readRegistry(): Promise<MindEntry[]> {
   return (rows as unknown as RawMindRow[]).map(rowToEntry);
 }
 
+/**
+ * Count minds that count toward the `maxMinds` cap: base minds only. Variants
+ * (transient worktrees) and the spirit are excluded. `readRegistry` already
+ * filters out variants (parent is null) and non-mind/spirit rows.
+ */
+export async function countCappedMinds(): Promise<number> {
+  const entries = await readRegistry();
+  return entries.filter((e) => e.mindType !== "spirit").length;
+}
+
 /** Read ALL minds (base + variants) from DB. */
 export async function readAllMinds(): Promise<MindEntry[]> {
   const db = await getDb();
