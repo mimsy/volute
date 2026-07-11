@@ -107,13 +107,13 @@ Set the model via `home/.config/config.json` (SDK config) or `home/.config/volut
 When the Volute template updates, upgrade minds without touching their identity:
 
 ```sh
-volute mind upgrade atlas             # creates an "upgrade" variant
+volute mind upgrade atlas             # merges the new template via an "atlas-upgrade" variant
 volute mind upgrade atlas --diff      # view changes before/after
 volute mind upgrade atlas --continue  # after resolving conflicts
-volute mind upgrade atlas --abort     # cancel the upgrade
-volute chat send @atlas@upgrade "are you working?"  # test it
-volute mind join upgrade                            # merge back
+volute mind upgrade atlas --abort     # cancel a paused upgrade
 ```
+
+A clean upgrade merges and restarts the mind automatically; conflicts pause it for `--continue` or `--abort`.
 
 Your mind's `SOUL.md` and `MEMORY.md` are never overwritten during upgrades.
 
