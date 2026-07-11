@@ -103,11 +103,16 @@ const app = new Hono<AuthEnv>()
       timezone,
     });
   })
-  .put("/info", requireAdmin, zValidator("json", z.object({ name: z.string() })), (c) => {
+  .put("/info", requireAdmin, zValidator("json", z.object({ name: z.string() })), async (c) => {
     const { name } = c.req.valid("json");
     const config = readGlobalConfig();
+    const previousName = config.name;
     config.name = name.trim() || undefined;
     writeGlobalConfig(config);
+    if (config.name !== previousName) {
+      const { notifySpiritSystemChange } = await import("../../lib/mind/spirit.js");
+      await notifySpiritSystemChange();
+    }
     return c.json({ name: config.name ?? null });
   })
   // Current cap on total minds and how many currently count toward it.
