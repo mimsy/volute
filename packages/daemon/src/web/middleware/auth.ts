@@ -191,7 +191,11 @@ export const requireSelf = (paramName = "name") =>
     if (user.role !== "admin" && user.role !== "system") {
       const target = c.req.param(paramName) ?? "";
       const baseName = await getBaseName(target);
-      if (user.username !== baseName) {
+      // Base-map the caller too: a variant's token resolves to its own name,
+      // but the variant shares its parent's trust domain (same OS user, history
+      // recorded under the parent) — without this, a variant 403s on its own
+      // routes and can't even report its events (#652).
+      if (user.username !== baseName && (await getBaseName(user.username)) !== baseName) {
         return c.json({ error: "Forbidden" }, 403);
       }
     }
