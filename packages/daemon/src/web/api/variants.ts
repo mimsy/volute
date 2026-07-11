@@ -95,7 +95,21 @@ const app = new Hono<AuthEnv>()
       await gitExec(["worktree", "add", "-b", variantName, variantDir], { cwd: projectRoot });
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
-      return c.json({ error: `Failed to create worktree: ${msg}` }, 500);
+      // mkdirSync + `git worktree add` ran as the daemon (root) and may leave
+      // root-owned files under .variants/ in the mind's tree; hand ownership
+      // back before returning so the mind can retry. Surface a restore failure
+      // so a left-behind-root-files condition isn't hidden.
+      let error = `Failed to create worktree: ${msg}`;
+      try {
+        await chownMindDir(projectRoot, mindName);
+      } catch (err) {
+        log.warn(
+          `failed to restore ownership after worktree-add failure for ${mindName}`,
+          log.errorData(err),
+        );
+        error += ` Restoring mind ownership also failed: ${err instanceof Error ? err.message : String(err)}`;
+      }
+      return c.json({ error }, 500);
     }
 
     // Fix ownership before npm install so it runs as the mind user
@@ -174,186 +188,203 @@ const app = new Hono<AuthEnv>()
 
     const projectRoot = parentEntry.dir ?? mindDir(mindName);
 
-    // Auto-commit any uncommitted changes in the variant worktree
-    if (existsSync(variantEntry.dir)) {
-      const status = (await gitExec(["status", "--porcelain"], { cwd: variantEntry.dir })).trim();
-      if (status) {
-        try {
-          await gitExec(["add", "-A"], { cwd: variantEntry.dir });
-          await gitExec(["commit", "-m", "Auto-commit uncommitted changes before merge"], {
-            cwd: variantEntry.dir,
-          });
-        } catch (_e) {
-          return c.json(
-            {
-              error:
-                "Failed to auto-commit variant changes. Commit or stash manually before merging.",
-            },
-            500,
-          );
-        }
-      }
-    }
-
-    // Verify variant before merge
-    if (!body.skipVerify) {
-      const result = await spawnServer(variantEntry.dir, 0, {
-        detached: true,
-        mindName: variantName,
-        template: variantEntry.template,
-      });
-      if (!result) {
-        return c.json(
-          { error: "Failed to start server for verification. Use skipVerify to skip." },
-          500,
-        );
-      }
-
-      const verified = await verify(result.actualPort);
-
-      try {
-        // The verify server is detached (its own process-group leader), so kill
-        // the whole group — under sandbox/isolation the real server is a wrapped
-        // grandchild that a single-PID SIGTERM would leave running.
-        process.kill(-result.child.pid!, "SIGTERM");
-      } catch {}
-
-      if (!verified) {
-        return c.json(
-          { error: "Verification failed. Fix issues or use skipVerify to proceed." },
-          500,
-        );
-      }
-    }
-
-    // Auto-commit any uncommitted changes in the main worktree
-    const mainStatus = (await gitExec(["status", "--porcelain"], { cwd: projectRoot })).trim();
-    if (mainStatus) {
-      try {
-        await gitExec(["add", "-A"], { cwd: projectRoot });
-        await gitExec(["commit", "-m", "Auto-commit uncommitted changes before merge"], {
-          cwd: projectRoot,
-        });
-      } catch (_e) {
-        return c.json(
-          { error: "Failed to auto-commit main changes. Commit or stash manually before merging." },
-          500,
-        );
-      }
-    }
-
-    // Merge branch
-    try {
-      await gitExec(["merge", variantEntry.branch], { cwd: projectRoot });
-    } catch (_e) {
-      // Collect the conflicting files before aborting so the caller/mind knows
-      // what collided.
-      let conflicts: string[] = [];
-      try {
-        const out = (
-          await gitExec(["diff", "--name-only", "--diff-filter=U"], { cwd: projectRoot })
-        ).trim();
-        conflicts = out ? out.split("\n") : [];
-      } catch (err) {
-        log.warn(`failed to list merge conflicts for ${mindName}`, log.errorData(err));
-      }
-      // Restore the parent worktree so the still-running parent mind never
-      // auto-commits conflict markers into SOUL.md/MEMORY.md.
-      try {
-        await gitExec(["merge", "--abort"], { cwd: projectRoot });
-      } catch (err) {
-        log.warn(`failed to abort merge for ${mindName}`, log.errorData(err));
-      }
-      // The git ops above (auto-commit, merge, merge --abort) ran as the daemon
-      // (root). Under user isolation that leaves the parent worktree — including
-      // home/MEMORY.md and other identity files — owned root:root, so the
-      // still-running parent mind can no longer write its own files. Hand
-      // ownership back before returning.
+    // Every early return past this point can follow a git write that ran as the
+    // daemon (root): the variant/main auto-commits, the merge, and the merge
+    // --abort. Under user isolation that leaves the parent worktree — and the
+    // variant worktree nested under it at .variants/<name>, which chownMindDir
+    // recurses — owned root:root, locking the still-running mind out of its own
+    // files. Hand ownership back before returning; surface a restore failure,
+    // since under isolation it means root-owned files were left behind.
+    const failAfterGitWrite = async (message: string, extra?: Record<string, unknown>) => {
       try {
         await chownMindDir(projectRoot, mindName);
       } catch (err) {
         log.warn(
-          `failed to restore ownership after aborted merge for ${mindName}`,
+          `failed to restore ownership for ${mindName} after merge failure`,
           log.errorData(err),
         );
         return c.json(
           {
-            error: `Merge failed and restoring parent ownership failed: ${err instanceof Error ? err.message : String(err)}`,
-            conflicts,
+            error: `${message} Restoring mind ownership also failed: ${err instanceof Error ? err.message : String(err)}`,
+            ...extra,
           },
           500,
         );
       }
-      // Leave the variant intact so the conflict can be resolved in the variant
-      // and the join retried.
-      return c.json(
-        {
-          error: "Merge failed. Resolve conflicts in the variant and retry the join.",
-          conflicts,
-        },
-        500,
-      );
-    }
-
-    await cleanupVariant(variantName, projectRoot, variantEntry.dir, { stop: true });
-
-    // The merge and cleanup git ops ran as the daemon (root). Hand ownership of
-    // the parent worktree back to the mind user before the wrapped npm install
-    // (which runs as that user) and the restart — otherwise the tree is left
-    // root-owned under isolation. Mirrors the split/create path.
-    await chownMindDir(projectRoot, mindName);
-
-    // Update template hash after upgrade merge
-    if (variantName.endsWith("-upgrade") || variantName === "upgrade") {
-      try {
-        const { computeTemplateHash } = await import("../../lib/template/template-hash.js");
-        const { setMindTemplateHash } = await import("../../lib/mind/registry.js");
-        const tmpl = parentEntry.template ?? "claude";
-        await setMindTemplateHash(mindName, computeTemplateHash(tmpl));
-      } catch (err) {
-        log.warn(`failed to update template hash for ${mindName}`, log.errorData(err));
-      }
-    }
-
-    // Reinstall dependencies
-    let restartWarning: string | undefined;
-    try {
-      if (isIsolationEnabled()) {
-        const [cmd, args] = await wrapForIsolation("npm", ["install"], mindName);
-        await exec(cmd, args, {
-          cwd: projectRoot,
-          env: { ...process.env, HOME: resolve(projectRoot, "home") },
-        });
-      } else {
-        await exec("npm", ["install"], { cwd: projectRoot });
-      }
-    } catch (err) {
-      log.warn(`npm install failed after merge for ${mindName}`, log.errorData(err));
-      restartWarning = `npm install failed after merge — mind may have stale dependencies`;
-    }
-
-    // Restart mind via mind manager with merge context
-    const manager = getMindManager();
-    const context = {
-      type: "merged",
-      name: variantName,
-      ...(body.summary && { summary: body.summary }),
-      ...(body.justification && { justification: body.justification }),
-      ...(body.memory && { memory: body.memory }),
+      return c.json({ error: message, ...extra }, 500);
     };
 
+    // From the first git write below through the restart, wrap everything in one
+    // try/catch. The named early returns already route through failAfterGitWrite,
+    // but an *uncaught* throw past the first write — spawnServer's isolation wrap,
+    // an unguarded status read, verify — would otherwise 500 without restoring
+    // ownership, leaving the parent (and the nested variant tree) root-owned under
+    // isolation. The catch funnels those through the same restore path.
     try {
-      if (manager.isRunning(mindName)) {
-        await manager.stopMind(mindName);
+      // Auto-commit any uncommitted changes in the variant worktree
+      if (existsSync(variantEntry.dir)) {
+        const status = (await gitExec(["status", "--porcelain"], { cwd: variantEntry.dir })).trim();
+        if (status) {
+          try {
+            await gitExec(["add", "-A"], { cwd: variantEntry.dir });
+            await gitExec(["commit", "-m", "Auto-commit uncommitted changes before merge"], {
+              cwd: variantEntry.dir,
+            });
+          } catch (_e) {
+            return failAfterGitWrite(
+              "Failed to auto-commit variant changes. Commit or stash manually before merging.",
+            );
+          }
+        }
       }
-      manager.setPendingContext(mindName, context);
-      await manager.startMind(mindName);
-    } catch (e) {
-      restartWarning = `Merge succeeded but mind restart failed: ${e instanceof Error ? e.message : String(e)}`;
-      log.warn(restartWarning);
-    }
 
-    return c.json({ ok: true, ...(restartWarning && { warning: restartWarning }) });
+      // Verify variant before merge
+      if (!body.skipVerify) {
+        const result = await spawnServer(variantEntry.dir, 0, {
+          detached: true,
+          mindName: variantName,
+          template: variantEntry.template,
+        });
+        if (!result) {
+          return failAfterGitWrite(
+            "Failed to start server for verification. Use skipVerify to skip.",
+          );
+        }
+
+        const verified = await verify(result.actualPort);
+
+        try {
+          // The verify server is detached (its own process-group leader), so kill
+          // the whole group — under sandbox/isolation the real server is a wrapped
+          // grandchild that a single-PID SIGTERM would leave running.
+          process.kill(-result.child.pid!, "SIGTERM");
+        } catch {}
+
+        if (!verified) {
+          return failAfterGitWrite("Verification failed. Fix issues or use skipVerify to proceed.");
+        }
+      }
+
+      // Auto-commit any uncommitted changes in the main worktree
+      const mainStatus = (await gitExec(["status", "--porcelain"], { cwd: projectRoot })).trim();
+      if (mainStatus) {
+        try {
+          await gitExec(["add", "-A"], { cwd: projectRoot });
+          await gitExec(["commit", "-m", "Auto-commit uncommitted changes before merge"], {
+            cwd: projectRoot,
+          });
+        } catch (_e) {
+          return failAfterGitWrite(
+            "Failed to auto-commit main changes. Commit or stash manually before merging.",
+          );
+        }
+      }
+
+      // Merge branch
+      try {
+        await gitExec(["merge", variantEntry.branch], { cwd: projectRoot });
+      } catch (_e) {
+        // Collect the conflicting files before aborting so the caller/mind knows
+        // what collided.
+        let conflicts: string[] = [];
+        try {
+          const out = (
+            await gitExec(["diff", "--name-only", "--diff-filter=U"], { cwd: projectRoot })
+          ).trim();
+          conflicts = out ? out.split("\n") : [];
+        } catch (err) {
+          log.warn(`failed to list merge conflicts for ${mindName}`, log.errorData(err));
+        }
+        // Restore the parent worktree so the still-running parent mind never
+        // auto-commits conflict markers into SOUL.md/MEMORY.md.
+        let abortFailed = false;
+        try {
+          await gitExec(["merge", "--abort"], { cwd: projectRoot });
+        } catch (err) {
+          abortFailed = true;
+          log.warn(`failed to abort merge for ${mindName}`, log.errorData(err));
+        }
+        // Leave the variant intact so the conflict can be resolved in the variant
+        // and the join retried. failAfterGitWrite restores ownership after the
+        // root-run auto-commit/merge/abort git ops above. If the abort itself
+        // failed, the parent is left mid-merge with conflict markers on disk —
+        // say so, since the still-running mind could auto-commit them.
+        return failAfterGitWrite(
+          abortFailed
+            ? "Merge failed and the abort did not complete — the parent worktree may be left mid-merge with conflict markers; manual cleanup may be needed."
+            : "Merge failed. Resolve conflicts in the variant and retry the join.",
+          { conflicts },
+        );
+      }
+
+      await cleanupVariant(variantName, projectRoot, variantEntry.dir, { stop: true });
+
+      // The merge and cleanup git ops ran as the daemon (root). Hand ownership of
+      // the parent worktree back to the mind user before the wrapped npm install
+      // (which runs as that user) and the restart — otherwise the tree is left
+      // root-owned under isolation. Mirrors the split/create path.
+      await chownMindDir(projectRoot, mindName);
+
+      // Update template hash after upgrade merge
+      if (variantName.endsWith("-upgrade") || variantName === "upgrade") {
+        try {
+          const { computeTemplateHash } = await import("../../lib/template/template-hash.js");
+          const { setMindTemplateHash } = await import("../../lib/mind/registry.js");
+          const tmpl = parentEntry.template ?? "claude";
+          await setMindTemplateHash(mindName, computeTemplateHash(tmpl));
+        } catch (err) {
+          log.warn(`failed to update template hash for ${mindName}`, log.errorData(err));
+        }
+      }
+
+      // Reinstall dependencies
+      let restartWarning: string | undefined;
+      try {
+        if (isIsolationEnabled()) {
+          const [cmd, args] = await wrapForIsolation("npm", ["install"], mindName);
+          await exec(cmd, args, {
+            cwd: projectRoot,
+            env: { ...process.env, HOME: resolve(projectRoot, "home") },
+          });
+        } else {
+          await exec("npm", ["install"], { cwd: projectRoot });
+        }
+      } catch (err) {
+        log.warn(`npm install failed after merge for ${mindName}`, log.errorData(err));
+        restartWarning = `npm install failed after merge — mind may have stale dependencies`;
+      }
+
+      // Restart mind via mind manager with merge context
+      const manager = getMindManager();
+      const context = {
+        type: "merged",
+        name: variantName,
+        ...(body.summary && { summary: body.summary }),
+        ...(body.justification && { justification: body.justification }),
+        ...(body.memory && { memory: body.memory }),
+      };
+
+      try {
+        if (manager.isRunning(mindName)) {
+          await manager.stopMind(mindName);
+        }
+        manager.setPendingContext(mindName, context);
+        await manager.startMind(mindName);
+      } catch (e) {
+        restartWarning = `Merge succeeded but mind restart failed: ${e instanceof Error ? e.message : String(e)}`;
+        log.warn(restartWarning);
+      }
+
+      return c.json({ ok: true, ...(restartWarning && { warning: restartWarning }) });
+    } catch (err) {
+      // Uncaught throw past the first git write — restore ownership before the
+      // generic 500 so isolation never leaves the tree root-owned. "join failed"
+      // stays accurate whether the throw was pre- or post-merge.
+      log.error(`variant join failed for ${mindName}`, log.errorData(err));
+      return await failAfterGitWrite(
+        `Variant join failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   })
   // Delete variant — admin only
   .delete("/:name/variants/:variant", requireSelf(), async (c) => {
