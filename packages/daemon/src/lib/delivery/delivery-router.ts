@@ -276,6 +276,16 @@ export function resolveRoute(config: RoutingConfig, meta: MatchMeta): ResolvedRo
   return { destination: "mind", session: fallback, matched: false };
 }
 
+/**
+ * Whether a resolved route should be gated: the channel is unrouted and gating is on, so
+ * the message is held until the mind opts in. A gated message is never delivered to the
+ * mind, so callers must NOT record it as inbound history — the mind hasn't seen it (#420).
+ * File routes and explicitly-matched rules are never gated.
+ */
+export function shouldGate(config: RoutingConfig, route: ResolvedRoute): boolean {
+  return route.destination === "mind" && !route.matched && config.gateUnmatched !== false;
+}
+
 // --- Delivery mode resolution ---
 
 const DEFAULT_BATCH_DEBOUNCE = 5;

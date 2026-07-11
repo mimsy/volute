@@ -11,6 +11,7 @@ import {
   extractTextContent,
   getRoutingConfig,
   resolveRoute,
+  shouldGate,
 } from "./delivery-router.js";
 
 const dlog = log.child("delivery");
@@ -230,6 +231,25 @@ export function resolveSleepAction(
 }
 
 /**
+ * Whether a message will be gated (held, not delivered) for a mind: an unrouted channel
+ * with gating enabled and no explicit session. Gated messages are held until the mind opts
+ * in, so they must NOT be recorded as inbound history on arrival — the mind hasn't seen
+ * them (#420). Resolved from the same routing config the delivery manager uses, so the two
+ * stay in lockstep.
+ */
+function willGate(baseName: string, payload: DeliveryPayload): boolean {
+  if (payload.session) return false; // explicit session bypasses routing
+  const config = getRoutingConfig(baseName);
+  const route = resolveRoute(config, {
+    channel: payload.channel,
+    sender: payload.sender ?? undefined,
+    isDM: payload.isDM,
+    participantCount: payload.participantCount,
+  });
+  return shouldGate(config, route);
+}
+
+/**
  * Deliver a message to a mind via the delivery manager (routes, batches, gates).
  * Fire-and-forget for normal callers — logs errors and returns `false` rather than throwing.
  * Returns `true` when the message was handled (delivered, queued, or intentionally skipped).
@@ -255,11 +275,13 @@ export async function deliverMessage(
 
     if (!opts.isFlush) {
       const textContent = extractTextContent(payload.content);
-      await recordInbound(baseName, payload.channel, payload.sender ?? null, textContent);
 
       // Check if mind is sleeping — handle based on whileSleeping or wake triggers
       const sleepManager = getSleepManagerIfReady();
       if (sleepManager?.isSleeping(baseName)) {
+        // Sleeping minds queue the message and flush it on wake — it is not gated here.
+        // Record at arrival so history keeps the true receipt time.
+        await recordInbound(baseName, payload.channel, payload.sender ?? null, textContent);
         const sleepState = sleepManager.getState(baseName);
         const action = resolveSleepAction(
           payload.whileSleeping,
@@ -281,6 +303,15 @@ export async function deliverMessage(
             .catch((err) => dlog.warn(`failed to trigger-wake ${baseName}`, log.errorData(err)));
         }
         return true;
+      }
+
+      // Awake: a message to an unrouted, gated channel is HELD — the mind never sees it
+      // until it routes the channel. Recording it as inbound would claim the mind heard
+      // something it didn't, inflating message counts and cluttering history (#420). Skip
+      // the history row for gated messages; releaseGated writes the real inbound row when
+      // (and if) the held backlog is later delivered.
+      if (!willGate(baseName, payload)) {
+        await recordInbound(baseName, payload.channel, payload.sender ?? null, textContent);
       }
     }
 

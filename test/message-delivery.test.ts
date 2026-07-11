@@ -1,9 +1,14 @@
 import assert from "node:assert/strict";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
+import { resolve } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { and, eq } from "drizzle-orm";
 import { getDb } from "../packages/daemon/src/lib/db.js";
-import { extractTextContent } from "../packages/daemon/src/lib/delivery/delivery-router.js";
+import {
+  clearConfigCache,
+  extractTextContent,
+} from "../packages/daemon/src/lib/delivery/delivery-router.js";
 import {
   deliverBatch,
   deliverMessage,
@@ -108,14 +113,31 @@ describe("deliverMessage flush recording", () => {
   const FLUSH_MIND = "test-flush";
   const FLUSH_PORT = 41999;
 
+  function mindConfigDir(name: string): string {
+    return resolve(process.env.VOLUTE_HOME!, "minds", name, "home/.config");
+  }
+
+  // Write an explicit routes.json so the routing decision is deterministic regardless of
+  // any file a previous test left behind.
+  function writeRoutes(name: string, config: object): void {
+    const configDir = mindConfigDir(name);
+    mkdirSync(configDir, { recursive: true });
+    writeFileSync(resolve(configDir, "routes.json"), JSON.stringify(config));
+    clearConfigCache(name);
+  }
+
   afterEach(async () => {
     const db = await getDb();
     await db.delete(mindHistory).where(eq(mindHistory.mind, FLUSH_MIND));
     await removeMind(FLUSH_MIND);
+    rmSync(resolve(mindConfigDir(FLUSH_MIND), "routes.json"), { force: true });
+    clearConfigCache();
   });
 
   it("records the inbound once on the normal (non-flush) path", async () => {
     await addMind(FLUSH_MIND, FLUSH_PORT);
+    // No gating: unmatched channels route to the default session and are delivered.
+    writeRoutes(FLUSH_MIND, { gateUnmatched: false });
     // No delivery manager is initialized, so routeAndDeliver throws and delivery reports
     // failure — but the inbound must still have been recorded exactly once.
     const ok = await deliverMessage(FLUSH_MIND, {
@@ -131,6 +153,37 @@ describe("deliverMessage flush recording", () => {
       .from(mindHistory)
       .where(and(eq(mindHistory.mind, FLUSH_MIND), eq(mindHistory.type, "inbound")));
     assert.equal(rows.length, 1);
+  });
+
+  it("does NOT record an inbound for a gated (unrouted) channel (#420)", async () => {
+    await addMind(FLUSH_MIND, FLUSH_PORT);
+    // Gating on, no matching rule → #unrouted is gated. The mind never sees the message,
+    // so no inbound history row may be written — otherwise counts and history would claim
+    // the mind heard something it didn't.
+    writeRoutes(FLUSH_MIND, { gateUnmatched: true, rules: [] });
+    const events: MindEvent[] = [];
+    const unsub = subscribe(FLUSH_MIND, (e) => events.push(e));
+    try {
+      await deliverMessage(FLUSH_MIND, {
+        channel: "#unrouted",
+        sender: "alice",
+        content: "hi",
+      });
+    } finally {
+      unsub();
+    }
+
+    assert.equal(
+      events.filter((e) => e.type === "inbound").length,
+      0,
+      "no inbound event is published for a gated message",
+    );
+    const db = await getDb();
+    const rows = await db
+      .select()
+      .from(mindHistory)
+      .where(and(eq(mindHistory.mind, FLUSH_MIND), eq(mindHistory.type, "inbound")));
+    assert.equal(rows.length, 0, "no inbound history row for a gated message");
   });
 
   it("skips re-recording the inbound on the flush path (isFlush)", async () => {
