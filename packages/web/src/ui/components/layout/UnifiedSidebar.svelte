@@ -407,6 +407,12 @@ let isSystemActive = $derived(
       <Icon kind="gear" class="menu-icon" />
       Settings
     </button>
+    {#if menuMind?.stage !== "seed" && menuMind?.mindType !== "spirit"}
+      <button class="mind-menu-item" onclick={() => handleMenuAction(openMenu!, "variants")}>
+        <Icon kind="fork" class="menu-icon" />
+        Variants
+      </button>
+    {/if}
     {#if menuMind?.status === "running"}
       <button class="mind-menu-item" onclick={() => handleMenuAction(openMenu!, "context")}>
         <Icon kind="document-lines" class="menu-icon" />
