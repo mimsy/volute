@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import { type ChildProcess, execFileSync, spawn } from "node:child_process";
-import { existsSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { resolve } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { and, eq } from "drizzle-orm";
@@ -583,6 +591,13 @@ describe("daemon e2e", { timeout: 420000 }, () => {
       "variant's divergent memory\n",
     );
 
+    // The variant leaves a parting note. The server isn't running (noStart), so
+    // the join can't run a live farewell turn — but a note already on disk is
+    // still surfaced into the merge context the parent receives.
+    const farewellText = "e2e-farewell: I explored the margins and found nothing but stars.";
+    mkdirSync(resolve(created.variant.path, ".mind"), { recursive: true });
+    writeFileSync(resolve(created.variant.path, ".mind", "farewell.md"), `${farewellText}\n`);
+
     // Join: merge the variant back. skipVerify avoids booting a verification server.
     const mergeRes = await daemonRequest(`/api/minds/${TEST_MIND}/variants/e2e-var/merge`, {
       method: "POST",
@@ -606,6 +621,17 @@ describe("daemon e2e", { timeout: 420000 }, () => {
       readFileSync(resolve(parentDir, "home", "MEMORY.md"), "utf-8"),
       "parent's own memory\n",
       "parent should keep its own MEMORY.md after the join",
+    );
+
+    // The parting note reached the merged parent as part of its merge context.
+    const db = await getDb();
+    const history = await db
+      .select()
+      .from(mindHistory)
+      .where(and(eq(mindHistory.mind, TEST_MIND), eq(mindHistory.type, "inbound")));
+    assert.ok(
+      history.some((h) => h.content?.includes(farewellText)),
+      "parent's merge context should include the variant's parting note",
     );
 
     // The variant is cleaned up: gone from registry and disk.

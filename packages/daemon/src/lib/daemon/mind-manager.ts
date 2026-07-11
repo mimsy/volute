@@ -115,10 +115,11 @@ function mindPidPath(name: string): string {
 /**
  * Build the message a mind receives after a lifecycle event (restart, merge,
  * split, sprout, upgrade). The leading line comes from the prompt registry; the
- * optional Changes/Why/Context lines, a split's purpose, and a merge's memory
- * delta are appended from the pending context. Pure and exported so the
- * stringly-typed context seam — where a mistyped key would silently drop the
- * variant's purpose or narrated memory — is testable without spawning a mind.
+ * optional Changes/Why/Context lines, a split's purpose, a merge's memory delta,
+ * and a merge's farewell note are appended from the pending context. Pure and
+ * exported so the stringly-typed context seam — where a mistyped key would
+ * silently drop the variant's purpose, narrated memory, or parting note — is
+ * testable without spawning a mind.
  */
 export async function buildPendingContextMessage(
   name: string,
@@ -145,6 +146,10 @@ export async function buildPendingContextMessage(
       `\nYour variant's memory & journal (not merged — integrate into your own memory what you want to keep):\n${context.memoryDelta}`,
     );
   }
+  // The variant's own voice from its farewell turn. Framed as continuity —
+  // the merged mind is both lineages, not the parent absorbing a stranger.
+  if (context.farewell)
+    parts.push(`Your variant's parting note (this was you, winding down):\n${context.farewell}`);
   return parts.join("\n");
 }
 

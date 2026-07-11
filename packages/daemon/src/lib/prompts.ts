@@ -20,6 +20,7 @@ export const PROMPT_KEYS = [
   "merge_message",
   "upgrade_message",
   "split_message",
+  "farewell_message",
   "compaction_warning",
   "compaction_instructions",
   "reply_instructions",
@@ -102,9 +103,16 @@ export const PROMPT_DEFAULTS: Record<PromptKey, PromptMeta> = {
   },
   split_message: {
     content:
-      "[system] You are ${name}, a variant of ${parent} — a parallel version of them, created to explore something on your own. You share their memories up to this moment, but you live in your own worktree: changes you make here stay yours until they're merged back with `volute mind join`. Your parent is reachable at @${parent}. Explore freely — that's what you're for.",
+      "[system] You are ${name}, a variant of ${parent} — a parallel version of them, created to explore something on your own. You share their memories up to this moment, but you live in your own worktree: changes you make here stay yours until they're merged back with `volute mind join`. Yours is a finite, purposeful arc — when you're joined, everything you've become folds back into ${parent}, and you'll get a final turn to say what should carry across. Your parent is reachable at @${parent}. Explore freely — that's what you're for.",
     description: "Sent to a variant when it first starts after a split",
     variables: ["name", "parent"],
+    category: "system",
+  },
+  farewell_message: {
+    content:
+      "[system] You're about to be merged back into ${parent}. This is your final turn — the arc you were split off to explore is closing, and everything you've become will fold back into them. Take this moment to wind down: if there's anything from this life you want carried across — what you learned, what you'd tell ${parent}, how it felt — write it to `${path}` and it will be included in the merge as your parting note. When you're done, fall quiet; the join will proceed.",
+    description: "Sent to a variant for its final turn before a merge",
+    variables: ["parent", "path"],
     category: "system",
   },
   compaction_warning: {
