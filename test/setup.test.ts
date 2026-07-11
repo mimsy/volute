@@ -6,6 +6,7 @@ import {
   _resetConfigCache,
   type GlobalConfig,
   isSetupComplete,
+  mindLimitError,
   readGlobalConfig,
   setupStatus,
   setupUrl,
@@ -173,5 +174,28 @@ describe("setupUrl", () => {
   it("brackets a bare IPv6 hostname", () => {
     writeGlobalConfig({ hostname: "::1", port: 1618 });
     assert.equal(setupUrl(), "http://[::1]:1618");
+  });
+});
+
+describe("mindLimitError", () => {
+  it("allows creation when the limit is unset (unlimited)", () => {
+    assert.equal(mindLimitError(0, undefined), null);
+    assert.equal(mindLimitError(9999, undefined), null);
+  });
+
+  it("allows creation while under the cap", () => {
+    assert.equal(mindLimitError(0, 5), null);
+    assert.equal(mindLimitError(4, 5), null);
+  });
+
+  it("rejects at the cap with an actionable message", () => {
+    const err = mindLimitError(5, 5);
+    assert.ok(err);
+    assert.match(err, /Mind limit reached \(5\/5\)/);
+    assert.match(err, /admin can raise maxMinds/i);
+  });
+
+  it("rejects over the cap", () => {
+    assert.ok(mindLimitError(6, 5));
   });
 });

@@ -99,6 +99,14 @@ export type GlobalConfig = {
   disabledExtensions?: string[];
   /** Default settings applied when creating new minds */
   mindDefaults?: MindDefaults;
+  /**
+   * Cap on the total number of base minds (excludes variants and the spirit).
+   * Every mind is a full process (plus SDK subprocesses, npm install, per-mind OS
+   * user under isolation), so unbounded creation can exhaust the host. Unset =
+   * unlimited (the default; preserves existing installs). Not a secret — stays in
+   * the operator-readable config.json.
+   */
+  maxMinds?: number;
   /** Restic-based system backup configuration */
   backup?: BackupConfig;
 };
@@ -320,6 +328,20 @@ export function isImagegenEnabled(): boolean {
   // New: enabled if any provider is configured
   if (ig.providers && Object.keys(ig.providers).length > 0) return true;
   return false;
+}
+
+/**
+ * Enforce the `maxMinds` cap. Returns a human-friendly error message when
+ * creating another mind would meet or exceed the cap — the spirit relays this
+ * verbatim to whoever asked, so keep it actionable — or null when creation is
+ * allowed. `limit` unset (undefined) = unlimited.
+ */
+export function mindLimitError(count: number, limit: number | undefined): string | null {
+  if (limit == null) return null;
+  if (count >= limit) {
+    return `Mind limit reached (${count}/${limit}). An admin can raise maxMinds in Settings.`;
+  }
+  return null;
 }
 
 /** Migrate pre-existing installations that have setup but not setupCompleted. */

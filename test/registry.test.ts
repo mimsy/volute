@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
 import {
   addMind,
+  addSpirit,
   addVariant,
+  countCappedMinds,
   daemonLoopback,
   findMind,
   findVariants,
@@ -167,6 +169,33 @@ describe("variants", () => {
     const base = await readRegistry();
     assert.ok(base.some((e) => e.name === testMind));
     assert.ok(!base.some((e) => e.name === splitName));
+  });
+});
+
+describe("countCappedMinds", () => {
+  const capMind = `cap-test-${Date.now()}`;
+  const capVariant = `${capMind}-v1`;
+  const capSpirit = `cap-spirit-${Date.now()}`;
+
+  afterEach(async () => {
+    try {
+      await removeMind(capMind);
+    } catch {}
+    try {
+      await removeMind(capSpirit);
+    } catch {}
+  });
+
+  it("counts a base mind but excludes its variants and the spirit", async () => {
+    const before = await countCappedMinds();
+    await addMind(capMind, 4100);
+    assert.equal(await countCappedMinds(), before + 1, "base mind counts");
+
+    await addVariant(capVariant, capMind, 4101, "/fake/v1", "v1");
+    assert.equal(await countCappedMinds(), before + 1, "variant does not count");
+
+    await addSpirit(capSpirit, 4102, "claude", "/fake/spirit");
+    assert.equal(await countCappedMinds(), before + 1, "spirit does not count");
   });
 });
 
