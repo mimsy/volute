@@ -366,6 +366,95 @@ else
   assert_eq "$bob_minds_in_history" "bob" "bob history only contains bob messages"
 fi
 
+# ─── Phase 7b: Variant lifecycle (split → dialogue → join) ────────────────────
+#
+# Exercises the variant train under real auth and user isolation — the config
+# where #652 (variant event authz), #653 (worktree .mind ownership), and #654
+# (stale verify port) all bit while the unit suites stayed green. Needs real
+# turns, so it's gated on the same key as Phase 6.
+
+echo ""
+echo "Phase 7b: Variant lifecycle"
+
+if [[ "$CHAT_TESTED" != "true" ]]; then
+  echo "  ⚠ SKIPPED: depends on Phase 6 chat round-trip (no ANTHROPIC_API_KEY)."
+else
+  if split_out=$(docker exec "$CONTAINER" node dist/cli.js \
+    mind split alice-var --from alice --purpose "docker e2e: prove the variant lifecycle works" 2>&1); then
+    pass "variant alice-var split from alice"
+  else
+    fail "variant split failed"
+    echo "$split_out"
+  fi
+
+  if poll_until 60 mind_is_running alice-var; then
+    pass "alice-var is running"
+  else
+    fail "alice-var did not reach running status within 60s"
+  fi
+
+  # #653: the variant's .mind (absent from the worktree, created at spawn) must
+  # belong to the mind user, or session writes EACCES and every turn dies.
+  var_mind_owner=$(docker exec "$CONTAINER" stat -c '%U' /minds/alice/.variants/alice-var/.mind 2>/dev/null || echo missing)
+  assert_eq "$var_mind_owner" "mind-alice" "variant worktree .mind owned by mind-alice"
+
+  # #652: the variant must be able to deliver a reply — before the authz fix its
+  # event posts 403'd and --wait timed out with the reply silently dropped.
+  var_reply=$(docker exec "$CONTAINER" node dist/cli.js \
+    chat send @alice-var "Reply with only the word echo" --wait --timeout 90000 2>/dev/null || true)
+  assert_not_empty "$var_reply" "alice-var replied to message"
+
+  var_403_count=$(docker exec "$CONTAINER" sh -c \
+    'grep -c "event emit failed" /data/system/state/alice-var/logs/mind.log 2>/dev/null' || true)
+  assert_eq "${var_403_count:-0}" "0" "variant event posts were accepted (no 'event emit failed')"
+
+  # #654: seed the worktree log with a dead previous attempt's port line — join
+  # verification must match only the fresh verify server's output.
+  docker exec "$CONTAINER" sh -c \
+    'mkdir -p /minds/alice/.variants/alice-var/.mind/logs && echo "listening on :1" >> /minds/alice/.variants/alice-var/.mind/logs/mind.log'
+  pass "stale 'listening on :1' line seeded before join"
+
+  # Join with verification ON (the default): farewell turn → auto-commit →
+  # verify (must not match the stale port) → merge → cleanup → parent restart.
+  if join_out=$(docker exec "$CONTAINER" node dist/cli.js \
+    mind join alice-var --summary "docker e2e variant" --justification "variant lifecycle test" 2>&1); then
+    assert_contains "$join_out" "joined and cleaned up" "join completed"
+  else
+    fail "variant join failed"
+    echo "$join_out"
+  fi
+
+  if docker exec "$CONTAINER" test ! -d /minds/alice/.variants/alice-var; then
+    pass "variant worktree removed after join"
+  else
+    fail "variant worktree still present after join"
+  fi
+
+  var_after_join=$(api_raw GET /minds/alice-var)
+  if echo "$var_after_join" | grep -q '"error"'; then
+    pass "alice-var removed from registry"
+  else
+    fail "alice-var still in registry after join"
+  fi
+
+  if poll_until 90 mind_is_running alice; then
+    pass "alice running again after merge restart"
+  else
+    fail "alice did not come back after merge restart"
+  fi
+
+  # The parent receives the merge context ("Your variant ... has returned") as a
+  # post-restart message; it lands in history once the parent's turn records.
+  merge_context_in_history() {
+    api_raw GET "/minds/alice/history?full=true" | grep -q "has returned"
+  }
+  if poll_until 90 merge_context_in_history; then
+    pass "parent received the merge context message"
+  else
+    fail "merge context message not found in parent history"
+  fi
+fi
+
 # ─── Phase 8: Stop minds & final checks ──────────────────────────────────────
 
 echo ""
