@@ -66,6 +66,7 @@ import {
 import { commitSrcChanges, rollbackSrcChanges } from "../../lib/mind/last-known-good.js";
 import {
   addMind,
+  countCappedMinds,
   ensureVoluteHome,
   findMind,
   findVariants,
@@ -880,6 +881,15 @@ const app = new Hono<AuthEnv>()
     if (nameErr) return c.json({ error: nameErr }, 400);
 
     if (await findMind(name)) return c.json({ error: `Mind already exists: ${name}` }, 409);
+
+    // Cap total minds to protect host resources. Central enforcement here covers
+    // `volute mind create`, `volute seed create`, and spirit-driven seeds alike;
+    // the error text is relayed verbatim to whoever asked.
+    {
+      const { mindLimitError, readGlobalConfig } = await import("../../lib/config/setup.js");
+      const limitError = mindLimitError(await countCappedMinds(), readGlobalConfig().maxMinds);
+      if (limitError) return c.json({ error: limitError }, 409);
+    }
 
     ensureVoluteHome();
     const dest = mindDir(name);

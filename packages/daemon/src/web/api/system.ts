@@ -36,7 +36,7 @@ import {
   writeSystemsConfig,
 } from "../../lib/config/systems-config.js";
 import { getMindManager } from "../../lib/daemon/mind-manager.js";
-import { findMind } from "../../lib/mind/registry.js";
+import { countCappedMinds, findMind } from "../../lib/mind/registry.js";
 import {
   generateImage,
   getDefaultModel as getImagegenDefaultModel,
@@ -110,6 +110,26 @@ const app = new Hono<AuthEnv>()
     writeGlobalConfig(config);
     return c.json({ name: config.name ?? null });
   })
+  // Current cap on total minds and how many currently count toward it.
+  .get("/max-minds", requireAdmin, async (c) => {
+    return c.json({
+      maxMinds: readGlobalConfig().maxMinds ?? null,
+      count: await countCappedMinds(),
+    });
+  })
+  // Set (positive integer) or clear (null) the cap. null = unlimited.
+  .put(
+    "/max-minds",
+    requireAdmin,
+    zValidator("json", z.object({ maxMinds: z.number().int().positive().nullable() })),
+    async (c) => {
+      const { maxMinds } = c.req.valid("json");
+      const config = readGlobalConfig();
+      config.maxMinds = maxMinds ?? undefined;
+      writeGlobalConfig(config);
+      return c.json({ maxMinds: maxMinds ?? null, count: await countCappedMinds() });
+    },
+  )
   .post(
     "/register",
     requireAdmin,

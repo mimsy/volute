@@ -4,7 +4,9 @@ import AiProviders from "../components/system/AiProviders.svelte";
 import ImagegenProviders from "../components/system/ImagegenProviders.svelte";
 import {
   fetchAiDefaults,
+  fetchMaxMinds,
   saveAiDefaults,
+  saveMaxMinds,
   systemLogin,
   systemLogout,
   systemRegister,
@@ -38,6 +40,11 @@ let defaultsLoaded = $state(false);
 
 let aiProvidersRef: AiProviders;
 
+// Mind limit (maxMinds). Empty input = unlimited.
+let maxMindsInput = $state("");
+let mindCount = $state(0);
+let maxMindsError = $state("");
+
 onMount(async () => {
   aiProvidersRef.load();
   try {
@@ -47,8 +54,36 @@ onMount(async () => {
   } catch {
     // will show via AiProviders load error
   }
+  try {
+    const limit = await fetchMaxMinds();
+    maxMindsInput = limit.maxMinds == null ? "" : String(limit.maxMinds);
+    mindCount = limit.count;
+  } catch {
+    // non-fatal; section just shows empty
+  }
   defaultsLoaded = true;
 });
+
+async function saveMindLimit() {
+  maxMindsError = "";
+  const trimmed = maxMindsInput.trim();
+  let value: number | null = null;
+  if (trimmed !== "") {
+    const n = Number(trimmed);
+    if (!Number.isInteger(n) || n < 1) {
+      maxMindsError = "Enter a whole number of 1 or more, or leave blank for unlimited.";
+      return;
+    }
+    value = n;
+  }
+  try {
+    const result = await saveMaxMinds(value);
+    maxMindsInput = result.maxMinds == null ? "" : String(result.maxMinds);
+    mindCount = result.count;
+  } catch (err) {
+    maxMindsError = err instanceof Error ? err.message : "Failed to save limit";
+  }
+}
 
 // Auto-save when defaults change (after initial load)
 $effect(() => {
@@ -104,6 +139,29 @@ async function handleSystemLogout() {
       onblur={saveLocalName}
       onkeydown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
     />
+  </div>
+
+  <!-- Mind Limit -->
+  <div class="section">
+    <div class="section-header">
+      <span class="section-title">Mind Limit</span>
+      <span class="section-subtitle">
+        Cap on total minds ({mindCount} in use). Blank = unlimited.
+      </span>
+    </div>
+    <input
+      type="number"
+      min="1"
+      step="1"
+      class="system-input"
+      bind:value={maxMindsInput}
+      placeholder="Unlimited"
+      onblur={saveMindLimit}
+      onkeydown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+    />
+    {#if maxMindsError}
+      <div class="error">{maxMindsError}</div>
+    {/if}
   </div>
 
   <!-- System Registration -->
