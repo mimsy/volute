@@ -264,10 +264,13 @@ export class MindManager {
     mkdirSync(mindTmp, { recursive: true });
 
     // State dir is created by root — chown so the mind user can write to it.
+    // Chown .mind itself, not just .mind/tmp: in a variant worktree .mind is
+    // absent (gitignored), so the recursive mkdir above creates it root-owned
+    // and the variant can't write sessions or its farewell note (#653).
     if (isIsolationEnabled()) {
       try {
         await chownMindDir(mindStateDir, baseName);
-        await chownMindDir(mindTmp, baseName);
+        await chownMindDir(resolve(dir, ".mind"), baseName);
       } catch (err) {
         throw new Error(
           `Cannot start mind ${name}: failed to set ownership on state directory ${mindStateDir}: ${err instanceof Error ? err.message : err}`,
