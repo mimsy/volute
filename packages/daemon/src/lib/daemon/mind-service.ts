@@ -87,8 +87,10 @@ export async function startMindFull(name: string): Promise<void> {
 
   // Auto-join #system channel. Only sprouted minds reach here — seeds returned
   // early above, so they stay out of the commons until they sprout (#617).
+  // warn, not error: membership self-heals (idempotent join, retried on every
+  // start and by the daemon-startup backfill), so a single miss isn't fatal.
   joinSystemChannelForMind(baseName).catch((err: unknown) =>
-    log.error(`failed to join #system for ${baseName}`, log.errorData(err)),
+    log.warn(`failed to join #system for ${baseName}`, log.errorData(err)),
   );
 
   if (config?.tokenBudget) {
