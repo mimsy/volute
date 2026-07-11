@@ -186,6 +186,26 @@ describe("deliverMessage flush recording", () => {
     assert.equal(rows.length, 0, "no inbound history row for a gated message");
   });
 
+  it("records an inbound when an explicit session bypasses gating (#420)", async () => {
+    await addMind(FLUSH_MIND, FLUSH_PORT);
+    // Gating is on and no rule matches #unrouted, but an explicit payload.session skips
+    // route matching entirely — the message is delivered, not gated, so it must be recorded.
+    writeRoutes(FLUSH_MIND, { gateUnmatched: true, rules: [] });
+    await deliverMessage(FLUSH_MIND, {
+      channel: "#unrouted",
+      sender: "alice",
+      content: "hi",
+      session: "main",
+    });
+
+    const db = await getDb();
+    const rows = await db
+      .select()
+      .from(mindHistory)
+      .where(and(eq(mindHistory.mind, FLUSH_MIND), eq(mindHistory.type, "inbound")));
+    assert.equal(rows.length, 1, "an explicit-session message is recorded despite gating on");
+  });
+
   it("skips re-recording the inbound on the flush path (isFlush)", async () => {
     await addMind(FLUSH_MIND, FLUSH_PORT);
     const events: MindEvent[] = [];
