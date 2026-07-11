@@ -165,7 +165,11 @@ describe("spirit as a mind sender via POST /api/v1/chat", () => {
       .where(eq(messages.conversation_id, conversationId))
       .all();
     const voluteMsgs = msgs.filter((m) => m.sender_name === "volute");
-    assert.equal(voluteMsgs.length, 1, "only the spirit's send should exist — no fallback reply");
+    assert.equal(
+      voluteMsgs.length,
+      1,
+      "only the spirit's send should exist — no fallback even with a turn open",
+    );
   });
 
   it("does not trigger a system self-reply loop on the spirit's own send", async () => {
