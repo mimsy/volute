@@ -67,4 +67,4 @@ This is the fundamental mechanism for mind self-modification — changes are alw
 volute mind delete experiment
 ```
 
-This stops the variant server, removes the worktree, and cleans up metadata. Nothing merges into the parent.
+This removes the variant from the registry and discards its work. Nothing merges into the parent. (The clean-up path that also removes the worktree runs from the web dashboard's discard action and the daemon's variant endpoint.)

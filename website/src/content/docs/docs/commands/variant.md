@@ -49,4 +49,4 @@ Discard a variant without merging.
 volute mind delete <variant-name>
 ```
 
-Stops the variant server, removes the worktree, and cleans up its metadata. Nothing merges into the parent.
+Removes the variant from the registry and discards its work. Nothing merges into the parent.
