@@ -22,7 +22,7 @@ import {
 const testMind = `require-self-test-${Date.now()}`;
 const testVariant = `${testMind}-variant`;
 
-const TEST_USERNAMES = ["admin-user", "admin-placeholder", "regular-user", testMind];
+const TEST_USERNAMES = ["admin-user", "admin-placeholder", "regular-user", testMind, testVariant];
 
 async function cleanup() {
   const db = await getDb();
@@ -130,6 +130,52 @@ describe("requireSelf middleware", () => {
       headers: { Authorization: `Bearer ${token}` },
     });
     assert.equal(res.status, 200);
+  });
+
+  it("variant's own token can access variant-scoped routes (#652)", async () => {
+    await addMind(testMind, 4400);
+    await addVariant(testVariant, testMind, 4401, mindDir(testMind), "variant-branch");
+    await getOrCreateMindUser(testVariant);
+    const token = generateMindToken(testVariant);
+    const app = createApp();
+
+    // The variant's server posts to its own /:name routes (e.g. /events) with
+    // a token issued for the variant name — this must not 403.
+    const res = await app.request(`/api/minds/${testVariant}/info`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    assert.equal(res.status, 200);
+  });
+
+  it("variant token can access parent-scoped routes (shared trust domain)", async () => {
+    await addMind(testMind, 4400);
+    await addVariant(testVariant, testMind, 4401, mindDir(testMind), "variant-branch");
+    await getOrCreateMindUser(testVariant);
+    const token = generateMindToken(testVariant);
+    const app = createApp();
+
+    const res = await app.request(`/api/minds/${testMind}/info`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    assert.equal(res.status, 200);
+  });
+
+  it("variant token cannot access an unrelated mind", async () => {
+    await addMind(testMind, 4400);
+    await addVariant(testVariant, testMind, 4401, mindDir(testMind), "variant-branch");
+    await addMind("other-mind", 4402);
+    await getOrCreateMindUser(testVariant);
+    const token = generateMindToken(testVariant);
+    const app = createApp();
+
+    const res = await app.request("/api/minds/other-mind/info", {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    assert.equal(res.status, 403);
+
+    try {
+      await removeMind("other-mind");
+    } catch {}
   });
 
   it("unauthenticated request gets 401", async () => {
