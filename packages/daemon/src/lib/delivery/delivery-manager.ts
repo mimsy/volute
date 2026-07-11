@@ -7,9 +7,10 @@ import { linkInboundToActiveTurn } from "../daemon/turn-tracker.js";
 import { getDb } from "../db.js";
 import { getParticipants } from "../events/conversations.js";
 import { onMindEvent } from "../events/mind-activity-tracker.js";
+import { publish as publishMindEvent } from "../events/mind-events.js";
 import { findMind, getBaseName, mindDir, voluteHome } from "../mind/registry.js";
 import { readVoluteConfig } from "../mind/volute-config.js";
-import { channelGates, deliveryQueue } from "../schema.js";
+import { channelGates, deliveryQueue, mindHistory } from "../schema.js";
 import { type AvatarBlock, renderAvatarBlock } from "../util/avatar-image.js";
 import log from "../util/logger.js";
 import {
@@ -471,30 +472,50 @@ export class DeliveryManager {
       return;
     }
 
-    // Promote per-row so each carries its freshly-resolved session (bug 1 fix). Bounded
-    // to GATED_RELEASE_LIMIT_PER_CHANNEL per channel, so this loop is small.
+    // Record inbound history AND promote to pending atomically, oldest-first. Gated
+    // messages are never recorded on arrival (#420), so this is the sole "the mind received
+    // this" write — and the background redrive sweep reads `pending` rows independently, so
+    // the inbound row MUST be committed before the row becomes pending. One transaction per
+    // row makes that ordering crash-safe: a failure rolls back both, leaving the row `gated`
+    // (retried on the next release) rather than delivered-without-history or duplicated.
+    const orderedPromote = [...promote].sort((a, b) => a.id - b.id);
     try {
       const db = await getDb();
-      for (const p of promote) {
-        await db
-          .update(deliveryQueue)
-          .set({ status: "pending", session: p.session, attempts: 0, next_attempt_at: null })
-          .where(eq(deliveryQueue.id, p.id));
+      for (const p of orderedPromote) {
+        await db.transaction(async (tx) => {
+          await tx.insert(mindHistory).values({
+            mind: baseName,
+            type: "inbound",
+            channel: p.channel,
+            sender: p.sender,
+            content: p.content,
+          });
+          await tx
+            .update(deliveryQueue)
+            .set({ status: "pending", session: p.session, attempts: 0, next_attempt_at: null })
+            .where(eq(deliveryQueue.id, p.id));
+        });
       }
       dlog.info(`released ${promote.length} gated message(s) for ${baseName} after route change`);
     } catch (err) {
-      dlog.warn(`failed to promote gated rows for ${baseName}`, log.errorData(err));
+      // This is the ONLY recording point for gated traffic — a permanent failure here is a
+      // silent history gap, so surface it loudly with enough context to find the messages.
+      dlog.error(
+        `failed to record+promote gated rows for ${baseName} (channels: ${[...byChannel.keys()].join(", ")})`,
+        log.errorData(err),
+      );
       return;
     }
 
-    // Now that these messages are actually being delivered, record their inbound history —
-    // gated messages are never recorded on arrival (#420), so this is where the truthful
-    // "the mind received this" row is written. Oldest-first so history reads in order; the
-    // next turn's linkPendingInbound tags them to the turn they trigger. Recorded before
-    // redrive so the rows exist before the mind processes the delivery.
-    const { recordInbound } = await import("./message-delivery.js");
-    for (const p of [...promote].sort((a, b) => a.id - b.id)) {
-      await recordInbound(baseName, p.channel, p.sender, p.content);
+    // Publish the inbound events after commit so live streams reflect the released backlog.
+    for (const p of orderedPromote) {
+      publishMindEvent(baseName, {
+        mind: baseName,
+        type: "inbound",
+        channel: p.channel,
+        content: p.content ?? undefined,
+        sender: p.sender ?? undefined,
+      });
     }
 
     if (truncationNotes.length > 0) await this.sendReleaseSummary(mindName, truncationNotes);
