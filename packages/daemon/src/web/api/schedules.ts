@@ -179,7 +179,11 @@ const app = new Hono<AuthEnv>()
     const now = new Date();
     const { upcoming, previous } = computeClockEvents(schedules, sleepState, sleepConfig, now);
 
-    return c.json({ sleep: sleepState, sleepConfig, schedules, upcoming, previous });
+    // Cron expressions are interpreted in the daemon host's local timezone, so a
+    // remote viewer needs the daemon IANA TZ to label cron-derived wall times.
+    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+    return c.json({ sleep: sleepState, sleepConfig, schedules, upcoming, previous, timezone });
   })
   // Get sleep config
   .get("/:name/sleep/config", requireSelf(), async (c) => {
