@@ -85,7 +85,8 @@ export async function startMindFull(name: string): Promise<void> {
     );
   }
 
-  // Auto-join #system channel
+  // Auto-join #system channel. Only sprouted minds reach here — seeds returned
+  // early above, so they stay out of the commons until they sprout (#617).
   joinSystemChannelForMind(baseName).catch((err: unknown) =>
     log.error(`failed to join #system for ${baseName}`, log.errorData(err)),
   );

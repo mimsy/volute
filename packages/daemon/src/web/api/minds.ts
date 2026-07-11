@@ -19,7 +19,7 @@ import {
   unqualifyModelId,
 } from "../../lib/ai-service.js";
 import { deleteMindUser } from "../../lib/auth.js";
-import { announceToSystem } from "../../lib/chat/system-channel.js";
+import { announceToSystem, joinSystemChannelForMind } from "../../lib/chat/system-channel.js";
 import { readSystemsConfig } from "../../lib/config/systems-config.js";
 import { getMindManager, MindStartupError } from "../../lib/daemon/mind-manager.js";
 // Lifecycle functions from mind-service.ts
@@ -1847,6 +1847,16 @@ const app = new Hono<AuthEnv>()
       return c.json({ error: `Mind is not a seed (stage: ${entry.stage})` }, 409);
     }
     await setMindStage(name, "sprouted");
+
+    // Join the #system commons now. Seeds are deliberately kept out until they
+    // sprout (backfill and the spawn path both exclude stage="seed"), so sprouting
+    // is the moment a mind enters the commons. Joining here — rather than relying on
+    // the incidental restart that follows — makes membership a direct consequence of
+    // sprouting for every caller. Idempotent; fail-soft so a join hiccup can't block
+    // the sprout itself.
+    await joinSystemChannelForMind(name).catch((err) =>
+      log.warn(`failed to join #system on sprout for ${name}`, log.errorData(err)),
+    );
 
     // Default autonomy: working dreaming out of the box (#581). The seed-sprout
     // CLI installs the standard skills — including dreaming — before calling
