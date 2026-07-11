@@ -39,10 +39,9 @@ import { handleMindEvent, setNoticeDrainWatermark } from "../../lib/daemon/turn-
 import { getActiveTurnId } from "../../lib/daemon/turn-tracker.js";
 import { getDb } from "../../lib/db.js";
 import { getDeliveryManager } from "../../lib/delivery/delivery-manager.js";
-import { recordInbound } from "../../lib/delivery/message-delivery.js";
+import { deliverSproutedNotice } from "../../lib/delivery/message-delivery.js";
 import { broadcast } from "../../lib/events/activity-events.js";
 import {
-  addMessage,
   getConversation,
   getMessages,
   getMessagesPaginated,
@@ -1534,16 +1533,10 @@ const app = new Hono<AuthEnv>()
         manager.setPendingContext(name, context);
       }
 
-      // Inject "[seed has sprouted]" system message into active volute conversations
+      // Inject "[seed has sprouted]" system message into active volute conversations.
       if (context?.type === "sprouted" && !entry.parent) {
         try {
-          const mindConvs = await listConversationsForMind(baseName);
-          for (const conv of mindConvs) {
-            await recordInbound(baseName, "system", "system", "[seed has sprouted]");
-            await addMessage(conv.id, "assistant", "system", [
-              { type: "text", text: "[seed has sprouted]" },
-            ]);
-          }
+          await deliverSproutedNotice(baseName);
         } catch (err) {
           log.error(`failed to inject sprouted message for ${baseName}`, log.errorData(err));
         }

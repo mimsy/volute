@@ -2,17 +2,24 @@ import assert from "node:assert/strict";
 import { createServer, type Server } from "node:http";
 import { afterEach, describe, it } from "node:test";
 import { and, eq } from "drizzle-orm";
+import { getOrCreateMindUser } from "../packages/daemon/src/lib/auth.js";
 import { getDb } from "../packages/daemon/src/lib/db.js";
 import { extractTextContent } from "../packages/daemon/src/lib/delivery/delivery-router.js";
 import {
   deliverBatch,
   deliverMessage,
+  deliverSproutedNotice,
   linkToolResultToTurn,
   recordInbound,
   recordOutbound,
   resolveSleepAction,
 } from "../packages/daemon/src/lib/delivery/message-delivery.js";
 import { publish as publishActivity } from "../packages/daemon/src/lib/events/activity-events.js";
+import {
+  createConversation,
+  deleteConversation,
+  getMessages,
+} from "../packages/daemon/src/lib/events/conversations.js";
 import { type MindEvent, subscribe } from "../packages/daemon/src/lib/events/mind-events.js";
 import { addMind, removeMind } from "../packages/daemon/src/lib/mind/registry.js";
 import {
@@ -21,6 +28,7 @@ import {
   messages,
   mindHistory,
   turns,
+  users,
 } from "../packages/daemon/src/lib/schema.js";
 
 describe("extractTextContent", () => {
@@ -505,5 +513,45 @@ describe("linkToolResultToTurn", () => {
     const db = await getDb();
     const row = await db.select().from(mindHistory).where(eq(mindHistory.id, outId!)).get();
     assert.equal(row!.turn_id, LINK_TURN_ID, "existing turn_id must be preserved");
+  });
+});
+
+describe("deliverSproutedNotice", () => {
+  const SPROUT_MIND = "sprout-notice-mind";
+
+  afterEach(async () => {
+    const db = await getDb();
+    await db.delete(mindHistory).where(eq(mindHistory.mind, SPROUT_MIND));
+    await db.delete(users).where(eq(users.username, SPROUT_MIND));
+  });
+
+  it("records the notice in mind history exactly once regardless of conversation count", async () => {
+    const mindUser = await getOrCreateMindUser(SPROUT_MIND);
+    // The mind participates in two active conversations — the source of the earlier
+    // double-injection bug (recordInbound was called once per conversation).
+    const convA = await createConversation({ participantIds: [mindUser.id] });
+    const convB = await createConversation({ participantIds: [mindUser.id] });
+
+    await deliverSproutedNotice(SPROUT_MIND);
+
+    const db = await getDb();
+    const historyRows = await db
+      .select()
+      .from(mindHistory)
+      .where(and(eq(mindHistory.mind, SPROUT_MIND), eq(mindHistory.type, "inbound")));
+    assert.equal(historyRows.length, 1, "sprouted notice must appear in history exactly once");
+    assert.equal(historyRows[0].content, "[seed has sprouted]");
+
+    // The notice still fans out to each conversation.
+    for (const conv of [convA, convB]) {
+      const msgs = await getMessages(conv.id);
+      const sprouted = msgs.filter(
+        (m) => (m.content[0] as { text?: string })?.text === "[seed has sprouted]",
+      );
+      assert.equal(sprouted.length, 1, "each conversation gets the notice once");
+    }
+
+    await deleteConversation(convA.id);
+    await deleteConversation(convB.id);
   });
 });
