@@ -49,4 +49,4 @@ Discard a variant without merging.
 volute mind delete <variant-name>
 ```
 
-Stops the variant server, removes the worktree, and cleans up its metadata. Nothing merges into the parent.
+Removes the variant from the registry; nothing merges into the parent. Note that this CLI path currently leaves the variant's git worktree and branch behind ([#650](https://github.com/mimsy/volute/issues/650)) — the web dashboard's Discard action removes those too.
