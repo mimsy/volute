@@ -230,6 +230,21 @@ describe("web minds routes", () => {
     }
   });
 
+  it("PUT /api/system/max-minds — rejects non-positive and non-integer caps (400)", async () => {
+    // The Zod schema is the real trust boundary: a cap of 0 would silently block
+    // ALL mind creation, so 0/-1/1.5 must never persist.
+    const cookie = await setupAuth();
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
+    for (const bad of [0, -1, 1.5]) {
+      const res = await app.request("http://localhost/api/system/max-minds", {
+        method: "PUT",
+        headers: { ...postHeaders(cookie), "Content-Type": "application/json" },
+        body: JSON.stringify({ maxMinds: bad }),
+      });
+      assert.equal(res.status, 400, `maxMinds: ${bad} should be rejected`);
+    }
+  });
+
   it("PUT /api/system/max-minds — non-admin gets 403", async () => {
     await setupAuth();
     const user2 = await createUser("regular-user", "pass");
@@ -244,6 +259,21 @@ describe("web minds routes", () => {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({ maxMinds: 5 }),
+    });
+    assert.equal(res.status, 403);
+    await deleteSession(cookie2);
+  });
+
+  it("GET /api/system/max-minds — non-admin gets 403", async () => {
+    // requireAdmin guards GET too, but authz-coverage.test.ts only protects
+    // /:name routes, so exercise this literal route directly.
+    await setupAuth();
+    const user2 = await createUser("regular-user2", "pass");
+    await approveUser(user2.id);
+    const cookie2 = await createSession(user2.id);
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
+    const res = await app.request("http://localhost/api/system/max-minds", {
+      headers: { Cookie: `volute_session=${cookie2}` },
     });
     assert.equal(res.status, 403);
     await deleteSession(cookie2);
