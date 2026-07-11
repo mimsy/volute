@@ -11,7 +11,7 @@ import {
   setRoutesChangeListener,
 } from "../packages/daemon/src/lib/delivery/delivery-router.js";
 import { addMind, removeMind } from "../packages/daemon/src/lib/mind/registry.js";
-import { channelGates, deliveryQueue } from "../packages/daemon/src/lib/schema.js";
+import { channelGates, deliveryQueue, mindHistory } from "../packages/daemon/src/lib/schema.js";
 
 // --- Helpers ---
 
@@ -58,10 +58,14 @@ describe("gated-channel release (#537)", () => {
   let manager: DeliveryManager | undefined;
   let cleanup: string[] = [];
 
-  afterEach(() => {
+  afterEach(async () => {
     manager?.dispose();
     manager = undefined;
-    for (const n of cleanup) removeMind(n);
+    const db = await getDb();
+    for (const n of cleanup) {
+      await db.delete(mindHistory).where(eq(mindHistory.mind, n));
+      removeMind(n);
+    }
     cleanup = [];
     clearConfigCache();
   });
@@ -188,6 +192,36 @@ describe("gated-channel release (#537)", () => {
       assert.equal(row.session, "discord-inbox", "session rewritten to the current route");
     });
 
+    it("records a real inbound history row only when a gated message is released (#420)", async () => {
+      const name = createMind({ rules: [], default: "main" });
+      cleanup.push(name);
+      const m = makeManager();
+      manager = m.manager;
+
+      await gate(manager, name, "discord:general", "hello there");
+
+      const db = await getDb();
+      const before = await db
+        .select()
+        .from(mindHistory)
+        .where(and(eq(mindHistory.mind, name), eq(mindHistory.type, "inbound")));
+      assert.equal(before.length, 0, "a gated message writes no inbound history row");
+
+      writeRoutes(name, {
+        rules: [{ channel: "discord:*", session: "inbox" }],
+        default: "main",
+      });
+      await manager.releaseGated(name);
+
+      const after = await db
+        .select()
+        .from(mindHistory)
+        .where(and(eq(mindHistory.mind, name), eq(mindHistory.type, "inbound")));
+      assert.equal(after.length, 1, "the released message is recorded as inbound exactly once");
+      assert.equal(after[0].channel, "discord:general");
+      assert.equal(after[0].content, "hello there");
+    });
+
     it("expands a $new route to a generated session on release, not the literal '$new'", async () => {
       const name = createMind({ rules: [], default: "main" });
       cleanup.push(name);
@@ -245,6 +279,15 @@ describe("gated-channel release (#537)", () => {
       assert.equal(summaries.length, 1, "exactly one summary, not a flood");
       assert.ok(summaries[0].text.includes("discord:general"));
       assert.ok(summaries[0].text.includes("15 earlier"));
+
+      // Only the promoted (delivered) rows become inbound history — the archived 15 stay
+      // inert and are never claimed as "received" (#420).
+      const db = await getDb();
+      const inbound = await db
+        .select()
+        .from(mindHistory)
+        .where(and(eq(mindHistory.mind, name), eq(mindHistory.type, "inbound")));
+      assert.equal(inbound.length, 10, "only the 10 delivered messages are recorded as inbound");
     });
 
     it("does not truncate or summarize when the backlog is within the limit", async () => {

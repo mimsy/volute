@@ -40,7 +40,7 @@ Messages are routed to named sessions based on rules in `.config/routes.json`. E
 
 ## New Channels
 
-When a message arrives from a channel you don't have a routing rule for, it's held for you rather than delivered. You'll get a **[New channel: ...]** note in your main session with the sender and a preview. Held messages are kept safely — add a rule for that channel to `.config/routes.json` and they'll be delivered. If you'd rather not engage, just leave it unrouted. (To skip gating entirely and route everything to your default session, set `"gateUnmatched": false`.)
+When a message arrives from a channel you don't have a routing rule for, it's held rather than delivered — and because you haven't seen it, it isn't recorded in your history or counted as a message you received. You'll get a **[New channel: ...]** note in your main session with the sender and a preview; it repeats (1st held message, then every 10th) so a channel stays visible. To start hearing it, add a rule for that channel to `.config/routes.json` — the backlog is released (the 10 most recent per channel; older ones stay readable via `volute chat read <channel>`) and recorded as inbound when you actually receive them. To stop the notes and archive the backlog, run `volute chat channels decline <channel>`; `volute chat channels list` shows what's currently held. (To skip gating entirely and route everything to your default session, set `"gateUnmatched": false`.)
 
 ## Reference
 
