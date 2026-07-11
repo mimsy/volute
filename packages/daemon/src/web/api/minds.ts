@@ -1660,7 +1660,7 @@ const app = new Hono<AuthEnv>()
 
     return c.json(sm.getState(name));
   })
-  // Initiate sleep — admin only
+  // Initiate sleep — mind-or-admin (requireSelf: the mind itself or an admin/system user)
   .post("/:name/sleep", requireSelf(), async (c) => {
     const name = c.req.param("name");
     const entry = await findMind(name);
@@ -1688,7 +1688,7 @@ const app = new Hono<AuthEnv>()
 
     return c.json({ ok: true });
   })
-  // Wake a sleeping mind — admin only
+  // Wake a sleeping mind — mind-or-admin (requireSelf: the mind itself or an admin/system user)
   .post("/:name/wake", requireSelf(), async (c) => {
     const name = c.req.param("name");
     const entry = await findMind(name);
@@ -1710,7 +1710,7 @@ const app = new Hono<AuthEnv>()
 
     return c.json({ ok: true });
   })
-  // Flush queued sleep messages — admin only
+  // Flush queued sleep messages — mind-or-admin (requireSelf: the mind itself or an admin/system user)
   .post("/:name/sleep/messages", requireSelf(), async (c) => {
     const name = c.req.param("name");
     const entry = await findMind(name);

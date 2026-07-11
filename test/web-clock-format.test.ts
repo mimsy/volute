@@ -1,6 +1,32 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { messagesToText, textToMessages } from "../packages/web/src/ui/lib/clock-format.js";
+import {
+  formatCron,
+  messagesToText,
+  textToMessages,
+} from "../packages/web/src/ui/lib/clock-format.js";
+
+describe("formatCron", () => {
+  it("renders interval and time-of-day crons", () => {
+    assert.equal(formatCron("*/5 * * * *"), "every 5 minutes");
+    assert.equal(formatCron("0 */2 * * *"), "every 2 hours");
+    assert.equal(formatCron("0 9 * * *"), "daily at 9am");
+    assert.equal(formatCron("30 14 * * 1"), "Mondays at 2:30pm");
+  });
+
+  it("appends the timezone label only to time-of-day phrases", () => {
+    // Wall-clock crons are daemon-local — the label disambiguates them.
+    assert.equal(formatCron("0 9 * * *", "EST"), "daily at 9am EST");
+    assert.equal(formatCron("30 14 * * 1", "EST"), "Mondays at 2:30pm EST");
+    // The label goes once after the joined time list, not per time.
+    assert.equal(formatCron("0 9,17 * * *", "EST"), "daily at 9am, 5pm EST");
+    // ...and after the day phrase, not before it.
+    assert.equal(formatCron("0 9 * * 1,2,3,4,5", "EST"), "weekdays at 9am EST");
+    // Interval crons have no time-of-day, so no label is added.
+    assert.equal(formatCron("*/5 * * * *", "EST"), "every 5 minutes");
+    assert.equal(formatCron("0 */2 * * *", "EST"), "every 2 hours");
+  });
+});
 
 describe("schedule message textarea helpers", () => {
   it("messagesToText joins a pool and falls back to message", () => {

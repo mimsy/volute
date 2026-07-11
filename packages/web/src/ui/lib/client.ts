@@ -804,6 +804,8 @@ export interface ClockStatus {
     willQueue?: boolean;
   }[];
   previous: { id: string; at: string }[];
+  /** Daemon host IANA timezone — cron wall times are interpreted in it. */
+  timezone: string | null;
 }
 
 export function fetchClockStatus(name: string): Promise<ClockStatus> {

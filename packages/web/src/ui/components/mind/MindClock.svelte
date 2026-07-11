@@ -2,7 +2,6 @@
 import { Icon } from "@volute/ui";
 import { type ClockStatus, fetchClockStatus } from "../../lib/client";
 import { formatCron, formatRelativeTime } from "../../lib/clock-format";
-import { activeMinds } from "../../lib/stores.svelte";
 
 type IconKind = "heartbeat" | "dream" | "sleep" | "clock";
 
@@ -76,6 +75,23 @@ function formatAction(s: {
   return lines.join("\n");
 }
 
+// Short label for the daemon timezone (e.g. "EST"), appended to cron wall times
+// so a viewer in another timezone reads them as daemon-local. Empty when the
+// daemon TZ matches the viewer's, since no disambiguation is needed then.
+let tzLabel = $derived.by(() => {
+  const tz = clock?.timezone;
+  if (!tz || tz === Intl.DateTimeFormat().resolvedOptions().timeZone) return undefined;
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: tz,
+      timeZoneName: "short",
+    }).formatToParts(new Date());
+    return parts.find((p) => p.type === "timeZoneName")?.value;
+  } catch {
+    return undefined;
+  }
+});
+
 function formatSleepTime(iso: string): string {
   try {
     return new Date(iso).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
@@ -122,7 +138,7 @@ let rows = $derived.by(() => {
       id: "sleep",
       icon: "sleep",
       color: scheduleColor("sleep"),
-      times: `${formatCron(sc.sleep)} \u2192 ${formatCron(sc.wake)}`,
+      times: `${formatCron(sc.sleep, tzLabel)} \u2192 ${formatCron(sc.wake, tzLabel)}`,
       next: nextSleep ? formatRelativeTime(nextSleep) : "",
       disabled: false,
       tooltip: "",
@@ -132,7 +148,7 @@ let rows = $derived.by(() => {
   // Regular schedules
   for (const s of clock.schedules) {
     let times = "";
-    if (s.cron) times = formatCron(s.cron);
+    if (s.cron) times = formatCron(s.cron, tzLabel);
     else if (s.fireAt) times = formatSleepTime(s.fireAt);
     const nextAt = upcomingMap.get(s.id);
     result.push({
@@ -170,18 +186,6 @@ let currentItem = $derived.by((): SummaryItem | null => {
       color: scheduleColor("sleep"),
       detail: effectiveWake ? `wake ${formatRelativeTime(effectiveWake)}` : "now",
     };
-  }
-  if (activeMinds.has(name) && clock.previous?.length > 0) {
-    const prev = clock.previous[0];
-    const elapsed = Date.now() - new Date(prev.at).getTime();
-    if (elapsed < 30 * 60_000) {
-      return {
-        icon: scheduleIcon(prev.id),
-        label: prev.id,
-        color: scheduleColor(prev.id),
-        detail: "active now",
-      };
-    }
   }
   if (clock.previous?.length > 0) {
     const prev = clock.previous[0];

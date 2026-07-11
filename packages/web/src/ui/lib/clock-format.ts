@@ -25,7 +25,12 @@ export function formatRelativeTime(iso: string): string {
   }
 }
 
-export function formatCron(cron: string): string {
+/**
+ * Render a cron expression as a human phrase. Cron wall times are interpreted in
+ * the daemon host's timezone; pass `tz` (a short label like "EST") to append it
+ * to time-of-day phrases so a viewer in another timezone reads them correctly.
+ */
+export function formatCron(cron: string, tz?: string): string {
   const parts = cron.split(" ");
   if (parts.length < 5) return cron;
   const [min, hour, dom, mon, dow] = parts;
@@ -43,8 +48,9 @@ export function formatCron(cron: string): string {
     const m = +min;
     const timeStr =
       hours.length === 1 ? fmtTime(hours[0], m) : hours.map((h) => fmtTime(h, m)).join(", ");
-    if (dow === "*") return `daily at ${timeStr}`;
-    return `${formatDays(dow)} at ${timeStr}`;
+    const suffix = tz ? ` ${tz}` : "";
+    if (dow === "*") return `daily at ${timeStr}${suffix}`;
+    return `${formatDays(dow)} at ${timeStr}${suffix}`;
   }
   return cron;
 }
