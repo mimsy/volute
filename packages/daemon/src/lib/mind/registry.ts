@@ -42,6 +42,8 @@ export type MindEntry = {
   parent?: string;
   dir?: string;
   branch?: string;
+  /** Why a variant was split off — set at split time, orients the variant and the UI. */
+  purpose?: string;
   mindType: MindType;
   createdBy?: string;
 };
@@ -95,6 +97,7 @@ type RawMindRow = {
   dir: string | null;
   branch: string | null;
   stage: string | null;
+  purpose: string | null;
   template: string | null;
   template_hash: string | null;
   running: number;
@@ -115,6 +118,7 @@ function rowToEntry(row: RawMindRow): MindEntry {
     parent: row.parent ?? undefined,
     dir: row.dir ?? undefined,
     branch: row.branch ?? undefined,
+    purpose: row.purpose ?? undefined,
     mindType: (row.mind_type as MindType) ?? "mind",
     createdBy: row.created_by ?? undefined,
   };
@@ -225,14 +229,21 @@ export async function addVariant(
   port: number,
   dir: string,
   branch: string,
+  purpose?: string,
 ) {
   const err = validateMindName(name);
   if (err) throw new Error(err);
   const db = await getDb();
-  await db.insert(minds).values({ name, port, parent, dir, branch }).onConflictDoUpdate({
-    target: minds.name,
-    set: { port, parent, dir, branch },
-  });
+  // On name conflict every field is overwritten, so an omitted purpose resets it to
+  // null. The split route pre-checks name uniqueness (409), so in practice this update
+  // path is only hit re-registering the same variant, where clobbering is intended.
+  await db
+    .insert(minds)
+    .values({ name, port, parent, dir, branch, purpose: purpose ?? null })
+    .onConflictDoUpdate({
+      target: minds.name,
+      set: { port, parent, dir, branch, purpose: purpose ?? null },
+    });
 }
 
 export async function removeMind(name: string) {
