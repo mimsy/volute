@@ -574,6 +574,15 @@ describe("daemon e2e", { timeout: 420000 }, () => {
       'export const marker = "e2e";\n',
     );
 
+    // Both minds diverge their living memory. On a plain merge these conflict;
+    // the join must instead keep the parent's copy and narrate the variant's
+    // (#440). The endpoint auto-commits both worktrees before merging.
+    writeFileSync(resolve(parentDir, "home", "MEMORY.md"), "parent's own memory\n");
+    writeFileSync(
+      resolve(created.variant.path, "home", "MEMORY.md"),
+      "variant's divergent memory\n",
+    );
+
     // Join: merge the variant back. skipVerify avoids booting a verification server.
     const mergeRes = await daemonRequest(`/api/minds/${TEST_MIND}/variants/e2e-var/merge`, {
       method: "POST",
@@ -589,6 +598,14 @@ describe("daemon e2e", { timeout: 420000 }, () => {
     assert.ok(
       existsSync(resolve(parentDir, "src", "e2e-merge-marker.ts")),
       "merged file should exist in the parent src/",
+    );
+
+    // The parent kept its own MEMORY.md; the variant's divergent memory was not
+    // spliced in (it rides along as narrated context instead).
+    assert.equal(
+      readFileSync(resolve(parentDir, "home", "MEMORY.md"), "utf-8"),
+      "parent's own memory\n",
+      "parent should keep its own MEMORY.md after the join",
     );
 
     // The variant is cleaned up: gone from registry and disk.
@@ -627,13 +644,16 @@ describe("daemon e2e", { timeout: 420000 }, () => {
       );
     };
 
-    // Conflicting edits to the same tracked file in both parent and variant.
-    const conflictFile = "home/MEMORY.md";
-    gitCommit(parentDir, conflictFile, "parent version of memory\n", "parent conflict edit");
+    // Conflicting edits to the same tracked, non-excluded file in both parent and
+    // variant. SOUL.md is identity but not memory/journal, so #440 does NOT
+    // exclude it — a real conflict here must still surface (unlike MEMORY.md,
+    // which now merges cleanly and is covered by the happy-path test above).
+    const conflictFile = "home/SOUL.md";
+    gitCommit(parentDir, conflictFile, "parent version of soul\n", "parent conflict edit");
     gitCommit(
       created.variant.path,
       conflictFile,
-      "variant version of memory\n",
+      "variant version of soul\n",
       "variant conflict edit",
     );
 
@@ -670,8 +690,8 @@ describe("daemon e2e", { timeout: 420000 }, () => {
 
     // The failed join must not leave root-owned files in the parent dir. Under
     // real user isolation the merge git ops (run as the daemon) would otherwise
-    // orphan home/MEMORY.md as root:root, locking the parent mind out of its own
-    // identity files. (This harness runs the daemon as the test user, so this is
+    // orphan the parent's identity files as root:root, locking the parent mind
+    // out of its own home dir. (This harness runs the daemon as the test user, so this is
     // a regression tripwire; the ownership-restore path itself is unit-tested in
     // variant-join-isolation.test.ts.)
     if (process.getuid && process.getuid() !== 0) {
