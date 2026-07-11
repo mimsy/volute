@@ -53,8 +53,18 @@ export async function daemonRestart(context?: {
         `[volute] daemonRestart failed: ${res.status} ${await res.text().catch(() => "")}`,
       );
     }
-  } catch {
-    // Daemon may kill us before response arrives — expected
+  } catch (err) {
+    // A successful restart usually rejects here — the daemon kills us before the
+    // response arrives — so this is expected on the happy path. It's only worth
+    // surfacing when a restart *didn't* happen (e.g. the daemon is down / refuses
+    // the connection), which leaves the mind stuck on its old identity. Gate it on
+    // VOLUTE_DEBUG so normal restarts stay quiet but the failure is diagnosable.
+    if (process.env.VOLUTE_DEBUG === "1") {
+      console.error(
+        "[volute] daemonRestart request errored (expected if the daemon killed us):",
+        err,
+      );
+    }
   }
 }
 

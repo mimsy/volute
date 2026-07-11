@@ -1399,11 +1399,13 @@ const app = new Hono<AuthEnv>()
     if (!entry) return c.json({ error: "Mind not found" }, 404);
 
     const targetPort = entry.port;
+    // Variants and spirits store their project dir in the DB (worktree /
+    // ~/.volute/system/spirit); only plain minds live at mindDir(name).
+    const projectDir = entry.dir ?? mindDir(name);
     if (entry.parent) {
       if (!entry.dir) return c.json({ error: `Variant ${name} has no directory` }, 404);
-    } else {
-      const dir = mindDir(name);
-      if (!existsSync(dir)) return c.json({ error: "Mind directory missing" }, 404);
+    } else if (!existsSync(projectDir)) {
+      return c.json({ error: "Mind directory missing" }, 404);
     }
 
     if (getMindManager().isRunning(name)) {
