@@ -22,6 +22,7 @@ type Captured = {
   content?: string;
   channel?: string;
   messageId?: string;
+  metadata?: Record<string, unknown>;
 };
 
 let composedDir: string;
@@ -180,5 +181,49 @@ describe("pi template event-handler agent_end errors", () => {
 
     await waitFor(() => captured.some((e) => e.type === "done"));
     assert.equal(captured.filter((e) => e.type === "error").length, 0);
+  });
+
+  // The error loop intentionally has no role gate (unlike the usage-summing loop):
+  // a provider error can arrive on a non-assistant message and must still surface.
+  // This pins that behavior so a later "consistency" refactor adding a role check fails.
+  it("surfaces an error regardless of message role", async () => {
+    captured = [];
+    const session = makeSession("main");
+    const handler = createEventHandler(session as never, {
+      cwd: resolvePath(composedDir, "home"),
+      broadcast: () => {},
+    });
+
+    handler({ type: "agent_start" } as never);
+    handler({
+      type: "agent_end",
+      messages: [{ errorMessage: "provider exploded" }],
+    } as never);
+
+    await waitFor(() => captured.some((e) => e.type === "done"));
+    const errors = captured.filter((e) => e.type === "error");
+    assert.equal(errors.length, 1, "error surfaces even without role: assistant");
+    assert.equal(errors[0].content, "provider exploded");
+  });
+
+  it("still reports token usage on an errored turn", async () => {
+    captured = [];
+    const session = makeSession("main");
+    const handler = createEventHandler(session as never, {
+      cwd: resolvePath(composedDir, "home"),
+      broadcast: () => {},
+    });
+
+    handler({ type: "agent_start" } as never);
+    handler({
+      type: "agent_end",
+      messages: [{ role: "assistant", errorMessage: "boom", usage: { input: 100, output: 20 } }],
+    } as never);
+
+    await waitFor(() => captured.some((e) => e.type === "done"));
+    assert.equal(captured.filter((e) => e.type === "error").length, 1, "error still emitted");
+    const usage = captured.find((e) => e.type === "usage");
+    assert.equal(usage?.metadata?.input_tokens, 100, "usage still reported alongside the error");
+    assert.equal(usage?.metadata?.output_tokens, 20);
   });
 });

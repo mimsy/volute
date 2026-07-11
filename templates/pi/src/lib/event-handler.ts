@@ -137,22 +137,28 @@ export function createEventHandler(session: EventSession, options: EventHandlerO
 
       if (event.type === "agent_end") {
         flushBuffers();
-        if (session.currentMessageId) {
-          session.messageChannels.delete(session.currentMessageId);
+        // Capture the turn's message context before clearing it: the ordered error/done
+        // emits below run asynchronously, but currentMessageId must be reset synchronously
+        // so the next turn shifts a fresh id (see the currentMessageId guard above).
+        const messageId = session.currentMessageId;
+        if (messageId) {
+          session.messageChannels.delete(messageId);
         }
+        const channel = messageId ? session.messageChannels.get(messageId)?.channel : undefined;
         log("mind", `session "${session.name}": turn done`);
-        // Surface any agent-level errors (e.g. a provider 401 reported inside agent_end).
-        // Warn-logging alone left the failure invisible at every operator surface (#619):
-        // emit a turn_error to the daemon too — mirroring the dispatch-rejection path in
+        // Collect any agent-level errors (e.g. a provider 401 reported inside agent_end).
+        // Warn-logging alone left the failure invisible at every operator surface (#619);
+        // we emit a turn_error to the daemon too — mirroring the dispatch-rejection path in
         // agent.ts — so classify() tags it and chat status + lastError surface it. Dedupe
         // identical messages so a turn with several failed messages records one notice.
+        const errorMessages: string[] = [];
         if (event.messages) {
           const seen = new Set<string>();
           for (const msg of event.messages as AgentEndMessage[]) {
             if (msg.errorMessage && !seen.has(msg.errorMessage)) {
               seen.add(msg.errorMessage);
               warn("mind", `session "${session.name}": agent error: ${msg.errorMessage}`);
-              emit(session, { type: "error", content: msg.errorMessage });
+              errorMessages.push(msg.errorMessage);
             }
           }
         }
@@ -182,14 +188,42 @@ export function createEventHandler(session: EventSession, options: EventHandlerO
           }
         }
         options.broadcast({ type: "done" });
-        emit(session, { type: "done" });
         session.currentMessageId = undefined;
+        // Emit any errors BEFORE done, awaiting each in turn. daemonEmit is fire-and-forget,
+        // so without ordered awaits the daemon could process `done` before `error`:
+        // markErrored would land after done consumed the errored flag, leaking it into the
+        // next turn (whose clean done then wrongly skips clearing delivered notices). This
+        // mirrors agent.ts's awaited error-then-done ordering. Message context is captured
+        // above rather than read from the (now-cleared) session.
+        void (async () => {
+          for (const content of errorMessages) {
+            const ev = filterEvent(preset, {
+              type: "error",
+              session: session.name,
+              channel,
+              messageId,
+              content,
+            });
+            if (ev) await daemonEmit(ev);
+          }
+          const doneEv = filterEvent(preset, {
+            type: "done",
+            session: session.name,
+            channel,
+            messageId,
+          });
+          if (doneEv) await daemonEmit(doneEv);
+        })().catch((err) =>
+          warn("mind", `session "${session.name}": error/done emit failed:`, err),
+        );
         flushFileChanges(options.cwd)
           .then(() => options.onTurnEnd?.())
           .catch((err) => log("mind", `session "${session.name}": flush/turn-end error:`, err));
       }
     } catch (err) {
-      log("mind", `session "${session.name}": event handler error (${event?.type}):`, err);
+      // warn-level: this block now drives turn-completion (error/done emission), so a throw
+      // here can hang a turn — it must not be buried at debug level.
+      warn("mind", `session "${session.name}": event handler error (${event?.type}):`, err);
     }
   };
 }
