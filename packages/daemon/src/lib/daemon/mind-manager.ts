@@ -112,6 +112,35 @@ function mindPidPath(name: string): string {
   return resolve(stateDir(name), "mind.pid");
 }
 
+/**
+ * Build the system message delivered to a mind for a pending context: the merge/split/
+ * sprout/upgrade/restart notice plus any changes/justification/memory the caller attached.
+ * For a split, the variant's purpose (when set) is appended so it learns why it exists.
+ * Pure and exported so the message shape is testable without spawning a mind.
+ */
+export async function buildPendingContextMessage(
+  name: string,
+  context: Record<string, unknown>,
+): Promise<string> {
+  const parts: string[] = [];
+  if (context.type === "merge" || context.type === "merged") {
+    parts.push(await getPrompt("merge_message", { name: String(context.name ?? "") }));
+  } else if (context.type === "split") {
+    parts.push(await getPrompt("split_message", { name, parent: String(context.parent ?? "") }));
+    if (context.purpose) parts.push(`Why you were split off: ${String(context.purpose)}`);
+  } else if (context.type === "sprouted") {
+    parts.push(await getPrompt("sprout_message"));
+  } else if (context.type === "upgraded") {
+    parts.push(await getPrompt("upgrade_message"));
+  } else {
+    parts.push(await getPrompt("restart_message"));
+  }
+  if (context.summary) parts.push(`Changes: ${context.summary}`);
+  if (context.justification) parts.push(`Why: ${context.justification}`);
+  if (context.memory) parts.push(`Context: ${context.memory}`);
+  return parts.join("\n");
+}
+
 export class MindManager {
   private minds = new Map<string, TrackedMind>();
   private stopping = new Set<string>();
@@ -548,23 +577,7 @@ export class MindManager {
 
     this.pendingContext.delete(name);
 
-    const parts: string[] = [];
-    if (context.type === "merge" || context.type === "merged") {
-      parts.push(await getPrompt("merge_message", { name: String(context.name ?? "") }));
-    } else if (context.type === "split") {
-      parts.push(await getPrompt("split_message", { name, parent: String(context.parent ?? "") }));
-    } else if (context.type === "sprouted") {
-      parts.push(await getPrompt("sprout_message"));
-    } else if (context.type === "upgraded") {
-      parts.push(await getPrompt("upgrade_message"));
-    } else {
-      parts.push(await getPrompt("restart_message"));
-    }
-    if (context.summary) parts.push(`Changes: ${context.summary}`);
-    if (context.justification) parts.push(`Why: ${context.justification}`);
-    if (context.memory) parts.push(`Context: ${context.memory}`);
-
-    const content = parts.join("\n");
+    const content = await buildPendingContextMessage(name, context);
 
     // Persist to system DM conversation and deliver directly to mind
     let conversationId: string | undefined;

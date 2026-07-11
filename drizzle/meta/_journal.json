@@ -92,6 +92,13 @@
       "when": 1775700000000,
       "tag": "0012_channel_gates",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "6",
+      "when": 1775800000000,
+      "tag": "0013_variant_purpose",
+      "breakpoints": true
     }
   ]
 }

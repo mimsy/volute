@@ -1,7 +1,10 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { Hono } from "hono";
+import { getOrCreateMindUser } from "../../lib/auth.js";
+import { sendSystemMessage } from "../../lib/chat/system-chat.js";
 import { getMindManager } from "../../lib/daemon/mind-manager.js";
+import { createConversation, findDMConversation } from "../../lib/events/conversations.js";
 import { chownMindDir, isIsolationEnabled, wrapForIsolation } from "../../lib/mind/isolation.js";
 import {
   addVariant,
@@ -19,6 +22,35 @@ import { exec, gitExec } from "../../lib/util/exec.js";
 import { checkHealth } from "../../lib/util/health.js";
 import log from "../../lib/util/logger.js";
 import { type AuthEnv, requireSelf } from "../middleware/auth.js";
+
+/**
+ * Establish the parent↔variant relationship as a conversation, not just plumbing:
+ * open a DM between the two mind identities so they have a thread to talk in while
+ * the variant lives, and notify the running parent that it now has a variant to
+ * check in on (with the purpose, if one was given). The variant learns why it
+ * exists from its own split birth-context message.
+ */
+export async function establishVariantDialogue(
+  parent: string,
+  variant: string,
+  purpose?: string,
+): Promise<void> {
+  const parentUser = await getOrCreateMindUser(parent);
+  const variantUser = await getOrCreateMindUser(variant);
+
+  const existing = await findDMConversation([parentUser.id, variantUser.id]);
+  if (!existing) {
+    await createConversation({ participantIds: [parentUser.id, variantUser.id] });
+  }
+
+  const purposeLine = purpose ? ` Its purpose: ${purpose}.` : "";
+  await sendSystemMessage(
+    parent,
+    `You've split off a variant, ${variant} — a parallel version of you exploring on its own.${purposeLine} ` +
+      `Reach it at @${variant} to check in on how the experiment is going, and merge its work back with ` +
+      `\`volute mind join ${variant}\` when you're ready.`,
+  );
+}
 
 const app = new Hono<AuthEnv>()
   .get("/:name/variants", async (c) => {
@@ -63,7 +95,7 @@ const app = new Hono<AuthEnv>()
         403,
       );
 
-    let body: { name: string; soul?: string; port?: number; noStart?: boolean };
+    let body: { name: string; soul?: string; port?: number; noStart?: boolean; purpose?: string };
     try {
       body = await c.req.json();
     } catch {
@@ -72,6 +104,8 @@ const app = new Hono<AuthEnv>()
 
     const variantName = body.name;
     if (!variantName) return c.json({ error: "Variant name required" }, 400);
+
+    const purpose = body.purpose?.trim() || undefined;
 
     const err = validateBranchName(variantName);
     if (err) return c.json({ error: err }, 400);
@@ -169,19 +203,24 @@ const app = new Hono<AuthEnv>()
 
     // Register variant in DB
     try {
-      await addVariant(variantName, mindName, variantPort, variantDir, variantName);
+      await addVariant(variantName, mindName, variantPort, variantDir, variantName, purpose);
     } catch (e: unknown) {
       await rollbackSplit();
       const msg = e instanceof Error ? e.message : String(e);
       return c.json({ error: `Failed to register variant: ${msg}` }, 500);
     }
 
-    // Start variant via mind manager unless noStart. The pending context becomes the
-    // variant's first message — orientation about who it is and where it came from.
+    // Queue the variant's birth context now, independent of --no-start: it's the
+    // variant's first message — who it is, where it came from, and why it was split
+    // off — and deliverPendingContext fires on whatever first start happens, so a
+    // variant started manually later still gets oriented. (pendingContext is an
+    // in-memory map, so a daemon restart before that start drops this transient
+    // orientation — acceptable; the variant just starts without the birth message.)
+    const manager = getMindManager();
+    manager.setPendingContext(variantName, { type: "split", parent: mindName, purpose });
+
     if (!body.noStart) {
       try {
-        const manager = getMindManager();
-        manager.setPendingContext(variantName, { type: "split", parent: mindName });
         await manager.startMind(variantName);
       } catch (e: unknown) {
         await rollbackSplit();
@@ -190,9 +229,25 @@ const app = new Hono<AuthEnv>()
       }
     }
 
+    // The split has now cleared every rollback point. Establish the parent↔variant
+    // relationship as a conversation: open a DM the two can talk in during the
+    // variant's life, and tell the parent it has a variant to check in on. Placed
+    // after the last rollback so a failed split never strands a DM or a stale notice.
+    // Best-effort, but logged at error level — a silent failure means the dialogue
+    // this feature exists for never happens.
+    await establishVariantDialogue(mindName, variantName, purpose).catch((e: unknown) =>
+      log.error(`failed to establish variant dialogue for ${variantName}`, log.errorData(e)),
+    );
+
     return c.json({
       ok: true,
-      variant: { name: variantName, branch: variantName, path: variantDir, port: variantPort },
+      variant: {
+        name: variantName,
+        branch: variantName,
+        path: variantDir,
+        port: variantPort,
+        ...(purpose && { purpose }),
+      },
     });
   })
   // Merge variant — admin only
@@ -392,11 +447,15 @@ const app = new Hono<AuthEnv>()
 
       // Restart mind via mind manager with merge context
       const manager = getMindManager();
+      // Fall back to the purpose captured at split so the parent's merge message can
+      // recall why the variant existed even when no justification is passed at join.
+      // Normalize like the split path so an explicit "" (or whitespace) still falls back.
+      const justification = body.justification?.trim() || variantEntry.purpose;
       const context = {
         type: "merged",
         name: variantName,
         ...(body.summary && { summary: body.summary }),
-        ...(body.justification && { justification: body.justification }),
+        ...(justification && { justification }),
         ...(body.memory && { memory: body.memory }),
       };
 
