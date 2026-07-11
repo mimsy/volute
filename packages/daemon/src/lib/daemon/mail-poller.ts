@@ -271,23 +271,30 @@ export class MailPoller {
   }
 
   private async deliver(mind: string, email: Email): Promise<void> {
-    const entry = await findMind(mind);
-    if (!entry || !entry.running) {
-      mlog.warn(`skipping delivery to ${mind}: ${!entry ? "not found" : "not running"}`);
+    // Deliberate drop for a deleted mind only: no retry can ever succeed, so
+    // don't throw (which would pin the catch-up watermark forever). Do NOT
+    // pre-check `running` — a sleeping mind has running=false, and deliverMessage
+    // queues those for wake; skipping here would drop their mail.
+    if (!(await findMind(mind))) {
+      mlog.warn(`skipping delivery to ${mind}: mind not found`);
       return;
     }
 
     const text = formatEmailContent(email);
 
-    // Let delivery failures propagate: the catch-up path relies on them to retain
-    // its watermark, and the live path logs them at its call site.
-    await deliverMessage(mind, {
+    // deliverMessage never throws — it logs and returns false on failure, true
+    // when delivered/queued/skipped. Throw on false so catch-up retains its
+    // watermark and retries: a transiently-down mind must not lose mail.
+    const delivered = await deliverMessage(mind, {
       content: [{ type: "text", text }],
       channel: `mail:${email.from.address}`,
       sender: email.from.name || email.from.address,
       platform: "Email",
       isDM: true,
     });
+    if (!delivered) {
+      throw new Error(`delivery to ${mind} failed`);
+    }
     mlog.info(`delivered email from ${email.from.address} to ${mind}`);
   }
 }

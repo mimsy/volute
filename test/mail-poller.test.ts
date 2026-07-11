@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
+import { and, eq } from "drizzle-orm";
 import { formatEmailContent, MailPoller } from "../packages/daemon/src/lib/daemon/mail-poller.js";
+import { getDb } from "../packages/daemon/src/lib/db.js";
+import { addMind, removeMind, setMindRunning } from "../packages/daemon/src/lib/mind/registry.js";
+import { mindHistory } from "../packages/daemon/src/lib/schema.js";
 
 describe("MailPoller", () => {
   it("start and stop manage state", () => {
@@ -46,6 +50,39 @@ describe("MailPoller catch-up watermark", () => {
 
   function watermark(poller: MailPoller): string | null {
     return (poller as unknown as { disconnectedAt: string | null }).disconnectedAt;
+  }
+
+  // A 200 response carrying the given missed-email ids, so catch-up actually
+  // invokes deliver() for each one.
+  function emailsResponse(...ids: string[]): Response {
+    const emails = ids.map((id) => ({
+      mind: "m",
+      id,
+      from: { address: "a@b.c", name: null },
+      subject: null,
+      body: "hi",
+      html: null,
+      receivedAt: SINCE,
+    }));
+    return new Response(JSON.stringify({ emails }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  // Swap the instance's deliver() for a stub; catchUp calls this.deliver, so an
+  // instance property shadows the prototype method.
+  function stubDeliver(
+    poller: MailPoller,
+    fn: (mind: string, email: { id: string }) => Promise<void>,
+  ) {
+    (poller as unknown as { deliver: typeof fn }).deliver = fn;
+  }
+
+  function catchUpAndClear(poller: MailPoller, since: string): Promise<void> {
+    return (poller as unknown as { catchUpAndClear(s: string): Promise<void> }).catchUpAndClear(
+      since,
+    );
   }
 
   it("retains the watermark when the catch-up fetch throws", async () => {
@@ -98,6 +135,106 @@ describe("MailPoller catch-up watermark", () => {
       SINCE,
     );
     assert.equal(watermark(poller), SINCE, "a fresh gap must keep its watermark for retry");
+  });
+
+  it("delivers every missed email and clears the watermark on success", async () => {
+    globalThis.fetch = async () => emailsResponse("a", "b");
+    const poller = primedPoller();
+    const delivered: string[] = [];
+    stubDeliver(poller, async (_mind, email) => {
+      delivered.push(email.id);
+    });
+    await catchUpAndClear(poller, SINCE);
+    assert.deepEqual(delivered, ["a", "b"], "all missed emails must be delivered");
+    assert.equal(watermark(poller), null);
+  });
+
+  it("retains the watermark when a delivery throws mid-catch-up", async () => {
+    // This is the core loss-proofing guarantee: reintroducing a swallowed
+    // try/catch in deliver() (the original #423 bug) would break this test.
+    globalThis.fetch = async () => emailsResponse("a", "b");
+    const poller = primedPoller();
+    let attempts = 0;
+    stubDeliver(poller, async () => {
+      attempts++;
+      throw new Error("delivery boom");
+    });
+    await catchUpAndClear(poller, SINCE);
+    assert.equal(watermark(poller), SINCE, "a failed delivery must retain the gap");
+    assert.equal(attempts, 1, "catch-up must stop at the first failed delivery");
+  });
+
+  it("does not clear if a newer disconnect advanced the watermark during catch-up", async () => {
+    // Exercises the `disconnectedAt === since` clause of the clear-guard: the
+    // socket stays open, but a re-disconnect moved the watermark forward, so the
+    // fresh gap must not be cleared by the older catch-up.
+    const NEWER = "2020-01-02T00:00:00.000Z";
+    let poller!: MailPoller;
+    globalThis.fetch = async () => {
+      (poller as unknown as { disconnectedAt: string | null }).disconnectedAt = NEWER;
+      return emailsResponse();
+    };
+    poller = primedPoller();
+    await catchUpAndClear(poller, SINCE);
+    assert.equal(watermark(poller), NEWER, "the fresher gap's watermark must survive");
+  });
+});
+
+// These exercise the REAL deliver() (not a stub) so they pin the fix's premise:
+// deliverMessage NEVER throws — it returns false on failure — so deliver() must
+// convert that to a throw. No delivery manager is initialized in unit tests, so
+// deliverMessage's routeAndDeliver fails and returns false.
+describe("MailPoller.deliver — delivery-failure propagation", () => {
+  const MIND = "test-mailpoller-deliver";
+  const PORT = 41977;
+  const email = {
+    mind: MIND,
+    id: "e1",
+    from: { address: "sender@x.test", name: "Sender" },
+    subject: "hi",
+    body: "body",
+    html: null,
+    receivedAt: "2020-01-01T00:00:00.000Z",
+  };
+
+  afterEach(async () => {
+    const db = await getDb();
+    await db.delete(mindHistory).where(eq(mindHistory.mind, MIND));
+    await removeMind(MIND);
+  });
+
+  function deliver(mind: string): Promise<void> {
+    return (
+      new MailPoller() as unknown as { deliver(m: string, e: typeof email): Promise<void> }
+    ).deliver(mind, email);
+  }
+
+  it("throws when deliverMessage reports failure (Finding 1 — false is not success)", async () => {
+    await addMind(MIND, PORT);
+    await setMindRunning(MIND, true);
+    // Reintroducing a swallowed try/catch or ignoring the boolean would resolve
+    // here and let catch-up clear the watermark past undelivered mail.
+    await assert.rejects(deliver(MIND), /delivery to .* failed/);
+  });
+
+  it("does not pre-skip a mind with running=false (Finding 2 — sleeping minds queue)", async () => {
+    await addMind(MIND, PORT); // running defaults to false, as a sleeping mind is
+    // The old `!entry.running` pre-check returned before deliverMessage, dropping
+    // the mail and bypassing sleep-queueing. It must now reach deliverMessage,
+    // which records the inbound (and, for a truly sleeping mind, queues it).
+    await assert.rejects(deliver(MIND));
+    const db = await getDb();
+    const rows = await db
+      .select()
+      .from(mindHistory)
+      .where(and(eq(mindHistory.mind, MIND), eq(mindHistory.type, "inbound")));
+    assert.equal(rows.length, 1, "a running=false mind must not be skipped before deliverMessage");
+  });
+
+  it("deliberately drops (no throw) for a mind that no longer exists", async () => {
+    // Not-found = deleted mind: no retry can help, so don't throw (that would pin
+    // the watermark forever). Resolving without throwing is the assertion.
+    await deliver("no-such-mailpoller-mind");
   });
 });
 
