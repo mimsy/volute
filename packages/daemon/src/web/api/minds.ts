@@ -94,7 +94,12 @@ import {
   substitute,
 } from "../../lib/prompts.js";
 import { mindHistory, summaries, turns } from "../../lib/schema.js";
-import { getStandardSkillsWithExtensions, installSkill, SEED_SKILLS } from "../../lib/skills.js";
+import {
+  getStandardSkillsWithExtensions,
+  installSkill,
+  migrateSkillsToTemplate,
+  SEED_SKILLS,
+} from "../../lib/skills.js";
 import { convertSession } from "../../lib/template/convert-session.js";
 import {
   findOpenClawSession,
@@ -437,6 +442,10 @@ async function mergeUpgradeAndRestart(
   if (templateChanged) {
     try {
       applyTemplateHomeFiles(resolve(dir, "home"), template);
+      // Move installed skills into the new template's skills dir and regenerate
+      // their shims, so they aren't stranded (invisible + shims pointing at the
+      // old path) after the switch.
+      const migratedSkills = migrateSkillsToTemplate(dir, oldTemplate, template);
       await gitExec(["add", "home/"], { cwd: dir });
       try {
         await gitExec(["diff", "--cached", "--quiet"], { cwd: dir });
@@ -446,7 +455,11 @@ async function mergeUpgradeAndRestart(
         });
       }
       await chownMindDir(dir, mindName);
-      switchWarning = `Switched ${oldTemplate}→${template}: config reset to ${template} defaults, mechanics doc replaced, conversation starts fresh (sessions aren't portable across runtimes).`;
+      const skillNote =
+        migratedSkills.length > 0
+          ? ` Migrated skills to the ${template} skills dir: ${migratedSkills.join(", ")}.`
+          : "";
+      switchWarning = `Switched ${oldTemplate}→${template}: config reset to ${template} defaults, mechanics doc replaced, conversation starts fresh (sessions aren't portable across runtimes).${skillNote}`;
     } catch (err) {
       log.warn(`failed to swap template home files for ${mindName}`, log.errorData(err));
       return {
