@@ -346,7 +346,7 @@ export function createMind(options: {
             // Mind's turn after compaction warning is done — abort the stream to run /compact
             log("mind", `session "${session.name}": aborting stream for compaction`);
             streamAbort.abort(new CompactionAbort());
-          } else if (identityReload.needsReload()) {
+          } else if (identityReload.shouldRequestReload()) {
             options.onIdentityReload?.();
           }
         },

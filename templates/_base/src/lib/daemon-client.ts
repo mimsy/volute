@@ -38,13 +38,33 @@ export async function daemonRestart(context?: {
     return;
   }
   try {
-    await fetch(`http://127.0.0.1:${port}/api/minds/${encodeURIComponent(mind)}/restart`, {
-      method: "POST",
-      headers: headers(),
-      body: JSON.stringify({ context }),
-    });
-  } catch {
-    // Daemon may kill us before response arrives — expected
+    const res = await fetch(
+      `http://127.0.0.1:${port}/api/minds/${encodeURIComponent(mind)}/restart`,
+      {
+        method: "POST",
+        headers: headers(),
+        body: JSON.stringify({ context }),
+      },
+    );
+    // A successful restart usually kills us before this runs. If we get here with a
+    // non-ok status, the restart didn't happen — surface it instead of silently looping.
+    if (!res.ok) {
+      console.error(
+        `[volute] daemonRestart failed: ${res.status} ${await res.text().catch(() => "")}`,
+      );
+    }
+  } catch (err) {
+    // A successful restart usually rejects here — the daemon kills us before the
+    // response arrives — so this is expected on the happy path. It's only worth
+    // surfacing when a restart *didn't* happen (e.g. the daemon is down / refuses
+    // the connection), which leaves the mind stuck on its old identity. Gate it on
+    // VOLUTE_DEBUG so normal restarts stay quiet but the failure is diagnosable.
+    if (process.env.VOLUTE_DEBUG === "1") {
+      console.error(
+        "[volute] daemonRestart request errored (expected if the daemon killed us):",
+        err,
+      );
+    }
   }
 }
 
