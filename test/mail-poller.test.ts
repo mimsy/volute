@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { and, eq } from "drizzle-orm";
 import { formatEmailContent, MailPoller } from "../packages/daemon/src/lib/daemon/mail-poller.js";
 import { getDb } from "../packages/daemon/src/lib/db.js";
+import { clearConfigCache } from "../packages/daemon/src/lib/delivery/delivery-router.js";
 import { addMind, removeMind, setMindRunning } from "../packages/daemon/src/lib/mind/registry.js";
 import { mindHistory } from "../packages/daemon/src/lib/schema.js";
 
@@ -197,16 +200,35 @@ describe("MailPoller.deliver — delivery-failure propagation", () => {
     receivedAt: "2020-01-01T00:00:00.000Z",
   };
 
+  const configDir = () => resolve(process.env.VOLUTE_HOME!, "minds", MIND, "home/.config");
+
   afterEach(async () => {
     const db = await getDb();
     await db.delete(mindHistory).where(eq(mindHistory.mind, MIND));
     await removeMind(MIND);
+    rmSync(resolve(configDir(), "routes.json"), { force: true });
+    clearConfigCache();
   });
 
   function deliver(mind: string): Promise<void> {
     return (
       new MailPoller() as unknown as { deliver(m: string, e: typeof email): Promise<void> }
     ).deliver(mind, email);
+  }
+
+  // Give the fixture the DM route every real mind gets from the default template. Mail is
+  // delivered with `isDM: true`, so a real mind routes it (and never gates it); without a
+  // routes.json the bare fixture would gate the unrouted `mail:` channel, and gated
+  // messages are not recorded as inbound (#636/#420). Routing the DM keeps the inbound row
+  // meaningful as proof that deliverMessage was reached.
+  function routeDMs(): void {
+    mkdirSync(configDir(), { recursive: true });
+    // No `session` needed — matching the DM (so it isn't gated) is all this test requires.
+    writeFileSync(
+      resolve(configDir(), "routes.json"),
+      JSON.stringify({ rules: [{ channel: "*", isDM: true }] }),
+    );
+    clearConfigCache(MIND);
   }
 
   it("throws when deliverMessage reports failure (Finding 1 — false is not success)", async () => {
@@ -219,6 +241,7 @@ describe("MailPoller.deliver — delivery-failure propagation", () => {
 
   it("does not pre-skip a mind with running=false (Finding 2 — sleeping minds queue)", async () => {
     await addMind(MIND, PORT); // running defaults to false, as a sleeping mind is
+    routeDMs(); // a real mind routes its DMs; mail arrives as a DM
     // The old `!entry.running` pre-check returned before deliverMessage, dropping
     // the mail and bypassing sleep-queueing. It must now reach deliverMessage,
     // which records the inbound (and, for a truly sleeping mind, queues it).
