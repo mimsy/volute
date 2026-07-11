@@ -38,4 +38,27 @@ describe("buildPendingContextMessage", () => {
     assert.ok(msg.includes("Why: the drier voice felt truer"));
     assert.ok(msg.includes("Context: keep the shorter entries"));
   });
+
+  it("delivers the variant's memory delta to the parent on merge", async () => {
+    const delta = "diff --git a/home/MEMORY.md b/home/MEMORY.md\n+ variant learned to whistle";
+    const content = await buildPendingContextMessage("parent", {
+      type: "merged",
+      name: "variant",
+      summary: "did some work",
+      memoryDelta: delta,
+    });
+
+    // The stringly-typed context seam must actually carry the delta through.
+    assert.ok(content.includes(delta), `expected delta in delivered message:\n${content}`);
+    assert.match(content, /not merged/);
+    assert.match(content, /Changes: did some work/);
+  });
+
+  it("omits the delta section when there is no delta", async () => {
+    const content = await buildPendingContextMessage("parent", {
+      type: "merged",
+      name: "variant",
+    });
+    assert.doesNotMatch(content, /not merged/);
+  });
 });

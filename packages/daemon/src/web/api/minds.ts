@@ -84,7 +84,7 @@ import {
 import { isTemplateStale } from "../../lib/mind/template-staleness.js";
 import { applyThinkingLevel, deriveThinkingLevel } from "../../lib/mind/thinking-config.js";
 import { cleanupVariant } from "../../lib/mind/variant-cleanup.js";
-import { validateBranchName } from "../../lib/mind/variants.js";
+import { mergeVariantExcludingMemory, validateBranchName } from "../../lib/mind/variants.js";
 import { readVoluteConfig, writeVoluteConfig } from "../../lib/mind/volute-config.js";
 import { PLATFORMS } from "../../lib/platforms.js";
 import {
@@ -1543,8 +1543,11 @@ const app = new Hono<AuthEnv>()
             }
           }
 
-          // Merge, cleanup worktree/branch, reinstall
-          await gitExec(["merge", variantEntry.branch], { cwd: projectRoot });
+          // Merge (excluding the mind's living memory/journal — #440), narrate
+          // the memory delta to the parent, then clean up worktree/branch and
+          // reinstall.
+          const memoryDelta = await mergeVariantExcludingMemory(projectRoot, variantEntry.branch);
+          if (memoryDelta && context) context.memoryDelta = memoryDelta;
           await cleanupVariant(mergeVariantName, projectRoot, variantEntry.dir);
           try {
             await npmInstallAsMind(projectRoot, baseName);

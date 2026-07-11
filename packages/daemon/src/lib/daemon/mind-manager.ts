@@ -113,10 +113,12 @@ function mindPidPath(name: string): string {
 }
 
 /**
- * Build the system message delivered to a mind for a pending context: the merge/split/
- * sprout/upgrade/restart notice plus any changes/justification/memory the caller attached.
- * For a split, the variant's purpose (when set) is appended so it learns why it exists.
- * Pure and exported so the message shape is testable without spawning a mind.
+ * Build the message a mind receives after a lifecycle event (restart, merge,
+ * split, sprout, upgrade). The leading line comes from the prompt registry; the
+ * optional Changes/Why/Context lines, a split's purpose, and a merge's memory
+ * delta are appended from the pending context. Pure and exported so the
+ * stringly-typed context seam — where a mistyped key would silently drop the
+ * variant's purpose or narrated memory — is testable without spawning a mind.
  */
 export async function buildPendingContextMessage(
   name: string,
@@ -138,6 +140,11 @@ export async function buildPendingContextMessage(
   if (context.summary) parts.push(`Changes: ${context.summary}`);
   if (context.justification) parts.push(`Why: ${context.justification}`);
   if (context.memory) parts.push(`Context: ${context.memory}`);
+  if (context.memoryDelta) {
+    parts.push(
+      `\nYour variant's memory & journal (not merged — integrate into your own memory what you want to keep):\n${context.memoryDelta}`,
+    );
+  }
   return parts.join("\n");
 }
 

@@ -16,7 +16,11 @@ import {
 } from "../../lib/mind/registry.js";
 import { spawnServer } from "../../lib/mind/spawn-server.js";
 import { cleanupVariant } from "../../lib/mind/variant-cleanup.js";
-import { validateBranchName } from "../../lib/mind/variants.js";
+import {
+  mergeVariantExcludingMemory,
+  VariantMergeError,
+  validateBranchName,
+} from "../../lib/mind/variants.js";
 import { verify } from "../../lib/mind/verify.js";
 import { exec, gitExec } from "../../lib/util/exec.js";
 import { checkHealth } from "../../lib/util/health.js";
@@ -371,40 +375,25 @@ const app = new Hono<AuthEnv>()
         }
       }
 
-      // Merge branch
+      // Merge the variant into the parent, excluding the mind's living memory and
+      // journal — those ride to the parent as `memoryDelta` (#440) instead of
+      // being line-merged. A real code/config conflict (or a failed restore)
+      // aborts the merge and throws VariantMergeError; route it through
+      // failAfterGitWrite so ownership is restored and the conflicts are reported.
+      let memoryDelta = "";
       try {
-        await gitExec(["merge", variantEntry.branch], { cwd: projectRoot });
-      } catch (_e) {
-        // Collect the conflicting files before aborting so the caller/mind knows
-        // what collided.
-        let conflicts: string[] = [];
-        try {
-          const out = (
-            await gitExec(["diff", "--name-only", "--diff-filter=U"], { cwd: projectRoot })
-          ).trim();
-          conflicts = out ? out.split("\n") : [];
-        } catch (err) {
-          log.warn(`failed to list merge conflicts for ${mindName}`, log.errorData(err));
-        }
-        // Restore the parent worktree so the still-running parent mind never
-        // auto-commits conflict markers into SOUL.md/MEMORY.md.
-        let abortFailed = false;
-        try {
-          await gitExec(["merge", "--abort"], { cwd: projectRoot });
-        } catch (err) {
-          abortFailed = true;
-          log.warn(`failed to abort merge for ${mindName}`, log.errorData(err));
-        }
+        memoryDelta = await mergeVariantExcludingMemory(projectRoot, variantEntry.branch);
+      } catch (err) {
+        if (!(err instanceof VariantMergeError)) throw err;
         // Leave the variant intact so the conflict can be resolved in the variant
-        // and the join retried. failAfterGitWrite restores ownership after the
-        // root-run auto-commit/merge/abort git ops above. If the abort itself
-        // failed, the parent is left mid-merge with conflict markers on disk —
-        // say so, since the still-running mind could auto-commit them.
+        // and the join retried. If the abort itself failed, the parent is left
+        // mid-merge with conflict markers on disk — say so, since the still-running
+        // mind could auto-commit them.
         return failAfterGitWrite(
-          abortFailed
+          err.abortFailed
             ? "Merge failed and the abort did not complete — the parent worktree may be left mid-merge with conflict markers; manual cleanup may be needed."
             : "Merge failed. Resolve conflicts in the variant and retry the join.",
-          { conflicts },
+          { conflicts: err.conflicts },
         );
       }
 
@@ -457,6 +446,7 @@ const app = new Hono<AuthEnv>()
         ...(body.summary && { summary: body.summary }),
         ...(justification && { justification }),
         ...(body.memory && { memory: body.memory }),
+        ...(memoryDelta && { memoryDelta }),
       };
 
       try {
