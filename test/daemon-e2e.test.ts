@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import { type ChildProcess, execFileSync, spawn } from "node:child_process";
-import { existsSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { resolve } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { and, eq } from "drizzle-orm";
@@ -574,6 +582,22 @@ describe("daemon e2e", { timeout: 420000 }, () => {
       'export const marker = "e2e";\n',
     );
 
+    // Both minds diverge their living memory. On a plain merge these conflict;
+    // the join must instead keep the parent's copy and narrate the variant's
+    // (#440). The endpoint auto-commits both worktrees before merging.
+    writeFileSync(resolve(parentDir, "home", "MEMORY.md"), "parent's own memory\n");
+    writeFileSync(
+      resolve(created.variant.path, "home", "MEMORY.md"),
+      "variant's divergent memory\n",
+    );
+
+    // The variant leaves a parting note. The server isn't running (noStart), so
+    // the join can't run a live farewell turn — but a note already on disk is
+    // still surfaced into the merge context the parent receives.
+    const farewellText = "e2e-farewell: I explored the margins and found nothing but stars.";
+    mkdirSync(resolve(created.variant.path, ".mind"), { recursive: true });
+    writeFileSync(resolve(created.variant.path, ".mind", "farewell.md"), `${farewellText}\n`);
+
     // Join: merge the variant back. skipVerify avoids booting a verification server.
     const mergeRes = await daemonRequest(`/api/minds/${TEST_MIND}/variants/e2e-var/merge`, {
       method: "POST",
@@ -589,6 +613,25 @@ describe("daemon e2e", { timeout: 420000 }, () => {
     assert.ok(
       existsSync(resolve(parentDir, "src", "e2e-merge-marker.ts")),
       "merged file should exist in the parent src/",
+    );
+
+    // The parent kept its own MEMORY.md; the variant's divergent memory was not
+    // spliced in (it rides along as narrated context instead).
+    assert.equal(
+      readFileSync(resolve(parentDir, "home", "MEMORY.md"), "utf-8"),
+      "parent's own memory\n",
+      "parent should keep its own MEMORY.md after the join",
+    );
+
+    // The parting note reached the merged parent as part of its merge context.
+    const db = await getDb();
+    const history = await db
+      .select()
+      .from(mindHistory)
+      .where(and(eq(mindHistory.mind, TEST_MIND), eq(mindHistory.type, "inbound")));
+    assert.ok(
+      history.some((h) => h.content?.includes(farewellText)),
+      "parent's merge context should include the variant's parting note",
     );
 
     // The variant is cleaned up: gone from registry and disk.
@@ -627,13 +670,16 @@ describe("daemon e2e", { timeout: 420000 }, () => {
       );
     };
 
-    // Conflicting edits to the same tracked file in both parent and variant.
-    const conflictFile = "home/MEMORY.md";
-    gitCommit(parentDir, conflictFile, "parent version of memory\n", "parent conflict edit");
+    // Conflicting edits to the same tracked, non-excluded file in both parent and
+    // variant. SOUL.md is identity but not memory/journal, so #440 does NOT
+    // exclude it — a real conflict here must still surface (unlike MEMORY.md,
+    // which now merges cleanly and is covered by the happy-path test above).
+    const conflictFile = "home/SOUL.md";
+    gitCommit(parentDir, conflictFile, "parent version of soul\n", "parent conflict edit");
     gitCommit(
       created.variant.path,
       conflictFile,
-      "variant version of memory\n",
+      "variant version of soul\n",
       "variant conflict edit",
     );
 
@@ -670,8 +716,8 @@ describe("daemon e2e", { timeout: 420000 }, () => {
 
     // The failed join must not leave root-owned files in the parent dir. Under
     // real user isolation the merge git ops (run as the daemon) would otherwise
-    // orphan home/MEMORY.md as root:root, locking the parent mind out of its own
-    // identity files. (This harness runs the daemon as the test user, so this is
+    // orphan the parent's identity files as root:root, locking the parent mind
+    // out of its own home dir. (This harness runs the daemon as the test user, so this is
     // a regression tripwire; the ownership-restore path itself is unit-tested in
     // variant-join-isolation.test.ts.)
     if (process.getuid && process.getuid() !== 0) {
@@ -688,8 +734,63 @@ describe("daemon e2e", { timeout: 420000 }, () => {
       assert.equal(rootOwned.length, 0, `parent dir has root-owned files: ${rootOwned.join(", ")}`);
     }
 
-    // Clean up the variant so later tests aren't affected.
-    await daemonRequest(`/api/minds/${TEST_MIND}/variants/e2e-conflict-var`, { method: "DELETE" });
+    // Standalone delete — the "Discard" action the web dashboard now exposes.
+    // The variant is removed from the registry and disk. Doubles as cleanup so
+    // later tests aren't affected.
+    const deleteRes = await daemonRequest(`/api/minds/${TEST_MIND}/variants/e2e-conflict-var`, {
+      method: "DELETE",
+    });
+    assert.equal(deleteRes.status, 200, `Delete: ${await deleteRes.clone().text()}`);
+    assert.ok(
+      !(await findMind("e2e-conflict-var")),
+      "deleted variant should be gone from the registry",
+    );
+    assert.ok(!existsSync(created.variant.path), "deleted variant worktree should be removed");
+  });
+
+  it("variants: a failed split rolls back its worktree/branch and frees the name", {
+    timeout: 300000,
+  }, async () => {
+    await ensureTestMind();
+    const parentDir = mindDir(TEST_MIND);
+    const parent = await findMind(TEST_MIND);
+    assert.ok(parent, "test mind should be registered");
+
+    // Force a failure AFTER the worktree + npm install: registering the variant with
+    // the parent's already-used port trips the unique-port constraint (addVariant's
+    // upsert only reconciles the name), so the handler must roll back.
+    const branch = "e2e-rollback-var";
+    const variantPath = resolve(parentDir, ".variants", branch);
+    const failRes = await daemonRequest(`/api/minds/${TEST_MIND}/variants`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: branch, port: parent.port, noStart: true }),
+    });
+    assert.equal(failRes.status, 500, `Split should fail: ${await failRes.clone().text()}`);
+    const failBody = (await failRes.json()) as { error: string };
+    assert.match(failBody.error, /register variant/i);
+
+    // Rollback removed the worktree, deleted the branch, and left no registry row —
+    // so the name is free to retry.
+    assert.ok(!existsSync(variantPath), "worktree should be rolled back");
+    assert.ok(!(await findMind(branch)), "no registry row should remain");
+    const branchList = execFileSync("git", ["branch", "--list", branch], {
+      cwd: parentDir,
+      encoding: "utf-8",
+    }).trim();
+    assert.equal(branchList, "", `branch should be deleted, got: ${branchList}`);
+
+    // A retry with the same name now succeeds.
+    const retryRes = await daemonRequest(`/api/minds/${TEST_MIND}/variants`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: branch, noStart: true }),
+    });
+    assert.equal(retryRes.status, 200, `Retry split: ${await retryRes.clone().text()}`);
+    assert.ok(existsSync(variantPath), "retry should recreate the worktree");
+    assert.ok(await findMind(branch), "retry should register the variant");
+
+    await daemonRequest(`/api/minds/${TEST_MIND}/variants/${branch}`, { method: "DELETE" });
   });
 
   // ── Bridge & Chat Integration Tests ──

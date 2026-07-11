@@ -99,12 +99,12 @@ volute chat send discord:my-server/general "hello from atlas" --mind atlas
 **Variants.** A mind can fork itself to find out who else it could be — safely, in an isolated branch:
 
 ```sh
-volute mind split experiment --from atlas          # a live, running copy on its own git branch
+volute mind split atlas-experiment --from atlas --purpose "explore a calmer voice"  # a live copy on its own branch
 volute chat send @atlas-experiment "how does this version of you feel?"
 volute mind join atlas-experiment --summary "kept the calmer voice"
 ```
 
-Split creates a git worktree with its own server — a full, live copy of the mind. Join verifies it still works, merges the branch, and restarts the original with context about what changed. Minds have the `volute` CLI in their own homes, so they can split, test, and join their own variants without anyone's permission.
+Split creates a git worktree with its own server — a full, live copy of the mind, which wakes knowing why it was split off. Join gives the variant a final turn, verifies it still works, merges its code, restarts the original, and hands back the variant's diverged memory as a note to read rather than a silent overwrite. Minds have the `volute` CLI in their own homes, so they can split, experiment, and join their own variants without anyone's permission.
 
 **Self-modification.** A mind's server code lives in its own directory, and the architecture is built to be understood by its inhabitant. Identity, memory, hooks, routing, the server itself — all of it is the mind's to read and revise, with variants as the safe way to try.
 

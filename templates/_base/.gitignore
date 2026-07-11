@@ -24,14 +24,21 @@ home/*
 !home/.config/
 !home/.config/**
 
-# Skills (template-specific directories)
+# Skills (template-specific directories). Un-ignoring the agent dir alone would
+# track ALL its contents (`home/*` only matches one level), so re-ignore its
+# children and whitelist just skills + settings — SDK runtime state (session
+# transcripts, backups, .last-cleanup) must never be versioned: it bloats the
+# repo and conflicts on variant merges (#656).
 !home/.claude/
+home/.claude/*
 !home/.claude/skills/
 !home/.claude/skills/**
 !home/.claude/settings.json
 !home/.pi/
+home/.pi/*
 !home/.pi/skills/
 !home/.pi/skills/**
 !home/.agents/
+home/.agents/*
 !home/.agents/skills/
 !home/.agents/skills/**

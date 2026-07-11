@@ -276,6 +276,16 @@ export async function startDaemon(opts: {
   const orphanedTurns = await completeOrphanedTurns();
   summarizeOrphanedTurns(orphanedTurns);
 
+  // Reconcile variant rows against disk before starting anything: drop stale rows
+  // whose worktree is gone (e.g. legacy `name@variant` rows) and report orphaned
+  // `.variants/` dirs that have no row (#444).
+  try {
+    const { reconcileVariants } = await import("./lib/mind/variant-cleanup.js");
+    await reconcileVariants();
+  } catch (err) {
+    log.error("failed to reconcile variants", log.errorData(err));
+  }
+
   // Start all minds + variants that were previously running (parallel, concurrency limit of 5)
   // Skip sleeping minds — they only need connectors, not the mind process
   const allMinds = await readAllMinds();

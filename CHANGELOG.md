@@ -1,5 +1,36 @@
 # Changelog
 
+## [0.49.0](https://github.com/mimsy/volute/compare/volute-v0.48.0...volute-v0.49.0) (2026-07-11)
+
+
+### Features
+
+* exclude memory/journal from variant join merge, narrate the delta ([#647](https://github.com/mimsy/volute/issues/647)) ([32d2035](https://github.com/mimsy/volute/commit/32d2035d84b10373609a9e76275d8e2e952cf58b))
+* let the spirit own its SOUL.md ([#631](https://github.com/mimsy/volute/issues/631)) ([59bbb3b](https://github.com/mimsy/volute/commit/59bbb3be5c5ed0501d4ca90c0353270606a1f034))
+* maxMinds config — cap total minds to protect host resources ([#627](https://github.com/mimsy/volute/issues/627)) ([bce3eb3](https://github.com/mimsy/volute/commit/bce3eb3c34209739bcf7bd8ae2efb43803db9dc7))
+* surface mind variants in the web dashboard ([#642](https://github.com/mimsy/volute/issues/642)) ([07c0c26](https://github.com/mimsy/volute/commit/07c0c26ef925c59433b1918b279c451e01c1eeee))
+* variant dignity — birth context and a farewell turn at merge ([#648](https://github.com/mimsy/volute/issues/648)) ([50e98f7](https://github.com/mimsy/volute/commit/50e98f7d626850784534d1db8c6a5d948ecc8573))
+* variant purpose at split time + auto-created parent↔variant DM ([#646](https://github.com/mimsy/volute/issues/646)) ([a8647c6](https://github.com/mimsy/volute/commit/a8647c68e33a10dcc77c5a3e004f16bc7becae25))
+
+
+### Bug Fixes
+
+* atomic record+promote on gated release (dropped from [#636](https://github.com/mimsy/volute/issues/636) merge) ([#644](https://github.com/mimsy/volute/issues/644)) ([6e610e1](https://github.com/mimsy/volute/commit/6e610e1e14c4e47a58c7ff174884f6fc2fc824eb))
+* chown the whole .mind dir at mind start, not just .mind/tmp ([#659](https://github.com/mimsy/volute/issues/659)) ([b9bae72](https://github.com/mimsy/volute/commit/b9bae72ba59d5edb7ef04d39751ccbc8ac2290cc))
+* clock/sleep display papercuts ([#454](https://github.com/mimsy/volute/issues/454) items 5-8) ([#637](https://github.com/mimsy/volute/issues/637)) ([c82477f](https://github.com/mimsy/volute/commit/c82477fc341d0fd990143690c67aeb7f9394ac8e))
+* dedupe sprout notice and tolerate empty scheduler state ([#628](https://github.com/mimsy/volute/issues/628)) ([ac782a7](https://github.com/mimsy/volute/commit/ac782a733bd43c58a2810e087b7119a2d594d3b2))
+* join #system at sprout so the commons gate is explicit ([#630](https://github.com/mimsy/volute/issues/630)) ([2c154b0](https://github.com/mimsy/volute/commit/2c154b0dff6cdb3b07052f2c47558911ca4dcb55))
+* let the spirit reload its identity without restart-looping ([#629](https://github.com/mimsy/volute/issues/629)) ([2d63ee0](https://github.com/mimsy/volute/commit/2d63ee0bc5635aff49239e8ed000c67e1968d600))
+* let variants pass requireSelf on their own routes ([#658](https://github.com/mimsy/volute/issues/658)) ([c42773c](https://github.com/mimsy/volute/commit/c42773c395e19557ac2d4307cb64be582bf33529))
+* make mail poller catch-up loss-proof and log readable errors ([#632](https://github.com/mimsy/volute/issues/632)) ([01b6d2f](https://github.com/mimsy/volute/commit/01b6d2f695dc899a185a6e2f2d7629ebb6fd6c63))
+* match only this spawn's output when detecting the detached server port ([#660](https://github.com/mimsy/volute/issues/660)) ([9799ef9](https://github.com/mimsy/volute/commit/9799ef9f5a3a06e647f11cb55b610ea631fff082))
+* migrate installed skills when a mind switches templates during upgrade ([#634](https://github.com/mimsy/volute/issues/634)) ([4c914cd](https://github.com/mimsy/volute/commit/4c914cd299bc51f8b03283668f86ac6f03ff13cf))
+* reconcile variant lifecycle and stop stranding orphaned state ([#645](https://github.com/mimsy/volute/issues/645)) ([292f586](https://github.com/mimsy/volute/commit/292f586b0d7d4ae34ec2c1736349664452c811e8))
+* restore mind ownership on variant git-op edge paths under isolation ([#643](https://github.com/mimsy/volute/issues/643)) ([ba9d1bd](https://github.com/mimsy/volute/commit/ba9d1bd0c2677392bcc152eef39030550642dabb))
+* stop recording gated messages as inbound history ([#636](https://github.com/mimsy/volute/issues/636)) ([f417a43](https://github.com/mimsy/volute/commit/f417a434f4c61a5c9e9cfa9ff9ffc7946ddc68c2))
+* stop versioning SDK runtime state in mind repos ([#661](https://github.com/mimsy/volute/issues/661)) ([4f445d2](https://github.com/mimsy/volute/commit/4f445d21c1299d9d42555d89f9fb972de929697f))
+* surface pi agent-level errors as turn_error notices ([#638](https://github.com/mimsy/volute/issues/638)) ([216a13e](https://github.com/mimsy/volute/commit/216a13ec26407dfa13c251c05cb9320897750a38))
+
 ## [0.48.0](https://github.com/mimsy/volute/compare/volute-v0.47.0...volute-v0.48.0) (2026-07-10)
 
 

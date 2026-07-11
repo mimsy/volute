@@ -121,14 +121,13 @@ volute mind upgrade [name] [--template <name>] [--diff] [--continue] [--abort]
 | `--continue` | Continue after resolving conflicts |
 | `--abort` | Cancel the upgrade |
 
-Creates an "upgrade" variant with the new template code. Resolve any conflicts, test the variant, then merge it back.
+Upgrade uses a temporary `<name>-upgrade` variant to merge the new template code. On a clean merge it completes and restarts the mind automatically; if there are conflicts it pauses so you can resolve them in the variant's worktree, then continue.
 
 ```sh
 volute mind upgrade atlas
-volute mind upgrade atlas --diff       # view changes
+volute mind upgrade atlas --diff       # view changes before upgrading
 volute mind upgrade atlas --continue   # after resolving conflicts
-volute chat send @atlas@upgrade "are you working?"
-volute mind join upgrade
+volute mind upgrade atlas --abort      # cancel a paused upgrade
 ```
 
 ## mind import

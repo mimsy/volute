@@ -45,7 +45,7 @@ HTTP client for CLI-to-daemon communication. Reads `~/.volute/daemon.json` for t
 
 ### Registry (`src/lib/registry.ts`)
 
-Mind registry backed by the `minds` DB table in `volute.db`. Maps mind names to ports, tracks `running` state. Supports `name@variant` syntax via `resolveMind()`. Port allocation starts at 4100.
+Mind registry backed by the `minds` DB table in `volute.db`. Maps mind names to ports, tracks `running` state. Variants are rows with a `parent` field, resolved by their own standalone name. Port allocation starts at 4100.
 
 ## Message flow
 

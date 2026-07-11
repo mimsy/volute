@@ -324,6 +324,25 @@ export function fetchVariants(name: string): Promise<Variant[]> {
   return get(`${V1}/minds/${enc(name)}/variants`);
 }
 
+export function createVariant(
+  name: string,
+  body: { name: string; soul?: string },
+): Promise<{ ok: boolean; variant: { name: string; branch: string; path: string; port: number } }> {
+  return post(`${V1}/minds/${enc(name)}/variants`, body);
+}
+
+export function joinVariant(
+  name: string,
+  variant: string,
+  body?: { summary?: string; justification?: string; memory?: string },
+): Promise<{ ok: boolean; warning?: string }> {
+  return post(`${V1}/minds/${enc(name)}/variants/${enc(variant)}/merge`, body ?? {});
+}
+
+export function deleteVariant(name: string, variant: string): Promise<void> {
+  return del(`${V1}/minds/${enc(name)}/variants/${enc(variant)}`);
+}
+
 // --- Config ---
 
 export function fetchMindConfig(name: string): Promise<MindConfig> {

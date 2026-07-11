@@ -136,6 +136,38 @@ describe("gated-channel release (#537)", () => {
         "messages are archived (history preserved)",
       );
     });
+
+    it("renders the channel_invite prompt's platform/participant details block", async () => {
+      const name = createMind({ rules: [] });
+      cleanup.push(name);
+      const m = makeManager();
+      manager = m.manager;
+
+      const invites: string[] = [];
+      manager.setNotifier(async (_mind, text) => {
+        if (text.includes("[New channel:")) invites.push(text);
+      });
+
+      // A gated message carrying platform + participantCount exercises the `details`
+      // branch of the getPrompt("channel_invite", …) rendering (#420 item 4).
+      await manager.routeAndDeliver(name, {
+        channel: "discord:general",
+        sender: "alice",
+        content: "hello",
+        platform: "discord",
+        participantCount: 3,
+      });
+
+      assert.equal(invites.length, 1, "one invite fired");
+      assert.ok(invites[0].includes("Platform: discord"), "renders the Platform line");
+      assert.ok(invites[0].includes("Participants: 3"), "renders the Participants line");
+      assert.ok(invites[0].includes("Preview: hello"), "still renders the preview after details");
+      // The decline hint (real command) must be present — pins the prompt to reality.
+      assert.ok(
+        invites[0].includes("volute chat channels decline discord:general"),
+        "renders the real decline command",
+      );
+    });
   });
 
   describe("declineChannel", () => {
@@ -220,6 +252,37 @@ describe("gated-channel release (#537)", () => {
       assert.equal(after.length, 1, "the released message is recorded as inbound exactly once");
       assert.equal(after[0].channel, "discord:general");
       assert.equal(after[0].content, "hello there");
+    });
+
+    it("a declined channel never produces an inbound row, even after a rule later matches (#420)", async () => {
+      const name = createMind({ rules: [] });
+      cleanup.push(name);
+      const m = makeManager();
+      manager = m.manager;
+
+      await manager.declineChannel(name, "discord:spam");
+      for (let i = 0; i < 3; i++) await gate(manager, name, "discord:spam", `spam ${i}`);
+
+      // Add a rule that WOULD match, then release. Declined channels are skipped, so the
+      // rows stay archived and no inbound history is ever written for them.
+      writeRoutes(name, {
+        rules: [{ channel: "discord:*", session: "inbox" }],
+        default: "main",
+      });
+      await manager.releaseGated(name);
+
+      const spamRows = (await rows(name)).filter((r) => r.channel === "discord:spam");
+      assert.equal(
+        spamRows.filter((r) => r.status === "pending").length,
+        0,
+        "declined channel is not promoted on release",
+      );
+      const db = await getDb();
+      const inbound = await db
+        .select()
+        .from(mindHistory)
+        .where(and(eq(mindHistory.mind, name), eq(mindHistory.type, "inbound")));
+      assert.equal(inbound.length, 0, "a declined channel writes no inbound history");
     });
 
     it("expands a $new route to a generated session on release, not the literal '$new'", async () => {

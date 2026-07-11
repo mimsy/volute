@@ -37,6 +37,20 @@ describe("variants CRUD", () => {
     assert.equal(splits[0].branch, "branch-a");
   });
 
+  it("addVariant stores the purpose captured at split", async () => {
+    await addMind(testMind, 4200);
+    await addVariant(`${testMind}-a`, testMind, 4201, "/fake/a", "a", "test a drier voice");
+    const entry = await findMind(`${testMind}-a`);
+    assert.equal(entry?.purpose, "test a drier voice");
+  });
+
+  it("addVariant leaves purpose undefined when none given", async () => {
+    await addMind(testMind, 4200);
+    await addVariant(`${testMind}-a`, testMind, 4201, "/fake/a", "a");
+    const entry = await findMind(`${testMind}-a`);
+    assert.equal(entry?.purpose, undefined);
+  });
+
   it("addVariant can create multiple variants", async () => {
     await addMind(testMind, 4200);
     await addVariant(`${testMind}-a`, testMind, 4201, "/fake/a", "a");

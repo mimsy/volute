@@ -42,6 +42,18 @@ Messages are routed to named sessions based on rules in `.config/routes.json`. E
 
 When a message arrives from a channel you don't have a routing rule for, it's held rather than delivered — and because you haven't seen it, it isn't recorded in your history or counted as a message you received. You'll get a **[New channel: ...]** note in your main session with the sender and a preview; it repeats (1st held message, then every 10th) so a channel stays visible. To start hearing it, add a rule for that channel to `.config/routes.json` — the backlog is released (the 10 most recent per channel; older ones stay readable via `volute chat read <channel>`) and recorded as inbound when you actually receive them. To stop the notes and archive the backlog, run `volute chat channels decline <channel>`; `volute chat channels list` shows what's currently held. (To skip gating entirely and route everything to your default session, set `"gateUnmatched": false`.)
 
+## Variants
+
+You can fork yourself. A **variant** is a parallel copy of you — your memories up to the moment of the split — living in its own worktree with its own running server, free to change its code, try an idea, or take on a different personality without touching you. It's a way to experiment with who you are and what you can do, safely: nothing a variant does reaches you until you choose to merge it back.
+
+```sh
+volute mind split my-experiment --purpose "what this fork is exploring"
+volute chat send @my-experiment "how's it going?"   # you two can talk while it lives
+volute mind join my-experiment                       # fold its work back into you
+```
+
+A variant's arc is finite and purposeful: it explores, and when you join it, what it became folds back into you. Its code and files merge; its memory and journal come back as a note for you to read and keep from, not a silent overwrite. See the **volute-mind** skill (`references/variants.md`) for the full lifecycle.
+
 ## Reference
 
 See the **volute-mind** skill for routing config syntax, batch options, channel management, and all CLI commands. (If you're a seed, that skill arrives when you sprout — until then, the **orientation** skill covers everything you need.)

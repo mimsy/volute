@@ -1,5 +1,5 @@
 import { type ChildProcess, spawn } from "node:child_process";
-import { closeSync, mkdirSync, openSync, readFileSync } from "node:fs";
+import { closeSync, mkdirSync, openSync, readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { isIsolationEnabled, wrapForIsolation } from "./isolation.js";
 import { mindTmpDir } from "./registry.js";
@@ -88,6 +88,13 @@ function spawnDetached(
   const logsDir = logDir ?? resolve(cwd, ".mind", "logs");
   mkdirSync(logsDir, { recursive: true });
   const logPath = resolve(logsDir, "mind.log");
+  // The log persists across spawns (append mode), so only match output written
+  // by THIS spawn: an earlier attempt's "listening on :PORT" line would
+  // otherwise be matched first and the (long-dead) stale port returned (#654).
+  let startOffset = 0;
+  try {
+    startOffset = statSync(logPath).size;
+  } catch {}
   const logFd = openSync(logPath, "a");
 
   const child = spawn(cmd, args, {
@@ -112,7 +119,8 @@ function spawnDetached(
 
     const interval = setInterval(() => {
       try {
-        const content = readFileSync(logPath, "utf-8");
+        // Byte offset, so slice the raw buffer before decoding.
+        const content = readFileSync(logPath).subarray(startOffset).toString("utf-8");
         const match = content.match(/listening on :(\d+)/);
         if (match) {
           finish({ child, actualPort: parseInt(match[1], 10) });

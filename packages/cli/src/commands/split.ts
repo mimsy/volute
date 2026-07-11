@@ -8,6 +8,7 @@ const cmd = command({
   flags: {
     from: { type: "string", description: "Parent mind to split from" },
     soul: { type: "string", description: "Custom SOUL.md content" },
+    purpose: { type: "string", description: "Why this variant exists — what it's exploring" },
     port: { type: "number", description: "Port for variant server" },
     "no-start": { type: "boolean", description: "Don't start the variant" },
     json: { type: "boolean", description: "Output JSON result" },
@@ -15,7 +16,7 @@ const cmd = command({
   run: async ({ args, flags }) => {
     const mindName = resolveMindName({ mind: flags.from });
     const variantName = args.name!;
-    const { soul, port, json } = flags;
+    const { soul, purpose, port, json } = flags;
     const noStart = flags["no-start"];
 
     if (!json) console.log("Creating variant via daemon...");
@@ -32,6 +33,7 @@ const cmd = command({
         body: JSON.stringify({
           name: variantName,
           ...(soul && { soul }),
+          ...(purpose && { purpose }),
           ...(port && { port }),
           ...(noStart && { noStart }),
         }),
@@ -41,7 +43,7 @@ const cmd = command({
     const data = (await res.json()) as {
       ok?: boolean;
       error?: string;
-      variant?: { name: string; branch: string; path: string; port: number };
+      variant?: { name: string; branch: string; path: string; port: number; purpose?: string };
     };
 
     if (!res.ok) {
@@ -56,6 +58,7 @@ const cmd = command({
       console.log(`  Branch: ${data.variant?.branch}`);
       console.log(`  Path:   ${data.variant?.path}`);
       console.log(`  Port:   ${data.variant?.port}`);
+      if (data.variant?.purpose) console.log(`  Purpose: ${data.variant.purpose}`);
     }
   },
 });

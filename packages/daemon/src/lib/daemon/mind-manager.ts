@@ -113,6 +113,47 @@ function mindPidPath(name: string): string {
   return resolve(stateDir(name), "mind.pid");
 }
 
+/**
+ * Build the message a mind receives after a lifecycle event (restart, merge,
+ * split, sprout, upgrade). The leading line comes from the prompt registry; the
+ * optional Changes/Why/Context lines, a split's purpose, a merge's memory delta,
+ * and a merge's farewell note are appended from the pending context. Pure and
+ * exported so the stringly-typed context seam — where a mistyped key would
+ * silently drop the variant's purpose, narrated memory, or parting note — is
+ * testable without spawning a mind.
+ */
+export async function buildPendingContextMessage(
+  name: string,
+  context: Record<string, unknown>,
+): Promise<string> {
+  const parts: string[] = [];
+  if (context.type === "merge" || context.type === "merged") {
+    parts.push(await getPrompt("merge_message", { name: String(context.name ?? "") }));
+  } else if (context.type === "split") {
+    parts.push(await getPrompt("split_message", { name, parent: String(context.parent ?? "") }));
+    if (context.purpose) parts.push(`Why you were split off: ${String(context.purpose)}`);
+  } else if (context.type === "sprouted") {
+    parts.push(await getPrompt("sprout_message"));
+  } else if (context.type === "upgraded") {
+    parts.push(await getPrompt("upgrade_message"));
+  } else {
+    parts.push(await getPrompt("restart_message"));
+  }
+  if (context.summary) parts.push(`Changes: ${context.summary}`);
+  if (context.justification) parts.push(`Why: ${context.justification}`);
+  if (context.memory) parts.push(`Context: ${context.memory}`);
+  if (context.memoryDelta) {
+    parts.push(
+      `\nYour variant's memory & journal (not merged — integrate into your own memory what you want to keep):\n${context.memoryDelta}`,
+    );
+  }
+  // The variant's own voice from its farewell turn. Framed as continuity —
+  // the merged mind is both lineages, not the parent absorbing a stranger.
+  if (context.farewell)
+    parts.push(`Your variant's parting note (this was you, winding down):\n${context.farewell}`);
+  return parts.join("\n");
+}
+
 export class MindManager {
   private minds = new Map<string, TrackedMind>();
   private stopping = new Set<string>();
@@ -224,10 +265,13 @@ export class MindManager {
     mkdirSync(mindTmp, { recursive: true });
 
     // State dir is created by root — chown so the mind user can write to it.
+    // Chown .mind itself, not just .mind/tmp: in a variant worktree .mind is
+    // absent (gitignored), so the recursive mkdir above creates it root-owned
+    // and the variant can't write sessions or its farewell note (#653).
     if (isIsolationEnabled()) {
       try {
         await chownMindDir(mindStateDir, baseName);
-        await chownMindDir(mindTmp, baseName);
+        await chownMindDir(resolve(dir, ".mind"), baseName);
       } catch (err) {
         throw new Error(
           `Cannot start mind ${name}: failed to set ownership on state directory ${mindStateDir}: ${err instanceof Error ? err.message : err}`,
@@ -549,23 +593,7 @@ export class MindManager {
 
     this.pendingContext.delete(name);
 
-    const parts: string[] = [];
-    if (context.type === "merge" || context.type === "merged") {
-      parts.push(await getPrompt("merge_message", { name: String(context.name ?? "") }));
-    } else if (context.type === "split") {
-      parts.push(await getPrompt("split_message", { name, parent: String(context.parent ?? "") }));
-    } else if (context.type === "sprouted") {
-      parts.push(await getPrompt("sprout_message"));
-    } else if (context.type === "upgraded") {
-      parts.push(await getPrompt("upgrade_message"));
-    } else {
-      parts.push(await getPrompt("restart_message"));
-    }
-    if (context.summary) parts.push(`Changes: ${context.summary}`);
-    if (context.justification) parts.push(`Why: ${context.justification}`);
-    if (context.memory) parts.push(`Context: ${context.memory}`);
-
-    const content = parts.join("\n");
+    const content = await buildPendingContextMessage(name, context);
 
     // Persist to system DM conversation and deliver directly to mind
     let conversationId: string | undefined;

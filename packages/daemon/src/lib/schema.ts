@@ -17,6 +17,7 @@ export const minds = sqliteTable(
     dir: text("dir"),
     branch: text("branch"),
     stage: text("stage"),
+    purpose: text("purpose"),
     template: text("template"),
     template_hash: text("template_hash"),
     running: integer("running").notNull().default(0),
