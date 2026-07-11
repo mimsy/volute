@@ -11,6 +11,7 @@ import {
   generateMindToken,
   revokeMindToken,
 } from "../packages/daemon/src/lib/daemon/mind-tokens.js";
+import { clearMind, createTurn } from "../packages/daemon/src/lib/daemon/turn-tracker.js";
 import { getDb } from "../packages/daemon/src/lib/db.js";
 import { createConversation } from "../packages/daemon/src/lib/events/conversations.js";
 import { addMind, addSpirit } from "../packages/daemon/src/lib/mind/registry.js";
@@ -19,6 +20,7 @@ import {
   messages,
   mindHistory,
   minds,
+  turns,
   users,
 } from "../packages/daemon/src/lib/schema.js";
 import { invalidateMindUserCache } from "../packages/daemon/src/web/middleware/auth.js";
@@ -31,12 +33,15 @@ let convId: string;
 async function cleanup() {
   resetSystemDMCache();
   revokeMindToken("volute");
+  // Drop any in-memory active turn so a prior test can't leak turn attribution.
+  await clearMind("volute");
   const db = await getDb();
   if (convId) {
     await db.delete(messages).where(eq(messages.conversation_id, convId));
     await db.delete(conversations).where(eq(conversations.id, convId));
   }
   await db.delete(mindHistory).where(eq(mindHistory.mind, "volute"));
+  await db.delete(turns).where(eq(turns.mind, "volute"));
   for (const username of TEST_USERNAMES) {
     await db.delete(users).where(eq(users.username, username));
   }
@@ -128,6 +133,39 @@ describe("spirit as a mind sender via POST /api/v1/chat", () => {
     assert.ok(send, "the spirit's message should be persisted");
     assert.ok(send!.content.includes("warning! done"), "escape fix should have run");
     assert.ok(!send!.content.includes("warning\\! done"), "raw escape should not survive");
+  });
+
+  it("attributes the spirit's outbound to its active turn", async () => {
+    const { token, conversationId } = await setupSpiritDM();
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
+
+    // Open a sessionless turn for the spirit (keyed `volute:*`). getActiveTurnId
+    // falls back to it when the send carries no X-Volute-Session header, so the
+    // outbound must be tagged with this turn — the attribution that was skipped
+    // entirely while the spirit was misclassified as a non-mind sender.
+    const turnId = await createTurn("volute");
+    assert.ok(turnId, "createTurn should return a turn id");
+
+    const res = await spiritSend(app as never, token, {
+      conversationId,
+      message: "tagged reply",
+    });
+    assert.equal(res.status, 200);
+
+    const db = await getDb();
+    const rows = await db.select().from(mindHistory).where(eq(mindHistory.mind, "volute")).all();
+    const outbound = rows.find((r) => r.type === "outbound" && r.content?.includes("tagged reply"));
+    assert.ok(outbound, "spirit send should be recorded as an outbound");
+    assert.equal(outbound!.turn_id, turnId, "outbound should carry the active turn's id");
+
+    // Exactly one reply — the send itself, no fallback loop even with a turn active.
+    const msgs = await db
+      .select()
+      .from(messages)
+      .where(eq(messages.conversation_id, conversationId))
+      .all();
+    const voluteMsgs = msgs.filter((m) => m.sender_name === "volute");
+    assert.equal(voluteMsgs.length, 1, "only the spirit's send should exist — no fallback reply");
   });
 
   it("does not trigger a system self-reply loop on the spirit's own send", async () => {
