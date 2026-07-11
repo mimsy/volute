@@ -1,4 +1,5 @@
 <script lang="ts">
+import { Input } from "@volute/ui";
 import { onMount } from "svelte";
 import AiProviders from "../components/system/AiProviders.svelte";
 import ImagegenProviders from "../components/system/ImagegenProviders.svelte";
@@ -44,6 +45,10 @@ let aiProvidersRef: AiProviders;
 let maxMindsInput = $state("");
 let mindCount = $state(0);
 let maxMindsError = $state("");
+// Only true once the current cap loaded. Guards the onblur autosave from
+// PUTting {maxMinds: null} — silently clearing an existing cap — after a failed
+// load renders the field blank.
+let maxMindsLoaded = $state(false);
 
 onMount(async () => {
   aiProvidersRef.load();
@@ -58,13 +63,18 @@ onMount(async () => {
     const limit = await fetchMaxMinds();
     maxMindsInput = limit.maxMinds == null ? "" : String(limit.maxMinds);
     mindCount = limit.count;
-  } catch {
-    // non-fatal; section just shows empty
+    maxMindsLoaded = true;
+  } catch (err) {
+    // Surface it: a blank field must not read as "no cap", or the autosave
+    // below would clear a cap the admin never saw.
+    maxMindsError = err instanceof Error ? err.message : "Failed to load mind limit";
   }
   defaultsLoaded = true;
 });
 
 async function saveMindLimit() {
+  // Never overwrite the cap from a field that never loaded (see maxMindsLoaded).
+  if (!maxMindsLoaded) return;
   maxMindsError = "";
   const trimmed = maxMindsInput.trim();
   let value: number | null = null;
@@ -149,15 +159,16 @@ async function handleSystemLogout() {
         Cap on total minds ({mindCount} in use). Blank = unlimited.
       </span>
     </div>
-    <input
+    <Input
       type="number"
       min="1"
       step="1"
-      class="system-input"
+      style="width:100%"
       bind:value={maxMindsInput}
       placeholder="Unlimited"
+      disabled={!maxMindsLoaded}
       onblur={saveMindLimit}
-      onkeydown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+      onkeydown={(e: KeyboardEvent) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
     />
     {#if maxMindsError}
       <div class="error">{maxMindsError}</div>
