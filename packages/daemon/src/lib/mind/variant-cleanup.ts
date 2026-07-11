@@ -1,9 +1,10 @@
-import { existsSync, rmSync } from "node:fs";
+import { existsSync, readdirSync, rmSync, statSync } from "node:fs";
+import { resolve } from "node:path";
 import { getMindManager } from "../daemon/mind-manager.js";
 import { gitExec } from "../util/exec.js";
 import log from "../util/logger.js";
 import { chownMindDir } from "./isolation.js";
-import { removeMind } from "./registry.js";
+import { deleteMindDbFootprint, mindDir, readAllMinds, removeMind } from "./registry.js";
 
 /**
  * Clean up a variant's git resources: stop process, remove worktree, delete branch,
@@ -57,6 +58,14 @@ export async function cleanupVariant(
     log.warn(`failed to remove variant ${variantName} from DB`, log.errorData(err));
   }
 
+  // Purge the variant's remaining DB footprint (user, owned conversations, and
+  // free-text-keyed rows) so nothing is left attributed to a gone variant (#444).
+  try {
+    await deleteMindDbFootprint(variantName);
+  } catch (err) {
+    log.warn(`failed to purge DB footprint for variant ${variantName}`, log.errorData(err));
+  }
+
   try {
     await chownMindDir(projectRoot, baseName);
   } catch (err) {
@@ -64,5 +73,60 @@ export async function cleanupVariant(
       `failed to fix ownership during variant cleanup for ${variantName}`,
       log.errorData(err),
     );
+  }
+}
+
+/**
+ * Reconcile variant rows against what's actually on disk (#444). Runs on daemon
+ * startup, before minds are started, to clean up state stranded by older flows:
+ *
+ * - A variant row whose worktree directory is gone (e.g. the legacy `whorl@upgrade`
+ *   row observed in production, whose `.variants/upgrade` dir and branch no longer
+ *   existed) is fully cleaned up — worktree/branch best-effort, row dropped, DB
+ *   footprint purged. Such names can predate today's validation, so this path uses
+ *   parameterized deletes rather than the branch-name-validating routes.
+ * - A `.variants/<name>` directory on disk with no registry row is reported (not
+ *   deleted — it may hold un-merged work), so an operator can investigate.
+ */
+export async function reconcileVariants(): Promise<void> {
+  const all = await readAllMinds();
+  const variants = all.filter((e) => e.parent);
+  const bases = all.filter((e) => !e.parent);
+  const baseDir = (name: string) => bases.find((b) => b.name === name)?.dir ?? mindDir(name);
+
+  for (const v of variants) {
+    if (v.dir && existsSync(v.dir)) continue;
+    log.warn(
+      `reconcile: dropping stale variant row ${v.name} (worktree ${v.dir ?? "<none>"} missing)`,
+    );
+    try {
+      await cleanupVariant(v.name, baseDir(v.parent!), v.dir ?? "");
+    } catch (err) {
+      log.warn(`reconcile: failed to drop stale variant ${v.name}`, log.errorData(err));
+    }
+  }
+
+  const knownDirs = new Set(variants.map((v) => v.dir).filter((d): d is string => Boolean(d)));
+  for (const base of bases) {
+    const variantsDir = resolve(base.dir ?? mindDir(base.name), ".variants");
+    if (!existsSync(variantsDir)) continue;
+    let entries: string[];
+    try {
+      entries = readdirSync(variantsDir);
+    } catch (err) {
+      log.warn(`reconcile: failed to read ${variantsDir}`, log.errorData(err));
+      continue;
+    }
+    for (const name of entries) {
+      const full = resolve(variantsDir, name);
+      if (knownDirs.has(full)) continue;
+      try {
+        if (statSync(full).isDirectory()) {
+          log.warn(`reconcile: orphaned variant worktree on disk with no registry row: ${full}`);
+        }
+      } catch {
+        // Entry vanished between readdir and stat — nothing to report.
+      }
+    }
   }
 }

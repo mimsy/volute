@@ -692,6 +692,51 @@ describe("daemon e2e", { timeout: 420000 }, () => {
     await daemonRequest(`/api/minds/${TEST_MIND}/variants/e2e-conflict-var`, { method: "DELETE" });
   });
 
+  it("variants: a failed split rolls back its worktree/branch and frees the name", {
+    timeout: 300000,
+  }, async () => {
+    await ensureTestMind();
+    const parentDir = mindDir(TEST_MIND);
+    const parent = await findMind(TEST_MIND);
+    assert.ok(parent, "test mind should be registered");
+
+    // Force a failure AFTER the worktree + npm install: registering the variant with
+    // the parent's already-used port trips the unique-port constraint (addVariant's
+    // upsert only reconciles the name), so the handler must roll back.
+    const branch = "e2e-rollback-var";
+    const variantPath = resolve(parentDir, ".variants", branch);
+    const failRes = await daemonRequest(`/api/minds/${TEST_MIND}/variants`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: branch, port: parent.port, noStart: true }),
+    });
+    assert.equal(failRes.status, 500, `Split should fail: ${await failRes.clone().text()}`);
+    const failBody = (await failRes.json()) as { error: string };
+    assert.match(failBody.error, /register variant/i);
+
+    // Rollback removed the worktree, deleted the branch, and left no registry row —
+    // so the name is free to retry.
+    assert.ok(!existsSync(variantPath), "worktree should be rolled back");
+    assert.ok(!(await findMind(branch)), "no registry row should remain");
+    const branchList = execFileSync("git", ["branch", "--list", branch], {
+      cwd: parentDir,
+      encoding: "utf-8",
+    }).trim();
+    assert.equal(branchList, "", `branch should be deleted, got: ${branchList}`);
+
+    // A retry with the same name now succeeds.
+    const retryRes = await daemonRequest(`/api/minds/${TEST_MIND}/variants`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: branch, noStart: true }),
+    });
+    assert.equal(retryRes.status, 200, `Retry split: ${await retryRes.clone().text()}`);
+    assert.ok(existsSync(variantPath), "retry should recreate the worktree");
+    assert.ok(await findMind(branch), "retry should register the variant");
+
+    await daemonRequest(`/api/minds/${TEST_MIND}/variants/${branch}`, { method: "DELETE" });
+  });
+
   // ── Bridge & Chat Integration Tests ──
 
   /** Ensure the test mind exists in the registry (creates via API if not). */

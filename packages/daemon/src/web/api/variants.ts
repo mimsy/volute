@@ -98,8 +98,36 @@ const app = new Hono<AuthEnv>()
       return c.json({ error: `Failed to create worktree: ${msg}` }, 500);
     }
 
-    // Fix ownership before npm install so it runs as the mind user
-    await chownMindDir(projectRoot, mindName);
+    // Everything after the worktree is created is rolled back on failure so a
+    // retry with the same name isn't blocked by a half-created variant (#444).
+    const rollbackSplit = async () => {
+      try {
+        await cleanupVariant(variantName, projectRoot, variantDir, { stop: true });
+      } catch (err) {
+        log.warn(`failed to roll back split of ${variantName}`, log.errorData(err));
+      }
+      // cleanupVariant hands ownership to the variant's base name, which before DB
+      // registration resolves to the variant itself — restore it to the parent mind.
+      try {
+        await chownMindDir(projectRoot, mindName);
+      } catch (err) {
+        log.warn(
+          `failed to restore ${mindName} ownership after split rollback`,
+          log.errorData(err),
+        );
+      }
+    };
+
+    // Fix ownership before npm install so it runs as the mind user. This is the
+    // first step past worktree creation, so a throw here (chownMindDir re-throws
+    // under isolation) must also roll back or it strands the worktree+branch.
+    try {
+      await chownMindDir(projectRoot, mindName);
+    } catch (e: unknown) {
+      await rollbackSplit();
+      const msg = e instanceof Error ? e.message : String(e);
+      return c.json({ error: `Failed to prepare variant ownership: ${msg}` }, 500);
+    }
 
     // Install dependencies
     try {
@@ -113,6 +141,7 @@ const app = new Hono<AuthEnv>()
         await exec("npm", ["install"], { cwd: variantDir });
       }
     } catch (e: unknown) {
+      await rollbackSplit();
       const msg = e instanceof Error ? e.message : String(e);
       return c.json({ error: `npm install failed: ${msg}` }, 500);
     }
@@ -125,7 +154,13 @@ const app = new Hono<AuthEnv>()
     const variantPort = body.port ?? (await nextPort());
 
     // Register variant in DB
-    await addVariant(variantName, mindName, variantPort, variantDir, variantName);
+    try {
+      await addVariant(variantName, mindName, variantPort, variantDir, variantName);
+    } catch (e: unknown) {
+      await rollbackSplit();
+      const msg = e instanceof Error ? e.message : String(e);
+      return c.json({ error: `Failed to register variant: ${msg}` }, 500);
+    }
 
     // Start variant via mind manager unless noStart. The pending context becomes the
     // variant's first message — orientation about who it is and where it came from.
@@ -135,6 +170,7 @@ const app = new Hono<AuthEnv>()
         manager.setPendingContext(variantName, { type: "split", parent: mindName });
         await manager.startMind(variantName);
       } catch (e: unknown) {
+        await rollbackSplit();
         const msg = e instanceof Error ? e.message : String(e);
         return c.json({ error: `Variant created but failed to start: ${msg}` }, 500);
       }
