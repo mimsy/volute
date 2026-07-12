@@ -187,7 +187,31 @@ export function createVoluteServer(options: {
 
     if (req.method === "POST" && url.pathname === "/message") {
       try {
-        const body = JSON.parse(await readBody(req)) as VoluteRequest;
+        const raw = JSON.parse(await readBody(req)) as
+          | VoluteRequest
+          | {
+              kind: "event";
+              event: { id: number; type: string; label: string; body: string; at: string };
+              session?: string;
+            };
+
+        // System-event envelope: ambient, sender-less. Dispatch with event framing.
+        if ((raw as { kind?: string }).kind === "event") {
+          const { event, session } = raw as {
+            event: { id: number; type: string; label: string; body: string; at: string };
+            session?: string;
+          };
+          router.dispatch([{ type: "text", text: event.body }], session ?? "main", {
+            isEvent: true,
+            eventLabel: event.label,
+            eventAt: event.at,
+          });
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: true }));
+          return;
+        }
+
+        const body = raw as VoluteRequest;
 
         // Strip any sender-provided verified field to prevent spoofing
         delete body.verified;

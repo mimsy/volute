@@ -17,6 +17,23 @@ export function compactTime(date: Date = new Date()): string {
   return `${h}:${min}`;
 }
 
+/**
+ * Prefix for a system-event turn: `[Event: <label> — <local time>]`. No sender, no
+ * platform/DM framing — events come from the environment, not a person.
+ */
+export function formatEventPrefix(label: string, at: string | undefined): string {
+  let time = "";
+  if (at) {
+    const iso = at.includes("T") ? at : at.replace(" ", "T");
+    const withZ = iso.endsWith("Z") ? iso : `${iso}Z`;
+    const d = new Date(withZ);
+    time = Number.isNaN(d.getTime()) ? at : compactTimestamp(d);
+  } else {
+    time = compactTimestamp();
+  }
+  return `[Event: ${label}${time ? ` — ${time}` : ""}]\n`;
+}
+
 export function formatPrefix(meta: ChannelMeta | undefined, time: string): string {
   if (!meta?.channel && !meta?.sender) return "";
   const platform = meta.platform ?? "Volute";
