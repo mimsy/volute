@@ -14,6 +14,7 @@ export type ActivityEvent = {
     | "mind_error"
     | "mind_sleeping"
     | "mind_waking"
+    | "mind_sprouted"
     | "page_updated"
     | "page_published"
     | "page_removed"

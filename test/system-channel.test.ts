@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { eq } from "drizzle-orm";
 import { createUser } from "../packages/daemon/src/lib/auth.js";
 import {
+  announceSprout,
   announceToSystem,
   backfillSystemChannelMembers,
   ensureSystemChannel,
@@ -21,9 +24,10 @@ import {
   addMind,
   addSpirit,
   addVariant,
+  mindDir,
   removeMind,
 } from "../packages/daemon/src/lib/mind/registry.js";
-import { messages, users } from "../packages/daemon/src/lib/schema.js";
+import { activity, messages, mindHistory, users } from "../packages/daemon/src/lib/schema.js";
 
 const TEST_USERNAMES = [
   "volute",
@@ -32,6 +36,7 @@ const TEST_USERNAMES = [
   "commons-seed",
   "commons-legacy",
   "commons-clash",
+  "commons-sprout",
 ];
 const TEST_MINDS = [
   "volute",
@@ -40,6 +45,7 @@ const TEST_MINDS = [
   "commons-legacy",
   "commons-clash",
   "commons-mind-v1",
+  "commons-sprout",
 ];
 
 async function cleanup() {
@@ -49,6 +55,8 @@ async function cleanup() {
     await db.delete(users).where(eq(users.username, username));
   }
   for (const mind of TEST_MINDS) {
+    await db.delete(activity).where(eq(activity.mind, mind));
+    await db.delete(mindHistory).where(eq(mindHistory.mind, mind));
     await removeMind(mind);
   }
   // Remove the #system channel so each test exercises fresh creation
@@ -163,5 +171,80 @@ describe("system channel", () => {
     const msgs = await db.select().from(messages).all();
     const found = msgs.find((m) => m.content.includes("test announcement"));
     assert.ok(found, "should find the announcement message");
+  });
+
+  // Register the spirit and give it the catch-all routes.json the real spirit
+  // template ships with, so the delivery pipeline records the prompt as spirit
+  // inbound history instead of gating the unrouted @volute channel.
+  async function registerSpiritWithRoutes(): Promise<void> {
+    await addSpirit("volute", 4906, "claude", "/tmp/spirit");
+    const configDir = resolve(mindDir("volute"), "home/.config");
+    mkdirSync(configDir, { recursive: true });
+    writeFileSync(
+      resolve(configDir, "routes.json"),
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: routing template var
+      JSON.stringify({ rules: [{ channel: "*", session: "${channel}" }], default: "main" }),
+    );
+  }
+
+  it("announceSprout prompts the spirit to write the welcome and records a mind_sprouted activity", async () => {
+    // The spirit hand-writes the #system welcome (#665); the daemon only sends
+    // it a prompt.
+    await registerSpiritWithRoutes();
+
+    await announceSprout("commons-sprout");
+
+    const db = await getDb();
+    const history = await db.select().from(mindHistory).where(eq(mindHistory.mind, "volute")).all();
+    const prompt = history.find(
+      (h) => h.type === "inbound" && h.content?.includes("@commons-sprout"),
+    );
+    assert.ok(prompt, "spirit should receive a prompt to welcome the sprouted mind");
+    assert.ok(prompt!.content!.includes("#system"), "prompt should point the spirit at #system");
+
+    // No canned message is posted anywhere — the spirit composes its own.
+    const msgs = await db.select().from(messages).all();
+    const canned = msgs.find((m) => m.content.includes("commons-sprout"));
+    assert.equal(canned, undefined, "no templated welcome should be posted");
+
+    const acts = await db.select().from(activity).where(eq(activity.mind, "commons-sprout")).all();
+    const sprouted = acts.find((a) => a.type === "mind_sprouted");
+    assert.ok(sprouted, "should publish a mind_sprouted activity event");
+    assert.ok(sprouted?.summary.includes("sprouted"), "activity summary should mention sprouting");
+  });
+
+  it("announceSprout still records the activity event when the spirit is unavailable", async () => {
+    // No spirit registered — the prompt can't be delivered. There's deliberately
+    // no canned fallback, but the deterministic feed card must still fire.
+    await announceSprout("commons-sprout");
+
+    const db = await getDb();
+    const acts = await db.select().from(activity).where(eq(activity.mind, "commons-sprout")).all();
+    const sprouted = acts.find((a) => a.type === "mind_sprouted");
+    assert.ok(sprouted, "mind_sprouted activity should fire even without a spirit");
+  });
+
+  it("announceSprout uses the mind's display name when set", async () => {
+    // The real sprout flow joins the mind to #system (creating its user row)
+    // before announcing, so the display-name branch is the production path.
+    const db = await getDb();
+    await db.insert(users).values({
+      username: "commons-sprout",
+      password_hash: "!mind",
+      role: "user",
+      user_type: "mind",
+      display_name: "Sprouty",
+    });
+    await registerSpiritWithRoutes();
+
+    await announceSprout("commons-sprout");
+
+    const history = await db.select().from(mindHistory).where(eq(mindHistory.mind, "volute")).all();
+    const prompt = history.find((h) => h.type === "inbound" && h.content?.includes("Sprouty"));
+    assert.ok(prompt, "spirit prompt should use the display name");
+
+    const acts = await db.select().from(activity).where(eq(activity.mind, "commons-sprout")).all();
+    const sprouted = acts.find((a) => a.type === "mind_sprouted");
+    assert.equal(sprouted?.summary, "Sprouty sprouted");
   });
 });

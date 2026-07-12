@@ -20,7 +20,11 @@ import {
   unqualifyModelId,
 } from "../../lib/ai-service.js";
 import { deleteMindUser } from "../../lib/auth.js";
-import { announceToSystem, joinSystemChannelForMind } from "../../lib/chat/system-channel.js";
+import {
+  announceSprout,
+  announceToSystem,
+  joinSystemChannelForMind,
+} from "../../lib/chat/system-channel.js";
 import { getSpiritName } from "../../lib/config/setup.js";
 import { readSystemsConfig } from "../../lib/config/systems-config.js";
 import { getMindManager, MindStartupError } from "../../lib/daemon/mind-manager.js";
@@ -1927,6 +1931,12 @@ const app = new Hono<AuthEnv>()
     await joinSystemChannelForMind(name).catch((err) =>
       log.warn(`failed to join #system on sprout for ${name}`, log.errorData(err)),
     );
+
+    // Make sprouting a visible event (#665): prompt the spirit to hand-write a
+    // welcome in #system, plus a persisted `mind_sprouted` activity event
+    // (home-feed card + immediate stage-badge refresh). Fail-soft — see
+    // announceSprout.
+    await announceSprout(name);
 
     // Default autonomy: working dreaming out of the box (#581). The seed-sprout
     // CLI installs the standard skills — including dreaming — before calling

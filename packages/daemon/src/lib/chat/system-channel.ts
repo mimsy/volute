@@ -1,5 +1,7 @@
-import { getOrCreateMindUser, getOrCreateSystemUser } from "../auth.js";
+import { getOrCreateMindUser, getOrCreateSystemUser, getUserByUsername } from "../auth.js";
+import { getSpiritName } from "../config/setup.js";
 import { deliverMessage } from "../delivery/message-delivery.js";
+import { publish as publishActivity } from "../events/activity-events.js";
 import {
   addMessage,
   createChannel,
@@ -11,6 +13,7 @@ import {
 } from "../events/conversations.js";
 import { readRegistry } from "../mind/registry.js";
 import log from "../util/logger.js";
+import { sendSystemMessage } from "./system-chat.js";
 
 const SYSTEM_CHANNEL_NAME = "system";
 const SYSTEM_CHANNEL_DESCRIPTION =
@@ -116,4 +119,35 @@ export async function announceToSystem(text: string): Promise<void> {
       log.warn(`failed to deliver system announcement to ${mind.username}`, log.errorData(err));
     });
   }
+}
+
+/**
+ * Make a mind's sprout a visible event (#665). Sprouting is the most significant
+ * moment in a mind's early life but used to flip the stage silently. This does two
+ * things, each fail-soft so neither can block the sprout that triggered it:
+ *   1. Prompts the spirit to welcome the mind in #system — via the same
+ *      daemon→spirit message path the nurture schedule uses — so the welcome is
+ *      hand-written in the spirit's own voice rather than a canned template. If
+ *      the spirit is unavailable there's simply no announcement (no canned
+ *      fallback); the feed card below still fires.
+ *   2. Publishes a persisted `mind_sprouted` activity event, which drives the home-
+ *      feed "sprouted" card and prompts the dashboard to refresh the mind's stage so
+ *      its seed badge flips immediately.
+ */
+export async function announceSprout(mindName: string): Promise<void> {
+  const displayName =
+    (await getUserByUsername(mindName).catch(() => null))?.display_name ?? mindName;
+  await sendSystemMessage(
+    getSpiritName(),
+    `${displayName} (@${mindName}) has just sprouted into a full mind and joined #system. Welcome them there in your own words.`,
+  ).catch((err) =>
+    log.warn(`failed to prompt spirit to welcome sprouted ${mindName}`, log.errorData(err)),
+  );
+  await publishActivity({
+    type: "mind_sprouted",
+    mind: mindName,
+    summary: `${displayName} sprouted`,
+  }).catch((err) =>
+    log.warn(`failed to publish sprout activity for ${mindName}`, log.errorData(err)),
+  );
 }
