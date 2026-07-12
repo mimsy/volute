@@ -11,6 +11,7 @@ import UnifiedSidebar from "./components/layout/UnifiedSidebar.svelte";
 import MindRightPanel from "./components/mind/MindRightPanel.svelte";
 import MindSettings from "./components/mind/MindSettings.svelte";
 import MindVariants from "./components/mind/MindVariants.svelte";
+import PendingFiles from "./components/mind/PendingFiles.svelte";
 import ChannelBrowserModal from "./components/modals/ChannelBrowserModal.svelte";
 import ContextModal from "./components/modals/ContextModal.svelte";
 import SeedModal from "./components/modals/SeedModal.svelte";
@@ -870,6 +871,7 @@ function handleGlobalClick(e: MouseEvent) {
   {#if activeModal === "mindFiles" && mindModalName}
     <Modal title="Files — {mindModalName}" onClose={() => { activeModal = null; mindModalName = null; }}>
       <div class="modal-scroll-body">
+        <PendingFiles name={mindModalName} />
         <PublicFiles name={mindModalName} />
       </div>
     </Modal>

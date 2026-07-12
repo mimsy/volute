@@ -894,6 +894,34 @@ export function deleteSchedule(name: string, id: string): Promise<void> {
   return del(`${V1}/minds/${enc(name)}/schedules/${enc(id)}`);
 }
 
+// --- Pending incoming files ---
+// These routes live under /api/minds (not /api/v1), guarded by requireSelf.
+
+export type PendingFile = {
+  id: string;
+  sender: string;
+  filename: string;
+  originalPath: string;
+  size: number;
+  createdAt: string;
+};
+
+export function fetchPendingFiles(mind: string): Promise<PendingFile[]> {
+  return get(`/api/minds/${enc(mind)}/files/pending`);
+}
+
+export function acceptPendingFile(
+  mind: string,
+  id: string,
+  dest?: string,
+): Promise<{ ok: boolean; destPath: string }> {
+  return post(`/api/minds/${enc(mind)}/files/accept`, { id, ...(dest ? { dest } : {}) });
+}
+
+export function rejectPendingFile(mind: string, id: string): Promise<{ ok: boolean }> {
+  return post(`/api/minds/${enc(mind)}/files/reject`, { id });
+}
+
 // --- Profile ---
 
 export async function updateMindProfile(
