@@ -69,20 +69,26 @@ let mindParticipants = $derived.by(() => {
 
 // Channel settings (description/rules/char limit/private) for the header + editor
 let channelSettings = $state<ChannelSettings | null>(null);
+let settingsLoadFailed = $state(false);
 let showSettings = $state(false);
 
 $effect(() => {
-  if (convType !== "channel" || !channelName) {
-    channelSettings = null;
-    return;
-  }
+  // Reset first so a failed or in-flight fetch can never leave another
+  // channel's settings behind (the modal seeds its form from this state).
+  channelSettings = null;
+  settingsLoadFailed = false;
+  if (convType !== "channel" || !channelName) return;
   const target = channelName;
   fetchChannelSettings(target)
     .then((res) => {
       // Guard against a stale response after the channel switched
       if (target === channelName) channelSettings = res.settings ?? null;
     })
-    .catch(() => {});
+    .catch((err) => {
+      if (target !== channelName) return;
+      console.error(`Failed to load settings for #${target}:`, err);
+      settingsLoadFailed = true;
+    });
 });
 
 // Notify parent of typing names changes
@@ -328,8 +334,12 @@ async function handleSend(
   <ChannelSettingsModal
     {channelName}
     settings={channelSettings}
+    loadFailed={settingsLoadFailed}
     onClose={() => (showSettings = false)}
-    onSaved={(next) => (channelSettings = next)}
+    onSaved={(next) => {
+      channelSettings = next;
+      settingsLoadFailed = false;
+    }}
   />
 {/if}
 

@@ -428,16 +428,23 @@ export async function updateChannelSettings(
     charLimit?: number | null;
     private?: boolean;
   },
-): Promise<void> {
+): Promise<ChannelSettings> {
   const res = await _client.fetch(`${V1}/channels/${enc(name)}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(settings),
   });
   if (!res.ok) {
-    const data = (await res.json().catch(() => ({}))) as { error?: string };
-    throw new Error(data.error || "Failed to update channel settings");
+    const data = (await res.json().catch(() => ({}))) as { error?: unknown };
+    const message =
+      typeof data.error === "string"
+        ? data.error
+        : `Failed to update channel settings (${res.status})`;
+    throw new Error(message);
   }
+  // Return the server's canonical settings so the UI reflects any normalization.
+  const body = (await res.json()) as { settings: ChannelSettings };
+  return body.settings;
 }
 
 // --- Skills ---

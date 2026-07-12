@@ -6,11 +6,13 @@ import { updateChannelSettings } from "../../lib/client";
 let {
   channelName,
   settings,
+  loadFailed = false,
   onClose,
   onSaved,
 }: {
   channelName: string;
   settings: ChannelSettings | null;
+  loadFailed?: boolean;
   onClose: () => void;
   onSaved: (settings: ChannelSettings) => void;
 } = $props();
@@ -51,8 +53,9 @@ async function handleSave() {
     private: isPrivate,
   };
   try {
-    await updateChannelSettings(channelName, next);
-    onSaved(next);
+    // Propagate the server's canonical settings, not the locally built object.
+    const saved = await updateChannelSettings(channelName, next);
+    onSaved(saved);
     onClose();
   } catch (err) {
     error = err instanceof Error ? err.message : "Failed to save settings";
@@ -64,6 +67,12 @@ async function handleSave() {
 
 <Modal size="420px" title="#{channelName} settings" {onClose}>
   <div class="settings-body">
+    {#if loadFailed}
+      <div class="warning">
+        Couldn't load the channel's current settings — saving will overwrite them.
+      </div>
+    {/if}
+
     <label class="field">
       <span class="field-label">Description</span>
       <textarea
@@ -172,6 +181,14 @@ async function handleSave() {
   .error {
     color: var(--red);
     font-size: 13px;
+  }
+
+  .warning {
+    color: var(--yellow);
+    font-size: 13px;
+    padding: 8px 10px;
+    border: 1px solid var(--yellow-bg);
+    border-radius: var(--radius);
   }
 
   .actions {

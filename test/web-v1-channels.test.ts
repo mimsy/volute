@@ -533,6 +533,72 @@ describe("web v1 channels routes", () => {
     assert.equal(body2.settings.description, "Updated desc");
     assert.equal(body2.settings.charLimit, 1000);
 
+    // Explicit null clears a field (the UI relies on null-vs-undefined)
+    const res3 = await app.request("/api/v1/channels/patchable", {
+      method: "PATCH",
+      headers: {
+        Cookie: `volute_session=${cookie}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ description: null }),
+    });
+    assert.equal(res3.status, 200);
+    const body3 = await res3.json();
+    assert.equal(body3.settings.description, null);
+    assert.equal(body3.settings.rules, "Be brief");
+
+    await deleteConversation(ch.id);
+  });
+
+  it("PATCH /:name — non-admin channel member may update settings", async () => {
+    await setupAuth(); // first user (admin) exists but is not used as the caller
+    const app = createApp();
+
+    const bob = await createUser("bob", "pass");
+    await setUserRole(bob.id, "user");
+    const bobCookie = await createSession(bob.id);
+
+    // bob is an ordinary member (creator) of the channel — the isParticipant
+    // allow branch, which every mind relies on, must permit the edit.
+    const ch = await createChannel("member-edit", bob.id);
+
+    const res = await app.request("/api/v1/channels/member-edit", {
+      method: "PATCH",
+      headers: {
+        Cookie: `volute_session=${bobCookie}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ description: "set by member" }),
+    });
+    assert.equal(res.status, 200);
+    const settings = await getChannelSettings("member-edit");
+    assert.equal(settings?.description, "set by member");
+
+    await deleteConversation(ch.id);
+  });
+
+  it("PATCH /:name — 400 for invalid charLimit", async () => {
+    const cookie = await setupAuth();
+    const app = createApp();
+
+    const ch = await createChannel("strict", userId);
+
+    for (const bad of [0, -5, 2.5]) {
+      const res = await app.request("/api/v1/channels/strict", {
+        method: "PATCH",
+        headers: {
+          Cookie: `volute_session=${cookie}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ charLimit: bad }),
+      });
+      assert.equal(res.status, 400, `charLimit ${bad} should be rejected`);
+    }
+
+    // Nothing was persisted.
+    const settings = await getChannelSettings("strict");
+    assert.equal(settings?.char_limit, null);
+
     await deleteConversation(ch.id);
   });
 
