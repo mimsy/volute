@@ -154,7 +154,7 @@ function buildAssistantItems(
     {#if role === "user"}
       {#each blocks as block}
         {#if block.type === "text"}
-          <div class="user-text">{block.text}</div>
+          <div class="markdown-body">{@html renderMarkdown(block.text)}</div>
         {:else if block.type === "image"}
           {@const imgSrc = `data:${block.media_type};base64,${block.data}`}
           <button type="button" class="chat-image-btn" onclick={() => (lightboxSrc = imgSrc)}>
@@ -242,11 +242,6 @@ function buildAssistantItems(
     min-width: 0;
     font-family: var(--mono);
     font-size: 14px;
-  }
-
-  .user-text {
-    color: var(--text-0);
-    white-space: pre-wrap;
   }
 
   .chat-image-btn {
