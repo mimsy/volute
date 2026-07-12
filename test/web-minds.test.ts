@@ -473,6 +473,21 @@ describe("web minds routes", () => {
       assert.ok(body2.seedChecklist, "non-privileged callers also see the checklist");
       assert.equal(body2.seedChecklist.soulWritten, true);
       await deleteSession(cookie2);
+
+      // The dashboard renders the card from the list route (data.minds), a
+      // separate call site from GET /:name — assert the checklist rides it too.
+      const listRes = await app.request("/api/minds", {
+        headers: { Cookie: `volute_session=${cookie}` },
+      });
+      assert.equal(listRes.status, 200);
+      const list = (await listRes.json()) as Array<{
+        name: string;
+        seedChecklist?: { soulWritten: boolean; displayNameSet: boolean };
+      }>;
+      const listed = list.find((m) => m.name === name);
+      assert.ok(listed?.seedChecklist, "list route carries the seed checklist");
+      assert.equal(listed.seedChecklist.soulWritten, true);
+      assert.equal(listed.seedChecklist.displayNameSet, true);
     } finally {
       await removeMind(name);
       rmSync(dir, { recursive: true, force: true });
