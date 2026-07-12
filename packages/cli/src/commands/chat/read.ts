@@ -1,6 +1,6 @@
 import { command } from "../../lib/command.js";
 import { daemonFetch } from "../../lib/daemon-client.js";
-import { compactTime, isCompact } from "../../lib/format-cli.js";
+import { compactTime, formatSender, isCompact } from "../../lib/format-cli.js";
 import { resolveMindName } from "../../lib/resolve-mind-name.js";
 
 type Conversation = {
@@ -80,6 +80,7 @@ const cmd = command({
       items: {
         role: string;
         sender_name: string | null;
+        sender_display_name: string | null;
         content: string | { type: string; text?: string }[];
         created_at: string;
       }[];
@@ -92,7 +93,10 @@ const cmd = command({
 
     const compact = isCompact();
     for (const msg of data.items) {
-      const sender = msg.sender_name ?? msg.role;
+      // Compact (mind-facing) output stays terse; display names are for humans.
+      const sender = compact
+        ? (msg.sender_name ?? msg.role)
+        : formatSender(msg.sender_name ?? msg.role, msg.sender_display_name);
       const text = Array.isArray(msg.content)
         ? msg.content
             .filter((b): b is { type: "text"; text: string } => b.type === "text")

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { eq } from "drizzle-orm";
 import { Hono } from "hono";
-import { approveUser, createUser } from "../packages/daemon/src/lib/auth.js";
+import { approveUser, createUser, getOrCreateMindUser } from "../packages/daemon/src/lib/auth.js";
 import { getDb } from "../packages/daemon/src/lib/db.js";
 import {
   addMessage,
@@ -12,7 +12,7 @@ import {
   getConversation,
   getMessages,
 } from "../packages/daemon/src/lib/events/conversations.js";
-import { users } from "../packages/daemon/src/lib/schema.js";
+import { minds, users } from "../packages/daemon/src/lib/schema.js";
 import v1ConversationsRoute from "../packages/daemon/src/web/api/v1/conversations.js";
 import conversationsRoute from "../packages/daemon/src/web/api/volute/conversations.js";
 import {
@@ -39,6 +39,7 @@ const TEST_USERNAMES = [
   "group-member",
   "privacy-outsider",
   "volute",
+  "conv-display-mind",
 ];
 
 async function cleanup() {
@@ -46,6 +47,7 @@ async function cleanup() {
   for (const username of TEST_USERNAMES) {
     await db.delete(users).where(eq(users.username, username));
   }
+  await db.delete(minds).where(eq(minds.name, "conv-display-mind"));
 }
 
 async function setupAuth() {
@@ -102,6 +104,68 @@ describe("web conversations routes", () => {
     assert.equal(body.items.length, 2);
     assert.equal(body.items[0].role, "user");
     assert.equal(body.items[1].role, "assistant");
+
+    await deleteConversation(conv.id);
+  });
+
+  it("GET /:name/conversations/:id/messages — includes sender display names", async () => {
+    const cookie = await setupAuth();
+    const app = createApp();
+    const db = await getDb();
+    // Give the sender a display name distinct from the username.
+    await db
+      .update(users)
+      .set({ display_name: "Admin Person" })
+      .where(eq(users.username, "conv-admin"));
+
+    const conv = await createConversation({ participantIds: [userId] });
+    await addMessage(conv.id, "user", "conv-admin", [{ type: "text", text: "Hi" }]);
+    // A sender with no matching user record resolves to null.
+    await addMessage(conv.id, "user", "ghost-user", [{ type: "text", text: "Boo" }]);
+
+    const res = await app.request(`/api/minds/test-mind/conversations/${conv.id}/messages`, {
+      headers: { Cookie: `volute_session=${cookie}` },
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.items[0].sender_display_name, "Admin Person");
+    assert.equal(body.items[1].sender_display_name, null);
+
+    await deleteConversation(conv.id);
+  });
+
+  it("GET /:name/conversations/:id/messages?limit=N — full app annotates display names (paginated branch)", async () => {
+    // Exercises the route `volute chat read` actually hits: in the composed app,
+    // minds.ts shadows the volute conversations route, and chat read always
+    // paginates (?limit=50), so this pins the paginated branch of minds.ts.
+    const cookie = await setupAuth();
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
+    const db = await getDb();
+
+    // The minds.ts route requires the mind to exist in the registry and the
+    // conversation to include the mind user as a participant.
+    await db
+      .insert(minds)
+      .values({ name: "conv-display-mind", port: 4391, dir: "/tmp/conv-display-mind" });
+    const mindUser = await getOrCreateMindUser("conv-display-mind");
+    await db
+      .update(users)
+      .set({ display_name: "Admin Person" })
+      .where(eq(users.username, "conv-admin"));
+
+    const conv = await createConversation({ participantIds: [userId, mindUser.id] });
+    await addMessage(conv.id, "user", "conv-admin", [{ type: "text", text: "Hi" }]);
+
+    const res = await app.request(
+      `/api/minds/conv-display-mind/conversations/${conv.id}/messages?limit=10`,
+      { headers: { Cookie: `volute_session=${cookie}` } },
+    );
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as {
+      items: { sender_name: string | null; sender_display_name: string | null }[];
+    };
+    const msg = body.items.find((m) => m.sender_name === "conv-admin");
+    assert.equal(msg?.sender_display_name, "Admin Person");
 
     await deleteConversation(conv.id);
   });

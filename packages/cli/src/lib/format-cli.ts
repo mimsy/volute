@@ -1,6 +1,15 @@
 /** Whether output should be compact (mind context). */
 export const isCompact = () => !!process.env.VOLUTE_MIND;
 
+/**
+ * Render a sender for human-facing output. When a distinct display name exists,
+ * shows "Display Name (@username)"; otherwise returns the name unchanged.
+ */
+export function formatSender(name: string, displayName?: string | null): string {
+  if (displayName && displayName !== name) return `${displayName} (@${name})`;
+  return name;
+}
+
 /** Format a DB timestamp as HH:MM */
 export function compactTime(dateStr: string): string {
   const d = new Date(dateStr.endsWith("Z") ? dateStr : `${dateStr}Z`);
