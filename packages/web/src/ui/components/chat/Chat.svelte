@@ -1,5 +1,5 @@
 <script lang="ts">
-import type { ContentBlock, Message, Mind, Participant } from "@volute/api";
+import type { ContentBlock, Message, Mind, Participant, SeedChecklist } from "@volute/api";
 import { fetchConversationMessages, sendChat } from "../../lib/client";
 import { subscribe } from "../../lib/connection.svelte";
 import { auth } from "../../lib/stores.svelte";
@@ -8,6 +8,7 @@ import ActivityIndicator from "./ActivityIndicator.svelte";
 import ChatStatusBar from "./ChatStatusBar.svelte";
 import MessageInput from "./MessageInput.svelte";
 import MessageList from "./MessageList.svelte";
+import SeedProgressCard from "./SeedProgressCard.svelte";
 
 let {
   name,
@@ -15,6 +16,7 @@ let {
   conversationId,
   onConversationId,
   stage,
+  seedChecklist,
   convType = "dm",
   channelName = "",
   minds = [],
@@ -27,6 +29,7 @@ let {
   conversationId: string | null;
   onConversationId: (id: string) => void;
   stage?: "seed" | "sprouted";
+  seedChecklist?: SeedChecklist;
   convType?: string;
   channelName?: string;
   minds?: Mind[];
@@ -244,7 +247,11 @@ async function handleSend(
 
 <div class="chat">
   {#if stage === "seed"}
-    <div class="orientation-bar">orientation</div>
+    {#if seedChecklist}
+      <SeedProgressCard checklist={seedChecklist} />
+    {:else}
+      <div class="orientation-bar">orientation</div>
+    {/if}
   {/if}
 
   {#if convType === "channel" && channelName}

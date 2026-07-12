@@ -82,6 +82,7 @@ import {
   stateDir,
   validateMindName,
 } from "../../lib/mind/registry.js";
+import { evaluateSeedChecklist } from "../../lib/mind/seed-readiness.js";
 import { isTemplateStale } from "../../lib/mind/template-staleness.js";
 import { applyThinkingLevel, deriveThinkingLevel } from "../../lib/mind/thinking-config.js";
 import { cleanupVariant } from "../../lib/mind/variant-cleanup.js";
@@ -141,7 +142,12 @@ type ChannelStatus = {
   status: "connected" | "disconnected";
 };
 
-async function getMindStatus(name: string, port: number, registryRunning?: boolean) {
+async function getMindStatus(
+  name: string,
+  port: number,
+  registryRunning?: boolean,
+  seed?: { stage?: string | null; dir?: string | null },
+) {
   const manager = getMindManager();
   let status: "running" | "stopped" | "starting" | "sleeping" = "stopped";
   let wakeAt: string | null = null;
@@ -186,6 +192,13 @@ async function getMindStatus(name: string, port: number, registryRunning?: boole
   // automatically once the notice drains on the next clean turn.
   const lastError = await latestFailureNotice(name);
 
+  // Seed minds surface their sprout checklist so the host watching the seed's
+  // chat can see how close it is (#664). Derived from the same predicates as the
+  // sprout gate and the spirit's nurture check — nothing secret, so it rides in
+  // the public status payload alongside displayName/avatar.
+  const seedChecklist =
+    seed?.stage === "seed" ? evaluateSeedChecklist(seed.dir ?? mindDir(name)) : undefined;
+
   return {
     status,
     wakeAt,
@@ -194,6 +207,7 @@ async function getMindStatus(name: string, port: number, registryRunning?: boole
     displayName: config?.profile?.displayName,
     description: config?.profile?.description,
     avatar: config?.profile?.avatar,
+    seedChecklist,
   };
 }
 
@@ -234,6 +248,7 @@ export function toPublicMind(
     displayName: status.displayName,
     description: status.description,
     avatar: status.avatar,
+    seedChecklist: status.seedChecklist,
     hasPages: extras.hasPages,
     lastActiveAt: extras.lastActiveAt ?? null,
   };
@@ -1344,7 +1359,10 @@ const app = new Hono<AuthEnv>()
     const privileged = isPrivileged(c);
     const minds = await Promise.all(
       entries.map(async (entry) => {
-        const mindStatus = await getMindStatus(entry.name, entry.port, entry.running);
+        const mindStatus = await getMindStatus(entry.name, entry.port, entry.running, {
+          stage: entry.stage,
+          dir: entry.dir,
+        });
         const hasPages = existsSync(resolve(mindDir(entry.name), "home", "pages"));
         const lastActiveAt = lastActiveMap.get(entry.name) ?? null;
         if (!privileged) return toPublicMind(entry, mindStatus, { hasPages, lastActiveAt });
@@ -1368,7 +1386,10 @@ const app = new Hono<AuthEnv>()
     const dir = entry.dir ?? mindDir(entry.parent ?? name);
     if (!existsSync(dir)) return c.json({ error: "Mind directory missing" }, 404);
 
-    const mindStatus = await getMindStatus(name, entry.port);
+    const mindStatus = await getMindStatus(name, entry.port, undefined, {
+      stage: entry.stage,
+      dir: entry.dir,
+    });
     const hasPages = existsSync(resolve(mindDir(name), "home", "pages"));
 
     // Non-privileged callers (minds, non-admin users) get profile-level fields
