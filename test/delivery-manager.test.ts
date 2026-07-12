@@ -29,7 +29,7 @@ describe("DeliveryManager", () => {
   describe("routeAndDeliver", () => {
     it("routes to correct session based on rules", async () => {
       const name = createMindWithRoutes({
-        rules: [{ channel: "discord:*", session: "discord" }],
+        rules: [{ channel: "discord:*", thread: "discord" }],
         default: "main",
       });
 
@@ -51,7 +51,7 @@ describe("DeliveryManager", () => {
 
     it("routes to default session when no rules match", async () => {
       const name = createMindWithRoutes({
-        rules: [{ channel: "discord:*", session: "discord" }],
+        rules: [{ channel: "discord:*", thread: "discord" }],
         default: "fallback",
         gateUnmatched: false,
       });
@@ -72,7 +72,7 @@ describe("DeliveryManager", () => {
 
     it("gates unmatched channels by default", async () => {
       const name = createMindWithRoutes({
-        rules: [{ channel: "discord:*", session: "discord" }],
+        rules: [{ channel: "discord:*", thread: "discord" }],
       });
 
       manager = new DeliveryManager();
@@ -91,7 +91,7 @@ describe("DeliveryManager", () => {
 
     it("does not gate when gateUnmatched is false", async () => {
       const name = createMindWithRoutes({
-        rules: [{ channel: "discord:*", session: "discord" }],
+        rules: [{ channel: "discord:*", thread: "discord" }],
         default: "main",
         gateUnmatched: false,
       });
@@ -132,7 +132,7 @@ describe("DeliveryManager", () => {
 
     it("returns batch mode for batch-configured sessions", async () => {
       const name = createMindWithRoutes({
-        rules: [{ channel: "discord:*", session: "discord" }],
+        rules: [{ channel: "discord:*", thread: "discord" }],
         sessions: { discord: { delivery: "batch" } },
       });
 
@@ -153,7 +153,7 @@ describe("DeliveryManager", () => {
 
     it("filters mention-mode messages that don't mention the mind", async () => {
       const name = createMindWithRoutes({
-        rules: [{ channel: "group:*", session: "group", mode: "mention" }],
+        rules: [{ channel: "group:*", thread: "group", mode: "mention" }],
       });
 
       manager = new DeliveryManager();
@@ -174,7 +174,7 @@ describe("DeliveryManager", () => {
   describe("session tracking", () => {
     it("tracks session as busy after delivery", async () => {
       const name = createMindWithRoutes({
-        rules: [{ channel: "test:*", session: "test" }],
+        rules: [{ channel: "test:*", thread: "test" }],
         gateUnmatched: false,
       });
 
@@ -273,7 +273,7 @@ describe("DeliveryManager", () => {
   describe("new-speaker no longer interrupts (buffers instead)", () => {
     function setBatchSession() {
       return createMindWithRoutes({
-        rules: [{ channel: "group:*", session: "group" }],
+        rules: [{ channel: "group:*", thread: "group" }],
         sessions: { group: { delivery: { mode: "batch", debounce: 2, maxWait: 10 } } },
         gateUnmatched: false,
       });

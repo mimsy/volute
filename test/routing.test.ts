@@ -29,7 +29,7 @@ describe("loadRoutingConfig", () => {
     writeFileSync(
       path,
       JSON.stringify({
-        rules: [{ channel: "web", session: "web-session" }],
+        rules: [{ channel: "web", thread: "web-session" }],
         default: "main",
       }),
     );
@@ -44,14 +44,14 @@ describe("loadRoutingConfig", () => {
     writeFileSync(
       path,
       JSON.stringify([
-        { channel: "system", session: "system" },
-        { channel: "@aswever", session: "volute-@aswever" },
+        { channel: "system", thread: "system" },
+        { channel: "@aswever", thread: "volute-@aswever" },
       ]),
     );
     const config = loadRoutingConfig(path);
     assert.equal(config.rules?.length, 2);
     assert.equal(config.rules?.[0].channel, "system");
-    assert.equal(config.rules?.[1].session, "volute-@aswever");
+    assert.equal(config.rules?.[1].thread, "volute-@aswever");
   });
 });
 
@@ -70,7 +70,7 @@ describe("resolveRoute", () => {
 
   it("returns mind destination for rules without destination field", () => {
     const config: RoutingConfig = {
-      rules: [{ channel: "discord:*", session: "discord" }],
+      rules: [{ channel: "discord:*", thread: "discord" }],
       default: "main",
     };
     const r = expectMind(resolveRoute(config, { channel: "discord:123" }));
@@ -89,7 +89,7 @@ describe("resolveRoute", () => {
 
   it("falls through to default when no rules match", () => {
     const config: RoutingConfig = {
-      rules: [{ channel: "discord:*", session: "discord" }],
+      rules: [{ channel: "discord:*", thread: "discord" }],
       default: "fallback",
     };
     const r = expectMind(resolveRoute(config, { channel: "web" }));
@@ -100,7 +100,7 @@ describe("resolveRoute", () => {
 
   it("matches exact channel", () => {
     const config: RoutingConfig = {
-      rules: [{ channel: "web", session: "web-session" }],
+      rules: [{ channel: "web", thread: "web-session" }],
       default: "main",
     };
     assert.equal(expectMind(resolveRoute(config, { channel: "web" })).session, "web-session");
@@ -108,7 +108,7 @@ describe("resolveRoute", () => {
 
   it("matches exact sender", () => {
     const config: RoutingConfig = {
-      rules: [{ sender: "alice", session: "alice" }],
+      rules: [{ sender: "alice", thread: "alice" }],
       default: "main",
     };
     assert.equal(
@@ -123,7 +123,7 @@ describe("resolveRoute", () => {
 
   it("matches glob pattern in channel", () => {
     const config: RoutingConfig = {
-      rules: [{ channel: "discord:*", session: "discord" }],
+      rules: [{ channel: "discord:*", thread: "discord" }],
       default: "main",
     };
     assert.equal(expectMind(resolveRoute(config, { channel: "discord:12345" })).session, "discord");
@@ -132,7 +132,7 @@ describe("resolveRoute", () => {
 
   it("matches multiple criteria (AND)", () => {
     const config: RoutingConfig = {
-      rules: [{ channel: "web", sender: "alice", session: "alice-web" }],
+      rules: [{ channel: "web", sender: "alice", thread: "alice-web" }],
       default: "main",
     };
     assert.equal(
@@ -152,8 +152,8 @@ describe("resolveRoute", () => {
   it("first matching rule wins", () => {
     const config: RoutingConfig = {
       rules: [
-        { sender: "alice", session: "alice-special" },
-        { channel: "web", session: "web-default" },
+        { sender: "alice", thread: "alice-special" },
+        { channel: "web", thread: "web-default" },
       ],
       default: "main",
     };
@@ -169,7 +169,7 @@ describe("resolveRoute", () => {
 
   it("rule with no match criteria matches everything", () => {
     const config: RoutingConfig = {
-      rules: [{ session: "catch-all" }],
+      rules: [{ thread: "catch-all" }],
       default: "main",
     };
     assert.equal(
@@ -181,7 +181,7 @@ describe("resolveRoute", () => {
 
   it("ignores unknown rule keys (no match)", () => {
     const config = {
-      rules: [{ chanel: "web", session: "typo-rule" }],
+      rules: [{ chanel: "web", thread: "typo-rule" }],
       default: "main",
     } as unknown as RoutingConfig;
     assert.equal(
@@ -196,7 +196,7 @@ describe("resolveRoute", () => {
   it("expands ${sender} template variable", () => {
     const config: RoutingConfig = {
       // biome-ignore lint/suspicious/noTemplateCurlyInString: literal config syntax
-      rules: [{ channel: "discord:*", session: "discord-${sender}" }],
+      rules: [{ channel: "discord:*", thread: "discord-${sender}" }],
       default: "main",
     };
     assert.equal(
@@ -213,7 +213,7 @@ describe("resolveRoute", () => {
   it("expands ${channel} template variable", () => {
     const config: RoutingConfig = {
       // biome-ignore lint/suspicious/noTemplateCurlyInString: literal config syntax
-      rules: [{ channel: "discord:*", session: "chan-${channel}" }],
+      rules: [{ channel: "discord:*", thread: "chan-${channel}" }],
       default: "main",
     };
     assert.equal(
@@ -225,7 +225,7 @@ describe("resolveRoute", () => {
   it("handles missing sender in template expansion", () => {
     const config: RoutingConfig = {
       // biome-ignore lint/suspicious/noTemplateCurlyInString: literal config syntax
-      rules: [{ channel: "web", session: "user-${sender}" }],
+      rules: [{ channel: "web", thread: "user-${sender}" }],
       default: "main",
     };
     assert.equal(expectMind(resolveRoute(config, { channel: "web" })).session, "user-unknown");
@@ -233,7 +233,7 @@ describe("resolveRoute", () => {
 
   it("returns $new literally (server handles generation)", () => {
     const config: RoutingConfig = {
-      rules: [{ channel: "system:scheduler", session: "$new" }],
+      rules: [{ channel: "system:scheduler", thread: "$new" }],
       default: "main",
     };
     assert.equal(
@@ -247,8 +247,8 @@ describe("resolveRoute", () => {
   it("scheduler schedule id as sender", () => {
     const config: RoutingConfig = {
       rules: [
-        { channel: "system:scheduler", sender: "daily-report", session: "daily-report" },
-        { channel: "system:scheduler", sender: "cleanup", session: "$new" },
+        { channel: "system:scheduler", sender: "daily-report", thread: "daily-report" },
+        { channel: "system:scheduler", sender: "cleanup", thread: "$new" },
       ],
       default: "main",
     };
@@ -278,7 +278,7 @@ describe("resolveRoute", () => {
           destination: "file",
           path: "home/inbox/bots.md",
         },
-        { channel: "discord:*", session: "discord" },
+        { channel: "discord:*", thread: "discord" },
       ],
       default: "main",
     };
@@ -297,7 +297,7 @@ describe("resolveRoute", () => {
   it("sanitizes path traversal in sender template", () => {
     const config: RoutingConfig = {
       // biome-ignore lint/suspicious/noTemplateCurlyInString: testing literal config syntax
-      rules: [{ channel: "discord:*", session: "discord-${sender}" }],
+      rules: [{ channel: "discord:*", thread: "discord-${sender}" }],
       default: "main",
     };
     const r = expectMind(
@@ -310,7 +310,7 @@ describe("resolveRoute", () => {
   it("sanitizes path traversal in channel template", () => {
     const config: RoutingConfig = {
       // biome-ignore lint/suspicious/noTemplateCurlyInString: testing literal config syntax
-      rules: [{ sender: "alice", session: "chan-${channel}" }],
+      rules: [{ sender: "alice", thread: "chan-${channel}" }],
       default: "main",
     };
     const r = expectMind(resolveRoute(config, { channel: "../../home/SOUL", sender: "alice" }));
@@ -321,7 +321,7 @@ describe("resolveRoute", () => {
   it("sanitizes backslashes in session names", () => {
     const config: RoutingConfig = {
       // biome-ignore lint/suspicious/noTemplateCurlyInString: testing literal config syntax
-      rules: [{ channel: "*", session: "s-${sender}" }],
+      rules: [{ channel: "*", thread: "s-${sender}" }],
       default: "main",
     };
     const r = expectMind(resolveRoute(config, { channel: "web", sender: "..\\..\\etc\\passwd" }));
@@ -333,7 +333,7 @@ describe("resolveRoute", () => {
 
   it("matches isDM: true", () => {
     const config: RoutingConfig = {
-      rules: [{ isDM: true, session: "dm" }],
+      rules: [{ isDM: true, thread: "dm" }],
       default: "main",
     };
     assert.equal(expectMind(resolveRoute(config, { channel: "@abc", isDM: true })).session, "dm");
@@ -346,7 +346,7 @@ describe("resolveRoute", () => {
 
   it("matches isDM: false", () => {
     const config: RoutingConfig = {
-      rules: [{ isDM: false, session: "group" }],
+      rules: [{ isDM: false, thread: "group" }],
       default: "main",
     };
     assert.equal(
@@ -362,7 +362,7 @@ describe("resolveRoute", () => {
 
   it("matches participants count", () => {
     const config: RoutingConfig = {
-      rules: [{ participants: 2, session: "one-on-one" }],
+      rules: [{ participants: 2, thread: "one-on-one" }],
       default: "main",
     };
     assert.equal(
@@ -379,8 +379,8 @@ describe("resolveRoute", () => {
   it("combines isDM with channel for routing", () => {
     const config: RoutingConfig = {
       rules: [
-        { channel: "*", isDM: true, session: "volute-dm" },
-        { channel: "*", session: "volute-group" },
+        { channel: "*", isDM: true, thread: "volute-dm" },
+        { channel: "*", thread: "volute-group" },
       ],
       default: "main",
     };
@@ -398,7 +398,7 @@ describe("resolveRoute", () => {
 
   it("returns matched: true when a rule matches", () => {
     const config: RoutingConfig = {
-      rules: [{ channel: "discord:*", session: "discord" }],
+      rules: [{ channel: "discord:*", thread: "discord" }],
       default: "main",
     };
     const r = resolveRoute(config, { channel: "discord:123" });
@@ -407,7 +407,7 @@ describe("resolveRoute", () => {
 
   it("returns matched: false when falling through to default", () => {
     const config: RoutingConfig = {
-      rules: [{ channel: "discord:*", session: "discord" }],
+      rules: [{ channel: "discord:*", thread: "discord" }],
       default: "main",
     };
     const r = resolveRoute(config, { channel: "web" });
@@ -432,7 +432,7 @@ describe("resolveRoute", () => {
 
   it("passes mode through to resolved route", () => {
     const config: RoutingConfig = {
-      rules: [{ channel: "#*", session: "channel", mode: "mention" }],
+      rules: [{ channel: "#*", thread: "channel", mode: "mention" }],
     };
     const r = expectMind(resolveRoute(config, { channel: "#general" }));
     assert.equal(r.session, "channel");
@@ -441,7 +441,7 @@ describe("resolveRoute", () => {
 
   it("mode defaults to undefined (all)", () => {
     const config: RoutingConfig = {
-      rules: [{ channel: "#general", session: "general" }],
+      rules: [{ channel: "#general", thread: "general" }],
     };
     const r = expectMind(resolveRoute(config, { channel: "#general" }));
     assert.equal(r.mode, undefined);
@@ -449,7 +449,7 @@ describe("resolveRoute", () => {
 
   it("mode is not treated as a match criterion", () => {
     const config: RoutingConfig = {
-      rules: [{ mode: "mention", session: "catch-all" }],
+      rules: [{ mode: "mention", thread: "catch-all" }],
     };
     // Rule with only mode (and session) should match everything — mode is not a match key
     const r = expectMind(resolveRoute(config, { channel: "anything" }));
