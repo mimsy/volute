@@ -49,8 +49,14 @@ if (!ungatedCommands.has(command)) {
       console.error(`Open ${setupUrl()} in your browser to complete it.`);
       console.error("(If the daemon isn't running, start it with `volute up` first.)");
     } else {
-      console.error("Volute is not set up. Run `volute setup` to get started.");
-      console.error("It starts the daemon and opens a browser wizard to finish configuration.");
+      const { detectSystemInstallHint } = await import("@volute/cli/lib/system-install.js");
+      const hint = detectSystemInstallHint();
+      if (hint) {
+        console.error(hint);
+      } else {
+        console.error("Volute is not set up. Run `volute setup` to get started.");
+        console.error("It starts the daemon and opens a browser wizard to finish configuration.");
+      }
     }
     process.exit(1);
   }
