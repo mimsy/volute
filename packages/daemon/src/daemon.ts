@@ -145,6 +145,16 @@ export async function startDaemon(opts: {
     log.warn("avatar size migration failed", log.errorData(err));
   }
 
+  // Rename legacy "session" keys to "thread" in each mind's routes.json and
+  // volute.json (#493) — a leftover `session` rule key makes the whole rule
+  // unmatchable, which gates the channel's messages. Non-fatal per file.
+  try {
+    const { migrateThreadConfigs } = await import("./lib/mind/migrate-thread-config.js");
+    await migrateThreadConfigs();
+  } catch (err) {
+    log.warn("session→thread config migration failed", log.errorData(err));
+  }
+
   // Initialize sandbox runtime for mind process isolation
   const { initSandbox } = await import("./lib/mind/sandbox.js");
   await initSandbox();

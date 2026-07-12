@@ -468,7 +468,7 @@ describe("resolveSessionConfig", () => {
 
   it("matches exact session name", () => {
     const config: RoutingConfig = {
-      sessions: { discord: { interrupt: false } },
+      threads: { discord: { interrupt: false } },
     };
     const r = resolveSessionConfig(config, "discord");
     assert.equal(r.interrupt, false);
@@ -476,7 +476,7 @@ describe("resolveSessionConfig", () => {
 
   it("matches glob pattern", () => {
     const config: RoutingConfig = {
-      sessions: { "@*": { interrupt: false } },
+      threads: { "@*": { interrupt: false } },
     };
     const r = resolveSessionConfig(config, "@conv-abc");
     assert.equal(r.interrupt, false);
@@ -484,7 +484,7 @@ describe("resolveSessionConfig", () => {
 
   it("first match wins", () => {
     const config: RoutingConfig = {
-      sessions: {
+      threads: {
         "discord:*": { interrupt: false },
         "*": { interrupt: true },
       },
@@ -495,7 +495,7 @@ describe("resolveSessionConfig", () => {
 
   it("normalizes batch number (minutes) to BatchConfig", () => {
     const config: RoutingConfig = {
-      sessions: { discord: { batch: 15 } },
+      threads: { discord: { batch: 15 } },
     };
     const r = resolveSessionConfig(config, "discord");
     assert.deepEqual(r.batch, { maxWait: 900 }); // 15 * 60
@@ -503,7 +503,7 @@ describe("resolveSessionConfig", () => {
 
   it("passes through BatchConfig object", () => {
     const config: RoutingConfig = {
-      sessions: {
+      threads: {
         discord: { batch: { debounce: 20, maxWait: 120, triggers: ["@bot"] } },
       },
     };
@@ -513,7 +513,7 @@ describe("resolveSessionConfig", () => {
 
   it("returns instructions when configured", () => {
     const config: RoutingConfig = {
-      sessions: { discord: { instructions: "Brief responses only." } },
+      threads: { discord: { instructions: "Brief responses only." } },
     };
     const r = resolveSessionConfig(config, "discord");
     assert.equal(r.instructions, "Brief responses only.");
@@ -521,7 +521,7 @@ describe("resolveSessionConfig", () => {
 
   it("returns defaults for unmatched session", () => {
     const config: RoutingConfig = {
-      sessions: { discord: { interrupt: false } },
+      threads: { discord: { interrupt: false } },
     };
     const r = resolveSessionConfig(config, "slack");
     assert.equal(r.interrupt, true);
@@ -535,7 +535,7 @@ describe("resolveSessionConfig", () => {
 
   it("passes through configured replyInstructions value", () => {
     const config: RoutingConfig = {
-      sessions: { discord: { replyInstructions: "always" } },
+      threads: { discord: { replyInstructions: "always" } },
     };
     const r = resolveSessionConfig(config, "discord");
     assert.equal(r.replyInstructions, "always");
@@ -543,7 +543,7 @@ describe("resolveSessionConfig", () => {
 
   it("passes through replyInstructions 'never'", () => {
     const config: RoutingConfig = {
-      sessions: { discord: { replyInstructions: "never" } },
+      threads: { discord: { replyInstructions: "never" } },
     };
     const r = resolveSessionConfig(config, "discord");
     assert.equal(r.replyInstructions, "never");

@@ -35,7 +35,7 @@ export type ResolvedSessionConfig = {
 
 export type RoutingConfig = {
   rules?: RoutingRule[];
-  sessions?: Record<string, SessionConfig>;
+  threads?: Record<string, SessionConfig>;
   default?: string;
   gateUnmatched?: boolean;
 };
@@ -149,7 +149,7 @@ export function resolveRoute(config: RoutingConfig, meta: MatchMeta): ResolvedRo
 }
 
 /**
- * Resolve session config by matching session name against glob-pattern keys in config.sessions.
+ * Resolve thread config by matching thread name against glob-pattern keys in config.threads.
  * First match wins. Returns defaults if no match.
  */
 export function resolveSessionConfig(
@@ -158,9 +158,9 @@ export function resolveSessionConfig(
 ): ResolvedSessionConfig {
   const defaults: ResolvedSessionConfig = { interrupt: true, replyInstructions: "once" };
 
-  if (!config.sessions) return defaults;
+  if (!config.threads) return defaults;
 
-  for (const [pattern, sessionConfig] of Object.entries(config.sessions)) {
+  for (const [pattern, sessionConfig] of Object.entries(config.threads)) {
     if (globMatch(pattern, sessionName)) {
       const batch = sessionConfig.batch != null ? normalizeBatch(sessionConfig.batch) : undefined;
       return {

@@ -133,7 +133,7 @@ describe("DeliveryManager", () => {
     it("returns batch mode for batch-configured sessions", async () => {
       const name = createMindWithRoutes({
         rules: [{ channel: "discord:*", thread: "discord" }],
-        sessions: { discord: { delivery: "batch" } },
+        threads: { discord: { delivery: "batch" } },
       });
 
       manager = new DeliveryManager();
@@ -274,7 +274,7 @@ describe("DeliveryManager", () => {
     function setBatchSession() {
       return createMindWithRoutes({
         rules: [{ channel: "group:*", thread: "group" }],
-        sessions: { group: { delivery: { mode: "batch", debounce: 2, maxWait: 10 } } },
+        threads: { group: { delivery: { mode: "batch", debounce: 2, maxWait: 10 } } },
         gateUnmatched: false,
       });
     }

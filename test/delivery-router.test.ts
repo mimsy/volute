@@ -156,7 +156,7 @@ describe("resolveDeliveryMode", () => {
 
   it("returns immediate when no sessions match", () => {
     const config: RoutingConfig = {
-      sessions: { discord: { delivery: "batch" } },
+      threads: { discord: { delivery: "batch" } },
     };
     const r = resolveDeliveryMode(config, "slack");
     assert.equal(r.delivery.mode, "immediate");
@@ -164,7 +164,7 @@ describe("resolveDeliveryMode", () => {
 
   it('resolves delivery: "immediate"', () => {
     const config: RoutingConfig = {
-      sessions: { main: { delivery: "immediate" } },
+      threads: { main: { delivery: "immediate" } },
     };
     const r = resolveDeliveryMode(config, "main");
     assert.equal(r.delivery.mode, "immediate");
@@ -172,7 +172,7 @@ describe("resolveDeliveryMode", () => {
 
   it('resolves delivery: "batch" with defaults', () => {
     const config: RoutingConfig = {
-      sessions: { main: { delivery: "batch" } },
+      threads: { main: { delivery: "batch" } },
     };
     const r = resolveDeliveryMode(config, "main");
     assert.equal(r.delivery.mode, "batch");
@@ -182,7 +182,7 @@ describe("resolveDeliveryMode", () => {
 
   it('resolves delivery: { mode: "batch", debounce, maxWait }', () => {
     const config: RoutingConfig = {
-      sessions: { main: { delivery: { mode: "batch", debounce: 10, maxWait: 60 } } },
+      threads: { main: { delivery: { mode: "batch", debounce: 10, maxWait: 60 } } },
     };
     const r = resolveDeliveryMode(config, "main");
     assert.equal(r.delivery.mode, "batch");
@@ -192,7 +192,7 @@ describe("resolveDeliveryMode", () => {
 
   it("matches glob session patterns", () => {
     const config: RoutingConfig = {
-      sessions: { "discord-*": { delivery: "batch" } },
+      threads: { "discord-*": { delivery: "batch" } },
     };
     const r = resolveDeliveryMode(config, "discord-general");
     assert.equal(r.delivery.mode, "batch");
@@ -200,7 +200,7 @@ describe("resolveDeliveryMode", () => {
 
   it("first matching session wins", () => {
     const config: RoutingConfig = {
-      sessions: {
+      threads: {
         "discord-*": { delivery: "batch" },
         "*": { delivery: "immediate" },
       },
@@ -211,7 +211,7 @@ describe("resolveDeliveryMode", () => {
 
   it("preserves instructions", () => {
     const config: RoutingConfig = {
-      sessions: { main: { instructions: "Be brief." } },
+      threads: { main: { instructions: "Be brief." } },
     };
     const r = resolveDeliveryMode(config, "main");
     assert.equal(r.instructions, "Be brief.");

@@ -36,7 +36,7 @@ export type DeliveryMode =
 
 export type RoutingConfig = {
   rules?: RoutingRule[];
-  sessions?: Record<string, SessionConfig>;
+  threads?: Record<string, SessionConfig>;
   default?: string;
   gateUnmatched?: boolean;
 };
@@ -166,6 +166,7 @@ export function getRoutingConfig(mindName: string): RoutingConfig {
   try {
     const config: RoutingConfig = JSON.parse(readFileSync(path, "utf-8"));
     const changed = cached != null && cached.mtime !== mtime;
+    warnUnknownRuleKeys(mindName, config);
     configCache.set(mindName, { config, mtime });
     // A pre-existing cached config with a different mtime means routes.json actually
     // changed — release any gated messages that the new rules now match.
@@ -210,6 +211,28 @@ function globMatch(pattern: string, value: string): boolean {
 
 const GLOB_MATCH_KEYS = new Set(["channel", "sender"]);
 const NON_MATCH_KEYS = new Set(["thread", "destination", "path", "mode", "batch"]);
+const KNOWN_RULE_KEYS = new Set([...GLOB_MATCH_KEYS, ...NON_MATCH_KEYS, "isDM", "participants"]);
+
+/**
+ * Warn (once per config load, not per message) about rule keys ruleMatches will
+ * reject. An unrecognized key makes the whole rule unmatchable — with gating on,
+ * that silently diverts the channel's messages into the gate. Catches leftovers
+ * from the session→thread rename and future typos alike.
+ */
+export function warnUnknownRuleKeys(mindName: string, config: RoutingConfig): void {
+  if (!Array.isArray(config.rules)) return;
+  for (const rule of config.rules) {
+    if (rule == null || typeof rule !== "object") continue;
+    const unknown = Object.keys(rule).filter((k) => !KNOWN_RULE_KEYS.has(k));
+    if (unknown.length > 0) {
+      dlog.warn(
+        `routes.json for ${mindName} has a rule with unrecognized key(s) ` +
+          `${unknown.map((k) => `"${k}"`).join(", ")} — the rule will never match ` +
+          `(known keys: ${[...KNOWN_RULE_KEYS].join(", ")})`,
+      );
+    }
+  }
+}
 
 function ruleMatches(rule: RoutingRule, meta: MatchMeta): boolean {
   for (const [key, pattern] of Object.entries(rule)) {
@@ -301,13 +324,13 @@ export function resolveDeliveryMode(
   sessionName: string,
   rule?: RoutingRule,
 ): ResolvedSessionConfig {
-  // Rule-level batch config takes priority when no sessions config exists
+  // Rule-level batch config takes priority when no threads config exists
   const ruleBatch = rule?.batch;
   const defaults: ResolvedSessionConfig = {
     delivery: { mode: "immediate" },
   };
 
-  if (!config.sessions) {
+  if (!config.threads) {
     if (ruleBatch != null) {
       const batch = normalizeBatchConfig(ruleBatch);
       return {
@@ -322,7 +345,7 @@ export function resolveDeliveryMode(
     return defaults;
   }
 
-  for (const [pattern, sessionConfig] of Object.entries(config.sessions)) {
+  for (const [pattern, sessionConfig] of Object.entries(config.threads)) {
     if (globMatch(pattern, sessionName)) {
       let delivery: ResolvedDeliveryMode;
 

@@ -1,6 +1,6 @@
 {
   "rules": [{ "channel": "#*", "thread": "${channel}" }],
-  "sessions": {
+  "threads": {
     "#*": { "batch": { "debounce": 20, "maxWait": 120, "triggers": ["@{{name}}"] } }
   }
 }

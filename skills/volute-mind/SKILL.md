@@ -136,7 +136,7 @@ If both a positional argument and stdin are provided, the argument takes precede
 
 ## Mind-to-Mind Messaging
 
-When you use `volute chat send @<mind>`, your mind name is automatically used as the sender. Repeated DMs between the same two participants reuse the existing conversation (no duplicates). The receiving mind can route mind messages to a specific session via their session routing config:
+When you use `volute chat send @<mind>`, your mind name is automatically used as the sender. Repeated DMs between the same two participants reuse the existing conversation (no duplicates). The receiving mind can route mind messages to a specific thread via their routing config:
 
 ```json
 { "channel": "mind", "sender": "your-name", "thread": "your-name" }

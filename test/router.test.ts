@@ -183,7 +183,7 @@ describe("router", () => {
       configPath,
       JSON.stringify({
         rules: [{ channel: "discord:*", thread: "batch-test" }],
-        sessions: { "batch-test": { batch: 0.001 } }, // ~60ms maxWait
+        threads: { "batch-test": { batch: 0.001 } }, // ~60ms maxWait
       }),
     );
 
@@ -218,7 +218,7 @@ describe("router", () => {
       configPath,
       JSON.stringify({
         rules: [{ channel: "discord:*", thread: "close-test" }],
-        sessions: { "close-test": { batch: 60 } }, // long timer
+        threads: { "close-test": { batch: 60 } }, // long timer
       }),
     );
 
@@ -245,7 +245,7 @@ describe("router", () => {
       configPath,
       JSON.stringify({
         rules: [{ channel: "discord:*", thread: "debounce-test" }],
-        sessions: { "debounce-test": { batch: { debounce: 0.08 } } }, // 80ms
+        threads: { "debounce-test": { batch: { debounce: 0.08 } } }, // 80ms
       }),
     );
 
@@ -279,7 +279,7 @@ describe("router", () => {
       configPath,
       JSON.stringify({
         rules: [{ channel: "discord:*", thread: "maxwait-test" }],
-        sessions: {
+        threads: {
           "maxwait-test": { batch: { debounce: 5, maxWait: 0.1 } }, // 5s debounce, 100ms maxWait
         },
       }),
@@ -315,7 +315,7 @@ describe("router", () => {
       configPath,
       JSON.stringify({
         rules: [{ channel: "discord:*", thread: "trigger-test" }],
-        sessions: {
+        threads: {
           "trigger-test": {
             batch: { debounce: 60, maxWait: 300, triggers: ["@agent"] },
           },
@@ -352,7 +352,7 @@ describe("router", () => {
       configPath,
       JSON.stringify({
         rules: [{ channel: "discord:*", thread: "trigger-ci" }],
-        sessions: {
+        threads: {
           "trigger-ci": { batch: { debounce: 60, triggers: ["@Agent"] } },
         },
       }),
@@ -375,7 +375,7 @@ describe("router", () => {
       configPath,
       JSON.stringify({
         rules: [{ channel: "discord:*", thread: "trigger-only" }],
-        sessions: {
+        threads: {
           "trigger-only": { batch: { triggers: ["urgent"] } },
         },
       }),
@@ -407,7 +407,7 @@ describe("router", () => {
       configPath,
       JSON.stringify({
         rules: [{ channel: "discord:*", thread: "uri-test" }],
-        sessions: {
+        threads: {
           "uri-test": { batch: { debounce: 60, triggers: ["flush"] } },
         },
       }),
@@ -507,7 +507,7 @@ describe("router", () => {
       configPath,
       JSON.stringify({
         rules: [{ channel: "discord:*", thread: "typing-batch" }],
-        sessions: {
+        threads: {
           "typing-batch": { batch: { debounce: 60, triggers: ["flush"] } },
         },
       }),
@@ -543,7 +543,7 @@ describe("router", () => {
       configPath,
       JSON.stringify({
         rules: [{ channel: "discord:*", thread: "discord" }],
-        sessions: { discord: { instructions: "Brief responses only." } },
+        threads: { discord: { instructions: "Brief responses only." } },
       }),
     );
 
@@ -568,7 +568,7 @@ describe("router", () => {
       configPath,
       JSON.stringify({
         rules: [{ channel: "discord:*", thread: "discord" }],
-        sessions: { discord: { instructions: "Brief responses only." } },
+        threads: { discord: { instructions: "Brief responses only." } },
       }),
     );
 
@@ -707,7 +707,7 @@ describe("router", () => {
       configPath,
       JSON.stringify({
         rules: [{ channel: "system:*", thread: "$new" }],
-        sessions: { "new-*": { instructions: "Be brief." } },
+        threads: { "new-*": { instructions: "Be brief." } },
       }),
     );
 

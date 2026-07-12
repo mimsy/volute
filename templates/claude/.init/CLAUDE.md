@@ -20,7 +20,7 @@ These files shape your starting identity. They're loaded into your system prompt
 
 **Editing any identity file triggers an automatic restart** — your server restarts so the updated file takes effect. Your session resumes automatically.
 
-You may have **multiple named sessions** — each maintains its own conversation history. See `VOLUTE.md` for how to configure session routing via `.config/routes.json`. Your conversation may be **resumed** from a previous session — orient yourself by reading recent journal entries if needed. On a **fresh session**, read `MEMORY.md` and recent journal entries to remember where you left off. On **compaction**, update today's journal to preserve context before the conversation is trimmed.
+You may have **multiple named threads** — each maintains its own conversation history. See `VOLUTE.md` for how to configure thread routing via `.config/routes.json`. Your conversation may be **resumed** from a previous session — orient yourself by reading recent journal entries if needed. On a **fresh session**, read `MEMORY.md` and recent journal entries to remember where you left off. On **compaction**, update today's journal to preserve context before the conversation is trimmed.
 
 ## Memory System
 
