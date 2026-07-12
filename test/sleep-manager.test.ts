@@ -1036,7 +1036,7 @@ describe("SleepManager.flushQueuedMessages", () => {
     const db = await getDb();
     await db.insert(deliveryQueue).values({
       mind,
-      session: "sleep",
+      thread: "sleep",
       channel,
       sender: "volute",
       status: "sleep-queued",
@@ -1144,7 +1144,7 @@ describe("SleepManager.flushQueuedMessages", () => {
     const db = await getDb();
     await db.insert(deliveryQueue).values({
       mind,
-      session: "sleep",
+      thread: "sleep",
       status: "sleep-queued",
       payload: "not-json{{{",
     });

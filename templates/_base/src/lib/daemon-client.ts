@@ -25,7 +25,7 @@ function headers(): Record<string, string> {
   if (port) h.Origin = `http://127.0.0.1:${port}`;
   // Tag requests with the current session for turn resolution
   const session = process.env.VOLUTE_SESSION ?? readSessionFile();
-  if (session) h["X-Volute-Session"] = session;
+  if (session) h["X-Volute-Thread"] = session;
   return h;
 }
 

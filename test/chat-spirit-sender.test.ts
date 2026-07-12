@@ -140,7 +140,7 @@ describe("spirit as a mind sender via POST /api/v1/chat", () => {
     const { default: app } = await import("../packages/daemon/src/web/app.js");
 
     // Open a sessionless turn for the spirit (keyed `volute:*`). getActiveTurnId
-    // falls back to it when the send carries no X-Volute-Session header, so the
+    // falls back to it when the send carries no X-Volute-Thread header, so the
     // outbound must be tagged with this turn — the attribution that was skipped
     // entirely while the spirit was misclassified as a non-mind sender.
     const turnId = await createTurn("volute");

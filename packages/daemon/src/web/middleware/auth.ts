@@ -136,7 +136,7 @@ export const authMiddleware = createMiddleware<AuthEnv>(async (c, next) => {
         avatar: null,
       } as User);
       // Capture mind session for turn resolution
-      const mindSessionHeader = c.req.header("X-Volute-Session");
+      const mindSessionHeader = c.req.header("X-Volute-Thread");
       if (mindSessionHeader) c.set("mindSession", mindSessionHeader);
       await next();
       return;
@@ -155,7 +155,7 @@ export const authMiddleware = createMiddleware<AuthEnv>(async (c, next) => {
       }
       c.set("user", mindUser);
       // Capture mind session for turn resolution
-      const mindSessionHeader = c.req.header("X-Volute-Session");
+      const mindSessionHeader = c.req.header("X-Volute-Thread");
       if (mindSessionHeader) c.set("mindSession", mindSessionHeader);
       await next();
       return;

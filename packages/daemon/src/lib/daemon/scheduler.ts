@@ -208,7 +208,7 @@ export class Scheduler {
         // Default schedule fires to "queue" while asleep so an unadorned cron
         // schedule doesn't inherit the DM wake-trigger fallback and wake the mind.
         whileSleeping: schedule.whileSleeping ?? "queue",
-        session: schedule.session,
+        session: schedule.thread,
       });
       slog.info(`fired "${schedule.id}" for ${mindName}${delivered ? "" : " (event pending)"}`);
 

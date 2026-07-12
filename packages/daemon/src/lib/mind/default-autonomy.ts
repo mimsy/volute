@@ -53,7 +53,7 @@ export function defaultDreamSchedule(): Schedule {
     message:
       "it's 3am. you are dreaming.\n\ngather your material — read your latest journal entry, read MEMORY.md, surface random memories if you have a way to. then construct a dream premise from that material and invoke the dreamer subagent to experience the dream.",
     enabled: true,
-    session: "$new",
+    thread: "$new",
     whileSleeping: "trigger-wake",
   };
 }

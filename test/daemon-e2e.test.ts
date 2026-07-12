@@ -360,7 +360,7 @@ describe("daemon e2e", { timeout: 420000 }, () => {
     await db.insert(deliveryQueue).values([
       {
         mind: TEST_MIND,
-        session: "main",
+        thread: "main",
         channel: "slack:random",
         sender: "zoe",
         status: "gated",
@@ -372,7 +372,7 @@ describe("daemon e2e", { timeout: 420000 }, () => {
       },
       {
         mind: TEST_MIND,
-        session: "main",
+        thread: "main",
         channel: "slack:random",
         sender: "amp",
         status: "gated",
@@ -1665,9 +1665,9 @@ describe("daemon e2e", { timeout: 420000 }, () => {
 
     // Insert turns and summaries for different sessions
     await db.insert(turns).values([
-      { id: "turn-1", mind: TEST_MIND, session: "discord", status: "complete" },
-      { id: "turn-2", mind: TEST_MIND, session: "slack", status: "complete" },
-      { id: "turn-3", mind: TEST_MIND, session: "main", status: "complete" },
+      { id: "turn-1", mind: TEST_MIND, thread: "discord", status: "complete" },
+      { id: "turn-2", mind: TEST_MIND, thread: "slack", status: "complete" },
+      { id: "turn-3", mind: TEST_MIND, thread: "main", status: "complete" },
     ]);
     await db.insert(summaries).values([
       {
@@ -1721,7 +1721,7 @@ describe("daemon e2e", { timeout: 420000 }, () => {
     await db.insert(mindHistory).values([
       {
         mind: TEST_MIND,
-        session: "web",
+        thread: "web",
         type: "inbound",
         content: "hello",
         turn_id: "web-turn-1",
@@ -1729,7 +1729,7 @@ describe("daemon e2e", { timeout: 420000 }, () => {
       },
       {
         mind: TEST_MIND,
-        session: "web",
+        thread: "web",
         type: "outbound",
         content: "hi there",
         turn_id: "web-turn-1",
@@ -1739,8 +1739,8 @@ describe("daemon e2e", { timeout: 420000 }, () => {
 
     // Insert turns and summaries: one before the turn boundary, one after
     await db.insert(turns).values([
-      { id: "old-turn", mind: TEST_MIND, session: "telegram", status: "complete" },
-      { id: "new-turn", mind: TEST_MIND, session: "telegram", status: "complete" },
+      { id: "old-turn", mind: TEST_MIND, thread: "telegram", status: "complete" },
+      { id: "new-turn", mind: TEST_MIND, thread: "telegram", status: "complete" },
     ]);
     await db.insert(summaries).values([
       {

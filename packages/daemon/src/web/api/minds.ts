@@ -810,7 +810,7 @@ async function importHistoryFromArchive(name: string, tempDir: string): Promise<
         await db.insert(mindHistory).values({
           mind: name,
           channel: row.channel ?? null,
-          session: row.session ?? null,
+          thread: row.session ?? null,
           sender: row.sender ?? null,
           message_id: row.message_id ?? null,
           type: row.type,
@@ -2780,15 +2780,15 @@ const app = new Hono<AuthEnv>()
     const db = await getDb();
     const rows = await db
       .select({
-        session: mindHistory.session,
+        session: mindHistory.thread,
         started_at: sql<string>`MIN(${mindHistory.created_at})`,
         event_count: sql<number>`COUNT(*)`,
         message_count: sql<number>`SUM(CASE WHEN ${mindHistory.type} IN ('inbound','outbound') THEN 1 ELSE 0 END)`,
         tool_count: sql<number>`SUM(CASE WHEN ${mindHistory.type}='tool_use' THEN 1 ELSE 0 END)`,
       })
       .from(mindHistory)
-      .where(and(eq(mindHistory.mind, name), sql`${mindHistory.session} IS NOT NULL`))
-      .groupBy(mindHistory.session)
+      .where(and(eq(mindHistory.mind, name), sql`${mindHistory.thread} IS NOT NULL`))
+      .groupBy(mindHistory.thread)
       .orderBy(sql`MIN(${mindHistory.created_at}) DESC`);
     return c.json(rows);
   })
@@ -2896,7 +2896,7 @@ const app = new Hono<AuthEnv>()
         .where(
           and(
             eq(mindHistory.mind, name),
-            eq(mindHistory.session, session),
+            eq(mindHistory.thread, session),
             sql`${mindHistory.id} >= ${fromId}`,
             sql`${mindHistory.id} <= ${toId}`,
             typeFilter,
@@ -2925,7 +2925,7 @@ const app = new Hono<AuthEnv>()
         .where(
           and(
             eq(mindHistory.mind, name),
-            eq(mindHistory.session, currentSession),
+            eq(mindHistory.thread, currentSession),
             sql`${mindHistory.turn_id} IS NOT NULL`,
           ),
         )
@@ -2958,12 +2958,12 @@ const app = new Hono<AuthEnv>()
       sql`${summaries.created_at} > ${sinceTimestamp}`,
     ];
     if (currentSession) {
-      conditions.push(sql`${turns.session} != ${currentSession}`);
+      conditions.push(sql`${turns.thread} != ${currentSession}`);
     }
 
     const rows = await db
       .select({
-        session: turns.session,
+        session: turns.thread,
         content: summaries.content,
         created_at: summaries.created_at,
       })
@@ -3052,7 +3052,7 @@ const app = new Hono<AuthEnv>()
       conditions.push(eq(mindHistory.channel, channel));
     }
     if (session) {
-      conditions.push(eq(mindHistory.session, session));
+      conditions.push(eq(mindHistory.thread, session));
     }
 
     // Preset-based type filtering
@@ -3063,7 +3063,7 @@ const app = new Hono<AuthEnv>()
       const sumConditions: SQL[] = [eq(summaries.mind, name), eq(summaries.period, "turn")];
 
       if (session) {
-        sumConditions.push(eq(turns.session, session));
+        sumConditions.push(eq(turns.thread, session));
         const sumRows = await db
           .select({
             id: summaries.id,
@@ -3073,7 +3073,7 @@ const app = new Hono<AuthEnv>()
             content: summaries.content,
             metadata: summaries.metadata,
             created_at: summaries.created_at,
-            session: turns.session,
+            session: turns.thread,
           })
           .from(summaries)
           .innerJoin(turns, eq(turns.id, summaries.period_key))

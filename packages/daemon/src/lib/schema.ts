@@ -64,7 +64,7 @@ export const turns = sqliteTable(
   {
     id: text("id").primaryKey(),
     mind: text("mind").notNull(),
-    session: text("session"),
+    thread: text("thread"),
     trigger_event_id: integer("trigger_event_id"),
     summary_id: integer("summary_id"),
     status: text("status").notNull().default("active"),
@@ -83,7 +83,7 @@ export const mindHistory = sqliteTable(
     id: integer("id").primaryKey({ autoIncrement: true }),
     mind: text("mind").notNull(),
     channel: text("channel"),
-    session: text("session"),
+    thread: text("thread"),
     sender: text("sender"),
     message_id: text("message_id"),
     type: text("type").notNull(),
@@ -97,7 +97,7 @@ export const mindHistory = sqliteTable(
     index("idx_mind_history_mind_channel").on(table.mind, table.channel),
     index("idx_mind_history_mind_type").on(table.mind, table.type),
     index("idx_mind_history_turn_id").on(table.turn_id),
-    index("idx_mind_history_session").on(table.session),
+    index("idx_mind_history_thread").on(table.thread),
     index("idx_mind_history_mind_created_at").on(table.mind, table.created_at),
   ],
 );
@@ -155,7 +155,7 @@ export const deliveryQueue = sqliteTable(
     // redrive so a variant's stranded message is re-delivered to the variant, not the
     // parent. Null on legacy rows → callers fall back to `mind`.
     target_mind: text("target_mind"),
-    session: text("session").notNull(),
+    thread: text("thread").notNull(),
     channel: text("channel"),
     sender: text("sender"),
     status: text("status").notNull().default("pending"),
@@ -167,7 +167,7 @@ export const deliveryQueue = sqliteTable(
     created_at: text("created_at").notNull().default(sql`(datetime('now'))`),
   },
   (table) => [
-    index("idx_delivery_queue_mind_session").on(table.mind, table.session),
+    index("idx_delivery_queue_mind_thread").on(table.mind, table.thread),
     index("idx_delivery_queue_mind_status").on(table.mind, table.status),
     index("idx_delivery_queue_status").on(table.status),
     index("idx_delivery_queue_status_next").on(table.status, table.next_attempt_at),

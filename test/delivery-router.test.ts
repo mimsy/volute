@@ -35,7 +35,7 @@ describe("getRoutingConfig", () => {
 
   it("loads and caches config by mtime", () => {
     const config: RoutingConfig = {
-      rules: [{ channel: "discord:*", session: "discord" }],
+      rules: [{ channel: "discord:*", thread: "discord" }],
       default: "main",
     };
     const name = createMindWithRoutes(config);
@@ -51,7 +51,7 @@ describe("getRoutingConfig", () => {
   });
 
   it("reloads config when mtime changes", () => {
-    const name = createMindWithRoutes({ rules: [{ channel: "web", session: "web" }] });
+    const name = createMindWithRoutes({ rules: [{ channel: "web", thread: "web" }] });
 
     const result1 = getRoutingConfig(name);
     assert.equal(result1.rules?.[0].channel, "web");
@@ -60,7 +60,7 @@ describe("getRoutingConfig", () => {
     const dir = resolve(process.env.VOLUTE_HOME!, "minds", name);
     const configPath = resolve(dir, "home/.config/routes.json");
     // Force a different mtime by waiting a tiny bit
-    const newConfig = { rules: [{ channel: "cli", session: "cli" }] };
+    const newConfig = { rules: [{ channel: "cli", thread: "cli" }] };
     writeFileSync(configPath, JSON.stringify(newConfig));
 
     clearConfigCache(name);
@@ -81,7 +81,7 @@ describe("resolveRoute (daemon-side)", () => {
 
   it("matches glob patterns", () => {
     const config: RoutingConfig = {
-      rules: [{ channel: "discord:*", session: "discord" }],
+      rules: [{ channel: "discord:*", thread: "discord" }],
       default: "main",
     };
     const r = resolveRoute(config, { channel: "discord:12345" });
@@ -101,7 +101,7 @@ describe("resolveRoute (daemon-side)", () => {
 
   it("matches isDM", () => {
     const config: RoutingConfig = {
-      rules: [{ isDM: true, session: "dm" }],
+      rules: [{ isDM: true, thread: "dm" }],
       default: "main",
     };
     const r = resolveRoute(config, { channel: "@abc", isDM: true });
@@ -113,7 +113,7 @@ describe("resolveRoute (daemon-side)", () => {
 
   it("matches participants count", () => {
     const config: RoutingConfig = {
-      rules: [{ participants: 2, session: "one-on-one" }],
+      rules: [{ participants: 2, thread: "one-on-one" }],
       default: "main",
     };
     const r = resolveRoute(config, { channel: "abc", participantCount: 2 });
@@ -123,7 +123,7 @@ describe("resolveRoute (daemon-side)", () => {
   it("expands template variables", () => {
     const config: RoutingConfig = {
       // biome-ignore lint/suspicious/noTemplateCurlyInString: literal config syntax
-      rules: [{ channel: "discord:*", session: "discord-${sender}" }],
+      rules: [{ channel: "discord:*", thread: "discord-${sender}" }],
     };
     const r = resolveRoute(config, { channel: "discord:123", sender: "alice" });
     assert.equal((r as any).session, "discord-alice");
@@ -132,7 +132,7 @@ describe("resolveRoute (daemon-side)", () => {
   it("sanitizes session names", () => {
     const config: RoutingConfig = {
       // biome-ignore lint/suspicious/noTemplateCurlyInString: literal config syntax
-      rules: [{ channel: "*", session: "s-${sender}" }],
+      rules: [{ channel: "*", thread: "s-${sender}" }],
     };
     const r = resolveRoute(config, { channel: "web", sender: "../../etc/passwd" });
     assert.ok(!(r as any).session.includes("/"));
@@ -141,7 +141,7 @@ describe("resolveRoute (daemon-side)", () => {
 
   it("passes mode through", () => {
     const config: RoutingConfig = {
-      rules: [{ channel: "#*", session: "channel", mode: "mention" }],
+      rules: [{ channel: "#*", thread: "channel", mode: "mention" }],
     };
     const r = resolveRoute(config, { channel: "#general" });
     assert.equal((r as any).mode, "mention");

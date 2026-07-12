@@ -94,7 +94,7 @@ async function waitFor(cond: () => Promise<boolean> | boolean, timeoutMs = 3000)
 }
 
 const IMMEDIATE: RoutingConfig = {
-  rules: [{ channel: "*", session: "main" }],
+  rules: [{ channel: "*", thread: "main" }],
   gateUnmatched: false,
 };
 
@@ -246,7 +246,7 @@ describe("DeliveryManager durability", () => {
     const srv = await startMindServer();
     servers.push(srv.server);
     // gateUnmatched defaults on; only discord is routed initially.
-    const name = await registerMind(srv.port, { rules: [{ channel: "discord:*", session: "d" }] });
+    const name = await registerMind(srv.port, { rules: [{ channel: "discord:*", thread: "d" }] });
 
     manager = new DeliveryManager();
     manager.setRunningCheck(() => true);
@@ -263,7 +263,7 @@ describe("DeliveryManager durability", () => {
     const configDir = resolve(process.env.VOLUTE_HOME!, "minds", name, "home/.config");
     writeFileSync(
       resolve(configDir, "routes.json"),
-      JSON.stringify({ rules: [{ channel: "slack:*", session: "s" }] }),
+      JSON.stringify({ rules: [{ channel: "slack:*", thread: "s" }] }),
     );
     clearConfigCache(name); // triggers releaseGated → redrive
 

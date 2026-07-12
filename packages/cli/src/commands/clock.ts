@@ -182,7 +182,7 @@ const addScheduleCmd = command({
     message: { type: "string", description: "Message to send" },
     script: { type: "string", description: "Script to run" },
     id: { type: "string", description: "Unique name for this schedule (required)" },
-    session: { type: "string", description: "Session name" },
+    thread: { type: "string", description: "Thread name" },
     "while-sleeping": {
       type: "string",
       description: "Behavior during sleep (skip, queue, trigger-wake)",
@@ -237,7 +237,7 @@ const addScheduleCmd = command({
     if (flags.message) body.message = flags.message;
     if (flags.script) body.script = flags.script;
     if (flags.id) body.id = flags.id;
-    if (flags.session) body.session = flags.session;
+    if (flags.thread) body.thread = flags.thread;
     if (flags["while-sleeping"]) {
       const ws = flags["while-sleeping"] as string;
       if (!["skip", "queue", "trigger-wake"].includes(ws)) {

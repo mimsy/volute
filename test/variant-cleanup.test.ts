@@ -62,7 +62,7 @@ async function seedVariantFootprint(): Promise<number> {
   // delivery_queue keys `mind` by the base name and `target_mind` by the variant.
   await db
     .insert(deliveryQueue)
-    .values({ mind: base, target_mind: variant, session: "main", payload: "{}" });
+    .values({ mind: base, target_mind: variant, thread: "main", payload: "{}" });
   return user.id;
 }
 

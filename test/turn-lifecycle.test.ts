@@ -47,7 +47,7 @@ describe("turn-lifecycle: handleMindEvent", () => {
 
     const db = await getDb();
     const row = await db.select().from(turns).where(eq(turns.id, turnId!)).get();
-    assert.equal(row!.session, "s1");
+    assert.equal(row!.thread, "s1");
     await cleanup(mind);
   });
 
@@ -65,7 +65,7 @@ describe("turn-lifecycle: handleMindEvent", () => {
     const row = await db.select().from(mindHistory).where(eq(mindHistory.id, insertedId!)).get();
     assert.equal(row!.type, "tool_use");
     assert.equal(row!.turn_id, turnId);
-    assert.equal(row!.session, "s1");
+    assert.equal(row!.thread, "s1");
     await cleanup(mind);
   });
 
@@ -361,7 +361,7 @@ describe("turn-lifecycle: trigger linking (#403)", () => {
     await db.insert(turns).values({
       id: priorTurn,
       mind,
-      session: "@alice",
+      thread: "@alice",
       status: "complete",
       created_at: "2020-01-01 01:00:00",
     });

@@ -171,7 +171,7 @@ export async function assignSession(mind: string, turnId: string, session: strin
 
   try {
     const db = await getDb();
-    await db.update(turns).set({ session }).where(eq(turns.id, turnId));
+    await db.update(turns).set({ thread: session }).where(eq(turns.id, turnId));
   } catch (err) {
     tlog.error(`failed to assign session to turn ${turnId}`, log.errorData(err));
     return;
@@ -211,7 +211,7 @@ export async function completeTurn(
 export async function completeOrphanedTurns(): Promise<OrphanedTurn[]> {
   const db = await getDb();
   const active = await db
-    .select({ id: turns.id, mind: turns.mind, session: turns.session })
+    .select({ id: turns.id, mind: turns.mind, session: turns.thread })
     .from(turns)
     .where(eq(turns.status, "active"));
   if (active.length === 0) return [];
@@ -291,7 +291,7 @@ export async function sweepWedgedTurns(idleMs: number): Promise<OrphanedTurn[]> 
   let rows: { id: string; mind: string; session: string | null }[];
   try {
     rows = await db
-      .select({ id: turns.id, mind: turns.mind, session: turns.session })
+      .select({ id: turns.id, mind: turns.mind, session: turns.thread })
       .from(turns)
       .innerJoin(mindHistory, eq(mindHistory.turn_id, turns.id))
       .where(eq(turns.status, "active"))

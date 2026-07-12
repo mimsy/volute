@@ -137,7 +137,7 @@ export async function ensureSpiritProject(): Promise<void> {
     const routesPath = resolve(dir, "home/.config/routes.json");
     mkdirSync(resolve(dir, "home/.config"), { recursive: true });
     // biome-ignore lint/suspicious/noTemplateCurlyInString: template var for mind routing
-    const routesContent = { rules: [{ channel: "*", session: "${channel}" }], default: "main" };
+    const routesContent = { rules: [{ channel: "*", thread: "${channel}" }], default: "main" };
     writeFileSync(routesPath, `${JSON.stringify(routesContent, null, 2)}\n`);
 
     // Set spirit model in mind config if available

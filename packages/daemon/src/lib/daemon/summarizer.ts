@@ -59,7 +59,7 @@ async function gatherTurnEvents(
     eq(mindHistory.type, "done"),
     lt(mindHistory.id, doneId),
   ];
-  if (session) subConditions.push(eq(mindHistory.session, session));
+  if (session) subConditions.push(eq(mindHistory.thread, session));
 
   const prevDoneSubquery = db
     .select({ id: mindHistory.id })
@@ -73,14 +73,14 @@ async function gatherTurnEvents(
     sql`${mindHistory.id} > COALESCE((${prevDoneSubquery}), 0)`,
     sql`${mindHistory.id} <= ${doneId}`,
   ];
-  if (session) turnConditions.push(eq(mindHistory.session, session));
+  if (session) turnConditions.push(eq(mindHistory.thread, session));
 
   const events = await db
     .select({
       id: mindHistory.id,
       type: mindHistory.type,
       channel: mindHistory.channel,
-      session: mindHistory.session,
+      session: mindHistory.thread,
       content: mindHistory.content,
       metadata: mindHistory.metadata,
       turn_id: mindHistory.turn_id,
@@ -106,7 +106,7 @@ async function gatherTurnEventsByTurnId(
       id: mindHistory.id,
       type: mindHistory.type,
       channel: mindHistory.channel,
-      session: mindHistory.session,
+      session: mindHistory.thread,
       content: mindHistory.content,
       metadata: mindHistory.metadata,
       turn_id: mindHistory.turn_id,

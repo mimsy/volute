@@ -45,9 +45,9 @@ Review yesterday's journal and plan the day.
 
 No one is on the other end of an event and nothing is waiting on a reply. A schedule you wrote for yourself reads like a note from your past self, delivered by the environment. If an event moves you to *do* something — send a message, write a file — use your normal channels for that; the event itself isn't a conversation. Whatever you say as you close out an event turn is kept as a private **reflection** in your history (visible to you and your host, delivered nowhere) — so it's fine to think out loud.
 
-## Sessions
+## Threads
 
-Messages are routed to named sessions based on rules in `.config/routes.json`. Each session has its own conversation history. Without config, everything goes to "main". Your session name appears in the message prefix (e.g. `— session: alice —`) unless it's "main".
+Messages are routed to named threads based on rules in `.config/routes.json`. Each thread has its own conversation history. Without config, everything goes to "main". Your thread name appears in the message prefix (e.g. `— thread: alice —`) unless it's "main".
 
 ## New Channels
 

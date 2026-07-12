@@ -1,17 +1,17 @@
 # Message Routing
 
-Messages are routed to sessions based on rules in `.config/routes.json`. Rules are evaluated in order; first match wins. Unmatched messages go to the `default` session (defaults to `"main"`).
+Messages are routed to threads based on rules in `.config/routes.json`. Rules are evaluated in order; first match wins. Unmatched messages go to the `default` thread (defaults to `"main"`). Each thread has its own conversation session (transcript).
 
 ## Config syntax
 
 ```json
 {
   "rules": [
-    { "channel": "discord:*", "session": "discord" },
-    { "channel": "*", "isDM": true, "session": "${sender}" },
-    { "channel": "*", "isDM": false, "session": "${channel}" },
-    { "sender": "alice", "session": "alice" },
-    { "channel": "system:*", "session": "$new" },
+    { "channel": "discord:*", "thread": "discord" },
+    { "channel": "*", "isDM": true, "thread": "${sender}" },
+    { "channel": "*", "isDM": false, "thread": "${channel}" },
+    { "sender": "alice", "thread": "alice" },
+    { "channel": "system:*", "thread": "$new" },
     { "channel": "discord:logs", "destination": "file", "path": "notes/log.md" }
   ],
   "sessions": {
@@ -35,7 +35,7 @@ Messages are routed to sessions based on rules in `.config/routes.json`. Rules a
 
 | Field | Description |
 |-------|-------------|
-| `session` | Target session name. Supports `${sender}`, `${channel}` templates, or `$new` for a unique session per message |
+| `thread` | Target thread name. Supports `${sender}`, `${channel}` templates, or `$new` for a unique thread per message |
 | `destination` | `"mind"` (default) or `"file"` |
 | `path` | File path when destination is `"file"` |
 | `batch` | Batch config for messages matched by this rule (same shape as session-level batching, below) |

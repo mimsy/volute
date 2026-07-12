@@ -7,7 +7,7 @@ import log from "../util/logger.js";
 // --- Types ---
 
 export type RoutingRule = {
-  session?: string;
+  thread?: string;
   destination?: "mind" | "file";
   path?: string;
   channel?: string;
@@ -209,7 +209,7 @@ function globMatch(pattern: string, value: string): boolean {
 // --- Rule matching ---
 
 const GLOB_MATCH_KEYS = new Set(["channel", "sender"]);
-const NON_MATCH_KEYS = new Set(["session", "destination", "path", "mode", "batch"]);
+const NON_MATCH_KEYS = new Set(["thread", "destination", "path", "mode", "batch"]);
 
 function ruleMatches(rule: RoutingRule, meta: MatchMeta): boolean {
   for (const [key, pattern] of Object.entries(rule)) {
@@ -265,7 +265,7 @@ export function resolveRoute(config: RoutingConfig, meta: MatchMeta): ResolvedRo
       }
       return {
         destination: "mind",
-        session: sanitizeSessionName(expandTemplate(rule.session ?? fallback, meta)),
+        session: sanitizeSessionName(expandTemplate(rule.thread ?? fallback, meta)),
         matched: true,
         mode: rule.mode,
         rule,

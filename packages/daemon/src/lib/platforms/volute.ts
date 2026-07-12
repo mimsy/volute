@@ -109,7 +109,7 @@ export async function send(
   // Session from env or file fallback (sandbox strips env vars set after process start)
   const voluteSession =
     env.VOLUTE_SESSION || (env.VOLUTE_MIND_DIR ? readSessionFile(env.VOLUTE_MIND_DIR) : undefined);
-  if (voluteSession) headers["X-Volute-Session"] = voluteSession;
+  if (voluteSession) headers["X-Volute-Thread"] = voluteSession;
 
   const res = await fetch(`${url}/api/v1/chat`, {
     method: "POST",

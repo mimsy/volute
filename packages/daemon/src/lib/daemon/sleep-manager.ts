@@ -477,7 +477,7 @@ export class SleepManager {
     const db = await getDb();
     await db.insert(deliveryQueue).values({
       mind: name,
-      session: "sleep",
+      thread: "sleep",
       channel: payload.channel,
       sender: payload.sender ?? null,
       status: "sleep-queued",

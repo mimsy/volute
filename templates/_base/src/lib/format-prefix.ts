@@ -46,9 +46,9 @@ export function formatPrefix(meta: ChannelMeta | undefined, time: string): strin
     if (meta.serverName) sender += ` in ${meta.serverName}`;
   }
   const parts = [platform, sender].filter(Boolean);
-  // Include session name if not the default
+  // Include thread name if not the default
   const sessionPart =
-    meta.sessionName && meta.sessionName !== "main" ? ` — session: ${meta.sessionName}` : "";
+    meta.sessionName && meta.sessionName !== "main" ? ` — thread: ${meta.sessionName}` : "";
   let prefix = parts.length > 0 ? `[${parts.join(": ")}${sessionPart} — ${time}]\n` : "";
 
   // Append participant profiles on first encounter per channel

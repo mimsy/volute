@@ -111,7 +111,7 @@ async function linkPendingInbound(
     const prev = await db
       .select({ max: sql<string | null>`max(${turns.created_at})` })
       .from(turns)
-      .where(and(eq(turns.mind, mind), eq(turns.session, session), sql`${turns.id} != ${turnId}`))
+      .where(and(eq(turns.mind, mind), eq(turns.thread, session), sql`${turns.id} != ${turnId}`))
       .get();
     lowerBound = prev?.max ?? undefined;
   }
@@ -192,7 +192,7 @@ export async function handleMindEvent(
       .values({
         mind,
         type: event.type,
-        session: event.session ?? null,
+        thread: event.session ?? null,
         channel: event.channel ?? null,
         message_id: event.messageId ?? null,
         content: cleanContent ?? null,

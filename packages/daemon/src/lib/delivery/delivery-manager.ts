@@ -325,7 +325,7 @@ export class DeliveryManager {
       }
 
       const config = getRoutingConfig(row.mind);
-      const sessionConfig = resolveDeliveryMode(config, row.session);
+      const sessionConfig = resolveDeliveryMode(config, row.thread);
 
       // Resolve delivery from the original target (may be a variant) — the `mind`
       // column is the base name, used only for keying/cleanup. Falls back to `mind`
@@ -334,7 +334,7 @@ export class DeliveryManager {
 
       if (sessionConfig.delivery.mode === "batch") {
         this.inFlight.add(row.id);
-        this.addToBatchBuffer(target, row.session, sessionConfig, {
+        this.addToBatchBuffer(target, row.thread, sessionConfig, {
           payload,
           channel: payload.channel,
           sender: payload.sender ?? null,
@@ -342,7 +342,7 @@ export class DeliveryManager {
           queueId: row.id,
         });
       } else {
-        this.deliverToMind(target, row.session, payload, sessionConfig, row.id).catch((err) => {
+        this.deliverToMind(target, row.thread, payload, sessionConfig, row.id).catch((err) => {
           dlog.warn(`failed to redrive delivery for ${target}`, log.errorData(err));
         });
       }
@@ -492,7 +492,7 @@ export class DeliveryManager {
           });
           await tx
             .update(deliveryQueue)
-            .set({ status: "pending", session: p.session, attempts: 0, next_attempt_at: null })
+            .set({ status: "pending", thread: p.session, attempts: 0, next_attempt_at: null })
             .where(eq(deliveryQueue.id, p.id));
         });
       }
@@ -1222,7 +1222,7 @@ export class DeliveryManager {
         .values({
           mind: baseName,
           target_mind: mindName,
-          session,
+          thread: session,
           channel: payload.channel ?? null,
           sender: payload.sender ?? null,
           status,

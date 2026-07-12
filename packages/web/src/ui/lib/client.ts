@@ -692,7 +692,7 @@ export type MindDefaultsCognition = {
 // UI-relevant subset of ScheduleEntry (omits deprecated channel, fireAt timers)
 export type MindDefaultsSchedule = Pick<
   ScheduleEntry,
-  "id" | "cron" | "message" | "messages" | "script" | "session" | "enabled"
+  "id" | "cron" | "message" | "messages" | "script" | "thread" | "enabled"
 > & {
   whileSleeping?: "skip" | "queue" | "trigger-wake";
 };
@@ -933,7 +933,7 @@ export type ScheduleEntry = {
   script?: string;
   enabled: boolean;
   whileSleeping?: string;
-  session?: string;
+  thread?: string;
 };
 
 export function fetchSleepConfig(name: string): Promise<SleepConfig> {

@@ -150,7 +150,7 @@ export async function daemonFetch(path: string, options?: RequestInit): Promise<
   // Pass session context for turn resolution (env var or file fallback for sandbox)
   const voluteSession = process.env.VOLUTE_SESSION ?? readMindSessionFile();
   if (voluteSession) {
-    headers.set("X-Volute-Session", voluteSession);
+    headers.set("X-Volute-Thread", voluteSession);
   }
 
   try {

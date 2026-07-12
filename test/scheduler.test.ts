@@ -176,7 +176,7 @@ describe("scheduler", () => {
       cron: "0 3 * * *",
       message: "time to dream",
       enabled: true,
-      session: "$new",
+      thread: "$new",
     });
     assert.equal(scheduler.systemDeliveries.length, 1);
     assert.equal(scheduler.systemDeliveries[0].opts?.session, "$new");
