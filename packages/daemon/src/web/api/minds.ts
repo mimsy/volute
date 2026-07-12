@@ -1932,9 +1932,10 @@ const app = new Hono<AuthEnv>()
       log.warn(`failed to join #system on sprout for ${name}`, log.errorData(err)),
     );
 
-    // Make sprouting a visible event (#665): a #system welcome in the spirit's
-    // voice plus a persisted `mind_sprouted` activity event (home-feed card +
-    // immediate stage-badge refresh). Fail-soft — see announceSprout.
+    // Make sprouting a visible event (#665): prompt the spirit to hand-write a
+    // welcome in #system, plus a persisted `mind_sprouted` activity event
+    // (home-feed card + immediate stage-badge refresh). Fail-soft — see
+    // announceSprout.
     await announceSprout(name);
 
     // Default autonomy: working dreaming out of the box (#581). The seed-sprout
