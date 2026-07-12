@@ -897,7 +897,7 @@ const app = new Hono<AuthEnv>()
 
     // Refuse to create a mind the system can't run. With no AI provider configured
     // every mind spawns mute (no model to think with), so block creation here rather
-    // than leave an unusable mind behind (#606). Same message as the dashboard banner.
+    // than leave an unusable mind behind (#606). Mirrors the dashboard banner's copy.
     if (!isAiConfigured()) {
       return c.json(
         {

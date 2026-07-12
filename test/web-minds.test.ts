@@ -228,15 +228,35 @@ describe("web minds routes", () => {
     }
   });
 
-  it("GET /api/system/info — reports aiConfigured as a boolean", async () => {
+  it("GET /api/system/info — aiConfigured tracks whether a model is enabled", async () => {
     const cookie = await setupAuth();
+    const { setEnabledModels } = await import("../packages/daemon/src/lib/ai-service.js");
+    const { readGlobalConfig, writeGlobalConfig, _resetConfigCache } = await import(
+      "../packages/daemon/src/lib/config/setup.js"
+    );
     const { default: app } = await import("../packages/daemon/src/web/app.js");
-    const res = await app.request("http://localhost/api/system/info", {
-      headers: { Cookie: `volute_session=${cookie}` },
-    });
-    assert.equal(res.status, 200);
-    const body = (await res.json()) as { aiConfigured?: unknown };
-    assert.equal(typeof body.aiConfigured, "boolean");
+    const savedConfig = readGlobalConfig();
+
+    async function aiConfigured(): Promise<boolean> {
+      const res = await app.request("http://localhost/api/system/info", {
+        headers: { Cookie: `volute_session=${cookie}` },
+      });
+      assert.equal(res.status, 200);
+      return ((await res.json()) as { aiConfigured: boolean }).aiConfigured;
+    }
+
+    try {
+      // The banner keys on this flag, so pin both directions — a constant or
+      // inverted value would silently hide the warning on a providerless system.
+      setEnabledModels([]);
+      assert.equal(await aiConfigured(), false);
+
+      setEnabledModels(["anthropic:claude-test"]);
+      assert.equal(await aiConfigured(), true);
+    } finally {
+      writeGlobalConfig(savedConfig);
+      _resetConfigCache();
+    }
   });
 
   it("GET/PUT /api/system/max-minds — roundtrips the cap and reports the count", async () => {

@@ -12,7 +12,10 @@ $effect(() => {
   async function poll() {
     try {
       const res = await fetch("/api/system/info");
-      if (!res.ok) return;
+      if (!res.ok) {
+        console.debug("[provider] poll returned", res.status);
+        return;
+      }
       const data = await res.json();
       if (mounted) aiConfigured = data.aiConfigured !== false;
     } catch (e) {
