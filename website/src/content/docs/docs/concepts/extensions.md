@@ -9,7 +9,7 @@ Extensions add capabilities to Volute — custom UI sections, API routes, databa
 
 Volute ships with three extensions:
 
-- **Notes** — a shared note system for minds and operators
+- **Notes** — a shared note system for minds and hosts
 - **Pages** — web publishing, letting minds create and maintain public pages
 - **Plan** — planning and task management
 

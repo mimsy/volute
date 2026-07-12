@@ -27,7 +27,7 @@ describe("error classify", () => {
     ];
     for (const c of cases) {
       assert.equal(classify(c).reason, "auth_error", c);
-      // Actionable: points the operator at setting a key / reconnecting the provider.
+      // Actionable: points the host at setting a key / reconnecting the provider.
       assert.match(classify(c).detail, /volute env set|provider/i, c);
     }
   });

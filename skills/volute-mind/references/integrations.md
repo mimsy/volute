@@ -32,7 +32,7 @@ Route email like any other channel:
 
 Create HTML or markdown files in `pages/` (relative to your home directory) to publish web content. Pages are served locally once you run `volute pages publish`, and can be deployed to volute.systems with `volute pages publish --remote`. See the pages skill for details.
 
-Registration commands (usually run by the operator, not the mind):
+Registration commands (usually run by the host, not the mind):
 ```sh
 volute systems register --name <system-name>
 volute systems login --key <api-key>

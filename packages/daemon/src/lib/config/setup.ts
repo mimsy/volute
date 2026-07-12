@@ -108,7 +108,7 @@ export type GlobalConfig = {
    * Every mind is a full process (plus SDK subprocesses, npm install, per-mind OS
    * user under isolation), so unbounded creation can exhaust the host. Unset =
    * unlimited (the default; preserves existing installs). Not a secret — stays in
-   * the operator-readable config.json.
+   * the host-readable config.json.
    */
   maxMinds?: number;
   /** Restic-based system backup configuration */
@@ -131,10 +131,10 @@ export function configPath(): string {
 
 /**
  * Provider credentials live in a separate owner-only file. On a `--system`
- * install the daemon runs as root while operators run CLI commands as their own
+ * install the daemon runs as root while hosts run CLI commands as their own
  * (non-root) user; a single file mode cannot both hide secrets from untrusted
- * minds and stay readable to the operator. So `config.json` keeps only
- * non-secret operational state (0644, operator-readable) and this file holds the
+ * minds and stay readable to the host. So `config.json` keeps only
+ * non-secret operational state (0644, host-readable) and this file holds the
  * provider API keys / OAuth tokens (0600, root-only), mirroring env.json/volute.db.
  */
 export function secretsPath(): string {
@@ -152,7 +152,7 @@ function hasEntries(obj: Record<string, unknown> | undefined): boolean {
   return !!obj && Object.keys(obj).length > 0;
 }
 
-/** Split a full config into its operator-readable part and its secret part. */
+/** Split a full config into its host-readable part and its secret part. */
 function splitConfig(config: GlobalConfig): { publicConfig: GlobalConfig; secrets: ConfigSecrets } {
   const publicConfig: GlobalConfig = { ...config };
   const secrets: ConfigSecrets = {};
@@ -193,14 +193,14 @@ function mergeSecrets(publicConfig: GlobalConfig, secrets: ConfigSecrets): Globa
   return merged;
 }
 
-/** Read secrets.json; returns {} when the file is missing or unreadable (e.g. a non-root operator). */
+/** Read secrets.json; returns {} when the file is missing or unreadable (e.g. a non-root host). */
 function readSecrets(): ConfigSecrets {
   const path = secretsPath();
   if (!existsSync(path)) return {};
   try {
     return JSON.parse(readFileSync(path, "utf-8"));
   } catch {
-    // EACCES for a non-root operator, or a corrupt file — proceed without secrets.
+    // EACCES for a non-root host, or a corrupt file — proceed without secrets.
     return {};
   }
 }
@@ -238,7 +238,7 @@ export function readGlobalConfig(): GlobalConfig {
 export function writeGlobalConfig(config: GlobalConfig): void {
   mkdirSync(voluteSystemDir(), { recursive: true });
   const { publicConfig, secrets } = splitConfig(config);
-  // 0644 — non-secret operational state; must stay readable by the operator's
+  // 0644 — non-secret operational state; must stay readable by the host's
   // (possibly non-root) CLI on a system install.
   const cfgPath = configPath();
   writeFileSync(cfgPath, `${JSON.stringify(publicConfig, null, 2)}\n`, { mode: 0o644 });
@@ -252,7 +252,7 @@ export function writeGlobalConfig(config: GlobalConfig): void {
 
 /**
  * Move provider credentials out of a legacy single-file config.json (which
- * v0.41.1 locked to 0600 root-only, breaking non-root operator CLI commands)
+ * v0.41.1 locked to 0600 root-only, breaking non-root host CLI commands)
  * into secrets.json, and relax config.json back to 0644. Idempotent; must run as
  * the config owner (root on a system install), so it lives on the daemon startup
  * path. A no-op once config.json is already split and 0644.

@@ -7,7 +7,7 @@ import { readFileSync } from "node:fs";
  * cause of a failed/crashed daemon inline instead of only printing a log path.
  *
  * A missing file (ENOENT) is benign and yields `[]`. Any other read failure
- * (e.g. EACCES on a root-owned log read by a non-root operator) is itself a
+ * (e.g. EACCES on a root-owned log read by a non-root host) is itself a
  * cause worth surfacing — issue #575 is about *not* swallowing first-run
  * failures — so it's returned as a single diagnostic line rather than hidden.
  *

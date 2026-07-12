@@ -62,7 +62,7 @@ export type ExtensionCommandInfo = Omit<ExtensionCommand, "handler">;
 /**
  * Enrich an activity event's metadata with the extension's icon/color branding and
  * sanitize the resulting icon before it reaches the DB. Activity icons round-trip to
- * the operator dashboard where they render as raw HTML, so the write-time sanitize is
+ * the host dashboard where they render as raw HTML, so the write-time sanitize is
  * the belt-and-braces layer that keeps a malicious `metadata.icon` from becoming stored
  * XSS even if a render-time sanitizer is ever missed.
  */

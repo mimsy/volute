@@ -148,7 +148,7 @@ export function setupDefaultDreaming(dir: string): DreamingSetupResult {
       const parsed = readVoluteConfig(dir);
       if (!parsed) {
         // Corrupt config: writing a fresh one back would destroy the mind's
-        // profile/sleep/schedules. Leave it for the operator to fix.
+        // profile/sleep/schedules. Leave it for the host to fix.
         warn("dreaming setup: volute.json is unparseable — dream schedule not installed");
         return { schedulesChanged: false, warnings };
       }

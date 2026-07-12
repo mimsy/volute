@@ -19,7 +19,7 @@ export function classify(raw: string): Classified {
     return {
       reason: "auth_error",
       detail:
-        "Your last turn failed because the model provider rejected your credentials. A one-off is usually a briefly-expired token that the daemon refreshes automatically. If it keeps happening, your API key is likely missing or invalid — an operator needs to set a valid key (e.g. `volute env set ANTHROPIC_API_KEY <key>`) or reconnect the provider in the dashboard.",
+        "Your last turn failed because the model provider rejected your credentials. A one-off is usually a briefly-expired token that the daemon refreshes automatically. If it keeps happening, your API key is likely missing or invalid — a host needs to set a valid key (e.g. `volute env set ANTHROPIC_API_KEY <key>`) or reconnect the provider in the dashboard.",
     };
   }
 

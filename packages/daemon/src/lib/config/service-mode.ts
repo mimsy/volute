@@ -218,9 +218,9 @@ export function daemonConfigPath(): string {
 
 /**
  * The daemon admin token lives in its own owner-only file, split out from
- * daemon.json so the latter (port/hostname) can stay operator-readable (0644)
+ * daemon.json so the latter (port/hostname) can stay host-readable (0644)
  * on a system install where the daemon runs as root. Only daemon-side code (also
- * root) needs the token; the operator CLI authenticates via cli-session.json.
+ * root) needs the token; the host CLI authenticates via cli-session.json.
  */
 export function daemonTokenPath(): string {
   return resolve(voluteSystemDir(), "daemon-token");

@@ -233,7 +233,7 @@ export function seedSpiritSoulIfMissing(dir: string): boolean {
 }
 
 /**
- * Called when the operator changes the system name/description. Refreshes the
+ * Called when the host changes the system name/description. Refreshes the
  * spirit's system.json and sends it a note so it can update its own SOUL if it
  * wants to. No-op if the spirit doesn't exist yet.
  */
@@ -253,7 +253,7 @@ export async function notifySpiritSystemChange(): Promise<void> {
     const { sendSystemMessage } = await import("../chat/system-chat.js");
     await sendSystemMessage(
       spiritName,
-      `The operator updated this system's identity: you're now the spirit of ${name}${desc}. Your SOUL.md is yours — update it if you'd like it to reflect this.`,
+      `The host updated this system's identity: you're now the spirit of ${name}${desc}. Your SOUL.md is yours — update it if you'd like it to reflect this.`,
     );
   } catch (err) {
     slog.warn("failed to notify spirit of system change", log.errorData(err));
