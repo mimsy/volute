@@ -1,7 +1,12 @@
 import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
 import { z } from "zod";
-import { getOrCreateMindUser, getUser, getUserByUsername } from "../../../lib/auth.js";
+import {
+  getOrCreateMindUser,
+  getUser,
+  getUserByUsername,
+  withSenderDisplayNames,
+} from "../../../lib/auth.js";
 import {
   createConversation,
   deleteConversationForUser,
@@ -130,7 +135,7 @@ const app = new Hono<AuthEnv>()
     const beforeStr = c.req.query("before");
     if (!limitStr && !beforeStr) {
       const msgs = await getMessages(id);
-      return c.json({ items: msgs, hasMore: false });
+      return c.json({ items: await withSenderDisplayNames(msgs), hasMore: false });
     }
     const limit = limitStr ? parseInt(limitStr, 10) : undefined;
     const before = beforeStr ? parseInt(beforeStr, 10) : undefined;
@@ -141,7 +146,10 @@ const app = new Hono<AuthEnv>()
       return c.json({ error: "Invalid pagination parameters" }, 400);
     }
     const result = await getMessagesPaginated(id, { before, limit });
-    return c.json({ items: result.messages, hasMore: result.hasMore });
+    return c.json({
+      items: await withSenderDisplayNames(result.messages),
+      hasMore: result.hasMore,
+    });
   })
   .get("/:name/conversations/:id/participants", async (c) => {
     const id = c.req.param("id");

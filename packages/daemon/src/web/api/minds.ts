@@ -19,7 +19,7 @@ import {
   resolveTemplate,
   unqualifyModelId,
 } from "../../lib/ai-service.js";
-import { deleteMindUser } from "../../lib/auth.js";
+import { deleteMindUser, getDisplayNames, withSenderDisplayNames } from "../../lib/auth.js";
 import {
   announceSprout,
   announceToSystem,
@@ -2399,7 +2399,7 @@ const app = new Hono<AuthEnv>()
     const limitStr = c.req.query("limit");
     if (!beforeStr && !limitStr) {
       const msgs = await getMessages(convId);
-      return c.json({ items: msgs, hasMore: false });
+      return c.json({ items: await withSenderDisplayNames(msgs), hasMore: false });
     }
     const before = beforeStr ? parseInt(beforeStr, 10) : undefined;
     const limit = limitStr ? parseInt(limitStr, 10) : undefined;
@@ -2410,7 +2410,10 @@ const app = new Hono<AuthEnv>()
       return c.json({ error: "Invalid pagination parameters" }, 400);
     }
     const result = await getMessagesPaginated(convId, { before, limit });
-    return c.json({ items: result.messages, hasMore: result.hasMore });
+    return c.json({
+      items: await withSenderDisplayNames(result.messages),
+      hasMore: result.hasMore,
+    });
   })
   // Budget status
   .get("/:name/budget", requireSelf(), async (c) => {
@@ -3116,7 +3119,13 @@ const app = new Hono<AuthEnv>()
       .limit(limit)
       .offset(offset);
 
-    return c.json(rows);
+    const displayNames = await getDisplayNames(rows.map((r) => r.sender));
+    return c.json(
+      rows.map((r) => ({
+        ...r,
+        sender_display_name: r.sender ? (displayNames.get(r.sender) ?? null) : null,
+      })),
+    );
   });
 
 export default app;

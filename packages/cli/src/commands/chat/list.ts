@@ -22,7 +22,7 @@ const cmd = command({
       id: string;
       type: string;
       channel_name: string | null;
-      participants: { username: string }[];
+      participants: { username: string; displayName: string | null }[];
       updated_at: string;
     }[];
 
@@ -38,7 +38,15 @@ const cmd = command({
         label = `#${conv.channel_name}`;
       } else {
         const other = conv.participants?.find((p) => p.username !== mindName);
-        label = other ? `@${other.username}` : conv.id.slice(0, 8);
+        if (other) {
+          // Compact (mind-facing) output stays terse; display names are for humans.
+          label =
+            !compact && other.displayName && other.displayName !== other.username
+              ? `${other.displayName} (@${other.username})`
+              : `@${other.username}`;
+        } else {
+          label = conv.id.slice(0, 8);
+        }
       }
       if (compact) {
         console.log(`${label} (${conv.type})`);
