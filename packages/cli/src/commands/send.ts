@@ -299,7 +299,7 @@ const cmd = command({
 
       // Sending to yourself is a dead end: it would resolve to a
       // one-participant conversation that reaches nobody. For the spirit this
-      // happens when it "replies" to its own system notices on @volute.
+      // happens when it "replies" to its own system notices on its own channel.
       if (mindSelf && targetName === mindSelf) {
         console.error(
           `Can't send to @${targetName} — that's your own system channel. ` +

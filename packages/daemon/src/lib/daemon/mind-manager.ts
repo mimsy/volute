@@ -5,6 +5,7 @@ import { promisify } from "node:util";
 import { getAiConfig, resolveApiKey } from "../ai-service.js";
 import { sendSystemMessageDirect } from "../chat/system-chat.js";
 import { loadMergedEnv } from "../config/env.js";
+import { getSpiritName } from "../config/setup.js";
 import { chownMindDir, isIsolationEnabled, wrapForIsolation } from "../mind/isolation.js";
 import {
   findMind,
@@ -609,10 +610,10 @@ export class MindManager {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           content: [{ type: "text", text: content }],
-          channel: "@volute",
-          sender: "volute",
+          channel: `@${getSpiritName()}`,
+          sender: getSpiritName(),
           isDM: true,
-          participants: ["volute", name],
+          participants: [getSpiritName(), name],
           participantCount: 2,
           ...(conversationId ? { conversationId } : {}),
         }),

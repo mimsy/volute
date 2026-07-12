@@ -3,6 +3,10 @@ import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { and, eq, inArray, isNull, or } from "drizzle-orm";
+// Intentional import cycle with config/setup.ts (which imports voluteSystemDir
+// from here): both modules export only hoisted function declarations and neither
+// calls the other at module-evaluation time, so resolution is safe.
+import { getSpiritName } from "../config/setup.js";
 import { getDb } from "../db.js";
 import {
   activity,
@@ -20,15 +24,14 @@ import {
 export type MindType = "mind" | "spirit";
 
 /**
- * Reserved name of the system spirit. The spirit shares the system user account
- * (see auth.ts `getOrCreateSystemUser`), so this name is used interchangeably as
- * the mind name, the system user's username, and the "@volute" DM channel.
+ * True when a mind/user name is the system spirit's name (config
+ * `setup.spiritName`, default "volute"). The spirit shares the system user
+ * account (see auth.ts `getOrCreateSystemUser`), so this name is used
+ * interchangeably as the mind name, the system user's username, and the
+ * spirit's DM channel ("@<name>").
  */
-export const SPIRIT_NAME = "volute";
-
-/** True when a mind/user name is the reserved spirit name. */
 export function isSpiritName(name: string): boolean {
-  return name === SPIRIT_NAME;
+  return name === getSpiritName();
 }
 
 export type MindEntry = {
@@ -165,6 +168,22 @@ export function validateMindName(name: string): string | null {
   if (RESERVED_NAMES.has(name.toLowerCase())) {
     return `"${name}" is a reserved name`;
   }
+  // The spirit's (possibly host-chosen) name: addMind's upsert on minds.name
+  // would otherwise clobber the spirit's registry row.
+  if (isSpiritName(name)) {
+    return `"${name}" is the spirit's name`;
+  }
+  return null;
+}
+
+/** Validate a host-chosen spirit name. Same shape rules as mind names; "volute" is allowed. */
+export function validateSpiritName(name: string): string | null {
+  if (!name) return "Spirit name is required";
+  if (name.length > MIND_NAME_MAX) return `Spirit name must be at most ${MIND_NAME_MAX} characters`;
+  if (!MIND_NAME_RE.test(name)) {
+    return "Spirit name must start with alphanumeric and contain only alphanumeric, dots, dashes, or underscores";
+  }
+  if (name.toLowerCase() === "system") return `"${name}" is a reserved name`;
   return null;
 }
 

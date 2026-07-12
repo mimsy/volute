@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { exec } from "../util/exec.js";
-import { getBaseName, validateMindName } from "./registry.js";
+import { getBaseName, isSpiritName, validateMindName } from "./registry.js";
 
 /** Returns true when per-mind user isolation is enabled. */
 export function isIsolationEnabled(): boolean {
@@ -12,8 +12,8 @@ export function isIsolationEnabled(): boolean {
 /** Username for a mind. Prefix configurable via VOLUTE_USER_PREFIX (default: "mind-"). */
 export function mindUserName(mindName: string): string {
   const err = validateMindName(mindName);
-  // Allow the "volute" spirit — it's a reserved name but gets the prefix too (mind-volute)
-  if (err && mindName !== "volute") {
+  // Allow the spirit — its name is reserved/rejected for minds but gets the prefix too
+  if (err && !isSpiritName(mindName)) {
     throw new Error(`Invalid mind name for isolation: ${err}`);
   }
   const prefix = process.env.VOLUTE_USER_PREFIX ?? "mind-";

@@ -11,6 +11,10 @@ export type SetupConfig = {
   mindsDir: string;
   isolation: IsolationMode;
   service: boolean;
+  /** Name the host gave the system spirit during setup; absent = "volute" */
+  spiritName?: string;
+  /** Optional temperament line the host wrote for the spirit, rendered into its SOUL.md */
+  spiritTemperament?: string;
 };
 
 export type AiProviderConfig = {
@@ -317,6 +321,16 @@ export function setupUrl(): string {
   if (host === "0.0.0.0" || host === "::") host = "localhost";
   if (host.includes(":") && !host.startsWith("[")) host = `[${host}]`; // bracket bare IPv6
   return `http://${host}:${port}`;
+}
+
+/**
+ * Name of the system spirit — the single source of truth for spirit identity.
+ * Keyed off config rather than the minds table's mind_type so future ephemeral
+ * spirits (#464) can't be mistaken for the system spirit. Absent config (every
+ * pre-naming install) resolves to "volute", which is the entire migration story.
+ */
+export function getSpiritName(): string {
+  return readGlobalConfig().setup?.spiritName ?? "volute";
 }
 
 export function isImagegenEnabled(): boolean {

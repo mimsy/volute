@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
 import { sendSystemMessageDirect } from "../chat/system-chat.js";
+import { getSpiritName } from "../config/setup.js";
 import { subscribe } from "../events/activity-events.js";
 import { getPrompt } from "../prompts.js";
 import log from "../util/logger.js";
@@ -132,10 +133,10 @@ export async function runFarewellTurn(opts: {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         content: [{ type: "text", text: message }],
-        channel: "@volute",
-        sender: "volute",
+        channel: `@${getSpiritName()}`,
+        sender: getSpiritName(),
         isDM: true,
-        participants: ["volute", variantName],
+        participants: [getSpiritName(), variantName],
         participantCount: 2,
         ...(conversationId ? { conversationId } : {}),
       }),

@@ -20,6 +20,7 @@ import {
 } from "../../lib/ai-service.js";
 import { deleteMindUser } from "../../lib/auth.js";
 import { announceToSystem, joinSystemChannelForMind } from "../../lib/chat/system-channel.js";
+import { getSpiritName } from "../../lib/config/setup.js";
 import { readSystemsConfig } from "../../lib/config/systems-config.js";
 import { getMindManager, MindStartupError } from "../../lib/daemon/mind-manager.js";
 // Lifecycle functions from mind-service.ts
@@ -1056,7 +1057,8 @@ const app = new Hono<AuthEnv>()
       // Add nurture schedule to spirit if this is a seed
       if (body.stage === "seed") {
         try {
-          const spiritEntry = await findMind("volute");
+          const spiritName = getSpiritName();
+          const spiritEntry = await findMind(spiritName);
           if (spiritEntry) {
             const { spiritDir } = await import("../../lib/mind/spirit.js");
             const sDir = spiritEntry.dir ?? spiritDir();
@@ -1074,7 +1076,7 @@ const app = new Hono<AuthEnv>()
               spiritConfig.schedules = schedules;
               writeVoluteConfig(sDir, spiritConfig);
               const { getScheduler } = await import("../../lib/daemon/scheduler.js");
-              getScheduler().loadSchedules("volute", sDir);
+              getScheduler().loadSchedules(spiritName, sDir);
             }
           }
         } catch (err) {
@@ -1783,7 +1785,8 @@ const app = new Hono<AuthEnv>()
     const rawSpirit = Number(process.env.VOLUTE_NURTURE_SPIRIT_MINUTES);
     const spiritThreshold = Number.isNaN(rawSpirit) ? 15 : rawSpirit;
 
-    // Last creator message (inbound, sender is not "volute" and not the seed itself)
+    // Last creator message (inbound, sender is not the spirit and not the seed itself)
+    const spiritName = getSpiritName();
     const lastCreatorMsg = await db
       .select({ created_at: mindHistory.created_at })
       .from(mindHistory)
@@ -1791,7 +1794,7 @@ const app = new Hono<AuthEnv>()
         and(
           eq(mindHistory.mind, name),
           eq(mindHistory.type, "inbound"),
-          sql`${mindHistory.sender} != 'volute'`,
+          sql`${mindHistory.sender} != ${spiritName}`,
           sql`${mindHistory.sender} != ${name}`,
           sql`${mindHistory.sender} IS NOT NULL`,
         ),
@@ -1807,7 +1810,7 @@ const app = new Hono<AuthEnv>()
         and(
           eq(mindHistory.mind, name),
           eq(mindHistory.type, "inbound"),
-          eq(mindHistory.sender, "volute"),
+          eq(mindHistory.sender, spiritName),
         ),
       )
       .orderBy(desc(mindHistory.created_at))
@@ -1902,7 +1905,8 @@ const app = new Hono<AuthEnv>()
     // A null spirit config (missing or unparseable) is left alone — writing a
     // fresh one back could destroy the spirit's profile and other schedules.
     try {
-      const spiritEntry = await findMind("volute");
+      const spiritName = getSpiritName();
+      const spiritEntry = await findMind(spiritName);
       if (spiritEntry) {
         const { firstWeekSchedules, spiritDir } = await import("../../lib/mind/spirit.js");
         const sDir = spiritEntry.dir ?? spiritDir();
@@ -1922,7 +1926,7 @@ const app = new Hono<AuthEnv>()
           // that's a different situation from the write itself failing.
           try {
             const { getScheduler } = await import("../../lib/daemon/scheduler.js");
-            getScheduler().loadSchedules("volute", sDir);
+            getScheduler().loadSchedules(spiritName, sDir);
           } catch (err) {
             log.warn(
               `spirit schedules for sprout of ${name} written to disk but not reloaded into the running scheduler (effective on next spirit restart)`,

@@ -13,6 +13,7 @@ import { promisify } from "node:util";
 import { CronExpressionParser } from "cron-parser";
 import { and, eq, inArray } from "drizzle-orm";
 import { sendSystemMessageDirect } from "../chat/system-chat.js";
+import { getSpiritName } from "../config/setup.js";
 import { getDb } from "../db.js";
 import type { DeliveryPayload } from "../delivery/delivery-router.js";
 import {
@@ -301,10 +302,10 @@ export class SleepManager {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             content: [{ type: "text", text: preSleepMsg }],
-            channel: "@volute",
-            sender: "volute",
+            channel: `@${getSpiritName()}`,
+            sender: getSpiritName(),
             isDM: true,
-            participants: ["volute", name],
+            participants: [getSpiritName(), name],
             participantCount: 2,
             ...(conversationId ? { conversationId } : {}),
           }),
@@ -417,10 +418,10 @@ export class SleepManager {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               content: [{ type: "text", text: summaryText }],
-              channel: "@volute",
-              sender: "volute",
+              channel: `@${getSpiritName()}`,
+              sender: getSpiritName(),
               isDM: true,
-              participants: ["volute", name],
+              participants: [getSpiritName(), name],
               participantCount: 2,
               ...(wakeConvId ? { conversationId: wakeConvId } : {}),
             }),

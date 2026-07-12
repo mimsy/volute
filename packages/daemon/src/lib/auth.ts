@@ -1,7 +1,9 @@
 import { compareSync, hashSync } from "bcryptjs";
 import { and, count, eq, or } from "drizzle-orm";
+import { getSpiritName } from "./config/setup.js";
 import { getDb } from "./db.js";
 import { broadcast } from "./events/activity-events.js";
+import { isSpiritName } from "./mind/registry.js";
 import type { MindProfile } from "./mind/volute-config.js";
 import { users } from "./schema.js";
 
@@ -98,8 +100,11 @@ export async function listUsersByType(userType: "brain" | "mind"): Promise<User[
 }
 
 export async function getOrCreateMindUser(mindName: string): Promise<User> {
+  // The spirit reuses the system user — route through getOrCreateSystemUser so a
+  // freshly named spirit never mints a second, mind-typed user.
+  if (isSpiritName(mindName)) return getOrCreateSystemUser();
+
   const db = await getDb();
-  // Look up by username — allow mind or system user_type (spirit "volute" reuses the system user)
   const existing = await db
     .select(userSelectFields)
     .from(users)
@@ -142,22 +147,37 @@ export async function getOrCreateMindUser(mindName: string): Promise<User> {
 
 export async function getOrCreateSystemUser(): Promise<User> {
   const db = await getDb();
+  const spiritName = getSpiritName();
+
+  // Look up by type only — exactly one system user exists. The daemon creates it
+  // at boot (before setup names the spirit), so an existing row may still carry
+  // an older name; rename it to follow the spirit.
   const existing = await db
     .select(userSelectFields)
     .from(users)
-    .where(and(eq(users.username, "volute"), eq(users.user_type, "system")))
+    .where(eq(users.user_type, "system"))
     .get();
-  if (existing) return existing as User;
+  if (existing) {
+    if ((existing as User).username !== spiritName) {
+      const [renamed] = await db
+        .update(users)
+        .set({ username: spiritName, display_name: spiritName })
+        .where(eq(users.id, (existing as User).id))
+        .returning(userSelectFields);
+      return renamed as User;
+    }
+    return existing as User;
+  }
 
   try {
     const [result] = await db
       .insert(users)
       .values({
-        username: "volute",
+        username: spiritName,
         password_hash: "!system",
         role: "system",
         user_type: "system",
-        display_name: "volute",
+        display_name: spiritName,
       })
       .returning(userSelectFields);
     return result as User;
@@ -166,7 +186,7 @@ export async function getOrCreateSystemUser(): Promise<User> {
       const retried = await db
         .select(userSelectFields)
         .from(users)
-        .where(and(eq(users.username, "volute"), eq(users.user_type, "system")))
+        .where(eq(users.user_type, "system"))
         .get();
       if (retried) return retried as User;
     }

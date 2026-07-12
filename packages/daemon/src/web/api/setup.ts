@@ -5,6 +5,7 @@ import { Hono } from "hono";
 import { setCookie } from "hono/cookie";
 import {
   type GlobalConfig,
+  getSpiritName,
   isSetupComplete,
   readGlobalConfig,
   type SetupConfig,
@@ -16,7 +17,7 @@ import {
   readSystemsConfig,
   writeSystemsConfig,
 } from "../../lib/config/systems-config.js";
-import { SPIRIT_NAME } from "../../lib/mind/registry.js";
+import { findMind, validateSpiritName } from "../../lib/mind/registry.js";
 import log from "../../lib/util/logger.js";
 import { createSession, SESSION_MAX_AGE } from "../middleware/auth.js";
 
@@ -82,6 +83,7 @@ setup.get("/status", async (c) => {
     hasSystem,
     hasAccount,
     setupType: config.setup?.type ?? null,
+    spiritName: config.setup?.spiritName ?? null,
   });
 });
 
@@ -422,6 +424,44 @@ setup.post("/models", async (c) => {
   }
 });
 
+// Step 4: Name the spirit
+setup.post("/spirit", async (c) => {
+  if (isSetupComplete()) {
+    return c.json({ error: "Setup already complete" }, 400);
+  }
+
+  let body: { name: string; temperament?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "Invalid JSON in request body" }, 400);
+  }
+
+  const name = body.name?.trim() ?? "";
+  const nameErr = validateSpiritName(name);
+  if (nameErr) {
+    return c.json({ error: nameErr }, 400);
+  }
+
+  const config = readGlobalConfig();
+  if (!config.setup) {
+    return c.json({ error: "Complete the system step first" }, 400);
+  }
+
+  // A mind already holding this name would collide with the spirit's registry row
+  const existing = await findMind(name);
+  if (existing && existing.mindType !== "spirit") {
+    return c.json({ error: `A mind named "${name}" already exists` }, 400);
+  }
+
+  config.setup.spiritName = name;
+  const temperament = body.temperament?.trim();
+  config.setup.spiritTemperament = temperament || undefined;
+  writeGlobalConfig(config);
+
+  return c.json({ ok: true });
+});
+
 // Step 5: Complete setup — start spirit, create DM, optionally install service
 setup.post("/complete", async (c) => {
   if (isSetupComplete()) {
@@ -459,10 +499,11 @@ setup.post("/complete", async (c) => {
     }
 
     // Start the spirit if the daemon is running
+    const spiritName = getSpiritName();
     let spiritStarted = false;
     try {
       log.info("starting spirit during setup...");
-      await startSpiritFull("volute");
+      await startSpiritFull(spiritName);
       spiritStarted = true;
       log.info("spirit started successfully during setup");
     } catch (err) {
@@ -479,7 +520,7 @@ setup.post("/complete", async (c) => {
         "../../lib/events/conversations.js"
       );
 
-      const spiritUser = await getOrCreateMindUser("volute");
+      const spiritUser = await getOrCreateMindUser(spiritName);
 
       // Find the admin user (first brain user)
       const brains = await listUsersByType("brain");
@@ -513,15 +554,22 @@ setup.post("/complete", async (c) => {
         // so the real participants are the spirit + admin. Label them accordingly.
         if (admin) {
           const adminName = admin.display_name || admin.username;
-          const welcomePrompt = `Setup is complete. ${adminName} just finished setting up this system and is now in your chat. Welcome them and help them create their first mind. Keep it brief — a short greeting, then ask what kind of being they'd like to bring into the world. Remember: minds are beings with their own experience, not tools — ask about personality and character, never about tasks or utility.`;
+          const cfg = readGlobalConfig();
+          const temperament = cfg.setup?.spiritTemperament;
+          const welcomePrompt =
+            `Setup is complete. You are ${spiritName}, the spirit of ${cfg.name ?? "this system"}` +
+            (cfg.description ? ` — ${cfg.description}` : "") +
+            `. ${adminName} chose your name just now` +
+            (temperament ? ` and imagined your temperament as: "${temperament}"` : "") +
+            `, and is now in your chat. Greet ${adminName} by name and help them create their first mind. Keep it brief — a short greeting in your own voice, then ask what kind of being they'd like to bring into the world. Remember: minds are beings with their own experience, not tools — ask about personality and character, never about tasks or utility.`;
 
-          await deliverMessage(SPIRIT_NAME, {
+          await deliverMessage(spiritName, {
             content: [{ type: "text", text: welcomePrompt }],
             channel: `@${admin.username}`,
             conversationId: spiritConversationId,
             sender: admin.username,
             isDM: true,
-            participants: [SPIRIT_NAME, admin.username],
+            participants: [spiritName, admin.username],
             participantCount: 2,
           });
         }

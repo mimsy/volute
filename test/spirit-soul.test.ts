@@ -74,7 +74,7 @@ describe("spirit SOUL.md ownership", () => {
     const wrote = seedSpiritSoulIfMissing(dir);
 
     assert.equal(wrote, true);
-    assert.match(readFileSync(soulPath(dir), "utf-8"), /You are Volute/);
+    assert.match(readFileSync(soulPath(dir), "utf-8"), /You are volute, the spirit of this system/);
   });
 
   it("leaves an existing SOUL.md untouched", () => {
@@ -140,7 +140,7 @@ describe("spirit SOUL.md ownership", () => {
     await syncSpiritTemplate();
 
     assert.equal(existsSync(soulPath(dir)), true);
-    assert.match(readFileSync(soulPath(dir), "utf-8"), /You are Volute/);
+    assert.match(readFileSync(soulPath(dir), "utf-8"), /You are volute, the spirit of this system/);
   });
 });
 

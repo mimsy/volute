@@ -638,11 +638,11 @@ function handleGlobalClick(e: MouseEvent) {
   </div>
 {:else if !auth.setupComplete}
   <div class="app full-height">
-    <SetupPage onComplete={() => {
+    <SetupPage onComplete={(spiritName) => {
       auth.setupComplete = true;
       connectActivity();
       requestAnimationFrame(() => {
-        selection = { kind: "mind", name: "volute" };
+        selection = { kind: "mind", name: spiritName };
       });
     }} />
   </div>

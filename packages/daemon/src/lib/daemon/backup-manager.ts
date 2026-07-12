@@ -1,8 +1,7 @@
 import { CronExpressionParser } from "cron-parser";
 import { readBackupState, runBackup } from "../backup/backup.js";
-import { readGlobalConfig } from "../config/setup.js";
+import { getSpiritName, readGlobalConfig } from "../config/setup.js";
 import { publish as publishActivity } from "../events/activity-events.js";
-import { SPIRIT_NAME } from "../mind/registry.js";
 import log from "../util/logger.js";
 
 const blog = log.child("backup");
@@ -137,7 +136,7 @@ export class BackupManager {
     try {
       await publishActivity({
         type: "backup_failed",
-        mind: SPIRIT_NAME,
+        mind: getSpiritName(),
         summary,
         metadata: { consecutiveFailures: n, error: reason },
       });
@@ -148,7 +147,7 @@ export class BackupManager {
     try {
       const { sendSystemMessage } = await import("../chat/system-chat.js");
       await sendSystemMessage(
-        SPIRIT_NAME,
+        getSpiritName(),
         `${summary}\n\nBackups are not being saved. Check \`volute backup status\` and the Backups settings tab.`,
       );
     } catch (msgErr) {

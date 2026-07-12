@@ -488,14 +488,18 @@ export function restartDaemon(): Promise<void> {
 export async function fetchSystemInfo(): Promise<{
   system: string | null;
   name: string | null;
+  spiritName: string | null;
   timezone: string | null;
 }> {
   try {
-    return await get<{ system: string | null; name: string | null; timezone: string | null }>(
-      `${V1}/system/info`,
-    );
+    return await get<{
+      system: string | null;
+      name: string | null;
+      spiritName: string | null;
+      timezone: string | null;
+    }>(`${V1}/system/info`);
   } catch {
-    return { system: null, name: null, timezone: null };
+    return { system: null, name: null, spiritName: null, timezone: null };
   }
 }
 

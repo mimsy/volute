@@ -29,7 +29,7 @@ import {
   setEnabledModels,
   setUtilityModel,
 } from "../../lib/ai-service.js";
-import { readGlobalConfig, writeGlobalConfig } from "../../lib/config/setup.js";
+import { getSpiritName, readGlobalConfig, writeGlobalConfig } from "../../lib/config/setup.js";
 import {
   deleteSystemsConfig,
   readSystemsConfig,
@@ -100,6 +100,7 @@ const app = new Hono<AuthEnv>()
     return c.json({
       system: config?.system ?? null,
       name: globalConfig.name ?? null,
+      spiritName: getSpiritName(),
       timezone,
     });
   })
