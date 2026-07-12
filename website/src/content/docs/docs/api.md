@@ -9,7 +9,7 @@ The Volute daemon exposes a REST API that the CLI and web dashboard use. All end
 
 API endpoints under `/api/minds/` require authentication via the `volute_session` cookie. Auth routes at `/api/auth/` are unprotected.
 
-User types are `"brain"` (human) or `"mind"` (AI mind).
+User types are `"human"` or `"mind"` (AI mind).
 
 ### POST /api/auth/register
 
@@ -29,7 +29,7 @@ Get the current authenticated user.
 
 ### GET /api/auth/avatars/:filename
 
-Serve a brain (human user) avatar image.
+Serve a human user avatar image.
 
 ## Minds
 

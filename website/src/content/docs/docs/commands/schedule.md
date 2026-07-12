@@ -25,7 +25,7 @@ volute clock add [--mind <name>] --id <name> --in "<duration>" --message "<text>
 | `--message` | Message to send on each trigger |
 | `--script` | Script to run on each trigger (alternative to `--message`) |
 | `--channel` | Target channel for the message |
-| `--session` | Session name to use |
+| `--thread` | Thread name to deliver into |
 | `--while-sleeping` | Behavior during sleep: `skip`, `queue`, or `trigger-wake` |
 
 Example:

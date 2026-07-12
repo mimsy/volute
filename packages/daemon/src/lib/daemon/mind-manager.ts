@@ -309,7 +309,10 @@ export class MindManager {
       VOLUTE_MIND_DIR: dir,
       VOLUTE_MIND_PORT: String(port),
       VOLUTE_MIND_TOKEN: mindToken,
-      VOLUTE_SYSTEM_NAME: readGlobalConfig().name ?? "Volute",
+      // Left unset when the system has no configured name — the startup-context
+      // hook then skips its "This system is named X" line rather than asserting
+      // a fabricated one.
+      VOLUTE_SYSTEM_NAME: readGlobalConfig().name,
       TMPDIR: mindTmp,
       PATH: `${mindLocalBin}:${currentPath}`,
       // Strip CLAUDECODE so the Agent SDK can spawn Claude Code subprocesses

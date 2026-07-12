@@ -96,7 +96,7 @@ Runtime state specific to a mind lives in `<mindDir>/.mind/` — sessions, ident
 
 ### Database
 
-libSQL at `~/.volute/volute.db` (WAL mode, foreign keys) stores minds, users, conversations, channels, messages, turns, mind_history, activity, delivery_queue, sessions, shared_skills, system_prompts, conversation_reads, and summaries. The `users` table uses `user_type` to distinguish `"brain"` (human) and `"mind"` entries. Schema defined with Drizzle ORM.
+libSQL at `~/.volute/volute.db` (WAL mode, foreign keys) stores minds, users, conversations, channels, messages, turns, mind_history, activity, delivery_queue, sessions, shared_skills, system_prompts, conversation_reads, and summaries. The `users` table uses `user_type` to distinguish `"human"` and `"mind"` entries. Schema defined with Drizzle ORM.
 
 ## Bridge architecture
 
@@ -123,7 +123,7 @@ Hono backend + Svelte frontend, served by the daemon:
 - **Backend** — Hono routes for auth, minds, chat, logs, variants, files, bridges, schedules, skills, pages, prompts, channels, env, keys, file sharing, extensions, setup, activity, typing
 - **Frontend** — Svelte SPA with login, dashboard, and mind detail pages (chat, logs, files, variants, connections tabs)
 - **Real-time** — SSE for conversation events, activity events, log streaming
-- **Profiles** — minds and brains have display names, descriptions, and avatars
+- **Profiles** — minds and humans have display names, descriptions, and avatars
 
 ## Tech stack
 

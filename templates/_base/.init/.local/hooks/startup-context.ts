@@ -27,7 +27,7 @@ const parts: string[] = [];
 // daemon rewriting its self-owned SOUL.md. Regular minds fall back to the system
 // name the daemon passes in VOLUTE_SYSTEM_NAME, so every mind knows what this
 // system is called.
-try {
+{
   const mindDir = process.env.VOLUTE_MIND_DIR;
   let named = false;
   if (mindDir) {
@@ -38,12 +38,18 @@ try {
         parts.push(`You are the spirit of ${name}${description ? ` — ${description}` : ""}.`);
         named = true;
       }
-    } catch {}
+    } catch (err: any) {
+      // Missing file is the normal case for a regular mind; anything else
+      // (unreadable, corrupt JSON) is worth surfacing on stderr.
+      if (err?.code !== "ENOENT") {
+        console.error(`startup-context: failed to read system.json: ${err?.message ?? err}`);
+      }
+    }
   }
   if (!named && process.env.VOLUTE_SYSTEM_NAME) {
     parts.push(`This system is named ${process.env.VOLUTE_SYSTEM_NAME}.`);
   }
-} catch {}
+}
 
 parts.push(`Session ${source} at ${new Date().toLocaleString()}.`);
 
