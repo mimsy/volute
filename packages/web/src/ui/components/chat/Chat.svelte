@@ -1,9 +1,18 @@
 <script lang="ts">
-import type { ContentBlock, Message, Mind, Participant, SeedChecklist } from "@volute/api";
-import { fetchConversationMessages, sendChat } from "../../lib/client";
+import type {
+  ChannelSettings,
+  ContentBlock,
+  Message,
+  Mind,
+  Participant,
+  SeedChecklist,
+} from "@volute/api";
+import { Icon } from "@volute/ui";
+import { fetchChannelSettings, fetchConversationMessages, sendChat } from "../../lib/client";
 import { subscribe } from "../../lib/connection.svelte";
 import { auth } from "../../lib/stores.svelte";
 import type { ChatEntry } from "../../lib/types";
+import ChannelSettingsModal from "../modals/ChannelSettingsModal.svelte";
 import ActivityIndicator from "./ActivityIndicator.svelte";
 import ChatStatusBar from "./ChatStatusBar.svelte";
 import MessageInput from "./MessageInput.svelte";
@@ -56,6 +65,24 @@ let mindParticipants = $derived.by(() => {
   // For DMs before conversation is created, use the target mind name
   if (convType === "dm" && minds.some((m) => m.name === name)) return [name];
   return [];
+});
+
+// Channel settings (description/rules/char limit/private) for the header + editor
+let channelSettings = $state<ChannelSettings | null>(null);
+let showSettings = $state(false);
+
+$effect(() => {
+  if (convType !== "channel" || !channelName) {
+    channelSettings = null;
+    return;
+  }
+  const target = channelName;
+  fetchChannelSettings(target)
+    .then((res) => {
+      // Guard against a stale response after the channel switched
+      if (target === channelName) channelSettings = res.settings ?? null;
+    })
+    .catch(() => {});
 });
 
 // Notify parent of typing names changes
@@ -256,7 +283,15 @@ async function handleSend(
 
   {#if convType === "channel" && channelName}
     <div class="channel-header">
-      <span class="channel-title">#{channelName}</span>
+      <div class="channel-info">
+        <span class="channel-title">#{channelName}</span>
+        {#if channelSettings?.description}
+          <span class="channel-description">{channelSettings.description}</span>
+        {/if}
+      </div>
+      <button class="settings-btn" title="Channel settings" onclick={() => (showSettings = true)}>
+        <Icon kind="gear" />
+      </button>
     </div>
   {/if}
 
@@ -289,6 +324,15 @@ async function handleSend(
   />
 </div>
 
+{#if showSettings}
+  <ChannelSettingsModal
+    {channelName}
+    settings={channelSettings}
+    onClose={() => (showSettings = false)}
+    onSaved={(next) => (channelSettings = next)}
+  />
+{/if}
+
 <style>
   .chat {
     display: flex;
@@ -318,10 +362,44 @@ async function handleSend(
     flex-shrink: 0;
   }
 
+  .channel-info {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+    flex: 1;
+  }
+
   .channel-title {
     font-size: 14px;
     font-weight: 600;
     color: var(--text-0);
+  }
+
+  .channel-description {
+    font-size: 12px;
+    color: var(--text-2);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .settings-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: none;
+    border: none;
+    color: var(--text-2);
+    cursor: pointer;
+    padding: 4px;
+    border-radius: var(--radius);
+    flex-shrink: 0;
+  }
+
+  .settings-btn:hover {
+    color: var(--text-0);
+    background: var(--bg-2);
   }
 
   @media (max-width: 1024px) {

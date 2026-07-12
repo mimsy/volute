@@ -6,6 +6,7 @@ import type {
   AvailableUser,
   AwayFeedItem,
   ChannelInfo,
+  ChannelSettings,
   Conversation,
   ConversationWithParticipants,
   HistoryMessage,
@@ -407,6 +408,36 @@ export function inviteToChannel(channelName: string, username: string): Promise<
 
 export function fetchChannelMembers(channelName: string): Promise<Participant[]> {
   return get(`${V1}/channels/${enc(channelName)}/members`);
+}
+
+export function fetchChannelSettings(name: string): Promise<
+  Conversation & {
+    channel_name: string;
+    participants: Participant[];
+    settings: ChannelSettings | null;
+  }
+> {
+  return get(`${V1}/channels/${enc(name)}`);
+}
+
+export async function updateChannelSettings(
+  name: string,
+  settings: {
+    description?: string | null;
+    rules?: string | null;
+    charLimit?: number | null;
+    private?: boolean;
+  },
+): Promise<void> {
+  const res = await _client.fetch(`${V1}/channels/${enc(name)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(settings),
+  });
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(data.error || "Failed to update channel settings");
+  }
 }
 
 // --- Skills ---

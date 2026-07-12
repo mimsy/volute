@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { eq } from "drizzle-orm";
 import { Hono } from "hono";
-import { createUser, getOrCreateMindUser } from "../packages/daemon/src/lib/auth.js";
+import { createUser, getOrCreateMindUser, setUserRole } from "../packages/daemon/src/lib/auth.js";
 import { getDb } from "../packages/daemon/src/lib/db.js";
 import {
   createChannel,
@@ -532,6 +532,56 @@ describe("web v1 channels routes", () => {
     assert.equal(body2.settings.rules, "Be brief");
     assert.equal(body2.settings.description, "Updated desc");
     assert.equal(body2.settings.charLimit, 1000);
+
+    await deleteConversation(ch.id);
+  });
+
+  it("PATCH /:name — 403 for non-member, non-admin caller", async () => {
+    await setupAuth(); // ch-admin (admin) is the channel creator
+    const app = createApp();
+
+    // A separate, non-admin user who is NOT a member of the channel.
+    const bob = await createUser("bob", "pass");
+    await setUserRole(bob.id, "user");
+    const bobCookie = await createSession(bob.id);
+
+    const ch = await createChannel("guarded", userId);
+
+    const res = await app.request("/api/v1/channels/guarded", {
+      method: "PATCH",
+      headers: {
+        Cookie: `volute_session=${bobCookie}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ description: "hijacked" }),
+    });
+    assert.equal(res.status, 403);
+
+    // Settings must be untouched.
+    const settings = await getChannelSettings("guarded");
+    assert.equal(settings?.description, null);
+
+    await deleteConversation(ch.id);
+  });
+
+  it("PATCH /:name — admin may edit a channel they are not a member of", async () => {
+    const cookie = await setupAuth(); // ch-admin is admin
+    const app = createApp();
+
+    // Channel created without ch-admin as a member.
+    const ch = await createChannel("adminless");
+
+    const res = await app.request("/api/v1/channels/adminless", {
+      method: "PATCH",
+      headers: {
+        Cookie: `volute_session=${cookie}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ description: "admin edit" }),
+    });
+    assert.equal(res.status, 200);
+    const settings = await getChannelSettings("adminless");
+    assert.equal(settings?.description, "admin edit");
 
     await deleteConversation(ch.id);
   });
