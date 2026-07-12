@@ -13,6 +13,7 @@ import { SandboxUnavailableError } from "../packages/daemon/src/lib/mind/sandbox
 
 type SystemDelivery = {
   mindName: string;
+  scheduleId: string;
   text: string;
   opts?: { whileSleeping?: "skip" | "queue" | "trigger-wake"; session?: string };
 };
@@ -35,10 +36,11 @@ class TestScheduler extends Scheduler {
 
   protected override async deliverSystem(
     mindName: string,
+    scheduleId: string,
     text: string,
     opts?: { whileSleeping?: "skip" | "queue" | "trigger-wake"; session?: string },
   ): Promise<void> {
-    this.systemDeliveries.push({ mindName, text, opts });
+    this.systemDeliveries.push({ mindName, scheduleId, text, opts });
   }
 }
 
@@ -93,7 +95,8 @@ describe("scheduler", () => {
     });
     assert.equal(scheduler.systemDeliveries.length, 1);
     assert.equal(scheduler.systemDeliveries[0].mindName, "test-mind");
-    assert.equal(scheduler.systemDeliveries[0].text, "[msg-sched] hello");
+    assert.equal(scheduler.systemDeliveries[0].scheduleId, "msg-sched");
+    assert.equal(scheduler.systemDeliveries[0].text, "hello");
     assert.equal(scheduler.scriptCalls.length, 0);
   });
 
@@ -115,8 +118,8 @@ describe("scheduler", () => {
       Math.random = originalRandom;
     }
     assert.equal(scheduler.systemDeliveries.length, 2);
-    assert.equal(scheduler.systemDeliveries[0].text, "[heartbeat] first");
-    assert.equal(scheduler.systemDeliveries[1].text, "[heartbeat] third");
+    assert.equal(scheduler.systemDeliveries[0].text, "first");
+    assert.equal(scheduler.systemDeliveries[1].text, "third");
   });
 
   it("fire falls back to message when messages pool is empty", async () => {
@@ -129,7 +132,7 @@ describe("scheduler", () => {
       enabled: true,
     });
     assert.equal(scheduler.systemDeliveries.length, 1);
-    assert.equal(scheduler.systemDeliveries[0].text, "[hb] fallback");
+    assert.equal(scheduler.systemDeliveries[0].text, "fallback");
   });
 
   it("fire skips schedule with empty messages and no message or script", async () => {

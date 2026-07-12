@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { afterEach, before, describe, it } from "node:test";
 import { and, eq } from "drizzle-orm";
-import { drainNotices } from "../packages/daemon/src/lib/daemon/notices.js";
+import { drainEvents } from "../packages/daemon/src/lib/chat/system-events.js";
 import { initTokenBudget } from "../packages/daemon/src/lib/daemon/token-budget.js";
 import { handleMindEvent } from "../packages/daemon/src/lib/daemon/turn-lifecycle.js";
 import {
@@ -115,9 +115,9 @@ describe("turn-lifecycle: handleMindEvent", () => {
       content: "boom: something failed",
     });
 
-    const notices = await drainNotices(mind, "s1");
+    const notices = await drainEvents(mind, "s1");
     assert.ok(
-      notices.some((n) => n.kind === "turn_error"),
+      notices.some((n) => JSON.parse(n.meta ?? "{}").subtype === "turn_error"),
       "a turn_error notice should be recorded",
     );
     await cleanup(mind);

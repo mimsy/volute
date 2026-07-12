@@ -4,6 +4,7 @@ import { Scheduler } from "../packages/daemon/src/lib/daemon/scheduler.js";
 
 type SystemDelivery = {
   mindName: string;
+  scheduleId: string;
   text: string;
   opts?: { whileSleeping?: "skip" | "queue" | "trigger-wake"; session?: string };
 };
@@ -17,10 +18,11 @@ class TestScheduler extends Scheduler {
 
   protected override async deliverSystem(
     mindName: string,
+    scheduleId: string,
     text: string,
     opts?: { whileSleeping?: "skip" | "queue" | "trigger-wake"; session?: string },
   ): Promise<void> {
-    this.systemDeliveries.push({ mindName, text, opts });
+    this.systemDeliveries.push({ mindName, scheduleId, text, opts });
   }
 }
 

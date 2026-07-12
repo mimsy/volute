@@ -27,7 +27,7 @@ describe("send self-DM fast-path", () => {
 
     assert.equal(exitMock.mock.calls[0]?.arguments[0], 1, "should exit with 1");
     assert.ok(
-      errors.some((e) => e.includes("your own system channel")),
+      errors.some((e) => e.includes("that's yourself")),
       `should explain the self-send is a dead end, got: ${errors.join(" | ")}`,
     );
   });

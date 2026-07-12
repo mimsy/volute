@@ -6,8 +6,8 @@ import {
   missingCredentialWarning,
   providerForMindTemplate,
 } from "../packages/daemon/src/lib/ai-service.js";
+import { drainEvents } from "../packages/daemon/src/lib/chat/system-events.js";
 import { mindEnvPath, writeEnv } from "../packages/daemon/src/lib/config/env.js";
-import { drainNotices } from "../packages/daemon/src/lib/daemon/notices.js";
 
 describe("providerForMindTemplate", () => {
   it("maps templates to the provider whose key the mind needs", () => {
@@ -100,11 +100,11 @@ describe("recordMissingCredentialsNotice", () => {
     const mind = `nocreds-claude-${process.pid}-${Date.now()}`;
     await recordMissingCredentialsNotice(mind, "claude");
     await recordMissingCredentialsNotice(mind, "claude"); // dedup: no second notice
-    const notices = await drainNotices(mind, "main");
+    const notices = await drainEvents(mind, "main");
     assert.equal(notices.length, 1);
-    assert.equal(notices[0].kind, "startup");
-    assert.equal(notices[0].reason, "no_credentials");
-    assert.match(notices[0].detail, /stay silent/i);
+    assert.equal(JSON.parse(notices[0].meta ?? "{}").subtype, "startup");
+    assert.equal(JSON.parse(notices[0].meta ?? "{}").reason, "no_credentials");
+    assert.match(notices[0].body, /stay silent/i);
   });
 
   it("reads a pi mind's model from its SDK config to resolve the provider", async () => {
@@ -121,10 +121,10 @@ describe("recordMissingCredentialsNotice", () => {
     );
     try {
       await recordMissingCredentialsNotice(mind, "pi");
-      const notices = await drainNotices(mind, "main");
+      const notices = await drainEvents(mind, "main");
       assert.equal(notices.length, 1);
-      assert.equal(notices[0].reason, "no_credentials");
-      assert.match(notices[0].detail, /OPENROUTER_API_KEY/);
+      assert.equal(JSON.parse(notices[0].meta ?? "{}").reason, "no_credentials");
+      assert.match(notices[0].body, /OPENROUTER_API_KEY/);
     } finally {
       rmSync(mindDir(mind), { recursive: true, force: true });
     }
@@ -136,7 +136,7 @@ describe("recordMissingCredentialsNotice", () => {
     );
     const mind = `nocreds-pi-nomodel-${process.pid}-${Date.now()}`;
     await recordMissingCredentialsNotice(mind, "pi");
-    const notices = await drainNotices(mind, "main");
+    const notices = await drainEvents(mind, "main");
     assert.equal(notices.length, 0);
   });
 });

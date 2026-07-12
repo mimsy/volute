@@ -13,6 +13,7 @@ import {
   readFarewell,
   runFarewellTurn,
 } from "../packages/daemon/src/lib/mind/farewell.js";
+import { addMind } from "../packages/daemon/src/lib/mind/registry.js";
 
 /** Start a throwaway HTTP server; returns its port and a close fn. */
 async function stubServer(onRequest: () => void): Promise<{ port: number; close: () => void }> {
@@ -119,13 +120,13 @@ describe("runFarewellTurn live turn", () => {
     // Delivery succeeds but no mind_done/mind_idle ever fires — a variant stuck
     // mid-thought. The join must not hang: it proceeds once the timeout elapses.
     const server = await stubServer(() => {});
+    await addMind("stuck", server.port);
     try {
       const start = Date.now();
       const note = await runFarewellTurn({
         variantName: "stuck",
         parentName: "p",
         variantDir: dir,
-        port: server.port,
         running: true,
         timeoutMs: 200,
       });
@@ -145,13 +146,13 @@ describe("runFarewellTurn live turn", () => {
       writeFileSync(farewellPath(dir), "It was brief, but it was mine.\n");
       broadcast({ type: "mind_done", mind: "swift", summary: "" });
     });
+    await addMind("swift", server.port);
     try {
       const start = Date.now();
       const note = await runFarewellTurn({
         variantName: "swift",
         parentName: "p",
         variantDir: dir,
-        port: server.port,
         running: true,
         timeoutMs: 10_000,
       });
@@ -174,12 +175,12 @@ describe("runFarewellTurn live turn", () => {
         broadcast({ type: "mind_done", mind: "racy", summary: "" }); // farewell turn
       }, 50);
     });
+    await addMind("racy", server.port);
     try {
       const note = await runFarewellTurn({
         variantName: "racy",
         parentName: "p",
         variantDir: dir,
-        port: server.port,
         running: true,
         timeoutMs: 10_000,
       });
@@ -198,13 +199,13 @@ describe("runFarewellTurn live turn", () => {
     });
     await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
     const port = (server.address() as AddressInfo).port;
+    await addMind("rejected", port);
     try {
       const start = Date.now();
       const note = await runFarewellTurn({
         variantName: "rejected",
         parentName: "p",
         variantDir: dir,
-        port,
         running: true,
         timeoutMs: 10_000,
       });
@@ -218,12 +219,12 @@ describe("runFarewellTurn live turn", () => {
 
   it("short-circuits the wait when delivery fails (does not burn the timeout)", async () => {
     const port = await deadPort();
+    await addMind("unreachable", port);
     const start = Date.now();
     const note = await runFarewellTurn({
       variantName: "unreachable",
       parentName: "p",
       variantDir: dir,
-      port,
       running: true,
       timeoutMs: 10_000,
     });
@@ -237,11 +238,11 @@ describe("runFarewellTurn live turn", () => {
     // delivered (dead port) and writes nothing, so a genuine absence must result.
     writeFileSync(farewellPath(dir), "stale words from a previous join");
     const port = await deadPort();
+    await addMind("stale", port);
     const note = await runFarewellTurn({
       variantName: "stale",
       parentName: "p",
       variantDir: dir,
-      port,
       running: true,
       timeoutMs: 200,
     });

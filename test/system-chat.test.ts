@@ -1,30 +1,17 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
+import { eq } from "drizzle-orm";
 import { getOrCreateSystemUser, verifyUser } from "../packages/daemon/src/lib/auth.js";
-import {
-  ensureSystemDM,
-  generateSystemFallbackReply,
-  resetSystemDMCache,
-  sendSystemMessage,
-  sendSystemMessageDirect,
-  shouldGenerateSystemFallback,
-} from "../packages/daemon/src/lib/chat/system-chat.js";
+import { ensureSystemDM, resetSystemDMCache } from "../packages/daemon/src/lib/chat/system-chat.js";
 import { getDb } from "../packages/daemon/src/lib/db.js";
-import {
-  addSpirit,
-  setMindRunning,
-  validateMindName,
-} from "../packages/daemon/src/lib/mind/registry.js";
+import { validateMindName } from "../packages/daemon/src/lib/mind/registry.js";
 import {
   conversationParticipants,
   conversations,
-  messages,
   mindHistory,
   minds,
   users,
 } from "../packages/daemon/src/lib/schema.js";
-
-const { eq } = await import("drizzle-orm");
 
 const TEST_USERNAMES = ["volute", "testmind", "mind1", "mind2"];
 
@@ -69,6 +56,8 @@ describe("system user", () => {
   });
 });
 
+// The spirit↔mind DM bootstrap survives the system-events refactor: automated traffic now
+// goes through system events, but the genuine correspondence DM is still created on demand.
 describe("system DM", () => {
   beforeEach(cleanup);
   afterEach(cleanup);
@@ -113,196 +102,9 @@ describe("system DM", () => {
     const { conversationId: id2 } = await ensureSystemDM("testmind");
     assert.equal(id1, id2, "should find existing DM via DB lookup");
   });
-});
 
-describe("system messages", () => {
-  beforeEach(cleanup);
-  afterEach(cleanup);
-
-  it("sendSystemMessageDirect persists message to conversation", async () => {
-    const { conversationId } = await sendSystemMessageDirect("testmind", "hello from system");
-
-    const db = await getDb();
-    const msgs = await db
-      .select()
-      .from(messages)
-      .where(eq(messages.conversation_id, conversationId))
-      .all();
-    assert.equal(msgs.length, 1);
-    assert.equal(msgs[0].sender_name, "volute");
-    assert.equal(msgs[0].role, "user");
-    assert.ok(msgs[0].content.includes("hello from system"));
-  });
-
-  it("sendSystemMessageDirect does not throw for the spirit and records inbound only", async () => {
-    const result = await sendSystemMessageDirect("volute", "pre-sleep context");
-
-    assert.equal(result.conversationId, undefined, "spirit gets no conversationId");
-
-    const db = await getDb();
-
-    // The inbound is recorded in mind_history even though there's no conversation
-    const history = await db.select().from(mindHistory).where(eq(mindHistory.mind, "volute")).all();
-    const inbound = history.find((h) => h.content?.includes("pre-sleep context"));
-    assert.ok(inbound, "spirit inbound should be recorded in mind_history");
-    assert.equal(inbound!.type, "inbound");
-    assert.equal(inbound!.channel, "@volute");
-  });
-
-  it("sendSystemMessage persists message and calls delivery pipeline", async () => {
-    // deliverMessage gracefully handles non-existent minds (logs warning, returns)
-    await sendSystemMessage("testmind", "scheduled reminder");
-
-    const { conversationId } = await ensureSystemDM("testmind");
-    const db = await getDb();
-    const msgs = await db
-      .select()
-      .from(messages)
-      .where(eq(messages.conversation_id, conversationId))
-      .all();
-    assert.ok(msgs.length >= 1, "message should be persisted");
-    const systemMsg = msgs.find((m) => m.content.includes("scheduled reminder"));
-    assert.ok(systemMsg, "should find the system message");
-    assert.equal(systemMsg!.sender_name, "volute");
-    assert.equal(systemMsg!.role, "user");
-  });
-});
-
-describe("shouldGenerateSystemFallback", () => {
-  const systemDM = [{ userType: "system" }, { userType: "mind" }];
-
-  it("triggers for a two-party system DM from a mind", () => {
-    assert.equal(
-      shouldGenerateSystemFallback({
-        senderIsMind: true,
-        hasMessage: true,
-        convType: "dm",
-        participants: systemDM,
-        replyTarget: "testmind",
-      }),
-      true,
-    );
-  });
-
-  it("does not trigger for a channel with a system-user participant (fan-out owns it)", () => {
-    assert.equal(
-      shouldGenerateSystemFallback({
-        senderIsMind: true,
-        hasMessage: true,
-        convType: "channel",
-        participants: [{ userType: "system" }, { userType: "mind" }, { userType: "mind" }],
-        replyTarget: "testmind",
-      }),
-      false,
-    );
-  });
-
-  it("does not trigger for a group DM that includes the system user", () => {
-    assert.equal(
-      shouldGenerateSystemFallback({
-        senderIsMind: true,
-        hasMessage: true,
-        convType: "dm",
-        participants: [{ userType: "system" }, { userType: "mind" }, { userType: "mind" }],
-        replyTarget: "testmind",
-      }),
-      false,
-    );
-  });
-
-  it("does not trigger when the spirit is the reply target (self-reply loop guard)", () => {
-    // The spirit shares the system user; without this guard a spirit DM to itself
-    // would trigger the system to reply to the spirit, which would reply again — loop.
-    assert.equal(
-      shouldGenerateSystemFallback({
-        senderIsMind: true,
-        hasMessage: true,
-        convType: "dm",
-        participants: systemDM,
-        replyTarget: "volute",
-      }),
-      false,
-    );
-  });
-
-  it("does not trigger for a non-mind sender or an empty message", () => {
-    assert.equal(
-      shouldGenerateSystemFallback({
-        senderIsMind: false,
-        hasMessage: true,
-        convType: "dm",
-        participants: systemDM,
-        replyTarget: "testmind",
-      }),
-      false,
-    );
-    assert.equal(
-      shouldGenerateSystemFallback({
-        senderIsMind: true,
-        hasMessage: false,
-        convType: "dm",
-        participants: systemDM,
-        replyTarget: "testmind",
-      }),
-      false,
-    );
-  });
-
-  it("does not trigger for a DM without a system-user participant", () => {
-    assert.equal(
-      shouldGenerateSystemFallback({
-        senderIsMind: true,
-        hasMessage: true,
-        convType: "dm",
-        participants: [{ userType: "mind" }, { userType: "mind" }],
-        replyTarget: "testmind",
-      }),
-      false,
-    );
-  });
-});
-
-describe("generateSystemFallbackReply", () => {
-  beforeEach(cleanup);
-  afterEach(cleanup);
-
-  it("persists fallback message when no AI model is configured", async () => {
-    const { conversationId } = await ensureSystemDM("testmind");
-
-    // No AI model configured in test env, so aiComplete returns null
-    await generateSystemFallbackReply(conversationId, "testmind", "hello volute");
-
-    const db = await getDb();
-    const msgs = await db
-      .select()
-      .from(messages)
-      .where(eq(messages.conversation_id, conversationId))
-      .all();
-    const fallback = msgs.find((m) => m.role === "assistant" && m.sender_name === "volute");
-    assert.ok(fallback, "should persist a fallback reply");
-    assert.ok(
-      fallback!.content.includes("no AI model is configured"),
-      "fallback should explain the issue",
-    );
-  });
-
-  it("skips the fallback when the spirit is running (fan-out owns delivery)", async () => {
-    const { conversationId } = await ensureSystemDM("testmind");
-
-    // Register a running spirit — fan-out has already delivered the mind's DM to it,
-    // so generateSystemFallbackReply must not deliver or reply again (issue #418).
-    await addSpirit("volute", 4099, "claude", "/tmp/volute-spirit-test");
-    await setMindRunning("volute", true);
-
-    await generateSystemFallbackReply(conversationId, "testmind", "hello volute");
-
-    const db = await getDb();
-    const msgs = await db
-      .select()
-      .from(messages)
-      .where(eq(messages.conversation_id, conversationId))
-      .all();
-    const reply = msgs.find((m) => m.role === "assistant" && m.sender_name === "volute");
-    assert.equal(reply, undefined, "should not persist any reply when the spirit is running");
+  it("ensureSystemDM throws for the spirit (can't DM the shared system user)", async () => {
+    // The spirit shares the system user, so there's no distinct pair to DM.
+    await assert.rejects(() => ensureSystemDM("volute"), /system user/);
   });
 });
