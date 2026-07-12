@@ -29,6 +29,7 @@ import typing from "./api/typing.js";
 import update from "./api/update.js";
 import v1Conversations from "./api/v1/conversations.js";
 import v1Events from "./api/v1/events.js";
+import v1Feed from "./api/v1/feed.js";
 import variants from "./api/variants.js";
 import voluteChannels from "./api/volute/channels.js";
 import chat, { unifiedChatApp } from "./api/volute/chat.js";
@@ -161,6 +162,7 @@ const routes = app
   // v1 API routes
   .route("/api/v1/conversations", v1Conversations)
   .route("/api/v1/events", v1Events)
+  .route("/api/v1/feed", v1Feed)
   .route("/api/v1", unifiedChatApp)
   .route("/api/v1/channels", voluteChannels)
   .route("/api/v1/history", historyRoutes);

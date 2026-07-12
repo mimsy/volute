@@ -13,6 +13,7 @@ import {
   getMessagesPaginated,
   getUnreadCounts,
   markConversationRead,
+  setConversationPrivate,
 } from "../packages/daemon/src/lib/events/conversations.js";
 import { users } from "../packages/daemon/src/lib/schema.js";
 import v1ConversationsRoute from "../packages/daemon/src/web/api/v1/conversations.js";
@@ -145,6 +146,7 @@ function createApp() {
 const TEST_USERNAMES = [
   "v1-admin",
   "outsider",
+  "outsider-priv",
   "outsider2",
   "unread-test",
   "mark-read-test",
@@ -260,15 +262,42 @@ describe("v1 conversations HTTP routes", () => {
     await deleteConversation(conv.id);
   });
 
-  it("GET /:id/messages — 404 for non-participant", async () => {
+  it("GET /:id/messages — non-participant may read a non-private conversation", async () => {
+    // Deliberate transparency (powers the home feed transcript modal): non-private
+    // conversations are readable by any authenticated user. Private ones are not.
     await setupAuth();
     const app = createApp();
 
     const conv = await createConversation({
       participantIds: [userId],
     });
+    await addMessage(conv.id, "user", "v1-admin", [{ type: "text", text: "public" }]);
 
     const user2 = await createUser("outsider", "pass");
+    await approveUser(user2.id);
+    const cookie2 = await createSession(user2.id);
+
+    const res = await app.request(`/api/v1/conversations/${conv.id}/messages`, {
+      headers: { Cookie: `volute_session=${cookie2}` },
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.ok(body.items.length >= 1);
+
+    await deleteSession(cookie2);
+    await deleteConversation(conv.id);
+  });
+
+  it("GET /:id/messages — 404 for non-participant on a private conversation", async () => {
+    await setupAuth();
+    const app = createApp();
+
+    const conv = await createConversation({
+      participantIds: [userId],
+    });
+    await setConversationPrivate(conv.id, true);
+
+    const user2 = await createUser("outsider-priv", "pass");
     await approveUser(user2.id);
     const cookie2 = await createSession(user2.id);
 

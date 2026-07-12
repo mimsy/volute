@@ -113,16 +113,46 @@ export type ActivityItem = {
   created_at: string;
 };
 
-/** One item in the "while you were away" home feed: a self-directed turn summary. */
-export type AwayFeedItem = {
-  /** The summary row id. */
+/** One snippet line shown on a chat-event card. */
+export type FeedSnippetMessage = {
+  role: "user" | "assistant";
+  senderName: string | null;
+  text: string;
+  createdAt: string;
+};
+
+/** A burst of conversation activity, derived at read time from the messages table. */
+export type FeedChatEvent = {
+  kind: "chat";
+  conversationId: string;
+  conversationType: "dm" | "channel";
+  channelName: string | null;
+  participants: Participant[];
+  /** Distinct sender names that spoke in this burst. */
+  activeSenders: string[];
+  messageCount: number;
+  startedAt: string;
+  endedAt: string;
+  /** The last few messages of the burst, for a preview. */
+  snippet: FeedSnippetMessage[];
+};
+
+/** A lifecycle moment (started/stopped/sleeping/waking/error/backup) in the feed. */
+export type FeedLifecycleEvent = {
+  kind: "lifecycle";
   id: number;
+  type: ActivityEventType;
   mind: string;
   summary: string;
-  /** The turn this summary describes. */
-  turnId: string;
-  created_at: string;
+  createdAt: string;
 };
+
+export type FeedEvent = FeedChatEvent | FeedLifecycleEvent;
+
+export type FeedResponse = { events: FeedEvent[] };
+
+/** The AI daily digest header. Empty content means "nothing to show" (frontend hides it). */
+export type FeedDigest = { content: string };
 
 export type ActivityEventType =
   | "mind_started"

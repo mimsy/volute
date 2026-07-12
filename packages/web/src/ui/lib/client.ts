@@ -4,10 +4,11 @@
 
 import type {
   AvailableUser,
-  AwayFeedItem,
   ChannelInfo,
   Conversation,
   ConversationWithParticipants,
+  FeedDigest,
+  FeedResponse,
   HistoryMessage,
   HistorySession,
   Message,
@@ -313,9 +314,16 @@ export function fetchSummaryByIds(ids: number[]): Promise<SummaryRow[]> {
   return get(`${V1}/history/summaries?ids=${ids.join(",")}`);
 }
 
-/** Fetch the "while you were away" feed: self-directed turn summaries (artifact activity is surfaced separately via extension feedSources). */
-export function fetchAwayFeed(limit?: number): Promise<AwayFeedItem[]> {
-  return get(`${V1}/history/away${limit !== undefined ? `?limit=${limit}` : ""}`);
+// --- Feed ---
+
+/** Fetch the home feed: conversation-burst events + lifecycle rows, newest first. */
+export function fetchFeed(): Promise<FeedResponse> {
+  return get(`${V1}/feed`);
+}
+
+/** Fetch the AI daily digest header for the home feed. */
+export function fetchFeedDigest(): Promise<FeedDigest> {
+  return get(`${V1}/feed/digest`);
 }
 
 // --- Variants ---

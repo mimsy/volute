@@ -21,6 +21,23 @@ const createSchema = z.object({
   participantNames: z.array(z.string()).min(1),
 });
 
+/**
+ * Whether `user` may read conversation `id`. Missing → false (404). Non-private →
+ * readable by any authenticated principal (deliberate transparency for the home
+ * feed). Private → participant/owner, admin, system, or the internal system caller
+ * (user.id === 0) only.
+ */
+async function canReadConversation(
+  id: string,
+  user: { id: number; role: string },
+): Promise<boolean> {
+  const conv = await getConversation(id);
+  if (!conv) return false;
+  if (conv.private !== 1) return true;
+  if (user.id === 0 || user.role === "admin" || user.role === "system") return true;
+  return isParticipantOrOwner(id, user.id);
+}
+
 const app = new Hono<AuthEnv>()
   .use("*", authMiddleware)
   .get("/", async (c) => {
@@ -31,7 +48,11 @@ const app = new Hono<AuthEnv>()
   .get("/:id/messages", async (c) => {
     const id = c.req.param("id");
     const user = c.get("user");
-    if (user.id !== 0 && !(await isParticipantOrOwner(id, user.id))) {
+    // Non-private conversations are readable by any authenticated user — deliberate;
+    // powers the home feed transcript modal (mirrors GET /api/minds/:name/
+    // conversations/:convId/messages, AUTHZ_EXEMPT). Private conversations stay
+    // scoped to participants (or admin/system).
+    if (!(await canReadConversation(id, user))) {
       return c.json({ error: "Conversation not found" }, 404);
     }
 
@@ -52,7 +73,9 @@ const app = new Hono<AuthEnv>()
   .get("/:id/participants", async (c) => {
     const id = c.req.param("id");
     const user = c.get("user");
-    if (user.id !== 0 && !(await isParticipantOrOwner(id, user.id))) {
+    // Same read semantics as /:id/messages: non-private conversations are readable
+    // by any authenticated user (powers the home feed); private ones stay scoped.
+    if (!(await canReadConversation(id, user))) {
       return c.json({ error: "Conversation not found" }, 404);
     }
     const participants = await getParticipants(id);
