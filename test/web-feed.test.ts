@@ -180,6 +180,77 @@ describe("web feed routes", () => {
     assert.ok(adminErr, "error row present for admin");
     assert.equal(adminErr.summary, "SECRET stack trace detail");
   });
+
+  it("orders same-second bursts by last message id (newest id first)", async () => {
+    const cookie = await makeUser("feed-test-admin", "admin");
+    const db = await getDb();
+    const convA = await createConversation({ participantIds: [] });
+    const convB = await createConversation({ participantIds: [] });
+    const stamp = ago(90);
+    // Same endedAt second; convB's message is inserted second, so it gets the higher id.
+    await insertMsg(convA.id, "user", "feed-test-a", "from A", stamp);
+    await insertMsg(convB.id, "user", "feed-test-b", "from B", stamp);
+
+    const res = await feedApp().request("/api/v1/feed", {
+      headers: { Cookie: `volute_session=${cookie}` },
+    });
+    const body = (await res.json()) as { events: any[] };
+    const order = body.events
+      .filter(
+        (e) =>
+          e.kind === "chat" && (e.conversationId === convA.id || e.conversationId === convB.id),
+      )
+      .map((e) => e.conversationId);
+    assert.deepEqual(order, [convB.id, convA.id], "higher last-message id sorts first on a tie");
+
+    await db.delete(messages).where(eq(messages.conversation_id, convA.id));
+    await db.delete(messages).where(eq(messages.conversation_id, convB.id));
+    await db.delete(conversations).where(inArray(conversations.id, [convA.id, convB.id]));
+  });
+
+  it("builds a snippet from the last 3 messages, handling tool-only, unparseable, and long text", async () => {
+    const cookie = await makeUser("feed-test-admin", "admin");
+    const db = await getDb();
+    const conv = await createConversation({ participantIds: [] });
+
+    const longText = "x".repeat(400);
+    // One tight burst of 5 messages (a few minutes apart, within the 45m gap).
+    await insertMsg(conv.id, "user", "feed-test-a", "first", ago(50));
+    await insertMsg(conv.id, "assistant", "feed-test-b", "second", ago(49));
+    // Unparseable content → extractText returns it raw.
+    await db.insert(messages).values({
+      conversation_id: conv.id,
+      role: "assistant",
+      sender_name: "feed-test-b",
+      content: "not json at all",
+      created_at: ago(48),
+    });
+    // Tool-only content (no text block) → empty snippet text.
+    await db.insert(messages).values({
+      conversation_id: conv.id,
+      role: "assistant",
+      sender_name: "feed-test-b",
+      content: JSON.stringify([{ type: "tool_use", name: "Bash", input: {} }]),
+      created_at: ago(47),
+    });
+    await insertMsg(conv.id, "assistant", "feed-test-b", longText, ago(46));
+
+    const res = await feedApp().request("/api/v1/feed", {
+      headers: { Cookie: `volute_session=${cookie}` },
+    });
+    const body = (await res.json()) as { events: any[] };
+    const ev = body.events.find((e) => e.kind === "chat" && e.conversationId === conv.id);
+    assert.ok(ev);
+    assert.equal(ev.messageCount, 5, "burst counts all 5 messages");
+    assert.equal(ev.snippet.length, 3, "snippet keeps only the last 3");
+    assert.equal(ev.snippet[0].text, "not json at all", "unparseable content passes through raw");
+    assert.equal(ev.snippet[1].text, "", "tool-only message yields empty text");
+    assert.equal(ev.snippet[2].text.length, 281, "long text truncated to 280 chars + ellipsis");
+    assert.ok(ev.snippet[2].text.endsWith("…"));
+
+    await db.delete(messages).where(eq(messages.conversation_id, conv.id));
+    await db.delete(conversations).where(eq(conversations.id, conv.id));
+  });
 });
 
 describe("daily digest", () => {
@@ -251,6 +322,75 @@ describe("daily digest", () => {
       .where(and(eq(summaries.mind, "system"), eq(summaries.period, "day")))
       .get();
     assert.equal(cached, undefined, "deterministic fallback must not be cached");
+  });
+
+  it("falls back to recent turn summaries as material when no hour summaries exist", async () => {
+    const db = await getDb();
+    await db.delete(summaries).where(inArray(summaries.period, ["turn", "hour"]));
+    await db.insert(summaries).values([
+      {
+        mind: "feed-test-x",
+        period: "turn",
+        period_key: "feed-test-turn-1",
+        content: "z".repeat(400),
+      },
+      {
+        mind: "feed-test-y",
+        period: "turn",
+        period_key: "feed-test-turn-2",
+        content: "did a thing",
+      },
+    ]);
+
+    let captured = "";
+    const result = await getDailyDigest(async (_system, material) => {
+      captured = material;
+      return "the digest";
+    });
+    assert.equal(result.content, "the digest");
+    assert.ok(captured.includes("[feed-test-x]"), "material carries the per-mind prefix");
+    assert.ok(captured.includes("…"), "an overlong turn summary is truncated to ~300 chars");
+
+    await db.delete(summaries).where(inArray(summaries.period, ["turn", "hour"]));
+  });
+
+  it("returns empty content and skips the AI when there is no source material", async () => {
+    const db = await getDb();
+    await db.delete(summaries).where(inArray(summaries.period, ["turn", "hour"]));
+    let called = false;
+    const result = await getDailyDigest(async () => {
+      called = true;
+      return "unused";
+    });
+    assert.equal(result.content, "");
+    assert.equal(called, false, "AI must not run without material");
+    const cached = await db
+      .select()
+      .from(summaries)
+      .where(and(eq(summaries.mind, "system"), eq(summaries.period, "day")))
+      .get();
+    assert.equal(cached, undefined, "empty digest is not cached");
+  });
+
+  it("uses singular grammar for exactly one active mind and one conversation", async () => {
+    const db = await getDb();
+    await db.delete(messages);
+    await db.delete(summaries).where(inArray(summaries.period, ["turn", "hour"]));
+    await db.insert(summaries).values({
+      mind: "feed-test-solo",
+      period: "turn",
+      period_key: "feed-test-solo-turn",
+      content: "a lone thought",
+    });
+    const conv = await createConversation({ participantIds: [] });
+    await insertMsg(conv.id, "user", "feed-test-solo", "hi", ago(5));
+
+    const result = await getDailyDigest(async () => null);
+    assert.equal(result.content, "1 mind was active across 1 conversation today.");
+
+    await db.delete(messages).where(eq(messages.conversation_id, conv.id));
+    await db.delete(conversations).where(eq(conversations.id, conv.id));
+    await db.delete(summaries).where(inArray(summaries.period, ["turn", "hour"]));
   });
 });
 
