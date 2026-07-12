@@ -133,7 +133,7 @@ function plainPreview(text: string): string {
                   id: 0,
                   mind: childTurn.mind,
                   channel: "",
-                  session: null,
+                  thread: null,
                   sender: null,
                   message_id: null,
                   type: "summary",

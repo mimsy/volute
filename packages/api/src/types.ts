@@ -289,7 +289,7 @@ export type HistoryMessage = {
   id: number;
   mind: string;
   channel: string;
-  session: string | null;
+  thread: string | null;
   sender: string | null;
   message_id: string | null;
   type: string;
@@ -300,7 +300,7 @@ export type HistoryMessage = {
 };
 
 export type HistorySession = {
-  session: string;
+  thread: string;
   started_at: string;
   event_count: number;
   message_count: number;

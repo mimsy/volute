@@ -1984,15 +1984,24 @@ describe("daemon e2e", { timeout: 420000 }, () => {
     // recording happens at delivery time, before the mind's model turn, so this
     // works without ANTHROPIC_API_KEY. Poll history for the probe.
     const deadline = Date.now() + 30000;
-    let delivered = false;
-    while (Date.now() < deadline && !delivered) {
+    let deliveredRow: Record<string, unknown> | undefined;
+    while (Date.now() < deadline && !deliveredRow) {
       const res = await daemonRequest(`/api/minds/${TEST_MIND}/history?full=true&limit=100`);
       assert.equal(res.status, 200);
-      const rows = (await res.json()) as { type: string; content: string | null }[];
-      delivered = rows.some((r) => r.type === "inbound" && (r.content ?? "").includes(probe));
-      if (!delivered) await new Promise((r) => setTimeout(r, 500));
+      const rows = (await res.json()) as Record<string, unknown>[];
+      deliveredRow = rows.find(
+        (r) => r.type === "inbound" && ((r.content as string) ?? "").includes(probe),
+      );
+      if (!deliveredRow) await new Promise((r) => setTimeout(r, 500));
     }
-    assert.ok(delivered, "inbound message should be recorded in mind_history after delivery");
+    assert.ok(deliveredRow, "inbound message should be recorded in mind_history after delivery");
+    // Wire-shape pin (#493): history rows expose the routed thread under the
+    // `thread` key — never the legacy `session` — across every history endpoint.
+    assert.ok("thread" in deliveredRow!, "history rows must carry a `thread` field");
+    assert.ok(
+      !("session" in deliveredRow!),
+      "history rows must not carry a legacy `session` field",
+    );
 
     await daemonRequest(`/api/minds/${TEST_MIND}/stop`, { method: "POST" });
   });

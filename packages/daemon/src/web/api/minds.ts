@@ -810,7 +810,8 @@ async function importHistoryFromArchive(name: string, tempDir: string): Promise<
         await db.insert(mindHistory).values({
           mind: name,
           channel: row.channel ?? null,
-          thread: row.session ?? null,
+          // Archives are long-lived files: pre-rename exports carry `session`.
+          thread: row.thread ?? row.session ?? null,
           sender: row.sender ?? null,
           message_id: row.message_id ?? null,
           type: row.type,
@@ -2780,7 +2781,7 @@ const app = new Hono<AuthEnv>()
     const db = await getDb();
     const rows = await db
       .select({
-        session: mindHistory.thread,
+        thread: mindHistory.thread,
         started_at: sql<string>`MIN(${mindHistory.created_at})`,
         event_count: sql<number>`COUNT(*)`,
         message_count: sql<number>`SUM(CASE WHEN ${mindHistory.type} IN ('inbound','outbound') THEN 1 ELSE 0 END)`,
@@ -2963,7 +2964,7 @@ const app = new Hono<AuthEnv>()
 
     const rows = await db
       .select({
-        session: turns.thread,
+        thread: turns.thread,
         content: summaries.content,
         created_at: summaries.created_at,
       })
@@ -2981,7 +2982,7 @@ const app = new Hono<AuthEnv>()
     const lines = rows.map((row) => {
       const ts = new Date(row.created_at.endsWith("Z") ? row.created_at : `${row.created_at}Z`);
       const ago = formatTimeAgo(ts);
-      return `- ${row.session ?? "unknown"} (${ago}): ${row.content ?? ""}`;
+      return `- ${row.thread ?? "unknown"} (${ago}): ${row.content ?? ""}`;
     });
 
     return c.json({ context: `[Session Activity]\n${lines.join("\n")}` });
@@ -3073,7 +3074,7 @@ const app = new Hono<AuthEnv>()
             content: summaries.content,
             metadata: summaries.metadata,
             created_at: summaries.created_at,
-            session: turns.thread,
+            thread: turns.thread,
           })
           .from(summaries)
           .innerJoin(turns, eq(turns.id, summaries.period_key))
@@ -3087,7 +3088,7 @@ const app = new Hono<AuthEnv>()
             mind: r.mind,
             type: "summary",
             channel: null,
-            session: r.session,
+            thread: r.thread,
             sender: null,
             message_id: null,
             content: r.content,
@@ -3111,7 +3112,7 @@ const app = new Hono<AuthEnv>()
           mind: r.mind,
           type: "summary",
           channel: null,
-          session: null,
+          thread: null,
           sender: null,
           message_id: null,
           content: r.content,

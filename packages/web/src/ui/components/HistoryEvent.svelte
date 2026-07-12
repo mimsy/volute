@@ -153,7 +153,7 @@ async function handleClick() {
     if (turnExpanded && turnEvents.length === 0) {
       // Prefer turn_id when available; fall back to legacy session+range
       const hasTurnId = !!event.turn_id;
-      const hasLegacy = event.session && meta?.from_id && meta?.to_id;
+      const hasLegacy = event.thread && meta?.from_id && meta?.to_id;
       if (!hasTurnId && !hasLegacy) {
         turnError = "Missing turn data";
         return;
@@ -165,7 +165,7 @@ async function handleClick() {
           mindName,
           hasTurnId
             ? { turnId: event.turn_id! }
-            : { session: event.session!, fromId: meta.from_id, toId: meta.to_id },
+            : { session: event.thread!, fromId: meta.from_id, toId: meta.to_id },
         );
       } catch (e) {
         turnError = "Failed to load turn details";
@@ -242,13 +242,13 @@ async function handleClick() {
               detailLoading = true;
               try {
                 const hasTurnId = !!event.turn_id;
-                const hasLegacy = event.session && meta?.from_id && meta?.to_id;
+                const hasLegacy = event.thread && meta?.from_id && meta?.to_id;
                 if (hasTurnId || hasLegacy) {
                   detailEvents = await fetchTurnEvents(
                     mindName,
                     hasTurnId
                       ? { turnId: event.turn_id!, detail: true }
-                      : { session: event.session!, fromId: meta.from_id, toId: meta.to_id, detail: true },
+                      : { session: event.thread!, fromId: meta.from_id, toId: meta.to_id, detail: true },
                   );
                 }
               } catch (err) {
@@ -356,7 +356,7 @@ async function handleClick() {
       {:else if event.type === "usage"}
         <span class="inline-text dim">↑{meta?.input_tokens ?? 0} ↓{meta?.output_tokens ?? 0}{#if meta?.model} {meta.model}{/if}</span>
       {:else if event.type === "session_start"}
-        <span class="inline-text dim">session started{#if event.session} {event.session}{/if}</span>
+        <span class="inline-text dim">session started{#if event.thread} {event.thread}{/if}</span>
       {:else if event.type === "done"}
         <span class="inline-text dim">processing complete</span>
       {:else}
