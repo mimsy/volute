@@ -138,6 +138,73 @@ describe("seed check endpoint", () => {
   });
 });
 
+describe("seed check nurture gate vs. forced host check", () => {
+  let cookie: string;
+  const seedName = `gate-seed-${Date.now()}`;
+
+  async function cleanup() {
+    const db = await getDb();
+    await db.delete(users).where(eq(users.username, "gate-admin"));
+    await db.delete(mindHistory).where(eq(mindHistory.mind, seedName));
+    await removeMind(seedName);
+  }
+
+  beforeEach(async () => {
+    await cleanup();
+    const user = await createUser("gate-admin", "pass");
+    cookie = await createSession(user.id);
+    await addMind(seedName, 4203, "seed");
+    const dir = resolve(voluteHome(), "minds", seedName);
+    mkdirSync(resolve(dir, "home/.config"), { recursive: true });
+    writeFileSync(resolve(dir, "home/.config/volute.json"), "{}");
+    writeFileSync(resolve(dir, "home/SOUL.md"), "a seed, still discovering who you are");
+
+    // Recent creator + spirit messages → the nurture gate should suppress output.
+    const db = await getDb();
+    const now = new Date().toISOString();
+    await db.insert(mindHistory).values([
+      { mind: seedName, type: "inbound", sender: "creator", content: "hi", created_at: now },
+      { mind: seedName, type: "inbound", sender: "volute", content: "hi", created_at: now },
+    ]);
+  });
+
+  afterEach(cleanup);
+
+  it("stays silent under the nurture gate when recently attended to", async () => {
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
+    const res = await app.request(`http://localhost/api/minds/${seedName}/seed-check`, {
+      headers: postHeaders(cookie),
+    });
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as { output: string };
+    assert.equal(body.output, "");
+  });
+
+  it("forces the readiness state for a manual host check (?force=1)", async () => {
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
+    const res = await app.request(`http://localhost/api/minds/${seedName}/seed-check?force=1`, {
+      headers: postHeaders(cookie),
+    });
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as { output: string };
+    assert.ok(body.output.includes(`Seed: ${seedName}`));
+    assert.ok(body.output.includes("Write MEMORY.md"));
+  });
+
+  it("reports a forced check for a mind that is no longer a seed", async () => {
+    await removeMind(seedName);
+    await addMind(seedName, 4203);
+
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
+    const res = await app.request(`http://localhost/api/minds/${seedName}/seed-check?force=1`, {
+      headers: postHeaders(cookie),
+    });
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as { output: string };
+    assert.ok(body.output.includes("no longer a seed"));
+  });
+});
+
 describe("sprout endpoint cleans up nurture schedule", () => {
   let cookie: string;
   const seedName = `sprout-cleanup-${Date.now()}`;

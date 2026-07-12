@@ -1067,7 +1067,7 @@ const app = new Hono<AuthEnv>()
               schedules.push({
                 id: nurtureId,
                 cron: process.env.VOLUTE_NURTURE_CRON ?? "*/5 * * * *",
-                script: `volute seed check ${name}`,
+                script: `volute seed check ${name} --nurture`,
                 enabled: true,
                 whileSleeping: "skip",
               });
@@ -1773,9 +1773,17 @@ const app = new Hono<AuthEnv>()
   // Seed readiness check — used by spirit nurture schedule
   .get("/:name/seed-check", requireSelf(), async (c) => {
     const name = c.req.param("name");
+    // The nurture schedule gates itself so the spirit is only nudged when a seed
+    // has gone quiet; a host running `volute seed check <name>` by hand passes
+    // ?force=1 to bypass that gate and always get the readiness state (#666).
+    const force = c.req.query("force") === "1" || c.req.query("force") === "true";
     const entry = await findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
-    if (entry.stage !== "seed") return c.json({ output: "" });
+    if (entry.stage !== "seed") {
+      return c.json({
+        output: force ? `${name} is no longer a seed (stage: ${entry.stage}).` : "",
+      });
+    }
 
     const db = await getDb();
     const rawCreator = Number(process.env.VOLUTE_NURTURE_CREATOR_MINUTES);
@@ -1819,8 +1827,8 @@ const app = new Hono<AuthEnv>()
     const minutesSinceCreator = creatorTime ? (now - creatorTime) / 60_000 : Infinity;
     const minutesSinceSpirit = spiritTime ? (now - spiritTime) / 60_000 : Infinity;
 
-    // No nudge needed
-    if (minutesSinceCreator < creatorThreshold && minutesSinceSpirit < spiritThreshold) {
+    // No nudge needed (the schedule stays quiet; a forced manual check reports anyway)
+    if (!force && minutesSinceCreator < creatorThreshold && minutesSinceSpirit < spiritThreshold) {
       return c.json({ output: "" });
     }
 
