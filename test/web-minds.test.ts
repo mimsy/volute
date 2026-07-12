@@ -169,12 +169,16 @@ describe("web minds routes", () => {
     const { readGlobalConfig, writeGlobalConfig, _resetConfigCache } = await import(
       "../packages/daemon/src/lib/config/setup.js"
     );
+    const { setEnabledModels } = await import("../packages/daemon/src/lib/ai-service.js");
     const existing = `cap-existing-${Date.now()}`;
     const savedConfig = readGlobalConfig();
     await addMind(existing, 4100);
     try {
+      // A provider must be configured for the cap guard to be the one that fires
+      // (a providerless system is refused earlier — see the no-provider test).
+      setEnabledModels(["anthropic:claude-test"]);
       const count = await countCappedMinds();
-      writeGlobalConfig({ ...savedConfig, maxMinds: count });
+      writeGlobalConfig({ ...readGlobalConfig(), maxMinds: count });
 
       const { default: app } = await import("../packages/daemon/src/web/app.js");
       const res = await app.request("http://localhost/api/minds", {
@@ -191,6 +195,48 @@ describe("web minds routes", () => {
       _resetConfigCache();
       await removeMind(existing);
     }
+  });
+
+  it("POST / — 409 with a provider hint when no AI provider is configured", async () => {
+    const cookie = await setupAuth();
+    const { setEnabledModels, isAiConfigured } = await import(
+      "../packages/daemon/src/lib/ai-service.js"
+    );
+    const { readGlobalConfig, writeGlobalConfig, _resetConfigCache } = await import(
+      "../packages/daemon/src/lib/config/setup.js"
+    );
+    const savedConfig = readGlobalConfig();
+    try {
+      // Drop every enabled model so the system reads as providerless.
+      setEnabledModels([]);
+      assert.equal(isAiConfigured(), false);
+
+      const { default: app } = await import("../packages/daemon/src/web/app.js");
+      const res = await app.request("http://localhost/api/minds", {
+        method: "POST",
+        headers: { ...postHeaders(cookie), "Content-Type": "application/json" },
+        body: JSON.stringify({ name: `noprovider-${Date.now()}` }),
+      });
+      assert.equal(res.status, 409);
+      const body = (await res.json()) as { error?: string };
+      assert.match(body.error ?? "", /cannot think/i);
+      assert.match(body.error ?? "", /provider/i);
+      assert.match(body.error ?? "", /Settings/i);
+    } finally {
+      writeGlobalConfig(savedConfig);
+      _resetConfigCache();
+    }
+  });
+
+  it("GET /api/system/info — reports aiConfigured as a boolean", async () => {
+    const cookie = await setupAuth();
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
+    const res = await app.request("http://localhost/api/system/info", {
+      headers: { Cookie: `volute_session=${cookie}` },
+    });
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as { aiConfigured?: unknown };
+    assert.equal(typeof body.aiConfigured, "boolean");
   });
 
   it("GET/PUT /api/system/max-minds — roundtrips the cap and reports the count", async () => {

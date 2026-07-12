@@ -21,6 +21,7 @@ import {
   getCustomModels,
   getEnabledModels,
   getUtilityModel,
+  isAiConfigured,
   removeAiConfig,
   removeCustomModel,
   removeProviderConfig,
@@ -101,6 +102,10 @@ const app = new Hono<AuthEnv>()
       system: config?.system ?? null,
       name: globalConfig.name ?? null,
       timezone,
+      // Whether any AI model is available for minds to think with. A providerless
+      // system spawns every mind mute, so the dashboard surfaces a banner (#606).
+      // Boolean only — no provider details or secrets are exposed here.
+      aiConfigured: isAiConfigured(),
     });
   })
   .put("/info", requireAdmin, zValidator("json", z.object({ name: z.string() })), async (c) => {
