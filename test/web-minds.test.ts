@@ -415,6 +415,100 @@ describe("web minds routes", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it("GET /:name — surfaces the sprout checklist for seed minds (#664)", async () => {
+    const { mkdirSync, rmSync, writeFileSync } = await import("node:fs");
+    const { resolve } = await import("node:path");
+    const { addMind, mindDir, removeMind } = await import(
+      "../packages/daemon/src/lib/mind/registry.js"
+    );
+    const { initMindManager, tryGetMindManager } = await import(
+      "../packages/daemon/src/lib/daemon/mind-manager.js"
+    );
+    if (!tryGetMindManager()) initMindManager();
+
+    const name = `web-seed-${Date.now()}`;
+    const dir = resolve(mindDir(name));
+    mkdirSync(resolve(dir, "home/.config"), { recursive: true });
+    // SOUL written (no orientation marker), MEMORY still unwritten (empty),
+    // display name set — a partially-oriented seed.
+    writeFileSync(resolve(dir, "home/SOUL.md"), "# Me\nA real identity.");
+    writeFileSync(resolve(dir, "home/MEMORY.md"), "   \n");
+    writeFileSync(
+      resolve(dir, "home/.config/volute.json"),
+      JSON.stringify({ profile: { displayName: "Sprout" } }),
+    );
+    await addMind(name, 4197, "seed", "claude");
+
+    try {
+      const cookie = await setupAuth();
+      const { default: app } = await import("../packages/daemon/src/web/app.js");
+      const res = await app.request(`/api/minds/${name}`, {
+        headers: { Cookie: `volute_session=${cookie}` },
+      });
+      assert.equal(res.status, 200);
+      const body = (await res.json()) as {
+        seedChecklist?: {
+          soulWritten: boolean;
+          memoryWritten: boolean;
+          displayNameSet: boolean;
+          avatarSet: boolean;
+        };
+      };
+      assert.ok(body.seedChecklist, "seed minds expose seedChecklist");
+      assert.equal(body.seedChecklist.soulWritten, true);
+      assert.equal(body.seedChecklist.memoryWritten, false);
+      assert.equal(body.seedChecklist.displayNameSet, true);
+      assert.equal(body.seedChecklist.avatarSet, false);
+
+      // Non-privileged callers get the checklist too — it's derived from
+      // already-public profile fields, nothing secret.
+      const user2 = await createUser("regular-user2", "pass");
+      await approveUser(user2.id);
+      const cookie2 = await createSession(user2.id);
+      const res2 = await app.request(`/api/minds/${name}`, {
+        headers: { Cookie: `volute_session=${cookie2}` },
+      });
+      const body2 = (await res2.json()) as { seedChecklist?: { soulWritten: boolean } };
+      assert.ok(body2.seedChecklist, "non-privileged callers also see the checklist");
+      assert.equal(body2.seedChecklist.soulWritten, true);
+      await deleteSession(cookie2);
+    } finally {
+      await removeMind(name);
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("GET /:name — omits the sprout checklist for sprouted minds (#664)", async () => {
+    const { mkdirSync, rmSync } = await import("node:fs");
+    const { resolve } = await import("node:path");
+    const { addMind, mindDir, removeMind } = await import(
+      "../packages/daemon/src/lib/mind/registry.js"
+    );
+    const { initMindManager, tryGetMindManager } = await import(
+      "../packages/daemon/src/lib/daemon/mind-manager.js"
+    );
+    if (!tryGetMindManager()) initMindManager();
+
+    const name = `web-sprouted-${Date.now()}`;
+    const dir = resolve(mindDir(name));
+    mkdirSync(dir, { recursive: true });
+    await addMind(name, 4196, "sprouted", "claude");
+
+    try {
+      const cookie = await setupAuth();
+      const { default: app } = await import("../packages/daemon/src/web/app.js");
+      const res = await app.request(`/api/minds/${name}`, {
+        headers: { Cookie: `volute_session=${cookie}` },
+      });
+      assert.equal(res.status, 200);
+      const body = (await res.json()) as { seedChecklist?: unknown };
+      assert.equal(body.seedChecklist, undefined);
+    } finally {
+      await removeMind(name);
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("toPublicMind", () => {

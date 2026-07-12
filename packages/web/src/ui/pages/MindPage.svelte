@@ -72,6 +72,7 @@ function handleIframeNav(e: Event) {
         conversationId={conversationId ?? null}
         onConversationId={onConversationId ?? (() => {})}
         stage={mind.stage}
+        seedChecklist={mind.seedChecklist}
         minds={minds ?? data.minds}
         participants={currentConv?.participants ?? []}
         {onOpenMind}

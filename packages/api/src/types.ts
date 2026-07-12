@@ -29,6 +29,17 @@ export type Mind = {
   description?: string;
   avatar?: string;
   mindType?: "mind" | "spirit";
+  /** Sprout-checklist state — present only for seed-stage minds. */
+  seedChecklist?: SeedChecklist;
+};
+
+/** The seed → sprout checklist, as surfaced in a seed's status payload. */
+export type SeedChecklist = {
+  soulWritten: boolean;
+  memoryWritten: boolean;
+  displayNameSet: boolean;
+  avatarSet: boolean;
+  imagegenEnabled: boolean;
 };
 
 export type MindLastError = {
