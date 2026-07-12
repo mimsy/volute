@@ -1773,9 +1773,10 @@ const app = new Hono<AuthEnv>()
   // Seed readiness check — used by spirit nurture schedule
   .get("/:name/seed-check", requireSelf(), async (c) => {
     const name = c.req.param("name");
-    // The nurture schedule gates itself so the spirit is only nudged when a seed
-    // has gone quiet; a host running `volute seed check <name>` by hand passes
-    // ?force=1 to bypass that gate and always get the readiness state (#666).
+    // Without ?force=1 this check is gated on recency — output is empty when the
+    // seed was recently attended to, which is what the spirit's `--nurture`
+    // schedule relies on. The CLI passes ?force=1 for bare host invocations so a
+    // manual check always reports, even for a mind that is no longer a seed (#666).
     const force = c.req.query("force") === "1" || c.req.query("force") === "true";
     const entry = await findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);

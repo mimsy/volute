@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { createUser } from "../packages/daemon/src/lib/auth.js";
 import { getDb } from "../packages/daemon/src/lib/db.js";
 import {
@@ -178,6 +178,23 @@ describe("seed check nurture gate vs. forced host check", () => {
     assert.equal(res.status, 200);
     const body = (await res.json()) as { output: string };
     assert.equal(body.output, "");
+  });
+
+  it("reports without force when only the creator is recent (gate needs both)", async () => {
+    // Remove the spirit message so only the creator is recent — the gate must
+    // not suppress (it requires BOTH creator and spirit to be recent).
+    const db = await getDb();
+    await db
+      .delete(mindHistory)
+      .where(and(eq(mindHistory.mind, seedName), eq(mindHistory.sender, "volute")));
+
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
+    const res = await app.request(`http://localhost/api/minds/${seedName}/seed-check`, {
+      headers: postHeaders(cookie),
+    });
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as { output: string };
+    assert.ok(body.output.includes(`Seed: ${seedName}`));
   });
 
   it("forces the readiness state for a manual host check (?force=1)", async () => {
