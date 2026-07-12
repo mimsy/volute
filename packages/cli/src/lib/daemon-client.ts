@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { Agent } from "undici";
+import { detectSystemInstallHint } from "./system-install.js";
 
 // Long-running daemon operations (upgrade, create, import) run `npm install`
 // synchronously before responding, which can exceed undici's default 5-minute
@@ -66,10 +67,9 @@ function readDaemonConfig(): DaemonConfig {
   const configPath = resolve(voluteSystemDir(), "daemon.json");
   if (!existsSync(configPath)) {
     // If a system service is installed, the issue is likely VOLUTE_HOME not being set
-    if (existsSync("/etc/systemd/system/volute.service") && !process.env.VOLUTE_HOME) {
-      console.error("Volute is running as a system service but VOLUTE_HOME is not set.");
-      console.error("Re-run setup to update the CLI wrapper: sudo volute service install --system");
-      console.error("Then start a new shell or run: source /etc/profile.d/volute.sh");
+    const hint = detectSystemInstallHint();
+    if (hint) {
+      console.error(hint);
     } else {
       console.error("Volute is not running. Start with: volute up");
     }
