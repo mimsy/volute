@@ -84,7 +84,7 @@ describe("system channel", () => {
     assert.ok(settings?.description?.includes("commons"), "should backfill the description");
   });
 
-  it("ensureSystemChannel never clobbers an operator-set description", async () => {
+  it("ensureSystemChannel never clobbers a host-set description", async () => {
     await createChannel("system", undefined, { description: "our house rules" });
     await ensureSystemChannel();
     const settings = await getChannelSettings("system");

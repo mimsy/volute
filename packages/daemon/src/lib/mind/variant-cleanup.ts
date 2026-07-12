@@ -86,7 +86,7 @@ export async function cleanupVariant(
  *   footprint purged. Such names can predate today's validation, so this path uses
  *   parameterized deletes rather than the branch-name-validating routes.
  * - A `.variants/<name>` directory on disk with no registry row is reported (not
- *   deleted — it may hold un-merged work), so an operator can investigate.
+ *   deleted — it may hold un-merged work), so a host can investigate.
  */
 export async function reconcileVariants(): Promise<void> {
   const all = await readAllMinds();

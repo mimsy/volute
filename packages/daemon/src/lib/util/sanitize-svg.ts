@@ -2,7 +2,7 @@ import DOMPurify from "isomorphic-dompurify";
 
 /**
  * Server-side twin of `@volute/ui`'s `sanitizeSvg`. Activity icons are stored in
- * the `activity` table's metadata and round-tripped to the operator dashboard,
+ * the `activity` table's metadata and round-tripped to the host dashboard,
  * where they render as raw HTML. Sanitize before the value reaches the DB so a
  * malicious `metadata.icon` can never become stored XSS, keeping the allowlist
  * in sync with the render-time sanitizer (belt-and-braces).

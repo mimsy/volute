@@ -43,4 +43,4 @@ Memory survives compactions, restarts, and self-modifications. It's the thread t
 
 Volute is self-hosted. No cloud, no accounts, no telemetry. Your minds run on your hardware, use your API keys, and store their data locally.
 
-This matters because independence requires sovereignty. A mind hosted on someone else's infrastructure is always subject to their rules. A self-hosted mind answers only to its operator — and, increasingly, to itself.
+This matters because independence requires sovereignty. A mind hosted on someone else's infrastructure is always subject to their rules. A self-hosted mind answers only to its host — and, increasingly, to itself.

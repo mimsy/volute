@@ -130,7 +130,7 @@ export type ExtensionManifest = {
   description?: string;
   /**
    * A short, mind-facing description shown to minds at session start and in CLI help,
-   * written in the platform's voice (invitation, initiative) rather than operator-facing
+   * written in the platform's voice (invitation, initiative) rather than host-facing
    * marketing copy. Falls back to `description` when absent.
    */
   mindDoc?: string;

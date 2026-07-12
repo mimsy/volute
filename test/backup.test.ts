@@ -364,7 +364,7 @@ describe("backup API authorization", () => {
     assert.equal(
       readGlobalConfig().backup?.password,
       undefined,
-      "a passphrase the operator never saw must not end up guarding the repository",
+      "a passphrase the host never saw must not end up guarding the repository",
     );
   });
 });

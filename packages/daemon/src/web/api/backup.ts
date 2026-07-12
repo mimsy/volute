@@ -92,7 +92,7 @@ const backup = new Hono<AuthEnv>()
       await initRepo(config.backup);
     } catch (err) {
       // The generated passphrase is deliberately NOT persisted on failure:
-      // a retry generates a fresh one, so a passphrase the operator never
+      // a retry generates a fresh one, so a passphrase the host never
       // saw can't end up guarding the repository.
       const stderr = (err as Error & { stderr?: string }).stderr;
       const detail = err instanceof Error ? err.message : String(err);
@@ -100,7 +100,7 @@ const backup = new Hono<AuthEnv>()
     }
     if (generatedPassword) writeGlobalConfig(config);
     // The passphrase is returned exactly once, by the successful init that
-    // generated it — the caller must surface it to the operator.
+    // generated it — the caller must surface it to the host.
     return c.json({ ok: true, password: generatedPassword });
   })
 

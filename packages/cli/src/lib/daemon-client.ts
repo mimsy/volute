@@ -126,7 +126,7 @@ export function resolveWebUrl(): string {
   return url.origin;
 }
 
-/** The bearer token daemonFetch would use: mind token (in a mind) or CLI session (operator). */
+/** The bearer token daemonFetch would use: mind token (in a mind) or CLI session (host). */
 export function getAuthToken(): string | undefined {
   return process.env.VOLUTE_MIND_TOKEN ?? readCliSession()?.sessionId;
 }

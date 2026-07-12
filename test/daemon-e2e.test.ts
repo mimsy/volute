@@ -209,8 +209,8 @@ describe("daemon e2e", { timeout: 420000 }, () => {
     assert.equal(body.ok, true);
   });
 
-  it("daemon.json is operator-readable (0644) and the admin token is owner-only (0600)", () => {
-    // daemon.json (port/hostname) must be readable by a non-root operator CLI on a
+  it("daemon.json is host-readable (0644) and the admin token is owner-only (0600)", () => {
+    // daemon.json (port/hostname) must be readable by a non-root host CLI on a
     // system install; the token lives in a separate 0600 file.
     const daemonJson = resolve(voluteSystemDir(), "daemon.json");
     assert.ok(existsSync(daemonJson), "daemon.json should exist");

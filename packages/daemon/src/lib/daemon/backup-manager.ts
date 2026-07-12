@@ -9,7 +9,7 @@ const blog = log.child("backup");
 export const DEFAULT_BACKUP_SCHEDULE = "0 3 * * *";
 
 /**
- * Notify the operator on the 1st scheduled-backup failure and then every Nth
+ * Notify the host on the 1st scheduled-backup failure and then every Nth
  * consecutive one. A persistently-broken repo shouldn't spam a message every
  * night, but a silent `lastError` in backup-state.json shouldn't sit unnoticed
  * until restore time either. The counter resets on the next success.
@@ -117,7 +117,7 @@ export class BackupManager {
   }
 
   /**
-   * Track consecutive scheduled-backup failures and actively notify the operator
+   * Track consecutive scheduled-backup failures and actively notify the host
    * on the 1st and then every Nth. Returns whether it notified (for tests).
    * Notification failures are swallowed — surfacing a backup failure must never
    * take the daemon's backup loop down with it.

@@ -32,7 +32,7 @@ export async function ensureSystemChannel(): Promise<string> {
   if (existing) {
     cachedChannelId = existing.id;
     // Channels created before the default description existed have none; fill it
-    // in (only when unset, so an operator-edited description is never clobbered).
+    // in (only when unset, so a host-edited description is never clobbered).
     const settings = await getChannelSettings(SYSTEM_CHANNEL_NAME);
     if (settings && settings.description == null) {
       await updateChannelSettings(SYSTEM_CHANNEL_NAME, {

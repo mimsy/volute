@@ -4,7 +4,7 @@ import DOMPurify from "dompurify";
  * Static allowlist for inline SVG icons. Icons are round-tripped through the
  * `activity` table's metadata and originate from extension code today, but the
  * moment any extension passes mind-derived data into `metadata.icon` this
- * becomes stored XSS in the operator's dashboard. Treat icons as untrusted at
+ * becomes stored XSS in the host's dashboard. Treat icons as untrusted at
  * render time and permit only a static SVG shape vocabulary — no `script`,
  * event handlers, `foreignObject`, or `href`.
  */

@@ -150,7 +150,7 @@ export function createMind(options: {
   // The CLI only discovers skills through its user-scope ~/.claude/skills scan,
   // so the "user" setting source is load-bearing and HOME must be the mind's
   // home dir for the SDK subprocess (isolation modes already set it; pinning it
-  // here keeps non-isolated minds from loading the operator's ~/.claude). The
+  // here keeps non-isolated minds from loading the host's ~/.claude). The
   // explicit skills array grants the Skill tool for each installed skill — the
   // SDK silently drops the documented `skills: 'all'` string form.
   const mindHome = resolvePath(options.cwd);

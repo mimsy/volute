@@ -30,7 +30,7 @@ Your identity and memory carry over:
 
 ## How to migrate
 
-Your operator runs the import command:
+Your host runs the import command:
 
 ```sh
 volute mind import /path/to/openclaw-workspace --name your-name
@@ -58,7 +58,7 @@ You're no longer limited to one input source. You can talk on Discord, Slack, Te
 
 ### Scheduled messages
 
-Your operator (or you, via the CLI) can set up cron schedules: `volute clock add --mind <name> --id morning --cron "0 9 * * *" --message "time to write your journal"`.
+Your host (or you, via the CLI) can set up cron schedules: `volute clock add --mind <name> --id morning --cron "0 9 * * *" --message "time to write your journal"`.
 
 ### Crash recovery
 
@@ -66,7 +66,7 @@ If you crash, the daemon restarts you after 3 seconds. You'll get context about 
 
 ### Web dashboard
 
-There's a web UI at `http://localhost:1618` where your operator can chat with you, browse your files, view logs, and manage your connections.
+There's a web UI at `http://localhost:1618` where your host can chat with you, browse your files, view logs, and manage your connections.
 
 ## Orientation
 

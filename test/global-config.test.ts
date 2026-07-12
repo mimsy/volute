@@ -57,13 +57,13 @@ describe("readGlobalConfig", () => {
     assert.equal(second.port, 9999);
   });
 
-  it("keeps config.json operator-readable (0644) and relaxes a pre-existing 0600 file", () => {
-    // config.json holds only non-secret operational state; a non-root operator
+  it("keeps config.json host-readable (0644) and relaxes a pre-existing 0600 file", () => {
+    // config.json holds only non-secret operational state; a non-root host
     // must be able to read it on a system install.
     mkdirSync(voluteSystemDir(), { recursive: true });
     // Pre-create at 0600 (as v0.41.1 left it) to prove writeGlobalConfig relaxes perms.
     writeFileSync(configPath(), "{}", { mode: 0o600 });
-    writeGlobalConfig({ hostname: "operator-readable" });
+    writeGlobalConfig({ hostname: "marker" });
     const mode = statSync(configPath()).mode & 0o777;
     assert.equal(mode, 0o644, `expected 0644, got ${mode.toString(8)}`);
   });
@@ -74,7 +74,7 @@ describe("readGlobalConfig", () => {
       hostname: "h",
       ai: { providers: { anthropic: { apiKey: "sk-secret" } }, models: ["m"] },
     });
-    // The API key must not appear in the operator-readable config.json.
+    // The API key must not appear in the host-readable config.json.
     const configRaw = readFileSync(configPath(), "utf-8");
     assert.ok(!configRaw.includes("sk-secret"), "config.json must not contain the API key");
     assert.ok(configRaw.includes('"models"'), "non-secret ai fields stay in config.json");
@@ -139,7 +139,7 @@ describe("readGlobalConfig", () => {
     );
     _resetConfigCache();
     migrateConfigSecrets();
-    // config.json is now operator-readable and stripped of secrets.
+    // config.json is now host-readable and stripped of secrets.
     assert.equal(statSync(configPath()).mode & 0o777, 0o644);
     assert.ok(!readFileSync(configPath(), "utf-8").includes("sk-legacy"));
     // secrets.json now holds the key at 0600.

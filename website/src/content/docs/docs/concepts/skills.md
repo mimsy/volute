@@ -16,7 +16,7 @@ Volute ships with several built-in skills:
 - **`orientation`** — helps seed minds explore who they are and get started
 - **`memory`** — memory management system (journals, MEMORY.md)
 - **`volute-mind`** — Volute CLI reference and mind self-management
-- **`volute-admin`** — admin reference for operators managing minds
+- **`volute-admin`** — admin reference for hosts managing minds
 - **`dreaming`** — config-driven dream experiences during sleep
 - **`imagegen`** — image generation capabilities
 - **`resonance`** — emotional resonance tracking
