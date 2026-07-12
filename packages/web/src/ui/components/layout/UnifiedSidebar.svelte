@@ -413,6 +413,10 @@ let isSystemActive = $derived(
         Variants
       </button>
     {/if}
+    <button class="mind-menu-item" onclick={() => handleMenuAction(openMenu!, "events")}>
+      <Icon kind="clock" class="menu-icon" />
+      Events
+    </button>
     {#if menuMind?.status === "running"}
       <button class="mind-menu-item" onclick={() => handleMenuAction(openMenu!, "context")}>
         <Icon kind="document-lines" class="menu-icon" />

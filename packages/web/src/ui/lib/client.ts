@@ -324,6 +324,26 @@ export function fetchVariants(name: string): Promise<Variant[]> {
   return get(`${V1}/minds/${enc(name)}/variants`);
 }
 
+// --- System events ---
+
+export type MindEvent = {
+  id: number;
+  type: string;
+  label: string;
+  body: string;
+  meta?: Record<string, unknown>;
+  delivery: "immediate" | "next-turn";
+  reflection: string | null;
+  created_at: string;
+  delivered_at: string | null;
+};
+
+export function fetchMindEvents(name: string, limit?: number): Promise<{ events: MindEvent[] }> {
+  return get(
+    `${V1}/minds/${enc(name)}/system-events${limit !== undefined ? `?limit=${limit}` : ""}`,
+  );
+}
+
 export function createVariant(
   name: string,
   body: { name: string; soul?: string },
