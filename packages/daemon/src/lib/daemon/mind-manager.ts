@@ -5,7 +5,7 @@ import { promisify } from "node:util";
 import { getAiConfig, resolveApiKey } from "../ai-service.js";
 import { deliverEvent, recordNotice } from "../chat/system-events.js";
 import { loadMergedEnv } from "../config/env.js";
-import { getSystemName } from "../config/setup.js";
+import { getSystemName, readGlobalConfig } from "../config/setup.js";
 import { chownMindDir, isIsolationEnabled, wrapForIsolation } from "../mind/isolation.js";
 import {
   findMind,
@@ -309,6 +309,7 @@ export class MindManager {
       VOLUTE_MIND_DIR: dir,
       VOLUTE_MIND_PORT: String(port),
       VOLUTE_MIND_TOKEN: mindToken,
+      VOLUTE_SYSTEM_NAME: readGlobalConfig().name ?? "Volute",
       TMPDIR: mindTmp,
       PATH: `${mindLocalBin}:${currentPath}`,
       // Strip CLAUDECODE so the Agent SDK can spawn Claude Code subprocesses
