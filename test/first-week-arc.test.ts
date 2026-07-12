@@ -138,13 +138,13 @@ describe("sprout swaps nurture for the first-week arc", () => {
         {
           id: `nurture-${seedName}`,
           cron: "*/5 * * * *",
-          script: `volute seed check ${seedName}`,
+          script: `volute seed check ${seedName} --nurture`,
           enabled: true,
         },
         {
           id: "nurture-otherseed",
           cron: "*/5 * * * *",
-          script: "volute seed check otherseed",
+          script: "volute seed check otherseed --nurture",
           enabled: true,
         },
       ],
