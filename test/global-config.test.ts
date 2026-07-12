@@ -63,7 +63,7 @@ describe("readGlobalConfig", () => {
     mkdirSync(voluteSystemDir(), { recursive: true });
     // Pre-create at 0600 (as v0.41.1 left it) to prove writeGlobalConfig relaxes perms.
     writeFileSync(configPath(), "{}", { mode: 0o600 });
-    writeGlobalConfig({ hostname: "host-readable" });
+    writeGlobalConfig({ hostname: "marker" });
     const mode = statSync(configPath()).mode & 0o777;
     assert.equal(mode, 0o644, `expected 0644, got ${mode.toString(8)}`);
   });
