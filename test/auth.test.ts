@@ -154,8 +154,8 @@ describe("auth", () => {
     await createUser("human1", "p1");
     await getOrCreateMindUser("mind1");
 
-    const humans = await listUsersByType("brain");
-    assert.ok(humans.every((u) => u.user_type === "brain"));
+    const humans = await listUsersByType("human");
+    assert.ok(humans.every((u) => u.user_type === "human"));
     assert.ok(humans.some((u) => u.username === "human1"));
 
     const minds = await listUsersByType("mind");

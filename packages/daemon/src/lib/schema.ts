@@ -36,7 +36,7 @@ export const users = sqliteTable("users", {
   username: text("username").unique().notNull(),
   password_hash: text("password_hash").notNull(),
   role: text("role").notNull().default("pending"),
-  user_type: text("user_type").notNull().default("brain"),
+  user_type: text("user_type").notNull().default("human"),
   display_name: text("display_name"),
   description: text("description"),
   avatar: text("avatar"),

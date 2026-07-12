@@ -42,7 +42,7 @@ function registerUser(id: number, username: string): void {
     id,
     username,
     role: "admin",
-    user_type: "brain",
+    user_type: "human",
     display_name: null,
     description: null,
     avatar: null,

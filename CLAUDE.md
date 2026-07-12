@@ -102,11 +102,11 @@ The SDK runs with `cwd: home/` so it picks up `CLAUDE.md` and `.claude/skills/` 
 
 ### Profiles
 
-Unified `users` table with `user_type` discrimination (`"brain"` or `"mind"`) stores profile data:
+Unified `users` table with `user_type` discrimination (`"human"` or `"mind"`) stores profile data:
 - Fields: `display_name`, `description`, `avatar`
 - Mind profiles configured in `volute.json` under `profile: { displayName, description, avatar }`
 - `syncMindProfile()` syncs mind config to users table on mind start
-- Mind avatars served at `GET /api/minds/:name/avatar`, brain avatars at `GET /api/auth/avatars/:filename`
+- Mind avatars served at `GET /api/minds/:name/avatar`, human avatars at `GET /api/auth/avatars/:filename`
 - `enrichWithProfiles()` in delivery-manager loads participant profiles + avatar images on first message per channel per session
 - `profile_updated` broadcast event triggers frontend refresh on profile changes
 

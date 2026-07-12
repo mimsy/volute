@@ -177,7 +177,7 @@ const admin = new Hono<AuthEnv>()
     }
 
     const type = c.req.query("type");
-    if (type === "brain" || type === "mind") {
+    if (type === "human" || type === "mind") {
       return c.json(await listUsersByType(type));
     }
     return c.json(await listUsers());

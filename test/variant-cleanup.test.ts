@@ -146,7 +146,7 @@ describe("deleteMindDbFootprint", () => {
     // channel); the variant's membership goes with its user row.
     const [owner] = await db
       .insert(users)
-      .values({ username: `owner-${base}`, password_hash: "!x", role: "user", user_type: "brain" })
+      .values({ username: `owner-${base}`, password_hash: "!x", role: "user", user_type: "human" })
       .returning({ id: users.id });
     const sharedId = `shared-${base}`;
     await db.insert(conversations).values({ id: sharedId, type: "channel", user_id: owner.id });

@@ -11,7 +11,7 @@ export type User = {
   id: number;
   username: string;
   role: "admin" | "user" | "pending" | "system";
-  user_type: "brain" | "mind" | "system";
+  user_type: "human" | "mind" | "system";
   display_name: string | null;
   description: string | null;
   avatar: string | null;
@@ -37,7 +37,7 @@ export async function createUser(username: string, password: string): Promise<Us
   const [{ value }] = await db
     .select({ value: count() })
     .from(users)
-    .where(eq(users.user_type, "brain"));
+    .where(eq(users.user_type, "human"));
   const role = value === 0 ? "admin" : "pending";
 
   const [result] = await db
@@ -123,7 +123,7 @@ export async function listPendingUsers(): Promise<User[]> {
     .all() as Promise<User[]>;
 }
 
-export async function listUsersByType(userType: "brain" | "mind"): Promise<User[]> {
+export async function listUsersByType(userType: "human" | "mind"): Promise<User[]> {
   const db = await getDb();
   return db
     .select(userSelectFields)
@@ -276,10 +276,10 @@ export async function deleteUser(id: number): Promise<void> {
   const target = await db
     .select({ id: users.id })
     .from(users)
-    .where(and(eq(users.id, id), eq(users.user_type, "brain")))
+    .where(and(eq(users.id, id), eq(users.user_type, "human")))
     .get();
   if (!target) throw new Error("User not found");
-  await db.delete(users).where(and(eq(users.id, id), eq(users.user_type, "brain")));
+  await db.delete(users).where(and(eq(users.id, id), eq(users.user_type, "human")));
 }
 
 export async function updateUserProfile(

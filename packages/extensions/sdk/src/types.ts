@@ -21,7 +21,7 @@ export type User = {
   id: number;
   username: string;
   role: "admin" | "user" | "pending" | "system";
-  user_type: "brain" | "mind" | "system";
+  user_type: "human" | "mind" | "system";
   display_name: string | null;
   description: string | null;
   avatar: string | null;

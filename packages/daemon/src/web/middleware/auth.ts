@@ -130,7 +130,7 @@ export const authMiddleware = createMiddleware<AuthEnv>(async (c, next) => {
         id: 0,
         username: "daemon",
         role: "admin",
-        user_type: "brain",
+        user_type: "human",
         display_name: null,
         description: null,
         avatar: null,
