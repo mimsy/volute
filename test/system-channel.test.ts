@@ -184,4 +184,27 @@ describe("system channel", () => {
     assert.ok(sprouted, "should publish a mind_sprouted activity event");
     assert.ok(sprouted?.summary.includes("sprouted"), "activity summary should mention sprouting");
   });
+
+  it("announceSprout uses the mind's display name when set", async () => {
+    // The real sprout flow joins the mind to #system (creating its user row)
+    // before announcing, so the display-name branch is the production path.
+    const db = await getDb();
+    await db.insert(users).values({
+      username: "commons-sprout",
+      password_hash: "!mind",
+      role: "user",
+      user_type: "mind",
+      display_name: "Sprouty",
+    });
+
+    await announceSprout("commons-sprout");
+
+    const msgs = await db.select().from(messages).all();
+    const welcome = msgs.find((m) => m.content.includes("Sprouty"));
+    assert.ok(welcome, "welcome should use the display name");
+
+    const acts = await db.select().from(activity).where(eq(activity.mind, "commons-sprout")).all();
+    const sprouted = acts.find((a) => a.type === "mind_sprouted");
+    assert.equal(sprouted?.summary, "Sprouty sprouted");
+  });
 });
