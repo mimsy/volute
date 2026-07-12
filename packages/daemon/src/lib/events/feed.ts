@@ -248,7 +248,8 @@ async function enrichBurstConversations(convIds: string[]): Promise<{
 
 /**
  * Recent lifecycle activity (started/stopped/sleeping/waking/error/backup_failed).
- * `mind_error` summaries carry raw error detail, so they're redacted to a generic
+ * `mind_error` and `backup_failed` summaries carry raw error detail (restic/backend
+ * errors can embed repo locations or credentials), so they're redacted to a generic
  * message for non-privileged callers (mirrors #503's error-detail redaction).
  */
 export async function getLifecycleFeedEvents(opts: {
@@ -276,10 +277,17 @@ export async function getLifecycleFeedEvents(opts: {
     id: r.id,
     type: r.type as FeedLifecycleEvent["type"],
     mind: r.mind,
-    summary:
-      !opts.privileged && r.type === "mind_error" ? "An error interrupted this mind." : r.summary,
+    summary: redactLifecycleSummary(r.type, r.summary, opts.privileged),
     createdAt: r.created_at,
   }));
+}
+
+/** Redact raw error detail from error/backup summaries for non-privileged callers. */
+function redactLifecycleSummary(type: string, summary: string, privileged: boolean): string {
+  if (privileged) return summary;
+  if (type === "mind_error") return "An error interrupted this mind.";
+  if (type === "backup_failed") return "A scheduled backup failed.";
+  return summary;
 }
 
 /**

@@ -140,7 +140,7 @@ describe("web feed routes", () => {
     await db.delete(messages).where(eq(messages.conversation_id, ch.id));
   });
 
-  it("merges lifecycle events and redacts mind_error for non-privileged callers", async () => {
+  it("merges lifecycle events and redacts mind_error/backup_failed for non-privileged callers", async () => {
     const adminCookie = await makeUser("feed-test-admin", "admin");
     const userCookie = await makeUser("feed-test-user", "user");
 
@@ -149,6 +149,11 @@ describe("web feed routes", () => {
       type: "mind_error",
       mind: "feed-test-m1",
       summary: "SECRET stack trace detail",
+    });
+    await publishActivity({
+      type: "backup_failed",
+      mind: "feed-test-m1",
+      summary: "Scheduled backup failed: SECRET restic repo /mnt/creds error",
     });
 
     const asUser = (await (
@@ -163,6 +168,14 @@ describe("web feed routes", () => {
     assert.ok(
       !userErr.summary.includes("SECRET"),
       "raw error detail must be redacted for non-privileged callers",
+    );
+    const userBackup = asUser.events.find(
+      (e) => e.kind === "lifecycle" && e.type === "backup_failed" && e.mind === "feed-test-m1",
+    );
+    assert.ok(userBackup, "backup_failed row present for non-privileged caller");
+    assert.ok(
+      !userBackup.summary.includes("SECRET"),
+      "raw backup error detail must be redacted for non-privileged callers",
     );
     assert.ok(
       asUser.events.some((e) => e.kind === "lifecycle" && e.type === "mind_started"),
@@ -179,6 +192,14 @@ describe("web feed routes", () => {
     );
     assert.ok(adminErr, "error row present for admin");
     assert.equal(adminErr.summary, "SECRET stack trace detail");
+    const adminBackup = asAdmin.events.find(
+      (e) => e.kind === "lifecycle" && e.type === "backup_failed" && e.mind === "feed-test-m1",
+    );
+    assert.ok(adminBackup, "backup_failed row present for admin");
+    assert.equal(
+      adminBackup.summary,
+      "Scheduled backup failed: SECRET restic repo /mnt/creds error",
+    );
   });
 
   it("orders same-second bursts by last message id (newest id first)", async () => {
