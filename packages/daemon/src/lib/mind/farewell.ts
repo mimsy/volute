@@ -1,7 +1,6 @@
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
-import { sendSystemMessageDirect } from "../chat/system-chat.js";
-import { getSpiritName } from "../config/setup.js";
+import { deliverEvent } from "../chat/system-events.js";
 import { subscribe } from "../events/activity-events.js";
 import { getPrompt } from "../prompts.js";
 import log from "../util/logger.js";
@@ -91,11 +90,10 @@ export async function runFarewellTurn(opts: {
   variantName: string;
   parentName: string;
   variantDir: string;
-  port: number;
   running: boolean;
   timeoutMs?: number;
 }): Promise<string | undefined> {
-  const { variantName, parentName, variantDir, port, running } = opts;
+  const { variantName, parentName, variantDir, running } = opts;
   const timeoutMs = opts.timeoutMs ?? FAREWELL_TIMEOUT_MS;
 
   // With no live server there's no turn to take. Surface any note already on
@@ -116,43 +114,16 @@ export async function runFarewellTurn(opts: {
     path: FAREWELL_MIND_PATH,
   });
 
-  let conversationId: string | undefined;
-  try {
-    const result = await sendSystemMessageDirect(variantName, message);
-    conversationId = result.conversationId;
-  } catch (err) {
-    flog.error(`failed to persist farewell message for ${variantName}`, log.errorData(err));
-  }
-
   // Subscribe before delivering so a fast turn's idle event isn't missed.
   const waiter = waitForFarewell(variantName, variantDir, timeoutMs);
-  let delivered = false;
-  try {
-    const res = await fetch(`http://127.0.0.1:${port}/message`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        content: [{ type: "text", text: message }],
-        channel: `@${getSpiritName()}`,
-        sender: getSpiritName(),
-        isDM: true,
-        participants: [getSpiritName(), variantName],
-        participantCount: 2,
-        ...(conversationId ? { conversationId } : {}),
-      }),
-      signal: AbortSignal.timeout(10_000),
-    });
-    // A non-2xx means the variant never accepted the turn — treat it like a
-    // network failure so we don't burn the full timeout waiting for an idle
-    // event that will never come.
-    if (res.ok) delivered = true;
-    else flog.warn(`farewell delivery to ${variantName} returned HTTP ${res.status}`);
-  } catch (err) {
-    flog.warn(`failed to deliver farewell message to ${variantName}`, log.errorData(err));
-  }
+  const { delivered } = await deliverEvent(variantName, {
+    type: "lifecycle",
+    body: message,
+    meta: { subtype: "farewell", parent: parentName },
+  });
 
-  // Only wait if the prompt actually reached the variant; otherwise there's
-  // nothing to wait for and we shouldn't burn the full timeout.
+  // Only wait if the prompt actually reached the variant; otherwise there's nothing to
+  // wait for and we shouldn't burn the full timeout.
   if (delivered) {
     await waiter.done;
   } else {

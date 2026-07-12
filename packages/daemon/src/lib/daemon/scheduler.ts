@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import { CronExpressionParser } from "cron-parser";
-import { sendSystemMessage } from "../chat/system-chat.js";
+import { deliverEvent } from "../chat/system-events.js";
 import { loadMergedEnv } from "../config/env.js";
 import { findMind, mindDir, mindTmpDir, stateDir, voluteSystemDir } from "../mind/registry.js";
 import { isSandboxEnabled, wrapForSandbox } from "../mind/sandbox.js";
@@ -204,7 +204,7 @@ export class Scheduler {
         return;
       }
 
-      await this.deliverSystem(mindName, `[${schedule.id}] ${text}`, {
+      await this.deliverSystem(mindName, schedule.id, text, {
         // Default schedule fires to "queue" while asleep so an unadorned cron
         // schedule doesn't inherit the DM wake-trigger fallback and wake the mind.
         whileSleeping: schedule.whileSleeping ?? "queue",
@@ -296,12 +296,19 @@ export class Scheduler {
     };
   }
 
-  protected deliverSystem(
+  protected async deliverSystem(
     mindName: string,
+    scheduleId: string,
     text: string,
     opts?: { whileSleeping?: "skip" | "queue" | "trigger-wake"; session?: string },
   ): Promise<void> {
-    return sendSystemMessage(mindName, text, opts);
+    await deliverEvent(mindName, {
+      type: "schedule",
+      body: text,
+      meta: { scheduleId },
+      session: opts?.session,
+      whileSleeping: opts?.whileSleeping,
+    });
   }
 }
 

@@ -3,9 +3,9 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { resolve } from "node:path";
 import { promisify } from "node:util";
 import { getAiConfig, resolveApiKey } from "../ai-service.js";
-import { sendSystemMessageDirect } from "../chat/system-chat.js";
+import { deliverEvent, recordNotice } from "../chat/system-events.js";
 import { loadMergedEnv } from "../config/env.js";
-import { getSpiritName } from "../config/setup.js";
+import { getSystemName } from "../config/setup.js";
 import { chownMindDir, isIsolationEnabled, wrapForIsolation } from "../mind/isolation.js";
 import {
   findMind,
@@ -23,7 +23,6 @@ import log from "../util/logger.js";
 import { RotatingLog } from "../util/rotating-log.js";
 import { writeClaudeCredentials, writePiProviderKey } from "./credential-sync.js";
 import { generateMindToken, revokeMindToken } from "./mind-tokens.js";
-import { recordNotice } from "./notices.js";
 import { RestartTracker } from "./restart-tracker.js";
 import { clearMind as clearTurnState, summarizeOrphanedTurns } from "./turn-tracker.js";
 
@@ -122,6 +121,23 @@ function mindPidPath(name: string): string {
  * silently drop the variant's purpose, narrated memory, or parting note — is
  * testable without spawning a mind.
  */
+/** Map a pending-context `type` to a lifecycle event subtype. */
+function lifecycleSubtype(type: unknown): string {
+  switch (type) {
+    case "merge":
+    case "merged":
+      return "merge";
+    case "split":
+      return "split";
+    case "sprouted":
+      return "sprout";
+    case "upgraded":
+      return "upgrade";
+    default:
+      return "restart";
+  }
+}
+
 export async function buildPendingContextMessage(
   name: string,
   context: Record<string, unknown>,
@@ -133,7 +149,7 @@ export async function buildPendingContextMessage(
     parts.push(await getPrompt("split_message", { name, parent: String(context.parent ?? "") }));
     if (context.purpose) parts.push(`Why you were split off: ${String(context.purpose)}`);
   } else if (context.type === "sprouted") {
-    parts.push(await getPrompt("sprout_message"));
+    parts.push(await getPrompt("sprout_message", { system: getSystemName() }));
   } else if (context.type === "upgraded") {
     parts.push(await getPrompt("upgrade_message"));
   } else {
@@ -594,34 +610,16 @@ export class MindManager {
     this.pendingContext.delete(name);
 
     const content = await buildPendingContextMessage(name, context);
+    const subtype = lifecycleSubtype(context.type);
 
-    // Persist to system DM conversation and deliver directly to mind
-    let conversationId: string | undefined;
-    try {
-      const result = await sendSystemMessageDirect(name, content);
-      conversationId = result.conversationId;
-    } catch (err) {
-      mlog.error(`failed to persist pending context for ${name}`, log.errorData(err));
-    }
-
-    try {
-      await fetch(`http://127.0.0.1:${tracked.port}/message`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          content: [{ type: "text", text: content }],
-          channel: `@${getSpiritName()}`,
-          sender: getSpiritName(),
-          isDM: true,
-          participants: [getSpiritName(), name],
-          participantCount: 2,
-          ...(conversationId ? { conversationId } : {}),
-        }),
-        signal: AbortSignal.timeout(10_000),
-      });
-    } catch (err) {
-      mlog.warn(`failed to deliver pending context to ${name}`, log.errorData(err));
-    }
+    // Force delivery: the mind has just started but may not yet be marked awake in
+    // sleep state, and this context must reach it regardless.
+    await deliverEvent(name, {
+      type: "lifecycle",
+      body: content,
+      meta: { subtype, ...(context.type ? { rawType: String(context.type) } : {}) },
+      force: true,
+    });
   }
 
   private setupCrashRecovery(name: string, child: ChildProcess): void {

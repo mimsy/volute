@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { sendSystemMessage } from "./chat/system-chat.js";
+import { deliverEvent } from "./chat/system-events.js";
 import { mindDir, readRegistry, setMindTemplateHash, voluteSystemDir } from "./mind/registry.js";
 import { computeMindTemplateHash } from "./mind/template-staleness.js";
 import { parseReleaseNotes } from "./release-notes.js";
@@ -116,7 +116,8 @@ export async function notifyVersionUpdate(): Promise<void> {
 
     const message = formatNotification(currentVersion, releaseNotes, needsUpgrade, entry.name);
 
-    await sendSystemMessage(entry.name, message);
+    // Informational — no reason to trigger a turn; drained on the mind's next turn.
+    await deliverEvent(entry.name, { type: "version", body: message, delivery: "next-turn" });
   });
 
   const results = await Promise.allSettled(promises);

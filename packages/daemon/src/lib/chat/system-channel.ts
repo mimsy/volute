@@ -13,7 +13,7 @@ import {
 } from "../events/conversations.js";
 import { readRegistry } from "../mind/registry.js";
 import log from "../util/logger.js";
-import { sendSystemMessage } from "./system-chat.js";
+import { deliverEvent } from "./system-events.js";
 
 const SYSTEM_CHANNEL_NAME = "system";
 const SYSTEM_CHANNEL_DESCRIPTION =
@@ -137,10 +137,11 @@ export async function announceToSystem(text: string): Promise<void> {
 export async function announceSprout(mindName: string): Promise<void> {
   const displayName =
     (await getUserByUsername(mindName).catch(() => null))?.display_name ?? mindName;
-  await sendSystemMessage(
-    getSpiritName(),
-    `${displayName} (@${mindName}) has just sprouted into a full mind and joined #system. Welcome them there in your own words.`,
-  ).catch((err) =>
+  await deliverEvent(getSpiritName(), {
+    type: "lifecycle",
+    meta: { subtype: "sprout-welcome", mind: mindName },
+    body: `${displayName} (@${mindName}) has just sprouted into a full mind and joined #system. Welcome them there in your own words.`,
+  }).catch((err) =>
     log.warn(`failed to prompt spirit to welcome sprouted ${mindName}`, log.errorData(err)),
   );
   await publishActivity({

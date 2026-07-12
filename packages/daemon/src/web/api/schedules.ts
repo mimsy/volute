@@ -414,11 +414,10 @@ const app = new Hono<AuthEnv>()
     if (!entry) return c.json({ error: "Mind not found" }, 404);
 
     const body = await c.req.text();
-    const message = `[webhook: ${event}] ${body}`;
 
     try {
-      const { sendSystemMessage } = await import("../../lib/chat/system-chat.js");
-      await sendSystemMessage(name, message);
+      const { deliverEvent } = await import("../../lib/chat/system-events.js");
+      await deliverEvent(name, { type: "webhook", body, meta: { source: event } });
       return c.json({ ok: true });
     } catch (err) {
       slog.warn(`webhook delivery failed for ${name}`, log.errorData(err));

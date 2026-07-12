@@ -333,6 +333,11 @@ export function getSpiritName(): string {
   return readGlobalConfig().setup?.spiritName ?? "volute";
 }
 
+/** The host-given name of this system (from `volute setup --name`), or a neutral fallback. */
+export function getSystemName(): string {
+  return readGlobalConfig().name ?? "this system";
+}
+
 export function isImagegenEnabled(): boolean {
   const config = readGlobalConfig();
   const ig = config.imagegen;

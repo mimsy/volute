@@ -145,11 +145,12 @@ export class BackupManager {
     }
 
     try {
-      const { sendSystemMessage } = await import("../chat/system-chat.js");
-      await sendSystemMessage(
-        getSpiritName(),
-        `${summary}\n\nBackups are not being saved. Check \`volute backup status\` and the Backups settings tab.`,
-      );
+      const { deliverEvent } = await import("../chat/system-events.js");
+      await deliverEvent(getSpiritName(), {
+        type: "notice",
+        meta: { subtype: "backup" },
+        body: `${summary}\n\nBackups are not being saved. Check \`volute backup status\` and the Backups settings tab.`,
+      });
     } catch (msgErr) {
       blog.error("failed to send backup-failure system message", log.errorData(msgErr));
     }

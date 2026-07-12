@@ -17,8 +17,8 @@ async function notifyMind(mindName: string, message: string) {
   const entry = await findMind(mindName);
   if (!entry) return;
   try {
-    const { sendSystemMessage } = await import("../../lib/chat/system-chat.js");
-    await sendSystemMessage(mindName, message);
+    const { deliverEvent } = await import("../../lib/chat/system-events.js");
+    await deliverEvent(mindName, { type: "file-share", body: message });
   } catch (err) {
     log.warn(`[file-sharing] notify mind ${mindName} failed`, log.errorData(err));
   }
