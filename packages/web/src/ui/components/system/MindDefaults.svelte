@@ -131,8 +131,8 @@ async function save() {
           : undefined,
         wakeTriggers: sleepEnabled
           ? {
-              mentions: wakeOnMentions || undefined,
-              dms: wakeOnDms || undefined,
+              mentions: wakeOnMentions,
+              dms: wakeOnDms,
               channels: splitList(wakeChannels),
               senders: splitList(wakeSenders),
             }
