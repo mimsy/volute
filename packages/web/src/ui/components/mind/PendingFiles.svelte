@@ -1,21 +1,16 @@
 <script lang="ts">
-import { Button, SectionHeader } from "@volute/ui";
-import {
-  acceptPendingFile,
-  fetchPendingFiles,
-  type PendingFile,
-  rejectPendingFile,
-} from "../../lib/client";
+import { SectionHeader } from "@volute/ui";
+import { fetchPendingFiles, type PendingFile } from "../../lib/client";
 import { formatRelativeTime } from "../../lib/format";
+
+// Read-only by design: accepting or rejecting a file is the mind's decision
+// (a consent gate) — this panel only provides visibility into the queue.
 
 let { name }: { name: string } = $props();
 
 let files = $state<PendingFile[]>([]);
 let loading = $state(true);
 let error = $state("");
-// Per-file action state (holds the id being confirmed / acted on)
-let confirmingReject = $state<string | null>(null);
-let busy = $state<string | null>(null);
 
 function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -47,41 +42,12 @@ $effect(() => {
   void name;
   load();
 });
-
-async function handleAccept(id: string) {
-  busy = id;
-  error = "";
-  try {
-    await acceptPendingFile(name, id);
-    await load();
-  } catch (err) {
-    console.error("Failed to accept file:", err);
-    error = err instanceof Error ? err.message : "Failed to accept file";
-  } finally {
-    busy = null;
-  }
-}
-
-async function handleReject(id: string) {
-  busy = id;
-  error = "";
-  try {
-    await rejectPendingFile(name, id);
-    confirmingReject = null;
-    await load();
-  } catch (err) {
-    console.error("Failed to reject file:", err);
-    error = err instanceof Error ? err.message : "Failed to reject file";
-  } finally {
-    busy = null;
-  }
-}
 </script>
 
 <div class="pending">
   <SectionHeader
     title="Incoming files"
-    subtitle="Files sent to this mind awaiting review — accept to save into its home directory, or reject to discard"
+    subtitle="Files sent to this mind, awaiting its review"
   />
 
   {#if error}
@@ -104,25 +70,13 @@ async function handleReject(id: string) {
             <span class="sender">from {f.sender}</span>
             <span class="created">{formatRelativeTime(f.createdAt)}</span>
           </div>
-          <div class="file-actions">
-            {#if confirmingReject === f.id}
-              <span class="confirm">
-                Discard this file?
-                <button class="confirm-yes danger" onclick={() => handleReject(f.id)} disabled={busy === f.id}>
-                  {busy === f.id ? "rejecting…" : "reject"}
-                </button>
-                <button class="confirm-no" onclick={() => (confirmingReject = null)} disabled={busy === f.id}>cancel</button>
-              </span>
-            {:else}
-              <Button variant="primary" onclick={() => handleAccept(f.id)} disabled={!!busy}>
-                {busy === f.id ? "Accepting…" : "Accept"}
-              </Button>
-              <Button variant="text" onclick={() => (confirmingReject = f.id)} disabled={!!busy}>Reject</Button>
-            {/if}
-          </div>
         </li>
       {/each}
     </ul>
+    <div class="hint">
+      Accepting or rejecting a file is the mind's decision — it runs
+      <code>volute chat accept/reject &lt;id&gt;</code> when it's ready.
+    </div>
   {/if}
 </div>
 
@@ -190,42 +144,13 @@ async function handleReject(id: string) {
     color: var(--text-2);
   }
 
-  .file-actions {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    flex-wrap: wrap;
-  }
-
-  .confirm {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 13px;
-    color: var(--text-1);
-  }
-
-  .confirm-yes,
-  .confirm-no {
-    background: none;
-    border: none;
-    cursor: pointer;
-    font-size: 13px;
-    font-weight: 500;
-    padding: 2px 4px;
-  }
-
-  .confirm-yes.danger {
-    color: var(--red);
-  }
-
-  .confirm-no {
+  .hint {
     color: var(--text-2);
+    font-size: 12px;
   }
 
-  .confirm-yes:disabled,
-  .confirm-no:disabled {
-    opacity: 0.5;
-    cursor: default;
+  .hint code {
+    font-family: var(--mono, monospace);
+    font-size: 11px;
   }
 </style>
