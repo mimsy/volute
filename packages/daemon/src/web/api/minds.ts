@@ -13,6 +13,7 @@ import { and, desc, eq, type SQL, sql } from "drizzle-orm";
 import { type Context, Hono } from "hono";
 import { z } from "zod";
 import {
+  isAiConfigured,
   missingCredentialWarning,
   qualifyModelId,
   resolveTemplate,
@@ -909,6 +910,19 @@ const app = new Hono<AuthEnv>()
     if (nameErr) return c.json({ error: nameErr }, 400);
 
     if (await findMind(name)) return c.json({ error: `Mind already exists: ${name}` }, 409);
+
+    // Refuse to create a mind the system can't run. With no AI provider configured
+    // every mind spawns mute (no model to think with), so block creation here rather
+    // than leave an unusable mind behind (#606). Mirrors the dashboard banner's copy.
+    if (!isAiConfigured()) {
+      return c.json(
+        {
+          error:
+            "Minds cannot think yet — no AI provider is configured. Add a provider in Settings before creating a mind.",
+        },
+        409,
+      );
+    }
 
     // Cap total minds to protect host resources. Central enforcement here covers
     // `volute mind create`, `volute seed create`, and spirit-driven seeds alike;

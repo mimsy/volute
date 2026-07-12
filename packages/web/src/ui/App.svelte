@@ -15,6 +15,7 @@ import ChannelBrowserModal from "./components/modals/ChannelBrowserModal.svelte"
 import ContextModal from "./components/modals/ContextModal.svelte";
 import SeedModal from "./components/modals/SeedModal.svelte";
 import UserSettingsModal from "./components/modals/UserSettingsModal.svelte";
+import NoProviderBanner from "./components/system/NoProviderBanner.svelte";
 import PublicFiles from "./components/system/PublicFiles.svelte";
 import SystemLogs from "./components/system/SystemLogs.svelte";
 import UpdateBanner from "./components/system/UpdateBanner.svelte";
@@ -663,6 +664,7 @@ function handleGlobalClick(e: MouseEvent) {
   <div class="shell">
     {#if auth.user.role === "admin"}
       <UpdateBanner />
+      <NoProviderBanner onOpenSettings={() => (activeModal = "systemSettings")} />
     {/if}
     <div class="shell-body">
       <div class="sidebar" class:sidebar-open={layout.sidebarOpen} style:width="{sidebar.width}px">

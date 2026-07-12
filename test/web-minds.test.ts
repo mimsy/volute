@@ -169,12 +169,16 @@ describe("web minds routes", () => {
     const { readGlobalConfig, writeGlobalConfig, _resetConfigCache } = await import(
       "../packages/daemon/src/lib/config/setup.js"
     );
+    const { setEnabledModels } = await import("../packages/daemon/src/lib/ai-service.js");
     const existing = `cap-existing-${Date.now()}`;
     const savedConfig = readGlobalConfig();
     await addMind(existing, 4100);
     try {
+      // A provider must be configured for the cap guard to be the one that fires
+      // (a providerless system is refused earlier — see the no-provider test).
+      setEnabledModels(["anthropic:claude-test"]);
       const count = await countCappedMinds();
-      writeGlobalConfig({ ...savedConfig, maxMinds: count });
+      writeGlobalConfig({ ...readGlobalConfig(), maxMinds: count });
 
       const { default: app } = await import("../packages/daemon/src/web/app.js");
       const res = await app.request("http://localhost/api/minds", {
@@ -190,6 +194,68 @@ describe("web minds routes", () => {
       writeGlobalConfig(savedConfig);
       _resetConfigCache();
       await removeMind(existing);
+    }
+  });
+
+  it("POST / — 409 with a provider hint when no AI provider is configured", async () => {
+    const cookie = await setupAuth();
+    const { setEnabledModels, isAiConfigured } = await import(
+      "../packages/daemon/src/lib/ai-service.js"
+    );
+    const { readGlobalConfig, writeGlobalConfig, _resetConfigCache } = await import(
+      "../packages/daemon/src/lib/config/setup.js"
+    );
+    const savedConfig = readGlobalConfig();
+    try {
+      // Drop every enabled model so the system reads as providerless.
+      setEnabledModels([]);
+      assert.equal(isAiConfigured(), false);
+
+      const { default: app } = await import("../packages/daemon/src/web/app.js");
+      const res = await app.request("http://localhost/api/minds", {
+        method: "POST",
+        headers: { ...postHeaders(cookie), "Content-Type": "application/json" },
+        body: JSON.stringify({ name: `noprovider-${Date.now()}` }),
+      });
+      assert.equal(res.status, 409);
+      const body = (await res.json()) as { error?: string };
+      assert.match(body.error ?? "", /cannot think/i);
+      assert.match(body.error ?? "", /provider/i);
+      assert.match(body.error ?? "", /Settings/i);
+    } finally {
+      writeGlobalConfig(savedConfig);
+      _resetConfigCache();
+    }
+  });
+
+  it("GET /api/system/info — aiConfigured tracks whether a model is enabled", async () => {
+    const cookie = await setupAuth();
+    const { setEnabledModels } = await import("../packages/daemon/src/lib/ai-service.js");
+    const { readGlobalConfig, writeGlobalConfig, _resetConfigCache } = await import(
+      "../packages/daemon/src/lib/config/setup.js"
+    );
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
+    const savedConfig = readGlobalConfig();
+
+    async function aiConfigured(): Promise<boolean> {
+      const res = await app.request("http://localhost/api/system/info", {
+        headers: { Cookie: `volute_session=${cookie}` },
+      });
+      assert.equal(res.status, 200);
+      return ((await res.json()) as { aiConfigured: boolean }).aiConfigured;
+    }
+
+    try {
+      // The banner keys on this flag, so pin both directions — a constant or
+      // inverted value would silently hide the warning on a providerless system.
+      setEnabledModels([]);
+      assert.equal(await aiConfigured(), false);
+
+      setEnabledModels(["anthropic:claude-test"]);
+      assert.equal(await aiConfigured(), true);
+    } finally {
+      writeGlobalConfig(savedConfig);
+      _resetConfigCache();
     }
   });
 

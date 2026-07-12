@@ -88,7 +88,12 @@ describe("daemon e2e", { timeout: 420000 }, () => {
     // Ensure setup config exists so CLI commands don't fail with "not set up"
     writeFileSync(
       resolve(voluteSystemDir(), "config.json"),
-      JSON.stringify({ setup: { type: "local", isolation: "none" } }),
+      JSON.stringify({
+        setup: { type: "local", isolation: "none" },
+        // Enable a model so isAiConfigured() is true — mind creation is refused
+        // on a providerless system (#606), and these tests create real minds.
+        ai: { models: ["anthropic:claude-sonnet-4-5"] },
+      }),
     );
 
     // Start daemon
