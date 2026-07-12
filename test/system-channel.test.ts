@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 import { eq } from "drizzle-orm";
 import { createUser } from "../packages/daemon/src/lib/auth.js";
 import {
+  announceSprout,
   announceToSystem,
   backfillSystemChannelMembers,
   ensureSystemChannel,
@@ -23,7 +24,7 @@ import {
   addVariant,
   removeMind,
 } from "../packages/daemon/src/lib/mind/registry.js";
-import { messages, users } from "../packages/daemon/src/lib/schema.js";
+import { activity, messages, users } from "../packages/daemon/src/lib/schema.js";
 
 const TEST_USERNAMES = [
   "volute",
@@ -32,6 +33,7 @@ const TEST_USERNAMES = [
   "commons-seed",
   "commons-legacy",
   "commons-clash",
+  "commons-sprout",
 ];
 const TEST_MINDS = [
   "volute",
@@ -40,6 +42,7 @@ const TEST_MINDS = [
   "commons-legacy",
   "commons-clash",
   "commons-mind-v1",
+  "commons-sprout",
 ];
 
 async function cleanup() {
@@ -49,6 +52,7 @@ async function cleanup() {
     await db.delete(users).where(eq(users.username, username));
   }
   for (const mind of TEST_MINDS) {
+    await db.delete(activity).where(eq(activity.mind, mind));
     await removeMind(mind);
   }
   // Remove the #system channel so each test exercises fresh creation
@@ -163,5 +167,21 @@ describe("system channel", () => {
     const msgs = await db.select().from(messages).all();
     const found = msgs.find((m) => m.content.includes("test announcement"));
     assert.ok(found, "should find the announcement message");
+  });
+
+  it("announceSprout welcomes the mind in #system and records a mind_sprouted activity", async () => {
+    await announceSprout("commons-sprout");
+
+    const db = await getDb();
+    const msgs = await db.select().from(messages).all();
+    const welcome = msgs.find(
+      (m) => m.content.includes("commons-sprout") && m.content.includes("sprouted"),
+    );
+    assert.ok(welcome, "should post a sprout welcome to #system");
+
+    const acts = await db.select().from(activity).where(eq(activity.mind, "commons-sprout")).all();
+    const sprouted = acts.find((a) => a.type === "mind_sprouted");
+    assert.ok(sprouted, "should publish a mind_sprouted activity event");
+    assert.ok(sprouted?.summary.includes("sprouted"), "activity summary should mention sprouting");
   });
 });

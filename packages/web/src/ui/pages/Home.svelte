@@ -143,10 +143,22 @@ $effect(() => {
   }
 });
 
+type SproutItem = { id: number; mind: string; date: string };
+
 type FeedItem =
   | { kind: "message"; conv: ConversationWithDetails; date: string }
   | { kind: "extension"; item: ExtFeedItem; date: string }
-  | { kind: "away"; item: AwayFeedItem; date: string };
+  | { kind: "away"; item: AwayFeedItem; date: string }
+  | { kind: "sprout"; item: SproutItem; date: string };
+
+// Sprout events surface as their own home-feed card (#665). They're read from
+// the live activity stream (populated by the SSE snapshot + events), so a mind
+// leaving the seed stage shows up here without a bespoke fetch.
+let sproutItems = $derived(
+  storeData.activity
+    .filter((a) => a.type === "mind_sprouted")
+    .map((a) => ({ id: a.id, mind: a.mind, date: a.created_at })),
+);
 
 let feedItems = $derived.by(() => {
   const items: FeedItem[] = [];
@@ -158,6 +170,9 @@ let feedItems = $derived.by(() => {
   }
   for (const awayItem of awayItems) {
     items.push({ kind: "away", item: awayItem, date: awayItem.created_at });
+  }
+  for (const sprout of sproutItems) {
+    items.push({ kind: "sprout", item: sprout, date: sprout.date });
   }
   items.sort((a, b) => {
     const aTime = new Date(normalizeTimestamp(a.date)).getTime();
@@ -198,7 +213,7 @@ function getConvLabel(conv: ConversationWithDetails): string {
     </div>
   {:else}
     <div class="feed-grid">
-      {#each feedItems as item, i (item.kind === "extension" ? `ext-${item.item.id}` : item.kind === "away" ? `away-${item.item.id}` : `msg-${item.conv.id}`)}
+      {#each feedItems as item, i (item.kind === "extension" ? `ext-${item.item.id}` : item.kind === "away" ? `away-${item.item.id}` : item.kind === "sprout" ? `sprout-${item.item.id}` : `msg-${item.conv.id}`)}
         {#if i === dividerAt}
           <div class="feed-divider"><span class="feed-divider-label">new since your last visit ↑</span></div>
         {/if}
@@ -227,6 +242,19 @@ function getConvLabel(conv: ConversationWithDetails): string {
               icon={icons.mind}
               color="purple"
               onclick={() => navigate(`/minds/${away.mind}`)}
+            />
+          </div>
+        {:else if item.kind === "sprout"}
+          {@const sprout = item.item}
+          <div class="feed-item">
+            <ExtensionFeedCard
+              title={`${mindLabel(sprout.mind)} sprouted`}
+              url={`/minds/${sprout.mind}`}
+              date={sprout.date}
+              bodyHtml="Left the seed stage and became a full mind — joined #system and began its first week."
+              icon={icons.mind}
+              color="green"
+              onclick={() => navigate(`/minds/${sprout.mind}`)}
             />
           </div>
         {:else}
