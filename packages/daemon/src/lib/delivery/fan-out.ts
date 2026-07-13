@@ -45,6 +45,22 @@ export async function fanOutToMinds(opts: FanOutOpts): Promise<void> {
     .map((ap) => {
       const key = opts.targetName ? opts.targetName(ap.username) : ap.username;
       if (manager.isRunning(key) || sm?.isSleeping(ap.username)) return ap.username;
+      if (ap.username !== opts.senderName) {
+        // This is the load-bearing silent drop in delivery: a stopped participant simply
+        // never receives the message. Make it traceable (#434).
+        log.warn(
+          `fan-out: skipping ${ap.username} (not running) for conversation ${opts.conversationId}`,
+        );
+        if (ap.userType === "system") {
+          // A stopped spirit reached outside POST /chat (bridge inbound, channels): start
+          // it fire-and-forget so the NEXT message reaches it — this one is missed, same
+          // as for any stopped mind. Advisory and never throws; there is no response
+          // channel here, so no notice either.
+          import("../chat/spirit-availability.js")
+            .then(({ ensureSpiritAvailable }) => ensureSpiritAvailable())
+            .catch((err) => log.warn("fan-out: on-demand spirit start failed", log.errorData(err)));
+        }
+      }
       return null;
     })
     .filter((n): n is string => n !== null && n !== opts.senderName);
