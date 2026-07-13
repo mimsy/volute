@@ -1,4 +1,4 @@
-import DOMPurify from "dompurify";
+import createDOMPurify from "dompurify";
 
 /**
  * Static allowlist for inline SVG icons. Icons are round-tripped through the
@@ -43,9 +43,15 @@ export const SVG_ICON_ALLOWED_ATTR = [
   "transform",
 ];
 
+// Instantiated lazily (not at module load) so it binds to whatever `window` is
+// live at first call, rather than whatever happened to be global when some
+// unrelated module first pulled in `dompurify` (a shared, eagerly-cached module).
+let purify: ReturnType<typeof createDOMPurify> | undefined;
+
 /** Sanitize an untrusted inline SVG icon string down to a static shape vocabulary. */
 export function sanitizeSvg(html: string): string {
-  return DOMPurify.sanitize(html, {
+  purify ??= createDOMPurify(window);
+  return purify.sanitize(html, {
     ALLOWED_TAGS: SVG_ICON_ALLOWED_TAGS,
     ALLOWED_ATTR: SVG_ICON_ALLOWED_ATTR,
     FORBID_TAGS: ["script", "foreignObject"],
