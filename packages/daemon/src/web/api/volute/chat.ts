@@ -5,6 +5,8 @@ import { z } from "zod";
 import { getOrCreateMindUser, getOrCreateSystemUser } from "../../../lib/auth.js";
 import { routeOutboundBridge } from "../../../lib/bridges/bridge-outbound.js";
 import { formatFileSize, stageFile, validateFilePath } from "../../../lib/chat/file-sharing.js";
+import { ensureSpiritAvailable, type SpiritStatus } from "../../../lib/chat/spirit-availability.js";
+import { getSpiritName } from "../../../lib/config/setup.js";
 import { getActiveTurnId } from "../../../lib/daemon/turn-tracker.js";
 import { extractTextContent } from "../../../lib/delivery/delivery-router.js";
 import { fanOutToMinds } from "../../../lib/delivery/fan-out.js";
@@ -19,6 +21,7 @@ import {
   getChannelName,
   getChannelSettings,
   getConversation,
+  getMessages,
   getParticipants,
   isParticipantOrOwner,
 } from "../../../lib/events/conversations.js";
@@ -313,6 +316,38 @@ export const unifiedChatApp = new Hono<AuthEnv>().post(
       }
     }
 
+    // On-demand spirit start (#434): if the system spirit is a recipient here and it exists
+    // but is stopped, start it now so the fan-out below delivers directly. If it can't exist
+    // (setup incomplete / creation failed), persist one honest notice in the conversation
+    // instead of silence — no AI-generated impersonation. A sleeping spirit is left alone:
+    // its queue covers the message (don't force-wake, per #418). The status is returned so
+    // the web chat / CLI send ack can show "volute is waking / unavailable".
+    let spiritStatus: SpiritStatus | undefined;
+    const spiritParticipant = participants.find(
+      (p) => p.userType === "system" && p.username !== senderName,
+    );
+    if (spiritParticipant) {
+      const availability = await ensureSpiritAvailable();
+      spiritStatus = availability.status;
+      if (availability.status === "unavailable" && availability.notice) {
+        // A single clear notice, not one per send: skip when it already appears
+        // among the recent messages (the sender's own send is the latest, so
+        // check a small window rather than just the last message).
+        const notice = availability.notice;
+        const recent = await getMessages(conversationId!, 10);
+        const alreadyNoticed = recent.some(
+          (m) =>
+            m.sender_name === getSpiritName() &&
+            m.content.some((b) => b.type === "text" && b.text === notice),
+        );
+        if (!alreadyNoticed) {
+          await addMessage(conversationId!, "assistant", getSpiritName(), [
+            { type: "text", text: notice },
+          ]);
+        }
+      }
+    }
+
     // Fan out to running mind participants
     const isDM = conv.type === "dm";
     await fanOutToMinds({
@@ -328,11 +363,7 @@ export const unifiedChatApp = new Hono<AuthEnv>().post(
         : undefined,
     });
 
-    // A DM to the stopped spirit simply waits — no utility-model fallback reply is
-    // generated (that behavior was removed with the system-events refactor; honest
-    // availability surfacing is #434). The running/sleeping spirit receives it via fan-out.
-
-    return c.json({ ok: true, conversationId, outboundId });
+    return c.json({ ok: true, conversationId, outboundId, spirit: spiritStatus });
   },
 );
 
