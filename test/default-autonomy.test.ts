@@ -73,7 +73,7 @@ describe("default autonomy", () => {
     const dream = config?.schedules?.find((s) => s.id === "dream");
     assert.ok(dream, "dream schedule installed");
     assert.equal(dream.cron, "0 3 * * *");
-    assert.equal(dream.session, "$new");
+    assert.equal(dream.thread, "$new");
     assert.equal(dream.whileSleeping, "trigger-wake");
     assert.equal(dream.enabled, true);
     assert.ok(config?.schedules?.some((s) => s.id === "heartbeat"));

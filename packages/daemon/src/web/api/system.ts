@@ -662,7 +662,7 @@ const app = new Hono<AuthEnv>()
               message: z.string().optional(),
               messages: z.array(z.string().min(1)).optional(),
               script: z.string().optional(),
-              session: z.string().optional(),
+              thread: z.string().optional(),
               enabled: z.boolean(),
               whileSleeping: z.enum(["skip", "queue", "trigger-wake"]).optional(),
             }),

@@ -74,7 +74,7 @@ export type Conversation = {
 export type Participant = {
   userId: number;
   username: string;
-  userType: "brain" | "mind" | "puppet" | "system";
+  userType: "human" | "mind" | "puppet" | "system";
   role: "owner" | "member";
   displayName?: string | null;
   description?: string | null;
@@ -205,7 +205,7 @@ export type AvailableUser = {
   id: number;
   username: string;
   role: "admin" | "user" | "pending" | "mind" | "system";
-  user_type: "brain" | "mind" | "system";
+  user_type: "human" | "mind" | "system";
   display_name?: string | null;
   description?: string | null;
   avatar?: string | null;
@@ -289,7 +289,7 @@ export type HistoryMessage = {
   id: number;
   mind: string;
   channel: string;
-  session: string | null;
+  thread: string | null;
   sender: string | null;
   message_id: string | null;
   type: string;
@@ -300,7 +300,7 @@ export type HistoryMessage = {
 };
 
 export type HistorySession = {
-  session: string;
+  thread: string;
   started_at: string;
   event_count: number;
   message_count: number;

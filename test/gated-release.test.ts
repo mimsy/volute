@@ -197,21 +197,21 @@ describe("gated-channel release (#537)", () => {
   describe("releaseGated", () => {
     it("rewrites session to the newly-resolved route, not the gate-time fallback", async () => {
       // Gate with default 'main' (no rule matches discord:general).
-      const name = createMind({ rules: [{ channel: "web", session: "web" }], default: "main" });
+      const name = createMind({ rules: [{ channel: "web", thread: "web" }], default: "main" });
       cleanup.push(name);
       const m = makeManager();
       manager = m.manager;
 
       await gate(manager, name, "discord:general");
       const before = await rows(name);
-      assert.equal(before[0].session, "main", "gated at the fallback session");
+      assert.equal(before[0].thread, "main", "gated at the fallback session");
       assert.equal(before[0].status, "gated");
 
       // Add a rule mapping the channel to a distinct session, then release.
       writeRoutes(name, {
         rules: [
-          { channel: "web", session: "web" },
-          { channel: "discord:*", session: "discord-inbox" },
+          { channel: "web", thread: "web" },
+          { channel: "discord:*", thread: "discord-inbox" },
         ],
         default: "main",
       });
@@ -221,7 +221,7 @@ describe("gated-channel release (#537)", () => {
       const row = after.find((r) => r.channel === "discord:general");
       assert.ok(row);
       assert.equal(row.status, "pending", "promoted to pending");
-      assert.equal(row.session, "discord-inbox", "session rewritten to the current route");
+      assert.equal(row.thread, "discord-inbox", "session rewritten to the current route");
     });
 
     it("records a real inbound history row only when a gated message is released (#420)", async () => {
@@ -240,7 +240,7 @@ describe("gated-channel release (#537)", () => {
       assert.equal(before.length, 0, "a gated message writes no inbound history row");
 
       writeRoutes(name, {
-        rules: [{ channel: "discord:*", session: "inbox" }],
+        rules: [{ channel: "discord:*", thread: "inbox" }],
         default: "main",
       });
       await manager.releaseGated(name);
@@ -266,7 +266,7 @@ describe("gated-channel release (#537)", () => {
       // Add a rule that WOULD match, then release. Declined channels are skipped, so the
       // rows stay archived and no inbound history is ever written for them.
       writeRoutes(name, {
-        rules: [{ channel: "discord:*", session: "inbox" }],
+        rules: [{ channel: "discord:*", thread: "inbox" }],
         default: "main",
       });
       await manager.releaseGated(name);
@@ -294,7 +294,7 @@ describe("gated-channel release (#537)", () => {
       await gate(manager, name, "discord:general");
 
       writeRoutes(name, {
-        rules: [{ channel: "discord:*", session: "$new" }],
+        rules: [{ channel: "discord:*", thread: "$new" }],
         default: "main",
       });
       await manager.releaseGated(name);
@@ -303,12 +303,12 @@ describe("gated-channel release (#537)", () => {
       const row = after.find((r) => r.channel === "discord:general");
       assert.ok(row);
       assert.equal(row.status, "pending", "promoted to pending");
-      assert.notEqual(row.session, "$new", "the literal '$new' is never persisted");
-      assert.match(row.session, /^new-/, "session expanded to a generated ephemeral name");
+      assert.notEqual(row.thread, "$new", "the literal '$new' is never persisted");
+      assert.match(row.thread, /^new-/, "session expanded to a generated ephemeral name");
     });
 
     it("promotes at most N per channel (newest) and archives the remainder with one summary", async () => {
-      const name = createMind({ rules: [{ channel: "web", session: "web" }], default: "main" });
+      const name = createMind({ rules: [{ channel: "web", thread: "web" }], default: "main" });
       cleanup.push(name);
       const m = makeManager();
       manager = m.manager;
@@ -319,8 +319,8 @@ describe("gated-channel release (#537)", () => {
 
       writeRoutes(name, {
         rules: [
-          { channel: "web", session: "web" },
-          { channel: "discord:*", session: "discord" },
+          { channel: "web", thread: "web" },
+          { channel: "discord:*", thread: "discord" },
         ],
         default: "main",
       });
@@ -362,7 +362,7 @@ describe("gated-channel release (#537)", () => {
       for (let i = 0; i < 3; i++) await gate(manager, name, "discord:general");
       m.notes.length = 0;
 
-      writeRoutes(name, { rules: [{ channel: "discord:*", session: "discord" }], default: "main" });
+      writeRoutes(name, { rules: [{ channel: "discord:*", thread: "discord" }], default: "main" });
       await manager.releaseGated(name);
 
       const after = await rows(name);
@@ -387,7 +387,7 @@ describe("gated-channel release (#537)", () => {
       await manager.declineChannel(name, "discord:general");
       for (let i = 0; i < 2; i++) await gate(manager, name, "discord:general");
 
-      writeRoutes(name, { rules: [{ channel: "discord:*", session: "discord" }], default: "main" });
+      writeRoutes(name, { rules: [{ channel: "discord:*", thread: "discord" }], default: "main" });
       await manager.releaseGated(name);
 
       const after = await rows(name);
@@ -436,7 +436,7 @@ describe("gated-channel release (#537)", () => {
       await gate(manager, name, "discord:general");
 
       // A rule that matches a different channel only.
-      writeRoutes(name, { rules: [{ channel: "slack:*", session: "slack" }], default: "main" });
+      writeRoutes(name, { rules: [{ channel: "slack:*", thread: "slack" }], default: "main" });
       await manager.releaseGated(name);
 
       const after = await rows(name);

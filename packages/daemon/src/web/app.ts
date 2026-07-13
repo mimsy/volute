@@ -80,7 +80,7 @@ app.use(
   "/api/*",
   cors({
     origin: (origin) => origin,
-    allowHeaders: ["Authorization", "Content-Type", "X-Volute-Session"],
+    allowHeaders: ["Authorization", "Content-Type", "X-Volute-Thread"],
     allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
     credentials: false,
   }),

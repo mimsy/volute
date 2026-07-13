@@ -53,7 +53,7 @@ describe("router invite gating", () => {
     const dir = mkdtempSync(join(tmpdir(), "router-invite-"));
     const configPath = writeConfig(dir, {
       gateUnmatched: true,
-      rules: [{ channel: "web", session: "web" }],
+      rules: [{ channel: "web", thread: "web" }],
       default: "main",
     });
 
@@ -135,7 +135,7 @@ describe("router invite gating", () => {
     const dir = mkdtempSync(join(tmpdir(), "router-invite-"));
     const configPath = writeConfig(dir, {
       gateUnmatched: true,
-      rules: [{ channel: "web", session: "web-session" }],
+      rules: [{ channel: "web", thread: "web-session" }],
       default: "main",
     });
 
@@ -158,7 +158,7 @@ describe("router invite gating", () => {
     const dir = mkdtempSync(join(tmpdir(), "router-invite-"));
     const configPath = writeConfig(dir, {
       gateUnmatched: false,
-      rules: [{ channel: "web", session: "web-session" }],
+      rules: [{ channel: "web", thread: "web-session" }],
       default: "fallback",
     });
 

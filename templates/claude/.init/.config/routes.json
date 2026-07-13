@@ -1,10 +1,10 @@
 {
   "gateUnmatched": true,
   "rules": [
-    { "channel": "*", "isDM": true, "session": "${channel}" },
-    { "channel": "#*", "session": "${channel}" }
+    { "channel": "*", "isDM": true, "thread": "${channel}" },
+    { "channel": "#*", "thread": "${channel}" }
   ],
-  "sessions": {
+  "threads": {
     "#*": { "batch": { "debounce": 20, "maxWait": 120, "triggers": ["@{{name}}"] } }
   },
   "default": "main"

@@ -35,7 +35,7 @@ describe("turn-tracker", () => {
     assert.ok(row, "turn should exist in DB");
     assert.equal(row!.mind, mind);
     assert.equal(row!.status, "active");
-    assert.equal(row!.session, null);
+    assert.equal(row!.thread, null);
 
     // Cleanup
     await clearMind(mind);
@@ -71,7 +71,7 @@ describe("turn-tracker", () => {
     // DB should reflect session
     const db = await getDb();
     const row = await db.select().from(turns).where(eq(turns.id, turnId)).get();
-    assert.equal(row!.session, "sess-1");
+    assert.equal(row!.thread, "sess-1");
 
     await clearMind(mind);
   });
@@ -168,8 +168,8 @@ describe("turn-tracker", () => {
     const db = await getDb();
     const turn1 = "orphan-test-1";
     const turn2 = "orphan-test-2";
-    await db.insert(turns).values({ id: turn1, mind: "mind-a", session: "s1", status: "active" });
-    await db.insert(turns).values({ id: turn2, mind: "mind-b", session: null, status: "active" });
+    await db.insert(turns).values({ id: turn1, mind: "mind-a", thread: "s1", status: "active" });
+    await db.insert(turns).values({ id: turn2, mind: "mind-b", thread: null, status: "active" });
 
     const result = await completeOrphanedTurns();
 
@@ -232,7 +232,7 @@ describe("turn-tracker", () => {
         await db.insert(mindHistory).values({
           mind: "sweep-mind",
           type: e.type,
-          session: sess,
+          thread: sess,
           turn_id: id,
           created_at: utcStamp(e.msAgo),
         });
@@ -305,7 +305,7 @@ describe("turn-tracker", () => {
         await db.insert(mindHistory).values({
           mind: "sweep-nosess",
           type: e.type,
-          session: null,
+          thread: null,
           turn_id: id,
           created_at: utcStamp(e.msAgo),
         });

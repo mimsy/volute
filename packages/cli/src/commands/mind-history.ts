@@ -17,7 +17,7 @@ type ActivityRow = {
 type HistoryRow = {
   type: string;
   channel: string | null;
-  session: string | null;
+  thread: string | null;
   sender: string | null;
   sender_display_name: string | null;
   content: string | null;
@@ -95,7 +95,7 @@ function formatRow(row: HistoryRow): string {
       return `[${time}] [summary${range}] ${row.content ?? ""}`;
     }
     case "session_start":
-      return `[${time}] [session_start] ${row.session ?? ""}`;
+      return `[${time}] [session_start] ${row.thread ?? ""}`;
     default:
       return `[${time}] [${row.type}] ${row.content ?? ""}`;
   }
@@ -151,7 +151,7 @@ function formatRowCompact(row: HistoryRow): string {
       return `[${time}] [summary${range}] ${row.content ?? ""}`;
     }
     case "session_start":
-      return `[${time}] [session_start] ${row.session ?? ""}`;
+      return `[${time}] [session_start] ${row.thread ?? ""}`;
     default:
       return `[${time}] [${row.type}] ${row.content ?? ""}`;
   }
@@ -240,7 +240,7 @@ const cmd = command({
   flags: {
     mind: { type: "string", description: "Mind name" },
     channel: { type: "string", description: "Filter by channel" },
-    session: { type: "string", description: "Filter by session" },
+    thread: { type: "string", description: "Filter by thread" },
     preset: { type: "string", description: "Use a preset view" },
     limit: { type: "string", description: "Number of entries to show" },
     full: { type: "boolean", description: "Show full details" },
@@ -345,7 +345,7 @@ const cmd = command({
 
     const url = client.api.minds[":name"].history.$url({ param: { name } });
     if (flags.channel) url.searchParams.set("channel", flags.channel);
-    if (flags.session) url.searchParams.set("session", flags.session);
+    if (flags.thread) url.searchParams.set("session", flags.thread);
     if (flags.preset) url.searchParams.set("preset", flags.preset);
     if (flags.limit) url.searchParams.set("limit", flags.limit);
     if (flags.full) url.searchParams.set("full", "true");

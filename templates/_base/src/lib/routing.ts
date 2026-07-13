@@ -8,7 +8,7 @@ export type BatchConfig = {
 };
 
 export type RoutingRule = {
-  session?: string;
+  thread?: string;
   destination?: "mind" | "file";
   path?: string; // file path for file destination
   channel?: string;
@@ -35,7 +35,7 @@ export type ResolvedSessionConfig = {
 
 export type RoutingConfig = {
   rules?: RoutingRule[];
-  sessions?: Record<string, SessionConfig>;
+  threads?: Record<string, SessionConfig>;
   default?: string;
   gateUnmatched?: boolean;
 };
@@ -58,7 +58,7 @@ export function normalizeBatch(batch: number | BatchConfig): BatchConfig {
 export function loadRoutingConfig(configPath: string): RoutingConfig {
   try {
     const parsed = JSON.parse(readFileSync(configPath, "utf-8"));
-    // Normalize flat arrays (e.g. [{channel, session}, ...]) to { rules: [...] }
+    // Normalize flat arrays (e.g. [{channel, thread}, ...]) to { rules: [...] }
     if (Array.isArray(parsed)) return { rules: parsed };
     return parsed;
   } catch (err: any) {
@@ -80,7 +80,7 @@ function globMatch(pattern: string, value: string): boolean {
 }
 
 const GLOB_MATCH_KEYS = new Set(["channel", "sender"]);
-const NON_MATCH_KEYS = new Set(["session", "destination", "path", "mode", "batch"]);
+const NON_MATCH_KEYS = new Set(["thread", "destination", "path", "mode", "batch"]);
 
 type MatchMeta = { channel?: string; sender?: string; isDM?: boolean; participantCount?: number };
 
@@ -138,7 +138,7 @@ export function resolveRoute(config: RoutingConfig, meta: MatchMeta): ResolvedRo
       }
       return {
         destination: "mind",
-        session: sanitizeSessionName(expandTemplate(rule.session ?? fallback, meta)),
+        session: sanitizeSessionName(expandTemplate(rule.thread ?? fallback, meta)),
         matched: true,
         mode: rule.mode,
       };
@@ -149,7 +149,7 @@ export function resolveRoute(config: RoutingConfig, meta: MatchMeta): ResolvedRo
 }
 
 /**
- * Resolve session config by matching session name against glob-pattern keys in config.sessions.
+ * Resolve thread config by matching thread name against glob-pattern keys in config.threads.
  * First match wins. Returns defaults if no match.
  */
 export function resolveSessionConfig(
@@ -158,9 +158,9 @@ export function resolveSessionConfig(
 ): ResolvedSessionConfig {
   const defaults: ResolvedSessionConfig = { interrupt: true, replyInstructions: "once" };
 
-  if (!config.sessions) return defaults;
+  if (!config.threads) return defaults;
 
-  for (const [pattern, sessionConfig] of Object.entries(config.sessions)) {
+  for (const [pattern, sessionConfig] of Object.entries(config.threads)) {
     if (globMatch(pattern, sessionName)) {
       const batch = sessionConfig.batch != null ? normalizeBatch(sessionConfig.batch) : undefined;
       return {

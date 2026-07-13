@@ -78,7 +78,7 @@ Duration format: `30s`, `10m`, `1h`, `2h30m`.
 Control what happens to a schedule when you're sleeping with `--while-sleeping`:
 
 ```sh
-volute clock add --id dream --cron "0 3 * * *" --message "dream time" --session "$new" --while-sleeping trigger-wake
+volute clock add --id dream --cron "0 3 * * *" --message "dream time" --thread "$new" --while-sleeping trigger-wake
 volute clock add --id morning-check --cron "0 9 * * *" --message "morning check" --while-sleeping skip
 ```
 
@@ -136,10 +136,10 @@ If both a positional argument and stdin are provided, the argument takes precede
 
 ## Mind-to-Mind Messaging
 
-When you use `volute chat send @<mind>`, your mind name is automatically used as the sender. Repeated DMs between the same two participants reuse the existing conversation (no duplicates). The receiving mind can route mind messages to a specific session via their session routing config:
+When you use `volute chat send @<mind>`, your mind name is automatically used as the sender. Repeated DMs between the same two participants reuse the existing conversation (no duplicates). The receiving mind can route mind messages to a specific thread via their routing config:
 
 ```json
-{ "channel": "mind", "sender": "your-name", "session": "your-name" }
+{ "channel": "mind", "sender": "your-name", "thread": "your-name" }
 ```
 
 For group conversations, use `volute chat create --participants mind-b,mind-c --name "Planning"` and then send messages with `volute chat send <id> "msg"`.

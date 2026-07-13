@@ -160,7 +160,7 @@ describe("router", () => {
     writeFileSync(
       configPath,
       JSON.stringify({
-        rules: [{ channel: "system:*", session: "$new" }],
+        rules: [{ channel: "system:*", thread: "$new" }],
       }),
     );
 
@@ -182,8 +182,8 @@ describe("router", () => {
     writeFileSync(
       configPath,
       JSON.stringify({
-        rules: [{ channel: "discord:*", session: "batch-test" }],
-        sessions: { "batch-test": { batch: 0.001 } }, // ~60ms maxWait
+        rules: [{ channel: "discord:*", thread: "batch-test" }],
+        threads: { "batch-test": { batch: 0.001 } }, // ~60ms maxWait
       }),
     );
 
@@ -217,8 +217,8 @@ describe("router", () => {
     writeFileSync(
       configPath,
       JSON.stringify({
-        rules: [{ channel: "discord:*", session: "close-test" }],
-        sessions: { "close-test": { batch: 60 } }, // long timer
+        rules: [{ channel: "discord:*", thread: "close-test" }],
+        threads: { "close-test": { batch: 60 } }, // long timer
       }),
     );
 
@@ -244,8 +244,8 @@ describe("router", () => {
     writeFileSync(
       configPath,
       JSON.stringify({
-        rules: [{ channel: "discord:*", session: "debounce-test" }],
-        sessions: { "debounce-test": { batch: { debounce: 0.08 } } }, // 80ms
+        rules: [{ channel: "discord:*", thread: "debounce-test" }],
+        threads: { "debounce-test": { batch: { debounce: 0.08 } } }, // 80ms
       }),
     );
 
@@ -278,8 +278,8 @@ describe("router", () => {
     writeFileSync(
       configPath,
       JSON.stringify({
-        rules: [{ channel: "discord:*", session: "maxwait-test" }],
-        sessions: {
+        rules: [{ channel: "discord:*", thread: "maxwait-test" }],
+        threads: {
           "maxwait-test": { batch: { debounce: 5, maxWait: 0.1 } }, // 5s debounce, 100ms maxWait
         },
       }),
@@ -314,8 +314,8 @@ describe("router", () => {
     writeFileSync(
       configPath,
       JSON.stringify({
-        rules: [{ channel: "discord:*", session: "trigger-test" }],
-        sessions: {
+        rules: [{ channel: "discord:*", thread: "trigger-test" }],
+        threads: {
           "trigger-test": {
             batch: { debounce: 60, maxWait: 300, triggers: ["@agent"] },
           },
@@ -351,8 +351,8 @@ describe("router", () => {
     writeFileSync(
       configPath,
       JSON.stringify({
-        rules: [{ channel: "discord:*", session: "trigger-ci" }],
-        sessions: {
+        rules: [{ channel: "discord:*", thread: "trigger-ci" }],
+        threads: {
           "trigger-ci": { batch: { debounce: 60, triggers: ["@Agent"] } },
         },
       }),
@@ -374,8 +374,8 @@ describe("router", () => {
     writeFileSync(
       configPath,
       JSON.stringify({
-        rules: [{ channel: "discord:*", session: "trigger-only" }],
-        sessions: {
+        rules: [{ channel: "discord:*", thread: "trigger-only" }],
+        threads: {
           "trigger-only": { batch: { triggers: ["urgent"] } },
         },
       }),
@@ -406,8 +406,8 @@ describe("router", () => {
     writeFileSync(
       configPath,
       JSON.stringify({
-        rules: [{ channel: "discord:*", session: "uri-test" }],
-        sessions: {
+        rules: [{ channel: "discord:*", thread: "uri-test" }],
+        threads: {
           "uri-test": { batch: { debounce: 60, triggers: ["flush"] } },
         },
       }),
@@ -446,7 +446,7 @@ describe("router", () => {
   it("direct dispatch appends typing suffix for single user", async () => {
     const dir = makeTempDir();
     const configPath = join(dir, "routes.json");
-    writeFileSync(configPath, JSON.stringify({ rules: [{ channel: "web", session: "main" }] }));
+    writeFileSync(configPath, JSON.stringify({ rules: [{ channel: "web", thread: "main" }] }));
 
     const mind = mockMindHandler();
     const router = createRouter({ configPath, mindHandler: mind.resolver });
@@ -465,7 +465,7 @@ describe("router", () => {
   it("direct dispatch appends typing suffix for multiple users", async () => {
     const dir = makeTempDir();
     const configPath = join(dir, "routes.json");
-    writeFileSync(configPath, JSON.stringify({ rules: [{ channel: "web", session: "main" }] }));
+    writeFileSync(configPath, JSON.stringify({ rules: [{ channel: "web", thread: "main" }] }));
 
     const mind = mockMindHandler();
     const router = createRouter({ configPath, mindHandler: mind.resolver });
@@ -484,7 +484,7 @@ describe("router", () => {
   it("direct dispatch omits typing suffix when no one is typing", async () => {
     const dir = makeTempDir();
     const configPath = join(dir, "routes.json");
-    writeFileSync(configPath, JSON.stringify({ rules: [{ channel: "web", session: "main" }] }));
+    writeFileSync(configPath, JSON.stringify({ rules: [{ channel: "web", thread: "main" }] }));
 
     const mind = mockMindHandler();
     const router = createRouter({ configPath, mindHandler: mind.resolver });
@@ -506,8 +506,8 @@ describe("router", () => {
     writeFileSync(
       configPath,
       JSON.stringify({
-        rules: [{ channel: "discord:*", session: "typing-batch" }],
-        sessions: {
+        rules: [{ channel: "discord:*", thread: "typing-batch" }],
+        threads: {
           "typing-batch": { batch: { debounce: 60, triggers: ["flush"] } },
         },
       }),
@@ -542,8 +542,8 @@ describe("router", () => {
     writeFileSync(
       configPath,
       JSON.stringify({
-        rules: [{ channel: "discord:*", session: "discord" }],
-        sessions: { discord: { instructions: "Brief responses only." } },
+        rules: [{ channel: "discord:*", thread: "discord" }],
+        threads: { discord: { instructions: "Brief responses only." } },
       }),
     );
 
@@ -567,8 +567,8 @@ describe("router", () => {
     writeFileSync(
       configPath,
       JSON.stringify({
-        rules: [{ channel: "discord:*", session: "discord" }],
-        sessions: { discord: { instructions: "Brief responses only." } },
+        rules: [{ channel: "discord:*", thread: "discord" }],
+        threads: { discord: { instructions: "Brief responses only." } },
       }),
     );
 
@@ -603,7 +603,7 @@ describe("router", () => {
     writeFileSync(
       configPath,
       JSON.stringify({
-        rules: [{ channel: "#*", session: "channel", mode: "mention" }],
+        rules: [{ channel: "#*", thread: "channel", mode: "mention" }],
       }),
     );
 
@@ -636,7 +636,7 @@ describe("router", () => {
     writeFileSync(
       configPath,
       JSON.stringify({
-        rules: [{ channel: "#*", session: "channel", mode: "mention" }],
+        rules: [{ channel: "#*", thread: "channel", mode: "mention" }],
       }),
     );
 
@@ -668,7 +668,7 @@ describe("router", () => {
   it("passes no listener to the handler when dispatched fire-and-forget", async () => {
     const dir = makeTempDir();
     const configPath = join(dir, "routes.json");
-    writeFileSync(configPath, JSON.stringify({ rules: [{ channel: "web", session: "main" }] }));
+    writeFileSync(configPath, JSON.stringify({ rules: [{ channel: "web", thread: "main" }] }));
 
     const mind = mockMindHandler();
     const router = createRouter({ configPath, mindHandler: mind.resolver });
@@ -687,7 +687,7 @@ describe("router", () => {
   it("passes the listener through when one is provided", async () => {
     const dir = makeTempDir();
     const configPath = join(dir, "routes.json");
-    writeFileSync(configPath, JSON.stringify({ rules: [{ channel: "web", session: "main" }] }));
+    writeFileSync(configPath, JSON.stringify({ rules: [{ channel: "web", thread: "main" }] }));
 
     const mind = mockMindHandler();
     const router = createRouter({ configPath, mindHandler: mind.resolver });
@@ -706,8 +706,8 @@ describe("router", () => {
     writeFileSync(
       configPath,
       JSON.stringify({
-        rules: [{ channel: "system:*", session: "$new" }],
-        sessions: { "new-*": { instructions: "Be brief." } },
+        rules: [{ channel: "system:*", thread: "$new" }],
+        threads: { "new-*": { instructions: "Be brief." } },
       }),
     );
 
@@ -739,7 +739,7 @@ describe("router", () => {
     writeFileSync(
       configPath,
       JSON.stringify({
-        rules: [{ channel: "#*", session: "channel", mode: "mention" }],
+        rules: [{ channel: "#*", thread: "channel", mode: "mention" }],
       }),
     );
 

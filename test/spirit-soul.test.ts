@@ -252,6 +252,26 @@ describe("startup-context hook reads system.json", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
+  it("names the system from VOLUTE_SYSTEM_NAME for a regular mind", () => {
+    const dir = spiritDir();
+    rmSync(dir, { recursive: true, force: true });
+    mkdirSync(resolve(dir, "home"), { recursive: true });
+
+    const env = { ...process.env, VOLUTE_MIND_DIR: dir, VOLUTE_SYSTEM_NAME: "Testarium" };
+    delete env.VOLUTE_DAEMON_PORT;
+    delete env.VOLUTE_MIND_TOKEN;
+    const out = execFileSync("node", ["--import", "tsx", HOOK_PATH], {
+      input: JSON.stringify({ source: "startup" }),
+      encoding: "utf-8",
+      env,
+    });
+    const context = JSON.parse(out).hookSpecificOutput.additionalContext as string;
+
+    assert.match(context, /This system is named Testarium\./);
+    assert.doesNotMatch(context, /You are the spirit of/);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
   it("swallows a malformed system.json and stays silent", () => {
     const dir = spiritDir();
     rmSync(dir, { recursive: true, force: true });

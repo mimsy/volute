@@ -123,7 +123,7 @@ export async function recordMissingCredentialsNotice(
   mind: string,
   template: string | undefined,
 ): Promise<void> {
-  const { hasUndeliveredEvent, recordNotice, MIND_LEVEL_SESSION } = await import(
+  const { hasUndeliveredEvent, recordNotice, MIND_LEVEL_THREAD } = await import(
     "../chat/system-events.js"
   );
   const warning = await missingCredentialWarning(template, readMindModel(mind, template), mind);
@@ -131,7 +131,7 @@ export async function recordMissingCredentialsNotice(
   if (await hasUndeliveredEvent(mind, "no_credentials")) return;
   await recordNotice({
     mind,
-    session: MIND_LEVEL_SESSION,
+    thread: MIND_LEVEL_THREAD,
     kind: "startup",
     reason: "no_credentials",
     detail: warning,
@@ -234,7 +234,7 @@ export async function stopSpiritFull(name: string): Promise<void> {
  */
 export function buildSeedOrientation(
   createdBy?: string | null,
-  creatorType?: "brain" | "mind" | "system",
+  creatorType?: "human" | "mind" | "system",
 ): string {
   const intro = `You've just been created as a seed on ${getSystemName()}. Start a conversation — introduce yourself, ask questions, and begin exploring who you want to be.`;
   if (!createdBy) return intro;
@@ -250,7 +250,7 @@ export function buildSeedOrientation(
 
 /** Look up the creator's user_type, build the orientation message, and send it. */
 async function sendSeedOrientation(mindName: string, createdBy?: string | null): Promise<void> {
-  let creatorType: "brain" | "mind" | "system" | undefined;
+  let creatorType: "human" | "mind" | "system" | undefined;
   if (createdBy) {
     const { getUserByUsername } = await import("../auth.js");
     creatorType = (await getUserByUsername(createdBy))?.user_type;

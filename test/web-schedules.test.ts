@@ -164,4 +164,28 @@ describe("schedules API rotating messages", () => {
     assert.equal(sched.enabled, false);
     assert.equal(sched.message, "solo");
   });
+
+  it("POST and PUT persist the thread target", async () => {
+    // POST persists thread (the scheduler fires it into that thread — see
+    // scheduler.test.ts "fire passes session from schedule config").
+    const res = await postSchedule({
+      id: "dream",
+      cron: "0 3 * * *",
+      message: "you are dreaming",
+      thread: "$new",
+    });
+    assert.equal(res.status, 201);
+    let [sched] = await fetchSchedules();
+    assert.equal(sched.thread, "$new");
+
+    // PUT updates it
+    assert.equal((await putSchedule("dream", { thread: "dreams" })).status, 200);
+    [sched] = await fetchSchedules();
+    assert.equal(sched.thread, "dreams");
+
+    // PUT with an empty string clears it
+    assert.equal((await putSchedule("dream", { thread: "" })).status, 200);
+    [sched] = await fetchSchedules();
+    assert.equal(sched.thread, undefined);
+  });
 });

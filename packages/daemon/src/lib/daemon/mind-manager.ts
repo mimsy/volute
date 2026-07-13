@@ -5,7 +5,7 @@ import { promisify } from "node:util";
 import { getAiConfig, resolveApiKey } from "../ai-service.js";
 import { deliverEvent, recordNotice } from "../chat/system-events.js";
 import { loadMergedEnv } from "../config/env.js";
-import { getSystemName } from "../config/setup.js";
+import { getSystemName, readGlobalConfig } from "../config/setup.js";
 import { chownMindDir, isIsolationEnabled, wrapForIsolation } from "../mind/isolation.js";
 import {
   findMind,
@@ -309,6 +309,10 @@ export class MindManager {
       VOLUTE_MIND_DIR: dir,
       VOLUTE_MIND_PORT: String(port),
       VOLUTE_MIND_TOKEN: mindToken,
+      // Left unset when the system has no configured name — the startup-context
+      // hook then skips its "This system is named X" line rather than asserting
+      // a fabricated one.
+      VOLUTE_SYSTEM_NAME: readGlobalConfig().name,
       TMPDIR: mindTmp,
       PATH: `${mindLocalBin}:${currentPath}`,
       // Strip CLAUDECODE so the Agent SDK can spawn Claude Code subprocesses
@@ -679,7 +683,7 @@ export class MindManager {
           for (const { session } of orphaned) {
             void recordNotice({
               mind: name,
-              session: session ?? "main",
+              thread: session ?? "main",
               kind: "crash",
               reason: "process_crash",
               detail:

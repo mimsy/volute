@@ -63,7 +63,7 @@ export async function recordInbound(
  * Record an outbound message: persist to mind_history.
  *
  * When the caller knows the sending mind's active turn (resolved from the per-request
- * `X-Volute-Session` header — the primary attribution path), it passes `turnId` and is
+ * `X-Volute-Thread` header — the primary attribution path), it passes `turnId` and is
  * responsible for publishing the SSE event itself. When `turnId` is omitted (e.g. a
  * sessionless path), the record is left untagged and its turn is resolved later when the
  * corresponding tool_result event arrives with a `[volute:outbound:NNN]` marker (via

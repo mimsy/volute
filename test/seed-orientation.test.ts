@@ -11,8 +11,8 @@ describe("buildSeedOrientation", () => {
     assert.ok(!msg.toLowerCase().includes("human"));
   });
 
-  it("names a human (brain) creator plainly", () => {
-    const msg = buildSeedOrientation("alice", "brain");
+  it("names a human creator plainly", () => {
+    const msg = buildSeedOrientation("alice", "human");
     assert.ok(msg.includes("Your creator is alice."));
     assert.ok(!msg.toLowerCase().includes("human"));
   });

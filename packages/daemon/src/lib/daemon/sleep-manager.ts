@@ -15,7 +15,7 @@ import { and, eq, inArray } from "drizzle-orm";
 import {
   deliverEvent,
   flushQueuedEvents,
-  MIND_LEVEL_SESSION,
+  MIND_LEVEL_THREAD,
   pendingEventCount,
   pendingEventsLine,
   recordNotice,
@@ -477,7 +477,7 @@ export class SleepManager {
     const db = await getDb();
     await db.insert(deliveryQueue).values({
       mind: name,
-      session: "sleep",
+      thread: "sleep",
       channel: payload.channel,
       sender: payload.sender ?? null,
       status: "sleep-queued",
@@ -646,7 +646,7 @@ export class SleepManager {
 
     await recordNotice({
       mind: name,
-      session: MIND_LEVEL_SESSION,
+      thread: MIND_LEVEL_THREAD,
       kind: "startup",
       reason: "startup_failed",
       detail: `Wake failed ${MAX_WAKE_ATTEMPTS} times in a row and was given up. Last error: ${detail}`,

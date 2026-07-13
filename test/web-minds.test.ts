@@ -443,7 +443,7 @@ describe("web minds routes", () => {
     await addMind(name, 4198, undefined, "claude");
     await recordNotice({
       mind: name,
-      session: "",
+      thread: "",
       kind: "startup",
       reason: "no_credentials",
       detail: "no anthropic key — mind will stay silent",

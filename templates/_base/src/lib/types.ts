@@ -4,7 +4,7 @@ export type VoluteContentPart =
 
 export type ParticipantProfile = {
   username: string;
-  userType: "brain" | "mind";
+  userType: "human" | "mind";
   displayName?: string | null;
   description?: string | null;
 };

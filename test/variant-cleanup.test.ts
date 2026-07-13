@@ -62,7 +62,7 @@ async function seedVariantFootprint(): Promise<number> {
   // delivery_queue keys `mind` by the base name and `target_mind` by the variant.
   await db
     .insert(deliveryQueue)
-    .values({ mind: base, target_mind: variant, session: "main", payload: "{}" });
+    .values({ mind: base, target_mind: variant, thread: "main", payload: "{}" });
   return user.id;
 }
 
@@ -80,7 +80,7 @@ async function seedBaseKeyed(): Promise<void> {
     body: "d",
     meta: JSON.stringify({ subtype: "crash", reason: "unknown" }),
     delivery: "next-turn",
-    session: "main",
+    thread: "main",
   });
   await db.insert(channelGates).values({ mind: base, channel: "#x", state: "declined" });
 }
@@ -146,7 +146,7 @@ describe("deleteMindDbFootprint", () => {
     // channel); the variant's membership goes with its user row.
     const [owner] = await db
       .insert(users)
-      .values({ username: `owner-${base}`, password_hash: "!x", role: "user", user_type: "brain" })
+      .values({ username: `owner-${base}`, password_hash: "!x", role: "user", user_type: "human" })
       .returning({ id: users.id });
     const sharedId = `shared-${base}`;
     await db.insert(conversations).values({ id: sharedId, type: "channel", user_id: owner.id });

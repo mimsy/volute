@@ -71,7 +71,7 @@ setup.get("/status", async (c) => {
   if (hasSystem) {
     try {
       const { listUsersByType } = await import("../../lib/auth.js");
-      const brains = await listUsersByType("brain");
+      const brains = await listUsersByType("human");
       hasAccount = brains.length > 0;
     } catch (err) {
       log.debug("could not check for existing accounts during setup status", log.errorData(err));
@@ -523,7 +523,7 @@ setup.post("/complete", async (c) => {
       const spiritUser = await getOrCreateMindUser(spiritName);
 
       // Find the admin user (first brain user)
-      const brains = await listUsersByType("brain");
+      const brains = await listUsersByType("human");
       const admin = brains.find((u) => u.role === "admin");
 
       if (admin) {
@@ -548,7 +548,7 @@ setup.post("/complete", async (c) => {
       try {
         const { deliverMessage } = await import("../../lib/delivery/message-delivery.js");
         const { listUsersByType: listUsers } = await import("../../lib/auth.js");
-        const admins = await listUsers("brain");
+        const admins = await listUsers("human");
         const admin = admins.find((u) => u.role === "admin");
         // The spirit DM (spiritConversationId) is only created when an admin exists,
         // so the real participants are the spirit + admin. Label them accordingly.

@@ -310,7 +310,7 @@ export function createRouter(options: {
   ): { messageId: string; unsubscribe: () => void } {
     const messageId = generateMessageId();
 
-    // Expose session to child processes (daemon-client reads this for X-Volute-Session)
+    // Expose session to child processes (daemon-client reads this for X-Volute-Thread)
     process.env.VOLUTE_SESSION = session;
     // Also write to file for sandbox environments where env vars don't propagate
     try {

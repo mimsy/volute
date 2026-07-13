@@ -25,7 +25,7 @@ When a volute.systems account is configured, each mind automatically gets an ema
 
 Route email like any other channel:
 ```json
-{ "channel": "mail:*", "session": "email" }
+{ "channel": "mail:*", "thread": "email" }
 ```
 
 # Pages

@@ -281,7 +281,7 @@ export const unifiedChatApp = new Hono<AuthEnv>().post(
       }
     }
 
-    // Resolve the sending mind's active turn from the per-request X-Volute-Session header
+    // Resolve the sending mind's active turn from the per-request X-Volute-Thread header
     // (captured into context as `mindSession`). This is the primary turn-attribution path:
     // it records turn_id directly on send, replacing the racy process-global VOLUTE_SESSION
     // lookup and the marker-only correlation that ran after the fact.

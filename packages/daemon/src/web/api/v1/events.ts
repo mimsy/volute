@@ -33,7 +33,7 @@ const app = new Hono<AuthEnv>().use("*", authMiddleware).get("/", async (c) => {
 
   return streamSSE(c, async (stream) => {
     const cleanups: (() => void)[] = [];
-    if (user.user_type === "brain") {
+    if (user.user_type === "human") {
       addConnection(user.username);
       cleanups.push(() => removeConnection(user.username));
     }

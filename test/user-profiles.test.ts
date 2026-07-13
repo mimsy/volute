@@ -182,7 +182,7 @@ describe("format-prefix participant profiles", () => {
         participantProfiles: [
           {
             username: "alice",
-            userType: "brain",
+            userType: "human",
             displayName: "Alice Chen",
             description: "researcher",
           },
@@ -197,7 +197,7 @@ describe("format-prefix participant profiles", () => {
       "12:00",
     );
     assert.ok(result.includes("[Participants:"));
-    assert.ok(result.includes("alice (Alice Chen) [brain] — researcher"));
+    assert.ok(result.includes("alice (Alice Chen) [human] — researcher"));
     assert.ok(result.includes("mystery [mind] — an introspective mind"));
   });
 

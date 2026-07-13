@@ -146,7 +146,7 @@ describe("summarizer", () => {
         .values({
           mind,
           type,
-          session,
+          thread: session,
           channel: opts?.channel ?? null,
           content: opts?.content ?? null,
           metadata: opts?.metadata ? JSON.stringify(opts.metadata) : null,
@@ -185,7 +185,7 @@ describe("summarizer", () => {
       const db = await getDb();
       const result = await db
         .insert(mindHistory)
-        .values({ mind: mind2, type: "done", session: "s2" })
+        .values({ mind: mind2, type: "done", thread: "s2" })
         .returning({ id: mindHistory.id });
 
       await summarizeTurn(mind2, "s2", undefined, result[0].id);
@@ -205,12 +205,12 @@ describe("summarizer", () => {
 
       await db
         .insert(turns)
-        .values({ id: turnId, mind: mind4, session: session4, status: "active" });
+        .values({ id: turnId, mind: mind4, thread: session4, status: "active" });
 
       await db.insert(mindHistory).values({
         mind: mind4,
         type: "inbound",
-        session: session4,
+        thread: session4,
         channel: "@test",
         content: "hello from turn",
         turn_id: turnId,
@@ -218,13 +218,13 @@ describe("summarizer", () => {
       await db.insert(mindHistory).values({
         mind: mind4,
         type: "tool_use",
-        session: session4,
+        thread: session4,
         metadata: JSON.stringify({ name: "Write" }),
         turn_id: turnId,
       });
       const doneResult = await db
         .insert(mindHistory)
-        .values({ mind: mind4, type: "done", session: session4, turn_id: turnId })
+        .values({ mind: mind4, type: "done", thread: session4, turn_id: turnId })
         .returning({ id: mindHistory.id });
 
       await summarizeTurn(mind4, session4, "@test", doneResult[0].id, turnId);
@@ -257,7 +257,7 @@ describe("summarizer", () => {
       const db = await getDb();
       const result = await db
         .insert(mindHistory)
-        .values({ mind: mind3, type: "done", session: "empty" })
+        .values({ mind: mind3, type: "done", thread: "empty" })
         .returning({ id: mindHistory.id });
 
       await summarizeTurn(mind3, "empty", undefined, result[0].id);
@@ -278,11 +278,11 @@ describe("summarizer", () => {
       const session = "wd1";
       const turnId = randomUUID();
       const db = await getDb();
-      await db.insert(turns).values({ id: turnId, mind, session, status: "active" });
+      await db.insert(turns).values({ id: turnId, mind, thread: session, status: "active" });
       await db.insert(mindHistory).values({
         mind,
         type: "inbound",
-        session,
+        thread: session,
         channel: "@c",
         content: "hi",
         turn_id: turnId,
@@ -290,13 +290,13 @@ describe("summarizer", () => {
       await db.insert(mindHistory).values({
         mind,
         type: "text",
-        session,
+        thread: session,
         content: "hello back",
         turn_id: turnId,
       });
       const doneResult = await db
         .insert(mindHistory)
-        .values({ mind, type: "done", session, turn_id: turnId })
+        .values({ mind, type: "done", thread: session, turn_id: turnId })
         .returning({ id: mindHistory.id });
       const doneId = doneResult[0].id;
 
@@ -321,13 +321,13 @@ describe("summarizer", () => {
       const session = "id1";
       const turnId = randomUUID();
       const db = await getDb();
-      await db.insert(turns).values({ id: turnId, mind, session, status: "active" });
+      await db.insert(turns).values({ id: turnId, mind, thread: session, status: "active" });
       const inbound = await db
         .insert(mindHistory)
         .values({
           mind,
           type: "inbound",
-          session,
+          thread: session,
           channel: "@c",
           content: "you there?",
           turn_id: turnId,
@@ -335,7 +335,7 @@ describe("summarizer", () => {
         .returning({ id: mindHistory.id });
       const doneResult = await db
         .insert(mindHistory)
-        .values({ mind, type: "done", session, turn_id: turnId })
+        .values({ mind, type: "done", thread: session, turn_id: turnId })
         .returning({ id: mindHistory.id });
 
       await summarizeTurn(mind, session, "@c", doneResult[0].id, turnId);
@@ -367,13 +367,13 @@ describe("summarizer", () => {
       const session = "ie1";
       const turnId = randomUUID();
       const db = await getDb();
-      await db.insert(turns).values({ id: turnId, mind, session, status: "active" });
+      await db.insert(turns).values({ id: turnId, mind, thread: session, status: "active" });
       const inbound = await db
         .insert(mindHistory)
         .values({
           mind,
           type: "inbound",
-          session,
+          thread: session,
           channel: "@c",
           content: "still there?",
           turn_id: turnId,
@@ -381,7 +381,7 @@ describe("summarizer", () => {
         .returning({ id: mindHistory.id });
       const doneResult = await db
         .insert(mindHistory)
-        .values({ mind, type: "done", session, turn_id: turnId })
+        .values({ mind, type: "done", thread: session, turn_id: turnId })
         .returning({ id: mindHistory.id });
 
       // No explicit turnId — it must be resolved from the events' turn_id.
@@ -1233,7 +1233,7 @@ describe("summarizer", () => {
         await db.insert(mindHistory).values({
           mind,
           type: e.type,
-          session,
+          thread: session,
           turn_id: id,
           created_at: new Date(Date.now() - e.msAgo).toISOString().slice(0, 19).replace("T", " "),
         });

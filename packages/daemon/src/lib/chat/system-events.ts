@@ -8,10 +8,10 @@ import log from "../util/logger.js";
 const elog = log.child("system-events");
 
 /**
- * Sentinel session for events not tied to a specific session (e.g. extension
- * notices). Drained into whichever session next runs a clean turn.
+ * Sentinel thread for events not tied to a specific thread (e.g. extension
+ * notices). Drained into whichever thread next runs a clean turn.
  */
-export const MIND_LEVEL_SESSION = "";
+export const MIND_LEVEL_THREAD = "";
 
 export type EventDelivery = "immediate" | "next-turn";
 export type WhileSleeping = "skip" | "queue" | "trigger-wake";
@@ -22,8 +22,8 @@ export type DeliverEventInput = {
   type: string;
   body: string;
   meta?: Record<string, unknown>;
-  /** Routing session (default "main"). Next-turn notices may use MIND_LEVEL_SESSION. */
-  session?: string;
+  /** Routing thread (default "main"). Next-turn notices may use MIND_LEVEL_THREAD. */
+  thread?: string;
   /** "immediate" POSTs an envelope to the mind (triggers a turn); "next-turn" waits. */
   delivery?: EventDelivery;
   /** How to handle an immediate event for a sleeping mind. */
@@ -32,7 +32,7 @@ export type DeliverEventInput = {
   force?: boolean;
 };
 
-/** Max undrained next-turn events retained per (mind, session) — bounds growth. */
+/** Max undrained next-turn events retained per (mind, thread) — bounds growth. */
 const MAX_NEXT_TURN_EVENTS = 100;
 
 /** Pending immediate events older than this are expired at flush, not replayed stale. */
@@ -58,7 +58,7 @@ export function parseMeta(
 
 /**
  * A worded label for an event, shown to the mind in the `[Event: <label> — <time>]`
- * envelope and to operators in the events UI. Never a raw id in isolation.
+ * envelope and to hosts in the events UI. Never a raw id in isolation.
  */
 export function eventLabel(type: string, meta: Record<string, unknown> | null | undefined): string {
   const m = meta ?? {};
@@ -127,7 +127,7 @@ export type NoticeKind = "turn_error" | "crash" | "budget" | "startup" | "extens
 
 export type RecordNoticeInput = {
   mind: string;
-  session: string;
+  thread: string;
   kind: NoticeKind;
   reason: string;
   detail: string;
@@ -144,7 +144,7 @@ export async function recordNotice(input: RecordNoticeInput): Promise<void> {
   await deliverEvent(input.mind, {
     type,
     body: input.detail,
-    session: input.session,
+    thread: input.thread,
     delivery: "next-turn",
     meta: {
       subtype: input.kind,
@@ -217,7 +217,7 @@ async function postEventEnvelope(mind: string, event: SystemEvent): Promise<bool
           body: event.body,
           at: event.created_at,
         },
-        session: event.session,
+        session: event.thread,
       }),
       signal: AbortSignal.timeout(10_000),
     });
@@ -303,7 +303,7 @@ export async function deliverEvent(
   mind: string,
   input: DeliverEventInput,
 ): Promise<{ id?: number; delivered: boolean }> {
-  const session = input.session ?? "main";
+  const thread = input.thread ?? "main";
   const delivery = input.delivery ?? "immediate";
   let eventId: number | undefined;
   try {
@@ -316,7 +316,7 @@ export async function deliverEvent(
         body: input.body,
         meta: input.meta ? JSON.stringify(input.meta) : null,
         delivery,
-        session,
+        thread,
       })
       .returning({ id: systemEvents.id });
     eventId = rows[0]?.id;
@@ -325,11 +325,11 @@ export async function deliverEvent(
       return { delivered: false };
     }
 
-    // Bound next-turn growth per (mind, session): stamp overflow rows dropped (they stay
+    // Bound next-turn growth per (mind, thread): stamp overflow rows dropped (they stay
     // visible in the events UI) rather than deleting them.
     if (delivery === "next-turn") {
       await db.run(
-        sql`UPDATE system_events SET delivered_at = datetime('now'), meta = json_set(COALESCE(meta, '{}'), '$.dropped', 1) WHERE mind = ${mind} AND session = ${session} AND delivery = 'next-turn' AND delivered_at IS NULL AND id NOT IN (SELECT id FROM system_events WHERE mind = ${mind} AND session = ${session} AND delivery = 'next-turn' AND delivered_at IS NULL ORDER BY id DESC LIMIT ${MAX_NEXT_TURN_EVENTS})`,
+        sql`UPDATE system_events SET delivered_at = datetime('now'), meta = json_set(COALESCE(meta, '{}'), '$.dropped', 1) WHERE mind = ${mind} AND thread = ${thread} AND delivery = 'next-turn' AND delivered_at IS NULL AND id NOT IN (SELECT id FROM system_events WHERE mind = ${mind} AND thread = ${thread} AND delivery = 'next-turn' AND delivered_at IS NULL ORDER BY id DESC LIMIT ${MAX_NEXT_TURN_EVENTS})`,
       );
       return { id: eventId, delivered: false };
     }
@@ -466,12 +466,12 @@ export function pendingEventsLine(count: number): string {
 // --- Next-turn drain (port of the notices context-block path) ---
 
 /**
- * Undrained next-turn events for a mind+session, oldest first. Includes mind-level
- * events (session = "") so they reach whichever session next runs a turn.
+ * Undrained next-turn events for a mind+thread, oldest first. Includes mind-level
+ * events (thread = "") so they reach whichever thread next runs a turn.
  */
 export async function drainEvents(
   mind: string,
-  session: string,
+  thread: string,
   limit = MAX_NEXT_TURN_EVENTS,
 ): Promise<SystemEvent[]> {
   const db = await getDb();
@@ -483,7 +483,7 @@ export async function drainEvents(
         eq(systemEvents.mind, mind),
         eq(systemEvents.delivery, "next-turn"),
         isNull(systemEvents.delivered_at),
-        or(eq(systemEvents.session, session), eq(systemEvents.session, MIND_LEVEL_SESSION)),
+        or(eq(systemEvents.thread, thread), eq(systemEvents.thread, MIND_LEVEL_THREAD)),
       ),
     )
     .orderBy(asc(systemEvents.id))
@@ -592,13 +592,13 @@ function localHM(createdAt: string): string {
 }
 
 /**
- * Mark next-turn events delivered for a mind+session up to and including `uptoId`. Unlike
+ * Mark next-turn events delivered for a mind+thread up to and including `uptoId`. Unlike
  * the old notices table (which deleted rows), events persist — we stamp `delivered_at` so
  * they stay visible in the events history/UI.
  */
 export async function clearDeliveredEvents(
   mind: string,
-  session: string,
+  thread: string,
   uptoId: number,
 ): Promise<void> {
   try {
@@ -611,12 +611,12 @@ export async function clearDeliveredEvents(
           eq(systemEvents.mind, mind),
           eq(systemEvents.delivery, "next-turn"),
           isNull(systemEvents.delivered_at),
-          or(eq(systemEvents.session, session), eq(systemEvents.session, MIND_LEVEL_SESSION)),
+          or(eq(systemEvents.thread, thread), eq(systemEvents.thread, MIND_LEVEL_THREAD)),
           lte(systemEvents.id, uptoId),
         ),
       );
   } catch (err) {
-    elog.warn(`failed to clear delivered events for ${mind}:${session}`, log.errorData(err));
+    elog.warn(`failed to clear delivered events for ${mind}:${thread}`, log.errorData(err));
   }
 }
 
@@ -628,7 +628,7 @@ let failureReadErrorLogged = false;
 
 /**
  * The most recent undelivered failure notice event for a mind with no completed turn since
- * (across all sessions). Used by chat to surface "last turn failed" (#574) — this runs on
+ * (across all threads). Used by chat to surface "last turn failed" (#574) — this runs on
  * every minds-list fetch, so the failure filter is pushed into SQL with a LIMIT 1 rather
  * than scanning all pending rows. Null on error.
  */
@@ -705,7 +705,7 @@ export async function latestEvent(
   };
 }
 
-/** True if the mind has an undelivered next-turn event with this meta.reason (any session). */
+/** True if the mind has an undelivered next-turn event with this meta.reason (any thread). */
 export async function hasUndeliveredEvent(mind: string, reason: string): Promise<boolean> {
   const db = await getDb();
   const row = await db

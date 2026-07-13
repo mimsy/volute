@@ -286,6 +286,11 @@ async function doLogout() {
 }
 
 // Auth — detect daemon connection first, then check auth
+// Reflect the configured system name in the browser tab.
+$effect(() => {
+  document.title = auth.localName || "volute";
+});
+
 onMount(() => {
   // Async init — fire and forget (onMount cleanup must be sync)
   detectConnection()

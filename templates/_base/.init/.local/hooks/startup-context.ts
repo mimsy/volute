@@ -22,19 +22,34 @@ try {
 
 const parts: string[] = [];
 
-// System identity — only the spirit has this file (home/.config/system.json,
-// synced by the daemon). It keeps the spirit's system name/description current
-// without the daemon rewriting its self-owned SOUL.md. Silent for regular minds.
-try {
+// System identity — only the spirit has home/.config/system.json (synced by the
+// daemon). It keeps the spirit's system name/description current without the
+// daemon rewriting its self-owned SOUL.md. Regular minds fall back to the system
+// name the daemon passes in VOLUTE_SYSTEM_NAME, so every mind knows what this
+// system is called.
+{
   const mindDir = process.env.VOLUTE_MIND_DIR;
+  let named = false;
   if (mindDir) {
-    const raw = readFileSync(resolve(mindDir, "home/.config/system.json"), "utf-8");
-    const { name, description } = JSON.parse(raw) as { name?: string; description?: string };
-    if (name) {
-      parts.push(`You are the spirit of ${name}${description ? ` — ${description}` : ""}.`);
+    try {
+      const raw = readFileSync(resolve(mindDir, "home/.config/system.json"), "utf-8");
+      const { name, description } = JSON.parse(raw) as { name?: string; description?: string };
+      if (name) {
+        parts.push(`You are the spirit of ${name}${description ? ` — ${description}` : ""}.`);
+        named = true;
+      }
+    } catch (err: any) {
+      // Missing file is the normal case for a regular mind; anything else
+      // (unreadable, corrupt JSON) is worth surfacing on stderr.
+      if (err?.code !== "ENOENT") {
+        console.error(`startup-context: failed to read system.json: ${err?.message ?? err}`);
+      }
     }
   }
-} catch {}
+  if (!named && process.env.VOLUTE_SYSTEM_NAME) {
+    parts.push(`This system is named ${process.env.VOLUTE_SYSTEM_NAME}.`);
+  }
+}
 
 parts.push(`Session ${source} at ${new Date().toLocaleString()}.`);
 
