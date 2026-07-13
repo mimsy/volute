@@ -229,6 +229,22 @@ export async function addMessage(
   return msg;
 }
 
+/** Most recent message in a conversation from a given sender, or null. */
+export async function getLastMessageBySender(
+  conversationId: string,
+  sender: string,
+): Promise<Message | null> {
+  const db = await getDb();
+  const row = await db
+    .select()
+    .from(messages)
+    .where(and(eq(messages.conversation_id, conversationId), eq(messages.sender_name, sender)))
+    .orderBy(desc(messages.id))
+    .limit(1)
+    .get();
+  return row ? parseMessageRow(row) : null;
+}
+
 export async function getMessages(conversationId: string, limit = 200): Promise<Message[]> {
   const db = await getDb();
   const rows = await db

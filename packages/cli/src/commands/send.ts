@@ -2,6 +2,7 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { userInfo } from "node:os";
 import { basename, extname } from "node:path";
 import { formatFileSize } from "@volute/daemon/lib/chat/file-sharing.js";
+import type { SpiritStatus } from "@volute/daemon/lib/chat/spirit-availability.js";
 import type { ImageAttachment } from "@volute/daemon/lib/platforms.js";
 import { getClient, urlOf } from "../lib/api-client.js";
 import { command } from "../lib/command.js";
@@ -130,7 +131,26 @@ async function waitForResponse(
   }
 }
 
-type SendResult = { held?: boolean; notice?: string; outboundId?: number };
+type SendResult = {
+  held?: boolean;
+  notice?: string;
+  outboundId?: number;
+  spirit?: SpiritStatus;
+};
+
+/** A one-line acknowledgment of the spirit's availability when it's a recipient (#434). */
+function spiritAck(spirit: SpiritStatus | undefined): string | null {
+  switch (spirit) {
+    case "waking":
+      return "The system spirit is waking — a reply is on its way.";
+    case "sleeping":
+      return "The system spirit is sleeping — it will reply when it wakes.";
+    case "unavailable":
+      return "The system spirit is unavailable — an admin can fix this in Settings.";
+    default:
+      return null;
+  }
+}
 
 /**
  * Print the outcome of a POST /chat send to stdout. A "held" send (a peer posted
@@ -148,6 +168,8 @@ function printSendResult(data: SendResult): void {
   } else {
     console.log(`Message sent.${outboundId != null ? `\n[volute:outbound:${outboundId}]` : ""}`);
   }
+  const ack = spiritAck(data.spirit);
+  if (ack) console.log(ack);
 }
 
 const cmd = command({
@@ -291,6 +313,7 @@ const cmd = command({
     let waitMindName: string | undefined;
     let waitConversationId: string | undefined;
     let heldResponse = false;
+    let spiritUnavailable = false;
 
     if (parsed.isDM && parsed.platform === "volute") {
       // For volute DMs (@target), create/find conversation via daemon
@@ -359,7 +382,17 @@ const cmd = command({
         console.error(`Warning: could not read send response: ${(err as Error).message}`);
       }
       if (data.held) heldResponse = true;
-      if (data.held || !flags.wait) printSendResult(data);
+      if (data.held || !flags.wait) {
+        printSendResult(data);
+      } else {
+        // Under --wait the sent-confirmation is skipped, but the spirit ack still
+        // matters — especially "unavailable", where no reply is coming.
+        const ack = spiritAck(data.spirit);
+        if (ack) console.log(ack);
+      }
+      // The daemon just said nothing will answer — don't block --wait on a reply
+      // that will never come.
+      if (data.spirit === "unavailable") spiritUnavailable = true;
     } else if (!parsed.isDM && parsed.platform === "volute") {
       // Bare names without # are ambiguous — require explicit sigil
       if (!parsed.identifier.startsWith("#")) {
@@ -430,8 +463,8 @@ const cmd = command({
       process.exit(1);
     }
 
-    if (heldResponse) {
-      // Nothing was posted (stale-send hold) — no reply is coming, so don't wait.
+    if (heldResponse || spiritUnavailable) {
+      // Nothing will answer (stale-send hold, or the spirit can't exist) — don't wait.
     } else if (flags.wait && waitMindName) {
       if (!waitConversationId) {
         console.error("--wait requires a volute conversation (DM to a mind)");

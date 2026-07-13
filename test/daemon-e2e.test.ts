@@ -1082,6 +1082,52 @@ describe("daemon e2e", { timeout: 420000 }, () => {
     assert.ok(messages.length >= 1);
   });
 
+  it("spirit availability: DM to a stopped spirit starts it on demand (#434)", {
+    timeout: 240000,
+  }, async () => {
+    // Poll the spirit's status; it's created (npm install) + started at daemon boot.
+    async function spiritStatus(): Promise<string | null> {
+      const res = await daemonRequest("/api/minds/volute");
+      if (!res.ok) return null;
+      return ((await res.json()) as { status: string }).status;
+    }
+    async function waitForSpirit(want: string[], timeoutMs: number): Promise<string | null> {
+      const deadline = Date.now() + timeoutMs;
+      let last: string | null = null;
+      while (Date.now() < deadline) {
+        last = await spiritStatus();
+        if (last && want.includes(last)) return last;
+        await new Promise((r) => setTimeout(r, 1000));
+      }
+      return last;
+    }
+
+    const booted = await waitForSpirit(["running"], 180000);
+    assert.equal(booted, "running", `spirit should be running after daemon boot, got ${booted}`);
+
+    // Stop the spirit — the pre-#434 silent-cliff state.
+    const stopRes = await daemonRequest("/api/minds/volute/stop", { method: "POST" });
+    assert.equal(stopRes.status, 200, `Stop spirit: ${await stopRes.clone().text()}`);
+
+    // A DM to the stopped spirit starts it on demand and reports "waking".
+    const chatRes = await daemonRequest("/api/v1/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        targetMind: "volute",
+        sender: "e2e-human",
+        message: "hello, are you there?",
+      }),
+    });
+    assert.equal(chatRes.status, 200, `Chat: ${await chatRes.clone().text()}`);
+    const chatBody = (await chatRes.json()) as { spirit?: string };
+    assert.equal(chatBody.spirit, "waking", "send to a stopped spirit should report waking");
+
+    // The spirit process is up again (the send itself started it).
+    const after = await waitForSpirit(["running"], 30000);
+    assert.equal(after, "running", `spirit should be running after on-demand start, got ${after}`);
+  });
+
   it("last-known-good: recovers when a self-edit to src/ breaks startup", {
     timeout: 90000,
   }, async () => {

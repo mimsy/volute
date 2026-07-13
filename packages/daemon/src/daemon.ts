@@ -343,10 +343,9 @@ export async function startDaemon(opts: {
       }
     }
   } catch (err) {
-    log.warn(
-      "failed to start system spirit — system replies will use aiComplete fallback",
-      log.errorData(err),
-    );
+    // No fallback replies exist anymore — a DM to the missing spirit gets an honest
+    // unavailable notice, and the next DM retries the start on demand (#434).
+    log.warn("failed to start system spirit", log.errorData(err));
   }
 
   // Start system-level bridges (non-blocking)

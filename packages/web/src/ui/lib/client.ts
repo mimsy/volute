@@ -196,13 +196,20 @@ export function setConversationPrivate(id: string, isPrivate: boolean): Promise<
 
 // --- Chat ---
 
+export type SpiritStatus = "running" | "sleeping" | "waking" | "unavailable";
+
 export function sendChat(opts: {
   message: string;
   conversationId?: string;
   targetMind?: string;
   images?: Array<{ media_type: string; data: string }>;
   files?: Array<{ filename: string; data: string }>;
-}): Promise<{ ok: boolean; conversationId: string }> {
+}): Promise<{
+  ok: boolean;
+  conversationId: string;
+  spirit?: SpiritStatus;
+  spiritName?: string;
+}> {
   return post(`${V1}/chat`, {
     message: opts.message || undefined,
     conversationId: opts.conversationId,

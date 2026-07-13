@@ -51,6 +51,11 @@ let nextEntryId = 0;
 let entries = $state<ChatEntry[]>([]);
 let loadError = $state("");
 let sending = $state(false);
+// Spirit availability surfaced from the last send (#434): shown while the spirit wakes
+// or when it can't answer. Cleared on the next send, on conversation switch, and when a
+// message from the spirit itself arrives.
+let spiritNotice = $state("");
+let spiritSender = $state("");
 let typingNames = $state<string[]>([]);
 let hasMore = $state(false);
 let loadingOlder = $state(false);
@@ -167,6 +172,8 @@ $effect(() => {
   currentConvId = conversationId;
   clearTimeout(typingSafetyTimer);
   typingNames = [];
+  spiritNotice = "";
+  spiritSender = "";
   messageList?.resetToolState();
   if (!conversationId) {
     entries = [];
@@ -187,6 +194,9 @@ $effect(() => {
     if (event.type === "message") {
       // Skip user messages from ourselves — already added optimistically in handleSend
       if (event.role === "user" && event.senderName === username) return;
+
+      // The spirit itself spoke — its availability notice is obsolete.
+      if (spiritSender && event.senderName === spiritSender) spiritNotice = "";
 
       // Append new message directly from SSE (no re-fetch needed)
       const newEntry: ChatEntry = {
@@ -245,6 +255,7 @@ async function handleSend(
     },
   ];
   sending = true;
+  spiritNotice = "";
   messageList?.scrollToBottom(true);
 
   try {
@@ -255,6 +266,20 @@ async function handleSend(
       images: images.length > 0 ? images : undefined,
       files: files.length > 0 ? files : undefined,
     });
+    if (result.spirit && result.spiritName) {
+      spiritSender = result.spiritName;
+      // Prefer the spirit's display name; the daemon returns its username.
+      const spiritLabel =
+        participants.find((p) => p.username === result.spiritName)?.displayName ??
+        result.spiritName;
+      if (result.spirit === "waking") {
+        spiritNotice = `${spiritLabel} is waking — a reply is on its way.`;
+      } else if (result.spirit === "sleeping") {
+        spiritNotice = `${spiritLabel} is sleeping — they'll reply when they wake.`;
+      } else if (result.spirit === "unavailable") {
+        spiritNotice = `${spiritLabel} is unavailable. An admin can fix this in Settings.`;
+      }
+    }
     const resultConvId = result.conversationId;
     // Only notify the parent when the conversation is actually new. Firing on
     // every send used to rebuild the whole realtime layer (SSE reconnect +
@@ -321,6 +346,10 @@ async function handleSend(
     <ChatStatusBar mind={dmMind} isAdmin={auth.user?.role === "admin"} />
   {/key}
 
+  {#if spiritNotice}
+    <div class="spirit-notice">{spiritNotice}</div>
+  {/if}
+
   <MessageInput
     {sending}
     onSend={handleSend}
@@ -361,6 +390,15 @@ async function handleSend(
     text-transform: uppercase;
     opacity: 0.6;
     border-bottom: 1px solid var(--yellow-bg);
+  }
+
+  .spirit-notice {
+    padding: 6px 12px;
+    text-align: center;
+    color: var(--text-1);
+    font-size: 12px;
+    opacity: 0.8;
+    flex-shrink: 0;
   }
 
   .channel-header {
