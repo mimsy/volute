@@ -15,7 +15,7 @@ type SystemDelivery = {
   mindName: string;
   scheduleId: string;
   text: string;
-  opts?: { whileSleeping?: "skip" | "queue" | "trigger-wake"; session?: string };
+  opts?: { whileSleeping?: "skip" | "queue" | "trigger-wake"; thread?: string };
 };
 
 /** Test subclass that captures calls instead of running real exec/deliver */
@@ -179,10 +179,10 @@ describe("scheduler", () => {
       thread: "$new",
     });
     assert.equal(scheduler.systemDeliveries.length, 1);
-    assert.equal(scheduler.systemDeliveries[0].opts?.session, "$new");
+    assert.equal(scheduler.systemDeliveries[0].opts?.thread, "$new");
   });
 
-  it("fire uses legacy channel as session fallback", async () => {
+  it("fire uses legacy channel as thread fallback", async () => {
     const scheduler = new TestScheduler();
     await (scheduler as any).fire("test-mind", {
       id: "dream",
@@ -191,9 +191,9 @@ describe("scheduler", () => {
       enabled: true,
       channel: "system:dream",
     });
-    // Legacy channel is ignored — no session override
+    // Legacy channel is ignored — no thread override
     assert.equal(scheduler.systemDeliveries.length, 1);
-    assert.equal(scheduler.systemDeliveries[0].opts?.session, undefined);
+    assert.equal(scheduler.systemDeliveries[0].opts?.thread, undefined);
   });
 
   it("fire runs script and delivers output via system chat", async () => {

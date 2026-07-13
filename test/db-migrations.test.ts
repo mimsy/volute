@@ -10,11 +10,11 @@ import { migrate } from "drizzle-orm/libsql/migrator";
 // Data-preservation test for the #493 rename migrations. The regular test suite
 // only ever applies migrations to fresh empty databases; this one populates a
 // scratch DB with pre-rename rows (via migrations 0000–0013), then applies
-// 0014 (session→thread column renames) and 0015 (brain→human user_type) and
+// 0015 (session→thread column renames) and 0016 (brain→human user_type) and
 // asserts the data survives under the new names.
 
 const MIGRATIONS_DIR = resolve(import.meta.dirname, "../drizzle");
-const CUTOFF_TAG = "0014_rename_session_to_thread";
+const CUTOFF_TAG = "0015_rename_session_to_thread";
 
 type JournalEntry = { idx: number; tag: string } & Record<string, unknown>;
 type Journal = { entries: JournalEntry[] } & Record<string, unknown>;
@@ -32,7 +32,7 @@ function migrationsSubset(dest: string, beforeTag: string | null): void {
   writeFileSync(journalPath, JSON.stringify(journal, null, 2));
 }
 
-describe("rename migrations preserve data (0014 session→thread, 0015 brain→human)", () => {
+describe("rename migrations preserve data (0015 session→thread, 0016 brain→human)", () => {
   const scratch = mkdtempSync(resolve(tmpdir(), "volute-migration-test-"));
   after(() => rmSync(scratch, { recursive: true, force: true }));
 
@@ -66,6 +66,11 @@ describe("rename migrations preserve data (0014 session→thread, 0015 brain→h
     );
     await db.run(
       sql.raw(
+        `INSERT INTO system_events (mind, type, body, delivery, session) VALUES ('echo', 'notice', 'heads up', 'next-turn', 'main')`,
+      ),
+    );
+    await db.run(
+      sql.raw(
         `INSERT INTO users (username, password_hash, role, user_type) VALUES ('alice', '!x', 'admin', 'brain')`,
       ),
     );
@@ -75,7 +80,7 @@ describe("rename migrations preserve data (0014 session→thread, 0015 brain→h
       ),
     );
 
-    // 3. Apply the rename migrations (0014, 0015) on top.
+    // 3. Apply the rename migrations (0015, 0016) on top.
     const fullDir = resolve(scratch, "migrations-full");
     mkdirSync(fullDir, { recursive: true });
     migrationsSubset(fullDir, null);
@@ -101,6 +106,12 @@ describe("rename migrations preserve data (0014 session→thread, 0015 brain→h
     assert.equal(dq.thread, "discord");
     assert.equal(dq.status, "pending", "in-flight delivery must survive the rename");
     assert.ok(!("session" in dq), "delivery_queue must not keep a session column");
+
+    const se = (
+      await db.all(sql.raw(`SELECT * FROM system_events WHERE mind = 'echo'`))
+    )[0] as Record<string, unknown>;
+    assert.equal(se.thread, "main");
+    assert.ok(!("session" in se), "system_events must not keep a session column");
 
     const userTypes = (await db.all(
       sql.raw(`SELECT username, user_type FROM users ORDER BY username`),

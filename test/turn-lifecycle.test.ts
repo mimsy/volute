@@ -136,7 +136,7 @@ describe("turn-lifecycle: handleMindEvent", () => {
 
     await recordNotice({
       mind,
-      session: "s1",
+      thread: "s1",
       kind: "turn_error",
       reason: "network",
       detail: "flaky",

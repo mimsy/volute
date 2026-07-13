@@ -123,7 +123,7 @@ export async function recordMissingCredentialsNotice(
   mind: string,
   template: string | undefined,
 ): Promise<void> {
-  const { hasUndeliveredEvent, recordNotice, MIND_LEVEL_SESSION } = await import(
+  const { hasUndeliveredEvent, recordNotice, MIND_LEVEL_THREAD } = await import(
     "../chat/system-events.js"
   );
   const warning = await missingCredentialWarning(template, readMindModel(mind, template), mind);
@@ -131,7 +131,7 @@ export async function recordMissingCredentialsNotice(
   if (await hasUndeliveredEvent(mind, "no_credentials")) return;
   await recordNotice({
     mind,
-    session: MIND_LEVEL_SESSION,
+    thread: MIND_LEVEL_THREAD,
     kind: "startup",
     reason: "no_credentials",
     detail: warning,

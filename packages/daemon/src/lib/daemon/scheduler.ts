@@ -208,7 +208,7 @@ export class Scheduler {
         // Default schedule fires to "queue" while asleep so an unadorned cron
         // schedule doesn't inherit the DM wake-trigger fallback and wake the mind.
         whileSleeping: schedule.whileSleeping ?? "queue",
-        session: schedule.thread,
+        thread: schedule.thread,
       });
       slog.info(`fired "${schedule.id}" for ${mindName}${delivered ? "" : " (event pending)"}`);
 
@@ -304,13 +304,13 @@ export class Scheduler {
     mindName: string,
     scheduleId: string,
     text: string,
-    opts?: { whileSleeping?: "skip" | "queue" | "trigger-wake"; session?: string },
+    opts?: { whileSleeping?: "skip" | "queue" | "trigger-wake"; thread?: string },
   ): Promise<{ id?: number; delivered: boolean }> {
     return deliverEvent(mindName, {
       type: "schedule",
       body: text,
       meta: { scheduleId },
-      session: opts?.session,
+      thread: opts?.thread,
       whileSleeping: opts?.whileSleeping,
     });
   }

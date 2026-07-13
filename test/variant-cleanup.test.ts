@@ -80,7 +80,7 @@ async function seedBaseKeyed(): Promise<void> {
     body: "d",
     meta: JSON.stringify({ subtype: "crash", reason: "unknown" }),
     delivery: "next-turn",
-    session: "main",
+    thread: "main",
   });
   await db.insert(channelGates).values({ mind: base, channel: "#x", state: "declined" });
 }

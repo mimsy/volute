@@ -269,7 +269,7 @@ export async function handleMindEvent(
     const { reason, detail } = classify(event.content ?? "");
     await recordNotice({
       mind,
-      session: event.session,
+      thread: event.session,
       kind: "turn_error",
       reason,
       detail,
@@ -305,7 +305,7 @@ export async function handleMindEvent(
     if (event.session && tb.noteExceeded(mind)) {
       void recordNotice({
         mind,
-        session: event.session,
+        thread: event.session,
         kind: "budget",
         reason: "token_budget",
         detail:

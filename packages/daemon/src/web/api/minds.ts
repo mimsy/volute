@@ -1644,7 +1644,7 @@ const app = new Hono<AuthEnv>()
         // also queries by the raw name) and the events UI instead.
         await recordNotice({
           mind: name,
-          session: "main",
+          thread: "main",
           kind: "startup",
           reason: "startup_failed",
           detail:

@@ -683,7 +683,7 @@ export class MindManager {
           for (const { session } of orphaned) {
             void recordNotice({
               mind: name,
-              session: session ?? "main",
+              thread: session ?? "main",
               kind: "crash",
               reason: "process_crash",
               detail:

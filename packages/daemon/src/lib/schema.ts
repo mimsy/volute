@@ -282,9 +282,9 @@ export const systemEvents = sqliteTable(
     // notice subtype/reason, etc.
     meta: text("meta"),
     delivery: text("delivery").$type<"immediate" | "next-turn">().notNull().default("immediate"),
-    // Routing session (default "main"). Next-turn notices tied to no session use the
-    // sentinel session = "" so any session's drain picks them up.
-    session: text("session").notNull().default("main"),
+    // Routing thread (default "main"). Next-turn notices tied to no thread use the
+    // sentinel thread = "" so any thread's drain picks them up.
+    thread: text("thread").notNull().default("main"),
     created_at: text("created_at").notNull().default(sql`(datetime('now'))`),
     delivered_at: text("delivered_at"),
     reflection: text("reflection"),

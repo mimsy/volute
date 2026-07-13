@@ -483,7 +483,7 @@ describe("system-events reflection attribution", () => {
   it("captureReflection is a no-op for a turn with no trigger", async () => {
     const mind = uniqueMind();
     const db = await getDb();
-    await db.insert(turns).values({ id: `${mind}-t`, mind, session: "main", status: "complete" });
+    await db.insert(turns).values({ id: `${mind}-t`, mind, thread: "main", status: "complete" });
     try {
       await captureReflection(mind, `${mind}-t`); // must not throw
     } finally {
@@ -499,21 +499,21 @@ describe("system-events next-turn drain", () => {
     const mind = uniqueMind();
     await recordNotice({
       mind,
-      session: "main",
+      thread: "main",
       kind: "turn_error",
       reason: "auth_error",
       detail: "first",
     });
     await recordNotice({
       mind,
-      session: "main",
+      thread: "main",
       kind: "turn_error",
       reason: "rate_limit",
       detail: "second",
     });
     await recordNotice({
       mind,
-      session: "other",
+      thread: "other",
       kind: "crash",
       reason: "process_crash",
       detail: "elsewhere",
@@ -536,14 +536,14 @@ describe("system-events next-turn drain", () => {
     const mind = uniqueMind();
     await recordNotice({
       mind,
-      session: "main",
+      thread: "main",
       kind: "turn_error",
       reason: "unknown",
       detail: "a",
     });
     await recordNotice({
       mind,
-      session: "main",
+      thread: "main",
       kind: "turn_error",
       reason: "unknown",
       detail: "b",
@@ -556,7 +556,7 @@ describe("system-events next-turn drain", () => {
     // An event created AFTER the drain (id > watermark) must survive the clear.
     await recordNotice({
       mind,
-      session: "main",
+      thread: "main",
       kind: "budget",
       reason: "token_budget",
       detail: "c",
@@ -575,14 +575,14 @@ describe("system-events next-turn drain", () => {
     const mind = uniqueMind();
     await recordNotice({
       mind,
-      session: "main",
+      thread: "main",
       kind: "turn_error",
       reason: "unknown",
       detail: "session-scoped",
     });
     await recordNotice({
       mind,
-      session: "",
+      thread: "",
       kind: "extension",
       reason: "notes",
       detail: "pip commented on your note",
@@ -607,7 +607,7 @@ describe("system-events next-turn drain", () => {
     for (let i = 0; i < 110; i++) {
       await recordNotice({
         mind,
-        session: "main",
+        thread: "main",
         kind: "turn_error",
         reason: "network",
         detail: `n${i}`,
@@ -641,28 +641,28 @@ describe("system-events latestFailureEvent", () => {
     const mind = uniqueMind();
     await recordNotice({
       mind,
-      session: "main",
+      thread: "main",
       kind: "turn_error",
       reason: "network",
       detail: "older",
     });
     await recordNotice({
       mind,
-      session: "other",
+      thread: "other",
       kind: "crash",
       reason: "process_crash",
       detail: "newer",
     });
     await recordNotice({
       mind,
-      session: "main",
+      thread: "main",
       kind: "budget",
       reason: "token_budget",
       detail: "budget pause",
     });
     await recordNotice({
       mind,
-      session: "",
+      thread: "",
       kind: "extension",
       reason: "notes",
       detail: "someone commented",
@@ -680,7 +680,7 @@ describe("system-events latestFailureEvent", () => {
     const mind = uniqueMind();
     await recordNotice({
       mind,
-      session: "main",
+      thread: "main",
       kind: "turn_error",
       reason: "overloaded",
       detail: "a 529",
@@ -697,7 +697,7 @@ describe("system-events latestFailureEvent", () => {
     const mind = uniqueMind();
     await recordNotice({
       mind,
-      session: "quiet-channel",
+      thread: "quiet-channel",
       kind: "crash",
       reason: "process_crash",
       detail: "crashed",
@@ -708,7 +708,7 @@ describe("system-events latestFailureEvent", () => {
     await db.insert(turns).values({
       id: `${mind}-turn-1`,
       mind,
-      session: "main",
+      thread: "main",
       status: "complete",
       created_at: "2999-01-01 00:00:00",
     });
@@ -725,14 +725,14 @@ describe("system-events latestFailureEvent", () => {
     await db.insert(turns).values({
       id: `${mind}-turn-0`,
       mind,
-      session: "main",
+      thread: "main",
       status: "complete",
       created_at: "2000-01-01 00:00:00",
     });
     try {
       await recordNotice({
         mind,
-        session: "main",
+        thread: "main",
         kind: "turn_error",
         reason: "network",
         detail: "still broken",
@@ -750,14 +750,14 @@ describe("system-events status surfaces", () => {
     assert.equal(await latestEvent(mind), null);
     await recordNotice({
       mind,
-      session: "main",
+      thread: "main",
       kind: "turn_error",
       reason: "auth_error",
       detail: "older",
     });
     await recordNotice({
       mind,
-      session: "",
+      thread: "",
       kind: "startup",
       reason: "no_credentials",
       detail: "newest",
@@ -773,7 +773,7 @@ describe("system-events status surfaces", () => {
     assert.equal(await hasUndeliveredEvent(mind, "no_credentials"), false);
     await recordNotice({
       mind,
-      session: "",
+      thread: "",
       kind: "startup",
       reason: "no_credentials",
       detail: "mute",
@@ -807,7 +807,7 @@ describe("system-events pendingEventsLine", () => {
 describe("system-events formatEvents", () => {
   const base = {
     mind: "m",
-    session: "s",
+    thread: "s",
     delivery: "next-turn",
     delivered_at: null,
     reflection: null,

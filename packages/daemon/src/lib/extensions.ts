@@ -15,7 +15,7 @@ import type { Context, Hono, MiddlewareHandler } from "hono";
 import { type AuthEnv, requireSelf } from "../web/middleware/auth.js";
 import { getUser, getUserByUsername } from "./auth.js";
 import { announceToSystem } from "./chat/system-channel.js";
-import { MIND_LEVEL_SESSION, recordNotice as recordMindNotice } from "./chat/system-events.js";
+import { MIND_LEVEL_THREAD, recordNotice as recordMindNotice } from "./chat/system-events.js";
 import { readGlobalConfig, writeGlobalConfig } from "./config/setup.js";
 import { readSystemsConfig } from "./config/systems-config.js";
 import { publish } from "./events/activity-events.js";
@@ -254,7 +254,7 @@ async function buildContext(
         if (user?.user_type !== "mind") return;
         await recordMindNotice({
           mind: mindName,
-          session: MIND_LEVEL_SESSION,
+          thread: MIND_LEVEL_THREAD,
           kind: "extension",
           reason: manifest.id,
           detail: text.slice(0, 500),
