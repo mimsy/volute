@@ -107,10 +107,10 @@ export class DeliveryManager {
   private isMindRunning: (baseName: string) => boolean = (name) =>
     tryGetMindManager()?.isRunning(name) ?? false;
 
-  /** Sends a system message to a mind (invites, release summaries); overridable in tests. */
+  /** Delivers a channel event to a mind (invites, release summaries); overridable in tests. */
   private notify: (mindName: string, text: string) => Promise<void> = async (mindName, text) => {
-    const { sendSystemMessage } = await import("../chat/system-chat.js");
-    await sendSystemMessage(mindName, text);
+    const { deliverEvent } = await import("../chat/system-events.js");
+    await deliverEvent(mindName, { type: "channel", body: text });
   };
 
   constructor() {

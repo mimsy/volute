@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import { CronExpressionParser } from "cron-parser";
-import { sendSystemMessage } from "../chat/system-chat.js";
+import { deliverEvent } from "../chat/system-events.js";
 import { loadMergedEnv } from "../config/env.js";
 import { findMind, mindDir, mindTmpDir, stateDir, voluteSystemDir } from "../mind/registry.js";
 import { isSandboxEnabled, wrapForSandbox } from "../mind/sandbox.js";
@@ -204,16 +204,20 @@ export class Scheduler {
         return;
       }
 
-      await this.deliverSystem(mindName, `[${schedule.id}] ${text}`, {
+      const { id, delivered } = await this.deliverSystem(mindName, schedule.id, text, {
         // Default schedule fires to "queue" while asleep so an unadorned cron
         // schedule doesn't inherit the DM wake-trigger fallback and wake the mind.
         whileSleeping: schedule.whileSleeping ?? "queue",
         session: schedule.session,
       });
-      slog.info(`fired "${schedule.id}" for ${mindName}`);
+      slog.info(`fired "${schedule.id}" for ${mindName}${delivered ? "" : " (event pending)"}`);
 
-      // Self-delete one-time timers after successful delivery
-      if (schedule.fireAt) {
+      // Self-delete one-time timers once the event row exists. An undelivered event row
+      // stays pending and is redelivered on the mind's next start or wake, so the
+      // reminder is not lost — only a failed insert (no id) keeps the schedule so the
+      // next tick retries (a retained fireAt refires every minute, so retaining it after
+      // a successful insert would pile up duplicate pending events).
+      if (schedule.fireAt && id != null) {
         this.removeSchedule(mindName, schedule.id);
       }
     } catch (err) {
@@ -296,12 +300,19 @@ export class Scheduler {
     };
   }
 
-  protected deliverSystem(
+  protected async deliverSystem(
     mindName: string,
+    scheduleId: string,
     text: string,
     opts?: { whileSleeping?: "skip" | "queue" | "trigger-wake"; session?: string },
-  ): Promise<void> {
-    return sendSystemMessage(mindName, text, opts);
+  ): Promise<{ id?: number; delivered: boolean }> {
+    return deliverEvent(mindName, {
+      type: "schedule",
+      body: text,
+      meta: { scheduleId },
+      session: opts?.session,
+      whileSleeping: opts?.whileSleeping,
+    });
   }
 }
 

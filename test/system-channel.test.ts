@@ -1,6 +1,4 @@
 import assert from "node:assert/strict";
-import { mkdirSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { eq } from "drizzle-orm";
 import { createUser } from "../packages/daemon/src/lib/auth.js";
@@ -24,10 +22,15 @@ import {
   addMind,
   addSpirit,
   addVariant,
-  mindDir,
   removeMind,
 } from "../packages/daemon/src/lib/mind/registry.js";
-import { activity, messages, mindHistory, users } from "../packages/daemon/src/lib/schema.js";
+import {
+  activity,
+  messages,
+  mindHistory,
+  systemEvents,
+  users,
+} from "../packages/daemon/src/lib/schema.js";
 
 const TEST_USERNAMES = [
   "volute",
@@ -57,6 +60,7 @@ async function cleanup() {
   for (const mind of TEST_MINDS) {
     await db.delete(activity).where(eq(activity.mind, mind));
     await db.delete(mindHistory).where(eq(mindHistory.mind, mind));
+    await db.delete(systemEvents).where(eq(systemEvents.mind, mind));
     await removeMind(mind);
   }
   // Remove the #system channel so each test exercises fresh creation
@@ -173,34 +177,29 @@ describe("system channel", () => {
     assert.ok(found, "should find the announcement message");
   });
 
-  // Register the spirit and give it the catch-all routes.json the real spirit
-  // template ships with, so the delivery pipeline records the prompt as spirit
-  // inbound history instead of gating the unrouted @volute channel.
-  async function registerSpiritWithRoutes(): Promise<void> {
+  // Register the spirit (dead port — the event stays pending, which is fine: the
+  // prompt is a durable system event redelivered on the spirit's next start).
+  async function registerSpirit(): Promise<void> {
     await addSpirit("volute", 4906, "claude", "/tmp/spirit");
-    const configDir = resolve(mindDir("volute"), "home/.config");
-    mkdirSync(configDir, { recursive: true });
-    writeFileSync(
-      resolve(configDir, "routes.json"),
-      // biome-ignore lint/suspicious/noTemplateCurlyInString: routing template var
-      JSON.stringify({ rules: [{ channel: "*", session: "${channel}" }], default: "main" }),
-    );
   }
 
   it("announceSprout prompts the spirit to write the welcome and records a mind_sprouted activity", async () => {
     // The spirit hand-writes the #system welcome (#665); the daemon only sends
-    // it a prompt.
-    await registerSpiritWithRoutes();
+    // it a prompt — now a lifecycle system event, not a DM.
+    await registerSpirit();
 
     await announceSprout("commons-sprout");
 
     const db = await getDb();
-    const history = await db.select().from(mindHistory).where(eq(mindHistory.mind, "volute")).all();
-    const prompt = history.find(
-      (h) => h.type === "inbound" && h.content?.includes("@commons-sprout"),
-    );
-    assert.ok(prompt, "spirit should receive a prompt to welcome the sprouted mind");
-    assert.ok(prompt!.content!.includes("#system"), "prompt should point the spirit at #system");
+    const events = await db
+      .select()
+      .from(systemEvents)
+      .where(eq(systemEvents.mind, "volute"))
+      .all();
+    const prompt = events.find((e) => e.body.includes("@commons-sprout"));
+    assert.ok(prompt, "spirit should receive an event prompting it to welcome the sprouted mind");
+    assert.ok(prompt!.body.includes("#system"), "prompt should point the spirit at #system");
+    assert.equal(prompt!.type, "lifecycle");
 
     // No canned message is posted anywhere — the spirit composes its own.
     const msgs = await db.select().from(messages).all();
@@ -235,12 +234,16 @@ describe("system channel", () => {
       user_type: "mind",
       display_name: "Sprouty",
     });
-    await registerSpiritWithRoutes();
+    await registerSpirit();
 
     await announceSprout("commons-sprout");
 
-    const history = await db.select().from(mindHistory).where(eq(mindHistory.mind, "volute")).all();
-    const prompt = history.find((h) => h.type === "inbound" && h.content?.includes("Sprouty"));
+    const events = await db
+      .select()
+      .from(systemEvents)
+      .where(eq(systemEvents.mind, "volute"))
+      .all();
+    const prompt = events.find((e) => e.body.includes("Sprouty"));
     assert.ok(prompt, "spirit prompt should use the display name");
 
     const acts = await db.select().from(activity).where(eq(activity.mind, "commons-sprout")).all();

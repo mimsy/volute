@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import {
   compactTime,
   compactTimestamp,
+  formatEventPrefix,
   formatPrefix,
   formatTypingSuffix,
 } from "./format-prefix.js";
@@ -67,7 +68,10 @@ function generateMessageId(): string {
 
 function applyPrefix(content: VoluteContentPart[], meta: ChannelMeta): VoluteContentPart[] {
   const time = compactTimestamp();
-  const prefix = formatPrefix(meta, time);
+  // System-event turns get an ambient `[Event: …]` prefix — no sender/DM framing.
+  const prefix = meta.isEvent
+    ? formatEventPrefix(meta.eventLabel ?? "Event", meta.eventAt)
+    : formatPrefix(meta, time);
   if (!prefix) return content;
 
   const firstTextIdx = content.findIndex((p) => p.type === "text");

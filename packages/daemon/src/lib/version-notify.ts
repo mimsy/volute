@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { sendSystemMessage } from "./chat/system-chat.js";
+import { deliverEvent } from "./chat/system-events.js";
 import { mindDir, readRegistry, setMindTemplateHash, voluteSystemDir } from "./mind/registry.js";
 import { computeMindTemplateHash } from "./mind/template-staleness.js";
 import { parseReleaseNotes } from "./release-notes.js";
@@ -116,7 +116,10 @@ export async function notifyVersionUpdate(): Promise<void> {
 
     const message = formatNotification(currentVersion, releaseNotes, needsUpgrade, entry.name);
 
-    await sendSystemMessage(entry.name, message);
+    // Immediate (triggers a turn): an idle mind — exactly the stale mind that needs the
+    // upgrade nudge — never drains a next-turn event, and pre-events templates lack the
+    // drain hook entirely, so next-turn delivery could not reach the minds that need it.
+    await deliverEvent(entry.name, { type: "version", body: message });
   });
 
   const results = await Promise.allSettled(promises);

@@ -1,4 +1,5 @@
 import { and, eq, gte, inArray, sql } from "drizzle-orm";
+import { captureReflection, clearDeliveredEvents, recordNotice } from "../chat/system-events.js";
 import { getTypingMap, publishTypingForChannels } from "../chat/typing.js";
 import { getDb } from "../db.js";
 import { getDeliveryManager } from "../delivery/delivery-manager.js";
@@ -10,7 +11,6 @@ import { publish as publishMindEvent } from "../events/mind-events.js";
 import { mindHistory, turns } from "../schema.js";
 import log from "../util/logger.js";
 import { classify } from "./error-classify.js";
-import { clearDeliveredNotices, recordNotice } from "./notices.js";
 import { summarizeTurn } from "./summarizer.js";
 import { getTokenBudget } from "./token-budget.js";
 import {
@@ -71,7 +71,7 @@ function markDeliveredOnCleanTurn(mind: string, session?: string | null): void {
   noticeDrainWatermarks.delete(wmKey);
   const errored = takeErrored(mind, session);
   if (!errored && watermark != null) {
-    clearDeliveredNotices(mind, session, watermark).catch((err) =>
+    clearDeliveredEvents(mind, session, watermark).catch((err) =>
       llog.warn(`failed to clear delivered notices for ${mind}:${session}`, log.errorData(err)),
     );
   }
@@ -329,6 +329,12 @@ async function completeTurnAndSummarize(
   const finish = async () => {
     const completedTurnId = await completeTurn(mind, event.session);
     markDeliveredOnCleanTurn(mind, event.session);
+    // If this turn was triggered by an immediate system event (exact match via the
+    // turn's trigger_event_id), record its final text as the event's reflection
+    // (logged only — delivered nowhere).
+    captureReflection(mind, completedTurnId).catch((err) =>
+      llog.warn("failed to capture event reflection", log.errorData(err)),
+    );
     if (insertedId != null) {
       summarizeTurn(mind, event.session, event.channel, insertedId, completedTurnId).catch((err) =>
         llog.error("turn summarization failed", log.errorData(err)),

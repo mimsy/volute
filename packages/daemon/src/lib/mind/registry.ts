@@ -14,9 +14,9 @@ import {
   conversations,
   deliveryQueue,
   mindHistory,
-  mindNotices,
   minds,
   summaries,
+  systemEvents,
   turns,
   users,
 } from "../schema.js";
@@ -318,7 +318,7 @@ export async function deleteMindDbFootprint(name: string): Promise<void> {
     await tx.delete(turns).where(eq(turns.mind, name));
     await tx.delete(mindHistory).where(eq(mindHistory.mind, name));
     await tx.delete(summaries).where(eq(summaries.mind, name));
-    await tx.delete(mindNotices).where(eq(mindNotices.mind, name));
+    await tx.delete(systemEvents).where(eq(systemEvents.mind, name));
     await tx.delete(channelGates).where(eq(channelGates.mind, name));
   });
 }

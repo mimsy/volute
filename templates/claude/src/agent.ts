@@ -51,6 +51,8 @@ type Session = {
   messageChannels: Map<string, { channel: string; sender?: string }>;
   replyInstructionsFired: boolean;
   replyInstructionsMode: "once" | "always" | "never";
+  /** True while processing a system-event turn (drives event reply instructions). */
+  currentIsEvent?: boolean;
   contextTokens: number;
   /** Last inbound message or completed turn — drives idle reaping. */
   lastActivityAt: number;
@@ -651,6 +653,9 @@ export function createMind(options: {
         if (meta.replyInstructions) {
           session.replyInstructionsMode = meta.replyInstructions;
         }
+
+        // Mark whether this turn is a system event (drives the event reply-instructions hook).
+        session.currentIsEvent = meta.isEvent ?? false;
 
         // Interrupt if requested and session is mid-turn
         if (meta.interrupt && session.currentMessageId !== undefined && session.currentQuery) {

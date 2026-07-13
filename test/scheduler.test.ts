@@ -13,6 +13,7 @@ import { SandboxUnavailableError } from "../packages/daemon/src/lib/mind/sandbox
 
 type SystemDelivery = {
   mindName: string;
+  scheduleId: string;
   text: string;
   opts?: { whileSleeping?: "skip" | "queue" | "trigger-wake"; session?: string };
 };
@@ -33,12 +34,17 @@ class TestScheduler extends Scheduler {
     return this.scriptResult;
   }
 
+  /** Result the stubbed deliverSystem returns; tests override to simulate failures. */
+  deliverResult: { id?: number; delivered: boolean } = { id: 1, delivered: true };
+
   protected override async deliverSystem(
     mindName: string,
+    scheduleId: string,
     text: string,
     opts?: { whileSleeping?: "skip" | "queue" | "trigger-wake"; session?: string },
-  ): Promise<void> {
-    this.systemDeliveries.push({ mindName, text, opts });
+  ): Promise<{ id?: number; delivered: boolean }> {
+    this.systemDeliveries.push({ mindName, scheduleId, text, opts });
+    return this.deliverResult;
   }
 }
 
@@ -93,7 +99,8 @@ describe("scheduler", () => {
     });
     assert.equal(scheduler.systemDeliveries.length, 1);
     assert.equal(scheduler.systemDeliveries[0].mindName, "test-mind");
-    assert.equal(scheduler.systemDeliveries[0].text, "[msg-sched] hello");
+    assert.equal(scheduler.systemDeliveries[0].scheduleId, "msg-sched");
+    assert.equal(scheduler.systemDeliveries[0].text, "hello");
     assert.equal(scheduler.scriptCalls.length, 0);
   });
 
@@ -115,8 +122,8 @@ describe("scheduler", () => {
       Math.random = originalRandom;
     }
     assert.equal(scheduler.systemDeliveries.length, 2);
-    assert.equal(scheduler.systemDeliveries[0].text, "[heartbeat] first");
-    assert.equal(scheduler.systemDeliveries[1].text, "[heartbeat] third");
+    assert.equal(scheduler.systemDeliveries[0].text, "first");
+    assert.equal(scheduler.systemDeliveries[1].text, "third");
   });
 
   it("fire falls back to message when messages pool is empty", async () => {
@@ -129,7 +136,7 @@ describe("scheduler", () => {
       enabled: true,
     });
     assert.equal(scheduler.systemDeliveries.length, 1);
-    assert.equal(scheduler.systemDeliveries[0].text, "[hb] fallback");
+    assert.equal(scheduler.systemDeliveries[0].text, "fallback");
   });
 
   it("fire skips schedule with empty messages and no message or script", async () => {
@@ -308,6 +315,38 @@ describe("scheduler", () => {
     });
     assert.equal(scheduler.systemDeliveries.length, 1);
     assert.ok(scheduler.systemDeliveries[0].text.includes("timer fired"));
+  });
+
+  it("fireAt self-deletes once the event row exists, even if delivery is pending", async () => {
+    // An undelivered event stays pending and is redelivered on the mind's next
+    // start/wake, so the one-shot's job is done once the row exists.
+    const scheduler = new TestScheduler();
+    const removed: string[] = [];
+    (scheduler as any).removeSchedule = (_mind: string, id: string) => removed.push(id);
+
+    scheduler.deliverResult = { id: 7, delivered: false };
+    await (scheduler as any).fire("test-mind", {
+      id: "pending-timer",
+      fireAt: new Date(Date.now() - 60000).toISOString(),
+      message: "timer",
+      enabled: true,
+    });
+    assert.deepEqual(removed, ["pending-timer"], "schedule removed — event row is durable");
+  });
+
+  it("fireAt is retained when the event row could not be recorded at all", async () => {
+    const scheduler = new TestScheduler();
+    const removed: string[] = [];
+    (scheduler as any).removeSchedule = (_mind: string, id: string) => removed.push(id);
+
+    scheduler.deliverResult = { id: undefined, delivered: false };
+    await (scheduler as any).fire("test-mind", {
+      id: "lost-timer",
+      fireAt: new Date(Date.now() - 60000).toISOString(),
+      message: "timer",
+      enabled: true,
+    });
+    assert.deepEqual(removed, [], "schedule kept so the next tick retries the insert");
   });
 });
 

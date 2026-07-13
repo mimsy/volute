@@ -196,4 +196,37 @@ describe("spirit as a mind sender via POST /api/v1/chat", () => {
     assert.equal(voluteMsgs.length, 1, "only the spirit's send should exist — no fallback reply");
     assert.equal(voluteMsgs[0].role, "user", "the single volute message is the send, not a reply");
   });
+
+  it("a regular mind DMing the system user with the spirit stopped gets no reply and no crash", async () => {
+    // The utility-model fallback is gone (hard cut): a DM to @volute while the spirit
+    // is stopped simply persists and waits — 200, one message, no generated reply.
+    const { conversationId } = await setupSpiritDM();
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
+
+    invalidateMindUserCache(TARGET_MIND);
+    const mindToken = generateMindToken(TARGET_MIND);
+    try {
+      const res = await spiritSend(app as never, mindToken, {
+        conversationId,
+        message: "spirit, are you there?",
+      });
+      assert.equal(res.status, 200);
+
+      const db = await getDb();
+      const msgs = await db
+        .select()
+        .from(messages)
+        .where(eq(messages.conversation_id, conversationId))
+        .all();
+      assert.equal(msgs.length, 1, "just the mind's message — nothing replied");
+      assert.equal(msgs[0].sender_name, TARGET_MIND);
+      assert.equal(
+        msgs.filter((m) => m.role === "assistant").length,
+        0,
+        "no generated fallback reply",
+      );
+    } finally {
+      revokeMindToken(TARGET_MIND);
+    }
+  });
 });

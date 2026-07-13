@@ -249,15 +249,14 @@ export async function notifySpiritSystemChange(): Promise<void> {
   const config = readGlobalConfig();
   const name = config.name ?? "Volute";
   const desc = config.description ? ` — ${config.description}` : "";
-  try {
-    const { sendSystemMessage } = await import("../chat/system-chat.js");
-    await sendSystemMessage(
-      spiritName,
-      `The host updated this system's identity: you're now the spirit of ${name}${desc}. Your SOUL.md is yours — update it if you'd like it to reflect this.`,
-    );
-  } catch (err) {
-    slog.warn("failed to notify spirit of system change", log.errorData(err));
-  }
+  // deliverEvent never throws — an undelivered notice stays pending and reaches the
+  // spirit on its next start or wake.
+  const { deliverEvent } = await import("../chat/system-events.js");
+  await deliverEvent(spiritName, {
+    type: "notice",
+    meta: { subtype: "identity-change" },
+    body: `The host updated this system's identity: you're now the spirit of ${name}${desc}. Your SOUL.md is yours — update it if you'd like it to reflect this.`,
+  });
 }
 
 /**

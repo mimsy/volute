@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { Hono } from "hono";
 import { getOrCreateMindUser } from "../../lib/auth.js";
-import { sendSystemMessage } from "../../lib/chat/system-chat.js";
+import { deliverEvent } from "../../lib/chat/system-events.js";
 import { getMindManager, tryGetMindManager } from "../../lib/daemon/mind-manager.js";
 import { createConversation, findDMConversation } from "../../lib/events/conversations.js";
 import { runFarewellTurn } from "../../lib/mind/farewell.js";
@@ -49,12 +49,14 @@ export async function establishVariantDialogue(
   }
 
   const purposeLine = purpose ? ` Its purpose: ${purpose}.` : "";
-  await sendSystemMessage(
-    parent,
-    `You've split off a variant, ${variant} — a parallel version of you exploring on its own.${purposeLine} ` +
+  await deliverEvent(parent, {
+    type: "lifecycle",
+    meta: { subtype: "variant-created", variant },
+    body:
+      `You've split off a variant, ${variant} — a parallel version of you exploring on its own.${purposeLine} ` +
       `Reach it at @${variant} to check in on how the experiment is going, and merge its work back with ` +
       `\`volute mind join ${variant}\` when you're ready.`,
-  );
+  });
 }
 
 const app = new Hono<AuthEnv>()
@@ -323,7 +325,6 @@ const app = new Hono<AuthEnv>()
         variantName,
         parentName: mindName,
         variantDir: variantEntry.dir,
-        port: variantEntry.port,
         running: tryGetMindManager()?.isRunning(variantName) ?? false,
       });
     } catch (err) {

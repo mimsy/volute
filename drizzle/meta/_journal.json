@@ -99,6 +99,13 @@
       "when": 1775800000000,
       "tag": "0013_variant_purpose",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "6",
+      "when": 1775900000000,
+      "tag": "0014_system_events",
+      "breakpoints": true
     }
   ]
 }

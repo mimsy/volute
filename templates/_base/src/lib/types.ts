@@ -14,6 +14,12 @@ export type ChannelMeta = {
   sender?: string;
   platform?: string;
   isDM?: boolean;
+  /** True when this turn was triggered by a system event (not a person). */
+  isEvent?: boolean;
+  /** Worded label for an event, e.g. "Schedule: morning-check". */
+  eventLabel?: string;
+  /** The event's timestamp (UTC) for the envelope prefix. */
+  eventAt?: string;
   channelName?: string;
   serverName?: string;
   sessionName?: string;

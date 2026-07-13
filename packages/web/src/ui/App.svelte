@@ -8,6 +8,7 @@ import ConnectionSetup from "./components/ConnectionSetup.svelte";
 import LoginPage from "./components/LoginPage.svelte";
 import MainFrame from "./components/layout/MainFrame.svelte";
 import UnifiedSidebar from "./components/layout/UnifiedSidebar.svelte";
+import MindEvents from "./components/mind/MindEvents.svelte";
 import MindRightPanel from "./components/mind/MindRightPanel.svelte";
 import MindSettings from "./components/mind/MindSettings.svelte";
 import MindVariants from "./components/mind/MindVariants.svelte";
@@ -109,6 +110,7 @@ type ModalType =
   | "mindFiles"
   | "mindSettings"
   | "mindVariants"
+  | "mindEvents"
   | "mindContext"
   | "systemSettings"
   | "systemLogs"
@@ -689,6 +691,7 @@ function handleGlobalClick(e: MouseEvent) {
             else if (section === "files") activeModal = "mindFiles";
             else if (section === "settings") activeModal = "mindSettings";
             else if (section === "variants") activeModal = "mindVariants";
+            else if (section === "events") activeModal = "mindEvents";
             else if (section === "context") activeModal = "mindContext";
           }}
           onSelectSystemSection={(section) => {
@@ -890,6 +893,13 @@ function handleGlobalClick(e: MouseEvent) {
     <Modal title="Variants — {mindModalName}" onClose={() => { activeModal = null; mindModalName = null; }}>
       <div class="modal-scroll-body">
         <MindVariants name={mindModalName} />
+      </div>
+    </Modal>
+  {/if}
+  {#if activeModal === "mindEvents" && mindModalName}
+    <Modal title="Events — {mindModalName}" onClose={() => { activeModal = null; mindModalName = null; }}>
+      <div class="modal-scroll-body">
+        <MindEvents name={mindModalName} />
       </div>
     </Modal>
   {/if}

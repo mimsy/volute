@@ -125,7 +125,7 @@ The daemon serves a Hono web server (default port 1618) with a Svelte frontend.
 - **Backend** (`packages/daemon/src/web/`): Hono API routes for auth, minds, chat, conversations, logs, variants, files, bridges, schedules, channels, env, keys, prompts, skills, file-sharing, extensions, setup, activity
 - **Frontend** (`packages/web/`): Svelte SPA with login, dashboard, and mind detail pages (chat, logs, files, variants, connections tabs). Shared UI components imported from `@volute/ui`
 - **Auth**: Cookie-based (`volute_session`), in-memory session map, first user auto-admin
-- **Database**: libSQL at `~/.volute/volute.db` for minds, users, conversations, channels, messages, turns, mind_history, activity, delivery_queue, sessions, shared_skills, system_prompts, conversation_reads, summaries
+- **Database**: libSQL at `~/.volute/volute.db` for minds, users, conversations, channels, messages, turns, mind_history, activity, delivery_queue, sessions, shared_skills, system_prompts, conversation_reads, summaries, system_events
 - **Build**: `vite build` → `dist/web-assets/`
 
 ### Extensions
@@ -272,7 +272,7 @@ Mind-scoped commands (`chat`, `clock`, `skill`) use `--mind <name>` or `VOLUTE_M
 | `config/env.ts` | Environment variables (shared `~/.volute/env.json` + mind-specific state dir env) |
 | `util/format-tool.ts` | Shared tool call summarization (`[toolName primaryArg]` format) |
 | `ai-service.ts` | System AI completion service via `@earendil-works/pi-ai` (multi-provider, OAuth + API key + env var auth, model selection) |
-| `schema.ts` | Drizzle ORM schema (minds, users, conversations, channels, turns, mindHistory, conversationParticipants, sessions, systemPrompts, sharedSkills, deliveryQueue, activity, conversationReads, messages, summaries) |
+| `schema.ts` | Drizzle ORM schema (minds, users, conversations, channels, turns, mindHistory, conversationParticipants, sessions, systemPrompts, sharedSkills, deliveryQueue, activity, conversationReads, messages, summaries, systemEvents) |
 | `db.ts` | libSQL database singleton at `~/.volute/volute.db` (WAL mode, foreign keys) |
 | `auth.ts` | bcrypt password hashing, first user auto-admin, pending approval flow, mind users |
 | `platforms.ts` | Platform registry with optional drivers (read/send), display names, slug resolution |
@@ -301,7 +301,8 @@ Mind-scoped commands (`chat`, `clock`, `skill`) use `--mind <name>` or `VOLUTE_M
 | `chat/typing.ts` | Typing indicator tracking |
 | `config/setup.ts` | Global config (`~/.volute/system/config.json`) with setup state, `defaultSkills` array, AI config types (`AiConfig`, `AiProviderConfig`), `isSetupComplete()`, `isImagegenEnabled()`, migration for existing users. Provider credentials (`ai.providers`, `imagegen.providers`) are split into a root-only `secrets.json` (0600) while `config.json` stays host-readable (0644); `readGlobalConfig()`/`writeGlobalConfig()` merge/split transparently and `migrateConfigSecrets()` migrates legacy single-file installs |
 | `chat/system-channel.ts` | System channel utilities |
-| `chat/system-chat.ts` | System chat functionality (spirit self-delivery bypass for "volute" target) |
+| `chat/system-chat.ts` | `ensureSystemDM` — bootstraps the genuine spirit↔mind DM (for hand-written nurture); all automated traffic goes through system events, not this DM |
+| `chat/system-events.ts` | System events: `deliverEvent` (environment → mind, `immediate`/`next-turn`), drain/format for next-turn context blocks, sleep queue flush, reflection capture, and the `recordNotice` failure-notice shim. Backed by the `system_events` table (replaced `mind_notices` + the `sendSystemMessage` utility-fallback) |
 | `mind/sandbox.ts` | Sandbox runtime (`@anthropic-ai/sandbox-runtime`) integration: `isSandboxEnabled()`, `initSandbox()`, `wrapForSandbox()`, deny-read list for mind isolation |
 | `config/service-mode.ts` | Service mode detection (manual/systemd/launchd/system-launchd), service control, health polling, daemon config reader |
 | `config/systems-config.ts` | Read/write `~/.volute/system/systems.json` (API key, system name, API URL) |

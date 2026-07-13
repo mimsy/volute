@@ -3,7 +3,9 @@ import { resolve } from "node:path";
 import { missingCredentialWarning } from "../ai-service.js";
 import { syncMindProfile } from "../auth.js";
 import { joinSystemChannelForMind, joinSystemChannelForSpirit } from "../chat/system-channel.js";
-import { ensureSystemDM, sendSystemMessage } from "../chat/system-chat.js";
+import { ensureSystemDM } from "../chat/system-chat.js";
+import { deliverEvent } from "../chat/system-events.js";
+import { getSystemName } from "../config/setup.js";
 import { publish as publishActivity } from "../events/activity-events.js";
 import { markIdle } from "../events/mind-activity-tracker.js";
 import { notifyExtensionsMindStart, notifyExtensionsMindStop } from "../extensions.js";
@@ -46,9 +48,13 @@ export async function startMindFull(name: string): Promise<void> {
   // Seed minds get the server + initial orientation, no schedules or budget
   if (!entry || entry.stage === "seed") {
     if (entry?.stage === "seed") {
-      // sendSeedOrientation calls ensureSystemDM internally (via sendSystemMessage)
+      // Orientation is delivered as a system event, not a spirit DM — so bootstrap the
+      // spirit↔seed DM separately (for later nurture correspondence).
       sendSeedOrientation(baseName, entry.createdBy).catch((err: unknown) =>
         log.error(`failed to send seed orientation for ${baseName}`, log.errorData(err)),
+      );
+      ensureSystemDM(baseName).catch((err: unknown) =>
+        log.error(`failed to ensure system DM for ${baseName}`, log.errorData(err)),
       );
 
       // If a creator is set, ensure a DM exists between the seed and the creator
@@ -117,10 +123,12 @@ export async function recordMissingCredentialsNotice(
   mind: string,
   template: string | undefined,
 ): Promise<void> {
-  const { hasUndeliveredNotice, recordNotice, MIND_LEVEL_SESSION } = await import("./notices.js");
+  const { hasUndeliveredEvent, recordNotice, MIND_LEVEL_SESSION } = await import(
+    "../chat/system-events.js"
+  );
   const warning = await missingCredentialWarning(template, readMindModel(mind, template), mind);
   if (!warning) return;
-  if (await hasUndeliveredNotice(mind, "no_credentials")) return;
+  if (await hasUndeliveredEvent(mind, "no_credentials")) return;
   await recordNotice({
     mind,
     session: MIND_LEVEL_SESSION,
@@ -228,8 +236,7 @@ export function buildSeedOrientation(
   createdBy?: string | null,
   creatorType?: "brain" | "mind" | "system",
 ): string {
-  const intro =
-    "You've just been created as a seed. Start a conversation — introduce yourself, ask questions, and begin exploring who you want to be.";
+  const intro = `You've just been created as a seed on ${getSystemName()}. Start a conversation — introduce yourself, ask questions, and begin exploring who you want to be.`;
   if (!createdBy) return intro;
 
   const who =
@@ -248,7 +255,10 @@ async function sendSeedOrientation(mindName: string, createdBy?: string | null):
     const { getUserByUsername } = await import("../auth.js");
     creatorType = (await getUserByUsername(createdBy))?.user_type;
   }
-  await sendSystemMessage(mindName, buildSeedOrientation(createdBy, creatorType));
+  await deliverEvent(mindName, {
+    type: "orientation",
+    body: buildSeedOrientation(createdBy, creatorType),
+  });
 }
 
 async function ensureCreatorDM(mindName: string, creatorUsername: string): Promise<void> {

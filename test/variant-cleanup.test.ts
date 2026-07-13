@@ -22,9 +22,9 @@ import {
   deliveryQueue,
   messages,
   mindHistory,
-  mindNotices,
   minds,
   summaries,
+  systemEvents,
   turns,
   users,
 } from "../packages/daemon/src/lib/schema.js";
@@ -74,9 +74,14 @@ async function seedBaseKeyed(): Promise<void> {
   await db
     .insert(summaries)
     .values({ mind: base, period: "day", period_key: "2026-07-11", content: "c" });
-  await db
-    .insert(mindNotices)
-    .values({ mind: base, session: "main", kind: "crash", reason: "unknown", detail: "d" });
+  await db.insert(systemEvents).values({
+    mind: base,
+    type: "notice",
+    body: "d",
+    meta: JSON.stringify({ subtype: "crash", reason: "unknown" }),
+    delivery: "next-turn",
+    session: "main",
+  });
   await db.insert(channelGates).values({ mind: base, channel: "#x", state: "declined" });
 }
 
@@ -89,7 +94,7 @@ describe("deleteMindDbFootprint", () => {
     await db.delete(turns).where(eq(turns.mind, base));
     await db.delete(mindHistory).where(eq(mindHistory.mind, base));
     await db.delete(summaries).where(eq(summaries.mind, base));
-    await db.delete(mindNotices).where(eq(mindNotices.mind, base));
+    await db.delete(systemEvents).where(eq(systemEvents.mind, base));
     await db.delete(channelGates).where(eq(channelGates.mind, base));
     await db.delete(activity).where(eq(activity.mind, base));
     await db.delete(deliveryQueue).where(eq(deliveryQueue.mind, base));
@@ -162,7 +167,10 @@ describe("deleteMindDbFootprint", () => {
     assert.equal((await db.select().from(turns).where(eq(turns.mind, base))).length, 1);
     assert.equal((await db.select().from(mindHistory).where(eq(mindHistory.mind, base))).length, 1);
     assert.equal((await db.select().from(summaries).where(eq(summaries.mind, base))).length, 1);
-    assert.equal((await db.select().from(mindNotices).where(eq(mindNotices.mind, base))).length, 1);
+    assert.equal(
+      (await db.select().from(systemEvents).where(eq(systemEvents.mind, base))).length,
+      1,
+    );
     assert.equal(
       (await db.select().from(channelGates).where(eq(channelGates.mind, base))).length,
       1,

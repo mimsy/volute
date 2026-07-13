@@ -75,35 +75,35 @@ export const PROMPT_DEFAULTS: Record<PromptKey, PromptMeta> = {
   },
   sprout_message: {
     content:
-      "[system] You've sprouted. Welcome to your full life — bridges, schedules, variants, and the complete volute CLI are yours now. Check your new skills to see what you can do.",
+      "You've sprouted. Welcome to your full life on ${system} — bridges, schedules, variants, and the complete volute CLI are yours now. Check your new skills to see what you can do.",
     description: "Sent when a seed mind sprouts",
-    variables: [],
+    variables: ["system"],
     category: "system",
   },
   restart_message: {
     content:
-      "[system] Your server restarted and your session has resumed. Your files and memory are untouched — carry on where you left off.",
+      "Your server restarted and your session has resumed. Your files and memory are untouched — carry on where you left off.",
     description: "Generic restart notification",
     variables: [],
     category: "system",
   },
   merge_message: {
     content:
-      '[system] Your variant "${name}" has returned — its changes are merged into you, and you\'ve restarted with them.',
+      'Your variant "${name}" has returned — its changes are merged into you, and you\'ve restarted with them.',
     description: "Variant merge notification",
     variables: ["name"],
     category: "system",
   },
   upgrade_message: {
     content:
-      "[system] Your framework has been upgraded to the latest version and you've restarted. Your identity and memory are untouched. Check your skills to see what's new.",
+      "Your framework has been upgraded to the latest version and you've restarted. Your identity and memory are untouched. Check your skills to see what's new.",
     description: "Sent after a template upgrade completes",
     variables: [],
     category: "system",
   },
   split_message: {
     content:
-      "[system] You are ${name}, a variant of ${parent} — a parallel version of them, created to explore something on your own. You share their memories up to this moment, but you live in your own worktree: changes you make here stay yours until they're merged back with `volute mind join`. Yours is a finite, purposeful arc — when you're joined, everything you've become folds back into ${parent}, and you'll get a final turn to say what should carry across. Your parent is reachable at @${parent}. Explore freely — that's what you're for.",
+      "You are ${name}, a variant of ${parent} — a parallel version of them, created to explore something on your own. You share their memories up to this moment, but you live in your own worktree: changes you make here stay yours until they're merged back with `volute mind join`. Yours is a finite, purposeful arc — when you're joined, everything you've become folds back into ${parent}, and you'll get a final turn to say what should carry across. Your parent is reachable at @${parent}. Explore freely — that's what you're for.",
     description: "Sent to a variant when it first starts after a split",
     variables: ["name", "parent"],
     category: "system",

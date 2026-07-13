@@ -5,10 +5,6 @@ import { z } from "zod";
 import { getOrCreateMindUser, getOrCreateSystemUser } from "../../../lib/auth.js";
 import { routeOutboundBridge } from "../../../lib/bridges/bridge-outbound.js";
 import { formatFileSize, stageFile, validateFilePath } from "../../../lib/chat/file-sharing.js";
-import {
-  generateSystemFallbackReply,
-  shouldGenerateSystemFallback,
-} from "../../../lib/chat/system-chat.js";
 import { getActiveTurnId } from "../../../lib/daemon/turn-tracker.js";
 import { extractTextContent } from "../../../lib/delivery/delivery-router.js";
 import { fanOutToMinds } from "../../../lib/delivery/fan-out.js";
@@ -332,22 +328,9 @@ export const unifiedChatApp = new Hono<AuthEnv>().post(
         : undefined,
     });
 
-    // Generate the system fallback reply only for genuine two-party system DMs
-    // (see shouldGenerateSystemFallback for the gating rationale).
-    const systemReplyTarget = baseName ?? senderName;
-    if (
-      shouldGenerateSystemFallback({
-        senderIsMind: !!senderIsMind,
-        hasMessage: !!body.message,
-        convType: conv.type,
-        participants,
-        replyTarget: systemReplyTarget,
-      })
-    ) {
-      generateSystemFallbackReply(conversationId!, systemReplyTarget, body.message!).catch((err) =>
-        log.error(`system reply generation failed for ${systemReplyTarget}`, log.errorData(err)),
-      );
-    }
+    // A DM to the stopped spirit simply waits — no utility-model fallback reply is
+    // generated (that behavior was removed with the system-events refactor; honest
+    // availability surfacing is #434). The running/sleeping spirit receives it via fan-out.
 
     return c.json({ ok: true, conversationId, outboundId });
   },
