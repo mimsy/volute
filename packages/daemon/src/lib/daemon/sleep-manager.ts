@@ -17,6 +17,7 @@ import {
   flushQueuedEvents,
   MIND_LEVEL_SESSION,
   pendingEventCount,
+  pendingEventsLine,
   recordNotice,
 } from "../chat/system-events.js";
 import { getDb } from "../db.js";
@@ -291,11 +292,14 @@ export class SleepManager {
       const wakeTime = formatWakeTime(wakeAt);
       const preSleepMsg = await getPrompt("pre_sleep", { wakeTime });
 
-      // Deliver the pre-sleep event (the mind is still awake here).
-      await deliverEvent(name, { type: "sleep", body: preSleepMsg });
+      // Deliver the pre-sleep event (the mind is still awake here). If it never reached
+      // the mind there is no wind-down turn to wait for — skip the idle wait rather than
+      // burning the full timeout. (Undelivered sleep events are never replayed: they are
+      // only meaningful at bedtime, so the wake flush expires them.)
+      const { delivered } = await deliverEvent(name, { type: "sleep", body: preSleepMsg });
 
       // Wait for mind to finish processing (timeout 120s)
-      await this.waitForIdle(name, 120_000);
+      if (delivered) await this.waitForIdle(name, 120_000);
 
       // Wait a beat for hooks (identity-reload, auto-commit) to settle
       await new Promise((r) => setTimeout(r, 3000));
@@ -372,11 +376,7 @@ export class SleepManager {
           duration,
         );
         const queuedSummary = await this.buildQueuedSummary(name);
-        const pendingEvents = await pendingEventCount(name);
-        const eventsSummary =
-          pendingEvents > 0
-            ? `${pendingEvents} system event${pendingEvents === 1 ? "" : "s"} arrived while you slept and will follow shortly.`
-            : "";
+        const eventsSummary = pendingEventsLine(await pendingEventCount(name));
         const sleepActivity = [triggerWakeSummary, wakeContext, queuedSummary, eventsSummary]
           .filter(Boolean)
           .join("\n\n");

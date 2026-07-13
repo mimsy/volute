@@ -144,16 +144,14 @@ export class BackupManager {
       blog.error("failed to publish backup-failure activity", log.errorData(pubErr));
     }
 
-    try {
-      const { deliverEvent } = await import("../chat/system-events.js");
-      await deliverEvent(getSpiritName(), {
-        type: "notice",
-        meta: { subtype: "backup" },
-        body: `${summary}\n\nBackups are not being saved. Check \`volute backup status\` and the Backups settings tab.`,
-      });
-    } catch (msgErr) {
-      blog.error("failed to send backup-failure system message", log.errorData(msgErr));
-    }
+    // deliverEvent never throws — an undelivered notice stays pending and reaches the
+    // spirit on its next start or wake.
+    const { deliverEvent } = await import("../chat/system-events.js");
+    await deliverEvent(getSpiritName(), {
+      type: "notice",
+      meta: { subtype: "backup" },
+      body: `${summary}\n\nBackups are not being saved. Check \`volute backup status\` and the Backups settings tab.`,
+    });
 
     return true;
   }

@@ -329,9 +329,10 @@ async function completeTurnAndSummarize(
   const finish = async () => {
     const completedTurnId = await completeTurn(mind, event.session);
     markDeliveredOnCleanTurn(mind, event.session);
-    // If this turn was triggered by an immediate system event, record its final text as
-    // the event's reflection (logged only — delivered nowhere).
-    captureReflection(mind, event.session, completedTurnId).catch((err) =>
+    // If this turn was triggered by an immediate system event (exact match via the
+    // turn's trigger_event_id), record its final text as the event's reflection
+    // (logged only — delivered nowhere).
+    captureReflection(mind, completedTurnId).catch((err) =>
       llog.warn("failed to capture event reflection", log.errorData(err)),
     );
     if (insertedId != null) {

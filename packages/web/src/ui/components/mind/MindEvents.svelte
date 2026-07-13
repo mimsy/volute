@@ -50,7 +50,17 @@ $effect(() => {
           <div class="event-head">
             <span class="event-label">{e.label}</span>
             {#if e.delivery === "next-turn"}<span class="badge">next-turn</span>{/if}
-            {#if e.meta?.skipped}<span class="badge skipped">skipped</span>{/if}
+            {#if e.meta?.skipped}
+              <span class="badge skipped">skipped</span>
+            {:else if e.meta?.dropped}
+              <span class="badge skipped">dropped</span>
+            {:else if e.meta?.expired}
+              <span class="badge skipped">expired</span>
+            {:else if !e.delivered_at}
+              <span class="badge pending"
+                >{e.delivery === "immediate" ? "undelivered" : "pending"}</span
+              >
+            {/if}
             <span class="event-time">{formatRelativeTime(e.created_at)}</span>
           </div>
           <div class="event-body">{e.body}</div>
@@ -120,6 +130,10 @@ $effect(() => {
     border: 1px solid var(--border);
     border-radius: var(--radius);
     padding: 1px 6px;
+  }
+
+  .badge.pending {
+    color: var(--orange, var(--yellow));
   }
 
   .badge.skipped {

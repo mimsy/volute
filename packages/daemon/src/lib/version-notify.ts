@@ -116,8 +116,10 @@ export async function notifyVersionUpdate(): Promise<void> {
 
     const message = formatNotification(currentVersion, releaseNotes, needsUpgrade, entry.name);
 
-    // Informational — no reason to trigger a turn; drained on the mind's next turn.
-    await deliverEvent(entry.name, { type: "version", body: message, delivery: "next-turn" });
+    // Immediate (triggers a turn): an idle mind — exactly the stale mind that needs the
+    // upgrade nudge — never drains a next-turn event, and pre-events templates lack the
+    // drain hook entirely, so next-turn delivery could not reach the minds that need it.
+    await deliverEvent(entry.name, { type: "version", body: message });
   });
 
   const results = await Promise.allSettled(promises);

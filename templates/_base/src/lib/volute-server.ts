@@ -196,6 +196,10 @@ export function createVoluteServer(options: {
             };
 
         // System-event envelope: ambient, sender-less. Dispatch with event framing.
+        // The channel slug (`event:<type>:<id>`) is echoed back on this turn's stream
+        // events so the daemon can link the turn to its triggering event (reflection
+        // capture). The `event: true` ack marker tells the daemon this template
+        // understands events (a pre-events template 200-acks without it).
         if ((raw as { kind?: string }).kind === "event") {
           const { event, session } = raw as {
             event: { id: number; type: string; label: string; body: string; at: string };
@@ -205,9 +209,10 @@ export function createVoluteServer(options: {
             isEvent: true,
             eventLabel: event.label,
             eventAt: event.at,
+            channel: `event:${event.type}:${event.id}`,
           });
           res.writeHead(200, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ ok: true }));
+          res.end(JSON.stringify({ ok: true, event: true }));
           return;
         }
 

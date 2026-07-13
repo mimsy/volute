@@ -591,6 +591,21 @@ export class MindManager {
 
     // Deliver any pending context (e.g. merge info) to the mind via HTTP
     await this.deliverPendingContext(name);
+
+    // Redeliver pending immediate events (failed earlier POSTs, or events that arrived
+    // while the mind was stopped). Skipped for sleeping minds — the sleep manager owns
+    // the flush there, after the wake summary, so ordering is preserved. Runs on every
+    // start path (manual start, daemon boot, crash recovery).
+    try {
+      const { getSleepManagerIfReady } = await import("./sleep-manager.js");
+      if (!getSleepManagerIfReady()?.isSleeping(name)) {
+        const { flushQueuedEvents } = await import("../chat/system-events.js");
+        const flushed = await flushQueuedEvents(name);
+        if (flushed > 0) mlog.info(`redelivered ${flushed} pending event(s) to ${name}`);
+      }
+    } catch (err) {
+      mlog.warn(`failed to flush pending events for ${name} on start`, log.errorData(err));
+    }
   }
 
   setPendingContext(name: string, context: Record<string, unknown>): void {

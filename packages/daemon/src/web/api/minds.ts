@@ -32,6 +32,7 @@ import {
   latestEvent,
   latestFailureEvent,
   listEvents,
+  parseMeta,
   recordNotice,
 } from "../../lib/chat/system-events.js";
 import { getSpiritName } from "../../lib/config/setup.js";
@@ -1635,9 +1636,11 @@ const app = new Hono<AuthEnv>()
 
         const startMsg = startErr instanceof Error ? startErr.message : String(startErr);
         const errLine = (stderr ?? startMsg).trim().split("\n").filter(Boolean).pop() ?? "";
-        // Attribute the notice to the mind/session that was actually restarted. For a
-        // variant restart `baseName` is the parent, so recording against it would notify
-        // the parent about code it didn't touch while the variant never sees it.
+        // Attribute the notice to the mind that was actually restarted so the parent
+        // isn't notified about variant code it didn't touch. Caveat: the drain endpoint
+        // resolves getBaseName first, so a notice recorded under a VARIANT name is not
+        // drained into the variant's turns — it surfaces via `mind status` (latestEvent
+        // also queries by the raw name) and the events UI instead.
         await recordNotice({
           mind: name,
           session: "main",
@@ -3009,17 +3012,21 @@ const app = new Hono<AuthEnv>()
     const before = c.req.query("before") ? Number(c.req.query("before")) : undefined;
     const events = await listEvents(baseName, limit, before);
     return c.json({
-      events: events.map((e) => ({
-        id: e.id,
-        type: e.type,
-        label: eventLabel(e.type, e.meta ? JSON.parse(e.meta) : undefined),
-        body: e.body,
-        meta: e.meta ? JSON.parse(e.meta) : undefined,
-        delivery: e.delivery,
-        reflection: e.reflection,
-        created_at: e.created_at,
-        delivered_at: e.delivered_at,
-      })),
+      events: events.map((e) => {
+        // parseMeta tolerates corrupt rows — one bad row must not 500 the listing.
+        const meta = parseMeta(e.meta, `event ${e.id}`);
+        return {
+          id: e.id,
+          type: e.type,
+          label: eventLabel(e.type, meta),
+          body: e.body,
+          meta,
+          delivery: e.delivery,
+          reflection: e.reflection,
+          created_at: e.created_at,
+          delivered_at: e.delivered_at,
+        };
+      }),
     });
   })
   .get("/:name/history", requireSelf(), async (c) => {

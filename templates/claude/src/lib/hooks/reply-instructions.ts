@@ -32,7 +32,9 @@ export function createReplyInstructionsHook(
     if (sessionState.replyInstructionsMode === "once" && sessionState.replyInstructionsFired)
       return {};
 
-    const entry = messageChannels.values().next().value;
+    // Skip event-channel entries (`event:<type>:<id>`) — they exist for turn
+    // attribution, not as a reply target.
+    const entry = [...messageChannels.values()].find((e) => !e.channel.startsWith("event:"));
     if (!entry) return {};
 
     sessionState.replyInstructionsFired = true;

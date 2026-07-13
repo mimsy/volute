@@ -20,4 +20,7 @@ CREATE INDEX IF NOT EXISTS `idx_system_events_mind_delivery` ON `system_events` 
 --> statement-breakpoint
 CREATE INDEX IF NOT EXISTS `idx_system_events_mind_type` ON `system_events` (`mind`, `type`);
 --> statement-breakpoint
+-- Deliberately discards any pending mind_notices rows at upgrade: notice rows were
+-- transient (deleted after delivery), so losing an undelivered failure notice across
+-- an upgrade is acceptable — no data migration is performed.
 DROP TABLE IF EXISTS `mind_notices`;

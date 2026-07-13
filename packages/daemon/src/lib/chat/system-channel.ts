@@ -137,13 +137,13 @@ export async function announceToSystem(text: string): Promise<void> {
 export async function announceSprout(mindName: string): Promise<void> {
   const displayName =
     (await getUserByUsername(mindName).catch(() => null))?.display_name ?? mindName;
+  // deliverEvent never throws — with the spirit unavailable the prompt stays pending
+  // and reaches it on its next start or wake.
   await deliverEvent(getSpiritName(), {
     type: "lifecycle",
     meta: { subtype: "sprout-welcome", mind: mindName },
     body: `${displayName} (@${mindName}) has just sprouted into a full mind and joined #system. Welcome them there in your own words.`,
-  }).catch((err) =>
-    log.warn(`failed to prompt spirit to welcome sprouted ${mindName}`, log.errorData(err)),
-  );
+  });
   await publishActivity({
     type: "mind_sprouted",
     mind: mindName,
