@@ -2,6 +2,7 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { userInfo } from "node:os";
 import { basename, extname } from "node:path";
 import { formatFileSize } from "@volute/daemon/lib/chat/file-sharing.js";
+import type { SpiritStatus } from "@volute/daemon/lib/chat/spirit-availability.js";
 import type { ImageAttachment } from "@volute/daemon/lib/platforms.js";
 import { getClient, urlOf } from "../lib/api-client.js";
 import { command } from "../lib/command.js";
@@ -130,7 +131,24 @@ async function waitForResponse(
   }
 }
 
-type SendResult = { held?: boolean; notice?: string; outboundId?: number };
+type SendResult = {
+  held?: boolean;
+  notice?: string;
+  outboundId?: number;
+  spirit?: SpiritStatus;
+};
+
+/** A one-line acknowledgment of the spirit's availability when it's a recipient (#434). */
+function spiritAck(spirit: SpiritStatus | undefined): string | null {
+  switch (spirit) {
+    case "waking":
+      return "The system spirit is waking — a reply is on its way.";
+    case "unavailable":
+      return "The system spirit is unavailable — an admin can fix this in Settings.";
+    default:
+      return null;
+  }
+}
 
 /**
  * Print the outcome of a POST /chat send to stdout. A "held" send (a peer posted
@@ -148,6 +166,8 @@ function printSendResult(data: SendResult): void {
   } else {
     console.log(`Message sent.${outboundId != null ? `\n[volute:outbound:${outboundId}]` : ""}`);
   }
+  const ack = spiritAck(data.spirit);
+  if (ack) console.log(ack);
 }
 
 const cmd = command({

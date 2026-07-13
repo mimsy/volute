@@ -51,6 +51,9 @@ let nextEntryId = 0;
 let entries = $state<ChatEntry[]>([]);
 let loadError = $state("");
 let sending = $state(false);
+// Spirit availability surfaced from the last send (#434): shown while volute wakes or
+// when it can't answer. Cleared on the next send and once a reply arrives.
+let spiritNotice = $state("");
 let typingNames = $state<string[]>([]);
 let hasMore = $state(false);
 let loadingOlder = $state(false);
@@ -188,6 +191,9 @@ $effect(() => {
       // Skip user messages from ourselves — already added optimistically in handleSend
       if (event.role === "user" && event.senderName === username) return;
 
+      // A reply arrived — clear any "volute is waking" notice.
+      if (event.role !== "user") spiritNotice = "";
+
       // Append new message directly from SSE (no re-fetch needed)
       const newEntry: ChatEntry = {
         id: nextEntryId++,
@@ -245,6 +251,7 @@ async function handleSend(
     },
   ];
   sending = true;
+  spiritNotice = "";
   messageList?.scrollToBottom(true);
 
   try {
@@ -255,6 +262,11 @@ async function handleSend(
       images: images.length > 0 ? images : undefined,
       files: files.length > 0 ? files : undefined,
     });
+    if (result.spirit === "waking") {
+      spiritNotice = `${name} is waking — a reply is on its way.`;
+    } else if (result.spirit === "unavailable") {
+      spiritNotice = `${name} is unavailable. An admin can fix this in Settings.`;
+    }
     const resultConvId = result.conversationId;
     // Only notify the parent when the conversation is actually new. Firing on
     // every send used to rebuild the whole realtime layer (SSE reconnect +
@@ -321,6 +333,10 @@ async function handleSend(
     <ChatStatusBar mind={dmMind} isAdmin={auth.user?.role === "admin"} />
   {/key}
 
+  {#if spiritNotice}
+    <div class="spirit-notice">{spiritNotice}</div>
+  {/if}
+
   <MessageInput
     {sending}
     onSend={handleSend}
@@ -361,6 +377,15 @@ async function handleSend(
     text-transform: uppercase;
     opacity: 0.6;
     border-bottom: 1px solid var(--yellow-bg);
+  }
+
+  .spirit-notice {
+    padding: 6px 12px;
+    text-align: center;
+    color: var(--text-1);
+    font-size: 12px;
+    opacity: 0.8;
+    flex-shrink: 0;
   }
 
   .channel-header {
