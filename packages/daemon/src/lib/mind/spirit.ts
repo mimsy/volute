@@ -103,6 +103,22 @@ export function getSpiritModel(): string | undefined {
   return config.spiritModel;
 }
 
+let creationInProgress = false;
+
+/**
+ * True while ensureSpiritProject is actively creating the spirit project (daemon boot
+ * or setup finale). Spirit-availability checks treat this window as indeterminate —
+ * "no row yet" during creation must not read as "creation failed" (#434).
+ */
+export function spiritCreationInProgress(): boolean {
+  return creationInProgress;
+}
+
+/** Test hook: simulate the creation window without running ensureSpiritProject. */
+export function _setSpiritCreationInProgressForTest(value: boolean): void {
+  creationInProgress = value;
+}
+
 /**
  * Compose and install the spirit project from template.
  * No-op if the spirit already exists in the DB.
@@ -112,6 +128,7 @@ export async function ensureSpiritProject(): Promise<void> {
   const existing = await findMind(spiritName);
   if (existing) return;
 
+  creationInProgress = true;
   const dir = spiritDir();
 
   // Determine template from spirit model or system config
@@ -200,6 +217,8 @@ export async function ensureSpiritProject(): Promise<void> {
     slog.error("failed to create spirit project", log.errorData(err));
     rmSync(dir, { recursive: true, force: true });
     throw err;
+  } finally {
+    creationInProgress = false;
   }
 }
 

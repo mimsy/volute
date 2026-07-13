@@ -1,13 +1,21 @@
 import assert from "node:assert/strict";
+import { writeFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { eq } from "drizzle-orm";
 import { getOrCreateMindUser, getOrCreateSystemUser } from "../packages/daemon/src/lib/auth.js";
 import {
+  _resetSpiritAvailabilityState,
   classifySpiritState,
   ensureSpiritAvailable,
+  SPIRIT_NOTICE_PREFIX,
   spiritUnavailableNotice,
 } from "../packages/daemon/src/lib/chat/spirit-availability.js";
-import { readGlobalConfig, writeGlobalConfig } from "../packages/daemon/src/lib/config/setup.js";
+import {
+  configPath,
+  readGlobalConfig,
+  writeGlobalConfig,
+} from "../packages/daemon/src/lib/config/setup.js";
 import {
   initMindManager,
   tryGetMindManager,
@@ -16,9 +24,14 @@ import {
   generateMindToken,
   revokeMindToken,
 } from "../packages/daemon/src/lib/daemon/mind-tokens.js";
+import {
+  getSleepManagerIfReady,
+  initSleepManager,
+} from "../packages/daemon/src/lib/daemon/sleep-manager.js";
 import { getDb } from "../packages/daemon/src/lib/db.js";
 import { createConversation } from "../packages/daemon/src/lib/events/conversations.js";
-import { addMind } from "../packages/daemon/src/lib/mind/registry.js";
+import { addMind, addSpirit, voluteSystemDir } from "../packages/daemon/src/lib/mind/registry.js";
+import { _setSpiritCreationInProgressForTest } from "../packages/daemon/src/lib/mind/spirit.js";
 import {
   conversations,
   messages,
@@ -28,8 +41,21 @@ import {
 } from "../packages/daemon/src/lib/schema.js";
 import { invalidateMindUserCache } from "../packages/daemon/src/web/middleware/auth.js";
 
-function ensureManager() {
+// --- Daemon-boot window (MUST run before anything initializes the managers) ---
+
+describe("ensureSpiritAvailable during the daemon-boot window", () => {
+  it("returns null (indeterminate) before the mind/sleep managers initialize", async () => {
+    // Guard: this test relies on running before any other test initializes the managers.
+    assert.equal(tryGetMindManager(), null, "test ordering broken: mind manager already up");
+    assert.equal(getSleepManagerIfReady(), null, "test ordering broken: sleep manager already up");
+    const result = await ensureSpiritAvailable();
+    assert.equal(result, null, "boot window must be indeterminate — no status, no notice");
+  });
+});
+
+function ensureManagers() {
   if (!tryGetMindManager()) initMindManager();
+  if (!getSleepManagerIfReady()) initSleepManager();
 }
 
 async function setSetupComplete(complete: boolean) {
@@ -48,6 +74,12 @@ async function removeSpirit() {
   const db = await getDb();
   await db.delete(minds).where(eq(minds.name, "volute"));
 }
+
+function clearCrashAttempts() {
+  tryGetMindManager()?.clearCrashAttempts();
+}
+
+// --- Pure decision logic ---
 
 describe("classifySpiritState (pure decision logic)", () => {
   it("cannot-exist when setup is incomplete, regardless of process state", () => {
@@ -128,6 +160,40 @@ describe("classifySpiritState (pure decision logic)", () => {
       "stopped",
     );
   });
+
+  it("cannot-exist when stopped but recently failed to stay up (crash-loop honesty)", () => {
+    assert.equal(
+      classifySpiritState({
+        setupComplete: true,
+        spiritExists: true,
+        sleeping: false,
+        running: false,
+        recentlyFailed: true,
+      }),
+      "cannot-exist",
+    );
+    // recentlyFailed never overrides an actually-up or sleeping spirit.
+    assert.equal(
+      classifySpiritState({
+        setupComplete: true,
+        spiritExists: true,
+        sleeping: false,
+        running: true,
+        recentlyFailed: true,
+      }),
+      "running",
+    );
+    assert.equal(
+      classifySpiritState({
+        setupComplete: true,
+        spiritExists: true,
+        sleeping: true,
+        running: false,
+        recentlyFailed: true,
+      }),
+      "sleeping",
+    );
+  });
 });
 
 describe("spiritUnavailableNotice", () => {
@@ -138,29 +204,79 @@ describe("spiritUnavailableNotice", () => {
   it("blames a failed start when setup is complete", () => {
     assert.match(spiritUnavailableNotice(true), /failed to start/);
   });
+  it("both share the stable dedupe prefix", () => {
+    assert.ok(spiritUnavailableNotice(false).startsWith(SPIRIT_NOTICE_PREFIX));
+    assert.ok(spiritUnavailableNotice(true).startsWith(SPIRIT_NOTICE_PREFIX));
+  });
 });
+
+// --- ensureSpiritAvailable (integration against real config/registry) ---
 
 describe("ensureSpiritAvailable", () => {
   afterEach(async () => {
+    _resetSpiritAvailabilityState();
+    _setSpiritCreationInProgressForTest(false);
+    clearCrashAttempts();
     await setSetupComplete(false);
     await removeSpirit();
   });
 
   it("reports unavailable with the setup-incomplete notice when setup is not done", async () => {
-    ensureManager();
+    ensureManagers();
     await setSetupComplete(false);
     const result = await ensureSpiritAvailable();
-    assert.equal(result.status, "unavailable");
-    assert.match(result.notice ?? "", /setup is incomplete/);
+    assert.equal(result?.status, "unavailable");
+    assert.match(result?.notice ?? "", /setup is incomplete/);
   });
 
   it("reports unavailable with the creation-failed notice when setup is done but no spirit exists", async () => {
-    ensureManager();
+    ensureManagers();
     await setSetupComplete(true);
     await removeSpirit();
     const result = await ensureSpiritAvailable();
-    assert.equal(result.status, "unavailable");
-    assert.match(result.notice ?? "", /failed to start/);
+    assert.equal(result?.status, "unavailable");
+    assert.match(result?.notice ?? "", /failed to start/);
+  });
+
+  it("returns null (indeterminate) when the config file is unparseable — never a confident notice", async () => {
+    ensureManagers();
+    writeFileSync(configPath(), "{ this is not json");
+    try {
+      const result = await ensureSpiritAvailable();
+      assert.equal(result, null, "a torn/corrupt config read must not classify anything");
+    } finally {
+      await setSetupComplete(false); // rewrites a valid config
+    }
+  });
+
+  it("returns null while the spirit project is still being created", async () => {
+    ensureManagers();
+    await setSetupComplete(true);
+    await removeSpirit();
+    _setSpiritCreationInProgressForTest(true);
+    try {
+      const result = await ensureSpiritAvailable();
+      assert.equal(result, null, "creation in flight must not read as creation failed");
+    } finally {
+      _setSpiritCreationInProgressForTest(false);
+    }
+  });
+
+  it("reports unavailable (failed to start) without restarting when crash recovery is exhausted", async () => {
+    ensureManagers();
+    await setSetupComplete(true);
+    await addSpirit("volute", 4098, "claude", "/tmp/volute-spirit-availability-test");
+    // Simulate the tracker's give-up state (5 recorded crashes = default max).
+    writeFileSync(resolve(voluteSystemDir(), "crash-attempts.json"), '{"volute": 5}\n');
+    tryGetMindManager()?.loadCrashAttempts();
+
+    const result = await ensureSpiritAvailable();
+    assert.equal(result?.status, "unavailable");
+    assert.match(
+      result?.notice ?? "",
+      /failed to start/,
+      "a crash-looping spirit must be reported honestly, not 'waking' forever",
+    );
   });
 });
 
@@ -168,11 +284,15 @@ describe("ensureSpiritAvailable", () => {
 
 const SENDER_MIND = "spirit-avail-sender";
 const NOTICE_RE = /system spirit isn't available/;
+const DAEMON_TOKEN = "spirit-avail-test-token";
 
 let routeConvId: string | undefined;
 
 async function routeCleanup() {
-  process.env.VOLUTE_DAEMON_TOKEN = "spirit-avail-test-token";
+  process.env.VOLUTE_DAEMON_TOKEN = DAEMON_TOKEN;
+  _resetSpiritAvailabilityState();
+  _setSpiritCreationInProgressForTest(false);
+  clearCrashAttempts();
   revokeMindToken(SENDER_MIND);
   invalidateMindUserCache(SENDER_MIND);
   invalidateMindUserCache("volute");
@@ -190,9 +310,18 @@ async function routeCleanup() {
   await db.delete(minds).where(eq(minds.name, SENDER_MIND));
 }
 
-/** DM between the system user (spirit) and a registered sender mind. */
-async function setupConversation(): Promise<{ conversationId: string; mindToken: string }> {
-  ensureManager();
+/** DM whose sole mind-ish participant is the system user (the human ↔ spirit shape). */
+async function setupHumanSpiritDM(): Promise<string> {
+  ensureManagers();
+  const systemUser = await getOrCreateSystemUser();
+  const conv = await createConversation({ participantIds: [systemUser.id] });
+  routeConvId = conv.id;
+  return conv.id;
+}
+
+/** DM between a registered sender mind and the system user (spirit). */
+async function setupMindSpiritDM(): Promise<{ conversationId: string; mindToken: string }> {
+  ensureManagers();
   const systemUser = await getOrCreateSystemUser();
   const mindUser = await getOrCreateMindUser(SENDER_MIND);
   await addMind(SENDER_MIND, 4181);
@@ -229,18 +358,19 @@ describe("POST /api/v1/chat spirit availability", () => {
 
   it("human DM to a spirit that cannot exist gets one honest persisted notice, not silence", async () => {
     await routeCleanup();
-    const { conversationId } = await setupConversation();
+    const conversationId = await setupHumanSpiritDM();
     const { default: app } = await import("../packages/daemon/src/web/app.js");
 
     // Daemon token + non-mind sender = human-style sender.
-    const res = await chatSend(app as never, "spirit-avail-test-token", {
+    const res = await chatSend(app as never, DAEMON_TOKEN, {
       conversationId,
       message: "hello volute",
       sender: "some-human",
     });
     assert.equal(res.status, 200);
-    const data = (await res.json()) as { spirit?: string };
+    const data = (await res.json()) as { spirit?: string; spiritName?: string };
     assert.equal(data.spirit, "unavailable");
+    assert.equal(data.spiritName, "volute");
 
     const notices = await spiritMessages(conversationId);
     assert.equal(notices.length, 1, "exactly one honest notice should be persisted");
@@ -248,7 +378,7 @@ describe("POST /api/v1/chat spirit availability", () => {
     assert.match(notices[0].content, NOTICE_RE);
 
     // Send again — the notice must not stack.
-    const res2 = await chatSend(app as never, "spirit-avail-test-token", {
+    const res2 = await chatSend(app as never, DAEMON_TOKEN, {
       conversationId,
       message: "anyone there?",
       sender: "some-human",
@@ -258,9 +388,32 @@ describe("POST /api/v1/chat spirit availability", () => {
     assert.equal(notices2.length, 1, "repeat sends must not add duplicate notices");
   });
 
+  it("concurrent sends persist at most one notice (read-then-write race closed)", async () => {
+    await routeCleanup();
+    const conversationId = await setupHumanSpiritDM();
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
+
+    const [r1, r2] = await Promise.all([
+      chatSend(app as never, DAEMON_TOKEN, {
+        conversationId,
+        message: "first",
+        sender: "some-human",
+      }),
+      chatSend(app as never, DAEMON_TOKEN, {
+        conversationId,
+        message: "second",
+        sender: "some-human",
+      }),
+    ]);
+    assert.equal(r1.status, 200);
+    assert.equal(r2.status, 200);
+    const notices = await spiritMessages(conversationId);
+    assert.equal(notices.length, 1, "concurrent sends must not double-persist the notice");
+  });
+
   it("mind sender gets the status in the response and the same persisted notice", async () => {
     await routeCleanup();
-    const { conversationId, mindToken } = await setupConversation();
+    const { conversationId, mindToken } = await setupMindSpiritDM();
     const { default: app } = await import("../packages/daemon/src/web/app.js");
 
     const res = await chatSend(app as never, mindToken, {
@@ -276,9 +429,34 @@ describe("POST /api/v1/chat spirit availability", () => {
     assert.match(notices[0].content, NOTICE_RE);
   });
 
+  it("channels never get a spirit status or notice — availability surfacing is DM-only", async () => {
+    await routeCleanup();
+    ensureManagers();
+    const systemUser = await getOrCreateSystemUser();
+    const mindUser = await getOrCreateMindUser(SENDER_MIND);
+    await addMind(SENDER_MIND, 4181);
+    invalidateMindUserCache(SENDER_MIND);
+    const token = generateMindToken(SENDER_MIND);
+    const conv = await createConversation({
+      type: "channel",
+      participantIds: [mindUser.id, systemUser.id],
+    });
+    routeConvId = conv.id;
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
+
+    const res = await chatSend(app as never, token, {
+      conversationId: conv.id,
+      message: "hello #channel",
+    });
+    assert.equal(res.status, 200);
+    const data = (await res.json()) as { spirit?: string };
+    assert.equal(data.spirit, undefined, "channel sends must not block on or report spirit state");
+    assert.equal((await spiritMessages(conv.id)).length, 0, "no notice in channels");
+  });
+
   it("no spirit status or notice when the conversation has no system participant", async () => {
     await routeCleanup();
-    ensureManager();
+    ensureManagers();
     const mindUser = await getOrCreateMindUser(SENDER_MIND);
     await addMind(SENDER_MIND, 4181);
     invalidateMindUserCache(SENDER_MIND);
@@ -296,8 +474,37 @@ describe("POST /api/v1/chat spirit availability", () => {
     assert.equal(
       data.spirit,
       undefined,
-      "spirit status only applies when the spirit is a recipient",
+      "spirit status only applies when the spirit is the sole recipient",
     );
     assert.equal((await spiritMessages(conv.id)).length, 0);
+  });
+
+  it("a broken config read degrades to no status and no notice — delivery still succeeds", async () => {
+    await routeCleanup();
+    const conversationId = await setupHumanSpiritDM();
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
+    writeFileSync(configPath(), "{ torn write !!");
+    try {
+      const res = await chatSend(app as never, DAEMON_TOKEN, {
+        conversationId,
+        message: "hello?",
+        sender: "some-human",
+      });
+      assert.equal(res.status, 200, "availability problems must never fail the send");
+      const data = (await res.json()) as { spirit?: string };
+      assert.equal(data.spirit, undefined, "no confident status from an unconfident read");
+      assert.equal((await spiritMessages(conversationId)).length, 0, "no false notice");
+
+      // The sender's message itself was persisted and delivery proceeded.
+      const db = await getDb();
+      const all = await db
+        .select()
+        .from(messages)
+        .where(eq(messages.conversation_id, conversationId))
+        .all();
+      assert.equal(all.length, 1, "the sender's message must persist despite the broken read");
+    } finally {
+      await setSetupComplete(false); // rewrites a valid config
+    }
   });
 });

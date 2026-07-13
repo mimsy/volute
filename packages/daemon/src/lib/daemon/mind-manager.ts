@@ -812,6 +812,15 @@ export class MindManager {
     return this.minds.has(name);
   }
 
+  /**
+   * True when crash recovery for this mind has used up all restart attempts (the
+   * "giving up on restart" state). Cleared by the tracker reset on the next
+   * successful start or explicit stop.
+   */
+  hasExhaustedRestarts(name: string): boolean {
+    return this.restartTracker.getAttempts(name) >= this.restartTracker.maxRestartAttempts;
+  }
+
   getRunningMinds(): string[] {
     return [...this.minds.keys()];
   }

@@ -293,8 +293,8 @@ export function migrateConfigSecrets(): void {
  */
 export type SetupStatus = "complete" | "in-progress" | "none";
 
-export function setupStatus(): SetupStatus {
-  const config = readGlobalConfig();
+/** Pure setup-status rules, usable against any (possibly strictly-read) config. */
+export function computeSetupStatus(config: GlobalConfig): SetupStatus {
   if (config.setupCompleted === true) return "complete";
   // Legacy install: has a setup block but predates the `setupCompleted` flag.
   // migrateSetupCompleted() persists these as complete on daemon start; the CLI
@@ -303,6 +303,22 @@ export function setupStatus(): SetupStatus {
   // A setup entry point ran but the browser wizard hasn't finished.
   if (config.setup != null) return "in-progress";
   return "none";
+}
+
+export function setupStatus(): SetupStatus {
+  return computeSetupStatus(readGlobalConfig());
+}
+
+/**
+ * Strict config read for callers that must not act on a broken read: a missing file
+ * reads as `{}` (a genuinely fresh install), but unparseable JSON (e.g. a torn read of
+ * the non-atomic writeGlobalConfig) THROWS instead of silently returning `{}` the way
+ * readGlobalConfig does. Skips the secrets merge — strict callers only need setup fields.
+ */
+export function readGlobalConfigStrict(): GlobalConfig {
+  const path = configPath();
+  if (!existsSync(path)) return {};
+  return JSON.parse(readFileSync(path, "utf-8")) as GlobalConfig;
 }
 
 /** Check if setup has been completed. Returns true once the full setup flow has finished. */

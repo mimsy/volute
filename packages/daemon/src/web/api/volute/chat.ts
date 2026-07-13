@@ -5,8 +5,11 @@ import { z } from "zod";
 import { getOrCreateMindUser, getOrCreateSystemUser } from "../../../lib/auth.js";
 import { routeOutboundBridge } from "../../../lib/bridges/bridge-outbound.js";
 import { formatFileSize, stageFile, validateFilePath } from "../../../lib/chat/file-sharing.js";
-import { ensureSpiritAvailable, type SpiritStatus } from "../../../lib/chat/spirit-availability.js";
-import { getSpiritName } from "../../../lib/config/setup.js";
+import {
+  ensureSpiritAvailable,
+  SPIRIT_NOTICE_PREFIX,
+  type SpiritStatus,
+} from "../../../lib/chat/spirit-availability.js";
 import { getActiveTurnId } from "../../../lib/daemon/turn-tracker.js";
 import { extractTextContent } from "../../../lib/delivery/delivery-router.js";
 import { fanOutToMinds } from "../../../lib/delivery/fan-out.js";
@@ -21,7 +24,7 @@ import {
   getChannelName,
   getChannelSettings,
   getConversation,
-  getMessages,
+  getLastMessageBySender,
   getParticipants,
   isParticipantOrOwner,
 } from "../../../lib/events/conversations.js";
@@ -84,6 +87,38 @@ function stageFilesForMinds(
     }
   }
   return { notifications };
+}
+
+/** Conversations with a spirit-unavailable notice write in flight (double-notice guard). */
+const spiritNoticeInFlight = new Set<string>();
+
+/**
+ * Persist the honest spirit-unavailable notice as a message from the spirit — once. Deduped
+ * against the spirit's most recent message in the conversation (by the stable notice prefix,
+ * so rewording doesn't orphan old notices): after the spirit posts anything real, the notice
+ * may appear again if it becomes unavailable later, but it never stacks per send. The
+ * in-flight set closes the concurrent read-then-write race.
+ */
+async function persistSpiritNotice(
+  conversationId: string,
+  spiritUsername: string,
+  notice: string,
+): Promise<void> {
+  if (spiritNoticeInFlight.has(conversationId)) return;
+  spiritNoticeInFlight.add(conversationId);
+  try {
+    const last = await getLastMessageBySender(conversationId, spiritUsername);
+    const alreadyNoticed = last?.content.some(
+      (b) => b.type === "text" && b.text.startsWith(SPIRIT_NOTICE_PREFIX),
+    );
+    if (!alreadyNoticed) {
+      await addMessage(conversationId, "assistant", spiritUsername, [
+        { type: "text", text: notice },
+      ]);
+    }
+  } finally {
+    spiritNoticeInFlight.delete(conversationId);
+  }
 }
 
 export const unifiedChatApp = new Hono<AuthEnv>().post(
@@ -316,36 +351,42 @@ export const unifiedChatApp = new Hono<AuthEnv>().post(
       }
     }
 
-    // On-demand spirit start (#434): if the system spirit is a recipient here and it exists
-    // but is stopped, start it now so the fan-out below delivers directly. If it can't exist
-    // (setup incomplete / creation failed), persist one honest notice in the conversation
-    // instead of silence — no AI-generated impersonation. A sleeping spirit is left alone:
-    // its queue covers the message (don't force-wake, per #418). The status is returned so
-    // the web chat / CLI send ack can show "volute is waking / unavailable".
+    // On-demand spirit start + availability surfacing (#434). ADVISORY: this must never
+    // block or break message delivery — any error degrades to "no status, no notice" and
+    // fan-out proceeds. Only a DM whose sole mind-ish recipient is the spirit awaits the
+    // start: fan-out only delivers to running/sleeping minds, so for the DM case the await
+    // IS the delivery guarantee. Channels/groups never block on a spirit start — there,
+    // fan-out's skip path starts a stopped spirit fire-and-forget and this message is
+    // missed, same as for any stopped mind. A sleeping spirit is left alone: its queue
+    // covers the message (don't force-wake, per #418).
     let spiritStatus: SpiritStatus | undefined;
-    const spiritParticipant = participants.find(
-      (p) => p.userType === "system" && p.username !== senderName,
-    );
-    if (spiritParticipant) {
-      const availability = await ensureSpiritAvailable();
-      spiritStatus = availability.status;
-      if (availability.status === "unavailable" && availability.notice) {
-        // A single clear notice, not one per send: skip when it already appears
-        // among the recent messages (the sender's own send is the latest, so
-        // check a small window rather than just the last message).
-        const notice = availability.notice;
-        const recent = await getMessages(conversationId!, 10);
-        const alreadyNoticed = recent.some(
-          (m) =>
-            m.sender_name === getSpiritName() &&
-            m.content.some((b) => b.type === "text" && b.text === notice),
-        );
-        if (!alreadyNoticed) {
-          await addMessage(conversationId!, "assistant", getSpiritName(), [
-            { type: "text", text: notice },
-          ]);
+    let spiritName: string | undefined;
+    try {
+      const mindishRecipients = participants.filter(
+        (p) => (p.userType === "mind" || p.userType === "system") && p.username !== senderName,
+      );
+      const spiritRecipient =
+        conv.type === "dm" &&
+        mindishRecipients.length === 1 &&
+        mindishRecipients[0].userType === "system"
+          ? mindishRecipients[0]
+          : undefined;
+      if (spiritRecipient) {
+        const availability = await ensureSpiritAvailable();
+        if (availability) {
+          spiritStatus = availability.status;
+          spiritName = spiritRecipient.username;
+          if (availability.status === "unavailable" && availability.notice) {
+            await persistSpiritNotice(
+              conversationId!,
+              spiritRecipient.username,
+              availability.notice,
+            );
+          }
         }
       }
+    } catch (err) {
+      log.error("spirit availability check failed — proceeding with delivery", log.errorData(err));
     }
 
     // Fan out to running mind participants
@@ -363,7 +404,7 @@ export const unifiedChatApp = new Hono<AuthEnv>().post(
         : undefined,
     });
 
-    return c.json({ ok: true, conversationId, outboundId, spirit: spiritStatus });
+    return c.json({ ok: true, conversationId, outboundId, spirit: spiritStatus, spiritName });
   },
 );
 
