@@ -204,7 +204,12 @@ export function sendChat(opts: {
   targetMind?: string;
   images?: Array<{ media_type: string; data: string }>;
   files?: Array<{ filename: string; data: string }>;
-}): Promise<{ ok: boolean; conversationId: string; spirit?: SpiritStatus }> {
+}): Promise<{
+  ok: boolean;
+  conversationId: string;
+  spirit?: SpiritStatus;
+  spiritName?: string;
+}> {
   return post(`${V1}/chat`, {
     message: opts.message || undefined,
     conversationId: opts.conversationId,
