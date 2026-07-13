@@ -29,8 +29,8 @@ import {
   activity,
   deliveryQueue,
   mindHistory,
-  mindNotices,
   summaries,
+  systemEvents,
   turns,
 } from "../packages/daemon/src/lib/schema.js";
 import { createSession } from "../packages/daemon/src/web/middleware/auth.js";
@@ -209,8 +209,8 @@ describe("daemon e2e", { timeout: 420000 }, () => {
     assert.equal(body.ok, true);
   });
 
-  it("daemon.json is operator-readable (0644) and the admin token is owner-only (0600)", () => {
-    // daemon.json (port/hostname) must be readable by a non-root operator CLI on a
+  it("daemon.json is host-readable (0644) and the admin token is owner-only (0600)", () => {
+    // daemon.json (port/hostname) must be readable by a non-root host CLI on a
     // system install; the token lives in a separate 0600 file.
     const daemonJson = resolve(voluteSystemDir(), "daemon.json");
     assert.ok(existsSync(daemonJson), "daemon.json should exist");
@@ -1148,15 +1148,18 @@ describe("daemon e2e", { timeout: 420000 }, () => {
 
     // A startup notice was recorded, carrying the failed child's stderr.
     const db = await getDb();
-    const rows = await db.select().from(mindNotices).where(eq(mindNotices.mind, TEST_MIND));
-    const startupNotice = rows.find((r) => r.kind === "startup");
+    const rows = await db.select().from(systemEvents).where(eq(systemEvents.mind, TEST_MIND));
+    const startupNotice = rows.find(
+      (r) => r.type === "notice" && JSON.parse(r.meta ?? "{}").subtype === "startup",
+    );
     assert.ok(startupNotice, "a startup notice should be recorded");
+    const startupMeta = JSON.parse(startupNotice.meta ?? "{}") as { raw?: string };
     assert.ok(
-      startupNotice.raw != null && startupNotice.raw.length > 0,
+      startupMeta.raw != null && startupMeta.raw.length > 0,
       "startup notice should carry the failed process stderr",
     );
     assert.ok(
-      startupNotice.detail.includes(body.brokenBranch ?? "broken/"),
+      startupNotice.body.includes(body.brokenBranch ?? "broken/"),
       "notice should name the broken branch",
     );
 
@@ -1455,6 +1458,11 @@ describe("daemon e2e", { timeout: 420000 }, () => {
     // Clean up
     await daemonRequest(`/api/minds/${TEST_MIND}/schedules/test-timer`, { method: "DELETE" });
   });
+
+  // System-event delivery + the /events API are covered by the robust webhook test
+  // further down ("system events: webhook delivers an immediate event visible in
+  // GET /:name/events"), which doesn't depend on the credential-less e2e mind
+  // completing a turn.
 
   it("schedule: whileSleeping field", async () => {
     await ensureTestMind();
@@ -1799,6 +1807,58 @@ describe("daemon e2e", { timeout: 420000 }, () => {
     const body2 = (await drain2.json()) as { context: string | null; notices: unknown[] };
     assert.equal(body2.context, null);
     assert.equal(body2.notices.length, 0);
+  });
+
+  it("system events: webhook delivers an immediate event visible in GET /:name/system-events", {
+    timeout: 45000,
+  }, async () => {
+    await ensureTestMind();
+    // Stop the mind so the immediate event's delivery POST fails fast against a down port
+    // rather than interacting with the credential-less e2e mind (which can't complete a
+    // turn). We only assert the event is recorded and surfaced by the API here; live
+    // delivery, the envelope, reflection, and the sleep queue are covered by the unit
+    // tests (test/system-events.test.ts) against a stub mind server.
+    await daemonRequest(`/api/minds/${TEST_MIND}/stop`, { method: "POST" });
+
+    // The webhook route is an immediate system event (no chat message, no sender).
+    // With the mind stopped it answers 202: recorded but pending, not delivered.
+    const hook = await daemonRequest(`/api/minds/${TEST_MIND}/webhook/deploy`, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain" },
+      body: "build 42 is live",
+    });
+    assert.equal(hook.status, 202, `webhook: ${await hook.clone().text()}`);
+    const hookBody = (await hook.json()) as { ok: boolean; delivered: boolean };
+    assert.equal(hookBody.delivered, false, "honest response: recorded but not delivered");
+
+    // It surfaces on the system-events listing with a worded label — not raw ids, not
+    // chat. (GET /:name/events is the live SSE stream; the listing is /system-events.)
+    const res = await daemonRequest(`/api/minds/${TEST_MIND}/system-events`);
+    assert.equal(res.status, 200);
+    const { events } = (await res.json()) as {
+      events: {
+        type: string;
+        label: string;
+        body: string;
+        delivery: string;
+        reflection: string | null;
+        delivered_at: string | null;
+      }[];
+    };
+    const webhook = events.find((e) => e.type === "webhook");
+    assert.ok(webhook, "webhook event should be recorded");
+    assert.equal(webhook.label, "Webhook: deploy");
+    assert.equal(webhook.body, "build 42 is live");
+    assert.equal(webhook.delivery, "immediate");
+    assert.equal(
+      webhook.delivered_at,
+      null,
+      "undelivered event stays pending (redelivered on the next start)",
+    );
+
+    // The endpoint is self-or-admin gated (authz-coverage enforces this too).
+    const unauth = await fetch(`${BASE_URL}/api/minds/${TEST_MIND}/system-events`);
+    assert.equal(unauth.status, 401);
   });
 
   it("mind status: GET /api/minds/:name surfaces lastError until recovery (#574)", async () => {

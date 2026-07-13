@@ -2,30 +2,29 @@ import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { eq, inArray } from "drizzle-orm";
 import { getOrCreateMindUser } from "../packages/daemon/src/lib/auth.js";
-import { ensureSystemDM, resetSystemDMCache } from "../packages/daemon/src/lib/chat/system-chat.js";
+import { resetSystemDMCache } from "../packages/daemon/src/lib/chat/system-chat.js";
 import { getDb } from "../packages/daemon/src/lib/db.js";
 import {
   findDMConversation,
   getParticipants,
 } from "../packages/daemon/src/lib/events/conversations.js";
 import { addMind, removeMind } from "../packages/daemon/src/lib/mind/registry.js";
-import { conversationParticipants, messages, users } from "../packages/daemon/src/lib/schema.js";
+import {
+  conversationParticipants,
+  systemEvents,
+  users,
+} from "../packages/daemon/src/lib/schema.js";
 import { establishVariantDialogue } from "../packages/daemon/src/web/api/variants.js";
 
 const PARENT = `dv-parent-${Date.now()}`;
 const VARIANT = `${PARENT}-exp`;
 const USERNAMES = [PARENT, VARIANT, "volute"];
 
-/** The message the parent received in its system DM announcing the variant. */
+/** The lifecycle event the parent received announcing the variant. */
 async function parentNotice(): Promise<string | undefined> {
-  const { conversationId } = await ensureSystemDM(PARENT);
   const db = await getDb();
-  const msgs = await db
-    .select()
-    .from(messages)
-    .where(eq(messages.conversation_id, conversationId))
-    .all();
-  return msgs.map((m) => m.content).find((c) => c.includes(VARIANT));
+  const rows = await db.select().from(systemEvents).where(eq(systemEvents.mind, PARENT)).all();
+  return rows.map((r) => r.body).find((b) => b.includes(VARIANT));
 }
 
 async function cleanup() {
@@ -40,6 +39,7 @@ async function cleanup() {
     await db.delete(conversationParticipants).where(inArray(conversationParticipants.user_id, ids));
   }
   await db.delete(users).where(inArray(users.username, USERNAMES));
+  await db.delete(systemEvents).where(inArray(systemEvents.mind, [PARENT, VARIANT]));
   try {
     await removeMind(VARIANT);
   } catch {}

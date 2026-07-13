@@ -9,7 +9,7 @@ const blog = log.child("backup");
 export const DEFAULT_BACKUP_SCHEDULE = "0 3 * * *";
 
 /**
- * Notify the operator on the 1st scheduled-backup failure and then every Nth
+ * Notify the host on the 1st scheduled-backup failure and then every Nth
  * consecutive one. A persistently-broken repo shouldn't spam a message every
  * night, but a silent `lastError` in backup-state.json shouldn't sit unnoticed
  * until restore time either. The counter resets on the next success.
@@ -117,7 +117,7 @@ export class BackupManager {
   }
 
   /**
-   * Track consecutive scheduled-backup failures and actively notify the operator
+   * Track consecutive scheduled-backup failures and actively notify the host
    * on the 1st and then every Nth. Returns whether it notified (for tests).
    * Notification failures are swallowed — surfacing a backup failure must never
    * take the daemon's backup loop down with it.
@@ -144,15 +144,14 @@ export class BackupManager {
       blog.error("failed to publish backup-failure activity", log.errorData(pubErr));
     }
 
-    try {
-      const { sendSystemMessage } = await import("../chat/system-chat.js");
-      await sendSystemMessage(
-        getSpiritName(),
-        `${summary}\n\nBackups are not being saved. Check \`volute backup status\` and the Backups settings tab.`,
-      );
-    } catch (msgErr) {
-      blog.error("failed to send backup-failure system message", log.errorData(msgErr));
-    }
+    // deliverEvent never throws — an undelivered notice stays pending and reaches the
+    // spirit on its next start or wake.
+    const { deliverEvent } = await import("../chat/system-events.js");
+    await deliverEvent(getSpiritName(), {
+      type: "notice",
+      meta: { subtype: "backup" },
+      body: `${summary}\n\nBackups are not being saved. Check \`volute backup status\` and the Backups settings tab.`,
+    });
 
     return true;
   }

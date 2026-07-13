@@ -1,5 +1,5 @@
 import { compareSync, hashSync } from "bcryptjs";
-import { and, count, eq, or } from "drizzle-orm";
+import { and, count, eq, inArray, or } from "drizzle-orm";
 import { getSpiritName } from "./config/setup.js";
 import { getDb } from "./db.js";
 import { broadcast } from "./events/activity-events.js";
@@ -62,6 +62,40 @@ export async function getUser(id: number): Promise<User | null> {
   const db = await getDb();
   const row = await db.select(userSelectFields).from(users).where(eq(users.id, id)).get();
   return (row as User) ?? null;
+}
+
+/**
+ * Resolve display names for a set of usernames.
+ * Returns a map of username → display_name, omitting users without a display name.
+ * Used to render "Display Name (@username)" in human-facing output.
+ */
+export async function getDisplayNames(usernames: (string | null)[]): Promise<Map<string, string>> {
+  const unique = [...new Set(usernames.filter((u): u is string => !!u))];
+  const map = new Map<string, string>();
+  if (unique.length === 0) return map;
+  const db = await getDb();
+  const rows = await db
+    .select({ username: users.username, displayName: users.display_name })
+    .from(users)
+    .where(inArray(users.username, unique));
+  for (const r of rows) {
+    if (r.displayName) map.set(r.username, r.displayName);
+  }
+  return map;
+}
+
+/**
+ * Annotate messages with the sender's display name (resolved from the users
+ * table) so human-facing clients can render "Display Name (@username)".
+ */
+export async function withSenderDisplayNames<T extends { sender_name: string | null }>(
+  msgs: T[],
+): Promise<(T & { sender_display_name: string | null })[]> {
+  const displayNames = await getDisplayNames(msgs.map((m) => m.sender_name));
+  return msgs.map((m) => ({
+    ...m,
+    sender_display_name: m.sender_name ? (displayNames.get(m.sender_name) ?? null) : null,
+  }));
 }
 
 export async function getUserByUsername(username: string): Promise<User | null> {

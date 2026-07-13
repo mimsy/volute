@@ -1,7 +1,6 @@
 import { and, eq, inArray } from "drizzle-orm";
 import { getSleepManagerIfReady } from "../daemon/sleep-manager.js";
 import { getDb } from "../db.js";
-import { addMessage, listConversationsForMind } from "../events/conversations.js";
 import { publish as publishMindEvent } from "../events/mind-events.js";
 import { findMind, getBaseName } from "../mind/registry.js";
 import { activity, messages, mindHistory } from "../schema.js";
@@ -58,22 +57,6 @@ export async function recordInbound(
   });
 
   return insertedId;
-}
-
-/**
- * Deliver the "[seed has sprouted]" notice to a freshly-sprouted mind.
- *
- * The mind's history (via recordInbound) is conversation-agnostic, so it's recorded
- * exactly once; the notice is then fanned out to each of the mind's active conversations.
- */
-export async function deliverSproutedNotice(mind: string): Promise<void> {
-  await recordInbound(mind, "system", "system", "[seed has sprouted]");
-  const convs = await listConversationsForMind(mind);
-  for (const conv of convs) {
-    await addMessage(conv.id, "assistant", "system", [
-      { type: "text", text: "[seed has sprouted]" },
-    ]);
-  }
 }
 
 /**

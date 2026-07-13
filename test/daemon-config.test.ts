@@ -6,8 +6,8 @@ import { describe, it } from "node:test";
 import { writeDaemonConfig } from "../packages/daemon/src/daemon.js";
 
 describe("writeDaemonConfig", () => {
-  it("keeps daemon.json operator-readable (0644) and puts the token in a 0600 file", () => {
-    // daemon.json (port/hostname) must be readable by a non-root operator CLI on a
+  it("keeps daemon.json host-readable (0644) and puts the token in a 0600 file", () => {
+    // daemon.json (port/hostname) must be readable by a non-root host CLI on a
     // system install; the admin token must never be world-readable.
     const dir = mkdtempSync(resolve(tmpdir(), "volute-daemon-cfg-"));
     const configPath = resolve(dir, "daemon.json");

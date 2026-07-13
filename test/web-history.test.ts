@@ -206,6 +206,45 @@ describe("web history routes", () => {
     assert.equal(res.status, 401);
   });
 
+  it("GET /api/minds/:name/history — annotates senders with display names", async () => {
+    const cookie = await setupAuth();
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
+    const db = await getDb();
+
+    // A sender that has a display name distinct from its username.
+    const sender = await createUser("test-history-alice", "pass");
+    await db.update(users).set({ display_name: "Alice Example" }).where(eq(users.id, sender.id));
+
+    await db.insert(mindHistory).values({
+      mind: "test-history-mind1",
+      type: "inbound",
+      channel: "@test-history-alice",
+      sender: "test-history-alice",
+      content: "hello",
+    });
+    // A sender with no matching user record resolves to null.
+    await db.insert(mindHistory).values({
+      mind: "test-history-mind1",
+      type: "inbound",
+      channel: "#room",
+      sender: "test-history-ghost",
+      content: "boo",
+    });
+
+    const res = await app.request("/api/minds/test-history-mind1/history?full=true", {
+      headers: { Cookie: `volute_session=${cookie}` },
+    });
+    assert.equal(res.status, 200);
+    const rows = (await res.json()) as Array<{
+      sender: string | null;
+      sender_display_name: string | null;
+    }>;
+    const alice = rows.find((r) => r.sender === "test-history-alice");
+    const ghost = rows.find((r) => r.sender === "test-history-ghost");
+    assert.equal(alice?.sender_display_name, "Alice Example");
+    assert.equal(ghost?.sender_display_name, null);
+  });
+
   // ── Summaries endpoint tests ──
 
   it("GET /api/v1/history/summaries — requires period param", async () => {

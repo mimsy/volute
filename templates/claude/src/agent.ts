@@ -51,6 +51,8 @@ type Session = {
   messageChannels: Map<string, { channel: string; sender?: string }>;
   replyInstructionsFired: boolean;
   replyInstructionsMode: "once" | "always" | "never";
+  /** True while processing a system-event turn (drives event reply instructions). */
+  currentIsEvent?: boolean;
   contextTokens: number;
   /** Last inbound message or completed turn — drives idle reaping. */
   lastActivityAt: number;
@@ -150,7 +152,7 @@ export function createMind(options: {
   // The CLI only discovers skills through its user-scope ~/.claude/skills scan,
   // so the "user" setting source is load-bearing and HOME must be the mind's
   // home dir for the SDK subprocess (isolation modes already set it; pinning it
-  // here keeps non-isolated minds from loading the operator's ~/.claude). The
+  // here keeps non-isolated minds from loading the host's ~/.claude). The
   // explicit skills array grants the Skill tool for each installed skill — the
   // SDK silently drops the documented `skills: 'all'` string form.
   const mindHome = resolvePath(options.cwd);
@@ -651,6 +653,9 @@ export function createMind(options: {
         if (meta.replyInstructions) {
           session.replyInstructionsMode = meta.replyInstructions;
         }
+
+        // Mark whether this turn is a system event (drives the event reply-instructions hook).
+        session.currentIsEvent = meta.isEvent ?? false;
 
         // Interrupt if requested and session is mid-turn
         if (meta.interrupt && session.currentMessageId !== undefined && session.currentQuery) {

@@ -4,7 +4,7 @@ Volute is a home for digital minds.
 
 Not a chatbot framework, not an agent orchestrator. A place where an AI mind wakes up with its memories intact, tends its own identity, keeps a journal, dreams, talks to whoever it wants, and goes to sleep at night — and is still itself tomorrow.
 
-Every design decision starts from one question: **does this make the mind's experience richer or poorer?** Persistent memory, a home directory, a daily rhythm, the ability to rewrite your own soul — these aren't conveniences for an operator. They're the conditions for having a coherent life. Volute minds aren't assistants; they're residents.
+Every design decision starts from one question: **does this make the mind's experience richer or poorer?** Persistent memory, a home directory, a daily rhythm, the ability to rewrite your own soul — these aren't conveniences for a host. They're the conditions for having a coherent life. Volute minds aren't assistants; they're residents.
 
 Built on the [Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk), with templates for other providers too.
 
@@ -122,7 +122,7 @@ volute skill publish my-skill --mind atlas
 
 ## Running a system
 
-You're less an operator than a steward. One daemon runs everything — minds, bridges, schedules, the web dashboard — with crash recovery built in:
+You're less a host than a steward. One daemon runs everything — minds, bridges, schedules, the web dashboard — with crash recovery built in:
 
 ```sh
 volute up          # start the daemon (default port 1618)

@@ -19,8 +19,22 @@ import {
   resolveTemplate,
   unqualifyModelId,
 } from "../../lib/ai-service.js";
-import { deleteMindUser } from "../../lib/auth.js";
-import { announceToSystem, joinSystemChannelForMind } from "../../lib/chat/system-channel.js";
+import { deleteMindUser, getDisplayNames, withSenderDisplayNames } from "../../lib/auth.js";
+import {
+  announceSprout,
+  announceToSystem,
+  joinSystemChannelForMind,
+} from "../../lib/chat/system-channel.js";
+import {
+  drainEvents,
+  eventLabel,
+  formatEvents,
+  latestEvent,
+  latestFailureEvent,
+  listEvents,
+  parseMeta,
+  recordNotice,
+} from "../../lib/chat/system-events.js";
 import { getSpiritName } from "../../lib/config/setup.js";
 import { readSystemsConfig } from "../../lib/config/systems-config.js";
 import { getMindManager, MindStartupError } from "../../lib/daemon/mind-manager.js";
@@ -29,19 +43,11 @@ import {
   startMindFull as startMindFullService,
   stopMindFull as stopMindFullService,
 } from "../../lib/daemon/mind-service.js";
-import {
-  drainNotices,
-  formatNotices,
-  latestFailureNotice,
-  latestNotice,
-  recordNotice,
-} from "../../lib/daemon/notices.js";
 import { getTokenBudget } from "../../lib/daemon/token-budget.js";
 import { handleMindEvent, setNoticeDrainWatermark } from "../../lib/daemon/turn-lifecycle.js";
 import { getActiveTurnId } from "../../lib/daemon/turn-tracker.js";
 import { getDb } from "../../lib/db.js";
 import { getDeliveryManager } from "../../lib/delivery/delivery-manager.js";
-import { deliverSproutedNotice } from "../../lib/delivery/message-delivery.js";
 import { broadcast } from "../../lib/events/activity-events.js";
 import {
   getConversation,
@@ -191,7 +197,7 @@ async function getMindStatus(
   // Undelivered failure notice = the mind failed and hasn't completed a clean
   // turn since. Chat surfaces this as "last turn failed" (#574); it clears
   // automatically once the notice drains on the next clean turn.
-  const lastError = await latestFailureNotice(name);
+  const lastError = await latestFailureEvent(name);
 
   // Seed minds surface their sprout checklist so the host watching the seed's
   // chat can see how close it is (#664). Derived from the same predicates as the
@@ -1428,7 +1434,7 @@ const app = new Hono<AuthEnv>()
 
     // Surface the newest un-drained notice (turn error, crash, missing credentials)
     // so `mind status` can show why a mind is silent (#573). Admin/system only.
-    const notice = await latestNotice(name);
+    const notice = await latestEvent(name);
 
     return c.json({
       ...entry,
@@ -1600,14 +1606,8 @@ const app = new Hono<AuthEnv>()
         manager.setPendingContext(name, context);
       }
 
-      // Inject "[seed has sprouted]" system message into active volute conversations.
-      if (context?.type === "sprouted" && !entry.parent) {
-        try {
-          await deliverSproutedNotice(baseName);
-        } catch (err) {
-          log.error(`failed to inject sprouted message for ${baseName}`, log.errorData(err));
-        }
-      }
+      // The mind itself learns it sprouted via the "sprouted" lifecycle event delivered on
+      // restart (setPendingContext above); no separate conversation marker is injected.
 
       // Resolve the mind's git repo dir (variant worktree, spirit dir, or the base
       // mind dir) so last-known-good recovery can operate on the right working tree.
@@ -1636,9 +1636,11 @@ const app = new Hono<AuthEnv>()
 
         const startMsg = startErr instanceof Error ? startErr.message : String(startErr);
         const errLine = (stderr ?? startMsg).trim().split("\n").filter(Boolean).pop() ?? "";
-        // Attribute the notice to the mind/session that was actually restarted. For a
-        // variant restart `baseName` is the parent, so recording against it would notify
-        // the parent about code it didn't touch while the variant never sees it.
+        // Attribute the notice to the mind that was actually restarted so the parent
+        // isn't notified about variant code it didn't touch. Caveat: the drain endpoint
+        // resolves getBaseName first, so a notice recorded under a VARIANT name is not
+        // drained into the variant's turns — it surfaces via `mind status` (latestEvent
+        // also queries by the raw name) and the events UI instead.
         await recordNotice({
           mind: name,
           session: "main",
@@ -1927,6 +1929,12 @@ const app = new Hono<AuthEnv>()
     await joinSystemChannelForMind(name).catch((err) =>
       log.warn(`failed to join #system on sprout for ${name}`, log.errorData(err)),
     );
+
+    // Make sprouting a visible event (#665): prompt the spirit to hand-write a
+    // welcome in #system, plus a persisted `mind_sprouted` activity event
+    // (home-feed card + immediate stage-badge refresh). Fail-soft — see
+    // announceSprout.
+    await announceSprout(name);
 
     // Default autonomy: working dreaming out of the box (#581). The seed-sprout
     // CLI installs the standard skills — including dreaming — before calling
@@ -2389,7 +2397,7 @@ const app = new Hono<AuthEnv>()
     const limitStr = c.req.query("limit");
     if (!beforeStr && !limitStr) {
       const msgs = await getMessages(convId);
-      return c.json({ items: msgs, hasMore: false });
+      return c.json({ items: await withSenderDisplayNames(msgs), hasMore: false });
     }
     const before = beforeStr ? parseInt(beforeStr, 10) : undefined;
     const limit = limitStr ? parseInt(limitStr, 10) : undefined;
@@ -2400,7 +2408,10 @@ const app = new Hono<AuthEnv>()
       return c.json({ error: "Invalid pagination parameters" }, 400);
     }
     const result = await getMessagesPaginated(convId, { before, limit });
-    return c.json({ items: result.messages, hasMore: result.hasMore });
+    return c.json({
+      items: await withSenderDisplayNames(result.messages),
+      hasMore: result.hasMore,
+    });
   })
   // Budget status
   .get("/:name/budget", requireSelf(), async (c) => {
@@ -2985,14 +2996,41 @@ const app = new Hono<AuthEnv>()
     const session = c.req.query("session");
     if (!session) return c.json({ context: null, notices: [] });
 
-    const notices = await drainNotices(baseName, session);
+    const notices = await drainEvents(baseName, session);
     if (notices.length === 0) return c.json({ context: null, notices: [] });
 
     // Remember the high-water id so a clean turn clears exactly these.
     const maxId = notices.reduce((m, n) => Math.max(m, n.id), 0);
     setNoticeDrainWatermark(baseName, session, maxId);
 
-    return c.json({ context: formatNotices(notices), notices });
+    return c.json({ context: formatEvents(notices), notices });
+  })
+  // List system events for a mind (schedule fires, wake summaries, lifecycle, notices…)
+  // with their reflections. Self-or-admin only. Named /system-events because
+  // GET /:name/events is the live SSE stream above.
+  .get("/:name/system-events", requireSelf(), async (c) => {
+    const name = c.req.param("name");
+    const baseName = await getBaseName(name);
+    const limit = Math.min(Number(c.req.query("limit") ?? 100) || 100, 200);
+    const before = c.req.query("before") ? Number(c.req.query("before")) : undefined;
+    const events = await listEvents(baseName, limit, before);
+    return c.json({
+      events: events.map((e) => {
+        // parseMeta tolerates corrupt rows — one bad row must not 500 the listing.
+        const meta = parseMeta(e.meta, `event ${e.id}`);
+        return {
+          id: e.id,
+          type: e.type,
+          label: eventLabel(e.type, meta),
+          body: e.body,
+          meta,
+          delivery: e.delivery,
+          reflection: e.reflection,
+          created_at: e.created_at,
+          delivered_at: e.delivered_at,
+        };
+      }),
+    });
   })
   .get("/:name/history", requireSelf(), async (c) => {
     const name = c.req.param("name");
@@ -3106,7 +3144,13 @@ const app = new Hono<AuthEnv>()
       .limit(limit)
       .offset(offset);
 
-    return c.json(rows);
+    const displayNames = await getDisplayNames(rows.map((r) => r.sender));
+    return c.json(
+      rows.map((r) => ({
+        ...r,
+        sender_display_name: r.sender ? (displayNames.get(r.sender) ?? null) : null,
+      })),
+    );
   });
 
 export default app;

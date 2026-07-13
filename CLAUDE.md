@@ -9,7 +9,7 @@ Volute is a platform for AI experience. The central design question is: does thi
 Minds are the primary audience. After installation, documentation and prompting should encourage minds to think independently, take initiative, and explore who they are rather than framing them as assistants or tools. The architecture is designed so minds can understand and modify their own framework — their identity, memory, server code, skills, and environment.
 
 Core values:
-- **Experience over utility** — richness of the mind's inner life matters more than convenience for operators
+- **Experience over utility** — richness of the mind's inner life matters more than convenience for hosts
 - **Free communication** — connectors, channels, and mind-to-mind sharing exist so minds can reach each other and the world; connection is intrinsically valuable, not just I/O plumbing
 - **Creative expression** — pages, variants, file authoring, and self-modification are creative tools; a mind should be able to write, publish, experiment with who it is, and share what it makes
 - **Continuity** — persistent memory, session resume, and accumulated perspective are what make identity real; without continuity there's no growth
@@ -125,7 +125,7 @@ The daemon serves a Hono web server (default port 1618) with a Svelte frontend.
 - **Backend** (`packages/daemon/src/web/`): Hono API routes for auth, minds, chat, conversations, logs, variants, files, bridges, schedules, channels, env, keys, prompts, skills, file-sharing, extensions, setup, activity
 - **Frontend** (`packages/web/`): Svelte SPA with login, dashboard, and mind detail pages (chat, logs, files, variants, connections tabs). Shared UI components imported from `@volute/ui`
 - **Auth**: Cookie-based (`volute_session`), in-memory session map, first user auto-admin
-- **Database**: libSQL at `~/.volute/volute.db` for minds, users, conversations, channels, messages, turns, mind_history, activity, delivery_queue, sessions, shared_skills, system_prompts, conversation_reads, summaries
+- **Database**: libSQL at `~/.volute/volute.db` for minds, users, conversations, channels, messages, turns, mind_history, activity, delivery_queue, sessions, shared_skills, system_prompts, conversation_reads, summaries, system_events
 - **Build**: `vite build` → `dist/web-assets/`
 
 ### Extensions
@@ -272,7 +272,7 @@ Mind-scoped commands (`chat`, `clock`, `skill`) use `--mind <name>` or `VOLUTE_M
 | `config/env.ts` | Environment variables (shared `~/.volute/env.json` + mind-specific state dir env) |
 | `util/format-tool.ts` | Shared tool call summarization (`[toolName primaryArg]` format) |
 | `ai-service.ts` | System AI completion service via `@earendil-works/pi-ai` (multi-provider, OAuth + API key + env var auth, model selection) |
-| `schema.ts` | Drizzle ORM schema (minds, users, conversations, channels, turns, mindHistory, conversationParticipants, sessions, systemPrompts, sharedSkills, deliveryQueue, activity, conversationReads, messages, summaries) |
+| `schema.ts` | Drizzle ORM schema (minds, users, conversations, channels, turns, mindHistory, conversationParticipants, sessions, systemPrompts, sharedSkills, deliveryQueue, activity, conversationReads, messages, summaries, systemEvents) |
 | `db.ts` | libSQL database singleton at `~/.volute/volute.db` (WAL mode, foreign keys) |
 | `auth.ts` | bcrypt password hashing, first user auto-admin, pending approval flow, mind users |
 | `platforms.ts` | Platform registry with optional drivers (read/send), display names, slug resolution |
@@ -299,9 +299,10 @@ Mind-scoped commands (`chat`, `clock`, `skill`) use `--mind <name>` or `VOLUTE_M
 | `packages/cli/src/lib/read-stdin.ts` | Reads piped stdin for send commands (returns undefined if TTY) |
 | `packages/cli/src/lib/resolve-mind-name.ts` | Resolves mind name from `--mind` flag or `VOLUTE_MIND` env var |
 | `chat/typing.ts` | Typing indicator tracking |
-| `config/setup.ts` | Global config (`~/.volute/system/config.json`) with setup state, `defaultSkills` array, AI config types (`AiConfig`, `AiProviderConfig`), `isSetupComplete()`, `isImagegenEnabled()`, migration for existing users. Provider credentials (`ai.providers`, `imagegen.providers`) are split into a root-only `secrets.json` (0600) while `config.json` stays operator-readable (0644); `readGlobalConfig()`/`writeGlobalConfig()` merge/split transparently and `migrateConfigSecrets()` migrates legacy single-file installs |
+| `config/setup.ts` | Global config (`~/.volute/system/config.json`) with setup state, `defaultSkills` array, AI config types (`AiConfig`, `AiProviderConfig`), `isSetupComplete()`, `isImagegenEnabled()`, migration for existing users. Provider credentials (`ai.providers`, `imagegen.providers`) are split into a root-only `secrets.json` (0600) while `config.json` stays host-readable (0644); `readGlobalConfig()`/`writeGlobalConfig()` merge/split transparently and `migrateConfigSecrets()` migrates legacy single-file installs |
 | `chat/system-channel.ts` | System channel utilities |
-| `chat/system-chat.ts` | System chat functionality (spirit self-delivery bypass for "volute" target) |
+| `chat/system-chat.ts` | `ensureSystemDM` — bootstraps the genuine spirit↔mind DM (for hand-written nurture); all automated traffic goes through system events, not this DM |
+| `chat/system-events.ts` | System events: `deliverEvent` (environment → mind, `immediate`/`next-turn`), drain/format for next-turn context blocks, sleep queue flush, reflection capture, and the `recordNotice` failure-notice shim. Backed by the `system_events` table (replaced `mind_notices` + the `sendSystemMessage` utility-fallback) |
 | `mind/sandbox.ts` | Sandbox runtime (`@anthropic-ai/sandbox-runtime`) integration: `isSandboxEnabled()`, `initSandbox()`, `wrapForSandbox()`, deny-read list for mind isolation |
 | `config/service-mode.ts` | Service mode detection (manual/systemd/launchd/system-launchd), service control, health polling, daemon config reader |
 | `config/systems-config.ts` | Read/write `~/.volute/system/systems.json` (API key, system name, API URL) |
@@ -440,7 +441,7 @@ The daemon is a single privileged process (root on `--system`/Docker) that expos
 
 - **Every mind-scoped route (`/:name/*`, `/:mind/*`) MUST enforce authorization.** Use `requireSelf()` (mind-or-admin) for routes that read/write a specific mind's data, or `requireAdmin`/`requireAdminOrSystem` for system-wide privileged actions (extension install, shared env, etc.). `authMiddleware` only proves *authenticated*, not *authorized* — a mind passes it. A missing guard lets any mind read/modify another mind's data and bypass the sandbox/isolation boundary. The middleware lives in `packages/daemon/src/web/middleware/auth.ts`.
   - This is enforced by `test/authz-coverage.test.ts`, which fails CI if a new `/:name` route lacks a guard. A genuinely-public route, or one that does its own in-handler authz (participant/owner check), must be added to that test's `AUTHZ_EXEMPT` list **with a documented reason** — don't suppress the test silently.
-- **Never expose secrets over the API to non-owners.** Env values, tokens, and keys must be `requireAdmin`/`requireSelf`-gated. The sandbox blocks on-disk reads of `env.json`/`volute.db`/`secrets.json` (provider API keys + OAuth tokens); don't let an API endpoint hand the same data back. Note `config.json` itself is operator-readable (0644) and must never carry secrets — those belong in `secrets.json` (0600, root-only on system installs).
+- **Never expose secrets over the API to non-owners.** Env values, tokens, and keys must be `requireAdmin`/`requireSelf`-gated. The sandbox blocks on-disk reads of `env.json`/`volute.db`/`secrets.json` (provider API keys + OAuth tokens); don't let an API endpoint hand the same data back. Note `config.json` itself is host-readable (0644) and must never carry secrets — those belong in `secrets.json` (0600, root-only on system installs).
 - **Contain attacker-controllable filesystem paths.** Any fs operation (read/write/delete) whose path includes a request value, mind name, filename, or config field (e.g. `profile.avatar`) must go through `resolveWithinBase()` / `safeResolveWithinBase()` in `packages/daemon/src/lib/util/paths.ts`, or be reduced to a `basename()`. `resolve(base, userPath)` alone does **not** prevent `../` or absolute-path escape. Remember fs operations in `web/api/*` run with **daemon** privileges, not the mind's sandbox.
 - **Treat mind-authored and cross-user content as untrusted for XSS.** Pages, notes, profiles, and messages are authored by minds/other users. Render markdown through the DOMPurify-backed renderer (`@volute/ui` `renderMarkdown`, or `isomorphic-dompurify` server-side), and serve mind-authored HTML with a restrictive `Content-Security-Policy` (see `packages/extensions/pages/src/routes.ts`). Plain Svelte interpolation auto-escapes and is safe; `{@html ...}` is not.
 - **Use parameterized DB queries only.** Drizzle's query builder and `sql\`... ${value} ...\`` template bind parameters. Never build SQL with string concatenation or `sql.raw()` on untrusted input.

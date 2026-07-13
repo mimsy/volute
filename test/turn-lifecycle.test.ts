@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { afterEach, before, describe, it } from "node:test";
 import { and, eq } from "drizzle-orm";
-import { drainNotices } from "../packages/daemon/src/lib/daemon/notices.js";
+import { drainEvents } from "../packages/daemon/src/lib/chat/system-events.js";
 import { initTokenBudget } from "../packages/daemon/src/lib/daemon/token-budget.js";
 import { handleMindEvent } from "../packages/daemon/src/lib/daemon/turn-lifecycle.js";
 import {
@@ -15,13 +15,14 @@ import {
   recordOutbound,
 } from "../packages/daemon/src/lib/delivery/message-delivery.js";
 import { subscribe as subscribeActivity } from "../packages/daemon/src/lib/events/activity-events.js";
-import { mindHistory, turns } from "../packages/daemon/src/lib/schema.js";
+import { mindHistory, systemEvents, turns } from "../packages/daemon/src/lib/schema.js";
 
 async function cleanup(mind: string): Promise<void> {
   await clearMind(mind);
   const db = await getDb();
   await db.delete(mindHistory).where(eq(mindHistory.mind, mind));
   await db.delete(turns).where(eq(turns.mind, mind));
+  await db.delete(systemEvents).where(eq(systemEvents.mind, mind));
 }
 
 describe("turn-lifecycle: handleMindEvent", () => {
@@ -115,11 +116,56 @@ describe("turn-lifecycle: handleMindEvent", () => {
       content: "boom: something failed",
     });
 
-    const notices = await drainNotices(mind, "s1");
+    const notices = await drainEvents(mind, "s1");
     assert.ok(
-      notices.some((n) => n.kind === "turn_error"),
+      notices.some((n) => JSON.parse(n.meta ?? "{}").subtype === "turn_error"),
       "a turn_error notice should be recorded",
     );
+    await cleanup(mind);
+  });
+
+  it("events drained mid-outage survive an errored turn and clear only on a clean one", async () => {
+    // The exactly-once machinery: the pre-prompt hook drains (recording a watermark);
+    // a clean `done` marks the drained events delivered, but an errored turn must NOT —
+    // failures accumulate until the mind demonstrably completes a turn.
+    const { setNoticeDrainWatermark } = await import(
+      "../packages/daemon/src/lib/daemon/turn-lifecycle.js"
+    );
+    const { recordNotice } = await import("../packages/daemon/src/lib/chat/system-events.js");
+    const mind = "tl-errored-redelivery";
+
+    await recordNotice({
+      mind,
+      session: "s1",
+      kind: "turn_error",
+      reason: "network",
+      detail: "flaky",
+    });
+
+    // Turn 1: drains the notice, then errors — the notice must survive.
+    let drained = await drainEvents(mind, "s1");
+    assert.equal(drained.length, 1);
+    setNoticeDrainWatermark(mind, "s1", Math.max(...drained.map((n) => n.id)));
+    await handleMindEvent(mind, { type: "text", session: "s1", content: "trying…" });
+    await handleMindEvent(mind, { type: "error", session: "s1", content: "boom again" });
+    await handleMindEvent(mind, { type: "done", session: "s1" });
+
+    drained = await drainEvents(mind, "s1");
+    assert.ok(
+      drained.some((n) => n.body === "flaky"),
+      "the drained notice must be redelivered after an errored turn",
+    );
+
+    // Turn 2: drains again and completes cleanly — everything drained clears.
+    setNoticeDrainWatermark(mind, "s1", Math.max(...drained.map((n) => n.id)));
+    await handleMindEvent(mind, { type: "text", session: "s1", content: "recovered" });
+    await handleMindEvent(mind, { type: "done", session: "s1" });
+    // The clear runs fire-and-forget on done; poll briefly.
+    const deadline = Date.now() + 3000;
+    while (Date.now() < deadline && (await drainEvents(mind, "s1")).length > 0) {
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    assert.deepEqual(await drainEvents(mind, "s1"), [], "clean turn clears the drained events");
     await cleanup(mind);
   });
 

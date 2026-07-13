@@ -10,7 +10,7 @@ import {
   type SleepState,
 } from "../packages/daemon/src/lib/daemon/sleep-manager.js";
 import { getDb } from "../packages/daemon/src/lib/db.js";
-import { activity, deliveryQueue, mindNotices } from "../packages/daemon/src/lib/schema.js";
+import { activity, deliveryQueue, systemEvents } from "../packages/daemon/src/lib/schema.js";
 
 // We test the SleepManager's pure logic methods without starting the daemon.
 // The class methods like checkWakeTrigger, formatDuration, etc. are tested directly.
@@ -1210,9 +1210,15 @@ describe("SleepManager wake-failure handling", () => {
     );
 
     // Notice recorded so the mind learns what happened on its next session.
-    const notices = await db.select().from(mindNotices).where(eq(mindNotices.mind, "broken")).all();
+    const notices = await db
+      .select()
+      .from(systemEvents)
+      .where(eq(systemEvents.mind, "broken"))
+      .all();
     assert.ok(
-      notices.some((n) => n.kind === "startup" && n.detail.includes("gpt-5.4")),
+      notices.some(
+        (n) => JSON.parse(n.meta ?? "{}").subtype === "startup" && n.body.includes("gpt-5.4"),
+      ),
       "expected a startup notice carrying the wake error",
     );
   });

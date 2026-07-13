@@ -12,8 +12,14 @@ import { resolve } from "node:path";
 import { promisify } from "node:util";
 import { CronExpressionParser } from "cron-parser";
 import { and, eq, inArray } from "drizzle-orm";
-import { sendSystemMessageDirect } from "../chat/system-chat.js";
-import { getSpiritName } from "../config/setup.js";
+import {
+  deliverEvent,
+  flushQueuedEvents,
+  MIND_LEVEL_SESSION,
+  pendingEventCount,
+  pendingEventsLine,
+  recordNotice,
+} from "../chat/system-events.js";
 import { getDb } from "../db.js";
 import type { DeliveryPayload } from "../delivery/delivery-router.js";
 import {
@@ -28,7 +34,6 @@ import { deliveryQueue } from "../schema.js";
 import log from "../util/logger.js";
 import { getMindManager } from "./mind-manager.js";
 import { sleepMind, wakeMind } from "./mind-service.js";
-import { MIND_LEVEL_SESSION, recordNotice } from "./notices.js";
 
 const slog = log.child("sleep");
 
@@ -287,35 +292,14 @@ export class SleepManager {
       const wakeTime = formatWakeTime(wakeAt);
       const preSleepMsg = await getPrompt("pre_sleep", { wakeTime });
 
-      // Persist to system DM conversation and deliver directly to mind
-      let conversationId: string | undefined;
-      try {
-        const result = await sendSystemMessageDirect(name, preSleepMsg);
-        conversationId = result.conversationId;
-      } catch (err) {
-        slog.error(`failed to persist pre-sleep message for ${name}`, log.errorData(err));
-      }
-
-      try {
-        await fetch(`http://127.0.0.1:${entry.port}/message`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            content: [{ type: "text", text: preSleepMsg }],
-            channel: `@${getSpiritName()}`,
-            sender: getSpiritName(),
-            isDM: true,
-            participants: [getSpiritName(), name],
-            participantCount: 2,
-            ...(conversationId ? { conversationId } : {}),
-          }),
-        });
-      } catch (err) {
-        slog.warn(`failed to send pre-sleep message to ${name}`, log.errorData(err));
-      }
+      // Deliver the pre-sleep event (the mind is still awake here). If it never reached
+      // the mind there is no wind-down turn to wait for — skip the idle wait rather than
+      // burning the full timeout. (Undelivered sleep events are never replayed: they are
+      // only meaningful at bedtime, so the wake flush expires them.)
+      const { delivered } = await deliverEvent(name, { type: "sleep", body: preSleepMsg });
 
       // Wait for mind to finish processing (timeout 120s)
-      await this.waitForIdle(name, 120_000);
+      if (delivered) await this.waitForIdle(name, 120_000);
 
       // Wait a beat for hooks (identity-reload, auto-commit) to settle
       await new Promise((r) => setTimeout(r, 3000));
@@ -392,7 +376,8 @@ export class SleepManager {
           duration,
         );
         const queuedSummary = await this.buildQueuedSummary(name);
-        const sleepActivity = [triggerWakeSummary, wakeContext, queuedSummary]
+        const eventsSummary = pendingEventsLine(await pendingEventCount(name));
+        const sleepActivity = [triggerWakeSummary, wakeContext, queuedSummary, eventsSummary]
           .filter(Boolean)
           .join("\n\n");
 
@@ -403,32 +388,8 @@ export class SleepManager {
           sleepActivity,
         });
 
-        // Persist to system DM conversation and deliver directly to mind
-        let wakeConvId: string | undefined;
-        try {
-          const result = await sendSystemMessageDirect(name, summaryText);
-          wakeConvId = result.conversationId;
-        } catch (err) {
-          slog.error(`failed to persist wake summary for ${name}`, log.errorData(err));
-        }
-
-        try {
-          await fetch(`http://127.0.0.1:${entry.port}/message`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              content: [{ type: "text", text: summaryText }],
-              channel: `@${getSpiritName()}`,
-              sender: getSpiritName(),
-              isDM: true,
-              participants: [getSpiritName(), name],
-              participantCount: 2,
-              ...(wakeConvId ? { conversationId: wakeConvId } : {}),
-            }),
-          });
-        } catch (err) {
-          slog.warn(`failed to deliver wake summary to ${name}`, log.errorData(err));
-        }
+        // Deliver the wake event directly (the mind is running but still flagged sleeping).
+        await deliverEvent(name, { type: "wake", body: summaryText, force: true });
 
         // Let the wake-summary turn finish before flushing the backlog (#382), so the
         // summary and the per-channel batches arrive as separate, ordered turns rather
@@ -440,6 +401,12 @@ export class SleepManager {
       const flushed = await this.flushQueuedMessages(name);
       if (flushed > 0) {
         slog.info(`flushed ${flushed} queued message(s) for ${name}`);
+      }
+
+      // Flush queued system events (delivered oldest-first after the wake event).
+      const flushedEvents = await flushQueuedEvents(name);
+      if (flushedEvents > 0) {
+        slog.info(`flushed ${flushedEvents} queued event(s) for ${name}`);
       }
 
       // Mark as awake

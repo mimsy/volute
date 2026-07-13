@@ -268,7 +268,11 @@ describe("DeliveryManager durability", () => {
     clearConfigCache(name); // triggers releaseGated → redrive
 
     await waitFor(async () => (await queueRows(name)).length === 0);
-    assert.equal(srv.received.length, 1, "gated message delivered after the route was added");
+    // The server also receives the "[New channel]" invite, now delivered as a system event
+    // (kind:"event") rather than a routed/gateable message — filter it out to isolate the
+    // released backlog message.
+    const releasedMsgs = srv.received.filter((b) => (b as { kind?: string }).kind !== "event");
+    assert.equal(releasedMsgs.length, 1, "gated message delivered after the route was added");
     removeMind(name);
   });
 

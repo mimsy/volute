@@ -58,7 +58,7 @@ if (process.env.VOLUTE_TIMEZONE && !process.env.TZ) {
 
 /**
  * Persist daemon connection info, splitting the secret from the non-secret part:
- * daemon.json (port/hostname) stays operator-readable at 0644 so a non-root CLI
+ * daemon.json (port/hostname) stays host-readable at 0644 so a non-root CLI
  * on a system install can find the daemon, while the admin token goes to a
  * separate 0600 owner-only file. chmodSync enforces the mode even when a file
  * pre-existed with looser/tighter perms (writeFileSync's `mode` only applies on
@@ -109,7 +109,7 @@ export async function startDaemon(opts: {
   ensureSystemDir();
 
   // Split provider credentials into secrets.json and relax config.json to 0644 so
-  // non-root operator CLI commands can read it (v0.41.1 regression). Runs as root.
+  // non-root host CLI commands can read it (v0.41.1 regression). Runs as root.
   const { migrateConfigSecrets, migrateSetupCompleted } = await import("./lib/config/setup.js");
   migrateConfigSecrets();
 
@@ -250,7 +250,7 @@ export async function startDaemon(opts: {
   const daemonConfig: Record<string, unknown> = { port, hostname };
   if (internalPort) daemonConfig.internalPort = internalPort;
   if (tls) daemonConfig.tls = true;
-  // daemon.json is operator-readable (0644); the admin token is written separately at 0600.
+  // daemon.json is host-readable (0644); the admin token is written separately at 0600.
   writeDaemonConfig(systemDir, daemonConfig, token);
 
   // Start delivery manager, mind manager, bridge manager, and scheduler

@@ -195,11 +195,12 @@ const cmd = command({
       process.exit(1);
     }
 
-    // Catch attempts to reply to system messages (with or without @)
+    // Catch attempts to reply to the system (with or without @)
     if (target === "system" || target === "@system") {
       console.error(
-        "Can't send to system — system messages are automated.\n" +
-          'To reply to a person, use their username from the message prefix (e.g. volute chat send @username "msg").',
+        "Can't send to system — system events come from your environment, not a person, and " +
+          "nothing is waiting on a reply.\n" +
+          'To reach a person, use their username from the message prefix (e.g. volute chat send @username "msg").',
       );
       process.exit(1);
     }
@@ -298,12 +299,11 @@ const cmd = command({
       const sender = flags.sender || mindSelf || userInfo().username;
 
       // Sending to yourself is a dead end: it would resolve to a
-      // one-participant conversation that reaches nobody. For the spirit this
-      // happens when it "replies" to its own system notices on its own channel.
+      // one-participant conversation that reaches nobody.
       if (mindSelf && targetName === mindSelf) {
         console.error(
-          `Can't send to @${targetName} — that's your own system channel. ` +
-            `System messages there are automated notices; they don't need a reply.`,
+          `Can't send to @${targetName} — that's yourself. ` +
+            `System events arrive from your environment and don't need a reply.`,
         );
         process.exit(1);
       }

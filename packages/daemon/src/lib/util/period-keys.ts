@@ -1,7 +1,7 @@
 // ── Period key helpers (server-local time) ──
 //
-// Period keys use the daemon host's local time so summaries align with the
-// operator's day/hour boundaries. This is the single source of truth shared by
+// Period keys use the server's local time so summaries align with the
+// host's day/hour boundaries. This is the single source of truth shared by
 // the summarizer, the history API range filters, and the backfill script.
 //
 // Formats:

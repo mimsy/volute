@@ -414,16 +414,22 @@ const app = new Hono<AuthEnv>()
     if (!entry) return c.json({ error: "Mind not found" }, 404);
 
     const body = await c.req.text();
-    const message = `[webhook: ${event}] ${body}`;
 
-    try {
-      const { sendSystemMessage } = await import("../../lib/chat/system-chat.js");
-      await sendSystemMessage(name, message);
-      return c.json({ ok: true });
-    } catch (err) {
-      slog.warn(`webhook delivery failed for ${name}`, log.errorData(err));
-      return c.json({ error: "Failed to reach mind" }, 502);
+    // deliverEvent never throws — answer honestly instead of a blanket ok. A webhook at
+    // a stopped/sleeping mind is recorded but pending (202); it is delivered on the
+    // mind's next start or wake. Only a failure to record at all is a 502.
+    const { deliverEvent } = await import("../../lib/chat/system-events.js");
+    const { id, delivered } = await deliverEvent(name, {
+      type: "webhook",
+      body,
+      meta: { source: event },
+    });
+    if (id == null) {
+      slog.warn(`webhook event for ${name} could not be recorded`);
+      return c.json({ error: "Failed to record event" }, 502);
     }
+    if (!delivered) return c.json({ ok: true, delivered: false, id }, 202);
+    return c.json({ ok: true, delivered: true, id });
   });
 
 export default app;

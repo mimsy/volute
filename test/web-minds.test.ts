@@ -431,7 +431,7 @@ describe("web minds routes", () => {
     const { addMind, mindDir, removeMind } = await import(
       "../packages/daemon/src/lib/mind/registry.js"
     );
-    const { recordNotice } = await import("../packages/daemon/src/lib/daemon/notices.js");
+    const { recordNotice } = await import("../packages/daemon/src/lib/chat/system-events.js");
     const { initMindManager, tryGetMindManager } = await import(
       "../packages/daemon/src/lib/daemon/mind-manager.js"
     );

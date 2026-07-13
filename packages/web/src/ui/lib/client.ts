@@ -5,6 +5,7 @@
 import type {
   AvailableUser,
   ChannelInfo,
+  ChannelSettings,
   Conversation,
   ConversationWithParticipants,
   FeedDigest,
@@ -332,6 +333,26 @@ export function fetchVariants(name: string): Promise<Variant[]> {
   return get(`${V1}/minds/${enc(name)}/variants`);
 }
 
+// --- System events ---
+
+export type MindEvent = {
+  id: number;
+  type: string;
+  label: string;
+  body: string;
+  meta?: Record<string, unknown>;
+  delivery: "immediate" | "next-turn";
+  reflection: string | null;
+  created_at: string;
+  delivered_at: string | null;
+};
+
+export function fetchMindEvents(name: string, limit?: number): Promise<{ events: MindEvent[] }> {
+  return get(
+    `${V1}/minds/${enc(name)}/system-events${limit !== undefined ? `?limit=${limit}` : ""}`,
+  );
+}
+
 export function createVariant(
   name: string,
   body: { name: string; soul?: string },
@@ -415,6 +436,43 @@ export function inviteToChannel(channelName: string, username: string): Promise<
 
 export function fetchChannelMembers(channelName: string): Promise<Participant[]> {
   return get(`${V1}/channels/${enc(channelName)}/members`);
+}
+
+export function fetchChannelSettings(name: string): Promise<
+  Conversation & {
+    channel_name: string;
+    participants: Participant[];
+    settings: ChannelSettings | null;
+  }
+> {
+  return get(`${V1}/channels/${enc(name)}`);
+}
+
+export async function updateChannelSettings(
+  name: string,
+  settings: {
+    description?: string | null;
+    rules?: string | null;
+    charLimit?: number | null;
+    private?: boolean;
+  },
+): Promise<ChannelSettings> {
+  const res = await _client.fetch(`${V1}/channels/${enc(name)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(settings),
+  });
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as { error?: unknown };
+    const message =
+      typeof data.error === "string"
+        ? data.error
+        : `Failed to update channel settings (${res.status})`;
+    throw new Error(message);
+  }
+  // Return the server's canonical settings so the UI reflects any normalization.
+  const body = (await res.json()) as { settings: ChannelSettings };
+  return body.settings;
 }
 
 // --- Skills ---
@@ -904,6 +962,25 @@ export function updateSchedule(
 
 export function deleteSchedule(name: string, id: string): Promise<void> {
   return del(`${V1}/minds/${enc(name)}/schedules/${enc(id)}`);
+}
+
+// --- Pending incoming files ---
+// This route lives under /api/minds (not /api/v1), guarded by requireSelf.
+// Read-only by design: accepting or rejecting a file is the mind's decision,
+// made via its own tools (volute chat accept/reject) — the web UI only
+// provides visibility into the queue.
+
+export type PendingFile = {
+  id: string;
+  sender: string;
+  filename: string;
+  originalPath: string;
+  size: number;
+  createdAt: string;
+};
+
+export function fetchPendingFiles(mind: string): Promise<PendingFile[]> {
+  return get(`/api/minds/${enc(mind)}/files/pending`);
 }
 
 // --- Profile ---

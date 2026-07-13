@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { sendSystemMessage } from "../chat/system-chat.js";
+import { deliverEvent } from "../chat/system-events.js";
 import { stateDir } from "../mind/registry.js";
 import log from "../util/logger.js";
 
@@ -236,10 +236,11 @@ export class TokenBudget {
       .join("\n");
 
     try {
-      await sendSystemMessage(
-        mindName,
-        `[Budget replay] ${messages.length} queued message(s) from the previous budget period:\n\n${summary}`,
-      );
+      await deliverEvent(mindName, {
+        type: "budget",
+        meta: { subtype: "replay" },
+        body: `${messages.length} queued message(s) from the previous budget period:\n\n${summary}`,
+      });
       tlog.info(`replayed ${messages.length} queued message(s) for ${mindName}`);
     } catch (err) {
       tlog.warn(`failed to replay for ${mindName}`, log.errorData(err));

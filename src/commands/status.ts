@@ -73,7 +73,7 @@ const cmd = command({
       }
     }
 
-    // List minds (best-effort — authenticate as the operator via CLI session)
+    // List minds (best-effort — authenticate as the host via CLI session)
     const headers: Record<string, string> = {};
     const token = getAuthToken();
     if (token) headers.Authorization = `Bearer ${token}`;

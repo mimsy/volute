@@ -2,7 +2,7 @@ import type { SummaryRow } from "@volute/api";
 import { getClient, urlOf } from "../lib/api-client.js";
 import { command } from "../lib/command.js";
 import { daemonFetch } from "../lib/daemon-client.js";
-import { compactTime, isCompact } from "../lib/format-cli.js";
+import { compactTime, formatSender, isCompact } from "../lib/format-cli.js";
 import { resolveMindName } from "../lib/resolve-mind-name.js";
 
 type ActivityRow = {
@@ -19,6 +19,7 @@ type HistoryRow = {
   channel: string | null;
   session: string | null;
   sender: string | null;
+  sender_display_name: string | null;
   content: string | null;
   metadata: string | null;
   created_at: string;
@@ -36,7 +37,10 @@ function formatRow(row: HistoryRow): string {
   switch (row.type) {
     case "inbound":
     case "outbound": {
-      const sender = row.sender ?? (row.type === "outbound" ? "mind" : "unknown");
+      const sender = formatSender(
+        row.sender ?? (row.type === "outbound" ? "mind" : "unknown"),
+        row.sender_display_name,
+      );
       return `[${time}] [${channel}] ${sender}: ${row.content ?? ""}`;
     }
     case "text":
@@ -104,6 +108,7 @@ function formatRowCompact(row: HistoryRow): string {
   switch (row.type) {
     case "inbound":
     case "outbound": {
+      // Compact (mind-facing) output stays terse; display names are for humans.
       const sender = row.sender ?? (row.type === "outbound" ? "mind" : "unknown");
       return `[${time}] [${channel}] ${sender}: ${row.content ?? ""}`;
     }

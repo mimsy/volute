@@ -194,7 +194,7 @@ export function providerForMindTemplate(
 
 /**
  * If a mind of this template/model would spawn without usable model credentials,
- * return an operator-actionable warning explaining it will stay silent and how to
+ * return a host-actionable warning explaining it will stay silent and how to
  * fix it; otherwise null. Checks the same sources the mind's spawn env is built
  * from: provider OAuth/stored key/ambient env (what the daemon injects), plus the
  * shared and per-mind env.json — which survive into the mind env, and which the

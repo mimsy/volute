@@ -265,40 +265,35 @@ export const messages = sqliteTable(
   ],
 );
 
-// Failure notices: recorded by the daemon when a mind's turn fails (auth, rate-limit,
-// overloaded, network, crash, budget), keyed to the (mind, session) where it happened.
-// Drained into the mind's next successful turn in that session via a pre-prompt hook.
-export const mindNotices = sqliteTable(
-  "mind_notices",
+// System events: environment → mind traffic (schedule fires, wake summaries, lifecycle
+// context, budget/version/crash notices, invites, file-share offers, …). Distinct from
+// chat messages — no sender, no reply target. `delivery: "immediate"` POSTs an event
+// envelope to the mind (triggers a turn); `delivery: "next-turn"` is drained as a context
+// block on the mind's next turn. `delivered_at` null = pending (sleep queue for immediate;
+// undrained for next-turn). `reflection` holds the mind's closing text from the event turn.
+export const systemEvents = sqliteTable(
+  "system_events",
   {
     id: integer("id").primaryKey({ autoIncrement: true }),
     mind: text("mind").notNull(),
-    // Mind-level notices (not tied to a session, e.g. extension notifications)
-    // use the sentinel session = "" so any session's drain picks them up.
-    session: text("session").notNull(),
-    kind: text("kind")
-      .$type<"turn_error" | "crash" | "budget" | "startup" | "extension">()
-      .notNull(),
-    reason: text("reason")
-      .$type<
-        | "auth_error"
-        | "rate_limit"
-        | "overloaded"
-        | "network"
-        | "unknown"
-        | "process_crash"
-        | "token_budget"
-        | "startup_failed"
-        | "no_credentials"
-        // For kind="extension", reason holds the extension id (e.g. "notes").
-        | (string & {})
-      >()
-      .notNull(),
-    detail: text("detail").notNull(),
-    raw: text("raw"),
+    type: text("type").notNull(),
+    body: text("body").notNull(),
+    // JSON: schedule id, sleep duration, variant name, lifecycle subtype, webhook source,
+    // notice subtype/reason, etc.
+    meta: text("meta"),
+    delivery: text("delivery").$type<"immediate" | "next-turn">().notNull().default("immediate"),
+    // Routing session (default "main"). Next-turn notices tied to no session use the
+    // sentinel session = "" so any session's drain picks them up.
+    session: text("session").notNull().default("main"),
     created_at: text("created_at").notNull().default(sql`(datetime('now'))`),
+    delivered_at: text("delivered_at"),
+    reflection: text("reflection"),
   },
-  (table) => [index("idx_mind_notices_mind_session").on(table.mind, table.session)],
+  (table) => [
+    index("idx_system_events_mind").on(table.mind),
+    index("idx_system_events_mind_delivery").on(table.mind, table.delivery, table.delivered_at),
+    index("idx_system_events_mind_type").on(table.mind, table.type),
+  ],
 );
 
 // Per-(mind, channel) gate state for unrouted channels. A row exists once a mind
