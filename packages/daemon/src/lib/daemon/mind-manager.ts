@@ -2,7 +2,7 @@ import { type ChildProcess, execFile, type SpawnOptions, spawn } from "node:chil
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
-import { getAiConfig, resolveApiKey } from "../ai-service.js";
+import { getAiConfig, resolveApiKey, resolveOAuthCredentials } from "../ai-service.js";
 import { deliverEvent, recordNotice } from "../chat/system-events.js";
 import { loadMergedEnv } from "../config/env.js";
 import { getSystemName, readGlobalConfig } from "../config/setup.js";
@@ -21,7 +21,11 @@ import { checkHealth } from "../util/health.js";
 import { clearJsonMap, loadJsonMap, saveJsonMap } from "../util/json-state.js";
 import log from "../util/logger.js";
 import { RotatingLog } from "../util/rotating-log.js";
-import { writeClaudeCredentials, writePiProviderKey } from "./credential-sync.js";
+import {
+  writeClaudeCredentials,
+  writePiProviderKey,
+  writePiProviderOAuth,
+} from "./credential-sync.js";
 import { generateMindToken, revokeMindToken } from "./mind-tokens.js";
 import { RestartTracker } from "./restart-tracker.js";
 import { clearMind as clearTurnState, summarizeOrphanedTurns } from "./turn-tracker.js";
@@ -328,35 +332,48 @@ export class MindManager {
           const modelStr = config.model as string | undefined;
           if (modelStr?.includes(":")) {
             const provider = modelStr.split(":")[0];
-            const apiKey = await resolveApiKey(provider);
-            if (apiKey) {
-              // Write API key to pi-coding-agent auth storage so the mind can use it.
-              // The pi template watches auth.json and reloads, so the daemon can
-              // push a refreshed OAuth token here without restarting the mind.
-              const piAgentDir = resolve(dir, ".mind", "pi-agent");
-              await writePiProviderKey(piAgentDir, baseName, provider, apiKey);
+            const piAgentDir = resolve(dir, ".mind", "pi-agent");
+            const oauthCreds = await resolveOAuthCredentials(provider);
+            if (oauthCreds) {
+              // Store the full OAuth credential (not just the derived key) so
+              // pi-ai's own OAuth resolution runs inside the mind — some
+              // providers (GitHub Copilot) derive a per-credential baseUrl from
+              // this shape that a flattened api_key loses, misdirecting
+              // requests to the wrong backend (421 Misdirected Request). It
+              // also lets the mind refresh its own token from the stored
+              // refresh grant.
+              await writePiProviderOAuth(piAgentDir, baseName, provider, oauthCreds);
               env.PI_CODING_AGENT_DIR = piAgentDir;
-
-              // Also set provider-specific env var as fallback — the sandbox may
-              // block proper-lockfile from reading auth.json, so the env var
-              // ensures getEnvApiKey() in pi-ai still resolves the key.
-              const providerEnvVars: Record<string, string> = {
-                openrouter: "OPENROUTER_API_KEY",
-                openai: "OPENAI_API_KEY",
-                anthropic: "ANTHROPIC_API_KEY",
-                google: "GEMINI_API_KEY",
-                groq: "GROQ_API_KEY",
-                cerebras: "CEREBRAS_API_KEY",
-                xai: "XAI_API_KEY",
-                mistral: "MISTRAL_API_KEY",
-                zai: "ZAI_API_KEY",
-              };
-              const providerEnv = providerEnvVars[provider];
-              if (providerEnv) env[providerEnv] = apiKey;
             } else {
-              mlog.warn(
-                `no API key found for provider "${provider}" — mind ${name} may fail to start`,
-              );
+              const apiKey = await resolveApiKey(provider);
+              if (apiKey) {
+                // Write API key to pi-coding-agent auth storage so the mind can use it.
+                // The pi template watches auth.json and reloads, so the daemon can
+                // push a refreshed key here without restarting the mind.
+                await writePiProviderKey(piAgentDir, baseName, provider, apiKey);
+                env.PI_CODING_AGENT_DIR = piAgentDir;
+
+                // Also set provider-specific env var as fallback — the sandbox may
+                // block proper-lockfile from reading auth.json, so the env var
+                // ensures getEnvApiKey() in pi-ai still resolves the key.
+                const providerEnvVars: Record<string, string> = {
+                  openrouter: "OPENROUTER_API_KEY",
+                  openai: "OPENAI_API_KEY",
+                  anthropic: "ANTHROPIC_API_KEY",
+                  google: "GEMINI_API_KEY",
+                  groq: "GROQ_API_KEY",
+                  cerebras: "CEREBRAS_API_KEY",
+                  xai: "XAI_API_KEY",
+                  mistral: "MISTRAL_API_KEY",
+                  zai: "ZAI_API_KEY",
+                };
+                const providerEnv = providerEnvVars[provider];
+                if (providerEnv) env[providerEnv] = apiKey;
+              } else {
+                mlog.warn(
+                  `no API key found for provider "${provider}" — mind ${name} may fail to start`,
+                );
+              }
             }
           }
         }

@@ -464,29 +464,46 @@ export async function getAvailableModels(): Promise<Model<Api>[]> {
   return result;
 }
 
+/**
+ * Resolve and refresh a provider's stored OAuth credential object (not just the
+ * derived API key). Some providers need more than a bearer token to authenticate
+ * correctly — GitHub Copilot's session tokens are proxy-affinitized, and only the
+ * full OAuth credential shape lets pi-ai derive the matching baseUrl at request
+ * time (a bare API key falls back to the provider's generic default baseUrl,
+ * which the token may not be valid against, producing 421 Misdirected Request).
+ * Returns undefined when the provider has no OAuth credentials configured or
+ * refresh fails.
+ */
+export async function resolveOAuthCredentials(
+  providerId: string,
+): Promise<NonNullable<AiProviderConfig["oauth"]> | undefined> {
+  const ai = getAiConfig();
+  const providerConfig = ai?.providers[providerId];
+  if (!providerConfig?.oauth) return undefined;
+
+  try {
+    const result = await getOAuthApiKey(providerId, { [providerId]: providerConfig.oauth });
+    if (!result) return undefined;
+    // Persist refreshed credentials
+    if (result.newCredentials.access !== providerConfig.oauth.access) {
+      saveProviderConfig(providerId, { ...providerConfig, oauth: result.newCredentials });
+      // Fan the rotated token out to running minds (single refresh authority).
+      fireProviderRefreshHook(providerId);
+    }
+    return result.newCredentials;
+  } catch (err) {
+    aiLog.warn(`OAuth credential resolution failed for ${providerId}`, log.errorData(err));
+    return undefined;
+  }
+}
+
 /** Resolve API key for a provider, checking OAuth → config → env var. */
 export async function resolveApiKey(providerId: string): Promise<string | undefined> {
   const ai = getAiConfig();
   const providerConfig = ai?.providers[providerId];
 
-  if (providerConfig?.oauth) {
-    try {
-      const result = await getOAuthApiKey(providerId, {
-        [providerId]: providerConfig.oauth,
-      });
-      if (result) {
-        // Persist refreshed credentials
-        if (result.newCredentials.access !== providerConfig.oauth.access) {
-          saveProviderConfig(providerId, { ...providerConfig, oauth: result.newCredentials });
-          // Fan the rotated token out to running minds (single refresh authority).
-          fireProviderRefreshHook(providerId);
-        }
-        return result.apiKey;
-      }
-    } catch (err) {
-      aiLog.warn(`OAuth key resolution failed for ${providerId}`, log.errorData(err));
-    }
-  }
+  const oauthCreds = await resolveOAuthCredentials(providerId);
+  if (oauthCreds) return oauthCreds.access;
 
   return resolveProviderKey(providerId, providerConfig?.apiKey);
 }

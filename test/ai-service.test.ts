@@ -15,6 +15,7 @@ import {
   removeAiConfig,
   removeCustomModel,
   removeProviderConfig,
+  resolveOAuthCredentials,
   saveProviderConfig,
   setEnabledModels,
   setUtilityModel,
@@ -64,6 +65,26 @@ describe("ai-service config", () => {
     saveProviderConfig("anthropic", { apiKey: "sk-test" });
     removeProviderConfig("anthropic");
     assert.equal(getAiConfig(), null);
+  });
+});
+
+describe("resolveOAuthCredentials", () => {
+  it("returns undefined when the provider has no stored oauth", async () => {
+    removeAiConfig();
+    saveProviderConfig("github-copilot", { apiKey: "static-key" });
+    assert.equal(await resolveOAuthCredentials("github-copilot"), undefined);
+  });
+
+  it("returns the stored credential unchanged when it isn't expired (no refresh/network call)", async () => {
+    removeAiConfig();
+    const oauth = {
+      access: "copilot-session-token",
+      refresh: "gh-oauth-refresh",
+      expires: 4102444800000, // year 2100 — never expired during a test run
+    };
+    saveProviderConfig("github-copilot", { oauth });
+    const result = await resolveOAuthCredentials("github-copilot");
+    assert.deepEqual(result, oauth);
   });
 });
 
