@@ -2,7 +2,7 @@
 import type { ConversationWithParticipants, Message } from "@volute/api";
 import { Modal } from "@volute/ui";
 import { renderMarkdown } from "@volute/ui/markdown";
-import { fetchMindConversationMessages } from "../../lib/client";
+import { fetchConversationMessages, fetchMindConversationMessages } from "../../lib/client";
 import { extractTextContent, formatTime, showSenderHeader } from "../../lib/feed-utils";
 import { normalizeTimestamp } from "../../lib/format";
 import { navigate } from "../../lib/navigate";
@@ -13,7 +13,10 @@ let {
   canChat = false,
   onClose,
 }: {
-  mindName: string;
+  // Optional: when a mind context is known (e.g. the timeline) reads go through the
+  // mind's endpoint; when absent (home feed) they use the conversation endpoint,
+  // which serves any non-private conversation to authenticated callers.
+  mindName?: string;
   conversation: ConversationWithParticipants;
   canChat?: boolean;
   onClose: () => void;
@@ -36,7 +39,10 @@ let label = $derived.by(() => {
 $effect(() => {
   loading = true;
   error = null;
-  fetchMindConversationMessages(mindName, conversation.id, { limit: 50 })
+  const load = mindName
+    ? fetchMindConversationMessages(mindName, conversation.id, { limit: 50 })
+    : fetchConversationMessages(conversation.id, { limit: 50 });
+  load
     .then((res) => {
       messages = res.items;
       requestAnimationFrame(() => {
@@ -97,7 +103,7 @@ function showDate(i: number): boolean {
           <div class="chat-entry" class:new-sender={showSenderHeader(messages, i)}>
             {#if showSenderHeader(messages, i)}
               <div class="chat-entry-header">
-                <span class="chat-sender" class:chat-sender-user={msg.role === "user"}>{msg.sender_name ?? (msg.role === "user" ? "user" : mindName)}</span>
+                <span class="chat-sender" class:chat-sender-user={msg.role === "user"}>{msg.sender_name ?? (msg.role === "user" ? "user" : (mindName ?? "mind"))}</span>
                 <span class="chat-timestamp">{formatTime(msg.created_at)}</span>
               </div>
             {/if}

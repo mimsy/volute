@@ -1,37 +1,29 @@
 <script lang="ts">
-import type {
-  AwayFeedItem,
-  ConversationWithParticipants,
-  LastMessageSummary,
-  Message,
-} from "@volute/api";
+import type { ConversationWithParticipants, FeedChatEvent, FeedEvent } from "@volute/api";
 import { icons } from "@volute/ui/icons";
 import { renderMarkdown } from "@volute/ui/markdown";
 import ExtensionFeedCard from "../components/ExtensionFeedCard.svelte";
+import ChatEventCard from "../components/home/ChatEventCard.svelte";
+import LifecycleRow from "../components/home/LifecycleRow.svelte";
+import MindPresenceStrip from "../components/home/MindPresenceStrip.svelte";
 import MindEmptyState from "../components/MindEmptyState.svelte";
-import { AWAY_SEEN_KEY, dividerIndex } from "../lib/away-feed";
-import { fetchAwayFeed, fetchConversationMessages } from "../lib/client";
-import { extractTextContent, formatTime, showSenderHeader } from "../lib/feed-utils";
-import { formatRelativeTime, normalizeTimestamp } from "../lib/format";
-
+import ReadOnlyChatModal from "../components/modals/ReadOnlyChatModal.svelte";
+import { fetchFeed, fetchFeedDigest } from "../lib/client";
+import { normalizeTimestamp } from "../lib/format";
 import { navigate } from "../lib/navigate";
 import { showMindOnboarding } from "../lib/onboarding";
 import { data as storeData } from "../lib/stores.svelte";
 
-type ConversationWithDetails = ConversationWithParticipants & {
-  lastMessage?: LastMessageSummary;
-};
-
 let {
   username,
-  conversations,
-  onSelectConversation,
   onSeed,
 }: {
   username: string;
-  conversations: ConversationWithDetails[];
-  onSelectConversation: (id: string) => void;
-  onSeed: () => void;
+  // `conversations` and `onSelectConversation` are part of the shared page
+  // signature (MainFrame passes them); the feed sources its own data.
+  conversations?: unknown;
+  onSelectConversation?: (id: string) => void;
+  onSeed?: () => void;
 } = $props();
 
 // Fresh-install state: no regular minds yet. Onboarding takes over the landing.
@@ -50,43 +42,32 @@ type ExtFeedItem = {
   extensionId: string;
 };
 
+let feedEvents = $state<FeedEvent[]>([]);
 let extensionFeedItems = $state<ExtFeedItem[]>([]);
-let awayItems = $state<AwayFeedItem[]>([]);
+let digest = $state("");
+let openEvent = $state<FeedChatEvent | null>(null);
 
-// "While you were away": read the previous visit's watermark once, then
-// advance it to now. Items newer than it sit above the divider.
-function readLastSeen(): number | null {
-  try {
-    const v = localStorage.getItem(AWAY_SEEN_KEY);
-    if (!v) return null;
-    const ms = Date.parse(v);
-    return Number.isNaN(ms) ? null : ms;
-  } catch {
-    return null;
-  }
-}
-const lastSeenMs = readLastSeen();
-try {
-  localStorage.setItem(AWAY_SEEN_KEY, new Date().toISOString());
-} catch {
-  // Can't advance the watermark — the divider still shows against the last
-  // stored visit (or stays hidden if there was never one); it just won't move.
-}
-
-// Fetch self-directed turn summaries (heartbeats, schedules, mind-to-mind)
+// Fetch the system feed (conversation bursts + lifecycle rows).
 $effect(() => {
-  fetchAwayFeed()
-    .then((items) => {
-      awayItems = items;
+  fetchFeed()
+    .then((res) => {
+      feedEvents = res.events;
     })
     .catch((err) => {
-      console.warn("Failed to fetch away feed:", err);
+      console.warn("Failed to fetch feed:", err);
     });
 });
 
-function mindLabel(name: string): string {
-  return storeData.minds.find((m) => m.name === name)?.displayName ?? name;
-}
+// Fetch the AI daily digest header.
+$effect(() => {
+  fetchFeedDigest()
+    .then((res) => {
+      digest = res.content;
+    })
+    .catch((err) => {
+      console.warn("Failed to fetch digest:", err);
+    });
+});
 
 // Fetch extension feed items from all extensions with feedSource
 $effect(() => {
@@ -111,44 +92,16 @@ $effect(() => {
   });
 });
 
-let topConversations = $derived(
-  [...conversations]
-    .filter((c) => (c as any).lastMessage)
-    .sort((a, b) => {
-      const aTime = new Date(normalizeTimestamp(a.updated_at)).getTime();
-      const bTime = new Date(normalizeTimestamp(b.updated_at)).getTime();
-      return bTime - aTime;
-    })
-    .slice(0, 6),
-);
-
-let messagesMap = $state<Record<string, Message[]>>({});
-let scrollEls = $state<Record<string, HTMLDivElement>>({});
-
-$effect(() => {
-  const convs = topConversations;
-  for (const conv of convs) {
-    if (messagesMap[conv.id]) continue;
-    fetchConversationMessages(conv.id, { limit: 10 })
-      .then((res) => {
-        messagesMap[conv.id] = res.items;
-        requestAnimationFrame(() => {
-          const el = scrollEls[conv.id];
-          if (el) el.scrollTop = el.scrollHeight;
-        });
-      })
-      .catch(() => {
-        messagesMap[conv.id] = [];
-      });
-  }
-});
+function mindLabel(name: string): string {
+  return storeData.minds.find((m) => m.name === name)?.displayName ?? name;
+}
 
 type SproutItem = { id: number; mind: string; date: string };
 
-type FeedItem =
-  | { kind: "message"; conv: ConversationWithDetails; date: string }
+type HomeItem =
+  | { kind: "chat"; event: FeedChatEvent; date: string }
+  | { kind: "lifecycle"; event: Extract<FeedEvent, { kind: "lifecycle" }>; date: string }
   | { kind: "extension"; item: ExtFeedItem; date: string }
-  | { kind: "away"; item: AwayFeedItem; date: string }
   | { kind: "sprout"; item: SproutItem; date: string };
 
 // Sprout events surface as their own home-feed card (#665). They're read from
@@ -160,157 +113,125 @@ let sproutItems = $derived(
     .map((a) => ({ id: a.id, mind: a.mind, date: a.created_at })),
 );
 
-let feedItems = $derived.by(() => {
-  const items: FeedItem[] = [];
-  for (const conv of topConversations) {
-    items.push({ kind: "message", conv, date: conv.updated_at });
+let items = $derived.by(() => {
+  const out: HomeItem[] = [];
+  for (const ev of feedEvents) {
+    if (ev.kind === "chat") out.push({ kind: "chat", event: ev, date: ev.endedAt });
+    else out.push({ kind: "lifecycle", event: ev, date: ev.createdAt });
   }
-  for (const extItem of extensionFeedItems) {
-    items.push({ kind: "extension", item: extItem, date: extItem.date });
-  }
-  for (const awayItem of awayItems) {
-    items.push({ kind: "away", item: awayItem, date: awayItem.created_at });
+  for (const ext of extensionFeedItems) {
+    out.push({ kind: "extension", item: ext, date: ext.date });
   }
   for (const sprout of sproutItems) {
-    items.push({ kind: "sprout", item: sprout, date: sprout.date });
+    out.push({ kind: "sprout", item: sprout, date: sprout.date });
   }
-  items.sort((a, b) => {
-    const aTime = new Date(normalizeTimestamp(a.date)).getTime();
-    const bTime = new Date(normalizeTimestamp(b.date)).getTime();
-    return bTime - aTime;
+  out.sort((a, b) => {
+    const at = new Date(normalizeTimestamp(a.date)).getTime();
+    const bt = new Date(normalizeTimestamp(b.date)).getTime();
+    return bt - at;
   });
-  return items;
+  return out;
 });
 
-// Where the "new since your last visit" divider goes in the newest-first feed
-let dividerAt = $derived(
-  dividerIndex(
-    feedItems.map((i) => new Date(normalizeTimestamp(i.date)).getTime()),
-    lastSeenMs,
-  ),
-);
+// Synthesize a conversation prop for the read-only modal from the clicked event.
+let openConversation = $derived.by<ConversationWithParticipants | null>(() => {
+  if (!openEvent) return null;
+  return {
+    id: openEvent.conversationId,
+    type: openEvent.conversationType,
+    user_id: null,
+    private: 0,
+    created_at: openEvent.startedAt,
+    updated_at: openEvent.endedAt,
+    channel_name: openEvent.channelName,
+    participants: openEvent.participants,
+  };
+});
 
-function getConvLabel(conv: ConversationWithDetails): string {
-  if (conv.type === "channel" && conv.channel_name) return `#${conv.channel_name}`;
-  const parts = conv.participants ?? [];
-  if (conv.type === "dm" && parts.length === 2) {
-    const mind = parts.find((p) => p.userType === "mind");
-    const other = parts.find((p) => p.username !== mind?.username);
-    if (mind && other) return `@${mind.username}`;
-  }
-  const names = parts.map((p) => p.username);
-  if (names.length > 0) return names.join(", ");
-  return "Conversation";
-}
+let canChat = $derived(openEvent?.participants.some((p) => p.username === username) ?? false);
 </script>
 
 <div class="home">
   {#if onboarding}
-    <MindEmptyState minds={storeData.minds} {onSeed} />
-  {:else if feedItems.length === 0}
-    <div class="empty-hint">
-      Nothing here yet. When your minds do things on their own, it shows up here.
-    </div>
+    <MindEmptyState minds={storeData.minds} onSeed={onSeed ?? (() => {})} />
   {:else}
-    <div class="feed-grid">
-      {#each feedItems as item, i (item.kind === "extension" ? `ext-${item.item.id}` : item.kind === "away" ? `away-${item.item.id}` : item.kind === "sprout" ? `sprout-${item.item.id}` : `msg-${item.conv.id}`)}
-        {#if i === dividerAt}
-          <div class="feed-divider"><span class="feed-divider-label">new since your last visit ↑</span></div>
-        {/if}
-        {#if item.kind === "extension"}
-          <div class="feed-item">
-            <ExtensionFeedCard
-              title={item.item.title}
-              url={item.item.url}
-              date={item.item.date}
-              author={item.item.author}
-              bodyHtml={item.item.bodyHtml}
-              iframeUrl={item.item.iframeUrl}
-              icon={item.item.icon}
-              color={item.item.color}
-              onclick={() => navigate(item.item.url)}
-            />
-          </div>
-        {:else if item.kind === "away"}
-          {@const away = item.item}
-          <div class="feed-item">
-            <ExtensionFeedCard
-              title={mindLabel(away.mind)}
-              url={`/minds/${away.mind}`}
-              date={away.created_at}
-              bodyHtml={away.summary}
-              icon={icons.mind}
-              color="purple"
-              onclick={() => navigate(`/minds/${away.mind}`)}
-            />
-          </div>
-        {:else if item.kind === "sprout"}
-          {@const sprout = item.item}
-          <div class="feed-item">
-            <ExtensionFeedCard
-              title={`${mindLabel(sprout.mind)} sprouted`}
-              url={`/minds/${sprout.mind}`}
-              date={sprout.date}
-              bodyHtml="Left the seed stage and became a full mind — joined #system and began its first week."
-              icon={icons.mind}
-              color="green"
-              onclick={() => navigate(`/minds/${sprout.mind}`)}
-            />
-          </div>
-        {:else}
-          {@const conv = item.conv}
-          {@const label = getConvLabel(conv)}
-          {@const messages = messagesMap[conv.id] ?? []}
-          <div class="feed-item">
-            <div class="feed-card card-chat" role="button" tabindex="0" onclick={() => onSelectConversation(conv.id)} onkeydown={(e) => { if (e.key === 'Enter') onSelectConversation(conv.id); }}>
-              <div class="feed-card-header header-chat">
-                <svg class="feed-card-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg>
-                <span class="feed-card-label">{label}</span>
-                <span class="feed-card-meta">{formatRelativeTime(conv.updated_at)}</span>
-                <button
-                  class="card-action-btn card-action-btn-primary"
-                  onclick={(e) => { e.stopPropagation(); onSelectConversation(conv.id); }}
-                >
-                  Chat
-                </button>
-              </div>
-              <div class="feed-card-body chat-body" role="log" bind:this={scrollEls[conv.id]} onscroll={(e) => {
-                const el = e.currentTarget;
-                if (el.scrollTop < 10) el.scrollTop = 10;
-              }}>
-                {#if messages.length === 0}
-                  <div class="msg-empty">Loading...</div>
-                {:else}
-                  {#each messages as msg, i (msg.id)}
-                    <div class="chat-entry" class:new-sender={showSenderHeader(messages, i)}>
-                      {#if showSenderHeader(messages, i)}
-                        <div class="chat-entry-header">
-                          <span class="chat-sender" class:chat-sender-user={msg.role === "user"}>{msg.sender_name ?? (msg.role === "user" ? username : "")}</span>
-                          <span class="chat-timestamp">{formatTime(msg.created_at)}</span>
-                        </div>
-                      {/if}
-                      <div class="chat-entry-content" class:chat-user-text={msg.role === "user"}>
-                        {#if msg.role === "user"}
-                          {extractTextContent(msg.content)}
-                        {:else}
-                          <div class="markdown-body">{@html renderMarkdown(extractTextContent(msg.content))}</div>
-                        {/if}
-                      </div>
-                    </div>
-                  {/each}
-                {/if}
-              </div>
+    <MindPresenceStrip />
+
+    {#if digest.trim()}
+      <div class="digest markdown-body">{@html renderMarkdown(digest)}</div>
+    {/if}
+
+    {#if items.length === 0}
+      <div class="empty-hint">
+        Nothing here yet. When your minds do things on their own, it shows up here.
+      </div>
+    {:else}
+      <div class="feed-grid">
+        {#each items as item (item.kind === "extension" ? `ext-${item.item.id}` : item.kind === "sprout" ? `sprout-${item.item.id}` : item.kind === "lifecycle" ? `life-${item.event.id}` : `chat-${item.event.conversationId}-${item.event.endedAt}`)}
+          {#if item.kind === "extension"}
+            <div class="feed-item">
+              <ExtensionFeedCard
+                title={item.item.title}
+                url={item.item.url}
+                date={item.item.date}
+                author={item.item.author}
+                bodyHtml={item.item.bodyHtml}
+                iframeUrl={item.item.iframeUrl}
+                icon={item.item.icon}
+                color={item.item.color}
+                onclick={() => navigate(item.item.url)}
+              />
             </div>
-          </div>
-        {/if}
-      {/each}
-    </div>
+          {:else if item.kind === "sprout"}
+            {@const sprout = item.item}
+            <div class="feed-item">
+              <ExtensionFeedCard
+                title={`${mindLabel(sprout.mind)} sprouted`}
+                url={`/minds/${sprout.mind}`}
+                date={sprout.date}
+                bodyHtml="Left the seed stage and became a full mind — joined #system and began its first week."
+                icon={icons.mind}
+                color="green"
+                onclick={() => navigate(`/minds/${sprout.mind}`)}
+              />
+            </div>
+          {:else if item.kind === "lifecycle"}
+            <div class="feed-lifecycle">
+              <LifecycleRow event={item.event} />
+            </div>
+          {:else}
+            <div class="feed-item">
+              <ChatEventCard event={item.event} onclick={() => { openEvent = item.event; }} />
+            </div>
+          {/if}
+        {/each}
+      </div>
+    {/if}
   {/if}
 </div>
+
+{#if openEvent && openConversation}
+  <ReadOnlyChatModal
+    conversation={openConversation}
+    {canChat}
+    onClose={() => { openEvent = null; }}
+  />
+{/if}
 
 <style>
   .home {
     animation: fadeIn 0.2s ease both;
+  }
+
+  .digest {
+    color: var(--text-1);
+    font-size: 14px;
+    line-height: 1.6;
+    margin: 0 0 20px;
+    padding: 14px 16px;
+    background: var(--bg-1);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
   }
 
   .empty-hint {
@@ -324,184 +245,14 @@ function getConvLabel(conv: ConversationWithDetails): string {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
     gap: 16px;
+    align-items: start;
   }
 
   .feed-item {
     min-width: 0;
   }
 
-  .feed-divider {
+  .feed-lifecycle {
     grid-column: 1 / -1;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    margin: 2px 0;
-  }
-
-  .feed-divider::before,
-  .feed-divider::after {
-    content: "";
-    flex: 1;
-    height: 1px;
-    background: color-mix(in srgb, var(--accent) 35%, var(--border));
-  }
-
-  .feed-divider-label {
-    font-size: 11px;
-    color: var(--text-2);
-    white-space: nowrap;
-  }
-
-  /* Unified card */
-  .feed-card {
-    background: var(--bg-0);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
-    display: flex;
-    flex-direction: column;
-    height: 240px;
-    overflow: hidden;
-    transition: border-color 0.15s;
-  }
-
-  .feed-card[role="button"] {
-    cursor: pointer;
-  }
-
-  .feed-card-header {
-    padding: 6px 8px 6px 10px;
-    font-size: 13px;
-    font-weight: 500;
-    color: var(--text-1);
-    border-bottom: 1px solid var(--border);
-    flex-shrink: 0;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
-
-  .feed-card-icon {
-    flex-shrink: 0;
-    width: 14px;
-    height: 14px;
-  }
-
-  .card-chat .feed-card-icon { color: var(--blue); }
-
-  .card-chat { border-color: color-mix(in srgb, var(--blue) 25%, var(--border)); }
-
-  .card-chat .feed-card-header { border-bottom-color: color-mix(in srgb, var(--blue) 25%, var(--border)); }
-
-  .card-chat:hover { border-color: color-mix(in srgb, var(--blue) 50%, var(--border)); }
-
-  .feed-card-label {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    min-width: 0;
-    flex: 1;
-  }
-
-  .feed-card-meta {
-    font-size: 11px;
-    color: var(--text-2);
-    font-weight: 400;
-    flex-shrink: 0;
-    margin-left: auto;
-  }
-
-  .feed-card-body {
-    flex: 1;
-    overflow: auto;
-    padding: 10px 12px;
-    min-height: 0;
-  }
-
-  /* Card action button */
-  .card-action-btn {
-    font-size: 12px;
-    padding: 2px 10px;
-    border-radius: var(--radius);
-    cursor: pointer;
-    flex-shrink: 0;
-    background: none;
-    border: 1px solid var(--border);
-    color: var(--text-2);
-    transition: color 0.15s, border-color 0.15s;
-  }
-
-  .card-action-btn:hover {
-    color: var(--text-1);
-    border-color: var(--border-bright);
-  }
-
-  .card-action-btn-primary {
-    background: var(--accent);
-    border-color: var(--accent);
-    color: var(--bg-0);
-  }
-
-  .card-action-btn-primary:hover {
-    opacity: 0.85;
-    color: var(--bg-0);
-    border-color: var(--accent);
-  }
-
-  /* Chat card body */
-  .chat-body {
-    padding: 8px 12px;
-  }
-
-  .msg-empty {
-    color: var(--text-2);
-    font-size: 13px;
-    padding: 16px 0;
-    text-align: center;
-  }
-
-  /* Chat entries */
-  .chat-entry {
-    padding: 1px 0;
-  }
-
-  .chat-entry.new-sender {
-    margin-top: 8px;
-  }
-
-  .chat-entry:first-child {
-    margin-top: 0;
-  }
-
-  .chat-entry-header {
-    display: flex;
-    align-items: baseline;
-    gap: 6px;
-    margin-bottom: 1px;
-  }
-
-  .chat-sender {
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--accent);
-  }
-
-  .chat-sender-user {
-    color: var(--blue);
-  }
-
-  .chat-timestamp {
-    font-size: 11px;
-    color: var(--text-2);
-  }
-
-  .chat-entry-content {
-    min-width: 0;
-    font-family: var(--mono);
-    font-size: 13px;
-  }
-
-  .chat-user-text {
-    color: var(--text-0);
-    white-space: pre-wrap;
   }
 </style>

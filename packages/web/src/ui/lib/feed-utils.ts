@@ -23,3 +23,14 @@ export function extractTextContent(content: ContentBlock[]): string {
     .map((b) => b.text)
     .join("\n\n");
 }
+
+/** Human-readable span between two DB timestamps, e.g. "12m", "3h", "just now". */
+export function formatDuration(startStr: string, endStr: string): string {
+  const start = new Date(normalizeTimestamp(startStr)).getTime();
+  const end = new Date(normalizeTimestamp(endStr)).getTime();
+  const mins = Math.round((end - start) / 60_000);
+  if (mins < 1) return "moment";
+  if (mins < 60) return `${mins}m`;
+  const hours = Math.round(mins / 60);
+  return `${hours}h`;
+}
