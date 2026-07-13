@@ -21,8 +21,9 @@ class TestScheduler extends Scheduler {
     scheduleId: string,
     text: string,
     opts?: { whileSleeping?: "skip" | "queue" | "trigger-wake"; session?: string },
-  ): Promise<void> {
+  ): Promise<{ id?: number; delivered: boolean }> {
     this.systemDeliveries.push({ mindName, scheduleId, text, opts });
+    return { id: 1, delivered: true };
   }
 }
 

@@ -34,13 +34,17 @@ class TestScheduler extends Scheduler {
     return this.scriptResult;
   }
 
+  /** Result the stubbed deliverSystem returns; tests override to simulate failures. */
+  deliverResult: { id?: number; delivered: boolean } = { id: 1, delivered: true };
+
   protected override async deliverSystem(
     mindName: string,
     scheduleId: string,
     text: string,
     opts?: { whileSleeping?: "skip" | "queue" | "trigger-wake"; session?: string },
-  ): Promise<void> {
+  ): Promise<{ id?: number; delivered: boolean }> {
     this.systemDeliveries.push({ mindName, scheduleId, text, opts });
+    return this.deliverResult;
   }
 }
 
@@ -311,6 +315,38 @@ describe("scheduler", () => {
     });
     assert.equal(scheduler.systemDeliveries.length, 1);
     assert.ok(scheduler.systemDeliveries[0].text.includes("timer fired"));
+  });
+
+  it("fireAt self-deletes once the event row exists, even if delivery is pending", async () => {
+    // An undelivered event stays pending and is redelivered on the mind's next
+    // start/wake, so the one-shot's job is done once the row exists.
+    const scheduler = new TestScheduler();
+    const removed: string[] = [];
+    (scheduler as any).removeSchedule = (_mind: string, id: string) => removed.push(id);
+
+    scheduler.deliverResult = { id: 7, delivered: false };
+    await (scheduler as any).fire("test-mind", {
+      id: "pending-timer",
+      fireAt: new Date(Date.now() - 60000).toISOString(),
+      message: "timer",
+      enabled: true,
+    });
+    assert.deepEqual(removed, ["pending-timer"], "schedule removed — event row is durable");
+  });
+
+  it("fireAt is retained when the event row could not be recorded at all", async () => {
+    const scheduler = new TestScheduler();
+    const removed: string[] = [];
+    (scheduler as any).removeSchedule = (_mind: string, id: string) => removed.push(id);
+
+    scheduler.deliverResult = { id: undefined, delivered: false };
+    await (scheduler as any).fire("test-mind", {
+      id: "lost-timer",
+      fireAt: new Date(Date.now() - 60000).toISOString(),
+      message: "timer",
+      enabled: true,
+    });
+    assert.deepEqual(removed, [], "schedule kept so the next tick retries the insert");
   });
 });
 

@@ -1821,12 +1821,15 @@ describe("daemon e2e", { timeout: 420000 }, () => {
     await daemonRequest(`/api/minds/${TEST_MIND}/stop`, { method: "POST" });
 
     // The webhook route is an immediate system event (no chat message, no sender).
+    // With the mind stopped it answers 202: recorded but pending, not delivered.
     const hook = await daemonRequest(`/api/minds/${TEST_MIND}/webhook/deploy`, {
       method: "POST",
       headers: { "Content-Type": "text/plain" },
       body: "build 42 is live",
     });
-    assert.equal(hook.status, 200, `webhook: ${await hook.text()}`);
+    assert.equal(hook.status, 202, `webhook: ${await hook.clone().text()}`);
+    const hookBody = (await hook.json()) as { ok: boolean; delivered: boolean };
+    assert.equal(hookBody.delivered, false, "honest response: recorded but not delivered");
 
     // It surfaces on the system-events listing with a worded label — not raw ids, not
     // chat. (GET /:name/events is the live SSE stream; the listing is /system-events.)
@@ -1839,6 +1842,7 @@ describe("daemon e2e", { timeout: 420000 }, () => {
         body: string;
         delivery: string;
         reflection: string | null;
+        delivered_at: string | null;
       }[];
     };
     const webhook = events.find((e) => e.type === "webhook");
@@ -1846,6 +1850,11 @@ describe("daemon e2e", { timeout: 420000 }, () => {
     assert.equal(webhook.label, "Webhook: deploy");
     assert.equal(webhook.body, "build 42 is live");
     assert.equal(webhook.delivery, "immediate");
+    assert.equal(
+      webhook.delivered_at,
+      null,
+      "undelivered event stays pending (redelivered on the next start)",
+    );
 
     // The endpoint is self-or-admin gated (authz-coverage enforces this too).
     const unauth = await fetch(`${BASE_URL}/api/minds/${TEST_MIND}/system-events`);
