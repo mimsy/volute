@@ -83,9 +83,17 @@ export function createMind(options: {
 
   // Shared setup (created once)
   const modelStr = options.model || process.env.PI_MODEL || "anthropic:claude-sonnet-4-20250514";
-  const model = resolveModel(modelStr);
   const authStorage = AuthStorage.create();
   const modelRegistry = ModelRegistry.create(authStorage);
+  // Prefer the registry's model: for OAuth providers with a per-credential baseUrl
+  // (e.g. GitHub Copilot, whose token is pinned to an individual/business/enterprise
+  // proxy host) it has already run the provider's modifyModels() patch. The static
+  // catalog lookup in resolveModel() has no way to apply that and would send every
+  // request to the wrong host, which the provider's API rejects (421 Misdirected
+  // Request for Copilot). Fall back to resolveModel() for ids the registry doesn't
+  // carry (e.g. an admin-registered custom id not yet in the built-in catalog).
+  const [modelProvider, ...modelRest] = modelStr.split(":");
+  const model = modelRegistry.find(modelProvider, modelRest.join(":")) ?? resolveModel(modelStr);
 
   // The daemon centrally refreshes the system OAuth token and rewrites auth.json
   // with the fresh token. Watch the file and reload so a running mind adopts the

@@ -67,6 +67,34 @@ export async function writePiProviderKey(
   }
 }
 
+/**
+ * Set a provider's oauth entry in a pi mind's auth.json, preserving any other
+ * providers already present. Unlike writePiProviderKey, this stores the full
+ * credential (access/refresh/expires + provider-specific extras) so pi-ai's own
+ * OAuth resolution runs inside the mind — some providers (GitHub Copilot) derive
+ * a per-credential baseUrl from this shape that a flattened api_key loses,
+ * causing requests to hit the wrong backend. It also lets the mind refresh its
+ * own token from the stored refresh grant instead of relying solely on the
+ * daemon's refresh fan-out.
+ */
+export async function writePiProviderOAuth(
+  piAgentDir: string,
+  baseName: string,
+  provider: string,
+  oauth: Record<string, unknown>,
+): Promise<void> {
+  mkdirSync(piAgentDir, { recursive: true });
+  const authPath = resolve(piAgentDir, "auth.json");
+  const authData: Record<string, unknown> = existsSync(authPath)
+    ? JSON.parse(readFileSync(authPath, "utf-8"))
+    : {};
+  authData[provider] = { type: "oauth", ...oauth };
+  writeFileSync(authPath, JSON.stringify(authData, null, 2), { mode: 0o600 });
+  if (isIsolationEnabled()) {
+    await chownMindDir(piAgentDir, baseName);
+  }
+}
+
 type MindLookup = {
   name: string;
   template?: string;

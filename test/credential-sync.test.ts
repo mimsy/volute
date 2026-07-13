@@ -7,6 +7,7 @@ import {
   syncProviderToMinds,
   writeClaudeCredentials,
   writePiProviderKey,
+  writePiProviderOAuth,
 } from "../packages/daemon/src/lib/daemon/credential-sync.js";
 
 function tmpRoot(label: string): string {
@@ -66,6 +67,38 @@ describe("writePiProviderKey", () => {
     await writePiProviderKey(piAgentDir, "mymind", "anthropic", OAUTH.access);
     const auth = JSON.parse(readFileSync(resolve(piAgentDir, "auth.json"), "utf-8"));
     assert.deepEqual(auth, { anthropic: { type: "api_key", key: OAUTH.access } });
+  });
+});
+
+describe("writePiProviderOAuth", () => {
+  it("stores the full oauth credential, preserving other providers", async () => {
+    const dir = tmpRoot("pi-oauth");
+    const piAgentDir = resolve(dir, ".mind", "pi-agent");
+    mkdirSync(piAgentDir, { recursive: true });
+    writeFileSync(
+      resolve(piAgentDir, "auth.json"),
+      JSON.stringify({ openai: { type: "api_key", key: "openai-key" } }),
+    );
+
+    const copilotOauth = {
+      ...OAUTH,
+      availableModelIds: ["claude-sonnet-4.6"],
+    };
+    await writePiProviderOAuth(piAgentDir, "mymind", "github-copilot", copilotOauth);
+
+    const auth = JSON.parse(readFileSync(resolve(piAgentDir, "auth.json"), "utf-8"));
+    assert.deepEqual(auth, {
+      openai: { type: "api_key", key: "openai-key" },
+      "github-copilot": { type: "oauth", ...copilotOauth },
+    });
+  });
+
+  it("creates auth.json when none exists", async () => {
+    const dir = tmpRoot("pi-oauth-fresh");
+    const piAgentDir = resolve(dir, ".mind", "pi-agent");
+    await writePiProviderOAuth(piAgentDir, "mymind", "github-copilot", OAUTH);
+    const auth = JSON.parse(readFileSync(resolve(piAgentDir, "auth.json"), "utf-8"));
+    assert.deepEqual(auth, { "github-copilot": { type: "oauth", ...OAUTH } });
   });
 });
 
