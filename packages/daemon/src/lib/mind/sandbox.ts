@@ -94,18 +94,21 @@ export async function initSandbox(): Promise<void> {
       }
     }
 
-    // Omit network config so the sandbox doesn't set up a proxy. All minds
-    // need direct API access and the proxy breaks clients that don't respect
-    // HTTP_PROXY (e.g. the claude subprocess spawned by the Agent SDK).
-    // Without network.allowedDomains, wrapWithSandbox generates a seatbelt
-    // profile with `(allow network*)` — unrestricted network while filesystem
-    // restrictions still apply.
+    // Leave network.allowedDomains/deniedDomains unset so the sandbox doesn't set
+    // up a proxy. All minds need direct API access and the proxy breaks clients
+    // that don't respect HTTP_PROXY (e.g. the claude subprocess spawned by the
+    // Agent SDK). Without network.allowedDomains, wrapWithSandbox generates a
+    // seatbelt profile with `(allow network*)` — unrestricted network while
+    // filesystem restrictions still apply. `network` itself must still be present:
+    // SandboxManager.initialize() reads `runtimeConfig.network.parentProxy` directly
+    // (added in sandbox-runtime 0.0.56) and throws a TypeError if `network` is missing.
     const config = {
       filesystem: {
         denyRead: [],
         allowWrite: [],
         denyWrite: [],
       },
+      network: {},
       ...(ripgrepConfig ? { ripgrep: ripgrepConfig } : {}),
     } as unknown as SandboxRuntimeConfig;
     await SandboxManager.initialize(config);
