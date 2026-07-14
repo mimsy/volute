@@ -44,6 +44,14 @@ type JobRecord = ImagegenJob & {
   /** Resolves when the job leaves "running" (drives the long-poll). */
   settled: Promise<void>;
   resolveSettled: () => void;
+  /**
+   * Set once a foreground long-poll times out with the job still running — i.e.
+   * the job outlived the caller's wait and dropped to the background. Only then
+   * does completion fire an "image ready" event; a job that finishes within the
+   * foreground wait is already reported to the caller via `saved:`, so a second
+   * async notification would just confuse the mind with a duplicate.
+   */
+  notifyOnDone: boolean;
 };
 
 const jobs = new Map<string, JobRecord>();
@@ -74,9 +82,23 @@ function settle(record: JobRecord, patch: Partial<JobRecord>): void {
   setTimeout(() => jobs.delete(record.id), DONE_TTL_MS).unref?.();
 }
 
-async function runJob(record: JobRecord, model: string, prompt: string, filename: string) {
+/** Injectable side effects (defaults hit the real provider/event bus; tests override). */
+export type JobDeps = {
+  generate?: (model: string, prompt: string) => Promise<Buffer>;
+  deliver?: typeof deliverEvent;
+};
+
+async function runJob(
+  record: JobRecord,
+  model: string,
+  prompt: string,
+  filename: string,
+  deps: JobDeps,
+) {
+  const generate = deps.generate ?? generateImage;
+  const deliver = deps.deliver ?? deliverEvent;
   try {
-    const buf = await generateImage(model, prompt);
+    const buf = await generate(model, prompt);
 
     const home = `${await resolveMindDir(record.mind)}/home`;
     const target = safeResolveWithinBase(home, `images/${filename}.png`);
@@ -88,13 +110,17 @@ async function runJob(record: JobRecord, model: string, prompt: string, filename
 
     settle(record, { status: "done", path: target });
 
-    // Wake the mind with the finished image (queues if it's asleep).
-    await deliverEvent(record.mind, {
-      type: "imagegen",
-      body: `image ready: ${target}`,
-      delivery: "immediate",
-      whileSleeping: "queue",
-    });
+    // Only wake the mind if the job outlived the foreground wait (dropped to
+    // background). A job that finished within the wait already returned `saved:`
+    // to the caller, so a completion event here would be a confusing duplicate.
+    if (record.notifyOnDone) {
+      await deliver(record.mind, {
+        type: "imagegen",
+        body: `image ready: ${target}`,
+        delivery: "immediate",
+        whileSleeping: "queue",
+      });
+    }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     jobLog.error(`job ${record.id} failed`, log.errorData(err));
@@ -111,6 +137,7 @@ export function createImagegenJob(
   model: string,
   prompt: string,
   filename: string,
+  deps: JobDeps = {},
 ): string {
   if (countInflight(mind) >= MAX_INFLIGHT_PER_MIND) {
     throw new Error(
@@ -129,9 +156,10 @@ export function createImagegenJob(
     createdAt: Date.now(),
     settled,
     resolveSettled,
+    notifyOnDone: false,
   };
   jobs.set(id, record);
-  void runJob(record, model, prompt, filename);
+  void runJob(record, model, prompt, filename, deps);
   return id;
 }
 
@@ -162,6 +190,9 @@ export async function waitForImagegenJob(
     });
     await Promise.race([record.settled, timeout]);
     if (timer) clearTimeout(timer);
+    // Still running after the wait → the job is going to the background, so its
+    // eventual completion should notify the mind (see JobRecord.notifyOnDone).
+    if (record.status === "running") record.notifyOnDone = true;
   }
   return publicView(record);
 }

@@ -511,6 +511,53 @@ describe("imagegen jobs", () => {
       /Too many image generations/,
     );
   });
+
+  it("does not fire a completion event when the job finishes within the foreground wait", async () => {
+    const events: unknown[] = [];
+    const id = createImagegenJob("mind-fast", "any:model", "p", "f", {
+      generate: async () => Buffer.from("png"),
+      deliver: async (mind, event) => {
+        events.push({ mind, event });
+        return { delivered: true };
+      },
+    });
+    const job = await waitForImagegenJob("mind-fast", id, 1000);
+    assert.equal(job?.status, "done");
+    // Let any (erroneous) async notification flush.
+    await new Promise((r) => setTimeout(r, 20));
+    assert.equal(events.length, 0, "a foregrounded job must not also send a completion event");
+  });
+
+  it("fires a single completion event when the job outlives the foreground wait", async () => {
+    const bodies: string[] = [];
+    let release!: () => void;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const id = createImagegenJob("mind-slow", "any:model", "p", "f", {
+      generate: async () => {
+        await gate;
+        return Buffer.from("png");
+      },
+      deliver: async (_mind, event) => {
+        bodies.push(event.body);
+        return { delivered: true };
+      },
+    });
+
+    // Foreground poll times out with the job still running → it drops to background.
+    const timedOut = await waitForImagegenJob("mind-slow", id, 10);
+    assert.equal(timedOut?.status, "running");
+    assert.equal(bodies.length, 0, "no event before completion");
+
+    // Let generation finish; the backgrounded job should now notify exactly once.
+    release();
+    const done = await waitForImagegenJob("mind-slow", id, 2000);
+    assert.equal(done?.status, "done");
+    await new Promise((r) => setTimeout(r, 20));
+    assert.equal(bodies.length, 1, "exactly one completion event when backgrounded");
+    assert.match(bodies[0], /image ready/);
+  });
 });
 
 describe("imagegen xai provider", () => {
