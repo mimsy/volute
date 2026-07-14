@@ -368,14 +368,28 @@ export function getSystemName(): string {
   return readGlobalConfig().name ?? "this system";
 }
 
+/**
+ * AI providers that double as image providers (chat/image unification): a
+ * subscription configured for chat also enables image generation. Kept in sync
+ * with the `aiProviderId` links in services/imagegen.ts — duplicated here only
+ * to avoid a setup.ts → imagegen.ts import cycle.
+ */
+const IMAGEGEN_AI_PROVIDERS = ["openai-codex", "xai"];
+
 export function isImagegenEnabled(): boolean {
   const config = readGlobalConfig();
   const ig = config.imagegen;
-  if (!ig) return false;
   // Legacy: explicit toggle
-  if (ig.enabled === true) return true;
-  // New: enabled if any provider is configured
-  if (ig.providers && Object.keys(ig.providers).length > 0) return true;
+  if (ig?.enabled === true) return true;
+  // Enabled if any imagegen provider has a key configured
+  if (ig?.providers && Object.keys(ig.providers).length > 0) return true;
+  // Or if a subscription AI provider (codex/xai) is configured for chat, since
+  // it is auto-added as an image provider.
+  const aiProviders = config.ai?.providers;
+  for (const id of IMAGEGEN_AI_PROVIDERS) {
+    const p = aiProviders?.[id];
+    if (p?.oauth || p?.apiKey) return true;
+  }
   return false;
 }
 

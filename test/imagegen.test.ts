@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
-import { readGlobalConfig, writeGlobalConfig } from "../packages/daemon/src/lib/config/setup.js";
+import {
+  isImagegenEnabled,
+  readGlobalConfig,
+  writeGlobalConfig,
+} from "../packages/daemon/src/lib/config/setup.js";
 import { registerXaiOAuthProvider } from "../packages/daemon/src/lib/oauth/xai.js";
 import {
   generateImage,
@@ -295,6 +299,35 @@ describe("imagegen config", () => {
       assert.ok(codex);
       assert.equal(codex.configured, false);
       assert.equal(codex.authMethod, null);
+    });
+  });
+
+  describe("isImagegenEnabled", () => {
+    it("is false with no imagegen or ai config", () => {
+      assert.equal(isImagegenEnabled(), false);
+    });
+
+    it("is true when an imagegen provider key is configured", () => {
+      saveProviderConfig("replicate", "key");
+      assert.equal(isImagegenEnabled(), true);
+    });
+
+    it("is true when only a subscription AI provider (codex) is configured for chat", () => {
+      const config = readGlobalConfig();
+      config.ai = {
+        providers: {
+          "openai-codex": { oauth: { access: "a", refresh: "r", expires: 4102444800000 } },
+        },
+      };
+      writeGlobalConfig(config);
+      assert.equal(isImagegenEnabled(), true, "codex chat provider auto-enables imagegen");
+    });
+
+    it("is false when only a non-imagegen AI provider (anthropic) is configured", () => {
+      const config = readGlobalConfig();
+      config.ai = { providers: { anthropic: { apiKey: "sk-ant" } } };
+      writeGlobalConfig(config);
+      assert.equal(isImagegenEnabled(), false);
     });
   });
 
