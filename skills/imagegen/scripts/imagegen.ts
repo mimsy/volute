@@ -198,7 +198,7 @@ async function fetchDefaultModel(): Promise<string | null> {
   if (!base || !token) return null;
 
   try {
-    const res = await fetch(`${base}/api/v1/system/imagegen/models`, {
+    const res = await fetch(`${base}/api/v1/system/imagegen/default-model`, {
       headers: { Authorization: `Bearer ${token}` },
     });
     if (!res.ok) return null;

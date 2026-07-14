@@ -298,6 +298,12 @@ const app = new Hono<AuthEnv>()
     const defaultModel = getImagegenDefaultModel();
     return c.json({ models, defaultModel: defaultModel ?? null });
   })
+  // Mind-callable: minds need the configured default model to generate. The
+  // full /imagegen/models route is requireAdmin, so minds read the default
+  // here (authMiddleware only) instead of silently falling back to a hardcode.
+  .get("/imagegen/default-model", (c) => {
+    return c.json({ defaultModel: getImagegenDefaultModel() ?? null });
+  })
   .put(
     "/imagegen/models",
     requireAdmin,

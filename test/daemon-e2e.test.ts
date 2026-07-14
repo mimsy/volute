@@ -981,6 +981,36 @@ describe("daemon e2e", { timeout: 420000 }, () => {
     );
   });
 
+  it("a mind token can read the configured imagegen default model", async () => {
+    // Regression: minds used to read the default from the requireAdmin
+    // /imagegen/models route, 403, and silently fall back to a hardcoded model.
+    // The admin's configured default never reached a mind.
+    const mindUser = await getOrCreateMindUser("e2e-imagegen-default-mind");
+    const mindSession = await createSession(mindUser.id);
+
+    const DEFAULT = "replicate:e2e-owner/e2e-default-model";
+    const setRes = await daemonRequest("/api/v1/system/imagegen/models", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ models: [DEFAULT], defaultModel: DEFAULT }),
+    });
+    assert.equal(setRes.status, 200, `admin set default: ${await setRes.clone().text()}`);
+
+    // The admin-only route must still reject a mind token...
+    const adminOnly = await fetch(`${BASE_URL}/api/v1/system/imagegen/models`, {
+      headers: { Authorization: `Bearer ${mindSession}`, Origin: BASE_URL },
+    });
+    assert.equal(adminOnly.status, 403, "full models route stays admin-gated");
+
+    // ...but the mind-callable default-model route returns the configured default.
+    const asMind = await fetch(`${BASE_URL}/api/v1/system/imagegen/default-model`, {
+      headers: { Authorization: `Bearer ${mindSession}`, Origin: BASE_URL },
+    });
+    assert.equal(asMind.status, 200, `mind default-model: ${await asMind.clone().text()}`);
+    const body = (await asMind.json()) as { defaultModel?: string | null };
+    assert.equal(body.defaultModel, DEFAULT, "mind must receive the admin's configured default");
+  });
+
   it("conversations: create, send message, read back", async () => {
     await ensureTestMind();
     const brain = await ensureBrainParticipant("convo");
