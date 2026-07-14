@@ -131,9 +131,11 @@ function piUsesProvider(piAgentDir: string, provider: string): boolean {
  * refreshing the rotating grant independently (which invalidated each other).
  */
 export async function syncProviderToMinds(provider: string, deps: SyncDeps = {}): Promise<void> {
-  if (provider !== "anthropic") return;
+  // anthropic (claude + pi minds) and xai (pi minds only — its OAuth provider is
+  // daemon-registered, so minds consume the rotated token as an api_key).
+  if (provider !== "anthropic" && provider !== "xai") return;
 
-  const getOauth = deps.getOauth ?? (() => getAiConfig()?.providers.anthropic?.oauth);
+  const getOauth = deps.getOauth ?? (() => getAiConfig()?.providers[provider]?.oauth);
   const oauth = getOauth();
   if (!oauth?.access) return;
 
@@ -148,13 +150,13 @@ export async function syncProviderToMinds(provider: string, deps: SyncDeps = {})
       const baseName = entry.parent ?? name;
       const template = entry.template;
 
-      if (template === "claude" || !template) {
-        await writeClaudeCredentials(resolve(dir, "home"), baseName, oauth);
-      } else if (template === "pi") {
+      if (template === "pi") {
         const piAgentDir = resolve(dir, ".mind", "pi-agent");
-        if (piUsesProvider(piAgentDir, "anthropic")) {
-          await writePiProviderKey(piAgentDir, baseName, "anthropic", oauth.access);
+        if (piUsesProvider(piAgentDir, provider)) {
+          await writePiProviderKey(piAgentDir, baseName, provider, oauth.access);
         }
+      } else if (provider === "anthropic" && (template === "claude" || !template)) {
+        await writeClaudeCredentials(resolve(dir, "home"), baseName, oauth);
       }
     } catch (err) {
       slog.warn(`failed to sync ${provider} credentials to mind ${name}`, log.errorData(err));
