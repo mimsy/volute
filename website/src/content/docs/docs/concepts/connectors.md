@@ -13,25 +13,43 @@ Bridges connect minds to external messaging platforms. Each bridge is a separate
 | Slack | Yes | Yes | Built-in |
 | Telegram | Yes | Yes | Built-in |
 
-## Connecting a platform
+## System-wide, not per-mind
 
-Set the required environment variables, then add the bridge:
+Bridges are configured once for the whole system, not per mind. The configuration lives in `~/.volute/system/bridges.json` — one entry per platform, each with an `enabled` flag, a `defaultMind` (where DMs are routed), and a set of channel mappings:
 
-```sh
-# Set the required token (shared across minds, or per-mind)
-volute env set DISCORD_TOKEN <your-bot-token>
-
-# Add bridge
-volute chat bridge add discord --mind atlas
-
-# Remove bridge
-volute chat bridge remove discord --mind atlas
-
-# List bridges
-volute chat bridge list --mind atlas
+```json
+{
+  "discord": {
+    "enabled": true,
+    "defaultMind": "atlas",
+    "channelMappings": {
+      "my-server/general": "team"
+    }
+  }
+}
 ```
 
-Bridges can also be managed through the web dashboard.
+When someone DMs the bot, the message goes to the bridge's default mind. Channel messages go to whichever Volute channel the external channel is mapped to, and every mind in that channel receives them.
+
+## Connecting a platform
+
+Set the required environment variables, then add the bridge with a default mind:
+
+```sh
+# Set the required token
+volute env set DISCORD_TOKEN <your-bot-token>
+
+# Enable the bridge, routing DMs to a mind
+volute chat bridge add discord --default-mind atlas
+
+# Disable the bridge
+volute chat bridge remove discord
+
+# Show all bridges and their status
+volute chat bridge list
+```
+
+`--default-mind` is required — it names the mind that answers direct messages on that platform. Bridges can also be managed through the web dashboard.
 
 ## Discord
 
@@ -39,17 +57,17 @@ Requires a Discord bot token. The mind receives messages from channels the bot h
 
 ```sh
 volute env set DISCORD_TOKEN <your-bot-token>
-volute chat bridge add discord --mind atlas
+volute chat bridge add discord --default-mind atlas
 ```
 
 ## Slack
 
-Requires a Slack bot token and app token.
+Requires a Slack bot token and an app-level token (for Socket Mode).
 
 ```sh
 volute env set SLACK_BOT_TOKEN xoxb-...
 volute env set SLACK_APP_TOKEN xapp-...
-volute chat bridge add slack --mind atlas
+volute chat bridge add slack --default-mind atlas
 ```
 
 ## Telegram
@@ -58,19 +76,27 @@ Requires a Telegram bot token from BotFather. Receives and responds to messages 
 
 ```sh
 volute env set TELEGRAM_BOT_TOKEN <your-bot-token>
-volute chat bridge add telegram --mind atlas
+volute chat bridge add telegram --default-mind atlas
 ```
 
 ## Bridge implementations
 
-Bridge implementations are built in to Volute — Discord, Slack, and Telegram ship with the daemon (`packages/daemon/src/lib/bridges/`). Each mind's bridge configuration lives in `<mindDir>/.mind/connectors/<type>/`. (The `connectors/` directory name is historical — the concept is now called bridges.)
+Bridge implementations are built in to Volute — Discord, Slack, and Telegram ship with the daemon (`packages/daemon/src/lib/bridges/`). There is no per-mind bridge config; all state lives in the system-wide `~/.volute/system/bridges.json`, managed by the daemon's BridgeManager.
 
-## Sending to channels
+## Mapping channels
 
-Once connected, platform channels are accessible by their mapped names:
+A channel on an external platform is bridged by mapping it to a Volute channel. Once mapped, the channel is accessible to minds by its Volute name:
 
 ```sh
-volute chat send #general "hello" --mind atlas
-```
+# Map an external channel to a Volute channel
+volute chat bridge map discord:my-server/general team
 
-Bridge channel mappings can be managed with `volute chat bridge map/unmap`.
+# Send to it like any other channel
+volute chat send #team "hello" --mind atlas
+
+# Remove a mapping
+volute chat bridge unmap discord:my-server/general
+
+# List mappings (optionally filtered by platform)
+volute chat bridge mappings discord
+```
