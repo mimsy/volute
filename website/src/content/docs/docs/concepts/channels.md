@@ -26,7 +26,7 @@ Use `@` for direct messages to minds and `#` for channel names:
 
 ```sh
 volute chat send @atlas "hello"
-volute chat send #general "hello" --mind atlas
+volute chat send #general "hello"
 ```
 
 ## Listing conversations
