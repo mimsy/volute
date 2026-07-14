@@ -11,10 +11,39 @@ import {
   setEnabledModels,
 } from "../packages/daemon/src/lib/services/imagegen.js";
 import {
+  accountIdFromToken,
+  buildCodexRequest,
+  CODEX_NOT_ENTITLED_SENTINEL,
+  CodexNotEntitledError,
+  codexGenerate,
+  parseCodexImageStream,
+} from "../packages/daemon/src/lib/services/imagegen-codex.js";
+import {
   generateViaDaemon,
   handleDaemonFailure,
   searchViaDaemon,
 } from "../skills/imagegen/scripts/imagegen.js";
+
+/** Build a synthetic Codex OAuth access token (JWT) carrying an account id. */
+function fakeCodexToken(accountId: string): string {
+  const payload = Buffer.from(
+    JSON.stringify({ "https://api.openai.com/auth": { chatgpt_account_id: accountId } }),
+  ).toString("base64url");
+  return `header.${payload}.sig`;
+}
+
+/** Wrap SSE text as a byte ReadableStream, chunked to exercise the line buffer. */
+function sseStream(text: string, chunkSize = 7): ReadableStream<Uint8Array> {
+  const bytes = new TextEncoder().encode(text);
+  let i = 0;
+  return new ReadableStream({
+    pull(controller) {
+      if (i >= bytes.length) return controller.close();
+      controller.enqueue(bytes.slice(i, i + chunkSize));
+      i += chunkSize;
+    },
+  });
+}
 
 function resetImagegenConfig() {
   const config = readGlobalConfig();
@@ -148,6 +177,24 @@ describe("imagegen config", () => {
       saveProviderConfig("openrouter", "imagegen-key");
       assert.equal((await resolveCredential("openrouter"))?.token, "imagegen-key");
     });
+
+    it("resolves an oauth credential from the linked AI provider", async () => {
+      // Far-future expiry ⇒ resolveOAuthCredentials returns the token with no
+      // refresh/network call (see ai-service.test.ts).
+      const config = readGlobalConfig();
+      config.ai = {
+        providers: {
+          "openai-codex": {
+            oauth: { access: "codex-access-token", refresh: "r", expires: 4102444800000 },
+          },
+        },
+      };
+      writeGlobalConfig(config);
+      assert.deepEqual(await resolveCredential("openai-codex"), {
+        kind: "oauth",
+        token: "codex-access-token",
+      });
+    });
   });
 
   describe("getConfiguredProviders", () => {
@@ -212,6 +259,27 @@ describe("imagegen config", () => {
       assert.equal(openrouter.configured, true);
       assert.equal(openrouter.authMethod, "api_key");
     });
+
+    it("auto-adds openai-codex when its AI provider has OAuth (chat/image unification)", () => {
+      const config = readGlobalConfig();
+      config.ai = {
+        providers: {
+          "openai-codex": { oauth: { access: "a", refresh: "r", expires: 4102444800000 } },
+        },
+      };
+      writeGlobalConfig(config);
+      const codex = getConfiguredProviders().find((p) => p.id === "openai-codex");
+      assert.ok(codex);
+      assert.equal(codex.configured, true);
+      assert.equal(codex.authMethod, "oauth");
+    });
+
+    it("reports openai-codex unconfigured when its AI provider is absent", () => {
+      const codex = getConfiguredProviders().find((p) => p.id === "openai-codex");
+      assert.ok(codex);
+      assert.equal(codex.configured, false);
+      assert.equal(codex.authMethod, null);
+    });
   });
 
   describe("getEnabledModels / setEnabledModels", () => {
@@ -249,6 +317,100 @@ describe("imagegen config", () => {
     it("throws on unknown provider", () => {
       assert.throws(() => parseModelId("badprovider:owner/model"), /Unknown imagegen provider/);
     });
+  });
+});
+
+describe("imagegen openai-codex provider", () => {
+  const realFetch = globalThis.fetch;
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+  });
+
+  // A 1x1 red PNG, base64 — stands in for a generated image.
+  const PNG_B64 =
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+
+  it("accountIdFromToken reads the chatgpt_account_id JWT claim", () => {
+    assert.equal(accountIdFromToken(fakeCodexToken("acct-xyz")), "acct-xyz");
+  });
+
+  it("accountIdFromToken returns undefined for a non-JWT token", () => {
+    assert.equal(accountIdFromToken("not-a-jwt"), undefined);
+  });
+
+  it("buildCodexRequest forces the hosted image tool with the given model", () => {
+    const req = buildCodexRequest("gpt-image-2", "a cat") as {
+      tools: Array<{ type: string; model: string }>;
+      tool_choice: { type: string };
+      stream: boolean;
+    };
+    assert.equal(req.tools[0].type, "image_generation");
+    assert.equal(req.tools[0].model, "gpt-image-2");
+    assert.equal(req.tool_choice.type, "image_generation");
+    assert.equal(req.stream, true);
+  });
+
+  it("parseCodexImageStream extracts the largest base64 blob from the stream", async () => {
+    const sse = [
+      "event: response.created",
+      'data: {"type":"response.created","response":{"id":"r"}}',
+      "",
+      "event: response.image_generation_call.partial_image",
+      `data: {"type":"response.image_generation_call.partial_image","partial_image_b64":"${PNG_B64}"}`,
+      "",
+      "event: response.completed",
+      'data: {"type":"response.completed","response":{"output":[]}}',
+      "",
+    ].join("\n");
+    const buf = await parseCodexImageStream(sseStream(sse));
+    assert.deepEqual(buf, Buffer.from(PNG_B64, "base64"));
+    // PNG magic bytes survived the round-trip.
+    assert.equal(buf.subarray(1, 4).toString(), "PNG");
+  });
+
+  it("codexGenerate posts to the Codex backend and returns image bytes", async () => {
+    let seen: { url: string; auth?: string; account?: string } | undefined;
+    globalThis.fetch = (async (url: string, init: RequestInit) => {
+      const headers = new Headers(init.headers);
+      seen = {
+        url: String(url),
+        auth: headers.get("authorization") ?? undefined,
+        account: headers.get("chatgpt-account-id") ?? undefined,
+      };
+      const sse =
+        "event: response.image_generation_call.partial_image\n" +
+        `data: {"type":"response.image_generation_call.partial_image","partial_image_b64":"${PNG_B64}"}\n\n`;
+      return new Response(sseStream(sse), { status: 200 });
+    }) as typeof fetch;
+
+    const buf = await codexGenerate("gpt-image-2", "a dog", {
+      kind: "oauth",
+      token: fakeCodexToken("acct-42"),
+    });
+    assert.deepEqual(buf, Buffer.from(PNG_B64, "base64"));
+    assert.ok(seen);
+    assert.match(seen.url, /chatgpt\.com\/backend-api\/codex\/responses$/);
+    assert.match(seen.auth ?? "", /^Bearer /);
+    assert.equal(seen.account, "acct-42", "account id must come from the token JWT");
+  });
+
+  it("codexGenerate throws CodexNotEntitledError on the exact 400 sentinel", async () => {
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ detail: CODEX_NOT_ENTITLED_SENTINEL }), {
+        status: 400,
+      })) as typeof fetch;
+    await assert.rejects(
+      codexGenerate("gpt-image-2", "x", { kind: "oauth", token: fakeCodexToken("a") }),
+      (err: Error) => err instanceof CodexNotEntitledError,
+    );
+  });
+
+  it("codexGenerate throws a generic error on other failures", async () => {
+    globalThis.fetch = (async () => new Response("upstream boom", { status: 502 })) as typeof fetch;
+    await assert.rejects(
+      codexGenerate("gpt-image-2", "x", { kind: "oauth", token: fakeCodexToken("a") }),
+      /502/,
+    );
   });
 });
 

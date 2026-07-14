@@ -6,7 +6,9 @@
  */
 
 import Replicate from "replicate";
+import { resolveOAuthCredentials } from "../ai-service.js";
 import { type ImagegenConfig, readGlobalConfig, writeGlobalConfig } from "../config/setup.js";
+import { codexGenerate, codexSearch } from "./imagegen-codex.js";
 
 // --- Provider registry ---
 
@@ -39,6 +41,14 @@ const PROVIDERS: Record<string, ImagegenProviderDef> = {
     envVar: "OPENROUTER_API_KEY",
     generate: openrouterGenerate,
     search: openrouterSearch,
+  },
+  "openai-codex": {
+    // Subscription-only: no env var API key path. Credentials come from the
+    // openai-codex AI provider's OAuth (chat/image unification).
+    envVar: "",
+    aiProviderId: "openai-codex",
+    generate: codexGenerate,
+    search: codexSearch,
   },
 };
 
@@ -199,19 +209,30 @@ export function removeProviderConfig(id: string): void {
 export type ConfiguredProvider = {
   id: string;
   configured: boolean;
-  authMethod: "api_key" | "env_var" | null;
+  authMethod: "api_key" | "oauth" | "env_var" | null;
 };
 
+/**
+ * Report which providers are configured. Tests config *presence* only — it must
+ * NOT resolve/refresh OAuth (that would trigger token refreshes + mind restarts
+ * on every Settings load). Liveness is carried by the entitlement badge.
+ *
+ * A provider is configured if it has an imagegen key, or its linked AI provider
+ * (chat/image unification) carries OAuth or an API key, or its env var is set.
+ */
 export function getConfiguredProviders(): ConfiguredProvider[] {
   const config = readGlobalConfig();
   const ig = config.imagegen ?? null;
   const aiProviders = config.ai?.providers;
-  return Object.entries(PROVIDERS).map(([id, { envVar }]) => {
+  return Object.entries(PROVIDERS).map(([id, { envVar, aiProviderId }]) => {
+    const aiId = aiProviderId ?? id;
     const providerConfig = ig?.providers?.[id];
     if (providerConfig?.apiKey) return { id, configured: true, authMethod: "api_key" as const };
-    // Check AI provider config fallback
-    if (aiProviders?.[id]?.apiKey) return { id, configured: true, authMethod: "api_key" as const };
-    if (process.env[envVar]) return { id, configured: true, authMethod: "env_var" as const };
+    if (aiProviders?.[aiId]?.oauth) return { id, configured: true, authMethod: "oauth" as const };
+    if (aiProviders?.[aiId]?.apiKey)
+      return { id, configured: true, authMethod: "api_key" as const };
+    if (envVar && process.env[envVar])
+      return { id, configured: true, authMethod: "env_var" as const };
     return { id, configured: false, authMethod: null };
   });
 }
@@ -234,8 +255,12 @@ export async function resolveCredential(providerId: string): Promise<Credential 
   const configKey = config.imagegen?.providers?.[providerId]?.apiKey;
   if (configKey) return { kind: "api_key", token: configKey };
 
-  // 3. AI provider config key (e.g. OpenRouter configured for chat)
-  //    (OAuth — step 2 — is added when subscription providers land.)
+  // 2. Linked AI provider's OAuth (subscription — preferred over ambient keys).
+  //    resolveOAuthCredentials refreshes + persists + fans rotated tokens out.
+  const oauth = await resolveOAuthCredentials(aiProviderId);
+  if (oauth) return { kind: "oauth", token: oauth.access };
+
+  // 3. Linked AI provider's API key (e.g. OpenRouter configured for chat)
   const aiKey = config.ai?.providers?.[aiProviderId]?.apiKey;
   if (aiKey) return { kind: "api_key", token: aiKey };
 
