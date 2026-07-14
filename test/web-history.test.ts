@@ -200,6 +200,90 @@ describe("web history routes", () => {
     assert.equal(messages[1].role, "assistant", "the answer (higher id) must come second");
   });
 
+  it("GET /api/v1/history/turns — a system event is an event, never a conversation", async () => {
+    // The timeline renders `conversations` as chat. A system event has no sender and no
+    // channel to reply to, so it must never appear there — it belongs in `events`, which
+    // the UI renders as a system marker. Letting it into `conversations` is what made
+    // events show up as blue message bubbles from a phantom sender named "user".
+    const cookie = await setupAuth();
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
+    const db = await getDb();
+
+    const turnId = randomUUID();
+    await db.insert(turns).values({ id: turnId, mind: "test-history-mind1", status: "complete" });
+    const [eventRow] = await db
+      .insert(mindHistory)
+      .values({
+        mind: "test-history-mind1",
+        type: "event",
+        channel: "event:orientation:1",
+        sender: null,
+        content: "You've just been created as a seed.",
+        metadata: JSON.stringify({ systemEventId: 1, label: "Orientation" }),
+        turn_id: turnId,
+      })
+      .returning({ id: mindHistory.id });
+    // The turn was triggered by the event (as linkPendingInbound would set).
+    await db.update(turns).set({ trigger_event_id: eventRow.id }).where(eq(turns.id, turnId));
+
+    const res = await app.request(`/api/v1/history/turns?turnId=${turnId}`, {
+      headers: { Cookie: `volute_session=${cookie}` },
+    });
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as Array<{
+      conversations: unknown[];
+      events: Array<{ id: number; label: string; content: string }>;
+      trigger: { event?: { type: string; label: string } } | null;
+    }>;
+    assert.equal(body.length, 1);
+
+    assert.deepEqual(body[0].conversations, [], "an event must not become a conversation");
+
+    assert.equal(body[0].events.length, 1);
+    assert.equal(body[0].events[0].label, "Orientation");
+    assert.equal(body[0].events[0].content, "You've just been created as a seed.");
+
+    // The turn is flagged event-triggered, so the timeline can label the mind's closing
+    // text a private reflection rather than rendering it as a reply.
+    assert.equal(body[0].trigger?.event?.type, "orientation");
+    assert.equal(body[0].trigger?.event?.label, "Orientation");
+  });
+
+  it("GET /api/v1/history/turns — a message turn carries no event flag", async () => {
+    const cookie = await setupAuth();
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
+    const db = await getDb();
+
+    const turnId = randomUUID();
+    await db.insert(turns).values({ id: turnId, mind: "test-history-mind1", status: "complete" });
+    const [inbound] = await db
+      .insert(mindHistory)
+      .values({
+        mind: "test-history-mind1",
+        type: "inbound",
+        channel: "@alice",
+        sender: "alice",
+        content: "hello",
+        turn_id: turnId,
+      })
+      .returning({ id: mindHistory.id });
+    await db.update(turns).set({ trigger_event_id: inbound.id }).where(eq(turns.id, turnId));
+
+    const res = await app.request(`/api/v1/history/turns?turnId=${turnId}`, {
+      headers: { Cookie: `volute_session=${cookie}` },
+    });
+    const body = (await res.json()) as Array<{
+      conversations: unknown[];
+      events: unknown[];
+      trigger: { event?: unknown; sender: string | null } | null;
+    }>;
+    // A real message still routes to conversations, with its sender, and no event flag.
+    assert.equal(body[0].conversations.length, 1);
+    assert.deepEqual(body[0].events, []);
+    assert.equal(body[0].trigger?.sender, "alice");
+    assert.equal(body[0].trigger?.event, undefined);
+  });
+
   it("GET /api/v1/history/turns — requires auth", async () => {
     const { default: app } = await import("../packages/daemon/src/web/app.js");
     const res = await app.request("/api/v1/history/turns");

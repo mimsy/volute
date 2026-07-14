@@ -86,7 +86,7 @@ const history = new Hono<HistoryEnv>()
       summaryByTurn.set(s.period_key, { content: s.content, metadata: s.metadata });
     }
 
-    // 3. Get inbound/outbound events from mind_history for these turns.
+    // 3. Get inbound/event/outbound rows from mind_history for these turns.
     // We use mind_history instead of the messages table because mind_history has
     // correct per-mind turn_id tagging. The messages table can only hold one turn_id,
     // so mind-to-mind messages get tagged with the sender's turn, not the receiver's.
@@ -98,6 +98,7 @@ const history = new Hono<HistoryEnv>()
         channel: mindHistory.channel,
         sender: mindHistory.sender,
         content: mindHistory.content,
+        metadata: mindHistory.metadata,
         turn_id: mindHistory.turn_id,
         created_at: mindHistory.created_at,
       })
@@ -105,7 +106,10 @@ const history = new Hono<HistoryEnv>()
       .where(
         and(
           inArray(mindHistory.turn_id, turnIds),
-          sql`${mindHistory.type} IN ('inbound', 'outbound')`,
+          // `event` rows are system events, not messages. They're fetched here but split off
+          // below into a separate per-turn `events` array — never into `conversations`, so no
+          // surface can render them as chat with a phantom sender.
+          sql`${mindHistory.type} IN ('inbound', 'event', 'outbound')`,
         ),
       )
       // id tiebreaker: created_at is second-resolution, so a same-second inbound/outbound
@@ -121,6 +125,15 @@ const history = new Hono<HistoryEnv>()
       created_at: string | null;
     };
     const msgsByTurnChannel = new Map<string, Map<string, ConvEvent[]>>();
+
+    /** A system event that triggered or arrived during a turn — never a conversation. */
+    type SystemEventEntry = {
+      id: number;
+      label: string;
+      content: string | null;
+      created_at: string | null;
+    };
+    const systemEventsByTurn = new Map<string, SystemEventEntry[]>();
 
     function addToTurnChannel(turnId: string, channel: string, event: ConvEvent) {
       let byChannel = msgsByTurnChannel.get(turnId);
@@ -140,9 +153,37 @@ const history = new Hono<HistoryEnv>()
     const turnMindMap = new Map<string, string>();
     for (const t of turnRows) turnMindMap.set(t.id, t.mind);
 
-    // Add inbound and outbound events from mind_history
+    /** The event's worded label, stored on the row by recordEventRow. */
+    function eventLabelOf(metadata: string | null, channel: string): string {
+      if (metadata) {
+        try {
+          const parsed = JSON.parse(metadata) as { label?: unknown };
+          if (typeof parsed.label === "string" && parsed.label) return parsed.label;
+        } catch {
+          // Fall through to the channel-derived label.
+        }
+      }
+      // `event:<type>:<id>` — fall back to the type segment for rows written before the
+      // label was stored (or if the metadata is malformed).
+      return channel.split(":")[1] || "Event";
+    }
+
+    // Split mind_history rows: messages into conversations, system events into their own
+    // per-turn list. An event has no sender and no channel to reply to, so it must never
+    // enter the conversation structure that the UI renders as chat.
     for (const m of historyMsgRows) {
       if (!m.turn_id || !m.channel) continue;
+      if (m.type === "event") {
+        const arr = systemEventsByTurn.get(m.turn_id) ?? [];
+        arr.push({
+          id: m.id,
+          label: eventLabelOf(m.metadata, m.channel),
+          content: m.content,
+          created_at: m.created_at,
+        });
+        systemEventsByTurn.set(m.turn_id, arr);
+        continue;
+      }
       const mindName = turnMindMap.get(m.turn_id) ?? m.mind;
       addToTurnChannel(m.turn_id, m.channel, {
         id: m.id,
@@ -188,7 +229,13 @@ const history = new Hono<HistoryEnv>()
       .map((t) => t.trigger_event_id!);
     const triggerMap = new Map<
       number,
-      { channel: string | null; sender: string | null; content: string | null }
+      {
+        channel: string | null;
+        sender: string | null;
+        content: string | null;
+        type: string;
+        metadata: string | null;
+      }
     >();
     if (triggerIds.length > 0) {
       const triggerRows = await db
@@ -197,6 +244,8 @@ const history = new Hono<HistoryEnv>()
           channel: mindHistory.channel,
           sender: mindHistory.sender,
           content: mindHistory.content,
+          type: mindHistory.type,
+          metadata: mindHistory.metadata,
         })
         .from(mindHistory)
         .where(inArray(mindHistory.id, triggerIds));
@@ -370,6 +419,10 @@ const history = new Hono<HistoryEnv>()
       }
 
       const trigger = t.trigger_event_id ? triggerMap.get(t.trigger_event_id) : null;
+      // A turn triggered by a system event is not a conversation: nothing is waiting on a
+      // reply, and the mind's closing text is a private reflection, not an answer. The flag
+      // lets the timeline say so instead of rendering it like a chat exchange.
+      const isEventTrigger = trigger?.type === "event";
 
       return {
         id: t.id,
@@ -379,9 +432,22 @@ const history = new Hono<HistoryEnv>()
         status: t.status,
         created_at: t.created_at,
         trigger: trigger
-          ? { channel: trigger.channel, sender: trigger.sender, content: trigger.content }
+          ? {
+              channel: trigger.channel,
+              sender: trigger.sender,
+              content: trigger.content,
+              ...(isEventTrigger && trigger.channel
+                ? {
+                    event: {
+                      type: trigger.channel.split(":")[1] || "event",
+                      label: eventLabelOf(trigger.metadata, trigger.channel),
+                    },
+                  }
+                : {}),
+            }
           : null,
         conversations: convEntries,
+        events: systemEventsByTurn.get(t.id) ?? [],
         activities: turnActivities,
       };
     });

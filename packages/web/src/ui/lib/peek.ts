@@ -5,7 +5,7 @@ import type { TurnActivity } from "@volute/api";
  * have been revealed (hovered) so their content is mounted lazily.
  */
 export function peekKey(
-  kind: "chat" | "activity",
+  kind: "chat" | "activity" | "system-event",
   turnId: string,
   itemId: string | number,
 ): string {

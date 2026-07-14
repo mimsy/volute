@@ -30,6 +30,20 @@ function normalizeTimestamp(dateStr: string): string {
   return dateStr.endsWith("Z") ? dateStr : `${dateStr}Z`;
 }
 
+/**
+ * A system event's worded label, stored on the row by the daemon. Falls back to the type
+ * segment of the `event:<type>:<id>` channel for rows written before the label was stored.
+ */
+function eventLabel(row: HistoryRow): string {
+  if (row.metadata) {
+    try {
+      const meta = JSON.parse(row.metadata);
+      if (typeof meta.label === "string" && meta.label) return meta.label;
+    } catch {}
+  }
+  return row.channel?.split(":")[1] || "event";
+}
+
 function formatRow(row: HistoryRow): string {
   const time = new Date(normalizeTimestamp(row.created_at)).toLocaleString();
   const channel = row.channel ?? "";
@@ -43,6 +57,10 @@ function formatRow(row: HistoryRow): string {
       );
       return `[${time}] [${channel}] ${sender}: ${row.content ?? ""}`;
     }
+    // A system event has no sender and no channel to reply to — never render it in the
+    // `[channel] sender: content` message shape.
+    case "event":
+      return `[${time}] [event: ${eventLabel(row)}] ${row.content ?? ""}`;
     case "text":
       return `[${time}] [text] ${row.content ?? ""}`;
     case "thinking":
@@ -112,6 +130,10 @@ function formatRowCompact(row: HistoryRow): string {
       const sender = row.sender ?? (row.type === "outbound" ? "mind" : "unknown");
       return `[${time}] [${channel}] ${sender}: ${row.content ?? ""}`;
     }
+    // A system event has no sender and no channel to reply to — never render it in the
+    // `[channel] sender: content` message shape.
+    case "event":
+      return `[${time}] [event: ${eventLabel(row)}] ${row.content ?? ""}`;
     case "text":
       return `[${time}] [text] ${row.content ?? ""}`;
     case "thinking":

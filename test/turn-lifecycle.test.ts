@@ -257,6 +257,48 @@ describe("turn-lifecycle: mid-turn inbound tagging", () => {
     await cleanup(mind);
   });
 
+  it("tags a system event arriving mid-turn to the in-progress turn", async () => {
+    // `linkInboundToActiveTurn` must match "event" rows as well as "inbound" ones. Events are
+    // delivered with no busy check, so one can land while a turn is already running — this is
+    // the only path that attributes it. If the filter narrows back to "inbound", the event
+    // silently drops out of the turn's `events` array in the timeline and out of the
+    // summarizer's transcript. Nothing throws; the event simply never happened, as far as
+    // history is concerned.
+    const mind = "tl-midturn-event";
+    const triggerId = await recordInbound(mind, "@alice", "alice", "first");
+    const { turnId } = await handleMindEvent(mind, {
+      type: "text",
+      session: "s1",
+      channel: "@alice",
+      content: "on it",
+    });
+    assert.ok(turnId);
+
+    const db = await getDb();
+    const inserted = await db
+      .insert(mindHistory)
+      .values({
+        mind,
+        type: "event",
+        thread: "s1",
+        channel: "event:schedule:99",
+        content: "Time for your morning check-in.",
+        metadata: JSON.stringify({ systemEventId: 99, label: "Schedule: morning-check" }),
+      })
+      .returning({ id: mindHistory.id });
+    const eventRowId = inserted[0].id;
+
+    await linkInboundToActiveTurn(mind, "s1", "event:schedule:99");
+
+    const after = await db.select().from(mindHistory).where(eq(mindHistory.id, eventRowId)).get();
+    assert.equal(after!.turn_id, turnId, "mid-turn event must be tagged to the active turn");
+
+    // ...but a mid-turn arrival is never the trigger — the turn was started by alice.
+    const turn = await db.select().from(turns).where(eq(turns.id, turnId!)).get();
+    assert.equal(turn!.trigger_event_id, triggerId, "trigger_event_id must not be overwritten");
+    await cleanup(mind);
+  });
+
   it("tags ALL mid-turn inbounds even when more than 5 accumulate (next-turn sweep would miss them)", async () => {
     const mind = "tl-midturn-backlog";
     // Open a turn on the channel.

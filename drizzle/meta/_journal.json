@@ -120,6 +120,13 @@
       "when": 1776100000000,
       "tag": "0016_brain_to_human",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "6",
+      "when": 1776200000000,
+      "tag": "0017_event_history_rows",
+      "breakpoints": true
     }
   ]
 }

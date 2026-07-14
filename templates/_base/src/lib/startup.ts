@@ -150,10 +150,16 @@ export type MindPrompts = {
   compaction_warning: string;
   compaction_instructions: string;
   reply_instructions: string;
+  event_instructions: string;
   channel_invite: string;
 };
 
-const DEFAULT_PROMPTS: MindPrompts = {
+/**
+ * What a mind falls back to when its prompts.json lacks a key — i.e. what every new mind is
+ * actually given. Must stay in sync with PROMPT_DEFAULTS in packages/daemon/src/lib/prompts.ts
+ * (the copy the Prompt Library UI edits); test/prompts.test.ts fails if they drift.
+ */
+export const DEFAULT_PROMPTS: MindPrompts = {
   compaction_warning:
     // biome-ignore lint/suspicious/noTemplateCurlyInString: literal ${date} prompt template
     "Compaction approaching — this conversation will be summarized soon. Take a moment to save anything important to your files (MEMORY.md, memory/journal/${date}.md) so it's preserved. Focus on decisions made, open threads, and anything you'd want to pick up again.",
@@ -161,6 +167,8 @@ const DEFAULT_PROMPTS: MindPrompts = {
     "Preserve your sense of who you are, what matters to you, what happened in this conversation, and the threads of thought and connection you'd want to return to.",
   // biome-ignore lint/suspicious/noTemplateCurlyInString: literal ${channel} prompt template
   reply_instructions: 'To reply to this message, use: volute chat send ${channel} "your message"',
+  event_instructions:
+    "This is a system event from your environment — not a message from anyone, and nothing awaits a reply. If it calls for action, use your normal channels. Your closing thoughts on an event turn are kept as a private reflection in your history.",
   channel_invite: `[Channel Invite]
 \${headers}
 

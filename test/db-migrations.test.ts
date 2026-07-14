@@ -133,3 +133,61 @@ describe("rename migrations preserve data (0015 session→thread, 0016 brain→h
     assert.ok(!names.has("idx_delivery_queue_mind_session"), "old delivery_queue index dropped");
   });
 });
+
+describe("0017 retypes delivered system events, and nothing else", () => {
+  const scratch = mkdtempSync(resolve(tmpdir(), "volute-migration-0017-"));
+  after(() => rmSync(scratch, { recursive: true, force: true }));
+
+  it("flips only inbound rows on an event: channel", async () => {
+    const db = drizzle({ connection: { url: `file:${resolve(scratch, "test.db")}` } });
+
+    // Everything before 0017: system events were still recorded as `inbound` rows.
+    const preDir = resolve(scratch, "migrations-pre");
+    mkdirSync(preDir, { recursive: true });
+    migrationsSubset(preDir, "0017_event_history_rows");
+    await migrate(db, { migrationsFolder: preDir });
+
+    const rows: [string, string, string][] = [
+      // The two legacy event rows the migration must retype...
+      ["event:orientation:1", "inbound", "welcome to the world"],
+      ["event:schedule:42", "inbound", "morning check-in"],
+      // ...and rows it must not touch. The `channel LIKE 'event:%'` guard is all that stands
+      // between this migration and retyping every message a mind ever received — which would
+      // erase every conversation from every timeline on the host.
+      ["@alice", "inbound", "hey, you around?"],
+      ["#general", "inbound", "standup in 5"],
+      ["@alice", "outbound", "yep, here"],
+      // A channel that merely mentions events without being one.
+      ["#events-planning", "inbound", "who is booking the venue?"],
+    ];
+    for (const [channel, type, content] of rows) {
+      await db.run(
+        sql.raw(
+          `INSERT INTO mind_history (mind, channel, thread, type, content) VALUES ('echo', '${channel}', 'main', '${type}', '${content}')`,
+        ),
+      );
+    }
+
+    const fullDir = resolve(scratch, "migrations-full");
+    mkdirSync(fullDir, { recursive: true });
+    migrationsSubset(fullDir, null);
+    await migrate(db, { migrationsFolder: fullDir });
+
+    const after = (await db.all(
+      sql.raw(`SELECT channel, type FROM mind_history WHERE mind = 'echo' ORDER BY id`),
+    )) as { channel: string; type: string }[];
+
+    assert.deepEqual(
+      after.map((r) => `${r.channel}=${r.type}`),
+      [
+        "event:orientation:1=event",
+        "event:schedule:42=event",
+        "@alice=inbound",
+        "#general=inbound",
+        "@alice=outbound",
+        "#events-planning=inbound",
+      ],
+      "only event: channels flip to type=event; real conversation is untouched",
+    );
+  });
+});

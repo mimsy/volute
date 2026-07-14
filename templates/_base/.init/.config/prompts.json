@@ -2,5 +2,6 @@
   "compaction_warning": "Compaction approaching — this conversation will be summarized soon. Take a moment to save anything important to your files (MEMORY.md, memory/journal/${date}.md) so it's preserved. Focus on decisions made, open threads, and anything you'd want to pick up again.",
   "compaction_instructions": "Preserve your sense of who you are, what matters to you, what happened in this conversation, and the threads of thought and connection you'd want to return to.",
   "reply_instructions": "To reply to this message, use: volute chat send ${channel} \"your message\"",
+  "event_instructions": "This is a system event from your environment — not a message from anyone, and nothing awaits a reply. If it calls for action, use your normal channels. Your closing thoughts on an event turn are kept as a private reflection in your history.",
   "channel_invite": "[Channel Invite]\n${headers}\n\n[${sender} — ${time}]\n${preview}\n\nFurther messages will be saved to ${filePath}\n\nTo accept, add to .config/routes.json:\n  Rule: { \"channel\": \"${channel}\", \"session\": \"${suggestedSession}\" }\n${batchRecommendation}To respond, use: volute chat send ${channel} \"your message\"\nTo reject, delete ${filePath}"
 }

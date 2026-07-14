@@ -143,6 +143,16 @@ import {
 const _lastActiveCache: { map: Map<string, string>; ts: number } = { map: new Map(), ts: 0 };
 const _LAST_ACTIVE_TTL = 60_000;
 
+/**
+ * mind_history row types the daemon authors to represent someone *other than the mind* —
+ * a human's message ("inbound") or the environment itself ("event"). Minds are untrusted
+ * principals (they run arbitrary code), and POST /:name/events is how a mind writes its own
+ * history, so it must not be able to write these: doing so forges a message from a human, or
+ * a system event that the UI renders as an authoritative environment notice. Everything else
+ * on this endpoint is mind-authored by definition and is rendered as such.
+ */
+const DAEMON_AUTHORED_TYPES = new Set(["inbound", "event"]);
+
 type ChannelStatus = {
   name: string;
   displayName: string;
@@ -2666,6 +2676,9 @@ const app = new Hono<AuthEnv>()
     if (!body.type) {
       return c.json({ error: "type required" }, 400);
     }
+    if (DAEMON_AUTHORED_TYPES.has(body.type)) {
+      return c.json({ error: `type "${body.type}" is daemon-authored` }, 400);
+    }
 
     await handleMindEvent(baseName, body);
 
@@ -2872,7 +2885,7 @@ const app = new Hono<AuthEnv>()
 
     const typeFilter = detail
       ? undefined
-      : sql`${mindHistory.type} IN ('inbound','outbound','tool_use','tool_result','text','thinking','activity')`;
+      : sql`${mindHistory.type} IN ('inbound','event','outbound','tool_use','tool_result','text','thinking','activity')`;
 
     // Prefer turn_id-based query; fall back to legacy session+range
     let rows: Array<typeof mindHistory.$inferSelect>;
@@ -3128,11 +3141,11 @@ const app = new Hono<AuthEnv>()
         // No type filter
         break;
       case "conversation":
-        conditions.push(sql`${mindHistory.type} IN ('inbound','outbound','tool_use')`);
+        conditions.push(sql`${mindHistory.type} IN ('inbound','event','outbound','tool_use')`);
         break;
       case "detailed":
         conditions.push(
-          sql`${mindHistory.type} IN ('inbound','outbound','tool_use','tool_result','text','thinking')`,
+          sql`${mindHistory.type} IN ('inbound','event','outbound','tool_use','tool_result','text','thinking')`,
         );
         break;
     }

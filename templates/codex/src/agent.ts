@@ -19,6 +19,7 @@ import { log, warn } from "./lib/logger.js";
 import { createSessionStore } from "./lib/session-store.js";
 import { getStartupContext, loadPrompts, loadSystemPrompt } from "./lib/startup.js";
 import { filterEvent, loadTransparencyPreset } from "./lib/transparency.js";
+import { turnContextFor } from "./lib/turn-context.js";
 import type {
   HandlerMeta,
   HandlerResolver,
@@ -47,6 +48,8 @@ type CodexSession = {
   abortController?: AbortController;
   messageChannels: Map<string, string>;
   firstMessagePerChannel: Set<string>;
+  /** The event note is a standing fact about events, so it fires once per session. */
+  eventNoteFired: boolean;
   cumulativeInputTokens: number;
 };
 
@@ -145,6 +148,7 @@ export function createMind(options: {
       processing: false,
       messageChannels: new Map(),
       firstMessagePerChannel: new Set(),
+      eventNoteFired: false,
       cumulativeInputTokens: 0,
     };
     sessions.set(name, session);
@@ -255,20 +259,16 @@ export function createMind(options: {
       warn("mind", "pre-prompt hook failed:", err);
     }
 
-    // Reply instructions on first message per channel (skip system messages)
-    const channel = meta.channel;
-    if (channel && !session.firstMessagePerChannel.has(channel)) {
-      session.firstMessagePerChannel.add(channel);
-      const isSystem = meta.sender === "volute";
-      const replyInstructions = isSystem
-        ? "This is a system message — no reply is needed."
-        : prompts.reply_instructions.replace(/\$\{channel\}/g, channel);
+    // Either the system-event note or reply instructions — never both, and never reply
+    // instructions on an event turn. See turn-context.ts for the rule and why it matters.
+    const turnContext = turnContextFor(meta, session, prompts);
+    if (turnContext) {
       emit(session, {
         type: "context",
-        content: replyInstructions,
-        metadata: { source: "reply-instructions" },
+        content: turnContext.content,
+        metadata: { source: turnContext.source },
       });
-      text = `${replyInstructions}\n\n${text}`;
+      text = `${turnContext.content}\n\n${text}`;
     }
 
     session.abortController = new AbortController();

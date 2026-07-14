@@ -330,10 +330,24 @@ export type TurnActivity = {
   created_at: string;
 };
 
+/**
+ * A system event delivered to the mind during a turn. Not a message: it has no sender and
+ * no channel to reply to, so it is kept out of `conversations` entirely and rendered as a
+ * system marker.
+ */
+export type TurnSystemEvent = {
+  id: number;
+  label: string;
+  content: string | null;
+  created_at: string | null;
+};
+
 export type TurnTrigger = {
   channel: string | null;
   sender: string | null;
   content: string | null;
+  /** Set when the turn was triggered by a system event rather than by a message. */
+  event?: { type: string; label: string };
 };
 
 export type TurnRow = {
@@ -345,6 +359,7 @@ export type TurnRow = {
   created_at: string;
   trigger: TurnTrigger | null;
   conversations: TurnConversation[];
+  events: TurnSystemEvent[];
   activities: TurnActivity[];
 };
 

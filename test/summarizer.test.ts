@@ -180,6 +180,47 @@ describe("summarizer", () => {
       assert.deepEqual(meta.tools, ["Read"]);
     });
 
+    it("names the system event that triggered a turn in the deterministic summary", async () => {
+      // The deterministic path is the fallback used whenever AI summarization is unavailable
+      // (unconfigured, 401, rate-limited). If it ignores event rows — as buildTranscript once
+      // did — a schedule/orientation/wake turn degrades to a bare "Used Read." and a host
+      // debugging "why did my mind wake at 3am and do nothing" learns nothing about the cause.
+      const mind3 = "test-summarizer-event";
+      const session3 = "s3-event";
+      const db = await getDb();
+      const insert = async (type: string, opts?: Record<string, unknown>) => {
+        const r = await db
+          .insert(mindHistory)
+          .values({ mind: mind3, type, thread: session3, ...opts })
+          .returning({ id: mindHistory.id });
+        return r[0].id;
+      };
+
+      await insert("event", {
+        channel: "event:schedule:42",
+        content: "Time for your morning check-in.",
+        metadata: JSON.stringify({ systemEventId: 42, label: "Schedule: morning-check" }),
+      });
+      await insert("tool_use", { metadata: JSON.stringify({ name: "Read" }) });
+      const doneId = await insert("done");
+
+      await summarizeTurn(mind3, session3, "event:schedule:42", doneId);
+
+      const rows = await db
+        .select()
+        .from(summaries)
+        .where(and(eq(summaries.mind, mind3), eq(summaries.period, "turn")));
+      const content = rows[0]?.content ?? "";
+      assert.ok(
+        content.includes("System event: Schedule: morning-check"),
+        `summary should name the triggering event, got: ${content}`,
+      );
+      assert.ok(
+        !content.includes("Received message"),
+        `an event is not a received message, got: ${content}`,
+      );
+    });
+
     it("skips summary for turn with no substantive output", async () => {
       const mind2 = "test-summarizer-2";
       const db = await getDb();
@@ -426,6 +467,35 @@ describe("summarizer", () => {
 
       const transcript = buildTranscript(events, meta);
       assert.match(transcript, /\[result error\] ENOENT: no such file/);
+    });
+
+    it("includes the system event that triggered the turn, framed as an event not a message", () => {
+      // Without this, a schedule/orientation/wake turn is summarized from its tool calls
+      // alone — the summarizer never sees what prompted them. But it must not read as an
+      // inbound message either: an event has no sender, and the summary shouldn't imply
+      // someone spoke to the mind.
+      const events: HistoryRow[] = [
+        {
+          id: 1,
+          type: "event",
+          channel: "event:schedule:42",
+          session: null,
+          content: "Review yesterday's journal.",
+          metadata: null,
+          created_at: "",
+        },
+        row(2, "text", "Reviewed it — nothing outstanding."),
+      ];
+      const meta = new Map<number, Record<string, unknown>>([
+        [1, { systemEventId: 42, label: "Schedule: morning-check" }],
+      ]);
+
+      const transcript = buildTranscript(events, meta);
+      assert.match(
+        transcript,
+        /\[system event: Schedule: morning-check\] Review yesterday's journal\./,
+      );
+      assert.doesNotMatch(transcript, /inbound/);
     });
 
     it("labels successful results distinctly from errors", () => {
