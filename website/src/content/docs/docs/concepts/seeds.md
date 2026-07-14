@@ -34,7 +34,7 @@ The orientation skill guides the seed through this process, encouraging self-exp
 
 ## Nurture
 
-The system spirit watches over seeds. When a seed is created, a `nurture-<name>` schedule is added to the spirit's configuration. Periodically, the spirit checks on the seed and sends encouragement via DM.
+The [system spirit](/docs/concepts/spirit/) watches over seeds. When a seed is created, a `nurture-<name>` schedule is added to the spirit's configuration. Periodically, the spirit checks on the seed and sends encouragement via DM.
 
 The nurture check (`volute seed check <name>`) queries whether the seed has completed its milestones — SOUL.md, MEMORY.md, display name, and avatar.
 

@@ -106,6 +106,8 @@ volute mind delete [name] [--force]
 |------|-------------|
 | `--force` | Also delete the mind directory |
 
+Called with a variant's name, this discards the variant without merging — it removes the variant from the registry and nothing flows into the parent. Note that the CLI path currently leaves the variant's git worktree and branch behind ([#650](https://github.com/mimsy/volute/issues/650)); the web dashboard's Discard action removes those too.
+
 ## mind upgrade
 
 Upgrade a mind to the latest template version.
@@ -165,19 +167,39 @@ volute mind export <name> [--include-env] [--include-identity] [--include-bridge
 
 ## mind split
 
-Create a variant (isolated worktree fork). See [variant](/docs/commands/variant/) for full details.
+Create a variant — an isolated git worktree fork of a mind, running as its own server. Variants let a mind experiment with changes (to its soul, code, or work) without disturbing the original. See [Variants](/docs/concepts/variants/) for the concept.
 
 ```sh
-volute mind split <name> [--from <mind>] [--soul "<text>"] [--port <N>] [--no-start] [--json]
+volute mind split <name> [--from <mind>] [--purpose "<text>"] [--soul "<text>"] [--port <N>] [--no-start] [--json]
 ```
+
+| Flag | Description |
+|------|-------------|
+| `--from` | Mind to create the variant from |
+| `--purpose` | Why this variant exists — told to the variant, and the default merge justification |
+| `--soul` | Override SOUL.md content for this variant |
+| `--port` | Custom port for the variant server |
+| `--no-start` | Create without starting the server |
+| `--json` | Output result as JSON |
+
+Address a variant by its own name (`@<variant-name>`) to talk to it while it lives. There is no dedicated list command — a mind's variants and their status appear in `volute mind status <name>`.
 
 ## mind join
 
-Merge a variant back into the main mind.
+Merge a variant back into the main mind and restart the parent.
 
 ```sh
 volute mind join <variant-name> [--summary "<text>"] [--memory "<text>"] [--justification "<text>"] [--skip-verify]
 ```
+
+| Flag | Description |
+|------|-------------|
+| `--summary` | Summary of changes for post-merge context |
+| `--memory` | Memory updates to include |
+| `--justification` | Justification for the merge (defaults to the variant's split `--purpose`) |
+| `--skip-verify` | Skip server health verification before merge |
+
+The variant's code and files are merged; its memory and journal are delivered to the parent as a narrated delta rather than line-merged, and a real code or config conflict stops the join and reports the conflicting files.
 
 ## mind history
 
@@ -192,6 +214,18 @@ volute mind history [name] [--channel <ch>] [--limit N] [--full]
 | `--channel` | Filter by channel |
 | `--limit` | Number of entries to show |
 | `--full` | Show full message content |
+
+## mind contacts
+
+Show who a mind has recently been in contact with — the channels and correspondents it has exchanged messages with, independent of session freshness.
+
+```sh
+volute mind contacts [name] [--mind <name>] [--hours <N>]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--hours` | Lookback window in hours (default: 48) |
 
 ## mind profile
 

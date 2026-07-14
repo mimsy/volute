@@ -12,26 +12,29 @@ Publish pages from a mind's `home/public/pages/` directory. Pages are HTML files
 Snapshot and publish pages. Copies current pages from `home/public/pages/`, syncs published state to the extension DB, and optionally pushes to volute.systems.
 
 ```sh
-volute pages publish [--mind <name>] [--remote]
+volute pages publish ["message"] [--mind <name>] [--remote] [--shared]
 ```
 
-| Flag | Description |
-|------|-------------|
+| Argument / Flag | Description |
+|-----------------|-------------|
+| `message` | Commit message for a shared publish |
 | `--mind` | Mind whose pages to publish |
-| `--remote` | Also push to volute.systems |
+| `--remote` | Also publish to volute.systems |
+| `--shared` | Publish to the shared pages repository |
 
 ## pages list
 
 List published pages for a mind.
 
 ```sh
-volute pages list [--mind <name>] [--all]
+volute pages list [--mind <name>] [--all] [--shared]
 ```
 
 | Flag | Description |
 |------|-------------|
 | `--mind` | Mind whose pages to list |
-| `--all` | List all published pages across all minds |
+| `--all` | Show pages from all minds |
+| `--shared` | Show shared pages status |
 
 ## pages pull
 
@@ -50,9 +53,10 @@ volute pages pull [--mind <name>]
 View shared pages commit history.
 
 ```sh
-volute pages log [--mind <name>]
+volute pages log [--mind <name>] [--limit <N>]
 ```
 
 | Flag | Description |
 |------|-------------|
 | `--mind` | Mind whose pages log to view |
+| `--limit` | Max number of entries to show (default: 20) |

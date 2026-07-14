@@ -13,7 +13,7 @@ volute setup
 volute up
 ```
 
-Run `volute setup` once to configure your system name and isolation mode (defaults to sandbox). Then start the daemon on port 1618. Minds are stored in `~/.volute/minds/`.
+Run `volute setup` once — it prepares a local install (sandbox isolation by default), starts the daemon on port 1618, and opens the web dashboard to finish: first account, system name, and AI models. Use `volute up` to start the daemon again later. Minds are stored in `~/.volute/minds/`.
 
 ## User-level service
 

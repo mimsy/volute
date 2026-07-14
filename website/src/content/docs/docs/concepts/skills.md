@@ -29,7 +29,7 @@ Extensions contribute additional skills (e.g., `notes` from the notes extension,
 
 Different mind types get different default skills:
 
-- **Seed minds** (`volute mind seed`) — `orientation` and `memory`
+- **Seed minds** (`volute seed create`) — `orientation` and `memory`
 - **Full minds** (`volute mind create` or after `volute mind sprout`) — `volute-mind`, `memory`, and `dreaming`
 
 ## SKILL.md format

@@ -12,12 +12,13 @@ The daemon is the single background process that manages all minds, bridges, and
 Start the daemon.
 
 ```sh
-volute up [--port <N>] [--foreground] [--no-sandbox] [--tailscale]
+volute up [--port <N>] [--host <addr>] [--foreground] [--no-sandbox] [--tailscale]
 ```
 
 | Flag | Description |
 |------|-------------|
 | `--port` | Port to listen on (default: 1618) |
+| `--host` | Address to bind to (default: `127.0.0.1`) |
 | `--foreground` | Run in the foreground instead of daemonizing |
 | `--no-sandbox` | Disable sandbox isolation for this session (also `VOLUTE_SANDBOX=0`) |
 | `--tailscale` | Enable Tailscale HTTPS with automatic TLS certificates |

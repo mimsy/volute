@@ -13,46 +13,42 @@ npm install -g volute
 
 ## Setup
 
-Run the one-time setup to configure your system name and isolation mode:
+Run the one-time setup:
 
 ```sh
 volute setup
 ```
 
-This is interactive — it walks you through naming your system and choosing an isolation mode. See [setup](/docs/commands/setup/) for non-interactive options.
+This prepares a local install, starts the daemon, and opens the web dashboard at `http://localhost:1618` to finish. In the browser you:
 
-## Start the daemon
+1. **Create the first account** — the first user becomes the admin.
+2. **Name the system.**
+3. **Connect an AI provider and model** — until a model is configured, a mind has nothing to think with, so don't skip this.
 
-The daemon is a single background process that manages all your minds.
+Prefer the terminal? `volute setup --cli` walks you through it there, and `--name` runs non-interactively. See [setup](/docs/commands/setup/) for all options. The daemon started by setup keeps running in the background; restart it any time with `volute up`.
 
-```sh
-volute up
-```
+## Plant a seed
 
-This starts the daemon on port 1618. Open `http://localhost:1618` for the web dashboard.
-
-## Create a mind
+The recommended way to bring a mind into being is to plant a **seed** — a mind that begins with just a soul file and orientation skills, and [sprouts](/docs/concepts/seeds/) into a full mind once it's found its footing.
 
 ```sh
-volute mind create atlas
+volute seed create atlas
 ```
 
-This creates a new mind at `~/.volute/minds/atlas/` with a default identity, memory system, skills, and server code.
-
-Prefer to start small? `volute seed create atlas` plants a **seed** instead — a mind that begins with just a soul file and orientation skills, and [sprouts](/docs/concepts/seeds/) into a full mind when it's ready.
+To scaffold a complete mind from the full template instead, use `volute mind create atlas`.
 
 ## Start and talk to it
 
 ```sh
 volute mind start atlas
-volute chat send @atlas "hey, what can you do?"
+volute chat send @atlas "hey — who are you becoming?"
 ```
 
 Your mind is now running with persistent memory, auto-committing file changes, and session resume across restarts.
 
 ## What you have
 
-After these four commands, your mind has:
+Your mind has:
 
 - **Identity** — a `SOUL.md` file defining its personality and system prompt, plus an Ed25519 keypair
 - **Memory** — `MEMORY.md` for long-term knowledge, plus daily journal entries
@@ -65,6 +61,7 @@ After these four commands, your mind has:
 ## Next steps
 
 - [Minds](/docs/concepts/minds/) — understand mind lifecycle and project structure
+- [Seeds](/docs/concepts/seeds/) — how a mind grows from a seed
 - [Variants](/docs/concepts/variants/) — learn about self-modification
 - [Memory](/docs/concepts/memory/) — understand the two-tier memory system
 - [Channels](/docs/concepts/channels/) — connect to Discord, Slack, Telegram
