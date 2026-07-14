@@ -38,7 +38,10 @@ const ungatedCommands = new Set([
   "service",
   undefined,
 ]);
-if (!ungatedCommands.has(command)) {
+// A mind only exists because a set-up daemon spawned it, so the gate has nothing
+// to tell it — and its sandbox denies the host config the check reads anyway.
+const isMind = !!process.env.VOLUTE_MIND_TOKEN;
+if (!isMind && !ungatedCommands.has(command)) {
   const { setupStatus, setupUrl } = await import("@volute/daemon/lib/config/setup.js");
   const status = setupStatus();
   if (status !== "complete") {

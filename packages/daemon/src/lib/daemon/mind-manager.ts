@@ -11,6 +11,7 @@ import {
   findMind,
   mindDir,
   mindTmpDir,
+  mindTmpEnv,
   setMindRunning,
   stateDir,
   voluteSystemDir,
@@ -317,7 +318,7 @@ export class MindManager {
       // hook then skips its "This system is named X" line rather than asserting
       // a fabricated one.
       VOLUTE_SYSTEM_NAME: readGlobalConfig().name,
-      TMPDIR: mindTmp,
+      ...mindTmpEnv(dir),
       PATH: `${mindLocalBin}:${currentPath}`,
       // Strip CLAUDECODE so the Agent SDK can spawn Claude Code subprocesses
       CLAUDECODE: undefined,

@@ -64,6 +64,18 @@ type DaemonConfig = {
 // This module is CLI-only (imported by src/commands/). process.exit() is intentional —
 // CLI commands should terminate immediately with a clear error when the daemon is unreachable.
 function readDaemonConfig(): DaemonConfig {
+  // A mind runs the CLI inside its sandbox, which denies the whole host home —
+  // daemon.json included. It doesn't need the file: the daemon that spawned it
+  // passes the same connection details in its env, as it does for the mind server.
+  const mindPort = process.env.VOLUTE_MIND_TOKEN && process.env.VOLUTE_DAEMON_PORT;
+  if (mindPort) {
+    return {
+      port: Number(mindPort),
+      hostname: process.env.VOLUTE_DAEMON_HOSTNAME || "127.0.0.1",
+      token: process.env.VOLUTE_MIND_TOKEN,
+    };
+  }
+
   const configPath = resolve(voluteSystemDir(), "daemon.json");
   if (!existsSync(configPath)) {
     // If a system service is installed, the issue is likely VOLUTE_HOME not being set
