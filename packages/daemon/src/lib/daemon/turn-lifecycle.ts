@@ -118,7 +118,10 @@ async function linkPendingInbound(
 
   const conditions = [
     eq(mindHistory.mind, mind),
-    eq(mindHistory.type, "inbound"),
+    // "event" rows are system events (see recordEventRow) — not messages, but they
+    // trigger turns the same way, and this linkage is what sets `trigger_event_id` and
+    // thus drives reflection capture. Dropping them here breaks it silently.
+    inArray(mindHistory.type, ["inbound", "event"]),
     sql`${mindHistory.turn_id} IS NULL`,
     eq(mindHistory.channel, scopeChannel),
   ];

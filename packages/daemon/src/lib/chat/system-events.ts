@@ -57,8 +57,8 @@ export function parseMeta(
 }
 
 /**
- * A worded label for an event, shown to the mind in the `[Event: <label> — <time>]`
- * envelope and to hosts in the events UI. Never a raw id in isolation.
+ * A worded label for an event, shown to the mind in the `=== System event: <label> — <time> ===`
+ * envelope and to hosts in the events UI and timeline. Never a raw id in isolation.
  */
 export function eventLabel(type: string, meta: Record<string, unknown> | null | undefined): string {
   const m = meta ?? {};
@@ -156,7 +156,7 @@ export async function recordNotice(input: RecordNoticeInput): Promise<void> {
 
 /**
  * The channel slug an event's turn is attributed under. Unique per event so
- * `linkPendingInbound` links each event turn to exactly its own inbound row (which
+ * `linkPendingInbound` links each event turn to exactly its own event row (which
  * carries `meta.systemEventId`), giving exact reflection attribution. The template
  * builds the same slug from the envelope's type + id when dispatching.
  */
@@ -168,24 +168,37 @@ export function eventChannel(type: string, id: number): string {
  * Record an event's actual delivery in mind_history so `mind history` and the activity
  * feed keep working. Called only after a successful POST — an event the mind never
  * received must not claim it was heard (#420). Recorded under the base name, matching
- * how the delivery pipeline records inbounds.
+ * how the delivery pipeline records incoming messages.
+ *
+ * The row type is `event`, not `inbound`: an event is not a message, and the surfaces that
+ * render history (web timeline, `volute mind history`) key off this type to show it as a
+ * system marker instead of a chat bubble with a phantom sender. The label rides along in
+ * the row metadata so those surfaces don't have to re-derive it from `system_events`.
  */
-async function recordEventInbound(mind: string, event: SystemEvent): Promise<void> {
+async function recordEventRow(mind: string, event: SystemEvent): Promise<void> {
   const channel = eventChannel(event.type, event.id);
+  const label = eventLabel(event.type, parseMeta(event.meta, `event ${event.id}`));
+  const metadata = { systemEventId: event.id, label };
   try {
     const db = await getDb();
     const baseName = await getBaseName(mind);
     await db.insert(mindHistory).values({
       mind: baseName,
-      type: "inbound",
+      type: "event",
       channel,
       sender: null,
       content: event.body,
-      metadata: JSON.stringify({ systemEventId: event.id }),
+      metadata: JSON.stringify(metadata),
     });
-    publishMindEvent(baseName, { mind: baseName, type: "inbound", channel, content: event.body });
+    publishMindEvent(baseName, {
+      mind: baseName,
+      type: "event",
+      channel,
+      content: event.body,
+      metadata,
+    });
   } catch (err) {
-    elog.warn(`failed to persist event inbound for ${mind}`, log.errorData(err));
+    elog.warn(`failed to persist event row for ${mind}`, log.errorData(err));
   }
 }
 
@@ -291,7 +304,7 @@ async function markDelivered(id: number, extraMeta?: Record<string, unknown>): P
 /**
  * Deliver a system event to a mind. Inserts the row, then:
  * - `immediate` + awake (or `force`): POSTs the envelope; on success stamps
- *   `delivered_at` and records the inbound in mind_history. A failed POST leaves the
+ *   `delivered_at` and records the event row in mind_history. A failed POST leaves the
  *   row pending — it is redelivered on the next wake or mind start.
  * - `immediate` + sleeping: applies `whileSleeping` (`queue` leaves it pending to flush on
  *   wake; `skip` stamps it delivered with `meta.skipped`; `trigger-wake` queues + wakes).
@@ -352,9 +365,9 @@ export async function deliverEvent(
       const event = await db.select().from(systemEvents).where(eq(systemEvents.id, eventId)).get();
       if (event && (await postEventEnvelope(mind, event))) {
         await markDelivered(eventId);
-        // Record inbound only on actual delivery — history must not claim the mind
+        // Record the row only on actual delivery — history must not claim the mind
         // heard something it never received (#420).
-        await recordEventInbound(mind, event);
+        await recordEventRow(mind, event);
         return { id: eventId, delivered: true };
       }
       elog.warn(
@@ -415,7 +428,7 @@ export async function flushQueuedEvents(mind: string): Promise<number> {
       }
       if (await postEventEnvelope(mind, event)) {
         await markDelivered(event.id);
-        await recordEventInbound(mind, event);
+        await recordEventRow(mind, event);
         delivered++;
       } else {
         elog.warn(`flush could not deliver event ${event.id} (${event.type}) to ${mind}`);
@@ -743,11 +756,20 @@ export async function listEvents(
 
 // --- Reflection capture ---
 
-/** Store `text` as the reflection on an event row. */
-export async function recordReflection(eventId: number, text: string): Promise<void> {
+/**
+ * Store `text` as the reflection on one of `mind`'s own events.
+ *
+ * Scoped by mind on purpose. The event id reaching here is read out of row metadata, and a
+ * mind writes its own history rows — so without the `mind` predicate a mind could name another
+ * mind's event id and overwrite that mind's private reflection.
+ */
+export async function recordReflection(mind: string, eventId: number, text: string): Promise<void> {
   try {
     const db = await getDb();
-    await db.update(systemEvents).set({ reflection: text }).where(eq(systemEvents.id, eventId));
+    await db
+      .update(systemEvents)
+      .set({ reflection: text })
+      .where(and(eq(systemEvents.id, eventId), eq(systemEvents.mind, mind)));
   } catch (err) {
     elog.warn(`failed to record reflection for event ${eventId}`, log.errorData(err));
   }
@@ -755,9 +777,9 @@ export async function recordReflection(eventId: number, text: string): Promise<v
 
 /**
  * Exact reflection attribution, called from turn-lifecycle when a turn completes:
- * the completed turn's `trigger_event_id` points at the mind_history inbound that
+ * the completed turn's `trigger_event_id` points at the mind_history event row that
  * started it (linked by `linkPendingInbound` via the unique `event:<type>:<id>`
- * channel the template echoes back). If that inbound carries a `systemEventId`, the
+ * channel the template echoes back). If that row carries a `systemEventId`, the
  * turn was an event turn and its final text is stored as the event's reflection.
  * A turn triggered by anything else — or with no linked trigger — records nothing:
  * a missing reflection is better than one stolen from an unrelated conversation.
@@ -776,13 +798,13 @@ export async function captureReflection(
       .get();
     if (turn?.trigger == null) return;
 
-    const inbound = await db
+    const trigger = await db
       .select({ metadata: mindHistory.metadata })
       .from(mindHistory)
       .where(eq(mindHistory.id, turn.trigger))
       .get();
-    const eventId = inbound?.metadata
-      ? parseMeta(inbound.metadata, `inbound ${turn.trigger}`).systemEventId
+    const eventId = trigger?.metadata
+      ? parseMeta(trigger.metadata, `event row ${turn.trigger}`).systemEventId
       : undefined;
     if (typeof eventId !== "number") return;
 
@@ -800,7 +822,7 @@ export async function captureReflection(
       .limit(1)
       .get();
     const text = row?.content?.trim();
-    if (text) await recordReflection(eventId, text);
+    if (text) await recordReflection(mind, eventId, text);
   } catch (err) {
     elog.warn(`failed to capture reflection for turn ${turnId}`, log.errorData(err));
   }

@@ -68,7 +68,7 @@ function generateMessageId(): string {
 
 function applyPrefix(content: VoluteContentPart[], meta: ChannelMeta): VoluteContentPart[] {
   const time = compactTimestamp();
-  // System-event turns get an ambient `[Event: …]` prefix — no sender/DM framing.
+  // System-event turns get the fenced `=== System event: … ===` heading — no sender/DM framing.
   const prefix = meta.isEvent
     ? formatEventPrefix(meta.eventLabel ?? "Event", meta.eventAt)
     : formatPrefix(meta, time);

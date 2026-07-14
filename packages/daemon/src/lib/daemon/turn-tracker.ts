@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { getDb } from "../db.js";
 import { mindHistory, turns } from "../schema.js";
 import log from "../util/logger.js";
@@ -80,18 +80,26 @@ export function getActiveTurnId(mind: string, session?: string | null): string |
 }
 
 /**
- * Attribute an inbound that arrives mid-turn to the turn already in progress.
+ * Attribute an inbound message OR a system event that arrives mid-turn to the turn already in
+ * progress.
  *
  * `TurnLifecycle.linkPendingInbound` only runs at turn CREATION and sweeps a bounded set of
- * the most-recent untagged inbounds. An inbound delivered while a turn is already active for
- * the session would otherwise wait for the NEXT same-channel turn to sweep it — and be left
+ * the most-recent untagged rows. One delivered while a turn is already active for the session
+ * would otherwise wait for the NEXT same-channel turn to sweep it — and be left
  * `turn_id = NULL` forever if more than that bound accumulate or no later turn runs. Called
  * per-delivery: when the mind has an active turn for (mind, session), every still-untagged
- * inbound on that channel is attributed to it immediately.
+ * row on that channel is attributed to it immediately.
+ *
+ * The type filter below must match "event" as well as "inbound". Events are POSTed with no
+ * busy check, so one can land while a turn is running, and this is the only path that
+ * attributes it. Narrow the filter and the event silently drops out of the turn's `events`
+ * array in the timeline and out of the summarizer's transcript — no error, no log; as far as
+ * history is concerned it never arrived. Guarded by "tags a system event arriving mid-turn"
+ * in test/turn-lifecycle.test.ts.
  *
  * No-op when no turn is active yet — the turn-creation path (`linkPendingInbound`) tags the
- * triggering inbound then. Only `turn_id` is set here: the turn's `trigger_event_id` stays
- * the original triggering inbound, since a mid-turn message did not trigger the turn.
+ * trigger then. Only `turn_id` is set here: the turn's `trigger_event_id` stays the original
+ * trigger, since a mid-turn arrival did not trigger the turn.
  */
 export async function linkInboundToActiveTurn(
   mind: string,
@@ -109,7 +117,8 @@ export async function linkInboundToActiveTurn(
     .where(
       and(
         eq(mindHistory.mind, mind),
-        eq(mindHistory.type, "inbound"),
+        // System events ("event") arrive mid-turn too and need the same attribution.
+        inArray(mindHistory.type, ["inbound", "event"]),
         sql`${mindHistory.turn_id} IS NULL`,
         eq(mindHistory.channel, channel),
       ),

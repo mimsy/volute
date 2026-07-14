@@ -13,6 +13,7 @@ import {
   getToolCategory,
   getToolLabel,
 } from "../lib/tool-names";
+import { isEventTriggeredTurn } from "../lib/turn-events";
 import ToolGroupComponent from "./chat/ToolGroup.svelte";
 import ExtensionFeedCard from "./ExtensionFeedCard.svelte";
 import HistoryEvent from "./HistoryEvent.svelte";
@@ -44,6 +45,7 @@ let {
   compact = false,
   turnConversations = [],
   turnActivities = [],
+  reflection = false,
   onsessionclick,
   onexpand,
 }: {
@@ -53,6 +55,12 @@ let {
   compact?: boolean;
   turnConversations?: TurnConversation[];
   turnActivities?: TurnActivity[];
+  /**
+   * True for the mind's closing text on a system-event turn. Nothing was sent to anyone —
+   * the text is kept as a private reflection — so it's labelled as such rather than reading
+   * like a reply to a message.
+   */
+  reflection?: boolean;
   onsessionclick?: (session: string) => void;
   onexpand?: (expanded: boolean, el: HTMLDivElement | undefined) => void;
 } = $props();
@@ -68,6 +76,8 @@ let detailLoading = $state(false);
 const typeColors: Record<string, string> = {
   inbound: "var(--blue)",
   outbound: "var(--red)",
+  // A system event is not a message — it never gets the inbound blue or a chat bubble.
+  event: "var(--purple)",
   text: "var(--text-1)",
   tool_use: "var(--yellow)",
   tool_result: "var(--yellow)",
@@ -90,9 +100,20 @@ let meta = $derived.by(() => {
   }
 });
 
+/**
+ * A system event's worded label ("Orientation", "Schedule: morning-check"), stored on the
+ * row by the daemon. Falls back to the type segment of the `event:<type>:<id>` channel for
+ * rows written before the label was stored.
+ */
+let eventLabel = $derived.by(() => {
+  if (typeof meta?.label === "string" && meta.label) return meta.label;
+  return event.channel?.split(":")[1] || "event";
+});
+
 let collapsible = $derived(
   event.type === "inbound" ||
     event.type === "outbound" ||
+    event.type === "event" ||
     event.type === "activity" ||
     event.type === "text" ||
     event.type === "thinking" ||
@@ -113,11 +134,25 @@ let tooltip = $derived.by(() => {
     const ch = event.channel ? ` · ${event.channel}` : "";
     return `${time} · ${type}${ch}`;
   }
+  if (type === "event") {
+    return `${time} · system event · ${eventLabel}`;
+  }
   if (type === "activity") {
     return `${time} · ${meta?.type ?? "activity"}`;
   }
   return `${time} · ${type}`;
 });
+
+/**
+ * The id of the last `text` row in a turn. On a system-event turn that row is the mind's
+ * closing thought, stored as a private reflection (it was delivered nowhere), so the
+ * timeline labels it rather than letting it read as a reply.
+ */
+function lastTextId(events: HistoryMessage[]): number | undefined {
+  let id: number | undefined;
+  for (const e of events) if (e.type === "text") id = e.id;
+  return id;
+}
 
 function formatTime(dateStr: string): string {
   const date = new Date(normalizeTimestamp(dateStr));
@@ -201,6 +236,9 @@ async function handleClick() {
     <div class="marker marker-icon" style:color="var(--blue)" use:tooltipAction={{ text: tooltip, position: "left" }}><Icon kind="chat" /></div>
   {:else if event.type === "outbound"}
     <div class="marker marker-icon" style:color="var(--red)" use:tooltipAction={{ text: tooltip, position: "left" }}><Icon kind="chat" /></div>
+  {:else if event.type === "event"}
+    <!-- Gear, never the chat icon: an event comes from the environment, not a person. -->
+    <div class="marker marker-icon" style:color="var(--purple)" use:tooltipAction={{ text: tooltip, position: "left" }}><Icon kind="gear" /></div>
   {:else if event.type === "text"}
     <div class="marker marker-icon" style:color="var(--text-1)" use:tooltipAction={{ text: tooltip, position: "left" }}><Icon kind="text" /></div>
   {:else if event.type === "thinking"}
@@ -276,11 +314,15 @@ async function handleClick() {
           {:else if turnError}
             <div class="turn-loading">{turnError}</div>
           {:else if fullDetail}
+            {@const detailIsEventTurn = isEventTriggeredTurn(detailEvents)}
+            {@const detailLastTextId = lastTextId(detailEvents)}
             {#each detailEvents.filter((e) => e.type !== "summary") as ev (ev.id)}
-              <HistoryEvent event={ev} {mindName} />
+              <HistoryEvent event={ev} {mindName} reflection={detailIsEventTurn && ev.id === detailLastTextId} />
             {/each}
           {:else}
             {@const items = groupToolEvents(turnEvents)}
+            {@const isEventTurn = isEventTriggeredTurn(turnEvents)}
+            {@const lastText = lastTextId(turnEvents)}
             {#each items as item (item.kind === "tool-group" ? `tg-${item.toolUse.id}` : `ev-${item.event.id}`)}
               {#if item.kind === "tool-group"}
                 {@const catColor = getCategoryColor(item.category)}
@@ -293,7 +335,7 @@ async function handleClick() {
                   <ToolGroupComponent group={item} {mindName} turnStatus="complete" />
                 </div>
               {:else}
-                <HistoryEvent event={item.event} {mindName} />
+                <HistoryEvent event={item.event} {mindName} reflection={isEventTurn && item.event.id === lastText} />
               {/if}
             {/each}
           {/if}
@@ -326,6 +368,24 @@ async function handleClick() {
     {:else}
       <span class="inline-text" style:color={actColor}>{event.content}</span>
     {/if}
+  {:else if event.type === "event"}
+    <!--
+      A system event: no bubble, no sender, no channel tag. It came from the environment,
+      not from anyone, and there is nothing to reply to. Rendering it in the message shape
+      is what made minds try to answer their own environment.
+    -->
+    {#if expanded}
+      <div class="system-event">
+        <div class="system-event-header">
+          <span class="system-event-kind">system event</span>
+          <span class="system-event-label">{eventLabel}</span>
+          <span class="time">{formatTime(event.created_at)}</span>
+        </div>
+        <div class="system-event-body">{event.content}</div>
+      </div>
+    {:else}
+      <span class="inline-text inline-text-event"><span class="system-event-label">{eventLabel}</span>{" "}{event.content}</span>
+    {/if}
   {:else if event.type === "inbound" || event.type === "outbound"}
     {#if expanded}
       <div class="compact-msg">
@@ -344,6 +404,9 @@ async function handleClick() {
   {:else}
     <div class="event-body">
       {#if event.type === "text"}
+        {#if reflection}
+          <div class="reflection-label">reflection · private</div>
+        {/if}
         <div class="inline-text dim" class:inline-text-expanded={expanded}>
           <div class="markdown-body">{@html renderMarkdown(event.content)}</div>
         </div>
@@ -672,5 +735,55 @@ async function handleClick() {
   }
   .compact-msg-text {
     color: var(--text-0);
+  }
+
+  /*
+    System event: deliberately NOT the message card. No bubble border, no sender, no
+    channel — a flat marker from the environment. Reads as a system notice, not as chat.
+  */
+  .system-event {
+    border-left: 2px solid color-mix(in srgb, var(--purple) 55%, transparent);
+    padding-left: 10px;
+  }
+  .system-event-header {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 3px;
+  }
+  .system-event-kind {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--purple);
+  }
+  .system-event-label {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-1);
+  }
+  .system-event-body {
+    font-family: var(--mono);
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--text-0);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .inline-text-event {
+    color: var(--text-1);
+  }
+  .inline-text-event .system-event-label {
+    color: var(--purple);
+  }
+  .reflection-label {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--purple);
+    margin-bottom: 2px;
   }
 </style>

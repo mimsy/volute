@@ -227,7 +227,7 @@ function deleteStreaming(turnId: string) {
 }
 
 let nextSyntheticId = -1;
-// Inbound events that arrived before any turn_created — shown as provisional turn
+// Inbound messages and system events that arrived before any turn_created — shown as provisional turn
 let pendingInbounds = $state<HistoryMessage[]>([]);
 // Fallback timers for done events that may not be followed by a summary
 const doneFallbackTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -378,11 +378,12 @@ function connectSSE() {
 
     const turnId = d.turnId as string | undefined;
     const eventType = d.type as string;
-    if (eventType === "inbound" && !turnId) {
-      // Show immediately as provisional turn before turn_created arrives
+    if ((eventType === "inbound" || eventType === "event") && !turnId) {
+      // Show immediately as provisional turn before turn_created arrives. System events
+      // ride the same path — HistoryEvent renders them as system markers, not as chat.
       pendingInbounds = [...pendingInbounds, buildHistoryMessage(d)];
     } else if (eventType === "turn_created" && turnId) {
-      // Promote pending inbounds into the real turn's streaming events
+      // Promote pending inbounds and system events into the real turn's streaming events
       if (!turnsData.some((t) => t.id === turnId)) {
         turnsData = [
           ...turnsData,
@@ -395,6 +396,7 @@ function connectSSE() {
             created_at: new Date().toISOString(),
             trigger: null,
             conversations: [],
+            events: [],
             activities: [],
           },
         ];
@@ -518,14 +520,17 @@ async function loadTurns() {
     const chronological = [...rows].reverse();
     upsertTurnRows(chronological);
 
-    // Check for recent untagged inbound events (message sent but turn not yet started)
+    // Check for recent untagged inbound/event rows (arrived, but turn not yet started)
     if (pendingInbounds.length === 0 && name) {
       fetchHistory(name, { preset: "all", limit: 10 })
         .then((recent) => {
           // Only promote recent untagged inbounds — an old inbound a stopped/sleeping
           // mind never processed must not render as a perpetually-active turn.
           const untagged = recent.filter(
-            (e) => e.type === "inbound" && !e.turn_id && isRecentInbound(e.created_at),
+            (e) =>
+              (e.type === "inbound" || e.type === "event") &&
+              !e.turn_id &&
+              isRecentInbound(e.created_at),
           );
           if (untagged.length > 0 && pendingInbounds.length === 0) {
             pendingInbounds = untagged;
@@ -1020,7 +1025,7 @@ function jumpToLatest() {
             </div>
           {:else}
             {@const turn = item.turn}
-          {@const peekCount = (!expandedTurns.has(turn.id) && turn.status !== "active") ? turn.conversations.length + turn.activities.length : 0}
+          {@const peekCount = (!expandedTurns.has(turn.id) && turn.status !== "active") ? turn.conversations.length + turn.events.length + turn.activities.length : 0}
           <div class="turn-row" data-turn-id={turn.id} style:min-height={peekCount > 0 ? `${36 + peekCount * 48}px` : undefined}>
             <div class="turn-time">
               {#if !name}
@@ -1043,7 +1048,7 @@ function jumpToLatest() {
               onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); (e.currentTarget as HTMLElement).click(); } }}
             >
               <div class="turn-dot"></div>
-              {#if !expandedTurns.has(turn.id) && turn.status !== "active" && (turn.conversations.length > 0 || turn.activities.length > 0)}
+              {#if !expandedTurns.has(turn.id) && turn.status !== "active" && (turn.conversations.length > 0 || turn.events.length > 0 || turn.activities.length > 0)}
                 <div class="turn-peek-icons">
                   {#each turn.conversations as conv (conv.id)}
                     {@const chatKey = peekKey("chat", turn.id, conv.id)}
@@ -1074,6 +1079,30 @@ function jumpToLatest() {
                                 </div>
                               {/each}
                             </div>
+                          </div>
+                        {/if}
+                      </div>
+                    </div>
+                  {/each}
+                  <!--
+                    System events peek with a gear, not the chat icon, and their card has no
+                    sender and no click-to-open-conversation: there is no conversation to open.
+                  -->
+                  {#each turn.events as evt (evt.id)}
+                    {@const evtKey = peekKey("system-event", turn.id, String(evt.id))}
+                    <div class="peek-anchor">
+                      <button class="peek-btn" style:color="var(--purple)" aria-label="View system event" onmouseenter={() => revealPeek(evtKey)} onfocus={() => revealPeek(evtKey)} onclick={(e) => e.stopPropagation()}>
+                        <Icon kind="gear" />
+                      </button>
+                      <div class="peek-popover">
+                        {#if shouldRenderPeek(revealedPeeks, evtKey)}
+                          <div class="peek-card" style:border-color="color-mix(in srgb, var(--purple) 25%, var(--border))">
+                            <div class="peek-card-header" style:border-bottom-color="color-mix(in srgb, var(--purple) 25%, var(--border))">
+                              <Icon kind="gear" class="peek-card-icon" />
+                              <span class="peek-card-label">{evt.label}</span>
+                              <span class="peek-card-meta">system event</span>
+                            </div>
+                            <div class="peek-card-body peek-card-event">{evt.content}</div>
                           </div>
                         {/if}
                       </div>
@@ -1149,17 +1178,22 @@ function jumpToLatest() {
                     onexpand={(expanded) => handleExpand(turn.id, expanded)}
                   />
                 {:else if turn.status === "complete"}
-                  <!-- Complete but no summary (e.g. daemon restarted mid-turn) -->
+                  <!-- Complete but no summary (e.g. daemon restarted mid-turn). An event-triggered
+                       turn must not be rebuilt with the event's channel/sender: that is exactly the
+                       message-shaped row this change exists to eliminate. `trigger.event` is the
+                       authoritative signal from the API — use it, don't sniff the channel. -->
                   <HistoryEvent
                     event={{
                       id: 0,
                       mind: turn.mind,
-                      channel: turn.trigger?.channel ?? "",
+                      channel: turn.trigger?.event ? "" : (turn.trigger?.channel ?? ""),
                       thread: null,
-                      sender: turn.trigger?.sender ?? null,
+                      sender: turn.trigger?.event ? null : (turn.trigger?.sender ?? null),
                       message_id: null,
                       type: "summary",
-                      content: turn.trigger?.content ?? "(no summary)",
+                      content: turn.trigger?.event
+                        ? `System event: ${turn.trigger.event.label}`
+                        : (turn.trigger?.content ?? "(no summary)"),
                       metadata: null,
                       turn_id: turn.id,
                       created_at: turn.created_at,
@@ -1609,6 +1643,15 @@ function jumpToLatest() {
     max-height: 300px;
     overflow-y: auto;
     color: var(--text-0);
+  }
+
+  /* System event body: plain text, no sender column — it came from no one. */
+  .peek-card-event {
+    font-family: var(--mono);
+    font-size: 12px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-word;
   }
 
   .peek-msg {

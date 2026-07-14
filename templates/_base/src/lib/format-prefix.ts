@@ -18,8 +18,10 @@ export function compactTime(date: Date = new Date()): string {
 }
 
 /**
- * Prefix for a system-event turn: `[Event: <label> — <local time>]`. No sender, no
- * platform/DM framing — events come from the environment, not a person.
+ * Prefix for a system-event turn: `=== System event: <label> — <local time> ===`.
+ * Deliberately unlike every message prefix (bracketed, names a sender): an event comes
+ * from the environment, has no sender, and cannot be replied to. The shape must not be
+ * pattern-matchable to a message — a mind that reads it as one tries to reply to it.
  */
 export function formatEventPrefix(label: string, at: string | undefined): string {
   let time = "";
@@ -31,7 +33,7 @@ export function formatEventPrefix(label: string, at: string | undefined): string
   } else {
     time = compactTimestamp();
   }
-  return `[Event: ${label}${time ? ` — ${time}` : ""}]\n`;
+  return `=== System event: ${label}${time ? ` — ${time}` : ""} ===\n`;
 }
 
 export function formatPrefix(meta: ChannelMeta | undefined, time: string): string {

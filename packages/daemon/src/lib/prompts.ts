@@ -24,6 +24,7 @@ export const PROMPT_KEYS = [
   "compaction_warning",
   "compaction_instructions",
   "reply_instructions",
+  "event_instructions",
   "channel_invite",
   "pre_sleep",
   "wake_summary",
@@ -133,6 +134,14 @@ export const PROMPT_DEFAULTS: Record<PromptKey, PromptMeta> = {
     content: 'To reply to this message, use: volute chat send ${channel} "your message"',
     description: "First-message reply hint injected via hook",
     variables: ["channel"],
+    category: "mind",
+  },
+  event_instructions: {
+    content:
+      "This is a system event from your environment — not a message from anyone, and nothing awaits a reply. If it calls for action, use your normal channels. Your closing thoughts on an event turn are kept as a private reflection in your history.",
+    description:
+      "Note injected on the first system-event turn of a session, in place of reply instructions",
+    variables: [],
     category: "mind",
   },
   channel_invite: {

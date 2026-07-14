@@ -14,6 +14,7 @@ import {
   PROMPT_KEYS,
 } from "../packages/daemon/src/lib/prompts.js";
 import { systemPrompts } from "../packages/daemon/src/lib/schema.js";
+import { DEFAULT_PROMPTS } from "../templates/_base/src/lib/startup.js";
 
 async function cleanup() {
   const db = await getDb();
@@ -29,6 +30,7 @@ describe("prompts library", () => {
     assert.ok(PROMPT_KEYS.includes("compaction_warning"));
     assert.ok(PROMPT_KEYS.includes("compaction_instructions"));
     assert.ok(PROMPT_KEYS.includes("reply_instructions"));
+    assert.ok(PROMPT_KEYS.includes("event_instructions"));
     assert.ok(PROMPT_KEYS.includes("channel_invite"));
     assert.ok(PROMPT_KEYS.includes("restart_message"));
     assert.ok(PROMPT_KEYS.includes("merge_message"));
@@ -50,6 +52,33 @@ describe("prompts library", () => {
 
   it("seed_soul contains the orientation marker used by sprout and seed-check", () => {
     assert.ok(PROMPT_DEFAULTS.seed_soul.content.includes(ORIENTATION_MARKER));
+  });
+
+  it("mind prompt defaults match the template's, which is what minds actually receive", async () => {
+    // These prompts live in two places: PROMPT_DEFAULTS (what the Prompt Library UI edits) and
+    // DEFAULT_PROMPTS in templates/_base/src/lib/startup.ts (what a mind falls back to when its
+    // prompts.json lacks the key — i.e. what every new mind is actually given). Nothing else
+    // keeps them in sync, so re-wording one silently leaves minds on the other's text.
+    // KNOWN DRIFT, pre-existing: the two channel_invite prompts are not variants of one text —
+    // they are different prompts with different variables (the template's still describes
+    // .config/routes.json rules and ${suggestedSession}; the daemon's is a rewritten "New
+    // channel" notice with ${heldLine}/${limit}). One of them is stale. Excluded rather than
+    // silently skipped, so this is a documented debt and not a hole in the guard.
+    const KNOWN_DRIFT = new Set(["channel_invite"]);
+
+    let compared = 0;
+    for (const [key, content] of Object.entries(await getMindPromptDefaults())) {
+      const templateDefault = (DEFAULT_PROMPTS as Record<string, string | undefined>)[key];
+      if (templateDefault === undefined) continue; // daemon-side only; not carried by templates
+      if (KNOWN_DRIFT.has(key)) continue;
+      compared++;
+      assert.equal(
+        templateDefault,
+        content,
+        `${key} has drifted between prompts.ts and templates/_base/src/lib/startup.ts`,
+      );
+    }
+    assert.ok(compared > 0, "expected to compare at least one shared prompt");
   });
 
   it("placeholder MEMORY.md template contains the marker used by sprout and seed-check", () => {
@@ -121,13 +150,14 @@ describe("prompts library", () => {
     assert.equal(result, null);
   });
 
-  it("getMindPromptDefaults returns 4 mind-category prompts", async () => {
+  it("getMindPromptDefaults returns 5 mind-category prompts", async () => {
     const defaults = await getMindPromptDefaults();
     assert.ok("compaction_warning" in defaults);
     assert.ok("compaction_instructions" in defaults);
     assert.ok("reply_instructions" in defaults);
+    assert.ok("event_instructions" in defaults);
     assert.ok("channel_invite" in defaults);
-    assert.equal(Object.keys(defaults).length, 4);
+    assert.equal(Object.keys(defaults).length, 5);
   });
 
   it("getMindPromptDefaults uses DB overrides", async () => {

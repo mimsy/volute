@@ -145,11 +145,20 @@ function buildTurnDeterministicSummary(
   const tools: string[] = [];
   let hasInbound = false;
   let hasOutbound = false;
+  let eventLabel: string | undefined;
 
   for (const ev of events) {
     if (ev.type === "inbound") {
       hasInbound = true;
       if (ev.channel) channels.add(ev.channel);
+    }
+    // Events need naming here too, not only in buildTranscript. This is the fallback used
+    // whenever aiCompleteUtility() returns null (AI unconfigured, 401, rate-limited, expired
+    // OAuth) — without it a schedule/orientation/wake turn degrades to a bare "Turn completed."
+    // and the trigger vanishes precisely when a host is least able to see what happened.
+    if (ev.type === "event") {
+      const label = parsedMeta.get(ev.id)?.label;
+      eventLabel = typeof label === "string" && label ? label : "System event";
     }
     if (ev.type === "outbound" || ev.type === "text") {
       hasOutbound = true;
@@ -161,6 +170,9 @@ function buildTurnDeterministicSummary(
   }
 
   const parts: string[] = [];
+  if (eventLabel) {
+    parts.push(`System event: ${eventLabel}`);
+  }
   if (hasInbound) {
     const channelList = [...channels];
     parts.push(
@@ -188,6 +200,16 @@ export function buildTranscript(
       case "inbound":
         lines.push(`[inbound${ev.channel ? ` ${ev.channel}` : ""}] ${ev.content ?? ""}`);
         break;
+      // A system event is what triggered the turn — the summarizer needs to see it, or a
+      // schedule/orientation/wake turn gets summarized from its tool calls alone, with no
+      // idea what prompted them. Framed as an event, not an inbound message: it has no
+      // sender, and the summary shouldn't imply someone spoke to the mind.
+      case "event": {
+        const label = parsedMeta.get(ev.id)?.label;
+        const named = typeof label === "string" && label ? `: ${label}` : "";
+        lines.push(`[system event${named}] ${ev.content ?? ""}`);
+        break;
+      }
       case "outbound":
       case "text":
         lines.push(`[response] ${(ev.content ?? "").slice(0, 500)}`);
@@ -257,7 +279,14 @@ export async function summarizeTurn(
         await db
           .update(mindHistory)
           .set({ turn_id: null })
-          .where(and(eq(mindHistory.turn_id, effectiveTurnId), eq(mindHistory.type, "inbound")));
+          .where(
+            and(
+              eq(mindHistory.turn_id, effectiveTurnId),
+              // Release system-event rows too, so an interrupted event turn's row can be
+              // re-linked to the turn that actually processes it.
+              inArray(mindHistory.type, ["inbound", "event"]),
+            ),
+          );
         await db
           .update(messages)
           .set({ turn_id: null })

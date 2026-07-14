@@ -67,10 +67,15 @@ async function eventRow(id: number): Promise<SystemEvent | undefined> {
   return db.select().from(systemEvents).where(eq(systemEvents.id, id)).get();
 }
 
+/**
+ * The mind_history rows recording a delivered event. These are `event` rows, NOT `inbound`:
+ * an event is not a message, and every history surface keys off the type to render it as a
+ * system marker instead of a chat bubble with a phantom sender.
+ */
 async function inboundRows(mind: string) {
   const db = await getDb();
   return (await db.select().from(mindHistory).where(eq(mindHistory.mind, mind))).filter(
-    (r) => r.type === "inbound",
+    (r) => r.type === "event",
   );
 }
 
@@ -111,12 +116,25 @@ describe("system-events deliverEvent", () => {
       const row = await eventRow(id!);
       assert.ok(row?.delivered_at, "delivered_at is stamped");
 
-      // Recorded as inbound (only on actual delivery) with the unique event channel.
+      // Recorded (only on actual delivery) with the unique event channel.
       const inbound = await inboundRows(mind);
       assert.equal(inbound.length, 1);
       assert.equal(inbound[0].content, "check the garden");
       assert.equal(inbound[0].channel, eventChannel("schedule", id!));
       assert.equal(parseMeta(inbound[0].metadata).systemEventId, id);
+
+      // Typed `event`, never `inbound` — a message row would render as chat with a phantom
+      // sender ("user"), which is exactly what made events indistinguishable from messages.
+      assert.equal(inbound[0].type, "event");
+      assert.equal(inbound[0].sender, null);
+      // The worded label rides on the row so history surfaces don't re-derive it.
+      assert.equal(parseMeta(inbound[0].metadata).label, "Schedule: morning");
+
+      const db = await getDb();
+      const asMessages = (
+        await db.select().from(mindHistory).where(eq(mindHistory.mind, mind))
+      ).filter((r) => r.type === "inbound");
+      assert.equal(asMessages.length, 0, "an event must never be recorded as an inbound message");
     } finally {
       stub.close();
       await cleanupMind(mind);
