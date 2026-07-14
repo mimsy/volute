@@ -50,6 +50,7 @@ import HistoryEvent from "./HistoryEvent.svelte";
 import ReadOnlyChatModal from "./modals/ReadOnlyChatModal.svelte";
 import SummaryNode from "./SummaryNode.svelte";
 import TimelineBranch from "./TimelineBranch.svelte";
+import TimelineCard from "./TimelineCard.svelte";
 
 type TimelineItem =
   | { kind: "turn"; turn: TurnRow }
@@ -1061,13 +1062,8 @@ function jumpToLatest() {
                         onkeydown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); openConversation(conv, turn); } }}
                       >
                         {#if shouldRenderPeek(revealedPeeks, chatKey)}
-                          <div class="peek-card peek-card-chat">
-                            <div class="peek-card-header">
-                              <Icon kind="chat" class="peek-card-icon" />
-                              <span class="peek-card-label">{conv.label}</span>
-                              <span class="peek-card-meta">{conv.messages.length} msg{conv.messages.length === 1 ? '' : 's'}</span>
-                            </div>
-                            <div class="peek-card-body">
+                          <TimelineCard title={conv.label} color="blue" iconKind="chat" meta={`${conv.messages.length} msg${conv.messages.length === 1 ? '' : 's'}`}>
+                            <div class="peek-msgs">
                               {#each conv.messages.slice(-5) as msg (msg.id)}
                                 <div class="peek-msg">
                                   <span class="peek-msg-sender" class:peek-msg-sender-user={msg.role === "user"}>{msg.sender_name ?? (msg.role === "user" ? "user" : turn.mind)}</span>
@@ -1079,7 +1075,7 @@ function jumpToLatest() {
                                 </div>
                               {/each}
                             </div>
-                          </div>
+                          </TimelineCard>
                         {/if}
                       </div>
                     </div>
@@ -1096,14 +1092,7 @@ function jumpToLatest() {
                       </button>
                       <div class="peek-popover">
                         {#if shouldRenderPeek(revealedPeeks, evtKey)}
-                          <div class="peek-card" style:border-color="color-mix(in srgb, var(--purple) 25%, var(--border))">
-                            <div class="peek-card-header" style:border-bottom-color="color-mix(in srgb, var(--purple) 25%, var(--border))">
-                              <Icon kind="gear" class="peek-card-icon" />
-                              <span class="peek-card-label">{evt.label}</span>
-                              <span class="peek-card-meta">system event</span>
-                            </div>
-                            <div class="peek-card-body peek-card-event">{evt.content}</div>
-                          </div>
+                          <TimelineCard title={evt.label} color="purple" iconKind="gear" meta="system event" body={{ kind: "text", text: evt.content ?? "" }} />
                         {/if}
                       </div>
                     </div>
@@ -1123,29 +1112,13 @@ function jumpToLatest() {
                       </button>
                       <div class="peek-popover">
                         {#if shouldRenderPeek(revealedPeeks, actKey)}
-                          {@const actBody = activityPeekBody(act.metadata)}
-                          <div class="peek-card" style:border-color="color-mix(in srgb, var(--{actColor}) 25%, var(--border))">
-                            <div class="peek-card-header" style:border-bottom-color="color-mix(in srgb, var(--{actColor}) 25%, var(--border))">
-                              {#if actIcon}
-                                <span class="peek-card-icon" style:color="var(--{actColor})">{@html actIcon}</span>
-                              {:else}
-                                <Icon kind="document-lines" class="peek-card-icon" />
-                              {/if}
-                              <span class="peek-card-label">{act.summary}</span>
-                            </div>
-                            {#if actBody.kind === "iframe"}
-                              <div class="peek-card-body peek-card-iframe">
-                                <iframe
-                                  src={actBody.url}
-                                  title={act.summary}
-                                  sandbox="allow-same-origin"
-                                  role="presentation"
-                                ></iframe>
-                              </div>
-                            {:else if actBody.kind === "markdown"}
-                              <div class="peek-card-body markdown-body">{@html renderMarkdown(actBody.source)}</div>
-                            {/if}
-                          </div>
+                          <TimelineCard
+                            title={act.summary}
+                            color={actColor}
+                            icon={typeof act.metadata?.icon === 'string' ? act.metadata.icon : undefined}
+                            iconKind={typeof act.metadata?.icon === 'string' ? undefined : "document-lines"}
+                            body={activityPeekBody(act.metadata)}
+                          />
                         {/if}
                       </div>
                     </div>
@@ -1172,9 +1145,6 @@ function jumpToLatest() {
                     }}
                     mindName={turn.mind}
                     expandable
-                    compact
-                    turnConversations={turn.conversations}
-                    turnActivities={turn.activities}
                     onexpand={(expanded) => handleExpand(turn.id, expanded)}
                   />
                 {:else if turn.status === "complete"}
@@ -1200,9 +1170,6 @@ function jumpToLatest() {
                     }}
                     mindName={turn.mind}
                     expandable
-                    compact
-                    turnConversations={turn.conversations}
-                    turnActivities={turn.activities}
                     onexpand={(expanded) => handleExpand(turn.id, expanded)}
                   />
                 {:else}
@@ -1574,84 +1541,26 @@ function jumpToLatest() {
     /* Invisible bridge from button to popover so hover persists */
     padding-left: 12px;
     margin-left: -12px;
+    --card-max-height: 340px;
+  }
+
+  .peek-popover :global(.timeline-card) {
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+  }
+
+  /* Hover peeks keep the old fixed preview height */
+  .peek-popover :global(.page-preview) {
+    height: 200px;
   }
 
   .peek-anchor:hover .peek-popover {
     display: block;
   }
 
-  .peek-card {
-    background: var(--bg-0);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
-    overflow: hidden;
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
-    cursor: pointer;
-    transition: border-color 0.15s;
-    color: var(--text-0);
-    text-align: left;
-    font: inherit;
-  }
-
-  .peek-card-chat {
-    border-color: color-mix(in srgb, var(--blue) 25%, var(--border));
-  }
-  .peek-card-chat:hover {
-    border-color: color-mix(in srgb, var(--blue) 50%, var(--border));
-  }
-  .peek-card-chat .peek-card-header {
-    border-bottom-color: color-mix(in srgb, var(--blue) 25%, var(--border));
-  }
-  .peek-card-chat :global(.peek-card-icon) {
-    color: var(--blue);
-  }
-
-  .peek-card-header {
-    padding: 5px 10px;
-    font-size: 13px;
-    font-weight: 500;
-    color: var(--text-1);
-    border-bottom: 1px solid var(--border);
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
-
-  :global(.peek-card-icon) {
-    width: 13px;
-    height: 13px;
-    flex-shrink: 0;
-  }
-
-  .peek-card-label {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    min-width: 0;
-    flex: 1;
-  }
-
-  .peek-card-meta {
-    font-size: 11px;
-    color: var(--text-2);
-    font-weight: 400;
-    flex-shrink: 0;
-  }
-
-  .peek-card-body {
+  .peek-msgs {
     padding: 8px 10px;
     max-height: 300px;
     overflow-y: auto;
-    color: var(--text-0);
-  }
-
-  /* System event body: plain text, no sender column — it came from no one. */
-  .peek-card-event {
-    font-family: var(--mono);
-    font-size: 12px;
-    line-height: 1.5;
-    white-space: pre-wrap;
-    word-break: break-word;
   }
 
   .peek-msg {
@@ -1676,13 +1585,6 @@ function jumpToLatest() {
   .peek-msg-md :global(p) {
     margin: 0;
     display: inline;
-  }
-
-  .peek-card-iframe iframe {
-    width: 100%;
-    height: 200px;
-    border: none;
-    pointer-events: none;
   }
 
   /* Controls */

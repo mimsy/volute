@@ -76,7 +76,7 @@ export function createRoutes(ctx: ExtensionContext): Hono {
         type: "plan_started",
         mind: actor.username,
         summary: `${actor.username} started plan: "${body.title}"`,
-        metadata: { planId: plan.id, title: body.title },
+        metadata: { planId: plan.id, title: body.title, url: "/plan" },
       });
 
       return c.json(plan, 201);
@@ -105,7 +105,7 @@ export function createRoutes(ctx: ExtensionContext): Hono {
         type: "plan_message",
         mind: actor.username,
         summary: `Plan message: "${body.content.slice(0, 100)}"`,
-        metadata: { planId, messageId: msg.id },
+        metadata: { planId, messageId: msg.id, url: "/plan" },
       });
 
       return c.json(msg, 201);
@@ -134,7 +134,7 @@ export function createRoutes(ctx: ExtensionContext): Hono {
         type: "plan_progress",
         mind: actor.username,
         summary: `${actor.username} logged progress: "${body.content.slice(0, 100)}"`,
-        metadata: { planId, logId: log.id },
+        metadata: { planId, logId: log.id, url: "/plan" },
       });
 
       return c.json(log, 201);
@@ -161,7 +161,7 @@ export function createRoutes(ctx: ExtensionContext): Hono {
         type: "plan_finished",
         mind: actor.username,
         summary: `${actor.username} finished a plan`,
-        metadata: { planId },
+        metadata: { planId, url: "/plan" },
       });
 
       return c.json({ ok: true });

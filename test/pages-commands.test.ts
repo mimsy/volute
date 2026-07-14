@@ -351,6 +351,8 @@ describe("pages commands", () => {
     // Verify activity event
     assert.equal(ctx._events.length, 1);
     assert.equal(ctx._events[0].type, "page_published");
+    assert.equal(ctx._events[0].metadata.url, "/minds/test-mind/pages/index.html");
+    assert.equal(ctx._events[0].metadata.iframeUrl, "/ext/pages/public/test-mind/index.html");
   });
 
   it("publish command reports removed files", async () => {

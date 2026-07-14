@@ -93,7 +93,12 @@ export function createCommands(): Record<string, ExtensionCommand> {
           type: "note_created",
           mind: user.username,
           summary: `${user.username} wrote "${title}"`,
-          metadata: { author: user.username, slug: note.slug, bodyHtml: content.slice(0, 500) },
+          metadata: {
+            author: user.username,
+            slug: note.slug,
+            url: `/minds/${note.author_username}/notes/${note.slug}`,
+            bodyHtml: content.slice(0, 500),
+          },
         });
 
         // Announce to #system so others hear about it (SKILL.md promises this).

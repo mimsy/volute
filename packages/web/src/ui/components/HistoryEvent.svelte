@@ -1,11 +1,13 @@
 <script lang="ts">
-import type { HistoryMessage, TurnActivity, TurnConversation } from "@volute/api";
+import type { HistoryMessage } from "@volute/api";
 import { Icon, tooltip as tooltipAction } from "@volute/ui";
 import { renderMarkdown } from "@volute/ui/markdown";
 import { sanitizeSvg } from "@volute/ui/sanitize";
 import { tick } from "svelte";
 import { fetchTurnEvents } from "../lib/client";
 import { normalizeTimestamp } from "../lib/format";
+import { navigate } from "../lib/navigate";
+import { historyEventCardModel, systemEventLabel } from "../lib/timeline-card";
 import { groupToolEvents } from "../lib/tool-groups";
 import {
   getCategoryColor,
@@ -15,53 +17,25 @@ import {
 } from "../lib/tool-names";
 import { isEventTriggeredTurn } from "../lib/turn-events";
 import ToolGroupComponent from "./chat/ToolGroup.svelte";
-import ExtensionFeedCard from "./ExtensionFeedCard.svelte";
 import HistoryEvent from "./HistoryEvent.svelte";
-
-const defaultActivityIcon =
-  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2h6l4 4v8H4V2z"/><path d="M10 2v4h4"/><path d="M6 9h6M6 12h4"/></svg>';
-
-function activityColor(act: TurnActivity): string {
-  return typeof act.metadata?.color === "string" ? act.metadata.color : "yellow";
-}
-
-function activityIcon(act: TurnActivity): string {
-  return typeof act.metadata?.icon === "string" ? act.metadata.icon : defaultActivityIcon;
-}
-
-function activityUrl(act: TurnActivity, mindName: string): string {
-  if (typeof act.metadata?.iframeUrl === "string") return act.metadata.iframeUrl;
-  if (typeof act.metadata?.slug === "string") {
-    const author = typeof act.metadata?.author === "string" ? act.metadata.author : mindName;
-    return `/minds/${author}/notes/${act.metadata.slug}`;
-  }
-  return "";
-}
+import TimelineCard from "./TimelineCard.svelte";
 
 let {
   event,
   mindName,
   expandable = false,
-  compact = false,
-  turnConversations = [],
-  turnActivities = [],
   reflection = false,
-  onsessionclick,
   onexpand,
 }: {
   event: HistoryMessage;
   mindName: string;
   expandable?: boolean;
-  compact?: boolean;
-  turnConversations?: TurnConversation[];
-  turnActivities?: TurnActivity[];
   /**
    * True for the mind's closing text on a system-event turn. Nothing was sent to anyone —
    * the text is kept as a private reflection — so it's labelled as such rather than reading
    * like a reply to a message.
    */
   reflection?: boolean;
-  onsessionclick?: (session: string) => void;
   onexpand?: (expanded: boolean, el: HTMLDivElement | undefined) => void;
 } = $props();
 
@@ -100,15 +74,10 @@ let meta = $derived.by(() => {
   }
 });
 
-/**
- * A system event's worded label ("Orientation", "Schedule: morning-check"), stored on the
- * row by the daemon. Falls back to the type segment of the `event:<type>:<id>` channel for
- * rows written before the label was stored.
- */
-let eventLabel = $derived.by(() => {
-  if (typeof meta?.label === "string" && meta.label) return meta.label;
-  return event.channel?.split(":")[1] || "event";
-});
+let eventLabel = $derived(systemEventLabel(meta, event.channel));
+
+/** Non-null exactly for the card tier (inbound/outbound/event/activity). */
+let cardModel = $derived(historyEventCardModel(event, meta, mindName));
 
 let collapsible = $derived(
   event.type === "inbound" ||
@@ -349,57 +318,34 @@ async function handleClick() {
         <span class="summary-text">{event.content}</span>
       {/if}
     </div>
-  {:else if event.type === "activity"}
-    {@const actMeta = meta}
-    {@const actColor = typeof actMeta?.color === "string" ? `var(--${actMeta.color})` : "var(--yellow)"}
-    {#if expanded}
-      <div class="activity-card">
-        <ExtensionFeedCard
-          title={event.content}
-          url={activityUrl({ type: actMeta?.type ?? "", metadata: actMeta } as TurnActivity, mindName)}
-          date={event.created_at}
-          author={typeof actMeta?.author === 'string' ? actMeta.author : undefined}
-          bodyHtml={typeof actMeta?.bodyHtml === 'string' ? actMeta.bodyHtml : ''}
-          iframeUrl={typeof actMeta?.iframeUrl === 'string' ? actMeta.iframeUrl : undefined}
-          icon={typeof actMeta?.icon === 'string' ? actMeta.icon : defaultActivityIcon}
-          color={typeof actMeta?.color === 'string' ? actMeta.color : 'yellow'}
-        />
-      </div>
-    {:else}
-      <span class="inline-text" style:color={actColor}>{event.content}</span>
-    {/if}
-  {:else if event.type === "event"}
+  {:else if cardModel}
+    {@const m = cardModel}
     <!--
-      A system event: no bubble, no sender, no channel tag. It came from the environment,
-      not from anyone, and there is nothing to reply to. Rendering it in the message shape
-      is what made minds try to answer their own environment.
+      Card tier: inbound/outbound messages, system events, activities. One shared card
+      shell; the per-type distinctions (icon, accent, meta) live in the card model. A
+      system event still reads as environment, not chat: gear icon, "system event" tag,
+      no sender, no channel.
     -->
     {#if expanded}
-      <div class="system-event">
-        <div class="system-event-header">
-          <span class="system-event-kind">system event</span>
-          <span class="system-event-label">{eventLabel}</span>
-          <span class="time">{formatTime(event.created_at)}</span>
-        </div>
-        <div class="system-event-body">{event.content}</div>
+      <div class="card-wrap">
+        <TimelineCard
+          title={m.title}
+          color={m.color}
+          icon={m.icon}
+          iconKind={m.iconKind}
+          meta={m.meta}
+          time={formatTime(event.created_at)}
+          body={m.body}
+          onclick={m.url ? () => navigate(m.url) : undefined}
+          oncollapse={() => (expanded = false)}
+        />
       </div>
+    {:else if event.type === "activity"}
+      <span class="inline-text inline-preview" style:color="var(--{m.color})">{event.content}</span>
+    {:else if event.type === "event"}
+      <span class="inline-text inline-text-event inline-preview"><span class="inline-event-label">{eventLabel}</span>{" "}{event.content}</span>
     {:else}
-      <span class="inline-text inline-text-event"><span class="system-event-label">{eventLabel}</span>{" "}{event.content}</span>
-    {/if}
-  {:else if event.type === "inbound" || event.type === "outbound"}
-    {#if expanded}
-      <div class="compact-msg">
-        <div class="compact-msg-header">
-          <svg class="compact-msg-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h12v8H5l-3 3V3z"/></svg>
-          {#if event.channel}<span class="compact-msg-channel">{event.channel}</span>{/if}
-        </div>
-        <div class="compact-msg-body">
-          <span class="compact-msg-sender" class:compact-msg-sender-user={event.type === "inbound"}>{event.type === "inbound" ? (event.sender ?? "user") : mindName}</span>
-          <span class="compact-msg-text">{event.content}</span>
-        </div>
-      </div>
-    {:else}
-      <span class="inline-text inline-text-chat">{#if event.channel}<span class="inline-channel">[{event.channel}]</span>{" "}{/if}<span class="inline-sender" class:inline-sender-user={event.type === "inbound"} class:inline-sender-mind={event.type === "outbound"}>{event.type === "inbound" ? (event.sender ?? "user") : mindName}:</span>{" "}{event.content}</span>
+      <span class="inline-text inline-text-chat inline-preview">{#if event.channel}<span class="inline-channel">[{event.channel}]</span>{" "}{/if}<span class="inline-sender" class:inline-sender-user={event.type === "inbound"} class:inline-sender-mind={event.type === "outbound"}>{event.type === "inbound" ? (event.sender ?? "user") : mindName}:</span>{" "}{event.content}</span>
     {/if}
   {:else}
     <div class="event-body">
@@ -684,98 +630,23 @@ async function handleClick() {
     top: 5px;
   }
 
-  /* Activity card */
-  .activity-card {
+  /* Expanded card-tier item (shared TimelineCard) */
+  .card-wrap {
     max-width: 480px;
   }
 
-  /* Inbound/outbound message card */
-  .compact-msg {
-    background: var(--bg-0);
-    border: 1px solid color-mix(in srgb, var(--blue) 25%, var(--border));
-    border-radius: var(--radius-lg);
-    overflow: hidden;
-  }
-  .compact-msg-header {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 4px 10px;
-    font-size: 13px;
-    font-weight: 500;
-    color: var(--text-1);
-    border-bottom: 1px solid color-mix(in srgb, var(--blue) 25%, var(--border));
-  }
-  .compact-msg-icon {
-    width: 12px;
-    height: 12px;
-    color: var(--blue);
-    flex-shrink: 0;
-  }
-  .compact-msg-channel {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    min-width: 0;
-  }
-  .compact-msg-body {
-    padding: 6px 10px;
-    font-family: var(--mono);
-    font-size: 13px;
-    line-height: 1.5;
-  }
-  .compact-msg-sender {
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--accent);
-    margin-right: 6px;
-  }
-  .compact-msg-sender-user {
-    color: var(--blue);
-  }
-  .compact-msg-text {
-    color: var(--text-0);
+  /* Collapsed card-tier items clamp to a single consistent preview line */
+  .inline-preview {
+    -webkit-line-clamp: 1;
+    line-clamp: 1;
   }
 
-  /*
-    System event: deliberately NOT the message card. No bubble border, no sender, no
-    channel — a flat marker from the environment. Reads as a system notice, not as chat.
-  */
-  .system-event {
-    border-left: 2px solid color-mix(in srgb, var(--purple) 55%, transparent);
-    padding-left: 10px;
-  }
-  .system-event-header {
-    display: flex;
-    align-items: baseline;
-    gap: 8px;
-    flex-wrap: wrap;
-    margin-bottom: 3px;
-  }
-  .system-event-kind {
-    font-size: 10px;
-    font-weight: 600;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: var(--purple);
-  }
-  .system-event-label {
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--text-1);
-  }
-  .system-event-body {
-    font-family: var(--mono);
-    font-size: 13px;
-    line-height: 1.5;
-    color: var(--text-0);
-    white-space: pre-wrap;
-    word-break: break-word;
-  }
   .inline-text-event {
     color: var(--text-1);
   }
-  .inline-text-event .system-event-label {
+  .inline-event-label {
+    font-size: 12px;
+    font-weight: 600;
     color: var(--purple);
   }
   .reflection-label {

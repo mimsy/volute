@@ -509,6 +509,7 @@ describe("notes commands stdin", () => {
   let username: string;
   let announced: string[];
   let notices: { mind: string; text: string }[];
+  let activities: { type: string; metadata?: Record<string, unknown> }[];
   const commands = createCommands();
 
   function makeCtx(
@@ -520,7 +521,9 @@ describe("notes commands stdin", () => {
       resolveUser: () => null,
       getUser,
       getUserByUsername,
-      publishActivity: () => {},
+      publishActivity: (e: { type: string; metadata?: Record<string, unknown> }) => {
+        activities.push(e);
+      },
       getMindDir: () => null,
       getSystemsConfig: () => null,
       announceToSystem: async (text: string) => {
@@ -542,6 +545,7 @@ describe("notes commands stdin", () => {
     usernameMap = new Map();
     announced = [];
     notices = [];
+    activities = [];
     const user = await createUser(uniqueName("cmduser"), "pass123");
     userId = user.id;
     username = user.username;
@@ -561,6 +565,10 @@ describe("notes commands stdin", () => {
     assert.equal(notes[0].title, "Stdin Title");
     const note = await getNote(db, getUser, getUserByUsername, username, notes[0].slug);
     assert.equal(note!.content, "from stdin");
+
+    assert.equal(activities.length, 1);
+    assert.equal(activities[0].type, "note_created");
+    assert.equal(activities[0].metadata?.url, `/minds/${username}/notes/${notes[0].slug}`);
   });
 
   it("write prefers arg over stdin", async () => {

@@ -55,8 +55,18 @@ describe("activityPeekBody", () => {
 });
 
 describe("activityNavUrl", () => {
-  it("navigates to the iframe url when present", () => {
-    assert.equal(activityNavUrl({ iframeUrl: "/pages/a" }, "mind"), "/pages/a");
+  it("prefers an explicit metadata url over everything else", () => {
+    assert.equal(
+      activityNavUrl(
+        {
+          url: "/minds/echo/pages/index.html",
+          iframeUrl: "/ext/pages/public/echo/index.html",
+          slug: "x",
+        },
+        "mind",
+      ),
+      "/minds/echo/pages/index.html",
+    );
   });
 
   it("builds a note url from slug, defaulting author to the mind", () => {
@@ -67,13 +77,18 @@ describe("activityNavUrl", () => {
     );
   });
 
+  it("builds a page url from file for legacy rows", () => {
+    assert.equal(activityNavUrl({ file: "garden.html" }, "echo"), "/minds/echo/pages/garden.html");
+  });
+
+  it("does not navigate to a raw iframeUrl (not an SPA route)", () => {
+    assert.equal(activityNavUrl({ iframeUrl: "/ext/pages/public/m/a.html" }, "mind"), "");
+  });
+
   it("returns empty when there is nothing to navigate to", () => {
     assert.equal(activityNavUrl(null, "mind"), "");
     assert.equal(activityNavUrl({ color: "red" }, "mind"), "");
-  });
-
-  it("an explicit empty-string iframeUrl wins over slug (no navigation, matching original inline logic)", () => {
-    assert.equal(activityNavUrl({ iframeUrl: "", slug: "my-note" }, "echo"), "");
+    assert.equal(activityNavUrl({ url: "" }, "mind"), "");
   });
 });
 

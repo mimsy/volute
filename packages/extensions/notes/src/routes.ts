@@ -84,6 +84,7 @@ export function createRoutes(ctx: ExtensionContext): Hono {
         metadata: {
           author: actor.username,
           slug: note.slug,
+          url: `/minds/${note.author_username}/notes/${note.slug}`,
           bodyHtml: body.content.slice(0, 500),
         },
       });

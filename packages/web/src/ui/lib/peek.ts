@@ -29,15 +29,18 @@ export function activityPeekBody(metadata: TurnActivity["metadata"]): ActivityPe
   return { kind: "none" };
 }
 
-/** Navigation target for the activity peek button. */
+/** Navigation target for an activity: the document's SPA route. */
 export function activityNavUrl(metadata: TurnActivity["metadata"], fallbackMind: string): string {
-  // A string iframeUrl always wins, even when empty (→ no navigation),
-  // matching the original inline `typeof === "string"` precedence.
-  if (typeof metadata?.iframeUrl === "string") return metadata.iframeUrl;
+  if (typeof metadata?.url === "string" && metadata.url) return metadata.url;
+  // Rows written before extensions published metadata.url:
   const slug = typeof metadata?.slug === "string" ? metadata.slug : "";
-  if (!slug) return "";
-  const author = typeof metadata?.author === "string" ? metadata.author : fallbackMind;
-  return `/minds/${author}/notes/${slug}`;
+  if (slug) {
+    const author = typeof metadata?.author === "string" ? metadata.author : fallbackMind;
+    return `/minds/${author}/notes/${slug}`;
+  }
+  const file = typeof metadata?.file === "string" ? metadata.file : "";
+  if (file) return `/minds/${fallbackMind}/pages/${file}`;
+  return "";
 }
 
 /** Accent color name for the activity peek button/card. */
