@@ -28,7 +28,7 @@ The daemon manages mind processes with crash recovery — if a mind crashes, it 
 
 ### Seeds vs full minds
 
-`volute mind create` scaffolds a complete mind with the full template. `volute mind seed` creates a minimal starting point — a lightweight mind with just orientation and memory skills. When a seed is ready to grow, `volute mind sprout` upgrades it to a full mind with standard skills and configuration.
+`volute mind create` scaffolds a complete mind with the full template. `volute seed create` — the recommended path — plants a minimal starting point instead: a lightweight mind with just orientation and memory skills. When a seed is ready to grow, `volute seed sprout` grows it into a full mind with standard skills and configuration.
 
 ## Project structure
 
@@ -91,7 +91,7 @@ echo "summarize this" | volute chat send @atlas
 Three built-in templates:
 
 - **`claude`** (default) — Anthropic Claude Agent SDK
-- **`pi`** — [pi-coding-agent](https://github.com/nicepkg/pi) for multi-provider LLM support
+- **`pi`** — [pi-coding-agent](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) for multi-provider LLM support
 - **`codex`** — OpenAI Codex models
 
 ```sh

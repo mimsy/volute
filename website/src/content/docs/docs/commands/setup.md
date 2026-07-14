@@ -8,10 +8,40 @@ sidebar:
 Required first-run command that configures Volute before other commands can be used.
 
 ```sh
-volute setup [--name <N>] [--system] [--service] [--dir <D>] [--port <N>] [--host <H>]
+volute setup [--cli] [--name <N>] [--system] [--service] [--remote] [--dir <D>] [--port <N>] [--host <H>]
 ```
 
-If run without flags, setup is interactive — it asks for a system name and walks through configuration choices.
+## Web-first setup
+
+Run with no flags and setup finishes in the browser:
+
+```sh
+volute setup
+```
+
+This prepares a local install (minds in `~/.volute/minds/` with sandbox isolation), starts the daemon, and opens the web UI. There you create the first account — the first user becomes the admin — name the system, and connect an AI provider and model. Until a model is configured, a new mind has nothing to think with, so complete this step before creating minds.
+
+## Terminal setup
+
+To configure everything from the terminal instead, use `--cli` (interactive) or `--name` (non-interactive):
+
+```sh
+# Interactive: prompts for system name, install type, remote access, service
+volute setup --cli
+
+# Non-interactive: --name implies terminal setup
+volute setup --name myserver
+```
+
+The terminal flow collects the system name, install type, and isolation up front, then still opens the browser so you can create the admin account and choose AI models.
+
+## System setup
+
+```sh
+sudo volute setup --system --remote
+```
+
+Runs privileged setup (requires root), creating a system-level service (systemd on Linux, LaunchDaemon on macOS) with data at `/var/lib/volute`, minds at `/minds`, and per-user isolation. It then opens the browser to finish — account, system name, and models. Add `--cli` or `--name` to drive the system install from the terminal instead.
 
 ## Isolation modes
 
@@ -27,20 +57,14 @@ Setup configures one of three mind isolation modes:
 
 | Flag | Description |
 |------|-------------|
-| `--name` | System name (shown in status and web UI) |
-| `--system` | System-level install with user isolation and service |
-| `--service` | Also install as a user-level auto-start service |
+| `--cli` | Run interactive terminal setup instead of the web-first flow |
+| `--name` | System name (implies terminal setup; required for non-interactive) |
+| `--system` | System-level install with user isolation and service (requires sudo) |
+| `--service` | Install as an auto-start service |
+| `--remote` | Allow access from other devices (binds to `0.0.0.0`) |
 | `--dir` | Custom data directory (default: `~/.volute`) |
 | `--port` | Daemon port (default: 1618) |
 | `--host` | Daemon host (default: `127.0.0.1`) |
-
-## System setup
-
-```sh
-sudo volute setup --name myserver --system --host 0.0.0.0
-```
-
-Creates a system-level service (systemd on Linux, LaunchDaemon on macOS) with data at `/var/lib/volute`, minds at `/minds`, and per-user isolation enabled.
 
 ## Migration
 

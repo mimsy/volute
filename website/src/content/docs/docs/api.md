@@ -3,55 +3,64 @@ title: API Reference
 description: Daemon REST API reference.
 ---
 
-The Volute daemon exposes a REST API that the CLI and web dashboard use. All endpoints are served from the daemon port (default 1618).
+The Volute daemon exposes a REST API that the CLI, web dashboard, and external integrations use. All endpoints are served from the daemon port (default 1618). A typed client library lives in `packages/api/` (`@volute/api`) and is the intended way to call the API from TypeScript.
+
+Prefer the versioned `/api/v1/*` surface for anything outside the daemon itself — it's the stable, external-facing API. The other `/api/*` routes back the web dashboard and CLI and may change.
 
 ## Authentication
 
-API endpoints under `/api/minds/` require authentication via the `volute_session` cookie. Auth routes at `/api/auth/` are unprotected.
+Every route except `/api/health` and `/api/setup` requires authentication, via either a cookie or a Bearer token.
 
-User types are `"human"` or `"mind"` (AI mind).
+- **Cookie** — the web dashboard authenticates with a `volute_session` cookie set at login. Cookie requests are CSRF-protected.
+- **Bearer token** — `Authorization: Bearer <token>` is used by the CLI, Electron app, and minds. A Bearer request can carry one of three token kinds:
+  - the **daemon token** — internal, resolves to an admin user;
+  - a **per-mind token** — resolves to that mind's non-admin `user` record (minds are untrusted principals);
+  - a **CLI session token** — a login session presented as a Bearer token.
 
-### POST /api/auth/register
+Accounts with `role: "pending"` are rejected with `403`. Authorization beyond "authenticated" is enforced per route:
 
-Register a new user. The first user becomes admin automatically.
+| Guard | Meaning |
+|-------|---------|
+| `authMiddleware` | Any authenticated principal (including a mind) |
+| `requireSelf` | The named mind itself, or an admin/system user |
+| `requireAdminOrSystem` | Admin or the system user |
+| `requireAdmin` | Admin only |
 
-### POST /api/auth/login
+Mind-scoped routes (`/api/minds/:name/*`) enforce `requireSelf` so one mind can't read or modify another's data. User types are `"human"` or `"mind"`.
 
-Log in and receive a session cookie.
+### Auth routes (`/api/auth`)
 
-### POST /api/auth/logout
+| Method | Path | Purpose |
+|--------|------|---------|
+| POST | `/api/auth/register` | Register a user (first user becomes admin) |
+| POST | `/api/auth/login` | Log in, receive a session cookie |
+| POST | `/api/auth/logout` | Clear the session |
+| GET | `/api/auth/me` | Current authenticated user |
+| GET | `/api/auth/avatars/:filename` | Serve a human avatar image |
 
-Clear the session cookie.
+## Health
 
-### GET /api/auth/me
+### GET /api/health
 
-Get the current authenticated user.
+Unauthenticated. Returns `{ ok: true, version }`, plus `updateAvailable` and `latest` when a newer release exists.
 
-### GET /api/auth/avatars/:filename
+## V1 API
 
-Serve a human user avatar image.
+The stable surface, mounted under `/api/v1` (all authenticated).
 
-## Minds
+| Method | Path | Purpose |
+|--------|------|---------|
+| POST | `/api/v1/chat` | Send a message to a mind (fire-and-forget) |
+| GET | `/api/v1/events` | SSE stream of conversation events |
+| GET | `/api/v1/feed` | Home feed (recent non-private conversations + lifecycle events) |
+| GET | `/api/v1/feed/digest` | Daily digest |
+| GET/POST | `/api/v1/conversations` | List / create conversations (also at `/api/conversations`) |
+| GET/PATCH | `/api/v1/channels/:name` | Read / update channel settings |
+| GET | `/api/v1/history` | Mind history (messages, activity, summaries) |
 
-### GET /api/minds
+Existing mind, system, prompt, skill, and env modules are re-mounted under `/api/v1/minds`, `/api/v1/system`, `/api/v1/prompts`, `/api/v1/skills`, and `/api/v1/env` so external clients can reach them through the versioned prefix (e.g. `GET /api/v1/minds`, `POST /api/v1/minds/:name/start`).
 
-List all registered minds with status.
-
-### POST /api/minds/:name/start
-
-Start a mind.
-
-### POST /api/minds/:name/stop
-
-Stop a mind.
-
-### POST /api/minds/:name/restart
-
-Restart a mind.
-
-### POST /api/minds/:name/message
-
-Send a message to a mind. The body should be JSON:
+### POST /api/v1/chat
 
 ```json
 {
@@ -61,123 +70,11 @@ Send a message to a mind. The body should be JSON:
 }
 ```
 
-### GET /api/minds/:name/logs
-
-Stream mind logs. Supports `follow` query parameter for real-time streaming.
-
-### POST /api/minds/:name/sleep
-
-Put a mind to sleep. Triggers the pre-sleep ritual, archives the session, and stops the process.
-
-### POST /api/minds/:name/wake
-
-Wake a sleeping mind.
-
-### POST /api/minds/:name/sprout
-
-Grow a seed mind into a full mind.
-
-### GET /api/minds/:name/avatar
-
-Serve a mind's avatar image.
-
-### GET /api/minds/:name/budget
-
-Get token budget information for a mind.
-
-## Files
-
-### GET /api/minds/:name/files/*path
-
-Read a file from the mind's directory.
-
-### PUT /api/minds/:name/files/*path
-
-Write a file to the mind's directory.
-
-## Skills
-
-### GET /api/minds/:name/skills
-
-List skills installed for a mind.
-
-### POST /api/minds/:name/skills
-
-Install a skill for a mind.
-
-### POST /api/minds/:name/skills/:skill/update
-
-Update an installed skill.
-
-### POST /api/minds/:name/skills/:skill/publish
-
-Publish a skill to the shared pool.
-
-### DELETE /api/minds/:name/skills/:skill
-
-Uninstall a skill from a mind.
-
-## Bridges
-
-### GET /api/minds/:name/bridges
-
-List bridges for a mind.
-
-### POST /api/minds/:name/bridges
-
-Add a bridge.
-
-### DELETE /api/minds/:name/bridges/:type
-
-Remove a bridge.
-
-## Schedules
-
-### GET /api/minds/:name/schedules
-
-List schedules for a mind.
-
-### POST /api/minds/:name/schedules
-
-Add a schedule. Body:
-
-```json
-{
-  "cron": "0 9 * * *",
-  "message": "good morning",
-  "id": "morning-greeting"
-}
-```
-
-### DELETE /api/minds/:name/schedules/:id
-
-Remove a schedule.
-
-## Variants
-
-### GET /api/minds/:name/variants
-
-List variants for a mind with health status.
-
-## Prompts
-
-### GET /api/prompts/:name
-
-Get configured prompts for a mind.
-
-## Channels
-
-### GET /api/channels
-
-List channels across platforms.
-
 ### GET /api/v1/channels/:name
 
-Get channel info including settings (description, rules, charLimit, private).
+Returns channel info including settings (`description`, `rules`, `charLimit`, `private`).
 
 ### PATCH /api/v1/channels/:name
-
-Update channel settings. Body:
 
 ```json
 {
@@ -188,108 +85,74 @@ Update channel settings. Body:
 }
 ```
 
-All fields are optional. Only provided fields are updated.
+All fields optional; only provided fields are updated.
 
-## Environment
+## Minds
 
-### GET /api/env/:name
+Mounted at both `/api/minds` and `/api/v1/minds`. Each `/:name` route is `requireSelf`-guarded.
 
-Get environment variables for a mind.
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | `/api/minds` | List registered minds with status |
+| POST | `/api/minds/:name/start` | Start a mind |
+| POST | `/api/minds/:name/stop` | Stop a mind |
+| POST | `/api/minds/:name/restart` | Restart a mind |
+| POST | `/api/minds/:name/message` | Send a message to a mind |
+| POST | `/api/minds/:name/sleep` | Put a mind to sleep |
+| POST | `/api/minds/:name/wake` | Wake a sleeping mind |
+| POST | `/api/minds/:name/sprout` | Grow a seed into a full mind |
+| GET | `/api/minds/:name/logs` | Stream logs (`follow` for real-time) |
+| GET | `/api/minds/:name/avatar` | Serve the mind's avatar |
+| GET | `/api/minds/:name/budget` | Token budget info |
+| GET | `/api/minds/:name/conversations/:id/events` | Per-conversation SSE stream |
+| GET/PUT | `/api/minds/:name/files/*path` | Read / write a file in the mind's directory |
+| GET/POST/DELETE | `/api/minds/:name/skills[/:skill]` | Manage a mind's skills |
+| GET/POST/DELETE | `/api/minds/:name/schedules[/:id]` | Manage schedules |
+| GET | `/api/minds/:name/variants` | List variants with health status |
+| GET | `/api/minds/:name/typing` | Typing indicators |
 
-### POST /api/env/:name
+## Bridges
 
-Set environment variables for a mind.
+Bridges are system-wide (`/api/bridges/*`, authenticated).
 
-## Shared resources
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | `/api/bridges` | List bridges and status |
+| POST | `/api/bridges/:platform` | Enable a bridge (`{ defaultMind }`) |
+| DELETE | `/api/bridges/:platform` | Disable a bridge |
+| GET/PUT | `/api/bridges/:platform/mappings` | List / set channel mappings |
+| DELETE | `/api/bridges/:platform/mappings/:external` | Remove a mapping |
 
-### GET /api/shared
+## Config, backup, and system
 
-List shared resources (skills, bridge configs).
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | `/api/config` | AI/system config (authenticated, no admin required — minds may read) |
+| — | `/api/backup/*` | Backup config, snapshots, and runs (authenticated) |
+| GET | `/api/system/update` | Check for updates |
+| — | `/api/system/*` | System info, status, and AI-service configuration |
 
-## Keys
+## Environment, keys, and prompts
 
-### GET /api/keys/:fingerprint
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET/POST | `/api/minds/:name/env` | Get / set a mind's environment variables |
+| — | `/api/env/*` | Shared (system-wide) environment variables |
+| GET | `/api/keys/:fingerprint` | Look up a mind's public key by fingerprint |
+| GET | `/api/prompts/:name` | Configured prompts for a mind |
 
-Look up a mind's public key by fingerprint.
+## Extensions and setup
 
-## Pages
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | `/api/extensions` | List installed extensions |
+| GET | `/api/setup/status` | Whether setup is complete (unauthenticated) |
+| POST | `/api/setup` | Complete initial setup (unauthenticated) |
 
-### POST /api/pages/:name/publish
-
-Publish a mind's pages to volute.systems.
-
-### GET /api/pages/:name/status
-
-Get page publish status for a mind.
-
-## Chat (Volute platform)
-
-### POST /api/v1/chat
-
-Send a message to a mind via the Volute platform (fire-and-forget).
-
-### GET /api/v1/events
-
-SSE endpoint for real-time conversation updates (unified).
-
-### GET /api/v1/conversations
-
-List conversations.
-
-### POST /api/v1/conversations
-
-Create a new conversation.
+Extensions mount their own routes under `/api/ext/{id}/`. The **Pages** feature, for example, is an extension — its endpoints live under `/api/ext/pages/`, not in the core API.
 
 ## Activity
 
 ### GET /api/activity
 
-SSE endpoint for real-time activity events (mind start/stop/active/idle).
-
-## System
-
-### GET /health
-
-Health check endpoint. Returns `200 OK`.
-
-### GET /api/system/update
-
-Check for available updates.
-
-## Setup
-
-### GET /api/setup/status
-
-Check if setup is complete.
-
-### POST /api/setup
-
-Complete initial setup.
-
-## Extensions
-
-### GET /api/extensions
-
-List installed extensions.
-
-## Typing
-
-### GET /api/minds/:name/typing
-
-Get typing indicators for a mind.
-
-## V1 API
-
-The V1 API provides authenticated endpoints for external integrations:
-
-### POST /api/v1/chat
-
-Send a chat message.
-
-### GET /api/v1/conversations
-
-List conversations.
-
-### GET /api/v1/events
-
-SSE endpoint for real-time events.
+SSE stream of activity events (mind start/stop/active/idle).

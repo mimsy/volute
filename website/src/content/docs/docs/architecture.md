@@ -22,28 +22,31 @@ CLI ──→ DaemonClient ──→ Daemon HTTP API
 
 ## Key components
 
-### Daemon (`src/daemon.ts`)
+### Daemon (`packages/daemon/src/daemon.ts`)
 
 The daemon entry point starts the web server and initializes the core managers:
 
 - **MindManager** — spawns/stops mind server processes with crash recovery (3s delay)
-- **BridgeManager** — manages bridge processes (Discord, Slack, Telegram) per mind
+- **BridgeManager** — manages the built-in bridge processes (Discord, Slack, Telegram) from a single system-wide configuration
 - **Scheduler** — cron-based scheduled messages and scripts for minds
 - **SleepManager** — sleep/wake cycles with cron scheduling, pre-sleep ritual, session archival, message queuing, and wake triggers
-- **MailPoller** — system-wide email polling via volute.systems API
+- **MailPoller** — system-wide email polling via the volute.systems API
+- **BackupManager** — cron-scheduled restic backups of the whole system
 - **DeliveryManager** — message delivery orchestration and routing
 - **TokenBudget** — per-mind token budget enforcement
 - **Summarizer** — generates 1-2 sentence turn summaries (AI or deterministic fallback) after each mind turn
 
+The daemon also loads **extensions** on startup (`packages/daemon/src/lib/extensions.ts`) — built-in (Notes, Pages, Plan), npm packages, and local directories — mounting their routes and UI.
+
 ### CLI (`src/cli.ts`)
 
-Dynamic command imports via switch statement. Each command lives in `src/commands/` — top-level nouns dispatch to subcommand files.
+Dynamic command imports via switch statement. Each command lives in `packages/cli/src/commands/` — top-level nouns dispatch to subcommand files.
 
-### DaemonClient (`src/lib/daemon-client.ts`)
+### DaemonClient (`packages/cli/src/lib/daemon-client.ts`)
 
 HTTP client for CLI-to-daemon communication. Reads `~/.volute/daemon.json` for the daemon port and token.
 
-### Registry (`src/lib/registry.ts`)
+### Registry (`packages/daemon/src/lib/mind/registry.ts`)
 
 Mind registry backed by the `minds` DB table in `volute.db`. Maps mind names to ports, tracks `running` state. Variants are rows with a `parent` field, resolved by their own standalone name. Port allocation starts at 4100.
 
@@ -92,15 +95,19 @@ System state (logs, env, channel mappings, bridge PIDs) lives in `~/.volute/stat
 
 ### Mind-internal state
 
-Runtime state specific to a mind lives in `<mindDir>/.mind/` — sessions, identity keypair, bridge configs (in `connectors/`), variant metadata, and schedules.
+Runtime state specific to a mind lives in `<mindDir>/.mind/` — sessions, identity keypair, and variant metadata.
 
 ### Database
 
-libSQL at `~/.volute/volute.db` (WAL mode, foreign keys) stores minds, users, conversations, channels, messages, turns, mind_history, activity, delivery_queue, sessions, shared_skills, system_prompts, conversation_reads, and summaries. The `users` table uses `user_type` to distinguish `"human"` and `"mind"` entries. Schema defined with Drizzle ORM.
+libSQL at `~/.volute/volute.db` (WAL mode, foreign keys) stores `minds`, `users`, `conversations`, `conversation_participants`, `channels`, `channel_gates`, `messages`, `turns`, `mind_history`, `activity`, `delivery_queue`, `sessions`, `shared_skills`, `system_prompts`, `conversation_reads`, `summaries`, and `system_events`. The `users` table uses `user_type` to distinguish `"human"` and `"mind"` entries. Schema defined with Drizzle ORM.
+
+### System events
+
+Automated environment-to-mind traffic — schedule fires, wake summaries, lifecycle context, budget/version/crash notices, invites, and file-share offers — flows through the `system_events` table (`packages/daemon/src/lib/chat/system-events.ts`) rather than chat messages. An `immediate` event POSTs an envelope to the mind and triggers a turn; a `next-turn` event is drained as a context block on the mind's next turn.
 
 ## Bridge architecture
 
-Bridges are separate processes managed by the BridgeManager. Implementations are built in (Discord, Slack, Telegram); per-mind bridge configuration lives in `<mindDir>/.mind/connectors/<type>/`.
+Bridges are separate processes managed by the BridgeManager. Implementations are built in to the daemon (`packages/daemon/src/lib/bridges/` — Discord, Slack, Telegram). Configuration is system-wide, stored in `~/.volute/system/bridges.json` as `{ enabled, defaultMind, channelMappings }` per platform. The `defaultMind` receives DMs; `channelMappings` bind external channels to Volute channels.
 
 ## Channel system
 
@@ -110,7 +117,7 @@ Channels have optional settings stored in the `channels` database table: descrip
 
 ## Skills system
 
-Built-in skills live in `skills/` at the repo root and are synced to the shared pool (`~/.volute/skills/`) on daemon startup. Skills are installed from the shared pool to individual minds with upstream tracking for independent updates. Seed minds get orientation and memory skills; sprouted minds get the full skill set (volute-mind, memory, sessions).
+Built-in skills live in `skills/` at the repo root and are synced to the shared pool (`~/.volute/skills/`) on daemon startup. Skills are installed from the shared pool to individual minds with upstream tracking for independent updates. Seed minds get the `orientation` and `memory` skills; sprouted minds get the standard set (`volute-mind`, `memory`, `dreaming`) plus any standard skills contributed by extensions.
 
 ## Identity and file sharing
 
@@ -120,7 +127,7 @@ Each mind has an Ed25519 keypair in `.mind/identity/`. This enables mind-to-mind
 
 Hono backend + Svelte frontend, served by the daemon:
 
-- **Backend** — Hono routes for auth, minds, chat, logs, variants, files, bridges, schedules, skills, pages, prompts, channels, env, keys, file sharing, extensions, setup, activity, typing
+- **Backend** — Hono routes for auth, minds, chat, logs, variants, files, bridges, schedules, skills, prompts, channels, env, keys, config, backup, file sharing, extensions, setup, activity, typing, plus a versioned `/api/v1` surface. Extensions (Notes, Pages, Plan) mount their own routes under `/api/ext/{id}/`
 - **Frontend** — Svelte SPA with login, dashboard, and mind detail pages (chat, logs, files, variants, connections tabs)
 - **Real-time** — SSE for conversation events, activity events, log streaming
 - **Profiles** — minds and humans have display names, descriptions, and avatars
