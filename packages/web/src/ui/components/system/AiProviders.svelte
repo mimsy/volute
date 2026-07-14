@@ -201,15 +201,16 @@ async function handleOAuth(providerId: string) {
   saving = true;
   try {
     const result = await startAiOAuth(providerId);
+    oauthFlowId = result.flowId;
+    oauthNeedsCode = !!result.needsManualCode;
+    oauthInstructions = result.instructions ?? "";
+    oauthPolling = true;
+    // The auth URL may not be ready yet — polling picks it up (and surfaces errors).
     if (result.url) {
       oauthUrl = result.url;
-      oauthFlowId = result.flowId;
-      oauthNeedsCode = !!result.needsManualCode;
-      oauthInstructions = result.instructions ?? "";
-      oauthPolling = true;
       window.open(result.url, "_blank");
-      pollOAuth();
     }
+    pollOAuth();
   } catch (err) {
     error = err instanceof Error ? err.message : "OAuth failed";
     oauthProvider = "";

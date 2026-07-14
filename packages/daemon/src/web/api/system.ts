@@ -534,7 +534,7 @@ const app = new Hono<AuthEnv>()
                 instructions: `Enter code: ${info.userCode}`,
               });
           },
-          onSelect: async (_prompt: OAuthSelectPrompt) => undefined,
+          onSelect: selectLoginMethod,
           onPrompt: async (_prompt: OAuthPrompt) => {
             if (promptPromise) {
               const existing = oauthFlows.get(flowId);
@@ -678,6 +678,14 @@ const app = new Hono<AuthEnv>()
       return c.json({ ok: true });
     },
   );
+
+// Some providers (Codex) open their login with a method selector. The web UI has
+// no picker for it, so take the first option — the browser/callback flow, whose
+// manual-code paste path already covers remote daemons. Answering `undefined`
+// cancels the login before it ever produces an auth URL.
+export async function selectLoginMethod(prompt: OAuthSelectPrompt): Promise<string | undefined> {
+  return prompt.options[0]?.id;
+}
 
 // In-memory OAuth flow tracking
 type OAuthFlow = {
