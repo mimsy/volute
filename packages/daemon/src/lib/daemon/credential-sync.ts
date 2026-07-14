@@ -159,7 +159,9 @@ export async function syncProviderToMinds(provider: string, deps: SyncDeps = {})
         await writeClaudeCredentials(resolve(dir, "home"), baseName, oauth);
       }
     } catch (err) {
-      slog.warn(`failed to sync ${provider} credentials to mind ${name}`, log.errorData(err));
+      // A desync leaves this mind on a stale token → its next model call auth-fails
+      // until the next successful sync. Log at error so it's not buried as noise.
+      slog.error(`failed to sync ${provider} credentials to mind ${name}`, log.errorData(err));
     }
   }
 }

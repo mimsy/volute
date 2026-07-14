@@ -24,23 +24,54 @@ const jobLog = log.child("imagegen-jobs");
 const MAX_INFLIGHT_PER_MIND = 4;
 /** How long a settled job stays queryable via `status` before cleanup. */
 const DONE_TTL_MS = 10 * 60 * 1000;
+/**
+ * Hard ceiling on a single generation. Without it a hung provider connection
+ * (e.g. a Codex SSE stream that never closes) would leave the job "running"
+ * forever, never freeing its inflight slot or arming TTL cleanup — after
+ * MAX_INFLIGHT_PER_MIND hangs the mind could not generate until a daemon restart.
+ */
+const GENERATION_TIMEOUT_MS = 3 * 60 * 1000;
 
 export type JobStatus = "running" | "done" | "error";
 
-/** Public view of a job (what the API returns). */
-export type ImagegenJob = {
+/**
+ * Public view of a job (what the API returns). A discriminated union so the
+ * status↔payload invariant is compile-time: a `done` job always has `path`, an
+ * `error` job always has `error`, and consumers can't read `job.path` without
+ * first narrowing to `status: "done"`.
+ */
+export type ImagegenJob =
+  | { status: "running"; id: string; mind: string; createdAt: number }
+  | {
+      status: "done";
+      id: string;
+      mind: string;
+      createdAt: number;
+      completedAt: number;
+      path: string;
+    }
+  | {
+      status: "error";
+      id: string;
+      mind: string;
+      createdAt: number;
+      completedAt: number;
+      error: string;
+    };
+
+/**
+ * Internal record — kept flat and mutable (the union above would fight the
+ * in-place `Object.assign` in `settle`). `publicView` is the single place that
+ * projects it into the tight union, enforcing the invariant at that boundary.
+ */
+type JobRecord = {
   id: string;
   mind: string;
   status: JobStatus;
-  /** Absolute path of the written image (status "done"). */
   path?: string;
-  /** Failure message (status "error"). */
   error?: string;
   createdAt: number;
   completedAt?: number;
-};
-
-type JobRecord = ImagegenJob & {
   /** Resolves when the job leaves "running" (drives the long-poll). */
   settled: Promise<void>;
   resolveSettled: () => void;
@@ -57,15 +88,20 @@ type JobRecord = ImagegenJob & {
 const jobs = new Map<string, JobRecord>();
 
 function publicView(r: JobRecord): ImagegenJob {
-  return {
-    id: r.id,
-    mind: r.mind,
-    status: r.status,
-    path: r.path,
-    error: r.error,
-    createdAt: r.createdAt,
-    completedAt: r.completedAt,
-  };
+  const base = { id: r.id, mind: r.mind, createdAt: r.createdAt };
+  if (r.status === "done") {
+    if (!r.path) throw new Error(`job ${r.id} is done but has no path`);
+    return { ...base, status: "done", completedAt: r.completedAt ?? r.createdAt, path: r.path };
+  }
+  if (r.status === "error") {
+    return {
+      ...base,
+      status: "error",
+      completedAt: r.completedAt ?? r.createdAt,
+      error: r.error ?? "unknown error",
+    };
+  }
+  return { ...base, status: "running" };
 }
 
 function countInflight(mind: string): number {
@@ -84,9 +120,24 @@ function settle(record: JobRecord, patch: Partial<JobRecord>): void {
 
 /** Injectable side effects (defaults hit the real provider/event bus; tests override). */
 export type JobDeps = {
-  generate?: (model: string, prompt: string) => Promise<Buffer>;
+  generate?: (model: string, prompt: string, signal?: AbortSignal) => Promise<Buffer>;
   deliver?: typeof deliverEvent;
 };
+
+/** Deliver a job event to the mind, logging (never throwing) if it doesn't land. */
+async function notify(deliver: typeof deliverEvent, mind: string, body: string): Promise<void> {
+  try {
+    const { delivered } = await deliver(mind, {
+      type: "imagegen",
+      body,
+      delivery: "immediate",
+      whileSleeping: "queue",
+    });
+    if (!delivered) jobLog.warn(`imagegen event not delivered to ${mind}: ${body}`);
+  } catch (err) {
+    jobLog.warn(`failed to deliver imagegen event to ${mind}`, log.errorData(err));
+  }
+}
 
 async function runJob(
   record: JobRecord,
@@ -97,8 +148,13 @@ async function runJob(
 ) {
   const generate = deps.generate ?? generateImage;
   const deliver = deps.deliver ?? deliverEvent;
+  // Abort a generation that outruns the ceiling so a hung provider connection
+  // can't pin the job in "running" forever (see GENERATION_TIMEOUT_MS).
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), GENERATION_TIMEOUT_MS);
+  timer.unref?.();
   try {
-    const buf = await generate(model, prompt);
+    const buf = await generate(model, prompt, controller.signal);
 
     const home = `${await resolveMindDir(record.mind)}/home`;
     const target = safeResolveWithinBase(home, `images/${filename}.png`);
@@ -113,18 +169,21 @@ async function runJob(
     // Only wake the mind if the job outlived the foreground wait (dropped to
     // background). A job that finished within the wait already returned `saved:`
     // to the caller, so a completion event here would be a confusing duplicate.
-    if (record.notifyOnDone) {
-      await deliver(record.mind, {
-        type: "imagegen",
-        body: `image ready: ${target}`,
-        delivery: "immediate",
-        whileSleeping: "queue",
-      });
-    }
+    if (record.notifyOnDone) await notify(deliver, record.mind, `image ready: ${target}`);
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = controller.signal.aborted
+      ? `image generation timed out after ${Math.round(GENERATION_TIMEOUT_MS / 1000)}s`
+      : err instanceof Error
+        ? err.message
+        : String(err);
     jobLog.error(`job ${record.id} failed`, log.errorData(err));
     settle(record, { status: "error", error: message });
+    // If the mind was told this dropped to the background, it's waiting for a
+    // completion event — tell it the job failed so it doesn't wait forever.
+    if (record.notifyOnDone)
+      await notify(deliver, record.mind, `image generation failed: ${message}`);
+  } finally {
+    clearTimeout(timer);
   }
 }
 

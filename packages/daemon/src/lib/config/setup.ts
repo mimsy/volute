@@ -52,11 +52,9 @@ export type ServiceProviderConfig = { apiKey?: string };
  * (ChatGPT plan without the hosted image tool; xAI tier not allowlisted).
  * Non-secret — lives in config.json, keyed by provider id.
  */
-export type ImagegenEntitlement = {
-  state: "entitled" | "not_entitled";
-  reason?: string;
-  checkedAt: number;
-};
+export type ImagegenEntitlement =
+  | { state: "entitled"; checkedAt: number }
+  | { state: "not_entitled"; reason: string; checkedAt: number };
 
 export type ImagegenConfig = {
   enabled?: boolean;

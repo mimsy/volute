@@ -31,14 +31,20 @@ import { XaiNotEntitledError, xaiGenerate, xaiSearch } from "./imagegen-xai.js";
 export type Credential = { kind: "oauth" | "api_key"; token: string };
 
 type ImagegenProviderDef = {
-  envVar: string;
+  /** Env var holding a metered API key, or omitted for subscription-only providers. */
+  envVar?: string;
   /**
    * AI-provider config id to borrow credentials from (chat/image unification).
    * Defaults to the imagegen provider id itself, preserving the historical
    * behavior where imagegen reused `ai.providers[<same-id>]`.
    */
   aiProviderId?: string;
-  generate: (model: string, prompt: string, cred: Credential) => Promise<Buffer>;
+  generate: (
+    model: string,
+    prompt: string,
+    cred: Credential,
+    signal?: AbortSignal,
+  ) => Promise<Buffer>;
   search: (query: string, cred: Credential) => Promise<ModelSearchResult[]>;
 };
 
@@ -56,7 +62,6 @@ const PROVIDERS: Record<string, ImagegenProviderDef> = {
   "openai-codex": {
     // Subscription-only: no env var API key path. Credentials come from the
     // openai-codex AI provider's OAuth (chat/image unification).
-    envVar: "",
     aiProviderId: "openai-codex",
     generate: codexGenerate,
     search: codexSearch,
@@ -73,10 +78,16 @@ const PROVIDERS: Record<string, ImagegenProviderDef> = {
 
 // --- Replicate provider ---
 
-async function replicateGenerate(model: string, prompt: string, cred: Credential): Promise<Buffer> {
+async function replicateGenerate(
+  model: string,
+  prompt: string,
+  cred: Credential,
+  signal?: AbortSignal,
+): Promise<Buffer> {
   const replicate = new Replicate({ auth: cred.token });
   const output = await replicate.run(model as `${string}/${string}`, {
     input: { prompt },
+    signal,
   });
 
   const file = Array.isArray(output) ? output[0] : output;
@@ -84,7 +95,7 @@ async function replicateGenerate(model: string, prompt: string, cred: Credential
 
   // Some models return a URL string instead of FileOutput
   if (typeof file === "string") {
-    const res = await fetch(file);
+    const res = await fetch(file, { signal });
     if (!res.ok) throw new Error(`Failed to fetch image from URL: ${res.status}`);
     return Buffer.from(await res.arrayBuffer());
   }
@@ -114,6 +125,7 @@ async function openrouterGenerate(
   model: string,
   prompt: string,
   cred: Credential,
+  signal?: AbortSignal,
 ): Promise<Buffer> {
   const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
@@ -126,6 +138,7 @@ async function openrouterGenerate(
       messages: [{ role: "user", content: prompt }],
       modalities: ["image", "text"],
     }),
+    signal,
   });
 
   if (!res.ok) {
@@ -149,7 +162,7 @@ async function openrouterGenerate(
   }
 
   // Regular URL — fetch it
-  const imgRes = await fetch(imageUrl);
+  const imgRes = await fetch(imageUrl, { signal });
   if (!imgRes.ok) throw new Error(`Failed to fetch image from URL: ${imgRes.status}`);
   return Buffer.from(await imgRes.arrayBuffer());
 }
@@ -288,7 +301,7 @@ export async function resolveCredential(providerId: string): Promise<Credential 
   if (aiKey) return { kind: "api_key", token: aiKey };
 
   // 4. Env var fallback
-  const envKey = process.env[provider.envVar];
+  const envKey = provider.envVar ? process.env[provider.envVar] : undefined;
   if (envKey) return { kind: "api_key", token: envKey };
 
   return undefined;
@@ -386,7 +399,10 @@ function setEntitlement(
   state: ImagegenEntitlement["state"],
   reason?: string,
 ): ImagegenEntitlement {
-  const entitlement: ImagegenEntitlement = { state, reason, checkedAt: Date.now() };
+  const entitlement: ImagegenEntitlement =
+    state === "not_entitled"
+      ? { state, reason: reason ?? "not entitled", checkedAt: Date.now() }
+      : { state, checkedAt: Date.now() };
   updateImagegenConfig((ig) => {
     ig.entitlements = ig.entitlements ?? {};
     ig.entitlements[providerId] = entitlement;
@@ -429,13 +445,17 @@ export async function probeEntitlement(providerId: string): Promise<ImagegenEnti
 
 // --- Generation ---
 
-export async function generateImage(model: string, prompt: string): Promise<Buffer> {
+export async function generateImage(
+  model: string,
+  prompt: string,
+  signal?: AbortSignal,
+): Promise<Buffer> {
   const { provider: providerId, model: modelId } = parseModelId(model);
   const cred = await resolveCredential(providerId);
   if (!cred) throw new Error(`No ${providerId} credentials configured`);
 
   try {
-    const buf = await PROVIDERS[providerId].generate(modelId, prompt, cred);
+    const buf = await PROVIDERS[providerId].generate(modelId, prompt, cred, signal);
     // A success confirms entitlement — refresh the cache (plans change).
     if (ENTITLEMENT_PROVIDERS.has(providerId)) setEntitlement(providerId, "entitled");
     return buf;

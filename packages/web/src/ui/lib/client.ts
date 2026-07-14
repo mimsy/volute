@@ -720,11 +720,9 @@ export function saveMindDefaults(defaults: MindDefaults): Promise<void> {
 
 // --- Imagegen ---
 
-export type ImagegenEntitlement = {
-  state: "entitled" | "not_entitled";
-  reason?: string;
-  checkedAt: number;
-};
+export type ImagegenEntitlement =
+  | { state: "entitled"; checkedAt: number }
+  | { state: "not_entitled"; reason: string; checkedAt: number };
 
 export type ImagegenProvider = {
   id: string;

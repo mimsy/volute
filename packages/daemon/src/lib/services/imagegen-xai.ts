@@ -23,7 +23,12 @@ export class XaiNotEntitledError extends Error {
   }
 }
 
-/** Metered API key fallback (never OAuth): imagegen config → ai config → env. */
+/**
+ * Metered API key fallback (never OAuth): imagegen config → ai config → env.
+ * Mirrors the api_key branches of `resolveCredential` in imagegen.ts (steps
+ * 1/3/4) — keep the two orderings in sync. Kept separate because this is the
+ * post-403 retry path, which must skip the OAuth token that just failed.
+ */
 export function xaiApiKeyFallback(): string | undefined {
   const config = readGlobalConfig();
   return (
@@ -39,11 +44,13 @@ async function requestXaiImage(
   model: string,
   prompt: string,
   token: string,
+  signal?: AbortSignal,
 ): Promise<{ ok: true; buffer: Buffer } | { ok: false; status: number; body: string }> {
   const res = await fetch(XAI_IMAGES_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
     body: JSON.stringify({ model, prompt, n: 1, response_format: "b64_json" }),
+    signal,
   });
   if (!res.ok) {
     return {
@@ -56,7 +63,7 @@ async function requestXaiImage(
   const item = data.data?.[0];
   if (item?.b64_json) return { ok: true, buffer: Buffer.from(item.b64_json, "base64") };
   if (item?.url) {
-    const imgRes = await fetch(item.url);
+    const imgRes = await fetch(item.url, { signal });
     if (!imgRes.ok) throw new Error(`Failed to fetch xAI image URL: ${imgRes.status}`);
     return { ok: true, buffer: Buffer.from(await imgRes.arrayBuffer()) };
   }
@@ -67,8 +74,9 @@ export async function xaiGenerate(
   model: string,
   prompt: string,
   cred: Credential,
+  signal?: AbortSignal,
 ): Promise<Buffer> {
-  const first = await requestXaiImage(model, prompt, cred.token);
+  const first = await requestXaiImage(model, prompt, cred.token, signal);
   if (first.ok) return first.buffer;
 
   // A 403 on an OAuth token = plan tier not allowlisted. Retry with a metered
@@ -79,7 +87,7 @@ export async function xaiGenerate(
       xaiLog.warn(
         "xAI OAuth token not entitled for image generation; retrying with XAI_API_KEY (billed to the API account).",
       );
-      const retry = await requestXaiImage(model, prompt, apiKey);
+      const retry = await requestXaiImage(model, prompt, apiKey, signal);
       if (retry.ok) return retry.buffer;
       if (retry.status === 403) throw new XaiNotEntitledError();
       throw new Error(`xAI image generation failed (${retry.status}): ${retry.body}`);

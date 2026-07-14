@@ -5,7 +5,11 @@ import {
   readGlobalConfig,
   writeGlobalConfig,
 } from "../packages/daemon/src/lib/config/setup.js";
-import { registerXaiOAuthProvider } from "../packages/daemon/src/lib/oauth/xai.js";
+import {
+  registerXaiOAuthProvider,
+  validateXaiUrl,
+  xaiOAuthProvider,
+} from "../packages/daemon/src/lib/oauth/xai.js";
 import {
   generateImage,
   getConfiguredProviders,
@@ -25,6 +29,7 @@ import {
   CodexNotEntitledError,
   codexGenerate,
   parseCodexImageStream,
+  probeCodexEntitlement,
 } from "../packages/daemon/src/lib/services/imagegen-codex.js";
 import {
   _resetImagegenJobs,
@@ -417,6 +422,51 @@ describe("imagegen openai-codex provider", () => {
     assert.equal(buf.subarray(1, 4).toString(), "PNG");
   });
 
+  it("parseCodexImageStream rejects a stream that closes before completion", async () => {
+    // A partial image arrived but the stream ended without response.completed —
+    // must throw rather than silently return the low-res partial as the final image.
+    const sse = [
+      "event: response.image_generation_call.partial_image",
+      `data: {"type":"response.image_generation_call.partial_image","partial_image_b64":"${PNG_B64}"}`,
+      "",
+    ].join("\n");
+    await assert.rejects(parseCodexImageStream(sseStream(sse)), /before completion/);
+  });
+
+  it("probeCodexEntitlement returns entitled once the tool starts, then aborts", async () => {
+    let aborted = false;
+    globalThis.fetch = (async (_url: string, init: RequestInit) => {
+      init.signal?.addEventListener("abort", () => {
+        aborted = true;
+      });
+      const sse =
+        'data: {"type":"response.created"}\n\n' +
+        'data: {"type":"response.image_generation_call.in_progress"}\n\n';
+      return new Response(sseStream(sse), { status: 200 });
+    }) as typeof fetch;
+    const state = await probeCodexEntitlement({ kind: "oauth", token: fakeCodexToken("a") });
+    assert.equal(state, "entitled");
+    assert.ok(aborted, "the stream should be aborted once entitlement is known");
+  });
+
+  it("probeCodexEntitlement returns not_entitled on the 400 sentinel", async () => {
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ detail: CODEX_NOT_ENTITLED_SENTINEL }), {
+        status: 400,
+      })) as typeof fetch;
+    const state = await probeCodexEntitlement({ kind: "oauth", token: fakeCodexToken("a") });
+    assert.equal(state, "not_entitled");
+  });
+
+  it("probeCodexEntitlement returns not_entitled when the tool never starts", async () => {
+    globalThis.fetch = (async () =>
+      new Response(sseStream('data: {"type":"response.completed"}\n\n'), {
+        status: 200,
+      })) as typeof fetch;
+    const state = await probeCodexEntitlement({ kind: "oauth", token: fakeCodexToken("a") });
+    assert.equal(state, "not_entitled");
+  });
+
   it("codexGenerate posts to the Codex backend and returns image bytes", async () => {
     let seen: { url: string; auth?: string; account?: string } | undefined;
     globalThis.fetch = (async (url: string, init: RequestInit) => {
@@ -428,7 +478,8 @@ describe("imagegen openai-codex provider", () => {
       };
       const sse =
         "event: response.image_generation_call.partial_image\n" +
-        `data: {"type":"response.image_generation_call.partial_image","partial_image_b64":"${PNG_B64}"}\n\n`;
+        `data: {"type":"response.image_generation_call.partial_image","partial_image_b64":"${PNG_B64}"}\n\n` +
+        'data: {"type":"response.completed","response":{"output":[]}}\n\n';
       return new Response(sseStream(sse), { status: 200 });
     }) as typeof fetch;
 
@@ -558,6 +609,42 @@ describe("imagegen jobs", () => {
     assert.equal(bodies.length, 1, "exactly one completion event when backgrounded");
     assert.match(bodies[0], /image ready/);
   });
+
+  it("rejects a traversing filename without writing outside home/images", async () => {
+    const id = createImagegenJob("mind-escape", "any:model", "p", "../../../etc/pwned", {
+      generate: async () => Buffer.from("png"),
+    });
+    const job = await waitForImagegenJob("mind-escape", id, 1000);
+    assert.equal(job?.status, "error");
+    if (job?.status === "error") assert.match(job.error, /Invalid image filename/);
+  });
+
+  it("notifies the mind when a backgrounded job fails", async () => {
+    const bodies: string[] = [];
+    let release!: (err: Error) => void;
+    const gate = new Promise<Buffer>((_resolve, reject) => {
+      release = reject;
+    });
+    const id = createImagegenJob("mind-bgfail", "any:model", "p", "f", {
+      generate: () => gate,
+      deliver: async (_mind, event) => {
+        bodies.push(event.body);
+        return { delivered: true };
+      },
+    });
+
+    // Foreground times out → the mind is told it's still generating (notifyOnDone).
+    const timedOut = await waitForImagegenJob("mind-bgfail", id, 10);
+    assert.equal(timedOut?.status, "running");
+
+    // The background generation then fails — the mind must be told, not left waiting.
+    release(new Error("provider exploded"));
+    const done = await waitForImagegenJob("mind-bgfail", id, 2000);
+    assert.equal(done?.status, "error");
+    await new Promise((r) => setTimeout(r, 20));
+    assert.equal(bodies.length, 1, "a backgrounded failure must send exactly one event");
+    assert.match(bodies[0], /image generation failed/);
+  });
 });
 
 describe("imagegen xai provider", () => {
@@ -593,6 +680,39 @@ describe("imagegen xai provider", () => {
     assert.equal(p.id, "xai");
     assert.equal(p.usesCallbackServer, false);
     assert.equal(p.getApiKey({ access: "tok", refresh: "r", expires: 0 }), "tok");
+  });
+
+  it("validateXaiUrl accepts auth.x.ai over https and rejects anything else", () => {
+    assert.equal(
+      validateXaiUrl("https://auth.x.ai/oauth2/token"),
+      "https://auth.x.ai/oauth2/token",
+    );
+    assert.throws(() => validateXaiUrl("https://evil.example/oauth2/token"), /non-xAI/);
+    assert.throws(() => validateXaiUrl("http://auth.x.ai/oauth2/token"), /non-xAI/);
+  });
+
+  it("refreshToken keeps the old refresh token when xAI omits a new one", async () => {
+    globalThis.fetch = (async () =>
+      // Rotation response omits refresh_token — must fall back to the existing one.
+      new Response(JSON.stringify({ access_token: "new-access", expires_in: 3600 }), {
+        status: 200,
+      })) as typeof fetch;
+    const next = await xaiOAuthProvider.refreshToken({
+      access: "old-access",
+      refresh: "keep-me",
+      expires: 0,
+    });
+    assert.equal(next.access, "new-access");
+    assert.equal(next.refresh, "keep-me", "a missing refresh_token must not blank the grant");
+  });
+
+  it("refreshToken throws when the token response lacks an access_token", async () => {
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ expires_in: 3600 }), { status: 200 })) as typeof fetch;
+    await assert.rejects(
+      xaiOAuthProvider.refreshToken({ access: "a", refresh: "r", expires: 0 }),
+      /access_token|token/i,
+    );
   });
 
   it("generates from a b64_json response", async () => {
@@ -707,7 +827,8 @@ describe("imagegen entitlement", () => {
     globalThis.fetch = (async () => {
       const sse =
         "event: response.image_generation_call.partial_image\n" +
-        `data: {"type":"response.image_generation_call.partial_image","partial_image_b64":"${PNG_B64}"}\n\n`;
+        `data: {"type":"response.image_generation_call.partial_image","partial_image_b64":"${PNG_B64}"}\n\n` +
+        'data: {"type":"response.completed","response":{"output":[]}}\n\n';
       const bytes = new TextEncoder().encode(sse);
       return new Response(
         new ReadableStream({

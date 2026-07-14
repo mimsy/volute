@@ -32,7 +32,7 @@ const FALLBACK_TOKEN_ENDPOINT = `${XAI_ISSUER}/oauth2/token`;
 type Endpoints = { deviceEndpoint: string; tokenEndpoint: string };
 
 /** Only accept endpoints served by xAI's auth host — never a redirected origin. */
-function validateXaiUrl(url: string): string {
+export function validateXaiUrl(url: string): string {
   const u = new URL(url);
   if (u.hostname !== "auth.x.ai" || u.protocol !== "https:") {
     throw new Error(`Refusing non-xAI OAuth endpoint: ${url}`);

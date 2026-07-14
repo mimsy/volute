@@ -16,8 +16,9 @@ const CODEX_RESPONSES_URL = "https://chatgpt.com/backend-api/codex/responses";
 const HOST_MODEL = "gpt-5.4-mini";
 
 /**
- * Exact 400 body the backend returns when the account's plan is not entitled to
- * the hosted image tool. Callers (entitlement) match on this precise string.
+ * Substring the backend includes in its 400 error body when the account's plan
+ * isn't entitled to the hosted image tool. Callers match it with `.includes()`
+ * — it's a fragment of a larger JSON error body, not the whole body.
  */
 export const CODEX_NOT_ENTITLED_SENTINEL =
   "Tool choice 'image_generation' not found in 'tools' parameter.";
@@ -90,14 +91,22 @@ export function buildCodexRequest(imageModel: string, prompt: string): unknown {
 /**
  * Parse the Codex SSE stream and return the final image bytes. The image never
  * appears in the terminal `response.completed` payload (its output array is
- * empty); the bytes arrive in `image_generation_call.partial_image` /
- * `output_item.done` events, so we keep the longest base64 blob seen.
+ * empty); the bytes stream across the partial-image / output-item events, so we
+ * keep the longest base64 blob seen. We require the terminal `response.completed`
+ * event before returning: because `partial_images: 1` sends a low-res preview
+ * first, a stream that closes cleanly *before* completion (server timeout,
+ * truncated final frame) would otherwise silently yield the blurry partial as if
+ * it were the finished image.
  */
-export async function parseCodexImageStream(body: ReadableStream<Uint8Array>): Promise<Buffer> {
+export async function parseCodexImageStream(
+  body: ReadableStream<Uint8Array>,
+  signal?: AbortSignal,
+): Promise<Buffer> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buf = "";
   let best = "";
+  let completed = false;
 
   const consumeLine = (line: string) => {
     if (!line.startsWith("data:")) return;
@@ -109,6 +118,7 @@ export async function parseCodexImageStream(body: ReadableStream<Uint8Array>): P
     } catch {
       return;
     }
+    if (evt.type === "response.completed") completed = true;
     const candidate =
       (evt.partial_image_b64 as string | undefined) ??
       (evt.result as string | undefined) ??
@@ -118,6 +128,7 @@ export async function parseCodexImageStream(body: ReadableStream<Uint8Array>): P
   };
 
   for (;;) {
+    if (signal?.aborted) throw new Error("Codex stream aborted");
     const { value, done } = await reader.read();
     if (done) break;
     buf += decoder.decode(value, { stream: true });
@@ -128,6 +139,9 @@ export async function parseCodexImageStream(body: ReadableStream<Uint8Array>): P
   }
   consumeLine(buf);
 
+  if (!completed) {
+    throw new Error("Codex stream closed before completion — only a partial image was received");
+  }
   if (!best) throw new Error("Codex stream produced no image");
   return Buffer.from(best, "base64");
 }
@@ -136,11 +150,13 @@ export async function codexGenerate(
   model: string,
   prompt: string,
   cred: Credential,
+  signal?: AbortSignal,
 ): Promise<Buffer> {
   const res = await fetch(CODEX_RESPONSES_URL, {
     method: "POST",
     headers: codexHeaders(cred.token),
     body: JSON.stringify(buildCodexRequest(model, prompt)),
+    signal,
   });
 
   if (res.status === 400) {
@@ -153,14 +169,16 @@ export async function codexGenerate(
     throw new Error(`Codex image generation failed (${res.status}): ${errBody.slice(0, 200)}`);
   }
 
-  return parseCodexImageStream(res.body);
+  return parseCodexImageStream(res.body, signal);
 }
 
 /**
  * Cheaply probe whether the account is entitled to the hosted image tool: force
- * the tool, then abort the stream the instant it's accepted (the
- * `image_generation_call.in_progress` event) — so we learn entitlement without
- * paying for a full image. A 400 with the sentinel means not entitled.
+ * the tool, then abort the stream the instant the tool starts (any
+ * `image_generation_call` event) — so we learn entitlement without paying for a
+ * full image. A 400 with the sentinel means not entitled. We key on the tool
+ * *starting* rather than a specific sub-event so a marker rename can't
+ * false-negative an entitled account.
  */
 export async function probeCodexEntitlement(
   cred: Credential,
@@ -197,7 +215,7 @@ export async function probeCodexEntitlement(
       const { value, done } = await reader.read();
       if (done) break;
       buf += decoder.decode(value, { stream: true });
-      if (buf.includes("response.image_generation_call.in_progress")) {
+      if (buf.includes("image_generation_call")) {
         controller.abort();
         return "entitled";
       }
