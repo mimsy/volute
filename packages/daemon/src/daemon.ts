@@ -421,6 +421,11 @@ export async function startDaemon(opts: {
     }).catch((err) => log.warn("credential sync to minds failed", log.errorData(err)));
   });
 
+  // Register the xAI (Grok) OAuth provider so subscription login flows through
+  // the existing provider OAuth UI (used for Grok Imagine image generation).
+  const { registerXaiOAuthProvider } = await import("./lib/oauth/xai.js");
+  registerXaiOAuthProvider();
+
   // Start periodic API key cache refresh for mind provider keys
   startApiKeyRefresh();
 

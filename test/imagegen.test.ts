@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
 import { readGlobalConfig, writeGlobalConfig } from "../packages/daemon/src/lib/config/setup.js";
+import { registerXaiOAuthProvider } from "../packages/daemon/src/lib/oauth/xai.js";
 import {
   getConfiguredProviders,
   getEnabledModels,
@@ -24,6 +25,11 @@ import {
   getImagegenJob,
   waitForImagegenJob,
 } from "../packages/daemon/src/lib/services/imagegen-jobs.js";
+import {
+  XaiNotEntitledError,
+  xaiApiKeyFallback,
+  xaiGenerate,
+} from "../packages/daemon/src/lib/services/imagegen-xai.js";
 import {
   handleDaemonFailure,
   pollImagegenJob,
@@ -468,6 +474,109 @@ describe("imagegen jobs", () => {
       () => createImagegenJob("mind-cap", UNCONFIGURED_MODEL, "p", "f5"),
       /Too many image generations/,
     );
+  });
+});
+
+describe("imagegen xai provider", () => {
+  const realFetch = globalThis.fetch;
+  const PNG_B64 =
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+    const config = readGlobalConfig();
+    delete config.imagegen;
+    delete config.ai;
+    writeGlobalConfig(config);
+    delete process.env.XAI_API_KEY;
+  });
+
+  function okImage(): Response {
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ data: [{ b64_json: PNG_B64 }] }),
+    } as Response;
+  }
+  function forbidden(): Response {
+    return { ok: false, status: 403, text: async () => "forbidden" } as Response;
+  }
+
+  it("registers into pi-ai's OAuth registry", async () => {
+    registerXaiOAuthProvider();
+    const { getOAuthProvider } = await import("@earendil-works/pi-ai/oauth");
+    const p = getOAuthProvider("xai");
+    assert.ok(p, "xai OAuth provider registered");
+    assert.equal(p.id, "xai");
+    assert.equal(p.usesCallbackServer, false);
+    assert.equal(p.getApiKey({ access: "tok", refresh: "r", expires: 0 }), "tok");
+  });
+
+  it("generates from a b64_json response", async () => {
+    let seenAuth: string | undefined;
+    globalThis.fetch = (async (_url: string, init: RequestInit) => {
+      seenAuth = new Headers(init.headers).get("authorization") ?? undefined;
+      return okImage();
+    }) as typeof fetch;
+    const buf = await xaiGenerate("grok-imagine-image", "a fox", {
+      kind: "api_key",
+      token: "xai-key",
+    });
+    assert.deepEqual(buf, Buffer.from(PNG_B64, "base64"));
+    assert.equal(seenAuth, "Bearer xai-key");
+  });
+
+  it("retries an OAuth 403 with the configured API key (payment-method swap)", async () => {
+    process.env.XAI_API_KEY = "fallback-key";
+    const tokens: string[] = [];
+    globalThis.fetch = (async (_url: string, init: RequestInit) => {
+      const auth = new Headers(init.headers).get("authorization") ?? "";
+      tokens.push(auth);
+      return auth === "Bearer fallback-key" ? okImage() : forbidden();
+    }) as typeof fetch;
+
+    const buf = await xaiGenerate("grok-imagine-image", "a fox", {
+      kind: "oauth",
+      token: "oauth-token",
+    });
+    assert.deepEqual(buf, Buffer.from(PNG_B64, "base64"));
+    assert.deepEqual(
+      tokens,
+      ["Bearer oauth-token", "Bearer fallback-key"],
+      "oauth first, then key",
+    );
+  });
+
+  it("throws XaiNotEntitledError on OAuth 403 with no API key fallback", async () => {
+    globalThis.fetch = (async () => forbidden()) as typeof fetch;
+    await assert.rejects(
+      xaiGenerate("grok-imagine-image", "x", { kind: "oauth", token: "oauth-token" }),
+      (err: Error) => err instanceof XaiNotEntitledError,
+    );
+  });
+
+  it("does not retry a 403 on an API-key credential (genuine auth failure)", async () => {
+    let calls = 0;
+    globalThis.fetch = (async () => {
+      calls++;
+      return forbidden();
+    }) as typeof fetch;
+    await assert.rejects(
+      xaiGenerate("grok-imagine-image", "x", { kind: "api_key", token: "bad-key" }),
+      /403/,
+    );
+    assert.equal(calls, 1, "no retry for an api_key 403");
+  });
+
+  it("xaiApiKeyFallback prefers imagegen config, then ai config, then env", () => {
+    process.env.XAI_API_KEY = "env-key";
+    assert.equal(xaiApiKeyFallback(), "env-key");
+    const config = readGlobalConfig();
+    config.ai = { providers: { xai: { apiKey: "ai-key" } } };
+    writeGlobalConfig(config);
+    assert.equal(xaiApiKeyFallback(), "ai-key");
+    saveProviderConfig("xai", "imagegen-key");
+    assert.equal(xaiApiKeyFallback(), "imagegen-key");
   });
 });
 

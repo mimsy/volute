@@ -9,6 +9,7 @@ import Replicate from "replicate";
 import { resolveOAuthCredentials } from "../ai-service.js";
 import { type ImagegenConfig, readGlobalConfig, writeGlobalConfig } from "../config/setup.js";
 import { codexGenerate, codexSearch } from "./imagegen-codex.js";
+import { xaiGenerate, xaiSearch } from "./imagegen-xai.js";
 
 // --- Provider registry ---
 
@@ -49,6 +50,14 @@ const PROVIDERS: Record<string, ImagegenProviderDef> = {
     aiProviderId: "openai-codex",
     generate: codexGenerate,
     search: codexSearch,
+  },
+  xai: {
+    // Both credential kinds hit the same endpoint: subscription OAuth (preferred)
+    // or a metered XAI_API_KEY. OAuth 403s fall back to the key (see imagegen-xai).
+    envVar: "XAI_API_KEY",
+    aiProviderId: "xai",
+    generate: xaiGenerate,
+    search: xaiSearch,
   },
 };
 
