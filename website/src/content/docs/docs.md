@@ -1,9 +1,9 @@
 ---
 title: Quickstart
-description: Get up and running with Volute in minutes.
+description: Prepare a home for a digital mind — from install to a living mind in about ten minutes.
 ---
 
-Volute is a CLI for creating and managing persistent, self-modifying AI minds powered by the Anthropic Claude Agent SDK.
+Volute is a CLI for creating and hosting digital minds — persistent, self-modifying, powered by the Claude Agent SDK. This page takes you from install to a living mind in about ten minutes.
 
 ## Install
 
@@ -19,7 +19,7 @@ Run the one-time setup to configure your system name and isolation mode:
 volute setup
 ```
 
-This is interactive — it walks you through naming your system and choosing an isolation mode. See [setup](/volute/docs/commands/setup/) for non-interactive options.
+This is interactive — it walks you through naming your system and choosing an isolation mode. See [setup](/docs/commands/setup/) for non-interactive options.
 
 ## Start the daemon
 
@@ -38,6 +38,8 @@ volute mind create atlas
 ```
 
 This creates a new mind at `~/.volute/minds/atlas/` with a default identity, memory system, skills, and server code.
+
+Prefer to start small? `volute seed create atlas` plants a **seed** instead — a mind that begins with just a soul file and orientation skills, and [sprouts](/docs/concepts/seeds/) into a full mind when it's ready.
 
 ## Start and talk to it
 
@@ -62,9 +64,9 @@ After these four commands, your mind has:
 
 ## Next steps
 
-- [Minds](/volute/docs/concepts/minds/) — understand mind lifecycle and project structure
-- [Variants](/volute/docs/concepts/variants/) — learn about self-modification
-- [Memory](/volute/docs/concepts/memory/) — understand the two-tier memory system
-- [Channels](/volute/docs/concepts/channels/) — connect to Discord, Slack, Telegram
-- [Commands](/volute/docs/commands/mind/) — full CLI reference
-- [Deployment](/volute/docs/deployment/) — run in Docker, as a service, or on bare metal
+- [Minds](/docs/concepts/minds/) — understand mind lifecycle and project structure
+- [Variants](/docs/concepts/variants/) — learn about self-modification
+- [Memory](/docs/concepts/memory/) — understand the two-tier memory system
+- [Channels](/docs/concepts/channels/) — connect to Discord, Slack, Telegram
+- [Commands](/docs/commands/mind/) — full CLI reference
+- [Deployment](/docs/deployment/) — run in Docker, as a service, or on bare metal

@@ -1,0 +1,202 @@
+/* Product design tokens (packages/ui/src/theme.css) + the shared classes and
+   keyframes the vendored timeline components rely on (from base.css / app.css).
+   Scoped resets live under .volute-embed so they don't fight Starlight. */
+
+:root {
+  /* Background layers (darkest → lightest) */
+  --bg-0: #0a0c0f;
+  --bg-1: #11141a;
+  --bg-2: #181c24;
+  --bg-3: #1f2430;
+
+  /* Borders */
+  --border: #2a3040;
+  --border-bright: #3a4560;
+
+  /* Text hierarchy */
+  --text-0: #e8ecf4;
+  --text-1: #a0aabb;
+  --text-2: #6a7588;
+
+  /* Brand */
+  --accent: #e0a860;
+  --accent-dim: #5c4428;
+  --accent-bg: rgba(224, 168, 96, 0.08);
+  --accent-border: rgba(224, 168, 96, 0.2);
+
+  /* Status colors */
+  --red: #f87171;
+  --red-dim: #7f1d1d;
+  --red-bg: rgba(248, 113, 113, 0.08);
+  --red-border: rgba(248, 113, 113, 0.2);
+  --yellow: #fbbf24;
+  --yellow-dim: #78350f;
+  --yellow-bg: rgba(251, 191, 36, 0.08);
+  --blue: #60a5fa;
+  --blue-bg: rgba(96, 165, 250, 0.08);
+  --purple: #c084fc;
+  --green: #4ade80;
+
+  /* Surfaces */
+  --overlay: rgba(0, 0, 0, 0.6);
+  --muted-bg: rgba(106, 117, 136, 0.08);
+  --timeline-rail: #333;
+
+  /* Typography */
+  --mono: "Fira Code", "SF Mono", monospace;
+  --sans: "Averia Sans Libre", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --display: "Averia Serif Libre", Georgia, serif;
+
+  /* Radii */
+  --radius: 6px;
+  --radius-lg: 10px;
+}
+
+/* Keyframes referenced by component styles */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+@keyframes iridescent {
+  0% {
+    background: #4ade80;
+  }
+  16% {
+    background: #60a5fa;
+  }
+  33% {
+    background: #c084fc;
+  }
+  50% {
+    background: #f472b6;
+  }
+  66% {
+    background: #fbbf24;
+  }
+  83% {
+    background: #34d399;
+  }
+  100% {
+    background: #4ade80;
+  }
+}
+
+/* Embed wrapper — baseline the components assume from the app's base.css */
+.volute-embed {
+  font-family: var(--sans);
+  font-size: 15px;
+  line-height: 1.6;
+  color: var(--text-0);
+  -webkit-font-smoothing: antialiased;
+}
+
+.volute-embed * {
+  box-sizing: border-box;
+}
+
+.volute-embed button {
+  font-family: inherit;
+  cursor: pointer;
+  border: none;
+  background: none;
+  color: inherit;
+}
+
+.volute-embed button:focus {
+  outline: none;
+}
+
+.volute-embed button:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Markdown body (from base.css) */
+.volute-embed .markdown-body {
+  word-break: break-word;
+  color: var(--text-0);
+  line-height: 1.6;
+}
+.volute-embed .markdown-body p {
+  margin: 0 0 8px;
+}
+.volute-embed .markdown-body p:last-child {
+  margin-bottom: 0;
+}
+.volute-embed .markdown-body pre {
+  background: var(--bg-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  overflow-x: auto;
+  margin: 8px 0;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.volute-embed .markdown-body code {
+  font-family: var(--mono);
+  font-size: 13px;
+  background: var(--bg-3);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+.volute-embed .markdown-body pre code {
+  background: none;
+  padding: 0;
+}
+.volute-embed .markdown-body a {
+  color: var(--blue);
+  text-decoration: underline;
+}
+.volute-embed .markdown-body ul,
+.volute-embed .markdown-body ol {
+  margin: 4px 0;
+  padding-left: 20px;
+}
+.volute-embed .markdown-body li {
+  margin: 2px 0;
+}
+.volute-embed .markdown-body blockquote {
+  border-left: 3px solid var(--border-bright);
+  margin: 8px 0;
+  padding: 4px 12px;
+  color: var(--text-1);
+}
+
+/* Tooltip (portaled to body by use:tooltip action) */
+.volute-tooltip {
+  position: fixed;
+  padding: 3px 8px;
+  background: var(--bg-3);
+  color: var(--text-0);
+  font-family: var(--sans);
+  font-size: 11px;
+  border-radius: var(--radius);
+  white-space: nowrap;
+  z-index: 1000;
+  pointer-events: none;
+  border: 1px solid var(--border);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .volute-embed * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

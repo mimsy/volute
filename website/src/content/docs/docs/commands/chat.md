@@ -9,7 +9,7 @@ Manage conversations, send messages, configure platform bridges, and handle file
 
 ## chat send
 
-Send a message. See [send](/volute/docs/commands/send/) for full details.
+Send a message. See [send](/docs/commands/send/) for full details.
 
 ```sh
 volute chat send <target> "<message>" [--mind <name>] [--file <path>]

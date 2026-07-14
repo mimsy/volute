@@ -55,5 +55,5 @@ volute service status
 ```
 
 :::note
-Service installation and uninstallation are handled by `volute setup`. See [setup](/volute/docs/commands/setup/) for details.
+Service installation and uninstallation are handled by `volute setup`. See [setup](/docs/commands/setup/) for details.
 :::

@@ -1,0 +1,320 @@
+/* Shared styles for custom (non-docs) pages. Tokens mirror the product theme
+   (packages/ui/src/theme.css) — the same values ship in the timeline island's
+   timeline.css; keep the two in sync when re-vendoring. */
+
+:root {
+  --bg-0: #0a0c0f;
+  --bg-1: #11141a;
+  --bg-2: #181c24;
+  --bg-3: #1f2430;
+  --border: #2a3040;
+  --border-bright: #3a4560;
+  --text-0: #e8ecf4;
+  --text-1: #a0aabb;
+  --text-2: #6a7588;
+  --accent: #e0a860;
+  --accent-dim: #5c4428;
+  --accent-bg: rgba(224, 168, 96, 0.08);
+  --accent-border: rgba(224, 168, 96, 0.2);
+  --red: #f87171;
+  --yellow: #fbbf24;
+  --blue: #60a5fa;
+  --purple: #c084fc;
+  --green: #4ade80;
+  --timeline-rail: #333;
+  --mono: "Fira Code", "SF Mono", monospace;
+  --sans: "Averia Sans Libre", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --display: "Averia Serif Libre", Georgia, serif;
+  --radius: 6px;
+  --radius-lg: 10px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  background: var(--bg-0);
+  color-scheme: dark;
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  background: var(--bg-0);
+  color: var(--text-0);
+  font-family: var(--sans);
+  font-size: 16px;
+  line-height: 1.7;
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: rgba(224, 168, 96, 0.25);
+  color: var(--accent);
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--border-bright);
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+  transition: color 0.15s;
+}
+a:hover {
+  color: #f0d4a0;
+}
+
+a:focus-visible,
+button:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ===== Site header ===== */
+
+.site-header {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  background: color-mix(in srgb, var(--bg-0) 88%, transparent);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--border);
+}
+
+.site-header-inner {
+  max-width: 1040px;
+  margin: 0 auto;
+  padding: 0 20px;
+  height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.site-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-0);
+  font-family: var(--display);
+  font-weight: 300;
+  font-size: 21px;
+  letter-spacing: 0.04em;
+}
+.site-brand:hover {
+  color: var(--text-0);
+}
+
+.site-brand img {
+  width: 26px;
+  height: 26px;
+  filter: invert(1);
+  opacity: 0.9;
+}
+
+.site-nav {
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  font-size: 14.5px;
+}
+
+.site-nav a {
+  color: var(--text-1);
+}
+.site-nav a:hover,
+.site-nav a[aria-current="true"] {
+  color: var(--text-0);
+}
+
+.site-nav .nav-github {
+  display: flex;
+  align-items: center;
+  color: var(--text-1);
+}
+.site-nav .nav-github:hover {
+  color: var(--text-0);
+}
+.site-nav .nav-github svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* ===== Page scaffolding ===== */
+
+.page {
+  max-width: 1040px;
+  margin: 0 auto;
+  padding: 0 20px;
+}
+
+.prose {
+  max-width: 660px;
+  margin: 0 auto;
+}
+
+.prose p {
+  color: var(--text-1);
+  margin: 0 0 1.2em;
+}
+
+.prose strong {
+  color: var(--text-0);
+  font-weight: 600;
+}
+
+.prose code {
+  font-family: var(--mono);
+  font-size: 0.85em;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 5px;
+  color: var(--text-0);
+}
+
+.prose h2 {
+  font-family: var(--display);
+  font-weight: 400;
+  font-size: 26px;
+  color: var(--text-0);
+  margin: 2.2em 0 0.6em;
+  text-wrap: balance;
+}
+
+.prose h3 {
+  font-family: var(--display);
+  font-weight: 400;
+  font-size: 20px;
+  color: var(--text-0);
+  margin: 1.8em 0 0.5em;
+}
+
+.prose ul,
+.prose ol {
+  color: var(--text-1);
+  padding-left: 22px;
+}
+.prose li {
+  margin: 6px 0;
+}
+
+.prose blockquote {
+  border-left: 2px solid var(--accent-border);
+  margin: 1.4em 0;
+  padding: 2px 0 2px 18px;
+  color: var(--text-1);
+  font-style: italic;
+}
+
+.prose pre {
+  background: var(--bg-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 14px 18px;
+  overflow-x: auto;
+  font-family: var(--mono);
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--text-1);
+}
+.prose pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: inherit;
+}
+
+/* Page hero for interior pages */
+.page-hero {
+  padding: 72px 0 8px;
+  text-align: center;
+}
+
+.page-eyebrow {
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin: 0 0 14px;
+}
+
+.page-title {
+  font-family: var(--display);
+  font-weight: 300;
+  font-size: clamp(34px, 5.5vw, 48px);
+  line-height: 1.15;
+  color: var(--text-0);
+  margin: 0 0 12px;
+  text-wrap: balance;
+}
+
+.page-lede {
+  font-family: var(--display);
+  font-weight: 300;
+  font-size: 20px;
+  color: var(--text-1);
+  max-width: 620px;
+  margin: 0 auto;
+  text-wrap: balance;
+}
+
+/* ===== Footer ===== */
+
+.site-footer {
+  border-top: 1px solid var(--border);
+  margin-top: 96px;
+  padding: 36px 0 48px;
+}
+
+.site-footer-inner {
+  max-width: 1040px;
+  margin: 0 auto;
+  padding: 0 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  font-size: 13.5px;
+  color: var(--text-2);
+}
+
+.site-footer a {
+  color: var(--text-2);
+}
+.site-footer a:hover {
+  color: var(--text-1);
+}
+
+.footer-links {
+  display: flex;
+  gap: 18px;
+  flex-wrap: wrap;
+}
+
+@media (max-width: 560px) {
+  .site-nav {
+    gap: 14px;
+    font-size: 13.5px;
+  }
+  .site-brand {
+    font-size: 18px;
+  }
+}

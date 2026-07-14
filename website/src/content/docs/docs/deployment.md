@@ -59,7 +59,7 @@ Check status with `systemctl status volute`.
 
 ## Mind isolation
 
-Three isolation modes are available, configured during [`volute setup`](/volute/docs/commands/setup/):
+Three isolation modes are available, configured during [`volute setup`](/docs/commands/setup/):
 
 ### Sandbox (default for local installs)
 
