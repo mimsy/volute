@@ -175,7 +175,6 @@ let isActive = $derived(activeMinds.has(mind.name));
   .history-section {
     flex: 1;
     min-height: 0;
-    padding: 0 16px;
     border-top: 1px solid var(--border);
   }
 </style>

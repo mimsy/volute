@@ -1,12 +1,14 @@
 <script lang="ts">
-import type { HistoryMessage, SummaryRow, TurnRow } from "@volute/api";
+import type { HistoryMessage, SummaryRow, TurnConversation, TurnRow } from "@volute/api";
 import { Icon } from "@volute/ui";
 import { renderMarkdown } from "@volute/ui/markdown";
-import type { SvelteMap } from "svelte/reactivity";
+import { type SvelteMap, SvelteSet } from "svelte/reactivity";
 import { groupToolEvents } from "../lib/tool-groups";
 import { getCategoryColor, getCategoryIcon } from "../lib/tool-names";
+import { summaryIconCount, turnRailParts } from "../lib/turn-rail";
 import ToolGroupComponent from "./chat/ToolGroup.svelte";
 import HistoryEvent from "./HistoryEvent.svelte";
+import RailIcons from "./RailIcons.svelte";
 import SummaryNode from "./SummaryNode.svelte";
 import TimelineBranch from "./TimelineBranch.svelte";
 
@@ -18,6 +20,7 @@ let {
   loadingChildren,
   toggleSummaryExpand,
   formatPeriodTime,
+  onopenconversation,
 }: {
   summary: SummaryRow;
   depth?: number;
@@ -26,7 +29,14 @@ let {
   loadingChildren: Set<number>;
   toggleSummaryExpand: (summary: SummaryRow) => void;
   formatPeriodTime: (period: string, periodKey: string) => string;
+  onopenconversation?: (
+    conv: Pick<TurnConversation, "id" | "label" | "type">,
+    createdAt: string,
+  ) => void;
 } = $props();
+
+// Child turn rows that are expanded — their rail stack hides while open.
+const expandedChildTurns = new SvelteSet<string>();
 
 let isExpanded = $derived(
   expandedSummaries.has(summary.id) || directEventsSummaries.has(summary.id),
@@ -99,10 +109,14 @@ function plainPreview(text: string): string {
           {#if 'period' in child}
             {@const childSummary = child as SummaryRow}
             {@const childExpanded = expandedSummaries.has(childSummary.id) || directEventsSummaries.has(childSummary.id)}
+            {@const childIconCount = !childExpanded ? summaryIconCount(childSummary.icons) : 0}
             <!-- svelte-ignore a11y_click_events_have_key_events -->
             <!-- svelte-ignore a11y_no_static_element_interactions -->
-            <div class="summary-child-item" class:summary-child-expanded={childExpanded} class:summary-child-collapsed={!childExpanded} onclick={(e) => { e.stopPropagation(); toggleSummaryExpand(childSummary); }}>
+            <div class="summary-child-item" class:summary-child-expanded={childExpanded} class:summary-child-collapsed={!childExpanded} style:min-height={childIconCount > 0 ? `${40 + childIconCount * 30}px` : undefined} onclick={(e) => { e.stopPropagation(); toggleSummaryExpand(childSummary); }}>
               <div class="summary-child-dot summary-dot"></div>
+              {#if childIconCount > 0 && childSummary.icons}
+                <RailIcons groups={childSummary.icons} mind={childSummary.mind} condensed onopenconversation={(c) => onopenconversation?.(c, childSummary.created_at)} />
+              {/if}
               <div class="summary-child-body">
                 {#if !childExpanded}
                   <span class="summary-child-time">{formatPeriodTime(childSummary.period, childSummary.period_key)}</span>
@@ -120,14 +134,21 @@ function plainPreview(text: string): string {
                   {loadingChildren}
                   {toggleSummaryExpand}
                   {formatPeriodTime}
+                  {onopenconversation}
                 />
               </div>
             {/if}
           {:else}
             {@const childTurn = child as TurnRow}
+            {@const turnOpen = expandedChildTurns.has(childTurn.id)}
+            {@const turnStackCount = turnOpen ? 0 : turnRailParts(childTurn).stackCount}
+            <!-- Nested turn row: same rail principle as the top level — the trigger
+                 renders as the marker (hiding HistoryEvent's dot), the rest of the
+                 turn's contents stack along the inner rail while collapsed. -->
             <!-- svelte-ignore a11y_click_events_have_key_events -->
             <!-- svelte-ignore a11y_no_static_element_interactions -->
-            <div onclick={(e) => e.stopPropagation()}>
+            <div class="summary-child-turn" class:has-trigger={!!childTurn.trigger} style:min-height={turnStackCount > 0 ? `${40 + turnStackCount * 30}px` : undefined} onclick={(e) => e.stopPropagation()}>
+              <RailIcons turn={childTurn} mind={childTurn.mind} condensed showStack={!turnOpen} onopenconversation={(c) => onopenconversation?.(c, childTurn.created_at)} />
               <HistoryEvent
                 event={{
                   id: 0,
@@ -144,6 +165,10 @@ function plainPreview(text: string): string {
                 }}
                 mindName={childTurn.mind}
                 expandable
+                onexpand={(exp) => {
+                  if (exp) expandedChildTurns.add(childTurn.id);
+                  else expandedChildTurns.delete(childTurn.id);
+                }}
               />
             </div>
           {/if}
@@ -227,7 +252,9 @@ function plainPreview(text: string): string {
 
   .summary-collapsed {
     cursor: pointer;
-    padding: 6px 0;
+    /* Left padding matches HistoryEvent's .event so summary text clears the
+       rail icon chips and their count badges, same as turn rows. */
+    padding: 6px 0 6px 20px;
   }
   .summary-collapsed-time {
     display: block;
@@ -247,6 +274,8 @@ function plainPreview(text: string): string {
     position: relative;
     padding: 8px 8px 8px 20px;
     cursor: pointer;
+    /* RailIcons chips center on the child rail (::after at left:-2px, 2px wide) */
+    --rail-x: -1px;
   }
   .summary-child-item:hover {
     background: color-mix(in srgb, var(--text-2) 5%, transparent);
@@ -304,6 +333,16 @@ function plainPreview(text: string): string {
   /* Offset nested branches to match original summary-nested-wrapper margin */
   .nested-branch-wrapper {
     margin-left: 8px;
+  }
+
+  /* Nested turn rows: RailIcons chips center on the inner rail; the trigger
+     chip replaces HistoryEvent's plain summary marker. */
+  .summary-child-turn {
+    position: relative;
+    --rail-x: -1px;
+  }
+  .summary-child-turn.has-trigger > :global(.event > .marker) {
+    display: none;
   }
 
   /* Marker/event styles for direct events rendered inline */

@@ -117,6 +117,43 @@ export function parseUtcDateTime(s: string): Date {
   return new Date(`${s.replace(" ", "T")}Z`);
 }
 
+/**
+ * UTC bounds for a period, for comparison against `created_at` columns
+ * (stored as UTC via datetime('now')). Unlike getTimeRange — whose day/week/
+ * month bounds are local strings for period_key comparison — every period
+ * here converts the local wall-clock range to UTC. `end` is exclusive.
+ */
+export function getUtcTimeRange(
+  periodKey: string,
+  period: TimerPeriod,
+): { start: string; end: string } {
+  switch (period) {
+    case "hour": {
+      const d = new Date(`${periodKey.slice(0, 10)}T${periodKey.slice(11)}:00:00`);
+      return { start: utcDateTimeStr(d), end: utcDateTimeStr(new Date(d.getTime() + 3600000)) };
+    }
+    case "day": {
+      const d = new Date(`${periodKey}T00:00:00`);
+      const dEnd = new Date(d);
+      dEnd.setDate(d.getDate() + 1);
+      return { start: utcDateTimeStr(d), end: utcDateTimeStr(dEnd) };
+    }
+    case "week": {
+      const monday = isoWeekToDate(periodKey);
+      const nextMonday = new Date(monday);
+      nextMonday.setDate(monday.getDate() + 7);
+      return { start: utcDateTimeStr(monday), end: utcDateTimeStr(nextMonday) };
+    }
+    case "month": {
+      const [y, m] = periodKey.split("-").map(Number);
+      return {
+        start: utcDateTimeStr(new Date(y, m - 1, 1)),
+        end: utcDateTimeStr(new Date(y, m, 1)),
+      };
+    }
+  }
+}
+
 export function getTimeRange(
   periodKey: string,
   period: TimerPeriod,

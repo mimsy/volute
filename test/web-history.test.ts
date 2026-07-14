@@ -376,6 +376,170 @@ describe("web history routes", () => {
     assert.equal(body[0].period_key, "2026-03-22T14");
   });
 
+  it("GET /api/v1/history/summaries?include=icons — aggregates period conversations/events/activities", async () => {
+    const cookie = await setupAuth();
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
+    const { getUtcTimeRange } = await import("../packages/daemon/src/lib/util/period-keys.js");
+    const db = await getDb();
+
+    const mind = "test-history-icons";
+    const periodKey = "2026-03-22T14";
+    // Compute in/out-of-range UTC timestamps from the same helper the endpoint
+    // uses, so the test is timezone-independent (period keys are server-local).
+    const { start, end } = getUtcTimeRange(periodKey, "hour");
+
+    await db.insert(summaries).values({
+      mind,
+      period: "hour",
+      period_key: periodKey,
+      content: "Busy hour",
+    });
+
+    // Two conversations: a DM with two messages, a channel with one. One
+    // outbound at the range end must be excluded (end is exclusive).
+    await db.insert(mindHistory).values([
+      {
+        mind,
+        type: "inbound",
+        channel: "@alice",
+        sender: "alice",
+        content: "hi",
+        created_at: start,
+      },
+      { mind, type: "outbound", channel: "@alice", content: "hello", created_at: start },
+      {
+        mind,
+        type: "inbound",
+        channel: "#general",
+        sender: "bob",
+        content: "yo",
+        created_at: start,
+      },
+      { mind, type: "outbound", channel: "@alice", content: "too late", created_at: end },
+      // System events: two heartbeats group under one label, plus one orientation.
+      {
+        mind,
+        type: "event",
+        channel: "event:heartbeat:1",
+        content: "tick",
+        metadata: JSON.stringify({ label: "Heartbeat" }),
+        created_at: start,
+      },
+      {
+        mind,
+        type: "event",
+        channel: "event:heartbeat:2",
+        content: "tock",
+        metadata: JSON.stringify({ label: "Heartbeat" }),
+        created_at: start,
+      },
+      {
+        mind,
+        type: "event",
+        channel: "event:orientation:3",
+        content: "welcome",
+        metadata: JSON.stringify({ label: "Orientation" }),
+        created_at: start,
+      },
+    ]);
+
+    // Activities: two notes group by type (with icon/color from metadata), one page.
+    // A noise row and an out-of-range row must both be excluded.
+    await db.insert(activity).values([
+      {
+        type: "note_created",
+        mind,
+        summary: "wrote first note",
+        metadata: JSON.stringify({
+          icon: "<svg></svg>",
+          color: "green",
+          url: "/minds/x/notes/first",
+        }),
+        created_at: start,
+      },
+      {
+        type: "note_created",
+        mind,
+        summary: "wrote second note",
+        metadata: JSON.stringify({
+          icon: "<svg></svg>",
+          color: "green",
+          url: "/minds/x/notes/second",
+        }),
+        created_at: start,
+      },
+      {
+        type: "page_published",
+        mind,
+        summary: "published index.md",
+        metadata: JSON.stringify({ color: "cyan", url: "/minds/x/pages/index.md" }),
+        created_at: start,
+      },
+      { type: "mind_started", mind, summary: "started", created_at: start },
+      { type: "note_created", mind, summary: "too late", created_at: end },
+    ]);
+
+    const res = await app.request(
+      `/api/v1/history/summaries?period=hour&mind=${mind}&include=icons`,
+      { headers: { Cookie: `volute_session=${cookie}` } },
+    );
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as Array<{
+      icons?: {
+        conversations: Array<{ id: string; label: string; type: string; count: number }>;
+        events: Array<{ label: string; count: number }>;
+        activities: Array<{
+          type: string;
+          count: number;
+          icon?: string;
+          color?: string;
+          items: Array<{ summary: string; metadata: Record<string, unknown> | null }>;
+        }>;
+      };
+    }>;
+    assert.equal(body.length, 1);
+    const icons = body[0].icons;
+    assert.ok(icons, "icons must be attached when include=icons");
+
+    assert.equal(icons.conversations.length, 2);
+    const dm = icons.conversations.find((cv) => cv.label === "@alice");
+    assert.equal(dm?.type, "dm");
+    assert.equal(dm?.count, 2, "out-of-range message must not count");
+    const chan = icons.conversations.find((cv) => cv.label === "#general");
+    assert.equal(chan?.type, "channel");
+    assert.equal(chan?.count, 1);
+
+    assert.deepEqual(
+      [...icons.events].sort((a, b) => a.label.localeCompare(b.label)),
+      [
+        { label: "Heartbeat", count: 2 },
+        { label: "Orientation", count: 1 },
+      ],
+    );
+
+    assert.equal(icons.activities.length, 2, "noise and out-of-range activities are excluded");
+    const notes = icons.activities.find((g) => g.type === "note_created");
+    assert.equal(notes?.count, 2);
+    assert.equal(notes?.icon, "<svg></svg>");
+    assert.equal(notes?.color, "green");
+    assert.deepEqual(
+      notes?.items.map((i) => i.summary),
+      ["wrote first note", "wrote second note"],
+      "items are chronological",
+    );
+    assert.equal(notes?.items[0].metadata?.url, "/minds/x/notes/first");
+    const pages = icons.activities.find((g) => g.type === "page_published");
+    assert.equal(pages?.count, 1);
+    assert.equal(pages?.color, "cyan");
+
+    // Without include=icons the field is absent.
+    const plain = await app.request(`/api/v1/history/summaries?period=hour&mind=${mind}`, {
+      headers: { Cookie: `volute_session=${cookie}` },
+    });
+    const plainBody = (await plain.json()) as Array<{ icons?: unknown }>;
+    assert.equal(plainBody[0].icons, undefined);
+  });
+
   it("GET /api/v1/history/summaries — fetches by IDs", async () => {
     const cookie = await setupAuth();
     const { default: app } = await import("../packages/daemon/src/web/app.js");

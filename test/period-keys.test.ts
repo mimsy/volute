@@ -5,8 +5,10 @@ import {
   getISOWeekKey,
   getPeriodKey,
   getPreviousPeriodKey,
+  getUtcTimeRange,
   isoWeekKeyForDateStr,
   isoWeekToDate,
+  utcDateTimeStr,
 } from "../packages/daemon/src/lib/util/period-keys.js";
 
 // Node resolves the process timezone once at startup, so DST-boundary behavior
@@ -101,6 +103,41 @@ describe("period-keys", () => {
       assert.equal(getPeriodKey(d, "day"), "2026-03-22");
       assert.equal(getPeriodKey(d, "week"), "2026-W12");
       assert.equal(getPeriodKey(d, "month"), "2026-03");
+    });
+  });
+
+  describe("getUtcTimeRange", () => {
+    // Bounds are local wall-clock converted to UTC, so assert by constructing
+    // the same local Dates rather than hardcoding zone-dependent strings.
+    it("hour spans exactly one hour", () => {
+      const { start, end } = getUtcTimeRange("2026-03-22T14", "hour");
+      const startD = new Date("2026-03-22T14:00:00");
+      assert.equal(start, utcDateTimeStr(startD));
+      assert.equal(end, utcDateTimeStr(new Date(startD.getTime() + 3600000)));
+    });
+
+    it("day spans local midnight to next local midnight", () => {
+      const { start, end } = getUtcTimeRange("2026-03-22", "day");
+      assert.equal(start, utcDateTimeStr(new Date("2026-03-22T00:00:00")));
+      assert.equal(end, utcDateTimeStr(new Date("2026-03-23T00:00:00")));
+    });
+
+    it("week spans Monday to next Monday", () => {
+      const { start, end } = getUtcTimeRange("2026-W12", "week");
+      assert.equal(start, utcDateTimeStr(new Date(2026, 2, 16)));
+      assert.equal(end, utcDateTimeStr(new Date(2026, 2, 23)));
+    });
+
+    it("month spans the 1st to the next month's 1st", () => {
+      const { start, end } = getUtcTimeRange("2026-12", "month");
+      assert.equal(start, utcDateTimeStr(new Date(2026, 11, 1)));
+      assert.equal(end, utcDateTimeStr(new Date(2027, 0, 1)));
+    });
+
+    it("bounds are half-open and contiguous across periods", () => {
+      const first = getUtcTimeRange("2026-03-22", "day");
+      const second = getUtcTimeRange("2026-03-23", "day");
+      assert.equal(first.end, second.start);
     });
   });
 });

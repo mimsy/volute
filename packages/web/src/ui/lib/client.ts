@@ -307,6 +307,7 @@ export function fetchSummaries(opts: {
   from?: string;
   to?: string;
   limit?: number;
+  icons?: boolean;
 }): Promise<SummaryRow[]> {
   const params = new URLSearchParams();
   if (opts.mind) params.set("mind", opts.mind);
@@ -314,6 +315,7 @@ export function fetchSummaries(opts: {
   if (opts.from) params.set("from", opts.from);
   if (opts.to) params.set("to", opts.to);
   if (opts.limit !== undefined) params.set("limit", String(opts.limit));
+  if (opts.icons) params.set("include", "icons");
   return get(`${V1}/history/summaries?${params}`);
 }
 

@@ -43,6 +43,18 @@ export function activityNavUrl(metadata: TurnActivity["metadata"], fallbackMind:
   return "";
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Whether a string is a UUID (e.g. a resolved conversation id vs. a raw channel slug). */
+export function isUuid(s: string): boolean {
+  return UUID_RE.test(s);
+}
+
+/** Human label for an activity type slug ("note_created" → "note created"). */
+export function activityTypeLabel(type: string): string {
+  return type.replace(/_/g, " ");
+}
+
 /** Accent color name for the activity peek button/card. */
 export function activityColor(metadata: TurnActivity["metadata"]): string {
   return typeof metadata?.color === "string" ? metadata.color : "yellow";

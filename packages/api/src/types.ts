@@ -343,6 +343,8 @@ export type TurnSystemEvent = {
 };
 
 export type TurnTrigger = {
+  /** mind_history row id of the trigger — matches events[].id / messages[].source_event_id. */
+  eventId: number;
   channel: string | null;
   sender: string | null;
   content: string | null;
@@ -365,6 +367,24 @@ export type TurnRow = {
 
 export type SummaryPeriod = "turn" | "hour" | "day" | "week" | "month";
 
+/** Grouped per-period icon data, present when summaries are fetched with `include=icons`. */
+export type SummaryIcons = {
+  conversations: { id: string; label: string; type: "dm" | "channel"; count: number }[];
+  events: { label: string; count: number }[];
+  activities: {
+    type: string;
+    count: number;
+    icon?: string;
+    color?: string;
+    items: {
+      id: number;
+      summary: string;
+      metadata: Record<string, unknown> | null;
+      created_at: string | null;
+    }[];
+  }[];
+};
+
 export type SummaryRow = {
   id: number;
   mind: string;
@@ -373,4 +393,5 @@ export type SummaryRow = {
   content: string;
   metadata: Record<string, unknown> | null;
   created_at: string;
+  icons?: SummaryIcons;
 };
