@@ -104,6 +104,11 @@ import {
 } from "../../lib/prompts.js";
 import { mindHistory, summaries, turns } from "../../lib/schema.js";
 import {
+  createImagegenJob,
+  getImagegenJob,
+  waitForImagegenJob,
+} from "../../lib/services/imagegen-jobs.js";
+import {
   getStandardSkillsWithExtensions,
   installSkill,
   migrateSkillsToTemplate,
@@ -1809,6 +1814,44 @@ const app = new Hono<AuthEnv>()
     broadcast({ type: "profile_updated", mind: name, summary: `${name} profile updated` });
 
     return c.json({ ok: true });
+  })
+  // Start a background image-generation job. Returns a job id immediately; the
+  // daemon generates, writes home/images/<filename>.png, and wakes the mind on
+  // completion. requireSelf: a mind may only run jobs for itself.
+  .post(
+    "/:name/imagegen/jobs",
+    requireSelf(),
+    zValidator(
+      "json",
+      z.object({
+        model: z.string().min(1),
+        prompt: z.string().min(1),
+        filename: z.string().min(1),
+      }),
+    ),
+    async (c) => {
+      const name = c.req.param("name");
+      const { model, prompt, filename } = c.req.valid("json");
+      try {
+        const jobId = createImagegenJob(name, model, prompt, filename);
+        return c.json({ jobId }, 202);
+      } catch (err) {
+        return c.json({ error: err instanceof Error ? err.message : "Failed to start job" }, 429);
+      }
+    },
+  )
+  // Poll a job. `?wait=<sec>` long-polls: the daemon returns as soon as the job
+  // finishes, or after the timeout (still "running"). 404 = unknown/lost job
+  // (e.g. after a daemon restart) — the skill tells the mind to re-run.
+  .get("/:name/imagegen/jobs/:jobId", requireSelf(), async (c) => {
+    const name = c.req.param("name");
+    const jobId = c.req.param("jobId");
+    const waitParam = Number(c.req.query("wait"));
+    const waitMs = Number.isFinite(waitParam) ? Math.min(Math.max(waitParam, 0), 60) * 1000 : 0;
+    const job =
+      waitMs > 0 ? await waitForImagegenJob(name, jobId, waitMs) : getImagegenJob(name, jobId);
+    if (!job) return c.json({ error: "Job not found" }, 404);
+    return c.json(job);
   })
   // Seed readiness check — used by spirit nurture schedule
   .get("/:name/seed-check", requireSelf(), async (c) => {

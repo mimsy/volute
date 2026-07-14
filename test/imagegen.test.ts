@@ -19,9 +19,16 @@ import {
   parseCodexImageStream,
 } from "../packages/daemon/src/lib/services/imagegen-codex.js";
 import {
-  generateViaDaemon,
+  _resetImagegenJobs,
+  createImagegenJob,
+  getImagegenJob,
+  waitForImagegenJob,
+} from "../packages/daemon/src/lib/services/imagegen-jobs.js";
+import {
   handleDaemonFailure,
+  pollImagegenJob,
   searchViaDaemon,
+  startImagegenJob,
 } from "../skills/imagegen/scripts/imagegen.js";
 
 /** Build a synthetic Codex OAuth access token (JWT) carrying an account id. */
@@ -414,20 +421,73 @@ describe("imagegen openai-codex provider", () => {
   });
 });
 
+describe("imagegen jobs", () => {
+  // Uses a provider with no configured credentials, so generateImage rejects
+  // fast (no network) and each job settles to "error" — enough to exercise the
+  // lifecycle, ownership, and cap without a real provider.
+  const UNCONFIGURED_MODEL = "openai-codex:gpt-image-2";
+
+  afterEach(() => {
+    _resetImagegenJobs();
+    const config = readGlobalConfig();
+    delete config.imagegen;
+    delete config.ai;
+    writeGlobalConfig(config);
+  });
+
+  it("creates a job and returns an id", () => {
+    const id = createImagegenJob("mind-a", UNCONFIGURED_MODEL, "prompt", "file");
+    assert.equal(typeof id, "string");
+    assert.ok(id.length > 0);
+  });
+
+  it("a job settles to error when generation fails", async () => {
+    const id = createImagegenJob("mind-a", UNCONFIGURED_MODEL, "prompt", "file");
+    const job = await waitForImagegenJob("mind-a", id, 5000);
+    assert.ok(job);
+    assert.equal(job.status, "error");
+    assert.match(job.error ?? "", /credentials|No .* configured/i);
+  });
+
+  it("enforces per-mind ownership", () => {
+    const id = createImagegenJob("mind-a", UNCONFIGURED_MODEL, "prompt", "file");
+    assert.ok(getImagegenJob("mind-a", id), "owner can read its job");
+    assert.equal(getImagegenJob("mind-b", id), undefined, "another mind cannot read it");
+  });
+
+  it("returns undefined for an unknown job", () => {
+    assert.equal(getImagegenJob("mind-a", "no-such-job"), undefined);
+  });
+
+  it("caps in-flight jobs per mind", () => {
+    // createImagegenJob is synchronous and marks the job running before the
+    // async generation yields, so four synchronous creates fill the cap and the
+    // fifth throws — deterministically, before any settles.
+    for (let i = 0; i < 4; i++) createImagegenJob("mind-cap", UNCONFIGURED_MODEL, "p", `f${i}`);
+    assert.throws(
+      () => createImagegenJob("mind-cap", UNCONFIGURED_MODEL, "p", "f5"),
+      /Too many image generations/,
+    );
+  });
+});
+
 describe("imagegen skill daemon error reporting", () => {
   const realFetch = globalThis.fetch;
   const savedEnv = {
     port: process.env.VOLUTE_DAEMON_PORT,
     token: process.env.VOLUTE_MIND_TOKEN,
+    mind: process.env.VOLUTE_MIND,
   };
 
   function setDaemonEnv(present: boolean) {
     if (present) {
       process.env.VOLUTE_DAEMON_PORT = "1618";
       process.env.VOLUTE_MIND_TOKEN = "mind-token";
+      process.env.VOLUTE_MIND = "test-mind";
     } else {
       delete process.env.VOLUTE_DAEMON_PORT;
       delete process.env.VOLUTE_MIND_TOKEN;
+      delete process.env.VOLUTE_MIND;
     }
   }
 
@@ -450,12 +510,14 @@ describe("imagegen skill daemon error reporting", () => {
     else delete process.env.VOLUTE_DAEMON_PORT;
     if (savedEnv.token !== undefined) process.env.VOLUTE_MIND_TOKEN = savedEnv.token;
     else delete process.env.VOLUTE_MIND_TOKEN;
+    if (savedEnv.mind !== undefined) process.env.VOLUTE_MIND = savedEnv.mind;
+    else delete process.env.VOLUTE_MIND;
   });
 
-  describe("generateViaDaemon", () => {
+  describe("startImagegenJob", () => {
     it("reports no-env when daemon env vars are unset", async () => {
       setDaemonEnv(false);
-      const res = await generateViaDaemon("replicate:owner/model", "prompt");
+      const res = await startImagegenJob("replicate:owner/model", "prompt", "file");
       assert.deepEqual(res, { ok: false, reason: "no-env" });
     });
 
@@ -464,16 +526,14 @@ describe("imagegen skill daemon error reporting", () => {
       mockFetch(() => {
         throw new TypeError("fetch failed");
       });
-      const res = await generateViaDaemon("replicate:owner/model", "prompt");
-      assert.equal(res.ok, false);
+      const res = await startImagegenJob("replicate:owner/model", "prompt", "file");
       assert.equal(res.ok === false && res.reason, "unreachable");
     });
 
     it("reports auth failure on 401", async () => {
       setDaemonEnv(true);
       mockFetch(() => jsonResponse(401, { error: "invalid token" }));
-      const res = await generateViaDaemon("replicate:owner/model", "prompt");
-      assert.equal(res.ok, false);
+      const res = await startImagegenJob("replicate:owner/model", "prompt", "file");
       assert.equal(res.ok === false && res.reason, "auth");
       assert.equal(res.ok === false && res.reason === "auth" && res.status, 401);
     });
@@ -481,29 +541,58 @@ describe("imagegen skill daemon error reporting", () => {
     it("reports auth failure on 403", async () => {
       setDaemonEnv(true);
       mockFetch(() => jsonResponse(403, { error: "forbidden" }));
-      const res = await generateViaDaemon("replicate:owner/model", "prompt");
+      const res = await startImagegenJob("replicate:owner/model", "prompt", "file");
       assert.equal(res.ok === false && res.reason, "auth");
+    });
+
+    it("reports fallback on 404 (older daemon without the job route)", async () => {
+      setDaemonEnv(true);
+      mockFetch(() => jsonResponse(404, { error: "not found" }));
+      const res = await startImagegenJob("replicate:owner/model", "prompt", "file");
+      assert.deepEqual(res, { ok: false, reason: "fallback" });
     });
 
     it("reports fallback when imagegen is genuinely not configured", async () => {
       setDaemonEnv(true);
       mockFetch(() => jsonResponse(400, { error: "imagegen not configured" }));
-      const res = await generateViaDaemon("replicate:owner/model", "prompt");
+      const res = await startImagegenJob("replicate:owner/model", "prompt", "file");
       assert.deepEqual(res, { ok: false, reason: "fallback" });
     });
 
     it("throws on an unexpected daemon error", async () => {
       setDaemonEnv(true);
       mockFetch(() => jsonResponse(500, { error: "boom" }));
-      await assert.rejects(generateViaDaemon("replicate:owner/model", "prompt"), /boom/);
+      await assert.rejects(startImagegenJob("replicate:owner/model", "prompt", "file"), /boom/);
     });
 
-    it("returns the image buffer on success", async () => {
+    it("returns the job id on success (202)", async () => {
       setDaemonEnv(true);
-      mockFetch(() => jsonResponse(200, {}));
-      const res = await generateViaDaemon("replicate:owner/model", "prompt");
+      mockFetch(() => jsonResponse(202, { jobId: "job-abc" }));
+      const res = await startImagegenJob("replicate:owner/model", "prompt", "file");
+      assert.deepEqual(res, { ok: true, value: "job-abc" });
+    });
+  });
+
+  describe("pollImagegenJob", () => {
+    it("reports no-env when daemon env vars are unset", async () => {
+      setDaemonEnv(false);
+      const res = await pollImagegenJob("job-1", 0);
+      assert.deepEqual(res, { ok: false, reason: "no-env" });
+    });
+
+    it("reports fallback on 404 (unknown/lost job)", async () => {
+      setDaemonEnv(true);
+      mockFetch(() => jsonResponse(404, { error: "Job not found" }));
+      const res = await pollImagegenJob("job-1", 0);
+      assert.deepEqual(res, { ok: false, reason: "fallback" });
+    });
+
+    it("returns the job view on success", async () => {
+      setDaemonEnv(true);
+      mockFetch(() => jsonResponse(200, { status: "done", path: "/home/images/x.png" }));
+      const res = await pollImagegenJob("job-1", 30);
       assert.equal(res.ok, true);
-      assert.ok(res.ok && Buffer.isBuffer(res.value));
+      assert.deepEqual(res.ok && res.value, { status: "done", path: "/home/images/x.png" });
     });
   });
 
