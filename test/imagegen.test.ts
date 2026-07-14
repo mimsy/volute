@@ -6,7 +6,7 @@ import {
   getEnabledModels,
   parseModelId,
   removeProviderConfig,
-  resolveApiKey,
+  resolveCredential,
   saveProviderConfig,
   setEnabledModels,
 } from "../packages/daemon/src/lib/services/imagegen.js";
@@ -64,17 +64,20 @@ describe("imagegen config", () => {
     });
   });
 
-  describe("resolveApiKey", () => {
-    it("returns config key when set", () => {
+  describe("resolveCredential", () => {
+    it("returns config key when set", async () => {
       saveProviderConfig("replicate", "config-key");
-      assert.equal(resolveApiKey("replicate"), "config-key");
+      assert.deepEqual(await resolveCredential("replicate"), {
+        kind: "api_key",
+        token: "config-key",
+      });
     });
 
-    it("falls back to env var when no config key", () => {
+    it("falls back to env var when no config key", async () => {
       const original = process.env.REPLICATE_API_TOKEN;
       try {
         process.env.REPLICATE_API_TOKEN = "env-key";
-        assert.equal(resolveApiKey("replicate"), "env-key");
+        assert.equal((await resolveCredential("replicate"))?.token, "env-key");
       } finally {
         if (original !== undefined) {
           process.env.REPLICATE_API_TOKEN = original;
@@ -84,12 +87,12 @@ describe("imagegen config", () => {
       }
     });
 
-    it("prefers config key over env var", () => {
+    it("prefers config key over env var", async () => {
       const original = process.env.REPLICATE_API_TOKEN;
       try {
         process.env.REPLICATE_API_TOKEN = "env-key";
         saveProviderConfig("replicate", "config-key");
-        assert.equal(resolveApiKey("replicate"), "config-key");
+        assert.equal((await resolveCredential("replicate"))?.token, "config-key");
       } finally {
         if (original !== undefined) {
           process.env.REPLICATE_API_TOKEN = original;
@@ -99,15 +102,15 @@ describe("imagegen config", () => {
       }
     });
 
-    it("returns undefined for unknown provider", () => {
-      assert.equal(resolveApiKey("nonexistent"), undefined);
+    it("returns undefined for unknown provider", async () => {
+      assert.equal(await resolveCredential("nonexistent"), undefined);
     });
 
-    it("returns undefined when nothing is configured", () => {
+    it("returns undefined when nothing is configured", async () => {
       const original = process.env.REPLICATE_API_TOKEN;
       try {
         delete process.env.REPLICATE_API_TOKEN;
-        assert.equal(resolveApiKey("replicate"), undefined);
+        assert.equal(await resolveCredential("replicate"), undefined);
       } finally {
         if (original !== undefined) {
           process.env.REPLICATE_API_TOKEN = original;
@@ -117,11 +120,11 @@ describe("imagegen config", () => {
       }
     });
 
-    it("resolves openrouter env var", () => {
+    it("resolves openrouter env var", async () => {
       const original = process.env.OPENROUTER_API_KEY;
       try {
         process.env.OPENROUTER_API_KEY = "or-env-key";
-        assert.equal(resolveApiKey("openrouter"), "or-env-key");
+        assert.equal((await resolveCredential("openrouter"))?.token, "or-env-key");
       } finally {
         if (original !== undefined) {
           process.env.OPENROUTER_API_KEY = original;
@@ -131,19 +134,19 @@ describe("imagegen config", () => {
       }
     });
 
-    it("falls back to AI provider config key", () => {
+    it("falls back to AI provider config key", async () => {
       const config = readGlobalConfig();
       config.ai = { providers: { openrouter: { apiKey: "ai-provider-key" } } };
       writeGlobalConfig(config);
-      assert.equal(resolveApiKey("openrouter"), "ai-provider-key");
+      assert.equal((await resolveCredential("openrouter"))?.token, "ai-provider-key");
     });
 
-    it("prefers imagegen config key over AI provider key", () => {
+    it("prefers imagegen config key over AI provider key", async () => {
       const config = readGlobalConfig();
       config.ai = { providers: { openrouter: { apiKey: "ai-provider-key" } } };
       writeGlobalConfig(config);
       saveProviderConfig("openrouter", "imagegen-key");
-      assert.equal(resolveApiKey("openrouter"), "imagegen-key");
+      assert.equal((await resolveCredential("openrouter"))?.token, "imagegen-key");
     });
   });
 

@@ -10,10 +10,23 @@ import { type ImagegenConfig, readGlobalConfig, writeGlobalConfig } from "../con
 
 // --- Provider registry ---
 
+/**
+ * A resolved credential for a provider. Image providers accept either a
+ * subscription OAuth access token or a metered API key; the `kind` lets a
+ * provider that supports both (e.g. xai) branch on which it received.
+ */
+export type Credential = { kind: "oauth" | "api_key"; token: string };
+
 type ImagegenProviderDef = {
   envVar: string;
-  generate: (model: string, prompt: string, apiKey: string) => Promise<Buffer>;
-  search: (query: string, apiKey: string) => Promise<ModelSearchResult[]>;
+  /**
+   * AI-provider config id to borrow credentials from (chat/image unification).
+   * Defaults to the imagegen provider id itself, preserving the historical
+   * behavior where imagegen reused `ai.providers[<same-id>]`.
+   */
+  aiProviderId?: string;
+  generate: (model: string, prompt: string, cred: Credential) => Promise<Buffer>;
+  search: (query: string, cred: Credential) => Promise<ModelSearchResult[]>;
 };
 
 const PROVIDERS: Record<string, ImagegenProviderDef> = {
@@ -31,8 +44,8 @@ const PROVIDERS: Record<string, ImagegenProviderDef> = {
 
 // --- Replicate provider ---
 
-async function replicateGenerate(model: string, prompt: string, apiKey: string): Promise<Buffer> {
-  const replicate = new Replicate({ auth: apiKey });
+async function replicateGenerate(model: string, prompt: string, cred: Credential): Promise<Buffer> {
+  const replicate = new Replicate({ auth: cred.token });
   const output = await replicate.run(model as `${string}/${string}`, {
     input: { prompt },
   });
@@ -55,8 +68,8 @@ async function replicateGenerate(model: string, prompt: string, apiKey: string):
   return Buffer.concat(chunks);
 }
 
-async function replicateSearch(query: string, apiKey: string): Promise<ModelSearchResult[]> {
-  const replicate = new Replicate({ auth: apiKey });
+async function replicateSearch(query: string, cred: Credential): Promise<ModelSearchResult[]> {
+  const replicate = new Replicate({ auth: cred.token });
   const response = await replicate.models.search(query || "text to image");
   return response.results.slice(0, 20).map((m) => ({
     id: `replicate:${m.owner}/${m.name}`,
@@ -68,12 +81,16 @@ async function replicateSearch(query: string, apiKey: string): Promise<ModelSear
 
 // --- OpenRouter provider ---
 
-async function openrouterGenerate(model: string, prompt: string, apiKey: string): Promise<Buffer> {
+async function openrouterGenerate(
+  model: string,
+  prompt: string,
+  cred: Credential,
+): Promise<Buffer> {
   const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
+      Authorization: `Bearer ${cred.token}`,
     },
     body: JSON.stringify({
       model,
@@ -108,7 +125,7 @@ async function openrouterGenerate(model: string, prompt: string, apiKey: string)
   return Buffer.from(await imgRes.arrayBuffer());
 }
 
-async function openrouterSearch(query: string, _apiKey: string): Promise<ModelSearchResult[]> {
+async function openrouterSearch(query: string, _cred: Credential): Promise<ModelSearchResult[]> {
   const res = await fetch("https://openrouter.ai/api/v1/models?output_modalities=image");
   if (!res.ok) throw new Error(`OpenRouter model list failed: ${res.status}`);
 
@@ -199,18 +216,34 @@ export function getConfiguredProviders(): ConfiguredProvider[] {
   });
 }
 
-export function resolveApiKey(providerId: string): string | undefined {
+/**
+ * Resolve a usable credential for a provider, in precedence order:
+ *   1. imagegen-specific config key (explicit admin override)
+ *   2. linked AI provider's OAuth (subscription — preferred over ambient keys)
+ *   3. linked AI provider's API key (e.g. OpenRouter configured for chat)
+ *   4. env var fallback
+ * Async because the OAuth branch refreshes + persists rotated tokens.
+ */
+export async function resolveCredential(providerId: string): Promise<Credential | undefined> {
   const provider = PROVIDERS[providerId];
   if (!provider) return undefined;
+  const aiProviderId = provider.aiProviderId ?? providerId;
   const config = readGlobalConfig();
+
   // 1. Imagegen-specific config key
   const configKey = config.imagegen?.providers?.[providerId]?.apiKey;
-  if (configKey) return configKey;
-  // 2. AI provider config key (e.g., OpenRouter configured for chat)
-  const aiKey = config.ai?.providers?.[providerId]?.apiKey;
-  if (aiKey) return aiKey;
-  // 3. Env var fallback
-  return process.env[provider.envVar] || undefined;
+  if (configKey) return { kind: "api_key", token: configKey };
+
+  // 3. AI provider config key (e.g. OpenRouter configured for chat)
+  //    (OAuth — step 2 — is added when subscription providers land.)
+  const aiKey = config.ai?.providers?.[aiProviderId]?.apiKey;
+  if (aiKey) return { kind: "api_key", token: aiKey };
+
+  // 4. Env var fallback
+  const envKey = process.env[provider.envVar];
+  if (envKey) return { kind: "api_key", token: envKey };
+
+  return undefined;
 }
 
 // --- Model discovery ---
@@ -257,17 +290,17 @@ export async function searchModels(
   if (provider) {
     const providerDef = PROVIDERS[provider];
     if (!providerDef) throw new Error(`Unknown imagegen provider: ${provider}`);
-    const apiKey = resolveApiKey(provider);
-    if (!apiKey) throw new Error(`No ${provider} API key configured`);
-    return providerDef.search(query || "text to image", apiKey);
+    const cred = await resolveCredential(provider);
+    if (!cred) throw new Error(`No ${provider} credentials configured`);
+    return providerDef.search(query || "text to image", cred);
   }
 
   // Search all configured providers in parallel
   const searches: Promise<ModelSearchResult[]>[] = [];
   for (const [id, def] of Object.entries(PROVIDERS)) {
-    const apiKey = resolveApiKey(id);
-    if (!apiKey) continue;
-    searches.push(def.search(query || "text to image", apiKey).catch(() => []));
+    const cred = await resolveCredential(id);
+    if (!cred) continue;
+    searches.push(def.search(query || "text to image", cred).catch(() => []));
   }
   if (searches.length === 0) {
     throw new Error("No imagegen providers configured");
@@ -279,7 +312,7 @@ export async function searchModels(
 
 export async function generateImage(model: string, prompt: string): Promise<Buffer> {
   const { provider: providerId, model: modelId } = parseModelId(model);
-  const apiKey = resolveApiKey(providerId);
-  if (!apiKey) throw new Error(`No ${providerId} API key configured`);
-  return PROVIDERS[providerId].generate(modelId, prompt, apiKey);
+  const cred = await resolveCredential(providerId);
+  if (!cred) throw new Error(`No ${providerId} credentials configured`);
+  return PROVIDERS[providerId].generate(modelId, prompt, cred);
 }
