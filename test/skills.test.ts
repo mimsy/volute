@@ -648,6 +648,23 @@ describe("syncBuiltinSkills", () => {
     assert.ok(second);
     assert.equal(second.version, first.version + 1, "version should bump when content differs");
   });
+
+  it("repopulates the DB row when the on-disk pool survives a DB reset", async () => {
+    await syncBuiltinSkills();
+    assert.ok(await getSharedSkill("memory"), "memory should be synced initially");
+
+    // Simulate a DB reset that leaves the on-disk shared pool intact: drop the
+    // row but keep the disk copy (whose hash still matches source).
+    const db = await getDb();
+    await db.delete(sharedSkills).where(eq(sharedSkills.id, "memory"));
+    assert.equal(await getSharedSkill("memory"), undefined, "row should be gone");
+    assert.ok(existsSync(join(sharedSkillsDir(), "memory", "SKILL.md")), "disk copy should remain");
+
+    // Sync must re-import (not skip on the matching disk hash) so the row returns —
+    // listSharedSkills()/the UI read the DB, not the disk.
+    await syncBuiltinSkills();
+    assert.ok(await getSharedSkill("memory"), "memory row should be repopulated after sync");
+  });
 });
 
 describe("hook shim management", () => {

@@ -927,11 +927,14 @@ export async function syncBuiltinSkills(): Promise<void> {
     try {
       const sourceHash = hashSkillDir(sourceDir);
 
-      // Check if shared pool already has this version
+      // Skip only when the shared pool already has this version on disk AND the
+      // DB row exists — the DB is what listSharedSkills() (and the UI) reads. If
+      // they ever diverge (e.g. the DB is reset but the on-disk pool survives),
+      // re-import so the row is repopulated rather than silently missing.
       const destDir = join(sharedSkillsDir(), entry.name);
       if (existsSync(destDir)) {
         const destHash = hashSkillDir(destDir);
-        if (sourceHash === destHash) continue;
+        if (sourceHash === destHash && (await getSharedSkill(entry.name))) continue;
       }
 
       await importSkillFromDir(sourceDir, "volute");
