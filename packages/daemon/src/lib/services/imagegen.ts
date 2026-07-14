@@ -7,9 +7,19 @@
 
 import Replicate from "replicate";
 import { resolveOAuthCredentials } from "../ai-service.js";
-import { type ImagegenConfig, readGlobalConfig, writeGlobalConfig } from "../config/setup.js";
-import { codexGenerate, codexSearch } from "./imagegen-codex.js";
-import { xaiGenerate, xaiSearch } from "./imagegen-xai.js";
+import {
+  type ImagegenConfig,
+  type ImagegenEntitlement,
+  readGlobalConfig,
+  writeGlobalConfig,
+} from "../config/setup.js";
+import {
+  CodexNotEntitledError,
+  codexGenerate,
+  codexSearch,
+  probeCodexEntitlement,
+} from "./imagegen-codex.js";
+import { XaiNotEntitledError, xaiGenerate, xaiSearch } from "./imagegen-xai.js";
 
 // --- Provider registry ---
 
@@ -219,6 +229,7 @@ export type ConfiguredProvider = {
   id: string;
   configured: boolean;
   authMethod: "api_key" | "oauth" | "env_var" | null;
+  entitlement?: ImagegenEntitlement;
 };
 
 /**
@@ -236,13 +247,16 @@ export function getConfiguredProviders(): ConfiguredProvider[] {
   return Object.entries(PROVIDERS).map(([id, { envVar, aiProviderId }]) => {
     const aiId = aiProviderId ?? id;
     const providerConfig = ig?.providers?.[id];
-    if (providerConfig?.apiKey) return { id, configured: true, authMethod: "api_key" as const };
-    if (aiProviders?.[aiId]?.oauth) return { id, configured: true, authMethod: "oauth" as const };
-    if (aiProviders?.[aiId]?.apiKey)
-      return { id, configured: true, authMethod: "api_key" as const };
-    if (envVar && process.env[envVar])
-      return { id, configured: true, authMethod: "env_var" as const };
-    return { id, configured: false, authMethod: null };
+    const entitlement = ig?.entitlements?.[id];
+
+    let base: Pick<ConfiguredProvider, "configured" | "authMethod">;
+    if (providerConfig?.apiKey) base = { configured: true, authMethod: "api_key" };
+    else if (aiProviders?.[aiId]?.oauth) base = { configured: true, authMethod: "oauth" };
+    else if (aiProviders?.[aiId]?.apiKey) base = { configured: true, authMethod: "api_key" };
+    else if (envVar && process.env[envVar]) base = { configured: true, authMethod: "env_var" };
+    else base = { configured: false, authMethod: null };
+
+    return { id, ...base, entitlement };
   });
 }
 
@@ -342,11 +356,97 @@ export async function searchModels(
   return (await Promise.all(searches)).flat();
 }
 
+// --- Entitlement ---
+//
+// A credential can be valid yet not allowed to generate images (a ChatGPT plan
+// without the hosted image tool; an xAI tier that isn't allowlisted). That is
+// NOT a misconfiguration, so it's tracked separately and reported with an
+// actionable message rather than "not configured".
+
+/** Actionable message shown when a provider's plan isn't entitled. */
+const NOT_ENTITLED_MESSAGE: Record<string, string> = {
+  "openai-codex":
+    "Your ChatGPT plan doesn't include Codex's hosted image tool. Ask an admin to configure an OpenAI API key or another image provider.",
+  xai: "Your xAI plan tier isn't allowlisted for image generation (SuperGrok Heavy required). Ask an admin to set XAI_API_KEY to use Grok Imagine at $0.02/image.",
+};
+
+/** Providers whose credentials can be valid-but-not-entitled. */
+const ENTITLEMENT_PROVIDERS = new Set(["openai-codex", "xai"]);
+
+export function getEntitlement(providerId: string): ImagegenEntitlement | undefined {
+  return getImagegenConfig()?.entitlements?.[providerId];
+}
+
+export function getEntitlements(): Record<string, ImagegenEntitlement> {
+  return getImagegenConfig()?.entitlements ?? {};
+}
+
+function setEntitlement(
+  providerId: string,
+  state: ImagegenEntitlement["state"],
+  reason?: string,
+): ImagegenEntitlement {
+  const entitlement: ImagegenEntitlement = { state, reason, checkedAt: Date.now() };
+  updateImagegenConfig((ig) => {
+    ig.entitlements = ig.entitlements ?? {};
+    ig.entitlements[providerId] = entitlement;
+  });
+  return entitlement;
+}
+
+/**
+ * Proactively check whether a provider's plan is entitled, and cache the result.
+ * Codex probes nearly free (aborts once the tool is accepted); xAI costs one
+ * image on success but a 403 fails free. Non-entitlement providers are trivially
+ * entitled.
+ */
+export async function probeEntitlement(providerId: string): Promise<ImagegenEntitlement> {
+  if (!ENTITLEMENT_PROVIDERS.has(providerId)) {
+    return setEntitlement(providerId, "entitled");
+  }
+  const cred = await resolveCredential(providerId);
+  if (!cred) throw new Error(`No ${providerId} credentials configured`);
+
+  if (providerId === "openai-codex") {
+    const state = await probeCodexEntitlement(cred);
+    return setEntitlement(
+      providerId,
+      state,
+      state === "not_entitled" ? NOT_ENTITLED_MESSAGE[providerId] : undefined,
+    );
+  }
+  // xai: attempt a small generation; a 403 (not entitled) is caught below.
+  try {
+    await xaiGenerate("grok-imagine-image", "entitlement probe", cred);
+    return setEntitlement(providerId, "entitled");
+  } catch (err) {
+    if (err instanceof XaiNotEntitledError) {
+      return setEntitlement(providerId, "not_entitled", NOT_ENTITLED_MESSAGE[providerId]);
+    }
+    throw err;
+  }
+}
+
 // --- Generation ---
 
 export async function generateImage(model: string, prompt: string): Promise<Buffer> {
   const { provider: providerId, model: modelId } = parseModelId(model);
   const cred = await resolveCredential(providerId);
   if (!cred) throw new Error(`No ${providerId} credentials configured`);
-  return PROVIDERS[providerId].generate(modelId, prompt, cred);
+
+  try {
+    const buf = await PROVIDERS[providerId].generate(modelId, prompt, cred);
+    // A success confirms entitlement — refresh the cache (plans change).
+    if (ENTITLEMENT_PROVIDERS.has(providerId)) setEntitlement(providerId, "entitled");
+    return buf;
+  } catch (err) {
+    // Not-entitled is a plan limitation, not a config error: cache it and
+    // hard-fail with an actionable message (never silently swap providers).
+    if (err instanceof CodexNotEntitledError || err instanceof XaiNotEntitledError) {
+      const message = NOT_ENTITLED_MESSAGE[providerId] ?? err.message;
+      setEntitlement(providerId, "not_entitled", message);
+      throw new Error(message);
+    }
+    throw err;
+  }
 }

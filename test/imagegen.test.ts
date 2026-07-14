@@ -3,9 +3,12 @@ import { afterEach, describe, it } from "node:test";
 import { readGlobalConfig, writeGlobalConfig } from "../packages/daemon/src/lib/config/setup.js";
 import { registerXaiOAuthProvider } from "../packages/daemon/src/lib/oauth/xai.js";
 import {
+  generateImage,
   getConfiguredProviders,
   getEnabledModels,
+  getEntitlement,
   parseModelId,
+  probeEntitlement,
   removeProviderConfig,
   resolveCredential,
   saveProviderConfig,
@@ -577,6 +580,105 @@ describe("imagegen xai provider", () => {
     assert.equal(xaiApiKeyFallback(), "ai-key");
     saveProviderConfig("xai", "imagegen-key");
     assert.equal(xaiApiKeyFallback(), "imagegen-key");
+  });
+});
+
+describe("imagegen entitlement", () => {
+  const realFetch = globalThis.fetch;
+  const PNG_B64 =
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+  const CODEX_SENTINEL = "Tool choice 'image_generation' not found in 'tools' parameter.";
+
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+    const config = readGlobalConfig();
+    delete config.imagegen;
+    delete config.ai;
+    writeGlobalConfig(config);
+    delete process.env.XAI_API_KEY;
+  });
+
+  function configureCodexOAuth() {
+    const config = readGlobalConfig();
+    config.ai = {
+      providers: {
+        "openai-codex": { oauth: { access: "codex-tok", refresh: "r", expires: 4102444800000 } },
+      },
+    };
+    writeGlobalConfig(config);
+  }
+
+  it("hard-fails with an actionable message and caches not_entitled (codex)", async () => {
+    configureCodexOAuth();
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ detail: CODEX_SENTINEL }), { status: 400 })) as typeof fetch;
+
+    await assert.rejects(
+      generateImage("openai-codex:gpt-image-2", "a cat"),
+      /ChatGPT plan doesn't include/,
+    );
+    const ent = getEntitlement("openai-codex");
+    assert.equal(ent?.state, "not_entitled");
+    assert.ok(ent?.checkedAt);
+  });
+
+  it("caches entitled after a successful generation (codex)", async () => {
+    configureCodexOAuth();
+    globalThis.fetch = (async () => {
+      const sse =
+        "event: response.image_generation_call.partial_image\n" +
+        `data: {"type":"response.image_generation_call.partial_image","partial_image_b64":"${PNG_B64}"}\n\n`;
+      const bytes = new TextEncoder().encode(sse);
+      return new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(bytes);
+            controller.close();
+          },
+        }),
+        { status: 200 },
+      );
+    }) as typeof fetch;
+
+    const buf = await generateImage("openai-codex:gpt-image-2", "a cat");
+    assert.deepEqual(buf, Buffer.from(PNG_B64, "base64"));
+    assert.equal(getEntitlement("openai-codex")?.state, "entitled");
+  });
+
+  it("hard-fails and caches not_entitled when xAI OAuth 403s with no key fallback", async () => {
+    const config = readGlobalConfig();
+    config.ai = {
+      providers: { xai: { oauth: { access: "x-tok", refresh: "r", expires: 4102444800000 } } },
+    };
+    writeGlobalConfig(config);
+    globalThis.fetch = (async () => new Response("forbidden", { status: 403 })) as typeof fetch;
+
+    await assert.rejects(
+      generateImage("xai:grok-imagine-image", "a fox"),
+      /plan tier isn't allowlisted/,
+    );
+    assert.equal(getEntitlement("xai")?.state, "not_entitled");
+  });
+
+  it("probeEntitlement(xai) records entitled on success and not_entitled on OAuth 403", async () => {
+    // OAuth credential, no XAI_API_KEY fallback — a 403 is the tier-gating case.
+    const config = readGlobalConfig();
+    config.ai = {
+      providers: { xai: { oauth: { access: "x-tok", refresh: "r", expires: 4102444800000 } } },
+    };
+    writeGlobalConfig(config);
+
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ data: [{ b64_json: PNG_B64 }] }), {
+        status: 200,
+      })) as typeof fetch;
+    const ok = await probeEntitlement("xai");
+    assert.equal(ok.state, "entitled");
+
+    globalThis.fetch = (async () => new Response("forbidden", { status: 403 })) as typeof fetch;
+    const bad = await probeEntitlement("xai");
+    assert.equal(bad.state, "not_entitled");
+    assert.match(bad.reason ?? "", /allowlisted/);
   });
 });
 

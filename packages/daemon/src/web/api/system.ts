@@ -43,6 +43,7 @@ import {
   getDefaultModel as getImagegenDefaultModel,
   getEnabledModels as getImagegenModels,
   getConfiguredProviders as getImagegenProviders,
+  probeEntitlement as probeImagegenEntitlement,
   removeProviderConfig as removeImagegenProvider,
   saveProviderConfig as saveImagegenProvider,
   searchModels,
@@ -292,6 +293,17 @@ const app = new Hono<AuthEnv>()
       return c.json({ error: err instanceof Error ? err.message : "Failed to remove" }, 400);
     }
     return c.json({ ok: true });
+  })
+  // Probe whether a provider's plan is entitled to generate images, caching the
+  // verdict so Settings can badge it before any mind tries. Admin-only (it can
+  // spend a small amount against the account — e.g. one xAI image on success).
+  .post("/imagegen/providers/:id/probe", requireAdmin, async (c) => {
+    try {
+      const entitlement = await probeImagegenEntitlement(c.req.param("id"));
+      return c.json(entitlement);
+    } catch (err) {
+      return c.json({ error: err instanceof Error ? err.message : "Probe failed" }, 400);
+    }
   })
   .get("/imagegen/models", requireAdmin, (c) => {
     const models = getImagegenModels();

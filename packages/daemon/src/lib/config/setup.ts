@@ -46,11 +46,25 @@ export type AiConfig = {
 /** Shared across daemon services (imagegen, future TTS, etc.) */
 export type ServiceProviderConfig = { apiKey?: string };
 
+/**
+ * Whether a provider's credential is actually allowed to generate images.
+ * Distinct from "configured": a plan can be authenticated yet not entitled
+ * (ChatGPT plan without the hosted image tool; xAI tier not allowlisted).
+ * Non-secret — lives in config.json, keyed by provider id.
+ */
+export type ImagegenEntitlement = {
+  state: "entitled" | "not_entitled";
+  reason?: string;
+  checkedAt: number;
+};
+
 export type ImagegenConfig = {
   enabled?: boolean;
   providers?: Record<string, ServiceProviderConfig>;
   models?: string[];
   defaultModel?: string;
+  /** Per-provider entitlement cache (sibling of providers → stays in config.json). */
+  entitlements?: Record<string, ImagegenEntitlement>;
 };
 
 export type BackupSettings = {

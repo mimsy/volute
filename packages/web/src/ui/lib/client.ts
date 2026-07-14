@@ -720,10 +720,17 @@ export function saveMindDefaults(defaults: MindDefaults): Promise<void> {
 
 // --- Imagegen ---
 
+export type ImagegenEntitlement = {
+  state: "entitled" | "not_entitled";
+  reason?: string;
+  checkedAt: number;
+};
+
 export type ImagegenProvider = {
   id: string;
   configured: boolean;
-  authMethod: "api_key" | "env_var" | null;
+  authMethod: "api_key" | "oauth" | "env_var" | null;
+  entitlement?: ImagegenEntitlement;
 };
 
 export type ImagegenModelSearchResult = {
@@ -743,6 +750,10 @@ export function saveImagegenProviderConfig(id: string, apiKey: string): Promise<
 
 export function removeImagegenProviderConfig(id: string): Promise<void> {
   return del(`${V1}/system/imagegen/providers/${enc(id)}`);
+}
+
+export function probeImagegenEntitlement(id: string): Promise<ImagegenEntitlement> {
+  return post(`${V1}/system/imagegen/providers/${enc(id)}/probe`, {});
 }
 
 export function fetchImagegenModels(): Promise<{ models: string[]; defaultModel: string | null }> {

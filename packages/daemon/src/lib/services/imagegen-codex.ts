@@ -156,6 +156,60 @@ export async function codexGenerate(
   return parseCodexImageStream(res.body);
 }
 
+/**
+ * Cheaply probe whether the account is entitled to the hosted image tool: force
+ * the tool, then abort the stream the instant it's accepted (the
+ * `image_generation_call.in_progress` event) — so we learn entitlement without
+ * paying for a full image. A 400 with the sentinel means not entitled.
+ */
+export async function probeCodexEntitlement(
+  cred: Credential,
+): Promise<"entitled" | "not_entitled"> {
+  const controller = new AbortController();
+  let res: Response;
+  try {
+    res = await fetch(CODEX_RESPONSES_URL, {
+      method: "POST",
+      headers: codexHeaders(cred.token),
+      body: JSON.stringify(buildCodexRequest("gpt-image-2", "entitlement probe")),
+      signal: controller.signal,
+    });
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") return "entitled";
+    throw err;
+  }
+
+  if (res.status === 400) {
+    const body = await res.text().catch(() => "");
+    if (body.includes(CODEX_NOT_ENTITLED_SENTINEL)) return "not_entitled";
+    throw new Error(`Codex entitlement probe failed (400): ${body.slice(0, 200)}`);
+  }
+  if (!res.ok || !res.body) {
+    throw new Error(`Codex entitlement probe failed (${res.status})`);
+  }
+
+  // Stream until the tool is accepted, then abort — the account is entitled.
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      if (buf.includes("response.image_generation_call.in_progress")) {
+        controller.abort();
+        return "entitled";
+      }
+    }
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") return "entitled";
+    throw err;
+  }
+  // Stream ended without the tool starting — treat as not entitled.
+  return "not_entitled";
+}
+
 // Codex exposes a single hosted image model; return it statically so it can be
 // enabled in the model-selection UI like any other.
 export async function codexSearch(_query: string, _cred: Credential): Promise<ModelSearchResult[]> {
