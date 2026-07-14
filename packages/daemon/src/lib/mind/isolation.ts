@@ -266,3 +266,23 @@ export async function chownMindDir(dir: string, name: string): Promise<void> {
     throw new Error(`Failed to chmod ${dir}${stderr ? `: ${stderr}` : ""}`);
   }
 }
+
+/**
+ * Set ownership of a single file the daemon wrote into a mind's dir to that
+ * mind's system user. Targeted counterpart to chownMindDir — used when the
+ * daemon drops one file (e.g. a generated image) into home/ and must hand it to
+ * the mind without re-chowning the whole tree. No-op when isolation is off.
+ */
+export async function chownMindFile(filePath: string, name: string): Promise<void> {
+  if (!isIsolationEnabled()) return;
+  const user = mindUserName(name);
+  const group = process.platform === "darwin" ? "volute" : user;
+  try {
+    await exec("chown", [`${user}:${group}`, filePath]);
+  } catch (err) {
+    const stderr = String((err as { stderr?: string })?.stderr ?? "").trim();
+    throw new Error(
+      `Failed to chown ${filePath} to ${user}:${group}${stderr ? `: ${stderr}` : ""}`,
+    );
+  }
+}

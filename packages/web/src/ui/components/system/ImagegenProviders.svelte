@@ -1,10 +1,13 @@
 <script lang="ts">
 import { Modal } from "@volute/ui";
+import { SvelteSet } from "svelte/reactivity";
 import {
   fetchImagegenModels,
   fetchImagegenProviders,
+  type ImagegenEntitlement,
   type ImagegenModelSearchResult,
   type ImagegenProvider,
+  probeImagegenEntitlement,
   removeImagegenProviderConfig,
   saveEnabledImagegenModels,
   saveImagegenProviderConfig,
@@ -40,8 +43,28 @@ function modelsForProvider(providerId: string) {
 
 function authMethodLabel(method: string | null): string {
   if (method === "api_key") return "API key";
+  if (method === "oauth") return "OAuth";
   if (method === "env_var") return "env var";
   return "";
+}
+
+let probing = new SvelteSet<string>();
+
+async function handleProbe(id: string) {
+  probing.add(id);
+  error = "";
+  try {
+    // Result is persisted server-side; reload picks up the updated entitlement.
+    const result: ImagegenEntitlement = await probeImagegenEntitlement(id);
+    if (result.state === "not_entitled" && !result.reason) {
+      error = "Provider plan is not entitled to generate images.";
+    }
+    await load();
+  } catch (err) {
+    error = err instanceof Error ? err.message : "Failed to check entitlement";
+  } finally {
+    probing.delete(id);
+  }
 }
 
 export async function load() {
@@ -191,8 +214,19 @@ $effect(() => {
       <div class="provider-header">
         <span class="provider-name">{provider.id}</span>
         <span class="auth-badge">{authMethodLabel(provider.authMethod)}</span>
+        {#if provider.entitlement?.state === "entitled"}
+          <span class="entitlement-badge entitled">Ready</span>
+        {:else if provider.entitlement?.state === "not_entitled"}
+          <span class="entitlement-badge not-entitled">Plan not entitled</span>
+        {/if}
+        <button class="check-btn" onclick={() => handleProbe(provider.id)} disabled={saving || probing.has(provider.id)}>
+          {probing.has(provider.id) ? "..." : "Check"}
+        </button>
         <button class="remove-btn" onclick={() => handleProviderRemove(provider.id)} disabled={saving}>Remove</button>
       </div>
+      {#if provider.entitlement?.state === "not_entitled" && provider.entitlement.reason}
+        <div class="entitlement-reason">{provider.entitlement.reason}</div>
+      {/if}
       <div class="provider-models">
         {#if providerModels.length > 0}
           <div class="model-tags">
@@ -359,6 +393,45 @@ $effect(() => {
     background: var(--bg-3);
     color: var(--text-2);
   }
+
+  .entitlement-badge {
+    font-size: 11px;
+    padding: 1px 6px;
+    border-radius: 3px;
+    border: 1px solid transparent;
+  }
+
+  .entitlement-badge.entitled {
+    color: var(--green);
+    background: rgba(74, 222, 128, 0.1);
+    border-color: rgba(74, 222, 128, 0.25);
+  }
+
+  .entitlement-badge.not-entitled {
+    color: var(--red);
+    background: var(--red-bg);
+    border-color: var(--red-border);
+  }
+
+  .entitlement-reason {
+    margin-top: 6px;
+    font-size: 12px;
+    color: var(--red);
+  }
+
+  .check-btn {
+    font-family: inherit;
+    font-size: 11px;
+    padding: 2px 8px;
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text-2);
+    cursor: pointer;
+  }
+
+  .check-btn:hover:not(:disabled) { color: var(--text-0); border-color: var(--border-bright); }
+  .check-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
   .remove-btn {
     font-family: inherit;

@@ -267,6 +267,13 @@ export async function startDaemon(opts: {
   const delivery = initDeliveryManager();
   const manager = initMindManager();
   manager.loadCrashAttempts();
+
+  // Register the xAI (Grok) OAuth provider before any minds start, so a running
+  // xai-model mind can resolve its subscription OAuth credentials at boot. (Also
+  // powers Grok Imagine image generation via the provider OAuth UI.)
+  const { registerXaiOAuthProvider } = await import("./lib/oauth/xai.js");
+  registerXaiOAuthProvider();
+
   const bridgeManager = initBridgeManager();
   const scheduler = initScheduler();
   scheduler.start();

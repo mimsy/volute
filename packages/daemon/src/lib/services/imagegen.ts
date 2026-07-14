@@ -6,14 +6,46 @@
  */
 
 import Replicate from "replicate";
-import { type ImagegenConfig, readGlobalConfig, writeGlobalConfig } from "../config/setup.js";
+import { resolveOAuthCredentials } from "../ai-service.js";
+import {
+  type ImagegenConfig,
+  type ImagegenEntitlement,
+  readGlobalConfig,
+  writeGlobalConfig,
+} from "../config/setup.js";
+import {
+  CodexNotEntitledError,
+  codexGenerate,
+  codexSearch,
+  probeCodexEntitlement,
+} from "./imagegen-codex.js";
+import { XaiNotEntitledError, xaiGenerate, xaiSearch } from "./imagegen-xai.js";
 
 // --- Provider registry ---
 
+/**
+ * A resolved credential for a provider. Image providers accept either a
+ * subscription OAuth access token or a metered API key; the `kind` lets a
+ * provider that supports both (e.g. xai) branch on which it received.
+ */
+export type Credential = { kind: "oauth" | "api_key"; token: string };
+
 type ImagegenProviderDef = {
-  envVar: string;
-  generate: (model: string, prompt: string, apiKey: string) => Promise<Buffer>;
-  search: (query: string, apiKey: string) => Promise<ModelSearchResult[]>;
+  /** Env var holding a metered API key, or omitted for subscription-only providers. */
+  envVar?: string;
+  /**
+   * AI-provider config id to borrow credentials from (chat/image unification).
+   * Defaults to the imagegen provider id itself, preserving the historical
+   * behavior where imagegen reused `ai.providers[<same-id>]`.
+   */
+  aiProviderId?: string;
+  generate: (
+    model: string,
+    prompt: string,
+    cred: Credential,
+    signal?: AbortSignal,
+  ) => Promise<Buffer>;
+  search: (query: string, cred: Credential) => Promise<ModelSearchResult[]>;
 };
 
 const PROVIDERS: Record<string, ImagegenProviderDef> = {
@@ -27,14 +59,35 @@ const PROVIDERS: Record<string, ImagegenProviderDef> = {
     generate: openrouterGenerate,
     search: openrouterSearch,
   },
+  "openai-codex": {
+    // Subscription-only: no env var API key path. Credentials come from the
+    // openai-codex AI provider's OAuth (chat/image unification).
+    aiProviderId: "openai-codex",
+    generate: codexGenerate,
+    search: codexSearch,
+  },
+  xai: {
+    // Both credential kinds hit the same endpoint: subscription OAuth (preferred)
+    // or a metered XAI_API_KEY. OAuth 403s fall back to the key (see imagegen-xai).
+    envVar: "XAI_API_KEY",
+    aiProviderId: "xai",
+    generate: xaiGenerate,
+    search: xaiSearch,
+  },
 };
 
 // --- Replicate provider ---
 
-async function replicateGenerate(model: string, prompt: string, apiKey: string): Promise<Buffer> {
-  const replicate = new Replicate({ auth: apiKey });
+async function replicateGenerate(
+  model: string,
+  prompt: string,
+  cred: Credential,
+  signal?: AbortSignal,
+): Promise<Buffer> {
+  const replicate = new Replicate({ auth: cred.token });
   const output = await replicate.run(model as `${string}/${string}`, {
     input: { prompt },
+    signal,
   });
 
   const file = Array.isArray(output) ? output[0] : output;
@@ -42,7 +95,7 @@ async function replicateGenerate(model: string, prompt: string, apiKey: string):
 
   // Some models return a URL string instead of FileOutput
   if (typeof file === "string") {
-    const res = await fetch(file);
+    const res = await fetch(file, { signal });
     if (!res.ok) throw new Error(`Failed to fetch image from URL: ${res.status}`);
     return Buffer.from(await res.arrayBuffer());
   }
@@ -55,8 +108,8 @@ async function replicateGenerate(model: string, prompt: string, apiKey: string):
   return Buffer.concat(chunks);
 }
 
-async function replicateSearch(query: string, apiKey: string): Promise<ModelSearchResult[]> {
-  const replicate = new Replicate({ auth: apiKey });
+async function replicateSearch(query: string, cred: Credential): Promise<ModelSearchResult[]> {
+  const replicate = new Replicate({ auth: cred.token });
   const response = await replicate.models.search(query || "text to image");
   return response.results.slice(0, 20).map((m) => ({
     id: `replicate:${m.owner}/${m.name}`,
@@ -68,18 +121,24 @@ async function replicateSearch(query: string, apiKey: string): Promise<ModelSear
 
 // --- OpenRouter provider ---
 
-async function openrouterGenerate(model: string, prompt: string, apiKey: string): Promise<Buffer> {
+async function openrouterGenerate(
+  model: string,
+  prompt: string,
+  cred: Credential,
+  signal?: AbortSignal,
+): Promise<Buffer> {
   const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
+      Authorization: `Bearer ${cred.token}`,
     },
     body: JSON.stringify({
       model,
       messages: [{ role: "user", content: prompt }],
       modalities: ["image", "text"],
     }),
+    signal,
   });
 
   if (!res.ok) {
@@ -103,12 +162,12 @@ async function openrouterGenerate(model: string, prompt: string, apiKey: string)
   }
 
   // Regular URL — fetch it
-  const imgRes = await fetch(imageUrl);
+  const imgRes = await fetch(imageUrl, { signal });
   if (!imgRes.ok) throw new Error(`Failed to fetch image from URL: ${imgRes.status}`);
   return Buffer.from(await imgRes.arrayBuffer());
 }
 
-async function openrouterSearch(query: string, _apiKey: string): Promise<ModelSearchResult[]> {
+async function openrouterSearch(query: string, _cred: Credential): Promise<ModelSearchResult[]> {
   const res = await fetch("https://openrouter.ai/api/v1/models?output_modalities=image");
   if (!res.ok) throw new Error(`OpenRouter model list failed: ${res.status}`);
 
@@ -182,35 +241,70 @@ export function removeProviderConfig(id: string): void {
 export type ConfiguredProvider = {
   id: string;
   configured: boolean;
-  authMethod: "api_key" | "env_var" | null;
+  authMethod: "api_key" | "oauth" | "env_var" | null;
+  entitlement?: ImagegenEntitlement;
 };
 
+/**
+ * Report which providers are configured. Tests config *presence* only — it must
+ * NOT resolve/refresh OAuth (that would trigger token refreshes + mind restarts
+ * on every Settings load). Liveness is carried by the entitlement badge.
+ *
+ * A provider is configured if it has an imagegen key, or its linked AI provider
+ * (chat/image unification) carries OAuth or an API key, or its env var is set.
+ */
 export function getConfiguredProviders(): ConfiguredProvider[] {
   const config = readGlobalConfig();
   const ig = config.imagegen ?? null;
   const aiProviders = config.ai?.providers;
-  return Object.entries(PROVIDERS).map(([id, { envVar }]) => {
+  return Object.entries(PROVIDERS).map(([id, { envVar, aiProviderId }]) => {
+    const aiId = aiProviderId ?? id;
     const providerConfig = ig?.providers?.[id];
-    if (providerConfig?.apiKey) return { id, configured: true, authMethod: "api_key" as const };
-    // Check AI provider config fallback
-    if (aiProviders?.[id]?.apiKey) return { id, configured: true, authMethod: "api_key" as const };
-    if (process.env[envVar]) return { id, configured: true, authMethod: "env_var" as const };
-    return { id, configured: false, authMethod: null };
+    const entitlement = ig?.entitlements?.[id];
+
+    let base: Pick<ConfiguredProvider, "configured" | "authMethod">;
+    if (providerConfig?.apiKey) base = { configured: true, authMethod: "api_key" };
+    else if (aiProviders?.[aiId]?.oauth) base = { configured: true, authMethod: "oauth" };
+    else if (aiProviders?.[aiId]?.apiKey) base = { configured: true, authMethod: "api_key" };
+    else if (envVar && process.env[envVar]) base = { configured: true, authMethod: "env_var" };
+    else base = { configured: false, authMethod: null };
+
+    return { id, ...base, entitlement };
   });
 }
 
-export function resolveApiKey(providerId: string): string | undefined {
+/**
+ * Resolve a usable credential for a provider, in precedence order:
+ *   1. imagegen-specific config key (explicit admin override)
+ *   2. linked AI provider's OAuth (subscription — preferred over ambient keys)
+ *   3. linked AI provider's API key (e.g. OpenRouter configured for chat)
+ *   4. env var fallback
+ * Async because the OAuth branch refreshes + persists rotated tokens.
+ */
+export async function resolveCredential(providerId: string): Promise<Credential | undefined> {
   const provider = PROVIDERS[providerId];
   if (!provider) return undefined;
+  const aiProviderId = provider.aiProviderId ?? providerId;
   const config = readGlobalConfig();
+
   // 1. Imagegen-specific config key
   const configKey = config.imagegen?.providers?.[providerId]?.apiKey;
-  if (configKey) return configKey;
-  // 2. AI provider config key (e.g., OpenRouter configured for chat)
-  const aiKey = config.ai?.providers?.[providerId]?.apiKey;
-  if (aiKey) return aiKey;
-  // 3. Env var fallback
-  return process.env[provider.envVar] || undefined;
+  if (configKey) return { kind: "api_key", token: configKey };
+
+  // 2. Linked AI provider's OAuth (subscription — preferred over ambient keys).
+  //    resolveOAuthCredentials refreshes + persists + fans rotated tokens out.
+  const oauth = await resolveOAuthCredentials(aiProviderId);
+  if (oauth) return { kind: "oauth", token: oauth.access };
+
+  // 3. Linked AI provider's API key (e.g. OpenRouter configured for chat)
+  const aiKey = config.ai?.providers?.[aiProviderId]?.apiKey;
+  if (aiKey) return { kind: "api_key", token: aiKey };
+
+  // 4. Env var fallback
+  const envKey = provider.envVar ? process.env[provider.envVar] : undefined;
+  if (envKey) return { kind: "api_key", token: envKey };
+
+  return undefined;
 }
 
 // --- Model discovery ---
@@ -257,17 +351,17 @@ export async function searchModels(
   if (provider) {
     const providerDef = PROVIDERS[provider];
     if (!providerDef) throw new Error(`Unknown imagegen provider: ${provider}`);
-    const apiKey = resolveApiKey(provider);
-    if (!apiKey) throw new Error(`No ${provider} API key configured`);
-    return providerDef.search(query || "text to image", apiKey);
+    const cred = await resolveCredential(provider);
+    if (!cred) throw new Error(`No ${provider} credentials configured`);
+    return providerDef.search(query || "text to image", cred);
   }
 
   // Search all configured providers in parallel
   const searches: Promise<ModelSearchResult[]>[] = [];
   for (const [id, def] of Object.entries(PROVIDERS)) {
-    const apiKey = resolveApiKey(id);
-    if (!apiKey) continue;
-    searches.push(def.search(query || "text to image", apiKey).catch(() => []));
+    const cred = await resolveCredential(id);
+    if (!cred) continue;
+    searches.push(def.search(query || "text to image", cred).catch(() => []));
   }
   if (searches.length === 0) {
     throw new Error("No imagegen providers configured");
@@ -275,11 +369,104 @@ export async function searchModels(
   return (await Promise.all(searches)).flat();
 }
 
+// --- Entitlement ---
+//
+// A credential can be valid yet not allowed to generate images (a ChatGPT plan
+// without the hosted image tool; an xAI tier that isn't allowlisted). That is
+// NOT a misconfiguration, so it's tracked separately and reported with an
+// actionable message rather than "not configured".
+
+/** Actionable message shown when a provider's plan isn't entitled. */
+const NOT_ENTITLED_MESSAGE: Record<string, string> = {
+  "openai-codex":
+    "Your ChatGPT plan doesn't include Codex's hosted image tool. Ask an admin to configure an OpenAI API key or another image provider.",
+  xai: "Your xAI plan tier isn't allowlisted for image generation (SuperGrok Heavy required). Ask an admin to set XAI_API_KEY to use Grok Imagine at $0.02/image.",
+};
+
+/** Providers whose credentials can be valid-but-not-entitled. */
+const ENTITLEMENT_PROVIDERS = new Set(["openai-codex", "xai"]);
+
+export function getEntitlement(providerId: string): ImagegenEntitlement | undefined {
+  return getImagegenConfig()?.entitlements?.[providerId];
+}
+
+export function getEntitlements(): Record<string, ImagegenEntitlement> {
+  return getImagegenConfig()?.entitlements ?? {};
+}
+
+function setEntitlement(
+  providerId: string,
+  state: ImagegenEntitlement["state"],
+  reason?: string,
+): ImagegenEntitlement {
+  const entitlement: ImagegenEntitlement =
+    state === "not_entitled"
+      ? { state, reason: reason ?? "not entitled", checkedAt: Date.now() }
+      : { state, checkedAt: Date.now() };
+  updateImagegenConfig((ig) => {
+    ig.entitlements = ig.entitlements ?? {};
+    ig.entitlements[providerId] = entitlement;
+  });
+  return entitlement;
+}
+
+/**
+ * Proactively check whether a provider's plan is entitled, and cache the result.
+ * Codex probes nearly free (aborts once the tool is accepted); xAI costs one
+ * image on success but a 403 fails free. Non-entitlement providers are trivially
+ * entitled.
+ */
+export async function probeEntitlement(providerId: string): Promise<ImagegenEntitlement> {
+  if (!ENTITLEMENT_PROVIDERS.has(providerId)) {
+    return setEntitlement(providerId, "entitled");
+  }
+  const cred = await resolveCredential(providerId);
+  if (!cred) throw new Error(`No ${providerId} credentials configured`);
+
+  if (providerId === "openai-codex") {
+    const state = await probeCodexEntitlement(cred);
+    return setEntitlement(
+      providerId,
+      state,
+      state === "not_entitled" ? NOT_ENTITLED_MESSAGE[providerId] : undefined,
+    );
+  }
+  // xai: attempt a small generation; a 403 (not entitled) is caught below.
+  try {
+    await xaiGenerate("grok-imagine-image", "entitlement probe", cred);
+    return setEntitlement(providerId, "entitled");
+  } catch (err) {
+    if (err instanceof XaiNotEntitledError) {
+      return setEntitlement(providerId, "not_entitled", NOT_ENTITLED_MESSAGE[providerId]);
+    }
+    throw err;
+  }
+}
+
 // --- Generation ---
 
-export async function generateImage(model: string, prompt: string): Promise<Buffer> {
+export async function generateImage(
+  model: string,
+  prompt: string,
+  signal?: AbortSignal,
+): Promise<Buffer> {
   const { provider: providerId, model: modelId } = parseModelId(model);
-  const apiKey = resolveApiKey(providerId);
-  if (!apiKey) throw new Error(`No ${providerId} API key configured`);
-  return PROVIDERS[providerId].generate(modelId, prompt, apiKey);
+  const cred = await resolveCredential(providerId);
+  if (!cred) throw new Error(`No ${providerId} credentials configured`);
+
+  try {
+    const buf = await PROVIDERS[providerId].generate(modelId, prompt, cred, signal);
+    // A success confirms entitlement — refresh the cache (plans change).
+    if (ENTITLEMENT_PROVIDERS.has(providerId)) setEntitlement(providerId, "entitled");
+    return buf;
+  } catch (err) {
+    // Not-entitled is a plan limitation, not a config error: cache it and
+    // hard-fail with an actionable message (never silently swap providers).
+    if (err instanceof CodexNotEntitledError || err instanceof XaiNotEntitledError) {
+      const message = NOT_ENTITLED_MESSAGE[providerId] ?? err.message;
+      setEntitlement(providerId, "not_entitled", message);
+      throw new Error(message);
+    }
+    throw err;
+  }
 }

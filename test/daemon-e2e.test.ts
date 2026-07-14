@@ -983,6 +983,85 @@ describe("daemon e2e", { timeout: 420000 }, () => {
     );
   });
 
+  it("a mind token can read the configured imagegen default model", async () => {
+    // Regression: minds used to read the default from the requireAdmin
+    // /imagegen/models route, 403, and silently fall back to a hardcoded model.
+    // The admin's configured default never reached a mind.
+    const mindUser = await getOrCreateMindUser("e2e-imagegen-default-mind");
+    const mindSession = await createSession(mindUser.id);
+
+    const DEFAULT = "replicate:e2e-owner/e2e-default-model";
+    const setRes = await daemonRequest("/api/v1/system/imagegen/models", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ models: [DEFAULT], defaultModel: DEFAULT }),
+    });
+    assert.equal(setRes.status, 200, `admin set default: ${await setRes.clone().text()}`);
+
+    // The admin-only route must still reject a mind token...
+    const adminOnly = await fetch(`${BASE_URL}/api/v1/system/imagegen/models`, {
+      headers: { Authorization: `Bearer ${mindSession}`, Origin: BASE_URL },
+    });
+    assert.equal(adminOnly.status, 403, "full models route stays admin-gated");
+
+    // ...but the mind-callable default-model route returns the configured default.
+    const asMind = await fetch(`${BASE_URL}/api/v1/system/imagegen/default-model`, {
+      headers: { Authorization: `Bearer ${mindSession}`, Origin: BASE_URL },
+    });
+    assert.equal(asMind.status, 200, `mind default-model: ${await asMind.clone().text()}`);
+    const body = (await asMind.json()) as { defaultModel?: string | null };
+    assert.equal(body.defaultModel, DEFAULT, "mind must receive the admin's configured default");
+  });
+
+  it("imagegen jobs: mind starts a job, long-polls it, and 404s an unknown one", async () => {
+    const mind = "e2e-imagegen-jobs-mind";
+    const mindUser = await getOrCreateMindUser(mind);
+    const mindSession = await createSession(mindUser.id);
+    const asMind = (path: string, init?: RequestInit): Promise<Response> =>
+      fetch(`${BASE_URL}${path}`, {
+        ...init,
+        headers: {
+          Authorization: `Bearer ${mindSession}`,
+          Origin: BASE_URL,
+          ...(init?.headers ?? {}),
+        },
+      });
+
+    // Start a job with an unconfigured provider — generation fails fast (no
+    // network), but the route must still accept the job and return an id.
+    const start = await asMind(`/api/minds/${mind}/imagegen/jobs`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "openai-codex:gpt-image-2",
+        prompt: "a test image",
+        filename: "e2e-test",
+      }),
+    });
+    assert.equal(start.status, 202, `start job: ${await start.clone().text()}`);
+    const { jobId } = (await start.json()) as { jobId: string };
+    assert.ok(jobId, "job id returned");
+
+    // Long-poll: the job settles to "error" (no credentials), and the daemon
+    // returns as soon as it does rather than waiting the full window.
+    const poll = await asMind(`/api/minds/${mind}/imagegen/jobs/${jobId}?wait=10`);
+    assert.equal(poll.status, 200, `poll job: ${await poll.clone().text()}`);
+    const job = (await poll.json()) as { status: string; error?: string };
+    assert.equal(job.status, "error", `expected error, got ${JSON.stringify(job)}`);
+
+    // A job that doesn't exist 404s (the skill maps this to "re-run generate").
+    const missing = await asMind(`/api/minds/${mind}/imagegen/jobs/does-not-exist`);
+    assert.equal(missing.status, 404, "unknown job must 404");
+
+    // Another mind cannot reach this mind's job routes (requireSelf).
+    const other = await getOrCreateMindUser("e2e-imagegen-jobs-outsider");
+    const otherSession = await createSession(other.id);
+    const cross = await fetch(`${BASE_URL}/api/minds/${mind}/imagegen/jobs/${jobId}`, {
+      headers: { Authorization: `Bearer ${otherSession}`, Origin: BASE_URL },
+    });
+    assert.equal(cross.status, 403, "another mind must not read this mind's job");
+  });
+
   it("conversations: create, send message, read back", async () => {
     await ensureTestMind();
     const brain = await ensureBrainParticipant("convo");

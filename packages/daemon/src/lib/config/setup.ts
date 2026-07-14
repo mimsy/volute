@@ -46,11 +46,23 @@ export type AiConfig = {
 /** Shared across daemon services (imagegen, future TTS, etc.) */
 export type ServiceProviderConfig = { apiKey?: string };
 
+/**
+ * Whether a provider's credential is actually allowed to generate images.
+ * Distinct from "configured": a plan can be authenticated yet not entitled
+ * (ChatGPT plan without the hosted image tool; xAI tier not allowlisted).
+ * Non-secret — lives in config.json, keyed by provider id.
+ */
+export type ImagegenEntitlement =
+  | { state: "entitled"; checkedAt: number }
+  | { state: "not_entitled"; reason: string; checkedAt: number };
+
 export type ImagegenConfig = {
   enabled?: boolean;
   providers?: Record<string, ServiceProviderConfig>;
   models?: string[];
   defaultModel?: string;
+  /** Per-provider entitlement cache (sibling of providers → stays in config.json). */
+  entitlements?: Record<string, ImagegenEntitlement>;
 };
 
 export type BackupSettings = {
@@ -354,14 +366,28 @@ export function getSystemName(): string {
   return readGlobalConfig().name ?? "this system";
 }
 
+/**
+ * AI providers that double as image providers (chat/image unification): a
+ * subscription configured for chat also enables image generation. Kept in sync
+ * with the `aiProviderId` links in services/imagegen.ts — duplicated here only
+ * to avoid a setup.ts → imagegen.ts import cycle.
+ */
+const IMAGEGEN_AI_PROVIDERS = ["openai-codex", "xai"];
+
 export function isImagegenEnabled(): boolean {
   const config = readGlobalConfig();
   const ig = config.imagegen;
-  if (!ig) return false;
   // Legacy: explicit toggle
-  if (ig.enabled === true) return true;
-  // New: enabled if any provider is configured
-  if (ig.providers && Object.keys(ig.providers).length > 0) return true;
+  if (ig?.enabled === true) return true;
+  // Enabled if any imagegen provider has a key configured
+  if (ig?.providers && Object.keys(ig.providers).length > 0) return true;
+  // Or if a subscription AI provider (codex/xai) is configured for chat, since
+  // it is auto-added as an image provider.
+  const aiProviders = config.ai?.providers;
+  for (const id of IMAGEGEN_AI_PROVIDERS) {
+    const p = aiProviders?.[id];
+    if (p?.oauth || p?.apiKey) return true;
+  }
   return false;
 }
 

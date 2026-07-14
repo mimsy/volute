@@ -35,6 +35,12 @@ const mlog = log.child("minds");
 
 const execFileAsync = promisify(execFile);
 
+// OAuth providers registered only in the daemon's pi-ai (not pi-ai built-ins),
+// so a mind's own pi-ai can't turn their stored OAuth blob into a key. For these
+// the daemon writes the resolved access token as an api_key instead. Keep in sync
+// with the daemon-only OAuth providers registered in daemon.ts (e.g. xai).
+const DAEMON_ONLY_OAUTH = new Set(["xai"]);
+
 // Benign system env vars a mind's node/tsx process needs to run. Everything else
 // from the daemon environment (ambient AWS_*/GITHUB_TOKEN/etc.) is withheld.
 const MIND_ENV_ALLOWLIST = [
@@ -335,7 +341,7 @@ export class MindManager {
             const provider = modelStr.split(":")[0];
             const piAgentDir = resolve(dir, ".mind", "pi-agent");
             const oauthCreds = await resolveOAuthCredentials(provider);
-            if (oauthCreds) {
+            if (oauthCreds && !DAEMON_ONLY_OAUTH.has(provider)) {
               // Store the full OAuth credential (not just the derived key) so
               // pi-ai's own OAuth resolution runs inside the mind — some
               // providers (GitHub Copilot) derive a per-credential baseUrl from
@@ -346,7 +352,11 @@ export class MindManager {
               await writePiProviderOAuth(piAgentDir, baseName, provider, oauthCreds);
               env.PI_CODING_AGENT_DIR = piAgentDir;
             } else {
-              const apiKey = await resolveApiKey(provider);
+              // DAEMON_ONLY_OAUTH providers (xai) are registered only in the
+              // daemon's pi-ai, so the mind can't resolve their OAuth blob — hand
+              // it the already-resolved access token as an api_key (works directly
+              // as the provider's bearer; the daemon stays the refresh authority).
+              const apiKey = oauthCreds?.access ?? (await resolveApiKey(provider));
               if (apiKey) {
                 // Write API key to pi-coding-agent auth storage so the mind can use it.
                 // The pi template watches auth.json and reloads, so the daemon can

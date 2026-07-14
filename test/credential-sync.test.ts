@@ -164,11 +164,63 @@ describe("syncProviderToMinds", () => {
     assert.equal(existsSync(resolve(codexDir, "home", ".claude", ".credentials.json")), false);
   });
 
-  it("no-ops for non-anthropic providers and when oauth is missing", async () => {
+  it("updates pi-with-xai auth as api_key, skips claude and pi-without-xai", async () => {
+    const root = tmpRoot("sync-xai");
+    const XAI_OAUTH = { access: "xai-oat-NEW", refresh: "xai-ort-NEW", expires: 1782152959152 };
+
+    // pi mind that already uses xai
+    const piDir = resolve(root, "grokky");
+    const piAgent = resolve(piDir, ".mind", "pi-agent");
+    mkdirSync(piAgent, { recursive: true });
+    writeFileSync(
+      resolve(piAgent, "auth.json"),
+      JSON.stringify({ xai: { type: "api_key", key: "OLD" } }),
+    );
+
+    // pi mind that does NOT use xai
+    const piOtherDir = resolve(root, "piother");
+    const piOtherAgent = resolve(piOtherDir, ".mind", "pi-agent");
+    mkdirSync(piOtherAgent, { recursive: true });
+    writeFileSync(
+      resolve(piOtherAgent, "auth.json"),
+      JSON.stringify({ anthropic: { type: "api_key", key: "ant-key" } }),
+    );
+
+    // claude mind — xai has no claude support, must be untouched
+    const claudeDir = resolve(root, "claudey");
+    mkdirSync(resolve(claudeDir, "home"), { recursive: true });
+
+    const entries: Record<string, { name: string; template?: string; dir: string }> = {
+      grokky: { name: "grokky", template: "pi", dir: piDir },
+      piother: { name: "piother", template: "pi", dir: piOtherDir },
+      claudey: { name: "claudey", template: "claude", dir: claudeDir },
+    };
+
+    await syncProviderToMinds("xai", {
+      getOauth: () => XAI_OAUTH,
+      listRunning: () => Object.keys(entries),
+      lookup: async (name) => entries[name],
+    });
+
+    // pi-with-xai updated to the new access token, still an api_key entry
+    const piAuth = JSON.parse(readFileSync(resolve(piAgent, "auth.json"), "utf-8"));
+    assert.equal(piAuth.xai.key, XAI_OAUTH.access);
+    assert.equal(piAuth.xai.type, "api_key");
+
+    // pi-without-xai untouched (no xai entry added)
+    const piOtherAuth = JSON.parse(readFileSync(resolve(piOtherAgent, "auth.json"), "utf-8"));
+    assert.equal(piOtherAuth.xai, undefined);
+    assert.equal(piOtherAuth.anthropic.key, "ant-key");
+
+    // claude untouched — xai never writes claude creds
+    assert.equal(existsSync(resolve(claudeDir, "home", ".claude", ".credentials.json")), false);
+  });
+
+  it("no-ops for unsupported providers and when oauth is missing", async () => {
     await syncProviderToMinds("openai-codex", {
       getOauth: () => OAUTH,
       listRunning: () => {
-        throw new Error("should not enumerate minds for non-anthropic provider");
+        throw new Error("should not enumerate minds for unsupported provider");
       },
       lookup: async () => undefined,
     });
