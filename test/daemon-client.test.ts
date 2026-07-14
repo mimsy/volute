@@ -4,7 +4,11 @@ import { createServer, type Server } from "node:http";
 import { resolve } from "node:path";
 import { after, afterEach, before, describe, it } from "node:test";
 import { Agent } from "undici";
-import { daemonDispatcher, resolveWebUrl } from "../packages/cli/src/lib/daemon-client.js";
+import {
+  daemonDispatcher,
+  resolveDaemonUrl,
+  resolveWebUrl,
+} from "../packages/cli/src/lib/daemon-client.js";
 
 // A server that waits before sending any response headers, simulating a
 // long-running daemon operation (e.g. upgrade running `npm install`).
@@ -85,5 +89,26 @@ describe("resolveWebUrl", () => {
   it("prefers VOLUTE_DAEMON_URL when set", () => {
     process.env.VOLUTE_DAEMON_URL = "https://remote.example:8443";
     assert.equal(resolveWebUrl(), "https://remote.example:8443");
+  });
+});
+
+describe("resolveDaemonUrl in a mind", () => {
+  const origToken = process.env.VOLUTE_MIND_TOKEN;
+  const origPort = process.env.VOLUTE_DAEMON_PORT;
+
+  afterEach(() => {
+    if (origToken === undefined) delete process.env.VOLUTE_MIND_TOKEN;
+    else process.env.VOLUTE_MIND_TOKEN = origToken;
+    if (origPort === undefined) delete process.env.VOLUTE_DAEMON_PORT;
+    else process.env.VOLUTE_DAEMON_PORT = origPort;
+  });
+
+  // A mind's sandbox denies the host home, so daemon.json is unreadable — without
+  // the env fallback every CLI call it makes dies with "Volute is not running".
+  it("uses the env the daemon passed instead of reading daemon.json", () => {
+    rmSync(resolve(process.env.VOLUTE_HOME!, "system", "daemon.json"), { force: true });
+    process.env.VOLUTE_MIND_TOKEN = "mind-token";
+    process.env.VOLUTE_DAEMON_PORT = "1618";
+    assert.equal(resolveDaemonUrl(), "http://127.0.0.1:1618");
   });
 });

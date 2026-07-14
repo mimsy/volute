@@ -1,4 +1,6 @@
 import { execFileSync } from "node:child_process";
+import { existsSync, realpathSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import type { SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
 import { readGlobalConfig } from "../config/setup.js";
 import log from "../util/logger.js";
@@ -138,6 +140,44 @@ export async function initSandbox(): Promise<void> {
 }
 
 /**
+ * Locate every path a sandboxed mind must be able to read to execute the `volute`
+ * CLI: the bin shim on PATH, the node install prefix, and the package root the
+ * shim resolves to.
+ *
+ * All three are needed. npm installs the shim as a symlink into
+ * `<prefix>/lib/node_modules/volute`, which under `npm link` is itself a symlink
+ * elsewhere. Seatbelt checks every hop it resolves, so a denied intermediate link
+ * fails the whole lookup — and the CLI bundle then loads sibling chunks and
+ * node_modules from the package root.
+ *
+ * Skips any `.local/bin` dir — that holds the mind's own wrapper, which re-scans
+ * PATH for the real CLI and reports "volute: command not found" if it finds none.
+ */
+export function voluteCliPaths(env: NodeJS.ProcessEnv = process.env): string[] {
+  for (const dir of (env.PATH ?? "").split(":")) {
+    if (!dir || dir.endsWith("/.local/bin")) continue;
+    const shim = resolve(dir, "volute");
+    if (!existsSync(shim)) continue;
+
+    const paths = [shim, resolve(dirname(process.execPath), "..")];
+    let target: string;
+    try {
+      target = realpathSync(shim);
+    } catch {
+      return paths;
+    }
+    for (let dir = dirname(target); dir !== dirname(dir); dir = dirname(dir)) {
+      if (existsSync(resolve(dir, "package.json"))) {
+        paths.push(dir);
+        break;
+      }
+    }
+    return paths;
+  }
+  return [];
+}
+
+/**
  * Build deny/allow read lists for a mind's sandbox.
  * Strategy: deny the user's entire home directory, then re-allow just the mind's
  * own directory via allowRead. This is much more restrictive than cherry-picking
@@ -151,7 +191,10 @@ export async function buildSandboxReadConfig(
   const userHome = process.env.HOME || "";
 
   const denyRead: string[] = [];
-  const allowRead: string[] = [mindDir];
+  // The sandbox runtime already exempts the node binary itself, but not the
+  // volute CLI. When it lives under $HOME (nvm, npm --prefix=~) the blanket
+  // denyRead below hides it, and a mind loses its only way to act or speak.
+  const allowRead: string[] = [mindDir, ...voluteCliPaths()];
 
   // Block user's entire home directory — covers .ssh, .aws, .gnupg, .config,
   // other projects, other minds, volute system state, etc.

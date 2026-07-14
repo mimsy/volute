@@ -2,7 +2,14 @@ import { resolve } from "node:path";
 import { CronExpressionParser } from "cron-parser";
 import { deliverEvent } from "../chat/system-events.js";
 import { loadMergedEnv } from "../config/env.js";
-import { findMind, mindDir, mindTmpDir, stateDir, voluteSystemDir } from "../mind/registry.js";
+import {
+  findMind,
+  mindDir,
+  mindTmpDir,
+  mindTmpEnv,
+  stateDir,
+  voluteSystemDir,
+} from "../mind/registry.js";
 import { isSandboxEnabled, wrapForSandbox } from "../mind/sandbox.js";
 import { readVoluteConfig, type Schedule, writeVoluteConfig } from "../mind/volute-config.js";
 import { exec } from "../util/exec.js";
@@ -295,7 +302,7 @@ export class Scheduler {
       VOLUTE_MIND_DIR: dir,
       VOLUTE_MIND_PORT: entry ? String(entry.port) : undefined,
       VOLUTE_MIND_TOKEN: token,
-      TMPDIR: mindTmpDir(dir),
+      ...mindTmpEnv(dir),
       PATH: `${mindLocalBin}:${currentPath}`,
     };
   }

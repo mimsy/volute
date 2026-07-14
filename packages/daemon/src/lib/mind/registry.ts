@@ -387,6 +387,15 @@ export function stateDir(name: string): string {
  * the sandbox's allowRead/allowWrite and, under user isolation, chowned to the
  * mind). Used as the mind's TMPDIR so minds never share a writable /tmp.
  */
+export function mindTmpEnv(dir: string): { TMPDIR: string; CLAUDE_CODE_TMPDIR: string } {
+  const tmp = mindTmpDir(dir);
+  // Claude Code ignores TMPDIR for its Bash scratch dir, building it as
+  // `${CLAUDE_CODE_TMPDIR ?? "/tmp"}/claude-<uid>` instead. Left unset it lands in
+  // the real /tmp, outside the sandbox's allowWrite set, and every Bash call fails
+  // with EPERM before the command runs.
+  return { TMPDIR: tmp, CLAUDE_CODE_TMPDIR: tmp };
+}
+
 export function mindTmpDir(dir: string): string {
   return resolve(dir, ".mind", "tmp");
 }

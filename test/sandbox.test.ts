@@ -1,6 +1,15 @@
 import assert from "node:assert/strict";
-import { mkdirSync, unlinkSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import {
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, resolve } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { _resetConfigCache } from "../packages/daemon/src/lib/config/setup.js";
 import { voluteSystemDir } from "../packages/daemon/src/lib/mind/registry.js";
@@ -89,6 +98,41 @@ describe("buildSandboxReadConfig", () => {
   it("allows the mind's own directory", async () => {
     const { allowRead } = await buildSandboxReadConfig("alice", "/tmp/minds/alice");
     assert.ok(allowRead.includes("/tmp/minds/alice"), "should allow mind's own dir");
+  });
+
+  // A mind acts and speaks only through the volute CLI. Installed under $HOME
+  // (nvm, npm --prefix=~) it falls under the blanket home denyRead, and the mind
+  // is left mute — so the CLI's own paths must be re-allowed.
+  it("allows the volute CLI even when it lives under the denied home dir", async () => {
+    const home = mkdtempSync(resolve(tmpdir(), "volute-cli-"));
+    const binDir = resolve(home, ".nvm/bin");
+    const pkgDir = resolve(home, ".nvm/lib/node_modules/volute");
+    mkdirSync(binDir, { recursive: true });
+    mkdirSync(resolve(pkgDir, "dist"), { recursive: true });
+    writeFileSync(resolve(pkgDir, "package.json"), "{}");
+    writeFileSync(resolve(pkgDir, "dist/cli.js"), "");
+    symlinkSync(resolve(pkgDir, "dist/cli.js"), resolve(binDir, "volute"));
+
+    const origPath = process.env.PATH;
+    process.env.HOME = home;
+    process.env.PATH = `${home}/.local/bin:${binDir}`;
+    try {
+      const { denyRead, allowRead } = await buildSandboxReadConfig("alice", "/tmp/minds/alice");
+      assert.ok(denyRead.includes(home), "home is still denied");
+      assert.ok(allowRead.includes(resolve(binDir, "volute")), "CLI shim must be readable");
+      // The bundle loads sibling chunks and node_modules, so the file alone won't run.
+      assert.ok(allowRead.includes(realpathSync(pkgDir)), "CLI package root must be readable");
+      // Seatbelt resolves every symlink hop; npm's shim points through the node
+      // prefix's lib/node_modules, so a denied hop there fails the whole lookup.
+      assert.ok(
+        allowRead.includes(resolve(dirname(process.execPath), "..")),
+        "node install prefix must be readable (npm's symlink hop lives under it)",
+      );
+    } finally {
+      if (origPath === undefined) delete process.env.PATH;
+      else process.env.PATH = origPath;
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 
   it("mind inside home dir is allowed via allowRead", async () => {
