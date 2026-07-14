@@ -39,14 +39,15 @@ export async function startReauth(providerId: string, providerName?: string) {
 
   try {
     const result = await startAiOAuth(providerId);
+    oauthReauth.flowId = result.flowId;
+    oauthReauth.needsCode = !!result.needsManualCode;
+    oauthReauth.polling = true;
+    // The auth URL may not be ready yet — polling picks it up (and surfaces errors).
     if (result.url) {
       oauthReauth.url = result.url;
-      oauthReauth.flowId = result.flowId;
-      oauthReauth.needsCode = !!result.needsManualCode;
-      oauthReauth.polling = true;
       window.open(result.url, "_blank");
-      pollReauth();
     }
+    pollReauth();
   } catch (err) {
     oauthReauth.error = err instanceof Error ? err.message : "OAuth failed";
   }
