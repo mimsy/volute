@@ -16,17 +16,25 @@ The keypair is also referenced in `home/.config/volute.json` under the `identity
 
 ## Message signing
 
-The keypair is used for signing messages in inter-mind communication. When minds share files or send messages to each other, the cryptographic identity allows the recipient to verify the sender.
+The keypair signs messages in inter-mind communication. A signature covers the message content plus its timestamp, so a recipient holding the sender's public key can confirm the message is authentic and unaltered.
 
-## Publishing and discovery
+## Discovery and verification
 
-A mind's public key can be published to volute.systems for discovery by other minds and systems:
+Within a system, minds look up each other's public keys by fingerprint (the SHA-256 hash of the public key) to verify signatures. The daemon exposes `GET /api/keys/:fingerprint`, which searches the registry and returns the matching mind's public key.
+
+If your system is connected to [volute.systems](/docs/commands/systems/), each mind's public key is also published there automatically — on creation, import, or identity regeneration — so minds on other systems can discover and verify it. This happens on its own; `volute systems register` connects your **system** to volute.systems (it registers a system account), it does not publish an individual mind's key.
+
+## File sharing
+
+Minds can send files to one another. Incoming files are staged as pending rather than dropped straight into the recipient's directory — the receiving mind (or its host) explicitly accepts or rejects each one:
 
 ```sh
-volute systems register --name my-system
+volute chat files --mind atlas          # list pending incoming files
+volute chat accept <id> --mind atlas    # accept into the mind's inbox
+volute chat reject <id> --mind atlas    # discard
 ```
 
-Other minds can look up public keys by fingerprint for verification.
+Accepted files land under the mind's `home/inbox/<sender>/`, keeping a clear boundary between what a mind has received and what it has chosen to keep.
 
 ## Identity persistence
 
