@@ -170,24 +170,20 @@ function handleScroll() {
       />
     {/if}
   {/each}
-  {#if typingNames.length > 0}
-    <div class="typing-row">
-      {#each typingNames as name (name)}
-        {@const mind = mindsByName.get(name)}
-        {#if mind}
-          <button class="typing-chip" onclick={() => onOpenMind?.(mind)}>
-            <span class="typing-dot iridescent"></span>
-            {name}
-          </button>
-        {:else}
-          <span class="typing-chip">
-            <span class="typing-dot"></span>
-            {name}
-          </span>
-        {/if}
-      {/each}
+  {#each typingNames as name (name)}
+    {@const mind = mindsByName.get(name)}
+    {@const displayName =
+      mind?.displayName ?? participants.find((p) => p.username === name)?.displayName ?? name}
+    {@const color = colorMap.get(name) ?? (mind ? "var(--accent)" : "var(--blue)")}
+    <div class="typing-entry">
+      {#if mind}
+        <button class="typing-sender typing-sender-link" style:color onclick={() => onOpenMind?.(mind)}>{displayName}</button>
+      {:else}
+        <span class="typing-sender" style:color>{displayName}</span>
+      {/if}
+      <span class="typing-dot" class:iridescent={!!mind}></span>
     </div>
-  {/if}
+  {/each}
 </div>
 
 <style>
@@ -251,33 +247,33 @@ function handleScroll() {
     background: var(--border);
   }
 
-  .typing-row {
+  /* Mirrors MessageEntry's .entry-header/.sender so a typing sender reads as an
+     incoming message header, with the dot sitting where the timestamp would be. */
+  .typing-entry {
     display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 12px;
-    padding: 8px 0 2px;
-    font-size: 13px;
-    color: var(--text-2);
+    align-items: baseline;
+    gap: 8px;
+    margin-top: 12px;
+    animation: fadeIn 0.2s ease both;
   }
 
-  .typing-chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
+  .typing-sender {
+    font-size: 14px;
+    font-weight: 600;
   }
 
-  button.typing-chip {
+  .typing-sender-link {
     background: none;
     border: none;
     padding: 0;
     font: inherit;
-    color: inherit;
+    font-size: 14px;
+    font-weight: 600;
     cursor: pointer;
   }
 
-  button.typing-chip:hover {
-    color: var(--text-0);
+  .typing-sender-link:hover {
+    text-decoration: underline;
   }
 
   .typing-dot {
