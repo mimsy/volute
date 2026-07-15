@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { afterEach, before, describe, it } from "node:test";
 import { and, eq } from "drizzle-orm";
 import { drainEvents } from "../packages/daemon/src/lib/chat/system-events.js";
+import { getTypingMap } from "../packages/daemon/src/lib/chat/typing.js";
 import { initTokenBudget } from "../packages/daemon/src/lib/daemon/token-budget.js";
 import { handleMindEvent } from "../packages/daemon/src/lib/daemon/turn-lifecycle.js";
 import {
@@ -199,6 +200,37 @@ describe("turn-lifecycle: handleMindEvent", () => {
       metadata: { input_tokens: 100, output_tokens: 50 },
     });
     // No throw is the primary assertion; the budget singleton recorded the usage.
+    await cleanup(mind);
+  });
+
+  it("typing persists through mid-turn text/outbound and clears on done", async () => {
+    const mind = "tl-typing-persist";
+    const map = getTypingMap();
+    // Delivery marks the mind typing in the triggering conversation (slug + conv-id keys).
+    map.set("@creator", mind, { persistent: true });
+    map.set("11111111-2222-3333-4444-555555555555", mind, { persistent: true });
+
+    // Mid-turn output — even on a different channel — must not clear typing.
+    await handleMindEvent(mind, {
+      type: "text",
+      session: "s1",
+      channel: "#elsewhere",
+      content: "thinking out loud",
+    });
+    assert.deepEqual(map.get("@creator"), [mind], "typing should survive mid-turn text");
+
+    await handleMindEvent(mind, {
+      type: "outbound",
+      session: "s1",
+      channel: "#elsewhere",
+      content: "sent something",
+    });
+    assert.deepEqual(map.get("@creator"), [mind], "typing should survive mid-turn outbound");
+
+    // Turn end clears typing everywhere.
+    await handleMindEvent(mind, { type: "done", session: "s1" });
+    assert.deepEqual(map.get("@creator"), [], "typing should clear on done");
+    assert.deepEqual(map.get("11111111-2222-3333-4444-555555555555"), []);
     await cleanup(mind);
   });
 

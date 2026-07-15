@@ -259,12 +259,6 @@ export async function handleMindEvent(
   // Track mind activity for the dashboard timeline.
   onMindEvent(mind, event.type, event.channel);
 
-  // Clear typing on first outbound event for a channel.
-  if ((event.type === "text" || event.type === "outbound") && event.channel) {
-    const map = getTypingMap();
-    publishTypingForChannels(map.deleteSender(mind), map);
-  }
-
   // Turn failure: record a notice and flag the session as errored so the upcoming `done`
   // does NOT mark notices delivered (failures accumulate until a clean turn).
   if (event.type === "error" && event.session) {
