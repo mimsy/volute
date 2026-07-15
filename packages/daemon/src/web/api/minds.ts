@@ -1886,10 +1886,11 @@ const app = new Hono<AuthEnv>()
     const rawSpirit = Number(process.env.VOLUTE_NURTURE_SPIRIT_MINUTES);
     const spiritThreshold = Number.isNaN(rawSpirit) ? 15 : rawSpirit;
 
-    // Last creator message (inbound, sender is not the spirit and not the seed itself)
+    // Last message anyone other than the spirit (or the seed itself) sent the
+    // seed — creator or neighbor mind alike, engagement is engagement.
     const spiritName = getSpiritName();
-    const lastCreatorMsg = await db
-      .select({ created_at: mindHistory.created_at })
+    const lastActivityMsg = await db
+      .select({ created_at: mindHistory.created_at, sender: mindHistory.sender })
       .from(mindHistory)
       .where(
         and(
@@ -1918,17 +1919,22 @@ const app = new Hono<AuthEnv>()
       .limit(1);
 
     const now = Date.now();
-    const creatorTime = lastCreatorMsg[0]
-      ? parseDbTimestamp(lastCreatorMsg[0].created_at).getTime()
+    const activityTime = lastActivityMsg[0]
+      ? parseDbTimestamp(lastActivityMsg[0].created_at).getTime()
       : 0;
     const spiritTime = lastSpiritMsg[0]
       ? parseDbTimestamp(lastSpiritMsg[0].created_at).getTime()
       : 0;
-    const minutesSinceCreator = creatorTime ? (now - creatorTime) / 60_000 : Infinity;
+    const minutesSinceActivity = activityTime ? (now - activityTime) / 60_000 : Infinity;
     const minutesSinceSpirit = spiritTime ? (now - spiritTime) / 60_000 : Infinity;
 
-    // No nudge needed (the schedule stays quiet; a forced manual check reports anyway)
-    if (!force && minutesSinceCreator < creatorThreshold && minutesSinceSpirit < spiritThreshold) {
+    // No nudge needed while anyone is engaging the seed — a recent message from
+    // the creator/another mind OR the spirit's own recent DM each suffice.
+    // (A forced manual check reports anyway.)
+    if (
+      !force &&
+      (minutesSinceActivity < creatorThreshold || minutesSinceSpirit < spiritThreshold)
+    ) {
       return c.json({ output: "" });
     }
 
@@ -1950,12 +1956,12 @@ const app = new Hono<AuthEnv>()
       else remaining.push("Generate and set avatar");
     }
 
-    const creatorStatus =
-      minutesSinceCreator === Infinity
-        ? "No creator messages yet"
-        : `Last creator message: ${Math.round(minutesSinceCreator)} minutes ago`;
+    const activityStatus =
+      minutesSinceActivity === Infinity
+        ? `No one has messaged ${name} yet`
+        : `Last message to ${name}: ${Math.round(minutesSinceActivity)} minutes ago (from ${lastActivityMsg[0].sender})`;
 
-    const lines = [`Seed: ${name}`, creatorStatus];
+    const lines = [`Seed: ${name}`, activityStatus];
     if (done.length > 0) lines.push(`Done: ${done.join(", ")}`);
     if (remaining.length > 0) lines.push(`Remaining: ${remaining.join(", ")}`);
     if (remaining.length > 0) {

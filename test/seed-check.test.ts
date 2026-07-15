@@ -21,6 +21,28 @@ function postHeaders(cookie: string) {
   };
 }
 
+async function insertHistory(row: {
+  mind: string;
+  type: string;
+  sender?: string;
+  content: string;
+  minutesAgo?: number;
+}) {
+  const db = await getDb();
+  // Mimic SQLite datetime('now'): zone-less UTC "YYYY-MM-DD HH:MM:SS".
+  const created_at = new Date(Date.now() - (row.minutesAgo ?? 0) * 60_000)
+    .toISOString()
+    .replace("T", " ")
+    .slice(0, 19);
+  await db.insert(mindHistory).values({
+    mind: row.mind,
+    type: row.type,
+    sender: row.sender ?? null,
+    content: row.content,
+    created_at,
+  });
+}
+
 describe("seed check endpoint", () => {
   let cookie: string;
   const seedName = `check-seed-${Date.now()}`;
@@ -29,6 +51,10 @@ describe("seed check endpoint", () => {
     const db = await getDb();
     await db.delete(users).where(eq(users.username, "check-admin"));
     await db.delete(mindHistory).where(eq(mindHistory.mind, seedName));
+    const { getSpiritName } = await import("../packages/daemon/src/lib/config/setup.js");
+    await db
+      .delete(mindHistory)
+      .where(and(eq(mindHistory.mind, getSpiritName()), eq(mindHistory.type, "event")));
     await removeMind(seedName);
   }
 
@@ -137,6 +163,66 @@ describe("seed check endpoint", () => {
     assert.equal(res.status, 404);
   });
 
+  it("stays quiet when someone messaged the seed recently", async () => {
+    // Regression: UTC created_at parsed as local made this message look "future"
+    // AND the && gate fired anyway when the spirit had never messaged.
+    await insertHistory({
+      mind: seedName,
+      type: "inbound",
+      sender: "some-human",
+      content: "hi seed",
+      minutesAgo: 2,
+    });
+
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
+    const res = await app.request(`http://localhost/api/minds/${seedName}/seed-check`, {
+      headers: postHeaders(cookie),
+    });
+    const body = (await res.json()) as { output: string };
+    assert.equal(body.output, "");
+  });
+
+  it("stays quiet when only the spirit messaged the seed recently", async () => {
+    const { getSpiritName } = await import("../packages/daemon/src/lib/config/setup.js");
+    await insertHistory({
+      mind: seedName,
+      type: "inbound",
+      sender: getSpiritName(),
+      content: "checking in",
+      minutesAgo: 5,
+    });
+
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
+    const res = await app.request(`http://localhost/api/minds/${seedName}/seed-check`, {
+      headers: postHeaders(cookie),
+    });
+    const body = (await res.json()) as { output: string };
+    assert.equal(body.output, "");
+  });
+
+  it("reports the last message with its sender once the seed is unattended", async () => {
+    await insertHistory({
+      mind: seedName,
+      type: "inbound",
+      sender: "some-human",
+      content: "hi seed",
+      minutesAgo: 40,
+    });
+
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
+    const res = await app.request(`http://localhost/api/minds/${seedName}/seed-check`, {
+      headers: postHeaders(cookie),
+    });
+    const body = (await res.json()) as { output: string };
+    assert.ok(body.output.includes(`Seed: ${seedName}`));
+    assert.ok(
+      body.output.includes(`Last message to ${seedName}:`),
+      `unexpected output: ${body.output}`,
+    );
+    assert.ok(body.output.includes("(from some-human)"));
+    assert.ok(!body.output.includes("creator message"), "old wording removed");
+  });
+
   describe("with a named spirit", () => {
     async function setSpiritName(name: string | undefined) {
       const { readGlobalConfig, writeGlobalConfig } = await import(
@@ -180,11 +266,18 @@ describe("seed check endpoint", () => {
 
     it("no longer counts volute as the spirit once renamed", async () => {
       await setSpiritName("iris");
-      const db = await getDb();
 
-      // A recent "volute" message is just another sender now — the spirit
-      // ("iris") has never messaged, so the check must fire.
-      await db.insert(mindHistory).values([{ mind: seedName, type: "inbound", sender: "volute" }]);
+      // An old "volute" message is just another sender now — the spirit ("iris")
+      // has never messaged, and the message is past both recency thresholds, so
+      // the check must fire and report volute as ordinary activity (not excluded
+      // as the spirit, which would read "No one has messaged ... yet").
+      await insertHistory({
+        mind: seedName,
+        type: "inbound",
+        sender: "volute",
+        content: "hi",
+        minutesAgo: 40,
+      });
 
       const { default: app } = await import("../packages/daemon/src/web/app.js");
       const res = await app.request(`http://localhost/api/minds/${seedName}/seed-check`, {
@@ -193,6 +286,7 @@ describe("seed check endpoint", () => {
       assert.equal(res.status, 200);
       const body = (await res.json()) as { output: string };
       assert.ok(body.output.includes(`Seed: ${seedName}`));
+      assert.ok(body.output.includes("(from volute)"));
     });
   });
 });
@@ -239,9 +333,9 @@ describe("seed check nurture gate vs. forced host check", () => {
     assert.equal(body.output, "");
   });
 
-  it("reports without force when only the creator is recent (gate needs both)", async () => {
-    // Remove the spirit message so only the creator is recent — the gate must
-    // not suppress (it requires BOTH creator and spirit to be recent).
+  it("stays quiet when only the creator is recent (any engagement suffices)", async () => {
+    // New semantics: any recent engagement quiets the gate. Remove the spirit
+    // message so only the creator is recent — the gate must still suppress.
     const db = await getDb();
     await db
       .delete(mindHistory)
@@ -253,7 +347,7 @@ describe("seed check nurture gate vs. forced host check", () => {
     });
     assert.equal(res.status, 200);
     const body = (await res.json()) as { output: string };
-    assert.ok(body.output.includes(`Seed: ${seedName}`));
+    assert.equal(body.output, "");
   });
 
   it("forces the readiness state for a manual host check (?force=1)", async () => {
