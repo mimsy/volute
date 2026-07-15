@@ -9,7 +9,7 @@ import {
 } from "node:fs";
 import { relative, resolve } from "node:path";
 import { zValidator } from "@hono/zod-validator";
-import { and, desc, eq, like, type SQL, sql } from "drizzle-orm";
+import { and, desc, eq, type SQL, sql } from "drizzle-orm";
 import { type Context, Hono } from "hono";
 import { z } from "zod";
 import {
@@ -1952,6 +1952,10 @@ const app = new Hono<AuthEnv>()
     // don't re-nudge about the same seed more than once per nudgeThreshold
     // minutes. The last nudge is the spirit's most recent "Seed: <name>" event.
     if (!force) {
+      // Match the nudge's leading "Seed: <name>\n" line. Mind names may contain
+      // `_`, a LIKE wildcard, so escape it (and `%`/`\`) to avoid matching a
+      // different seed's nudge.
+      const nudgePattern = `Seed: ${name.replace(/[\\%_]/g, "\\$&")}\n%`;
       const lastNudge = await db
         .select({ created_at: mindHistory.created_at })
         .from(mindHistory)
@@ -1959,7 +1963,7 @@ const app = new Hono<AuthEnv>()
           and(
             eq(mindHistory.mind, spiritName),
             eq(mindHistory.type, "event"),
-            like(mindHistory.content, `Seed: ${name}\n%`),
+            sql`${mindHistory.content} LIKE ${nudgePattern} ESCAPE '\\'`,
           ),
         )
         .orderBy(desc(mindHistory.created_at))
