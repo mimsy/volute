@@ -1122,7 +1122,6 @@ function handleGlobalClick(e: MouseEvent) {
     border-radius: 50%;
     flex-shrink: 0;
     align-self: center;
-    margin-left: 8px;
     animation: iridescent 3s ease-in-out infinite;
   }
 

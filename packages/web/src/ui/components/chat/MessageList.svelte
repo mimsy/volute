@@ -175,7 +175,7 @@ function handleScroll() {
       {#each typingNames as name (name)}
         {@const mind = mindsByName.get(name)}
         {#if mind}
-          <button class="typing-chip mind" onclick={() => onOpenMind?.(mind)}>
+          <button class="typing-chip" onclick={() => onOpenMind?.(mind)}>
             <span class="typing-dot iridescent"></span>
             {name}
           </button>
