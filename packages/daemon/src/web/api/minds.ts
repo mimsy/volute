@@ -136,6 +136,7 @@ import { exec, gitExec } from "../../lib/util/exec.js";
 import { checkHealth } from "../../lib/util/health.js";
 import log from "../../lib/util/logger.js";
 import { safeResolveWithinBase } from "../../lib/util/paths.js";
+import { parseDbTimestamp } from "../../lib/util/time.js";
 import { fireWebhook } from "../../lib/webhook.js";
 import {
   type AuthEnv,
@@ -1879,16 +1880,27 @@ const app = new Hono<AuthEnv>()
       });
     }
 
+    // A sleeping seed needs no encouragement; stay quiet until it wakes.
+    if (!force) {
+      const { getSleepManagerIfReady } = await import("../../lib/daemon/sleep-manager.js");
+      if (getSleepManagerIfReady()?.isSleeping(name)) {
+        return c.json({ output: "" });
+      }
+    }
+
     const db = await getDb();
     const rawCreator = Number(process.env.VOLUTE_NURTURE_CREATOR_MINUTES);
     const creatorThreshold = Number.isNaN(rawCreator) ? 5 : rawCreator;
     const rawSpirit = Number(process.env.VOLUTE_NURTURE_SPIRIT_MINUTES);
     const spiritThreshold = Number.isNaN(rawSpirit) ? 15 : rawSpirit;
+    const rawNudge = Number(process.env.VOLUTE_NURTURE_NUDGE_MINUTES);
+    const nudgeThreshold = Number.isNaN(rawNudge) ? 30 : rawNudge;
 
-    // Last creator message (inbound, sender is not the spirit and not the seed itself)
+    // Last message anyone other than the spirit (or the seed itself) sent the
+    // seed — creator or neighbor mind alike, engagement is engagement.
     const spiritName = getSpiritName();
-    const lastCreatorMsg = await db
-      .select({ created_at: mindHistory.created_at })
+    const lastActivityMsg = await db
+      .select({ created_at: mindHistory.created_at, sender: mindHistory.sender })
       .from(mindHistory)
       .where(
         and(
@@ -1917,14 +1929,52 @@ const app = new Hono<AuthEnv>()
       .limit(1);
 
     const now = Date.now();
-    const creatorTime = lastCreatorMsg[0] ? new Date(lastCreatorMsg[0].created_at).getTime() : 0;
-    const spiritTime = lastSpiritMsg[0] ? new Date(lastSpiritMsg[0].created_at).getTime() : 0;
-    const minutesSinceCreator = creatorTime ? (now - creatorTime) / 60_000 : Infinity;
+    const activityTime = lastActivityMsg[0]
+      ? parseDbTimestamp(lastActivityMsg[0].created_at).getTime()
+      : 0;
+    const spiritTime = lastSpiritMsg[0]
+      ? parseDbTimestamp(lastSpiritMsg[0].created_at).getTime()
+      : 0;
+    const minutesSinceActivity = activityTime ? (now - activityTime) / 60_000 : Infinity;
     const minutesSinceSpirit = spiritTime ? (now - spiritTime) / 60_000 : Infinity;
 
-    // No nudge needed (the schedule stays quiet; a forced manual check reports anyway)
-    if (!force && minutesSinceCreator < creatorThreshold && minutesSinceSpirit < spiritThreshold) {
+    // No nudge needed while anyone is engaging the seed — a recent message from
+    // the creator/another mind OR the spirit's own recent DM each suffice.
+    // (A forced manual check reports anyway.)
+    if (
+      !force &&
+      (minutesSinceActivity < creatorThreshold || minutesSinceSpirit < spiritThreshold)
+    ) {
       return c.json({ output: "" });
+    }
+
+    // Backoff: repeated identical nudges cost the spirit a full turn each, so
+    // don't re-nudge about the same seed more than once per nudgeThreshold
+    // minutes. The last nudge is the spirit's most recent "Seed: <name>" event.
+    if (!force) {
+      // Match the nudge's leading "Seed: <name>\n" line. Mind names may contain
+      // `_`, a LIKE wildcard, so escape it (and `%`/`\`) to avoid matching a
+      // different seed's nudge.
+      const nudgePattern = `Seed: ${name.replace(/[\\%_]/g, "\\$&")}\n%`;
+      const lastNudge = await db
+        .select({ created_at: mindHistory.created_at })
+        .from(mindHistory)
+        .where(
+          and(
+            eq(mindHistory.mind, spiritName),
+            eq(mindHistory.type, "event"),
+            sql`${mindHistory.content} LIKE ${nudgePattern} ESCAPE '\\'`,
+          ),
+        )
+        .orderBy(desc(mindHistory.created_at))
+        .limit(1);
+      if (lastNudge[0]) {
+        const minutesSinceNudge =
+          (now - parseDbTimestamp(lastNudge[0].created_at).getTime()) / 60_000;
+        if (minutesSinceNudge < nudgeThreshold) {
+          return c.json({ output: "" });
+        }
+      }
     }
 
     // Collect state — shared with the sprout gate so the two always agree.
@@ -1945,12 +1995,12 @@ const app = new Hono<AuthEnv>()
       else remaining.push("Generate and set avatar");
     }
 
-    const creatorStatus =
-      minutesSinceCreator === Infinity
-        ? "No creator messages yet"
-        : `Last creator message: ${Math.round(minutesSinceCreator)} minutes ago`;
+    const activityStatus =
+      minutesSinceActivity === Infinity
+        ? `No one has messaged ${name} yet`
+        : `Last message to ${name}: ${Math.round(minutesSinceActivity)} minutes ago (from ${lastActivityMsg[0].sender})`;
 
-    const lines = [`Seed: ${name}`, creatorStatus];
+    const lines = [`Seed: ${name}`, activityStatus];
     if (done.length > 0) lines.push(`Done: ${done.join(", ")}`);
     if (remaining.length > 0) lines.push(`Remaining: ${remaining.join(", ")}`);
     if (remaining.length > 0) {
@@ -3036,7 +3086,7 @@ const app = new Hono<AuthEnv>()
 
     // Format as [Session Activity] block
     const lines = rows.map((row) => {
-      const ts = new Date(row.created_at.endsWith("Z") ? row.created_at : `${row.created_at}Z`);
+      const ts = parseDbTimestamp(row.created_at);
       const ago = formatTimeAgo(ts);
       return `- ${row.thread ?? "unknown"} (${ago}): ${row.content ?? ""}`;
     });

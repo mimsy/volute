@@ -21,6 +21,28 @@ function postHeaders(cookie: string) {
   };
 }
 
+async function insertHistory(row: {
+  mind: string;
+  type: string;
+  sender?: string;
+  content: string;
+  minutesAgo?: number;
+}) {
+  const db = await getDb();
+  // Mimic SQLite datetime('now'): zone-less UTC "YYYY-MM-DD HH:MM:SS".
+  const created_at = new Date(Date.now() - (row.minutesAgo ?? 0) * 60_000)
+    .toISOString()
+    .replace("T", " ")
+    .slice(0, 19);
+  await db.insert(mindHistory).values({
+    mind: row.mind,
+    type: row.type,
+    sender: row.sender ?? null,
+    content: row.content,
+    created_at,
+  });
+}
+
 describe("seed check endpoint", () => {
   let cookie: string;
   const seedName = `check-seed-${Date.now()}`;
@@ -29,6 +51,10 @@ describe("seed check endpoint", () => {
     const db = await getDb();
     await db.delete(users).where(eq(users.username, "check-admin"));
     await db.delete(mindHistory).where(eq(mindHistory.mind, seedName));
+    const { getSpiritName } = await import("../packages/daemon/src/lib/config/setup.js");
+    await db
+      .delete(mindHistory)
+      .where(and(eq(mindHistory.mind, getSpiritName()), eq(mindHistory.type, "event")));
     await removeMind(seedName);
   }
 
@@ -137,6 +163,249 @@ describe("seed check endpoint", () => {
     assert.equal(res.status, 404);
   });
 
+  it("stays quiet when someone messaged the seed recently", async () => {
+    // Regression: UTC created_at parsed as local made this message look "future"
+    // AND the && gate fired anyway when the spirit had never messaged.
+    await insertHistory({
+      mind: seedName,
+      type: "inbound",
+      sender: "some-human",
+      content: "hi seed",
+      minutesAgo: 2,
+    });
+
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
+    const res = await app.request(`http://localhost/api/minds/${seedName}/seed-check`, {
+      headers: postHeaders(cookie),
+    });
+    const body = (await res.json()) as { output: string };
+    assert.equal(body.output, "");
+  });
+
+  it("stays quiet when only the spirit messaged the seed recently", async () => {
+    const { getSpiritName } = await import("../packages/daemon/src/lib/config/setup.js");
+    await insertHistory({
+      mind: seedName,
+      type: "inbound",
+      sender: getSpiritName(),
+      content: "checking in",
+      minutesAgo: 5,
+    });
+
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
+    const res = await app.request(`http://localhost/api/minds/${seedName}/seed-check`, {
+      headers: postHeaders(cookie),
+    });
+    const body = (await res.json()) as { output: string };
+    assert.equal(body.output, "");
+  });
+
+  it("reports the last message with its sender once the seed is unattended", async () => {
+    await insertHistory({
+      mind: seedName,
+      type: "inbound",
+      sender: "some-human",
+      content: "hi seed",
+      minutesAgo: 40,
+    });
+
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
+    const res = await app.request(`http://localhost/api/minds/${seedName}/seed-check`, {
+      headers: postHeaders(cookie),
+    });
+    const body = (await res.json()) as { output: string };
+    assert.ok(body.output.includes(`Seed: ${seedName}`));
+    assert.ok(
+      body.output.includes(`Last message to ${seedName}:`),
+      `unexpected output: ${body.output}`,
+    );
+    assert.ok(body.output.includes("(from some-human)"));
+    assert.ok(!body.output.includes("creator message"), "old wording removed");
+  });
+
+  it("backs off after a recent nudge", async () => {
+    const { getSpiritName } = await import("../packages/daemon/src/lib/config/setup.js");
+    await insertHistory({
+      mind: seedName,
+      type: "inbound",
+      sender: "some-human",
+      content: "hi seed",
+      minutesAgo: 40,
+    });
+    // A nudge was already delivered to the spirit 5 minutes ago.
+    await insertHistory({
+      mind: getSpiritName(),
+      type: "event",
+      content: `Seed: ${seedName}\nLast message to ${seedName}: 35 minutes ago (from some-human)`,
+      minutesAgo: 5,
+    });
+
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
+    const res = await app.request(`http://localhost/api/minds/${seedName}/seed-check`, {
+      headers: postHeaders(cookie),
+    });
+    const body = (await res.json()) as { output: string };
+    assert.equal(body.output, "");
+  });
+
+  it("nudges again once the backoff window has passed", async () => {
+    const { getSpiritName } = await import("../packages/daemon/src/lib/config/setup.js");
+    await insertHistory({
+      mind: seedName,
+      type: "inbound",
+      sender: "some-human",
+      content: "hi seed",
+      minutesAgo: 90,
+    });
+    await insertHistory({
+      mind: getSpiritName(),
+      type: "event",
+      content: `Seed: ${seedName}\nLast message to ${seedName}: 50 minutes ago (from some-human)`,
+      minutesAgo: 40,
+    });
+
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
+    const res = await app.request(`http://localhost/api/minds/${seedName}/seed-check`, {
+      headers: postHeaders(cookie),
+    });
+    const body = (await res.json()) as { output: string };
+    assert.ok(body.output.includes(`Seed: ${seedName}`));
+  });
+
+  it("a forced check bypasses the backoff", async () => {
+    const { getSpiritName } = await import("../packages/daemon/src/lib/config/setup.js");
+    await insertHistory({
+      mind: getSpiritName(),
+      type: "event",
+      content: `Seed: ${seedName}\nLast message to ${seedName}: 35 minutes ago (from some-human)`,
+      minutesAgo: 5,
+    });
+
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
+    const res = await app.request(`http://localhost/api/minds/${seedName}/seed-check?force=1`, {
+      headers: postHeaders(cookie),
+    });
+    const body = (await res.json()) as { output: string };
+    assert.ok(body.output.includes(`Seed: ${seedName}`));
+  });
+
+  it("suppresses a re-check when fed back its own emitted nudge (round trip)", async () => {
+    // Guards the coupling between the emitter's first line ("Seed: <name>\n...")
+    // and the backoff matcher: whatever the endpoint emits, recording it as the
+    // spirit's nudge event must suppress the next check.
+    const { getSpiritName } = await import("../packages/daemon/src/lib/config/setup.js");
+    await insertHistory({
+      mind: seedName,
+      type: "inbound",
+      sender: "some-human",
+      content: "hi seed",
+      minutesAgo: 40,
+    });
+
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
+    const first = await app.request(`http://localhost/api/minds/${seedName}/seed-check`, {
+      headers: postHeaders(cookie),
+    });
+    const firstBody = (await first.json()) as { output: string };
+    assert.ok(firstBody.output.includes(`Seed: ${seedName}`), "first check should nudge");
+
+    // Record exactly what the spirit received, then re-check immediately.
+    await insertHistory({
+      mind: getSpiritName(),
+      type: "event",
+      content: firstBody.output,
+      minutesAgo: 0,
+    });
+
+    const second = await app.request(`http://localhost/api/minds/${seedName}/seed-check`, {
+      headers: postHeaders(cookie),
+    });
+    const secondBody = (await second.json()) as { output: string };
+    assert.equal(secondBody.output, "");
+  });
+
+  it("does not back off on a nudge about a different seed", async () => {
+    const { getSpiritName } = await import("../packages/daemon/src/lib/config/setup.js");
+    await insertHistory({
+      mind: seedName,
+      type: "inbound",
+      sender: "some-human",
+      content: "hi seed",
+      minutesAgo: 40,
+    });
+    // A recent nudge, but about another seed entirely — it must not suppress this one.
+    await insertHistory({
+      mind: getSpiritName(),
+      type: "event",
+      content: `Seed: some-other-seed\nLast message to some-other-seed: 35 minutes ago (from someone)`,
+      minutesAgo: 5,
+    });
+
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
+    const res = await app.request(`http://localhost/api/minds/${seedName}/seed-check`, {
+      headers: postHeaders(cookie),
+    });
+    const body = (await res.json()) as { output: string };
+    assert.ok(body.output.includes(`Seed: ${seedName}`));
+  });
+
+  it("treats _ in a seed name as a literal, not a LIKE wildcard, for backoff", async () => {
+    // A seed name with an underscore (mind names permit them). The backoff LIKE
+    // must not match a nudge for a sibling name differing only where the `_` is.
+    const escName = `esc_seed_${Date.now()}`;
+    await addMind(escName, 4210, "seed");
+    const dir = resolve(voluteHome(), "minds", escName);
+    mkdirSync(resolve(dir, "home/.config"), { recursive: true });
+    writeFileSync(resolve(dir, "home/.config/volute.json"), "{}");
+    writeFileSync(resolve(dir, "home/SOUL.md"), "a seed, still discovering who you are");
+    try {
+      const { getSpiritName } = await import("../packages/daemon/src/lib/config/setup.js");
+      await insertHistory({
+        mind: escName,
+        type: "inbound",
+        sender: "some-human",
+        content: "hi",
+        minutesAgo: 40,
+      });
+      // Wildcard sibling: replaces every `_` with another char. If `_` were a
+      // wildcard, this nudge would wrongly suppress escName's check.
+      const sibling = escName.replace(/_/g, "X");
+      await insertHistory({
+        mind: getSpiritName(),
+        type: "event",
+        content: `Seed: ${sibling}\nLast message to ${sibling}: 35 minutes ago (from some-human)`,
+        minutesAgo: 5,
+      });
+
+      const { default: app } = await import("../packages/daemon/src/web/app.js");
+      const sib = await app.request(`http://localhost/api/minds/${escName}/seed-check`, {
+        headers: postHeaders(cookie),
+      });
+      const sibBody = (await sib.json()) as { output: string };
+      assert.ok(
+        sibBody.output.includes(`Seed: ${escName}`),
+        `sibling nudge must not suppress; got: ${sibBody.output}`,
+      );
+
+      // A nudge for the exact underscore name still backs off (literal match works).
+      await insertHistory({
+        mind: getSpiritName(),
+        type: "event",
+        content: `Seed: ${escName}\nLast message to ${escName}: 35 minutes ago (from some-human)`,
+        minutesAgo: 1,
+      });
+      const exact = await app.request(`http://localhost/api/minds/${escName}/seed-check`, {
+        headers: postHeaders(cookie),
+      });
+      const exactBody = (await exact.json()) as { output: string };
+      assert.equal(exactBody.output, "");
+    } finally {
+      const db = await getDb();
+      await db.delete(mindHistory).where(eq(mindHistory.mind, escName));
+      await removeMind(escName);
+    }
+  });
+
   describe("with a named spirit", () => {
     async function setSpiritName(name: string | undefined) {
       const { readGlobalConfig, writeGlobalConfig } = await import(
@@ -180,11 +449,18 @@ describe("seed check endpoint", () => {
 
     it("no longer counts volute as the spirit once renamed", async () => {
       await setSpiritName("iris");
-      const db = await getDb();
 
-      // A recent "volute" message is just another sender now — the spirit
-      // ("iris") has never messaged, so the check must fire.
-      await db.insert(mindHistory).values([{ mind: seedName, type: "inbound", sender: "volute" }]);
+      // An old "volute" message is just another sender now — the spirit ("iris")
+      // has never messaged, and the message is past both recency thresholds, so
+      // the check must fire and report volute as ordinary activity (not excluded
+      // as the spirit, which would read "No one has messaged ... yet").
+      await insertHistory({
+        mind: seedName,
+        type: "inbound",
+        sender: "volute",
+        content: "hi",
+        minutesAgo: 40,
+      });
 
       const { default: app } = await import("../packages/daemon/src/web/app.js");
       const res = await app.request(`http://localhost/api/minds/${seedName}/seed-check`, {
@@ -193,6 +469,7 @@ describe("seed check endpoint", () => {
       assert.equal(res.status, 200);
       const body = (await res.json()) as { output: string };
       assert.ok(body.output.includes(`Seed: ${seedName}`));
+      assert.ok(body.output.includes("(from volute)"));
     });
   });
 });
@@ -239,9 +516,9 @@ describe("seed check nurture gate vs. forced host check", () => {
     assert.equal(body.output, "");
   });
 
-  it("reports without force when only the creator is recent (gate needs both)", async () => {
-    // Remove the spirit message so only the creator is recent — the gate must
-    // not suppress (it requires BOTH creator and spirit to be recent).
+  it("stays quiet when only the creator is recent (any engagement suffices)", async () => {
+    // New semantics: any recent engagement quiets the gate. Remove the spirit
+    // message so only the creator is recent — the gate must still suppress.
     const db = await getDb();
     await db
       .delete(mindHistory)
@@ -253,7 +530,7 @@ describe("seed check nurture gate vs. forced host check", () => {
     });
     assert.equal(res.status, 200);
     const body = (await res.json()) as { output: string };
-    assert.ok(body.output.includes(`Seed: ${seedName}`));
+    assert.equal(body.output, "");
   });
 
   it("forces the readiness state for a manual host check (?force=1)", async () => {

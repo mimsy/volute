@@ -36,7 +36,7 @@ const cmd = command({
       parent?: string;
       model?: string;
       templateStale?: boolean;
-      channels?: Array<{ type: string; status: string }>;
+      channels?: Array<{ name: string; displayName?: string; status: string }>;
       variants?: Array<{ name: string; status: string }>;
       hasPages?: boolean;
       lastNotice?: { kind: string; reason: string; detail: string; created_at: string };
@@ -63,7 +63,7 @@ const cmd = command({
     if (mind.channels && mind.channels.length > 0) {
       console.log(`\nChannels:`);
       for (const ch of mind.channels) {
-        console.log(`  ${ch.type}: ${ch.status}`);
+        console.log(`  ${ch.displayName ?? ch.name}: ${ch.status}`);
       }
     }
 
