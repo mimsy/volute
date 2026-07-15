@@ -9,7 +9,7 @@ import {
 } from "node:fs";
 import { relative, resolve } from "node:path";
 import { zValidator } from "@hono/zod-validator";
-import { and, desc, eq, type SQL, sql } from "drizzle-orm";
+import { and, desc, eq, like, type SQL, sql } from "drizzle-orm";
 import { type Context, Hono } from "hono";
 import { z } from "zod";
 import {
@@ -1880,11 +1880,21 @@ const app = new Hono<AuthEnv>()
       });
     }
 
+    // A sleeping seed needs no encouragement; stay quiet until it wakes.
+    if (!force) {
+      const { getSleepManagerIfReady } = await import("../../lib/daemon/sleep-manager.js");
+      if (getSleepManagerIfReady()?.isSleeping(name)) {
+        return c.json({ output: "" });
+      }
+    }
+
     const db = await getDb();
     const rawCreator = Number(process.env.VOLUTE_NURTURE_CREATOR_MINUTES);
     const creatorThreshold = Number.isNaN(rawCreator) ? 5 : rawCreator;
     const rawSpirit = Number(process.env.VOLUTE_NURTURE_SPIRIT_MINUTES);
     const spiritThreshold = Number.isNaN(rawSpirit) ? 15 : rawSpirit;
+    const rawNudge = Number(process.env.VOLUTE_NURTURE_NUDGE_MINUTES);
+    const nudgeThreshold = Number.isNaN(rawNudge) ? 30 : rawNudge;
 
     // Last message anyone other than the spirit (or the seed itself) sent the
     // seed — creator or neighbor mind alike, engagement is engagement.
@@ -1936,6 +1946,31 @@ const app = new Hono<AuthEnv>()
       (minutesSinceActivity < creatorThreshold || minutesSinceSpirit < spiritThreshold)
     ) {
       return c.json({ output: "" });
+    }
+
+    // Backoff: repeated identical nudges cost the spirit a full turn each, so
+    // don't re-nudge about the same seed more than once per nudgeThreshold
+    // minutes. The last nudge is the spirit's most recent "Seed: <name>" event.
+    if (!force) {
+      const lastNudge = await db
+        .select({ created_at: mindHistory.created_at })
+        .from(mindHistory)
+        .where(
+          and(
+            eq(mindHistory.mind, spiritName),
+            eq(mindHistory.type, "event"),
+            like(mindHistory.content, `Seed: ${name}\n%`),
+          ),
+        )
+        .orderBy(desc(mindHistory.created_at))
+        .limit(1);
+      if (lastNudge[0]) {
+        const minutesSinceNudge =
+          (now - parseDbTimestamp(lastNudge[0].created_at).getTime()) / 60_000;
+        if (minutesSinceNudge < nudgeThreshold) {
+          return c.json({ output: "" });
+        }
+      }
     }
 
     // Collect state — shared with the sprout gate so the two always agree.

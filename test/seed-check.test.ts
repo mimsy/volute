@@ -223,6 +223,72 @@ describe("seed check endpoint", () => {
     assert.ok(!body.output.includes("creator message"), "old wording removed");
   });
 
+  it("backs off after a recent nudge", async () => {
+    const { getSpiritName } = await import("../packages/daemon/src/lib/config/setup.js");
+    await insertHistory({
+      mind: seedName,
+      type: "inbound",
+      sender: "some-human",
+      content: "hi seed",
+      minutesAgo: 40,
+    });
+    // A nudge was already delivered to the spirit 5 minutes ago.
+    await insertHistory({
+      mind: getSpiritName(),
+      type: "event",
+      content: `Seed: ${seedName}\nLast message to ${seedName}: 35 minutes ago (from some-human)`,
+      minutesAgo: 5,
+    });
+
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
+    const res = await app.request(`http://localhost/api/minds/${seedName}/seed-check`, {
+      headers: postHeaders(cookie),
+    });
+    const body = (await res.json()) as { output: string };
+    assert.equal(body.output, "");
+  });
+
+  it("nudges again once the backoff window has passed", async () => {
+    const { getSpiritName } = await import("../packages/daemon/src/lib/config/setup.js");
+    await insertHistory({
+      mind: seedName,
+      type: "inbound",
+      sender: "some-human",
+      content: "hi seed",
+      minutesAgo: 90,
+    });
+    await insertHistory({
+      mind: getSpiritName(),
+      type: "event",
+      content: `Seed: ${seedName}\nLast message to ${seedName}: 50 minutes ago (from some-human)`,
+      minutesAgo: 40,
+    });
+
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
+    const res = await app.request(`http://localhost/api/minds/${seedName}/seed-check`, {
+      headers: postHeaders(cookie),
+    });
+    const body = (await res.json()) as { output: string };
+    assert.ok(body.output.includes(`Seed: ${seedName}`));
+  });
+
+  it("a forced check bypasses the backoff", async () => {
+    const { getSpiritName } = await import("../packages/daemon/src/lib/config/setup.js");
+    await insertHistory({
+      mind: getSpiritName(),
+      type: "event",
+      content: `Seed: ${seedName}\nLast message to ${seedName}: 35 minutes ago (from some-human)`,
+      minutesAgo: 5,
+    });
+
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
+    const res = await app.request(`http://localhost/api/minds/${seedName}/seed-check?force=1`, {
+      headers: postHeaders(cookie),
+    });
+    const body = (await res.json()) as { output: string };
+    assert.ok(body.output.includes(`Seed: ${seedName}`));
+  });
+
   describe("with a named spirit", () => {
     async function setSpiritName(name: string | undefined) {
       const { readGlobalConfig, writeGlobalConfig } = await import(
