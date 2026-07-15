@@ -33,6 +33,7 @@ import {
 import { navigate, parseSelection, type Selection, selectionToPath } from "./lib/navigate";
 import { requestNotificationPermission } from "./lib/notifications";
 import {
+  activeMinds,
   auth,
   checkAuth,
   closeSidebar,
@@ -272,6 +273,23 @@ let breadcrumbs = $derived.by((): Breadcrumb[] => {
     crumbs.push({ label: "system" });
   }
   return crumbs;
+});
+
+// Ambient activity cue: mind participants of the open conversation, for the
+// header dot (the only persistent activity indicator on mobile, where the
+// sidebars are hidden).
+let headerMindActive = $derived.by(() => {
+  const sel = selection;
+  if (sel.kind === "mind") return activeMinds.has(sel.name);
+  if (sel.kind === "channel") {
+    const conv = data.conversations.find(
+      (c) => c.type === "channel" && c.channel_name === sel.slug,
+    );
+    return (conv?.participants ?? []).some(
+      (p) => p.userType === "mind" && activeMinds.has(p.username),
+    );
+  }
+  return false;
 });
 
 // Remote connection state — true when no daemon found and no saved connection
@@ -752,6 +770,9 @@ function handleGlobalClick(e: MouseEvent) {
                   <span class="crumb-current">{crumb.label}</span>
                 {/if}
               {/each}
+              {#if headerMindActive}
+                <span class="header-active-dot"></span>
+              {/if}
             </div>
             {#if activeMindName}
               <div class="mind-section-tabs">
@@ -1093,6 +1114,16 @@ function handleGlobalClick(e: MouseEvent) {
     letter-spacing: 0.02em;
     min-width: 0;
     overflow: hidden;
+  }
+
+  .header-active-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    align-self: center;
+    margin-left: 8px;
+    animation: iridescent 3s ease-in-out infinite;
   }
 
   .crumb-sep {
