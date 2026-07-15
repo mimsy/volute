@@ -291,6 +291,20 @@ $effect(() => {
   document.title = auth.localName || "volute";
 });
 
+// Shrink the sidebar title until its longest word fits the available width.
+// Multi-word names wrap instead; only an oversized single word triggers shrinking.
+function fitTitle(node: HTMLElement, _deps: { text: string; width: number }) {
+  function fit() {
+    for (let size = 26; size >= 15; size--) {
+      node.style.setProperty("--title-size", `${size}px`);
+      if (node.scrollWidth <= node.clientWidth) break;
+    }
+  }
+  fit();
+  document.fonts?.ready.then(fit);
+  return { update: fit };
+}
+
 onMount(() => {
   // Async init — fire and forget (onMount cleanup must be sync)
   detectConnection()
@@ -677,11 +691,11 @@ function handleGlobalClick(e: MouseEvent) {
     <div class="shell-body">
       <div class="sidebar" class:sidebar-open={layout.sidebarOpen} style:width="{sidebar.width}px">
         <button class="sidebar-header" onclick={handleSystemHome}>
-          <span class="header-logo-wrap">
-            <img src="/logo.png" alt="" class="sidebar-logo" />
-            <span class="hover-dot"></span>
-          </span>
-          <span class="sidebar-title">{auth.localName || "volute"}</span>
+          <span class="awake-dot"></span>
+          <span
+            class="sidebar-title"
+            use:fitTitle={{ text: auth.localName || "volute", width: sidebar.width }}
+          >{auth.localName || "volute"}</span>
         </button>
         <UnifiedSidebar
           minds={data.minds}
@@ -974,54 +988,31 @@ function handleGlobalClick(e: MouseEvent) {
     cursor: pointer;
   }
 
-  .header-logo-wrap {
-    position: relative;
-    width: 30px;
-    height: 30px;
-    flex-shrink: 0;
-  }
-
-  .sidebar-logo {
-    width: 30px;
-    height: 30px;
-    filter: invert(1);
-    transition: opacity 0.15s;
-  }
-
-  .hover-dot {
-    position: absolute;
-    inset: 0;
-    margin: auto;
+  .awake-dot {
     width: 10px;
     height: 10px;
     border-radius: 50%;
-    opacity: 0;
-    transition: opacity 0.15s;
+    flex-shrink: 0;
+    background: var(--text-0);
+  }
+
+  .sidebar-header:hover .awake-dot {
     animation: iridescent 3s ease-in-out infinite;
-  }
-
-  .sidebar-header:hover .sidebar-logo {
-    opacity: 0;
-  }
-
-  .sidebar-header:hover .hover-dot {
-    opacity: 1;
   }
 
   .sidebar-title {
     font-family: var(--display);
-    font-size: 26px;
+    font-size: var(--title-size, 26px);
     font-weight: 300;
     color: var(--text-0);
     letter-spacing: 0.04em;
     margin-top: -4px;
-    margin-left: -4px;
+    min-width: 0;
     display: -webkit-box;
     -webkit-line-clamp: 2;
     line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;
-    overflow-wrap: anywhere;
     line-height: 1.2;
   }
   .resize-handle {
@@ -1420,17 +1411,7 @@ function handleGlobalClick(e: MouseEvent) {
     cursor: default;
   }
 
-  :global(html.electron) .sidebar-header .sidebar-logo {
-    width: 16px;
-    height: 16px;
-  }
-
-  :global(html.electron) .sidebar-header .header-logo-wrap {
-    width: 16px;
-    height: 16px;
-  }
-
-  :global(html.electron) .sidebar-header .hover-dot {
+  :global(html.electron) .sidebar-header .awake-dot {
     width: 6px;
     height: 6px;
   }
