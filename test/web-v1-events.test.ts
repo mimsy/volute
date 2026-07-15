@@ -2,6 +2,12 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { getOrCreateMindUser } from "../packages/daemon/src/lib/auth.js";
 import { publish } from "../packages/daemon/src/lib/events/activity-events.js";
+import { publishParticipantAdded } from "../packages/daemon/src/lib/events/conversation-events.js";
+import {
+  addMessage,
+  addParticipant,
+  createConversation,
+} from "../packages/daemon/src/lib/events/conversations.js";
 import {
   bufferEvent,
   getEventsSince,
@@ -393,5 +399,175 @@ describe("v1 events replay ring buffers each event once", () => {
       if (prevToken === undefined) delete process.env.VOLUTE_DAEMON_TOKEN;
       else process.env.VOLUTE_DAEMON_TOKEN = prevToken;
     }
+  });
+});
+
+describe("v1 events live delivery of newly created conversations", () => {
+  it("delivers a conversation_added event and its messages without reconnecting", async () => {
+    resetSequencer();
+    // Alice is already watching the dashboard (connected before the conversation
+    // exists). Bob will start a brand-new DM with her — the seed-message scenario.
+    const alice = await getOrCreateMindUser("new-conv-alice");
+    const bob = await getOrCreateMindUser("new-conv-bob");
+    const aliceSession = await createSession(alice.id);
+
+    const stream = await openEventStream(`Bearer ${aliceSession}`);
+    // Let the snapshot flush and the live subscriptions register.
+    await delay(200);
+
+    // A conversation that did not exist at connect time, with its first message
+    // sent immediately after — the realistic seed-first-DM flow, no artificial
+    // gap. The daemon must announce the conversation before forwarding messages.
+    const conv = await createConversation({
+      userId: bob.id,
+      participantIds: [bob.id, alice.id],
+      type: "dm",
+    });
+    await addMessage(conv.id, "user", "new-conv-bob", [
+      { type: "text", text: "hello from a brand-new dm" },
+    ]);
+    await delay(200);
+    await stream.close();
+
+    // The new conversation is pushed live so it appears in the list without reload.
+    const added = stream.events.filter(
+      (e) => e.event === "conversation_added" && e.conversation?.id === conv.id,
+    );
+    assert.equal(added.length, 1, "should receive exactly one conversation_added for the new DM");
+    assert.ok(
+      added[0].conversation.participants?.some((p: any) => p.username === "new-conv-alice"),
+      "conversation_added should carry enriched participants",
+    );
+
+    // And messages to that new conversation flow live thereafter.
+    const messages = stream.events.filter(
+      (e) => e.event === "conversation" && e.conversationId === conv.id && e.type === "message",
+    );
+    assert.ok(
+      messages.some((m) =>
+        m.content?.some((b: any) => b.type === "text" && b.text.includes("brand-new dm")),
+      ),
+      "the new conversation's first message should be delivered live",
+    );
+
+    // conversation_added must arrive before the first message: the client drops
+    // messages for conversations it doesn't yet know about, so out-of-order
+    // delivery would lose the first message's preview/unread until reload.
+    const order = stream.events
+      .filter(
+        (e) =>
+          (e.event === "conversation_added" && e.conversation?.id === conv.id) ||
+          (e.event === "conversation" && e.conversationId === conv.id),
+      )
+      .map((e) => e.event);
+    assert.equal(order[0], "conversation_added", "conversation_added must precede its messages");
+  });
+
+  it("delivers conversation_added when added to an existing conversation live", async () => {
+    resetSequencer();
+    // Carl is watching. A group exists between Dana and Erin that already has a
+    // message; Carl is then added to it — the "added to an existing channel" path.
+    const carl = await getOrCreateMindUser("add-part-carl");
+    const dana = await getOrCreateMindUser("add-part-dana");
+    const erin = await getOrCreateMindUser("add-part-erin");
+    const carlSession = await createSession(carl.id);
+
+    const conv = await createConversation({
+      userId: dana.id,
+      participantIds: [dana.id, erin.id],
+      type: "channel",
+    });
+    await addMessage(conv.id, "user", "add-part-dana", [{ type: "text", text: "pre-existing" }]);
+
+    const stream = await openEventStream(`Bearer ${carlSession}`);
+    await delay(200);
+    // Carl isn't a participant yet — nothing for this conversation so far.
+    assert.ok(
+      !stream.events.some(
+        (e) => e.event === "conversation_added" && e.conversation?.id === conv.id,
+      ),
+      "no conversation_added before being added",
+    );
+
+    await addParticipant(conv.id, carl.id);
+    await delay(200);
+    await stream.close();
+
+    const added = stream.events.filter(
+      (e) => e.event === "conversation_added" && e.conversation?.id === conv.id,
+    );
+    assert.equal(added.length, 1, "added participant receives one conversation_added");
+    // The enriched payload carries the pre-existing last message.
+    assert.equal(
+      added[0].conversation.lastMessage?.text,
+      "pre-existing",
+      "conversation_added carries the existing last-message preview",
+    );
+  });
+
+  it("does not re-announce or double-subscribe an already-known conversation", async () => {
+    resetSequencer();
+    const fay = await getOrCreateMindUser("dedup-fay");
+    const gil = await getOrCreateMindUser("dedup-gil");
+    const faySession = await createSession(fay.id);
+
+    const stream = await openEventStream(`Bearer ${faySession}`);
+    await delay(200);
+
+    const conv = await createConversation({
+      userId: gil.id,
+      participantIds: [gil.id, fay.id],
+      type: "dm",
+    });
+    await delay(150);
+    // A duplicate participant-added for the same (conversation, user) — must be
+    // ignored, or messages would be forwarded twice to the UI.
+    publishParticipantAdded(conv.id, fay.id);
+    await delay(50);
+    await addMessage(conv.id, "user", "dedup-gil", [{ type: "text", text: "once" }]);
+    await delay(200);
+    await stream.close();
+
+    const added = stream.events.filter(
+      (e) => e.event === "conversation_added" && e.conversation?.id === conv.id,
+    );
+    assert.equal(added.length, 1, "conversation_added emitted exactly once");
+    const messages = stream.events.filter(
+      (e) => e.event === "conversation" && e.conversationId === conv.id && e.type === "message",
+    );
+    assert.equal(messages.length, 1, "message delivered exactly once (no double subscription)");
+  });
+
+  it("does not leak new conversations to non-participants", async () => {
+    resetSequencer();
+    const viewer = await getOrCreateMindUser("new-conv-viewer");
+    const sender = await getOrCreateMindUser("new-conv-sender");
+    const other = await getOrCreateMindUser("new-conv-other");
+    const viewerSession = await createSession(viewer.id);
+
+    const stream = await openEventStream(`Bearer ${viewerSession}`);
+    await delay(200);
+
+    // A DM between two other users the viewer is not part of.
+    const conv = await createConversation({
+      userId: sender.id,
+      participantIds: [sender.id, other.id],
+      type: "dm",
+    });
+    await delay(100);
+    await addMessage(conv.id, "user", "new-conv-sender", [{ type: "text", text: "private" }]);
+    await delay(200);
+    await stream.close();
+
+    assert.ok(
+      !stream.events.some(
+        (e) => e.event === "conversation_added" && e.conversation?.id === conv.id,
+      ),
+      "viewer must not receive conversation_added for a conversation they are not in",
+    );
+    assert.ok(
+      !stream.events.some((e) => e.event === "conversation" && e.conversationId === conv.id),
+      "viewer must not receive messages for a conversation they are not in",
+    );
   });
 });

@@ -18,7 +18,7 @@ import {
   users,
 } from "../schema.js";
 import { fireWebhook } from "../webhook.js";
-import { publish } from "./conversation-events.js";
+import { publish, publishParticipantAdded } from "./conversation-events.js";
 
 export type {
   ContentBlock,
@@ -52,6 +52,11 @@ export async function createConversation(opts?: {
         role: i === 0 ? "owner" : "member",
       })),
     );
+    // Notify each participant's live SSE streams so the new conversation shows
+    // up without a reload.
+    for (const uid of opts.participantIds) {
+      publishParticipantAdded(id, uid);
+    }
   }
 
   fireWebhook({
@@ -87,6 +92,8 @@ export async function addParticipant(
     user_id: userId,
     role,
   });
+  // Notify the added user's live SSE streams (e.g. added to a group/channel).
+  publishParticipantAdded(conversationId, userId);
 }
 
 export async function removeParticipant(conversationId: string, userId: number): Promise<void> {
@@ -383,6 +390,15 @@ export async function listConversationsWithParticipants(
 ): Promise<ConversationWithParticipants[]> {
   const convs = await listConversationsForUser(userId);
   return enrichConversations(convs);
+}
+
+export async function getConversationWithParticipants(
+  conversationId: string,
+): Promise<ConversationWithParticipants | null> {
+  const conv = await getConversation(conversationId);
+  if (!conv) return null;
+  const [enriched] = await enrichConversations([conv]);
+  return enriched ?? null;
 }
 
 export async function findDMConversation(participantIds: [number, number]): Promise<string | null> {

@@ -33,6 +33,33 @@ export function subscribe(conversationId: string, callback: Callback): () => voi
   };
 }
 
+// Global (not per-conversation) pub-sub for "a user became a participant of a
+// conversation". Lets already-connected SSE streams start following a
+// conversation that was created after they connected (e.g. a seed's first DM).
+// Not buffered in the sequencer — a reconnect rebuilds subscriptions from a
+// fresh snapshot, so replay is unnecessary.
+type ParticipantAddedEvent = { conversationId: string; userId: number };
+type ParticipantCallback = (event: ParticipantAddedEvent) => void;
+
+const participantSubscribers = new Set<ParticipantCallback>();
+
+export function subscribeParticipantAdded(callback: ParticipantCallback): () => void {
+  participantSubscribers.add(callback);
+  return () => participantSubscribers.delete(callback);
+}
+
+export function publishParticipantAdded(conversationId: string, userId: number): void {
+  for (const cb of participantSubscribers) {
+    try {
+      cb({ conversationId, userId });
+    } catch (err) {
+      // Drop a throwing subscriber (likely a dead stream), mirroring publish().
+      console.error("[conversation-events] participant subscriber threw:", err);
+      participantSubscribers.delete(cb);
+    }
+  }
+}
+
 export function publish(conversationId: string, event: ConversationEvent): void {
   const set = subscribers.get(conversationId);
   if (!set) return;

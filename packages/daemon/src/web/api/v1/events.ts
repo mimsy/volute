@@ -1,3 +1,4 @@
+import type { SSEConversationAddedEvent } from "@volute/api/events";
 import { desc, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
@@ -8,8 +9,13 @@ import {
   getOnlineBrains,
   removeConnection,
 } from "../../../lib/events/brain-presence.js";
-import { subscribe as subscribeConversation } from "../../../lib/events/conversation-events.js";
 import {
+  type ConversationEvent,
+  subscribe as subscribeConversation,
+  subscribeParticipantAdded,
+} from "../../../lib/events/conversation-events.js";
+import {
+  getConversationWithParticipants,
   getUnreadCounts,
   listConversationsWithParticipants,
 } from "../../../lib/events/conversations.js";
@@ -132,13 +138,15 @@ const app = new Hono<AuthEnv>().use("*", authMiddleware).get("/", async (c) => {
       });
       cleanups.push(unsubActivity);
 
-      // Subscribe to conversation events for each user conversation
-      for (const conv of conversations) {
-        const unsubConv = subscribeConversation(conv.id, (event) => {
+      // Subscribe to conversation events for a single conversation, forwarding
+      // its messages to this stream.
+      const subscribedConvIds = new Set<string>(conversations.map((c: any) => c.id));
+      function subscribeToConversation(convId: string) {
+        const unsubConv = subscribeConversation(convId, (event) => {
           // Buffered once at the publish site (conversation-events publish); forward
           // using the shared `seq` instead of re-buffering per subscribed connection.
           const { seq, ...rest } = event;
-          const data = { event: "conversation" as const, conversationId: conv.id, ...rest };
+          const data = { event: "conversation" as const, conversationId: convId, ...rest };
           stream
             .writeSSE({
               id: String(seq),
@@ -150,6 +158,64 @@ const app = new Hono<AuthEnv>().use("*", authMiddleware).get("/", async (c) => {
         });
         cleanups.push(unsubConv);
       }
+
+      // Subscribe to conversation events for each conversation known at connect.
+      for (const conv of conversations) {
+        subscribeToConversation(conv.id);
+      }
+
+      // A conversation created after connect (e.g. a seed's first DM) has no
+      // subscription above, so its messages would only surface on reload. When
+      // this caller becomes a participant of such a conversation, subscribe live
+      // and push a `conversation_added` event so the client can add it to its
+      // list immediately. The event is connection-specific, so allocate an ID
+      // without buffering (like the snapshot) — reconnect rebuilds via snapshot.
+      const unsubParticipant = subscribeParticipantAdded(({ conversationId, userId }) => {
+        if (userId !== user.id || subscribedConvIds.has(conversationId)) return;
+        subscribedConvIds.add(conversationId);
+
+        // The client drops message events for conversations it doesn't yet know
+        // about, and the first message can be published before the (async,
+        // DB-backed) conversation_added is written. Queue this conversation's
+        // messages until conversation_added has been sent, then flush in order,
+        // so the first message's preview/unread is never lost.
+        function forward(event: ConversationEvent & { seq: number }) {
+          const { seq, ...rest } = event;
+          const data = { event: "conversation" as const, conversationId, ...rest };
+          stream.writeSSE({ id: String(seq), data: JSON.stringify(data) }).catch((err) => {
+            if (!stream.aborted) log.error("[v1-events] write error:", log.errorData(err));
+          });
+        }
+        let queued: Array<ConversationEvent & { seq: number }> | null = [];
+        const unsubConv = subscribeConversation(conversationId, (event) => {
+          if (queued) queued.push(event);
+          else forward(event);
+        });
+        cleanups.push(unsubConv);
+
+        getConversationWithParticipants(conversationId)
+          .then((conv) => {
+            if (!conv) {
+              log.error("[v1-events] conversation_added: enrich returned null", { conversationId });
+              return;
+            }
+            const data: SSEConversationAddedEvent = {
+              event: "conversation_added",
+              conversation: conv,
+            };
+            return stream.writeSSE({ id: String(nextEventId()), data: JSON.stringify(data) });
+          })
+          .catch((err) => {
+            if (!stream.aborted)
+              log.error("[v1-events] conversation_added error:", log.errorData(err));
+          })
+          .finally(() => {
+            const pending = queued ?? [];
+            queued = null;
+            for (const event of pending) forward(event);
+          });
+      });
+      cleanups.push(unsubParticipant);
 
       // Keep-alive pings every 15s
       const keepAlive = setInterval(() => {

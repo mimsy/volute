@@ -248,6 +248,16 @@ function handleSSEEvent(event: SSEEvent) {
           console.warn("[stores] failed to refresh minds:", err);
         });
     }
+  } else if (event.event === "conversation_added") {
+    // A conversation we just became a participant of, created after we connected
+    // (e.g. a seed's first DM, or being added to an existing channel). Add it to
+    // the list live so it appears without a reload. The payload is enriched, so
+    // its last-message preview is pre-filled when the conversation already has
+    // messages; unread starts at 0 and accrues from the message events that
+    // follow (the daemon sends this before forwarding the conversation's messages).
+    if (!data.conversations.some((c) => c.id === event.conversation.id)) {
+      data.conversations = [event.conversation, ...data.conversations];
+    }
   } else if (event.event === "conversation") {
     const conv = data.conversations.find((c) => c.id === event.conversationId);
     if (conv && event.type === "message") {
