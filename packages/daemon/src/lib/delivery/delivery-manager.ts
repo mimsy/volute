@@ -656,15 +656,17 @@ export class DeliveryManager {
 
   /**
    * Clear all session state for a specific mind (called on mind stop/crash).
-   * Resets active counts and cleans up batch buffers so ghost counts don't accumulate.
+   * Resets active counts, clears typing indicators, and cleans up batch buffers
+   * so ghost state doesn't accumulate.
    */
   clearMindSessions(mindName: string): void {
     this.sessionStates.delete(mindName);
     // Free the mind's stale-send gate state so it doesn't linger after stop.
     clearMind(mindName);
-    // Clear typing indicators for this mind: entries are persistent and only cleared on
-    // `done`, so a stopped/crashed mind that never emits `done` would leave ghost typing
-    // entries. Publish so connected web clients drop the indicator immediately.
+    // Clear typing indicators for this mind: entries are persistent (no TTL) and after a
+    // successful delivery are only cleared on `done`, so a stopped/crashed mind that never
+    // emits `done` would leave ghost typing entries. Publish so connected web clients drop
+    // the indicator immediately.
     const typingMap = getTypingMap();
     publishTypingForChannels(typingMap.deleteSender(mindName), typingMap);
     // Clean up any batch buffers for this mind

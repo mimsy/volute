@@ -16,6 +16,10 @@ import {
   recordOutbound,
 } from "../packages/daemon/src/lib/delivery/message-delivery.js";
 import { subscribe as subscribeActivity } from "../packages/daemon/src/lib/events/activity-events.js";
+import {
+  type ConversationEvent,
+  subscribe,
+} from "../packages/daemon/src/lib/events/conversation-events.js";
 import { mindHistory, systemEvents, turns } from "../packages/daemon/src/lib/schema.js";
 
 async function cleanup(mind: string): Promise<void> {
@@ -205,10 +209,11 @@ describe("turn-lifecycle: handleMindEvent", () => {
 
   it("typing persists through mid-turn text/outbound and clears on done", async () => {
     const mind = "tl-typing-persist";
+    const convId = "11111111-2222-3333-4444-555555555555";
     const map = getTypingMap();
     // Delivery marks the mind typing in the triggering conversation (slug + conv-id keys).
     map.set("@creator", mind, { persistent: true });
-    map.set("11111111-2222-3333-4444-555555555555", mind, { persistent: true });
+    map.set(convId, mind, { persistent: true });
 
     // Mid-turn output — even on a different channel — must not clear typing.
     await handleMindEvent(mind, {
@@ -227,10 +232,21 @@ describe("turn-lifecycle: handleMindEvent", () => {
     });
     assert.deepEqual(map.get("@creator"), [mind], "typing should survive mid-turn outbound");
 
-    // Turn end clears typing everywhere.
+    // Turn end clears typing everywhere AND publishes the update to the conversation —
+    // the client relies on this event to drop the indicator (it no longer self-expires
+    // mind typing), so the publish is load-bearing, not just the map clear.
+    const received: ConversationEvent[] = [];
+    const unsub = subscribe(convId, (e) => received.push(e));
     await handleMindEvent(mind, { type: "done", session: "s1" });
+    unsub();
     assert.deepEqual(map.get("@creator"), [], "typing should clear on done");
-    assert.deepEqual(map.get("11111111-2222-3333-4444-555555555555"), []);
+    assert.deepEqual(map.get(convId), []);
+    const typingEvents = received.filter((e) => e.type === "typing");
+    assert.ok(typingEvents.length > 0, "done should publish a typing update to the conversation");
+    assert.ok(
+      typingEvents.every((e) => !e.senders.includes(mind)),
+      "published senders must not include the mind after done",
+    );
     await cleanup(mind);
   });
 

@@ -506,10 +506,47 @@ describe("DeliveryManager", () => {
       unsub();
 
       assert.equal(map.get(convId).includes(name), false, "mind should be cleared from typing map");
+      const typingEvents = received.filter((e) => e.type === "typing");
+      assert.ok(typingEvents.length > 0, "expected a typing event to be published on clear");
       assert.ok(
-        received.some((e) => e.type === "typing"),
-        "expected a typing event to be published on clear",
+        typingEvents.every((e) => !e.senders.includes(name)),
+        "published senders must not include the cleared mind",
       );
+    });
+
+    it("publishes typing once per conversation when delivering a batch", async () => {
+      const name = createMindWithRoutes({
+        rules: [{ channel: "test:*", thread: "group" }],
+        gateUnmatched: false,
+      });
+      const convId = `conv${Date.now()}${Math.floor(Math.random() * 1000)}`;
+
+      const received: ConversationEvent[] = [];
+      const unsub = subscribe(convId, (e) => received.push(e));
+
+      manager = new DeliveryManager();
+      const msg = (sender: string, content: string) => ({
+        payload: { channel: "test:ch", sender, content, conversationId: convId },
+        channel: "test:ch",
+        sender,
+        createdAt: Date.now(),
+      });
+      // Delivery fails (no mind server) but typing is set + published before the POST.
+      await (manager as any).deliverBatchToMind(
+        name,
+        "group",
+        [msg("alice", "one"), msg("bob", "two")],
+        { delivery: { mode: "immediate" } },
+      );
+
+      unsub();
+      const setEvents = received.filter((e) => e.type === "typing" && e.senders.includes(name));
+      assert.equal(
+        setEvents.length,
+        1,
+        "batch delivery should publish the typing set exactly once per conversation",
+      );
+      removeMind(name);
     });
   });
 
