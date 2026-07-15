@@ -1,4 +1,5 @@
 import type { TurnActivity } from "@volute/api";
+import { icons } from "@volute/ui/icons";
 
 /**
  * Stable key for a collapsed-turn peek popover, used to track which popovers
@@ -50,9 +51,26 @@ export function isUuid(s: string): boolean {
   return UUID_RE.test(s);
 }
 
+/**
+ * Built-in look for significant lifecycle activities that are published without
+ * their own icon/color metadata. Keyed on the stable activity type (not stored
+ * metadata) so rows written before any styling — like a mind's one-time sprout —
+ * still get their distinct display instead of the note-like default.
+ */
+const ACTIVITY_TYPE_STYLE: Record<string, { color: string; icon: string; label: string }> = {
+  mind_sprouted: { color: "green", icon: icons.mind, label: "sprouted" },
+};
+
+/** Presentation for a known lifecycle activity type, or undefined for generic ones. */
+export function activityTypeStyle(
+  type: string,
+): { color: string; icon: string; label: string } | undefined {
+  return ACTIVITY_TYPE_STYLE[type];
+}
+
 /** Human label for an activity type slug ("note_created" → "note created"). */
 export function activityTypeLabel(type: string): string {
-  return type.replace(/_/g, " ");
+  return ACTIVITY_TYPE_STYLE[type]?.label ?? type.replace(/_/g, " ");
 }
 
 /** Accent color name for the activity peek button/card. */

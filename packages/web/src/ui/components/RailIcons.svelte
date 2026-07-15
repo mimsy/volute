@@ -12,6 +12,7 @@ import {
   activityNavUrl,
   activityPeekBody,
   activityTypeLabel,
+  activityTypeStyle,
   isUuid,
 } from "../lib/peek";
 import { turnRailParts } from "../lib/turn-rail";
@@ -234,8 +235,10 @@ function reveal(key: string) {
     {/if}
     {#each groups.activities as group (group.type)}
       {@const groupKey = `group:${group.type}`}
-      {@const groupColor = group.color ?? "yellow"}
-      {@const groupIcon = group.icon ? sanitizeSvg(group.icon) : ''}
+      {@const typeStyle = activityTypeStyle(group.type)}
+      {@const groupColor = group.color ?? typeStyle?.color ?? "yellow"}
+      {@const groupIconSvg = group.icon ?? typeStyle?.icon}
+      {@const groupIcon = groupIconSvg ? sanitizeSvg(groupIconSvg) : ''}
       <div class="peek-anchor">
         <button class="peek-btn" style:color="var(--{groupColor})" aria-label="View activities" onmouseenter={() => reveal(groupKey)} onfocus={() => reveal(groupKey)}>
           {#if groupIcon}
@@ -247,7 +250,7 @@ function reveal(key: string) {
         </button>
         <div class="peek-popover">
           {#if revealed.has(groupKey)}
-            <TimelineCard title={activityTypeLabel(group.type)} color={groupColor} icon={group.icon} iconKind={group.icon ? undefined : "document-lines"} meta={group.count > group.items.length ? `${group.items.length} of ${group.count}` : `×${group.count}`}>
+            <TimelineCard title={activityTypeLabel(group.type)} color={groupColor} icon={groupIconSvg} iconKind={groupIconSvg ? undefined : "document-lines"} meta={group.count > group.items.length ? `${group.items.length} of ${group.count}` : `×${group.count}`}>
               <div class="peek-list">
                 {#each group.items as actItem (actItem.id)}
                   {@const itemUrl = activityNavUrl(actItem.metadata, mind)}

@@ -4,6 +4,8 @@ import {
   activityColor,
   activityNavUrl,
   activityPeekBody,
+  activityTypeLabel,
+  activityTypeStyle,
   peekKey,
   shouldRenderPeek,
 } from "../packages/web/src/ui/lib/peek";
@@ -100,6 +102,21 @@ describe("activityColor", () => {
   it("defaults to yellow", () => {
     assert.equal(activityColor(null), "yellow");
     assert.equal(activityColor({ color: 3 }), "yellow");
+  });
+});
+
+describe("activityTypeStyle / activityTypeLabel", () => {
+  it("gives mind_sprouted its own green mind-icon look and a clean label", () => {
+    const style = activityTypeStyle("mind_sprouted");
+    assert.ok(style, "mind_sprouted should have a built-in style");
+    assert.equal(style?.color, "green");
+    assert.ok(style?.icon.includes("<svg"), "should carry an inline icon");
+    assert.equal(activityTypeLabel("mind_sprouted"), "sprouted");
+  });
+
+  it("leaves generic activity types to the slug label and no built-in style", () => {
+    assert.equal(activityTypeStyle("note_created"), undefined);
+    assert.equal(activityTypeLabel("note_created"), "note created");
   });
 });
 
