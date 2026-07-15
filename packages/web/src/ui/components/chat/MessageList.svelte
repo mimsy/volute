@@ -13,6 +13,7 @@ let {
   minds = [],
   participants = [],
   onOpenMind,
+  typingNames = [],
 }: {
   entries: ChatEntry[];
   loadError?: string;
@@ -22,6 +23,7 @@ let {
   minds?: Mind[];
   participants?: Participant[];
   onOpenMind?: (mind: Mind) => void;
+  typingNames?: string[];
 } = $props();
 
 let scrollEl: HTMLDivElement;
@@ -168,6 +170,24 @@ function handleScroll() {
       />
     {/if}
   {/each}
+  {#if typingNames.length > 0}
+    <div class="typing-row">
+      {#each typingNames as name (name)}
+        {@const mind = mindsByName.get(name)}
+        {#if mind}
+          <button class="typing-chip mind" onclick={() => onOpenMind?.(mind)}>
+            <span class="typing-dot iridescent"></span>
+            {name}
+          </button>
+        {:else}
+          <span class="typing-chip">
+            <span class="typing-dot"></span>
+            {name}
+          </span>
+        {/if}
+      {/each}
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -229,5 +249,53 @@ function handleScroll() {
     flex: 1;
     height: 1px;
     background: var(--border);
+  }
+
+  .typing-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 12px;
+    padding: 8px 0 2px;
+    font-size: 13px;
+    color: var(--text-2);
+  }
+
+  .typing-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+  }
+
+  button.typing-chip {
+    background: none;
+    border: none;
+    padding: 0;
+    font: inherit;
+    color: inherit;
+    cursor: pointer;
+  }
+
+  button.typing-chip:hover {
+    color: var(--text-0);
+  }
+
+  .typing-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    background: var(--text-3);
+    animation: typing-pulse 1.5s ease infinite;
+  }
+
+  .typing-dot.iridescent {
+    background: none;
+    animation: iridescent 3s ease-in-out infinite;
+  }
+
+  @keyframes typing-pulse {
+    0%, 100% { opacity: 0.4; }
+    50% { opacity: 1; }
   }
 </style>
