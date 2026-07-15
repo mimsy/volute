@@ -221,6 +221,22 @@ export function shellEscape(s: string): string {
 }
 
 /**
+ * Extra directories a sandboxed mind must be able to write to for the shell's
+ * here-documents to work.
+ *
+ * macOS ships bash 3.2, whose here-document handling writes the body to a temp
+ * file under /tmp (→ /private/tmp, then /var/tmp) and IGNORES $TMPDIR — so a
+ * mind running `cat <<'X' … X` fails with "cannot create temp file for here
+ * document: operation not permitted" unless the seatbelt sandbox can write
+ * there. sandbox-runtime only whitelists /tmp/claude (the dir it points TMPDIR
+ * at), which bash 3.2 never consults. Linux ships modern bash that honors that
+ * TMPDIR=/tmp/claude, so it needs nothing extra here.
+ */
+export function shellTempWritePaths(): string[] {
+  return process.platform === "darwin" ? ["/private/tmp", "/private/var/tmp"] : [];
+}
+
+/**
  * Wrap a command for sandbox execution.
  * Returns [cmd, args] ready for spawn().
  * If sandbox is not available, returns the original command unchanged.
@@ -245,7 +261,7 @@ export async function wrapForSandbox(
     filesystem: {
       denyRead,
       allowRead,
-      allowWrite: allowWrite ?? [mindDir],
+      allowWrite: [...(allowWrite ?? [mindDir]), ...shellTempWritePaths()],
       denyWrite: [],
     },
   };
