@@ -136,6 +136,7 @@ import { exec, gitExec } from "../../lib/util/exec.js";
 import { checkHealth } from "../../lib/util/health.js";
 import log from "../../lib/util/logger.js";
 import { safeResolveWithinBase } from "../../lib/util/paths.js";
+import { parseDbTimestamp } from "../../lib/util/time.js";
 import { fireWebhook } from "../../lib/webhook.js";
 import {
   type AuthEnv,
@@ -1917,8 +1918,12 @@ const app = new Hono<AuthEnv>()
       .limit(1);
 
     const now = Date.now();
-    const creatorTime = lastCreatorMsg[0] ? new Date(lastCreatorMsg[0].created_at).getTime() : 0;
-    const spiritTime = lastSpiritMsg[0] ? new Date(lastSpiritMsg[0].created_at).getTime() : 0;
+    const creatorTime = lastCreatorMsg[0]
+      ? parseDbTimestamp(lastCreatorMsg[0].created_at).getTime()
+      : 0;
+    const spiritTime = lastSpiritMsg[0]
+      ? parseDbTimestamp(lastSpiritMsg[0].created_at).getTime()
+      : 0;
     const minutesSinceCreator = creatorTime ? (now - creatorTime) / 60_000 : Infinity;
     const minutesSinceSpirit = spiritTime ? (now - spiritTime) / 60_000 : Infinity;
 
@@ -3036,7 +3041,7 @@ const app = new Hono<AuthEnv>()
 
     // Format as [Session Activity] block
     const lines = rows.map((row) => {
-      const ts = new Date(row.created_at.endsWith("Z") ? row.created_at : `${row.created_at}Z`);
+      const ts = parseDbTimestamp(row.created_at);
       const ago = formatTimeAgo(ts);
       return `- ${row.thread ?? "unknown"} (${ago}): ${row.content ?? ""}`;
     });
