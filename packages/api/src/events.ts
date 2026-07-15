@@ -29,7 +29,11 @@ export type ActivityEvent = {
 };
 
 /** Unified SSE event envelope sent over /api/v1/events */
-export type SSEEvent = SSESnapshotEvent | SSEActivityEvent | SSEConversationEvent;
+export type SSEEvent =
+  | SSESnapshotEvent
+  | SSEActivityEvent
+  | SSEConversationEvent
+  | SSEConversationAddedEvent;
 
 export type SSESnapshotEvent = {
   event: "snapshot";
@@ -53,6 +57,16 @@ export type SSEConversationEvent = {
   event: "conversation";
   conversationId: string;
 } & ConversationEvent;
+
+/**
+ * Sent when the caller becomes a participant of a conversation that did not
+ * exist (or wasn't theirs) at connect time — e.g. a seed's first DM. Lets the
+ * client add the conversation to its list live, without a reconnect/snapshot.
+ */
+export type SSEConversationAddedEvent = {
+  event: "conversation_added";
+  conversation: ConversationWithParticipants;
+};
 
 /** Sequenced event wrapper for Last-Event-ID reconnection */
 export type SequencedEvent = {
