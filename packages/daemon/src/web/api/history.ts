@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, lt, sql } from "drizzle-orm";
 import type { Context } from "hono";
 import { Hono } from "hono";
 import { getDb } from "../../lib/db.js";
@@ -15,7 +15,11 @@ import {
   users,
 } from "../../lib/schema.js";
 import log from "../../lib/util/logger.js";
-import { isoWeekKeyForDateStr } from "../../lib/util/period-keys.js";
+import {
+  getUtcTimeRange,
+  isoWeekKeyForDateStr,
+  type TimerPeriod,
+} from "../../lib/util/period-keys.js";
 import type { AuthEnv } from "../middleware/auth.js";
 
 /**
@@ -37,6 +41,326 @@ async function resolveMindFilter(c: Context<HistoryEnv>): Promise<string | undef
   const user = c.get("user");
   const privileged = user.role === "admin" || user.role === "system";
   return privileged ? (c.req.query("mind") ?? undefined) : getBaseName(user.username);
+}
+
+type Db = Awaited<ReturnType<typeof getDb>>;
+
+/** The event's worded label, stored on the row by recordEventRow. */
+function eventLabelOf(metadata: string | null, channel: string): string {
+  if (metadata) {
+    try {
+      const parsed = JSON.parse(metadata) as { label?: unknown };
+      if (typeof parsed.label === "string" && parsed.label) return parsed.label;
+    } catch {
+      // Fall through to the channel-derived label.
+    }
+  }
+  // `event:<type>:<id>` — fall back to the type segment for rows written before the
+  // label was stored (or if the metadata is malformed).
+  return channel.split(":")[1] || "Event";
+}
+
+/** Build conversation label from channel slug. */
+function getChannelLabel(channel: string): { label: string; type: "dm" | "channel" } {
+  const isDM = channel.startsWith("@");
+  const colonIdx = channel.indexOf(":");
+  const raw = colonIdx >= 0 ? channel.substring(colonIdx + 1) : channel;
+  const label = isDM ? raw : raw.startsWith("#") ? raw : `#${raw}`;
+  return { label, type: isDM ? "dm" : "channel" };
+}
+
+/**
+ * Resolve channel/DM slugs to conversation UUIDs. `dmSlugMinds` maps each DM
+ * slug to the minds whose history used it — a DM only resolves when the mind
+ * is verified as a participant. Resolution failures degrade to an empty map
+ * entry (callers fall back to the slug itself).
+ */
+async function resolveConversationIds(
+  db: Db,
+  allChannelSlugs: Set<string>,
+  dmSlugMinds: Map<string, Set<string>>,
+): Promise<Map<string, string>> {
+  const channelIdMap = new Map<string, string>();
+  try {
+    if (allChannelSlugs.size > 0) {
+      // Resolve channel conversations by name (strip # prefix, platform prefix)
+      const channelNames = [...allChannelSlugs]
+        .filter((s) => !s.startsWith("@"))
+        .map((s) => {
+          let name = s;
+          if (name.startsWith("#")) name = name.slice(1);
+          const colonIdx = name.indexOf(":");
+          if (colonIdx >= 0) name = name.substring(colonIdx + 1);
+          return { slug: s, name };
+        });
+      if (channelNames.length > 0) {
+        const channelRows = await db
+          .select({ conversationId: channels.conversation_id, name: channels.name })
+          .from(channels)
+          .where(
+            inArray(
+              channels.name,
+              channelNames.map((c) => c.name),
+            ),
+          );
+        const nameToId = new Map(channelRows.map((r) => [r.name, r.conversationId]));
+        for (const { slug, name } of channelNames) {
+          const id = nameToId.get(name);
+          if (id) channelIdMap.set(slug, id);
+        }
+      }
+
+      // Resolve DM conversations by participant username, verifying the mind is also a participant
+      const dmSlugs = [...dmSlugMinds.keys()];
+      if (dmSlugs.length > 0) {
+        const targetNames = dmSlugs.map((s) => s.slice(1));
+        const cp2 = db.$with("cp2").as(
+          db
+            .select({
+              conversation_id: conversationParticipants.conversation_id,
+              username: users.username,
+            })
+            .from(conversationParticipants)
+            .innerJoin(users, eq(conversationParticipants.user_id, users.id)),
+        );
+        const dmRows = await db
+          .with(cp2)
+          .select({
+            id: conversations.id,
+            targetUsername: users.username,
+          })
+          .from(conversations)
+          .innerJoin(
+            conversationParticipants,
+            eq(conversations.id, conversationParticipants.conversation_id),
+          )
+          .innerJoin(users, eq(conversationParticipants.user_id, users.id))
+          .where(and(eq(conversations.type, "dm"), inArray(users.username, targetNames)));
+        // Batch-verify mind participation in one query instead of per-DM
+        const dmCandidates: { slug: string; conversationId: string; mindNames: string[] }[] = [];
+        for (const row of dmRows) {
+          const slug = `@${row.targetUsername}`;
+          const mindNames = dmSlugMinds.get(slug);
+          if (mindNames && !channelIdMap.has(slug)) {
+            dmCandidates.push({ slug, conversationId: row.id, mindNames: [...mindNames] });
+          }
+        }
+        if (dmCandidates.length > 0) {
+          const candidateConvIds = dmCandidates.map((d) => d.conversationId);
+          const allMindNames = [...new Set(dmCandidates.flatMap((d) => d.mindNames))];
+          const verifyRows = await db
+            .select({
+              conversation_id: conversationParticipants.conversation_id,
+              username: users.username,
+            })
+            .from(conversationParticipants)
+            .innerJoin(users, eq(conversationParticipants.user_id, users.id))
+            .where(
+              and(
+                inArray(conversationParticipants.conversation_id, candidateConvIds),
+                inArray(users.username, allMindNames),
+              ),
+            );
+          const verifiedConvs = new Set(verifyRows.map((r) => r.conversation_id));
+          for (const candidate of dmCandidates) {
+            if (verifiedConvs.has(candidate.conversationId)) {
+              channelIdMap.set(candidate.slug, candidate.conversationId);
+            }
+          }
+        }
+      }
+    }
+  } catch (err) {
+    log.warn("Failed to resolve channel slugs to conversation IDs", log.errorData(err));
+  }
+  return channelIdMap;
+}
+
+/** Activity types excluded from user-facing history (lifecycle/presence noise). */
+const NOISE_ACTIVITY_TYPES = sql`('mind_started', 'mind_stopped', 'mind_active', 'mind_idle', 'mind_done', 'mind_sleeping', 'mind_waking', 'brain_online', 'brain_offline')`;
+
+/** Grouped per-period icon data attached to summary rows via `?include=icons`. */
+type SummaryIcons = {
+  conversations: { id: string; label: string; type: "dm" | "channel"; count: number }[];
+  events: { label: string; count: number }[];
+  activities: {
+    type: string;
+    count: number;
+    icon?: string;
+    color?: string;
+    items: {
+      id: number;
+      summary: string;
+      metadata: Record<string, unknown> | null;
+      created_at: string | null;
+    }[];
+  }[];
+};
+
+const PERIODIC_TIERS = new Set<string>(["hour", "day", "week", "month"]);
+
+/**
+ * Aggregate what happened during each summary's period — distinct conversations
+ * (with message counts), system events grouped by label, activities grouped by
+ * type — mirroring the per-turn conversations/events/activities structure at
+ * period granularity. `_system` rows are skipped: their events live in per-mind
+ * history, so a system-level aggregate would double-count across minds.
+ */
+async function attachSummaryIcons(
+  db: Db,
+  rows: { mind: string; period: string; period_key: string; icons?: SummaryIcons }[],
+): Promise<void> {
+  const allChannelSlugs = new Set<string>();
+  const dmSlugMinds = new Map<string, Set<string>>();
+  const pending: {
+    row: (typeof rows)[number];
+    convCounts: { channel: string; count: number }[];
+    events: { label: string; count: number }[];
+    activities: SummaryIcons["activities"];
+  }[] = [];
+
+  for (const row of rows) {
+    if (row.mind === "_system" || !PERIODIC_TIERS.has(row.period)) continue;
+    const { start, end } = getUtcTimeRange(row.period_key, row.period as TimerPeriod);
+
+    // Conversations: message counts per channel slug (exact via GROUP BY).
+    const convCounts = await db
+      .select({ channel: mindHistory.channel, count: sql<number>`count(*)` })
+      .from(mindHistory)
+      .where(
+        and(
+          eq(mindHistory.mind, row.mind),
+          sql`${mindHistory.type} IN ('inbound', 'outbound')`,
+          gte(mindHistory.created_at, start),
+          lt(mindHistory.created_at, end),
+        ),
+      )
+      .groupBy(mindHistory.channel)
+      .limit(50);
+    for (const cc of convCounts) {
+      if (!cc.channel) continue;
+      allChannelSlugs.add(cc.channel);
+      if (cc.channel.startsWith("@")) {
+        let minds = dmSlugMinds.get(cc.channel);
+        if (!minds) {
+          minds = new Set();
+          dmSlugMinds.set(cc.channel, minds);
+        }
+        minds.add(row.mind);
+      }
+    }
+
+    // System events: grouped by worded label. Label lives in metadata JSON, so
+    // grouping happens here; the fetch cap comfortably exceeds real volumes
+    // (heartbeat-style events are the densest source).
+    const eventRows = await db
+      .select({ channel: mindHistory.channel, metadata: mindHistory.metadata })
+      .from(mindHistory)
+      .where(
+        and(
+          eq(mindHistory.mind, row.mind),
+          eq(mindHistory.type, "event"),
+          gte(mindHistory.created_at, start),
+          lt(mindHistory.created_at, end),
+        ),
+      )
+      .orderBy(mindHistory.created_at, mindHistory.id)
+      .limit(2000);
+    const eventGroups = new Map<string, number>();
+    for (const ev of eventRows) {
+      const label = eventLabelOf(ev.metadata, ev.channel ?? "");
+      eventGroups.set(label, (eventGroups.get(label) ?? 0) + 1);
+    }
+
+    // Activities: grouped by type, newest-first fetch so item caps keep the
+    // most recent; counts stay exact via a separate GROUP BY.
+    const actCounts = await db
+      .select({ type: activity.type, count: sql<number>`count(*)` })
+      .from(activity)
+      .where(
+        and(
+          eq(activity.mind, row.mind),
+          gte(activity.created_at, start),
+          lt(activity.created_at, end),
+          sql`${activity.type} NOT IN ${NOISE_ACTIVITY_TYPES}`,
+        ),
+      )
+      .groupBy(activity.type);
+    let actGroups: SummaryIcons["activities"] = [];
+    if (actCounts.length > 0) {
+      const actRows = await db
+        .select({
+          id: activity.id,
+          type: activity.type,
+          summary: activity.summary,
+          metadata: activity.metadata,
+          created_at: activity.created_at,
+        })
+        .from(activity)
+        .where(
+          and(
+            eq(activity.mind, row.mind),
+            gte(activity.created_at, start),
+            lt(activity.created_at, end),
+            sql`${activity.type} NOT IN ${NOISE_ACTIVITY_TYPES}`,
+          ),
+        )
+        .orderBy(desc(activity.created_at), desc(activity.id))
+        .limit(200);
+      const byType = new Map<string, SummaryIcons["activities"][number]>();
+      for (const a of actRows) {
+        let metadata: Record<string, unknown> | null = null;
+        if (a.metadata) {
+          try {
+            metadata = JSON.parse(a.metadata);
+          } catch (err) {
+            log.debug(`malformed activity metadata for activity ${a.id}`, log.errorData(err));
+          }
+        }
+        let group = byType.get(a.type);
+        if (!group) {
+          group = {
+            type: a.type,
+            count: 0,
+            ...(typeof metadata?.icon === "string" ? { icon: metadata.icon } : {}),
+            ...(typeof metadata?.color === "string" ? { color: metadata.color } : {}),
+            items: [],
+          };
+          byType.set(a.type, group);
+        }
+        if (group.items.length < 20) {
+          group.items.push({ id: a.id, summary: a.summary, metadata, created_at: a.created_at });
+        }
+      }
+      const countByType = new Map(actCounts.map((c) => [c.type, c.count]));
+      for (const group of byType.values()) {
+        group.count = countByType.get(group.type) ?? group.items.length;
+        group.items.reverse(); // chronological within the group
+      }
+      actGroups = [...byType.values()];
+    }
+
+    pending.push({
+      row,
+      convCounts: convCounts.filter((c): c is { channel: string; count: number } => !!c.channel),
+      events: [...eventGroups.entries()].map(([label, count]) => ({ label, count })),
+      activities: actGroups,
+    });
+  }
+
+  if (pending.length === 0) return;
+  const channelIdMap = await resolveConversationIds(db, allChannelSlugs, dmSlugMinds);
+
+  for (const p of pending) {
+    p.row.icons = {
+      conversations: p.convCounts.map((cc) => {
+        const { label, type } = getChannelLabel(cc.channel);
+        return { id: channelIdMap.get(cc.channel) ?? cc.channel, label, type, count: cc.count };
+      }),
+      events: p.events,
+      activities: p.activities,
+    };
+  }
 }
 
 const history = new Hono<HistoryEnv>()
@@ -153,21 +477,6 @@ const history = new Hono<HistoryEnv>()
     const turnMindMap = new Map<string, string>();
     for (const t of turnRows) turnMindMap.set(t.id, t.mind);
 
-    /** The event's worded label, stored on the row by recordEventRow. */
-    function eventLabelOf(metadata: string | null, channel: string): string {
-      if (metadata) {
-        try {
-          const parsed = JSON.parse(metadata) as { label?: unknown };
-          if (typeof parsed.label === "string" && parsed.label) return parsed.label;
-        } catch {
-          // Fall through to the channel-derived label.
-        }
-      }
-      // `event:<type>:<id>` — fall back to the type segment for rows written before the
-      // label was stored (or if the metadata is malformed).
-      return channel.split(":")[1] || "Event";
-    }
-
     // Split mind_history rows: messages into conversations, system events into their own
     // per-turn list. An event has no sender and no channel to reply to, so it must never
     // enter the conversation structure that the UI renders as chat.
@@ -192,15 +501,6 @@ const history = new Hono<HistoryEnv>()
         content: m.content,
         created_at: m.created_at,
       });
-    }
-
-    // Build conversation label from channel slug
-    function getChannelLabel(channel: string): { label: string; type: "dm" | "channel" } {
-      const isDM = channel.startsWith("@");
-      const colonIdx = channel.indexOf(":");
-      const raw = colonIdx >= 0 ? channel.substring(colonIdx + 1) : channel;
-      const label = isDM ? raw : raw.startsWith("#") ? raw : `#${raw}`;
-      return { label, type: isDM ? "dm" : "channel" };
     }
 
     // 4. Get activities linked to these turns
@@ -275,99 +575,7 @@ const history = new Hono<HistoryEnv>()
       }
     }
 
-    const channelIdMap = new Map<string, string>();
-    try {
-      if (allChannelSlugs.size > 0) {
-        // Resolve channel conversations by name (strip # prefix, platform prefix)
-        const channelNames = [...allChannelSlugs]
-          .filter((s) => !s.startsWith("@"))
-          .map((s) => {
-            let name = s;
-            if (name.startsWith("#")) name = name.slice(1);
-            const colonIdx = name.indexOf(":");
-            if (colonIdx >= 0) name = name.substring(colonIdx + 1);
-            return { slug: s, name };
-          });
-        if (channelNames.length > 0) {
-          const channelRows = await db
-            .select({ conversationId: channels.conversation_id, name: channels.name })
-            .from(channels)
-            .where(
-              inArray(
-                channels.name,
-                channelNames.map((c) => c.name),
-              ),
-            );
-          const nameToId = new Map(channelRows.map((r) => [r.name, r.conversationId]));
-          for (const { slug, name } of channelNames) {
-            const id = nameToId.get(name);
-            if (id) channelIdMap.set(slug, id);
-          }
-        }
-
-        // Resolve DM conversations by participant username, verifying the mind is also a participant
-        const dmSlugs = [...dmSlugMinds.keys()];
-        if (dmSlugs.length > 0) {
-          const targetNames = dmSlugs.map((s) => s.slice(1));
-          const cp2 = db.$with("cp2").as(
-            db
-              .select({
-                conversation_id: conversationParticipants.conversation_id,
-                username: users.username,
-              })
-              .from(conversationParticipants)
-              .innerJoin(users, eq(conversationParticipants.user_id, users.id)),
-          );
-          const dmRows = await db
-            .with(cp2)
-            .select({
-              id: conversations.id,
-              targetUsername: users.username,
-            })
-            .from(conversations)
-            .innerJoin(
-              conversationParticipants,
-              eq(conversations.id, conversationParticipants.conversation_id),
-            )
-            .innerJoin(users, eq(conversationParticipants.user_id, users.id))
-            .where(and(eq(conversations.type, "dm"), inArray(users.username, targetNames)));
-          // Batch-verify mind participation in one query instead of per-DM
-          const dmCandidates: { slug: string; conversationId: string; mindNames: string[] }[] = [];
-          for (const row of dmRows) {
-            const slug = `@${row.targetUsername}`;
-            const mindNames = dmSlugMinds.get(slug);
-            if (mindNames && !channelIdMap.has(slug)) {
-              dmCandidates.push({ slug, conversationId: row.id, mindNames: [...mindNames] });
-            }
-          }
-          if (dmCandidates.length > 0) {
-            const candidateConvIds = dmCandidates.map((d) => d.conversationId);
-            const allMindNames = [...new Set(dmCandidates.flatMap((d) => d.mindNames))];
-            const verifyRows = await db
-              .select({
-                conversation_id: conversationParticipants.conversation_id,
-                username: users.username,
-              })
-              .from(conversationParticipants)
-              .innerJoin(users, eq(conversationParticipants.user_id, users.id))
-              .where(
-                and(
-                  inArray(conversationParticipants.conversation_id, candidateConvIds),
-                  inArray(users.username, allMindNames),
-                ),
-              );
-            const verifiedConvs = new Set(verifyRows.map((r) => r.conversation_id));
-            for (const candidate of dmCandidates) {
-              if (verifiedConvs.has(candidate.conversationId)) {
-                channelIdMap.set(candidate.slug, candidate.conversationId);
-              }
-            }
-          }
-        }
-      }
-    } catch (err) {
-      log.warn("Failed to resolve channel slugs to conversation IDs", log.errorData(err));
-    }
+    const channelIdMap = await resolveConversationIds(db, allChannelSlugs, dmSlugMinds);
 
     // 7. Assemble response
     const result = turnRows.map((t) => {
@@ -433,6 +641,10 @@ const history = new Hono<HistoryEnv>()
         created_at: t.created_at,
         trigger: trigger
           ? {
+              // The trigger's mind_history row id — matches events[].id /
+              // messages[].source_event_id so the UI can dedupe the trigger
+              // from the per-turn icon stack.
+              eventId: t.trigger_event_id,
               channel: trigger.channel,
               sender: trigger.sender,
               content: trigger.content,
@@ -601,8 +813,15 @@ const history = new Hono<HistoryEnv>()
           log.debug(`malformed meta_summary metadata for id ${r.id}`, log.errorData(err));
         }
       }
-      return { ...r, metadata };
+      return { ...r, metadata } as (typeof rows)[number] & {
+        metadata: Record<string, unknown> | null;
+        icons?: SummaryIcons;
+      };
     });
+
+    if (c.req.query("include") === "icons") {
+      await attachSummaryIcons(db, result);
+    }
 
     return c.json(result);
   })
@@ -619,9 +838,7 @@ const history = new Hono<HistoryEnv>()
     if (to) conditions.push(sql`${activity.created_at} <= ${to}`);
 
     // Exclude noise events (mind lifecycle, brain presence)
-    conditions.push(
-      sql`${activity.type} NOT IN ('mind_started', 'mind_stopped', 'mind_active', 'mind_idle', 'mind_done', 'mind_sleeping', 'mind_waking', 'brain_online', 'brain_offline')`,
-    );
+    conditions.push(sql`${activity.type} NOT IN ${NOISE_ACTIVITY_TYPES}`);
 
     const rows = await db
       .select({

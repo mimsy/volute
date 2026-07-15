@@ -259,12 +259,6 @@ export async function handleMindEvent(
   // Track mind activity for the dashboard timeline.
   onMindEvent(mind, event.type, event.channel);
 
-  // Clear typing on first outbound event for a channel.
-  if ((event.type === "text" || event.type === "outbound") && event.channel) {
-    const map = getTypingMap();
-    publishTypingForChannels(map.deleteSender(mind), map);
-  }
-
   // Turn failure: record a notice and flag the session as errored so the upcoming `done`
   // does NOT mark notices delivered (failures accumulate until a clean turn).
   if (event.type === "error" && event.session) {
@@ -284,6 +278,10 @@ export async function handleMindEvent(
   }
 
   if (event.type === "done") {
+    // Turn end: clear the persistent typing entries set at delivery (delivery-manager)
+    // and push the update to web clients. This is the canonical mid-flight clear — do
+    // not clear earlier (e.g. on text/outbound); typing means "on a turn", not "about
+    // to send here".
     const map = getTypingMap();
     publishTypingForChannels(map.deleteSender(mind), map);
     broadcast({ type: "mind_done", mind, summary: "Finished processing" });

@@ -1,10 +1,9 @@
 <script lang="ts">
 import type { ConversationWithParticipants, Mind } from "@volute/api";
 import { Icon, Modal, tooltip as tooltipAction } from "@volute/ui";
-import { icons } from "@volute/ui/icons";
 import { startMind, stopMind } from "../../lib/client";
 import { mindDotColor } from "../../lib/format";
-import { navigate, type Selection } from "../../lib/navigate";
+import type { Selection } from "../../lib/navigate";
 import {
   cancelReauth,
   oauthReauth,
@@ -96,9 +95,6 @@ function toggleSection(section: Section) {
   localStorage.setItem("volute:sidebar-collapsed", JSON.stringify([...collapsed]));
 }
 
-let spirits = $derived(minds.filter((m) => m.mindType === "spirit"));
-let regularMinds = $derived(minds.filter((m) => m.mindType !== "spirit"));
-
 let mindNames = $derived(new Set(minds.map((m) => m.name)));
 
 let mindDmMap = $derived(
@@ -119,7 +115,11 @@ let mindDmMap = $derived(
 );
 
 let sortedMinds = $derived(
-  [...regularMinds].sort((a, b) => {
+  [...minds].sort((a, b) => {
+    // Spirit pinned first
+    const aSpirit = a.mindType === "spirit" ? 0 : 1;
+    const bSpirit = b.mindType === "spirit" ? 0 : 1;
+    if (aSpirit !== bSpirit) return aSpirit - bSpirit;
     const aActive = activeMinds.has(a.name) ? 0 : a.status === "running" ? 1 : 2;
     const bActive = activeMinds.has(b.name) ? 0 : b.status === "running" ? 1 : 2;
     if (aActive !== bActive) return aActive - bActive;
@@ -233,43 +233,6 @@ let isSystemActive = $derived(
           >!</button>
         {/if}
       </div>
-      <div class="item-list">
-        <div class="mind-item-row">
-          <button
-            class="nav-item"
-            class:active={selection.kind === "system-history"}
-            onclick={() => navigate("/history")}
-          >
-            <span class="nav-icon">{@html icons.history}</span>
-            <span class="nav-label">Timeline</span>
-          </button>
-        </div>
-      </div>
-      {#if spirits.length > 0}
-        <div class="item-list">
-          {#each spirits as spirit}
-            {@const dmId = mindDmMap.get(spirit.name)}
-            {@const spiritUnread = dmId ? (unreadCounts.get(dmId) ?? 0) : 0}
-            <div class="mind-item-row">
-              <button
-                class="nav-item"
-                class:active={selection.kind === "mind" && selection.name === spirit.name}
-                onclick={() => onSelectMind(spirit.name)}
-              >
-                <span
-                  class="status-dot"
-                  class:iridescent={activeMinds.has(spirit.name)}
-                  style:background={activeMinds.has(spirit.name) ? undefined : mindDotColor(spirit)}
-                ></span>
-                <span class="nav-label">{spirit.displayName ?? spirit.name}</span>
-                {#if spiritUnread > 0}
-                  <span class="unread-dot"></span>
-                {/if}
-              </button>
-            </div>
-          {/each}
-        </div>
-      {/if}
     </div>
 
     <!-- Minds -->
@@ -315,6 +278,9 @@ let isSystemActive = $derived(
                       style:background={activeMinds.has(mind.name) ? undefined : mindDotColor(mind)}
                     ></span>
                     <span class="nav-label">{mind.displayName ?? mind.name}</span>
+                    {#if mind.mindType === "spirit"}
+                      <Icon kind="spiral" class="spirit-marker" />
+                    {/if}
                     {#if mind.templateStale}
                       <span
                         class="stale-badge"
@@ -622,15 +588,11 @@ let isSystemActive = $derived(
     white-space: nowrap;
   }
 
-  .nav-icon {
-    display: flex;
-    flex-shrink: 0;
-    color: var(--text-2);
-  }
-
-  .nav-icon :global(svg) {
+  .nav-item :global(.spirit-marker) {
     width: 12px;
     height: 12px;
+    flex-shrink: 0;
+    color: var(--text-2);
   }
 
   .item-list {

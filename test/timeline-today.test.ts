@@ -131,7 +131,41 @@ describe("buildTodayItems", () => {
       turnsData: [turn("live", 13, 20, true), turn("t11", 11, 0)],
       isActive: (t) => t.status === "active",
     });
-    const ids = items.map((i) => (i.kind === "summary" ? "s:10" : `t:${i.turn.id}`));
-    assert.deepEqual(ids, ["s:10", "t:t11", "t:live"]);
+    const ids = items.map((i) =>
+      i.kind === "summary" ? "s:10" : i.kind === "separator" ? "sep" : `t:${i.turn.id}`,
+    );
+    // The uncovered 11:00 turn is "earlier today"; the split lands before the
+    // current-hour (active) turn.
+    assert.deepEqual(ids, ["s:10", "t:t11", "sep", "t:live"]);
+  });
+
+  it("splits earlier today from this hour's turns", () => {
+    const items = buildTodayItems({
+      now: NOW,
+      hourSummaries: [hourSummary(10), hourSummary(12)],
+      turnsData: [turn("cur", 13, 10)],
+      isActive: noneActive,
+    });
+    const ids = items.map((i) =>
+      i.kind === "summary"
+        ? `s:${i.summary.period_key.slice(-2)}`
+        : i.kind === "separator"
+          ? `sep:${i.above}/${i.below}`
+          : `t:${i.turn.id}`,
+    );
+    assert.deepEqual(ids, ["s:10", "s:12", "sep:earlier today/this hour", "t:cur"]);
+  });
+
+  it("no split when the current hour has nothing above it", () => {
+    const items = buildTodayItems({
+      now: NOW,
+      hourSummaries: [],
+      turnsData: [turn("cur", 13, 10)],
+      isActive: noneActive,
+    });
+    assert.deepEqual(
+      items.map((i) => i.kind),
+      ["turn"],
+    );
   });
 });

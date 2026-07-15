@@ -27,6 +27,7 @@ let {
   mindsByName,
   participants = [],
   onOpenMind,
+  showTypingDot = false,
 }: {
   role: "user" | "assistant";
   blocks: ContentBlock[];
@@ -41,6 +42,7 @@ let {
   mindsByName: Map<string, Mind>;
   participants?: Participant[];
   onOpenMind?: (mind: Mind) => void;
+  showTypingDot?: boolean;
 } = $props();
 
 let lightboxSrc = $state<string | null>(null);
@@ -143,7 +145,9 @@ function buildAssistantItems(
       {:else}
         <span class="sender" style:color={senderColor}>{role === "user" ? "you" : "mind"}</span>
       {/if}
-      {#if createdAt}
+      {#if showTypingDot}
+        <span class="typing-dot" class:iridescent={senderName ? mindsByName.has(senderName) : false}></span>
+      {:else if createdAt}
         <span class="timestamp">{formatTime(createdAt)}</span>
       {/if}
     </div>
@@ -231,6 +235,20 @@ function buildAssistantItems(
   .timestamp {
     font-size: 12px;
     color: var(--text-2);
+  }
+
+  .typing-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    background: var(--text-3);
+    animation: typing-pulse 1.5s ease infinite;
+  }
+
+  .typing-dot.iridescent {
+    background: none;
+    animation: iridescent 3s ease-in-out infinite;
   }
 
   .inline-time {

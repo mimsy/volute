@@ -656,12 +656,19 @@ export class DeliveryManager {
 
   /**
    * Clear all session state for a specific mind (called on mind stop/crash).
-   * Resets active counts and cleans up batch buffers so ghost counts don't accumulate.
+   * Resets active counts, clears typing indicators, and cleans up batch buffers
+   * so ghost state doesn't accumulate.
    */
   clearMindSessions(mindName: string): void {
     this.sessionStates.delete(mindName);
     // Free the mind's stale-send gate state so it doesn't linger after stop.
     clearMind(mindName);
+    // Clear typing indicators for this mind: entries are persistent (no TTL) and after a
+    // successful delivery are only cleared on `done`, so a stopped/crashed mind that never
+    // emits `done` would leave ghost typing entries. Publish so connected web clients drop
+    // the indicator immediately.
+    const typingMap = getTypingMap();
+    publishTypingForChannels(typingMap.deleteSender(mindName), typingMap);
     // Clean up any batch buffers for this mind
     const toDelete: string[] = [];
     for (const [bufferKey, buffer] of this.batchBuffers) {
@@ -849,13 +856,16 @@ export class DeliveryManager {
         dlog.warn(`failed to link mid-turn inbound for ${baseName}`, log.errorData(err)),
       );
 
-      // Set typing indicator on both slug and conversationId keys
+      // Set typing indicator on both slug and conversationId keys, and publish the
+      // conversationId key so the web UI learns the mind is typing at delivery time
+      // (not incidentally via an unrelated re-publish).
       const typingMap = getTypingMap();
       if (payload.channel) {
         typingMap.set(payload.channel, baseName, { persistent: true });
       }
       if (payload.conversationId) {
         typingMap.set(payload.conversationId, baseName, { persistent: true });
+        publishTypingForChannels([payload.conversationId], typingMap);
       }
 
       // Mark mind as active immediately at delivery time (before it emits events)
@@ -969,13 +979,17 @@ export class DeliveryManager {
       for (const ch of Object.keys(channels)) {
         if (ch !== "unknown") typingMap.set(ch, baseName, { persistent: true });
       }
-      // Also set on conversationId keys for web UI typing
+      // Also set on conversationId keys for web UI typing, then publish them once so the
+      // web UI learns the mind is typing at delivery time.
       const seenConvIds = new Set<string>();
       for (const msg of messages) {
         if (msg.payload.conversationId && !seenConvIds.has(msg.payload.conversationId)) {
           seenConvIds.add(msg.payload.conversationId);
           typingMap.set(msg.payload.conversationId, baseName, { persistent: true });
         }
+      }
+      if (seenConvIds.size > 0) {
+        publishTypingForChannels([...seenConvIds], typingMap);
       }
 
       const body = JSON.stringify({

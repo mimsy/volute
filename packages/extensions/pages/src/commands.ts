@@ -110,7 +110,11 @@ export function createCommands(): Record<string, ExtensionCommand> {
             type: "page_published",
             mind: mindName,
             summary: `${mindName} published ${file}`,
-            metadata: { file, iframeUrl: `/ext/pages/public/${mindName}/${file}` },
+            metadata: {
+              file,
+              url: `/minds/${mindName}/pages/${file}`,
+              iframeUrl: `/ext/pages/public/${mindName}/${file}`,
+            },
           });
         }
         for (const file of diff.removed) {

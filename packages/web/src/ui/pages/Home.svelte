@@ -2,17 +2,18 @@
 import type { ConversationWithParticipants, FeedChatEvent, FeedEvent } from "@volute/api";
 import { icons } from "@volute/ui/icons";
 import { renderMarkdown } from "@volute/ui/markdown";
-import ExtensionFeedCard from "../components/ExtensionFeedCard.svelte";
 import ChatEventCard from "../components/home/ChatEventCard.svelte";
 import LifecycleRow from "../components/home/LifecycleRow.svelte";
 import MindPresenceStrip from "../components/home/MindPresenceStrip.svelte";
 import MindEmptyState from "../components/MindEmptyState.svelte";
 import ReadOnlyChatModal from "../components/modals/ReadOnlyChatModal.svelte";
+import TimelineCard from "../components/TimelineCard.svelte";
 import { fetchFeed, fetchFeedDigest } from "../lib/client";
-import { normalizeTimestamp } from "../lib/format";
+import { formatRelativeTime, normalizeTimestamp } from "../lib/format";
 import { navigate } from "../lib/navigate";
 import { showMindOnboarding } from "../lib/onboarding";
 import { data as storeData } from "../lib/stores.svelte";
+import { feedItemBody } from "../lib/timeline-card";
 
 let {
   username,
@@ -170,28 +171,25 @@ let canChat = $derived(openEvent?.participants.some((p) => p.username === userna
         {#each items as item (item.kind === "extension" ? `ext-${item.item.id}` : item.kind === "sprout" ? `sprout-${item.item.id}` : item.kind === "lifecycle" ? `life-${item.event.id}` : `chat-${item.event.conversationId}-${item.event.endedAt}`)}
           {#if item.kind === "extension"}
             <div class="feed-item">
-              <ExtensionFeedCard
+              <TimelineCard
                 title={item.item.title}
-                url={item.item.url}
-                date={item.item.date}
-                author={item.item.author}
-                bodyHtml={item.item.bodyHtml}
-                iframeUrl={item.item.iframeUrl}
-                icon={item.item.icon}
                 color={item.item.color}
+                icon={item.item.icon}
+                meta={item.item.author}
+                time={formatRelativeTime(item.item.date)}
+                body={feedItemBody(item.item)}
                 onclick={() => navigate(item.item.url)}
               />
             </div>
           {:else if item.kind === "sprout"}
             {@const sprout = item.item}
             <div class="feed-item">
-              <ExtensionFeedCard
+              <TimelineCard
                 title={`${mindLabel(sprout.mind)} sprouted`}
-                url={`/minds/${sprout.mind}`}
-                date={sprout.date}
-                bodyHtml="Left the seed stage and became a full mind — joined #system and began its first week."
-                icon={icons.mind}
                 color="green"
+                icon={icons.mind}
+                time={formatRelativeTime(sprout.date)}
+                body={{ kind: "markdown", source: "Left the seed stage and became a full mind — joined #system and began its first week." }}
                 onclick={() => navigate(`/minds/${sprout.mind}`)}
               />
             </div>

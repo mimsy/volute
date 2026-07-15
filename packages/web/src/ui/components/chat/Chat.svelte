@@ -13,7 +13,6 @@ import { subscribe } from "../../lib/connection.svelte";
 import { auth } from "../../lib/stores.svelte";
 import type { ChatEntry } from "../../lib/types";
 import ChannelSettingsModal from "../modals/ChannelSettingsModal.svelte";
-import ActivityIndicator from "./ActivityIndicator.svelte";
 import ChatStatusBar from "./ChatStatusBar.svelte";
 import MessageInput from "./MessageInput.svelte";
 import MessageList from "./MessageList.svelte";
@@ -64,13 +63,6 @@ let typingSafetyTimer = 0;
 let messageList: MessageList;
 // The DM's target mind, for the status bar (#574). Channels show nothing.
 let dmMind = $derived(convType === "dm" ? minds.find((m) => m.name === name) : undefined);
-let mindParticipants = $derived.by(() => {
-  const fromParticipants = participants.filter((p) => p.userType === "mind").map((p) => p.username);
-  if (fromParticipants.length > 0) return fromParticipants;
-  // For DMs before conversation is created, use the target mind name
-  if (convType === "dm" && minds.some((m) => m.name === name)) return [name];
-  return [];
-});
 
 // Channel settings (description/rules/char limit/private) for the header + editor
 let channelSettings = $state<ChannelSettings | null>(null);
@@ -214,10 +206,16 @@ $effect(() => {
     } else if (event.type === "typing") {
       const senders: string[] = event.senders;
       typingNames = senders.filter((n) => n !== username);
+      if (typingNames.length > 0) {
+        messageList?.scrollToBottom();
+      }
       clearTimeout(typingSafetyTimer);
       if (typingNames.length > 0) {
         typingSafetyTimer = window.setTimeout(() => {
-          typingNames = [];
+          // Mind typing state is authoritative (published on delivery, done, and
+          // stop/crash) and a turn can far outlast this timer — only reap humans,
+          // whose stop event may have been missed.
+          typingNames = typingNames.filter((n) => minds.some((m) => m.name === n));
         }, 15_000);
       }
     }
@@ -336,9 +334,8 @@ async function handleSend(
     {minds}
     {participants}
     {onOpenMind}
+    {typingNames}
   />
-
-  <ActivityIndicator {typingNames} {mindParticipants} {minds} {onOpenMind} />
 
   <!-- Keyed on the mind name so switching DMs resets in-flight Start state;
        minds refreshes replace objects but keep the name, so no remount then. -->

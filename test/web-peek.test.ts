@@ -4,6 +4,8 @@ import {
   activityColor,
   activityNavUrl,
   activityPeekBody,
+  activityTypeLabel,
+  activityTypeStyle,
   peekKey,
   shouldRenderPeek,
 } from "../packages/web/src/ui/lib/peek";
@@ -55,8 +57,18 @@ describe("activityPeekBody", () => {
 });
 
 describe("activityNavUrl", () => {
-  it("navigates to the iframe url when present", () => {
-    assert.equal(activityNavUrl({ iframeUrl: "/pages/a" }, "mind"), "/pages/a");
+  it("prefers an explicit metadata url over everything else", () => {
+    assert.equal(
+      activityNavUrl(
+        {
+          url: "/minds/echo/pages/index.html",
+          iframeUrl: "/ext/pages/public/echo/index.html",
+          slug: "x",
+        },
+        "mind",
+      ),
+      "/minds/echo/pages/index.html",
+    );
   });
 
   it("builds a note url from slug, defaulting author to the mind", () => {
@@ -67,13 +79,18 @@ describe("activityNavUrl", () => {
     );
   });
 
+  it("builds a page url from file for legacy rows", () => {
+    assert.equal(activityNavUrl({ file: "garden.html" }, "echo"), "/minds/echo/pages/garden.html");
+  });
+
+  it("does not navigate to a raw iframeUrl (not an SPA route)", () => {
+    assert.equal(activityNavUrl({ iframeUrl: "/ext/pages/public/m/a.html" }, "mind"), "");
+  });
+
   it("returns empty when there is nothing to navigate to", () => {
     assert.equal(activityNavUrl(null, "mind"), "");
     assert.equal(activityNavUrl({ color: "red" }, "mind"), "");
-  });
-
-  it("an explicit empty-string iframeUrl wins over slug (no navigation, matching original inline logic)", () => {
-    assert.equal(activityNavUrl({ iframeUrl: "", slug: "my-note" }, "echo"), "");
+    assert.equal(activityNavUrl({ url: "" }, "mind"), "");
   });
 });
 
@@ -85,6 +102,21 @@ describe("activityColor", () => {
   it("defaults to yellow", () => {
     assert.equal(activityColor(null), "yellow");
     assert.equal(activityColor({ color: 3 }), "yellow");
+  });
+});
+
+describe("activityTypeStyle / activityTypeLabel", () => {
+  it("gives mind_sprouted its own green mind-icon look and a clean label", () => {
+    const style = activityTypeStyle("mind_sprouted");
+    assert.ok(style, "mind_sprouted should have a built-in style");
+    assert.equal(style?.color, "green");
+    assert.ok(style?.icon.includes("<svg"), "should carry an inline icon");
+    assert.equal(activityTypeLabel("mind_sprouted"), "sprouted");
+  });
+
+  it("leaves generic activity types to the slug label and no built-in style", () => {
+    assert.equal(activityTypeStyle("note_created"), undefined);
+    assert.equal(activityTypeLabel("note_created"), "note created");
   });
 });
 

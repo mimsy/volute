@@ -6,7 +6,10 @@ import type { SummaryRow, TurnRow } from "@volute/api";
 // summary yet (summarizer lag/failure). This makes a missing summary degrade to
 // "more detail" instead of a silent gap.
 
-export type TodayItem = { kind: "summary"; summary: SummaryRow } | { kind: "turn"; turn: TurnRow };
+export type TodayItem =
+  | { kind: "summary"; summary: SummaryRow }
+  | { kind: "turn"; turn: TurnRow }
+  | { kind: "separator"; above: string; below: string };
 
 function normalizeTs(s: string): string {
   return s.endsWith("Z") ? s : `${s}Z`;
@@ -74,5 +77,14 @@ export function buildTodayItems(opts: {
   }
 
   sortable.sort((a, b) => a.sort - b.sort);
-  return sortable.map((x) => x.item);
+  const items: TodayItem[] = sortable.map((x) => x.item);
+
+  // Scale break between the summarized part of today and the current hour's
+  // individual turns, mirroring the earlier/this-week/today separators.
+  const splitIdx = sortable.findIndex((x) => x.item.kind === "turn" && x.sort >= currentHourMs);
+  if (splitIdx > 0) {
+    items.splice(splitIdx, 0, { kind: "separator", above: "earlier today", below: "this hour" });
+  }
+
+  return items;
 }

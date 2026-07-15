@@ -13,6 +13,7 @@ let {
   minds = [],
   participants = [],
   onOpenMind,
+  typingNames = [],
 }: {
   entries: ChatEntry[];
   loadError?: string;
@@ -22,6 +23,7 @@ let {
   minds?: Mind[];
   participants?: Participant[];
   onOpenMind?: (mind: Mind) => void;
+  typingNames?: string[];
 } = $props();
 
 let scrollEl: HTMLDivElement;
@@ -48,6 +50,22 @@ let colorMap = $derived.by(() => {
   }
   return map;
 });
+
+// While a sender is typing, their trailing message group carries the dot in its
+// header instead of a standalone typing line below the messages.
+let typingDotIndex = $derived.by(() => {
+  const last = entries[entries.length - 1];
+  if (!last?.senderName || !typingNames.includes(last.senderName)) return -1;
+  let i = entries.length - 1;
+  while (i > 0 && entries[i - 1].senderName === last.senderName) i--;
+  return i;
+});
+
+let standaloneTypingNames = $derived(
+  typingDotIndex === -1
+    ? typingNames
+    : typingNames.filter((n) => n !== entries[typingDotIndex].senderName),
+);
 
 function showSenderHeader(i: number): boolean {
   if (i === 0) return true;
@@ -165,8 +183,23 @@ function handleScroll() {
         {mindsByName}
         {participants}
         {onOpenMind}
+        showTypingDot={i === typingDotIndex}
       />
     {/if}
+  {/each}
+  {#each standaloneTypingNames as name (name)}
+    {@const mind = mindsByName.get(name)}
+    {@const displayName =
+      mind?.displayName ?? participants.find((p) => p.username === name)?.displayName ?? name}
+    {@const color = colorMap.get(name) ?? (mind ? "var(--accent)" : "var(--blue)")}
+    <div class="typing-entry">
+      {#if mind}
+        <button class="typing-sender typing-sender-link" style:color onclick={() => onOpenMind?.(mind)}>{displayName}</button>
+      {:else}
+        <span class="typing-sender" style:color>{displayName}</span>
+      {/if}
+      <span class="typing-dot" class:iridescent={!!mind}></span>
+    </div>
   {/each}
 </div>
 
@@ -229,5 +262,48 @@ function handleScroll() {
     flex: 1;
     height: 1px;
     background: var(--border);
+  }
+
+  /* Mirrors MessageEntry's .entry-header/.sender so a typing sender reads as an
+     incoming message header, with the dot sitting where the timestamp would be. */
+  .typing-entry {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    margin-top: 12px;
+    animation: fadeIn 0.2s ease both;
+  }
+
+  .typing-sender {
+    font-size: 14px;
+    font-weight: 600;
+  }
+
+  .typing-sender-link {
+    background: none;
+    border: none;
+    padding: 0;
+    font: inherit;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .typing-sender-link:hover {
+    text-decoration: underline;
+  }
+
+  .typing-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    background: var(--text-3);
+    animation: typing-pulse 1.5s ease infinite;
+  }
+
+  .typing-dot.iridescent {
+    background: none;
+    animation: iridescent 3s ease-in-out infinite;
   }
 </style>

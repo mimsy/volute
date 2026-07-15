@@ -7,8 +7,6 @@ import type {
   TurnRow,
 } from "@volute/api";
 import { Icon } from "@volute/ui";
-import { renderMarkdown } from "@volute/ui/markdown";
-import { sanitizeSvg } from "@volute/ui/sanitize";
 import { SvelteMap, SvelteSet } from "svelte/reactivity";
 import {
   fetchHistory,
@@ -18,16 +16,9 @@ import {
   fetchTurnEvents,
   fetchTurns,
 } from "../lib/client";
-import { extractTextContent } from "../lib/feed-utils";
-import { formatRelativeTime } from "../lib/format";
+import { formatRelativeTime, normalizeTimestamp } from "../lib/format";
 import { navigate } from "../lib/navigate";
-import {
-  activityColor,
-  activityNavUrl,
-  activityPeekBody,
-  peekKey,
-  shouldRenderPeek,
-} from "../lib/peek";
+import { isUuid } from "../lib/peek";
 import { parseISOWeek, summaryBounds, wallNow } from "../lib/period-keys";
 import { activeMinds } from "../lib/stores.svelte";
 import { mergeOlderSummaries, nextSummaryPage } from "../lib/summary-paging";
@@ -45,9 +36,11 @@ import {
   type TimelineItem as ToolTimelineItem,
 } from "../lib/tool-groups";
 import { getCategoryColor, getCategoryIcon } from "../lib/tool-names";
+import { summaryIconCount, turnRailParts } from "../lib/turn-rail";
 import ToolGroupComponent from "./chat/ToolGroup.svelte";
 import HistoryEvent from "./HistoryEvent.svelte";
 import ReadOnlyChatModal from "./modals/ReadOnlyChatModal.svelte";
+import RailIcons from "./RailIcons.svelte";
 import SummaryNode from "./SummaryNode.svelte";
 import TimelineBranch from "./TimelineBranch.svelte";
 
@@ -192,8 +185,7 @@ let directEventsSummaries = $state(new SvelteMap<number, HistoryMessage[]>());
 
 // A turn summary's period_key is the turn UUID. Legacy "<mind>-<doneId>" keys can't be
 // resolved to turn events, so the direct-events drill-down must skip them (see #395).
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const isTurnUuid = (key: string): boolean => UUID_RE.test(key);
+const isTurnUuid = isUuid;
 
 // --- Streaming events for active turns ---
 // Raw events are the source of truth but non-reactive: rendering reads the
@@ -232,13 +224,6 @@ let pendingInbounds = $state<HistoryMessage[]>([]);
 // Fallback timers for done events that may not be followed by a summary
 const doneFallbackTimers = new Map<string, ReturnType<typeof setTimeout>>();
 let expandedTurns = $state(new Set<string>());
-// Peek popovers (collapsed-turn hover cards) render markdown / mount live iframes,
-// so their content is mounted lazily on first hover and then kept (frozen) to avoid
-// eagerly rendering hundreds of hidden popovers on the initial timeline paint (#541).
-let revealedPeeks = new SvelteSet<string>();
-function revealPeek(key: string) {
-  revealedPeeks.add(key);
-}
 
 function buildHistoryMessage(
   d: Record<string, unknown>,
@@ -280,17 +265,28 @@ function upsertTurnRows(rows: TurnRow[]) {
   }
 }
 
-function openConversation(conv: TurnConversation, turn: TurnRow) {
+function openConversation(
+  conv: Pick<TurnConversation, "id" | "label" | "type">,
+  createdAt: string,
+) {
   readOnlyConv = {
     id: conv.id,
     type: conv.type,
     user_id: null,
-    created_at: turn.created_at,
-    updated_at: turn.created_at,
+    created_at: createdAt,
+    updated_at: createdAt,
     private: 0,
     channel_name: conv.type === "channel" ? conv.label.replace(/^#/, "") : null,
     participants: [],
   };
+}
+
+/** Wall-clock stamp for a turn row, mirroring the hour summaries' period labels. */
+function formatTurnStamp(createdAt: string): string {
+  return new Date(normalizeTimestamp(createdAt)).toLocaleTimeString(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+  });
 }
 
 function handleExpand(turnId: string, expanded: boolean) {
@@ -432,10 +428,12 @@ function connectSSE() {
       fetchTurns({ mind: name, turnId })
         .then((rows) => {
           upsertTurnRows(rows);
-          // Scroll the completed turn into view after DOM update
+          // The row's height changes as the branch collapses into a summary +
+          // rail stack; if the user was pinned to the bottom, keep them there.
           requestAnimationFrame(() => {
-            const el = scrollContainer?.querySelector(`[data-turn-id="${turnId}"]`);
-            el?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+            if (!userScrolledUp && scrollContainer) {
+              scrollContainer.scrollTo({ top: scrollContainer.scrollHeight, behavior: "smooth" });
+            }
           });
         })
         .catch((err) => {
@@ -575,6 +573,7 @@ async function loadSummaries() {
         from: bounds.todayHourFrom,
         to: bounds.hourCutoff,
         limit: 24,
+        icons: true,
       }),
       fetchSummaries({
         mind: name,
@@ -582,9 +581,16 @@ async function loadSummaries() {
         from: bounds.weekCutoff,
         to: bounds.todayKey,
         limit: 7,
+        icons: true,
       }),
-      fetchSummaries({ mind: name, period: "week", to: bounds.weekCutoff, limit: 12 }),
-      fetchSummaries({ mind: name, period: "month", to: bounds.currentMonthKey, limit: 12 }),
+      fetchSummaries({ mind: name, period: "week", to: bounds.weekCutoff, limit: 12, icons: true }),
+      fetchSummaries({
+        mind: name,
+        period: "month",
+        to: bounds.currentMonthKey,
+        limit: 12,
+        icons: true,
+      }),
     ]);
 
     hourSummaries = hours.sort((a, b) => a.period_key.localeCompare(b.period_key));
@@ -625,6 +631,7 @@ async function loadOlderSummaries() {
       period: next.tier,
       to: next.to,
       limit: 12,
+      icons: true,
     });
     if (next.tier === "month") {
       const { merged, exhausted } = mergeOlderSummaries(monthSummaries, fetched);
@@ -667,6 +674,7 @@ async function toggleSummaryExpand(summary: SummaryRow) {
             from: summary.period_key,
             to: summary.period_key,
             limit: 1,
+            icons: true,
           }),
         ),
       );
@@ -738,6 +746,7 @@ async function toggleSummaryExpand(summary: SummaryRow) {
         from,
         to,
         limit: 100,
+        icons: true,
       });
       expandedSummaries.set(
         summary.id,
@@ -995,7 +1004,9 @@ function jumpToLatest() {
           {:else if item.kind === "summary"}
             {@const summary = item.summary}
             {@const isExpanded = expandedSummaries.has(summary.id) || directEventsSummaries.has(summary.id)}
-            <div class="turn-row" data-summary-id={summary.id}>
+            {@const icons = summary.icons}
+            {@const iconCount = !isExpanded ? summaryIconCount(icons) : 0}
+            <div class="turn-row" data-summary-id={summary.id} style:min-height={iconCount > 0 ? `${42 + iconCount * 30}px` : undefined}>
               <div class="turn-time">
                 {#if !name && summary.mind !== "_system"}
                   <button class="mind-badge" onclick={() => navigate(`/minds/${summary.mind}/history`)}>{summary.mind}</button>
@@ -1009,6 +1020,9 @@ function jumpToLatest() {
                 onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleSummaryExpand(summary); } }}
               >
                 <div class="turn-dot summary-dot"></div>
+                {#if iconCount > 0 && icons}
+                  <RailIcons groups={icons} mind={summary.mind} condensed onopenconversation={(c) => openConversation(c, summary.created_at)} />
+                {/if}
               </div>
               <div class="turn-body">
                 <div class="turn-summary">
@@ -1019,19 +1033,20 @@ function jumpToLatest() {
                     {loadingChildren}
                     {toggleSummaryExpand}
                     formatPeriodTime={(p, k) => formatPeriodTime(p, k, serverTz)}
+                    onopenconversation={openConversation}
                   />
                 </div>
               </div>
             </div>
           {:else}
             {@const turn = item.turn}
-          {@const peekCount = (!expandedTurns.has(turn.id) && turn.status !== "active") ? turn.conversations.length + turn.events.length + turn.activities.length : 0}
+          {@const showTurnStack = !expandedTurns.has(turn.id) && turn.status !== "active"}
+          {@const peekCount = showTurnStack ? turnRailParts(turn).stackCount : 0}
           <div class="turn-row" data-turn-id={turn.id} style:min-height={peekCount > 0 ? `${36 + peekCount * 48}px` : undefined}>
             <div class="turn-time">
               {#if !name}
                 <button class="mind-badge" onclick={() => navigate(`/minds/${turn.mind}/history`)}>{turn.mind}</button>
               {/if}
-              {formatRelativeTime(turn.created_at)}
             </div>
             <div
               class="turn-rail"
@@ -1047,114 +1062,18 @@ function jumpToLatest() {
               }}
               onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); (e.currentTarget as HTMLElement).click(); } }}
             >
-              <div class="turn-dot"></div>
-              {#if !expandedTurns.has(turn.id) && turn.status !== "active" && (turn.conversations.length > 0 || turn.events.length > 0 || turn.activities.length > 0)}
-                <div class="turn-peek-icons">
-                  {#each turn.conversations as conv (conv.id)}
-                    {@const chatKey = peekKey("chat", turn.id, conv.id)}
-                    <div class="peek-anchor">
-                      <button class="peek-btn" aria-label="View conversation" onmouseenter={() => revealPeek(chatKey)} onfocus={() => revealPeek(chatKey)} onclick={(e) => e.stopPropagation()}>
-                        <Icon kind="chat" />
-                      </button>
-                      <div class="peek-popover" role="button" tabindex="0"
-                        onclick={(e) => { e.stopPropagation(); openConversation(conv, turn); }}
-                        onkeydown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); openConversation(conv, turn); } }}
-                      >
-                        {#if shouldRenderPeek(revealedPeeks, chatKey)}
-                          <div class="peek-card peek-card-chat">
-                            <div class="peek-card-header">
-                              <Icon kind="chat" class="peek-card-icon" />
-                              <span class="peek-card-label">{conv.label}</span>
-                              <span class="peek-card-meta">{conv.messages.length} msg{conv.messages.length === 1 ? '' : 's'}</span>
-                            </div>
-                            <div class="peek-card-body">
-                              {#each conv.messages.slice(-5) as msg (msg.id)}
-                                <div class="peek-msg">
-                                  <span class="peek-msg-sender" class:peek-msg-sender-user={msg.role === "user"}>{msg.sender_name ?? (msg.role === "user" ? "user" : turn.mind)}</span>
-                                  {#if msg.role === "assistant"}
-                                    <span class="peek-msg-md markdown-body">{@html renderMarkdown(extractTextContent(msg.content))}</span>
-                                  {:else}
-                                    <span>{extractTextContent(msg.content)}</span>
-                                  {/if}
-                                </div>
-                              {/each}
-                            </div>
-                          </div>
-                        {/if}
-                      </div>
-                    </div>
-                  {/each}
-                  <!--
-                    System events peek with a gear, not the chat icon, and their card has no
-                    sender and no click-to-open-conversation: there is no conversation to open.
-                  -->
-                  {#each turn.events as evt (evt.id)}
-                    {@const evtKey = peekKey("system-event", turn.id, String(evt.id))}
-                    <div class="peek-anchor">
-                      <button class="peek-btn" style:color="var(--purple)" aria-label="View system event" onmouseenter={() => revealPeek(evtKey)} onfocus={() => revealPeek(evtKey)} onclick={(e) => e.stopPropagation()}>
-                        <Icon kind="gear" />
-                      </button>
-                      <div class="peek-popover">
-                        {#if shouldRenderPeek(revealedPeeks, evtKey)}
-                          <div class="peek-card" style:border-color="color-mix(in srgb, var(--purple) 25%, var(--border))">
-                            <div class="peek-card-header" style:border-bottom-color="color-mix(in srgb, var(--purple) 25%, var(--border))">
-                              <Icon kind="gear" class="peek-card-icon" />
-                              <span class="peek-card-label">{evt.label}</span>
-                              <span class="peek-card-meta">system event</span>
-                            </div>
-                            <div class="peek-card-body peek-card-event">{evt.content}</div>
-                          </div>
-                        {/if}
-                      </div>
-                    </div>
-                  {/each}
-                  {#each turn.activities as act (act.id)}
-                    {@const actKey = peekKey("activity", turn.id, act.id)}
-                    {@const actColor = activityColor(act.metadata)}
-                    {@const actIcon = typeof act.metadata?.icon === 'string' ? sanitizeSvg(act.metadata.icon) : ''}
-                    {@const actUrl = activityNavUrl(act.metadata, turn.mind)}
-                    <div class="peek-anchor">
-                      <button class="peek-btn" style:color="var(--{actColor})" aria-label="View activity" onmouseenter={() => revealPeek(actKey)} onfocus={() => revealPeek(actKey)} onclick={(e) => { e.stopPropagation(); if (actUrl) navigate(actUrl); }}>
-                        {#if actIcon}
-                          {@html actIcon}
-                        {:else}
-                          <Icon kind="document-lines" />
-                        {/if}
-                      </button>
-                      <div class="peek-popover">
-                        {#if shouldRenderPeek(revealedPeeks, actKey)}
-                          {@const actBody = activityPeekBody(act.metadata)}
-                          <div class="peek-card" style:border-color="color-mix(in srgb, var(--{actColor}) 25%, var(--border))">
-                            <div class="peek-card-header" style:border-bottom-color="color-mix(in srgb, var(--{actColor}) 25%, var(--border))">
-                              {#if actIcon}
-                                <span class="peek-card-icon" style:color="var(--{actColor})">{@html actIcon}</span>
-                              {:else}
-                                <Icon kind="document-lines" class="peek-card-icon" />
-                              {/if}
-                              <span class="peek-card-label">{act.summary}</span>
-                            </div>
-                            {#if actBody.kind === "iframe"}
-                              <div class="peek-card-body peek-card-iframe">
-                                <iframe
-                                  src={actBody.url}
-                                  title={act.summary}
-                                  sandbox="allow-same-origin"
-                                  role="presentation"
-                                ></iframe>
-                              </div>
-                            {:else if actBody.kind === "markdown"}
-                              <div class="peek-card-body markdown-body">{@html renderMarkdown(actBody.source)}</div>
-                            {/if}
-                          </div>
-                        {/if}
-                      </div>
-                    </div>
-                  {/each}
-                </div>
+              {#if !turn.trigger}
+                <div class="turn-dot"></div>
               {/if}
+              <!-- Trigger chip at the dot + per-item stack below (RailIcons) -->
+              <RailIcons {turn} mind={turn.mind} showStack={showTurnStack} onopenconversation={(c) => openConversation(c, turn.created_at)} />
             </div>
             <div class="turn-body">
               <div class="turn-summary">
+                {#if turn.summary || turn.status === "complete"}
+                  <!-- Wall-clock stamp beside the trigger dot, mirroring summary period labels -->
+                  <div class="turn-stamp">{formatTurnStamp(turn.created_at)}</div>
+                {/if}
                 {#if turn.summary}
                   <HistoryEvent
                     event={{
@@ -1172,9 +1091,6 @@ function jumpToLatest() {
                     }}
                     mindName={turn.mind}
                     expandable
-                    compact
-                    turnConversations={turn.conversations}
-                    turnActivities={turn.activities}
                     onexpand={(expanded) => handleExpand(turn.id, expanded)}
                   />
                 {:else if turn.status === "complete"}
@@ -1200,9 +1116,6 @@ function jumpToLatest() {
                     }}
                     mindName={turn.mind}
                     expandable
-                    compact
-                    turnConversations={turn.conversations}
-                    turnActivities={turn.activities}
                     onexpand={(expanded) => handleExpand(turn.id, expanded)}
                   />
                 {:else}
@@ -1248,7 +1161,9 @@ function jumpToLatest() {
               {formatRelativeTime(pendingInbounds[0].created_at)}
             </div>
             <div class="turn-rail turn-rail-expanded">
-              <div class="turn-dot"></div>
+              <div class="turn-dot-icon" style:color={pendingInbounds[0].type === "event" ? "var(--purple)" : "var(--blue)"}>
+                <Icon kind={pendingInbounds[0].type === "event" ? "gear" : "chat"} />
+              </div>
             </div>
             <div class="turn-body">
               <div class="turn-summary">
@@ -1326,7 +1241,8 @@ function jumpToLatest() {
     flex: 1;
     overflow-x: hidden;
     overflow-y: auto;
-    padding: 0 16px;
+    /* Asymmetric: room for the time column on the left, scrollbar hugs the pane edge on the right */
+    padding: 0 8px 0 16px;
   }
 
   .turn-track {
@@ -1334,6 +1250,7 @@ function jumpToLatest() {
     min-height: 100%;
     max-width: 720px;
     margin: 0 auto;
+    padding-bottom: 16px;
   }
 
   .turn-row {
@@ -1479,6 +1396,39 @@ function jumpToLatest() {
     z-index: 3;
   }
 
+
+  /* Wall-clock stamp above the turn summary, mirroring .summary-collapsed-time */
+  .turn-stamp {
+    padding: 8px 0 0 20px;
+    font-size: 11px;
+    color: var(--text-2);
+    line-height: 1;
+  }
+
+  /* Trigger-icon chip on the provisional pending-turn row; center matches the
+     dot's (y=16px). pointer-events pass through to the rail. */
+  .turn-dot-icon {
+    position: absolute;
+    top: 7px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 18px;
+    height: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg-1);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    z-index: 3;
+    pointer-events: none;
+  }
+
+  .turn-dot-icon :global(svg) {
+    width: 10px;
+    height: 10px;
+  }
+
   /* Lower inner rail z-index so it doesn't cover the main rail dot */
   .turn-summary :global(.turn-connector) {
     z-index: 0;
@@ -1506,9 +1456,6 @@ function jumpToLatest() {
       padding-left: 8px;
       padding-right: 4px;
     }
-    .turn-scroll {
-      padding: 0 8px;
-    }
     /* Shorter connector extensions for reduced padding */
     .turn-summary :global(.turn-connector::after) {
       left: -31px;
@@ -1518,171 +1465,6 @@ function jumpToLatest() {
       left: -24px;
       width: 32px;
     }
-  }
-
-  /* Peek icon buttons on the timeline rail */
-  .turn-peek-icons {
-    position: absolute;
-    top: 40px; /* below the dot (dot is at top:12px, generous gap) */
-    left: 50%;
-    transform: translateX(-50%);
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 30px;
-    z-index: 4;
-  }
-
-  .peek-anchor {
-    position: relative;
-  }
-
-  .peek-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 18px;
-    height: 18px;
-    background: var(--bg-1);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    color: var(--blue);
-    cursor: pointer;
-    padding: 0;
-    transition: background 0.1s, border-color 0.1s;
-  }
-
-  .peek-btn :global(svg) {
-    width: 10px;
-    height: 10px;
-  }
-
-  .peek-btn:hover {
-    background: var(--bg-2);
-    border-color: var(--border-bright);
-  }
-
-  .peek-popover {
-    display: none;
-    position: absolute;
-    top: -4px;
-    left: calc(100% + 8px);
-    z-index: 20;
-    min-width: 280px;
-    max-width: 400px;
-    cursor: pointer;
-    /* Invisible bridge from button to popover so hover persists */
-    padding-left: 12px;
-    margin-left: -12px;
-  }
-
-  .peek-anchor:hover .peek-popover {
-    display: block;
-  }
-
-  .peek-card {
-    background: var(--bg-0);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
-    overflow: hidden;
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
-    cursor: pointer;
-    transition: border-color 0.15s;
-    color: var(--text-0);
-    text-align: left;
-    font: inherit;
-  }
-
-  .peek-card-chat {
-    border-color: color-mix(in srgb, var(--blue) 25%, var(--border));
-  }
-  .peek-card-chat:hover {
-    border-color: color-mix(in srgb, var(--blue) 50%, var(--border));
-  }
-  .peek-card-chat .peek-card-header {
-    border-bottom-color: color-mix(in srgb, var(--blue) 25%, var(--border));
-  }
-  .peek-card-chat :global(.peek-card-icon) {
-    color: var(--blue);
-  }
-
-  .peek-card-header {
-    padding: 5px 10px;
-    font-size: 13px;
-    font-weight: 500;
-    color: var(--text-1);
-    border-bottom: 1px solid var(--border);
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
-
-  :global(.peek-card-icon) {
-    width: 13px;
-    height: 13px;
-    flex-shrink: 0;
-  }
-
-  .peek-card-label {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    min-width: 0;
-    flex: 1;
-  }
-
-  .peek-card-meta {
-    font-size: 11px;
-    color: var(--text-2);
-    font-weight: 400;
-    flex-shrink: 0;
-  }
-
-  .peek-card-body {
-    padding: 8px 10px;
-    max-height: 300px;
-    overflow-y: auto;
-    color: var(--text-0);
-  }
-
-  /* System event body: plain text, no sender column — it came from no one. */
-  .peek-card-event {
-    font-family: var(--mono);
-    font-size: 12px;
-    line-height: 1.5;
-    white-space: pre-wrap;
-    word-break: break-word;
-  }
-
-  .peek-msg {
-    padding: 2px 0;
-    font-family: var(--mono);
-    font-size: 13px;
-    color: var(--text-0);
-    line-height: 1.5;
-  }
-
-  .peek-msg-sender {
-    font-weight: 600;
-    color: var(--accent);
-    margin-right: 6px;
-    font-size: 12px;
-  }
-
-  .peek-msg-sender-user {
-    color: var(--blue);
-  }
-
-  .peek-msg-md :global(p) {
-    margin: 0;
-    display: inline;
-  }
-
-  .peek-card-iframe iframe {
-    width: 100%;
-    height: 200px;
-    border: none;
-    pointer-events: none;
   }
 
   /* Controls */

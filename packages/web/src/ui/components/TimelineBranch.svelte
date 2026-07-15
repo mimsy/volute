@@ -28,7 +28,7 @@ let {
 } = $props();
 </script>
 
-<div class="branch-wrapper" class:no-return={noReturn} style:--branch-gap="{gap}px" style:--branch-reach="{reach}px" style:--rail-top="{railTop}px" >
+<div class="branch-wrapper" style:--branch-gap="{gap}px" style:--branch-reach="{reach}px" style:--rail-top="{railTop}px" >
   <div class="branch-connector" class:branch-connector-dashed={dashed}></div>
   {#if dashed}
     <!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -82,9 +82,6 @@ let {
     bottom: 12px;
     cursor: pointer;
     z-index: 2;
-  }
-  .no-return > .branch-connector {
-    bottom: 0;
   }
   .branch-connector-dashed {
     background:

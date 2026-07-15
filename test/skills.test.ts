@@ -1012,8 +1012,14 @@ describe("autoUpdateMindSkills", () => {
     for (const name of testNames) {
       await db.delete(minds).where(eq(minds.name, name));
     }
-    if (existsSync(testMindDir)) rmSync(testMindDir, { recursive: true });
-    if (existsSync(testMindDir2)) rmSync(testMindDir2, { recursive: true });
+    // maxRetries: files can land in a mind dir mid-scan (lingering async update work),
+    // which makes a plain recursive rm flake with ENOTEMPTY on CI.
+    const variantDir = join(voluteHome(), "minds", `${testMindName}-variant`);
+    for (const dir of [testMindDir, testMindDir2, variantDir]) {
+      if (existsSync(dir)) {
+        rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+      }
+    }
   });
 
   it("updates outdated skills on registered minds", async () => {

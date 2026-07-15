@@ -51,7 +51,7 @@ export function createCommands(): Record<string, ExtensionCommand> {
           type: "plan_started",
           mind: user.username,
           summary: `${user.username} started plan: "${title}"`,
-          metadata: { planId: plan.id, title },
+          metadata: { planId: plan.id, title, url: "/plan" },
         });
 
         return { output: `Plan started: ${plan.title}` };
@@ -78,7 +78,7 @@ export function createCommands(): Record<string, ExtensionCommand> {
           type: "plan_message",
           mind: mindName,
           summary: `Plan message: "${content.slice(0, 100)}"`,
-          metadata: { planId: plan.id, messageId: msg.id },
+          metadata: { planId: plan.id, messageId: msg.id, url: "/plan" },
         });
 
         // Announce to #system so all minds see it
@@ -112,7 +112,7 @@ export function createCommands(): Record<string, ExtensionCommand> {
           type: "plan_progress",
           mind: mindName,
           summary: `${mindName} logged progress: "${content.slice(0, 100)}"`,
-          metadata: { planId: plan.id, logId: log.id },
+          metadata: { planId: plan.id, logId: log.id, url: "/plan" },
         });
 
         return { output: "Progress logged." };
@@ -189,7 +189,7 @@ export function createCommands(): Record<string, ExtensionCommand> {
           type: "plan_finished",
           mind: mindName,
           summary: `${mindName} finished plan: "${plan.title}"`,
-          metadata: { planId: plan.id },
+          metadata: { planId: plan.id, url: "/plan" },
         });
 
         // Announce to #system
