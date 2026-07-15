@@ -18,6 +18,7 @@ import {
   isSandboxEnabled,
   SandboxUnavailableError,
   shellEscape,
+  shellTempWritePaths,
   wrapForSandbox,
 } from "../packages/daemon/src/lib/mind/sandbox.js";
 
@@ -186,6 +187,19 @@ describe("shellEscape", () => {
 
   it("handles empty strings", () => {
     assert.equal(shellEscape(""), "''");
+  });
+});
+
+describe("shellTempWritePaths", () => {
+  // macOS bash 3.2 writes here-document temp files to /tmp (ignoring $TMPDIR),
+  // so a sandboxed mind needs the tmp root writable. Linux's modern bash uses
+  // the sandbox's already-whitelisted TMPDIR=/tmp/claude, so it needs nothing.
+  it("grants the here-doc temp root on macOS and nothing elsewhere", () => {
+    if (process.platform === "darwin") {
+      assert.deepEqual(shellTempWritePaths(), ["/private/tmp", "/private/var/tmp"]);
+    } else {
+      assert.deepEqual(shellTempWritePaths(), []);
+    }
   });
 });
 
