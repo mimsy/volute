@@ -212,7 +212,10 @@ $effect(() => {
       clearTimeout(typingSafetyTimer);
       if (typingNames.length > 0) {
         typingSafetyTimer = window.setTimeout(() => {
-          typingNames = [];
+          // Mind typing state is authoritative (published on delivery, done, and
+          // stop/crash) and a turn can far outlast this timer — only reap humans,
+          // whose stop event may have been missed.
+          typingNames = typingNames.filter((n) => minds.some((m) => m.name === n));
         }, 15_000);
       }
     }

@@ -51,6 +51,22 @@ let colorMap = $derived.by(() => {
   return map;
 });
 
+// While a sender is typing, their trailing message group carries the dot in its
+// header instead of a standalone typing line below the messages.
+let typingDotIndex = $derived.by(() => {
+  const last = entries[entries.length - 1];
+  if (!last?.senderName || !typingNames.includes(last.senderName)) return -1;
+  let i = entries.length - 1;
+  while (i > 0 && entries[i - 1].senderName === last.senderName) i--;
+  return i;
+});
+
+let standaloneTypingNames = $derived(
+  typingDotIndex === -1
+    ? typingNames
+    : typingNames.filter((n) => n !== entries[typingDotIndex].senderName),
+);
+
 function showSenderHeader(i: number): boolean {
   if (i === 0) return true;
   const prev = entries[i - 1];
@@ -167,10 +183,11 @@ function handleScroll() {
         {mindsByName}
         {participants}
         {onOpenMind}
+        showTypingDot={i === typingDotIndex}
       />
     {/if}
   {/each}
-  {#each typingNames as name (name)}
+  {#each standaloneTypingNames as name (name)}
     {@const mind = mindsByName.get(name)}
     {@const displayName =
       mind?.displayName ?? participants.find((p) => p.username === name)?.displayName ?? name}
@@ -288,10 +305,5 @@ function handleScroll() {
   .typing-dot.iridescent {
     background: none;
     animation: iridescent 3s ease-in-out infinite;
-  }
-
-  @keyframes typing-pulse {
-    0%, 100% { opacity: 0.4; }
-    50% { opacity: 1; }
   }
 </style>

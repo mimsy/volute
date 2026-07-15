@@ -49,6 +49,16 @@
   }
 }
 
+@keyframes typing-pulse {
+  0%,
+  100% {
+    opacity: 0.4;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
 /* Electron: titlebar safe area and window drag */
 html.electron {
   --titlebar-height: 38px;
