@@ -85,6 +85,9 @@ export async function read(
             .map((b) => b.text)
             .join("")
         : m.content;
+      // Automated announcements have no sender (#687) — render sender-less so a mind reading
+      // #system via the platform driver doesn't see "event: atlas has joined".
+      if (m.role === "event") return `· ${text}`;
       return `${m.sender_name ?? m.role}: ${text}`;
     })
     .join("\n");

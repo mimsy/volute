@@ -16,11 +16,13 @@ import {
   getConversation,
   getMessages,
   getParticipants,
+  getUnreadCounts,
   isParticipant,
   joinChannel,
   leaveChannel,
   listChannels,
   listConversationsForUser,
+  listConversationsWithParticipants,
   removeParticipant,
   setConversationPrivate,
 } from "../packages/daemon/src/lib/events/conversations.js";
@@ -478,6 +480,39 @@ describe("conversation privacy", () => {
       assert.equal(fetched!.private, 0);
     } finally {
       await deleteConversation(conv.id);
+    }
+  });
+});
+
+// Pins the intentional behavior change from #687: a sender-less announcement (role "event",
+// sender_name NULL) is stored on the channel like any other row. Because it has no sender it
+// counts as unread for every participant (the spirit included) and flows through the
+// conversation-list enrichment as an event with a null sender — both must hold without error.
+describe("sender-less event rows (#687)", () => {
+  it("counts an event row as unread and surfaces it as a null-sender lastMessage", async () => {
+    const db = await getDb();
+    await db.delete(users).where(eq(users.username, "event-reader"));
+    const reader = await getOrCreateMindUser("event-reader");
+    const channel = await createChannel(`event-unread-${Date.now()}`);
+    try {
+      await joinChannel(channel.id, reader.id);
+      await addMessage(channel.id, "event", null, [{ type: "text", text: "atlas has joined" }]);
+
+      const unread = await getUnreadCounts(reader.id, [channel.id], "event-reader");
+      assert.equal(unread[channel.id], 1, "a sender-less event must count as unread");
+
+      const convs = await listConversationsWithParticipants(reader.id);
+      const found = convs.find((c) => c.id === channel.id);
+      assert.ok(found, "the channel should enrich without throwing");
+      assert.equal(found!.lastMessage?.role, "event", "lastMessage should carry the event role");
+      assert.equal(
+        found!.lastMessage?.senderName,
+        null,
+        "lastMessage for an announcement must have no sender",
+      );
+    } finally {
+      await deleteConversation(channel.id);
+      await db.delete(users).where(eq(users.username, "event-reader"));
     }
   });
 });

@@ -103,8 +103,10 @@ describe("system DM", () => {
     assert.equal(id1, id2, "should find existing DM via DB lookup");
   });
 
-  it("ensureSystemDM throws for the spirit (can't DM the shared system user)", async () => {
-    // The spirit shares the system user, so there's no distinct pair to DM.
-    await assert.rejects(() => ensureSystemDM("volute"), /system user/);
+  it("ensureSystemDM is a no-op for the spirit (can't DM the shared system user)", async () => {
+    // The spirit shares the system user, so there's no distinct pair to DM. It returns
+    // null rather than throwing, so `startMindFull` doesn't log an error on spirit start (#688).
+    const result = await ensureSystemDM("volute");
+    assert.equal(result, null, "should return null for the spirit, not throw");
   });
 });

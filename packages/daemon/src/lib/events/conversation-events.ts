@@ -7,7 +7,7 @@ export type ConversationEvent =
   | {
       type: "message";
       id: number;
-      role: "user" | "assistant";
+      role: "user" | "assistant" | "event";
       senderName: string | null;
       content: ContentBlock[];
       createdAt: string;

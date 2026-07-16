@@ -26,3 +26,37 @@ export function compactDateTime(dateStr: string): string {
   const min = String(d.getMinutes()).padStart(2, "0");
   return `${y}-${m}-${day} ${h}:${min}`;
 }
+
+export type ReadLineMessage = {
+  role: string;
+  sender_name: string | null;
+  sender_display_name?: string | null;
+  content: string | { type: string; text?: string }[];
+  created_at: string;
+};
+
+/**
+ * Render one `chat read` line. Automated announcements (`role: "event"`, #687) render
+ * sender-less as `[time] · text` — role wins even if a sender_name is somehow present, so an
+ * event is never attributed to anyone. Everything else renders `[time] sender: text`, with
+ * display names in human (non-compact) mode.
+ */
+export function formatMessageLine(msg: ReadLineMessage, compact: boolean): string {
+  const text = Array.isArray(msg.content)
+    ? msg.content
+        .filter((b): b is { type: "text"; text: string } => b.type === "text")
+        .map((b) => b.text)
+        .join("")
+    : msg.content;
+  const time = compact
+    ? compactTime(msg.created_at)
+    : new Date(
+        msg.created_at.endsWith("Z") ? msg.created_at : `${msg.created_at}Z`,
+      ).toLocaleString();
+  if (msg.role === "event") return `[${time}] · ${text}`;
+  // Compact (mind-facing) output stays terse; display names are for humans.
+  const sender = compact
+    ? (msg.sender_name ?? msg.role)
+    : formatSender(msg.sender_name ?? msg.role, msg.sender_display_name);
+  return `[${time}] ${sender}: ${text}`;
+}

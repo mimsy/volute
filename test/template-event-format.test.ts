@@ -48,6 +48,64 @@ describe("template event envelope formatting", () => {
   });
 });
 
+// #687: automated #system announcements are delivered on the ordinary channel path but with a
+// null sender. The mind-facing prefix must frame them by channel and never name anyone — no
+// spirit name, and no phantom "unknown" fallback in any of the formatting paths.
+describe("sender-less channel announcements (#687)", () => {
+  it("formatPrefix frames a sender-less channel post by channel, with no sender", () => {
+    const prefix = formatPrefix({ channel: "#system", platform: "Volute" }, "2026-07-12 07:30");
+    assert.match(prefix, /^\[Volute: #system — 2026-07-12 07:30\]/);
+    assert.ok(!prefix.includes("unknown"), "must not invent an 'unknown' sender");
+  });
+
+  it("dispatch delivers a sender-less announcement with no sender attribution", () => {
+    const handled: { content: VoluteContentPart[]; meta: HandlerMeta }[] = [];
+    const router = createRouter({
+      mindHandler: () => ({
+        handle(content, meta) {
+          handled.push({ content, meta });
+          return () => {};
+        },
+      }),
+    });
+
+    router.dispatch([{ type: "text", text: "atlas has joined" }], "system", {
+      channel: "#system",
+      sender: null as unknown as undefined,
+      isDM: false,
+    });
+
+    const text = (handled[0].content[0] as { type: "text"; text: string }).text;
+    assert.ok(text.includes("atlas has joined"));
+    assert.match(text, /^\[Volute: #system/, "framed by channel");
+    assert.ok(!text.includes("unknown"), "no phantom sender");
+    router.close();
+  });
+
+  it("dispatchBatch renders a sender-less announcement without an 'unknown' sender", () => {
+    const handled: { content: VoluteContentPart[]; meta: HandlerMeta }[] = [];
+    const router = createRouter({
+      mindHandler: () => ({
+        handle(content, meta) {
+          handled.push({ content, meta });
+          return () => {};
+        },
+      }),
+    });
+
+    router.dispatchBatch(
+      { channels: { "#system": [{ sender: null, content: "atlas has joined" }] } },
+      "system",
+      {},
+    );
+
+    const text = (handled[0].content[0] as { type: "text"; text: string }).text;
+    assert.ok(text.includes("atlas has joined"));
+    assert.ok(!text.includes("unknown"), "batch flush must not invent an 'unknown' sender");
+    router.close();
+  });
+});
+
 describe("router event dispatch", () => {
   it("applies the system-event heading and no sender/DM framing to an event dispatch", () => {
     const handled: { content: VoluteContentPart[]; meta: HandlerMeta }[] = [];

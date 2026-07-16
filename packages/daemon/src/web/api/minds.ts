@@ -1167,8 +1167,13 @@ const app = new Hono<AuthEnv>()
         },
       });
 
-      // Announce to #system channel
-      announceToSystem(`${name} has joined`).catch(() => {});
+      // Announce to #system channel. Fire-and-forget, but surface failures — this is the
+      // primary producer of #system event rows, and announceToSystem propagates DB errors
+      // (ensureSystemChannel/addMessage/getParticipants), so a silent swallow would make the
+      // join moment vanish without a trace.
+      announceToSystem(`${name} has joined`).catch((err) =>
+        log.warn(`failed to announce ${name} joining #system`, log.errorData(err)),
+      );
 
       // Warn (don't block) when the mind will spawn without usable model credentials,
       // so a mute-on-first-turn mind is caught at creation rather than in silence (#573).

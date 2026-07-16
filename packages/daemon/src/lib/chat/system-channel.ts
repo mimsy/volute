@@ -92,17 +92,25 @@ export async function backfillSystemChannelMembers(): Promise<void> {
   }
 }
 
-/** Post a system announcement to the #system channel and deliver to mind participants. */
+/**
+ * Post an automated announcement to the #system channel ("X has joined", "📝 X published a
+ * note …"). These are sender-less, never the spirit's voice: since the spirit shares the
+ * system user (#663), attributing automation to that user made it indistinguishable from the
+ * spirit's hand-written messages (#687).
+ *
+ * The channel row is stored with `role: "event"` and no sender so web chat and `chat read`
+ * render it as an event. It is delivered to mind participants through the normal channel-message
+ * path (so it follows each mind's #system routing, batching, gating, and file destinations
+ * exactly like any channel message) — but with a null sender, so the prefix the mind receives
+ * frames it by channel and never names the spirit or invents a sender. The spirit's own
+ * hand-written messages are unaffected.
+ */
 export async function announceToSystem(text: string): Promise<void> {
   const channelId = await ensureSystemChannel();
-  const systemUser = await getOrCreateSystemUser();
 
-  // Ensure system user is a participant
-  await joinChannel(channelId, systemUser.id);
+  await addMessage(channelId, "event", null, [{ type: "text", text }]);
 
-  await addMessage(channelId, "user", systemUser.username, [{ type: "text", text }]);
-
-  // Deliver to all mind participants of #system
+  // Deliver to all mind participants of #system, sender-less, on the ordinary channel path.
   const participants = await getParticipants(channelId);
   const mindParticipants = participants.filter((p) => p.userType === "mind");
   const channel = "#system";
@@ -111,7 +119,7 @@ export async function announceToSystem(text: string): Promise<void> {
       content: [{ type: "text", text }],
       channel,
       conversationId: channelId,
-      sender: systemUser.username,
+      sender: null,
       participants: participants.map((p) => p.username),
       participantCount: participants.length,
       isDM: false,

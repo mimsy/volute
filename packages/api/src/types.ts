@@ -84,14 +84,16 @@ export type Participant = {
 export type Message = {
   id: number;
   conversation_id: string;
-  role: "user" | "assistant";
+  // "event" marks a sender-less automated announcement (e.g. #system "X has joined"), which
+  // the UI renders as an event rather than a chat message attributed to a sender (#687).
+  role: "user" | "assistant" | "event";
   sender_name: string | null;
   content: ContentBlock[];
   created_at: string;
 };
 
 export type LastMessageSummary = {
-  role: "user" | "assistant";
+  role: "user" | "assistant" | "event";
   senderName: string | null;
   text: string;
   createdAt: string;

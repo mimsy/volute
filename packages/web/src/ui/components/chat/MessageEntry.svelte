@@ -29,7 +29,9 @@ let {
   onOpenMind,
   showTypingDot = false,
 }: {
-  role: "user" | "assistant";
+  // "event" entries are rendered by MessageList directly and never reach MessageEntry; the
+  // wider type keeps the `role={entry.role}` binding sound (#687).
+  role: "user" | "assistant" | "event";
   blocks: ContentBlock[];
   senderName?: string;
   createdAt?: string;
