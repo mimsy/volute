@@ -68,9 +68,9 @@ import {
   deleteMindUser as deleteIsolationUser,
   ensureVoluteGroup,
   isIsolationEnabled,
-  wrapForIsolation,
 } from "../../lib/mind/isolation.js";
 import { commitSrcChanges, rollbackSrcChanges } from "../../lib/mind/last-known-good.js";
+import { npmInstallAsMind, npmInstallNeeded } from "../../lib/mind/npm-install.js";
 import {
   addMind,
   countCappedMinds,
@@ -132,7 +132,7 @@ import {
   type TemplateManifest,
 } from "../../lib/template/template.js";
 import { computeTemplateHash } from "../../lib/template/template-hash.js";
-import { exec, gitExec } from "../../lib/util/exec.js";
+import { gitExec } from "../../lib/util/exec.js";
 import { checkHealth } from "../../lib/util/health.js";
 import log from "../../lib/util/logger.js";
 import { safeResolveWithinBase } from "../../lib/util/paths.js";
@@ -424,19 +424,6 @@ async function mergeTemplateBranch(worktreeDir: string): Promise<boolean> {
 }
 
 /**
- * Run npm install in a directory, using the mind user's identity when isolation is enabled.
- * This avoids creating root-owned node_modules that the mind can't modify later.
- */
-async function npmInstallAsMind(cwd: string, mindName: string): Promise<void> {
-  if (isIsolationEnabled()) {
-    const [cmd, args] = await wrapForIsolation("npm", ["install"], mindName);
-    await exec(cmd, args, { cwd, env: { ...process.env, HOME: resolve(cwd, "home") } });
-  } else {
-    await exec("npm", ["install"], { cwd });
-  }
-}
-
-/**
  * Merge the upgrade branch back into main, clean up, install deps, and restart.
  * Returns { ok, warning? } on success, throws on merge failure.
  */
@@ -457,11 +444,12 @@ async function mergeUpgradeAndRestart(
     await gitExec(["commit", "-m", "Auto-commit before upgrade merge"], { cwd: dir });
   }
 
+  const preMergeHead = (await gitExec(["rev-parse", "HEAD"], { cwd: dir })).trim();
   await gitExec(["merge", upgradeBranch], { cwd: dir });
 
   // Merge succeeded — everything below is best-effort cleanup/restart
   try {
-    await cleanupVariant(upgradeVariantName, dir, worktreeDir);
+    await cleanupVariant(upgradeVariantName, mindName, dir, worktreeDir);
   } catch (err) {
     log.warn(`failed to clean up upgrade worktree for ${mindName}`, log.errorData(err));
   }
@@ -517,14 +505,20 @@ async function mergeUpgradeAndRestart(
     log.warn(`failed to update template for ${mindName}`, log.errorData(err));
   }
 
-  try {
-    await npmInstallAsMind(dir, mindName);
-  } catch (err) {
-    log.warn(`npm install failed after upgrade merge for ${mindName}`, log.errorData(err));
-    return {
-      ok: true,
-      warning: `Upgrade merged but npm install failed: ${err instanceof Error ? err.message : String(err)}. You may need to run npm install manually.`,
-    };
+  // Skip npm install when the merge didn't touch dependencies — even a no-op
+  // install writes enough to freeze slow storage for a minute or more.
+  if (await npmInstallNeeded(dir, preMergeHead)) {
+    try {
+      await npmInstallAsMind(dir, mindName);
+    } catch (err) {
+      log.warn(`npm install failed after upgrade merge for ${mindName}`, log.errorData(err));
+      return {
+        ok: true,
+        warning: `Upgrade merged but npm install failed: ${err instanceof Error ? err.message : String(err)}. You may need to run npm install manually.`,
+      };
+    }
+  } else {
+    log.info(`skipping npm install for ${mindName} — dependencies unchanged by upgrade`);
   }
 
   // Restart mind with upgrade context
@@ -534,7 +528,10 @@ async function mergeUpgradeAndRestart(
       await manager.stopMind(mindName);
     }
     manager.setPendingContext(mindName, { type: "upgraded" });
-    await manager.startMind(mindName);
+    // Generous health budget: right after an npm install the disk cache is
+    // cold and I/O may still be saturated, so a tsx cold start can exceed the
+    // default 30s — timing out here kills the child and leaves the mind down.
+    await manager.startMind(mindName, { healthTimeoutMs: 120_000 });
   } catch (e) {
     return {
       ok: true,
@@ -1605,14 +1602,17 @@ const app = new Hono<AuthEnv>()
 
           // Merge (excluding the mind's living memory/journal — #440), narrate
           // the memory delta to the parent, then clean up worktree/branch and
-          // reinstall.
+          // reinstall if the merge touched dependencies.
+          const preMergeHead = (await gitExec(["rev-parse", "HEAD"], { cwd: projectRoot })).trim();
           const memoryDelta = await mergeVariantExcludingMemory(projectRoot, variantEntry.branch);
           if (memoryDelta && context) context.memoryDelta = memoryDelta;
-          await cleanupVariant(mergeVariantName, projectRoot, variantEntry.dir);
-          try {
-            await npmInstallAsMind(projectRoot, baseName);
-          } catch (e) {
-            log.error(`npm install failed after merge for ${baseName}`, log.errorData(e));
+          await cleanupVariant(mergeVariantName, baseName, projectRoot, variantEntry.dir);
+          if (await npmInstallNeeded(projectRoot, preMergeHead)) {
+            try {
+              await npmInstallAsMind(projectRoot, baseName);
+            } catch (e) {
+              log.error(`npm install failed after merge for ${baseName}`, log.errorData(e));
+            }
           }
         }
       }
@@ -2120,7 +2120,7 @@ const app = new Hono<AuthEnv>()
     const variants = await findVariants(name);
     for (const s of variants) {
       if (s.dir) {
-        await cleanupVariant(s.name, dir, s.dir, { stop: true });
+        await cleanupVariant(s.name, name, dir, s.dir, { stop: true });
       }
     }
 
@@ -2196,7 +2196,7 @@ const app = new Hono<AuthEnv>()
           }
         } catch {}
 
-        await cleanupVariant(upgradeVariantName, dir, worktreeDir, { stop: true });
+        await cleanupVariant(upgradeVariantName, mindName, dir, worktreeDir, { stop: true });
 
         // Also delete the upgrade branch directly — cleanupVariant uses the variant
         // name as fallback branch, but the actual branch is UPGRADE_BRANCH
@@ -2285,7 +2285,7 @@ const app = new Hono<AuthEnv>()
       // Legacy — upgrades now auto-merge. Clean up any old-style upgrade state.
       if (existsSync(worktreeDir)) {
         try {
-          await cleanupVariant(upgradeVariantName, dir, worktreeDir, { stop: true });
+          await cleanupVariant(upgradeVariantName, mindName, dir, worktreeDir, { stop: true });
         } catch (err) {
           log.warn(`failed to clean up legacy upgrade variant for ${mindName}`, log.errorData(err));
         }
@@ -2447,7 +2447,7 @@ const app = new Hono<AuthEnv>()
     } catch (err) {
       // Merge failed — clean up
       try {
-        await cleanupVariant(upgradeVariantName, dir, worktreeDir);
+        await cleanupVariant(upgradeVariantName, mindName, dir, worktreeDir);
       } catch (cleanupErr) {
         log.warn(`cleanup failed after upgrade error for ${mindName}`, log.errorData(cleanupErr));
       }
