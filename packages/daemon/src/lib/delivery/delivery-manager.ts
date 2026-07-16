@@ -1,6 +1,7 @@
 import { realpath } from "node:fs/promises";
 import { resolve } from "node:path";
 import { and, eq, inArray, sql } from "drizzle-orm";
+import { MIND_LEVEL_THREAD, type RecordNoticeInput } from "../chat/system-events.js";
 import { getTypingMap, publishTypingForChannels } from "../chat/typing.js";
 import { tryGetMindManager } from "../daemon/mind-manager.js";
 import { linkInboundToActiveTurn } from "../daemon/turn-tracker.js";
@@ -37,6 +38,11 @@ const REDRIVE_INTERVAL_MS = 15_000;
 const RETRY_BASE_MS = 5_000;
 const RETRY_MAX_MS = 5 * 60_000;
 const REDRIVE_BATCH_LIMIT = 200;
+// After this many failed POST attempts a row is dead-lettered (status "dead") instead of
+// retried forever. With the backoff above (capped at 5 min) this is ~30 min of retries —
+// enough to ride out a mind restart or transient fault, but bounded so a payload the mind
+// permanently rejects can't grow the queue without limit. #356
+export const MAX_DELIVERY_ATTEMPTS = 10;
 
 // --- Gated-channel release tuning ---
 // When a routing change matches a previously-gated channel, deliver at most this many
@@ -82,6 +88,17 @@ type QueuedMessage = {
   queueId?: number;
 };
 
+/** The delivery_queue fields a dead-lettered row carries into its failure notice. */
+type DeadLetterRow = {
+  id: number;
+  mind: string;
+  target_mind: string | null;
+  thread: string;
+  channel: string | null;
+  sender: string | null;
+  created_at: string;
+};
+
 // --- Delivery Manager ---
 
 export class DeliveryManager {
@@ -113,6 +130,12 @@ export class DeliveryManager {
     await deliverEvent(mindName, { type: "channel", body: text });
   };
 
+  /** Surfaces a dead-lettered delivery as a next-turn failure notice; overridable in tests. */
+  private notifyFailure: (input: RecordNoticeInput) => Promise<void> = async (input) => {
+    const { recordNotice } = await import("../chat/system-events.js");
+    await recordNotice(input);
+  };
+
   constructor() {
     // Release gated messages when a mind's routes.json changes.
     setRoutesChangeListener((mind) => {
@@ -130,6 +153,11 @@ export class DeliveryManager {
   /** Test seam: capture/override system notifications sent to minds. */
   setNotifier(fn: (mindName: string, text: string) => Promise<void>): void {
     this.notify = fn;
+  }
+
+  /** Test seam: capture/override dead-letter failure notices. */
+  setFailureNotifier(fn: (input: RecordNoticeInput) => Promise<void>): void {
+    this.notifyFailure = fn;
   }
 
   // --- Public API ---
@@ -789,28 +817,141 @@ export class DeliveryManager {
     }
   }
 
-  /** Bump attempt counters and set a backoff window so a down mind isn't hot-looped. */
-  private async scheduleRetry(ids: (number | undefined)[]): Promise<void> {
+  /**
+   * Record the outcome of a failed delivery attempt: set a backoff window so the target
+   * isn't hot-looped, and — for a LIVE rejection — advance the dead-letter counter.
+   *
+   * Only a live rejection (`liveRejection: true`: the target was reachable and answered with
+   * a non-OK HTTP status) counts toward {@link MAX_DELIVERY_ATTEMPTS}. A transport failure
+   * (`liveRejection: false`: connection refused, reset, or timeout — the mind or a detached
+   * variant is simply down/unreachable) backs off WITHOUT advancing the counter, so a merely
+   * offline target is never dead-lettered and its message is preserved until it returns. The
+   * redrive guard only checks the base mind's up-ness, so a stopped variant reaches here on
+   * every sweep — this is what stops that from silently dropping its messages. #356
+   *
+   * A row that reaches the ceiling moves to the terminal `dead` status (excluded from
+   * redrive, which only reads `pending`) and the batch is surfaced as one failure notice.
+   *
+   * Rows here are still `inFlight` (the caller clears ownership in its own `finally`, after
+   * this resolves), so the concurrent redrive sweep skips them and can't race this update.
+   */
+  private async scheduleRetry(
+    ids: (number | undefined)[],
+    opts: { liveRejection: boolean },
+  ): Promise<void> {
     const valid = [...new Set(ids.filter((id): id is number => typeof id === "number"))];
     if (valid.length === 0) return;
     try {
       const db = await getDb();
       const rows = await db
-        .select({ id: deliveryQueue.id, attempts: deliveryQueue.attempts })
+        .select({
+          id: deliveryQueue.id,
+          attempts: deliveryQueue.attempts,
+          mind: deliveryQueue.mind,
+          target_mind: deliveryQueue.target_mind,
+          thread: deliveryQueue.thread,
+          channel: deliveryQueue.channel,
+          sender: deliveryQueue.sender,
+          created_at: deliveryQueue.created_at,
+        })
         .from(deliveryQueue)
         .where(inArray(deliveryQueue.id, valid));
+      const dead: DeadLetterRow[] = [];
       for (const row of rows) {
+        // Transport failure: back off on the current (unadvanced) counter, don't dead-letter.
+        if (!opts.liveRejection) {
+          await db
+            .update(deliveryQueue)
+            .set({ next_attempt_at: this.backoffExpr(row.attempts) })
+            .where(eq(deliveryQueue.id, row.id));
+          continue;
+        }
         const attempts = row.attempts + 1;
-        const backoffSec = Math.round(
-          Math.min(RETRY_MAX_MS, RETRY_BASE_MS * 2 ** Math.min(attempts, 20)) / 1000,
-        );
+        if (attempts >= MAX_DELIVERY_ATTEMPTS) {
+          // Log BEFORE the terminal UPDATE so a crash between the two can't drop a message
+          // without a trace. #356
+          dlog.error(
+            `dead-lettering delivery queue row ${row.id} for ${row.mind} after ${attempts} ` +
+              `live rejections (channel=${row.channel ?? "?"}, sender=${row.sender ?? "?"})`,
+          );
+          // Gate the transition on the row still being `pending` and only notify on a row that
+          // actually flipped — so a (currently unreachable) re-process of an already-`dead` row
+          // can't fire a duplicate notice. Makes the terminal-once invariant provable, not assumed.
+          const flipped = await db
+            .update(deliveryQueue)
+            .set({ attempts, status: "dead", next_attempt_at: null })
+            .where(and(eq(deliveryQueue.id, row.id), eq(deliveryQueue.status, "pending")))
+            .returning({ id: deliveryQueue.id });
+          if (flipped.length > 0) dead.push(row);
+          continue;
+        }
         await db
           .update(deliveryQueue)
-          .set({ attempts, next_attempt_at: sql`datetime('now', ${`+${backoffSec} seconds`})` })
+          .set({ attempts, next_attempt_at: this.backoffExpr(attempts) })
           .where(eq(deliveryQueue.id, row.id));
       }
+      if (dead.length > 0) await this.notifyDeadLettered(dead);
     } catch (err) {
-      dlog.warn("failed to schedule delivery retry", log.errorData(err));
+      // This path now guards the dead-letter transition, so a failure here can strand a row
+      // one attempt short of terminal — surface it loudly, not at warn.
+      dlog.error("failed to record delivery retry / dead-letter", log.errorData(err));
+    }
+  }
+
+  /** Exponential backoff window (capped at {@link RETRY_MAX_MS}) as a SQL datetime expr. */
+  private backoffExpr(attempts: number) {
+    const backoffSec = Math.round(
+      Math.min(RETRY_MAX_MS, RETRY_BASE_MS * 2 ** Math.min(attempts, 20)) / 1000,
+    );
+    return sql`datetime('now', ${`+${backoffSec} seconds`})`;
+  }
+
+  /**
+   * Surface a batch of dead-lettered rows as ONE next-turn failure notice, so a whole failing
+   * batch can't emit dozens of notices and evict unrelated ones via the per-thread overflow
+   * cap. The notice names the channel(s) and send times and points the mind at the surviving
+   * channel history, and never throws back into the delivery path — the rows are terminal. #356
+   */
+  private async notifyDeadLettered(rows: DeadLetterRow[]): Promise<void> {
+    const mind = rows[0].mind;
+    // Rows in one scheduleRetry call share a (mind, thread) batch. If that thread is an
+    // ephemeral `$new` session, its only message WAS the dropped one — no turn will ever run
+    // to drain a notice parked there — so route the notice to MIND_LEVEL_THREAD instead. #356
+    const threads = new Set(rows.map((r) => r.thread));
+    const single = threads.size === 1 ? [...threads][0] : MIND_LEVEL_THREAD;
+    const thread = single.startsWith("new-") ? MIND_LEVEL_THREAD : single;
+
+    const lines = rows.map((r) => {
+      const from = r.sender ? ` from ${r.sender}` : "";
+      const on = r.channel ? ` on ${r.channel}` : "";
+      // The notice is delivered to the base mind, but the rejecting process may be a variant —
+      // name it so the mind isn't told "your process is rejecting" about a process it isn't. #356
+      const to =
+        r.target_mind && r.target_mind !== r.mind ? ` to your variant ${r.target_mind}` : "";
+      return `- a message${from}${on}${to} (sent ${r.created_at})`;
+    });
+    const channels = [...new Set(rows.map((r) => r.channel).filter((c): c is string => !!c))];
+    const recovery =
+      channels.length > 0
+        ? `The original message(s) remain in the channel history — read them with ` +
+          `${channels.map((c) => `\`volute chat read ${c}\``).join(" or ")}.`
+        : `The original message(s) remain in the channel history.`;
+    const detail = [
+      `${rows.length} message(s) sent to you could not be delivered after ` +
+        `${MAX_DELIVERY_ATTEMPTS} attempts and were dropped:`,
+      ...lines,
+      recovery,
+    ].join("\n");
+    try {
+      await this.notifyFailure({
+        mind,
+        thread,
+        kind: "delivery_failed",
+        reason: "delivery_failed",
+        detail,
+      });
+    } catch (err) {
+      dlog.warn(`failed to send dead-letter notice for ${mind}`, log.errorData(err));
     }
   }
 
@@ -883,18 +1024,20 @@ export class DeliveryManager {
       try {
         const ok = await this.postToMind(port, body);
         if (!ok) {
+          // Reachable but rejected (non-OK HTTP) → a live rejection that counts toward the ceiling.
           this.decrementActive(baseName, session);
           publishTypingForChannels(typingMap.deleteSender(baseName), typingMap);
-          await this.scheduleRetry([queueId]);
+          await this.scheduleRetry([queueId], { liveRejection: true });
         } else {
           // Mark delivered ONLY on ack, by specific row id — never a broad DELETE.
           await this.deleteQueueRows([queueId]);
         }
       } catch (err) {
+        // Threw → transport failure (mind/variant down or timed out), NOT a live rejection.
         dlog.warn(`failed to deliver to ${mindName}`, log.errorData(err));
         this.decrementActive(baseName, session);
         publishTypingForChannels(typingMap.deleteSender(baseName), typingMap);
-        await this.scheduleRetry([queueId]);
+        await this.scheduleRetry([queueId], { liveRejection: false });
       } finally {
         if (queueId != null) this.inFlight.delete(queueId);
       }
@@ -1001,9 +1144,10 @@ export class DeliveryManager {
       try {
         const ok = await this.postToMind(port, body);
         if (!ok) {
+          // Reachable but rejected (non-OK HTTP) → a live rejection that counts toward the ceiling.
           this.decrementActive(baseName, session);
           publishTypingForChannels(typingMap.deleteSender(baseName), typingMap);
-          await this.scheduleRetry(queueIds);
+          await this.scheduleRetry(queueIds, { liveRejection: true });
         } else {
           // Mark delivered ONLY on ack, and ONLY the specific rows in this batch —
           // a broad (mind, session, pending) DELETE would race with rows enqueued
@@ -1011,10 +1155,11 @@ export class DeliveryManager {
           await this.deleteQueueRows(queueIds);
         }
       } catch (err) {
+        // Threw → transport failure (mind/variant down or timed out), NOT a live rejection.
         dlog.warn(`failed to deliver batch to ${mindName}`, log.errorData(err));
         this.decrementActive(baseName, session);
         publishTypingForChannels(typingMap.deleteSender(baseName), typingMap);
-        await this.scheduleRetry(queueIds);
+        await this.scheduleRetry(queueIds, { liveRejection: false });
       } finally {
         for (const id of queueIds) this.inFlight.delete(id);
       }

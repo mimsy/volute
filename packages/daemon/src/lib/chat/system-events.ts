@@ -114,6 +114,8 @@ export function eventLabel(type: string, meta: Record<string, unknown> | null | 
           return "Startup notice";
         case "extension":
           return s("reason") ? `Notice: ${s("reason")}` : "Notice";
+        case "delivery_failed":
+          return "Delivery failed";
         default:
           return "Notice";
       }
@@ -123,7 +125,13 @@ export function eventLabel(type: string, meta: Record<string, unknown> | null | 
 }
 
 /** The kinds of failure/informational notice that fold into next-turn events. */
-export type NoticeKind = "turn_error" | "crash" | "budget" | "startup" | "extension";
+export type NoticeKind =
+  | "turn_error"
+  | "crash"
+  | "budget"
+  | "startup"
+  | "extension"
+  | "delivery_failed";
 
 export type RecordNoticeInput = {
   mind: string;
