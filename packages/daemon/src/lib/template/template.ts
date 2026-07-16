@@ -132,21 +132,20 @@ export function copyTemplateToDir(
 }
 
 /**
- * Render the composed template's package.json from package.json.tmpl.
+ * Substitute {{name}} in the composed template's package.json.
  *
- * composeTemplate() leaves package.json as package.json.tmpl — the rename +
- * {{name}} substitution normally happen in copyTemplateToDir(). Callers that
- * read composedDir/package.json directly (e.g. syncSpiritTemplate) must render
- * it first, otherwise a template switch silently skips updating deps / npm
- * install. Idempotent; returns the rendered package.json path, or null if the
- * template ships no package.json.tmpl.
+ * composeTemplate() leaves package.json under its real name but with the
+ * {{name}} placeholder unsubstituted — the substitution normally happens in
+ * copyTemplateToDir(). Callers that read composedDir/package.json directly (e.g.
+ * syncSpiritTemplate) must render it first, otherwise a template switch silently
+ * skips updating deps / npm install. Idempotent (replaceAll on an already-
+ * substituted file is a no-op); returns the package.json path, or null if the
+ * template ships no package.json.
  */
 export function renderComposedPackageJson(composedDir: string, mindName: string): string | null {
   const dest = resolve(composedDir, "package.json");
-  if (existsSync(dest)) return dest;
-  const tmpl = resolve(composedDir, "package.json.tmpl");
-  if (!existsSync(tmpl)) return null;
-  const content = readFileSync(tmpl, "utf-8").replaceAll("{{name}}", mindName);
+  if (!existsSync(dest)) return null;
+  const content = readFileSync(dest, "utf-8").replaceAll("{{name}}", mindName);
   writeFileSync(dest, content);
   return dest;
 }
@@ -219,14 +218,14 @@ export function applyTemplateHomeFiles(homeDir: string, template: string) {
     rmSync(settingsDest, { force: true });
   }
 
-  // config.json: regenerate from the target's tmpl (template-specific overrides _base).
-  const templateConfig = resolve(root, template, "home", ".config", "config.json.tmpl");
-  const configTmpl = existsSync(templateConfig)
+  // config.json: regenerate from the target's config (template-specific overrides _base).
+  const templateConfig = resolve(root, template, "home", ".config", "config.json");
+  const configSrc = existsSync(templateConfig)
     ? templateConfig
-    : resolve(root, "_base", "home", ".config", "config.json.tmpl");
+    : resolve(root, "_base", "home", ".config", "config.json");
   const configDest = resolve(homeDir, ".config", "config.json");
   mkdirSync(dirname(configDest), { recursive: true });
-  writeFileSync(configDest, readFileSync(configTmpl, "utf-8"));
+  writeFileSync(configDest, readFileSync(configSrc, "utf-8"));
 }
 
 /**

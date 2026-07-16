@@ -55,7 +55,7 @@ function getTemplateFileList(templateName: string): TemplateFileList {
  * Hash a mind's actual on-disk template files, using the same file list and
  * algorithm as computeTemplateHash(), so a pristine mind hashes identically to
  * computeTemplateHash(templateName). Renames from the manifest are applied
- * (composed `package.json.tmpl` maps to on-disk `package.json`).
+ * (composed `gitignore` maps to on-disk `.gitignore`).
  *
  * For files that carry a `{{name}}` substitution, the expected on-disk bytes are
  * derived by forward-substituting the mind name into the composed template — the
