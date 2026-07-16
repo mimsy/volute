@@ -22,6 +22,7 @@ import PublicFiles from "./components/system/PublicFiles.svelte";
 import SystemLogs from "./components/system/SystemLogs.svelte";
 import UpdateBanner from "./components/system/UpdateBanner.svelte";
 import TurnTimeline from "./components/TurnTimeline.svelte";
+import { resolveScreen } from "./lib/app-screen";
 import { type AuthUser, fetchMe } from "./lib/auth";
 import { deleteConversation } from "./lib/client";
 import {
@@ -294,6 +295,17 @@ let headerMindActive = $derived.by(() => {
 
 // Remote connection state — true when no daemon found and no saved connection
 let needsConnection = $state(false);
+
+// Top-level screen to render (loading / setup / connection / login / app).
+let screen = $derived(
+  resolveScreen({
+    checked: auth.checked,
+    setupComplete: auth.setupComplete,
+    hasAccount: !!auth.setupProgress?.hasAccount,
+    needsConnection,
+    loggedIn: !!auth.user,
+  }),
+);
 
 async function doLogout() {
   await handleLogout();
@@ -673,11 +685,11 @@ function handleGlobalClick(e: MouseEvent) {
 <svelte:window onkeydown={handleEscape} />
 <svelte:document onclick={handleGlobalClick} />
 
-{#if !auth.checked}
+{#if screen === "loading"}
   <div class="app">
     <div class="loading">Loading...</div>
   </div>
-{:else if !auth.setupComplete}
+{:else if screen === "setup"}
   <div class="app full-height">
     <SetupPage onComplete={(spiritName) => {
       auth.setupComplete = true;
@@ -687,7 +699,7 @@ function handleGlobalClick(e: MouseEvent) {
       });
     }} />
   </div>
-{:else if needsConnection}
+{:else if screen === "connection"}
   <div class="app full-height">
     <ConnectionSetup onConnected={(user) => {
       needsConnection = false;
@@ -696,11 +708,12 @@ function handleGlobalClick(e: MouseEvent) {
       handleAuth(user);
     }} />
   </div>
-{:else if !auth.user}
+{:else if screen === "login"}
   <div class="app full-height">
-    <LoginPage {onAuth} />
+    <LoginPage {onAuth} resumeSetup={!auth.setupComplete && !!auth.setupProgress?.hasAccount} />
   </div>
-{:else}
+<!-- screen === "app" implies loggedIn; the auth.user guard is just for TS narrowing. -->
+{:else if auth.user}
   <div class="shell">
     {#if auth.user.role === "admin"}
       <UpdateBanner />

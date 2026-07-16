@@ -2,7 +2,13 @@
 import { Input } from "@volute/ui";
 import { type AuthUser, login, register } from "../lib/auth";
 
-let { onAuth }: { onAuth: (user: AuthUser) => void } = $props();
+let {
+  onAuth,
+  // When the setup wizard is resumed without a session, an admin account
+  // already exists — offer only sign-in (registering would create a second,
+  // pending account and re-trap the user) and say the wizard resumes after.
+  resumeSetup = false,
+}: { onAuth: (user: AuthUser) => void; resumeSetup?: boolean } = $props();
 
 let mode = $state<"login" | "register">("login");
 let username = $state("");
@@ -61,7 +67,11 @@ async function handleSubmit(e: Event) {
           <span class="logo">volute</span>
         </div>
         <div class="subtitle">
-          {mode === "login" ? "Sign in to continue" : "Create an account"}
+          {resumeSetup
+            ? "Sign in to continue setup"
+            : mode === "login"
+              ? "Sign in to continue"
+              : "Create an account"}
         </div>
       </div>
 
@@ -92,11 +102,13 @@ async function handleSubmit(e: Event) {
         </button>
       </form>
 
-      <div class="toggle">
-        <button class="link-btn" onclick={() => { mode = mode === "login" ? "register" : "login"; error = ""; }}>
-          {mode === "login" ? "Need an account? Register" : "Have an account? Sign in"}
-        </button>
-      </div>
+      {#if !resumeSetup}
+        <div class="toggle">
+          <button class="link-btn" onclick={() => { mode = mode === "login" ? "register" : "login"; error = ""; }}>
+            {mode === "login" ? "Need an account? Register" : "Have an account? Sign in"}
+          </button>
+        </div>
+      {/if}
     </div>
   </div>
 {/if}

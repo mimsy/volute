@@ -74,7 +74,9 @@ setup.get("/status", async (c) => {
       const brains = await listUsersByType("human");
       hasAccount = brains.length > 0;
     } catch (err) {
-      log.debug("could not check for existing accounts during setup status", log.errorData(err));
+      // Falling through with hasAccount:false sends a resumed browser back into
+      // the wizard (the #690 dead-end) — make the real failure visible.
+      log.error("could not check for existing accounts during setup status", log.errorData(err));
     }
   }
 
