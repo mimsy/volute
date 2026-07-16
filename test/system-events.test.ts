@@ -811,6 +811,9 @@ describe("system-events eventLabel", () => {
     assert.equal(eventLabel("wake", null), "Woke from sleep");
     assert.equal(eventLabel("lifecycle", { subtype: "merge" }), "Variant merged in");
     assert.equal(eventLabel("webhook", { source: "github" }), "Webhook: github");
+    // A #system announcement event (#687): minds see this as the envelope prefix, so it must
+    // stay "#system", never fall through to the capitalized type name "Commons".
+    assert.equal(eventLabel("commons", null), "#system");
   });
 });
 

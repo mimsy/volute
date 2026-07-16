@@ -1,5 +1,5 @@
 import type { FeedChatEvent, FeedDigest, FeedLifecycleEvent, Participant } from "@volute/api";
-import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, ne, sql } from "drizzle-orm";
 import { aiCompleteUtility } from "../ai-service.js";
 import { SYSTEM_MIND } from "../daemon/summarizer.js";
 import { getDb } from "../db.js";
@@ -143,7 +143,18 @@ export async function getChatFeedEvents(opts?: { limit?: number }): Promise<Feed
     })
     .from(messages)
     .innerJoin(conversations, eq(conversations.id, messages.conversation_id))
-    .where(and(gte(messages.created_at, cutoff), eq(conversations.private, 0)))
+    // Exclude sender-less `event` rows (#system announcements, #687): they're events, not
+    // conversation activity, so they must not form "chat burst" cards — that would relocate the
+    // exact spirit-misattribution #687 removes (ChatEventCard renders a null sender as "mind"),
+    // and a run of them would render as a fake conversation burst. Joins already surface as
+    // lifecycle cards; the announcement itself lives in the #system channel.
+    .where(
+      and(
+        gte(messages.created_at, cutoff),
+        eq(conversations.private, 0),
+        ne(messages.role, "event"),
+      ),
+    )
     .orderBy(desc(messages.id))
     .limit(5000);
 

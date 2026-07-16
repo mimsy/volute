@@ -140,6 +140,28 @@ describe("web feed routes", () => {
     await db.delete(messages).where(eq(messages.conversation_id, ch.id));
   });
 
+  it("excludes sender-less announcement events from chat bursts (#687)", async () => {
+    const cookie = await makeUser("feed-test-admin", "admin");
+    const db = await getDb();
+    const owner = await createUser("feed-test-owner", "pass");
+    const ch = await createChannel("feed-test-commons", owner.id);
+    // A run of pure #system announcements — events, not conversation. They must not form a
+    // "chat burst" card (which would render the null sender as "mind" — the #687 confusion).
+    await insertMsg(ch.id, "event", null, "atlas has joined", ago(12));
+    await insertMsg(ch.id, "event", null, "willow has joined", ago(11));
+
+    const res = await feedApp().request("/api/v1/feed", {
+      headers: { Cookie: `volute_session=${cookie}` },
+    });
+    const body = (await res.json()) as { events: any[] };
+    assert.ok(
+      !body.events.some((e) => e.kind === "chat" && e.conversationId === ch.id),
+      "an announcement-only channel must not produce a chat burst card",
+    );
+
+    await db.delete(messages).where(eq(messages.conversation_id, ch.id));
+  });
+
   it("merges lifecycle events and redacts mind_error/backup_failed for non-privileged callers", async () => {
     const adminCookie = await makeUser("feed-test-admin", "admin");
     const userCookie = await makeUser("feed-test-user", "user");

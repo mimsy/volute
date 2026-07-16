@@ -1,6 +1,6 @@
 import { command } from "../../lib/command.js";
 import { daemonFetch } from "../../lib/daemon-client.js";
-import { compactTime, formatSender, isCompact } from "../../lib/format-cli.js";
+import { formatMessageLine, isCompact } from "../../lib/format-cli.js";
 import { resolveMindName } from "../../lib/resolve-mind-name.js";
 
 type Conversation = {
@@ -93,28 +93,7 @@ const cmd = command({
 
     const compact = isCompact();
     for (const msg of data.items) {
-      const text = Array.isArray(msg.content)
-        ? msg.content
-            .filter((b): b is { type: "text"; text: string } => b.type === "text")
-            .map((b) => b.text)
-            .join("")
-        : msg.content;
-      const time = compact
-        ? compactTime(msg.created_at)
-        : new Date(
-            msg.created_at.endsWith("Z") ? msg.created_at : `${msg.created_at}Z`,
-          ).toLocaleString();
-      // Automated announcements have no sender (#687) — render them as events, not as a
-      // message attributed to whoever the fallback would name.
-      if (msg.role === "event") {
-        console.log(`[${time}] · ${text}`);
-        continue;
-      }
-      // Compact (mind-facing) output stays terse; display names are for humans.
-      const sender = compact
-        ? (msg.sender_name ?? msg.role)
-        : formatSender(msg.sender_name ?? msg.role, msg.sender_display_name);
-      console.log(`[${time}] ${sender}: ${text}`);
+      console.log(formatMessageLine(msg, compact));
     }
   },
 });
