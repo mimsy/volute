@@ -40,7 +40,7 @@ import {
   deleteSession,
   getSessionUserId,
   invalidateSessionCache,
-  requireAdminOrSystem,
+  requireAdmin,
   SESSION_MAX_AGE,
 } from "../middleware/auth.js";
 
@@ -220,11 +220,15 @@ const admin = new Hono<AuthEnv>()
     },
   )
   // --- Durable per-user API tokens ---
-  // requireAdminOrSystem throughout: a role:"user" principal (which every mind
-  // token resolves to) can neither mint nor rotate credentials.
+  // requireAdmin throughout: durable credential issuance is human-gated. Only a
+  // role:"admin" principal may mint or rotate tokens — a mind gets this power
+  // only by being deliberately made an admin. Neither a role:"user" principal
+  // (what every mind token resolves to) nor the system principal (the spirit)
+  // qualifies, which closes the prompt-injection path where untrusted text
+  // could talk the spirit into issuing a durable credential to an attacker.
   .post(
     "/users/:id/tokens",
-    requireAdminOrSystem,
+    requireAdmin,
     zValidator("json", z.object({ label: z.string().max(200).optional() })),
     async (c) => {
       const id = parseInt(c.req.param("id"), 10);
@@ -245,7 +249,7 @@ const admin = new Hono<AuthEnv>()
       );
     },
   )
-  .get("/users/:id/tokens", requireAdminOrSystem, async (c) => {
+  .get("/users/:id/tokens", requireAdmin, async (c) => {
     const id = parseInt(c.req.param("id"), 10);
     if (Number.isNaN(id)) return c.json({ error: "Invalid user ID" }, 400);
     const target = await getUser(id);
@@ -253,7 +257,7 @@ const admin = new Hono<AuthEnv>()
     const tokens = await listApiTokens(id);
     return c.json(tokens.map((t) => ({ id: t.id, label: t.label, createdAt: t.created_at })));
   })
-  .delete("/users/:id/tokens/:tokenId", requireAdminOrSystem, async (c) => {
+  .delete("/users/:id/tokens/:tokenId", requireAdmin, async (c) => {
     const id = parseInt(c.req.param("id"), 10);
     const tokenId = parseInt(c.req.param("tokenId"), 10);
     if (Number.isNaN(id) || Number.isNaN(tokenId)) return c.json({ error: "Invalid ID" }, 400);
