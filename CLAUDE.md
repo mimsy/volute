@@ -272,9 +272,10 @@ Mind-scoped commands (`chat`, `clock`, `skill`) use `--mind <name>` or `VOLUTE_M
 | `config/env.ts` | Environment variables (shared `~/.volute/env.json` + mind-specific state dir env) |
 | `util/format-tool.ts` | Shared tool call summarization (`[toolName primaryArg]` format) |
 | `ai-service.ts` | System AI completion service via `@earendil-works/pi-ai` (multi-provider, OAuth + API key + env var auth, model selection) |
-| `schema.ts` | Drizzle ORM schema (minds, users, conversations, channels, turns, mindHistory, conversationParticipants, sessions, systemPrompts, sharedSkills, deliveryQueue, activity, conversationReads, messages, summaries, systemEvents) |
+| `schema.ts` | Drizzle ORM schema (minds, users, apiTokens, conversations, channels, turns, mindHistory, conversationParticipants, sessions, systemPrompts, sharedSkills, deliveryQueue, activity, conversationReads, messages, summaries, systemEvents) |
 | `db.ts` | libSQL database singleton at `~/.volute/volute.db` (WAL mode, foreign keys) |
 | `auth.ts` | bcrypt password hashing, first user auto-admin, pending approval flow, mind users |
+| `api-tokens.ts` | Durable per-user API tokens (`vmt_`-prefixed, SHA-256 hashed at rest, revoke = row DELETE); issue/list/resolve/revoke. Distinct from the in-memory native-mind token map in `daemon/mind-tokens.ts` |
 | `platforms.ts` | Platform registry with optional drivers (read/send), display names, slug resolution |
 | `packages/platforms/src/drivers/discord.ts` | Discord platform driver (read/send via REST API, slug-to-ID resolution) |
 | `packages/platforms/src/drivers/slack.ts` | Slack platform driver (read/send via Slack API, slug-to-ID resolution) |

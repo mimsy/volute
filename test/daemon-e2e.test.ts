@@ -527,6 +527,71 @@ describe("daemon e2e", { timeout: 420000 }, () => {
     );
   });
 
+  it("durable API tokens still authenticate across a daemon restart", async () => {
+    // The in-memory native-mind token map is empty after a restart, so only a
+    // DB-backed api_tokens credential can survive this. This is the load-bearing
+    // assertion for durable tokens.
+    const mindUser = await getUserByUsername(TEST_MIND);
+    assert.ok(mindUser, "test mind should have a user record");
+
+    const issueRes = await daemonRequest(`/api/auth/users/${mindUser.id}/tokens`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ label: "e2e-restart" }),
+    });
+    assert.equal(issueRes.status, 201, `issue: ${await issueRes.clone().text()}`);
+    const { id: tokenId, token } = (await issueRes.json()) as { id: number; token: string };
+    assert.ok(token.startsWith("vmt_"), `expected vmt_ prefix, got ${token.slice(0, 8)}...`);
+
+    const tokenRequest = (path: string, options?: RequestInit) =>
+      fetch(`${BASE_URL}${path}`, {
+        ...options,
+        headers: { ...options?.headers, Authorization: `Bearer ${token}`, Origin: BASE_URL },
+      });
+
+    // Authenticates before the restart (requireSelf route, as the mind itself).
+    const before = await tokenRequest(`/api/minds/${TEST_MIND}/sleep`);
+    assert.equal(before.status, 200, `before restart: ${await before.clone().text()}`);
+
+    // Restart the daemon (SIGTERM, as `volute down` does), then bring it back.
+    daemon.kill("SIGTERM");
+    await new Promise<void>((resolve) => {
+      daemon.on("exit", () => resolve());
+      setTimeout(() => {
+        try {
+          daemon.kill("SIGKILL");
+        } catch {}
+        resolve();
+      }, 5000);
+    });
+
+    daemon = spawn(
+      "npx",
+      ["tsx", "packages/daemon/src/daemon.ts", "--port", String(PORT), "--foreground"],
+      {
+        cwd: process.cwd(),
+        stdio: ["ignore", "pipe", "pipe"],
+        env: { ...cleanEnv, VOLUTE_DAEMON_TOKEN: TOKEN, VOLUTE_BASE_PORT: String(MIND_BASE_PORT) },
+      },
+    );
+    daemon.stderr?.on("data", (data: Buffer) => {
+      process.stderr.write(`[daemon] ${data}`);
+    });
+    await waitForHealth();
+
+    // The whole point: the same token still authenticates against a fresh process.
+    const after = await tokenRequest(`/api/minds/${TEST_MIND}/sleep`);
+    assert.equal(after.status, 200, `after restart: ${await after.clone().text()}`);
+
+    // And revocation still takes effect against the new daemon.
+    const del = await daemonRequest(`/api/auth/users/${mindUser.id}/tokens/${tokenId}`, {
+      method: "DELETE",
+    });
+    assert.equal(del.status, 200, `revoke: ${await del.clone().text()}`);
+    const revoked = await tokenRequest(`/api/minds/${TEST_MIND}/sleep`);
+    assert.equal(revoked.status, 401, "revoked token must not authenticate");
+  });
+
   it("crash recovery: daemon restarts a mind whose process dies", { timeout: 60000 }, async () => {
     const entry = await findMind(TEST_MIND);
     assert.ok(entry, "test mind should be registered");
