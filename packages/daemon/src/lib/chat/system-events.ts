@@ -4,6 +4,7 @@ import { publish as publishMindEvent } from "../events/mind-events.js";
 import { findMind, getBaseName } from "../mind/registry.js";
 import { mindHistory, systemEvents, turns } from "../schema.js";
 import log from "../util/logger.js";
+import { newEphemeralSession } from "../util/session-name.js";
 
 const elog = log.child("system-events");
 
@@ -310,6 +311,23 @@ async function markDelivered(id: number, extraMeta?: Record<string, unknown>): P
 }
 
 /**
+ * Resolve an event's stored thread, expanding the `$new` convention ("a fresh isolated
+ * session per fire") the same way the message path does. Expansion lives here so every
+ * caller passing `$new` — scheduler, default dream autonomy, future — gets isolation without
+ * owning the contract itself (#735).
+ *
+ * `$new` only means something for `immediate` delivery, which POSTs an envelope and runs a
+ * turn in the fresh session. A `next-turn` event stamped to a unique session that never runs
+ * a turn would strand forever (#356/#721), so it collapses to the mind-level sentinel and
+ * drains into whichever thread next runs a clean turn. Uses the shared session-name minter so
+ * the name shape is identical to the message path's mind-side.
+ */
+function resolveEventThread(thread: string, delivery: EventDelivery): string {
+  if (thread !== "$new") return thread;
+  return delivery === "immediate" ? newEphemeralSession() : MIND_LEVEL_THREAD;
+}
+
+/**
  * Deliver a system event to a mind. Inserts the row, then:
  * - `immediate` + awake (or `force`): POSTs the envelope; on success stamps
  *   `delivered_at` and records the event row in mind_history. A failed POST leaves the
@@ -324,8 +342,8 @@ export async function deliverEvent(
   mind: string,
   input: DeliverEventInput,
 ): Promise<{ id?: number; delivered: boolean }> {
-  const thread = input.thread ?? "main";
   const delivery = input.delivery ?? "immediate";
+  const thread = resolveEventThread(input.thread ?? "main", delivery);
   let eventId: number | undefined;
   try {
     const db = await getDb();

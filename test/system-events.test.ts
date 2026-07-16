@@ -296,6 +296,69 @@ describe("system-events deliverEvent", () => {
   });
 });
 
+describe("system-events $new thread expansion", () => {
+  it("immediate $new: expands to a unique new-* session, stored and POSTed, isolated per fire", async () => {
+    const mind = uniqueMind();
+    const stub = await stubMind(mind);
+    try {
+      const { id: id1, delivered } = await deliverEvent(mind, {
+        type: "schedule",
+        body: "dream one",
+        meta: { scheduleId: "dream" },
+        thread: "$new",
+      });
+      assert.equal(delivered, true);
+
+      // The row is stamped with the expanded thread, never the literal "$new".
+      const row1 = await eventRow(id1!);
+      assert.notEqual(row1?.thread, "$new", "literal $new must not be stored");
+      assert.match(row1!.thread, /^new-/, "expanded to a new-* session");
+
+      // The envelope carries the same expanded session the row was stamped with.
+      assert.equal(stub.posted[0].session, row1!.thread, "POSTed session matches the row thread");
+
+      // A second fire gets a DIFFERENT isolated session — dreams don't share context.
+      const { id: id2 } = await deliverEvent(mind, {
+        type: "schedule",
+        body: "dream two",
+        meta: { scheduleId: "dream" },
+        thread: "$new",
+      });
+      const row2 = await eventRow(id2!);
+      assert.match(row2!.thread, /^new-/);
+      assert.notEqual(row2!.thread, row1!.thread, "each fire is its own session");
+    } finally {
+      stub.close();
+      await cleanupMind(mind);
+    }
+  });
+
+  it("next-turn $new: collapses to mind-level so it can't strand in a session that never runs", async () => {
+    const mind = uniqueMind();
+    try {
+      // A next-turn event stamped to a unique new-* session would never drain (nothing
+      // triggers a turn there); mind-level lets it reach whichever thread next runs.
+      const { id } = await deliverEvent(mind, {
+        type: "notice",
+        body: "mind-level, not stranded",
+        thread: "$new",
+        delivery: "next-turn",
+      });
+      const row = await eventRow(id!);
+      assert.equal(row?.thread, "", "next-turn $new stored as mind-level (MIND_LEVEL_THREAD)");
+
+      // It drains into an arbitrary session's next turn, proving it isn't stranded.
+      const drained = await drainEvents(mind, "some-other-session");
+      assert.deepEqual(
+        drained.map((e) => e.body),
+        ["mind-level, not stranded"],
+      );
+    } finally {
+      await cleanupMind(mind);
+    }
+  });
+});
+
 describe("system-events flushQueuedEvents", () => {
   it("delivers pending events oldest-first", async () => {
     const mind = uniqueMind();

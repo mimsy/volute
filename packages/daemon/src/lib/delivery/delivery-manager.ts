@@ -14,6 +14,7 @@ import { readVoluteConfig } from "../mind/volute-config.js";
 import { channelGates, deliveryQueue, mindHistory } from "../schema.js";
 import { type AvatarBlock, renderAvatarBlock } from "../util/avatar-image.js";
 import log from "../util/logger.js";
+import { newEphemeralSession } from "../util/session-name.js";
 import {
   type DeliveryPayload,
   extractTextContent,
@@ -189,7 +190,7 @@ export class DeliveryManager {
     if (payload.session) {
       let sessionName = payload.session;
       if (sessionName === "$new") {
-        sessionName = `new-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        sessionName = newEphemeralSession();
       }
       const sessionConfig = resolveDeliveryMode(config, sessionName);
       if (sessionConfig.delivery.mode === "batch") {
@@ -244,7 +245,7 @@ export class DeliveryManager {
     // Resolve session name ($new expansion)
     let sessionName = route.session;
     if (sessionName === "$new") {
-      sessionName = `new-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      sessionName = newEphemeralSession();
     }
 
     // Inbound-to-turn linking happens deterministically at turn creation (see
@@ -442,7 +443,7 @@ export class DeliveryManager {
       }
       let session = route.session;
       if (session === "$new") {
-        session = `new-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        session = newEphemeralSession();
       }
       const channel = row.channel ?? payload.channel ?? "unknown";
       const list = byChannel.get(channel) ?? [];
