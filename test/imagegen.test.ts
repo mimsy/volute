@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
+import { OAuthRefreshError } from "../packages/daemon/src/lib/ai-service.js";
 import {
   isImagegenEnabled,
   readGlobalConfig,
@@ -20,6 +21,7 @@ import {
   removeProviderConfig,
   resolveCredential,
   saveProviderConfig,
+  searchModels,
   setEnabledModels,
 } from "../packages/daemon/src/lib/services/imagegen.js";
 import {
@@ -219,6 +221,64 @@ describe("imagegen config", () => {
         kind: "oauth",
         token: "codex-access-token",
       });
+    });
+
+    it("throws OAuthRefreshError (not undefined) when a subscription-only provider's OAuth refresh fails", async () => {
+      // openai-codex is subscription-only: OAuth is the only credential path.
+      // A transient refresh failure must surface as a distinct error, not fall
+      // through to undefined (which callers report as "not configured").
+      const realFetch = globalThis.fetch;
+      globalThis.fetch = (async () => {
+        throw new TypeError("token endpoint unreachable");
+      }) as typeof fetch;
+      try {
+        const config = readGlobalConfig();
+        config.ai = {
+          providers: {
+            "openai-codex": { oauth: { access: "expired", refresh: "r", expires: 0 } },
+          },
+        };
+        writeGlobalConfig(config);
+        await assert.rejects(resolveCredential("openai-codex"), (err: unknown) => {
+          assert.ok(err instanceof OAuthRefreshError, "should be an OAuthRefreshError");
+          assert.doesNotMatch(err.message, /not configured/i);
+          return true;
+        });
+      } finally {
+        globalThis.fetch = realFetch;
+      }
+    });
+
+    it("falls back to the AI provider's API key when OAuth refresh fails", async () => {
+      // A provider that has BOTH a (failing) OAuth grant and a static API key
+      // must degrade to the key during a transient auth blip, not error out.
+      const realFetch = globalThis.fetch;
+      globalThis.fetch = (async () => {
+        throw new TypeError("token endpoint unreachable");
+      }) as typeof fetch;
+      try {
+        const config = readGlobalConfig();
+        config.ai = {
+          providers: {
+            "openai-codex": {
+              oauth: { access: "expired", refresh: "r", expires: 0 },
+              apiKey: "codex-fallback-key",
+            },
+          },
+        };
+        writeGlobalConfig(config);
+        assert.deepEqual(await resolveCredential("openai-codex"), {
+          kind: "api_key",
+          token: "codex-fallback-key",
+        });
+      } finally {
+        globalThis.fetch = realFetch;
+      }
+    });
+
+    it("still returns undefined when a provider genuinely has no credentials", async () => {
+      // No OAuth, no key, no env — the unchanged "not configured" path.
+      assert.equal(await resolveCredential("openai-codex"), undefined);
     });
   });
 
@@ -883,6 +943,61 @@ describe("imagegen entitlement", () => {
   });
 });
 
+describe("imagegen transient OAuth failure", () => {
+  const realFetch = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+    const config = readGlobalConfig();
+    delete config.imagegen;
+    delete config.ai;
+    writeGlobalConfig(config);
+  });
+
+  function configureCodexOAuth() {
+    const config = readGlobalConfig();
+    config.ai = {
+      providers: { "openai-codex": { oauth: { access: "expired", refresh: "r", expires: 0 } } },
+    };
+    writeGlobalConfig(config);
+  }
+
+  it("generateImage surfaces a transient-auth message, not 'not configured'", async () => {
+    globalThis.fetch = (async () => {
+      throw new TypeError("token endpoint unreachable");
+    }) as typeof fetch;
+    configureCodexOAuth();
+    await assert.rejects(generateImage("openai-codex:gpt-image-2", "a cat"), (err: unknown) => {
+      assert.ok(err instanceof Error);
+      assert.match(err.message, /temporarily unavailable/i);
+      assert.doesNotMatch(err.message, /not configured/i);
+      return true;
+    });
+  });
+
+  it("generateImage still says 'not configured' when the provider genuinely has no credentials", async () => {
+    // No ai/imagegen config — codex is truly unconfigured (unchanged behavior).
+    await assert.rejects(
+      generateImage("openai-codex:gpt-image-2", "a cat"),
+      /No openai-codex credentials configured/,
+    );
+  });
+
+  it("searchModels skips a transiently-failing provider instead of failing the whole search", async () => {
+    globalThis.fetch = (async () => {
+      throw new TypeError("everything unreachable");
+    }) as typeof fetch;
+    configureCodexOAuth(); // codex OAuth refresh will throw (transient)
+    saveProviderConfig("openrouter", "or-key"); // a second, key-configured provider
+
+    // codex resolveCredential throws OAuthRefreshError → the loop must skip it;
+    // openrouter's search runs (its fetch throws → per-search .catch → []).
+    // The whole search resolves rather than rejecting with the codex error.
+    const results = await searchModels();
+    assert.deepEqual(results, []);
+  });
+});
+
 describe("imagegen skill daemon error reporting", () => {
   const realFetch = globalThis.fetch;
   const savedEnv = {
@@ -975,6 +1090,20 @@ describe("imagegen skill daemon error reporting", () => {
       setDaemonEnv(true);
       mockFetch(() => jsonResponse(500, { error: "boom" }));
       await assert.rejects(startImagegenJob("replicate:owner/model", "prompt", "file"), /boom/);
+    });
+
+    it("surfaces a transient-auth error instead of silently falling back", async () => {
+      // A provider whose OAuth is temporarily failing must NOT be treated as
+      // "not configured" (which would swap to a direct replicate fallback and
+      // tell the mind to reconfigure a correctly-configured provider).
+      setDaemonEnv(true);
+      const transient =
+        "openai-codex authentication is temporarily unavailable (OAuth token refresh failed).";
+      mockFetch(() => jsonResponse(500, { error: transient }));
+      await assert.rejects(
+        startImagegenJob("openai-codex:gpt-image-2", "prompt", "file"),
+        /temporarily unavailable/,
+      );
     });
 
     it("returns the job id on success (202)", async () => {

@@ -2,7 +2,12 @@ import { type ChildProcess, execFile, type SpawnOptions, spawn } from "node:chil
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
-import { getAiConfig, resolveApiKey, resolveOAuthCredentials } from "../ai-service.js";
+import {
+  getAiConfig,
+  OAuthRefreshError,
+  resolveApiKey,
+  resolveOAuthCredentials,
+} from "../ai-service.js";
 import { deliverEvent, recordNotice } from "../chat/system-events.js";
 import { loadMergedEnv } from "../config/env.js";
 import { getSystemName, readGlobalConfig } from "../config/setup.js";
@@ -340,7 +345,16 @@ export class MindManager {
           if (modelStr?.includes(":")) {
             const provider = modelStr.split(":")[0];
             const piAgentDir = resolve(dir, ".mind", "pi-agent");
-            const oauthCreds = await resolveOAuthCredentials(provider);
+            // A transient OAuth refresh failure here shouldn't crash spawn or
+            // skip the api_key/env fallback below — treat it as "no OAuth this
+            // time" (resolveApiKey does the same).
+            let oauthCreds: Awaited<ReturnType<typeof resolveOAuthCredentials>>;
+            try {
+              oauthCreds = await resolveOAuthCredentials(provider);
+            } catch (err) {
+              if (!(err instanceof OAuthRefreshError)) throw err;
+              oauthCreds = undefined;
+            }
             if (oauthCreds && !DAEMON_ONLY_OAUTH.has(provider)) {
               // Store the full OAuth credential (not just the derived key) so
               // pi-ai's own OAuth resolution runs inside the mind — some

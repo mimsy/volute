@@ -465,14 +465,41 @@ export async function getAvailableModels(): Promise<Model<Api>[]> {
 }
 
 /**
+ * Thrown when a provider *has* OAuth configured but resolving/refreshing it
+ * failed transiently (network timeout to the token endpoint, a 5xx from the auth
+ * server, a temporarily-rejected refresh grant, clock-skew expiry). This is
+ * deliberately distinct from "no OAuth configured" (which returns `undefined`):
+ * for subscription-only providers (openai-codex, xai) OAuth is the only
+ * credential path, so collapsing a transient refresh failure into `undefined`
+ * makes callers report a correctly-configured provider as "not configured".
+ * Callers that have no other credential should surface this error's message —
+ * which is worded as transient, never "not configured".
+ */
+export class OAuthRefreshError extends Error {
+  constructor(
+    readonly providerId: string,
+    override readonly cause: unknown,
+  ) {
+    super(
+      `${providerId} authentication is temporarily unavailable (OAuth token refresh failed). ` +
+        `This is usually transient — try again shortly. If it keeps failing, ask your admin to ` +
+        `re-check the ${providerId} provider.`,
+    );
+    this.name = "OAuthRefreshError";
+  }
+}
+
+/**
  * Resolve and refresh a provider's stored OAuth credential object (not just the
  * derived API key). Some providers need more than a bearer token to authenticate
  * correctly — GitHub Copilot's session tokens are proxy-affinitized, and only the
  * full OAuth credential shape lets pi-ai derive the matching baseUrl at request
  * time (a bare API key falls back to the provider's generic default baseUrl,
  * which the token may not be valid against, producing 421 Misdirected Request).
- * Returns undefined when the provider has no OAuth credentials configured or
- * refresh fails.
+ * Returns undefined when the provider has no OAuth credentials configured;
+ * throws {@link OAuthRefreshError} when OAuth *is* configured but the
+ * resolve/refresh failed (so a transient auth outage isn't misread as
+ * "not configured").
  */
 export async function resolveOAuthCredentials(
   providerId: string,
@@ -483,7 +510,7 @@ export async function resolveOAuthCredentials(
 
   try {
     const result = await getOAuthApiKey(providerId, { [providerId]: providerConfig.oauth });
-    if (!result) return undefined;
+    if (!result) throw new Error(`OAuth resolution returned no credential for ${providerId}`);
     // Persist refreshed credentials
     if (result.newCredentials.access !== providerConfig.oauth.access) {
       saveProviderConfig(providerId, { ...providerConfig, oauth: result.newCredentials });
@@ -492,18 +519,32 @@ export async function resolveOAuthCredentials(
     }
     return result.newCredentials;
   } catch (err) {
-    aiLog.warn(`OAuth credential resolution failed for ${providerId}`, log.errorData(err));
-    return undefined;
+    // A subscription mind losing its only credential path is a defect, not
+    // benign noise — log at error, and throw so callers can tell this apart
+    // from an unconfigured provider.
+    aiLog.error(`OAuth credential resolution failed for ${providerId}`, log.errorData(err));
+    throw new OAuthRefreshError(providerId, err);
   }
 }
 
-/** Resolve API key for a provider, checking OAuth → config → env var. */
+/**
+ * Resolve API key for a provider, checking OAuth → config → env var. A transient
+ * OAuth refresh failure ({@link OAuthRefreshError}) must not mask a configured
+ * API key or env-var fallback, and callers here (health checks, mind spawn,
+ * completion) expect `undefined` for "no usable key" — so it falls through to
+ * those fallbacks rather than propagating. The imagegen path calls
+ * resolveOAuthCredentials directly and surfaces the transient error itself.
+ */
 export async function resolveApiKey(providerId: string): Promise<string | undefined> {
   const ai = getAiConfig();
   const providerConfig = ai?.providers[providerId];
 
-  const oauthCreds = await resolveOAuthCredentials(providerId);
-  if (oauthCreds) return oauthCreds.access;
+  try {
+    const oauthCreds = await resolveOAuthCredentials(providerId);
+    if (oauthCreds) return oauthCreds.access;
+  } catch (err) {
+    if (!(err instanceof OAuthRefreshError)) throw err;
+  }
 
   return resolveProviderKey(providerId, providerConfig?.apiKey);
 }

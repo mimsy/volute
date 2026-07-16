@@ -6,7 +6,7 @@
  */
 
 import Replicate from "replicate";
-import { resolveOAuthCredentials } from "../ai-service.js";
+import { OAuthRefreshError, resolveOAuthCredentials } from "../ai-service.js";
 import {
   type ImagegenConfig,
   type ImagegenEntitlement,
@@ -293,8 +293,17 @@ export async function resolveCredential(providerId: string): Promise<Credential 
 
   // 2. Linked AI provider's OAuth (subscription — preferred over ambient keys).
   //    resolveOAuthCredentials refreshes + persists + fans rotated tokens out.
-  const oauth = await resolveOAuthCredentials(aiProviderId);
-  if (oauth) return { kind: "oauth", token: oauth.access };
+  //    A transient refresh failure must not skip the api_key/env fallbacks
+  //    below — but if none exist (subscription-only provider), rethrow so the
+  //    caller surfaces a transient-auth message, never "not configured".
+  let oauthError: OAuthRefreshError | undefined;
+  try {
+    const oauth = await resolveOAuthCredentials(aiProviderId);
+    if (oauth) return { kind: "oauth", token: oauth.access };
+  } catch (err) {
+    if (!(err instanceof OAuthRefreshError)) throw err;
+    oauthError = err;
+  }
 
   // 3. Linked AI provider's API key (e.g. OpenRouter configured for chat)
   const aiKey = config.ai?.providers?.[aiProviderId]?.apiKey;
@@ -303,6 +312,9 @@ export async function resolveCredential(providerId: string): Promise<Credential 
   // 4. Env var fallback
   const envKey = provider.envVar ? process.env[provider.envVar] : undefined;
   if (envKey) return { kind: "api_key", token: envKey };
+
+  // OAuth was configured but its refresh failed and there's no other credential.
+  if (oauthError) throw oauthError;
 
   return undefined;
 }
@@ -359,7 +371,15 @@ export async function searchModels(
   // Search all configured providers in parallel
   const searches: Promise<ModelSearchResult[]>[] = [];
   for (const [id, def] of Object.entries(PROVIDERS)) {
-    const cred = await resolveCredential(id);
+    let cred: Credential | undefined;
+    try {
+      cred = await resolveCredential(id);
+    } catch (err) {
+      // A transient OAuth outage on one provider shouldn't fail search across
+      // all of them — skip it and let the others answer.
+      if (!(err instanceof OAuthRefreshError)) throw err;
+      continue;
+    }
     if (!cred) continue;
     searches.push(def.search(query || "text to image", cred).catch(() => []));
   }

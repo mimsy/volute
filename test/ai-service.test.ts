@@ -11,10 +11,12 @@ import {
   getEnabledModels,
   getUtilityModel,
   migrateAiModelQualification,
+  OAuthRefreshError,
   qualifyModelId,
   removeAiConfig,
   removeCustomModel,
   removeProviderConfig,
+  resolveApiKey,
   resolveOAuthCredentials,
   saveProviderConfig,
   setEnabledModels,
@@ -85,6 +87,68 @@ describe("resolveOAuthCredentials", () => {
     saveProviderConfig("github-copilot", { oauth });
     const result = await resolveOAuthCredentials("github-copilot");
     assert.deepEqual(result, oauth);
+  });
+
+  it("throws OAuthRefreshError (not undefined) when OAuth is configured but refresh fails", async () => {
+    // A subscription-only provider losing its only credential path to a transient
+    // auth-server blip must NOT collapse into undefined (which reads as "not
+    // configured"). expires:0 forces a refresh; the failing fetch makes it throw.
+    removeAiConfig();
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async () => {
+      throw new TypeError("token endpoint unreachable");
+    }) as typeof fetch;
+    try {
+      saveProviderConfig("github-copilot", {
+        oauth: { access: "expired", refresh: "r", expires: 0 },
+      });
+      await assert.rejects(resolveOAuthCredentials("github-copilot"), (err: unknown) => {
+        assert.ok(err instanceof OAuthRefreshError, "should be an OAuthRefreshError");
+        assert.equal(err.providerId, "github-copilot");
+        assert.doesNotMatch(err.message, /not configured/i);
+        return true;
+      });
+    } finally {
+      globalThis.fetch = realFetch;
+      removeAiConfig();
+    }
+  });
+});
+
+describe("resolveApiKey", () => {
+  it("falls back to a configured API key when OAuth refresh fails (never throws)", async () => {
+    removeAiConfig();
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async () => {
+      throw new TypeError("token endpoint unreachable");
+    }) as typeof fetch;
+    try {
+      saveProviderConfig("github-copilot", {
+        oauth: { access: "expired", refresh: "r", expires: 0 },
+        apiKey: "static-fallback-key",
+      });
+      assert.equal(await resolveApiKey("github-copilot"), "static-fallback-key");
+    } finally {
+      globalThis.fetch = realFetch;
+      removeAiConfig();
+    }
+  });
+
+  it("returns undefined (not throws) when OAuth refresh fails and no key fallback exists", async () => {
+    removeAiConfig();
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async () => {
+      throw new TypeError("token endpoint unreachable");
+    }) as typeof fetch;
+    try {
+      saveProviderConfig("github-copilot", {
+        oauth: { access: "expired", refresh: "r", expires: 0 },
+      });
+      assert.equal(await resolveApiKey("github-copilot"), undefined);
+    } finally {
+      globalThis.fetch = realFetch;
+      removeAiConfig();
+    }
   });
 });
 
