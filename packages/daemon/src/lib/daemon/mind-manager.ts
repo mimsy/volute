@@ -2,7 +2,7 @@ import { type ChildProcess, execFile, type SpawnOptions, spawn } from "node:chil
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
-import { getAiConfig, resolveApiKey, resolveOAuthCredentials } from "../ai-service.js";
+import { getAiConfig, resolveApiKey } from "../ai-service.js";
 import { deliverEvent, recordNotice } from "../chat/system-events.js";
 import { loadMergedEnv } from "../config/env.js";
 import { getSystemName, readGlobalConfig } from "../config/setup.js";
@@ -22,11 +22,7 @@ import { checkHealth } from "../util/health.js";
 import { clearJsonMap, loadJsonMap, saveJsonMap } from "../util/json-state.js";
 import log from "../util/logger.js";
 import { RotatingLog } from "../util/rotating-log.js";
-import {
-  writeClaudeCredentials,
-  writePiProviderKey,
-  writePiProviderOAuth,
-} from "./credential-sync.js";
+import { injectPiProviderCredentials, writeClaudeCredentials } from "./credential-sync.js";
 import { generateMindToken, revokeMindToken } from "./mind-tokens.js";
 import { RestartTracker } from "./restart-tracker.js";
 import { clearMind as clearTurnState, summarizeOrphanedTurns } from "./turn-tracker.js";
@@ -34,12 +30,6 @@ import { clearMind as clearTurnState, summarizeOrphanedTurns } from "./turn-trac
 const mlog = log.child("minds");
 
 const execFileAsync = promisify(execFile);
-
-// OAuth providers registered only in the daemon's pi-ai (not pi-ai built-ins),
-// so a mind's own pi-ai can't turn their stored OAuth blob into a key. For these
-// the daemon writes the resolved access token as an api_key instead. Keep in sync
-// with the daemon-only OAuth providers registered in daemon.ts (e.g. xai).
-const DAEMON_ONLY_OAUTH = new Set(["xai"]);
 
 // Benign system env vars a mind's node/tsx process needs to run. Everything else
 // from the daemon environment (ambient AWS_*/GITHUB_TOKEN/etc.) is withheld.
@@ -340,52 +330,13 @@ export class MindManager {
           if (modelStr?.includes(":")) {
             const provider = modelStr.split(":")[0];
             const piAgentDir = resolve(dir, ".mind", "pi-agent");
-            const oauthCreds = await resolveOAuthCredentials(provider);
-            if (oauthCreds && !DAEMON_ONLY_OAUTH.has(provider)) {
-              // Store the full OAuth credential (not just the derived key) so
-              // pi-ai's own OAuth resolution runs inside the mind — some
-              // providers (GitHub Copilot) derive a per-credential baseUrl from
-              // this shape that a flattened api_key loses, misdirecting
-              // requests to the wrong backend (421 Misdirected Request). It
-              // also lets the mind refresh its own token from the stored
-              // refresh grant.
-              await writePiProviderOAuth(piAgentDir, baseName, provider, oauthCreds);
-              env.PI_CODING_AGENT_DIR = piAgentDir;
-            } else {
-              // DAEMON_ONLY_OAUTH providers (xai) are registered only in the
-              // daemon's pi-ai, so the mind can't resolve their OAuth blob — hand
-              // it the already-resolved access token as an api_key (works directly
-              // as the provider's bearer; the daemon stays the refresh authority).
-              const apiKey = oauthCreds?.access ?? (await resolveApiKey(provider));
-              if (apiKey) {
-                // Write API key to pi-coding-agent auth storage so the mind can use it.
-                // The pi template watches auth.json and reloads, so the daemon can
-                // push a refreshed key here without restarting the mind.
-                await writePiProviderKey(piAgentDir, baseName, provider, apiKey);
-                env.PI_CODING_AGENT_DIR = piAgentDir;
-
-                // Also set provider-specific env var as fallback — the sandbox may
-                // block proper-lockfile from reading auth.json, so the env var
-                // ensures getEnvApiKey() in pi-ai still resolves the key.
-                const providerEnvVars: Record<string, string> = {
-                  openrouter: "OPENROUTER_API_KEY",
-                  openai: "OPENAI_API_KEY",
-                  anthropic: "ANTHROPIC_API_KEY",
-                  google: "GEMINI_API_KEY",
-                  groq: "GROQ_API_KEY",
-                  cerebras: "CEREBRAS_API_KEY",
-                  xai: "XAI_API_KEY",
-                  mistral: "MISTRAL_API_KEY",
-                  zai: "ZAI_API_KEY",
-                };
-                const providerEnv = providerEnvVars[provider];
-                if (providerEnv) env[providerEnv] = apiKey;
-              } else {
-                mlog.warn(
-                  `no API key found for provider "${provider}" — mind ${name} may fail to start`,
-                );
-              }
-            }
+            await injectPiProviderCredentials({
+              provider,
+              piAgentDir,
+              baseName,
+              mindName: name,
+              env,
+            });
           }
         }
       } catch (err) {
@@ -474,6 +425,27 @@ export class MindManager {
           if (key && oauth) {
             const claudeDir = await writeClaudeCredentials(resolve(dir, "home"), baseName, oauth);
             env.CLAUDE_CONFIG_DIR = claudeDir;
+          } else {
+            // OAuth is configured but resolveApiKey couldn't derive a token and
+            // there's no static-key/env fallback — a transient refresh/auth-server
+            // failure. The mind would otherwise spawn credential-less with no
+            // CLAUDE_CONFIG_DIR, which credential-sync can't repair, leaving it
+            // silent until manually restarted. Surface it, don't fail quietly (#701).
+            mlog.error(
+              `Anthropic OAuth token refresh is failing for ${name}; it will spawn without ` +
+                `credentials and stay silent until the provider recovers and it is restarted`,
+            );
+            void recordNotice({
+              mind: name,
+              thread: "main",
+              kind: "startup",
+              reason: "oauth_refresh_failed",
+              detail:
+                "Anthropic authentication is temporarily unavailable (OAuth token refresh is " +
+                "failing), so you started without model credentials and may be unable to respond " +
+                "until it recovers. This is usually transient; if it persists, ask your host to " +
+                "re-check the anthropic provider.",
+            });
           }
         } else {
           // resolveApiKey covers both the configured key and an ambient

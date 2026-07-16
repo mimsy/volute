@@ -11,10 +11,13 @@ import {
   getEnabledModels,
   getUtilityModel,
   migrateAiModelQualification,
+  missingCredentialWarning,
+  OAuthRefreshError,
   qualifyModelId,
   removeAiConfig,
   removeCustomModel,
   removeProviderConfig,
+  resolveApiKey,
   resolveOAuthCredentials,
   saveProviderConfig,
   setEnabledModels,
@@ -85,6 +88,114 @@ describe("resolveOAuthCredentials", () => {
     saveProviderConfig("github-copilot", { oauth });
     const result = await resolveOAuthCredentials("github-copilot");
     assert.deepEqual(result, oauth);
+  });
+
+  it("throws OAuthRefreshError (not undefined) when OAuth is configured but refresh fails", async () => {
+    // A subscription-only provider losing its only credential path to a transient
+    // auth-server blip must NOT collapse into undefined (which reads as "not
+    // configured"). expires:0 forces a refresh; the failing fetch makes it throw.
+    removeAiConfig();
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async () => {
+      throw new TypeError("token endpoint unreachable");
+    }) as typeof fetch;
+    try {
+      saveProviderConfig("github-copilot", {
+        oauth: { access: "expired", refresh: "r", expires: 0 },
+      });
+      await assert.rejects(resolveOAuthCredentials("github-copilot"), (err: unknown) => {
+        assert.ok(err instanceof OAuthRefreshError, "should be an OAuthRefreshError");
+        assert.equal(err.providerId, "github-copilot");
+        // Must dodge BOTH of the skill's fallback-classifier regexes, or a future
+        // reword could resurrect #701 while still passing this test.
+        assert.doesNotMatch(err.message, /not configured/i);
+        assert.doesNotMatch(err.message, /No .* API key/i);
+        return true;
+      });
+    } finally {
+      globalThis.fetch = realFetch;
+      removeAiConfig();
+    }
+  });
+});
+
+describe("resolveApiKey", () => {
+  it("falls back to a configured API key when OAuth refresh fails (never throws)", async () => {
+    removeAiConfig();
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async () => {
+      throw new TypeError("token endpoint unreachable");
+    }) as typeof fetch;
+    try {
+      saveProviderConfig("github-copilot", {
+        oauth: { access: "expired", refresh: "r", expires: 0 },
+        apiKey: "static-fallback-key",
+      });
+      assert.equal(await resolveApiKey("github-copilot"), "static-fallback-key");
+    } finally {
+      globalThis.fetch = realFetch;
+      removeAiConfig();
+    }
+  });
+
+  it("returns undefined (not throws) when OAuth refresh fails and no key fallback exists", async () => {
+    removeAiConfig();
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async () => {
+      throw new TypeError("token endpoint unreachable");
+    }) as typeof fetch;
+    try {
+      saveProviderConfig("github-copilot", {
+        oauth: { access: "expired", refresh: "r", expires: 0 },
+      });
+      assert.equal(await resolveApiKey("github-copilot"), undefined);
+    } finally {
+      globalThis.fetch = realFetch;
+      removeAiConfig();
+    }
+  });
+});
+
+describe("missingCredentialWarning", () => {
+  it("warns transiently (never 'not configured' / 'volute env set') when OAuth refresh is failing", async () => {
+    // A configured-but-transiently-failing OAuth provider must not be reported as
+    // unconfigured with remediation advice for a provider that IS configured (#701).
+    removeAiConfig();
+    const realFetch = globalThis.fetch;
+    const savedKey = process.env.ANTHROPIC_API_KEY;
+    delete process.env.ANTHROPIC_API_KEY;
+    globalThis.fetch = (async () => {
+      throw new TypeError("token endpoint unreachable");
+    }) as typeof fetch;
+    try {
+      saveProviderConfig("anthropic", { oauth: { access: "expired", refresh: "r", expires: 0 } });
+      const warning = await missingCredentialWarning("claude", undefined, "test-mind-transient");
+      assert.ok(warning, "should return a warning");
+      assert.match(warning, /temporarily unavailable/i);
+      assert.doesNotMatch(warning, /not configured/i);
+      assert.doesNotMatch(warning, /volute env set/i);
+    } finally {
+      globalThis.fetch = realFetch;
+      if (savedKey !== undefined) process.env.ANTHROPIC_API_KEY = savedKey;
+      else delete process.env.ANTHROPIC_API_KEY;
+      removeAiConfig();
+    }
+  });
+
+  it("still says 'not configured' with remediation when nothing is configured", async () => {
+    removeAiConfig();
+    const savedKey = process.env.ANTHROPIC_API_KEY;
+    delete process.env.ANTHROPIC_API_KEY;
+    try {
+      const warning = await missingCredentialWarning("claude", undefined, "test-mind-unconfigured");
+      assert.ok(warning);
+      assert.match(warning, /No anthropic credentials are configured/);
+      assert.match(warning, /volute env set/);
+    } finally {
+      if (savedKey !== undefined) process.env.ANTHROPIC_API_KEY = savedKey;
+      else delete process.env.ANTHROPIC_API_KEY;
+      removeAiConfig();
+    }
   });
 });
 

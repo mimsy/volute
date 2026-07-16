@@ -6,13 +6,14 @@
  */
 
 import Replicate from "replicate";
-import { resolveOAuthCredentials } from "../ai-service.js";
+import { OAuthRefreshError, resolveOAuthCredentials } from "../ai-service.js";
 import {
   type ImagegenConfig,
   type ImagegenEntitlement,
   readGlobalConfig,
   writeGlobalConfig,
 } from "../config/setup.js";
+import log from "../util/logger.js";
 import {
   CodexNotEntitledError,
   codexGenerate,
@@ -20,6 +21,8 @@ import {
   probeCodexEntitlement,
 } from "./imagegen-codex.js";
 import { XaiNotEntitledError, xaiGenerate, xaiSearch } from "./imagegen-xai.js";
+
+const igLog = log.child("imagegen");
 
 // --- Provider registry ---
 
@@ -293,8 +296,17 @@ export async function resolveCredential(providerId: string): Promise<Credential 
 
   // 2. Linked AI provider's OAuth (subscription — preferred over ambient keys).
   //    resolveOAuthCredentials refreshes + persists + fans rotated tokens out.
-  const oauth = await resolveOAuthCredentials(aiProviderId);
-  if (oauth) return { kind: "oauth", token: oauth.access };
+  //    A transient refresh failure must not skip the api_key/env fallbacks
+  //    below — but if none exist (subscription-only provider), rethrow so the
+  //    caller surfaces a transient-auth message, never "not configured".
+  let oauthError: OAuthRefreshError | undefined;
+  try {
+    const oauth = await resolveOAuthCredentials(aiProviderId);
+    if (oauth) return { kind: "oauth", token: oauth.access };
+  } catch (err) {
+    if (!(err instanceof OAuthRefreshError)) throw err;
+    oauthError = err;
+  }
 
   // 3. Linked AI provider's API key (e.g. OpenRouter configured for chat)
   const aiKey = config.ai?.providers?.[aiProviderId]?.apiKey;
@@ -303,6 +315,9 @@ export async function resolveCredential(providerId: string): Promise<Credential 
   // 4. Env var fallback
   const envKey = provider.envVar ? process.env[provider.envVar] : undefined;
   if (envKey) return { kind: "api_key", token: envKey };
+
+  // OAuth was configured but its refresh failed and there's no other credential.
+  if (oauthError) throw oauthError;
 
   return undefined;
 }
@@ -358,12 +373,34 @@ export async function searchModels(
 
   // Search all configured providers in parallel
   const searches: Promise<ModelSearchResult[]>[] = [];
+  let transientError: OAuthRefreshError | undefined;
   for (const [id, def] of Object.entries(PROVIDERS)) {
-    const cred = await resolveCredential(id);
+    let cred: Credential | undefined;
+    try {
+      cred = await resolveCredential(id);
+    } catch (err) {
+      // A transient OAuth outage on one provider shouldn't fail search across
+      // all of them — skip it and let the others answer. If it turns out to be
+      // the only configured provider, we rethrow it below rather than reporting
+      // "not configured".
+      if (!(err instanceof OAuthRefreshError)) throw err;
+      igLog.warn(`skipping ${id} in model search: OAuth temporarily unavailable`);
+      transientError = err;
+      continue;
+    }
     if (!cred) continue;
-    searches.push(def.search(query || "text to image", cred).catch(() => []));
+    searches.push(
+      def.search(query || "text to image", cred).catch((err) => {
+        igLog.warn(`model search failed for ${id}`, log.errorData(err));
+        return [];
+      }),
+    );
   }
   if (searches.length === 0) {
+    // Nothing could answer. If the only configured provider was skipped for a
+    // transient auth failure, surface that (never "not configured") so the mind
+    // isn't told to reconfigure a correctly-configured provider (#701).
+    if (transientError) throw transientError;
     throw new Error("No imagegen providers configured");
   }
   return (await Promise.all(searches)).flat();
