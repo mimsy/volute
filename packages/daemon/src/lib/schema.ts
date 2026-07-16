@@ -43,6 +43,27 @@ export const users = sqliteTable("users", {
   created_at: text("created_at").notNull().default(sql`(datetime('now'))`),
 });
 
+// Durable, hashed, revocable per-user API credentials. Keyed to a users row —
+// deliberately user_type-agnostic, so the same token type serves external minds
+// and (later) external humans. Only the SHA-256 hash is stored; revocation is a
+// row DELETE, and the FK cascade drops a user's tokens with the user.
+export const apiTokens = sqliteTable(
+  "api_tokens",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    user_id: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    token_hash: text("token_hash").notNull(),
+    label: text("label"),
+    created_at: text("created_at").notNull().default(sql`(datetime('now'))`),
+  },
+  (table) => [
+    uniqueIndex("idx_api_tokens_hash").on(table.token_hash),
+    index("idx_api_tokens_user").on(table.user_id),
+  ],
+);
+
 export const conversations = sqliteTable(
   "conversations",
   {

@@ -2,6 +2,7 @@ import { timingSafeEqual } from "node:crypto";
 import { eq, lt } from "drizzle-orm";
 import { getCookie } from "hono/cookie";
 import { createMiddleware } from "hono/factory";
+import { API_TOKEN_PREFIX, resolveApiToken } from "../../lib/api-tokens.js";
 import { getOrCreateMindUser, getUser, type User } from "../../lib/auth.js";
 import { resolveMindToken } from "../../lib/daemon/mind-tokens.js";
 import { getDb } from "../../lib/db.js";
@@ -180,7 +181,24 @@ export const authMiddleware = createMiddleware<AuthEnv>(async (c, next) => {
       return;
     }
 
-    // 3. Session token via Bearer (CLI login)
+    // 3. Durable per-user API token (vmt_-prefixed) — resolves to any users row.
+    // Disjoint from the branches around it by construction: the daemon token and
+    // session ids are bare UUIDs, and the in-memory mind-token map only ever
+    // holds UUIDs, so a vmt_ value misses them and falls through to here.
+    if (token.startsWith(API_TOKEN_PREFIX)) {
+      const userId = await resolveApiToken(token);
+      if (userId != null) {
+        const user = await getUser(userId);
+        if (user) {
+          if (user.role === "pending") return c.json({ error: "Account pending approval" }, 403);
+          c.set("user", user);
+          await next();
+          return;
+        }
+      }
+    }
+
+    // 4. Session token via Bearer (CLI login)
     if (token) {
       const user = await resolveSession(token);
       if (user) {
@@ -192,7 +210,7 @@ export const authMiddleware = createMiddleware<AuthEnv>(async (c, next) => {
     }
   }
 
-  // 4. Cookie-based session (web UI)
+  // 5. Cookie-based session (web UI)
   const sessionId = getCookie(c, "volute_session");
   if (!sessionId) return c.json({ error: "Unauthorized" }, 401);
 

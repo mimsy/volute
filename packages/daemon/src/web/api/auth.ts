@@ -4,6 +4,7 @@ import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { z } from "zod";
+import { issueApiToken, listApiTokens, revokeApiToken } from "../../lib/api-tokens.js";
 import {
   approveUser,
   changePassword,
@@ -39,6 +40,7 @@ import {
   deleteSession,
   getSessionUserId,
   invalidateSessionCache,
+  requireAdmin,
   SESSION_MAX_AGE,
 } from "../middleware/auth.js";
 
@@ -217,6 +219,54 @@ const admin = new Hono<AuthEnv>()
       return c.json({ ok: true });
     },
   )
+  // --- Durable per-user API tokens ---
+  // requireAdmin throughout: durable credential issuance is human-gated. Only a
+  // role:"admin" principal may mint or rotate tokens — a mind gets this power
+  // only by being deliberately made an admin. Neither a role:"user" principal
+  // (what every mind token resolves to) nor the system principal (the spirit)
+  // qualifies, which closes the prompt-injection path where untrusted text
+  // could talk the spirit into issuing a durable credential to an attacker.
+  .post(
+    "/users/:id/tokens",
+    requireAdmin,
+    zValidator("json", z.object({ label: z.string().max(200).optional() })),
+    async (c) => {
+      const id = parseInt(c.req.param("id"), 10);
+      if (Number.isNaN(id)) return c.json({ error: "Invalid user ID" }, 400);
+      const target = await getUser(id);
+      if (!target) return c.json({ error: "User not found" }, 404);
+      const { label } = c.req.valid("json");
+      // The plaintext token exists only in this response — never logged.
+      const issued = await issueApiToken(id, label);
+      return c.json(
+        {
+          id: issued.id,
+          token: issued.token,
+          label: issued.label,
+          createdAt: issued.created_at,
+        },
+        201,
+      );
+    },
+  )
+  .get("/users/:id/tokens", requireAdmin, async (c) => {
+    const id = parseInt(c.req.param("id"), 10);
+    if (Number.isNaN(id)) return c.json({ error: "Invalid user ID" }, 400);
+    const target = await getUser(id);
+    if (!target) return c.json({ error: "User not found" }, 404);
+    const tokens = await listApiTokens(id);
+    return c.json(tokens.map((t) => ({ id: t.id, label: t.label, createdAt: t.created_at })));
+  })
+  .delete("/users/:id/tokens/:tokenId", requireAdmin, async (c) => {
+    const id = parseInt(c.req.param("id"), 10);
+    const tokenId = parseInt(c.req.param("tokenId"), 10);
+    if (Number.isNaN(id) || Number.isNaN(tokenId)) return c.json({ error: "Invalid ID" }, 400);
+    // Scoped to :id inside the DELETE, so a token id belonging to another user
+    // can't be revoked through a path that claims to be this user's.
+    const revoked = await revokeApiToken(id, tokenId);
+    if (!revoked) return c.json({ error: "Token not found" }, 404);
+    return c.json({ ok: true });
+  })
   .put("/users/:id/profile", zValidator("json", profileSchema), async (c) => {
     const user = c.get("user");
     if (user.role !== "admin") return c.json({ error: "Forbidden" }, 403);
