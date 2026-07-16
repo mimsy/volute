@@ -7,7 +7,22 @@ export type AuthUser = {
   description?: string | null;
   avatar?: string | null;
   created_at?: string;
+  /**
+   * Mind users only: no `minds` registry row, so nothing is spawned here — it
+   * authenticates over HTTP with an API token. Server-computed; a variant is
+   * local despite being absent from the mind list.
+   */
+  external?: boolean;
 };
+
+export type ApiToken = {
+  id: number;
+  label: string | null;
+  createdAt: string;
+};
+
+/** The plaintext `token` exists only in this response — it is never stored. */
+export type IssuedToken = ApiToken & { token: string };
 
 async function authGet<T>(path: string): Promise<T> {
   const res = await fetch(path);
@@ -90,6 +105,39 @@ export async function updateUserProfile(
   if (!res.ok) {
     const data = (await res.json().catch(() => ({}))) as { error?: string };
     throw new Error(data.error || "Failed to update profile");
+  }
+}
+
+/**
+ * Register an external mind: creates a mind-typed user with no registry row and
+ * mints its first token. Rejects reserved/malformed names (400) and taken ones
+ * (409) — authPost surfaces the server's message for both.
+ */
+export function registerExternalMind(body: {
+  name: string;
+  displayName?: string;
+  description?: string;
+  tokenLabel?: string;
+}): Promise<{ name: string; token: string; tokenId: number }> {
+  // The response also carries the created `user`, deliberately left off this type:
+  // the server builds it without the `external` flag, so typing it as AuthUser
+  // would hand callers a mind that reads as local. Re-read it from the users list.
+  return authPost("/api/auth/minds", body);
+}
+
+export function fetchUserTokens(id: number): Promise<ApiToken[]> {
+  return authGet(`/api/auth/users/${id}/tokens`);
+}
+
+export function issueUserToken(id: number, label?: string): Promise<IssuedToken> {
+  return authPost(`/api/auth/users/${id}/tokens`, { label });
+}
+
+export async function revokeUserToken(id: number, tokenId: number): Promise<void> {
+  const res = await fetch(`/api/auth/users/${id}/tokens/${tokenId}`, { method: "DELETE" });
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(data.error || "Failed to revoke token");
   }
 }
 

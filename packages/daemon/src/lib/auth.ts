@@ -3,7 +3,7 @@ import { and, count, eq, inArray, or } from "drizzle-orm";
 import { getSpiritName } from "./config/setup.js";
 import { getDb } from "./db.js";
 import { broadcast } from "./events/activity-events.js";
-import { isSpiritName } from "./mind/registry.js";
+import { findMind, isSpiritName } from "./mind/registry.js";
 import type { MindProfile } from "./mind/volute-config.js";
 import { users } from "./schema.js";
 
@@ -280,6 +280,32 @@ export async function deleteUser(id: number): Promise<void> {
     .get();
   if (!target) throw new Error("User not found");
   await db.delete(users).where(and(eq(users.id, id), eq(users.user_type, "human")));
+}
+
+/**
+ * Delete an external mind's account — a `user_type:"mind"` row with no `minds`
+ * registry row. That is the whole teardown: there is no process to stop and no
+ * directory to remove, and the FK cascade takes its api_tokens, which is the
+ * point (deleting the account revokes its access).
+ *
+ * Refuses any mind the daemon spawns, including variants. Those own a process and
+ * a worktree, so removing only the account would orphan both — they go through the
+ * mind-deletion API. Kept separate from `deleteUser` so that function keeps its
+ * human-only guarantee and no caller can reach a system or puppet row through here.
+ */
+export async function deleteExternalMindUser(id: number): Promise<void> {
+  const db = await getDb();
+  const target = await db
+    .select({ id: users.id, username: users.username, user_type: users.user_type })
+    .from(users)
+    .where(eq(users.id, id))
+    .get();
+  if (!target) throw new Error("User not found");
+  if (target.user_type !== "mind") throw new Error("Not a mind account");
+  if (await findMind(target.username)) {
+    throw new Error("Use the mind deletion API to delete minds");
+  }
+  await db.delete(users).where(eq(users.id, id));
 }
 
 export async function updateUserProfile(
