@@ -2,13 +2,18 @@ import assert from "node:assert/strict";
 import { afterEach, before, beforeEach, describe, it } from "node:test";
 import { eq } from "drizzle-orm";
 import { resolveApiToken } from "../packages/daemon/src/lib/api-tokens.js";
-import { createUser, getUserByUsername } from "../packages/daemon/src/lib/auth.js";
+import {
+  createUser,
+  getOrCreateMindUser,
+  getUserByUsername,
+} from "../packages/daemon/src/lib/auth.js";
 import {
   type GlobalConfig,
   readGlobalConfig,
   writeGlobalConfig,
 } from "../packages/daemon/src/lib/config/setup.js";
 import { getDb } from "../packages/daemon/src/lib/db.js";
+import { addMind, addVariant } from "../packages/daemon/src/lib/mind/registry.js";
 import { minds, users } from "../packages/daemon/src/lib/schema.js";
 import { createSession, deleteSession } from "../packages/daemon/src/web/middleware/auth.js";
 
@@ -20,6 +25,8 @@ const TAKEN = "r2-reg-taken";
 const NEW_MIND = "r2-reg-external";
 const NEW_MIND_2 = "r2-reg-external-two";
 const NEW_MIND_3 = "r2-reg-external-three";
+const LOCAL_MIND = "r2-reg-local";
+const LOCAL_VARIANT = "r2-reg-local-variant";
 
 const TEST_USERNAMES = [
   ADMIN,
@@ -30,7 +37,12 @@ const TEST_USERNAMES = [
   NEW_MIND,
   NEW_MIND_2,
   NEW_MIND_3,
+  LOCAL_MIND,
+  LOCAL_VARIANT,
 ];
+
+/** Registry rows the external-flag tests create; dropped alongside their users. */
+const TEST_MIND_ROWS = [LOCAL_MIND, LOCAL_VARIANT];
 
 const sessions: string[] = [];
 let savedConfig: GlobalConfig;
@@ -40,6 +52,11 @@ async function cleanup() {
   for (const username of TEST_USERNAMES) {
     // FK cascade drops any api_tokens rows with the user.
     await db.delete(users).where(eq(users.username, username));
+  }
+  // `minds.port` is UNIQUE, so a leaked row would collide with the next run's
+  // addMind rather than fail visibly here.
+  for (const name of TEST_MIND_ROWS) {
+    await db.delete(minds).where(eq(minds.name, name));
   }
   for (const id of sessions.splice(0)) await deleteSession(id);
   writeGlobalConfig(savedConfig);
@@ -205,5 +222,149 @@ describe("external mind registration", () => {
 
     const res = await register(sessionId, { name: NEW_MIND_3 });
     assert.equal(res.status, 201, "an external mind has no minds row, so the cap cannot apply");
+  });
+});
+
+/**
+ * `GET /api/auth/users` tags mind users with `external`. This has to be computed
+ * daemon-side: the flag means "no `minds` row", and the mind list a client can
+ * see (`GET /api/v1/minds` → readRegistry) omits variants, so a client comparing
+ * against it would read every live variant as external.
+ */
+describe("users list — external flag", () => {
+  before(() => {
+    savedConfig = structuredClone(readGlobalConfig());
+  });
+  beforeEach(cleanup);
+  afterEach(cleanup);
+
+  async function listUsers(cookie: string) {
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
+    const res = await app.request("http://localhost/api/auth/users", {
+      headers: { Cookie: `volute_session=${cookie}` },
+    });
+    assert.equal(res.status, 200, await res.clone().text());
+    const body = (await res.json()) as {
+      username: string;
+      user_type: string;
+      external?: boolean;
+    }[];
+    return new Map(body.map((u) => [u.username, u]));
+  }
+
+  it("flags a registered external mind, and not a local one", async () => {
+    const { sessionId } = await makeUser(ADMIN, "admin");
+    await register(sessionId, { name: NEW_MIND });
+    await addMind(LOCAL_MIND, 4977);
+
+    const byName = await listUsers(sessionId);
+
+    assert.equal(byName.get(NEW_MIND)?.external, true, "no minds row ⇒ external");
+    assert.equal(byName.get(LOCAL_MIND)?.external, false, "has a minds row ⇒ local");
+  });
+
+  // A variant gets its users row at split and keeps a minds row naming its parent,
+  // which readRegistry filters out. It is local whether or not it is running.
+  it("does not flag a variant as external", async () => {
+    const { sessionId } = await makeUser(ADMIN, "admin");
+    await addMind(LOCAL_MIND, 4977);
+    await addVariant(LOCAL_VARIANT, LOCAL_MIND, 4978, "/tmp/variant", "variant-branch");
+    await getOrCreateMindUser(LOCAL_VARIANT);
+
+    const byName = await listUsers(sessionId);
+
+    assert.equal(byName.get(LOCAL_VARIANT)?.user_type, "mind");
+    assert.equal(
+      byName.get(LOCAL_VARIANT)?.external,
+      false,
+      "a variant is spawned here — readAllMinds must be the source, not readRegistry",
+    );
+  });
+
+  it("leaves human users untagged", async () => {
+    const { sessionId } = await makeUser(ADMIN, "admin");
+
+    const byName = await listUsers(sessionId);
+
+    assert.equal(byName.get(ADMIN)?.user_type, "human");
+    assert.equal(byName.get(ADMIN)?.external, undefined, "external is a mind-only concept");
+  });
+
+  it("tags mind users on the ?type=mind branch too", async () => {
+    const { sessionId } = await makeUser(ADMIN, "admin");
+    await register(sessionId, { name: NEW_MIND });
+    await addMind(LOCAL_MIND, 4977);
+
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
+    const res = await app.request("http://localhost/api/auth/users?type=mind", {
+      headers: { Cookie: `volute_session=${sessionId}` },
+    });
+    assert.equal(res.status, 200);
+    const byName = new Map(
+      ((await res.json()) as { username: string; external?: boolean }[]).map((u) => [
+        u.username,
+        u,
+      ]),
+    );
+
+    assert.equal(byName.get(NEW_MIND)?.external, true);
+    assert.equal(byName.get(LOCAL_MIND)?.external, false);
+  });
+});
+
+/**
+ * Deleting an external mind is deleting its account: there is no process to stop
+ * and no directory to remove, and the mind-deletion API would 404 on it. The guard
+ * that sends minds to that API must therefore key on having a registry row, not on
+ * being mind-typed — otherwise a registered external mind can never be removed.
+ */
+describe("external mind deletion", () => {
+  before(() => {
+    savedConfig = structuredClone(readGlobalConfig());
+  });
+  beforeEach(cleanup);
+  afterEach(cleanup);
+
+  async function del(cookie: string, id: number) {
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
+    return app.request(`http://localhost/api/auth/users/${id}`, {
+      method: "DELETE",
+      headers: { Cookie: `volute_session=${cookie}`, Origin: "http://localhost" },
+    });
+  }
+
+  it("deletes an external mind's account, taking its tokens with it", async () => {
+    const { sessionId } = await makeUser(ADMIN, "admin");
+    const res = await register(sessionId, { name: NEW_MIND });
+    const { user, token } = (await res.json()) as { user: { id: number }; token: string };
+    assert.equal(await resolveApiToken(token), user.id, "token works before deletion");
+
+    const delRes = await del(sessionId, user.id);
+    assert.equal(delRes.status, 200, await delRes.clone().text());
+
+    assert.equal(await getUserByUsername(NEW_MIND), null, "account is gone");
+    // FK cascade on api_tokens.user_id — revoking access is the point of the delete.
+    assert.equal(await resolveApiToken(token), null, "its token no longer authenticates");
+  });
+
+  it("still refuses to delete a local mind through the users API", async () => {
+    const { sessionId } = await makeUser(ADMIN, "admin");
+    await addMind(LOCAL_MIND, 4977);
+    const mindUser = await getOrCreateMindUser(LOCAL_MIND);
+
+    const delRes = await del(sessionId, mindUser.id);
+    assert.equal(delRes.status, 400, "a mind with a registry row has a process and a directory");
+    assert.ok(await getUserByUsername(LOCAL_MIND), "and its account survives");
+  });
+
+  it("still refuses to delete a variant through the users API", async () => {
+    const { sessionId } = await makeUser(ADMIN, "admin");
+    await addMind(LOCAL_MIND, 4977);
+    await addVariant(LOCAL_VARIANT, LOCAL_MIND, 4978, "/tmp/variant", "variant-branch");
+    const variantUser = await getOrCreateMindUser(LOCAL_VARIANT);
+
+    const delRes = await del(sessionId, variantUser.id);
+    assert.equal(delRes.status, 400, "a variant has a worktree to tear down");
+    assert.ok(await getUserByUsername(LOCAL_VARIANT), "and its account survives");
   });
 });

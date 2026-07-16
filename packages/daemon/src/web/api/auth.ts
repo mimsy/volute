@@ -10,6 +10,7 @@ import {
   changePassword,
   countAdmins,
   createUser,
+  deleteExternalMindUser,
   deleteUser,
   getOrCreateMindUser,
   getUser,
@@ -24,10 +25,33 @@ import {
 import { joinSystemChannel } from "../../lib/chat/system-channel.js";
 import { getDb } from "../../lib/db.js";
 import { broadcast } from "../../lib/events/activity-events.js";
-import { readRegistry, validateMindName, voluteHome } from "../../lib/mind/registry.js";
+import {
+  findMind,
+  readAllMinds,
+  readRegistry,
+  validateMindName,
+  voluteHome,
+} from "../../lib/mind/registry.js";
 import { users } from "../../lib/schema.js";
 import { normalizeAvatar } from "../../lib/util/avatar-image.js";
 import { fileEtag, isNotModified } from "../../lib/util/http-cache.js";
+
+/**
+ * Mark mind users that have no `minds` row: an external mind reaches in over HTTP
+ * with a Bearer token and has no port, process, or directory here, so a caller
+ * cannot infer this from the mind list alone.
+ *
+ * `readAllMinds`, not `readRegistry`: readRegistry drops variants (`parent IS NULL`),
+ * but every variant gets a users row at split (establishVariantDialogue) and keeps a
+ * `minds` row naming its parent — running or stopped, it is local, not external.
+ */
+async function withExternalFlag<T extends { username: string; user_type: string }>(
+  list: T[],
+): Promise<(T & { external?: boolean })[]> {
+  if (!list.some((u) => u.user_type === "mind")) return list;
+  const local = new Set((await readAllMinds()).map((m) => m.name));
+  return list.map((u) => (u.user_type === "mind" ? { ...u, external: !local.has(u.username) } : u));
+}
 
 /** Only join system channel when running inside the daemon (not in tests). */
 function tryJoinSystem(userId: number): void {
@@ -251,9 +275,9 @@ const admin = new Hono<AuthEnv>()
 
     const type = c.req.query("type");
     if (type === "human" || type === "mind") {
-      return c.json(await listUsersByType(type));
+      return c.json(await withExternalFlag(await listUsersByType(type)));
     }
-    return c.json(await listUsers());
+    return c.json(await withExternalFlag(await listUsers()));
   })
   .get("/users/pending", async (c) => {
     const user = c.get("user");
@@ -368,7 +392,19 @@ const admin = new Hono<AuthEnv>()
       if (adminCount <= 1) return c.json({ error: "Cannot delete the last admin" }, 400);
     }
     if (target.user_type === "mind") {
-      return c.json({ error: "Use the mind deletion API to delete minds" }, 400);
+      // Only a mind the daemon spawns needs the mind-deletion API, which exists to
+      // stop the process and remove the directory. An external mind has neither, so
+      // deleting its account is the whole teardown — and the mind API would 404 on
+      // it, leaving no way to remove it at all.
+      //
+      // Re-derived from the registry rather than trusted from the caller: the client
+      // chooses which endpoint to call, but only the registry knows whether a live
+      // mind's process and directory are at stake.
+      if (await findMind(target.username)) {
+        return c.json({ error: "Use the mind deletion API to delete minds" }, 400);
+      }
+      await deleteExternalMindUser(id);
+      return c.json({ ok: true });
     }
     await deleteUser(id);
     return c.json({ ok: true });
