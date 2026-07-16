@@ -1,5 +1,40 @@
 # Changelog
 
+## [0.50.0](https://github.com/mimsy/volute/compare/volute-v0.49.0...volute-v0.50.0) (2026-07-15)
+
+
+### Features
+
+* host names the system spirit during setup, with a waking finale ([#663](https://github.com/mimsy/volute/issues/663)) ([38f82da](https://github.com/mimsy/volute/commit/38f82da30a6ee6520a658e5b79d604c43c00e1a1))
+* image generation via OpenAI Codex and xAI Grok subscriptions ([#702](https://github.com/mimsy/volute/issues/702)) ([fd25ceb](https://github.com/mimsy/volute/commit/fd25cebd9e1fae74ec94eeeb3625f493de5f2936))
+* make sprouting a visible event ([#677](https://github.com/mimsy/volute/issues/677)) ([11bd5b9](https://github.com/mimsy/volute/commit/11bd5b9fd812963419b60909ba940607c3bf1c8b))
+* resolve display names in CLI chat/history output ([#680](https://github.com/mimsy/volute/issues/680)) ([71f5f68](https://github.com/mimsy/volute/commit/71f5f68e7a5cf427c6624137980769251bf03145))
+* rework chat activity indicators, timeline and sidebar refinements ([#708](https://github.com/mimsy/volute/issues/708)) ([0bcf3f1](https://github.com/mimsy/volute/commit/0bcf3f1bdeb4ae8b4d261b62510b8acb0ca9cc00))
+* seed-progress card in the seed's chat view ([#672](https://github.com/mimsy/volute/issues/672)) ([0151c58](https://github.com/mimsy/volute/commit/0151c5841587c72806806b8f29f99cc8bd03ded6))
+* start the spirit on demand and surface its availability ([#685](https://github.com/mimsy/volute/issues/685)) ([8d783fe](https://github.com/mimsy/volute/commit/8d783fe0d84d8c9da21bec22c67448f5e63b4331))
+* system events — automated system messages become sender-less events ([#684](https://github.com/mimsy/volute/issues/684)) ([5a9d970](https://github.com/mimsy/volute/commit/5a9d9706fb04ca46ba50a2268b48d1a8ad89c915))
+* terminology — session→thread routing, human/host, real system name ([#686](https://github.com/mimsy/volute/issues/686)) ([6e65478](https://github.com/mimsy/volute/commit/6e6547842f6ff490a5285f1036f269b2dd7144c7))
+* **web:** channel settings editor ([#682](https://github.com/mimsy/volute/issues/682)) ([fe1706a](https://github.com/mimsy/volute/commit/fe1706ae8b0ee1b9b0e44bae423a39ad9b55bcac))
+* **web:** dashboard notice and creation guard when no AI provider is configured ([#673](https://github.com/mimsy/volute/issues/673)) ([a3e87f2](https://github.com/mimsy/volute/commit/a3e87f24c803299fa565245d8a9d65b8a20341df))
+* **web:** pending incoming-file visibility panel ([#679](https://github.com/mimsy/volute/issues/679)) ([156c734](https://github.com/mimsy/volute/commit/156c734304ba155b1384d85d396ddc2e6e812570))
+* **web:** render human messages as markdown in chat ([#671](https://github.com/mimsy/volute/issues/671)) ([37b1b71](https://github.com/mimsy/volute/commit/37b1b71c810763496d37a196ccabf76cc11876f5))
+* **web:** rework home feed with conversation events, presence strip, and daily digest ([#683](https://github.com/mimsy/volute/issues/683)) ([7ed2122](https://github.com/mimsy/volute/commit/7ed2122e563fc3752b898534614b6eab4b4759dc))
+
+
+### Bug Fixes
+
+* **cli:** correct guidance when VOLUTE_HOME is unset on system installs ([#674](https://github.com/mimsy/volute/issues/674)) ([dcb9804](https://github.com/mimsy/volute/commit/dcb9804fd22c308f9e16af5502a58673e85f78e0))
+* Codex OAuth modal renders blank ([#696](https://github.com/mimsy/volute/issues/696)) ([0966c59](https://github.com/mimsy/volute/commit/0966c598c513b2333170cd4ab1963e42fbfb63f3))
+* daemon fails to start in sandbox mode with sandbox-runtime 0.0.56 ([#692](https://github.com/mimsy/volute/issues/692)) ([559fada](https://github.com/mimsy/volute/commit/559fadafbd66ee6f18e4a2982c63d5815794a2e2))
+* deliver newly created conversations to live SSE clients ([#707](https://github.com/mimsy/volute/issues/707)) ([a7e0789](https://github.com/mimsy/volute/commit/a7e078946740c25b0268564cf1f5d0d2321f87de))
+* pi minds send GitHub Copilot requests to the wrong backend host ([#693](https://github.com/mimsy/volute/issues/693)) ([70d227d](https://github.com/mimsy/volute/commit/70d227d8b483e9974cd5de8f34c3b2ded2106c0e))
+* sandboxed minds can't run their shell or the volute CLI ([#695](https://github.com/mimsy/volute/issues/695)) ([25f2d3d](https://github.com/mimsy/volute/commit/25f2d3d9e816daac61daa1f5ebe0371357a9150b))
+* sandboxed minds can't use bash here-documents on macOS ([#705](https://github.com/mimsy/volute/issues/705)) ([ec94e8e](https://github.com/mimsy/volute/commit/ec94e8ea0b7980777628102eb70764b4d3895002))
+* seed-nurture timing — UTC timestamps, quiet gate, backoff, sleep-aware ([#706](https://github.com/mimsy/volute/issues/706)) ([d5bbb79](https://github.com/mimsy/volute/commit/d5bbb79b02d29045bf779063879c6f8ca24cbecd))
+* system events no longer resemble messages ([#698](https://github.com/mimsy/volute/issues/698)) ([3544da6](https://github.com/mimsy/volute/commit/3544da69df46a64f7d6c321d417274bcd5b0032c))
+* volute seed check always prints readiness state ([#676](https://github.com/mimsy/volute/issues/676)) ([cb298fa](https://github.com/mimsy/volute/commit/cb298fa477e59c0fef5d439bbbecb85af38f1e72))
+* **web:** allow wake triggers off in Mind Defaults ([#675](https://github.com/mimsy/volute/issues/675)) ([58ddf15](https://github.com/mimsy/volute/commit/58ddf15c6cbdda4ca9395ecb20712653bbcb76e8))
+
 ## [0.49.0](https://github.com/mimsy/volute/compare/volute-v0.48.0...volute-v0.49.0) (2026-07-11)
 
 
