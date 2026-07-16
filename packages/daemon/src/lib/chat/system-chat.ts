@@ -14,17 +14,21 @@ export function resetSystemDMCache(): void {
  *
  * Automated system traffic now goes through system events (`deliverEvent`), not this DM —
  * this only bootstraps the genuine spirit↔mind conversation.
+ *
+ * Returns null for the spirit itself: it shares the system user, so there's no one to DM.
+ * `startMindFull` calls this for every mind including the spirit, so a no-op (not a throw)
+ * keeps spirit starts out of the error log (#688).
  */
-export async function ensureSystemDM(mindName: string): Promise<{ conversationId: string }> {
+export async function ensureSystemDM(mindName: string): Promise<{ conversationId: string } | null> {
   const cached = dmCache.get(mindName);
   if (cached) return { conversationId: cached };
 
   const systemUser = await getOrCreateSystemUser();
   const mindUser = await getOrCreateMindUser(mindName);
 
-  // The spirit shares the system user — can't DM yourself
+  // The spirit shares the system user — can't DM yourself.
   if (systemUser.id === mindUser.id) {
-    throw new Error(`Cannot create system DM: mind "${mindName}" is the system user`);
+    return null;
   }
 
   const existing = await findDMConversation([systemUser.id, mindUser.id]);

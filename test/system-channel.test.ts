@@ -8,6 +8,7 @@ import {
   backfillSystemChannelMembers,
   ensureSystemChannel,
   joinSystemChannel,
+  joinSystemChannelForMind,
   joinSystemChannelForSpirit,
   resetSystemChannelCache,
 } from "../packages/daemon/src/lib/chat/system-channel.js";
@@ -169,12 +170,43 @@ describe("system channel", () => {
     assert.ok(!names.includes("commons-clash"), "failed entry should not be joined");
   });
 
-  it("announceToSystem posts a message", async () => {
+  it("announceToSystem posts a sender-less event row, never the spirit's voice (#687)", async () => {
     await announceToSystem("test announcement");
     const db = await getDb();
     const msgs = await db.select().from(messages).all();
     const found = msgs.find((m) => m.content.includes("test announcement"));
     assert.ok(found, "should find the announcement message");
+    assert.equal(found!.role, "event", "announcement should be an event, not a chat message");
+    assert.equal(
+      found!.sender_name,
+      null,
+      "announcement must have no sender so it isn't attributed to the spirit",
+    );
+  });
+
+  it("announceToSystem delivers a sender-less commons event to mind participants (#687)", async () => {
+    await addMind("commons-mind", 4901, "sprouted");
+    await joinSystemChannelForMind("commons-mind");
+
+    await announceToSystem("atlas has joined");
+
+    // deliverEvent inserts the event row; as a next-turn event it stays pending until the
+    // mind's next turn drains it as an [Events] block. It must be a `commons` event, not a
+    // message attributed to the spirit.
+    const db = await getDb();
+    const events = await db
+      .select()
+      .from(systemEvents)
+      .where(eq(systemEvents.mind, "commons-mind"))
+      .all();
+    const event = events.find((e) => e.body.includes("atlas has joined"));
+    assert.ok(event, "mind participant should receive the announcement as a system event");
+    assert.equal(event!.type, "commons", "announcement should be delivered as a commons event");
+    assert.equal(
+      event!.delivery,
+      "next-turn",
+      "ambient commons announcements should fold into the next turn, not interrupt per event",
+    );
   });
 
   // Register the spirit (dead port — the event stays pending, which is fine: the

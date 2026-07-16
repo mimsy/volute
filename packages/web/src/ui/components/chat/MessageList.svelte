@@ -161,8 +161,15 @@ function handleScroll() {
     <div class="empty">Send a message to start chatting.</div>
   {/if}
   {#each entries as entry, i (entry.id)}
+    <!-- Sender-less automated announcement (#687): a #system event, not a chat message -->
+    {#if entry.role === "event"}
+      <div class="event-row">
+        {#each entry.blocks as block, bi (bi)}
+          {#if block.type === "text"}<span>{block.text}</span>{/if}
+        {/each}
+      </div>
     <!-- System divider -->
-    {#if entry.senderName === "system" && entry.blocks.length === 1 && entry.blocks[0].type === "text" && entry.blocks[0].text.match(/^\[.+\]$/)}
+    {:else if entry.senderName === "system" && entry.blocks.length === 1 && entry.blocks[0].type === "text" && entry.blocks[0].text.match(/^\[.+\]$/)}
       <div class="divider">
         <div class="divider-line"></div>
         <span>{entry.blocks[0].text.slice(1, -1)}</span>
@@ -246,6 +253,14 @@ function handleScroll() {
   .load-more-btn:hover {
     color: var(--text-1);
     border-color: var(--border-bright);
+  }
+
+  .event-row {
+    text-align: center;
+    margin: 12px 0;
+    color: var(--text-2);
+    font-size: 13px;
+    font-style: italic;
   }
 
   .divider {

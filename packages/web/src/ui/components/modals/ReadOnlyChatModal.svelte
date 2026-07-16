@@ -100,21 +100,26 @@ function showDate(i: number): boolean {
               <div class="divider-line"></div>
             </div>
           {/if}
-          <div class="chat-entry" class:new-sender={showSenderHeader(messages, i)}>
-            {#if showSenderHeader(messages, i)}
-              <div class="chat-entry-header">
-                <span class="chat-sender" class:chat-sender-user={msg.role === "user"}>{msg.sender_name ?? (msg.role === "user" ? "user" : (mindName ?? "mind"))}</span>
-                <span class="chat-timestamp">{formatTime(msg.created_at)}</span>
-              </div>
-            {/if}
-            <div class="chat-entry-content" class:chat-user-text={msg.role === "user"}>
-              {#if msg.role === "user"}
-                {extractTextContent(msg.content)}
-              {:else}
-                <div class="markdown-body">{@html renderMarkdown(extractTextContent(msg.content))}</div>
+          {#if msg.role === "event"}
+            <!-- Sender-less automated announcement (#687) -->
+            <div class="chat-event">{extractTextContent(msg.content)}</div>
+          {:else}
+            <div class="chat-entry" class:new-sender={showSenderHeader(messages, i)}>
+              {#if showSenderHeader(messages, i)}
+                <div class="chat-entry-header">
+                  <span class="chat-sender" class:chat-sender-user={msg.role === "user"}>{msg.sender_name ?? (msg.role === "user" ? "user" : (mindName ?? "mind"))}</span>
+                  <span class="chat-timestamp">{formatTime(msg.created_at)}</span>
+                </div>
               {/if}
+              <div class="chat-entry-content" class:chat-user-text={msg.role === "user"}>
+                {#if msg.role === "user"}
+                  {extractTextContent(msg.content)}
+                {:else}
+                  <div class="markdown-body">{@html renderMarkdown(extractTextContent(msg.content))}</div>
+                {/if}
+              </div>
             </div>
-          </div>
+          {/if}
         {/each}
       </div>
     {/if}
@@ -172,6 +177,14 @@ function showDate(i: number): boolean {
     flex: 1;
     height: 1px;
     background: var(--border);
+  }
+
+  .chat-event {
+    text-align: center;
+    margin: 10px 0;
+    color: var(--text-2);
+    font-size: 13px;
+    font-style: italic;
   }
 
   .chat-entry {

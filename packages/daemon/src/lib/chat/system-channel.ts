@@ -1,6 +1,5 @@
 import { getOrCreateMindUser, getOrCreateSystemUser, getUserByUsername } from "../auth.js";
 import { getSpiritName } from "../config/setup.js";
-import { deliverMessage } from "../delivery/message-delivery.js";
 import { publish as publishActivity } from "../events/activity-events.js";
 import {
   addMessage,
@@ -92,32 +91,35 @@ export async function backfillSystemChannelMembers(): Promise<void> {
   }
 }
 
-/** Post a system announcement to the #system channel and deliver to mind participants. */
+/**
+ * Post an automated announcement to the #system channel ("X has joined", "📝 X published a
+ * note …"). These are sender-less events, never the spirit's voice: since the spirit shares
+ * the system user (#663), attributing automation to that user made it indistinguishable from
+ * the spirit's hand-written messages (#687).
+ *
+ * The channel row is stored with `role: "event"` and no sender so web chat and `chat read`
+ * render it as an event, and each mind participant receives it as a `commons` system event
+ * rather than a message from the spirit. The spirit's own hand-written messages are unaffected.
+ *
+ * Delivery is `next-turn`: these are ambient commons updates, not messages demanding a reply,
+ * so they fold into the mind's next turn as one `[Events]` block instead of interrupting it
+ * per announcement — and a mind that slept through a run of them wakes to a single bundled
+ * block rather than one cold turn each (the flood the old batched message path avoided, #382).
+ */
 export async function announceToSystem(text: string): Promise<void> {
   const channelId = await ensureSystemChannel();
-  const systemUser = await getOrCreateSystemUser();
 
-  // Ensure system user is a participant
-  await joinChannel(channelId, systemUser.id);
+  await addMessage(channelId, "event", null, [{ type: "text", text }]);
 
-  await addMessage(channelId, "user", systemUser.username, [{ type: "text", text }]);
-
-  // Deliver to all mind participants of #system
+  // Deliver to all mind participants of #system as a sender-less, next-turn event.
   const participants = await getParticipants(channelId);
   const mindParticipants = participants.filter((p) => p.userType === "mind");
-  const channel = "#system";
   for (const mind of mindParticipants) {
-    deliverMessage(mind.username, {
-      content: [{ type: "text", text }],
-      channel,
-      conversationId: channelId,
-      sender: systemUser.username,
-      participants: participants.map((p) => p.username),
-      participantCount: participants.length,
-      isDM: false,
-    }).catch((err) => {
-      log.warn(`failed to deliver system announcement to ${mind.username}`, log.errorData(err));
-    });
+    deliverEvent(mind.username, { type: "commons", body: text, delivery: "next-turn" }).catch(
+      (err) => {
+        log.warn(`failed to deliver system announcement to ${mind.username}`, log.errorData(err));
+      },
+    );
   }
 }
 
