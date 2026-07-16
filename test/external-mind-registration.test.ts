@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { afterEach, before, beforeEach, describe, it } from "node:test";
 import { eq } from "drizzle-orm";
 import { resolveApiToken } from "../packages/daemon/src/lib/api-tokens.js";
-import { createUser, getUserByUsername, setUserRole } from "../packages/daemon/src/lib/auth.js";
+import { createUser, getUserByUsername } from "../packages/daemon/src/lib/auth.js";
 import {
   type GlobalConfig,
   readGlobalConfig,
@@ -15,12 +15,22 @@ import { createSession, deleteSession } from "../packages/daemon/src/web/middlew
 const ADMIN = "r2-reg-admin";
 const SYSTEM_CALLER = "r2-reg-system";
 const PLAIN = "r2-reg-plain";
+const PENDING = "r2-reg-pending";
 const TAKEN = "r2-reg-taken";
 const NEW_MIND = "r2-reg-external";
 const NEW_MIND_2 = "r2-reg-external-two";
 const NEW_MIND_3 = "r2-reg-external-three";
 
-const TEST_USERNAMES = [ADMIN, SYSTEM_CALLER, PLAIN, TAKEN, NEW_MIND, NEW_MIND_2, NEW_MIND_3];
+const TEST_USERNAMES = [
+  ADMIN,
+  SYSTEM_CALLER,
+  PLAIN,
+  PENDING,
+  TAKEN,
+  NEW_MIND,
+  NEW_MIND_2,
+  NEW_MIND_3,
+];
 
 const sessions: string[] = [];
 let savedConfig: GlobalConfig;
@@ -35,21 +45,16 @@ async function cleanup() {
   writeGlobalConfig(savedConfig);
 }
 
-/** Set (or clear, when policy is undefined) the registration policy. */
-function setPolicy(policy?: "closed" | "admin-only" | "open") {
-  const config = readGlobalConfig();
-  if (policy) config.externalRegistration = policy;
-  else delete config.externalRegistration;
-  writeGlobalConfig(config);
-}
-
 /**
  * `createUser` only auto-admins the FIRST human user in the DB, which isn't
- * reliable in a shared test DB — set the role explicitly.
+ * reliable in a shared test DB — set the role explicitly. Written straight to the
+ * row rather than via `setUserRole`, whose contract is only "admin" | "user";
+ * the gate has to be provable against "system" and "pending" callers too.
  */
-async function makeUser(username: string, role: "admin" | "user" | "system") {
+async function makeUser(username: string, role: "admin" | "user" | "system" | "pending") {
   const user = await createUser(username, "pw-123456");
-  await setUserRole(user.id, role);
+  const db = await getDb();
+  await db.update(users).set({ role }).where(eq(users.id, user.id));
   const sessionId = await createSession(user.id);
   sessions.push(sessionId);
   return { user, sessionId };
@@ -74,13 +79,15 @@ async function register(cookie: string, body: Record<string, unknown>) {
 
 describe("external mind registration", () => {
   before(() => {
-    savedConfig = readGlobalConfig();
+    // Cloned: readGlobalConfig() hands back the live cache object on a miss, so
+    // holding the reference would let a later in-place mutation rewrite the very
+    // baseline we restore from.
+    savedConfig = structuredClone(readGlobalConfig());
   });
   beforeEach(cleanup);
   afterEach(cleanup);
 
-  it("admin under admin-only creates a mind USER with no registry row, token returned once", async () => {
-    setPolicy("admin-only");
+  it("an admin creates a mind USER with no registry row, token returned once", async () => {
     const { sessionId } = await makeUser(ADMIN, "admin");
 
     const res = await register(sessionId, {
@@ -121,50 +128,32 @@ describe("external mind registration", () => {
     assert.equal(typeof body.tokenId, "number");
   });
 
-  it("a role:system caller may register under admin-only", async () => {
-    setPolicy("admin-only");
-    const { sessionId } = await makeUser(SYSTEM_CALLER, "system");
-    const res = await register(sessionId, { name: NEW_MIND });
-    assert.equal(res.status, 201, await res.clone().text());
-  });
-
-  it("a role:user caller is refused under admin-only, and creates nothing", async () => {
-    setPolicy("admin-only");
+  it("refuses a role:user caller, and creates nothing", async () => {
     const { sessionId } = await makeUser(PLAIN, "user");
     const res = await register(sessionId, { name: NEW_MIND });
     assert.equal(res.status, 403);
     assert.equal(await getUserByUsername(NEW_MIND), null);
   });
 
-  it("defaults to admin-only when the policy is unset", async () => {
-    setPolicy(undefined);
-    const { sessionId } = await makeUser(PLAIN, "user");
+  // The gate that matters: registration mints a durable credential, so it is
+  // requireAdmin — human-gated — exactly like the R1 token routes. The injectable
+  // `system` principal (the spirit) must NOT be able to mint one for itself. This
+  // test fails if anyone re-widens the route to admit "system".
+  it("refuses a role:system caller, and creates nothing", async () => {
+    const { sessionId } = await makeUser(SYSTEM_CALLER, "system");
     const res = await register(sessionId, { name: NEW_MIND });
-    assert.equal(res.status, 403, "unset policy must not fall open");
+    assert.equal(res.status, 403, "system must not mint durable credentials without a human");
     assert.equal(await getUserByUsername(NEW_MIND), null);
   });
 
-  it("under open, a role:user caller may self-register (still landing role:user)", async () => {
-    setPolicy("open");
-    const { sessionId } = await makeUser(PLAIN, "user");
-    const res = await register(sessionId, { name: NEW_MIND });
-    assert.equal(res.status, 201, await res.clone().text());
-    const body = (await res.json()) as { user: { role: string; user_type: string } };
-    // Self-registration must not be an escalation path.
-    assert.equal(body.user.role, "user");
-    assert.equal(body.user.user_type, "mind");
-  });
-
-  it("under closed, even an admin is refused", async () => {
-    setPolicy("closed");
-    const { sessionId } = await makeUser(ADMIN, "admin");
+  it("refuses a pending caller, and creates nothing", async () => {
+    const { sessionId } = await makeUser(PENDING, "pending");
     const res = await register(sessionId, { name: NEW_MIND });
     assert.equal(res.status, 403);
     assert.equal(await getUserByUsername(NEW_MIND), null);
   });
 
   it("rejects reserved and malformed names with 400", async () => {
-    setPolicy("admin-only");
     const { sessionId } = await makeUser(ADMIN, "admin");
 
     for (const name of ["volute", "system"]) {
@@ -179,7 +168,6 @@ describe("external mind registration", () => {
   });
 
   it("returns 409 when the username is taken by any user, mind or human", async () => {
-    setPolicy("admin-only");
     const { sessionId } = await makeUser(ADMIN, "admin");
     await makeUser(TAKEN, "user"); // a human holds the name
 
@@ -192,7 +180,6 @@ describe("external mind registration", () => {
   });
 
   it("resolves a concurrent same-name race to 409, not an unhandled 500", async () => {
-    setPolicy("admin-only");
     const { sessionId } = await makeUser(ADMIN, "admin");
 
     // Both requests clear the getUserByUsername check before either inserts; the
@@ -211,81 +198,12 @@ describe("external mind registration", () => {
   });
 
   it("is exempt from the maxMinds cap by construction (the cap counts registry rows)", async () => {
-    setPolicy("admin-only");
     const { sessionId } = await makeUser(ADMIN, "admin");
     const config = readGlobalConfig();
-    config.externalRegistration = "admin-only";
     config.maxMinds = 0; // no native mind could be created at all
     writeGlobalConfig(config);
 
     const res = await register(sessionId, { name: NEW_MIND_3 });
     assert.equal(res.status, 201, "an external mind has no minds row, so the cap cannot apply");
-  });
-});
-
-describe("external-registration policy route", () => {
-  before(() => {
-    savedConfig = readGlobalConfig();
-  });
-  beforeEach(cleanup);
-  afterEach(cleanup);
-
-  it("GET/PUT roundtrips the policy for an admin", async () => {
-    const { sessionId } = await makeUser(ADMIN, "admin");
-    const { default: app } = await import("../packages/daemon/src/web/app.js");
-
-    setPolicy(undefined);
-    const initial = await app.request("http://localhost/api/system/external-registration", {
-      headers: { Cookie: `volute_session=${sessionId}` },
-    });
-    assert.equal(initial.status, 200);
-    assert.equal(((await initial.json()) as { policy: string }).policy, "admin-only");
-
-    for (const policy of ["open", "closed", "admin-only"] as const) {
-      const put = await app.request("http://localhost/api/system/external-registration", {
-        method: "PUT",
-        headers: postHeaders(sessionId),
-        body: JSON.stringify({ policy }),
-      });
-      assert.equal(put.status, 200, await put.clone().text());
-      assert.equal(((await put.json()) as { policy: string }).policy, policy);
-
-      const get = await app.request("http://localhost/api/system/external-registration", {
-        headers: { Cookie: `volute_session=${sessionId}` },
-      });
-      assert.equal(((await get.json()) as { policy: string }).policy, policy);
-      assert.equal(readGlobalConfig().externalRegistration, policy);
-    }
-  });
-
-  it("refuses a non-admin on both GET and PUT", async () => {
-    const { sessionId } = await makeUser(PLAIN, "user");
-    const { default: app } = await import("../packages/daemon/src/web/app.js");
-
-    const get = await app.request("http://localhost/api/system/external-registration", {
-      headers: { Cookie: `volute_session=${sessionId}` },
-    });
-    assert.equal(get.status, 403);
-
-    const put = await app.request("http://localhost/api/system/external-registration", {
-      method: "PUT",
-      headers: postHeaders(sessionId),
-      body: JSON.stringify({ policy: "open" }),
-    });
-    assert.equal(put.status, 403);
-    assert.notEqual(readGlobalConfig().externalRegistration, "open");
-  });
-
-  it("rejects a policy outside the enum", async () => {
-    const { sessionId } = await makeUser(ADMIN, "admin");
-    const { default: app } = await import("../packages/daemon/src/web/app.js");
-
-    const res = await app.request("http://localhost/api/system/external-registration", {
-      method: "PUT",
-      headers: postHeaders(sessionId),
-      body: JSON.stringify({ policy: "everyone" }),
-    });
-    assert.equal(res.status, 400);
-    assert.notEqual(readGlobalConfig().externalRegistration, "everyone");
   });
 });

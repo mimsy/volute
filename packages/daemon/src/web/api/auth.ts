@@ -22,7 +22,6 @@ import {
   verifyUser,
 } from "../../lib/auth.js";
 import { joinSystemChannel } from "../../lib/chat/system-channel.js";
-import { readGlobalConfig } from "../../lib/config/setup.js";
 import { getDb } from "../../lib/db.js";
 import { broadcast } from "../../lib/events/activity-events.js";
 import { readRegistry, validateMindName, voluteHome } from "../../lib/mind/registry.js";
@@ -96,16 +95,12 @@ const authenticated = new Hono<AuthEnv>()
   // registry row — no port, no process, never spawned. It authenticates with the
   // returned token and pulls its messages. (This is also why `maxMinds` doesn't
   // apply: countCappedMinds counts `minds` rows, of which this has none.)
-  .post("/minds", zValidator("json", registerMindSchema), async (c) => {
-    const caller = c.get("user");
-    const policy = readGlobalConfig().externalRegistration ?? "admin-only";
-    if (policy === "closed") {
-      return c.json({ error: "External mind registration is closed" }, 403);
-    }
-    if (policy === "admin-only" && caller.role !== "admin" && caller.role !== "system") {
-      return c.json({ error: "Forbidden" }, 403);
-    }
-
+  //
+  // requireAdmin, like the R1 token routes below: this mints a durable credential,
+  // so it stays human-gated. That excludes the injectable `system` principal by
+  // construction. Public self-signup needs rate-limiting, abuse controls, and a
+  // resource cap before it can ship — deferred, not merely disabled.
+  .post("/minds", requireAdmin, zValidator("json", registerMindSchema), async (c) => {
     const { name, displayName, description, tokenLabel } = c.req.valid("json");
     // Not a collision check (that's the getUserByUsername lookup below): this
     // rejects reserved names and enforces the slug charset so `sender_name`

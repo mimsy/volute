@@ -142,22 +142,6 @@ const app = new Hono<AuthEnv>()
       return c.json({ maxMinds: maxMinds ?? null, count: await countCappedMinds() });
     },
   )
-  // Who may register an external mind account (POST /api/auth/minds).
-  .get("/external-registration", requireAdmin, async (c) => {
-    return c.json({ policy: readGlobalConfig().externalRegistration ?? "admin-only" });
-  })
-  .put(
-    "/external-registration",
-    requireAdmin,
-    zValidator("json", z.object({ policy: z.enum(["closed", "admin-only", "open"]) })),
-    async (c) => {
-      const { policy } = c.req.valid("json");
-      const config = readGlobalConfig();
-      config.externalRegistration = policy;
-      writeGlobalConfig(config);
-      return c.json({ policy });
-    },
-  )
   .post(
     "/register",
     requireAdmin,
