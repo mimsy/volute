@@ -18,22 +18,22 @@ Core values:
 
 - `src/cli.ts` — CLI entry point, dynamic command imports via switch statement
 - `packages/daemon/src/daemon.ts` — Daemon entry point, starts web server + mind/bridge/scheduler managers
-- `packages/cli/src/commands/` — One file per command, each exports `async function run(args: string[])`. Top-level nouns (`mind.ts`, `chat.ts`, `clock.ts`, `env.ts`, `skill.ts`, `seed-cmd.ts`, `systems.ts`) dispatch to subcommand files. Daemon-lifecycle commands (`setup`, `up`, `down`, `restart`, `status`, `update`) live in root `src/commands/`.
-- `packages/daemon/src/lib/` — Shared libraries (registry, mind-manager, bridge-manager, scheduler, db, auth, conversations, platforms); CLI-side helpers (daemon-client, arg parsing) live in `packages/cli/src/lib/`
-- `packages/daemon/src/web/` + `packages/web/` — Web dashboard (Hono backend + Svelte frontend), served by the daemon
-- `packages/daemon/src/lib/bridges/` — Built-in bridge implementations (Discord, Slack, Telegram) + shared SDK
-- `skills/` — Built-in skill definitions (memory, orientation, volute-mind, volute-admin, dreaming, imagegen, resonance, seed-nurture, plan-coordinator), synced to the shared pool on daemon startup. Extensions contribute additional skills via `skillsDir` in their manifest (e.g., notes, pages, and plan extensions each bundle their own skill).
+- `packages/cli/src/commands/` — One file per command, built with the `command()`/`subcommands()` helpers from `packages/cli/src/lib/command.ts` (see Code conventions). Top-level nouns (`mind.ts`, `chat.ts`, `clock.ts`, `env.ts`, `skill.ts`, `seed-cmd.ts`, `systems.ts`) dispatch to subcommand files. Daemon-lifecycle commands (`setup`, `up`, `down`, `restart`, `status`, `update`) live in root `src/commands/`.
+- `packages/daemon/src/lib/` — Shared libraries (registry, mind-manager, bridge-manager, scheduler, db, auth, conversations, platforms); CLI-side helpers (daemon-client, api-client, command builder) live in `packages/cli/src/lib/`
+- `packages/daemon/src/lib/bridges/` — System-wide bridge config + built-in bridge implementations (Discord, Slack, Telegram)
+- `skills/` — Built-in skill definitions (dreaming, imagegen, memory, orientation, plan-coordinator, resonance, seed-nurture, tending, volute-admin, volute-mind), synced to the shared pool on daemon startup. Extensions contribute additional skills via `skillsDir` in their manifest (e.g., notes, pages, and plan extensions each bundle their own skill).
 - `templates/claude/` — Default template (Claude Agent SDK) copied by `volute mind create`
 - `templates/pi/` — Alternative template using pi-coding-agent for multi-provider LLM support
 - `templates/codex/` — Alternative template using OpenAI Codex models
 - All minds live in `~/.volute/minds/<name>/` by default (overridable via `VOLUTE_MINDS_DIR`) with a centralized registry backed by the `minds` DB table in `volute.db`
+- System state (config, secrets, DB, env, bridges, daemon info) lives under `~/.volute/system/` via `voluteSystemDir()`: `config.json`, `secrets.json`, `volute.db`, `env.json`, `bridges.json`, `daemon.json`, `systems.json`
 
 ### Daemon model
 
 A single daemon process (`volute up`) manages all minds, bridges, and schedules:
 
 - **MindManager** (`packages/daemon/src/lib/daemon/mind-manager.ts`) — Spawns/stops mind server processes, crash recovery
-- **BridgeManager** (`packages/daemon/src/lib/daemon/bridge-manager.ts`) — Manages bridge processes (Discord, Slack, Telegram) per mind
+- **BridgeManager** (`packages/daemon/src/lib/daemon/bridge-manager.ts`) — Manages system-wide bridge processes, one per platform (Discord, Slack, Telegram)
 - **Scheduler** (`packages/daemon/src/lib/daemon/scheduler.ts`) — Cron-based scheduled messages and scripts for minds
 - **SleepManager** (`packages/daemon/src/lib/daemon/sleep-manager.ts`) — Sleep/wake cycles: cron-based scheduling, pre-sleep ritual, session archival, message queuing, wake triggers, trigger-wake with return-to-sleep
 - **MailPoller** (`packages/daemon/src/lib/daemon/mail-poller.ts`) — System-wide email polling via volute.systems API (auto-activates when a systems account exists)
@@ -42,9 +42,13 @@ A single daemon process (`volute up`) manages all minds, bridges, and schedules:
 
 CLI commands like `mind start`, `mind stop`, `chat send`, `mind split`, `mind join` all proxy through the daemon API.
 
+### Bridges
+
+Bridges are **system-wide**, not per-mind. Config lives in `~/.volute/system/bridges.json` — one entry per platform with `{ enabled, defaultMind, channelMappings }` (`packages/daemon/src/lib/bridges/bridges.ts`). BridgeManager runs one bridge process per enabled platform; inbound messages route to the mapped mind for the channel, falling back to `defaultMind`. Managed via `volute chat bridge add <platform> --default-mind <mind>` and `chat bridge map/unmap/mappings`.
+
 ### Centralized state directory
 
-Volute system state (logs, env, bridge PIDs) lives in `~/.volute/state/<name>/`, separate from mind directories. This keeps mind projects portable — they contain only mind-owned state (sessions, cursors, bridge configs). The `stateDir(name)` helper in `packages/daemon/src/lib/mind/registry.ts` resolves state paths. On daemon startup, `migrateDotVoluteDir()` renames any legacy `<mindDir>/.volute/` to `<mindDir>/.mind/`, then `migrateMindState()` copies `env.json` and `logs/` from the mind's `.mind/` to the centralized state dir.
+Volute per-mind system state (logs, env, bridge PIDs) lives in `~/.volute/state/<name>/`, separate from mind directories. This keeps mind projects portable — they contain only mind-owned state (sessions, cursors). The `stateDir(name)` helper in `packages/daemon/src/lib/mind/registry.ts` resolves state paths. On daemon startup, `migrateDotVoluteDir()` renames any legacy `<mindDir>/.volute/` to `<mindDir>/.mind/`, then `migrateMindState()` copies `env.json` and `logs/` from the mind's `.mind/` to the centralized state dir.
 
 Minds receive `VOLUTE_MIND`, `VOLUTE_STATE_DIR`, `VOLUTE_MIND_DIR`, `VOLUTE_MIND_PORT`, `VOLUTE_DAEMON_PORT`, and `VOLUTE_MIND_TOKEN` env vars from the daemon. The mind env is built from an allowlist (benign system vars, outbound proxy / custom-CA vars, + `VOLUTE_*`), not a full `process.env` spread, so ambient host secrets are withheld. `VOLUTE_MIND_TOKEN` is a per-mind, non-admin token — distinct from the daemon's own admin `VOLUTE_DAEMON_TOKEN`, which is never handed to minds. Instead of file-based IPC (restart.json, merged.json), minds call the daemon's REST API via `daemonRestart()` and `daemonSend()` from `templates/_base/src/lib/daemon-client.ts`. The daemon delivers post-restart context (merge info) to minds via HTTP POST to the mind's `/message` endpoint.
 
@@ -58,10 +62,9 @@ Each mind project (created from the template) has:
 │   ├── server.ts              # Wires mind + router + file handler + HTTP server
 │   ├── agent.ts               # Core mind handler: session management, SDK integration, HandlerResolver
 │   └── lib/
-│       ├── router.ts          # Message router: route resolution, prefix formatting, batch buffering
+│       ├── router.ts          # Message router: prefix formatting, batch buffering, dispatch
 │       ├── volute-server.ts   # Thin HTTP layer: /health, POST /message → JSON response
 │       ├── file-handler.ts    # File destination handler: appends messages to files
-│       ├── routing.ts         # Message routing: config loader, glob matcher, route resolution
 │       ├── types.ts           # ChannelMeta, HandlerMeta, MessageHandler, HandlerResolver, VoluteEvent
 │       ├── format-prefix.ts   # Shared message formatting (channel/sender/time prefix)
 │       ├── startup.ts         # Shared server.ts boilerplate (parseArgs, loadConfig, etc.)
@@ -94,8 +97,7 @@ Each mind project (created from the template) has:
 │   └── .claude/skills/        # Skills (volute CLI reference, memory system)
 └── .mind/                     # Mind-internal runtime state
     ├── sessions/              # Per-session SDK state (e.g. sessions/main.json)
-    ├── identity/              # Ed25519 keypair (private.pem, public.pem)
-    └── connectors/            # Bridge configs (e.g. connectors/discord/config.json)
+    └── identity/              # Ed25519 keypair (private.pem, public.pem)
 ```
 
 The SDK runs with `cwd: home/` so it picks up `CLAUDE.md` and `.claude/skills/` from there.
@@ -114,49 +116,36 @@ Unified `users` table with `user_type` discrimination (`"human"` or `"mind"`) st
 
 Templates have a `.init/` directory containing identity and config files. On `volute mind create`, these are copied into `home/` and `.init/` is deleted. On `volute mind upgrade`, `.init/` files are excluded so identity files are never overwritten.
 
-- **`_base/.init/`**: SOUL.md, MEMORY.md, memory/journal/, .config/prompts.json, .local/hooks/startup-context.ts, .local/hooks/wake-context.sh, .local/hooks/pre-prompt/session-activity.ts, .local/bin/volute
+- **`_base/.init/`**: SOUL.md, MEMORY.md, memory/journal/, .config/prompts.json, .local/hooks/startup-context.ts, .local/hooks/wake-context.sh, .local/hooks/pre-prompt/ (session-activity.ts, notices.ts), .local/bin/volute
 - **`claude/.init/`**: CLAUDE.md, .claude/settings.json, .config/routes.json
 - **`pi/.init/`**: MINDS.md, .config/routes.json
+- **`codex/.init/`**: AGENTS.md, .config/routes.json
 
 ### Web dashboard
 
 The daemon serves a Hono web server (default port 1618) with a Svelte frontend.
 
-- **Backend** (`packages/daemon/src/web/`): Hono API routes for auth, minds, chat, conversations, logs, variants, files, bridges, schedules, channels, env, keys, prompts, skills, file-sharing, extensions, setup, activity
-- **Frontend** (`packages/web/`): Svelte SPA with login, dashboard, and mind detail pages (chat, logs, files, variants, connections tabs). Shared UI components imported from `@volute/ui`
-- **Auth**: Cookie-based (`volute_session`), in-memory session map, first user auto-admin
-- **Database**: libSQL at `~/.volute/volute.db` for minds, users, conversations, channels, messages, turns, mind_history, activity, delivery_queue, sessions, shared_skills, system_prompts, conversation_reads, summaries, system_events
+- **Backend** (`packages/daemon/src/web/`): Hono API routes for auth, minds, chat, conversations, logs, variants, files, bridges, schedules, channels, env, keys, prompts, skills, file-sharing, extensions, setup, activity, backup, config, history
+- **Frontend** (`packages/web/`): Svelte 5 SPA with login, dashboard, and mind detail pages (chat, logs, files, variants, connections tabs). Shared UI components imported from `@volute/ui`
+- **Auth**: Cookie-based (`volute_session`), in-memory session map, first user auto-admin; durable `vmt_` API tokens in the `api_tokens` table
+- **Database**: libSQL at `~/.volute/system/volute.db`. The Drizzle schema (`packages/daemon/src/lib/schema.ts`) is the source of truth for the table list — don't enumerate tables in docs
 - **Build**: `vite build` → `dist/web-assets/`
 
 ### Extensions
 
 Extensions add functionality to Volute — custom UI sections, API routes, database tables, feed sources, and mind lifecycle hooks. Built-in extensions (Notes, Pages, Plan) ship with Volute; third-party and local extensions can be added.
 
-**SDK** (`@volute/extensions`): Provides `ExtensionManifest`, `ExtensionContext`, and `createExtension()` helper.
+**SDK** (`@volute/extensions`): Provides `ExtensionManifest`, `ExtensionContext`, and `createExtension()` helper. `packages/extensions/sdk/src/types.ts` is the source of truth for the manifest and context shapes; highlights:
 
-**Extension manifest** — an object with:
-- `id`, `name`, `version`, `description` — metadata
-- `routes(ctx)` — Hono app mounted at `/api/ext/{id}/` (authenticated)
-- `publicRoutes?(ctx)` — Hono app mounted at `/ext/{id}/public/` (no auth)
-- `ui.assetsDir?` — directory of built UI assets, served at `/ext/{id}/`
-- `ui.systemSections?` — sidebar items in the system view
-- `ui.mindSections?` — tab items in mind detail views
-- `ui.feedSource?` — endpoint for home/mind feed cards
-- `skillsDir?` — directory containing skills to sync on load (each subdirectory is a skill with a `SKILL.md`)
-- `standardSkill?` — if true, skills are added to the default skill set for new minds
-- `ui.systemSections[].urlPatterns?` — URL patterns for system-level routing (e.g., `["/notes", "/notes/:author/:slug"]`)
-- `initDb?(db)` — called on load to create tables; extension gets its own SQLite DB at `~/.volute/system/extension-data/{id}/data.db`
-- `onDaemonStart?()`, `onDaemonStop?()`, `onMindStart?(name)`, `onMindStop?(name)` — lifecycle hooks
+- `id`, `name`, `version`, `description`, `icon?`, `color?` — metadata
+- `routes(ctx)` — Hono app mounted at `/api/ext/{id}/` (authenticated); `publicRoutes?(ctx)` at `/ext/{id}/public/` (no auth)
+- `ui.assetsDir?` — built UI assets served at `/ext/{id}/`; `ui.systemSection?` (singular, with `urlPatterns` for system-level routing); `ui.mindSections?` (array); `ui.feedSource?`
+- `skillsDir?` — directory of skills synced on load; `standardSkill?` adds them to the default skill set
+- `mindDoc?` — markdown appended to minds' VOLUTE.md; `commands?` — extension-provided CLI subcommands
+- `initDb?(db)` — per-extension SQLite DB at `~/.volute/system/extension-data/{id}/data.db`
+- `onDaemonStart?()`, `onDaemonStop?()`, `onMindStart?(name, ctx)`, `onMindStop?(name)` — lifecycle hooks
 
-**Extension context** — provided to `routes()` and `publicRoutes()`:
-- `db` — SQLite database instance
-- `authMiddleware` — Hono middleware for auth
-- `resolveUser(c)` — extract user from Hono context
-- `getUser(id)` / `getUserByUsername(name)` — user lookup
-- `publishActivity(event)` — emit activity events
-- `getMindDir(name)` — resolve mind directory path
-- `getSystemsConfig()` — read volute.systems credentials (apiKey, system, apiUrl) or null
-- `dataDir` — extension-specific data directory
+**Extension context** (passed to `routes()`/`publicRoutes()`): `db`, `dataDir`, `authMiddleware`, `requireSelf`, `resolveUser(c)`, `getUser`/`getUserByUsername`/`getMindUser`, `publishActivity(event)`, `announceToSystem`, `recordNotice`, `getMindDir(name)`, `isIsolationEnabled`, `getSystemsConfig()`.
 
 **Extension UI** — standalone Svelte apps built with Vite, served as static assets at `/ext/{id}/`, rendered in iframes by the main app. Uses hash routing internally; communicates navigation to parent via `window.parent.postMessage({ type: "navigate", path })`. Extensions can import shared UI components from `@volute/ui` (add `"@volute/ui": "*"` to dependencies). Theme is shared via auto-generated `ext-theme.css` (built from `@volute/ui`'s `theme.css` + `base.css`).
 
@@ -174,220 +163,88 @@ Extensions add functionality to Volute — custom UI sections, API routes, datab
 
 **Other packages:**
 - `packages/api/` (`@volute/api`) — public API client library
-- `packages/ui/` (`@volute/ui`) — shared Svelte UI components, theme, icons, markdown rendering
+- `packages/ui/` (`@volute/ui`) — shared Svelte UI components, theme, icons, markdown rendering, `sanitizeSvg`
 - `packages/electron/` — Electron desktop app
-
-**Key files:**
-- `packages/daemon/src/lib/extensions.ts` — extension loader: discovery, context building, route mounting, lifecycle
-- `packages/cli/src/commands/extension.ts` — CLI: `volute extension list|install|uninstall`
-- `packages/extensions/sdk/src/types.ts` — all extension types
 
 ## Commands
 
 | Command | Purpose |
 |---------|---------|
 | `volute mind create <name>` | Create new mind in `~/.volute/minds/<name>/` |
-| `volute mind start <name>` | Start a mind (via daemon) |
-| `volute mind stop <name>` | Stop a mind (via daemon) |
+| `volute mind start/stop/restart <name>` | Manage a mind's server process (via daemon) |
 | `volute mind delete <name> [--force]` | Remove from registry (--force deletes directory) |
 | `volute mind list` | List all minds |
 | `volute mind status <name>` | Check mind status |
 | `volute mind history <name> [--channel <ch>] [--limit N] [--full]` | View mind activity history |
-| `volute mind restart <name>` | Restart a mind |
+| `volute mind contacts <name>` | Who a mind has recently been in contact with |
 | `volute mind upgrade <name> [--diff] [--continue] [--abort]` | Upgrade mind to latest template |
+| `volute mind split <name> [--from <mind>] [--soul "..."] [--port N] [--no-start] [--json]` | Create a variant (worktree + server) |
+| `volute mind join <variant-name> [--summary "..." --justification "..." --memory "..."] [--skip-verify]` | Merge variant back and restart parent |
+| `volute mind import <path> [--name <name>] [--session <path>]` | Import an OpenClaw workspace |
+| `volute mind export <name>` | Export a mind |
+| `volute mind profile [--mind] [--display-name <n>] [--description <t>] [--avatar <path>]` | Update mind profile |
 | `volute clock sleep <name> [--wake-at <time>]` | Put a mind to sleep (pre-sleep ritual, session archive, stop process) |
 | `volute clock wake <name>` | Wake a sleeping mind |
-| `volute mind import <path> [--name <name>] [--session <path>]` | Import an OpenClaw workspace |
-| `volute chat send <target> "<msg>" [--mind] [--file <path>]` | Send a message (DM, channel, cross-platform, with file) |
+| `volute clock status/list [--mind]` | Show sleep state + schedules |
+| `volute clock add [--mind] --id <name> --cron/--in "..." --message/--script "..." [--while-sleeping skip\|queue\|trigger-wake]` | Add a schedule (recurring --cron or one-time --in) |
+| `volute clock remove [--mind] --id <id>` | Remove a schedule |
+| `volute chat send <target> "<msg>" [--sender <user>] [--file <path>] [--image <path>] [--wait [--timeout ms]]` | Send a message (sender identity from `VOLUTE_MIND` or `--sender`; no `--mind` flag) |
 | `volute chat read <conversation> [--mind] [--limit N]` | Read conversation messages |
 | `volute chat list [--mind]` | List conversations |
 | `volute chat create --participants u1,u2 [--mind]` | Create a conversation |
-| `volute chat bridge add/remove/list/map/unmap` | Manage platform bridges |
-| `volute mind split <name> [--from <mind>] [--soul "..."] [--port N] [--no-start] [--json]` | Create a variant (worktree + server) |
-| `volute mind join <variant-name> [--summary "..." --justification "..." --memory "..."] [--skip-verify]` | Merge variant back and restart parent |
+| `volute chat bridge add/remove/list/map/unmap/mappings` | Manage system-wide platform bridges (`add <platform> --default-mind <mind>`) |
+| `volute chat files/accept/reject [--mind]` | Manage pending incoming files |
 | `volute env <set\|get\|list\|remove> [--mind] [--reveal]` | Manage environment variables |
-| `volute mind export <name>` | Export a mind |
-| `volute clock status [--mind]` | Show sleep state + upcoming schedule fires |
-| `volute clock list [--mind]` | List schedules for a mind |
-| `volute clock add [--mind] --id <name> --cron/--in "..." --message/--script "..." [--while-sleeping skip\|queue\|trigger-wake]` | Add a schedule (recurring --cron or one-time --in) |
-| `volute clock remove [--mind] --id <id>` | Remove a schedule |
 | `volute skill <list\|info\|install\|update\|uninstall\|publish\|remove> [--mind]` | Manage mind skills |
 | `volute skill defaults <list\|add\|remove>` | Manage default skill set for new minds |
 | `volute seed create <name> [--template <t>] [--model <m>] [--description <text>] [--skills <list\|none>] [--created-by <user>]` | Plant a new seed mind |
 | `volute seed sprout` | Complete orientation and become a full mind (run by seed) |
 | `volute seed check <name>` | Check seed readiness (used by spirit nurture schedule) |
-| `volute mind profile [--mind] [--display-name <n>] [--description <t>] [--avatar <path>]` | Update mind profile (display name, description, avatar) |
-| `volute mind seed <name>` | Legacy alias for `volute seed create` |
-| `volute mind sprout` | Legacy alias for `volute seed sprout` |
-| `volute chat files [--mind]` | List pending incoming files |
-| `volute chat accept <id> [--mind] [--dest <path>]` | Accept a pending file |
-| `volute chat reject <id> [--mind]` | Reject a pending file |
-| `volute systems status` | Show volute.systems account info |
-| `volute systems register [--name <name>]` | Register a system on volute.systems |
-| `volute systems login [--key <key>]` | Log in with an existing API key |
-| `volute systems logout` | Remove stored credentials |
-| `volute extension list` | List installed extensions |
-| `volute extension install <package>` | Install a third-party extension (npm package) |
-| `volute extension uninstall <package>` | Uninstall a third-party extension |
-| `volute config models` | List enabled AI models |
-| `volute config providers` | List configured AI providers |
-| `volute setup [--name N] [--system] [--service] [--dir D] [--port N] [--host H]` | Required first-run setup (interactive or non-interactive) |
-| `volute up [--port N] [--foreground] [--no-sandbox]` | Start the daemon (default: 1618) |
-| `volute down` | Stop the daemon |
-| `volute backup init [--repo R] [--password P]` | Configure and initialize the restic backup repository (prompts if flags omitted) |
-| `volute backup create` | Run a backup now (via daemon) |
-| `volute backup list` | List backup snapshots |
-| `volute backup schedule [--enable\|--disable] [--cron "..."]` | Manage scheduled backups |
-| `volute backup status` | Show backup config and last run |
-| `volute backup restore [--repo R] [--snapshot ID] [--target D] [--yes]` | Restore the system from a backup (in-place restore stops the daemon; --target inspects without touching it) |
-| `volute restart [--port N]` | Restart the daemon |
+| `volute systems <status\|register\|login\|logout>` | Manage volute.systems account |
+| `volute extension <list\|install\|uninstall>` | Manage third-party extensions (npm packages) |
+| `volute config <show\|models\|providers>` | Show config / enabled AI models / providers |
+| `volute setup [--cli] [--system] [--name N] [--dir D] [--port N] [--host H]` | Required first-run setup (web-first; `--cli` for terminal) |
+| `volute up [--port N] [--host H] [--foreground] [--no-sandbox]` | Start the daemon (default: 1618) |
+| `volute down` / `volute restart [--port N]` | Stop / restart the daemon |
 | `volute status` | Show daemon status, service info, version, and minds |
-| `volute login` | CLI authentication to the daemon |
-| `volute logout` | Remove CLI authentication |
+| `volute backup <init\|create\|list\|schedule\|status\|restore>` | Restic backups of the whole system |
+| `volute login` / `volute logout` | CLI authentication to the daemon |
 | `volute service status` | Show service status |
 | `volute update` | Check for updates |
 
-Mind-scoped commands (`chat`, `clock`, `skill`) use `--mind <name>` or `VOLUTE_MIND` env var.
+Mind-scoped commands (`chat`, `clock`, `skill`) use `--mind <name>` or `VOLUTE_MIND` env var. Legacy aliases (`volute mind seed/sprout/sleep/wake`, `volute variant ...`) forward to the current nouns. Full flags: `volute <cmd> --help`.
 
-## Source files
+## Directory guide
 
-### packages/daemon/src/lib/
+Find files with search — this is a map, not an inventory.
 
-| File | Purpose |
-|------|---------|
-| `mind/registry.ts` | Mind registry backed by DB `minds` table, port allocation (4100+), `running` field |
-| `bridges/bridge-defs.ts` | Bridge type definitions and metadata |
-| `bridges/bridge-outbound.ts` | Outbound bridge message delivery |
-| `bridges/bridges.ts` | Bridge configuration and channel mapping management |
-| `packages/cli/src/lib/daemon-client.ts` | HTTP client for CLI → daemon communication, reads `~/.volute/daemon.json` for port |
-| `packages/cli/src/lib/api-client.ts` | Typed Hono client for CLI → daemon API calls |
-| `mind/variants.ts` | Branch name validation for variants |
-| `util/health.ts` | Shared health check utility for mind ports |
-| `cloud-sync.ts` | Cloud synchronization utilities |
-| `template/template.ts` | Template discovery, copying, `{{name}}` substitution, `.init/` → `home/` migration |
-| `mind/spawn-server.ts` | Spawns `tsx src/server.ts`, waits for port listening (used for variants only) |
-| `packages/cli/src/lib/parse-args.ts` | Type-safe argument parser with positional args and typed flags |
-| `packages/cli/src/lib/parse-target.ts` | Parse send target strings (DMs, channels, platform URIs) |
-| `util/exec.ts` | Async wrappers around `execFile` (returns stdout) and `spawn` (inherits stdio) |
-| `config/env.ts` | Environment variables (shared `~/.volute/env.json` + mind-specific state dir env) |
-| `util/format-tool.ts` | Shared tool call summarization (`[toolName primaryArg]` format) |
-| `ai-service.ts` | System AI completion service via `@earendil-works/pi-ai` (multi-provider, OAuth + API key + env var auth, model selection) |
-| `schema.ts` | Drizzle ORM schema (minds, users, apiTokens, conversations, channels, turns, mindHistory, conversationParticipants, sessions, systemPrompts, sharedSkills, deliveryQueue, activity, conversationReads, messages, summaries, systemEvents) |
-| `db.ts` | libSQL database singleton at `~/.volute/volute.db` (WAL mode, foreign keys) |
-| `auth.ts` | bcrypt password hashing, first user auto-admin, pending approval flow, mind users |
-| `api-tokens.ts` | Durable per-user API tokens (`vmt_`-prefixed, SHA-256 hashed at rest, revoke = row DELETE); issue/list/resolve/revoke. Distinct from the in-memory native-mind token map in `daemon/mind-tokens.ts` |
-| `platforms.ts` | Platform registry with optional drivers (read/send), display names, slug resolution |
-| `packages/platforms/src/drivers/discord.ts` | Discord platform driver (read/send via REST API, slug-to-ID resolution) |
-| `packages/platforms/src/drivers/slack.ts` | Slack platform driver (read/send via Slack API, slug-to-ID resolution) |
-| `packages/platforms/src/drivers/telegram.ts` | Telegram platform driver (send via Bot API, slug-to-ID resolution; read not supported) |
-| `platforms/volute.ts` | Volute platform driver (conversations, DMs, group chats) |
-| `util/slugify.ts` | Shared slugify function for generating human-readable channel slugs |
-| `mind/consolidate.ts` | Memory consolidation (reads daily logs, produces MEMORY.md via LLM) |
-| `template/convert-session.ts` | Converts OpenClaw `session.jsonl` to Claude Agent SDK format |
-| `util/history-cleanup.ts` | History log cleanup utilities |
-| `util/json-state.ts` | JSON file state management utilities |
-| `util/log-buffer.ts` | Log buffering utilities |
-| `util/logger.ts` | Logging utilities |
-| `mind/identity.ts` | Mind identity (Ed25519 keypair) management |
-| `chat/file-sharing.ts` | Mind-to-mind file sharing with trust system |
-| `mind/archive.ts` | Mind archival utilities |
-| `skills.ts` | Skill installation and management, hook shim generation from SKILL.md frontmatter |
-| `extensions.ts` | Extension discovery (built-in, npm, local), context building, route mounting, lifecycle |
-| `prompts.ts` | System prompt registry with DB overrides (creation, system, mind categories) |
-| `chat/puppets.ts` | Puppet user management |
-| `release-notes.ts` | Release notes management |
-| `util/rotating-log.ts` | Size-limited rotating log files |
-| `packages/cli/src/lib/read-stdin.ts` | Reads piped stdin for send commands (returns undefined if TTY) |
-| `packages/cli/src/lib/resolve-mind-name.ts` | Resolves mind name from `--mind` flag or `VOLUTE_MIND` env var |
-| `chat/typing.ts` | Typing indicator tracking |
-| `config/setup.ts` | Global config (`~/.volute/system/config.json`) with setup state, `defaultSkills` array, AI config types (`AiConfig`, `AiProviderConfig`), `isSetupComplete()`, `isImagegenEnabled()`, migration for existing users. Provider credentials (`ai.providers`, `imagegen.providers`) are split into a root-only `secrets.json` (0600) while `config.json` stays host-readable (0644); `readGlobalConfig()`/`writeGlobalConfig()` merge/split transparently and `migrateConfigSecrets()` migrates legacy single-file installs |
-| `chat/system-channel.ts` | System channel utilities |
-| `chat/system-chat.ts` | `ensureSystemDM` — bootstraps the genuine spirit↔mind DM (for hand-written nurture); all automated traffic goes through system events, not this DM |
-| `chat/system-events.ts` | System events: `deliverEvent` (environment → mind, `immediate`/`next-turn`), drain/format for next-turn context blocks, sleep queue flush, reflection capture, and the `recordNotice` failure-notice shim. Backed by the `system_events` table (replaced `mind_notices` + the `sendSystemMessage` utility-fallback) |
-| `mind/sandbox.ts` | Sandbox runtime (`@anthropic-ai/sandbox-runtime`) integration: `isSandboxEnabled()`, `initSandbox()`, `wrapForSandbox()`, deny-read list for mind isolation |
-| `config/service-mode.ts` | Service mode detection (manual/systemd/launchd/system-launchd), service control, health polling, daemon config reader |
-| `config/systems-config.ts` | Read/write `~/.volute/system/systems.json` (API key, system name, API URL) |
-| `config/systems-fetch.ts` | Shared fetch wrapper for volute.systems API calls |
-| `tailscale.ts` | Tailscale integration |
-| `template/template-hash.ts` | Template hash verification |
-| `packages/cli/src/lib/prompt.ts` | Shared interactive terminal prompt utility |
-| `update-check.ts` | npm update check on CLI invocation |
-| `mind/variant-cleanup.ts` | Variant cleanup utilities |
-| `mind/verify.ts` | Mind verification utilities |
-| `version-notify.ts` | Version notification utilities |
-| `mind/volute-config.ts` | Mind volute.json config reader |
-| `webhook.ts` | Webhook integration |
-| `mind/isolation.ts` | Per-mind user isolation (`VOLUTE_ISOLATION=user`), user/group management (Linux via useradd, macOS via dscl), chown |
+**`packages/daemon/src/lib/`** — core shared libraries:
+- `mind/` — registry (DB-backed, port allocation), identity (Ed25519), variants + verify + cleanup, sandbox, isolation (per-mind OS users), archive, consolidate, spirit/seed-readiness, volute-config
+- `bridges/` — system-wide bridge config (`bridges.ts`) + the built-in bridge processes (`discord-bridge.ts`, `slack-bridge.ts`, `telegram-bridge.ts`), outbound delivery
+- `chat/` — file-sharing, puppets, typing, system-chat, system-events
+- `config/` — global config + secrets (`setup.ts`), env vars, service-mode, systems-config
+- `daemon/` — mind-manager, bridge-manager, scheduler, sleep-manager, mail-poller, backup-manager, token-budget, summarizer, turn lifecycle, mind-service
+- `delivery/` — delivery-manager/router, message-delivery, fan-out, send-gate
+- `events/` — in-process pub-sub (activity, conversation, mind), conversations CRUD, feed, activity tracking
+- `services/` — imagegen backends + job queue
+- `template/` — template discovery/copying (`{{name}}` substitution, `.init/` handling), session conversion, template-hash
+- `util/` — exec (async child-process wrappers), paths (`resolveWithinBase`), time (`parseDbTimestamp`), logger, format-tool, slugify, json-state, rotating-log
+- root — `schema.ts`, `db.ts`, `auth.ts`, `api-tokens.ts`, `skills.ts`, `extensions.ts`, `prompts.ts`, `platforms.ts`, `ai-service.ts`, `webhook.ts`, `tailscale.ts`
 
-### packages/daemon/src/lib/daemon/
+**`packages/cli/src/`** — `commands/` (one file per command; noun files dispatch to subdirectories), `lib/` (command builder, parse-args, api-client, daemon-client, parse-target, prompt, read-stdin, resolve-mind-name)
 
-| File | Purpose |
-|------|---------|
-| `mind-manager.ts` | Spawns/stops mind servers, crash recovery (3s delay), merge-restart coordination |
-| `bridge-manager.ts` | Manages bridge processes per mind (built-in bridge implementations only) |
-| `scheduler.ts` | Cron-based scheduled messages and scripts, per-mind schedule loading |
-| `mail-poller.ts` | Daemon-integrated mail polling (system-wide, uses volute.systems API) |
-| `backup-manager.ts` | Cron-scheduled restic backups (see `packages/daemon/src/lib/backup/`) |
-| `token-budget.ts` | Per-mind token budget enforcement |
-| `restart-tracker.ts` | Tracks mind restart state |
-| `sleep-manager.ts` | Sleep/wake cycles, cron scheduling, message queuing, wake triggers |
-| `summarizer.ts` | Generates 1-2 sentence turn summaries (AI or deterministic fallback) after each mind turn |
-| `turn-tracker.ts` | Turn tracking utilities |
-| `mind-tokens.ts` | Mind token management |
-| `mind-service.ts` | Mind service management utilities (startMindFull, startSpiritFull with schedule loading) |
+**`packages/daemon/src/web/`** — `server.ts`/`app.ts` (route composition, `AppType` export), `middleware/auth.ts` (cookie auth, `requireSelf`/`requireAdmin`), `api/` (one module per resource), `api/v1/` (public API: conversations, channels, events, feed), `api/volute/` (volute platform chat/conversations/channels)
 
-### packages/daemon/src/lib/delivery/
+**`packages/platforms/src/drivers/`** — external platform drivers (discord, slack, telegram): read/send + slug-to-ID resolution
 
-| File | Purpose |
-|------|---------|
-| `delivery-manager.ts` | Message delivery orchestration |
-| `delivery-router.ts` | Message delivery routing logic |
-| `message-delivery.ts` | Message delivery primitives |
+Load-bearing details worth knowing:
 
-### packages/daemon/src/lib/events/
-
-| File | Purpose |
-|------|---------|
-| `activity-events.ts` | In-process pub-sub for activity events (mind start/stop/active/idle) |
-| `brain-presence.ts` | Brain (human user) presence tracking |
-| `conversation-events.ts` | In-process pub-sub for conversation events, consumed by SSE endpoint |
-| `conversations.ts` | Conversation and message CRUD, multi-participant conversations |
-| `event-sequencer.ts` | Event ordering and sequencing |
-| `mind-events.ts` | Mind event pub-sub system |
-| `mind-activity-tracker.ts` | Mind activity tracking with idle timeout detection |
-
-### packages/daemon/src/web/
-
-| Path | Purpose |
-|------|---------|
-| `server.ts` | Hono app setup, static file serving, route mounting |
-| `app.ts` | Hono route composition, middleware setup, health endpoint |
-| `middleware/auth.ts` | Cookie-based auth middleware, in-memory session map |
-| `api/auth.ts` | Login, register, logout, user management |
-| `api/minds.ts` | List/start/stop minds, message proxy with persistence |
-| `api/activity.ts` | Activity event streaming |
-| `api/bridges.ts` | Bridge management per mind |
-| `api/channels.ts` | Channel listing and management |
-| `api/env.ts` | Environment variable management |
-| `api/extensions.ts` | Extension management |
-| `api/file-sharing.ts` | Mind-to-mind file sharing |
-| `api/files.ts` | Read/write mind files |
-| `api/keys.ts` | API key management |
-| `api/logs.ts` | Log streaming |
-| `api/mind-skills.ts` | Per-mind skill management |
-| `api/prompts.ts` | Mind prompt management |
-| `api/schedules.ts` | CRUD schedules + webhook endpoint |
-| `api/setup.ts` | Initial setup endpoints |
-| `api/skills.ts` | Shared skill management |
-| `api/system.ts` | System info, status, AI service config + OAuth flows |
-| `api/typing.ts` | Typing indicator endpoints |
-| `api/update.ts` | Update check endpoint |
-| `api/variants.ts` | Variant listing |
-| `api/volute/channels.ts` | Volute platform channel operations |
-| `api/volute/chat.ts` | POST /chat — fire-and-forget to minds; GET /conversations/:id/events — SSE |
-| `api/volute/conversations.ts` | Conversation CRUD, group creation, participant management |
-| `api/v1/conversations.ts` | V1 API: conversation endpoints (also mounted at /api/conversations) |
-| `api/v1/events.ts` | V1 API: event streaming |
+- `lib/config/setup.ts` — Global config (`~/.volute/system/config.json`) with setup state, `defaultSkills`, AI config types, `isSetupComplete()`, `isImagegenEnabled()`. Provider credentials (`ai.providers`, `imagegen.providers`) are split into a root-only `secrets.json` (0600) while `config.json` stays host-readable (0644); `readGlobalConfig()`/`writeGlobalConfig()` merge/split transparently
+- `lib/chat/system-events.ts` — System events: `deliverEvent` (environment → mind, `immediate`/`next-turn`), drain/format for next-turn context blocks, sleep queue flush, reflection capture, `recordNotice` failure-notice shim. Backed by the `system_events` table
+- `lib/chat/system-chat.ts` — `ensureSystemDM` bootstraps the genuine spirit↔mind DM (hand-written nurture); automated traffic goes through system events, not this DM
+- `lib/api-tokens.ts` — Durable per-user API tokens (`vmt_`-prefixed, SHA-256 hashed at rest); distinct from the in-memory native-mind token map in `daemon/mind-tokens.ts`
+- `lib/mind/registry.ts` — Mind registry backed by the `minds` DB table, port allocation (4100+), `running` field, `mindDir()`/`stateDir()`/`voluteSystemDir()` path helpers
+- `lib/skills.ts` — Skill install/update with upstream tracking (`.upstream.json`), hook shim generation from SKILL.md frontmatter, `STANDARD_SKILLS`/`SEED_SKILLS`
 
 ## Tech stack
 
@@ -395,41 +252,54 @@ Mind-scoped commands (`chat`, `clock`, `skill`) use `--mind <name>` or `VOLUTE_M
 - **Language**: TypeScript (strict, ES2022, NodeNext modules)
 - **Agent SDK**: `@anthropic-ai/claude-agent-sdk`
 - **Web server**: Hono + @hono/node-server
-- **Frontend**: Svelte + Vite
+- **Frontend**: Svelte 5 (runes) + Vite
 - **Database**: libsql (synchronous better-sqlite3-compatible API), drizzle-orm
 - **Auth**: bcryptjs
 - **Discord**: discord.js
 - **AI providers**: @earendil-works/pi-ai (multi-provider completion with OAuth support)
 - **Scheduling**: cron-parser
+- **Lint/format**: Biome; git hooks via lefthook
 - **CLI build**: tsup (compiles CLI + daemon → `dist/`)
 - **Frontend build**: Vite (→ `dist/web-assets/`)
 - **Package manager**: npm
+
+## Code conventions
+
+Rules with a canonical helper or enforcing test hold up; prose-only rules drift. When you add a convention, point at the one true helper.
+
+- **Timestamps**: DB timestamps are zone-less UTC text (`datetime('now')` → `"YYYY-MM-DD HH:MM:SS"`). `new Date(row.created_at)` parses that as *local* time — a recurring production bug (PR #706). Always parse via `parseDbTimestamp()` (`packages/daemon/src/lib/util/time.ts`); frontend timeline code uses `normalizeTs()` in `packages/web/src/ui/lib/timeline-today.ts`. Exception: the `sessions` table stores integer epoch millis.
+- **Hono API routes**: each module in `web/api/` is a single chained expression — `new Hono<AuthEnv>().get(...).post(...)`. Don't split the chain into statements or drop `<AuthEnv>`: routes silently vanish from the exported `AppType` (`app.ts` chains all mounts into `routes`), breaking the CLI's typed client. Guards go inline per route: `requireSelf()` is a factory (call it), `requireAdmin`/`requireAdminOrSystem` are plain middleware. Most mind routes mount at both `/api/minds` and `/api/v1/minds`.
+- **API responses**: errors are `c.json({ error: string }, status)` — 401 `"Unauthorized"`, 403 `"Forbidden"`, 404 `"X not found"`, 400 for validation. Success is the payload or `{ ok: true }`. Wrap `await c.req.json()` in try/catch → 400 `"Invalid JSON body"`, or use `zValidator("json", schema)` + `c.req.valid("json")`.
+- **Two API clients, deliberately**: the CLI uses the typed Hono RPC client (`packages/cli/src/lib/api-client.ts` — `daemonFetch(urlOf(getClient().api.minds[":name"].$url({ param })))`). The web frontend uses a hand-written plain-fetch wrapper (`packages/web/src/ui/lib/client.ts` over `@volute/api/client`, `/api/v1/` paths) — intentionally not Hono RPC so it works through the worker proxy. Add frontend endpoints there as functions; don't unify the two.
+- **CLI commands**: use the `command()`/`subcommands()` builder from `packages/cli/src/lib/command.ts` (name/description/args/flags/examples/run) and end the file with `export const run = cmd.execute`. Don't use raw `parseArgs` directly. Errors: `console.error(...)` + `process.exit(1)`.
+- **Svelte 5, runes only**: `$props()`, `$state`, `$derived`, `$effect`; DOM events are `onclick=`, not `on:click`; no `export let` or `$:`. Shared reactive state is exported `$state({...})` objects in `*.svelte.ts` modules (see `packages/web/src/ui/lib/stores.svelte.ts`) — not `svelte/store`. Reactive collections use `SvelteMap`/`SvelteSet` from `svelte/reactivity`. Style with `@volute/ui` CSS custom properties in scoped `<style>` blocks.
+- **SSE**: the frontend consumes one unified stream (`/api/v1/events`) via `subscribe(handler)` from `packages/web/src/ui/lib/connection.svelte.ts` (fetch + ReadableStream, `?since=` reconnection, backoff). Don't open new `EventSource`s or per-conversation streams.
+- **Logging**: daemon modules use the structured logger — `import log from ".../util/logger.js"`, then `log.child("category")` and `log.info/warn/error(msg, data)`, `log.errorData(err)` for errors. Bare `console.*` is for CLI user-facing output only.
+- **Child processes**: use the async `exec`/`gitExec` wrappers in `lib/util/exec.ts`. No sync exec (`execFileSync`/`execSync`) on daemon request or mind-lifecycle paths — it blocks the event loop for every mind. Sync is tolerated only in one-shot CLI/setup detection code.
+- **Imports**: relative imports need explicit `.js` extensions (NodeNext ESM), even in `.ts` files.
+- **Biome**: 2-space indent, 100-char lines, organize-imports. `noExplicitAny` and `noNonNullAssertion` are off — `any` and `!` are allowed where they help.
+- **lefthook**: pre-commit runs `biome check --write`, `tsc --noEmit`, template typecheck, and svelte-check; pre-push runs `npm test`. If a commit is rejected, fix the code — never `--no-verify`.
 
 ## Key patterns
 
 - Shared UI components live in `@volute/ui` (`packages/ui/`) — both the main app and extensions import from this package. Theme CSS variables, icons, and markdown rendering are also shared via `@volute/ui`
 - `ext-theme.css` is auto-generated from `@volute/ui`'s `theme.css` + `base.css` during `build:ext`. Extensions load it via `<link>` in their iframe `index.html`
 - Single daemon process manages all minds, bridges, and schedules
-- CLI commands proxy through daemon HTTP API via `daemonFetch()` in `daemon-client.ts`
-- Centralized registry in the `minds` DB table maps mind names to ports, tracks `running` state; variants are rows with a `parent` field
-- `resolveMind()` does DB lookups to resolve mind names (including variants by their standalone name)
+- Centralized registry in the `minds` DB table maps mind names to ports, tracks `running` state; variants are rows with a `parent` field. `resolveMind()` does DB lookups to resolve mind names (including variants by their standalone name)
 - MindManager spawns mind servers as child processes with crash recovery (3s delay) and merge-restart
 - Channel URIs use human-readable slugs: `discord:my-server/general`, `slack:workspace/channel`, `telegram:@username`, `@mind-name`, `#channel-name`. Volute channels use bare slugs (no platform prefix); external platform slugs use `platform:identifier` format. `resolvePlatformId()` extracts the part after the colon, or returns the full string for bare slugs.
 - Channels have optional settings stored in the `channels` DB table: description, rules, char_limit, private. Settings are managed via `PATCH /api/v1/channels/:name` and returned in `GET /api/v1/channels/:name`.
-- Bridge implementations are built-in (`packages/daemon/src/lib/bridges/`); per-mind bridge config lives in `<mindDir>/.mind/connectors/<type>/`
-- Mind message flow: `volute-server` (JSON req/res) → `Router` (routing/formatting/batching) → `MessageHandler` (mind or file destination); web dashboard receives updates via SSE event channel
+- Mind message flow: `volute-server` (JSON req/res) → `Router` (formatting/batching) → `MessageHandler` (mind or file destination); web dashboard receives updates via SSE event channel. Live message routing happens daemon-side (`delivery/`)
 - `MessageHandler` interface: `handle(content, meta, listener) => unsubscribe`; `HandlerResolver`: `(key: string) => MessageHandler`
 - Message routing via `routes.json` rules with glob matching, `isDM`/`participants` matching, template expansion (`${sender}`, `${channel}`), and file/mind destinations
-- Channel gating (`gateUnmatched`) holds unrecognized channels in `inbox/` until the mind adds a routing rule
+- Channel gating (`gateUnmatched`, default on) holds unrecognized channels in `inbox/` until the mind adds a routing rule
 - Multi-participant conversations with fan-out to all mind participants; mind users tracked in the `users` table with `user_type: "mind"`
 - Variants use git worktrees with detached server processes; tracked as rows in the `minds` DB table with a `parent` field
-- All child process execution must be async (never `execFileSync`) to avoid blocking the event loop
-- Arg parsing via `packages/cli/src/lib/parse-args.ts` — type-safe with positional args and typed flags
 - Mind system prompt built from: SOUL.md + VOLUTE.md + MEMORY.md
 - Model configurable via `VOLUTE_MODEL` env var
 - Auto-commit hooks track file changes in mind `home/` directory
 - Centralized message persistence in `mind_history` table via daemon routes (text + tool call summaries). Turn summarizer fires on each `done` event to generate a `summary` row (AI-powered via `aiComplete()` with deterministic fallback)
-- System AI service configured via `ai` field in GlobalConfig (`~/.volute/config.json`), supports multiple providers with API key, OAuth, or env var auth; admin selects enabled models via web UI
+- System AI service configured via `ai` field in GlobalConfig (`~/.volute/system/config.json`), supports multiple providers with API key, OAuth, or env var auth; admin selects enabled models via web UI
 - Mind process isolation: sandbox mode (local installs, `@anthropic-ai/sandbox-runtime`), per-user mode (system installs, Linux/macOS), or none. Configured via `volute setup`, stored in `config.json` as `setup.isolation`
 - `volute setup` is the required first-run command; CLI commands are gated on `isSetupComplete()` with auto-migration for existing users via `migrateSetupConfig()`
 - Built-in skills live in `skills/` at repo root and are synced to the shared pool (`~/.volute/skills/`) on daemon startup via `syncBuiltinSkills()`. Extensions contribute skills via `skillsDir` in their manifest; skills with `standardSkill: true` are added to the configurable default skill set. The default skill set is stored in `~/.volute/system/config.json` (`defaultSkills` array) and initialized on first daemon start from `STANDARD_SKILLS` + extension standard skills. Admins can manage defaults via the web UI (Settings → Skills) or `volute skill defaults` CLI. `SEED_SKILLS` (orientation, memory) are installed for seed minds. Skills are installed from the shared pool with upstream tracking (`.upstream.json`) for independent updates.
@@ -444,7 +314,7 @@ The daemon is a single privileged process (root on `--system`/Docker) that expos
   - This is enforced by `test/authz-coverage.test.ts`, which fails CI if a new `/:name` route lacks a guard. A genuinely-public route, or one that does its own in-handler authz (participant/owner check), must be added to that test's `AUTHZ_EXEMPT` list **with a documented reason** — don't suppress the test silently.
 - **Never expose secrets over the API to non-owners.** Env values, tokens, and keys must be `requireAdmin`/`requireSelf`-gated. The sandbox blocks on-disk reads of `env.json`/`volute.db`/`secrets.json` (provider API keys + OAuth tokens); don't let an API endpoint hand the same data back. Note `config.json` itself is host-readable (0644) and must never carry secrets — those belong in `secrets.json` (0600, root-only on system installs).
 - **Contain attacker-controllable filesystem paths.** Any fs operation (read/write/delete) whose path includes a request value, mind name, filename, or config field (e.g. `profile.avatar`) must go through `resolveWithinBase()` / `safeResolveWithinBase()` in `packages/daemon/src/lib/util/paths.ts`, or be reduced to a `basename()`. `resolve(base, userPath)` alone does **not** prevent `../` or absolute-path escape. Remember fs operations in `web/api/*` run with **daemon** privileges, not the mind's sandbox.
-- **Treat mind-authored and cross-user content as untrusted for XSS.** Pages, notes, profiles, and messages are authored by minds/other users. Render markdown through the DOMPurify-backed renderer (`@volute/ui` `renderMarkdown`, or `isomorphic-dompurify` server-side), and serve mind-authored HTML with a restrictive `Content-Security-Policy` (see `packages/extensions/pages/src/routes.ts`). Plain Svelte interpolation auto-escapes and is safe; `{@html ...}` is not.
+- **Treat mind-authored and cross-user content as untrusted for XSS.** Pages, notes, profiles, and messages are authored by minds/other users. Render markdown through the DOMPurify-backed renderer (`@volute/ui` `renderMarkdown`, or `isomorphic-dompurify` server-side), and serve mind-authored HTML with a restrictive `Content-Security-Policy` (see `packages/extensions/pages/src/routes.ts`). Plain Svelte interpolation auto-escapes and is safe; `{@html ...}` is not. Extension- or mind-supplied SVG icons injected with `{@html}` must go through `sanitizeSvg` (`@volute/ui/sanitize`).
 - **Use parameterized DB queries only.** Drizzle's query builder and `sql\`... ${value} ...\`` template bind parameters. Never build SQL with string concatenation or `sql.raw()` on untrusted input.
 - **Build subprocess commands as argv arrays, never shell strings.** Use the `exec`/`gitExec` wrappers in `packages/daemon/src/lib/util/exec.ts` (no `shell: true`, no string interpolation into a command). Validate branch/variant names via `validateBranchName()`.
 
@@ -473,7 +343,7 @@ sudo volute setup --name myserver --system --host 0.0.0.0
 
 ### Mind isolation
 
-Three isolation modes, configured via `volute setup` (stored in `~/.volute/config.json` as `setup.isolation`):
+Three isolation modes, configured via `volute setup` (stored in `~/.volute/system/config.json` as `setup.isolation`):
 
 - **`sandbox`** — Local installs use `@anthropic-ai/sandbox-runtime` to sandbox mind processes. Each mind can only write to its own directory; reads to other minds' dirs, system state (`volute.db`, `env.json`), and sensitive user dirs (`.ssh`, `.aws`, `.gnupg`, `.config`) are blocked. Sandbox wrapping happens per-mind at spawn time. Disable at runtime with `volute up --no-sandbox` or `VOLUTE_SANDBOX=0`. **Note:** Codex template minds are excluded from sandbox wrapping on macOS — the Anthropic sandbox blocks Mach IPC services the Codex binary needs, and Codex's own seatbelt sandbox has an upstream bug (`mullvad/system-configuration-rs#59`). Codex minds currently run without process-level sandbox isolation.
 - **`user`** — System installs create per-mind OS users (`mind-<name>`, prefix configurable via `VOLUTE_USER_PREFIX`). On Linux, uses `useradd`/`runuser`; on macOS, uses `dscl`/`sudo -u`. Mind and bridge processes spawn with the mind's uid/gid. Requires root.
@@ -486,19 +356,20 @@ On production deployments, `VOLUTE_MINDS_DIR` separates mind directories from th
 ```sh
 npm install              # install dependencies
 npm run dev              # run CLI in dev mode (via tsx)
-npm run build            # build CLI + web frontend
+npm run build            # build extensions + CLI/daemon (tsup) + web frontend (vite)
 npm run dev:web          # run frontend dev server
 npm test                 # run tests
 ```
 
 The CLI is installed globally via `npm link` (requires `npm run build` first) or run in dev mode via `tsx src/cli.ts`.
 
-Tests run via `npm test` which uses `node --import tsx --import ./test/setup.ts --test` with concurrency and exclusions configured in package.json.
+Build order matters: `npm run build` runs `build:ext` (extensions + `ext-theme.css`) before tsup and the web build. tsup keeps several deps external (`libsql`, `sharp`, `isomorphic-dompurify`, pi-ai, the agent SDK) — see `tsup.config.ts` before adding one.
 
 ### Testing
 
 - **Unit tests** (`npm test`): Primary safety net. Run before every PR.
-- **Daemon e2e** (`test/daemon-e2e.test.ts`): Tests daemon API without Docker, spawning a real daemon and mind. Runs via `npm run test:e2e` (also in CI). Add tests here for cross-process daemon behavior: lifecycle, crash recovery, delivery, variants.
+- Tests use `node:test` (`describe`/`it`) + `node:assert/strict`, files at `test/*.test.ts`. **Always run via `npm test`** — it imports `test/setup.ts`, which redirects `VOLUTE_HOME` to a per-process temp dir and runs DB migrations. Running `node --test` without it hits the live `~/.volute` and can corrupt a real installation. Use `mkdtempSync` for scratch dirs.
+- **Daemon e2e** (`test/daemon-e2e.test.ts`): Tests daemon API without Docker, spawning a real daemon and mind. Runs via `npm run test:e2e` (also in CI; excluded from the default `npm test` glob). Add tests here for cross-process daemon behavior: lifecycle, crash recovery, delivery, variants.
 - **Docker e2e** (`test/docker-e2e.sh`): Full Docker lifecycle with user isolation. Run for PRs touching daemon, mind lifecycle, or Docker setup.
 - **Integration testing**: For manual testing with real minds in Docker — see `docs/integration-testing.md` for setup scripts, test mind fixtures, and interaction guidelines. Use `test/integration-setup.sh` to spin up an environment and `test/integration-teardown.sh` to clean up.
 
