@@ -3,7 +3,9 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { describe, it } from "node:test";
+import { removeProviderConfig, saveProviderConfig } from "../packages/daemon/src/lib/ai-service.js";
 import {
+  injectPiProviderCredentials,
   syncProviderToMinds,
   writeClaudeCredentials,
   writePiProviderKey,
@@ -99,6 +101,52 @@ describe("writePiProviderOAuth", () => {
     await writePiProviderOAuth(piAgentDir, "mymind", "github-copilot", OAUTH);
     const auth = JSON.parse(readFileSync(resolve(piAgentDir, "auth.json"), "utf-8"));
     assert.deepEqual(auth, { "github-copilot": { type: "oauth", ...OAUTH } });
+  });
+});
+
+describe("injectPiProviderCredentials", () => {
+  it("degrades to the static api_key + env var (never re-refreshing) when OAuth is transiently failing", async () => {
+    // anthropic is registered in pi-ai's OAuth registry, so the expired grant
+    // actually attempts a refresh; the failing fetch makes it throw. The provider
+    // ALSO has a static key configured — the fallback must land that key as an
+    // api_key entry (not a flattened OAuth blob) and set the env-var fallback.
+    const dir = tmpRoot("pi-inject-blip");
+    const piAgentDir = resolve(dir, ".mind", "pi-agent");
+    const realFetch = globalThis.fetch;
+    const savedEnvKey = process.env.ANTHROPIC_API_KEY;
+    delete process.env.ANTHROPIC_API_KEY;
+    globalThis.fetch = (async () => {
+      throw new TypeError("token endpoint unreachable");
+    }) as typeof fetch;
+    const env: Record<string, string | undefined> = {};
+    try {
+      saveProviderConfig("anthropic", {
+        oauth: { access: "expired", refresh: "r", expires: 0 },
+        apiKey: "static-anthropic-key",
+      });
+      await injectPiProviderCredentials({
+        provider: "anthropic",
+        piAgentDir,
+        baseName: "mymind",
+        mindName: "mymind",
+        env,
+      });
+
+      const auth = JSON.parse(readFileSync(resolve(piAgentDir, "auth.json"), "utf-8"));
+      assert.equal(
+        auth.anthropic.type,
+        "api_key",
+        "must write an api_key entry, not an oauth blob",
+      );
+      assert.equal(auth.anthropic.key, "static-anthropic-key");
+      assert.equal(env.PI_CODING_AGENT_DIR, piAgentDir);
+      assert.equal(env.ANTHROPIC_API_KEY, "static-anthropic-key", "env-var fallback must be set");
+    } finally {
+      globalThis.fetch = realFetch;
+      if (savedEnvKey !== undefined) process.env.ANTHROPIC_API_KEY = savedEnvKey;
+      else delete process.env.ANTHROPIC_API_KEY;
+      removeProviderConfig("anthropic");
+    }
   });
 });
 

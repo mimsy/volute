@@ -13,6 +13,7 @@ import {
   readGlobalConfig,
   writeGlobalConfig,
 } from "../config/setup.js";
+import log from "../util/logger.js";
 import {
   CodexNotEntitledError,
   codexGenerate,
@@ -20,6 +21,8 @@ import {
   probeCodexEntitlement,
 } from "./imagegen-codex.js";
 import { XaiNotEntitledError, xaiGenerate, xaiSearch } from "./imagegen-xai.js";
+
+const igLog = log.child("imagegen");
 
 // --- Provider registry ---
 
@@ -370,20 +373,34 @@ export async function searchModels(
 
   // Search all configured providers in parallel
   const searches: Promise<ModelSearchResult[]>[] = [];
+  let transientError: OAuthRefreshError | undefined;
   for (const [id, def] of Object.entries(PROVIDERS)) {
     let cred: Credential | undefined;
     try {
       cred = await resolveCredential(id);
     } catch (err) {
       // A transient OAuth outage on one provider shouldn't fail search across
-      // all of them — skip it and let the others answer.
+      // all of them — skip it and let the others answer. If it turns out to be
+      // the only configured provider, we rethrow it below rather than reporting
+      // "not configured".
       if (!(err instanceof OAuthRefreshError)) throw err;
+      igLog.warn(`skipping ${id} in model search: OAuth temporarily unavailable`);
+      transientError = err;
       continue;
     }
     if (!cred) continue;
-    searches.push(def.search(query || "text to image", cred).catch(() => []));
+    searches.push(
+      def.search(query || "text to image", cred).catch((err) => {
+        igLog.warn(`model search failed for ${id}`, log.errorData(err));
+        return [];
+      }),
+    );
   }
   if (searches.length === 0) {
+    // Nothing could answer. If the only configured provider was skipped for a
+    // transient auth failure, surface that (never "not configured") so the mind
+    // isn't told to reconfigure a correctly-configured provider (#701).
+    if (transientError) throw transientError;
     throw new Error("No imagegen providers configured");
   }
   return (await Promise.all(searches)).flat();

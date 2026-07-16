@@ -32,7 +32,7 @@ const authContext = defaultProviderAuthContext();
  * auth. Replaces the old getEnvApiKey/config lookups. Returns configKey as a
  * fallback when the provider or a representative model is unavailable.
  */
-async function resolveProviderKey(
+export async function resolveProviderKey(
   providerId: string,
   configKey?: string,
 ): Promise<string | undefined> {
@@ -219,6 +219,18 @@ export async function missingCredentialWarning(
   // a missing per-mind env.json reads as empty and the shared env still applies.
   const { loadMergedEnv } = await import("./config/env.js");
   if (loadMergedEnv(mindName)[envVar]) return null;
+
+  // No usable key. If the provider HAS OAuth configured, resolveApiKey couldn't
+  // derive a token from it right now (it swallows a transient OAuthRefreshError
+  // and falls through) — a temporary auth-server/refresh failure, not a missing
+  // configuration. Never advise reconfiguring a correctly-configured provider (#701).
+  if (getAiConfig()?.providers[provider]?.oauth) {
+    return (
+      `${provider} authentication is temporarily unavailable, so ${mindName} will start but ` +
+      `may stay silent until it recovers (OAuth token refresh is failing — usually transient). ` +
+      `If it persists, re-check the ${provider} provider in the web dashboard (Settings → Providers).`
+    );
+  }
   return (
     `No ${provider} credentials are configured, so ${mindName} will start but stay silent ` +
     `until a key is available. Set one with \`volute env set ${envVar} <key> --mind ${mindName}\`, ` +

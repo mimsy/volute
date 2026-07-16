@@ -970,7 +970,9 @@ describe("imagegen transient OAuth failure", () => {
     await assert.rejects(generateImage("openai-codex:gpt-image-2", "a cat"), (err: unknown) => {
       assert.ok(err instanceof Error);
       assert.match(err.message, /temporarily unavailable/i);
+      // Dodge BOTH of the skill's fallback-classifier regexes.
       assert.doesNotMatch(err.message, /not configured/i);
+      assert.doesNotMatch(err.message, /No .* API key/i);
       return true;
     });
   });
@@ -983,18 +985,83 @@ describe("imagegen transient OAuth failure", () => {
     );
   });
 
-  it("searchModels skips a transiently-failing provider instead of failing the whole search", async () => {
+  it("resolveCredential degrades xai to its metered XAI_API_KEY when OAuth refresh fails", async () => {
+    // xai has both paths: subscription OAuth + a metered key. A transient OAuth
+    // failure must fall through to the env key — pinning that oauthError is only
+    // rethrown AFTER the env check, so xai keeps working during a blip.
+    registerXaiOAuthProvider();
+    const savedKey = process.env.XAI_API_KEY;
+    process.env.XAI_API_KEY = "metered-key";
+    globalThis.fetch = (async () => {
+      throw new TypeError("token endpoint unreachable");
+    }) as typeof fetch;
+    try {
+      const config = readGlobalConfig();
+      config.ai = {
+        providers: { xai: { oauth: { access: "expired", refresh: "r", expires: 0 } } },
+      };
+      writeGlobalConfig(config);
+      assert.deepEqual(await resolveCredential("xai"), { kind: "api_key", token: "metered-key" });
+    } finally {
+      if (savedKey !== undefined) process.env.XAI_API_KEY = savedKey;
+      else delete process.env.XAI_API_KEY;
+    }
+  });
+
+  it("searchModels skips a transiently-failing provider but still returns healthy providers' models", async () => {
+    // Route the fetch by URL: openrouter's model list succeeds, everything else
+    // (the codex OAuth token endpoint) throws. This proves the skip is scoped to
+    // the blipping provider — not that the whole search silently returned [].
+    globalThis.fetch = (async (url: string | URL) => {
+      const href = typeof url === "string" ? url : url.toString();
+      if (href.includes("openrouter.ai")) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ data: [{ id: "acme/painter", name: "Painter" }] }),
+        } as Response;
+      }
+      throw new TypeError("everything else unreachable");
+    }) as typeof fetch;
+    configureCodexOAuth(); // codex OAuth refresh will throw (transient) → skipped
+    saveProviderConfig("openrouter", "or-key"); // a second, healthy, key-configured provider
+
+    // openrouterSearch filters its model list by the query string, so search for
+    // a term the fake model matches.
+    const results = await searchModels("painter");
+    assert.ok(
+      results.some((m) => m.id === "openrouter:acme/painter"),
+      "the healthy provider's model must still appear after the blipping one is skipped",
+    );
+  });
+
+  it("searchModels rethrows the transient error (not 'not configured') when the only provider blips", async () => {
+    // With codex the sole configured provider and it blipping, the skip leaves
+    // `searches` empty — it must rethrow the transient error, never collapse into
+    // "No imagegen providers configured" (the forbidden false-negative, #701).
+    const savedEnv = {
+      replicate: process.env.REPLICATE_API_TOKEN,
+      openrouter: process.env.OPENROUTER_API_KEY,
+      xai: process.env.XAI_API_KEY,
+    };
+    delete process.env.REPLICATE_API_TOKEN;
+    delete process.env.OPENROUTER_API_KEY;
+    delete process.env.XAI_API_KEY;
     globalThis.fetch = (async () => {
       throw new TypeError("everything unreachable");
     }) as typeof fetch;
-    configureCodexOAuth(); // codex OAuth refresh will throw (transient)
-    saveProviderConfig("openrouter", "or-key"); // a second, key-configured provider
-
-    // codex resolveCredential throws OAuthRefreshError → the loop must skip it;
-    // openrouter's search runs (its fetch throws → per-search .catch → []).
-    // The whole search resolves rather than rejecting with the codex error.
-    const results = await searchModels();
-    assert.deepEqual(results, []);
+    try {
+      configureCodexOAuth(); // codex is the ONLY configured provider, and it's blipping
+      await assert.rejects(searchModels(), (err: unknown) => {
+        assert.ok(err instanceof OAuthRefreshError, "should rethrow the transient error");
+        assert.doesNotMatch((err as Error).message, /not configured/i);
+        return true;
+      });
+    } finally {
+      if (savedEnv.replicate !== undefined) process.env.REPLICATE_API_TOKEN = savedEnv.replicate;
+      if (savedEnv.openrouter !== undefined) process.env.OPENROUTER_API_KEY = savedEnv.openrouter;
+      if (savedEnv.xai !== undefined) process.env.XAI_API_KEY = savedEnv.xai;
+    }
   });
 });
 
@@ -1095,14 +1162,19 @@ describe("imagegen skill daemon error reporting", () => {
     it("surfaces a transient-auth error instead of silently falling back", async () => {
       // A provider whose OAuth is temporarily failing must NOT be treated as
       // "not configured" (which would swap to a direct replicate fallback and
-      // tell the mind to reconfigure a correctly-configured provider).
+      // tell the mind to reconfigure a correctly-configured provider). Build the
+      // daemon error body from the REAL OAuthRefreshError message so a future
+      // reword that starts matching the skill's fallback regexes fails this test.
       setDaemonEnv(true);
-      const transient =
-        "openai-codex authentication is temporarily unavailable (OAuth token refresh failed).";
+      const transient = new OAuthRefreshError("openai-codex", new Error("x")).message;
       mockFetch(() => jsonResponse(500, { error: transient }));
       await assert.rejects(
         startImagegenJob("openai-codex:gpt-image-2", "prompt", "file"),
-        /temporarily unavailable/,
+        (err) => {
+          assert.ok(err instanceof Error);
+          assert.equal(err.message, transient, "the exact daemon message must reach the mind");
+          return true;
+        },
       );
     });
 

@@ -1,11 +1,42 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { getAiConfig } from "../ai-service.js";
+import {
+  getAiConfig,
+  OAuthRefreshError,
+  resolveApiKey,
+  resolveOAuthCredentials,
+  resolveProviderKey,
+} from "../ai-service.js";
 import { chownMindDir, isIsolationEnabled } from "../mind/isolation.js";
 import { findMind, mindDir } from "../mind/registry.js";
 import log from "../util/logger.js";
 
 const slog = log.child("cred-sync");
+
+/**
+ * Providers whose OAuth provider is registered only in the daemon's pi-ai, not
+ * the mind's — so the mind can't resolve their OAuth blob and must consume the
+ * already-derived access token as a flat api_key (the daemon stays the refresh
+ * authority).
+ */
+export const DAEMON_ONLY_OAUTH = new Set(["xai"]);
+
+/**
+ * Provider → env var pi-ai reads as an api-key fallback. Set alongside the
+ * auth.json entry because the sandbox may block proper-lockfile from reading
+ * auth.json, so the env var keeps getEnvApiKey() in pi-ai working.
+ */
+const PI_PROVIDER_ENV_VAR: Record<string, string> = {
+  openrouter: "OPENROUTER_API_KEY",
+  openai: "OPENAI_API_KEY",
+  anthropic: "ANTHROPIC_API_KEY",
+  google: "GEMINI_API_KEY",
+  groq: "GROQ_API_KEY",
+  cerebras: "CEREBRAS_API_KEY",
+  xai: "XAI_API_KEY",
+  mistral: "MISTRAL_API_KEY",
+  zai: "ZAI_API_KEY",
+};
 
 export type AnthropicOauth = {
   access: string;
@@ -92,6 +123,76 @@ export async function writePiProviderOAuth(
   writeFileSync(authPath, JSON.stringify(authData, null, 2), { mode: 0o600 });
   if (isIsolationEnabled()) {
     await chownMindDir(piAgentDir, baseName);
+  }
+}
+
+/**
+ * Resolve and write a pi mind's provider credential into its auth.json + spawn
+ * env (mutated in place). Prefers the full OAuth blob so pi-ai's own resolution
+ * runs inside the mind; {@link DAEMON_ONLY_OAUTH} providers and static-key
+ * providers get a flat api_key plus the provider env-var fallback.
+ *
+ * A transient OAuth refresh failure ({@link OAuthRefreshError}) never crashes
+ * spawn: it falls back to a STATIC key only. It deliberately does NOT retry via
+ * resolveApiKey, which would re-attempt the refresh (a second network call +
+ * error log) and — worse — let a blip-then-success on the retry flatten the
+ * rotated OAuth blob into an api_key entry, losing the baseUrl-deriving shape
+ * (the 421 Misdirected Request case). Sets env.PI_CODING_AGENT_DIR when a
+ * credential is written.
+ */
+export async function injectPiProviderCredentials(opts: {
+  provider: string;
+  piAgentDir: string;
+  baseName: string;
+  mindName: string;
+  env: Record<string, string | undefined>;
+}): Promise<void> {
+  const { provider, piAgentDir, baseName, mindName, env } = opts;
+
+  let oauthCreds: Awaited<ReturnType<typeof resolveOAuthCredentials>>;
+  let oauthError: OAuthRefreshError | undefined;
+  try {
+    oauthCreds = await resolveOAuthCredentials(provider);
+  } catch (err) {
+    if (!(err instanceof OAuthRefreshError)) throw err;
+    slog.warn(
+      `OAuth token refresh failing for provider "${provider}" (mind ${mindName}); ` +
+        `falling back to a static key if available`,
+      log.errorData(err),
+    );
+    oauthError = err;
+  }
+
+  if (oauthCreds && !DAEMON_ONLY_OAUTH.has(provider)) {
+    await writePiProviderOAuth(piAgentDir, baseName, provider, oauthCreds);
+    env.PI_CODING_AGENT_DIR = piAgentDir;
+    return;
+  }
+
+  // DAEMON_ONLY_OAUTH providers (xai) hand the resolved access token to the mind
+  // as an api_key; otherwise resolve a key (static/env), avoiding a refresh retry
+  // when OAuth is transiently failing.
+  let apiKey: string | undefined;
+  if (oauthCreds) {
+    apiKey = oauthCreds.access;
+  } else if (oauthError) {
+    apiKey = await resolveProviderKey(provider, getAiConfig()?.providers[provider]?.apiKey);
+  } else {
+    apiKey = await resolveApiKey(provider);
+  }
+
+  if (apiKey) {
+    await writePiProviderKey(piAgentDir, baseName, provider, apiKey);
+    env.PI_CODING_AGENT_DIR = piAgentDir;
+    const providerEnv = PI_PROVIDER_ENV_VAR[provider];
+    if (providerEnv) env[providerEnv] = apiKey;
+  } else if (oauthError) {
+    slog.warn(
+      `OAuth token refresh is temporarily failing for provider "${provider}" and no static key ` +
+        `is available — mind ${mindName} may start but stay silent until it recovers`,
+    );
+  } else {
+    slog.warn(`no API key found for provider "${provider}" — mind ${mindName} may fail to start`);
   }
 }
 
