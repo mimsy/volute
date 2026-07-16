@@ -59,9 +59,13 @@ describe("template helpers", () => {
       rmSync(composedDir, { recursive: true, force: true });
     }
 
-    // package.json should exist (renamed from .tmpl)
+    // package.json ships under its real name (no .tmpl rename anymore)
     assert.ok(existsSync(join(dest, "package.json")));
     assert.ok(!existsSync(join(dest, "package.json.tmpl")));
+
+    // gitignore is renamed to .gitignore at scaffold time
+    assert.ok(existsSync(join(dest, ".gitignore")));
+    assert.ok(!existsSync(join(dest, "gitignore")));
 
     // Name substitution should have happened
     const pkg = readFileSync(join(dest, "package.json"), "utf-8");

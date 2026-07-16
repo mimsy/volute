@@ -57,14 +57,5 @@
       "groupName": "build-tools",
       "matchPackageNames": ["vite", "tsup", "typescript"]
     }
-  ],
-  "customManagers": [
-    {
-      "customType": "regex",
-      "managerFilePatterns": ["templates/.+/package\\.json\\.tmpl$"],
-      "matchStrings": ["\"(?<depName>@?[^\"]+)\":\\s*\"(?<currentValue>[^\"]+)\""],
-      "datasourceTemplate": "npm",
-      "versioningTemplate": "npm"
-    }
   ]
 }
