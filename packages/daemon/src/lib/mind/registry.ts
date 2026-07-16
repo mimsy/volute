@@ -268,6 +268,16 @@ export async function addVariant(
 export async function removeMind(name: string) {
   const db = await getDb();
   await db.delete(minds).where(eq(minds.name, name));
+  // Drop any delivery_queue rows owned by (base name) or targeted at (variant name) this mind
+  // so a deleted mind's undelivered/gated/dead rows don't linger forever — the redrive guard
+  // just skips them, it never cleans them up. Two independent statements rather than a
+  // transaction: `removeMind` runs in nearly every teardown, and an async `db.transaction`
+  // (which holds BEGIN open across awaits on libsql's single shared connection) serializes
+  // out concurrent callers and floods them with SQLITE_BUSY. A partial failure here only
+  // leaves a few inert rows the next delete can still reap — not worth that contention. #356
+  await db
+    .delete(deliveryQueue)
+    .where(or(eq(deliveryQueue.mind, name), eq(deliveryQueue.target_mind, name)));
 }
 
 /**

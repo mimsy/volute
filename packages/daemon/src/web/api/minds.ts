@@ -1198,8 +1198,8 @@ const app = new Hono<AuthEnv>()
       if (existsSync(dest)) rmSync(dest, { recursive: true, force: true });
       try {
         await removeMind(name);
-      } catch {
-        // ignore cleanup errors
+      } catch (cleanupErr) {
+        log.warn(`failed to clean up registry for ${name}`, log.errorData(cleanupErr));
       }
       return c.json({ error: err instanceof Error ? err.message : "Failed to create mind" }, 500);
     } finally {
@@ -1357,8 +1357,8 @@ const app = new Hono<AuthEnv>()
       if (existsSync(dest)) rmSync(dest, { recursive: true, force: true });
       try {
         await removeMind(name);
-      } catch {
-        // ignore cleanup errors
+      } catch (cleanupErr) {
+        log.warn(`failed to clean up registry for ${name}`, log.errorData(cleanupErr));
       }
       return c.json({ error: err instanceof Error ? err.message : "Failed to import mind" }, 500);
     } finally {
