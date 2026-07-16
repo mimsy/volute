@@ -19,7 +19,7 @@ const slog = log.child("cred-sync");
  * already-derived access token as a flat api_key (the daemon stays the refresh
  * authority).
  */
-export const DAEMON_ONLY_OAUTH = new Set(["xai"]);
+const DAEMON_ONLY_OAUTH = new Set(["xai"]);
 
 /**
  * Provider → env var pi-ai reads as an api-key fallback. Set alongside the
