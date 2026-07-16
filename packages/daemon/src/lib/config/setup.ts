@@ -123,6 +123,13 @@ export type GlobalConfig = {
    * the host-readable config.json.
    */
   maxMinds?: number;
+  /**
+   * Who may register an external mind account (a `user_type:"mind"` users row
+   * with no `minds` registry row). Unset = "admin-only". The enum leaves room
+   * for a future "invite" policy. Not a secret — stays in the host-readable
+   * config.json.
+   */
+  externalRegistration?: "closed" | "admin-only" | "open";
   /** Restic-based system backup configuration */
   backup?: BackupConfig;
 };

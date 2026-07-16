@@ -8,6 +8,7 @@ import { getTypingMap } from "../chat/typing.js";
 import { getMindManager } from "../daemon/mind-manager.js";
 import { getSleepManagerIfReady } from "../daemon/sleep-manager.js";
 import { type ContentBlock, getParticipants } from "../events/conversations.js";
+import { readAllMinds } from "../mind/registry.js";
 import log from "../util/logger.js";
 import { buildVoluteSlug } from "../util/slugify.js";
 import { deliverMessage } from "./message-delivery.js";
@@ -40,6 +41,14 @@ export async function fanOutToMinds(opts: FanOutOpts): Promise<void> {
   const manager = getMindManager();
   const sm = getSleepManagerIfReady();
 
+  // Registry names, read once per fan-out (a scan of the small `minds` table —
+  // bounded by mind count, and fan-out already queries the DB) rather than a
+  // findMind per participant, which would be N queries and force this map async.
+  // A mind-typed participant with no `minds` row is an external mind: it pulls its
+  // messages and is never spawned, so "not running" is its expected steady state,
+  // not the stopped-native-mind condition the warn below traces (#434).
+  const registeredMinds = new Set((await readAllMinds()).map((m) => m.name));
+
   // Include running minds AND sleeping minds (sleeping ones route through the sleep queue).
   const targetMinds = mindParticipants
     .map((ap) => {
@@ -47,10 +56,13 @@ export async function fanOutToMinds(opts: FanOutOpts): Promise<void> {
       if (manager.isRunning(key) || sm?.isSleeping(ap.username)) return ap.username;
       if (ap.username !== opts.senderName) {
         // This is the load-bearing silent drop in delivery: a stopped participant simply
-        // never receives the message. Make it traceable (#434).
-        log.warn(
-          `fan-out: skipping ${ap.username} (not running) for conversation ${opts.conversationId}`,
-        );
+        // never receives the message. Make it traceable (#434) — but only for minds that
+        // have a registry row, i.e. ones that were meant to be running.
+        if (registeredMinds.has(ap.username)) {
+          log.warn(
+            `fan-out: skipping ${ap.username} (not running) for conversation ${opts.conversationId}`,
+          );
+        }
         if (ap.userType === "system") {
           // A stopped spirit reached outside POST /chat (bridge inbound, channels): start
           // it fire-and-forget so the NEXT message reaches it — this one is missed, same
