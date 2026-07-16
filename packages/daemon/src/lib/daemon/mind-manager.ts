@@ -228,11 +228,11 @@ export class MindManager {
     return { dir, port: entry.port, baseName: name, template: entry.template };
   }
 
-  async startMind(name: string): Promise<void> {
-    return this.withLock(name, () => this._startMind(name));
+  async startMind(name: string, opts?: { healthTimeoutMs?: number }): Promise<void> {
+    return this.withLock(name, () => this._startMind(name, opts));
   }
 
-  private async _startMind(name: string): Promise<void> {
+  private async _startMind(name: string, opts?: { healthTimeoutMs?: number }): Promise<void> {
     if (this.minds.has(name)) {
       throw new Error(`Mind ${name} is already running`);
     }
@@ -544,9 +544,10 @@ export class MindManager {
     // or an early child exit/error (e.g. a `tsx` syntax error from a self-edit). Polling
     // /health is more robust than scraping stdout for "listening on :PORT".
     try {
+      const healthTimeoutMs = opts?.healthTimeoutMs ?? 30000;
       await new Promise<void>((resolve, reject) => {
         let settled = false;
-        const deadline = Date.now() + 30000;
+        const deadline = Date.now() + healthTimeoutMs;
 
         const onExit = (code: number | null) => {
           // Extract the most useful error line from stderr
@@ -586,7 +587,7 @@ export class MindManager {
             finish(() =>
               reject(
                 new MindStartupError(
-                  `Mind ${name} did not become healthy within 30s`,
+                  `Mind ${name} did not become healthy within ${Math.round(healthTimeoutMs / 1000)}s`,
                   recentStderr.join("\n"),
                 ),
               ),

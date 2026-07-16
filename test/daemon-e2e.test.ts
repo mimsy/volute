@@ -1125,6 +1125,43 @@ describe("daemon e2e", { timeout: 420000 }, () => {
     assert.notEqual(entry?.template, "../../evil");
   });
 
+  it("upgrade: same-template upgrade merges, skips npm install, and restarts the mind", async () => {
+    await ensureTestMind();
+    const dir = mindDir(TEST_MIND);
+
+    // npm install writes this on every run — an unchanged mtime proves the
+    // dependencies-unchanged upgrade skipped the install entirely.
+    const lockStamp = resolve(dir, "node_modules", ".package-lock.json");
+    assert.ok(existsSync(lockStamp), "test mind should have node_modules installed");
+    const mtimeBefore = statSync(lockStamp).mtimeMs;
+
+    const res = await daemonRequest(`/api/minds/${TEST_MIND}/upgrade`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    assert.equal(res.status, 200, `Upgrade failed: ${res.status} ${await res.clone().text()}`);
+    const body = (await res.json()) as { ok?: boolean; conflicts?: boolean; warning?: string };
+    assert.equal(body.ok, true, `Upgrade not ok: ${JSON.stringify(body)}`);
+    assert.notEqual(body.conflicts, true, "same-template upgrade should not conflict");
+    assert.equal(
+      body.warning?.includes("restart failed") ?? false,
+      false,
+      `Upgrade restart failed: ${body.warning}`,
+    );
+
+    assert.equal(statSync(lockStamp).mtimeMs, mtimeBefore, "npm install should have been skipped");
+
+    // The upgrade worktree and branch must be cleaned up.
+    assert.ok(!existsSync(resolve(dir, ".variants", "upgrade")), "upgrade worktree left behind");
+
+    // Upgrade restarts the mind; stop it so later tests see the usual state.
+    const statusRes = await daemonRequest(`/api/minds/${TEST_MIND}`);
+    const status = (await statusRes.json()) as { status?: string };
+    assert.equal(status.status, "running", "mind should be running after upgrade");
+    await daemonRequest(`/api/minds/${TEST_MIND}/stop`, { method: "POST" });
+  });
+
   it("unified chat: send via /api/v1/chat", async () => {
     await ensureTestMind();
     const brain = await ensureBrainParticipant("unified");

@@ -157,19 +157,9 @@ const app = new Hono<AuthEnv>()
     // retry with the same name isn't blocked by a half-created variant (#444).
     const rollbackSplit = async () => {
       try {
-        await cleanupVariant(variantName, projectRoot, variantDir, { stop: true });
+        await cleanupVariant(variantName, mindName, projectRoot, variantDir, { stop: true });
       } catch (err) {
         log.warn(`failed to roll back split of ${variantName}`, log.errorData(err));
-      }
-      // cleanupVariant hands ownership to the variant's base name, which before DB
-      // registration resolves to the variant itself — restore it to the parent mind.
-      try {
-        await chownMindDir(projectRoot, mindName);
-      } catch (err) {
-        log.warn(
-          `failed to restore ${mindName} ownership after split rollback`,
-          log.errorData(err),
-        );
       }
     };
 
@@ -419,7 +409,7 @@ const app = new Hono<AuthEnv>()
         );
       }
 
-      await cleanupVariant(variantName, projectRoot, variantEntry.dir, { stop: true });
+      await cleanupVariant(variantName, mindName, projectRoot, variantEntry.dir, { stop: true });
 
       // The merge and cleanup git ops ran as the daemon (root). Hand ownership of
       // the parent worktree back to the mind user before the wrapped npm install
@@ -511,7 +501,7 @@ const app = new Hono<AuthEnv>()
 
     const projectRoot = parentEntry.dir ?? mindDir(mindName);
 
-    await cleanupVariant(variantName, projectRoot, variantEntry.dir, { stop: true });
+    await cleanupVariant(variantName, mindName, projectRoot, variantEntry.dir, { stop: true });
 
     return c.json({ ok: true });
   });

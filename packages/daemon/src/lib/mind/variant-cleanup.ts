@@ -10,9 +10,14 @@ import { deleteMindDbFootprint, mindDir, readAllMinds, removeMind } from "./regi
  * Clean up a variant's git resources: stop process, remove worktree, delete branch,
  * remove from DB, and fix ownership. Each step is independently guarded so failures
  * don't prevent subsequent cleanup.
+ *
+ * `baseName` is the parent mind that owns projectRoot — passed explicitly because
+ * upgrade variants have no DB row to derive it from, and a wrong fallback chowns
+ * the mind dir to a nonexistent user, leaving merge-written files root-owned.
  */
 export async function cleanupVariant(
   variantName: string,
+  baseName: string,
   projectRoot: string,
   variantPath: string,
   opts?: { stop?: boolean },
@@ -48,9 +53,6 @@ export async function cleanupVariant(
   } catch (err) {
     log.warn(`failed to delete branch ${branchName} for ${variantName}`, log.errorData(err));
   }
-
-  // Get the base name before removing from DB (uses variantEntry.parent which is already fetched)
-  const baseName = variantEntry?.parent ?? variantName;
 
   try {
     await removeMind(variantName);
@@ -100,7 +102,7 @@ export async function reconcileVariants(): Promise<void> {
       `reconcile: dropping stale variant row ${v.name} (worktree ${v.dir ?? "<none>"} missing)`,
     );
     try {
-      await cleanupVariant(v.name, baseDir(v.parent!), v.dir ?? "");
+      await cleanupVariant(v.name, v.parent!, baseDir(v.parent!), v.dir ?? "");
     } catch (err) {
       log.warn(`reconcile: failed to drop stale variant ${v.name}`, log.errorData(err));
     }
