@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.51.0](https://github.com/mimsy/volute/compare/volute-v0.50.0...volute-v0.51.0) (2026-07-16)
+
+
+### Features
+
+* R1 — durable per-user API tokens (api_tokens) ([#712](https://github.com/mimsy/volute/issues/712)) ([9c4d35c](https://github.com/mimsy/volute/commit/9c4d35c96c2da1d1fdfffd48e3a74080bc8e946b))
+* R2 — external-mind registration, gated on requireAdmin ([#715](https://github.com/mimsy/volute/issues/715)) ([87fd93a](https://github.com/mimsy/volute/commit/87fd93a79cecb2f0e1c30826da1a9db213ff8332))
+
+
+### Bug Fixes
+
+* **ci:** pin pi template earendil deps to exact 0.80.6 ([#714](https://github.com/mimsy/volute/issues/714)) ([37963f9](https://github.com/mimsy/volute/commit/37963f94d70cc8c51446b93588201a0fa54ca305))
+* dead-letter and orphan cleanup for delivery_queue ([#721](https://github.com/mimsy/volute/issues/721)) ([c5e57a0](https://github.com/mimsy/volute/commit/c5e57a097c0aa90ea98cecd7d9fe771496449ec6))
+* distinguish transient OAuth-refresh failure from "not configured" ([#718](https://github.com/mimsy/volute/issues/718)) ([d11b464](https://github.com/mimsy/volute/commit/d11b464ee4e927e93e96cae94d2f19f59ee63e8a))
+* expand $new to a unique thread for system events ([#735](https://github.com/mimsy/volute/issues/735)) ([#737](https://github.com/mimsy/volute/issues/737)) ([fa9bbed](https://github.com/mimsy/volute/commit/fa9bbedfbf96ff266be1f12ef6b69dfab8ab60b0))
+* keep mind upgrades from starving the system ([#709](https://github.com/mimsy/volute/issues/709)) ([a4f42cf](https://github.com/mimsy/volute/commit/a4f42cf9df0e6fd603444d112466ce994a67c161))
+* make #system announcements sender-less events ([#687](https://github.com/mimsy/volute/issues/687)), silence spirit-start DM error ([#688](https://github.com/mimsy/volute/issues/688)) ([#719](https://github.com/mimsy/volute/issues/719)) ([5ae5d53](https://github.com/mimsy/volute/commit/5ae5d53441767d700f627bcd5fa784168399e11b))
+* route setup wizard to login when resumed without a session ([#717](https://github.com/mimsy/volute/issues/717)) ([54ffeba](https://github.com/mimsy/volute/commit/54ffeba58f49f150ed384b8dfcf24dd357ba9bf2))
+* send the message before staging a --file share so a failed send can't orphan the file ([#722](https://github.com/mimsy/volute/issues/722)) ([ab043d5](https://github.com/mimsy/volute/commit/ab043d50d9407cc06bcb7096d4126274281bad77))
+* ship template configs as real files (npm pack drops .gitignore) ([#716](https://github.com/mimsy/volute/issues/716)) ([925a013](https://github.com/mimsy/volute/commit/925a01323c852fe5edb15c746bd446c9e37e2fa9))
+
 ## [0.50.0](https://github.com/mimsy/volute/compare/volute-v0.49.0...volute-v0.50.0) (2026-07-15)
 
 
