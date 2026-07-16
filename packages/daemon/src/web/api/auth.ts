@@ -22,8 +22,10 @@ import {
   verifyUser,
 } from "../../lib/auth.js";
 import { joinSystemChannel } from "../../lib/chat/system-channel.js";
+import { getDb } from "../../lib/db.js";
 import { broadcast } from "../../lib/events/activity-events.js";
-import { readRegistry, voluteHome } from "../../lib/mind/registry.js";
+import { readRegistry, validateMindName, voluteHome } from "../../lib/mind/registry.js";
+import { users } from "../../lib/schema.js";
 import { normalizeAvatar } from "../../lib/util/avatar-image.js";
 import { fileEtag, isNotModified } from "../../lib/util/http-cache.js";
 
@@ -66,6 +68,13 @@ const profileSchema = z.object({
   description: z.string().max(500).nullable().optional(),
 });
 
+const registerMindSchema = z.object({
+  name: z.string().min(1),
+  displayName: z.string().max(100).optional(),
+  description: z.string().max(500).optional(),
+  tokenLabel: z.string().max(100).optional(),
+});
+
 const AVATAR_MIME: Record<string, string> = {
   ".png": "image/png",
   ".jpg": "image/jpeg",
@@ -82,6 +91,68 @@ function avatarsDir(): string {
 
 const authenticated = new Hono<AuthEnv>()
   .use(authMiddleware)
+  // Register an external mind: a `user_type:"mind"` users row with NO `minds`
+  // registry row — no port, no process, never spawned. It authenticates with the
+  // returned token and pulls its messages. (This is also why `maxMinds` doesn't
+  // apply: countCappedMinds counts `minds` rows, of which this has none.)
+  //
+  // requireAdmin, like the R1 token routes below: this mints a durable credential,
+  // so it stays human-gated. That excludes the injectable `system` principal by
+  // construction. Public self-signup needs rate-limiting, abuse controls, and a
+  // resource cap before it can ship — deferred, not merely disabled.
+  .post("/minds", requireAdmin, zValidator("json", registerMindSchema), async (c) => {
+    const { name, displayName, description, tokenLabel } = c.req.valid("json");
+    // Not a collision check (that's the getUserByUsername lookup below): this
+    // rejects reserved names and enforces the slug charset so `sender_name`
+    // attribution stays clean.
+    const invalid = validateMindName(name);
+    if (invalid) return c.json({ error: invalid }, 400);
+
+    // Any existing user — mind, human, puppet, or system — takes the name. The
+    // users.username UNIQUE constraint is the backstop against a lost race.
+    if (await getUserByUsername(name)) {
+      return c.json({ error: `"${name}" is already taken` }, 409);
+    }
+
+    const db = await getDb();
+    let user: { id: number; username: string; user_type: string; role: string } & {
+      display_name: string | null;
+    };
+    try {
+      [user] = await db
+        .insert(users)
+        .values({
+          username: name,
+          password_hash: "!mind",
+          role: "user",
+          user_type: "mind",
+          display_name: displayName ?? null,
+          description: description ?? null,
+        })
+        .returning({
+          id: users.id,
+          username: users.username,
+          user_type: users.user_type,
+          role: users.role,
+          display_name: users.display_name,
+        });
+    } catch (err) {
+      // Two concurrent registrations of the same name both clear the check above
+      // and race to insert; the UNIQUE constraint stops the duplicate row, but the
+      // loser must still read as a collision rather than an unhandled 500 (which
+      // would also log the failed INSERT's SQL and params).
+      if (await getUserByUsername(name)) {
+        return c.json({ error: `"${name}" is already taken` }, 409);
+      }
+      throw err;
+    }
+
+    // Returned exactly once — only the SHA-256 hash is stored. Never logged.
+    const { id: tokenId, token } = await issueApiToken(user.id, tokenLabel);
+    // Deliberately no auto-join to any system channel: the mind self-joins via
+    // POST /api/v1/channels/:name/join, so registration grants no reach by default.
+    return c.json({ name, user, token, tokenId }, 201);
+  })
   .post("/change-password", zValidator("json", changePasswordSchema), async (c) => {
     const user = c.get("user");
     const { currentPassword, newPassword } = c.req.valid("json");
