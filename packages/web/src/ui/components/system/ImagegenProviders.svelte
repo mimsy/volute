@@ -13,6 +13,7 @@ import {
   saveImagegenProviderConfig,
   searchImagegenModels,
 } from "../../lib/client";
+import { loadErrorMessage } from "../../lib/load-error";
 import ModelSelect from "./ModelSelect.svelte";
 
 let providers = $state<ImagegenProvider[]>([]);
@@ -74,8 +75,9 @@ export async function load() {
     const res = await fetchImagegenModels();
     enabledModels = res.models;
     defaultModel = res.defaultModel;
-  } catch {
-    loadError = "Failed to load imagegen config. Check your connection and try again.";
+  } catch (err) {
+    console.warn("[ImagegenProviders] failed to load imagegen config:", err);
+    loadError = loadErrorMessage(err, "Failed to load imagegen config. Please try again.");
   }
 }
 

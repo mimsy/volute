@@ -14,6 +14,7 @@ import {
   startAiOAuth,
   submitAiOAuthCode,
 } from "../../lib/client";
+import { loadErrorMessage } from "../../lib/load-error";
 import ModelSelect from "./ModelSelect.svelte";
 
 let {
@@ -130,8 +131,9 @@ export async function load() {
   try {
     providers = await fetchAiProviders();
     aiModels = await fetchAiModels();
-  } catch {
-    loadError = "Failed to load providers. Check your connection and try again.";
+  } catch (err) {
+    console.warn("[AiProviders] failed to load providers/models:", err);
+    loadError = loadErrorMessage(err, "Failed to load providers. Please try again.");
   }
 }
 
