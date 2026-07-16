@@ -39,15 +39,22 @@ export function formatEventPrefix(label: string, at: string | undefined): string
 export function formatPrefix(meta: ChannelMeta | undefined, time: string): string {
   if (!meta?.channel && !meta?.sender) return "";
   const platform = meta.platform ?? "Volute";
-  // Build sender context (e.g., "alice in DM" or "alice in #general in My Server")
-  let sender = meta.sender ?? "";
-  if (meta.isDM) {
-    sender += " in DM";
-  } else if (meta.channelName) {
-    sender += ` in #${meta.channelName}`;
-    if (meta.serverName) sender += ` in ${meta.serverName}`;
+  // Build the subject context. With a sender it's "alice in #general in My Server"; without one
+  // this is a sender-less channel announcement (#687) — frame it by its channel and never invent
+  // a name, so automated posts (e.g. #system "X has joined") aren't attributed to anyone.
+  let subject: string;
+  if (meta.sender) {
+    subject = meta.sender;
+    if (meta.isDM) {
+      subject += " in DM";
+    } else if (meta.channelName) {
+      subject += ` in #${meta.channelName}`;
+      if (meta.serverName) subject += ` in ${meta.serverName}`;
+    }
+  } else {
+    subject = meta.channelName ? `#${meta.channelName}` : (meta.channel ?? "");
   }
-  const parts = [platform, sender].filter(Boolean);
+  const parts = [platform, subject].filter(Boolean);
   // Include thread name if not the default
   const sessionPart =
     meta.sessionName && meta.sessionName !== "main" ? ` — thread: ${meta.sessionName}` : "";

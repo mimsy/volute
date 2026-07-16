@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { createUser } from "../packages/daemon/src/lib/auth.js";
 import {
   announceSprout,
@@ -13,6 +15,7 @@ import {
   resetSystemChannelCache,
 } from "../packages/daemon/src/lib/chat/system-channel.js";
 import { getDb } from "../packages/daemon/src/lib/db.js";
+import { clearConfigCache } from "../packages/daemon/src/lib/delivery/delivery-router.js";
 import {
   createChannel,
   deleteConversation,
@@ -52,8 +55,17 @@ const TEST_MINDS = [
   "commons-sprout",
 ];
 
+/** Write a routes.json for a test mind so its #system routing decision is deterministic. */
+function writeCommonsRoutes(name: string, config: object): void {
+  const configDir = resolve(process.env.VOLUTE_HOME!, "minds", name, "home/.config");
+  mkdirSync(configDir, { recursive: true });
+  writeFileSync(resolve(configDir, "routes.json"), JSON.stringify(config));
+  clearConfigCache(name);
+}
+
 async function cleanup() {
   resetSystemChannelCache();
+  clearConfigCache();
   const db = await getDb();
   for (const username of TEST_USERNAMES) {
     await db.delete(users).where(eq(users.username, username));
@@ -184,29 +196,42 @@ describe("system channel", () => {
     );
   });
 
-  it("announceToSystem delivers a sender-less commons event to mind participants (#687)", async () => {
+  it("announceToSystem delivers to mind participants sender-less on the channel path (#687)", async () => {
     await addMind("commons-mind", 4901, "sprouted");
     await joinSystemChannelForMind("commons-mind");
+    // Disable gating so the (dead-port) delivery still records the inbound: the mind never acks,
+    // but recordInbound runs first on the normal channel path and captures the delivered shape.
+    writeCommonsRoutes("commons-mind", { gateUnmatched: false });
 
     await announceToSystem("atlas has joined");
 
-    // deliverEvent inserts the event row; as a next-turn event it stays pending until the
-    // mind's next turn drains it as an [Events] block. It must be a `commons` event, not a
-    // message attributed to the spirit.
+    // Delivery is fire-and-forget inside announceToSystem, so poll for the recorded inbound.
     const db = await getDb();
+    let row: { sender: string | null; channel: string | null } | undefined;
+    for (let i = 0; i < 50 && !row; i++) {
+      const inbound = await db
+        .select()
+        .from(mindHistory)
+        .where(and(eq(mindHistory.mind, "commons-mind"), eq(mindHistory.type, "inbound")))
+        .all();
+      row = inbound.find((r) => r.content?.includes("atlas has joined"));
+      if (!row) await new Promise((res) => setTimeout(res, 20));
+    }
+    assert.ok(row, "the announcement should be delivered to the mind participant");
+    assert.equal(row!.sender, null, "delivery must be sender-less — never the spirit");
+    assert.equal(
+      row!.channel,
+      "#system",
+      "delivered on the #system channel, following its routing",
+    );
+
+    // And it must NOT go out as a system event any more — announcements are channel messages.
     const events = await db
       .select()
       .from(systemEvents)
       .where(eq(systemEvents.mind, "commons-mind"))
       .all();
-    const event = events.find((e) => e.body.includes("atlas has joined"));
-    assert.ok(event, "mind participant should receive the announcement as a system event");
-    assert.equal(event!.type, "commons", "announcement should be delivered as a commons event");
-    assert.equal(
-      event!.delivery,
-      "next-turn",
-      "ambient commons announcements should fold into the next turn, not interrupt per event",
-    );
+    assert.equal(events.length, 0, "announcements are channel messages, not system events");
   });
 
   // Register the spirit (dead port — the event stays pending, which is fine: the

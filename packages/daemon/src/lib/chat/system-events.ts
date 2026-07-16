@@ -100,8 +100,6 @@ export function eventLabel(type: string, meta: Record<string, unknown> | null | 
       return "New version available";
     case "channel":
       return "Channel invite";
-    case "commons":
-      return "#system";
     case "file-share":
       return "File offered";
     case "webhook":

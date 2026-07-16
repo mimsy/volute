@@ -242,10 +242,12 @@ export function createRouter(options: {
     const multiChannel = channelCounts.size > 1;
     const body = messages
       .map((m) => {
-        const prefix =
-          multiChannel && m.channel
-            ? `[${m.sender ?? "unknown"} in ${m.channel} — ${m.timestamp}]`
-            : `[${m.sender ?? "unknown"} — ${m.timestamp}]`;
+        // Sender-less rows are channel announcements (#687) — frame by channel, never "unknown".
+        const prefix = m.sender
+          ? multiChannel && m.channel
+            ? `[${m.sender} in ${m.channel} — ${m.timestamp}]`
+            : `[${m.sender} — ${m.timestamp}]`
+          : `[${m.channel ?? "#system"} — ${m.timestamp}]`;
         return `${prefix}\n${m.text}`;
       })
       .join("\n\n");
@@ -536,7 +538,7 @@ export function createRouter(options: {
 
     const body = allMessages
       .map((m) => {
-        const sender = m.payload.sender ?? "unknown";
+        const sender = m.payload.sender;
         const text =
           typeof m.payload.content === "string"
             ? m.payload.content
@@ -547,9 +549,12 @@ export function createRouter(options: {
                   .join("\n")
               : JSON.stringify(m.payload.content);
         const time = compactTime();
-        const prefix = multiChannel
-          ? `[${sender} in ${m.channel} — ${time}]`
-          : `[${sender} — ${time}]`;
+        // Sender-less rows are channel announcements (#687) — frame by channel, never "unknown".
+        const prefix = sender
+          ? multiChannel
+            ? `[${sender} in ${m.channel} — ${time}]`
+            : `[${sender} — ${time}]`
+          : `[${m.channel} — ${time}]`;
         return `${prefix}\n${text}`;
       })
       .join("\n\n");
