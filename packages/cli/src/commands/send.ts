@@ -227,74 +227,6 @@ const cmd = command({
       process.exit(1);
     }
 
-    // Handle --file: stage file for the target mind, then send a notification message
-    if (flags.file) {
-      const filePath = flags.file;
-
-      // Resolve target mind name
-      const parsed = parseTarget(target);
-      const targetName =
-        parsed.isDM && parsed.platform === "volute"
-          ? parsed.identifier.slice(1) // strip @
-          : parsed.identifier;
-
-      // For mind senders, use the daemon file-send API (reads from mind's home/)
-      const mindSelf = process.env.VOLUTE_MIND;
-      if (mindSelf) {
-        const res = await daemonFetch(`/api/minds/${encodeURIComponent(mindSelf)}/files/send`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ targetMind: targetName, filePath }),
-        });
-        if (!res.ok) {
-          const data = (await res.json()) as { error?: string };
-          console.error(data.error ?? `Failed to send file: ${res.status}`);
-          process.exit(1);
-        }
-        const data = (await res.json()) as { id: string };
-        console.log(`File staged for ${targetName} (id: ${data.id})`);
-      } else {
-        // For CLI (human) senders, read file locally and stage via daemon API
-        if (!existsSync(filePath)) {
-          console.error(`File not found: ${filePath}`);
-          process.exit(1);
-        }
-        const stat = statSync(filePath);
-        const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50 MB
-        if (stat.size > MAX_FILE_SIZE) {
-          console.error(
-            `File too large (${formatFileSize(stat.size)}, max ${formatFileSize(MAX_FILE_SIZE)})`,
-          );
-          process.exit(1);
-        }
-
-        const content = readFileSync(filePath);
-        const filename = basename(filePath);
-        const senderName = flags.sender || userInfo().username;
-
-        // Stage the file directly via the daemon's accept-raw endpoint
-        const res = await daemonFetch(`/api/minds/${encodeURIComponent(targetName)}/files/stage`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            sender: senderName,
-            filename,
-            data: content.toString("base64"),
-          }),
-        });
-        if (!res.ok) {
-          const data = (await res.json()) as { error?: string };
-          console.error(data.error ?? `Failed to stage file: ${res.status}`);
-          process.exit(1);
-        }
-        const data = (await res.json()) as { id: string };
-        console.log(`File staged for ${targetName} (id: ${data.id})`);
-      }
-
-      // If there's also a text message, send it through the normal chat flow
-      if (!message) return;
-    }
-
     let parsed = parseTarget(target);
 
     // If bare name matches a registered mind, treat as a DM (e.g. "sprout" → "@sprout")
@@ -305,6 +237,113 @@ const cmd = command({
         uri: `@${parsed.identifier}`,
         isDM: true,
       };
+    }
+
+    // The mind this send resolves to, when it's a volute DM to a mind.
+    const dmTargetName =
+      parsed.isDM && parsed.platform === "volute" ? parsed.identifier.slice(1) : undefined;
+
+    // Enforce --file constraints BEFORE anything is sent, so a bad combination can't
+    // post the message and then fail on staging (#691). File sharing is mind-to-mind
+    // into a DM; channels, non-mind recipients, and image+file-without-text can't work.
+    if (flags.file) {
+      if (!dmTargetName || !(await isMind(dmTargetName))) {
+        console.error(
+          "--file can only attach to a direct message to a mind — e.g.\n" +
+            '  volute chat send @mind "here you go" --file <path>\n' +
+            "Channels and non-mind recipients can't receive a file share.",
+        );
+        process.exit(1);
+      }
+      if (!message && images) {
+        console.error(
+          "Can't attach an image and a file without a message. Send the image with a " +
+            "message, or send the file on its own.",
+        );
+        process.exit(1);
+      }
+    }
+
+    // Stage the attached file (if any). Runs AFTER the accompanying message is
+    // sent so a failed send can't strand the file offer with no context (#691):
+    // the file share is only staged once the message has actually gone out.
+    // `afterSend` distinguishes a staging failure that follows a delivered message
+    // (the message is already out — a blind retry would duplicate it) from a bare
+    // `--file` where nothing has been sent yet.
+    const stageAttachedFile = async (afterSend: boolean): Promise<void> => {
+      const filePath = flags.file!;
+      // Guaranteed a mind DM by the --file validation above.
+      const targetName = dmTargetName!;
+
+      // A staging failure exits non-zero. When the message already went out, say so
+      // — a blind retry of the whole command would re-post the message.
+      const failStaging = (reason: string): never => {
+        console.error(
+          afterSend
+            ? `Your message was delivered. Only the file failed: ${reason}\n` +
+                `Retry the attachment with:  volute chat send ${target} --file ${filePath} ` +
+                "(no message) — sending the whole command again would duplicate the message."
+            : reason,
+        );
+        process.exit(1);
+      };
+
+      // Wrap the staging call so a network error or a non-JSON error body is framed
+      // the same way as a clean daemon error (never an uncaught throw after send).
+      const postStaging = async (path: string, body: unknown): Promise<string> => {
+        let res: Response;
+        try {
+          res = await daemonFetch(path, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          });
+        } catch (err) {
+          return failStaging(`couldn't reach the daemon (${(err as Error).message})`);
+        }
+        if (!res.ok) {
+          const data = (await res.json().catch(() => ({}))) as { error?: string };
+          return failStaging(data.error ?? `daemon returned ${res.status}`);
+        }
+        const data = (await res.json().catch(() => ({}))) as { id?: string };
+        return data.id ?? "?";
+      };
+
+      // For mind senders, use the daemon file-send API (reads from mind's home/)
+      const mindSelf = process.env.VOLUTE_MIND;
+      if (mindSelf) {
+        const id = await postStaging(`/api/minds/${encodeURIComponent(mindSelf)}/files/send`, {
+          targetMind: targetName,
+          filePath,
+        });
+        console.log(`File staged for ${targetName} (id: ${id})`);
+      } else {
+        // For CLI (human) senders, read file locally and stage via daemon API
+        if (!existsSync(filePath)) {
+          failStaging(`File not found: ${filePath}`);
+        }
+        const stat = statSync(filePath);
+        const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50 MB
+        if (stat.size > MAX_FILE_SIZE) {
+          failStaging(
+            `File too large (${formatFileSize(stat.size)}, max ${formatFileSize(MAX_FILE_SIZE)})`,
+          );
+        }
+
+        const content = readFileSync(filePath);
+        const id = await postStaging(`/api/minds/${encodeURIComponent(targetName)}/files/stage`, {
+          sender: flags.sender || userInfo().username,
+          filename: basename(filePath),
+          data: content.toString("base64"),
+        });
+        console.log(`File staged for ${targetName} (id: ${id})`);
+      }
+    };
+
+    // A bare --file with no message has nothing to order against — stage and stop.
+    if (flags.file && !message) {
+      await stageAttachedFile(false);
+      return;
     }
 
     const client = getClient();
@@ -382,11 +421,14 @@ const cmd = command({
         console.error(`Warning: could not read send response: ${(err as Error).message}`);
       }
       if (data.held) heldResponse = true;
-      if (data.held || !flags.wait) {
+      // Under --wait the sent-confirmation is normally skipped (the reply follows),
+      // but with --file the staging result prints next regardless — so surface the
+      // confirmation now, otherwise a staging failure would hide that the message
+      // actually went out (#691).
+      if (data.held || !flags.wait || flags.file) {
         printSendResult(data);
       } else {
-        // Under --wait the sent-confirmation is skipped, but the spirit ack still
-        // matters — especially "unavailable", where no reply is coming.
+        // The spirit ack still matters — especially "unavailable", where no reply is coming.
         const ack = spiritAck(data.spirit);
         if (ack) console.log(ack);
       }
@@ -461,6 +503,21 @@ const cmd = command({
           "See: volute chat bridge --help",
       );
       process.exit(1);
+    }
+
+    // Stage the attached file only after the message has actually been sent, so a
+    // failed send can't leave an orphaned file offer with no context (#691).
+    if (flags.file) {
+      if (heldResponse) {
+        // A held send never posted — the mind is expected to re-send. Staging now
+        // would strand the file (the message it belongs to isn't out); say so
+        // explicitly so a revised re-send doesn't silently drop the attachment.
+        console.log(
+          "Your attached file was not staged — include --file <path> again when you re-send.",
+        );
+      } else {
+        await stageAttachedFile(true);
+      }
     }
 
     if (heldResponse || spiritUnavailable) {
