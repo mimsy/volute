@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { before, describe, it } from "node:test";
 import { JSDOM } from "jsdom";
 import { enrichActivityMetadata } from "../packages/daemon/src/lib/extensions.js";
@@ -107,5 +109,50 @@ describe("extension activity metadata enrichment", () => {
     assert.ok(!icon.includes("onload"), "strips inline handler from manifest icon");
     assert.ok(!icon.includes("evil"), "strips handler body");
     assert.equal(out.color, "purple", "keeps color branding");
+  });
+});
+
+// #729: App.svelte's extension tab icons (`sec.icon` for mind-section tabs,
+// `ext.icon` for system-section tabs) are rendered via `{@html ...}` without
+// going through `sanitizeSvg`, unlike every other render-time icon site (#398).
+// Guard against both a functional regression (icon HTML not neutralized) and a
+// source-level regression (someone reverting to a bare `{@html ext.icon}`).
+describe("App.svelte extension tab icons (#729)", () => {
+  it("neutralizes a hostile extension-supplied icon exactly as App.svelte renders it (sanitizeSvg(ext.icon ?? fallback))", () => {
+    // Mirrors App.svelte: {@html sanitizeSvg(ext.icon ?? '<svg ...>')} — an
+    // extension manifest can set `icon` to arbitrary HTML.
+    const hostileExtIcon = '<svg onload="alert(1)"><script>steal()</script><path d="M0 0"/></svg>';
+    const rendered = sanitizeSvg(hostileExtIcon).toLowerCase();
+    assert.ok(!rendered.includes("onload"), "strips inline handler");
+    assert.ok(!rendered.includes("<script"), "strips script tag");
+    assert.ok(!rendered.includes("steal"), "strips script body");
+  });
+
+  it("leaves the trusted fallback SVG intact when ext.icon is unset", () => {
+    // Mirrors App.svelte's fallback branch — sanitizeSvg must not mangle the
+    // hardcoded default icon shown when an extension doesn't supply one.
+    const fallback =
+      '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 2h5v5H2zM9 2h5v5H9zM2 9h5v5H2zM9 9h5v5H9z"/></svg>';
+    const rendered = sanitizeSvg(undefined ?? fallback);
+    assert.ok(rendered.includes("<svg"), "keeps <svg>");
+    assert.ok(rendered.includes('viewBox="0 0 16 16"'), "keeps viewBox");
+    assert.ok(rendered.includes("<path"), "keeps <path>");
+  });
+
+  it("wraps both extension icon {@html} sites in App.svelte with sanitizeSvg", () => {
+    const source = readFileSync(
+      join(import.meta.dirname, "../packages/web/src/ui/App.svelte"),
+      "utf-8",
+    );
+    assert.match(
+      source,
+      /\{#if sec\.icon\}.*\{@html sanitizeSvg\(sec\.icon\)\}/,
+      "mind-section tab icon (sec.icon) must be wrapped in sanitizeSvg",
+    );
+    assert.match(
+      source,
+      /\{@html sanitizeSvg\(ext\.icon \?\?/,
+      "system-section tab icon (ext.icon) must be wrapped in sanitizeSvg",
+    );
   });
 });
