@@ -77,8 +77,16 @@ export async function startMindFull(name: string): Promise<void> {
   );
 
   const dir = mindDir(baseName);
-  getScheduler().loadSchedules(baseName);
-  getSleepManagerIfReady()?.loadSleepConfig(baseName);
+  try {
+    getScheduler().loadSchedules(baseName);
+  } catch (err) {
+    log.error(`failed to load schedules for ${baseName}`, log.errorData(err));
+  }
+  try {
+    getSleepManagerIfReady()?.loadSleepConfig(baseName);
+  } catch (err) {
+    log.error(`failed to load sleep config for ${baseName}`, log.errorData(err));
+  }
   ensureMailAddress(baseName).catch((err: unknown) =>
     log.error(`failed to ensure mail address for ${baseName}`, log.errorData(err)),
   );
@@ -100,14 +108,22 @@ export async function startMindFull(name: string): Promise<void> {
   );
 
   if (config?.tokenBudget) {
-    getTokenBudget().setBudget(
-      baseName,
-      config.tokenBudget,
-      config.tokenBudgetPeriodMinutes ?? DEFAULT_BUDGET_PERIOD_MINUTES,
-    );
+    try {
+      getTokenBudget().setBudget(
+        baseName,
+        config.tokenBudget,
+        config.tokenBudgetPeriodMinutes ?? DEFAULT_BUDGET_PERIOD_MINUTES,
+      );
+    } catch (err) {
+      log.error(`failed to set token budget for ${baseName}`, log.errorData(err));
+    }
   }
 
-  notifyExtensionsMindStart(baseName);
+  try {
+    notifyExtensionsMindStart(baseName);
+  } catch (err) {
+    log.error(`failed to notify extensions of mind start for ${baseName}`, log.errorData(err));
+  }
 }
 
 /**

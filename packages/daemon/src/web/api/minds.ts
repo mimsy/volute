@@ -1690,6 +1690,7 @@ const app = new Hono<AuthEnv>()
       );
       return c.json({ ok: true, port: targetPort });
     } catch (err) {
+      log.error(`failed to restart mind ${name}`, log.errorData(err));
       return c.json({ error: err instanceof Error ? err.message : "Failed to restart mind" }, 500);
     }
   })
@@ -1709,6 +1710,7 @@ const app = new Hono<AuthEnv>()
       await stopMindFullService(name);
       return c.json({ ok: true });
     } catch (err) {
+      log.error(`failed to stop mind ${name}`, log.errorData(err));
       return c.json({ error: err instanceof Error ? err.message : "Failed to stop mind" }, 500);
     }
   })
