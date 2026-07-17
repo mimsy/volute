@@ -94,6 +94,10 @@ describe("syncSpiritTemplate SPIRIT.md migration", () => {
       .where(and(eq(systemEvents.mind, "volute"), eq(systemEvents.type, "notice")));
     const migration = rows.filter((r) => r.meta?.includes("spirit-md-migration"));
     assert.equal(migration.length, 1);
+    // Must use the mind-level sentinel thread, not the default "main" — the spirit's
+    // routes.json maps every channel to its own thread, so a "main"-threaded event
+    // would never drain into an actual turn.
+    assert.equal(migration[0].thread, "");
 
     await syncSpiritTemplate(); // second sync: file present — no second notice
     const rows2 = await db
@@ -155,5 +159,9 @@ describe("spirit orientation arc", () => {
       .where(and(eq(systemEvents.mind, getSpiritName()), eq(systemEvents.type, "orientation")));
     assert.equal(rows.length, 1);
     assert.equal(rows[0].delivery, "next-turn");
+    // Must use the mind-level sentinel thread so it drains into the spirit's actual
+    // first turn (its DM with the admin), not the routes.json default "main" thread
+    // that the wildcard rule never actually produces.
+    assert.equal(rows[0].thread, "");
   });
 });
