@@ -1,4 +1,12 @@
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { basename, resolve } from "node:path";
 import { qualifyModelId, resolveTemplate, unqualifyModelId } from "../ai-service.js";
 import { getSpiritName, readGlobalConfig } from "../config/setup.js";
@@ -154,15 +162,16 @@ export function applyStashedSpiritProfile(dir: string): {
   const config = readGlobalConfig();
   const stashName = config.setup?.spiritAvatar;
   const description = config.setup?.spiritDescription;
+  // stashName is server-generated ("spirit-avatar.<ext>") but basename it anyway.
+  const safeName = stashName ? basename(stashName) : undefined;
   let hasAvatar = false;
   try {
-    if (stashName) {
-      // stashName is server-generated ("spirit-avatar.<ext>") but basename it anyway.
-      const safeName = basename(stashName);
+    if (safeName) {
       const stashPath = resolve(voluteSystemDir(), safeName);
       if (existsSync(stashPath)) {
-        cpSync(stashPath, resolve(dir, "home", safeName));
-        rmSync(stashPath, { force: true });
+        // Spirit projects always live under voluteSystemDir(), so the stash and its
+        // destination are on the same filesystem — a plain rename is safe here.
+        renameSync(stashPath, resolve(dir, "home", safeName));
         hasAvatar = true;
       }
     }
@@ -171,7 +180,7 @@ export function applyStashedSpiritProfile(dir: string): {
       vc.profile = {
         ...vc.profile,
         ...(description ? { description } : {}),
-        ...(hasAvatar && stashName ? { avatar: basename(stashName) } : {}),
+        ...(hasAvatar && safeName ? { avatar: safeName } : {}),
       };
       writeVoluteConfig(dir, vc);
     }
