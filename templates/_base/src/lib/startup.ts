@@ -73,6 +73,7 @@ function loadFile(path: string): string {
 
 export function loadSystemPrompt(): string {
   const soulPath = resolve("home/SOUL.md");
+  const spiritPath = resolve("home/SPIRIT.md");
   const memoryPath = resolve("home/MEMORY.md");
   const volutePath = resolve("home/VOLUTE.md");
 
@@ -82,10 +83,14 @@ export function loadSystemPrompt(): string {
     process.exit(1);
   }
 
+  // SPIRIT.md exists only for the system spirit — daemon-owned doctrine (role,
+  // philosophy), kept separate so SOUL.md can be entirely the spirit's own.
+  const spirit = loadFile(spiritPath);
   const memory = loadFile(memoryPath);
   const volute = loadFile(volutePath);
 
   const promptParts = [soul];
+  if (spirit) promptParts.push(spirit);
   if (volute) promptParts.push(volute);
   if (memory) promptParts.push(`## Memory\n\n${memory}`);
   return promptParts.join("\n\n---\n\n");
