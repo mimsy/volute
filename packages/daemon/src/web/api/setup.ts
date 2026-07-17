@@ -1,6 +1,6 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { resolve } from "node:path";
+import { basename, resolve } from "node:path";
 import { Hono } from "hono";
 import { setCookie } from "hono/cookie";
 import {
@@ -18,6 +18,7 @@ import {
   writeSystemsConfig,
 } from "../../lib/config/systems-config.js";
 import { findMind, validateSpiritName, voluteSystemDir } from "../../lib/mind/registry.js";
+import { normalizeAvatar } from "../../lib/util/avatar-image.js";
 import log from "../../lib/util/logger.js";
 import { createSession, SESSION_MAX_AGE } from "../middleware/auth.js";
 
@@ -463,19 +464,43 @@ setup.post("/spirit", async (c) => {
   const description = body.description?.trim();
   config.setup.spiritDescription = description || undefined;
 
+  // Each submission is authoritative for the avatar: a previously stashed file is
+  // dropped whether the host replaced it or removed it. Runs only after validation
+  // so a rejected upload can't destroy the existing stash.
+  const clearOldStash = () => {
+    if (config.setup?.spiritAvatar) {
+      rmSync(resolve(voluteSystemDir(), basename(config.setup.spiritAvatar)), { force: true });
+      config.setup.spiritAvatar = undefined;
+    }
+  };
+
   if (body.avatar) {
     const match = /^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/=]+)$/.exec(body.avatar);
     if (!match) {
       return c.json({ error: "Avatar must be a png, jpeg, or webp image" }, 400);
     }
-    const ext = match[1] === "jpeg" ? "jpg" : match[1];
-    const bytes = Buffer.from(match[2], "base64");
+    // Base64 inflates by 4/3 — reject oversized payloads before decoding.
+    if (match[2].length > 3 * 1024 * 1024) {
+      return c.json({ error: "Avatar must be under 2MB" }, 400);
+    }
+    let bytes: Buffer = Buffer.from(match[2], "base64");
     if (bytes.length > 2 * 1024 * 1024) {
       return c.json({ error: "Avatar must be under 2MB" }, 400);
     }
+    let ext = match[1] === "jpeg" ? "jpg" : match[1];
+    // Downscale + re-encode like every other avatar upload; keep original bytes
+    // when sharp is unavailable
+    const normalized = await normalizeAvatar(bytes);
+    if (normalized) {
+      bytes = normalized.buffer;
+      ext = "webp";
+    }
+    clearOldStash();
     const filename = `spirit-avatar.${ext}`;
     writeFileSync(resolve(voluteSystemDir(), filename), bytes);
     config.setup.spiritAvatar = filename;
+  } else {
+    clearOldStash();
   }
 
   writeGlobalConfig(config);

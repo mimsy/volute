@@ -150,6 +150,9 @@ function onSpiritAvatarPicked(e: Event) {
   reader.onload = () => {
     spiritAvatarDataUri = reader.result as string;
   };
+  reader.onerror = () => {
+    spiritAvatarError = "Couldn't read that file — try another image.";
+  };
   reader.readAsDataURL(file);
 }
 

@@ -170,11 +170,40 @@ describe("web setup routes", () => {
 
     const config = readGlobalConfig();
     assert.equal(config.setup?.spiritDescription, "the quiet keeper of this house");
-    assert.equal(config.setup?.spiritAvatar, "spirit-avatar.png");
-    const stashed = resolve(voluteSystemDir(), "spirit-avatar.png");
+    // normalizeAvatar re-encodes to webp when sharp is available; the raw png is
+    // the fallback. Either way the stash filename is server-generated.
+    const filename = config.setup?.spiritAvatar;
+    assert.ok(filename && /^spirit-avatar\.(png|webp)$/.test(filename), `got ${filename}`);
+    const stashed = resolve(voluteSystemDir(), filename);
     assert.ok(existsSync(stashed));
-    assert.equal(readFileSync(stashed).toString("base64"), PNG_B64);
+    assert.ok(readFileSync(stashed).length > 0);
     rmSync(stashed);
+  });
+
+  it("POST /api/setup/spirit — resubmitting without an avatar clears the stash", async () => {
+    writeGlobalConfig({
+      name: "test",
+      setup: { type: "local", mindsDir: "/tmp/minds", isolation: "sandbox", service: false },
+      setupCompleted: false,
+    });
+    const app = createApp();
+    const upload = await app.request("/api/setup/spirit", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "iris", avatar: `data:image/png;base64,${PNG_B64}` }),
+    });
+    assert.equal(upload.status, 200);
+    const stashedName = readGlobalConfig().setup?.spiritAvatar;
+    assert.ok(stashedName);
+
+    const resubmit = await app.request("/api/setup/spirit", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "iris" }),
+    });
+    assert.equal(resubmit.status, 200);
+    assert.equal(readGlobalConfig().setup?.spiritAvatar, undefined);
+    assert.ok(!existsSync(resolve(voluteSystemDir(), stashedName)), "stash file removed");
   });
 
   it("POST /api/setup/spirit — rejects a non-image data URI", async () => {
@@ -190,6 +219,34 @@ describe("web setup routes", () => {
       body: JSON.stringify({ name: "iris", avatar: "data:text/html;base64,PGI+" }),
     });
     assert.equal(res.status, 400);
+  });
+
+  it("POST /api/setup/spirit — a rejected upload leaves an existing stash intact", async () => {
+    writeGlobalConfig({
+      name: "test",
+      setup: { type: "local", mindsDir: "/tmp/minds", isolation: "sandbox", service: false },
+      setupCompleted: false,
+    });
+    const app = createApp();
+    const upload = await app.request("/api/setup/spirit", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "iris", avatar: `data:image/png;base64,${PNG_B64}` }),
+    });
+    assert.equal(upload.status, 200);
+    const stashedName = readGlobalConfig().setup?.spiritAvatar;
+    assert.ok(stashedName);
+
+    const bad = await app.request("/api/setup/spirit", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "iris", avatar: "data:text/html;base64,PGI+" }),
+    });
+    assert.equal(bad.status, 400);
+    assert.equal(readGlobalConfig().setup?.spiritAvatar, stashedName);
+    const stashed = resolve(voluteSystemDir(), stashedName);
+    assert.ok(existsSync(stashed), "stash file preserved");
+    rmSync(stashed);
   });
 
   it("POST /api/setup/spirit — requires the system step first", async () => {

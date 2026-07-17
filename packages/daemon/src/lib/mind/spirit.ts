@@ -1,12 +1,4 @@
-import {
-  cpSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  renameSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename, resolve } from "node:path";
 import { qualifyModelId, resolveTemplate, unqualifyModelId } from "../ai-service.js";
 import { getSpiritName, readGlobalConfig } from "../config/setup.js";
@@ -165,15 +157,13 @@ export function applyStashedSpiritProfile(dir: string): {
   // stashName is server-generated ("spirit-avatar.<ext>") but basename it anyway.
   const safeName = stashName ? basename(stashName) : undefined;
   let hasAvatar = false;
+  const stashPath = safeName ? resolve(voluteSystemDir(), safeName) : undefined;
   try {
-    if (safeName) {
-      const stashPath = resolve(voluteSystemDir(), safeName);
-      if (existsSync(stashPath)) {
-        // Spirit projects always live under voluteSystemDir(), so the stash and its
-        // destination are on the same filesystem — a plain rename is safe here.
-        renameSync(stashPath, resolve(dir, "home", safeName));
-        hasAvatar = true;
-      }
+    if (safeName && stashPath && existsSync(stashPath)) {
+      // Copy rather than rename: a failure in the profile write below must leave
+      // the stash in place so the next creation attempt can retry it.
+      cpSync(stashPath, resolve(dir, "home", safeName));
+      hasAvatar = true;
     }
     if (hasAvatar || description) {
       const vc = readVoluteConfig(dir) ?? {};
@@ -184,8 +174,10 @@ export function applyStashedSpiritProfile(dir: string): {
       };
       writeVoluteConfig(dir, vc);
     }
+    if (hasAvatar && stashPath) rmSync(stashPath, { force: true });
   } catch (err) {
     slog.warn("failed to apply stashed spirit profile", log.errorData(err));
+    hasAvatar = false;
   }
   return { hasAvatar, hasDescription: Boolean(description) };
 }
