@@ -55,7 +55,7 @@ If a variant didn't lead anywhere, let it go without merging:
 ```sh
 volute mind delete mymind-experiment
 ```
-This removes the variant from the registry — nothing merges into you. Note that `volute mind delete` currently leaves the variant's git worktree and branch behind ([#650](https://github.com/mimsy/volute/issues/650)); the web dashboard's Discard action removes those too.
+This removes the variant from the registry along with its git worktree and branch — nothing merges into you. Same cleanup as the web dashboard's Discard action.
 
 # Upgrade Workflow
 
