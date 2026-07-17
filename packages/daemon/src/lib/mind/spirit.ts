@@ -347,7 +347,20 @@ export async function syncSpiritTemplate(): Promise<void> {
   // System name/description reach the spirit through system.json + the
   // startup-context hook instead (see writeSpiritSystemJson).
   seedSpiritSoulIfMissing(dir);
+  const doctrineExisted = existsSync(resolve(dir, "home/SPIRIT.md"));
+  writeSpiritDoctrine(dir);
   writeSpiritSystemJson(dir);
+
+  // Migration moment for spirits created before SPIRIT.md existed: tell them once.
+  if (!doctrineExisted) {
+    const { deliverEvent } = await import("../chat/system-events.js");
+    await deliverEvent(spiritName, {
+      type: "notice",
+      meta: { subtype: "spirit-md-migration" },
+      delivery: "next-turn",
+      body: "The platform now keeps your role and its philosophy in SPIRIT.md, refreshed for you as Volute evolves. Your SOUL.md remains entirely yours — if it still carries doctrine that SPIRIT.md now duplicates (or a line claiming you don't get an orientation), feel free to trim it until the soul is purely you.",
+    });
+  }
 
   // Sync spirit model from global config
   const config = readGlobalConfig();
