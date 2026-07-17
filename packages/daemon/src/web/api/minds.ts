@@ -93,7 +93,12 @@ import { evaluateSeedChecklist } from "../../lib/mind/seed-readiness.js";
 import { isTemplateStale } from "../../lib/mind/template-staleness.js";
 import { applyThinkingLevel, deriveThinkingLevel } from "../../lib/mind/thinking-config.js";
 import { cleanupVariant } from "../../lib/mind/variant-cleanup.js";
-import { mergeVariantExcludingMemory, validateBranchName } from "../../lib/mind/variants.js";
+import {
+  findUnresolvedHomeFiles,
+  formatUnresolvedHomeFilesMessage,
+  mergeVariantExcludingMemory,
+  validateBranchName,
+} from "../../lib/mind/variants.js";
 import { readVoluteConfig, writeVoluteConfig } from "../../lib/mind/volute-config.js";
 import { PLATFORMS } from "../../lib/platforms.js";
 import {
@@ -1569,6 +1574,7 @@ const app = new Hono<AuthEnv>()
           variantEntry.branch
         ) {
           const projectRoot = mindDir(baseName);
+          const discardUnresolved = context.discardUnresolvedHomeFiles === true;
 
           // Auto-commit variant worktree
           if (existsSync(variantEntry.dir)) {
@@ -1605,18 +1611,61 @@ const app = new Hono<AuthEnv>()
             }
           }
 
-          // Merge (excluding the mind's living memory/journal — #440), narrate
-          // the memory delta to the parent, then clean up worktree/branch and
-          // reinstall if the merge touched dependencies.
+          // Merge (excluding the mind's living memory/journal — #440); clean up
+          // worktree/branch and reinstall if the merge touched dependencies, and
+          // narrate the memory delta — but only once cleanup actually happens (see
+          // below). Telling the parent "your variant has returned, merged into you"
+          // (the merge_message prompt, keyed off context.type === "merge") while
+          // the variant is still sitting there unresolved would be a straight-up lie.
           const preMergeHead = (await gitExec(["rev-parse", "HEAD"], { cwd: projectRoot })).trim();
           const memoryDelta = await mergeVariantExcludingMemory(projectRoot, variantEntry.branch);
-          if (memoryDelta && context) context.memoryDelta = memoryDelta;
-          await cleanupVariant(mergeVariantName, baseName, projectRoot, variantEntry.dir);
-          if (await npmInstallNeeded(projectRoot, preMergeHead)) {
+
+          // The daemon can't know what's precious in a mind's home/, so it never
+          // guesses. Checked here, right before the one genuinely destructive step
+          // (`cleanupVariant`'s `git worktree remove`) — the merge above already
+          // landed (it only pulls in what the variant committed, so it's safe
+          // regardless), but cleanup waits until this comes back clean. If anything
+          // is found, skip cleanup, leave the variant fully intact, and tell the
+          // parent why via a notice instead of falsely claiming the join finished (#656).
+          let unresolvedNotice: string | undefined;
+          if (existsSync(variantEntry.dir) && !discardUnresolved) {
             try {
-              await npmInstallAsMind(projectRoot, baseName);
-            } catch (e) {
-              log.error(`npm install failed after merge for ${baseName}`, log.errorData(e));
+              const unresolved = await findUnresolvedHomeFiles(variantEntry.dir);
+              if (unresolved.totalCount > 0) {
+                unresolvedNotice = formatUnresolvedHomeFilesMessage(mergeVariantName, unresolved);
+              }
+            } catch (err) {
+              unresolvedNotice = `Could not verify variant ${mergeVariantName} has no unresolved home/ files: ${err instanceof Error ? err.message : String(err)}. Variant left intact — retry the join.`;
+            }
+          }
+
+          if (unresolvedNotice) {
+            log.warn(
+              `variant join blocked for ${baseName}: ${mergeVariantName} — ${unresolvedNotice}`,
+            );
+            await recordNotice({
+              mind: baseName,
+              thread: "main",
+              kind: "join_blocked",
+              reason: "unresolved_variant_files",
+              detail: unresolvedNotice,
+            });
+            // Downgrade to a plain restart so buildPendingContextMessage doesn't fire
+            // the "your variant has returned, merged into you" prompt — nothing merged
+            // or cleaned up. The join_blocked notice above is the real story here.
+            if (context) {
+              context.type = "restart";
+              context.name = undefined;
+            }
+          } else {
+            if (memoryDelta && context) context.memoryDelta = memoryDelta;
+            await cleanupVariant(mergeVariantName, baseName, projectRoot, variantEntry.dir);
+            if (await npmInstallNeeded(projectRoot, preMergeHead)) {
+              try {
+                await npmInstallAsMind(projectRoot, baseName);
+              } catch (e) {
+                log.error(`npm install failed after merge for ${baseName}`, log.errorData(e));
+              }
             }
           }
         }

@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { resolve } from "node:path";
-import { log } from "./logger.js";
+import { log, warn } from "./logger.js";
 
 function gitArgs(args: string[]): string[] {
   return process.env.VOLUTE_ISOLATION === "user" ? ["-c", "safe.directory=*", ...args] : args;
@@ -63,15 +63,37 @@ export function flushFileChanges(cwd?: string): Promise<void> {
   const effectiveCwd = cwd ?? process.cwd();
 
   pending = pending.then(async () => {
-    // Commit mind's own files
+    // Commit mind's own files. Only files that actually staged go into the commit
+    // message — a file `git add` couldn't stage (typically because it's gitignored)
+    // must never be named alongside files that really did commit, or the mind is
+    // told its work is safe when it isn't (#656).
     if (filesToCommit.length > 0) {
+      const staged: string[] = [];
+      const blocked: string[] = [];
       for (const f of filesToCommit) {
-        if ((await exec("git", ["add", f], effectiveCwd)).code !== 0) {
-          log("auto-commit", `git add failed for ${f}`);
+        if ((await exec("git", ["add", f], effectiveCwd)).code === 0) {
+          staged.push(f);
+        } else {
+          blocked.push(f);
         }
       }
-      if ((await exec("git", ["diff", "--cached", "--quiet"], effectiveCwd)).code !== 0) {
-        const names = filesToCommit.map((f) => f.replace(/^.*\//, "")).join(", ");
+      if (blocked.length > 0) {
+        const pronoun = blocked.length === 1 ? "it" : "they";
+        warn(
+          "auto-commit",
+          `git add failed for ${blocked.join(", ")} — likely gitignored, so ` +
+            `${pronoun} will NOT be committed or survive a variant join`,
+        );
+      }
+      // staged.length check guards against committing under a blank "Update "
+      // message when every file in this batch was blocked — `diff --cached` can
+      // still be non-empty from unrelated content already in the index (e.g. the
+      // mind ran `git add` itself), which isn't this batch's to name or claim.
+      if (
+        staged.length > 0 &&
+        (await exec("git", ["diff", "--cached", "--quiet"], effectiveCwd)).code !== 0
+      ) {
+        const names = staged.map((f) => f.replace(/^.*\//, "")).join(", ");
         const message = `Update ${names}`;
         if ((await exec("git", ["commit", "-m", message], effectiveCwd)).code === 0) {
           log("auto-commit", message);
@@ -89,20 +111,36 @@ export function flushFileChanges(cwd?: string): Promise<void> {
       }
     }
 
-    // Commit collaborative pages worktree files
+    // Commit collaborative pages worktree files. Same rule as the mind's own
+    // files above: only what actually staged gets named in the commit message.
     if (sharedToCommit.length > 0) {
       const sharedCwd = resolve(effectiveCwd, "pages", "_system");
       const sharedPrefix = "pages/_system/";
       const mindName = process.env.VOLUTE_MIND ?? "unknown";
 
+      const sharedStaged: string[] = [];
+      const sharedBlocked: string[] = [];
       for (const f of sharedToCommit) {
         const sharedRelative = f.slice(sharedPrefix.length);
-        if ((await exec("git", gitArgs(["add", sharedRelative]), sharedCwd)).code !== 0) {
-          log("auto-commit", `git add failed for pages/_system/${sharedRelative}`);
+        if ((await exec("git", gitArgs(["add", sharedRelative]), sharedCwd)).code === 0) {
+          sharedStaged.push(f);
+        } else {
+          sharedBlocked.push(f);
         }
       }
-      if ((await exec("git", gitArgs(["diff", "--cached", "--quiet"]), sharedCwd)).code !== 0) {
-        const names = sharedToCommit
+      if (sharedBlocked.length > 0) {
+        const pronoun = sharedBlocked.length === 1 ? "it" : "they";
+        warn(
+          "auto-commit",
+          `git add failed for ${sharedBlocked.join(", ")} — likely gitignored, so ` +
+            `${pronoun} will NOT be committed`,
+        );
+      }
+      if (
+        sharedStaged.length > 0 &&
+        (await exec("git", gitArgs(["diff", "--cached", "--quiet"]), sharedCwd)).code !== 0
+      ) {
+        const names = sharedStaged
           .map((f) => f.slice(sharedPrefix.length).replace(/^.*\//, ""))
           .join(", ");
         const message = `Update ${names}`;
