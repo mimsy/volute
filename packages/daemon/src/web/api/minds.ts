@@ -2114,11 +2114,35 @@ const app = new Hono<AuthEnv>()
     const entry = await findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
 
+    const manager = getMindManager();
+
+    // Variants live in a git worktree under the parent's `.variants/`, not
+    // mindDir(name) — route to the same cleanup the variant-specific endpoint
+    // uses so the worktree and branch aren't stranded (#650).
+    if (entry.parent) {
+      if (!entry.dir) return c.json({ error: `Variant ${name} has no directory` }, 500);
+      const parentEntry = await findMind(entry.parent);
+      if (!parentEntry) return c.json({ error: `Parent mind ${entry.parent} not found` }, 404);
+
+      if (manager.isRunning(name)) {
+        await stopMindFullService(name);
+      }
+      await cleanupVariant(name, entry.parent, parentEntry.dir ?? mindDir(entry.parent), entry.dir);
+      invalidateMindUserCache(name);
+
+      fireWebhook({
+        event: "mind_deleted",
+        mind: name,
+        data: { port: entry.port, stage: entry.stage, template: entry.template },
+      });
+
+      return c.json({ ok: true, variant: true });
+    }
+
     const dir = mindDir(name);
     const force = c.req.query("force") === "true";
 
     // Stop mind if running
-    const manager = getMindManager();
     if (manager.isRunning(name)) {
       await stopMindFullService(name);
     }

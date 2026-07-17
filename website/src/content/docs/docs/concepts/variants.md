@@ -67,4 +67,4 @@ This is the fundamental mechanism for mind self-modification — changes are alw
 volute mind delete experiment
 ```
 
-This removes the variant from the registry; nothing merges into the parent. Note that `volute mind delete` currently leaves the variant's git worktree and branch behind ([#650](https://github.com/mimsy/volute/issues/650)); the web dashboard's Discard action (and the daemon's variant endpoint) removes those too.
+This removes the variant from the registry along with its git worktree and branch; nothing merges into the parent. Same cleanup as the web dashboard's Discard action.

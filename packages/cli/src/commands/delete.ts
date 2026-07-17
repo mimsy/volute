@@ -21,11 +21,16 @@ const cmd = command({
 
     const res = await daemonFetch(url, { method: "DELETE" });
 
-    const data = (await res.json()) as { ok?: boolean; error?: string };
+    const data = (await res.json()) as { ok?: boolean; variant?: boolean; error?: string };
 
     if (!res.ok) {
       console.error(data.error ?? "Failed to delete mind");
       process.exit(1);
+    }
+
+    if (data.variant) {
+      console.log(`Deleted variant ${name}, including its git worktree and branch.`);
+      return;
     }
 
     console.log(`Deleted ${name} from the registry.`);

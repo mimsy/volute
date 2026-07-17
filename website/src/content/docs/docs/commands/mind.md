@@ -106,7 +106,7 @@ volute mind delete [name] [--force]
 |------|-------------|
 | `--force` | Also delete the mind directory |
 
-Called with a variant's name, this discards the variant without merging — it removes the variant from the registry and nothing flows into the parent. Note that the CLI path currently leaves the variant's git worktree and branch behind ([#650](https://github.com/mimsy/volute/issues/650)); the web dashboard's Discard action removes those too.
+Called with a variant's name, this discards the variant without merging — it removes the variant from the registry along with its git worktree and branch, and nothing flows into the parent. Same cleanup as the web dashboard's Discard action.
 
 ## mind upgrade
 
