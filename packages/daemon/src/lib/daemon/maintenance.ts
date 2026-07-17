@@ -1,4 +1,5 @@
 import { cleanExpiredSessions } from "../../web/middleware/auth.js";
+import { cleanExpiredEvents } from "../chat/system-events.js";
 import { cleanExpiredLogs } from "../util/history-cleanup.js";
 import log from "../util/logger.js";
 
@@ -19,6 +20,11 @@ export async function runMaintenance(): Promise<void> {
     await cleanExpiredLogs();
   } catch (err) {
     log.warn("maintenance: failed to clean expired logs", log.errorData(err));
+  }
+  try {
+    await cleanExpiredEvents();
+  } catch (err) {
+    log.warn("maintenance: failed to clean expired events", log.errorData(err));
   }
 }
 
