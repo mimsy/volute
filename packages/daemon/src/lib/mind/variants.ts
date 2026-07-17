@@ -26,18 +26,27 @@ const MERGE_EXCLUDED_PATHS = ["home/MEMORY.md", "home/memory/journal/"];
 const MAX_DELTA_CHARS = 12000;
 
 /**
- * Paths under home/ that the platform deliberately keeps untracked — SDK runtime
- * session state and backups (`.claude/projects`, `.claude/backups`, etc.), fixed
- * by PR #661's gitignore rules so this noise stops merging into parents. The
- * rescue below must never resurrect these, even though they're ignored by the
- * same `home/*` catch-all that also blocks a mind's genuine new files.
+ * Paths under home/ that the platform deliberately keeps untracked, even though
+ * a mind's own new files there should be rescued (see below). Never resurrect:
  *
- * Kept in manual sync with the re-ignore rules in templates/_base/gitignore
- * (search there for "#656") — adding a new deliberately-ignored subdirectory
- * under home/ needs a matching prefix here, or its noise gets force-added and
- * merged into the parent.
+ * - SDK runtime session state and backups under home/.claude/, home/.pi/,
+ *   home/.agents/ (minus their whitelisted skills/settings, already tracked
+ *   normally) — fixed by PR #661's gitignore rules so this noise stops merging
+ *   into parents.
+ * - node_modules/dist anywhere under home/ — templates/_base/gitignore ignores
+ *   these repo-wide (no leading slash, so the rule matches at any depth), for
+ *   the same reason they're excluded everywhere else: dependency trees and
+ *   build output aren't a mind's creative work and don't belong in git history.
+ *
+ * Kept in manual sync with templates/_base/gitignore (search there for "#656").
  */
 const NEVER_RESCUE_PREFIXES = ["home/.claude/", "home/.pi/", "home/.agents/"];
+const NEVER_RESCUE_SEGMENTS = new Set(["node_modules", "dist"]);
+
+function isRescuable(path: string): boolean {
+  if (NEVER_RESCUE_PREFIXES.some((prefix) => path.startsWith(prefix))) return false;
+  return !path.split("/").some((segment) => NEVER_RESCUE_SEGMENTS.has(segment));
+}
 
 /**
  * Force-stage any file a mind created directly under home/ that .gitignore's
@@ -47,13 +56,15 @@ const NEVER_RESCUE_PREFIXES = ["home/.claude/", "home/.pi/", "home/.agents/"];
  * in the variant's working tree — and `cleanupVariant`'s `git worktree remove`
  * deletes the working tree wholesale, destroying them (#656).
  *
- * SDK runtime noise under home/.claude/, home/.pi/, home/.agents/ (minus their
- * whitelisted skills/settings, which are already tracked normally) stays
- * excluded — resurrecting it would reintroduce the inversion PR #661 fixed.
+ * Deliberately-ignored SDK runtime noise and build/dependency output (see
+ * {@link isRescuable}) stay excluded — resurrecting either would bake noise or
+ * unrelated build artifacts into the parent's permanent git history.
  *
  * Call this before the pre-merge auto-commit in the variant's own worktree, so
  * the rescued files land in a real commit on the variant branch and merge into
- * the parent like any other change.
+ * the parent like any other change. Never throws — a scan or stage failure is
+ * logged and treated as "nothing to rescue," falling back to the pre-#656
+ * behavior for that join rather than blocking it.
  *
  * @returns the repo-relative paths that were force-added.
  */
@@ -62,7 +73,7 @@ export async function rescueIgnoredHomeFiles(cwd: string): Promise<string[]> {
   let raw: string;
   try {
     raw = await gitExec(
-      ["status", "--porcelain=v1", "-z", "--ignored=matching", "--", "home"],
+      ["ls-files", "--others", "--ignored", "--exclude-standard", "-z", "--", "home"],
       opts,
     );
   } catch (err) {
@@ -70,26 +81,20 @@ export async function rescueIgnoredHomeFiles(cwd: string): Promise<string[]> {
     return [];
   }
 
-  const candidates: string[] = [];
-  for (const entry of raw.split("\0")) {
-    if (!entry.startsWith("!! ")) continue;
-    const path = entry.slice(3);
-    if (NEVER_RESCUE_PREFIXES.some((prefix) => path.startsWith(prefix))) continue;
-    candidates.push(path);
-  }
-  if (candidates.length === 0) return [];
+  const rescued = raw.split("\0").filter((path) => path && isRescuable(path));
+  if (rescued.length === 0) return [];
 
   try {
-    await gitExec(["add", "-f", "--", ...candidates], opts);
+    await gitExec(["add", "-f", "--", ...rescued], opts);
   } catch (err) {
     log.warn(
-      `variant join: failed to rescue ignored home/ files: ${candidates.join(", ")}`,
+      `variant join: failed to rescue ignored home/ files: ${rescued.join(", ")}`,
       log.errorData(err),
     );
     return [];
   }
-  log.info(`variant join: rescued gitignored home/ files: ${candidates.join(", ")}`);
-  return candidates;
+  log.info(`variant join: rescued gitignored home/ files: ${rescued.join(", ")}`);
+  return rescued;
 }
 
 /**

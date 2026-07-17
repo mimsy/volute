@@ -126,4 +126,44 @@ describe("auto-commit batching", () => {
       "auto-commit must not create a commit when nothing it tracked actually staged",
     );
   });
+
+  it("does not claim a gitignored pages/_system file in the shared commit message (#656)", async () => {
+    const { trackFileChange, flushFileChanges } = await import(
+      "../templates/_base/src/lib/auto-commit.js"
+    );
+
+    const sharedDir = join(repoDir, "pages", "_system");
+    mkdirSync(sharedDir, { recursive: true });
+    git(["init", "-b", "main"], sharedDir);
+    git(["config", "user.email", "test@test.com"], sharedDir);
+    git(["config", "user.name", "Test"], sharedDir);
+    writeFileSync(join(sharedDir, ".gitignore"), "draft.md\n");
+    writeFileSync(join(sharedDir, "index.md"), "page");
+    git(["add", "-A"], sharedDir);
+    git(["commit", "-m", "initial"], sharedDir);
+
+    writeFileSync(join(sharedDir, "index.md"), "page v2");
+    writeFileSync(join(sharedDir, "draft.md"), "a draft gitignore blocks");
+
+    trackFileChange("pages/_system/index.md", repoDir);
+    trackFileChange("pages/_system/draft.md", repoDir);
+
+    await flushFileChanges(repoDir);
+
+    const lastMsg = git(["log", "-1", "--format=%s"], sharedDir).trim();
+    assert.ok(
+      lastMsg.includes("index.md"),
+      `Expected shared commit to mention index.md: ${lastMsg}`,
+    );
+    assert.ok(
+      !lastMsg.includes("draft.md"),
+      `Shared commit message must not claim draft.md was committed when git add failed: ${lastMsg}`,
+    );
+
+    const committedFiles = git(["show", "--name-only", "--format=", "HEAD"], sharedDir).trim();
+    assert.ok(
+      !committedFiles.includes("draft.md"),
+      "draft.md must not be in the shared commit tree",
+    );
+  });
 });

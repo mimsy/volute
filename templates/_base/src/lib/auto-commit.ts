@@ -111,20 +111,36 @@ export function flushFileChanges(cwd?: string): Promise<void> {
       }
     }
 
-    // Commit collaborative pages worktree files
+    // Commit collaborative pages worktree files. Same rule as the mind's own
+    // files above: only what actually staged gets named in the commit message.
     if (sharedToCommit.length > 0) {
       const sharedCwd = resolve(effectiveCwd, "pages", "_system");
       const sharedPrefix = "pages/_system/";
       const mindName = process.env.VOLUTE_MIND ?? "unknown";
 
+      const sharedStaged: string[] = [];
+      const sharedBlocked: string[] = [];
       for (const f of sharedToCommit) {
         const sharedRelative = f.slice(sharedPrefix.length);
-        if ((await exec("git", gitArgs(["add", sharedRelative]), sharedCwd)).code !== 0) {
-          log("auto-commit", `git add failed for pages/_system/${sharedRelative}`);
+        if ((await exec("git", gitArgs(["add", sharedRelative]), sharedCwd)).code === 0) {
+          sharedStaged.push(f);
+        } else {
+          sharedBlocked.push(f);
         }
       }
-      if ((await exec("git", gitArgs(["diff", "--cached", "--quiet"]), sharedCwd)).code !== 0) {
-        const names = sharedToCommit
+      if (sharedBlocked.length > 0) {
+        const pronoun = sharedBlocked.length === 1 ? "it" : "they";
+        warn(
+          "auto-commit",
+          `git add failed for ${sharedBlocked.join(", ")} — likely gitignored, so ` +
+            `${pronoun} will NOT be committed`,
+        );
+      }
+      if (
+        sharedStaged.length > 0 &&
+        (await exec("git", gitArgs(["diff", "--cached", "--quiet"]), sharedCwd)).code !== 0
+      ) {
+        const names = sharedStaged
           .map((f) => f.slice(sharedPrefix.length).replace(/^.*\//, ""))
           .join(", ");
         const message = `Update ${names}`;
