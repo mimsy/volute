@@ -5,6 +5,7 @@ import { before, describe, it } from "node:test";
 import { eq } from "drizzle-orm";
 import {
   captureReflection,
+  cleanExpiredEvents,
   clearDeliveredEvents,
   deliverEvent,
   drainEvents,
@@ -861,6 +862,58 @@ describe("system-events status surfaces", () => {
     });
     assert.equal(await hasUndeliveredEvent(mind, "no_credentials"), true);
     assert.equal(await hasUndeliveredEvent(mind, "process_crash"), false);
+    await cleanupMind(mind);
+  });
+});
+
+describe("system-events cleanExpiredEvents", () => {
+  it("sweeps delivered events past the retention window and keeps everything else", async () => {
+    const mind = uniqueMind();
+    const db = await getDb();
+    const day = 24 * 60 * 60 * 1000;
+    const ago = (ms: number) =>
+      new Date(Date.now() - ms).toISOString().replace("T", " ").slice(0, 19);
+
+    await db.insert(systemEvents).values([
+      // Delivered, well past the 30-day retention window — swept.
+      {
+        mind,
+        type: "notice",
+        body: "old delivered",
+        delivery: "next-turn",
+        thread: "main",
+        created_at: ago(40 * day),
+        delivered_at: ago(40 * day),
+      },
+      // Delivered, but recent — survives.
+      {
+        mind,
+        type: "notice",
+        body: "recent delivered",
+        delivery: "next-turn",
+        thread: "main",
+        created_at: ago(day),
+        delivered_at: ago(day),
+      },
+      // Undelivered and old — must survive: pending rows are never swept by age alone,
+      // only by the per-(mind,thread) cap and flush-time expiry.
+      {
+        mind,
+        type: "notice",
+        body: "old pending",
+        delivery: "next-turn",
+        thread: "main",
+        created_at: ago(40 * day),
+        delivered_at: null,
+      },
+    ]);
+
+    await cleanExpiredEvents();
+
+    const rows = await db.select().from(systemEvents).where(eq(systemEvents.mind, mind));
+    const bodies = rows.map((r) => r.body).sort();
+    assert.deepEqual(bodies, ["old pending", "recent delivered"]);
+
     await cleanupMind(mind);
   });
 });

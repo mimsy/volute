@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, isNull, lte, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, isNotNull, isNull, lt, lte, or, sql } from "drizzle-orm";
 import { getDb } from "../db.js";
 import { publish as publishMindEvent } from "../events/mind-events.js";
 import { findMind, getBaseName } from "../mind/registry.js";
@@ -38,6 +38,14 @@ const MAX_NEXT_TURN_EVENTS = 100;
 
 /** Pending immediate events older than this are expired at flush, not replayed stale. */
 const FLUSH_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * Retention for resolved events (delivered_at set): 30 days. This is the mind-wide,
+ * unbounded-lifetime backstop — the per-(mind,thread) cap above and flush-time expiry
+ * only bound *pending* rows, so a long-lived mind's delivered notices/events would
+ * otherwise accumulate forever (#607).
+ */
+const EVENT_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 
 /**
  * Parse an event row's meta JSON, tolerating corrupt rows: a single bad row must
@@ -496,6 +504,23 @@ export async function pendingEventCount(mind: string): Promise<number> {
   }
 }
 
+/**
+ * Delete resolved (delivered_at IS NOT NULL) events older than {@link EVENT_RETENTION_MS}.
+ * Pending rows are never touched here — they're bounded separately by the per-(mind,thread)
+ * cap on insert and by flush-time expiry, and must survive until actually drained/delivered.
+ * Called from the daemon's hourly maintenance sweep (`daemon/maintenance.ts`).
+ */
+export async function cleanExpiredEvents(): Promise<void> {
+  const db = await getDb();
+  const cutoff = new Date(Date.now() - EVENT_RETENTION_MS)
+    .toISOString()
+    .replace("T", " ")
+    .slice(0, 19);
+  await db
+    .delete(systemEvents)
+    .where(and(isNotNull(systemEvents.delivered_at), lt(systemEvents.created_at, cutoff)));
+}
+
 /** The wake-summary line describing queued events, or "" when none are pending. */
 export function pendingEventsLine(count: number): string {
   if (count <= 0) return "";
@@ -632,8 +657,9 @@ function localHM(createdAt: string): string {
 
 /**
  * Mark next-turn events delivered for a mind+thread up to and including `uptoId`. Unlike
- * the old notices table (which deleted rows), events persist — we stamp `delivered_at` so
- * they stay visible in the events history/UI.
+ * the old notices table (which deleted rows on write), events persist — we stamp
+ * `delivered_at` so they stay visible in the events history/UI until swept by
+ * {@link cleanExpiredEvents} after {@link EVENT_RETENTION_MS}.
  */
 export async function clearDeliveredEvents(
   mind: string,
