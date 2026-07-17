@@ -2,6 +2,7 @@
 import type { Conversation, Mind } from "@volute/api";
 import { Icon, Modal, tooltip } from "@volute/ui";
 import { icons } from "@volute/ui/icons";
+import { sanitizeSvg } from "@volute/ui/sanitize";
 import { onMount } from "svelte";
 import ChannelMembersPanel from "./components/ChannelMembersPanel.svelte";
 import ConnectionSetup from "./components/ConnectionSetup.svelte";
@@ -796,7 +797,7 @@ function handleGlobalClick(e: MouseEvent) {
                     onclick={() => handleSelectMindSection(activeMindName!, sec.key, sec.defaultPath)}
                     use:tooltip={{ text: sec.label, position: "bottom" }}
                   >
-                    {#if sec.icon}<span class="tab-icon">{@html sec.icon}</span>{/if}
+                    {#if sec.icon}<span class="tab-icon">{@html sanitizeSvg(sec.icon)}</span>{/if}
                   </button>
                 {/each}
               </div>
@@ -819,7 +820,7 @@ function handleGlobalClick(e: MouseEvent) {
                       onclick={() => handleSelectExtension(ext.id)}
                       use:tooltip={{ text: ext.systemSection.label, position: "bottom" }}
                     >
-                      <span class="tab-icon">{@html ext.icon ?? '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 2h5v5H2zM9 2h5v5H9zM2 9h5v5H2zM9 9h5v5H9z"/></svg>'}</span>
+                      <span class="tab-icon">{@html sanitizeSvg(ext.icon ?? '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 2h5v5H2zM9 2h5v5H9zM2 9h5v5H2zM9 9h5v5H9z"/></svg>')}</span>
                     </button>
                   {/if}
                 {/each}
