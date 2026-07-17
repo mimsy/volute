@@ -17,14 +17,7 @@ import { readVoluteConfig, type Schedule, writeVoluteConfig } from "./volute-con
 
 const slog = log.child("spirit");
 
-const SPIRIT_SKILLS = [
-  "volute-admin",
-  "orientation",
-  "memory",
-  "seed-nurture",
-  "tending",
-  "plan-coordinator",
-];
+const SPIRIT_SKILLS = ["volute-admin", "memory", "seed-nurture", "tending", "plan-coordinator"];
 
 const TENDING_SCHEDULE = {
   id: "tending",
