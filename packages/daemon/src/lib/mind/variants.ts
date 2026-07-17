@@ -1,3 +1,5 @@
+import { statSync } from "node:fs";
+import { resolve } from "node:path";
 import { gitExec } from "../util/exec.js";
 import log from "../util/logger.js";
 
@@ -26,75 +28,123 @@ const MERGE_EXCLUDED_PATHS = ["home/MEMORY.md", "home/memory/journal/"];
 const MAX_DELTA_CHARS = 12000;
 
 /**
- * Paths under home/ that the platform deliberately keeps untracked, even though
- * a mind's own new files there should be rescued (see below). Never resurrect:
- *
- * - SDK runtime session state and backups under home/.claude/, home/.pi/,
- *   home/.agents/ (minus their whitelisted skills/settings, already tracked
- *   normally) — fixed by PR #661's gitignore rules so this noise stops merging
- *   into parents.
- * - node_modules/dist anywhere under home/ — templates/_base/gitignore ignores
- *   these repo-wide (no leading slash, so the rule matches at any depth), for
- *   the same reason they're excluded everywhere else: dependency trees and
- *   build output aren't a mind's creative work and don't belong in git history.
- *
- * Kept in manual sync with templates/_base/gitignore (search there for "#656").
+ * SDK-managed runtime subtrees under home/ — session transcripts, backups, cleanup
+ * markers — that are permanently and deliberately kept out of git (PR #661) and get
+ * regenerated every session. They aren't a mind's content to keep or discard, so
+ * they're excluded from the unresolved-files scan below entirely: reporting them
+ * would make nearly every join block by default (any mind with conversation history
+ * has `.claude/projects/*.jsonl`), defeating the point of only interrupting the join
+ * when a mind's *own* work is actually at risk. Skills/settings within these dirs are
+ * already tracked normally and never show up here.
  */
-const NEVER_RESCUE_PREFIXES = ["home/.claude/", "home/.pi/", "home/.agents/"];
-const NEVER_RESCUE_SEGMENTS = new Set(["node_modules", "dist"]);
+const NEVER_REPORT_PREFIXES = ["home/.claude/", "home/.pi/", "home/.agents/"];
 
-function isRescuable(path: string): boolean {
-  if (NEVER_RESCUE_PREFIXES.some((prefix) => path.startsWith(prefix))) return false;
-  return !path.split("/").some((segment) => NEVER_RESCUE_SEGMENTS.has(segment));
+/** Cap the individual files listed in an unresolved-files report; huge trees (a cloned
+ * repo, a venv) would otherwise flood the message. `totalCount`/`totalBytes` still
+ * cover everything found, not just what's listed. */
+const MAX_LISTED_UNRESOLVED_FILES = 20;
+
+/** One untracked home/ file .gitignore hides from git, found at join time. */
+export interface UnresolvedHomeFile {
+  /** Path relative to the variant's repo root, e.g. "home/downloads/movie.mp4". */
+  path: string;
+  /** Size in bytes, or -1 if it couldn't be read (e.g. deleted mid-scan). */
+  bytes: number;
+}
+
+/** Result of scanning a variant's home/ for files gitignore would silently drop. */
+export interface UnresolvedHomeFiles {
+  /** Up to {@link MAX_LISTED_UNRESOLVED_FILES} entries, for display. */
+  files: UnresolvedHomeFile[];
+  /** The true count, which may exceed `files.length`. */
+  totalCount: number;
+  /** Sum of bytes across every file found, not just the displayed subset. */
+  totalBytes: number;
 }
 
 /**
- * Force-stage any file a mind created directly under home/ that .gitignore's
- * `home/*` catch-all silently blocks from tracking. New top-level home/ files
- * are the normal creative path variants exist to support, but auto-commit's
- * `git add` no-ops on them (it only logs the failure), so they sit uncommitted
- * in the variant's working tree — and `cleanupVariant`'s `git worktree remove`
- * deletes the working tree wholesale, destroying them (#656).
+ * Find every file under home/ that .gitignore hides from tracking and that's still
+ * sitting on disk, uncommitted — exactly what `cleanupVariant`'s `git worktree remove`
+ * would silently destroy at join (#656).
  *
- * Deliberately-ignored SDK runtime noise and build/dependency output (see
- * {@link isRescuable}) stay excluded — resurrecting either would bake noise or
- * unrelated build artifacts into the parent's permanent git history.
+ * `home/*` is gitignored by design: a mind's home can hold large downloads, nested git
+ * repos, build output, anything. The daemon has no way to know what's precious and what
+ * isn't, so unlike the previous force-add approach, this makes no judgment call on a
+ * mind's own content — it only excludes the SDK's own permanently-ignored runtime
+ * directories (see {@link NEVER_REPORT_PREFIXES}), which are never a mind's content.
+ * Everything else found here is the caller's to report and block on, not resolve.
  *
- * Call this before the pre-merge auto-commit in the variant's own worktree, so
- * the rescued files land in a real commit on the variant branch and merge into
- * the parent like any other change. Never throws — a scan or stage failure is
- * logged and treated as "nothing to rescue," falling back to the pre-#656
- * behavior for that join rather than blocking it.
- *
- * @returns the repo-relative paths that were force-added.
+ * Throws on a scan failure (e.g. the worktree is gone or corrupt) rather than treating
+ * "couldn't check" as "nothing found" — a safety check that fails open isn't a safety
+ * check. Callers must treat a thrown error as blocking too.
  */
-export async function rescueIgnoredHomeFiles(cwd: string): Promise<string[]> {
-  const opts = { cwd };
-  let raw: string;
-  try {
-    raw = await gitExec(
-      ["ls-files", "--others", "--ignored", "--exclude-standard", "-z", "--", "home"],
-      opts,
-    );
-  } catch (err) {
-    log.warn("variant join: failed to scan for ignored home/ files", log.errorData(err));
-    return [];
+export async function findUnresolvedHomeFiles(cwd: string): Promise<UnresolvedHomeFiles> {
+  const raw = await gitExec(
+    ["ls-files", "--others", "--ignored", "--exclude-standard", "-z", "--", "home"],
+    { cwd },
+  );
+
+  const allPaths = raw
+    .split("\0")
+    .filter((path) => path && !NEVER_REPORT_PREFIXES.some((prefix) => path.startsWith(prefix)));
+
+  const files: UnresolvedHomeFile[] = [];
+  let totalBytes = 0;
+  for (const path of allPaths) {
+    let bytes = -1;
+    try {
+      bytes = statSync(resolve(cwd, path)).size;
+    } catch {
+      // Deleted between listing and stat, or an unreadable symlink — still report it,
+      // just without a size, rather than silently dropping it from the count.
+    }
+    if (bytes > 0) totalBytes += bytes;
+    if (files.length < MAX_LISTED_UNRESOLVED_FILES) files.push({ path, bytes });
   }
 
-  const rescued = raw.split("\0").filter((path) => path && isRescuable(path));
-  if (rescued.length === 0) return [];
+  return { files, totalCount: allPaths.length, totalBytes };
+}
 
-  try {
-    await gitExec(["add", "-f", "--", ...rescued], opts);
-  } catch (err) {
-    log.warn(
-      `variant join: failed to rescue ignored home/ files: ${rescued.join(", ")}`,
-      log.errorData(err),
-    );
-    return [];
+function formatBytes(bytes: number): string {
+  if (bytes < 0) return "size unknown";
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ["KB", "MB", "GB", "TB"];
+  let value = bytes / 1024;
+  for (const unit of units) {
+    if (value < 1024) return `${value.toFixed(1)} ${unit}`;
+    value /= 1024;
   }
-  log.info(`variant join: rescued gitignored home/ files: ${rescued.join(", ")}`);
-  return rescued;
+  return `${value.toFixed(1)} PB`;
+}
+
+/**
+ * Render {@link findUnresolvedHomeFiles}'s result as an unmistakable, actionable
+ * message: which files are at risk, how big they are, and the three ways to resolve
+ * each one before retrying the join. Paths drop the "home/" prefix so they read the
+ * way the variant itself sees them (its cwd is already home/).
+ */
+export function formatUnresolvedHomeFilesMessage(
+  variantName: string,
+  result: UnresolvedHomeFiles,
+): string {
+  const lines = result.files.map(
+    (f) => `  - ${f.path.replace(/^home\//, "")} (${formatBytes(f.bytes)})`,
+  );
+  const remaining = result.totalCount - result.files.length;
+  if (remaining > 0) lines.push(`  ...and ${remaining} more`);
+
+  return (
+    `Cannot join variant "${variantName}": it has ${result.totalCount} untracked file` +
+    `${result.totalCount === 1 ? "" : "s"} under home/ that .gitignore is hiding from git — ` +
+    `never committed, and joining would destroy them when the variant is cleaned up ` +
+    `(total: ${formatBytes(result.totalBytes)}):\n\n${lines.join("\n")}\n\n` +
+    `Before retrying the join, resolve each file in the variant — one of:\n` +
+    `  1. Track it: git add -f -- <path> (then commit it, or let auto-commit pick it up next turn)\n` +
+    `  2. Copy it out of home/ to somewhere safe, then delete it\n` +
+    `  3. Delete it if it's disposable\n\n` +
+    `Once resolved, retry the join. To join anyway and discard everything listed above, pass ` +
+    `discardUnresolved: true.`
+  );
 }
 
 /**

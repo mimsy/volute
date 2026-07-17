@@ -3,8 +3,9 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import {
+  findUnresolvedHomeFiles,
+  formatUnresolvedHomeFilesMessage,
   mergeVariantExcludingMemory,
-  rescueIgnoredHomeFiles,
   VariantMergeError,
 } from "../packages/daemon/src/lib/mind/variants.js";
 import { findTemplatesRoot } from "../packages/daemon/src/lib/template/template.js";
@@ -205,12 +206,12 @@ describe("mergeVariantExcludingMemory", () => {
   });
 });
 
-describe("rescueIgnoredHomeFiles (#656)", () => {
+describe("findUnresolvedHomeFiles / formatUnresolvedHomeFilesMessage (#656)", () => {
   // A real worktree pair (not just branches) so we can reproduce the actual
   // destructive step at join: `git worktree remove` deletes everything left
   // uncommitted on disk, ignored or not.
-  const parent = resolve("/tmp", `variant-rescue-test-${process.pid}`);
-  const variantDir = resolve("/tmp", `variant-rescue-test-${process.pid}-variant`);
+  const parent = resolve("/tmp", `variant-unresolved-test-${process.pid}`);
+  const variantDir = resolve("/tmp", `variant-unresolved-test-${process.pid}-variant`);
   const templateGitignore = readFileSync(
     resolve(findTemplatesRoot(), "_base", "gitignore"),
     "utf-8",
@@ -252,59 +253,119 @@ describe("rescueIgnoredHomeFiles (#656)", () => {
     rmSync(variantDir, { recursive: true, force: true });
   });
 
-  it("force-adds new home/ files .gitignore blocks, but leaves SDK runtime noise alone", async () => {
+  it("finds new home/ files .gitignore blocks, with sizes, but leaves SDK runtime noise alone", async () => {
     // The mind's normal creative path: a brand-new top-level home/ file. The
     // `home/*` catch-all ignores it, exactly as it ignored MANIFESTO.md/NOTE.md
-    // in the reported repro.
+    // in the reported repro. Nothing here is force-added — only reported.
     writeFileSync(resolve(variantDir, "home/NOTE.md"), "hello from the variant\n");
 
-    // SDK runtime noise that PR #661 deliberately keeps ignored — must not be
-    // resurrected by the rescue.
+    // SDK runtime noise that PR #661 deliberately keeps ignored — the daemon's own
+    // regenerated-every-session plumbing, not a mind's content, so it must never
+    // show up as something the mind is asked to resolve.
     mkdirSync(resolve(variantDir, "home/.claude/projects"), { recursive: true });
     writeFileSync(resolve(variantDir, "home/.claude/projects/transcript.jsonl"), "{}\n");
 
-    const rescued = await rescueIgnoredHomeFiles(variantDir);
+    const result = await findUnresolvedHomeFiles(variantDir);
 
-    assert.deepEqual(rescued, ["home/NOTE.md"]);
+    assert.equal(result.totalCount, 1);
+    assert.equal(result.files.length, 1);
+    assert.equal(result.files[0].path, "home/NOTE.md");
+    assert.equal(result.files[0].bytes, "hello from the variant\n".length);
+    assert.equal(result.totalBytes, "hello from the variant\n".length);
 
-    const staged = (await variantGit("diff", "--cached", "--name-only")).trim().split("\n");
-    assert.ok(staged.includes("home/NOTE.md"), "new home/ file should be staged");
-    assert.ok(
-      !staged.includes("home/.claude/projects/transcript.jsonl"),
-      "SDK runtime noise must stay unstaged",
+    // Nothing was staged — this is pure detection, no side effects.
+    const staged = (await variantGit("diff", "--cached", "--name-only")).trim();
+    assert.equal(staged, "", "detection must not stage anything");
+  });
+
+  it("caps the listed files but keeps the true count and total size", async () => {
+    for (let i = 0; i < 25; i++) {
+      writeFileSync(resolve(variantDir, `home/file-${i}.bin`), "x".repeat(10));
+    }
+
+    const result = await findUnresolvedHomeFiles(variantDir);
+
+    assert.equal(result.totalCount, 25);
+    assert.ok(result.files.length < 25, "listing should be capped");
+    assert.equal(result.totalBytes, 250, "total size covers every file, not just the listed ones");
+  });
+
+  it("formats an actionable message naming paths, sizes, and the three resolution options", async () => {
+    mkdirSync(resolve(variantDir, "home/downloads"), { recursive: true });
+    writeFileSync(resolve(variantDir, "home/downloads/movie.mp4"), "x".repeat(2048));
+
+    const result = await findUnresolvedHomeFiles(variantDir);
+    const message = formatUnresolvedHomeFilesMessage("my-variant", result);
+
+    assert.match(message, /my-variant/);
+    assert.match(message, /downloads\/movie\.mp4/);
+    assert.match(message, /2\.0 KB/);
+    assert.match(message, /git add -f/);
+    assert.match(message, /[Cc]opy it out/);
+    assert.match(message, /[Dd]elete it/);
+    assert.match(message, /discardUnresolved/);
+  });
+
+  it("reports nothing when the variant has no untracked home/ files", async () => {
+    writeFileSync(resolve(variantDir, "home/SOUL.md"), "# Soul\nupdated\n");
+    await variantGit("add", "-A");
+    await variantGit("commit", "-m", "tracked change only");
+
+    const result = await findUnresolvedHomeFiles(variantDir);
+
+    assert.equal(result.totalCount, 0);
+    assert.equal(result.files.length, 0);
+    assert.equal(result.totalBytes, 0);
+  });
+
+  it("a variant's new home/ file survives a join that's blocked on it — nothing is destroyed", async () => {
+    // Mirrors the reported repro: the mind writes a new top-level home/ file, never
+    // committed (gitignored). This test proves the actual safety property the redesign
+    // exists for: the file is still there, byte-for-byte, after a join attempt that
+    // finds it unresolved — not silently gone, the way the pre-fix code left it.
+    writeFileSync(resolve(variantDir, "home/NOTE.md"), "hello from the variant\n");
+
+    const unresolved = await findUnresolvedHomeFiles(variantDir);
+    assert.equal(
+      unresolved.totalCount,
+      1,
+      "the new file must be detected before anything destructive runs",
+    );
+
+    // The production join flow (web/api/variants.ts, web/api/minds.ts) checks this
+    // and — finding something — returns/notices instead of calling cleanupVariant.
+    // Simulate that decision directly: skip cleanup entirely.
+    if (unresolved.totalCount === 0) {
+      await parentGit("worktree", "remove", "--force", variantDir);
+    }
+
+    // The variant worktree is untouched: still there, file still exactly as written.
+    assert.ok(existsSync(variantDir), "variant worktree must not be removed while blocked");
+    assert.equal(
+      readFileSync(resolve(variantDir, "home/NOTE.md"), "utf-8"),
+      "hello from the variant\n",
+      "the file must survive completely intact — nothing merged, nothing discarded",
     );
   });
 
-  it("survives a variant's new home/ file across join, including worktree deletion", async () => {
-    // Mirrors the reported repro: the mind writes a new top-level home/ file.
-    // Nothing commits it — auto-commit's `git add` silently fails on the
-    // gitignored path, exactly as it does in production today.
+  it("once resolved (git add -f + commit), the retried join proceeds and the file survives via a normal merge", async () => {
     writeFileSync(resolve(variantDir, "home/NOTE.md"), "hello from the variant\n");
+    assert.equal((await findUnresolvedHomeFiles(variantDir)).totalCount, 1);
 
-    // The pre-merge safety net in the join flow (web/api/minds.ts): rescue
-    // gitignored creative work, then commit anything staged.
-    await rescueIgnoredHomeFiles(variantDir);
-    await variantGit("add", "-A");
-    const diffCode = await variantGit("diff", "--cached", "--quiet").then(
-      () => 0,
-      () => 1,
-    );
-    if (diffCode !== 0) {
-      await variantGit("commit", "-m", "Auto-commit uncommitted changes before merge");
-    }
+    // The mind resolves it — option 1 from the message: track it explicitly.
+    await variantGit("add", "-f", "--", "home/NOTE.md");
+    await variantGit("commit", "-m", "keep my note");
+
+    // Retrying the join now finds nothing unresolved, so it's safe to proceed.
+    const retried = await findUnresolvedHomeFiles(variantDir);
+    assert.equal(retried.totalCount, 0, "resolved files must no longer block the join");
 
     await mergeVariantExcludingMemory(parent, "variant");
-
-    // Join always tears down the variant worktree once merged.
     await parentGit("worktree", "remove", "--force", variantDir);
 
     assert.ok(
       existsSync(resolve(parent, "home/NOTE.md")),
-      "the variant's new home/ file must survive the join, not die with the worktree",
-    );
-    assert.equal(
-      readFileSync(resolve(parent, "home/NOTE.md"), "utf-8"),
-      "hello from the variant\n",
+      "once tracked, the file merges into the parent like any other committed change",
     );
   });
 });

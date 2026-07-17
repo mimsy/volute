@@ -9,6 +9,11 @@ const cmd = command({
     justification: { type: "string", description: "Justification for merge" },
     memory: { type: "string", description: "Memory to add" },
     "skip-verify": { type: "boolean", description: "Skip verification step" },
+    "discard-unresolved": {
+      type: "boolean",
+      description:
+        "Join even if the variant has untracked home/ files git would otherwise refuse to discard",
+    },
   },
   run: async ({ args, flags }) => {
     const variantName = args.variant!;
@@ -54,17 +59,26 @@ const cmd = command({
           ...(flags.justification && { justification: flags.justification }),
           ...(flags.memory && { memory: flags.memory }),
           ...(flags["skip-verify"] && { skipVerify: true }),
+          ...(flags["discard-unresolved"] && { discardUnresolved: true }),
         }),
       },
     );
 
-    const data = (await res.json()) as { ok?: boolean; error?: string; conflicts?: string[] };
+    const data = (await res.json()) as {
+      ok?: boolean;
+      error?: string;
+      conflicts?: string[];
+      unresolvedFiles?: { path: string; bytes: number }[];
+    };
 
     if (!res.ok) {
       console.error(data.error ?? "Failed to join variant");
       if (data.conflicts?.length) {
         console.error("\nConflicting files:");
         for (const file of data.conflicts) console.error(`  ${file}`);
+      }
+      if (data.unresolvedFiles?.length) {
+        console.error("\nRetry with --discard-unresolved to join anyway and discard them.");
       }
       process.exit(1);
     }

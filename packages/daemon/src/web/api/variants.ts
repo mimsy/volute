@@ -18,8 +18,9 @@ import {
 import { spawnServer } from "../../lib/mind/spawn-server.js";
 import { cleanupVariant } from "../../lib/mind/variant-cleanup.js";
 import {
+  findUnresolvedHomeFiles,
+  formatUnresolvedHomeFilesMessage,
   mergeVariantExcludingMemory,
-  rescueIgnoredHomeFiles,
   VariantMergeError,
   validateBranchName,
 } from "../../lib/mind/variants.js";
@@ -267,8 +268,13 @@ const app = new Hono<AuthEnv>()
     const branchErr = validateBranchName(variantEntry.branch);
     if (branchErr) return c.json({ error: branchErr }, 400);
 
-    let body: { summary?: string; justification?: string; memory?: string; skipVerify?: boolean } =
-      {};
+    let body: {
+      summary?: string;
+      justification?: string;
+      memory?: string;
+      skipVerify?: boolean;
+      discardUnresolved?: boolean;
+    } = {};
     try {
       body = await c.req.json();
     } catch {
@@ -284,7 +290,11 @@ const app = new Hono<AuthEnv>()
     // recurses — owned root:root, locking the still-running mind out of its own
     // files. Hand ownership back before returning; surface a restore failure,
     // since under isolation it means root-owned files were left behind.
-    const failAfterGitWrite = async (message: string, extra?: Record<string, unknown>) => {
+    const failAfterGitWrite = async (
+      message: string,
+      extra?: Record<string, unknown>,
+      status: 409 | 500 = 500,
+    ) => {
       try {
         await chownMindDir(projectRoot, mindName);
       } catch (err) {
@@ -300,7 +310,7 @@ const app = new Hono<AuthEnv>()
           500,
         );
       }
-      return c.json({ error: message, ...extra }, 500);
+      return c.json({ error: message, ...extra }, status);
     };
 
     // Give the variant one final turn to wind down before it's merged and
@@ -331,14 +341,6 @@ const app = new Hono<AuthEnv>()
     try {
       // Auto-commit any uncommitted changes in the variant worktree
       if (existsSync(variantEntry.dir)) {
-        // Force-stage new home/ files .gitignore's `home/*` catch-all silently
-        // blocked from tracking — a mind's normal creative path. Without this,
-        // `git status --porcelain` below never sees them (only `--ignored` does),
-        // so they'd stay uncommitted and die when the variant worktree is removed
-        // after merge (#656). Never throws — failures are logged internally and
-        // the join proceeds either way.
-        await rescueIgnoredHomeFiles(variantEntry.dir);
-
         const status = (await gitExec(["status", "--porcelain"], { cwd: variantEntry.dir })).trim();
         if (status) {
           try {
@@ -416,6 +418,37 @@ const app = new Hono<AuthEnv>()
             : "Merge failed. Resolve conflicts in the variant and retry the join.",
           { conflicts: err.conflicts },
         );
+      }
+
+      // The daemon can't know what's precious in a mind's home/ — a download, a cloned
+      // repo, a venv could all be exactly what the mind wants kept, so it never guesses.
+      // Checked here, right before the one genuinely destructive step (`cleanupVariant`'s
+      // `git worktree remove`), so it also catches anything the farewell turn above just
+      // wrote — an earlier check, before the farewell turn ran, could miss those. The
+      // merge above already landed (it only pulls in what the variant committed, so it's
+      // safe regardless), but cleanup — and with it, the point of no return — waits until
+      // this comes back clean. Retrying the same join later resumes cleanly: a no-op
+      // merge next time, then cleanup, once the files are resolved.
+      if (existsSync(variantEntry.dir) && !body.discardUnresolved) {
+        let unresolved: Awaited<ReturnType<typeof findUnresolvedHomeFiles>>;
+        try {
+          unresolved = await findUnresolvedHomeFiles(variantEntry.dir);
+        } catch (err) {
+          return failAfterGitWrite(
+            `Could not verify variant ${variantName} has no unresolved home/ files: ${err instanceof Error ? err.message : String(err)}. Variant left intact — retry the join.`,
+          );
+        }
+        if (unresolved.totalCount > 0) {
+          return failAfterGitWrite(
+            formatUnresolvedHomeFilesMessage(variantName, unresolved),
+            {
+              unresolvedFiles: unresolved.files,
+              unresolvedCount: unresolved.totalCount,
+              unresolvedBytes: unresolved.totalBytes,
+            },
+            409,
+          );
+        }
       }
 
       await cleanupVariant(variantName, mindName, projectRoot, variantEntry.dir, { stop: true });

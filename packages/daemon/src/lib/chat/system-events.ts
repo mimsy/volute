@@ -117,6 +117,8 @@ export function eventLabel(type: string, meta: Record<string, unknown> | null | 
           return s("reason") ? `Notice: ${s("reason")}` : "Notice";
         case "delivery_failed":
           return "Delivery failed";
+        case "join_blocked":
+          return "Variant join blocked";
         default:
           return "Notice";
       }
@@ -132,7 +134,8 @@ export type NoticeKind =
   | "budget"
   | "startup"
   | "extension"
-  | "delivery_failed";
+  | "delivery_failed"
+  | "join_blocked";
 
 export type RecordNoticeInput = {
   mind: string;
