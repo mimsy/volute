@@ -93,7 +93,11 @@ import { evaluateSeedChecklist } from "../../lib/mind/seed-readiness.js";
 import { isTemplateStale } from "../../lib/mind/template-staleness.js";
 import { applyThinkingLevel, deriveThinkingLevel } from "../../lib/mind/thinking-config.js";
 import { cleanupVariant } from "../../lib/mind/variant-cleanup.js";
-import { mergeVariantExcludingMemory, validateBranchName } from "../../lib/mind/variants.js";
+import {
+  mergeVariantExcludingMemory,
+  rescueIgnoredHomeFiles,
+  validateBranchName,
+} from "../../lib/mind/variants.js";
 import { readVoluteConfig, writeVoluteConfig } from "../../lib/mind/volute-config.js";
 import { PLATFORMS } from "../../lib/platforms.js";
 import {
@@ -1572,6 +1576,14 @@ const app = new Hono<AuthEnv>()
 
           // Auto-commit variant worktree
           if (existsSync(variantEntry.dir)) {
+            // Force-stage new home/ files .gitignore's `home/*` catch-all silently
+            // blocked from tracking — a mind's normal creative path. Without this,
+            // `git status --porcelain` below never sees them (git only reports
+            // ignored paths under --ignored), so they'd stay uncommitted and die
+            // when the variant worktree is deleted after merge (#656). Never throws
+            // — failures are logged internally and the join proceeds either way.
+            await rescueIgnoredHomeFiles(variantEntry.dir);
+
             const status = (
               await gitExec(["status", "--porcelain"], { cwd: variantEntry.dir })
             ).trim();

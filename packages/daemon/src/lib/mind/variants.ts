@@ -26,6 +26,73 @@ const MERGE_EXCLUDED_PATHS = ["home/MEMORY.md", "home/memory/journal/"];
 const MAX_DELTA_CHARS = 12000;
 
 /**
+ * Paths under home/ that the platform deliberately keeps untracked — SDK runtime
+ * session state and backups (`.claude/projects`, `.claude/backups`, etc.), fixed
+ * by PR #661's gitignore rules so this noise stops merging into parents. The
+ * rescue below must never resurrect these, even though they're ignored by the
+ * same `home/*` catch-all that also blocks a mind's genuine new files.
+ *
+ * Kept in manual sync with the re-ignore rules in templates/_base/gitignore
+ * (search there for "#656") — adding a new deliberately-ignored subdirectory
+ * under home/ needs a matching prefix here, or its noise gets force-added and
+ * merged into the parent.
+ */
+const NEVER_RESCUE_PREFIXES = ["home/.claude/", "home/.pi/", "home/.agents/"];
+
+/**
+ * Force-stage any file a mind created directly under home/ that .gitignore's
+ * `home/*` catch-all silently blocks from tracking. New top-level home/ files
+ * are the normal creative path variants exist to support, but auto-commit's
+ * `git add` no-ops on them (it only logs the failure), so they sit uncommitted
+ * in the variant's working tree — and `cleanupVariant`'s `git worktree remove`
+ * deletes the working tree wholesale, destroying them (#656).
+ *
+ * SDK runtime noise under home/.claude/, home/.pi/, home/.agents/ (minus their
+ * whitelisted skills/settings, which are already tracked normally) stays
+ * excluded — resurrecting it would reintroduce the inversion PR #661 fixed.
+ *
+ * Call this before the pre-merge auto-commit in the variant's own worktree, so
+ * the rescued files land in a real commit on the variant branch and merge into
+ * the parent like any other change.
+ *
+ * @returns the repo-relative paths that were force-added.
+ */
+export async function rescueIgnoredHomeFiles(cwd: string): Promise<string[]> {
+  const opts = { cwd };
+  let raw: string;
+  try {
+    raw = await gitExec(
+      ["status", "--porcelain=v1", "-z", "--ignored=matching", "--", "home"],
+      opts,
+    );
+  } catch (err) {
+    log.warn("variant join: failed to scan for ignored home/ files", log.errorData(err));
+    return [];
+  }
+
+  const candidates: string[] = [];
+  for (const entry of raw.split("\0")) {
+    if (!entry.startsWith("!! ")) continue;
+    const path = entry.slice(3);
+    if (NEVER_RESCUE_PREFIXES.some((prefix) => path.startsWith(prefix))) continue;
+    candidates.push(path);
+  }
+  if (candidates.length === 0) return [];
+
+  try {
+    await gitExec(["add", "-f", "--", ...candidates], opts);
+  } catch (err) {
+    log.warn(
+      `variant join: failed to rescue ignored home/ files: ${candidates.join(", ")}`,
+      log.errorData(err),
+    );
+    return [];
+  }
+  log.info(`variant join: rescued gitignored home/ files: ${candidates.join(", ")}`);
+  return candidates;
+}
+
+/**
  * Merge a variant branch into the parent worktree, excluding the mind's living
  * memory (MEMORY.md, memory/journal/) from the textual merge. The parent keeps
  * its own copy of those files; the variant's delta is returned so it can be

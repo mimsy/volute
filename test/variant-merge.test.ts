@@ -4,8 +4,10 @@ import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import {
   mergeVariantExcludingMemory,
+  rescueIgnoredHomeFiles,
   VariantMergeError,
 } from "../packages/daemon/src/lib/mind/variants.js";
+import { findTemplatesRoot } from "../packages/daemon/src/lib/template/template.js";
 import { gitExec } from "../packages/daemon/src/lib/util/exec.js";
 
 const repo = resolve("/tmp", `variant-merge-test-${process.pid}`);
@@ -199,6 +201,110 @@ describe("mergeVariantExcludingMemory", () => {
     assert.doesNotMatch(
       readFileSync(resolve(repo, "home/MEMORY.md"), "utf-8"),
       /variant fact line/,
+    );
+  });
+});
+
+describe("rescueIgnoredHomeFiles (#656)", () => {
+  // A real worktree pair (not just branches) so we can reproduce the actual
+  // destructive step at join: `git worktree remove` deletes everything left
+  // uncommitted on disk, ignored or not.
+  const parent = resolve("/tmp", `variant-rescue-test-${process.pid}`);
+  const variantDir = resolve("/tmp", `variant-rescue-test-${process.pid}-variant`);
+  const templateGitignore = readFileSync(
+    resolve(findTemplatesRoot(), "_base", "gitignore"),
+    "utf-8",
+  );
+
+  async function parentGit(...args: string[]): Promise<string> {
+    return gitExec(args, { cwd: parent });
+  }
+
+  async function variantGit(...args: string[]): Promise<string> {
+    return gitExec(args, { cwd: variantDir });
+  }
+
+  beforeEach(async () => {
+    rmSync(parent, { recursive: true, force: true });
+    rmSync(variantDir, { recursive: true, force: true });
+    mkdirSync(parent, { recursive: true });
+
+    await parentGit("init", "-b", "main");
+    await parentGit("config", "user.name", "test");
+    await parentGit("config", "user.email", "test@example.com");
+
+    // Use the real template gitignore so the test tracks actual mind behavior,
+    // not a hand-rolled approximation of it.
+    writeFileSync(resolve(parent, ".gitignore"), templateGitignore);
+    mkdirSync(resolve(parent, "home"), { recursive: true });
+    writeFileSync(resolve(parent, "home/SOUL.md"), "# Soul\n");
+    await parentGit("add", "-A");
+    await parentGit("commit", "-m", "initial");
+
+    await parentGit("worktree", "add", "-b", "variant", variantDir, "main");
+    await variantGit("config", "user.name", "test");
+    await variantGit("config", "user.email", "test@example.com");
+  });
+
+  afterEach(async () => {
+    await parentGit("worktree", "remove", "--force", variantDir).catch(() => {});
+    rmSync(parent, { recursive: true, force: true });
+    rmSync(variantDir, { recursive: true, force: true });
+  });
+
+  it("force-adds new home/ files .gitignore blocks, but leaves SDK runtime noise alone", async () => {
+    // The mind's normal creative path: a brand-new top-level home/ file. The
+    // `home/*` catch-all ignores it, exactly as it ignored MANIFESTO.md/NOTE.md
+    // in the reported repro.
+    writeFileSync(resolve(variantDir, "home/NOTE.md"), "hello from the variant\n");
+
+    // SDK runtime noise that PR #661 deliberately keeps ignored — must not be
+    // resurrected by the rescue.
+    mkdirSync(resolve(variantDir, "home/.claude/projects"), { recursive: true });
+    writeFileSync(resolve(variantDir, "home/.claude/projects/transcript.jsonl"), "{}\n");
+
+    const rescued = await rescueIgnoredHomeFiles(variantDir);
+
+    assert.deepEqual(rescued, ["home/NOTE.md"]);
+
+    const staged = (await variantGit("diff", "--cached", "--name-only")).trim().split("\n");
+    assert.ok(staged.includes("home/NOTE.md"), "new home/ file should be staged");
+    assert.ok(
+      !staged.includes("home/.claude/projects/transcript.jsonl"),
+      "SDK runtime noise must stay unstaged",
+    );
+  });
+
+  it("survives a variant's new home/ file across join, including worktree deletion", async () => {
+    // Mirrors the reported repro: the mind writes a new top-level home/ file.
+    // Nothing commits it — auto-commit's `git add` silently fails on the
+    // gitignored path, exactly as it does in production today.
+    writeFileSync(resolve(variantDir, "home/NOTE.md"), "hello from the variant\n");
+
+    // The pre-merge safety net in the join flow (web/api/minds.ts): rescue
+    // gitignored creative work, then commit anything staged.
+    await rescueIgnoredHomeFiles(variantDir);
+    await variantGit("add", "-A");
+    const diffCode = await variantGit("diff", "--cached", "--quiet").then(
+      () => 0,
+      () => 1,
+    );
+    if (diffCode !== 0) {
+      await variantGit("commit", "-m", "Auto-commit uncommitted changes before merge");
+    }
+
+    await mergeVariantExcludingMemory(parent, "variant");
+
+    // Join always tears down the variant worktree once merged.
+    await parentGit("worktree", "remove", "--force", variantDir);
+
+    assert.ok(
+      existsSync(resolve(parent, "home/NOTE.md")),
+      "the variant's new home/ file must survive the join, not die with the worktree",
+    );
+    assert.equal(
+      readFileSync(resolve(parent, "home/NOTE.md"), "utf-8"),
+      "hello from the variant\n",
     );
   });
 });

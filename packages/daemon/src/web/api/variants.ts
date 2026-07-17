@@ -19,6 +19,7 @@ import { spawnServer } from "../../lib/mind/spawn-server.js";
 import { cleanupVariant } from "../../lib/mind/variant-cleanup.js";
 import {
   mergeVariantExcludingMemory,
+  rescueIgnoredHomeFiles,
   VariantMergeError,
   validateBranchName,
 } from "../../lib/mind/variants.js";
@@ -330,6 +331,14 @@ const app = new Hono<AuthEnv>()
     try {
       // Auto-commit any uncommitted changes in the variant worktree
       if (existsSync(variantEntry.dir)) {
+        // Force-stage new home/ files .gitignore's `home/*` catch-all silently
+        // blocked from tracking — a mind's normal creative path. Without this,
+        // `git status --porcelain` below never sees them (only `--ignored` does),
+        // so they'd stay uncommitted and die when the variant worktree is removed
+        // after merge (#656). Never throws — failures are logged internally and
+        // the join proceeds either way.
+        await rescueIgnoredHomeFiles(variantEntry.dir);
+
         const status = (await gitExec(["status", "--porcelain"], { cwd: variantEntry.dir })).trim();
         if (status) {
           try {

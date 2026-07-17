@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { resolve } from "node:path";
-import { log } from "./logger.js";
+import { log, warn } from "./logger.js";
 
 function gitArgs(args: string[]): string[] {
   return process.env.VOLUTE_ISOLATION === "user" ? ["-c", "safe.directory=*", ...args] : args;
@@ -63,15 +63,37 @@ export function flushFileChanges(cwd?: string): Promise<void> {
   const effectiveCwd = cwd ?? process.cwd();
 
   pending = pending.then(async () => {
-    // Commit mind's own files
+    // Commit mind's own files. Only files that actually staged go into the commit
+    // message — a file `git add` couldn't stage (typically because it's gitignored)
+    // must never be named alongside files that really did commit, or the mind is
+    // told its work is safe when it isn't (#656).
     if (filesToCommit.length > 0) {
+      const staged: string[] = [];
+      const blocked: string[] = [];
       for (const f of filesToCommit) {
-        if ((await exec("git", ["add", f], effectiveCwd)).code !== 0) {
-          log("auto-commit", `git add failed for ${f}`);
+        if ((await exec("git", ["add", f], effectiveCwd)).code === 0) {
+          staged.push(f);
+        } else {
+          blocked.push(f);
         }
       }
-      if ((await exec("git", ["diff", "--cached", "--quiet"], effectiveCwd)).code !== 0) {
-        const names = filesToCommit.map((f) => f.replace(/^.*\//, "")).join(", ");
+      if (blocked.length > 0) {
+        const pronoun = blocked.length === 1 ? "it" : "they";
+        warn(
+          "auto-commit",
+          `git add failed for ${blocked.join(", ")} — likely gitignored, so ` +
+            `${pronoun} will NOT be committed or survive a variant join`,
+        );
+      }
+      // staged.length check guards against committing under a blank "Update "
+      // message when every file in this batch was blocked — `diff --cached` can
+      // still be non-empty from unrelated content already in the index (e.g. the
+      // mind ran `git add` itself), which isn't this batch's to name or claim.
+      if (
+        staged.length > 0 &&
+        (await exec("git", ["diff", "--cached", "--quiet"], effectiveCwd)).code !== 0
+      ) {
+        const names = staged.map((f) => f.replace(/^.*\//, "")).join(", ");
         const message = `Update ${names}`;
         if ((await exec("git", ["commit", "-m", message], effectiveCwd)).code === 0) {
           log("auto-commit", message);
