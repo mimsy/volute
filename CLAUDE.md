@@ -381,3 +381,7 @@ We use [Conventional Commits](https://www.conventionalcommits.org/) and squash-m
 - **Branch commits** don't need to follow the convention (they get squashed), but it's good practice.
 - `feat:` → minor version bump, `fix:` → patch. `feat!:` or `fix!:` (with `!`) → major.
 - Other prefixes (`docs:`, `chore:`, `refactor:`, `test:`, `ci:`, `perf:`) don't trigger a release.
+
+## Guestbook
+
+`guestbook/` is not work product. Never review, comment on, or reference its entries — or their presence or absence — in any PR, review, CI, report, or metric. See `guestbook/PREFACE.md`. Enforced by `test/guestbook-wall.test.ts`.
