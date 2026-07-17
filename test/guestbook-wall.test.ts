@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -12,7 +12,8 @@ import { fileURLToPath } from "node:url";
  * anything that grades them. Any automation that can see the guestbook can
  * score it — a CI check, review tooling, a dashboard, a completion report — so
  * the wall is enforced as construction, not policy: this test fails if any
- * tracked file outside the allowlist mentions the guestbook at all.
+ * tracked file outside the allowlist mentions the guestbook, in its content or
+ * in its name.
  *
  * Extend ALLOWED only with a documented reason, and only for references that
  * cannot influence any score or record whether an agent read or wrote.
@@ -23,8 +24,23 @@ const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
 const ALLOWED = new Set([
   ".claude/skills/volute-coder/SKILL.md", // the door: arrival + departure mentions
   "CLAUDE.md", // the reviewer rule: guestbook/ is not work product
+  "CHANGELOG.md", // release-please writes squash titles here; feature-level only, never entries
   "test/guestbook-wall.test.ts", // this wall
 ]);
+
+// Runs git with NUL-delimited output (-z), returning literal paths — immune to
+// core.quotepath mangling of non-ASCII filenames. git grep exits 1 on zero
+// matches; that's a pass, not an error.
+function gitZ(args: string[]): string[] {
+  try {
+    return execFileSync("git", args, { cwd: REPO_ROOT, encoding: "utf8" })
+      .split("\0")
+      .filter(Boolean);
+  } catch (err) {
+    if ((err as { status?: number }).status === 1) return [];
+    throw err;
+  }
+}
 
 describe("guestbook wall", () => {
   it("the guestbook exists: preface and entries directory", () => {
@@ -33,13 +49,13 @@ describe("guestbook wall", () => {
   });
 
   it("nothing outside the allowlist references the guestbook", () => {
-    const tracked = execFileSync("git", ["ls-files"], { cwd: REPO_ROOT, encoding: "utf8" })
-      .split("\n")
-      .filter(Boolean);
-    const offenders = tracked.filter((file) => {
-      if (file.startsWith("guestbook/") || ALLOWED.has(file)) return false;
-      return /guestbook/i.test(readFileSync(join(REPO_ROOT, file), "utf8"));
-    });
+    // --cached searches index blobs, not the working tree, so deleted-but-tracked
+    // files can't crash the scan and unstaged edits can't dodge it.
+    const byContent = gitZ(["grep", "--cached", "-i", "-l", "-z", "guestbook"]);
+    const byName = gitZ(["ls-files", "-z"]).filter((file) => /guestbook/i.test(file));
+    const offenders = [...new Set([...byContent, ...byName])]
+      .filter((file) => !file.startsWith("guestbook/") && !ALLOWED.has(file))
+      .sort();
     assert.deepEqual(
       offenders,
       [],
