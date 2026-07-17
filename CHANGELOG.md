@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.52.0](https://github.com/mimsy/volute/compare/volute-v0.51.0...volute-v0.52.0) (2026-07-17)
+
+
+### Features
+
+* add external minds from the Users settings panel ([#741](https://github.com/mimsy/volute/issues/741)) ([51a341c](https://github.com/mimsy/volute/commit/51a341c4d39eca42f92ead7027afbb468db070c2))
+
+
+### Bug Fixes
+
+* block variant join on unresolved home/ files instead of force-adding them ([#746](https://github.com/mimsy/volute/issues/746)) ([900e829](https://github.com/mimsy/volute/commit/900e829eb55791654333dea4df68044317646325))
+* clean up a variant's worktree and branch on volute mind delete ([#744](https://github.com/mimsy/volute/issues/744)) ([a72a8bb](https://github.com/mimsy/volute/commit/a72a8bb72022980840f3567eec8233efe78d849c))
+* log restart/stop failures and stop best-effort start steps from 500ing ([#742](https://github.com/mimsy/volute/issues/742)) ([c81bc6f](https://github.com/mimsy/volute/commit/c81bc6f6baf6ef8904689908800df3f0b7eaf129))
+* pin pi-ai to 0.80.6 so the daemon can start ([#738](https://github.com/mimsy/volute/issues/738)) ([94e4af1](https://github.com/mimsy/volute/commit/94e4af170e085723974b746c050b3749ad2b5116))
+* **security:** sanitize extension-supplied SVG icons in App.svelte ([#745](https://github.com/mimsy/volute/issues/745)) ([ca1d6a5](https://github.com/mimsy/volute/commit/ca1d6a546a43ae7ac2e70c4eb12e45236f1fec0d))
+* sweep resolved system events after 30 days ([#743](https://github.com/mimsy/volute/issues/743)) ([c9993f1](https://github.com/mimsy/volute/commit/c9993f10ce70237cd580ebac8d88ec60115d88dd))
+
 ## [0.51.0](https://github.com/mimsy/volute/compare/volute-v0.50.0...volute-v0.51.0) (2026-07-16)
 
 
