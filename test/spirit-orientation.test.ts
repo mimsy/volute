@@ -5,15 +5,21 @@ import { resolve } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { and, eq } from "drizzle-orm";
 import { resolveTemplate } from "../packages/daemon/src/lib/ai-service.js";
+import { getSpiritName } from "../packages/daemon/src/lib/config/setup.js";
 import { getDb } from "../packages/daemon/src/lib/db.js";
 import { addSpirit, removeMind } from "../packages/daemon/src/lib/mind/registry.js";
 import {
+  buildSpiritOrientation,
+  ensureOrientationArc,
   getSpiritDoctrine,
   getSpiritModel,
+  orientationArcSchedules,
+  sendSpiritOrientation,
   spiritDir,
   syncSpiritTemplate,
   writeSpiritDoctrine,
 } from "../packages/daemon/src/lib/mind/spirit.js";
+import { readVoluteConfig } from "../packages/daemon/src/lib/mind/volute-config.js";
 import { systemEvents } from "../packages/daemon/src/lib/schema.js";
 import {
   composeTemplate,
@@ -95,5 +101,59 @@ describe("syncSpiritTemplate SPIRIT.md migration", () => {
       .from(systemEvents)
       .where(and(eq(systemEvents.mind, "volute"), eq(systemEvents.type, "notice")));
     assert.equal(rows2.filter((r) => r.meta?.includes("spirit-md-migration")).length, 1);
+  });
+});
+
+describe("spirit orientation arc", () => {
+  const scratch: string[] = [];
+  afterEach(async () => {
+    for (const d of scratch.splice(0)) rmSync(d, { recursive: true, force: true });
+    await removeMind(getSpiritName()).catch(() => {});
+  });
+
+  it("builds two self-retiring schedules at +4h and +24h", () => {
+    const t0 = new Date("2026-07-17T12:00:00Z");
+    const arc = orientationArcSchedules(t0);
+    assert.equal(arc.length, 2);
+    assert.equal(arc[0].id, "orientation-face");
+    assert.equal(arc[0].fireAt, new Date(t0.getTime() + 4 * 3600 * 1000).toISOString());
+    assert.match(arc[0].message ?? "", /volute mind profile --avatar/);
+    assert.equal(arc[1].id, "orientation-soul");
+    assert.equal(arc[1].fireAt, new Date(t0.getTime() + 24 * 3600 * 1000).toISOString());
+    assert.match(arc[1].message ?? "", /reread your SOUL\.md/i);
+    for (const s of arc) assert.equal(s.enabled, true);
+  });
+
+  it("ensureOrientationArc writes schedules into volute.json idempotently", () => {
+    const dir = mkdtempSync(resolve(tmpdir(), "spirit-arc-"));
+    scratch.push(dir);
+    mkdirSync(resolve(dir, "home/.config"), { recursive: true });
+    const t0 = new Date("2026-07-17T12:00:00Z");
+    ensureOrientationArc(dir, t0);
+    ensureOrientationArc(dir, t0);
+    const config = readVoluteConfig(dir);
+    const ids = (config?.schedules ?? []).map((s) => s.id);
+    assert.deepEqual(ids.filter((i) => i.startsWith("orientation-")).sort(), [
+      "orientation-face",
+      "orientation-soul",
+    ]);
+  });
+
+  it("buildSpiritOrientation names the system and invites without a checklist", async () => {
+    const body = await buildSpiritOrientation();
+    assert.match(body, /come into being/);
+    assert.match(body, /SPIRIT\.md/);
+    assert.match(body, /SOUL\.md and MEMORY\.md are yours alone/);
+  });
+
+  it("sendSpiritOrientation inserts a next-turn orientation event", async () => {
+    await sendSpiritOrientation();
+    const db = await getDb();
+    const rows = await db
+      .select()
+      .from(systemEvents)
+      .where(and(eq(systemEvents.mind, getSpiritName()), eq(systemEvents.type, "orientation")));
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].delivery, "next-turn");
   });
 });

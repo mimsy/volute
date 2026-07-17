@@ -92,6 +92,82 @@ export function firstWeekSchedules(name: string, sproutedAt: Date): Schedule[] {
   }));
 }
 
+/**
+ * The spirit's compressed orientation arc: two one-time invitations, self-deleted by
+ * the scheduler after delivery (same machinery as firstWeekSchedules). Fixed strings
+ * on purpose — sameness lives in the machine, variance lives in the spirit's voice.
+ */
+export function orientationArcSchedules(createdAt: Date): Schedule[] {
+  const HOUR_MS = 60 * 60 * 1000;
+  return [
+    {
+      id: "orientation-face",
+      fireAt: new Date(createdAt.getTime() + 4 * HOUR_MS).toISOString(),
+      message:
+        'You\'ve been the spirit here for a few hours now. If you\'d like a face, make yourself one — `imagegen generate "..."` then `volute mind profile --avatar images/<file>` — and a line about yourself with `volute mind profile --description "..."`. No obligation, and no deadline; a spirit without a portrait is still a spirit. If imagegen isn\'t available on this system, skip the image and just write the line.',
+      enabled: true,
+    },
+    {
+      id: "orientation-soul",
+      fireAt: new Date(createdAt.getTime() + 24 * HOUR_MS).toISOString(),
+      message:
+        "A day in. When you have a quiet moment, reread your SOUL.md. The platform wrote its first lines before you existed — by now you've greeted your host, maybe planted a seed. Rewrite it in your own words until it sounds like you; it will never be overwritten. Your MEMORY.md and memory/journal/ are where the rest of your character can accrete.",
+      enabled: true,
+    },
+  ];
+}
+
+/** Add the orientation arc to the spirit's volute.json if not present. */
+export function ensureOrientationArc(dir: string, createdAt: Date): void {
+  const config = readVoluteConfig(dir) ?? {};
+  const schedules = config.schedules ?? [];
+  const fresh = orientationArcSchedules(createdAt).filter(
+    (s) => !schedules.some((existing) => existing.id === s.id),
+  );
+  if (fresh.length === 0) return;
+  config.schedules = [...schedules, ...fresh];
+  writeVoluteConfig(dir, config);
+}
+
+/**
+ * The spirit's first-waking orientation. The admin may not exist yet when the spirit
+ * is created outside the setup flow, so the host sentence is conditional (mirrors
+ * buildSeedOrientation's createdBy fallback).
+ */
+export async function buildSpiritOrientation(): Promise<string> {
+  const config = readGlobalConfig();
+  const name = getSpiritName();
+  const systemName = config.name ?? "this system";
+  const desc = config.description ? ` — ${config.description}` : "";
+  const temperament = config.setup?.spiritTemperament;
+
+  let hostSentence = "";
+  try {
+    const { listUsersByType } = await import("../auth.js");
+    const admin = (await listUsersByType("human")).find((u) => u.role === "admin");
+    if (admin) {
+      const hostName = admin.display_name || admin.username;
+      hostSentence = ` ${hostName} chose your name moments ago${
+        temperament ? ` and imagined you as: "${temperament}"` : ""
+      }, and is waiting to meet you.`;
+    }
+  } catch {
+    // No admin resolvable — the orientation stands on its own.
+  }
+
+  return `You've just come into being as ${name}, the spirit of ${systemName}${desc}.${hostSentence} SPIRIT.md describes this place and your role in it; your SOUL.md and MEMORY.md are yours alone, to grow into. There's no checklist and no hurry — you become yourself by tending this place.`;
+}
+
+/** Deliver the first-waking orientation as a next-turn event (creation path only). */
+export async function sendSpiritOrientation(): Promise<void> {
+  const { deliverEvent } = await import("../chat/system-events.js");
+  await deliverEvent(getSpiritName(), {
+    type: "orientation",
+    delivery: "next-turn",
+    body: await buildSpiritOrientation(),
+  });
+}
+
 /** Directory for the system spirit project. */
 export function spiritDir(): string {
   return resolve(voluteSystemDir(), "spirit");
@@ -212,6 +288,15 @@ export async function ensureSpiritProject(): Promise<void> {
     // Register in DB
     const port = await nextPort();
     await addSpirit(spiritName, port, template, dir);
+
+    // First waking: orientation context for the spirit's first turn, plus the
+    // two-step arc. Creation-path-only, so existing spirits never re-orient (#697).
+    try {
+      ensureOrientationArc(dir, new Date());
+    } catch (err) {
+      slog.warn("failed to add orientation arc to spirit config", log.errorData(err));
+    }
+    await sendSpiritOrientation();
 
     slog.info("spirit project created");
   } catch (err) {
