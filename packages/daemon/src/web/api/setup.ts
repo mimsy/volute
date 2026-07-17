@@ -1,4 +1,4 @@
-import { mkdirSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { Hono } from "hono";
@@ -17,7 +17,7 @@ import {
   readSystemsConfig,
   writeSystemsConfig,
 } from "../../lib/config/systems-config.js";
-import { findMind, validateSpiritName } from "../../lib/mind/registry.js";
+import { findMind, validateSpiritName, voluteSystemDir } from "../../lib/mind/registry.js";
 import log from "../../lib/util/logger.js";
 import { createSession, SESSION_MAX_AGE } from "../middleware/auth.js";
 
@@ -432,7 +432,7 @@ setup.post("/spirit", async (c) => {
     return c.json({ error: "Setup already complete" }, 400);
   }
 
-  let body: { name: string; temperament?: string };
+  let body: { name: string; temperament?: string; description?: string; avatar?: string };
   try {
     body = await c.req.json();
   } catch {
@@ -459,6 +459,25 @@ setup.post("/spirit", async (c) => {
   config.setup.spiritName = name;
   const temperament = body.temperament?.trim();
   config.setup.spiritTemperament = temperament || undefined;
+
+  const description = body.description?.trim();
+  config.setup.spiritDescription = description || undefined;
+
+  if (body.avatar) {
+    const match = /^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/=]+)$/.exec(body.avatar);
+    if (!match) {
+      return c.json({ error: "Avatar must be a png, jpeg, or webp image" }, 400);
+    }
+    const ext = match[1] === "jpeg" ? "jpg" : match[1];
+    const bytes = Buffer.from(match[2], "base64");
+    if (bytes.length > 2 * 1024 * 1024) {
+      return c.json({ error: "Avatar must be under 2MB" }, 400);
+    }
+    const filename = `spirit-avatar.${ext}`;
+    writeFileSync(resolve(voluteSystemDir(), filename), bytes);
+    config.setup.spiritAvatar = filename;
+  }
+
   writeGlobalConfig(config);
 
   return c.json({ ok: true });

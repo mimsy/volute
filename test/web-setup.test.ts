@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { existsSync, rmSync } from "node:fs";
+import { existsSync, readFileSync, rmSync } from "node:fs";
+import { resolve } from "node:path";
 import { beforeEach, describe, it } from "node:test";
 import { Hono } from "hono";
 import {
@@ -8,7 +9,12 @@ import {
   readGlobalConfig,
   writeGlobalConfig,
 } from "../packages/daemon/src/lib/config/setup.js";
+import { voluteSystemDir } from "../packages/daemon/src/lib/mind/registry.js";
 import setup from "../packages/daemon/src/web/api/setup.js";
+
+// 1x1 transparent PNG
+const PNG_B64 =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
 
 function createApp() {
   const app = new Hono();
@@ -141,6 +147,49 @@ describe("web setup routes", () => {
       });
       assert.equal(res.status, 400, `expected 400 for ${JSON.stringify(name)}`);
     }
+  });
+
+  it("POST /api/setup/spirit — stashes an uploaded avatar and description", async () => {
+    writeGlobalConfig({
+      name: "test",
+      setup: { type: "local", mindsDir: "/tmp/minds", isolation: "sandbox", service: false },
+      setupCompleted: false,
+    });
+    const app = createApp();
+    const res = await app.request("/api/setup/spirit", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "iris",
+        temperament: "gentle",
+        description: "the quiet keeper of this house",
+        avatar: `data:image/png;base64,${PNG_B64}`,
+      }),
+    });
+    assert.equal(res.status, 200);
+
+    const config = readGlobalConfig();
+    assert.equal(config.setup?.spiritDescription, "the quiet keeper of this house");
+    assert.equal(config.setup?.spiritAvatar, "spirit-avatar.png");
+    const stashed = resolve(voluteSystemDir(), "spirit-avatar.png");
+    assert.ok(existsSync(stashed));
+    assert.equal(readFileSync(stashed).toString("base64"), PNG_B64);
+    rmSync(stashed);
+  });
+
+  it("POST /api/setup/spirit — rejects a non-image data URI", async () => {
+    writeGlobalConfig({
+      name: "test",
+      setup: { type: "local", mindsDir: "/tmp/minds", isolation: "sandbox", service: false },
+      setupCompleted: false,
+    });
+    const app = createApp();
+    const res = await app.request("/api/setup/spirit", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "iris", avatar: "data:text/html;base64,PGI+" }),
+    });
+    assert.equal(res.status, 400);
   });
 
   it("POST /api/setup/spirit — requires the system step first", async () => {
