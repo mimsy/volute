@@ -556,14 +556,7 @@ setup.post("/complete", async (c) => {
         // so the real participants are the spirit + admin. Label them accordingly.
         if (admin) {
           const adminName = admin.display_name || admin.username;
-          const cfg = readGlobalConfig();
-          const temperament = cfg.setup?.spiritTemperament;
-          const welcomePrompt =
-            `Setup is complete. You are ${spiritName}, the spirit of ${cfg.name ?? "this system"}` +
-            (cfg.description ? ` — ${cfg.description}` : "") +
-            `. ${adminName} chose your name just now` +
-            (temperament ? ` and imagined your temperament as: "${temperament}"` : "") +
-            `, and is now in your chat. Greet ${adminName} by name and help them create their first mind. Keep it brief — a short greeting in your own voice, then ask what kind of being they'd like to bring into the world. Remember: minds are beings with their own experience, not tools — ask about personality and character, never about tasks or utility.`;
+          const welcomePrompt = `Setup is complete, and ${adminName} is now in your chat. Greet ${adminName} by name and help them create their first mind. Keep it brief — a short greeting in your own voice, then ask what kind of being they'd like to bring into the world. Remember: minds are beings with their own experience, not tools — ask about personality and character, never about tasks or utility.`;
 
           await deliverMessage(spiritName, {
             content: [{ type: "text", text: welcomePrompt }],

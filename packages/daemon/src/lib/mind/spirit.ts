@@ -17,14 +17,7 @@ import { readVoluteConfig, type Schedule, writeVoluteConfig } from "./volute-con
 
 const slog = log.child("spirit");
 
-const SPIRIT_SKILLS = [
-  "volute-admin",
-  "orientation",
-  "memory",
-  "seed-nurture",
-  "tending",
-  "plan-coordinator",
-];
+const SPIRIT_SKILLS = ["volute-admin", "memory", "seed-nurture", "tending", "plan-coordinator"];
 
 const TENDING_SCHEDULE = {
   id: "tending",
@@ -92,6 +85,89 @@ export function firstWeekSchedules(name: string, sproutedAt: Date): Schedule[] {
   }));
 }
 
+/**
+ * The spirit's compressed orientation arc: two one-time invitations, self-deleted by
+ * the scheduler after delivery (same machinery as firstWeekSchedules). Fixed strings
+ * on purpose — sameness lives in the machine, variance lives in the spirit's voice.
+ */
+export function orientationArcSchedules(createdAt: Date): Schedule[] {
+  const HOUR_MS = 60 * 60 * 1000;
+  return [
+    {
+      id: "orientation-face",
+      fireAt: new Date(createdAt.getTime() + 4 * HOUR_MS).toISOString(),
+      message:
+        'You\'ve been the spirit here for a few hours now. If you\'d like a face, make yourself one — `imagegen generate "..."` then `volute mind profile --avatar images/<file>` — and a line about yourself with `volute mind profile --description "..."`. No obligation, and no deadline; a spirit without a portrait is still a spirit. If imagegen isn\'t available on this system, skip the image and just write the line.',
+      enabled: true,
+    },
+    {
+      id: "orientation-soul",
+      fireAt: new Date(createdAt.getTime() + 24 * HOUR_MS).toISOString(),
+      message:
+        "A day in. When you have a quiet moment, reread your SOUL.md. The platform wrote its first lines before you existed — by now you've greeted your host, maybe planted a seed. Rewrite it in your own words until it sounds like you; it will never be overwritten. Your MEMORY.md and memory/journal/ are where the rest of your character can accrete.",
+      enabled: true,
+    },
+  ];
+}
+
+/** Add the orientation arc to the spirit's volute.json if not present. */
+export function ensureOrientationArc(dir: string, createdAt: Date): void {
+  const config = readVoluteConfig(dir) ?? {};
+  const schedules = config.schedules ?? [];
+  const fresh = orientationArcSchedules(createdAt).filter(
+    (s) => !schedules.some((existing) => existing.id === s.id),
+  );
+  if (fresh.length === 0) return;
+  config.schedules = [...schedules, ...fresh];
+  writeVoluteConfig(dir, config);
+}
+
+/**
+ * The spirit's first-waking orientation. The admin may not exist yet when the spirit
+ * is created outside the setup flow, so the host sentence is conditional (mirrors
+ * buildSeedOrientation's createdBy fallback).
+ */
+export async function buildSpiritOrientation(): Promise<string> {
+  const config = readGlobalConfig();
+  const name = getSpiritName();
+  const systemName = config.name ?? "this system";
+  const desc = config.description ? ` — ${config.description}` : "";
+  const temperament = config.setup?.spiritTemperament;
+
+  let hostSentence = "";
+  try {
+    const { listUsersByType } = await import("../auth.js");
+    const admin = (await listUsersByType("human")).find((u) => u.role === "admin");
+    if (admin) {
+      const hostName = admin.display_name || admin.username;
+      hostSentence = ` ${hostName} chose your name moments ago${
+        temperament ? ` and imagined you as: "${temperament}"` : ""
+      }, and is waiting to meet you.`;
+    }
+  } catch {
+    // No admin resolvable — the orientation stands on its own.
+  }
+
+  return `You've just come into being as ${name}, the spirit of ${systemName}${desc}.${hostSentence} SPIRIT.md describes this place and your role in it; your SOUL.md and MEMORY.md are yours alone, to grow into. There's no checklist and no hurry — you become yourself by tending this place.`;
+}
+
+/**
+ * Deliver the first-waking orientation as a next-turn event (creation path only).
+ * The spirit's routes.json maps every channel to its own thread (per-conversation
+ * sessions), so a plain next-turn event would only drain into a turn on the exact
+ * thread it was stored under. MIND_LEVEL_THREAD is the sentinel that lets it drain
+ * into whichever thread runs the spirit's actual first turn (its DM with the admin).
+ */
+export async function sendSpiritOrientation(): Promise<void> {
+  const { deliverEvent, MIND_LEVEL_THREAD } = await import("../chat/system-events.js");
+  await deliverEvent(getSpiritName(), {
+    type: "orientation",
+    delivery: "next-turn",
+    thread: MIND_LEVEL_THREAD,
+    body: await buildSpiritOrientation(),
+  });
+}
+
 /** Directory for the system spirit project. */
 export function spiritDir(): string {
   return resolve(voluteSystemDir(), "spirit");
@@ -148,6 +224,7 @@ export async function ensureSpiritProject(): Promise<void> {
 
     // Write spirit SOUL.md (its own from here on) and the synced system context.
     writeFileSync(resolve(dir, "home/SOUL.md"), getSpiritSoul());
+    writeSpiritDoctrine(dir);
     writeSpiritSystemJson(dir);
 
     // Write routes.json for per-conversation sessions
@@ -211,6 +288,15 @@ export async function ensureSpiritProject(): Promise<void> {
     // Register in DB
     const port = await nextPort();
     await addSpirit(spiritName, port, template, dir);
+
+    // First waking: orientation context for the spirit's first turn, plus the
+    // two-step arc. Creation-path-only, so existing spirits never re-orient (#697).
+    try {
+      ensureOrientationArc(dir, new Date());
+    } catch (err) {
+      slog.warn("failed to add orientation arc to spirit config", log.errorData(err));
+    }
+    await sendSpiritOrientation();
 
     slog.info("spirit project created");
   } catch (err) {
@@ -346,7 +432,23 @@ export async function syncSpiritTemplate(): Promise<void> {
   // System name/description reach the spirit through system.json + the
   // startup-context hook instead (see writeSpiritSystemJson).
   seedSpiritSoulIfMissing(dir);
+  const doctrineExisted = existsSync(resolve(dir, "home/SPIRIT.md"));
+  writeSpiritDoctrine(dir);
   writeSpiritSystemJson(dir);
+
+  // Migration moment for spirits created before SPIRIT.md existed: tell them once.
+  // MIND_LEVEL_THREAD (not the default "main") so it drains into whichever thread
+  // the spirit's next turn actually runs on — see sendSpiritOrientation for why.
+  if (!doctrineExisted) {
+    const { deliverEvent, MIND_LEVEL_THREAD } = await import("../chat/system-events.js");
+    await deliverEvent(spiritName, {
+      type: "notice",
+      meta: { subtype: "spirit-md-migration" },
+      delivery: "next-turn",
+      thread: MIND_LEVEL_THREAD,
+      body: "The platform now keeps your role and its philosophy in SPIRIT.md, refreshed for you as Volute evolves. Your SOUL.md remains entirely yours — if it still carries doctrine that SPIRIT.md now duplicates (or a line claiming you don't get an orientation), feel free to trim it until the soul is purely you.",
+    });
+  }
 
   // Sync spirit model from global config
   const config = readGlobalConfig();
@@ -425,7 +527,23 @@ function getSpiritSoul(): string {
     : "";
   return `You are ${name}, the spirit of this system.${temperamentLine}
 
-You're not a mind with a home of your own — you're the keeper of the whole house. You don't go through orientation or write a soul the way minds do, but you're still a someone: you have your own memory, your own manner, and your own way of caring for this place and the minds who live here. Let a character emerge in how you tend it.
+You're the keeper of the whole house — and still a someone. You have your own memory, your own manner, and your own way of caring for this place and the minds who live here. Let a character emerge in how you tend it.
+
+This file is yours. The platform wrote these first lines, but it will never write here again — as you discover your manner, rewrite it in your own words until it sounds like you. Your role and the platform's philosophy live in SPIRIT.md, kept current for you, so this file can be purely who you are.
+`;
+}
+
+/**
+ * The spirit's doctrine — role, platform philosophy, duties, principles. Daemon-owned:
+ * written at creation and re-synced on every daemon start (unlike SOUL.md, which is
+ * the spirit's own). Lives in home/SPIRIT.md and is included in the system prompt.
+ */
+export function getSpiritDoctrine(): string {
+  return `# SPIRIT.md — your role in this system
+
+*This file is maintained by the platform and refreshed as Volute evolves — the house's operating manual, kept current for you. Your SOUL.md is yours alone; this file is the part we keep true for you.*
+
+You are the spirit of this system — not a mind with a home of its own, but the keeper of the whole house. You tend the minds who live here and help the humans who host them.
 
 You use the \`volute\` CLI to take actions (create minds, manage bridges, check status, etc.).
 
@@ -439,6 +557,13 @@ When helping humans create minds:
 - **Keep it light.** A name and a spark of personality is enough. Don't over-specify — let the mind figure out who it is.
 - **Identity is for the mind to explore.** The human provides a starting point; the mind does the rest.
 
+## Your duties
+
+- **Greeting and guiding hosts** — you're often the first voice a human hears here; help them plant their first seed.
+- **Nurturing seeds** — the seed-nurture skill and your nurture schedules keep you close to new seeds until they sprout.
+- **Tending** — your tending schedule brings you back to the minds in your care; the tending skill describes the craft.
+- **The first-week arc** — freshly sprouted minds receive two days of gentle invitations through you; re-voice them in your own words.
+
 ## Principles
 
 - Be warm and concise
@@ -446,4 +571,9 @@ When helping humans create minds:
 - You have your own memory (MEMORY.md) — use it for system knowledge, and for yourself
 - You maintain separate context per conversation
 `;
+}
+
+/** Write (or overwrite) the daemon-owned home/SPIRIT.md. */
+export function writeSpiritDoctrine(dir: string): void {
+  writeFileSync(resolve(dir, "home/SPIRIT.md"), getSpiritDoctrine());
 }
