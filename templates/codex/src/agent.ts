@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
 import { Codex } from "@openai/codex-sdk";
 import { flushFileChanges, trackFileChange } from "./lib/auto-commit.js";
+import { DEFAULT_SEED_TOKENS, seedCodexSession } from "./lib/codex-session-seed.js";
 import { extractText } from "./lib/content.js";
 import {
   countSdkInstructionTokens,
@@ -51,7 +52,20 @@ type CodexSession = {
   /** The event note is a standing fact about events, so it fires once per session. */
   eventNoteFired: boolean;
   cumulativeInputTokens: number;
+  /**
+   * True when this session was seeded from the previous session's rollout.
+   * Consumed once, on the first turn, to inject the honest-boundary note.
+   */
+  seeded: boolean;
 };
+
+/**
+ * Injected on the first turn of a seeded session so the mind knows the
+ * conversation above was restored from its previous (archived) session rather
+ * than lived through continuously in this one.
+ */
+const SEEDED_SESSION_NOTE =
+  "Note: this session continues from your previous session's transcript (restored after archival). The conversation above happened before the break; a fresh session begins here.";
 
 // Loaded once at startup
 const preset = loadTransparencyPreset();
@@ -79,6 +93,8 @@ export function createMind(options: {
   model?: string;
   reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh";
   maxContextTokens?: number;
+  /** Estimated-token budget for seeding a fresh persistent session. 0 disables. Default 30000. */
+  seedTokens?: number;
 }): {
   resolve: HandlerResolver;
   getContextInfo: () => Promise<ContextInfo>;
@@ -150,6 +166,7 @@ export function createMind(options: {
       firstMessagePerChannel: new Set(),
       eventNoteFired: false,
       cumulativeInputTokens: 0,
+      seeded: false,
     };
     sessions.set(name, session);
 
@@ -163,11 +180,26 @@ export function createMind(options: {
     emit(session, { type: "session_start" });
 
     if (!isEphemeral) {
-      const savedThreadId = sessionStore.load(session.name);
-      if (savedThreadId) {
+      let resumeThreadId = sessionStore.load(session.name);
+      if (!resumeThreadId) {
+        // Fresh persistent session — seed it from the previous session's archived
+        // rollout so the mind experiences the conversation continuing rather than
+        // waking into an empty context.
+        const seededId = seedCodexSession({
+          mindDir: options.mindDir,
+          name: session.name,
+          seedTokens: options.seedTokens ?? DEFAULT_SEED_TOKENS,
+        });
+        if (seededId) {
+          resumeThreadId = seededId;
+          session.seeded = true;
+          log("mind", `session "${session.name}": seeded from previous transcript`);
+        }
+      }
+      if (resumeThreadId) {
         try {
-          log("mind", `session "${session.name}": resuming thread ${savedThreadId}`);
-          session.thread = codex.resumeThread(savedThreadId, {
+          log("mind", `session "${session.name}": resuming thread ${resumeThreadId}`);
+          session.thread = codex.resumeThread(resumeThreadId, {
             workingDirectory: options.cwd,
             model: options.model,
             modelReasoningEffort: options.reasoningEffort,
@@ -181,6 +213,9 @@ export function createMind(options: {
           return;
         } catch (err) {
           warn("mind", `session "${session.name}": failed to resume thread, starting new:`, err);
+          // We fell back to a truly fresh thread — don't tell the mind its
+          // conversation continued when the seeded rollout failed to resume.
+          session.seeded = false;
         }
       }
     }
@@ -239,6 +274,18 @@ export function createMind(options: {
         });
         text = `${startupContext}\n\n${text}`;
       }
+    }
+
+    // On the first turn of a seeded session, prepend the honest-boundary note
+    // (consumed once) so the mind knows the conversation above was restored.
+    if (session.seeded) {
+      session.seeded = false;
+      emit(session, {
+        type: "context",
+        content: SEEDED_SESSION_NOTE,
+        metadata: { source: "seeded-session" },
+      });
+      text = `${SEEDED_SESSION_NOTE}\n\n${text}`;
     }
 
     // Run pre-prompt hooks

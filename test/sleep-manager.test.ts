@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { describe, it } from "node:test";
@@ -10,6 +10,7 @@ import {
   type SleepState,
 } from "../packages/daemon/src/lib/daemon/sleep-manager.js";
 import { getDb } from "../packages/daemon/src/lib/db.js";
+import { mindDir } from "../packages/daemon/src/lib/mind/registry.js";
 import { activity, deliveryQueue, systemEvents } from "../packages/daemon/src/lib/schema.js";
 
 // We test the SleepManager's pure logic methods without starting the daemon.
@@ -134,6 +135,10 @@ class TestSleepManager extends SleepManager {
   // Expose evaluateMind for testing
   testEvaluateMind(name: string, now: Date): Promise<void> {
     return (this as any).evaluateMind(name, now);
+  }
+
+  testArchiveSessions(name: string): Promise<void> {
+    return (this as any).archiveSessions(name);
   }
 }
 
@@ -1240,5 +1245,62 @@ describe("SleepManager wake-failure handling", () => {
     sm.setStateForTest("awake", awakeState());
     await sm.testHandleWakeFailure("awake", new Error("x"));
     assert.equal(sm.getStateForTest("awake")?.wakeFailures, 0);
+  });
+});
+
+describe("SleepManager.archiveSessions — codex pointers", () => {
+  const ARCHIVE_NAME = /^main-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}\.json$/;
+
+  function codexSessionsDir(name: string): string {
+    return resolve(mindDir(name), ".mind", "codex-sessions");
+  }
+
+  it("moves a codex pointer into archive/ with a timestamped name", async () => {
+    const name = `codex-arch-${Date.now()}`;
+    const dir = codexSessionsDir(name);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(resolve(dir, "main.json"), JSON.stringify({ threadId: "019f-old-thread" }));
+
+    const sm = new TestSleepManager();
+    await sm.testArchiveSessions(name);
+
+    // The live pointer is gone; a timestamped archive copy holds the threadId.
+    assert.equal(existsSync(resolve(dir, "main.json")), false);
+    const archived = readdirSync(resolve(dir, "archive"));
+    assert.equal(archived.length, 1);
+    assert.match(archived[0], ARCHIVE_NAME);
+    const data = JSON.parse(readFileSync(resolve(dir, "archive", archived[0]), "utf-8"));
+    assert.equal(data.threadId, "019f-old-thread");
+
+    rmSync(mindDir(name), { recursive: true, force: true });
+  });
+
+  it("does not touch the archive/ dir itself or non-json files", async () => {
+    const name = `codex-arch2-${Date.now()}`;
+    const dir = codexSessionsDir(name);
+    mkdirSync(resolve(dir, "archive"), { recursive: true });
+    writeFileSync(resolve(dir, "main.json"), JSON.stringify({ threadId: "t1" }));
+    writeFileSync(resolve(dir, "notes.txt"), "not a pointer");
+
+    const sm = new TestSleepManager();
+    await sm.testArchiveSessions(name);
+
+    assert.equal(existsSync(resolve(dir, "notes.txt")), true);
+    const archived = readdirSync(resolve(dir, "archive"));
+    assert.equal(archived.length, 1);
+    assert.match(archived[0], ARCHIVE_NAME);
+
+    rmSync(mindDir(name), { recursive: true, force: true });
+  });
+
+  it("is a no-op when there is no codex-sessions dir", async () => {
+    const name = `codex-arch3-${Date.now()}`;
+    // Create a bare mind dir with no .mind/codex-sessions.
+    mkdirSync(mindDir(name), { recursive: true });
+    const sm = new TestSleepManager();
+    // Should not throw.
+    await sm.testArchiveSessions(name);
+    assert.equal(existsSync(codexSessionsDir(name)), false);
+    rmSync(mindDir(name), { recursive: true, force: true });
   });
 });
