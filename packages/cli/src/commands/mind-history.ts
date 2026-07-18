@@ -22,6 +22,7 @@ type HistoryRow = {
   sender_display_name: string | null;
   content: string | null;
   metadata: string | null;
+  turn_id: string | null;
   created_at: string;
 };
 
@@ -44,7 +45,7 @@ function eventLabel(row: HistoryRow): string {
   return row.channel?.split(":")[1] || "event";
 }
 
-function formatRow(row: HistoryRow): string {
+function formatRow(row: HistoryRow, showTurn = false): string {
   const time = new Date(normalizeTimestamp(row.created_at)).toLocaleString();
   const channel = row.channel ?? "";
 
@@ -110,7 +111,8 @@ function formatRow(row: HistoryRow): string {
           }
         } catch {}
       }
-      return `[${time}] [summary${range}] ${row.content ?? ""}`;
+      const turn = showTurn && row.turn_id ? ` (turn ${row.turn_id})` : "";
+      return `[${time}] [summary${range}]${turn} ${row.content ?? ""}`;
     }
     case "session_start":
       return `[${time}] [session_start] ${row.thread ?? ""}`;
@@ -119,7 +121,7 @@ function formatRow(row: HistoryRow): string {
   }
 }
 
-function formatRowCompact(row: HistoryRow): string {
+function formatRowCompact(row: HistoryRow, showTurn = false): string {
   const time = compactTime(row.created_at);
   const channel = row.channel ?? "";
 
@@ -170,7 +172,8 @@ function formatRowCompact(row: HistoryRow): string {
           }
         } catch {}
       }
-      return `[${time}] [summary${range}] ${row.content ?? ""}`;
+      const turn = showTurn && row.turn_id ? ` (turn ${row.turn_id})` : "";
+      return `[${time}] [summary${range}]${turn} ${row.content ?? ""}`;
     }
     case "session_start":
       return `[${time}] [session_start] ${row.thread ?? ""}`;
@@ -266,6 +269,10 @@ const cmd = command({
     preset: { type: "string", description: "Use a preset view" },
     limit: { type: "string", description: "Number of entries to show" },
     full: { type: "boolean", description: "Show full details" },
+    provisional: {
+      type: "boolean",
+      description: "Only turn summaries you haven't rewritten yet (shows turn ids)",
+    },
     period: { type: "string", description: "Time period (hour, day, week, month)" },
     from: { type: "string", description: "Start date" },
     to: { type: "string", description: "End date" },
@@ -274,6 +281,7 @@ const cmd = command({
     "volute mind history --mind myname",
     "volute mind history --mind myname --full",
     "volute mind history --mind myname --period day",
+    "volute mind history --mind myname --provisional",
   ],
   run: async ({ flags }) => {
     // Meta-summary mode: --period hour|day|week|month
@@ -371,6 +379,7 @@ const cmd = command({
     if (flags.preset) url.searchParams.set("preset", flags.preset);
     if (flags.limit) url.searchParams.set("limit", flags.limit);
     if (flags.full) url.searchParams.set("full", "true");
+    if (flags.provisional) url.searchParams.set("provisional", "true");
 
     const res = await daemonFetch(urlOf(url));
 
@@ -388,9 +397,10 @@ const cmd = command({
 
     // Display in chronological order (API returns newest first, so reverse)
     const compact = isCompact();
+    const showTurn = !!flags.provisional;
     for (const row of rows.reverse()) {
       if (compact && (row.type === "done" || row.type === "usage")) continue;
-      console.log(compact ? formatRowCompact(row) : formatRow(row));
+      console.log(compact ? formatRowCompact(row, showTurn) : formatRow(row, showTurn));
     }
   },
 });

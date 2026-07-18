@@ -253,108 +253,135 @@ describe("mind-authored turn summaries", () => {
     assert.equal(res.status, 401);
   });
 
-  // ── API: GET /api/minds/:name/turn-summaries ──
+  // ── GET /api/minds/:name/history?provisional=true (summary preset) ──
 
-  it("GET lists turns newest-first with author markers, filtered by session", async () => {
+  it("history?provisional=true keeps only turns not yet mind-authored, with turn_id", async () => {
     const { default: app } = await import("../packages/daemon/src/web/app.js");
     const db = await getDb();
-    const mind = "test-turnsum-list";
+    const mind = "test-turnsum-prov";
     const cookie = await mindCookie(mind);
 
-    const t1 = randomUUID(); // s1, provisional summary
-    const t2 = randomUUID(); // s1, mind-authored summary
-    const t3 = randomUUID(); // s2, no summary
-    await db.insert(turns).values([
-      { id: t1, mind, thread: "s1", status: "complete", created_at: "2026-03-22 10:00:00" },
-      { id: t2, mind, thread: "s1", status: "complete", created_at: "2026-03-22 11:00:00" },
-      { id: t3, mind, thread: "s2", status: "complete", created_at: "2026-03-22 12:00:00" },
-    ]);
+    const auto = randomUUID(); // summarizer, deterministic (no author)
+    const bare = randomUUID(); // summarizer, no metadata at all
+    const mine = randomUUID(); // mind-authored
     await db.insert(summaries).values([
       {
         mind,
         period: "turn",
-        period_key: t1,
-        content: "auto one",
-        metadata: JSON.stringify({ deterministic: false }),
+        period_key: auto,
+        content: "auto row",
+        metadata: JSON.stringify({ deterministic: true }),
       },
+      { mind, period: "turn", period_key: bare, content: "bare row", metadata: null },
       {
         mind,
         period: "turn",
-        period_key: t2,
-        content: "mine two",
+        period_key: mine,
+        content: "my row",
         metadata: JSON.stringify({ author: "mind" }),
       },
     ]);
 
-    const res = await app.request(`/api/minds/${mind}/turn-summaries?session=s1`, {
+    const res = await app.request(`/api/minds/${mind}/history?provisional=true`, {
       headers: { Cookie: `volute_session=${cookie}` },
     });
     assert.equal(res.status, 200);
-    const body = (await res.json()) as Array<{
-      turnId: string;
-      thread: string;
-      content: string | null;
-      author: string | null;
-    }>;
-    assert.equal(body.length, 2, "session filter excludes s2");
-    // Newest first: t2 then t1.
-    assert.equal(body[0].turnId, t2);
-    assert.equal(body[0].author, "mind");
-    assert.equal(body[1].turnId, t1);
-    assert.equal(body[1].author, "summarizer");
-    assert.ok(body.every((r) => r.thread === "s1"));
+    const body = (await res.json()) as Array<{ turn_id: string; content: string }>;
+    const keys = new Set(body.map((r) => r.turn_id));
+    assert.ok(keys.has(auto), "deterministic summarizer row is provisional");
+    assert.ok(keys.has(bare), "row with no metadata is provisional");
+    assert.ok(!keys.has(mine), "mind-authored row is excluded");
+    // turn_id is surfaced so the mind can act on it via `volute mind summarize --turn`.
+    assert.ok(body.every((r) => typeof r.turn_id === "string" && r.turn_id.length > 0));
   });
 
-  it("GET includes turns without a summary yet (author null)", async () => {
+  it("history without provisional returns all turn summaries (mind-authored included)", async () => {
     const { default: app } = await import("../packages/daemon/src/web/app.js");
     const db = await getDb();
-    const mind = "test-turnsum-nosum";
+    const mind = "test-turnsum-provall";
     const cookie = await mindCookie(mind);
-    const t = randomUUID();
-    await db.insert(turns).values({ id: t, mind, status: "active" });
+    const auto = randomUUID();
+    const mine = randomUUID();
+    await db.insert(summaries).values([
+      { mind, period: "turn", period_key: auto, content: "auto row", metadata: null },
+      {
+        mind,
+        period: "turn",
+        period_key: mine,
+        content: "my row",
+        metadata: JSON.stringify({ author: "mind" }),
+      },
+    ]);
 
-    const res = await app.request(`/api/minds/${mind}/turn-summaries`, {
+    const res = await app.request(`/api/minds/${mind}/history`, {
       headers: { Cookie: `volute_session=${cookie}` },
     });
     assert.equal(res.status, 200);
-    const body = (await res.json()) as Array<{ turnId: string; content: null; author: null }>;
-    const found = body.find((r) => r.turnId === t);
-    assert.ok(found);
-    assert.equal(found?.content, null);
-    assert.equal(found?.author, null);
+    const body = (await res.json()) as Array<{ turn_id: string }>;
+    const keys = new Set(body.map((r) => r.turn_id));
+    assert.ok(keys.has(auto) && keys.has(mine), "both rows returned when not provisional");
   });
 
-  it("GET does not leak another mind's turns via ?session or admin cross-read stays scoped", async () => {
+  it("history?provisional=true is ignored outside the summary preset", async () => {
     const { default: app } = await import("../packages/daemon/src/web/app.js");
     const db = await getDb();
-    const mind = "test-turnsum-scoped";
+    const mind = "test-turnsum-provconv";
     const cookie = await mindCookie(mind);
-    const otherTurn = randomUUID();
-    await db
-      .insert(turns)
-      .values({ id: otherTurn, mind: "test-turnsum-elsewhere", status: "complete" });
-
-    const res = await app.request(`/api/minds/${mind}/turn-summaries`, {
-      headers: { Cookie: `volute_session=${cookie}` },
+    // A conversation-preset row (mind_history) and a mind-authored turn summary.
+    await db.insert(mindHistory).values({
+      mind,
+      type: "inbound",
+      channel: "@x",
+      sender: "x",
+      content: "hello there",
     });
+    await db.insert(summaries).values({
+      mind,
+      period: "turn",
+      period_key: randomUUID(),
+      content: "my row",
+      metadata: JSON.stringify({ author: "mind" }),
+    });
+
+    const res = await app.request(
+      `/api/minds/${mind}/history?preset=conversation&provisional=true`,
+      {
+        headers: { Cookie: `volute_session=${cookie}` },
+      },
+    );
     assert.equal(res.status, 200);
-    const body = (await res.json()) as Array<{ turnId: string }>;
-    assert.ok(!body.some((r) => r.turnId === otherTurn));
+    const body = (await res.json()) as Array<{ type: string; content: string }>;
+    // The conversation preset reads mind_history; provisional has no effect there.
+    assert.ok(body.some((r) => r.type === "inbound" && r.content === "hello there"));
+    assert.ok(
+      !body.some((r) => r.type === "summary"),
+      "summary rows are not in the conversation preset",
+    );
   });
 
-  it("GET works for an admin caller too", async () => {
+  it("history?provisional=true works for an admin caller and stays scoped to the mind", async () => {
     const { default: app } = await import("../packages/daemon/src/web/app.js");
     const db = await getDb();
-    const mind = "test-turnsum-adminview";
+    const mind = "test-turnsum-provadmin";
     const cookie = await adminCookie("test-turnsum-admin");
-    const t = randomUUID();
-    await db.insert(turns).values({ id: t, mind, status: "complete" });
+    const own = randomUUID();
+    await db.insert(summaries).values([
+      { mind, period: "turn", period_key: own, content: "auto row", metadata: null },
+      {
+        mind: "test-turnsum-elsewhere",
+        period: "turn",
+        period_key: randomUUID(),
+        content: "other mind",
+        metadata: null,
+      },
+    ]);
 
-    const res = await app.request(`/api/minds/${mind}/turn-summaries`, {
+    const res = await app.request(`/api/minds/${mind}/history?provisional=true`, {
       headers: { Cookie: `volute_session=${cookie}` },
     });
     assert.equal(res.status, 200);
-    const body = (await res.json()) as Array<{ turnId: string }>;
-    assert.ok(body.some((r) => r.turnId === t));
+    const body = (await res.json()) as Array<{ turn_id: string; content: string }>;
+    assert.ok(body.some((r) => r.turn_id === own));
+    assert.ok(!body.some((r) => r.content === "other mind"), "history is scoped to :name");
   });
 });

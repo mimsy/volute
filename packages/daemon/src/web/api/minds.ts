@@ -3220,59 +3220,6 @@ const app = new Hono<AuthEnv>()
       }),
     });
   })
-  // Compact index of a mind's recent turns + their current summary, so a mind can see exactly
-  // what each turn covers before superseding any. Self-or-admin only.
-  .get("/:name/turn-summaries", requireSelf(), async (c) => {
-    const name = c.req.param("name");
-    const baseName = await getBaseName(name);
-    const session = c.req.query("session");
-    const limit = Math.min(Math.max(parseInt(c.req.query("limit") ?? "20", 10) || 20, 1), 100);
-
-    const db = await getDb();
-    const conditions = [eq(turns.mind, baseName)];
-    if (session) conditions.push(eq(turns.thread, session));
-
-    const rows = await db
-      .select({
-        turnId: turns.id,
-        created_at: turns.created_at,
-        thread: turns.thread,
-        status: turns.status,
-        content: summaries.content,
-        metadata: summaries.metadata,
-      })
-      .from(turns)
-      .leftJoin(
-        summaries,
-        and(
-          eq(summaries.mind, baseName),
-          eq(summaries.period, "turn"),
-          eq(summaries.period_key, turns.id),
-        ),
-      )
-      .where(and(...conditions))
-      .orderBy(desc(turns.created_at))
-      .limit(limit);
-
-    return c.json(
-      rows.map((r) => {
-        let author: "mind" | "summarizer" | null = r.content ? "summarizer" : null;
-        if (r.metadata) {
-          try {
-            if ((JSON.parse(r.metadata) as { author?: string }).author === "mind") author = "mind";
-          } catch {}
-        }
-        return {
-          turnId: r.turnId,
-          created_at: r.created_at,
-          thread: r.thread,
-          status: r.status,
-          content: r.content,
-          author,
-        };
-      }),
-    );
-  })
   // Supersede provisional turn summaries with the mind's own words. Self-or-admin only.
   .put("/:name/turn-summaries", requireSelf(), async (c) => {
     const name = c.req.param("name");
@@ -3329,6 +3276,8 @@ const app = new Hono<AuthEnv>()
       | undefined;
     const limit = Math.min(Math.max(parseInt(c.req.query("limit") ?? "50", 10) || 50, 1), 200);
     const offset = Math.max(parseInt(c.req.query("offset") ?? "0", 10) || 0, 0);
+    // Summary preset only: keep just turn summaries the mind hasn't rewritten yet.
+    const provisional = c.req.query("provisional") === "true";
 
     const db = await getDb();
     const conditions = [eq(mindHistory.mind, name)];
@@ -3345,6 +3294,12 @@ const app = new Hono<AuthEnv>()
     // Default "summary" preset reads from the unified summaries table
     if (!effectivePreset || effectivePreset === "summary") {
       const sumConditions: SQL[] = [eq(summaries.mind, name), eq(summaries.period, "turn")];
+      if (provisional) {
+        // Turn summaries the mind hasn't rewritten: metadata.author absent or not "mind".
+        // `IS NOT` is null-safe, so rows with no author (the summarizer's) match; the path
+        // literal is constant and the compared value is bound, so no injection surface.
+        sumConditions.push(sql`json_extract(${summaries.metadata}, '$.author') is not ${"mind"}`);
+      }
 
       if (session) {
         sumConditions.push(eq(turns.thread, session));
