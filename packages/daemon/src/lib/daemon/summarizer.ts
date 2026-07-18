@@ -1,7 +1,11 @@
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { and, desc, eq, gte, inArray, like, lt, sql } from "drizzle-orm";
 import { aiCompleteUtility } from "../ai-service.js";
+import { getUserByUsername } from "../auth.js";
 import { getDb } from "../db.js";
 import { publish as publishMindEvent } from "../events/mind-events.js";
+import { resolveMindDir } from "../mind/registry.js";
 import { getPrompt } from "../prompts.js";
 import { messages, mindHistory, summaries, turns } from "../schema.js";
 import { summarizeTool } from "../util/format-tool.js";
@@ -14,6 +18,7 @@ import {
   type TimerPeriod,
   utcDateTimeStr,
 } from "../util/period-keys.js";
+import { parseDbTimestamp } from "../util/time.js";
 
 const sLog = log.child("summarizer");
 
@@ -40,6 +45,7 @@ export type HistoryRow = {
   type: string;
   channel: string | null;
   session: string | null;
+  sender: string | null;
   content: string | null;
   metadata: string | null;
   turn_id: string | null;
@@ -81,6 +87,7 @@ async function gatherTurnEvents(
       type: mindHistory.type,
       channel: mindHistory.channel,
       session: mindHistory.thread,
+      sender: mindHistory.sender,
       content: mindHistory.content,
       metadata: mindHistory.metadata,
       turn_id: mindHistory.turn_id,
@@ -107,6 +114,7 @@ async function gatherTurnEventsByTurnId(
       type: mindHistory.type,
       channel: mindHistory.channel,
       session: mindHistory.thread,
+      sender: mindHistory.sender,
       content: mindHistory.content,
       metadata: mindHistory.metadata,
       turn_id: mindHistory.turn_id,
@@ -193,13 +201,20 @@ function buildTurnDeterministicSummary(
 export function buildTranscript(
   events: HistoryRow[],
   parsedMeta: Map<number, Record<string, unknown>>,
+  mind: string,
 ): string {
   const lines: string[] = [];
   for (const ev of events) {
     switch (ev.type) {
-      case "inbound":
-        lines.push(`[inbound${ev.channel ? ` ${ev.channel}` : ""}] ${ev.content ?? ""}`);
+      // Inbound messages come from *other* people. Attribute them to the sender by name (and
+      // channel) so the summarizer never absorbs someone else's first-person statements into
+      // the mind's own "I" in a multi-party channel.
+      case "inbound": {
+        const on = ev.channel ? ` on ${ev.channel}` : "";
+        const from = ev.sender ? ` from ${ev.sender}` : "";
+        lines.push(`[inbound${on}${from}] ${ev.content ?? ""}`);
         break;
+      }
       // A system event is what triggered the turn — the summarizer needs to see it, or a
       // schedule/orientation/wake turn gets summarized from its tool calls alone, with no
       // idea what prompted them. Framed as an event, not an inbound message: it has no
@@ -210,9 +225,12 @@ export function buildTranscript(
         lines.push(`[system event${named}] ${ev.content ?? ""}`);
         break;
       }
+      // The mind's own output/thoughts, labeled with its name so the "I" is unambiguous. Never
+      // truncated — a mid-sentence fragment is worse than a long line, because the model
+      // interpolates over the cut and invents a false memory.
       case "outbound":
       case "text":
-        lines.push(`[response] ${(ev.content ?? "").slice(0, 500)}`);
+        lines.push(`[${mind} replied] ${ev.content ?? ""}`);
         break;
       case "tool_use": {
         const meta = parsedMeta.get(ev.id);
@@ -235,11 +253,31 @@ export function buildTranscript(
         break;
       }
       case "thinking":
-        lines.push(`[thinking] ${(ev.content ?? "").slice(0, 300)}`);
+        lines.push(`[${mind} thinking] ${ev.content ?? ""}`);
         break;
     }
   }
   return lines.join("\n");
+}
+
+/**
+ * A one-line identity for the mind (display name + description from its users-table profile),
+ * prepended to the turn-summary input so the summarizer knows whose voice it's writing in.
+ * Returns "" when the mind has no profile or the lookup fails — the summary proceeds without it.
+ */
+async function getMindIdentityLine(mind: string): Promise<string> {
+  try {
+    const user = await getUserByUsername(mind);
+    if (!user) return "";
+    const name = user.display_name?.trim();
+    const desc = user.description?.trim();
+    if (!name && !desc) return "";
+    const who = name ? `${mind} (${name})` : mind;
+    return `[about the mind] ${who}${desc ? `: ${desc}` : ""}`;
+  } catch (err) {
+    sLog.debug(`failed to load identity for ${mind}`, log.errorData(err));
+    return "";
+  }
 }
 
 export async function summarizeTurn(
@@ -317,10 +355,12 @@ export async function summarizeTurn(
   let summaryText: string;
   let deterministic: boolean;
 
-  const transcript = buildTranscript(events, parsedMeta);
+  const transcript = buildTranscript(events, parsedMeta, mind);
   if (transcript.trim()) {
-    const summaryPrompt = await getPrompt("turn_summary");
-    const aiResult = await aiCompleteUtility(summaryPrompt, transcript);
+    const summaryPrompt = await getPrompt("turn_summary", { mind });
+    const identity = await getMindIdentityLine(mind);
+    const input = identity ? `${identity}\n\n${transcript}` : transcript;
+    const aiResult = await aiCompleteUtility(summaryPrompt, input);
     if (aiResult) {
       summaryText = aiResult;
       deterministic = false;
@@ -603,11 +643,35 @@ function trackProvisionalAttempt(
   metadata.last_attempt_at = new Date().toISOString();
 }
 
+/**
+ * A short temporal label identifying a child within its parent period, prefixed to each child
+ * in the AI rollup input so the model can order events in time without guessing. Turn keys are
+ * UUIDs, so hour rollups label their turn-children by wall-clock time (HH:MM, server-local);
+ * day rollups label hour-children HH:00; week/month rollups label day-children by date.
+ */
+function childLabel(period: TimerPeriod, key: string, createdAt: string): string {
+  switch (period) {
+    case "hour": {
+      const d = parseDbTimestamp(createdAt);
+      const hh = String(d.getHours()).padStart(2, "0");
+      const mm = String(d.getMinutes()).padStart(2, "0");
+      return `${hh}:${mm}`;
+    }
+    case "day":
+      // hour key = "YYYY-MM-DDTHH"
+      return `${key.slice(11)}:00`;
+    case "week":
+    case "month":
+      // day key = "YYYY-MM-DD"
+      return key;
+  }
+}
+
 async function gatherChildSummaries(
   mind: string,
   period: TimerPeriod,
   periodKey: string,
-): Promise<{ texts: string[]; sourceIds: number[]; keys: string[] }> {
+): Promise<{ texts: string[]; sourceIds: number[]; keys: string[]; labels: string[] }> {
   const db = await getDb();
   const childPeriod = getChildPeriod(period);
 
@@ -616,7 +680,12 @@ async function gatherChildSummaries(
     // so we filter by created_at time range instead
     const { start, end } = getTimeRange(periodKey, "hour");
     const rows = await db
-      .select({ id: summaries.id, content: summaries.content, key: summaries.period_key })
+      .select({
+        id: summaries.id,
+        content: summaries.content,
+        key: summaries.period_key,
+        created_at: summaries.created_at,
+      })
       .from(summaries)
       .where(
         and(
@@ -631,6 +700,7 @@ async function gatherChildSummaries(
       texts: rows.map((r) => r.content),
       sourceIds: rows.map((r) => r.id),
       keys: rows.map((r) => r.key),
+      labels: rows.map((r) => childLabel(period, r.key, r.created_at)),
     };
   }
 
@@ -651,6 +721,7 @@ async function gatherChildSummaries(
       texts: rows.map((r) => r.content),
       sourceIds: rows.map((r) => r.id),
       keys: rows.map((r) => r.key),
+      labels: rows.map((r) => childLabel(period, r.key, "")),
     };
   }
 
@@ -674,7 +745,24 @@ async function gatherChildSummaries(
     texts: rows.map((r) => r.content),
     sourceIds: rows.map((r) => r.id),
     keys: rows.map((r) => r.key),
+    labels: rows.map((r) => childLabel(period, r.key, "")),
   };
+}
+
+/**
+ * Read a mind's SOUL.md for use as voice/perspective context in its week/month rollups, capped
+ * so a pathological file can't blow up the AI call. Missing or unreadable → "".
+ */
+const SOUL_MAX_CHARS = 8000;
+
+async function readMindSoul(mind: string): Promise<string> {
+  try {
+    const dir = await resolveMindDir(mind);
+    const soul = await readFile(join(dir, "home", "SOUL.md"), "utf8");
+    return soul.length > SOUL_MAX_CHARS ? soul.slice(0, SOUL_MAX_CHARS) : soul;
+  } catch {
+    return "";
+  }
 }
 
 export async function summarizePeriod(
@@ -737,8 +825,22 @@ export async function summarizePeriod(
   const entries: ChildEntry[] = sources.texts.map((text, i) => ({ key: sources.keys[i], text }));
   const promptKey = `meta_summary_${period}` as const;
   const scopeInstruction = getScopeInstruction(mind);
-  const systemPrompt = await getPrompt(promptKey, { scope_instruction: scopeInstruction });
-  const userMessage = sources.texts.join("\n\n---\n\n");
+  let systemPrompt = await getPrompt(promptKey, { scope_instruction: scopeInstruction });
+  // Week/month per-mind rollups get the mind's SOUL.md as voice/perspective context, so the
+  // reflective summary sounds like the mind rather than a neutral narrator. Hour/day, turn, and
+  // _system summaries do not — this is the mind's own long-arc self-narrative.
+  if (period === "week" || period === "month") {
+    const soul = await readMindSoul(mind);
+    if (soul.trim()) {
+      systemPrompt = `${systemPrompt}\n\nFor voice and perspective, this is the mind's own self-description (SOUL.md):\n\n${soul.trim()}`;
+    }
+  }
+  // Prefix each child with its temporal label so the model can order events in time. The label
+  // convention is documented in the meta_summary prompts, which also tell the model not to echo
+  // the brackets.
+  const userMessage = sources.texts
+    .map((text, i) => `[${sources.labels[i]}] ${text}`)
+    .join("\n\n---\n\n");
 
   let content: string;
   let deterministic: boolean;
