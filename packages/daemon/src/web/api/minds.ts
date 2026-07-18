@@ -43,6 +43,7 @@ import {
   startMindFull as startMindFullService,
   stopMindFull as stopMindFullService,
 } from "../../lib/daemon/mind-service.js";
+import { supersedeTurnSummary } from "../../lib/daemon/summarizer.js";
 import { getTokenBudget } from "../../lib/daemon/token-budget.js";
 import { handleMindEvent, setNoticeDrainWatermark } from "../../lib/daemon/turn-lifecycle.js";
 import { getActiveTurnId } from "../../lib/daemon/turn-tracker.js";
@@ -3218,6 +3219,102 @@ const app = new Hono<AuthEnv>()
         };
       }),
     });
+  })
+  // Compact index of a mind's recent turns + their current summary, so a mind can see exactly
+  // what each turn covers before superseding any. Self-or-admin only.
+  .get("/:name/turn-summaries", requireSelf(), async (c) => {
+    const name = c.req.param("name");
+    const baseName = await getBaseName(name);
+    const session = c.req.query("session");
+    const limit = Math.min(Math.max(parseInt(c.req.query("limit") ?? "20", 10) || 20, 1), 100);
+
+    const db = await getDb();
+    const conditions = [eq(turns.mind, baseName)];
+    if (session) conditions.push(eq(turns.thread, session));
+
+    const rows = await db
+      .select({
+        turnId: turns.id,
+        created_at: turns.created_at,
+        thread: turns.thread,
+        status: turns.status,
+        content: summaries.content,
+        metadata: summaries.metadata,
+      })
+      .from(turns)
+      .leftJoin(
+        summaries,
+        and(
+          eq(summaries.mind, baseName),
+          eq(summaries.period, "turn"),
+          eq(summaries.period_key, turns.id),
+        ),
+      )
+      .where(and(...conditions))
+      .orderBy(desc(turns.created_at))
+      .limit(limit);
+
+    return c.json(
+      rows.map((r) => {
+        let author: "mind" | "summarizer" | null = r.content ? "summarizer" : null;
+        if (r.metadata) {
+          try {
+            if ((JSON.parse(r.metadata) as { author?: string }).author === "mind") author = "mind";
+          } catch {}
+        }
+        return {
+          turnId: r.turnId,
+          created_at: r.created_at,
+          thread: r.thread,
+          status: r.status,
+          content: r.content,
+          author,
+        };
+      }),
+    );
+  })
+  // Supersede provisional turn summaries with the mind's own words. Self-or-admin only.
+  .put("/:name/turn-summaries", requireSelf(), async (c) => {
+    const name = c.req.param("name");
+    const baseName = await getBaseName(name);
+
+    let body: { summaries?: Array<{ turnId?: string; content?: string }> };
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "Invalid JSON body" }, 400);
+    }
+
+    const items = body.summaries;
+    if (!Array.isArray(items) || items.length === 0) {
+      return c.json({ error: "summaries must be a non-empty array" }, 400);
+    }
+
+    let updated = 0;
+    let created = 0;
+    for (const item of items) {
+      if (!item || typeof item.turnId !== "string" || !item.turnId) {
+        return c.json({ error: "each summary needs a turnId" }, 400);
+      }
+      if (typeof item.content !== "string") {
+        return c.json({ error: "each summary needs content" }, 400);
+      }
+      const result = await supersedeTurnSummary(baseName, item.turnId, item.content);
+      switch (result.status) {
+        case "invalid":
+          return c.json({ error: result.error }, 400);
+        case "not_found":
+          return c.json({ error: "Turn not found" }, 404);
+        case "forbidden":
+          return c.json({ error: "Forbidden" }, 403);
+        case "ok":
+          if (result.created) created++;
+          else updated++;
+          break;
+      }
+    }
+
+    return c.json({ ok: true, updated, created });
   })
   .get("/:name/history", requireSelf(), async (c) => {
     const name = c.req.param("name");

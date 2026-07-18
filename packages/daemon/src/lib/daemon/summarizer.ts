@@ -409,6 +409,107 @@ async function setSummaryId(turnId: string, summaryId: number): Promise<void> {
   await db.update(turns).set({ summary_id: summaryId }).where(eq(turns.id, turnId));
 }
 
+// ── Mind-authored turn summaries ──
+
+/** Max length of a mind-authored turn summary (matches the API's validation cap). */
+export const MIND_TURN_SUMMARY_MAX_CHARS = 4000;
+
+export type MindTurnSummaryResult =
+  | { status: "ok"; created: boolean }
+  | { status: "not_found" }
+  | { status: "forbidden" }
+  | { status: "invalid"; error: string };
+
+/**
+ * Supersede a turn's provisional (summarizer-authored) summary with the mind's own words.
+ *
+ * The automatic summarizer stays the provisional record; this lets a mind replace a turn's row
+ * with its own account. It overwrites the `period:"turn"` row in place, marks it `author: "mind"`,
+ * and preserves the replaced provisional text under `metadata.superseded` (kept stable across
+ * repeated edits so the original auto-summary is never lost). When no summary row exists yet — the
+ * mind got here before the automatic summarizer ran — it inserts one and links `turns.summary_id`;
+ * `summarizeTurn`'s `summaryExists` guard then skips that turn, so the mind's account is respected.
+ *
+ * Only `period:"turn"` rows owned by `mind` are ever touched; rollups and `_system` rows are not.
+ */
+export async function supersedeTurnSummary(
+  mind: string,
+  turnId: string,
+  content: string,
+): Promise<MindTurnSummaryResult> {
+  const text = content.trim();
+  if (!text) return { status: "invalid", error: "content is required" };
+  if (text.length > MIND_TURN_SUMMARY_MAX_CHARS) {
+    return {
+      status: "invalid",
+      error: `content exceeds ${MIND_TURN_SUMMARY_MAX_CHARS} characters`,
+    };
+  }
+
+  const db = await getDb();
+  const turn = await db.select().from(turns).where(eq(turns.id, turnId)).get();
+  if (!turn) return { status: "not_found" };
+  if (turn.mind !== mind) return { status: "forbidden" };
+
+  const existing = await db
+    .select({ id: summaries.id, content: summaries.content, metadata: summaries.metadata })
+    .from(summaries)
+    .where(
+      and(eq(summaries.mind, mind), eq(summaries.period, "turn"), eq(summaries.period_key, turnId)),
+    )
+    .get();
+
+  const authoredAt = utcDateTimeStr(new Date());
+  let created: boolean;
+
+  if (existing) {
+    const prevMeta = parseMeta(existing.metadata);
+    // Preserve the replaced provisional: on a re-edit keep the ORIGINAL provisional (already
+    // captured), otherwise capture the row being replaced now, so the auto-summary survives.
+    let superseded = prevMeta.superseded;
+    if (superseded === undefined) {
+      const captured: Record<string, unknown> = { content: existing.content };
+      if (typeof prevMeta.deterministic === "boolean")
+        captured.deterministic = prevMeta.deterministic;
+      superseded = captured;
+    }
+    const metadata = { ...prevMeta, author: "mind", authored_at: authoredAt, superseded };
+    await db
+      .update(summaries)
+      .set({ content: text, metadata: JSON.stringify(metadata) })
+      .where(eq(summaries.id, existing.id));
+    created = false;
+  } else {
+    const metadata = { author: "mind", authored_at: authoredAt };
+    const result = await db
+      .insert(summaries)
+      .values({
+        mind,
+        period: "turn",
+        period_key: turnId,
+        content: text,
+        metadata: JSON.stringify(metadata),
+      })
+      .returning({ id: summaries.id });
+    const summaryId = result[0]?.id;
+    if (summaryId != null && turn.summary_id == null) {
+      await setSummaryId(turnId, summaryId);
+    }
+    created = true;
+  }
+
+  publishMindEvent(mind, {
+    mind,
+    type: "summary",
+    session: turn.thread ?? undefined,
+    content: text,
+    metadata: { author: "mind", authored_at: authoredAt },
+    turnId,
+  });
+
+  return { status: "ok", created };
+}
+
 // ── Periodic summarization (timer-driven) ──
 
 function getChildPeriod(period: TimerPeriod): Period {

@@ -48,6 +48,14 @@ const cmd = subcommands({
       description: "Who a mind has recently been in contact with",
       run: (args) => import("./mind-contacts.js").then((m) => m.run(transformMindFlag(args))),
     },
+    summaries: {
+      description: "List your recent turns and their summaries",
+      run: (args) => import("./mind-summaries.js").then((m) => m.run(transformMindFlag(args))),
+    },
+    summarize: {
+      description: "Replace a turn's provisional summary with your own account",
+      run: (args) => import("./mind-summarize.js").then((m) => m.run(transformMindFlag(args))),
+    },
     profile: {
       description: "Update mind profile",
       run: (args) => import("./mind-profile.js").then((m) => m.run(args)),
