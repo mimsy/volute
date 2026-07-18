@@ -27,6 +27,7 @@ import {
   reapSessionQuery,
   reapSessionsForShutdown,
 } from "./lib/session-reaper.js";
+import { DEFAULT_SEED_TOKENS, seedSession } from "./lib/session-seed.js";
 import { createSessionStore } from "./lib/session-store.js";
 import type { EffortLevel, ThinkingConfig } from "./lib/startup.js";
 import { loadPrompts, type SubagentConfig } from "./lib/startup.js";
@@ -56,7 +57,20 @@ type Session = {
   contextTokens: number;
   /** Last inbound message or completed turn — drives idle reaping. */
   lastActivityAt: number;
+  /**
+   * True when this session was seeded from the previous session's transcript.
+   * Consumed once, on the first prompt, to inject the honest-boundary note.
+   */
+  seeded: boolean;
 };
+
+/**
+ * Injected on the first prompt of a seeded session so the mind knows the
+ * conversation above was restored from its previous (archived) session rather
+ * than lived through continuously in this one.
+ */
+const SEEDED_SESSION_NOTE =
+  "Note: this session continues from your previous session's transcript (restored after archival). The conversation above happened before the break; a fresh session begins here.";
 
 export function createMind(options: {
   systemPrompt: string;
@@ -72,6 +86,8 @@ export function createMind(options: {
   onIdentityReload?: () => Promise<void>;
   /** Idle minutes before a session's SDK subprocess is reaped. 0 disables. Default 30. */
   sessionIdleMinutes?: number;
+  /** Estimated-token budget for seeding a fresh persistent session. 0 disables. Default 30000. */
+  seedTokens?: number;
 }): {
   resolve: HandlerResolver;
   waitForCommits: () => Promise<void>;
@@ -242,11 +258,21 @@ export function createMind(options: {
           }
         }
         // Only UserPromptSubmit hooks can inject additionalContext into the conversation
-        if (event !== "pre-prompt" || !result.additionalContext) return {};
+        if (event !== "pre-prompt") return {};
+        let additionalContext = result.additionalContext;
+        // On the first prompt of a seeded session, prepend the honest-boundary
+        // note (consumed once), even if the pre-prompt hooks produced nothing.
+        if (session.seeded) {
+          session.seeded = false;
+          additionalContext = additionalContext
+            ? `${SEEDED_SESSION_NOTE}\n\n${additionalContext}`
+            : SEEDED_SESSION_NOTE;
+        }
+        if (!additionalContext) return {};
         return {
           hookSpecificOutput: {
             hookEventName: "UserPromptSubmit" as const,
-            additionalContext: result.additionalContext,
+            additionalContext,
           },
         };
       } catch (err) {
@@ -491,6 +517,9 @@ export function createMind(options: {
           log("mind", `session "${session.name}": resume failed, starting fresh:`, err);
           sessionStore.delete(session.name);
           currentSessionId = undefined;
+          // We fell back to a truly empty session — don't tell the mind its
+          // conversation continued when the seeded transcript failed to resume.
+          session.seeded = false;
           streamAbort = new AbortController();
           session.channel = createMessageChannel();
           try {
@@ -531,6 +560,7 @@ export function createMind(options: {
       eventNoteFired: false,
       contextTokens: 0,
       lastActivityAt: Date.now(),
+      seeded: false,
     };
     sessions.set(name, session);
 
@@ -545,6 +575,24 @@ export function createMind(options: {
     }
     if (savedSessionId) {
       log("mind", `session "${name}": resuming ${savedSessionId}`);
+    } else if (!isEphemeral) {
+      // Fresh persistent session — seed it from the previous session's archived
+      // transcript so the mind experiences the conversation continuing rather
+      // than waking into an empty context. Ephemeral `new-*` sessions never seed.
+      const seededId = seedSession({
+        cwd: options.cwd,
+        sessionsDir: options.sessionsDir,
+        name,
+        seedTokens: options.seedTokens ?? DEFAULT_SEED_TOKENS,
+      });
+      if (seededId) {
+        sessionStore.save(name, seededId);
+        savedSessionId = seededId;
+        session.seeded = true;
+        log("mind", `session "${name}": seeded from previous transcript, resuming ${seededId}`);
+      } else {
+        log("mind", `session "${name}": starting fresh`);
+      }
     } else {
       log("mind", `session "${name}": starting fresh`);
     }
