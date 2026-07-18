@@ -1,14 +1,31 @@
 import assert from "node:assert/strict";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { and, eq } from "drizzle-orm";
 import { resolveTemplate } from "../packages/daemon/src/lib/ai-service.js";
-import { getSpiritName } from "../packages/daemon/src/lib/config/setup.js";
-import { getDb } from "../packages/daemon/src/lib/db.js";
-import { addSpirit, removeMind } from "../packages/daemon/src/lib/mind/registry.js";
 import {
+  getSpiritName,
+  readGlobalConfig,
+  writeGlobalConfig,
+} from "../packages/daemon/src/lib/config/setup.js";
+import { getDb } from "../packages/daemon/src/lib/db.js";
+import {
+  addSpirit,
+  removeMind,
+  voluteSystemDir,
+} from "../packages/daemon/src/lib/mind/registry.js";
+import {
+  applyStashedSpiritProfile,
   buildSpiritOrientation,
   ensureOrientationArc,
   getSpiritDoctrine,
@@ -163,5 +180,75 @@ describe("spirit orientation arc", () => {
     // first turn (its DM with the admin), not the routes.json default "main" thread
     // that the wildcard rule never actually produces.
     assert.equal(rows[0].thread, "");
+  });
+
+  it("face schedule is omitted when the host gave both avatar and description", () => {
+    const t0 = new Date("2026-07-17T12:00:00Z");
+    const arc = orientationArcSchedules(t0, { hasAvatar: true, hasDescription: true });
+    assert.deepEqual(
+      arc.map((s) => s.id),
+      ["orientation-soul"],
+    );
+  });
+
+  it("face schedule narrows to the description when only an avatar was given", () => {
+    const t0 = new Date("2026-07-17T12:00:00Z");
+    const arc = orientationArcSchedules(t0, { hasAvatar: true, hasDescription: false });
+    const face = arc.find((s) => s.id === "orientation-face");
+    assert.ok(face);
+    assert.match(face.message ?? "", /gave you a face/);
+    assert.doesNotMatch(face.message ?? "", /imagegen/);
+  });
+});
+
+describe("applyStashedSpiritProfile", () => {
+  const scratch: string[] = [];
+  afterEach(() => {
+    for (const d of scratch.splice(0)) rmSync(d, { recursive: true, force: true });
+    const stashed = resolve(voluteSystemDir(), "spirit-avatar.png");
+    if (existsSync(stashed)) rmSync(stashed);
+    const config = readGlobalConfig();
+    config.setup = {
+      ...(config.setup ?? { type: "local", mindsDir: "", isolation: "none", service: false }),
+      spiritAvatar: undefined,
+      spiritDescription: undefined,
+    };
+    writeGlobalConfig(config);
+  });
+
+  it("moves the stash into the spirit home and volute.json", () => {
+    const dir = mkdtempSync(resolve(tmpdir(), "spirit-stash-"));
+    scratch.push(dir);
+    mkdirSync(resolve(dir, "home/.config"), { recursive: true });
+    const config = readGlobalConfig();
+    config.setup = {
+      ...(config.setup ?? { type: "local", mindsDir: "", isolation: "none", service: false }),
+      spiritAvatar: "spirit-avatar.png",
+      spiritDescription: "keeper",
+    };
+    writeGlobalConfig(config);
+    writeFileSync(resolve(voluteSystemDir(), "spirit-avatar.png"), Buffer.from("fakepng"));
+
+    const result = applyStashedSpiritProfile(dir);
+    assert.deepEqual(result, { hasAvatar: true, hasDescription: true });
+    assert.ok(existsSync(resolve(dir, "home/spirit-avatar.png")));
+    const vc = readVoluteConfig(dir);
+    assert.equal(vc?.profile?.avatar, "spirit-avatar.png");
+    assert.equal(vc?.profile?.description, "keeper");
+    assert.ok(!existsSync(resolve(voluteSystemDir(), "spirit-avatar.png")), "stash cleaned up");
+  });
+
+  it("is a safe no-op with nothing stashed", () => {
+    const dir = mkdtempSync(resolve(tmpdir(), "spirit-stash-empty-"));
+    scratch.push(dir);
+    mkdirSync(resolve(dir, "home/.config"), { recursive: true });
+    const config = readGlobalConfig();
+    config.setup = {
+      ...(config.setup ?? { type: "local", mindsDir: "", isolation: "none", service: false }),
+      spiritAvatar: undefined,
+      spiritDescription: undefined,
+    };
+    writeGlobalConfig(config);
+    assert.deepEqual(applyStashedSpiritProfile(dir), { hasAvatar: false, hasDescription: false });
   });
 });

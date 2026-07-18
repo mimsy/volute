@@ -15,6 +15,10 @@ export type SetupConfig = {
   spiritName?: string;
   /** Optional temperament line the host wrote for the spirit, rendered into its SOUL.md */
   spiritTemperament?: string;
+  /** Optional one-line description the host wrote for the spirit during setup */
+  spiritDescription?: string;
+  /** Filename of a host-uploaded avatar stashed in voluteSystemDir(), e.g. "spirit-avatar.png". */
+  spiritAvatar?: string;
 };
 
 export type AiProviderConfig = {

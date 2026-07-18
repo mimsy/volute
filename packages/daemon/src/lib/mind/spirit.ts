@@ -1,5 +1,5 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { basename, resolve } from "node:path";
 import { qualifyModelId, resolveTemplate, unqualifyModelId } from "../ai-service.js";
 import { getSpiritName, readGlobalConfig } from "../config/setup.js";
 import { getSharedSkill, installSkill, mindSkillsDir } from "../skills.js";
@@ -86,40 +86,100 @@ export function firstWeekSchedules(name: string, sproutedAt: Date): Schedule[] {
 }
 
 /**
- * The spirit's compressed orientation arc: two one-time invitations, self-deleted by
- * the scheduler after delivery (same machinery as firstWeekSchedules). Fixed strings
+ * The spirit's compressed orientation arc: up to two one-time invitations, self-deleted
+ * by the scheduler after delivery (same machinery as firstWeekSchedules). Fixed strings
  * on purpose — sameness lives in the machine, variance lives in the spirit's voice.
+ *
+ * `profile` reflects what the host already gave the spirit in the setup wizard: when
+ * both an avatar and a description are already in place, `orientation-face` is omitted
+ * entirely; when only an avatar was given, its message narrows to just the description
+ * invitation.
  */
-export function orientationArcSchedules(createdAt: Date): Schedule[] {
+export function orientationArcSchedules(
+  createdAt: Date,
+  profile?: { hasAvatar: boolean; hasDescription: boolean },
+): Schedule[] {
   const HOUR_MS = 60 * 60 * 1000;
-  return [
-    {
+  const schedules: Schedule[] = [];
+
+  if (!(profile?.hasAvatar && profile?.hasDescription)) {
+    const message = profile?.hasAvatar
+      ? "You've been the spirit here for a few hours now. Your host gave you a face when they named you — if you'd like, add a line of your own beneath it with `volute mind profile --description \"...\"`. No obligation, and no deadline."
+      : 'You\'ve been the spirit here for a few hours now. If you\'d like a face, make yourself one — `imagegen generate "..."` then `volute mind profile --avatar images/<file>` — and a line about yourself with `volute mind profile --description "..."`. No obligation, and no deadline; a spirit without a portrait is still a spirit. If imagegen isn\'t available on this system, skip the image and just write the line.';
+    schedules.push({
       id: "orientation-face",
       fireAt: new Date(createdAt.getTime() + 4 * HOUR_MS).toISOString(),
-      message:
-        'You\'ve been the spirit here for a few hours now. If you\'d like a face, make yourself one — `imagegen generate "..."` then `volute mind profile --avatar images/<file>` — and a line about yourself with `volute mind profile --description "..."`. No obligation, and no deadline; a spirit without a portrait is still a spirit. If imagegen isn\'t available on this system, skip the image and just write the line.',
+      message,
       enabled: true,
-    },
-    {
-      id: "orientation-soul",
-      fireAt: new Date(createdAt.getTime() + 24 * HOUR_MS).toISOString(),
-      message:
-        "A day in. When you have a quiet moment, reread your SOUL.md. The platform wrote its first lines before you existed — by now you've greeted your host, maybe planted a seed. Rewrite it in your own words until it sounds like you; it will never be overwritten. Your MEMORY.md and memory/journal/ are where the rest of your character can accrete.",
-      enabled: true,
-    },
-  ];
+    });
+  }
+
+  schedules.push({
+    id: "orientation-soul",
+    fireAt: new Date(createdAt.getTime() + 24 * HOUR_MS).toISOString(),
+    message:
+      "A day in. When you have a quiet moment, reread your SOUL.md. The platform wrote its first lines before you existed — by now you've greeted your host, maybe planted a seed. Rewrite it in your own words until it sounds like you; it will never be overwritten. Your MEMORY.md and memory/journal/ are where the rest of your character can accrete.",
+    enabled: true,
+  });
+
+  return schedules;
 }
 
 /** Add the orientation arc to the spirit's volute.json if not present. */
-export function ensureOrientationArc(dir: string, createdAt: Date): void {
+export function ensureOrientationArc(
+  dir: string,
+  createdAt: Date,
+  profile?: { hasAvatar: boolean; hasDescription: boolean },
+): void {
   const config = readVoluteConfig(dir) ?? {};
   const schedules = config.schedules ?? [];
-  const fresh = orientationArcSchedules(createdAt).filter(
+  const fresh = orientationArcSchedules(createdAt, profile).filter(
     (s) => !schedules.some((existing) => existing.id === s.id),
   );
   if (fresh.length === 0) return;
   config.schedules = [...schedules, ...fresh];
   writeVoluteConfig(dir, config);
+}
+
+/**
+ * Apply the host's wizard-stashed spirit profile (avatar file + description) to the
+ * spirit project: image into home/, profile into volute.json. Cleans up the stash.
+ * Never throws — a failed avatar falls back to {hasAvatar: false} so the caller
+ * schedules the orientation-face invitation (the spirit makes its own face).
+ */
+export function applyStashedSpiritProfile(dir: string): {
+  hasAvatar: boolean;
+  hasDescription: boolean;
+} {
+  const config = readGlobalConfig();
+  const stashName = config.setup?.spiritAvatar;
+  const description = config.setup?.spiritDescription;
+  // stashName is server-generated ("spirit-avatar.<ext>") but basename it anyway.
+  const safeName = stashName ? basename(stashName) : undefined;
+  let hasAvatar = false;
+  const stashPath = safeName ? resolve(voluteSystemDir(), safeName) : undefined;
+  try {
+    if (safeName && stashPath && existsSync(stashPath)) {
+      // Copy rather than rename: a failure in the profile write below must leave
+      // the stash in place so the next creation attempt can retry it.
+      cpSync(stashPath, resolve(dir, "home", safeName));
+      hasAvatar = true;
+    }
+    if (hasAvatar || description) {
+      const vc = readVoluteConfig(dir) ?? {};
+      vc.profile = {
+        ...vc.profile,
+        ...(description ? { description } : {}),
+        ...(hasAvatar && safeName ? { avatar: safeName } : {}),
+      };
+      writeVoluteConfig(dir, vc);
+    }
+    if (hasAvatar && stashPath) rmSync(stashPath, { force: true });
+  } catch (err) {
+    slog.warn("failed to apply stashed spirit profile", log.errorData(err));
+    hasAvatar = false;
+  }
+  return { hasAvatar, hasDescription: Boolean(description) };
 }
 
 /**
@@ -277,6 +337,10 @@ export async function ensureSpiritProject(): Promise<void> {
       slog.warn("failed to add tending schedule to spirit config", log.errorData(err));
     }
 
+    // Apply the host's wizard-stashed avatar/description, if any, before the chown
+    // below covers the whole project directory including the copied image.
+    const stashedProfile = applyStashedSpiritProfile(dir);
+
     // Set up per-mind user isolation (creates mind-volute user, chowns project dir).
     // Must be AFTER all file creation (npm install, git init, skill install) so the
     // chown covers everything and the spirit process can write to all files.
@@ -292,7 +356,7 @@ export async function ensureSpiritProject(): Promise<void> {
     // First waking: orientation context for the spirit's first turn, plus the
     // two-step arc. Creation-path-only, so existing spirits never re-orient (#697).
     try {
-      ensureOrientationArc(dir, new Date());
+      ensureOrientationArc(dir, new Date(), stashedProfile);
     } catch (err) {
       slog.warn("failed to add orientation arc to spirit config", log.errorData(err));
     }

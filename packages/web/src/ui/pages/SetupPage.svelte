@@ -127,8 +127,34 @@ const SPIRIT_SUGGESTIONS = [
 ];
 let spiritName = $state(auth.setupProgress?.spiritName ?? "");
 let spiritTemperament = $state("");
+let spiritDescription = $state("");
+let spiritAvatarDataUri = $state<string | null>(null);
+let spiritAvatarError = $state("");
 let spiritGreeting = $state("");
 let spiritTimedOut = $state(false);
+
+function onSpiritAvatarPicked(e: Event) {
+  spiritAvatarError = "";
+  const input = e.currentTarget as HTMLInputElement;
+  const file = input.files?.[0];
+  if (!file) return;
+  if (!/^image\/(png|jpeg|webp)$/.test(file.type)) {
+    spiritAvatarError = "Please choose a png, jpeg, or webp image.";
+    return;
+  }
+  if (file.size > 2 * 1024 * 1024) {
+    spiritAvatarError = "Image must be under 2MB.";
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = () => {
+    spiritAvatarDataUri = reader.result as string;
+  };
+  reader.onerror = () => {
+    spiritAvatarError = "Couldn't read that file — try another image.";
+  };
+  reader.readAsDataURL(file);
+}
 
 const SPIRIT_NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
 let spiritNameValid = $derived(
@@ -331,6 +357,8 @@ async function handleSpiritSubmit(e: Event) {
       body: JSON.stringify({
         name: spiritName.trim(),
         temperament: spiritTemperament.trim() || undefined,
+        description: spiritDescription.trim() || undefined,
+        avatar: spiritAvatarDataUri ?? undefined,
       }),
     });
     if (!res.ok) {
@@ -740,6 +768,52 @@ $effect(() => {
         />
         <div class="hint">A line about who they are. It becomes part of their soul — a seed they'll grow from.</div>
 
+        <label class="label mt" for="spiritDescription">A line about them <span class="optional">(optional)</span></label>
+        <Input
+          inputSize="md"
+          id="spiritDescription"
+          type="text"
+          placeholder="the quiet keeper of this house"
+          maxlength={200}
+          bind:value={spiritDescription}
+        />
+
+        <span class="label mt" id="spiritAvatarLabel">A face <span class="optional">(optional)</span></span>
+        <div class="avatar-section">
+          <div class="avatar-preview">
+            {#if spiritAvatarDataUri}
+              <img src={spiritAvatarDataUri} alt="Spirit avatar preview" class="avatar-img" />
+            {:else}
+              <div class="avatar-placeholder">?</div>
+            {/if}
+          </div>
+          <div class="avatar-actions">
+            <label class="avatar-upload-btn" for="spiritAvatarFile">
+              Choose file
+              <input
+                type="file"
+                id="spiritAvatarFile"
+                aria-labelledby="spiritAvatarLabel"
+                accept="image/png,image/jpeg,image/webp"
+                onchange={onSpiritAvatarPicked}
+                hidden
+              />
+            </label>
+            {#if spiritAvatarDataUri}
+              <button type="button" class="remove-btn" onclick={() => (spiritAvatarDataUri = null)}>
+                Remove
+              </button>
+            {/if}
+          </div>
+        </div>
+        {#if spiritAvatarError}
+          <div class="error">{spiritAvatarError}</div>
+        {:else}
+          <div class="hint">
+            You can leave this to {spiritName || "them"} — they'll make their own face if you skip it.
+          </div>
+        {/if}
+
         {#if error}
           <div class="error">{error}</div>
         {/if}
@@ -960,6 +1034,68 @@ $effect(() => {
     color: var(--text-2);
     font-size: 12px;
     margin-top: 6px;
+  }
+
+  .avatar-section {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .avatar-preview {
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    overflow: hidden;
+    flex-shrink: 0;
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .avatar-img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
+  .avatar-placeholder {
+    font-size: 18px;
+    color: var(--text-2);
+  }
+
+  .avatar-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+
+  .avatar-upload-btn {
+    padding: 10px 16px;
+    background: var(--accent-dim);
+    color: var(--accent);
+    border: 1px solid var(--accent-border, var(--border));
+    border-radius: var(--radius);
+    font-size: 13px;
+    font-family: inherit;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  .remove-btn {
+    font-family: inherit;
+    font-size: 12px;
+    color: var(--text-2);
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 0;
+  }
+
+  .remove-btn:hover {
+    color: var(--text-1);
   }
 
   .toggle-row {
