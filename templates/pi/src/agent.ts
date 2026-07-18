@@ -26,6 +26,7 @@ import { dispatchPrompt } from "./lib/dispatch.js";
 import { createEventHandler, emit } from "./lib/event-handler.js";
 import { runHooks } from "./lib/hook-loader.js";
 import { log } from "./lib/logger.js";
+import { DEFAULT_SEED_TOKENS, seedPiSession } from "./lib/pi-session-seed.js";
 import { createReplyInstructionsExtension } from "./lib/reply-instructions-extension.js";
 import { resolveModel } from "./lib/resolve-model.js";
 import { getStartupContext, loadPrompts, type SubagentConfig } from "./lib/startup.js";
@@ -52,16 +53,33 @@ type PiSession = {
   currentMessageId?: string;
   messageChannels: Map<string, { channel: string; sender?: string }>;
   contextTokens: number;
+  /**
+   * True when this session was seeded from the previous session's transcript.
+   * Consumed once, on the first turn, to inject the honest-boundary note.
+   */
+  seeded?: boolean;
 };
+
+/**
+ * Injected on the first turn of a seeded session so the mind knows the
+ * conversation above was restored from its previous (archived) session rather
+ * than lived through continuously in this one.
+ */
+const SEEDED_SESSION_NOTE =
+  "Note: this session continues from your previous session's transcript (restored after archival). The conversation above happened before the break; a fresh session begins here.";
 
 export function createMind(options: {
   systemPrompt: string;
   cwd: string;
   mindDir: string;
+  /** Directory holding pi session subdirs (`<sessionsDir>/<name>/*.jsonl`). */
+  sessionsDir: string;
   model?: string;
   thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
   compactionMessage?: string;
   maxContextTokens?: number;
+  /** Estimated-token budget for seeding a fresh persistent session. 0 disables. Default 30000. */
+  seedTokens?: number;
   subagents?: Record<string, SubagentConfig>;
 }): {
   resolve: HandlerResolver;
@@ -183,6 +201,18 @@ export function createMind(options: {
         // Inject startup context on the first turn of each session
         if (!startupContextInjected) {
           startupContextInjected = true;
+          // On the first turn of a seeded session, lead with the honest-boundary
+          // note (consumed once) so the restored transcript above isn't mistaken
+          // for a continuously-lived conversation.
+          if (session.seeded) {
+            session.seeded = false;
+            emit(session, {
+              type: "context",
+              content: SEEDED_SESSION_NOTE,
+              metadata: { source: "seeded-session" },
+            });
+            parts.push(SEEDED_SESSION_NOTE);
+          }
           const startupContext = await startupContextPromise;
           if (startupContext) {
             emit(session, {
@@ -273,9 +303,31 @@ export function createMind(options: {
   async function initSession(session: PiSession) {
     const isEphemeral = session.name.startsWith("new-");
 
+    // Fresh persistent session — seed it from the previous session's archived
+    // transcript so the mind experiences the conversation continuing rather than
+    // waking into an empty context. seedPiSession no-ops when a live session
+    // already exists (continueRecent will resume that instead). Ephemeral
+    // `new-*` sessions are never persisted or archived, so they never seed.
+    const seededId = isEphemeral
+      ? null
+      : seedPiSession({
+          cwd: options.cwd,
+          piSessionsDir: options.sessionsDir,
+          name: session.name,
+          seedTokens: options.seedTokens ?? DEFAULT_SEED_TOKENS,
+        });
+
     const sessionManager = isEphemeral
       ? SessionManager.inMemory()
-      : SessionManager.continueRecent(options.cwd, `.mind/pi-sessions/${session.name}`);
+      : SessionManager.continueRecent(options.cwd, resolvePath(options.sessionsDir, session.name));
+
+    // If continueRecent adopted our seed file, its header id is the seeded id;
+    // if it fell back to a truly fresh session it minted a different id, so the
+    // honest-boundary note never lies about a conversation that didn't continue.
+    if (seededId && sessionManager.getSessionId() === seededId) {
+      session.seeded = true;
+      log("mind", `session "${session.name}": seeded from previous transcript`);
+    }
 
     log("mind", `session "${session.name}": ${isEphemeral ? "ephemeral" : "persistent"}`);
 
