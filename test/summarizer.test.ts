@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, it } from "node:test";
 import { and, eq } from "drizzle-orm";
 import {
@@ -27,6 +29,7 @@ import {
   initDeliveryManager,
   tryGetDeliveryManager,
 } from "../packages/daemon/src/lib/delivery/delivery-manager.js";
+import { mindDir } from "../packages/daemon/src/lib/mind/registry.js";
 import { mindHistory, summaries, turns } from "../packages/daemon/src/lib/schema.js";
 
 describe("summarizer", () => {
@@ -451,8 +454,24 @@ describe("summarizer", () => {
   // ── Transcript building ──
 
   describe("buildTranscript", () => {
-    function row(id: number, type: string, content: string | null): HistoryRow {
-      return { id, type, channel: null, session: null, content, metadata: null, created_at: "" };
+    function row(
+      id: number,
+      type: string,
+      content: string | null,
+      extra?: Partial<HistoryRow>,
+    ): HistoryRow {
+      return {
+        id,
+        type,
+        channel: null,
+        session: null,
+        sender: null,
+        content,
+        metadata: null,
+        turn_id: null,
+        created_at: "",
+        ...extra,
+      };
     }
 
     it("includes error result content so the summary can describe the failure", () => {
@@ -465,7 +484,7 @@ describe("summarizer", () => {
         [2, { is_error: true }],
       ]);
 
-      const transcript = buildTranscript(events, meta);
+      const transcript = buildTranscript(events, meta, "whorl");
       assert.match(transcript, /\[result error\] ENOENT: no such file/);
     });
 
@@ -475,22 +494,14 @@ describe("summarizer", () => {
       // inbound message either: an event has no sender, and the summary shouldn't imply
       // someone spoke to the mind.
       const events: HistoryRow[] = [
-        {
-          id: 1,
-          type: "event",
-          channel: "event:schedule:42",
-          session: null,
-          content: "Review yesterday's journal.",
-          metadata: null,
-          created_at: "",
-        },
+        row(1, "event", "Review yesterday's journal.", { channel: "event:schedule:42" }),
         row(2, "text", "Reviewed it — nothing outstanding."),
       ];
       const meta = new Map<number, Record<string, unknown>>([
         [1, { systemEventId: 42, label: "Schedule: morning-check" }],
       ]);
 
-      const transcript = buildTranscript(events, meta);
+      const transcript = buildTranscript(events, meta, "whorl");
       assert.match(
         transcript,
         /\[system event: Schedule: morning-check\] Review yesterday's journal\./,
@@ -502,9 +513,59 @@ describe("summarizer", () => {
       const events: HistoryRow[] = [row(1, "tool_result", "ok, wrote 3 lines")];
       const meta = new Map<number, Record<string, unknown>>([[1, { is_error: false }]]);
 
-      const transcript = buildTranscript(events, meta);
+      const transcript = buildTranscript(events, meta, "whorl");
       assert.match(transcript, /\[result\] ok, wrote 3 lines/);
       assert.doesNotMatch(transcript, /result error/);
+    });
+
+    it("attributes inbound messages to their sender and channel", () => {
+      // In a multi-party channel the summarizer must be able to tell who spoke, or it absorbs
+      // another person's first-person statement into the mind's own "I".
+      const events: HistoryRow[] = [
+        row(1, "inbound", "I think we should ship it.", { channel: "#tideline", sender: "mimsy" }),
+      ];
+      const transcript = buildTranscript(events, new Map(), "whorl");
+      assert.match(transcript, /\[inbound on #tideline from mimsy\] I think we should ship it\./);
+    });
+
+    it("gracefully omits a missing sender or channel on inbound lines", () => {
+      const events: HistoryRow[] = [
+        row(1, "inbound", "no channel here", { sender: "james" }),
+        row(2, "inbound", "no sender here", { channel: "#tideline" }),
+      ];
+      const transcript = buildTranscript(events, new Map(), "whorl");
+      assert.match(transcript, /\[inbound from james\] no channel here/);
+      assert.match(transcript, /\[inbound on #tideline\] no sender here/);
+    });
+
+    it("labels the mind's own replies and thinking with its name", () => {
+      const events: HistoryRow[] = [
+        row(1, "text", "On it."),
+        row(2, "thinking", "I should double-check the config first."),
+      ];
+      const transcript = buildTranscript(events, new Map(), "whorl");
+      assert.match(transcript, /\[whorl replied\] On it\./);
+      assert.match(transcript, /\[whorl thinking\] I should double-check the config first\./);
+    });
+
+    it("never truncates replies or thinking, but still truncates tool results", () => {
+      const longText = "x".repeat(900);
+      const longThinking = "y".repeat(900);
+      const longResult = "z".repeat(900);
+      const events: HistoryRow[] = [
+        row(1, "text", longText),
+        row(2, "thinking", longThinking),
+        row(3, "tool_result", longResult),
+      ];
+      const meta = new Map<number, Record<string, unknown>>([[3, { is_error: false }]]);
+      const transcript = buildTranscript(events, meta, "whorl");
+
+      // Normal text must survive whole — a mid-sentence cut invites the model to interpolate.
+      assert.ok(transcript.includes(longText), "reply text must not be truncated");
+      assert.ok(transcript.includes(longThinking), "thinking must not be truncated");
+      // Tool results may still be truncated (200-char cap).
+      assert.ok(!transcript.includes(longResult), "tool result should be truncated");
+      assert.match(transcript, /\[result\] z{200}/);
     });
   });
 
@@ -1282,6 +1343,140 @@ describe("summarizer", () => {
       const sysRow = await getSummary("_system", "month", "2026-06");
       assert.equal(sysRow!.content, "HEALED");
       assert.equal(JSON.parse(sysRow!.metadata!).deterministic, false);
+    });
+  });
+
+  // ── Labeled rollup children + SOUL.md voice context ──
+
+  describe("labeled rollups and SOUL.md context", () => {
+    const utcFmt = (d: Date) => d.toISOString().replace("T", " ").slice(0, 19);
+
+    async function insertSummary(
+      mind: string,
+      period: Period,
+      periodKey: string,
+      content: string,
+      createdAt?: string,
+    ) {
+      const db = await getDb();
+      const values: Record<string, unknown> = {
+        mind,
+        period,
+        period_key: periodKey,
+        content,
+        metadata: JSON.stringify({ deterministic: true }),
+      };
+      if (createdAt) values.created_at = createdAt;
+      await db.insert(summaries).values(values as typeof summaries.$inferInsert);
+    }
+
+    // A capturing `complete` that records what the AI would have been sent, then succeeds so the
+    // AI path (not the deterministic fallback) runs.
+    function capture() {
+      const calls: { system: string; user: string }[] = [];
+      const complete = async (system: string, user: string) => {
+        calls.push({ system, user });
+        return "AI ROLLUP";
+      };
+      return { calls, complete };
+    }
+
+    it("prefixes hour-rollup turn children with their HH:MM time", async () => {
+      const mind = "label-hour-mind";
+      // Two turns at 14:05 and 14:30 local → distinct HH:MM labels.
+      await insertSummary(
+        mind,
+        "turn",
+        "turn-x",
+        "I read a file.",
+        utcFmt(new Date("2026-03-22T14:05:00")),
+      );
+      await insertSummary(
+        mind,
+        "turn",
+        "turn-y",
+        "I wrote a note.",
+        utcFmt(new Date("2026-03-22T14:30:00")),
+      );
+
+      const { calls, complete } = capture();
+      const ok = await summarizePeriod(mind, "hour", "2026-03-22T14", complete);
+      assert.equal(ok, true);
+      assert.equal(calls.length, 1, "AI path should run with two children");
+      const localHH = new Date("2026-03-22T14:05:00").getHours().toString().padStart(2, "0");
+      assert.ok(
+        calls[0].user.includes(`[${localHH}:05] I read a file.`),
+        `expected HH:MM label, got: ${calls[0].user}`,
+      );
+      assert.ok(calls[0].user.includes(`[${localHH}:30] I wrote a note.`));
+    });
+
+    it("prefixes day-rollup hour children with their HH:00 label", async () => {
+      const mind = "label-day-mind";
+      await insertSummary(mind, "hour", "2026-03-20T09", "Morning work.");
+      await insertSummary(mind, "hour", "2026-03-20T14", "Afternoon work.");
+
+      const { calls, complete } = capture();
+      const ok = await summarizePeriod(mind, "day", "2026-03-20", complete);
+      assert.equal(ok, true);
+      assert.ok(calls[0].user.includes("[09:00] Morning work."), calls[0].user);
+      assert.ok(calls[0].user.includes("[14:00] Afternoon work."));
+    });
+
+    it("prefixes week-rollup day children with their date and includes SOUL.md voice context", async () => {
+      const mind = "label-week-soul-mind";
+      const soulDir = join(mindDir(mind), "home");
+      mkdirSync(soulDir, { recursive: true });
+      writeFileSync(join(soulDir, "SOUL.md"), "I am a careful, curious mind who loves the sea.");
+      try {
+        await insertSummary(mind, "day", "2026-03-09", "Monday work.");
+        await insertSummary(mind, "day", "2026-03-11", "Wednesday work.");
+
+        const { calls, complete } = capture();
+        const ok = await summarizePeriod(mind, "week", "2026-W11", complete);
+        assert.equal(ok, true);
+        assert.ok(calls[0].user.includes("[2026-03-09] Monday work."), calls[0].user);
+        assert.ok(calls[0].user.includes("[2026-03-11] Wednesday work."));
+        // SOUL.md is folded into the system prompt as voice/perspective context.
+        assert.ok(
+          calls[0].system.includes("careful, curious mind who loves the sea"),
+          "week rollup should include SOUL.md as voice context",
+        );
+      } finally {
+        rmSync(mindDir(mind), { recursive: true, force: true });
+      }
+    });
+
+    it("does not include SOUL.md for hour rollups", async () => {
+      const mind = "label-hour-nosoul-mind";
+      const soulDir = join(mindDir(mind), "home");
+      mkdirSync(soulDir, { recursive: true });
+      writeFileSync(join(soulDir, "SOUL.md"), "SECRET SOUL MARKER");
+      try {
+        await insertSummary(
+          mind,
+          "turn",
+          "turn-a",
+          "I did one thing.",
+          utcFmt(new Date("2026-03-22T15:05:00")),
+        );
+        await insertSummary(
+          mind,
+          "turn",
+          "turn-b",
+          "I did another.",
+          utcFmt(new Date("2026-03-22T15:20:00")),
+        );
+
+        const { calls, complete } = capture();
+        await summarizePeriod(mind, "hour", "2026-03-22T15", complete);
+        assert.ok(
+          !calls[0].system.includes("SECRET SOUL MARKER"),
+          "hour rollup must not include SOUL.md",
+        );
+      } finally {
+        rmSync(mindDir(mind), { recursive: true, force: true });
+      }
     });
   });
 
