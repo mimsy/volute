@@ -88,7 +88,20 @@ type Session = {
    * rotation can't trim. Past the cap we stop rotating and defer to native compaction.
    */
   consecutiveRotations: number;
+  /**
+   * Rotation state machine (undefined = idle). The warning is pushed and the mind
+   * takes a wrap-up turn — with FULL context of the turns it's summarizing — before
+   * the session rotates:
+   *   - "warned": a turn was mid-flight when we warned; it must finish before the
+   *     wrap-up turn (which consumes the warning) runs.
+   *   - "rotateAfterTurn": the wrap-up turn is the current/next turn; rotate when it ends.
+   * Lives on the session (not a map) so it can't leak into a resumed session if the
+   * stream dies mid-flight — a fresh session starts idle.
+   */
+  rotationPhase?: RotationPhase;
 };
+
+type RotationPhase = "warned" | "rotateAfterTurn";
 
 /** Stop self-rotating after this many back-to-back rotations that didn't reduce context. */
 const MAX_CONSECUTIVE_ROTATIONS = 3;
@@ -135,9 +148,6 @@ export function createMind(options: {
   if (maxContextTokens) {
     log("mind", `compaction threshold: ${maxContextTokens} tokens`);
   }
-
-  // Per-session compaction state
-  const compactionTriggered = new Map<string, boolean>();
 
   // --- Subagents (config-driven) ---
 
@@ -391,8 +401,16 @@ export function createMind(options: {
        * cut point it's told about. Computes which whole turns fit in `seedTokens`
        * from the live transcript, pins the first-kept turn (so rotation honors the
        * same boundary even as the transcript grows), interpolates its time into the
-       * `${cutoff}` placeholder, marks the session for rotation, and pushes the
+       * `${cutoff}` placeholder, enters the rotation state machine, and pushes the
        * warning as the wrap-up prompt. Shared by the threshold and PreCompact paths.
+       *
+       * Crucially it does NOT abort here: the mind takes a wrap-up turn (reading the
+       * pinned cutoff and authoring `volute mind history` summaries with full context
+       * of the turns being collapsed) before rotation. The entry phase depends on
+       * whether a turn is mid-flight: if one is (threshold path fires on an assistant
+       * message), it must finish before the queued warning runs, so we start "warned";
+       * if we're between turns (PreCompact fired at a boundary), the warning IS the
+       * next turn, so we start "rotateAfterTurn".
        */
       function warnAndPinRotation() {
         let cutoffLabel = "the cutoff";
@@ -414,7 +432,8 @@ export function createMind(options: {
         }
         // biome-ignore lint/suspicious/noTemplateCurlyInString: literal ${cutoff} prompt placeholder
         const warning = compactionMessage.replaceAll("${cutoff}", cutoffLabel);
-        compactionTriggered.set(session.name, true);
+        session.rotationPhase =
+          session.currentMessageId !== undefined ? "warned" : "rotateAfterTurn";
         session.messageIds.push(undefined);
         session.channel.push({
           type: "user",
@@ -424,19 +443,14 @@ export function createMind(options: {
         });
       }
 
-      // PreCompact backstop: first fire warns + pins + marks for rotation (unless the
-      // threshold path already did); second fire allows the SDK's native compaction as
-      // an emergency backstop (only reachable if rotation never happened).
+      // PreCompact backstop: first fire warns + pins + enters the rotation machine
+      // (unless already warned, or the rotation cap is hit) and blocks; second fire
+      // allows the SDK's native compaction — the emergency backstop when rotation never
+      // intervened (a hung turn, or a system prompt too large for rotation to relieve).
       const preCompact = createPreCompactHook(() => {
-        if (
-          !compactionTriggered.get(session.name) &&
-          session.consecutiveRotations < MAX_CONSECUTIVE_ROTATIONS
-        ) {
+        if (!session.rotationPhase && session.consecutiveRotations < MAX_CONSECUTIVE_ROTATIONS) {
           warnAndPinRotation();
         }
-        // If we don't warn (already triggered, or the rotation cap is hit), the hook
-        // still blocks the first fire and allows native compaction on the second —
-        // the emergency backstop when rotation can't bring context under control.
       });
 
       const callbacks = {
@@ -456,11 +470,13 @@ export function createMind(options: {
           // the closest-to-arrival signal available without reading the transcript back.
           session.seeded = false;
           await autoCommit.flushFileChanges();
-          const wasCompacting = compactionTriggered.get(session.name);
-          compactionTriggered.set(session.name, false);
-          if (wasCompacting) {
-            // The wrap-up turn is done — abort the stream to rotate the session in place.
-            log("mind", `session "${session.name}": aborting stream to rotate`);
+          if (session.rotationPhase === "warned") {
+            // The mid-flight turn finished; the queued warning runs next as the wrap-up
+            // turn. Advance — do NOT abort yet, so the mind summarizes with full context.
+            session.rotationPhase = "rotateAfterTurn";
+          } else if (session.rotationPhase === "rotateAfterTurn") {
+            // The wrap-up turn is done (summaries authored) — abort to rotate in place.
+            log("mind", `session "${session.name}": wrap-up turn done — aborting to rotate`);
             streamAbort.abort(new CompactionAbort());
           } else {
             // A healthy turn (context under the threshold) — the rotation streak, if
@@ -474,7 +490,7 @@ export function createMind(options: {
           if (
             maxContextTokens &&
             tokens >= maxContextTokens &&
-            !compactionTriggered.get(session.name) &&
+            !session.rotationPhase &&
             session.consecutiveRotations < MAX_CONSECUTIVE_ROTATIONS
           ) {
             log(
@@ -539,6 +555,7 @@ export function createMind(options: {
                 seedTokens,
               });
               session.rotationCut = null;
+              session.rotationPhase = undefined; // state machine consumed
               if (!rotatedId) {
                 // Rotation couldn't proceed — fall back to a fresh session (no seed,
                 // no note). Fresh is a far smaller cliff now that seeding exists.
@@ -589,8 +606,11 @@ export function createMind(options: {
           sessionStore.delete(session.name);
           currentSessionId = undefined;
           // We fell back to a truly empty session — don't tell the mind its
-          // conversation continued when the seeded transcript failed to resume.
+          // conversation continued when the seeded transcript failed to resume,
+          // and don't let a half-entered rotation leak into the fresh session.
           session.seeded = false;
+          session.rotationPhase = undefined;
+          session.rotationCut = null;
           streamAbort = new AbortController();
           session.channel = createMessageChannel();
           try {
@@ -693,7 +713,6 @@ export function createMind(options: {
     // Delete first so a racing inbound message spins up a fresh resumed session
     // instead of reusing the one we're tearing down.
     sessions.delete(session.name);
-    compactionTriggered.delete(session.name);
     // End the input iterable so the stream consumer unwinds (its finally block
     // also deletes from the map, now a no-op), then await the SDK's graceful
     // shutdown via query.return() — unlike the fire-and-forget close(), this
@@ -733,7 +752,12 @@ export function createMind(options: {
     const reaper = setInterval(() => {
       const now = Date.now();
       const stale = [...sessions.values()].filter((s) =>
-        isSessionReapable(s, now, idleTimeoutMs, (name) => !!compactionTriggered.get(name)),
+        isSessionReapable(
+          s,
+          now,
+          idleTimeoutMs,
+          (name) => sessions.get(name)?.rotationPhase !== undefined,
+        ),
       );
       // Reaps run independently; each awaits its own subprocess exit internally.
       for (const session of stale) {
