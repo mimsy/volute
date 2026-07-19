@@ -43,9 +43,13 @@ export async function consumeStream(
   callbacks: StreamCallbacks,
 ) {
   emit(session, { type: "session_start" });
+  // How many queued message ids predate the current turn — see the pruning in
+  // the result handler (#700).
+  let preTurnPending = 0;
   for await (const msg of stream) {
     if (session.currentMessageId === undefined) {
       session.currentMessageId = session.messageIds.shift();
+      preTurnPending = session.messageIds.length;
     }
     if ("session_id" in msg && msg.session_id) {
       callbacks.onSessionId?.(msg.session_id as string);
@@ -118,6 +122,15 @@ export async function consumeStream(
     if (msg.type === "result") {
       if (session.currentMessageId) {
         session.messageChannels.delete(session.currentMessageId);
+      }
+      // Prune every id folded into this turn — the ones pushed after it started
+      // — not just currentMessageId. The SDK folds mid-run arrivals into the
+      // active run (they never see a result of their own), and a stranded entry
+      // would be shifted in as the NEXT turn's id, tagging that turn's rows with
+      // the wrong channel (#700). Ids queued before the turn started stay: each
+      // still gets a run (and result) of its own.
+      for (const id of session.messageIds.splice(preTurnPending)) {
+        if (id !== undefined) session.messageChannels.delete(id);
       }
       log("mind", `session "${session.name}": turn done`);
       // Log any error messages from the result
