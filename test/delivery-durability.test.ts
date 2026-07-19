@@ -588,12 +588,13 @@ describe("DeliveryManager durability", () => {
     });
 
     // Two rows crossing the ceiling at once: a DM (channel named after the sender, as the
-    // recipient's queue sees it) and a shared channel. Plus a human-sender row that the
-    // seam still receives — filtering humans is recordSenderDeliveryFailure's job.
+    // recipient's queue sees it) and a shared channel. The sender name is deliberately NOT
+    // slug-identical (uppercase + underscore) — fan-out stores DM slugs as @slugify(sender),
+    // so the rename must compare against the slugified name, not the raw one.
     const db = await getDb();
     const values = [
-      { channel: "@peer-mind", sender: "peer-mind" }, // DM: recipient-side slug names the sender
-      { channel: "test:ch", sender: "peer-mind" }, // shared channel: same slug for both sides
+      { channel: "@peer-mind", sender: "Peer_Mind" }, // DM: recipient-side slug names the sender
+      { channel: "test:ch", sender: "Peer_Mind" }, // shared channel: same slug for both sides
     ].map((v) => ({
       mind: name,
       thread: "main",
@@ -624,7 +625,7 @@ describe("DeliveryManager durability", () => {
       "DM channel renamed to the recipient from the sender's perspective",
     );
     for (const n of senderNotices) {
-      assert.equal(n.sender, "peer-mind");
+      assert.equal(n.sender, "Peer_Mind");
       assert.match(n.reason, /rejected/);
     }
     await removeMind(name);

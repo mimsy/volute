@@ -96,9 +96,14 @@ describe("POST /api/minds/:name/notices", () => {
     try {
       for (const body of [
         { kind: "not-a-kind", message: "x" },
+        // Daemon-authored kinds must not be forgeable by a mind: crash/turn_error/
+        // startup drive the host "last turn failed" surface, budget becomes a budget event.
+        { kind: "crash", message: "x" },
+        { kind: "turn_error", message: "x" },
+        { kind: "startup", message: "x" },
+        { kind: "budget", message: "x" },
         { kind: "context_lost" },
         { kind: "context_lost", message: "   " },
-        { kind: "context_lost", message: "y".repeat(4001) },
         { kind: "context_lost", message: "x", thread: 42 },
       ]) {
         const res = await app.request(`http://localhost/api/minds/${name}/notices`, {
@@ -109,6 +114,26 @@ describe("POST /api/minds/:name/notices", () => {
         assert.equal(res.status, 400, `expected 400 for ${JSON.stringify(body)}`);
       }
       assert.equal((await drainEvents(name, "main")).length, 0, "no notice recorded on 400s");
+    } finally {
+      await removeMind(name);
+    }
+  });
+
+  it("truncates an oversized message instead of dropping the notice", async () => {
+    const name = `notice-api-${Date.now()}-f`;
+    const token = await makeMind(name);
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
+    try {
+      const res = await app.request(`http://localhost/api/minds/${name}/notices`, {
+        method: "POST",
+        headers: postHeaders(token),
+        body: JSON.stringify({ kind: "context_lost", message: "y".repeat(5000) }),
+      });
+      assert.equal(res.status, 200, "a long explanation must not be silently rejected");
+      const drained = await drainEvents(name, "main");
+      assert.equal(drained.length, 1);
+      assert.equal(drained[0].body.length, 4001, "4000 chars plus the ellipsis");
+      assert.ok(drained[0].body.endsWith("…"));
     } finally {
       await removeMind(name);
     }

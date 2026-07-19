@@ -82,6 +82,16 @@ describe("recordDeliveryFailure", () => {
     assert.equal(metaOf(single!).count, 1);
   });
 
+  it("does not coalesce across threads — scoping is part of the key", async () => {
+    const mind = uniqueMind();
+    await recordDeliveryFailure({ mind, channel: "#ch", reason: "a", thread: "planning" });
+    await recordDeliveryFailure({ mind, channel: "#ch", reason: "b" }); // mind-level
+
+    const rows = await failureRows(mind);
+    assert.equal(rows.length, 2, "a mind-level failure must not fold into a thread-scoped row");
+    assert.deepEqual(rows.map((r) => r.thread).sort(), ["", "planning"]);
+  });
+
   it("does not coalesce into a notice older than the window", async () => {
     const mind = uniqueMind();
     await recordDeliveryFailure({ mind, channel: "#ch", reason: "first" });

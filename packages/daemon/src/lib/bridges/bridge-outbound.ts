@@ -96,7 +96,7 @@ async function routeChannelOutbound(
     await recordSenderDeliveryFailure(
       senderName,
       channelName,
-      (err as Error).message ?? String(err),
+      err instanceof Error && err.message ? err.message : String(err),
     );
     throw err;
   }
@@ -155,7 +155,7 @@ async function routeDMOutbound(
       await recordSenderDeliveryFailure(
         senderName,
         puppet.username,
-        (err as Error).message ?? String(err),
+        err instanceof Error && err.message ? err.message : String(err),
       );
     }
   }

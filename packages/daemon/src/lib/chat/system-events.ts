@@ -158,6 +158,8 @@ export type RecordNoticeInput = {
   reason: string;
   detail: string;
   raw?: string | null;
+  /** Extra meta merged into the notice (e.g. delivery-failure channel/count); subtype/reason win. */
+  meta?: Record<string, unknown>;
 };
 
 /**
@@ -173,6 +175,7 @@ export async function recordNotice(input: RecordNoticeInput): Promise<void> {
     thread: input.thread,
     delivery: "next-turn",
     meta: {
+      ...(input.meta ?? {}),
       subtype: input.kind,
       reason: input.reason,
       ...(input.raw ? { raw: input.raw } : {}),
@@ -659,7 +662,8 @@ export function formatEvents(events: SystemEvent[]): string | null {
   return blocks.join("\n\n");
 }
 
-function localHM(createdAt: string): string {
+/** HH:MM local-time rendering of a stored UTC `created_at` — the notices-surface time format. */
+export function localHM(createdAt: string): string {
   const iso = createdAt.endsWith("Z") ? createdAt : `${createdAt.replace(" ", "T")}Z`;
   return new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
 }

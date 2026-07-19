@@ -232,13 +232,20 @@ export class Scheduler {
       slog.warn(`failed to fire "${schedule.id}" for ${mindName}`, log.errorData(err));
       // The schedule fired but the mind never heard it — leave a notice rather than
       // only a daemon log the mind can't see (#366). recordNotice never throws.
+      // A literal ephemeral thread would strand the notice in a session that never
+      // runs another turn, so those fall back to mind-level ("$new" is collapsed by
+      // deliverEvent itself).
       const detail = await getPrompt("schedule_failure_notice", {
         id: schedule.id,
-        reason: (err as Error).message ?? String(err),
+        reason: err instanceof Error && err.message ? err.message : String(err),
       });
+      const thread =
+        schedule.thread && !schedule.thread.startsWith("new-")
+          ? schedule.thread
+          : MIND_LEVEL_THREAD;
       await recordNotice({
         mind: mindName,
-        thread: schedule.thread ?? MIND_LEVEL_THREAD,
+        thread,
         kind: "delivery_failed",
         reason: "schedule_failed",
         detail,

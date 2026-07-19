@@ -1,11 +1,10 @@
 import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { getDb } from "../db.js";
-import { findMind, getBaseName } from "../mind/registry.js";
+import { findMind } from "../mind/registry.js";
 import { getPrompt } from "../prompts.js";
 import { systemEvents } from "../schema.js";
 import log from "../util/logger.js";
-import { parseDbTimestamp } from "../util/time.js";
-import { deliverEvent, MIND_LEVEL_THREAD, parseMeta } from "./system-events.js";
+import { localHM, MIND_LEVEL_THREAD, parseMeta, recordNotice } from "./system-events.js";
 
 const nlog = log.child("delivery-notices");
 
@@ -28,13 +27,32 @@ export type DeliveryFailureInput = {
 };
 
 /**
+ * Per-(mind, channel) promise chain serializing {@link recordDeliveryFailure} calls.
+ * Coalescing is a read-modify-write across awaits; a burst interleaving two calls
+ * would otherwise double-insert or drop a count. Entries self-clean when idle.
+ */
+const recordChains = new Map<string, Promise<void>>();
+
+/**
  * Record a "your message could not be delivered" notice for a mind, coalescing
  * repeated failures to the same channel: if an undelivered delivery-failure
- * notice for this (mind, channel) was created within {@link COALESCE_WINDOW_MINUTES},
- * its count and body are updated in place instead of inserting a new row.
- * Never throws — a failure to record a failure must not break the send path.
+ * notice for this (mind, channel, thread) was created within
+ * {@link COALESCE_WINDOW_MINUTES}, its count and body are updated in place instead
+ * of inserting a new row. Never throws — a failure to record a failure must not
+ * break the send path.
  */
 export async function recordDeliveryFailure(input: DeliveryFailureInput): Promise<void> {
+  const key = `${input.mind}\n${input.channel}`;
+  const next = (recordChains.get(key) ?? Promise.resolve()).then(() =>
+    recordDeliveryFailureUnserialized(input),
+  );
+  recordChains.set(key, next);
+  await next;
+  if (recordChains.get(key) === next) recordChains.delete(key);
+}
+
+async function recordDeliveryFailureUnserialized(input: DeliveryFailureInput): Promise<void> {
+  const thread = input.thread ?? MIND_LEVEL_THREAD;
   try {
     const db = await getDb();
     const existing = await db
@@ -45,6 +63,7 @@ export async function recordDeliveryFailure(input: DeliveryFailureInput): Promis
           eq(systemEvents.mind, input.mind),
           eq(systemEvents.type, "notice"),
           eq(systemEvents.delivery, "next-turn"),
+          eq(systemEvents.thread, thread),
           isNull(systemEvents.delivered_at),
           // Literal subtype + bound channel value — not string-built SQL.
           sql`json_extract(${systemEvents.meta}, '$.subtype') = 'delivery_failed'`,
@@ -59,14 +78,10 @@ export async function recordDeliveryFailure(input: DeliveryFailureInput): Promis
     if (existing) {
       const meta = parseMeta(existing.meta, `event ${existing.id}`);
       const count = (typeof meta.count === "number" ? meta.count : 1) + 1;
-      const since = parseDbTimestamp(existing.created_at).toLocaleTimeString("en-GB", {
-        hour: "2-digit",
-        minute: "2-digit",
-      });
       const body = await getPrompt("delivery_failure_coalesced", {
         count: String(count),
         channel: input.channel,
-        since,
+        since: localHM(existing.created_at),
         reason: input.reason,
       });
       await db
@@ -80,17 +95,13 @@ export async function recordDeliveryFailure(input: DeliveryFailureInput): Promis
       channel: input.channel,
       reason: input.reason,
     });
-    await deliverEvent(input.mind, {
-      type: "notice",
-      body,
-      thread: input.thread ?? MIND_LEVEL_THREAD,
-      delivery: "next-turn",
-      meta: {
-        subtype: "delivery_failed",
-        reason: "delivery_failed",
-        channel: input.channel,
-        count: 1,
-      },
+    await recordNotice({
+      mind: input.mind,
+      thread,
+      kind: "delivery_failed",
+      reason: "delivery_failed",
+      detail: body,
+      meta: { channel: input.channel, count: 1 },
     });
   } catch (err) {
     nlog.warn(
@@ -115,8 +126,7 @@ export async function recordSenderDeliveryFailure(
   try {
     const entry = await findMind(sender);
     if (!entry) return;
-    const base = await getBaseName(sender);
-    await recordDeliveryFailure({ mind: base, channel, reason });
+    await recordDeliveryFailure({ mind: entry.parent ?? entry.name, channel, reason });
   } catch (err) {
     nlog.warn(
       `failed to record sender delivery-failure notice for ${sender} → ${channel}`,

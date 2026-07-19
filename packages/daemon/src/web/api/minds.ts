@@ -33,7 +33,6 @@ import {
   latestFailureEvent,
   listEvents,
   MIND_LEVEL_THREAD,
-  NOTICE_KINDS,
   type NoticeKind,
   parseMeta,
   recordNotice,
@@ -3201,7 +3200,13 @@ const app = new Hono<AuthEnv>()
   // it lands in the same next-turn notices drain as daemon-recorded failures (#367).
   // A `thread` scopes the notice to that thread's drain; omitted → mind-level
   // (drained by whichever thread next runs a turn).
+  //
+  // Deliberately narrower than NOTICE_KINDS: crash/turn_error/startup feed
+  // latestFailureEvent (the host's "last turn failed" surface) and budget becomes a
+  // budget event — daemon-authored semantics a mind must not be able to forge about
+  // itself (mirrors the DAEMON_AUTHORED_TYPES guard on POST /:name/events).
   .post("/:name/notices", requireSelf(), async (c) => {
+    const MIND_POSTABLE_KINDS: NoticeKind[] = ["context_lost", "delivery_failed"];
     const name = c.req.param("name");
     const baseName = await getBaseName(name);
 
@@ -3212,12 +3217,11 @@ const app = new Hono<AuthEnv>()
       return c.json({ error: "Invalid JSON body" }, 400);
     }
     const kind = body.kind;
-    if (typeof kind !== "string" || !(NOTICE_KINDS as readonly string[]).includes(kind)) {
-      return c.json({ error: `kind must be one of: ${NOTICE_KINDS.join(", ")}` }, 400);
+    if (typeof kind !== "string" || !(MIND_POSTABLE_KINDS as string[]).includes(kind)) {
+      return c.json({ error: `kind must be one of: ${MIND_POSTABLE_KINDS.join(", ")}` }, 400);
     }
     const message = typeof body.message === "string" ? body.message.trim() : "";
     if (!message) return c.json({ error: "message is required" }, 400);
-    if (message.length > 4000) return c.json({ error: "message too long (max 4000 chars)" }, 400);
     if (body.thread !== undefined && typeof body.thread !== "string") {
       return c.json({ error: "thread must be a string" }, 400);
     }
@@ -3227,7 +3231,9 @@ const app = new Hono<AuthEnv>()
       thread: (body.thread as string | undefined) ?? MIND_LEVEL_THREAD,
       kind: kind as NoticeKind,
       reason: kind,
-      detail: message,
+      // Bound the size (the body is injected into turn context) without dropping
+      // the notice — a truncated explanation beats a silent 400.
+      detail: message.length > 4000 ? `${message.slice(0, 4000)}…` : message,
     });
     return c.json({ ok: true });
   })

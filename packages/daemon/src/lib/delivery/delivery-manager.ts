@@ -15,6 +15,7 @@ import { channelGates, deliveryQueue, mindHistory } from "../schema.js";
 import { type AvatarBlock, renderAvatarBlock } from "../util/avatar-image.js";
 import log from "../util/logger.js";
 import { newEphemeralSession } from "../util/session-name.js";
+import { slugify } from "../util/slugify.js";
 import {
   type DeliveryPayload,
   extractTextContent,
@@ -976,12 +977,14 @@ export class DeliveryManager {
     // too (#366). One call per distinct (sender, channel); the sender-side helper
     // no-ops for humans and coalesces bursts, so a failing batch stays one notice.
     // From the sender's perspective a DM channel is named after the *recipient*, not
-    // the "@sender" slug the recipient's queue row carries.
+    // the "@sender" slug the recipient's queue row carries. Queue rows store DM slugs
+    // through buildVoluteSlug — `@${slugify(sender)}`, not the raw sender name.
     const senderPairs = new Map<string, { sender: string; channel: string }>();
     for (const r of rows) {
       if (!r.sender || r.sender === r.mind) continue;
       const recipient = r.target_mind ?? r.mind;
-      const channel = !r.channel || r.channel === `@${r.sender}` ? `@${recipient}` : r.channel;
+      const channel =
+        !r.channel || r.channel === `@${slugify(r.sender)}` ? `@${recipient}` : r.channel;
       senderPairs.set(`${r.sender}\n${channel}`, { sender: r.sender, channel });
     }
     for (const { sender, channel } of senderPairs.values()) {
