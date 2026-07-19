@@ -2,7 +2,13 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
 import { Codex } from "@openai/codex-sdk";
 import { flushFileChanges, trackFileChange } from "./lib/auto-commit.js";
-import { DEFAULT_SEED_TOKENS, seedCodexSession } from "./lib/codex-session-seed.js";
+import {
+  type CodexSeedCut,
+  computeCodexSeedCut,
+  DEFAULT_SEED_TOKENS,
+  rotateCodexSession,
+  seedCodexSession,
+} from "./lib/codex-session-seed.js";
 import { extractText } from "./lib/content.js";
 import {
   countSdkInstructionTokens,
@@ -15,9 +21,10 @@ import {
   readSkillDescriptions,
 } from "./lib/context-breakdown.js";
 import { daemonEmit, daemonRestart, type EventType } from "./lib/daemon-client.js";
+import { compactTimestamp } from "./lib/format-prefix.js";
 import { runHooks } from "./lib/hook-loader.js";
 import { log, warn } from "./lib/logger.js";
-import { buildSeededNote } from "./lib/seed-note.js";
+import { buildSeededNote, type SeedCause } from "./lib/seed-note.js";
 import { createSessionStore } from "./lib/session-store.js";
 import { getStartupContext, loadPrompts, loadSystemPrompt } from "./lib/startup.js";
 import { filterEvent, loadTransparencyPreset } from "./lib/transparency.js";
@@ -40,12 +47,14 @@ type CodexThread = {
   ): Promise<{ events: AsyncIterable<Record<string, any>> }>;
 };
 
+type QueuedMessage = { text: string; meta: HandlerMeta; isRotationWarning?: boolean };
+
 type CodexSession = {
   name: string;
   thread: CodexThread | null;
   listeners: Set<Listener>;
   currentMessageId?: string;
-  messageQueue: Array<{ text: string; meta: HandlerMeta }>;
+  messageQueue: QueuedMessage[];
   processing: boolean;
   abortController?: AbortController;
   messageChannels: Map<string, string>;
@@ -54,13 +63,38 @@ type CodexSession = {
   eventNoteFired: boolean;
   cumulativeInputTokens: number;
   /**
-   * True when this session was seeded from the previous session's rollout.
-   * Consumed once, on the first turn, to inject the honest-boundary note.
+   * True when this session was seeded from a previous session's rollout (a restart
+   * restore) or a rotation. Consumed once, on the first turn, to inject the note.
    */
   seeded: boolean;
   /** When the seeded-from session was archived (epoch ms), for the gap note; null if unknown. */
   seededArchivedAt: number | null;
+  /**
+   * The live Codex thread id, tracked in-memory (from thread.started) so rotation can
+   * locate the rollout even for ephemeral `new-*` sessions, which persist no pointer.
+   */
+  currentThreadId: string | null;
+  /** Why the tail is seeded — picks the boundary note's wording. Last cause wins. */
+  seededCause: SeedCause;
+  /**
+   * The cut point pinned at warn time (the first-kept turn the mind was told would
+   * survive verbatim). Honored at rotation so the promise in the warning holds even
+   * though the rollout grows after the warning. Null until a warning fires.
+   */
+  rotationCut: CodexSeedCut | null;
+  /** A rotation warning turn is queued/in-flight — suppress re-triggering until it rotates. */
+  rotatePending: boolean;
+  /**
+   * Back-to-back rotations that did NOT bring context under the threshold (reset by any
+   * healthy turn). Guards against a runaway loop when the tail alone can't fit — e.g. a
+   * system prompt (large MEMORY.md) that already fills most of the window, which rotation
+   * can't trim. Past the cap we stop rotating and defer to the SDK's native backstop.
+   */
+  consecutiveRotations: number;
 };
+
+/** Stop self-rotating after this many back-to-back rotations that didn't reduce context. */
+const MAX_CONSECUTIVE_ROTATIONS = 3;
 
 // Loaded once at startup
 const preset = loadTransparencyPreset();
@@ -98,6 +132,14 @@ export function createMind(options: {
   const sessions = new Map<string, CodexSession>();
   const prompts = loadPrompts();
   const maxContextTokens = options.maxContextTokens;
+  const seedTokens = options.seedTokens ?? DEFAULT_SEED_TOKENS;
+
+  // The warning the mind gets when the context limit approaches: it authors summaries
+  // of the turns that will collapse, then the session rotates onto the verbatim tail.
+  // ${date} is baked once here; ${cutoff} is filled per-warning with the pinned boundary.
+  const today = new Date().toLocaleDateString("en-CA");
+  // biome-ignore lint/suspicious/noTemplateCurlyInString: literal ${date} in prompt template
+  const compactionMessage = prompts.compaction_warning.replace("${date}", today);
 
   if (maxContextTokens) {
     log("mind", `compaction threshold: ${maxContextTokens} tokens`);
@@ -127,8 +169,14 @@ export function createMind(options: {
     ...(apiKey ? { apiKey } : {}),
     config: {
       model_instructions_file: promptPath,
-      // Let the SDK handle compaction natively when a threshold is configured
-      model_auto_compact_token_limit: maxContextTokens ?? 999999999,
+      // Rotation (mind-authored compaction) is the primary path: at maxContextTokens we
+      // warn the mind and rotate onto the verbatim tail. The SDK's native auto-compaction
+      // is only an emergency backstop — set above the volute threshold (1.5×) so it fires
+      // solely when rotation can't relieve context (e.g. a system prompt too large to fit
+      // the tail under the threshold), after the runaway guard stops self-rotating.
+      model_auto_compact_token_limit: maxContextTokens
+        ? Math.floor(maxContextTokens * 1.5)
+        : 999999999,
       // Enable reasoning summaries so they appear as events
       model_reasoning_summary: "auto",
       model_supports_reasoning_summaries: true,
@@ -163,11 +211,31 @@ export function createMind(options: {
       cumulativeInputTokens: 0,
       seeded: false,
       seededArchivedAt: null,
+      currentThreadId: null,
+      seededCause: "restored",
+      rotationCut: null,
+      rotatePending: false,
+      consecutiveRotations: 0,
     };
     sessions.set(name, session);
 
     initSession(session);
     return session;
+  }
+
+  /** Thread options shared by startThread, resumeThread, and rotation resume. */
+  function threadOptions() {
+    return {
+      workingDirectory: options.cwd,
+      model: options.model,
+      modelReasoningEffort: options.reasoningEffort,
+      skipGitRepoCheck: true,
+      // Codex's native seatbelt sandbox panics on macOS due to a bug in the
+      // system-configuration Rust crate (SCDynamicStore NULL object). Use full
+      // access until upstream ships a fix (mullvad/system-configuration-rs#59).
+      sandboxMode: "danger-full-access" as const,
+      networkAccessEnabled: true,
+    };
   }
 
   function initSession(session: CodexSession) {
@@ -184,29 +252,21 @@ export function createMind(options: {
         const seeded = seedCodexSession({
           mindDir: options.mindDir,
           name: session.name,
-          seedTokens: options.seedTokens ?? DEFAULT_SEED_TOKENS,
+          seedTokens,
         });
         if (seeded) {
           resumeThreadId = seeded.threadId;
           session.seeded = true;
           session.seededArchivedAt = seeded.archivedAt;
+          session.seededCause = "restored";
           log("mind", `session "${session.name}": seeded from previous transcript`);
         }
       }
       if (resumeThreadId) {
         try {
           log("mind", `session "${session.name}": resuming thread ${resumeThreadId}`);
-          session.thread = codex.resumeThread(resumeThreadId, {
-            workingDirectory: options.cwd,
-            model: options.model,
-            modelReasoningEffort: options.reasoningEffort,
-            skipGitRepoCheck: true,
-            // Codex's native seatbelt sandbox panics on macOS due to a bug in the
-            // system-configuration Rust crate (SCDynamicStore NULL object). Use full
-            // access until upstream ships a fix (mullvad/system-configuration-rs#59).
-            sandboxMode: "danger-full-access",
-            networkAccessEnabled: true,
-          });
+          session.thread = codex.resumeThread(resumeThreadId, threadOptions());
+          session.currentThreadId = resumeThreadId;
           return;
         } catch (err) {
           warn("mind", `session "${session.name}": failed to resume thread, starting new:`, err);
@@ -218,15 +278,7 @@ export function createMind(options: {
     }
 
     try {
-      session.thread = codex.startThread({
-        workingDirectory: options.cwd,
-        model: options.model,
-        modelReasoningEffort: options.reasoningEffort,
-        skipGitRepoCheck: true,
-        // See comment in resumeThread above
-        sandboxMode: "danger-full-access",
-        networkAccessEnabled: true,
-      });
+      session.thread = codex.startThread(threadOptions());
       log("mind", `session "${session.name}": new thread started`);
     } catch (err) {
       warn("mind", `session "${session.name}": failed to start thread:`, err);
@@ -274,11 +326,15 @@ export function createMind(options: {
     }
 
     // On the first turn of a seeded session, prepend the honest-boundary note
-    // (consumed once) so the mind knows the conversation above was restored. The
-    // note carries a coarse gap-duration clause when the archive time is known.
+    // (consumed once) so the mind knows the tail above was restored (restart) or
+    // rotated (context limit). The restored note carries a coarse gap-duration
+    // clause when the archive time is known; the rotation note has no gap clause.
     if (session.seeded) {
       session.seeded = false;
-      const note = buildSeededNote(session.seededArchivedAt);
+      const note = buildSeededNote({
+        cause: session.seededCause,
+        archivedAtMs: session.seededArchivedAt,
+      });
       emit(session, {
         type: "context",
         content: note,
@@ -358,11 +414,15 @@ export function createMind(options: {
         try {
           switch (event.type) {
             case "thread.started": {
-              // Save thread ID for session resume
+              // Track the live thread id in-memory (used by rotation) and persist it for
+              // resume — persistent sessions only; ephemeral `new-*` keep no pointer.
               const threadId = event.thread_id ?? event.threadId ?? event.thread?.id;
-              if (threadId && !session.name.startsWith("new-")) {
-                sessionStore.save(session.name, threadId);
-                log("mind", `session "${session.name}": saved thread ${threadId}`);
+              if (threadId) {
+                session.currentThreadId = threadId;
+                if (!session.name.startsWith("new-")) {
+                  sessionStore.save(session.name, threadId);
+                  log("mind", `session "${session.name}": saved thread ${threadId}`);
+                }
               }
               break;
             }
@@ -560,14 +620,6 @@ export function createMind(options: {
         daemonRestart({ type: "reload" }).catch((err) => log("mind", "daemonRestart failed:", err));
       }
 
-      // Compaction warning — actual compaction is handled by the Codex SDK via model_auto_compact_token_limit
-      if (maxContextTokens && session.cumulativeInputTokens >= maxContextTokens) {
-        log(
-          "mind",
-          `session "${session.name}": ${session.cumulativeInputTokens} tokens >= ${maxContextTokens} — SDK auto-compaction will handle`,
-        );
-      }
-
       log("mind", `session "${session.name}": turn done`);
     } catch (err: any) {
       if (err?.name === "AbortError") {
@@ -586,6 +638,115 @@ export function createMind(options: {
     session.currentMessageId = undefined;
   }
 
+  // --- Rotation (mind-authored compaction) ---
+
+  /**
+   * Warn the mind that the session will rotate at the context limit and pin the cut
+   * point it's told about. Computes which whole turns fit in `seedTokens` from the live
+   * rollout, pins the first-kept turn's timestamp (so rotation honors the same boundary
+   * even as the rollout grows), interpolates its local time into the `${cutoff}`
+   * placeholder, and queues the warning as the mind's next (wrap-up) turn.
+   */
+  function warnAndPinRotation(session: CodexSession) {
+    let cutoffLabel = "the cutoff";
+    session.rotationCut = null;
+    const threadId = session.currentThreadId;
+    if (threadId) {
+      try {
+        const path = findCodexSessionFile(threadId, options.mindDir);
+        const cut = path ? computeCodexSeedCut(readFileSync(path, "utf-8"), seedTokens) : null;
+        if (cut) {
+          session.rotationCut = cut;
+          const d = new Date(cut.boundaryTimestamp);
+          if (!Number.isNaN(d.getTime())) cutoffLabel = compactTimestamp(d);
+        }
+      } catch (err) {
+        log("mind", `session "${session.name}": failed to pin rotation cut:`, err);
+      }
+    }
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: literal ${cutoff} prompt placeholder
+    const warning = compactionMessage.replaceAll("${cutoff}", cutoffLabel);
+    session.rotatePending = true;
+    // Run the warning next, ahead of any queued messages, so the mind wraps up before
+    // more context piles on. Remaining queued messages then run on the rotated thread.
+    session.messageQueue.unshift({
+      text: warning,
+      meta: { messageId: `rotation-warning-${Date.now()}` },
+      isRotationWarning: true,
+    });
+  }
+
+  /**
+   * After the wrap-up warning turn completes, rotate the thread in place: build a seeded
+   * rollout from the pinned cut out of the live rollout, archive the rotated-out thread,
+   * and resume the new thread. On any failure we leave the old thread in place and let
+   * the SDK's native backstop handle it if context keeps climbing.
+   */
+  function performRotation(session: CodexSession) {
+    session.rotatePending = false;
+    const oldThreadId = session.currentThreadId;
+    const cut = session.rotationCut;
+    session.rotationCut = null;
+
+    const newThreadId = oldThreadId
+      ? rotateCodexSession({
+          mindDir: options.mindDir,
+          name: session.name,
+          oldThreadId,
+          cut,
+          seedTokens,
+        })
+      : null;
+    if (!newThreadId) {
+      log("mind", `session "${session.name}": rotation failed, deferring to SDK backstop`);
+      return;
+    }
+
+    try {
+      session.thread = codex.resumeThread(newThreadId, threadOptions());
+    } catch (err) {
+      warn("mind", `session "${session.name}": failed to resume rotated thread:`, err);
+      return; // keep the old thread; the SDK backstop covers a runaway
+    }
+    session.currentThreadId = newThreadId;
+    if (!session.name.startsWith("new-")) sessionStore.save(session.name, newThreadId);
+    // Fresh thread — reset token tracking (the next turn.completed sets the real value)
+    // and arm the rotation-cause boundary note for the mind's next turn.
+    session.cumulativeInputTokens = 0;
+    session.seeded = true;
+    session.seededCause = "rotation";
+    session.seededArchivedAt = null;
+    // Count this rotation; a healthy turn resets it. If back-to-back rotations don't
+    // reduce context (system prompt too large to fit the tail), the cap stops the loop.
+    session.consecutiveRotations++;
+    if (session.consecutiveRotations >= MAX_CONSECUTIVE_ROTATIONS) {
+      log(
+        "mind",
+        `session "${session.name}": ${session.consecutiveRotations} rotations without relief — deferring further compaction to the SDK (system prompt likely too large)`,
+      );
+    }
+    log("mind", `session "${session.name}": rotated to ${newThreadId}`);
+  }
+
+  /**
+   * Decide, after a normal (non-warning) turn, whether to warn + pin a rotation: only when
+   * a threshold is configured, context is at/over it, no rotation is already pending, and
+   * we're under the runaway cap. A turn that came back under the threshold ends any streak.
+   */
+  function maybeWarnRotation(session: CodexSession) {
+    if (!maxContextTokens) return;
+    if (session.cumulativeInputTokens < maxContextTokens) {
+      session.consecutiveRotations = 0; // healthy turn — streak over
+      return;
+    }
+    if (session.rotatePending || session.consecutiveRotations >= MAX_CONSECUTIVE_ROTATIONS) return;
+    log(
+      "mind",
+      `session "${session.name}": ${session.cumulativeInputTokens} tokens >= ${maxContextTokens} — warning + pinning rotation`,
+    );
+    warnAndPinRotation(session);
+  }
+
   // --- Message queue processing ---
 
   async function processQueue(session: CodexSession) {
@@ -596,6 +757,12 @@ export function createMind(options: {
       const next = session.messageQueue.shift()!;
       session.currentMessageId = next.meta.messageId;
       await runTurn(session, next.text, next.meta);
+      if (next.isRotationWarning) {
+        // The wrap-up warning turn is done — rotate the thread in place.
+        performRotation(session);
+      } else {
+        maybeWarnRotation(session);
+      }
     }
 
     session.processing = false;

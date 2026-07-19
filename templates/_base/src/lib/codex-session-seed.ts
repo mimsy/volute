@@ -35,6 +35,7 @@ import { dirname, resolve } from "node:path";
 import { findCodexSessionFile } from "./context-breakdown.js";
 import { log } from "./logger.js";
 import { parseArchiveTimestamp } from "./seed-note.js";
+import { archivePointerTimestamp } from "./session-seed.js";
 
 /** Default seed budget (estimated tokens) when config omits continuity.seedTokens. */
 export const DEFAULT_SEED_TOKENS = 30000;
@@ -135,19 +136,20 @@ export function generateThreadId(now: Date = new Date()): string {
 
 export type SeededRollout = { threadId: string; lines: string[] };
 
+/** A kept body line paired with its raw JSON text (for token estimation). */
+type KeptLine = { obj: RolloutLine; raw: string };
+
+/** The session_meta header plus the response_items we keep (messages + tool pairs). */
+type ParsedRollout = { meta: RolloutLine; kept: KeptLine[] };
+
 /**
- * Build the seeded rollout from a previous rollout's raw jsonl text: rewrite the
- * `session_meta` header to `threadId` with an updated timestamp, then take as
- * many whole trailing turns as fit in `seedTokens` (always at least the final
- * turn), keeping message and complete tool-call pairs. Returns null if there's
- * nothing seedable (empty, no session_meta, no genuine turn, or a corrupt line).
+ * Parse a rollout into its session_meta header and the kept body lines. In strict
+ * mode a corrupt body line aborts (returns null — a broken line means we can't
+ * faithfully reconstruct). In lenient mode corrupt lines are skipped (used when
+ * reading a live rollout that may still be mid-write, e.g. computing the cut point
+ * while Codex is streaming). Returns null if the first line isn't session_meta.
  */
-export function buildSeededRollout(
-  jsonl: string,
-  threadId: string,
-  seedTokens: number,
-  now: Date = new Date(),
-): SeededRollout | null {
+function parseRollout(jsonl: string, lenient: boolean): ParsedRollout | null {
   const rawLines = jsonl.split("\n").filter((l) => l.trim().length > 0);
   if (rawLines.length === 0) return null;
 
@@ -161,35 +163,36 @@ export function buildSeededRollout(
     return null;
   }
 
-  // Rewrite the header: fresh thread id and timestamp, detached from its parent.
-  const iso = now.toISOString();
-  const mp = meta.payload;
-  mp.session_id = threadId;
-  mp.id = threadId;
-  delete mp.parent_thread_id;
-  mp.timestamp = iso;
-  meta.timestamp = iso;
-
-  // Parse and filter the body down to the response_items we keep.
-  const kept: { obj: RolloutLine; raw: string }[] = [];
+  const kept: KeptLine[] = [];
   for (let i = 1; i < rawLines.length; i++) {
     let obj: RolloutLine;
     try {
       obj = JSON.parse(rawLines[i]);
     } catch {
-      // A corrupt line means we can't faithfully reconstruct — start clean.
+      if (lenient) continue;
       return null;
     }
     if (isKeptBody(obj)) kept.push({ obj, raw: rawLines[i] });
   }
-  if (kept.length === 0) return null;
+  return { meta, kept };
+}
 
+/** Indices (into kept) of the user-message turn boundaries. */
+function keptBoundaries(kept: KeptLine[]): number[] {
   const boundaries: number[] = [];
   for (let i = 0; i < kept.length; i++) {
     if (isTurnBoundary(kept[i].obj)) boundaries.push(i);
   }
-  if (boundaries.length === 0) return null;
+  return boundaries;
+}
 
+/**
+ * Choose the first-kept boundary index: walk backward from the final turn, taking
+ * as many whole turns as fit in `seedTokens` (always at least the final turn even
+ * if it alone exceeds the budget). Assumes at least one boundary exists.
+ */
+function tailStartByBudget(kept: KeptLine[], seedTokens: number): number {
+  const boundaries = keptBoundaries(kept);
   // Turn t spans kept[boundaries[t], boundaries[t+1]); the last turn runs to end.
   const turnTokens = (t: number): number => {
     const start = boundaries[t];
@@ -198,9 +201,6 @@ export function buildSeededRollout(
     for (let i = start; i < end; i++) sum += estimateTokens(kept[i].raw);
     return sum;
   };
-
-  // Walk backward from the final turn, adding earlier whole turns while they fit.
-  // The final turn is always included even if it alone exceeds the budget.
   const last = boundaries.length - 1;
   let startTurn = last;
   let accum = turnTokens(last);
@@ -210,8 +210,31 @@ export function buildSeededRollout(
     accum += cost;
     startTurn = t;
   }
+  return boundaries[startTurn];
+}
 
-  let tail = kept.slice(boundaries[startTurn]);
+/**
+ * Emit the seeded rollout: rewrite the header to `threadId`/`now` (detached from
+ * its parent), then the tail from `startIdx` to end, dropping any tool call/output
+ * whose partner isn't in the tail. Returns null if the tail ends up empty.
+ */
+function emitFromKept(
+  meta: RolloutLine,
+  kept: KeptLine[],
+  startIdx: number,
+  threadId: string,
+  now: Date,
+): SeededRollout | null {
+  // Rewrite the header: fresh thread id and timestamp, detached from its parent.
+  const iso = now.toISOString();
+  const mp = meta.payload as Record<string, unknown>;
+  mp.session_id = threadId;
+  mp.id = threadId;
+  delete mp.parent_thread_id;
+  mp.timestamp = iso;
+  meta.timestamp = iso;
+
+  let tail = kept.slice(startIdx);
 
   // Keep only tool calls/outputs whose call_id has BOTH a call and an output in
   // the tail — never an orphaned call (e.g. a truncated final turn) or output.
@@ -234,6 +257,68 @@ export function buildSeededRollout(
 
   const lines = [JSON.stringify(meta), ...tail.map((t) => JSON.stringify(t.obj))];
   return { threadId, lines };
+}
+
+/**
+ * Build the seeded rollout from a previous rollout's raw jsonl text: rewrite the
+ * `session_meta` header to `threadId` with an updated timestamp, then take as
+ * many whole trailing turns as fit in `seedTokens` (always at least the final
+ * turn), keeping message and complete tool-call pairs. Returns null if there's
+ * nothing seedable (empty, no session_meta, no genuine turn, or a corrupt line).
+ */
+export function buildSeededRollout(
+  jsonl: string,
+  threadId: string,
+  seedTokens: number,
+  now: Date = new Date(),
+): SeededRollout | null {
+  const p = parseRollout(jsonl, false);
+  if (!p || p.kept.length === 0) return null;
+  if (keptBoundaries(p.kept).length === 0) return null;
+  return emitFromKept(p.meta, p.kept, tailStartByBudget(p.kept, seedTokens), threadId, now);
+}
+
+/**
+ * A pinned cut point for rotation. Codex `response_item` message lines carry no
+ * stable id, so we pin the boundary by its top-level `timestamp` (millisecond
+ * precision — unique in practice). Rotation locates the same turn by matching it.
+ */
+export type CodexSeedCut = { boundaryTimestamp: string };
+
+/**
+ * Compute the cut point (the first-kept turn's timestamp) for a `seedTokens` budget,
+ * from raw jsonl. Parsed leniently because the live rollout may still be mid-write
+ * when this runs at warn time. Returns null if there's no genuine turn or the chosen
+ * boundary lacks a timestamp to pin on.
+ */
+export function computeCodexSeedCut(jsonl: string, seedTokens: number): CodexSeedCut | null {
+  const p = parseRollout(jsonl, true);
+  if (!p || p.kept.length === 0) return null;
+  if (keptBoundaries(p.kept).length === 0) return null;
+  const boundary = p.kept[tailStartByBudget(p.kept, seedTokens)].obj;
+  if (typeof boundary.timestamp !== "string") return null;
+  return { boundaryTimestamp: boundary.timestamp };
+}
+
+/**
+ * Build the seeded rollout starting at a pinned boundary timestamp (the whole tail
+ * from that turn through EOF). Used by rotation to honor the cut point the mind was
+ * warned about, regardless of how much the rollout grew after the warning. Returns
+ * null if the boundary isn't found or a line is corrupt.
+ */
+export function buildSeededRolloutFromCut(
+  jsonl: string,
+  threadId: string,
+  boundaryTimestamp: string,
+  now: Date = new Date(),
+): SeededRollout | null {
+  const p = parseRollout(jsonl, false);
+  if (!p || p.kept.length === 0) return null;
+  const startIdx = p.kept.findIndex(
+    (k) => isTurnBoundary(k.obj) && k.obj.timestamp === boundaryTimestamp,
+  );
+  if (startIdx < 0) return null;
+  return emitFromKept(p.meta, p.kept, startIdx, threadId, now);
 }
 
 /** Two-digit zero-padded string for date/time components. */
@@ -277,23 +362,7 @@ export function seedCodexSession(opts: {
     const seeded = buildSeededRollout(readFileSync(sourcePath, "utf-8"), threadId, seedTokens, now);
     if (!seeded) return null;
 
-    // Write the seed into the SAME sessions root the source rollout was found in,
-    // so it lands wherever Codex will look on resume. That root is CODEX_HOME/sessions
-    // (`.mind/codex/sessions` when CODEX_HOME is set for the mind) or ~/.codex/sessions
-    // otherwise — findCodexSessionFile already resolved whichever holds the old rollout.
-    // sourcePath is `<sessionsRoot>/YYYY/MM/DD/rollout-*.jsonl`; climb three levels.
-    const sessionsRoot = resolve(dirname(sourcePath), "..", "..", "..");
-
-    // Rollout files live under a local-time YYYY/MM/DD tree, with a local-time
-    // filename timestamp — mirroring how Codex itself names them.
-    const y = String(now.getFullYear());
-    const mo = pad2(now.getMonth() + 1);
-    const d = pad2(now.getDate());
-    const fnTs = `${y}-${mo}-${d}T${pad2(now.getHours())}-${pad2(now.getMinutes())}-${pad2(now.getSeconds())}`;
-    const destDir = resolve(sessionsRoot, y, mo, d);
-    mkdirSync(destDir, { recursive: true });
-    const destPath = resolve(destDir, `rollout-${fnTs}-${threadId}.jsonl`);
-    writeFileSync(destPath, `${seeded.lines.join("\n")}\n`);
+    writeSeededRollout(sourcePath, seeded, now);
     log(
       "mind",
       `session "${name}": seeded ${seeded.lines.length} line(s) from ${oldThreadId} → ${threadId}`,
@@ -301,6 +370,94 @@ export function seedCodexSession(opts: {
     return { threadId, archivedAt: archived.archivedAt };
   } catch (err) {
     log("mind", `session "${name}": codex seeding failed, starting fresh:`, err);
+    return null;
+  }
+}
+
+/**
+ * Write a seeded rollout next to its source: into the SAME sessions root the source
+ * rollout was found in, so it lands wherever Codex will look on resume — that root is
+ * CODEX_HOME/sessions (`.mind/codex/sessions` when CODEX_HOME is set) or ~/.codex/sessions
+ * otherwise. `sourcePath` is `<sessionsRoot>/YYYY/MM/DD/rollout-*.jsonl`; climb three
+ * levels. Rollouts live under a local-time YYYY/MM/DD tree with a local-time filename
+ * timestamp, mirroring how Codex itself names them.
+ */
+function writeSeededRollout(sourcePath: string, seeded: SeededRollout, now: Date): void {
+  const sessionsRoot = resolve(dirname(sourcePath), "..", "..", "..");
+  const y = String(now.getFullYear());
+  const mo = pad2(now.getMonth() + 1);
+  const d = pad2(now.getDate());
+  const fnTs = `${y}-${mo}-${d}T${pad2(now.getHours())}-${pad2(now.getMinutes())}-${pad2(now.getSeconds())}`;
+  const destDir = resolve(sessionsRoot, y, mo, d);
+  mkdirSync(destDir, { recursive: true });
+  writeFileSync(
+    resolve(destDir, `rollout-${fnTs}-${seeded.threadId}.jsonl`),
+    `${seeded.lines.join("\n")}\n`,
+  );
+}
+
+/**
+ * Write an archive pointer for a rotated-out codex thread, matching how sleep archival
+ * preserves the live pointer: `<sessionsDir>/archive/<name>-<UTC-ts>.json` holding
+ * `{ threadId }` (the codex session-store format). Reuses the shared timestamp format
+ * (archivePointerTimestamp) so the byte layout matches sleep-manager's codex branch and
+ * findLatestArchivedThread keeps finding it.
+ */
+export function writeCodexRotationArchivePointer(
+  sessionsDir: string,
+  name: string,
+  threadId: string,
+  now: Date = new Date(),
+): void {
+  const archiveDir = resolve(sessionsDir, "archive");
+  mkdirSync(archiveDir, { recursive: true });
+  const dest = resolve(archiveDir, `${name}-${archivePointerTimestamp(now)}.json`);
+  writeFileSync(dest, JSON.stringify({ threadId }));
+}
+
+/**
+ * Rotate a codex session in place at the context limit. Reads the live rollout, builds
+ * a seeded tail from the pinned `cut` (falling back to a budget-based tail when the pin
+ * can't be honored), writes it as a new synthetic rollout next to the source, and — for
+ * persistent sessions — archives the rotated-out thread pointer so the full transcript
+ * stays findable. Returns the new thread id, or null if rotation can't proceed (the
+ * caller then leaves the old thread in place). Never throws.
+ */
+export function rotateCodexSession(opts: {
+  mindDir: string;
+  name: string;
+  oldThreadId: string;
+  cut: CodexSeedCut | null;
+  seedTokens: number;
+  now?: Date;
+}): string | null {
+  const { mindDir, name, oldThreadId, cut, seedTokens } = opts;
+  const now = opts.now ?? new Date();
+  try {
+    const sourcePath = findCodexSessionFile(oldThreadId, mindDir);
+    if (!sourcePath) return null; // live rollout not found — leave the old thread
+    const jsonl = readFileSync(sourcePath, "utf-8");
+    const threadId = generateThreadId(now);
+    // Honor the pinned boundary the mind was warned about; only fall back to a
+    // budget-based tail if the pin can't be resolved (missing/renamed boundary).
+    const seeded =
+      (cut ? buildSeededRolloutFromCut(jsonl, threadId, cut.boundaryTimestamp, now) : null) ??
+      buildSeededRollout(jsonl, threadId, seedTokens, now);
+    if (!seeded) return null;
+
+    writeSeededRollout(sourcePath, seeded, now);
+    // Ephemeral `new-*` sessions rotate too, but leave no pointer/archive behind.
+    if (!name.startsWith("new-")) {
+      const sessionsDir = resolve(mindDir, ".mind", "codex-sessions");
+      writeCodexRotationArchivePointer(sessionsDir, name, oldThreadId, now);
+    }
+    log(
+      "mind",
+      `session "${name}": rotated ${oldThreadId} → ${threadId} (${seeded.lines.length} lines)`,
+    );
+    return threadId;
+  } catch (err) {
+    log("mind", `session "${name}": rotation failed:`, err);
     return null;
   }
 }
