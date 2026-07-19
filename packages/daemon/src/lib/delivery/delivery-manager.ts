@@ -1006,653 +1006,599 @@ export class DeliveryManager {
     payload: DeliveryPayload,
     sessionConfig: ResolvedSessionConfig,
     queueId?: number,
-  ): Promise<void>;
-  if (queueId != null)
-  this;
-  .
-  inFlight;
-  .
-  add(queueId);
+  ): Promise<void> {
+    if (queueId != null) this.inFlight.add(queueId);
 
-  // Serialize the ENTIRE delivery (resolvePort + enrichment + POST) per
-  // (mind, session) so resolvePort/enrichment latency can't reorder two rapid
-  // messages — they POST in submission order.
-  await;
-  this;
-  .
-  runSequential(`${mindName}:${session}`, async ()
-  => {
-      const
-  resolved = await this.resolvePort(mindName);
-  if (!resolved) {
+    // Serialize the ENTIRE delivery (resolvePort + enrichment + POST) per
+    // (mind, session) so resolvePort/enrichment latency can't reorder two rapid
+    // messages — they POST in submission order.
+    await this.runSequential(`${mindName}:${session}`, async () => {
+      const resolved = await this.resolvePort(mindName);
+      if (!resolved) {
         // Mind not found/running — leave the persisted row pending for the redrive loop.
         dlog.warn(`cannot deliver to ${mindName}: mind not found`);
         if (queueId != null) this.inFlight.delete(queueId);
         return;
       }
-  const;
-  {
-  baseName;
-  ,
-  port;
-}
-= resolved
+      const { baseName, port } = resolved;
 
-// Increment active count before delivery with sender/channel metadata
-const senders = new Set<string>();
-if (payload.sender) senders.add(payload.sender);
-const channels = new Set<string>();
-if (payload.channel) channels.add(payload.channel);
-this.incrementActive(baseName, session, senders, channels);
+      // Increment active count before delivery with sender/channel metadata
+      const senders = new Set<string>();
+      if (payload.sender) senders.add(payload.sender);
+      const channels = new Set<string>();
+      if (payload.channel) channels.add(payload.channel);
+      this.incrementActive(baseName, session, senders, channels);
 
-// Snapshot the stale-send baseline: the latest message this mind has now seen in
-// the conversation, so a reply it composes can be held if a peer posts after this.
-// Awaited so the baseline is set before the mind can receive-and-reply.
-await onDeliveredToMind(baseName, payload.conversationId);
+      // Snapshot the stale-send baseline: the latest message this mind has now seen in
+      // the conversation, so a reply it composes can be held if a peer posts after this.
+      // Awaited so the baseline is set before the mind can receive-and-reply.
+      await onDeliveredToMind(baseName, payload.conversationId);
 
-// If a turn is already in progress for this session, attribute this mid-turn inbound to
-// it now. linkPendingInbound only tags at turn creation (bounded sweep), so without this
-// a batched message arriving mid-turn — or a >5 backlog — would stay untagged.
-// No-op when no turn is active yet; the turn-creation path tags the trigger then.
-linkInboundToActiveTurn(baseName, session, payload.channel).catch((err) =>
-  dlog.warn(`failed to link mid-turn inbound for ${baseName}`, log.errorData(err)),
-);
+      // If a turn is already in progress for this session, attribute this mid-turn inbound to
+      // it now. linkPendingInbound only tags at turn creation (bounded sweep), so without this
+      // a batched message arriving mid-turn — or a >5 backlog — would stay untagged.
+      // No-op when no turn is active yet; the turn-creation path tags the trigger then.
+      linkInboundToActiveTurn(baseName, session, payload.channel).catch((err) =>
+        dlog.warn(`failed to link mid-turn inbound for ${baseName}`, log.errorData(err)),
+      );
 
-// Set typing indicator on both slug and conversationId keys, and publish the
-// conversationId key so the web UI learns the mind is typing at delivery time
-// (not incidentally via an unrelated re-publish).
-const typingMap = getTypingMap();
-if (payload.channel) {
-  typingMap.set(payload.channel, baseName, { persistent: true });
-}
-if (payload.conversationId) {
-  typingMap.set(payload.conversationId, baseName, { persistent: true });
-  publishTypingForChannels([payload.conversationId], typingMap);
-}
+      // Set typing indicator on both slug and conversationId keys, and publish the
+      // conversationId key so the web UI learns the mind is typing at delivery time
+      // (not incidentally via an unrelated re-publish).
+      const typingMap = getTypingMap();
+      if (payload.channel) {
+        typingMap.set(payload.channel, baseName, { persistent: true });
+      }
+      if (payload.conversationId) {
+        typingMap.set(payload.conversationId, baseName, { persistent: true });
+        publishTypingForChannels([payload.conversationId], typingMap);
+      }
 
-// Mark mind as active immediately at delivery time (before it emits events)
-onMindEvent(baseName, "delivery", payload.channel);
+      // Mark mind as active immediately at delivery time (before it emits events)
+      onMindEvent(baseName, "delivery", payload.channel);
 
-// Enrich with participant profiles on first encounter per channel
-const enrichedPayload = await this.enrichWithProfiles(baseName, session, payload);
+      // Enrich with participant profiles on first encounter per channel
+      const enrichedPayload = await this.enrichWithProfiles(baseName, session, payload);
 
-const body = JSON.stringify({
-  ...enrichedPayload,
-  session,
-  instructions: sessionConfig.instructions,
-});
+      const body = JSON.stringify({
+        ...enrichedPayload,
+        session,
+        instructions: sessionConfig.instructions,
+      });
 
-try {
-  const ok = await this.postToMind(port, body);
-  if (!ok) {
-    // Reachable but rejected (non-OK HTTP) → a live rejection that counts toward the ceiling.
-    this.decrementActive(baseName, session);
-    publishTypingForChannels(typingMap.deleteSender(baseName), typingMap);
-    await this.scheduleRetry([queueId], { liveRejection: true });
-  } else {
-    // Mark delivered ONLY on ack, by specific row id — never a broad DELETE.
-    await this.deleteQueueRows([queueId]);
+      try {
+        const ok = await this.postToMind(port, body);
+        if (!ok) {
+          // Reachable but rejected (non-OK HTTP) → a live rejection that counts toward the ceiling.
+          this.decrementActive(baseName, session);
+          publishTypingForChannels(typingMap.deleteSender(baseName), typingMap);
+          await this.scheduleRetry([queueId], { liveRejection: true });
+        } else {
+          // Mark delivered ONLY on ack, by specific row id — never a broad DELETE.
+          await this.deleteQueueRows([queueId]);
+        }
+      } catch (err) {
+        // Threw → transport failure (mind/variant down or timed out), NOT a live rejection.
+        dlog.warn(`failed to deliver to ${mindName}`, log.errorData(err));
+        this.decrementActive(baseName, session);
+        publishTypingForChannels(typingMap.deleteSender(baseName), typingMap);
+        await this.scheduleRetry([queueId], { liveRejection: false });
+      } finally {
+        if (queueId != null) this.inFlight.delete(queueId);
+      }
+    });
   }
-} catch (err) {
-  // Threw → transport failure (mind/variant down or timed out), NOT a live rejection.
-  dlog.warn(`failed to deliver to ${mindName}`, log.errorData(err));
-  this.decrementActive(baseName, session);
-  publishTypingForChannels(typingMap.deleteSender(baseName), typingMap);
-  await this.scheduleRetry([queueId], { liveRejection: false });
-} finally {
-  if (queueId != null) this.inFlight.delete(queueId);
-}
-})
 
-private
-async;
-deliverBatchToMind(
+  private async deliverBatchToMind(
     mindName: string,
     session: string,
     messages: QueuedMessage[],
     sessionConfig: ResolvedSessionConfig,
-  )
-: Promise<void>
-{
-  const queueIds = messages
-    .map((m) => m.queueId)
-    .filter((id): id is number => typeof id === "number");
+  ): Promise<void> {
+    const queueIds = messages
+      .map((m) => m.queueId)
+      .filter((id): id is number => typeof id === "number");
 
-  // Serialize the whole batch delivery per (mind, session) so it can't be
-  // reordered against interleaving immediate deliveries to the same session.
-  await this.runSequential(`${mindName}:${session}`, async () => {
-    const resolved = await this.resolvePort(mindName);
-    if (!resolved) {
-      dlog.warn(`cannot deliver batch to ${mindName}: mind not found`);
-      // Leave rows pending for redrive; release ownership so the sweep can retry.
-      for (const id of queueIds) this.inFlight.delete(id);
-      return;
-    }
-    const { baseName, port } = resolved;
-
-    // Enrich first message per new channel with participant profiles
-    const firstPerChannel = new Set<string>();
-    const isFirstForChannel: boolean[] = [];
-    for (const msg of messages) {
-      const ch = msg.channel ?? "unknown";
-      isFirstForChannel.push(!firstPerChannel.has(ch));
-      firstPerChannel.add(ch);
-    }
-    const enrichedMessages = await Promise.all(
-      messages.map(async (msg, i) => {
-        if (!isFirstForChannel[i]) return msg;
-        const enrichedPayload = await this.enrichWithProfiles(baseName, session, msg.payload);
-        return { ...msg, payload: enrichedPayload };
-      }),
-    );
-
-    // Group messages by channel
-    const channels: Record<string, DeliveryPayload[]> = {};
-    for (const msg of enrichedMessages) {
-      const ch = msg.channel ?? "unknown";
-      if (!channels[ch]) channels[ch] = [];
-      channels[ch].push(msg.payload);
-    }
-
-    // Collect sender/channel metadata from messages
-    const senders = new Set<string>();
-    const channelSet = new Set<string>();
-    for (const msg of messages) {
-      if (msg.sender) senders.add(msg.sender);
-      if (msg.channel) channelSet.add(msg.channel);
-    }
-
-    // Increment active count with metadata
-    this.incrementActive(baseName, session, senders, channelSet);
-
-    // Snapshot the stale-send baseline per conversation in this batch (see deliverToMind).
-    const convIds = new Set<string>();
-    for (const msg of messages) {
-      if (msg.payload.conversationId) convIds.add(msg.payload.conversationId);
-    }
-    for (const convId of convIds) {
-      await onDeliveredToMind(baseName, convId);
-    }
-
-    // Attribute any mid-turn inbounds in this batch to an in-progress turn (see deliverToMind).
-    for (const ch of channelSet) {
-      linkInboundToActiveTurn(baseName, session, ch).catch((err) =>
-        dlog.warn(`failed to link mid-turn inbound for ${baseName}`, log.errorData(err)),
-      );
-    }
-
-    // Set typing indicators for all real channels in the batch
-    const typingMap = getTypingMap();
-    for (const ch of Object.keys(channels)) {
-      if (ch !== "unknown") typingMap.set(ch, baseName, { persistent: true });
-    }
-    // Also set on conversationId keys for web UI typing, then publish them once so the
-    // web UI learns the mind is typing at delivery time.
-    const seenConvIds = new Set<string>();
-    for (const msg of messages) {
-      if (msg.payload.conversationId && !seenConvIds.has(msg.payload.conversationId)) {
-        seenConvIds.add(msg.payload.conversationId);
-        typingMap.set(msg.payload.conversationId, baseName, { persistent: true });
+    // Serialize the whole batch delivery per (mind, session) so it can't be
+    // reordered against interleaving immediate deliveries to the same session.
+    await this.runSequential(`${mindName}:${session}`, async () => {
+      const resolved = await this.resolvePort(mindName);
+      if (!resolved) {
+        dlog.warn(`cannot deliver batch to ${mindName}: mind not found`);
+        // Leave rows pending for redrive; release ownership so the sweep can retry.
+        for (const id of queueIds) this.inFlight.delete(id);
+        return;
       }
-    }
-    if (seenConvIds.size > 0) {
-      publishTypingForChannels([...seenConvIds], typingMap);
-    }
+      const { baseName, port } = resolved;
 
-    const body = JSON.stringify({
-      session,
-      batch: { channels },
-      instructions: sessionConfig.instructions,
-    });
+      // Enrich first message per new channel with participant profiles
+      const firstPerChannel = new Set<string>();
+      const isFirstForChannel: boolean[] = [];
+      for (const msg of messages) {
+        const ch = msg.channel ?? "unknown";
+        isFirstForChannel.push(!firstPerChannel.has(ch));
+        firstPerChannel.add(ch);
+      }
+      const enrichedMessages = await Promise.all(
+        messages.map(async (msg, i) => {
+          if (!isFirstForChannel[i]) return msg;
+          const enrichedPayload = await this.enrichWithProfiles(baseName, session, msg.payload);
+          return { ...msg, payload: enrichedPayload };
+        }),
+      );
 
-    try {
-      const ok = await this.postToMind(port, body);
-      if (!ok) {
-        // Reachable but rejected (non-OK HTTP) → a live rejection that counts toward the ceiling.
+      // Group messages by channel
+      const channels: Record<string, DeliveryPayload[]> = {};
+      for (const msg of enrichedMessages) {
+        const ch = msg.channel ?? "unknown";
+        if (!channels[ch]) channels[ch] = [];
+        channels[ch].push(msg.payload);
+      }
+
+      // Collect sender/channel metadata from messages
+      const senders = new Set<string>();
+      const channelSet = new Set<string>();
+      for (const msg of messages) {
+        if (msg.sender) senders.add(msg.sender);
+        if (msg.channel) channelSet.add(msg.channel);
+      }
+
+      // Increment active count with metadata
+      this.incrementActive(baseName, session, senders, channelSet);
+
+      // Snapshot the stale-send baseline per conversation in this batch (see deliverToMind).
+      const convIds = new Set<string>();
+      for (const msg of messages) {
+        if (msg.payload.conversationId) convIds.add(msg.payload.conversationId);
+      }
+      for (const convId of convIds) {
+        await onDeliveredToMind(baseName, convId);
+      }
+
+      // Attribute any mid-turn inbounds in this batch to an in-progress turn (see deliverToMind).
+      for (const ch of channelSet) {
+        linkInboundToActiveTurn(baseName, session, ch).catch((err) =>
+          dlog.warn(`failed to link mid-turn inbound for ${baseName}`, log.errorData(err)),
+        );
+      }
+
+      // Set typing indicators for all real channels in the batch
+      const typingMap = getTypingMap();
+      for (const ch of Object.keys(channels)) {
+        if (ch !== "unknown") typingMap.set(ch, baseName, { persistent: true });
+      }
+      // Also set on conversationId keys for web UI typing, then publish them once so the
+      // web UI learns the mind is typing at delivery time.
+      const seenConvIds = new Set<string>();
+      for (const msg of messages) {
+        if (msg.payload.conversationId && !seenConvIds.has(msg.payload.conversationId)) {
+          seenConvIds.add(msg.payload.conversationId);
+          typingMap.set(msg.payload.conversationId, baseName, { persistent: true });
+        }
+      }
+      if (seenConvIds.size > 0) {
+        publishTypingForChannels([...seenConvIds], typingMap);
+      }
+
+      const body = JSON.stringify({
+        session,
+        batch: { channels },
+        instructions: sessionConfig.instructions,
+      });
+
+      try {
+        const ok = await this.postToMind(port, body);
+        if (!ok) {
+          // Reachable but rejected (non-OK HTTP) → a live rejection that counts toward the ceiling.
+          this.decrementActive(baseName, session);
+          publishTypingForChannels(typingMap.deleteSender(baseName), typingMap);
+          await this.scheduleRetry(queueIds, { liveRejection: true });
+        } else {
+          // Mark delivered ONLY on ack, and ONLY the specific rows in this batch —
+          // a broad (mind, session, pending) DELETE would race with rows enqueued
+          // concurrently during the flush.
+          await this.deleteQueueRows(queueIds);
+        }
+      } catch (err) {
+        // Threw → transport failure (mind/variant down or timed out), NOT a live rejection.
+        dlog.warn(`failed to deliver batch to ${mindName}`, log.errorData(err));
         this.decrementActive(baseName, session);
         publishTypingForChannels(typingMap.deleteSender(baseName), typingMap);
-        await this.scheduleRetry(queueIds, { liveRejection: true });
-      } else {
-        // Mark delivered ONLY on ack, and ONLY the specific rows in this batch —
-        // a broad (mind, session, pending) DELETE would race with rows enqueued
-        // concurrently during the flush.
-        await this.deleteQueueRows(queueIds);
+        await this.scheduleRetry(queueIds, { liveRejection: false });
+      } finally {
+        for (const id of queueIds) this.inFlight.delete(id);
       }
-    } catch (err) {
-      // Threw → transport failure (mind/variant down or timed out), NOT a live rejection.
-      dlog.warn(`failed to deliver batch to ${mindName}`, log.errorData(err));
-      this.decrementActive(baseName, session);
-      publishTypingForChannels(typingMap.deleteSender(baseName), typingMap);
-      await this.scheduleRetry(queueIds, { liveRejection: false });
-    } finally {
-      for (const id of queueIds) this.inFlight.delete(id);
-    }
-  });
-}
+    });
+  }
 
-private
-async;
-enqueueBatch(
+  private async enqueueBatch(
     mindName: string,
     session: string,
     payload: DeliveryPayload,
     sessionConfig: ResolvedSessionConfig,
-  )
-: Promise<void>
-{
-  const delivery = sessionConfig.delivery as Extract<ResolvedDeliveryMode, { mode: "batch" }>;
+  ): Promise<void> {
+    const delivery = sessionConfig.delivery as Extract<ResolvedDeliveryMode, { mode: "batch" }>;
 
-  // Persist to the queue FIRST — the row is the source of truth; the in-memory buffer is
-  // a fast path reconciled against these rows on ack/redrive. The row is "owned" (inFlight)
-  // while buffered so the redrive sweep won't double-send.
-  const queueId = await this.persistToQueue(mindName, session, payload);
-  if (queueId != null) this.inFlight.add(queueId);
-  const msg: QueuedMessage = {
-    payload,
-    channel: payload.channel,
-    sender: payload.sender ?? null,
-    createdAt: Date.now(),
-    queueId,
-  };
+    // Persist to the queue FIRST — the row is the source of truth; the in-memory buffer is
+    // a fast path reconciled against these rows on ack/redrive. The row is "owned" (inFlight)
+    // while buffered so the redrive sweep won't double-send.
+    const queueId = await this.persistToQueue(mindName, session, payload);
+    if (queueId != null) this.inFlight.add(queueId);
+    const msg: QueuedMessage = {
+      payload,
+      channel: payload.channel,
+      sender: payload.sender ?? null,
+      createdAt: Date.now(),
+      queueId,
+    };
 
-  // Check triggers — immediate flush if matched
-  if (delivery.triggers?.length) {
-    const text = extractTextContent(payload.content);
-    const lower = text.toLowerCase();
-    if (delivery.triggers.some((t) => lower.includes(t.toLowerCase()))) {
-      // Flush existing buffer + this message immediately
-      await this.flushBatch(mindName, session, [msg]);
-      return;
+    // Check triggers — immediate flush if matched
+    if (delivery.triggers?.length) {
+      const text = extractTextContent(payload.content);
+      const lower = text.toLowerCase();
+      if (delivery.triggers.some((t) => lower.includes(t.toLowerCase()))) {
+        // Flush existing buffer + this message immediately
+        await this.flushBatch(mindName, session, [msg]);
+        return;
+      }
     }
+
+    this.addToBatchBuffer(mindName, session, sessionConfig, msg);
   }
 
-  this.addToBatchBuffer(mindName, session, sessionConfig, msg);
-}
-
-private
-addToBatchBuffer(
+  private addToBatchBuffer(
     mindName: string,
     session: string,
     sessionConfig: ResolvedSessionConfig,
     msg: QueuedMessage,
-  )
-: void
-{
-  const delivery = sessionConfig.delivery as Extract<ResolvedDeliveryMode, { mode: "batch" }>;
-  const bufferKey = `${mindName}:${session}`;
+  ): void {
+    const delivery = sessionConfig.delivery as Extract<ResolvedDeliveryMode, { mode: "batch" }>;
+    const bufferKey = `${mindName}:${session}`;
 
-  let buffer = this.batchBuffers.get(bufferKey);
-  if (!buffer) {
-    buffer = {
-      messages: [],
-      debounceTimer: null,
-      maxWaitTimer: null,
-      delivery,
-    };
-    this.batchBuffers.set(bufferKey, buffer);
-  }
-
-  buffer.messages.push(msg);
-
-  // Max batch size — force flush
-  if (buffer.messages.length >= MAX_BATCH_SIZE) {
-    this.flushBatch(mindName, session);
-    return;
-  }
-
-  this.scheduleBatchTimers(mindName, session, bufferKey);
-}
-
-private
-scheduleBatchTimers(mindName: string, session: string, bufferKey: string)
-: void
-{
-  const buffer = this.batchBuffers.get(bufferKey);
-  if (!buffer) return;
-
-  // Reset debounce timer
-  if (buffer.debounceTimer) clearTimeout(buffer.debounceTimer);
-  buffer.debounceTimer = setTimeout(() => {
-    // Only flush if session is idle
-    if (!this.isSessionBusy(mindName, session)) {
-      this.flushBatch(mindName, session);
+    let buffer = this.batchBuffers.get(bufferKey);
+    if (!buffer) {
+      buffer = {
+        messages: [],
+        debounceTimer: null,
+        maxWaitTimer: null,
+        delivery,
+      };
+      this.batchBuffers.set(bufferKey, buffer);
     }
-    // If busy, will flush when session goes idle
-  }, buffer.delivery.debounce * 1000);
-  buffer.debounceTimer.unref();
 
-  // Start maxWait timer if not already running
-  if (!buffer.maxWaitTimer) {
-    buffer.maxWaitTimer = setTimeout(() => {
+    buffer.messages.push(msg);
+
+    // Max batch size — force flush
+    if (buffer.messages.length >= MAX_BATCH_SIZE) {
       this.flushBatch(mindName, session);
-    }, buffer.delivery.maxWait * 1000);
-    buffer.maxWaitTimer.unref();
-  }
-}
+      return;
+    }
 
-private
-async;
-flushBatch(
+    this.scheduleBatchTimers(mindName, session, bufferKey);
+  }
+
+  private scheduleBatchTimers(mindName: string, session: string, bufferKey: string): void {
+    const buffer = this.batchBuffers.get(bufferKey);
+    if (!buffer) return;
+
+    // Reset debounce timer
+    if (buffer.debounceTimer) clearTimeout(buffer.debounceTimer);
+    buffer.debounceTimer = setTimeout(() => {
+      // Only flush if session is idle
+      if (!this.isSessionBusy(mindName, session)) {
+        this.flushBatch(mindName, session);
+      }
+      // If busy, will flush when session goes idle
+    }, buffer.delivery.debounce * 1000);
+    buffer.debounceTimer.unref();
+
+    // Start maxWait timer if not already running
+    if (!buffer.maxWaitTimer) {
+      buffer.maxWaitTimer = setTimeout(() => {
+        this.flushBatch(mindName, session);
+      }, buffer.delivery.maxWait * 1000);
+      buffer.maxWaitTimer.unref();
+    }
+  }
+
+  private async flushBatch(
     mindName: string,
     session: string,
     extra?: QueuedMessage[],
-  )
-: Promise<void>
-{
-  const bufferKey = `${mindName}:${session}`;
-  const buffer = this.batchBuffers.get(bufferKey);
+  ): Promise<void> {
+    const bufferKey = `${mindName}:${session}`;
+    const buffer = this.batchBuffers.get(bufferKey);
 
-  const messages: QueuedMessage[] = [];
-  if (buffer) {
-    if (buffer.debounceTimer) clearTimeout(buffer.debounceTimer);
-    if (buffer.maxWaitTimer) clearTimeout(buffer.maxWaitTimer);
-    buffer.debounceTimer = null;
-    buffer.maxWaitTimer = null;
-    messages.push(...buffer.messages.splice(0));
-    this.batchBuffers.delete(bufferKey);
+    const messages: QueuedMessage[] = [];
+    if (buffer) {
+      if (buffer.debounceTimer) clearTimeout(buffer.debounceTimer);
+      if (buffer.maxWaitTimer) clearTimeout(buffer.maxWaitTimer);
+      buffer.debounceTimer = null;
+      buffer.maxWaitTimer = null;
+      messages.push(...buffer.messages.splice(0));
+      this.batchBuffers.delete(bufferKey);
+    }
+    if (extra) messages.push(...extra);
+
+    if (messages.length === 0) return;
+
+    const baseName = await getBaseName(mindName);
+    const config = getRoutingConfig(baseName);
+    const sessionConfig = resolveDeliveryMode(config, session);
+
+    dlog.info(`flushing batch for ${mindName}/${session}: ${messages.length} messages`);
+    this.deliverBatchToMind(mindName, session, messages, sessionConfig).catch((err) => {
+      dlog.warn(`failed to flush batch for ${mindName}/${session}`, log.errorData(err));
+    });
   }
-  if (extra) messages.push(...extra);
 
-  if (messages.length === 0) return;
-
-  const baseName = await getBaseName(mindName);
-  const config = getRoutingConfig(baseName);
-  const sessionConfig = resolveDeliveryMode(config, session);
-
-  dlog.info(`flushing batch for ${mindName}/${session}: ${messages.length} messages`);
-  this.deliverBatchToMind(mindName, session, messages, sessionConfig).catch((err) => {
-    dlog.warn(`failed to flush batch for ${mindName}/${session}`, log.errorData(err));
-  });
-}
-
-private
-async;
-gateMessage(
+  private async gateMessage(
     mindName: string,
     session: string,
     payload: DeliveryPayload,
-  )
-: Promise<void>
-{
-  const baseName = await getBaseName(mindName);
-  // A declined channel's messages are archived immediately (inert): history is still
-  // preserved, but they never notify, never surface in getPending/status, and never
-  // accumulate as live gated rows — matching declineChannel's own archiving. #537
-  const declined = await this.isChannelDeclined(baseName, payload.channel);
-  await this.persistToQueue(mindName, session, payload, declined ? "archived" : "gated");
-  if (declined) return;
+  ): Promise<void> {
+    const baseName = await getBaseName(mindName);
+    // A declined channel's messages are archived immediately (inert): history is still
+    // preserved, but they never notify, never surface in getPending/status, and never
+    // accumulate as live gated rows — matching declineChannel's own archiving. #537
+    const declined = await this.isChannelDeclined(baseName, payload.channel);
+    await this.persistToQueue(mindName, session, payload, declined ? "archived" : "gated");
+    if (declined) return;
 
-  // Re-notify on a cadence, not just once, so a long silence stays visible. Count over
-  // both gated AND archived rows so clearing/truncating the backlog doesn't silently
-  // re-arm the invite, and the cadence reflects total messages seen on the channel. #537
-  try {
-    const db = await getDb();
-    const rows = await db
-      .select({ count: sql<number>`count(*)` })
-      .from(deliveryQueue)
-      .where(
-        and(
-          eq(deliveryQueue.mind, baseName),
-          eq(deliveryQueue.channel, payload.channel),
-          inArray(deliveryQueue.status, ["gated", "archived"]),
-        ),
-      );
-    const count = rows[0]?.count ?? 0;
-    if (count === 1 || count % GATED_NOTIFY_EVERY === 0) {
-      await this.sendInviteNotification(mindName, payload, count);
+    // Re-notify on a cadence, not just once, so a long silence stays visible. Count over
+    // both gated AND archived rows so clearing/truncating the backlog doesn't silently
+    // re-arm the invite, and the cadence reflects total messages seen on the channel. #537
+    try {
+      const db = await getDb();
+      const rows = await db
+        .select({ count: sql<number>`count(*)` })
+        .from(deliveryQueue)
+        .where(
+          and(
+            eq(deliveryQueue.mind, baseName),
+            eq(deliveryQueue.channel, payload.channel),
+            inArray(deliveryQueue.status, ["gated", "archived"]),
+          ),
+        );
+      const count = rows[0]?.count ?? 0;
+      if (count === 1 || count % GATED_NOTIFY_EVERY === 0) {
+        await this.sendInviteNotification(mindName, payload, count);
+      }
+    } catch (err) {
+      dlog.warn(`failed to check gated count for ${baseName}`, log.errorData(err));
     }
-  } catch (err) {
-    dlog.warn(`failed to check gated count for ${baseName}`, log.errorData(err));
   }
-}
 
-private
-async;
-sendInviteNotification(
+  private async sendInviteNotification(
     mindName: string,
     payload: DeliveryPayload,
     gatedCount = 1,
-  )
-: Promise<void>
-{
-  const text = extractTextContent(payload.content);
-  const preview = text.length > 200 ? `${text.slice(0, 200)}...` : text;
-  const channel = payload.channel ?? "unknown";
+  ): Promise<void> {
+    const text = extractTextContent(payload.content);
+    const preview = text.length > 200 ? `${text.slice(0, 200)}...` : text;
+    const channel = payload.channel ?? "unknown";
 
-  const heldLine =
-    gatedCount > 1
-      ? `${gatedCount} messages from this channel are being held, unrouted — you've not routed it yet.`
-      : `Someone new is reaching out — you don't have a route for this channel yet.`;
+    const heldLine =
+      gatedCount > 1
+        ? `${gatedCount} messages from this channel are being held, unrouted — you've not routed it yet.`
+        : `Someone new is reaching out — you don't have a route for this channel yet.`;
 
-  // Optional platform/participant lines, each with a trailing newline so the template's
-  // fixed line before "Preview:" reads correctly whether or not they're present.
-  const detailLines = [
-    payload.platform ? `Platform: ${payload.platform}` : null,
-    payload.participantCount ? `Participants: ${payload.participantCount}` : null,
-  ].filter((l): l is string => l !== null);
-  const details = detailLines.length > 0 ? `${detailLines.join("\n")}\n\n` : "\n";
+    // Optional platform/participant lines, each with a trailing newline so the template's
+    // fixed line before "Preview:" reads correctly whether or not they're present.
+    const detailLines = [
+      payload.platform ? `Platform: ${payload.platform}` : null,
+      payload.participantCount ? `Participants: ${payload.participantCount}` : null,
+    ].filter((l): l is string => l !== null);
+    const details = detailLines.length > 0 ? `${detailLines.join("\n")}\n\n` : "\n";
 
-  const { getPrompt } = await import("../prompts.js");
-  const notification = await getPrompt("channel_invite", {
-    channel,
-    heldLine,
-    sender: payload.sender ?? "unknown",
-    details,
-    preview,
-    limit: String(GATED_RELEASE_LIMIT_PER_CHANNEL),
-  });
+    const { getPrompt } = await import("../prompts.js");
+    const notification = await getPrompt("channel_invite", {
+      channel,
+      heldLine,
+      sender: payload.sender ?? "unknown",
+      details,
+      preview,
+      limit: String(GATED_RELEASE_LIMIT_PER_CHANNEL),
+    });
 
-  await this.notify(mindName, notification);
-}
+    await this.notify(mindName, notification);
+  }
 
-/**
- * Insert a delivery_queue row and return its id. The `mind` column is always keyed by
- * `baseName` so inserts under a variant name and the id-scoped cleanup use the same key
- * (fixes the variant mismatch where variant-keyed rows were never matched by the base
- * cleanup). `target_mind` records the original delivery target (`mindName`, which may be a
- * variant) so redrive resolves the port from it — a variant's stranded row is re-delivered
- * to the variant, not the parent.
- */
-private
-async;
-persistToQueue(
+  /**
+   * Insert a delivery_queue row and return its id. The `mind` column is always keyed by
+   * `baseName` so inserts under a variant name and the id-scoped cleanup use the same key
+   * (fixes the variant mismatch where variant-keyed rows were never matched by the base
+   * cleanup). `target_mind` records the original delivery target (`mindName`, which may be a
+   * variant) so redrive resolves the port from it — a variant's stranded row is re-delivered
+   * to the variant, not the parent.
+   */
+  private async persistToQueue(
     mindName: string,
     session: string,
     payload: DeliveryPayload,
     status: "pending" | "gated" | "archived" = "pending",
-  )
-: Promise<number | undefined>
-try {
-  const baseName = await getBaseName(mindName);
-  const db = await getDb();
-  const result = await db
-    .insert(deliveryQueue)
-    .values({
-      mind: baseName,
-      target_mind: mindName,
-      thread: session,
-      channel: payload.channel ?? null,
-      sender: payload.sender ?? null,
-      status,
-      payload: JSON.stringify(payload),
-    })
-    .returning({ id: deliveryQueue.id });
-  return result[0]?.id;
-} catch (err) {
-  dlog.warn(`failed to persist to delivery queue for ${mindName}/${session}`, log.errorData(err));
-  return undefined;
-}
+  ): Promise<number | undefined> {
+    try {
+      const baseName = await getBaseName(mindName);
+      const db = await getDb();
+      const result = await db
+        .insert(deliveryQueue)
+        .values({
+          mind: baseName,
+          target_mind: mindName,
+          thread: session,
+          channel: payload.channel ?? null,
+          sender: payload.sender ?? null,
+          status,
+          payload: JSON.stringify(payload),
+        })
+        .returning({ id: deliveryQueue.id });
+      return result[0]?.id;
+    } catch (err) {
+      dlog.warn(
+        `failed to persist to delivery queue for ${mindName}/${session}`,
+        log.errorData(err),
+      );
+      return undefined;
+    }
+  }
 
-private
-async;
-enrichWithProfiles(
+  private async enrichWithProfiles(
     mindName: string,
     session: string,
     payload: DeliveryPayload,
-  )
-: Promise<DeliveryPayload>
-{
-  if (!payload.conversationId || !payload.channel) return payload;
-  const mindSessions = this.sessionStates.get(mindName);
-  const state = mindSessions?.get(session);
-  if (!state) return payload;
+  ): Promise<DeliveryPayload> {
+    if (!payload.conversationId || !payload.channel) return payload;
+    const mindSessions = this.sessionStates.get(mindName);
+    const state = mindSessions?.get(session);
+    if (!state) return payload;
 
-  const channelKey = payload.channel;
-  if (state.seenChannelProfiles.has(channelKey)) return payload;
-
-  try {
-    const participants = await getParticipants(payload.conversationId);
-    const profiles: ParticipantProfile[] = participants.map((p) => ({
-      username: p.username,
-      userType: p.userType,
-      displayName: p.displayName,
-      description: p.description,
-    }));
-
-    // Read avatar images and prepend as image blocks
-    const avatarBlocks = await this.loadAvatarBlocks(participants);
-
-    state.seenChannelProfiles.add(channelKey);
-    const enriched: DeliveryPayload = { ...payload, participantProfiles: profiles };
-    if (avatarBlocks.length > 0) {
-      const existing = Array.isArray(payload.content)
-        ? payload.content
-        : typeof payload.content === "string"
-          ? [{ type: "text" as const, text: payload.content }]
-          : [];
-      enriched.content = [...avatarBlocks, ...existing];
-    }
-    return enriched;
-  } catch (err) {
-    dlog.warn(`failed to fetch participant profiles for ${mindName}`, log.errorData(err));
-    return payload;
-  }
-}
-
-private
-async;
-loadAvatarBlocks(
-    participants: { username: string;
-userType: string;
-avatar?: string | null
-}[],
-  ): Promise<AvatarBlock[]>
-{
-  const cacheKey = participants
-    .map((p) => `${p.username}:${p.avatar ?? ""}`)
-    .sort()
-    .join(",");
-  const cached = avatarBlocksCache.get(cacheKey);
-  if (cached && cached.expiresAt > Date.now()) return cached.blocks;
-
-  const blocks: AvatarBlock[] = [];
-
-  for (const p of participants) {
-    if (!p.avatar) continue;
+    const channelKey = payload.channel;
+    if (state.seenChannelProfiles.has(channelKey)) return payload;
 
     try {
-      let filePath: string;
-      if (p.userType === "mind") {
-        const dir = mindDir(p.username);
-        const config = readVoluteConfig(dir);
-        if (!config?.profile?.avatar) continue;
-        filePath = resolve(dir, "home", config.profile.avatar);
-        const homeDir = resolve(dir, "home");
-        if (!filePath.startsWith(`${homeDir}/`)) {
-          dlog.warn(`avatar path for ${p.username} escapes home directory, skipping`);
-          continue;
-        }
-        try {
-          const realHome = await realpath(homeDir);
-          const realAvatar = await realpath(filePath);
-          if (!realAvatar.startsWith(`${realHome}/`)) {
-            dlog.warn(`avatar symlink for ${p.username} resolves outside home directory, skipping`);
-            continue;
-          }
-        } catch (err) {
-          if ((err as NodeJS.ErrnoException).code === "ENOENT") continue;
-          throw err;
-        }
-      } else {
-        filePath = resolve(voluteHome(), "avatars", p.avatar);
-      }
+      const participants = await getParticipants(payload.conversationId);
+      const profiles: ParticipantProfile[] = participants.map((p) => ({
+        username: p.username,
+        userType: p.userType,
+        displayName: p.displayName,
+        description: p.description,
+      }));
 
-      const rendered = await renderAvatarBlock(filePath, p.username);
-      if (rendered) blocks.push(...rendered);
-    } catch (err) {
-      const code = (err as NodeJS.ErrnoException).code;
-      if (code !== "ENOENT") {
-        dlog.warn(`failed to load avatar for ${p.username}`, log.errorData(err));
+      // Read avatar images and prepend as image blocks
+      const avatarBlocks = await this.loadAvatarBlocks(participants);
+
+      state.seenChannelProfiles.add(channelKey);
+      const enriched: DeliveryPayload = { ...payload, participantProfiles: profiles };
+      if (avatarBlocks.length > 0) {
+        const existing = Array.isArray(payload.content)
+          ? payload.content
+          : typeof payload.content === "string"
+            ? [{ type: "text" as const, text: payload.content }]
+            : [];
+        enriched.content = [...avatarBlocks, ...existing];
       }
+      return enriched;
+    } catch (err) {
+      dlog.warn(`failed to fetch participant profiles for ${mindName}`, log.errorData(err));
+      return payload;
     }
   }
 
-  // Evict expired entries on insert. The map holds base64 image blocks keyed by
-  // participant-set permutation; without this sweep every distinct membership
-  // combination leaves a permanent entry. TTL-on-read alone never frees them.
-  const now = Date.now();
-  for (const [key, entry] of avatarBlocksCache) {
-    if (entry.expiresAt <= now) avatarBlocksCache.delete(key);
-  }
-  avatarBlocksCache.set(cacheKey, { blocks, expiresAt: now + AVATAR_CACHE_TTL });
-  return blocks;
-}
+  private async loadAvatarBlocks(
+    participants: { username: string; userType: string; avatar?: string | null }[],
+  ): Promise<AvatarBlock[]> {
+    const cacheKey = participants
+      .map((p) => `${p.username}:${p.avatar ?? ""}`)
+      .sort()
+      .join(",");
+    const cached = avatarBlocksCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) return cached.blocks;
 
-private
-incrementActive(
+    const blocks: AvatarBlock[] = [];
+
+    for (const p of participants) {
+      if (!p.avatar) continue;
+
+      try {
+        let filePath: string;
+        if (p.userType === "mind") {
+          const dir = mindDir(p.username);
+          const config = readVoluteConfig(dir);
+          if (!config?.profile?.avatar) continue;
+          filePath = resolve(dir, "home", config.profile.avatar);
+          const homeDir = resolve(dir, "home");
+          if (!filePath.startsWith(`${homeDir}/`)) {
+            dlog.warn(`avatar path for ${p.username} escapes home directory, skipping`);
+            continue;
+          }
+          try {
+            const realHome = await realpath(homeDir);
+            const realAvatar = await realpath(filePath);
+            if (!realAvatar.startsWith(`${realHome}/`)) {
+              dlog.warn(
+                `avatar symlink for ${p.username} resolves outside home directory, skipping`,
+              );
+              continue;
+            }
+          } catch (err) {
+            if ((err as NodeJS.ErrnoException).code === "ENOENT") continue;
+            throw err;
+          }
+        } else {
+          filePath = resolve(voluteHome(), "avatars", p.avatar);
+        }
+
+        const rendered = await renderAvatarBlock(filePath, p.username);
+        if (rendered) blocks.push(...rendered);
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code !== "ENOENT") {
+          dlog.warn(`failed to load avatar for ${p.username}`, log.errorData(err));
+        }
+      }
+    }
+
+    // Evict expired entries on insert. The map holds base64 image blocks keyed by
+    // participant-set permutation; without this sweep every distinct membership
+    // combination leaves a permanent entry. TTL-on-read alone never frees them.
+    const now = Date.now();
+    for (const [key, entry] of avatarBlocksCache) {
+      if (entry.expiresAt <= now) avatarBlocksCache.delete(key);
+    }
+    avatarBlocksCache.set(cacheKey, { blocks, expiresAt: now + AVATAR_CACHE_TTL });
+    return blocks;
+  }
+
+  private incrementActive(
     mind: string,
     session: string,
     senders?: Set<string>,
     channels?: Set<string>,
-  )
-: void
-{
-  let mindSessions = this.sessionStates.get(mind);
-  if (!mindSessions) {
-    mindSessions = new Map();
-    this.sessionStates.set(mind, mindSessions);
+  ): void {
+    let mindSessions = this.sessionStates.get(mind);
+    if (!mindSessions) {
+      mindSessions = new Map();
+      this.sessionStates.set(mind, mindSessions);
+    }
+    const state = mindSessions.get(session) ?? {
+      activeCount: 0,
+      lastDeliveredAt: 0,
+      lastDeliverySenders: new Set<string>(),
+      lastDeliveryChannels: new Set<string>(),
+      seenChannelProfiles: new Set<string>(),
+    };
+    state.activeCount++;
+    state.lastDeliveredAt = Date.now();
+    if (senders) state.lastDeliverySenders = senders;
+    if (channels) state.lastDeliveryChannels = channels;
+    mindSessions.set(session, state);
   }
-  const state = mindSessions.get(session) ?? {
-    activeCount: 0,
-    lastDeliveredAt: 0,
-    lastDeliverySenders: new Set<string>(),
-    lastDeliveryChannels: new Set<string>(),
-    seenChannelProfiles: new Set<string>(),
-  };
-  state.activeCount++;
-  state.lastDeliveredAt = Date.now();
-  if (senders) state.lastDeliverySenders = senders;
-  if (channels) state.lastDeliveryChannels = channels;
-  mindSessions.set(session, state);
-}
 
-private
-decrementActive(mind: string, session: string)
-: void
-{
-  const mindSessions = this.sessionStates.get(mind);
-  if (!mindSessions) return;
-  const state = mindSessions.get(session);
-  if (!state) return;
+  private decrementActive(mind: string, session: string): void {
+    const mindSessions = this.sessionStates.get(mind);
+    if (!mindSessions) return;
+    const state = mindSessions.get(session);
+    if (!state) return;
 
-  state.activeCount = Math.max(0, state.activeCount - 1);
+    state.activeCount = Math.max(0, state.activeCount - 1);
 
-  // If session went idle, check for pending batch
-  if (state.activeCount === 0) {
-    const bufferKey = `${mind}:${session}`;
-    const buffer = this.batchBuffers.get(bufferKey);
-    if (buffer && buffer.messages.length > 0) {
-      // Session idle + messages buffered → flush after debounce
-      this.scheduleBatchTimers(mind, session, bufferKey);
-    } else if (session.startsWith("new-")) {
-      // Ephemeral $new sessions get a unique name per message and never recur,
-      // so their state would accumulate forever. Reclaim it once idle. Long-lived
-      // named sessions keep their entry (bounded by routing config).
-      mindSessions.delete(session);
-      if (mindSessions.size === 0) this.sessionStates.delete(mind);
+    // If session went idle, check for pending batch
+    if (state.activeCount === 0) {
+      const bufferKey = `${mind}:${session}`;
+      const buffer = this.batchBuffers.get(bufferKey);
+      if (buffer && buffer.messages.length > 0) {
+        // Session idle + messages buffered → flush after debounce
+        this.scheduleBatchTimers(mind, session, bufferKey);
+      } else if (session.startsWith("new-")) {
+        // Ephemeral $new sessions get a unique name per message and never recur,
+        // so their state would accumulate forever. Reclaim it once idle. Long-lived
+        // named sessions keep their entry (bounded by routing config).
+        mindSessions.delete(session);
+        if (mindSessions.size === 0) this.sessionStates.delete(mind);
+      }
     }
   }
-}
 }
 
 // --- Singleton ---

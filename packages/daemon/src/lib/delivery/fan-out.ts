@@ -4,6 +4,7 @@
  * This is the single fan-out path used by both the chat API (`/chat`) and the
  * bridge inbound path.
  */
+import { recordDeliveryFailure } from "../chat/delivery-notices.js";
 import { getTypingMap } from "../chat/typing.js";
 import { getMindManager } from "../daemon/mind-manager.js";
 import { getSleepManagerIfReady } from "../daemon/sleep-manager.js";
@@ -11,7 +12,6 @@ import { type ContentBlock, getParticipants } from "../events/conversations.js";
 import { getBaseName, readAllMinds } from "../mind/registry.js";
 import log from "../util/logger.js";
 import { buildVoluteSlug } from "../util/slugify.js";
-import { reportSendFailure } from "./delivery-failures.js";
 import { deliverMessage, willGateMessage } from "./message-delivery.js";
 
 type Participant = Awaited<ReturnType<typeof getParticipants>>[number];
@@ -60,16 +60,16 @@ export async function fanOutToMinds(opts: FanOutOpts): Promise<FanOutResult> {
   const registeredMinds = new Set((await readAllMinds()).map((m) => m.name));
 
   // When the sender is itself a registered mind, delivery failures are surfaced back to
-  // it as coalesced next-turn notices — it was told "Message sent." and would otherwise
-  // never learn the recipient didn't receive it (#723). Resolved lazily (failures are
-  // rare) and to the BASE name: a variant sender's notice must be recorded under the
+  // it via the shared delivery-notices machinery (#762) — it was told "Message sent."
+  // and would otherwise never learn the recipient didn't receive it (#723). Resolved
+  // lazily (failures are rare) and to the BASE name: a variant sender's notice must be recorded under the
   // base mind — notices are drained by base name (see minds.ts /history/notices), so a
   // variant-keyed row would strand forever — and the slug must be built from the base
   // username (the one actually in the participants list) so the channel names the
   // recipient, not the sender's own base user.
   const senderIsMind = registeredMinds.has(opts.senderName);
   let senderCtx: Promise<{ base: string; channel: string }> | undefined;
-  const reportFailure = (recipient: string, reason: string) => {
+  const reportFailure = (reason: string) => {
     if (!senderIsMind) return;
     senderCtx ??= getBaseName(opts.senderName).then((base) => ({
       base,
@@ -81,9 +81,7 @@ export async function fanOutToMinds(opts: FanOutOpts): Promise<FanOutResult> {
       }),
     }));
     senderCtx
-      .then(({ base, channel }) =>
-        reportSendFailure({ senderMind: base, channel, recipient, reason }),
-      )
+      .then(({ base, channel }) => recordDeliveryFailure({ mind: base, channel, reason }))
       .catch((err) => log.warn("fan-out: failed to report send failure", log.errorData(err)));
   };
 
@@ -100,7 +98,7 @@ export async function fanOutToMinds(opts: FanOutOpts): Promise<FanOutResult> {
           log.warn(
             `fan-out: skipping ${ap.username} (not running) for conversation ${opts.conversationId}`,
           );
-          reportFailure(ap.username, "recipient not running");
+          reportFailure(`${ap.username} is not running`);
         } else if (ap.userType === "mind") {
           // External mind (no registry row): it pulls its messages, so this is its
           // expected steady state — but a stale registry (mind deleted, user row and
@@ -187,12 +185,12 @@ export async function fanOutToMinds(opts: FanOutOpts): Promise<FanOutResult> {
         // recover it, so the message is genuinely lost. Surface it to the sender (#723).
         if (!ok) {
           log.warn(`fan-out delivery failed for ${target} (message not delivered)`);
-          reportFailure(mindName, "delivery failed");
+          reportFailure(`the delivery to ${mindName} failed`);
         }
       },
       (err) => {
         log.warn(`fan-out delivery failed for ${target}`, log.errorData(err));
-        reportFailure(mindName, "delivery failed");
+        reportFailure(`the delivery to ${mindName} failed`);
       },
     );
   }
