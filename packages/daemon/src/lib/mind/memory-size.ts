@@ -1,19 +1,20 @@
-import { readFileSync, statSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 /**
  * MEMORY.md is inlined into a mind's system prompt on every request, so its size
  * is a per-request token cost. The daemon reads the file directly (rather than
  * asking the mind server) so size is visible even for stopped minds and minds on
- * stale templates. Defaults mirror templates/_base/src/lib/startup.ts; a mind can
- * override both via `memory` in home/.config/config.json.
+ * stale templates. Defaults and the chars/4 estimate mirror
+ * templates/_base/src/lib/startup.ts (guarded by test/memory-size.test.ts); a
+ * mind can override both budgets via `memory` in home/.config/config.json.
  */
 export const MEMORY_SOFT_BUDGET_TOKENS = 5000;
 export const MEMORY_HARD_CAP_TOKENS = 25000;
 
 export type MemoryStatus = {
   bytes: number;
-  /** Estimated tokens (bytes / 4). */
+  /** Estimated tokens (chars / 4 — the same estimate the mind's template uses). */
   estTokens: number;
   softBudgetTokens: number;
   hardCapTokens: number;
@@ -25,9 +26,9 @@ export type MemoryStatus = {
 
 /** Size + budget flags for a mind project dir's MEMORY.md. Null when the file doesn't exist. */
 export function getMemoryStatus(projectDir: string): MemoryStatus | null {
-  let bytes: number;
+  let text: string;
   try {
-    bytes = statSync(resolve(projectDir, "home", "MEMORY.md")).size;
+    text = readFileSync(resolve(projectDir, "home", "MEMORY.md"), "utf-8");
   } catch {
     return null;
   }
@@ -48,9 +49,11 @@ export function getMemoryStatus(projectDir: string): MemoryStatus | null {
     // Missing or malformed config — use defaults.
   }
 
-  const estTokens = Math.round(bytes / 4);
+  // Chars, not bytes: byte counts overestimate multibyte (CJK/emoji) content and
+  // would flag truncation the template isn't actually performing.
+  const estTokens = Math.round(text.length / 4);
   return {
-    bytes,
+    bytes: Buffer.byteLength(text),
     estTokens,
     softBudgetTokens,
     hardCapTokens,
@@ -59,7 +62,8 @@ export function getMemoryStatus(projectDir: string): MemoryStatus | null {
   };
 }
 
-/** "~13k tokens" / "~800 tokens" — shared formatting for status output. */
+/** "~13.3k tokens" / "~800 tokens" — shared formatting for status output. */
 export function formatTokens(tokens: number): string {
-  return tokens >= 1000 ? `~${Math.round(tokens / 1000)}k tokens` : `~${tokens} tokens`;
+  if (tokens < 1000) return `~${tokens} tokens`;
+  return `~${(tokens / 1000).toFixed(1).replace(/\.0$/, "")}k tokens`;
 }

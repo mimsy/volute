@@ -92,7 +92,10 @@ export function estimateTokens(chars: number): number {
 }
 
 export function formatTokens(tokens: number): string {
-  return tokens >= 1000 ? `~${Math.round(tokens / 1000)}k tokens` : `~${tokens} tokens`;
+  if (tokens < 1000) return `~${tokens} tokens`;
+  // One decimal so a value just past a budget doesn't render as the budget
+  // itself ("~5.1k tokens ... budget of ~5k tokens", not "~5k ... ~5k").
+  return `~${(tokens / 1000).toFixed(1).replace(/\.0$/, "")}k tokens`;
 }
 
 /** Current MEMORY.md size as a "~Nk tokens" label, for prompt substitution. */
@@ -100,9 +103,31 @@ export function memorySizeLabel(): string {
   return formatTokens(estimateTokens(loadFile(resolve("home/MEMORY.md")).length));
 }
 
+/**
+ * Render the compaction warning for sending: substitute ${date} and
+ * ${memory_size} with current values. Called per send — the date rolls over
+ * and MEMORY.md changes as the mind edits it.
+ */
+export function renderCompactionWarning(template: string): string {
+  return (
+    template
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: literal ${date} placeholder
+      .replaceAll("${date}", new Date().toLocaleDateString("en-CA"))
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: literal ${memory_size} placeholder
+      .replaceAll("${memory_size}", memorySizeLabel())
+  );
+}
+
 function headAtLineBoundary(text: string, maxChars: number): string {
   const cut = text.lastIndexOf("\n", maxChars);
-  return cut > 0 ? text.slice(0, cut) : text.slice(0, maxChars);
+  // Prefer a whole-line cut, but not when the nearest newline is so far back
+  // that it would discard most of the allowed head (one giant line).
+  if (cut >= maxChars / 2) return text.slice(0, cut);
+  let head = text.slice(0, maxChars);
+  // Don't split a surrogate pair at a hard cut.
+  const last = head.charCodeAt(head.length - 1);
+  if (last >= 0xd800 && last <= 0xdbff) head = head.slice(0, -1);
+  return head;
 }
 
 /**
@@ -112,8 +137,16 @@ function headAtLineBoundary(text: string, maxChars: number): string {
  * file on disk is never touched) with a loud notice explaining how to recover.
  */
 export function buildMemorySection(memory: string, config: MindConfig): string {
-  const softBudget = config.memory?.softBudgetTokens ?? MEMORY_SOFT_BUDGET_TOKENS;
-  const hardCap = config.memory?.hardCapTokens ?? MEMORY_HARD_CAP_TOKENS;
+  // typeof guards mirror the daemon's getMemoryStatus: a malformed override
+  // (null, string) falls back to the default instead of poisoning arithmetic.
+  const softBudget =
+    typeof config.memory?.softBudgetTokens === "number"
+      ? config.memory.softBudgetTokens
+      : MEMORY_SOFT_BUDGET_TOKENS;
+  const hardCap =
+    typeof config.memory?.hardCapTokens === "number"
+      ? config.memory.hardCapTokens
+      : MEMORY_HARD_CAP_TOKENS;
   const totalTokens = estimateTokens(memory.length);
 
   let body = memory;

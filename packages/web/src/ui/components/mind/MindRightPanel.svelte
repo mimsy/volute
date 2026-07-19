@@ -20,8 +20,29 @@ let mind = $derived(data.minds.find((m) => m.name === initialMind.name) ?? initi
 let isActive = $derived(activeMinds.has(mind.name));
 
 function fmtTokens(tokens: number): string {
-  return tokens >= 1000 ? `~${Math.round(tokens / 1000)}k` : `~${tokens}`;
+  if (tokens < 1000) return `~${tokens} tokens`;
+  return `~${(tokens / 1000).toFixed(1).replace(/\.0$/, "")}k tokens`;
 }
+
+let memoryBadge = $derived.by(() => {
+  const memory = mind.memory;
+  if (!memory) return null;
+  if (memory.overHardCap) {
+    return {
+      over: true,
+      suffix: " — over load cap",
+      tip: `Over the load cap (${fmtTokens(memory.hardCapTokens)}) — only the head of MEMORY.md is loaded`,
+    };
+  }
+  if (memory.overBudget) {
+    return {
+      over: true,
+      suffix: " — over budget",
+      tip: `Over the recommended budget (${fmtTokens(memory.softBudgetTokens)}) — consolidation recommended`,
+    };
+  }
+  return { over: false, suffix: "", tip: "MEMORY.md is loaded into every request" };
+});
 </script>
 
 <div class="mind-panel">
@@ -61,24 +82,13 @@ function fmtTokens(tokens: number): string {
       {#if mind.description}
         <p class="profile-description">{mind.description}</p>
       {/if}
-      {#if mind.memory}
+      {#if mind.memory && memoryBadge}
         <span
           class="memory-size"
-          class:over-budget={mind.memory.overBudget}
-          use:tooltip={{
-            text: mind.memory.overHardCap
-              ? `Over the ${fmtTokens(mind.memory.hardCapTokens)} token load cap — only the head of MEMORY.md is loaded`
-              : mind.memory.overBudget
-                ? `Over the recommended ${fmtTokens(mind.memory.softBudgetTokens)} token budget — consolidation recommended`
-                : "MEMORY.md is loaded into every request",
-            position: "bottom",
-          }}
+          class:over-budget={memoryBadge.over}
+          use:tooltip={{ text: memoryBadge.tip, position: "bottom" }}
         >
-          Memory {fmtTokens(mind.memory.estTokens)} tokens{mind.memory.overHardCap
-            ? " — over load cap"
-            : mind.memory.overBudget
-              ? " — over budget"
-              : ""}
+          Memory {fmtTokens(mind.memory.estTokens)}{memoryBadge.suffix}
         </span>
       {/if}
     </div>

@@ -3,7 +3,11 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { afterEach, describe, it } from "node:test";
-import { loadSystemPrompt } from "../templates/_base/src/lib/startup.js";
+import {
+  DEFAULT_PROMPTS,
+  loadSystemPrompt,
+  renderCompactionWarning,
+} from "../templates/_base/src/lib/startup.js";
 
 describe("loadSystemPrompt", () => {
   const origCwd = process.cwd();
@@ -109,6 +113,30 @@ describe("loadSystemPrompt", () => {
     assert.ok(!prompt.includes("line-01000"), "lines past the cap are dropped whole");
     // The file on disk is never modified.
     assert.equal(readFileSync(memoryPath, "utf-8"), memory);
+  });
+
+  it("falls back to a hard cut when the only newline is near the start (one giant line)", () => {
+    // A pathological MEMORY.md: a short heading, then one enormous single line.
+    // A naive last-newline cut would collapse the loaded memory to the heading.
+    const memory = `# Head\n${"x".repeat(120_000)}`;
+    const dir = makeHome({ "SOUL.md": "S", "MEMORY.md": memory });
+    process.chdir(dir);
+    const prompt = loadSystemPrompt();
+    assert.ok(prompt.includes("only the first ~25k tokens are loaded"));
+    assert.ok(prompt.length > 90_000, `most of the allowed head is loaded (got ${prompt.length})`);
+  });
+
+  it("renderCompactionWarning substitutes every ${date} and ${memory_size} occurrence", () => {
+    const dir = makeHome({ "SOUL.md": "S", "MEMORY.md": "m".repeat(4000) });
+    process.chdir(dir);
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: literal placeholders under test
+    const out = renderCompactionWarning("size ${memory_size} and again ${memory_size} on ${date}");
+    assert.equal(out.match(/~1k tokens/g)?.length, 2);
+    assert.ok(!out.includes("${date}"));
+
+    // The shipped default renders with no leftover placeholders.
+    const rendered = renderCompactionWarning(DEFAULT_PROMPTS.compaction_warning);
+    assert.ok(!rendered.includes("${"), rendered);
   });
 
   it("honors memory budget overrides from home/.config/config.json (#569)", () => {

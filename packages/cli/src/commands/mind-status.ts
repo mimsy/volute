@@ -1,3 +1,4 @@
+import { formatTokens } from "@volute/daemon/lib/mind/memory-size.js";
 import { command } from "../lib/command.js";
 import { daemonFetch } from "../lib/daemon-client.js";
 import { resolveMindName } from "../lib/resolve-mind-name.js";
@@ -58,12 +59,11 @@ const cmd = command({
     if (mind.parent) console.log(`Parent:  ${mind.parent}`);
     if (mind.model) console.log(`Model:   ${mind.model}`);
     if (mind.memory) {
-      const fmt = (t: number) => (t >= 1000 ? `~${Math.round(t / 1000)}k` : `~${t}`);
-      let line = `Memory:  ${fmt(mind.memory.estTokens)} tokens (${Math.round(mind.memory.bytes / 1024)}KB), always loaded`;
+      let line = `Memory:  ${formatTokens(mind.memory.estTokens)} (${Math.round(mind.memory.bytes / 1024)}KB), always loaded`;
       if (mind.memory.overHardCap) {
-        line += ` — exceeds the ${fmt(mind.memory.hardCapTokens)} token load cap; only the head is loaded`;
+        line += ` — exceeds the load cap (${formatTokens(mind.memory.hardCapTokens)}); only the head is loaded`;
       } else if (mind.memory.overBudget) {
-        line += ` — over the ${fmt(mind.memory.softBudgetTokens)} token budget; consider consolidating`;
+        line += ` — over the recommended budget (${formatTokens(mind.memory.softBudgetTokens)}); consider consolidating`;
       }
       console.log(line);
     }

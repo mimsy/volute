@@ -20,7 +20,7 @@ if (config.model) log("server", `using model: ${config.model}`);
 if (config.thinking) log("server", `thinking: ${JSON.stringify(config.thinking)}`);
 if (config.effort) log("server", `effort: ${config.effort}`);
 
-const systemPrompt = loadSystemPrompt();
+const systemPrompt = loadSystemPrompt(config);
 const sessionsDir = resolve(".mind/sessions");
 
 const pkg = loadPackageInfo();

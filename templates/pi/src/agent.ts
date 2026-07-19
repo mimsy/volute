@@ -40,7 +40,7 @@ import { buildSeededNote, type SeedCause } from "./lib/seed-note.js";
 import {
   getStartupContext,
   loadPrompts,
-  memorySizeLabel,
+  renderCompactionWarning,
   type SubagentConfig,
 } from "./lib/startup.js";
 import { createSubagentExtension, type SubagentDefinition } from "./lib/subagents.js";
@@ -119,14 +119,8 @@ export function createMind(options: {
 } {
   const sessions = new Map<string, PiSession>();
   const prompts = loadPrompts();
-  // Built per warning: the date rolls over and MEMORY.md changes as the mind edits it.
   const compactionMessage = () =>
-    options.compactionMessage ??
-    prompts.compaction_warning
-      // biome-ignore lint/suspicious/noTemplateCurlyInString: literal ${date} in prompt template
-      .replace("${date}", new Date().toLocaleDateString("en-CA"))
-      // biome-ignore lint/suspicious/noTemplateCurlyInString: literal ${memory_size} in prompt template
-      .replace("${memory_size}", memorySizeLabel());
+    options.compactionMessage ?? renderCompactionWarning(prompts.compaction_warning);
   const compactionInstructions = prompts.compaction_instructions;
   const maxContextTokens = options.maxContextTokens;
   const seedTokens = options.seedTokens ?? DEFAULT_SEED_TOKENS;

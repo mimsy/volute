@@ -38,7 +38,7 @@ import {
 } from "./lib/session-seed.js";
 import { createSessionStore } from "./lib/session-store.js";
 import type { EffortLevel, ThinkingConfig } from "./lib/startup.js";
-import { loadPrompts, memorySizeLabel, type SubagentConfig } from "./lib/startup.js";
+import { loadPrompts, renderCompactionWarning, type SubagentConfig } from "./lib/startup.js";
 import { consumeStream } from "./lib/stream-consumer.js";
 import type {
   HandlerMeta,
@@ -138,14 +138,8 @@ export function createMind(options: {
 
   const sessions = new Map<string, Session>();
   const prompts = loadPrompts();
-  // Built per warning: the date rolls over and MEMORY.md changes as the mind edits it.
   const compactionMessage = () =>
-    options.compactionMessage ??
-    prompts.compaction_warning
-      // biome-ignore lint/suspicious/noTemplateCurlyInString: literal ${date} in prompt template
-      .replace("${date}", new Date().toLocaleDateString("en-CA"))
-      // biome-ignore lint/suspicious/noTemplateCurlyInString: literal ${memory_size} in prompt template
-      .replace("${memory_size}", memorySizeLabel());
+    options.compactionMessage ?? renderCompactionWarning(prompts.compaction_warning);
   const maxContextTokens = options.maxContextTokens;
   const seedTokens = options.seedTokens ?? DEFAULT_SEED_TOKENS;
 

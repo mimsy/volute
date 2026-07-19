@@ -29,7 +29,7 @@ describe("getMemoryStatus", () => {
     assert.equal(getMemoryStatus(makeProject()), null);
   });
 
-  it("estimates tokens as bytes/4 with default budgets", () => {
+  it("estimates tokens as chars/4 with default budgets", () => {
     const status = getMemoryStatus(makeProject("m".repeat(4000)));
     assert.ok(status);
     assert.equal(status.bytes, 4000);
@@ -38,6 +38,24 @@ describe("getMemoryStatus", () => {
     assert.equal(status.hardCapTokens, MEMORY_HARD_CAP_TOKENS);
     assert.equal(status.overBudget, false);
     assert.equal(status.overHardCap, false);
+  });
+
+  it("estimates from chars, not bytes, so multibyte content matches what the template loads", () => {
+    // 1000 CJK chars = 3000 UTF-8 bytes. The template's buildMemorySection
+    // estimates chars/4; a bytes-based daemon estimate would claim truncation
+    // the mind never experiences.
+    const status = getMemoryStatus(makeProject("語".repeat(1000)));
+    assert.ok(status);
+    assert.equal(status.bytes, 3000);
+    assert.equal(status.estTokens, 250);
+  });
+
+  it("default budgets match the template's constants", async () => {
+    // The daemon flags what the template enforces; if these drift, status
+    // reports truncation that isn't happening (or misses one that is).
+    const template = await import("../templates/_base/src/lib/startup.js");
+    assert.equal(MEMORY_SOFT_BUDGET_TOKENS, template.MEMORY_SOFT_BUDGET_TOKENS);
+    assert.equal(MEMORY_HARD_CAP_TOKENS, template.MEMORY_HARD_CAP_TOKENS);
   });
 
   it("flags over-budget past the soft budget, over-hard-cap past the cap", () => {
