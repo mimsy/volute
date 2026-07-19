@@ -36,6 +36,7 @@ const mind = createMind({
   compactionMessage: config.compactionMessage,
   maxContextTokens: config.compaction?.maxContextTokens,
   sessionIdleMinutes: config.sessionIdleMinutes,
+  seedTokens: config.continuity?.seedTokens,
   subagents: config.subagents,
   onIdentityReload: async () => {
     log("server", "identity file changed — restarting to reload");

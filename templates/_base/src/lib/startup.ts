@@ -44,6 +44,12 @@ export type MindConfig = {
   compaction?: { maxContextTokens?: number };
   /** Idle minutes before a session's SDK subprocess is reaped. 0 disables. Default 30. */
   sessionIdleMinutes?: number;
+  /**
+   * Session continuity across restarts. When a fresh persistent session starts,
+   * the tail of the previous session's transcript (up to `seedTokens` estimated
+   * tokens) is copied into it so the conversation continues. Default 30000; 0 disables.
+   */
+  continuity?: { seedTokens?: number };
   subagents?: Record<string, SubagentConfig>;
   // Template-specific config fields (claude, pi, codex)
   thinking?: ThinkingConfig;

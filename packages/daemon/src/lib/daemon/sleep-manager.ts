@@ -858,6 +858,27 @@ export class SleepManager {
         }
       }
     }
+
+    // Codex template: .mind/codex-sessions/ (pointer files holding { threadId }).
+    // Archive them like the claude branch so codex minds get a fresh session on
+    // wake and the old threadId is preserved for session seeding.
+    const codexSessionsDir = resolve(dir, ".mind", "codex-sessions");
+    if (existsSync(codexSessionsDir)) {
+      const archiveDir = resolve(codexSessionsDir, "archive");
+      mkdirSync(archiveDir, { recursive: true });
+
+      for (const file of readdirSync(codexSessionsDir)) {
+        if (file === "archive" || !file.endsWith(".json")) continue;
+        const src = resolve(codexSessionsDir, file);
+        const base = file.replace(/\.json$/, "");
+        const dest = resolve(archiveDir, `${base}-${timestamp}.json`);
+        try {
+          renameSync(src, dest);
+        } catch (err) {
+          slog.warn(`failed to archive codex-session ${file} for ${name}`, log.errorData(err));
+        }
+      }
+    }
   }
 
   private async runWakeContextScript(

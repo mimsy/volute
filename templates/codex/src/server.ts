@@ -31,6 +31,7 @@ const mind = createMind({
   model: config.model,
   reasoningEffort: config.reasoningEffort,
   maxContextTokens: config.compaction?.maxContextTokens,
+  seedTokens: config.continuity?.seedTokens,
 });
 
 const router = createRouter({
