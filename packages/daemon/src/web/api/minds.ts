@@ -43,6 +43,7 @@ import {
   startMindFull as startMindFullService,
   stopMindFull as stopMindFullService,
 } from "../../lib/daemon/mind-service.js";
+import { supersedeTurnSummary } from "../../lib/daemon/summarizer.js";
 import { getTokenBudget } from "../../lib/daemon/token-budget.js";
 import { handleMindEvent, setNoticeDrainWatermark } from "../../lib/daemon/turn-lifecycle.js";
 import { getActiveTurnId } from "../../lib/daemon/turn-tracker.js";
@@ -3219,6 +3220,49 @@ const app = new Hono<AuthEnv>()
       }),
     });
   })
+  // Supersede provisional turn summaries with the mind's own words. Self-or-admin only.
+  .put("/:name/turn-summaries", requireSelf(), async (c) => {
+    const name = c.req.param("name");
+    const baseName = await getBaseName(name);
+
+    let body: { summaries?: Array<{ turnId?: string; content?: string }> };
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "Invalid JSON body" }, 400);
+    }
+
+    const items = body.summaries;
+    if (!Array.isArray(items) || items.length === 0) {
+      return c.json({ error: "summaries must be a non-empty array" }, 400);
+    }
+
+    let updated = 0;
+    let created = 0;
+    for (const item of items) {
+      if (!item || typeof item.turnId !== "string" || !item.turnId) {
+        return c.json({ error: "each summary needs a turnId" }, 400);
+      }
+      if (typeof item.content !== "string") {
+        return c.json({ error: "each summary needs content" }, 400);
+      }
+      const result = await supersedeTurnSummary(baseName, item.turnId, item.content);
+      switch (result.status) {
+        case "invalid":
+          return c.json({ error: result.error }, 400);
+        case "not_found":
+          return c.json({ error: "Turn not found" }, 404);
+        case "forbidden":
+          return c.json({ error: "Forbidden" }, 403);
+        case "ok":
+          if (result.created) created++;
+          else updated++;
+          break;
+      }
+    }
+
+    return c.json({ ok: true, updated, created });
+  })
   .get("/:name/history", requireSelf(), async (c) => {
     const name = c.req.param("name");
     const channel = c.req.query("channel");
@@ -3232,6 +3276,8 @@ const app = new Hono<AuthEnv>()
       | undefined;
     const limit = Math.min(Math.max(parseInt(c.req.query("limit") ?? "50", 10) || 50, 1), 200);
     const offset = Math.max(parseInt(c.req.query("offset") ?? "0", 10) || 0, 0);
+    // Summary preset only: keep just turn summaries the mind hasn't rewritten yet.
+    const provisional = c.req.query("provisional") === "true";
 
     const db = await getDb();
     const conditions = [eq(mindHistory.mind, name)];
@@ -3248,6 +3294,12 @@ const app = new Hono<AuthEnv>()
     // Default "summary" preset reads from the unified summaries table
     if (!effectivePreset || effectivePreset === "summary") {
       const sumConditions: SQL[] = [eq(summaries.mind, name), eq(summaries.period, "turn")];
+      if (provisional) {
+        // Turn summaries the mind hasn't rewritten: metadata.author absent or not "mind".
+        // `IS NOT` is null-safe, so rows with no author (the summarizer's) match; the path
+        // literal is constant and the compared value is bound, so no injection surface.
+        sumConditions.push(sql`json_extract(${summaries.metadata}, '$.author') is not ${"mind"}`);
+      }
 
       if (session) {
         sumConditions.push(eq(turns.thread, session));

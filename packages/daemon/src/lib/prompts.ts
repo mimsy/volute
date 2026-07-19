@@ -118,7 +118,7 @@ export const PROMPT_DEFAULTS: Record<PromptKey, PromptMeta> = {
     category: "system",
   },
   compaction_warning: {
-    content: `Compaction approaching — this conversation will be summarized soon. Take a moment to save anything important to your files (MEMORY.md, memory/journal/\${date}.md) so it's preserved. Focus on decisions made, open threads, and anything you'd want to pick up again.`,
+    content: `Compaction approaching — this conversation will be summarized soon. Take a moment to save anything important to your files (MEMORY.md, memory/journal/\${date}.md) so it's preserved. Focus on decisions made, open threads, and anything you'd want to pick up again.\n\nIf you'd like this session kept in your own words, run \`volute mind history --provisional\` to review the provisional turn summaries and \`volute mind history --write --turn <id> --text "..."\` to replace any with your own account.`,
     description: "Pre-compaction save reminder sent to the mind",
     variables: ["date"],
     category: "mind",
@@ -153,7 +153,7 @@ export const PROMPT_DEFAULTS: Record<PromptKey, PromptMeta> = {
   },
   pre_sleep: {
     content:
-      "Time to rest. You have this turn to wind down however feels right — reflect on your day, update your journal or memory, finish any threads of thought, or simply settle.\n\nYour current session will be archived and a fresh one will begin when you wake. Anything in session context that isn't saved to files will be lost.\n\nYou'll wake ${wakeTime}.",
+      "Time to rest. You have this turn to wind down however feels right — reflect on your day, update your journal or memory, finish any threads of thought, or simply settle.\n\nYour current session will be archived and a fresh one will begin when you wake. Anything in session context that isn't saved to files will be lost.\n\nIf you'd like this session kept in your own words, run `volute mind history --provisional` to review the provisional turn summaries and `volute mind history --write --turn <id> --text \"...\"` to replace any with your own account.\n\nYou'll wake ${wakeTime}.",
     description: "Pre-sleep message sent before stopping the mind",
     variables: ["wakeTime"],
     category: "system",
