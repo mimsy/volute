@@ -3,6 +3,7 @@ import { getClient, urlOf } from "../lib/api-client.js";
 import { command } from "../lib/command.js";
 import { daemonFetch } from "../lib/daemon-client.js";
 import { compactTime, formatSender, isCompact } from "../lib/format-cli.js";
+import { readStdin } from "../lib/read-stdin.js";
 import { resolveMindName } from "../lib/resolve-mind-name.js";
 
 type ActivityRow = {
@@ -276,14 +277,80 @@ const cmd = command({
     period: { type: "string", description: "Time period (hour, day, week, month)" },
     from: { type: "string", description: "Start date" },
     to: { type: "string", description: "End date" },
+    write: {
+      type: "boolean",
+      description: "Replace a turn's provisional summary with your own account (needs --turn)",
+    },
+    turn: { type: "string", description: "Turn id to write a summary for (with --write)" },
+    text: { type: "string", description: "Summary text for --write (or pipe it via stdin)" },
   },
   examples: [
     "volute mind history --mind myname",
     "volute mind history --mind myname --full",
     "volute mind history --mind myname --period day",
     "volute mind history --mind myname --provisional",
+    'volute mind history --mind myname --write --turn <id> --text "I traced the bug and fixed it."',
   ],
   run: async ({ flags }) => {
+    // Write mode: replace a turn's provisional summary with the mind's own account.
+    if (flags.write) {
+      // --write is a distinct mode; it takes only --turn and --text (or stdin).
+      const readFlags = [
+        ["--channel", flags.channel],
+        ["--thread", flags.thread],
+        ["--preset", flags.preset],
+        ["--limit", flags.limit],
+        ["--from", flags.from],
+        ["--to", flags.to],
+        ["--period", flags.period],
+        ["--full", flags.full],
+        ["--provisional", flags.provisional],
+      ].filter(([, v]) => v);
+      if (readFlags.length > 0) {
+        console.error(
+          `--write can't be combined with read flags (${readFlags.map(([n]) => n).join(", ")}); it takes only --turn and --text.`,
+        );
+        process.exit(1);
+      }
+
+      const name = resolveMindName(flags);
+      const turnId = flags.turn;
+      if (!turnId) {
+        console.error("--write requires --turn <id> (see 'volute mind history --provisional')");
+        process.exit(1);
+      }
+      const text = flags.text ?? (await readStdin());
+      if (!text) {
+        console.error("Provide --text or pipe the summary via stdin");
+        process.exit(1);
+      }
+
+      const client = getClient();
+      const url = client.api.minds[":name"]["turn-summaries"].$url({ param: { name } });
+      const res = await daemonFetch(urlOf(url), {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ summaries: [{ turnId, content: text }] }),
+      });
+      if (!res.ok) {
+        let msg = `Failed to save summary: ${res.status}`;
+        try {
+          const data = (await res.json()) as { error?: string };
+          if (data.error) msg = data.error;
+        } catch {}
+        console.error(msg);
+        process.exit(1);
+      }
+      console.log(`Saved your summary for turn ${turnId.slice(0, 8)}.`);
+      return;
+    }
+
+    // --turn / --text only make sense in write mode; ignoring them silently would hide a mistake.
+    if (flags.turn || flags.text) {
+      console.error("--turn and --text only apply with --write");
+      process.exit(1);
+    }
+
     // Meta-summary mode: --period hour|day|week|month
     if (flags.period) {
       const validPeriods = ["hour", "day", "week", "month"];

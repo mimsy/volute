@@ -291,7 +291,7 @@ describe("mind-authored turn summaries", () => {
     assert.ok(keys.has(auto), "deterministic summarizer row is provisional");
     assert.ok(keys.has(bare), "row with no metadata is provisional");
     assert.ok(!keys.has(mine), "mind-authored row is excluded");
-    // turn_id is surfaced so the mind can act on it via `volute mind summarize --turn`.
+    // turn_id is surfaced so the mind can act on it via `volute mind history --write --turn`.
     assert.ok(body.every((r) => typeof r.turn_id === "string" && r.turn_id.length > 0));
   });
 
