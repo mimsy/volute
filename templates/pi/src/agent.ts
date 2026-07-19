@@ -37,7 +37,12 @@ import {
 import { createReplyInstructionsExtension } from "./lib/reply-instructions-extension.js";
 import { resolveModel } from "./lib/resolve-model.js";
 import { buildSeededNote, type SeedCause } from "./lib/seed-note.js";
-import { getStartupContext, loadPrompts, type SubagentConfig } from "./lib/startup.js";
+import {
+  getStartupContext,
+  loadPrompts,
+  renderCompactionWarning,
+  type SubagentConfig,
+} from "./lib/startup.js";
 import { createSubagentExtension, type SubagentDefinition } from "./lib/subagents.js";
 import type {
   HandlerMeta,
@@ -114,10 +119,8 @@ export function createMind(options: {
 } {
   const sessions = new Map<string, PiSession>();
   const prompts = loadPrompts();
-  const today = new Date().toLocaleDateString("en-CA");
-  const compactionMessage =
-    // biome-ignore lint/suspicious/noTemplateCurlyInString: literal ${date} in prompt template
-    options.compactionMessage ?? prompts.compaction_warning.replace("${date}", today);
+  const compactionMessage = () =>
+    options.compactionMessage ?? renderCompactionWarning(prompts.compaction_warning);
   const compactionInstructions = prompts.compaction_instructions;
   const maxContextTokens = options.maxContextTokens;
   const seedTokens = options.seedTokens ?? DEFAULT_SEED_TOKENS;
@@ -430,7 +433,7 @@ export function createMind(options: {
         }
       }
       // biome-ignore lint/suspicious/noTemplateCurlyInString: literal ${cutoff} prompt placeholder
-      const warning = compactionMessage.replaceAll("${cutoff}", cutoffLabel);
+      const warning = compactionMessage().replaceAll("${cutoff}", cutoffLabel);
       compactionTriggered = true;
       session.messageIds.push(undefined);
       session.agentSession?.prompt(warning, { streamingBehavior: "followUp" });

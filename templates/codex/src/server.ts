@@ -18,7 +18,7 @@ if (config.logLevel) setLevel(config.logLevel);
 if (config.model) log("server", `using model: ${config.model}`);
 if (config.reasoningEffort) log("server", `reasoning effort: ${config.reasoningEffort}`);
 
-const systemPrompt = loadSystemPrompt();
+const systemPrompt = loadSystemPrompt(config);
 const pkg = loadPackageInfo();
 
 const mindDir = resolve(".");

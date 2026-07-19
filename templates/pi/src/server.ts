@@ -18,7 +18,7 @@ if (config.logLevel) setLevel(config.logLevel);
 if (config.model) log("server", `using model: ${config.model}`);
 if (config.thinkingLevel) log("server", `thinking level: ${config.thinkingLevel}`);
 
-const systemPrompt = loadSystemPrompt();
+const systemPrompt = loadSystemPrompt(config);
 const pkg = loadPackageInfo();
 
 const mindDir = resolve(".");

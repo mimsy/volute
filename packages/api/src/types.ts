@@ -31,6 +31,22 @@ export type Mind = {
   mindType?: "mind" | "spirit";
   /** Sprout-checklist state — present only for seed-stage minds. */
   seedChecklist?: SeedChecklist;
+  /** MEMORY.md size + budget flags. Null when the mind has no MEMORY.md. */
+  memory?: MindMemoryStatus | null;
+};
+
+/**
+ * The cost of a mind's always-loaded MEMORY.md, estimated as bytes/4 tokens.
+ * Over `softBudgetTokens` a consolidation nudge is warranted; over `hardCapTokens`
+ * the mind's template loads only the head of the file.
+ */
+export type MindMemoryStatus = {
+  bytes: number;
+  estTokens: number;
+  softBudgetTokens: number;
+  hardCapTokens: number;
+  overBudget: boolean;
+  overHardCap: boolean;
 };
 
 /** The seed → sprout checklist, as surfaced in a seed's status payload. */

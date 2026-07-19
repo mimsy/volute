@@ -26,7 +26,12 @@ import { runHooks } from "./lib/hook-loader.js";
 import { log, warn } from "./lib/logger.js";
 import { buildSeededNote, type SeedCause } from "./lib/seed-note.js";
 import { createSessionStore } from "./lib/session-store.js";
-import { getStartupContext, loadPrompts, loadSystemPrompt } from "./lib/startup.js";
+import {
+  getStartupContext,
+  loadPrompts,
+  loadSystemPrompt,
+  renderCompactionWarning,
+} from "./lib/startup.js";
 import { filterEvent, loadTransparencyPreset } from "./lib/transparency.js";
 import { turnContextFor } from "./lib/turn-context.js";
 import type {
@@ -136,10 +141,9 @@ export function createMind(options: {
 
   // The warning the mind gets when the context limit approaches: it authors summaries
   // of the turns that will collapse, then the session rotates onto the verbatim tail.
-  // ${date} is baked once here; ${cutoff} is filled per-warning with the pinned boundary.
-  const today = new Date().toLocaleDateString("en-CA");
-  // biome-ignore lint/suspicious/noTemplateCurlyInString: literal ${date} in prompt template
-  const compactionMessage = prompts.compaction_warning.replace("${date}", today);
+  // ${date}/${memory_size} are filled per-warning (the date rolls over and MEMORY.md
+  // changes as the mind edits it); ${cutoff} is filled with the pinned boundary.
+  const compactionMessage = () => renderCompactionWarning(prompts.compaction_warning);
 
   if (maxContextTokens) {
     log("mind", `compaction threshold: ${maxContextTokens} tokens`);
@@ -665,7 +669,7 @@ export function createMind(options: {
       }
     }
     // biome-ignore lint/suspicious/noTemplateCurlyInString: literal ${cutoff} prompt placeholder
-    const warning = compactionMessage.replaceAll("${cutoff}", cutoffLabel);
+    const warning = compactionMessage().replaceAll("${cutoff}", cutoffLabel);
     session.rotatePending = true;
     // Run the warning next, ahead of any queued messages, so the mind wraps up before
     // more context piles on. Remaining queued messages then run on the rotated thread.

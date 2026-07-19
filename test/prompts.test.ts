@@ -81,6 +81,35 @@ describe("prompts library", () => {
     assert.ok(compared > 0, "expected to compare at least one shared prompt");
   });
 
+  it("compaction_warning states the memory cost and teaches consolidation, not appending (#569)", () => {
+    // Compaction is when the memory tax bites; the warning must carry the current
+    // MEMORY.md size and point away from append-forever growth.
+    const { content, variables } = PROMPT_DEFAULTS.compaction_warning;
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: literal ${memory_size} in prompt
+    assert.ok(content.includes("${memory_size}"));
+    assert.ok(variables.includes("memory_size"));
+    assert.match(content, /consolidate rather than append/);
+    // The old text told minds to save things *to* MEMORY.md — the backwards direction.
+    assert.ok(!content.includes("(MEMORY.md"));
+  });
+
+  it("stamped prompts.json matches the template defaults minds fall back to", () => {
+    // .init/.config/prompts.json is copied into new minds at creation (then
+    // mind-owned). At stamp time it must equal DEFAULT_PROMPTS, or new minds get
+    // different text depending on whether the key survived in their prompts.json.
+    const here = fileURLToPath(new URL(".", import.meta.url));
+    const stamped = JSON.parse(
+      readFileSync(resolve(here, "../templates/_base/.init/.config/prompts.json"), "utf-8"),
+    ) as Record<string, string>;
+    for (const [key, content] of Object.entries(stamped)) {
+      assert.equal(
+        content,
+        (DEFAULT_PROMPTS as Record<string, string | undefined>)[key],
+        `${key} has drifted between .init/.config/prompts.json and DEFAULT_PROMPTS`,
+      );
+    }
+  });
+
   it("placeholder MEMORY.md template contains the marker used by sprout and seed-check", () => {
     const here = fileURLToPath(new URL(".", import.meta.url));
     const placeholder = readFileSync(resolve(here, "../templates/_base/.init/MEMORY.md"), "utf-8");

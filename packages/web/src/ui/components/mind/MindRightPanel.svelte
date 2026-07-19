@@ -18,6 +18,31 @@ let {
 
 let mind = $derived(data.minds.find((m) => m.name === initialMind.name) ?? initialMind);
 let isActive = $derived(activeMinds.has(mind.name));
+
+function fmtTokens(tokens: number): string {
+  if (tokens < 1000) return `~${tokens} tokens`;
+  return `~${(tokens / 1000).toFixed(1).replace(/\.0$/, "")}k tokens`;
+}
+
+let memoryBadge = $derived.by(() => {
+  const memory = mind.memory;
+  if (!memory) return null;
+  if (memory.overHardCap) {
+    return {
+      over: true,
+      suffix: " — over load cap",
+      tip: `Over the load cap (${fmtTokens(memory.hardCapTokens)}) — only the head of MEMORY.md is loaded`,
+    };
+  }
+  if (memory.overBudget) {
+    return {
+      over: true,
+      suffix: " — over budget",
+      tip: `Over the recommended budget (${fmtTokens(memory.softBudgetTokens)}) — consolidation recommended`,
+    };
+  }
+  return { over: false, suffix: "", tip: "MEMORY.md is loaded into every request" };
+});
 </script>
 
 <div class="mind-panel">
@@ -56,6 +81,15 @@ let isActive = $derived(activeMinds.has(mind.name));
       </span>
       {#if mind.description}
         <p class="profile-description">{mind.description}</p>
+      {/if}
+      {#if mind.memory && memoryBadge}
+        <span
+          class="memory-size"
+          class:over-budget={memoryBadge.over}
+          use:tooltip={{ text: memoryBadge.tip, position: "bottom" }}
+        >
+          Memory {fmtTokens(mind.memory.estTokens)}{memoryBadge.suffix}
+        </span>
       {/if}
     </div>
 
@@ -170,6 +204,17 @@ let isActive = $derived(activeMinds.has(mind.name));
     max-width: 320px;
     margin: 0;
     line-height: 1.4;
+  }
+
+  .memory-size {
+    position: relative;
+    font-size: 12px;
+    color: var(--text-2);
+    margin-top: 2px;
+  }
+
+  .memory-size.over-budget {
+    color: var(--yellow);
   }
 
   .history-section {

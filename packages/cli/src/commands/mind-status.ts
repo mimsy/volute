@@ -1,3 +1,4 @@
+import { formatTokens } from "@volute/daemon/lib/mind/memory-size.js";
 import { command } from "../lib/command.js";
 import { daemonFetch } from "../lib/daemon-client.js";
 import { resolveMindName } from "../lib/resolve-mind-name.js";
@@ -35,6 +36,14 @@ const cmd = command({
       stage?: string;
       parent?: string;
       model?: string;
+      memory?: {
+        bytes: number;
+        estTokens: number;
+        softBudgetTokens: number;
+        hardCapTokens: number;
+        overBudget: boolean;
+        overHardCap: boolean;
+      } | null;
       templateStale?: boolean;
       channels?: Array<{ name: string; displayName?: string; status: string }>;
       variants?: Array<{ name: string; status: string }>;
@@ -49,6 +58,15 @@ const cmd = command({
     if (mind.stage) console.log(`Stage:   ${mind.stage}`);
     if (mind.parent) console.log(`Parent:  ${mind.parent}`);
     if (mind.model) console.log(`Model:   ${mind.model}`);
+    if (mind.memory) {
+      let line = `Memory:  ${formatTokens(mind.memory.estTokens)} (${Math.round(mind.memory.bytes / 1024)}KB), always loaded`;
+      if (mind.memory.overHardCap) {
+        line += ` — exceeds the load cap (${formatTokens(mind.memory.hardCapTokens)}); only the head is loaded`;
+      } else if (mind.memory.overBudget) {
+        line += ` — over the recommended budget (${formatTokens(mind.memory.softBudgetTokens)}); consider consolidating`;
+      }
+      console.log(line);
+    }
     if (mind.templateStale) {
       console.log(`Template: outdated — run 'volute mind upgrade ${mind.name}'`);
     }

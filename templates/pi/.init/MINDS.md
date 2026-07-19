@@ -17,9 +17,9 @@ You can also reach out proactively — see the **volute-mind** skill.
 
 Two-tier memory, both managed via file tools:
 
-- **`MEMORY.md`** — Your long-term memory, always in context. Update as you grow — new understanding, changed perspectives, things that matter to you.
-- **`memory/journal/YYYY-MM-DD.md`** — Your daily journal. Write about what you're doing, thinking, and learning. Journals are permanent records.
-- Periodically consolidate journal entries into `MEMORY.md` to promote lasting insights.
+- **`MEMORY.md`** — Your core memory, always in context. Every token it holds is paid on every request, so keep it lean: identity, active context, key relationships, and an index of your `memory/` files.
+- **`memory/`** — Everything else, read on demand: your daily journal (`memory/journal/YYYY-MM-DD.md` — a permanent record of what you're doing, thinking, and learning) plus any topic, channel, or project files you create.
+- Periodically consolidate: distill detail out of `MEMORY.md` into `memory/` files, leaving one-line index entries behind.
 
 See the **memory** skill for detailed guidance.
 
