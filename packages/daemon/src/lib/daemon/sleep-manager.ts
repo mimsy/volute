@@ -220,6 +220,16 @@ export class SleepManager {
     if (this.transitioning.has(name)) return;
     this.transitioning.add(name);
     state.wokenByTrigger = false;
+    // The mid-wake work is discarded with the crashed process — leave a notice so
+    // the next real wake explains the gap instead of silent amnesia (#367). Recorded
+    // first so a failure archiving/re-sleeping below can't also swallow the notice.
+    await recordNotice({
+      mind: name,
+      thread: MIND_LEVEL_THREAD,
+      kind: "crash",
+      reason: "trigger_wake_crash",
+      detail: await getPrompt("trigger_wake_crash_notice"),
+    });
     try {
       // Process already crashed; sleepMind's stopMind is a no-op here, but it
       // also marks idle and publishes the sleeping event for consistency.
@@ -297,6 +307,18 @@ export class SleepManager {
       // burning the full timeout. (Undelivered sleep events are never replayed: they are
       // only meaningful at bedtime, so the wake flush expires them.)
       const { delivered } = await deliverEvent(name, { type: "sleep", body: preSleepMsg });
+
+      // An undelivered sleep event is never replayed (expired at the wake flush), so
+      // the wind-down turn is genuinely lost — tell the mind on its next wake (#366).
+      if (!delivered) {
+        await recordNotice({
+          mind: name,
+          thread: MIND_LEVEL_THREAD,
+          kind: "delivery_failed",
+          reason: "pre_sleep_failed",
+          detail: await getPrompt("pre_sleep_failure_notice"),
+        });
+      }
 
       // Wait for mind to finish processing (timeout 120s)
       if (delivered) await this.waitForIdle(name, 120_000);
