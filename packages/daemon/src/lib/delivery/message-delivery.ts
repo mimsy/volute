@@ -250,6 +250,21 @@ function willGate(baseName: string, payload: DeliveryPayload): boolean {
 }
 
 /**
+ * Public will-gate predicate: whether a message to `mindName` on this payload's channel
+ * would be held in the gate rather than delivered. Used by the chat API to warn the
+ * sender in the 200 response that the message is held pending channel approval (#723).
+ * Resolved from the same routing config the delivery manager uses, so the prediction
+ * matches what deliverMessage will actually do.
+ */
+export async function willGateMessage(
+  mindName: string,
+  payload: Pick<DeliveryPayload, "channel" | "sender" | "isDM" | "participantCount" | "session">,
+): Promise<boolean> {
+  const baseName = await getBaseName(mindName);
+  return willGate(baseName, payload as DeliveryPayload);
+}
+
+/**
  * Deliver a message to a mind via the delivery manager (routes, batches, gates).
  * Fire-and-forget for normal callers — logs errors and returns `false` rather than throwing.
  * Returns `true` when the message was handled (delivered, queued, or intentionally skipped).

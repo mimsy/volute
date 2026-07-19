@@ -2,6 +2,9 @@ import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename, join, normalize, resolve } from "node:path";
 import { stateDir } from "../mind/registry.js";
+import log from "../util/logger.js";
+
+const flog = log.child("file-sharing");
 
 // --- Types ---
 
@@ -93,7 +96,7 @@ export function listPending(receiver: string): PendingFileMetadata[] {
     try {
       result.push(JSON.parse(readFileSync(metaPath, "utf-8")) as PendingFileMetadata);
     } catch (err) {
-      console.warn(`[file-sharing] skipping malformed pending entry ${entry.name}:`, err);
+      flog.warn(`skipping malformed pending entry ${entry.name}`, log.errorData(err));
     }
   }
 
@@ -107,7 +110,7 @@ export function getPending(receiver: string, id: string): PendingFileMetadata | 
   try {
     return JSON.parse(readFileSync(metaPath, "utf-8")) as PendingFileMetadata;
   } catch (err) {
-    console.warn(`[file-sharing] failed to read pending metadata for ${id}:`, err);
+    flog.warn(`failed to read pending metadata for ${id}`, log.errorData(err));
     return null;
   }
 }

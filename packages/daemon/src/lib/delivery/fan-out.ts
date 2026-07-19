@@ -11,7 +11,8 @@ import { type ContentBlock, getParticipants } from "../events/conversations.js";
 import { readAllMinds } from "../mind/registry.js";
 import log from "../util/logger.js";
 import { buildVoluteSlug } from "../util/slugify.js";
-import { deliverMessage } from "./message-delivery.js";
+import { reportSendFailure } from "./delivery-failures.js";
+import { deliverMessage, willGateMessage } from "./message-delivery.js";
 
 type Participant = Awaited<ReturnType<typeof getParticipants>>[number];
 type SlugOpts = Parameters<typeof buildVoluteSlug>[0];
@@ -30,7 +31,16 @@ export interface FanOutOpts {
   targetName?: (username: string) => string;
 }
 
-export async function fanOutToMinds(opts: FanOutOpts): Promise<void> {
+export interface FanOutResult {
+  /**
+   * Mind participants whose routing will hold this message in the gate (unrouted
+   * channel, gating on) rather than deliver it. Lets the chat API tell the sender
+   * in the 200 response that the message is held pending channel approval (#723).
+   */
+  gatedRecipients: string[];
+}
+
+export async function fanOutToMinds(opts: FanOutOpts): Promise<FanOutResult> {
   const participants = opts.participants ?? (await getParticipants(opts.conversationId));
   const mindParticipants = participants.filter(
     (p) => p.userType === "mind" || p.userType === "system",
@@ -49,6 +59,29 @@ export async function fanOutToMinds(opts: FanOutOpts): Promise<void> {
   // not the stopped-native-mind condition the warn below traces (#434).
   const registeredMinds = new Set((await readAllMinds()).map((m) => m.name));
 
+  // When the sender is itself a registered mind, delivery failures are surfaced back to
+  // it as coalesced next-turn notices — it was told "Message sent." and would otherwise
+  // never learn the recipient didn't receive it (#723). The channel is named from the
+  // sender's perspective (e.g. `@recipient`, `#channel`), not the recipient's.
+  const senderIsMind = registeredMinds.has(opts.senderName);
+  const senderChannel = senderIsMind
+    ? buildVoluteSlug({
+        participants,
+        mindUsername: opts.senderName,
+        conversationId: opts.conversationId,
+        ...opts.slugExtra,
+      })
+    : "";
+  const reportFailure = (recipient: string, reason: string) => {
+    if (!senderIsMind) return;
+    reportSendFailure({
+      senderMind: opts.senderName,
+      channel: senderChannel,
+      recipient,
+      reason,
+    }).catch((err) => log.warn("fan-out: failed to report send failure", log.errorData(err)));
+  };
+
   // Include running minds AND sleeping minds (sleeping ones route through the sleep queue).
   const targetMinds = mindParticipants
     .map((ap) => {
@@ -61,6 +94,15 @@ export async function fanOutToMinds(opts: FanOutOpts): Promise<void> {
         if (registeredMinds.has(ap.username)) {
           log.warn(
             `fan-out: skipping ${ap.username} (not running) for conversation ${opts.conversationId}`,
+          );
+          reportFailure(ap.username, "recipient not running");
+        } else if (ap.userType === "mind") {
+          // External mind (no registry row): it pulls its messages, so this is its
+          // expected steady state — but a stale registry (mind deleted, user row and
+          // participation left behind) looks identical, so leave a trace (#723).
+          log.info(
+            `fan-out: skipping ${ap.username} (no registry row — external mind or stale ` +
+              `participant) for conversation ${opts.conversationId}`,
           );
         }
         if (ap.userType === "system") {
@@ -78,6 +120,7 @@ export async function fanOutToMinds(opts: FanOutOpts): Promise<void> {
     .filter((n): n is string => n !== null && n !== opts.senderName);
 
   // Fire-and-forget: deliver to all target minds (running or sleeping)
+  const gatedRecipients: string[] = [];
   for (const mindName of targetMinds) {
     const target = opts.targetName ? opts.targetName(mindName) : mindName;
     const channel = buildVoluteSlug({
@@ -86,6 +129,20 @@ export async function fanOutToMinds(opts: FanOutOpts): Promise<void> {
       conversationId: opts.conversationId,
       ...opts.slugExtra,
     });
+    const payloadMeta = {
+      channel,
+      sender: opts.senderName,
+      isDM,
+      participantCount: participants.length,
+    };
+    // Predict the gate the same way deliverMessage will resolve it, so the caller can
+    // tell the sender the message is held rather than delivered (#723). Advisory only —
+    // a prediction failure must not block delivery.
+    try {
+      if (await willGateMessage(target, payloadMeta)) gatedRecipients.push(mindName);
+    } catch (err) {
+      log.warn(`fan-out: will-gate check failed for ${target}`, log.errorData(err));
+    }
     const typingMap = getTypingMap();
     // Filter typing to only participants of this conversation (slugs are shared across DMs).
     const currentlyTyping = typingMap
@@ -100,8 +157,21 @@ export async function fanOutToMinds(opts: FanOutOpts): Promise<void> {
       participantCount: participants.length,
       isDM,
       ...(currentlyTyping.length > 0 ? { typing: currentlyTyping } : {}),
-    }).catch((err) => {
-      log.warn(`fan-out delivery failed for ${target}`, log.errorData(err));
-    });
+    }).then(
+      (ok) => {
+        // deliverMessage returned false: it failed BEFORE a delivery_queue row existed
+        // (mind not found, sleep-queue error, routing crash) — the redrive loop cannot
+        // recover it, so the message is genuinely lost. Surface it to the sender (#723).
+        if (!ok) {
+          log.warn(`fan-out delivery failed for ${target} (message not delivered)`);
+          reportFailure(mindName, "delivery failed");
+        }
+      },
+      (err) => {
+        log.warn(`fan-out delivery failed for ${target}`, log.errorData(err));
+        reportFailure(mindName, "delivery failed");
+      },
+    );
   }
+  return { gatedRecipients };
 }
