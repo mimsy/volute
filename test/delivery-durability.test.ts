@@ -356,6 +356,57 @@ describe("DeliveryManager durability", () => {
     await removeMind(name);
   });
 
+  it("dead-lettering also notifies a MIND sender, keyed under its base name (#723)", async () => {
+    const { resetSendFailureState, setSendFailureNotifier } = await import(
+      "../packages/daemon/src/lib/delivery/delivery-failures.js"
+    );
+    const srv = await startMindServer();
+    servers.push(srv.server);
+    srv.fail();
+    const name = await registerMind(srv.port, IMMEDIATE);
+    // The sender is itself a registered mind — the party that was told "Message sent."
+    // (Its port is never contacted; it only needs a registry row.)
+    const senderName = await registerMind(4790, IMMEDIATE);
+
+    manager = new DeliveryManager();
+    manager.setRunningCheck(() => true);
+    manager.setFailureNotifier(async () => {}); // recipient notice — not under test here
+    const senderNotices: { mind: string; detail: string }[] = [];
+    resetSendFailureState();
+    setSendFailureNotifier(async (input) => {
+      senderNotices.push({ mind: input.mind, detail: input.detail });
+    });
+
+    try {
+      await manager.routeAndDeliver(name, {
+        channel: "test:ch",
+        sender: senderName,
+        content: "hi",
+      });
+      const rows = await queueRows(name, "pending");
+      assert.equal(rows.length, 1);
+
+      const db = await getDb();
+      await db
+        .update(deliveryQueue)
+        .set({ attempts: MAX_DELIVERY_ATTEMPTS - 1, next_attempt_at: null })
+        .where(eq(deliveryQueue.id, rows[0].id));
+
+      await manager.redrive();
+      await waitFor(async () => (await queueRows(name, "dead")).length === 1);
+      await waitFor(() => senderNotices.length === 1);
+
+      assert.equal(senderNotices[0].mind, senderName, "sender notice keyed under the sender");
+      assert.match(senderNotices[0].detail, /test:ch/, "detail names the channel");
+      assert.match(senderNotices[0].detail, /could not be delivered|have failed/);
+    } finally {
+      resetSendFailureState();
+      setSendFailureNotifier();
+      await removeMind(name);
+      await removeMind(senderName);
+    }
+  });
+
   it("a live rejection on the last permitted attempt still delivers — no dead-letter", async () => {
     const srv = await startMindServer();
     servers.push(srv.server);

@@ -7,17 +7,22 @@ import {
   initMindManager,
   tryGetMindManager,
 } from "../packages/daemon/src/lib/daemon/mind-manager.js";
+import {
+  getSleepManagerIfReady,
+  initSleepManager,
+} from "../packages/daemon/src/lib/daemon/sleep-manager.js";
 import { getDb } from "../packages/daemon/src/lib/db.js";
 import {
   FAILURE_NOTICE_WINDOW_MS,
+  flushPendingSendFailures,
   reportSendFailure,
   resetSendFailureState,
   setSendFailureClock,
   setSendFailureNotifier,
 } from "../packages/daemon/src/lib/delivery/delivery-failures.js";
 import { fanOutToMinds } from "../packages/daemon/src/lib/delivery/fan-out.js";
-import { addMind, removeMind } from "../packages/daemon/src/lib/mind/registry.js";
-import { minds } from "../packages/daemon/src/lib/schema.js";
+import { addMind, addVariant, removeMind } from "../packages/daemon/src/lib/mind/registry.js";
+import { deliveryQueue, mindHistory, minds } from "../packages/daemon/src/lib/schema.js";
 import log from "../packages/daemon/src/lib/util/logger.js";
 
 const SENDER = "dfn-sender";
@@ -25,8 +30,9 @@ const RECIPIENT = "dfn-recipient";
 const STOPPED = "dfn-stopped";
 const EXTERNAL = "dfn-external";
 const HUMAN = "dfn-human";
+const VARIANT = "dfn-sender-var";
 
-const MIND_NAMES = [SENDER, RECIPIENT, STOPPED];
+const MIND_NAMES = [SENDER, RECIPIENT, STOPPED, VARIANT];
 const CONVERSATION_ID = "dfn-conversation";
 
 type Participant = Parameters<typeof fanOutToMinds>[0]["participants"];
@@ -56,7 +62,14 @@ async function cleanup() {
   setSendFailureClock();
   const db = await getDb();
   await db.delete(minds).where(inArray(minds.name, MIND_NAMES));
-  for (const name of MIND_NAMES) tracked()?.delete(name);
+  await db.delete(deliveryQueue).where(inArray(deliveryQueue.mind, MIND_NAMES));
+  await db.delete(mindHistory).where(inArray(mindHistory.mind, MIND_NAMES));
+  for (const name of MIND_NAMES) {
+    tracked()?.delete(name);
+    (getSleepManagerIfReady() as unknown as { states?: Map<string, unknown> })?.states?.delete(
+      name,
+    );
+  }
 }
 
 /** Poll until the predicate holds or the timeout elapses. */
@@ -144,7 +157,29 @@ describe("send-failure notice coalescing", () => {
       reason: "delivery failed",
     });
     assert.equal(notices.length, 2);
-    assert.match(notices[1].detail, /4 messages on @dfn-recipient have failed/);
+    assert.match(notices[1].detail, /4 message deliveries on @dfn-recipient have failed/);
+  });
+
+  it("flushes the suppressed tail of a burst as one rollup", async () => {
+    // First failure → immediate notice; three more inside the window → suppressed.
+    for (let i = 0; i < 4; i++) {
+      await reportSendFailure({
+        senderMind: SENDER,
+        channel: `@${RECIPIENT}`,
+        recipient: RECIPIENT,
+        reason: "delivery failed",
+      });
+      now += 60_000;
+    }
+    assert.equal(notices.length, 1);
+    // The end-of-window flush (a real timer in production; invoked directly here)
+    // must report the suppressed failures even though no further failure arrives.
+    await flushPendingSendFailures();
+    assert.equal(notices.length, 2);
+    assert.match(notices[1].detail, /3 message deliveries on @dfn-recipient have failed/);
+    // Nothing left to flush — a second flush must not duplicate the notice.
+    await flushPendingSendFailures();
+    assert.equal(notices.length, 2);
   });
 
   it("tracks distinct channels independently", async () => {
@@ -301,6 +336,61 @@ describe("fan-out surfaces lost deliveries to a mind sender", () => {
       participants,
     });
     assert.deepEqual(gatedRecipients, [RECIPIENT]);
+  });
+
+  it("does not report a sleeping recipient as gated", async () => {
+    // A sleeping mind's message goes to the sleep queue and is delivered on wake —
+    // it never gates, so it must not be predicted as "held pending approval".
+    if (!getSleepManagerIfReady()) initSleepManager();
+    await addMind(SENDER, 4728);
+    await addMind(RECIPIENT, 4729); // not running — targeted via its sleep state
+    (getSleepManagerIfReady() as unknown as { states: Map<string, unknown> }).states.set(
+      RECIPIENT,
+      { sleeping: true, wokenByTrigger: false },
+    );
+
+    const participants = [
+      participant(SENDER, "mind", 1),
+      participant(RECIPIENT, "mind", 2),
+    ] as unknown as Participant;
+
+    const { gatedRecipients } = await fanOutToMinds({
+      conversationId: CONVERSATION_ID,
+      contentBlocks: [{ type: "text", text: "good night" }],
+      senderName: SENDER,
+      participants,
+    });
+    assert.deepEqual(gatedRecipients, []);
+  });
+
+  it("records a variant sender's failure notice under the BASE mind name", async () => {
+    // Notices are drained by base name — a variant-keyed system_events row would
+    // strand forever, so the notice (and its channel slug) must resolve the base.
+    await addMind(SENDER, 4730);
+    await addVariant(VARIANT, SENDER, 4733, "/tmp/dfn-variant-dir", "dfn-branch");
+    await addMind(STOPPED, 4734); // registered, never marked running
+
+    const participants = [
+      participant(SENDER, "mind", 1),
+      participant(STOPPED, "mind", 2),
+    ] as unknown as Participant;
+
+    await fanOutToMinds({
+      conversationId: CONVERSATION_ID,
+      contentBlocks: [{ type: "text", text: "from the variant" }],
+      senderName: VARIANT,
+      participants,
+    });
+
+    assert.ok(
+      await waitFor(() => notices.length > 0),
+      "variant sender failure must record a notice",
+    );
+    assert.equal(notices[0].mind, SENDER, "notice must be keyed under the base mind");
+    assert.ok(
+      notices[0].detail.includes(`@${STOPPED}`),
+      `channel must name the recipient, got: ${notices[0].detail}`,
+    );
   });
 
   afterEach(async () => {

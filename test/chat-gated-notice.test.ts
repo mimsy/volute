@@ -141,30 +141,58 @@ describe("file-sharing responses carry `notified` (#723)", () => {
   beforeEach(cleanup);
   afterEach(cleanup);
 
-  it("stage reports notified:true for a registered mind and accept reports notified:false for a non-mind sender", async () => {
+  it("stage reports notified honestly and accept reports notified:false for a non-mind sender", async () => {
     await setup();
     const { default: app } = await import("../packages/daemon/src/web/app.js");
 
-    // A human (non-mind) stages a file for the recipient mind. The notification event
-    // is durably recorded for the mind (delivered later even if the POST fails now).
+    // A tiny mind stand-in on the recipient's port that acks the event envelope,
+    // so the first stage exercises the notified:true (actually delivered) path.
+    const { createServer } = await import("node:http");
+    const { findMind } = await import("../packages/daemon/src/lib/mind/registry.js");
+    const recipientPort = (await findMind(RECIPIENT))!.port;
+    const server = createServer((_req, res) => {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ event: true }));
+    });
+    await new Promise<void>((resolve) => server.listen(recipientPort, "127.0.0.1", resolve));
+
     invalidateMindUserCache(RECIPIENT);
     const recipientToken = generateMindToken(RECIPIENT);
-    const stageRes = await app.request(`http://localhost/api/minds/${RECIPIENT}/files/stage`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${recipientToken}`,
-        Origin: "http://localhost",
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        sender: "some-human",
-        filename: "notes.txt",
-        data: Buffer.from("hello").toString("base64"),
-      }),
-    } as RequestInit);
-    assert.equal(stageRes.status, 200);
-    const staged = (await stageRes.json()) as { id: string; notified?: boolean };
-    assert.equal(staged.notified, true, "recipient is a registered mind — notification recorded");
+    const stage = (filename: string) =>
+      app.request(`http://localhost/api/minds/${RECIPIENT}/files/stage`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${recipientToken}`,
+          Origin: "http://localhost",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          sender: "some-human",
+          filename,
+          data: Buffer.from("hello").toString("base64"),
+        }),
+      } as RequestInit);
+
+    let staged: { id: string; notified?: boolean };
+    try {
+      const stageRes = await stage("notes.txt");
+      assert.equal(stageRes.status, 200);
+      staged = (await stageRes.json()) as { id: string; notified?: boolean };
+      assert.equal(staged.notified, true, "the recipient ack'd the event — notified");
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+
+    // With the recipient awake but unreachable, the pending event only replays on the
+    // next wake/restart — the honest answer is notified:false (#723).
+    const stageRes2 = await stage("notes2.txt");
+    assert.equal(stageRes2.status, 200);
+    const staged2 = (await stageRes2.json()) as { id: string; notified?: boolean };
+    assert.equal(
+      staged2.notified,
+      false,
+      "an awake but unreachable recipient must not be reported as notified",
+    );
 
     // Accepting notifies the sender — a human with no mind entry, so notified must be false.
     const acceptRes = await app.request(`http://localhost/api/minds/${RECIPIENT}/files/accept`, {

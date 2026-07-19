@@ -24,7 +24,11 @@ const cmd = command({
       process.exit(1);
     }
 
+    const data = (await res.json().catch(() => ({}))) as { notified?: boolean };
     console.log(`File rejected: ${args.id}`);
+    if (data.notified === false) {
+      console.log("Note: the sender could not be notified — mention it to them directly.");
+    }
   },
 });
 

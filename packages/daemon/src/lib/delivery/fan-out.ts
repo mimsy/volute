@@ -8,7 +8,7 @@ import { getTypingMap } from "../chat/typing.js";
 import { getMindManager } from "../daemon/mind-manager.js";
 import { getSleepManagerIfReady } from "../daemon/sleep-manager.js";
 import { type ContentBlock, getParticipants } from "../events/conversations.js";
-import { readAllMinds } from "../mind/registry.js";
+import { getBaseName, readAllMinds } from "../mind/registry.js";
 import log from "../util/logger.js";
 import { buildVoluteSlug } from "../util/slugify.js";
 import { reportSendFailure } from "./delivery-failures.js";
@@ -61,25 +61,30 @@ export async function fanOutToMinds(opts: FanOutOpts): Promise<FanOutResult> {
 
   // When the sender is itself a registered mind, delivery failures are surfaced back to
   // it as coalesced next-turn notices — it was told "Message sent." and would otherwise
-  // never learn the recipient didn't receive it (#723). The channel is named from the
-  // sender's perspective (e.g. `@recipient`, `#channel`), not the recipient's.
+  // never learn the recipient didn't receive it (#723). Resolved lazily (failures are
+  // rare) and to the BASE name: a variant sender's notice must be recorded under the
+  // base mind — notices are drained by base name (see minds.ts /history/notices), so a
+  // variant-keyed row would strand forever — and the slug must be built from the base
+  // username (the one actually in the participants list) so the channel names the
+  // recipient, not the sender's own base user.
   const senderIsMind = registeredMinds.has(opts.senderName);
-  const senderChannel = senderIsMind
-    ? buildVoluteSlug({
-        participants,
-        mindUsername: opts.senderName,
-        conversationId: opts.conversationId,
-        ...opts.slugExtra,
-      })
-    : "";
+  let senderCtx: Promise<{ base: string; channel: string }> | undefined;
   const reportFailure = (recipient: string, reason: string) => {
     if (!senderIsMind) return;
-    reportSendFailure({
-      senderMind: opts.senderName,
-      channel: senderChannel,
-      recipient,
-      reason,
-    }).catch((err) => log.warn("fan-out: failed to report send failure", log.errorData(err)));
+    senderCtx ??= getBaseName(opts.senderName).then((base) => ({
+      base,
+      channel: buildVoluteSlug({
+        participants,
+        mindUsername: base,
+        conversationId: opts.conversationId,
+        ...opts.slugExtra,
+      }),
+    }));
+    senderCtx
+      .then(({ base, channel }) =>
+        reportSendFailure({ senderMind: base, channel, recipient, reason }),
+      )
+      .catch((err) => log.warn("fan-out: failed to report send failure", log.errorData(err)));
   };
 
   // Include running minds AND sleeping minds (sleeping ones route through the sleep queue).
@@ -119,30 +124,48 @@ export async function fanOutToMinds(opts: FanOutOpts): Promise<FanOutResult> {
     })
     .filter((n): n is string => n !== null && n !== opts.senderName);
 
-  // Fire-and-forget: deliver to all target minds (running or sleeping)
-  const gatedRecipients: string[] = [];
-  for (const mindName of targetMinds) {
-    const target = opts.targetName ? opts.targetName(mindName) : mindName;
-    const channel = buildVoluteSlug({
+  // Per-target delivery descriptors: the target process name (variant-aware) and the
+  // channel slug from that recipient's perspective — shared by the gate prediction and
+  // the delivery payload so the two provably see the same routing metadata.
+  const targets = targetMinds.map((mindName) => ({
+    mindName,
+    target: opts.targetName ? opts.targetName(mindName) : mindName,
+    channel: buildVoluteSlug({
       participants,
       mindUsername: mindName,
       conversationId: opts.conversationId,
       ...opts.slugExtra,
-    });
-    const payloadMeta = {
-      channel,
-      sender: opts.senderName,
-      isDM,
-      participantCount: participants.length,
-    };
-    // Predict the gate the same way deliverMessage will resolve it, so the caller can
-    // tell the sender the message is held rather than delivered (#723). Advisory only —
-    // a prediction failure must not block delivery.
-    try {
-      if (await willGateMessage(target, payloadMeta)) gatedRecipients.push(mindName);
-    } catch (err) {
-      log.warn(`fan-out: will-gate check failed for ${target}`, log.errorData(err));
-    }
+    }),
+  }));
+
+  // Predict the gate the same way deliverMessage will resolve it, so the caller can
+  // tell the sender the message is held rather than delivered (#723). Advisory only —
+  // a prediction failure must not block delivery. Sleeping recipients never gate on
+  // this path: their message goes to the sleep queue and is delivered on wake, so a
+  // "held pending approval" notice for them would be false. Checked concurrently —
+  // this runs before the caller's 200 and must not serialize per-recipient lookups.
+  const gatedRecipients = (
+    await Promise.all(
+      targets.map(async ({ mindName, target, channel }) => {
+        if (sm?.isSleeping(mindName)) return null;
+        try {
+          const gated = await willGateMessage(target, {
+            channel,
+            sender: opts.senderName,
+            isDM,
+            participantCount: participants.length,
+          });
+          return gated ? mindName : null;
+        } catch (err) {
+          log.warn(`fan-out: will-gate check failed for ${target}`, log.errorData(err));
+          return null;
+        }
+      }),
+    )
+  ).filter((n): n is string => n !== null);
+
+  // Fire-and-forget: deliver to all target minds (running or sleeping)
+  for (const { mindName, target, channel } of targets) {
     const typingMap = getTypingMap();
     // Filter typing to only participants of this conversation (slugs are shared across DMs).
     const currentlyTyping = typingMap

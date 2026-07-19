@@ -25,8 +25,11 @@ const cmd = command({
       process.exit(1);
     }
 
-    const data = (await res.json()) as { destPath: string };
+    const data = (await res.json()) as { destPath: string; notified?: boolean };
     console.log(`File accepted: ${data.destPath}`);
+    if (data.notified === false) {
+      console.log("Note: the sender could not be notified — mention it to them directly.");
+    }
   },
 });
 

@@ -14,11 +14,13 @@ import log from "../../lib/util/logger.js";
 import { type AuthEnv, requireSelf } from "../middleware/auth.js";
 
 /**
- * Notify a mind about a file-share event. Returns whether the notification exists
- * anywhere the mind will see it: delivered now, or durably recorded for the next
- * wake/start flush. `false` means the notification is genuinely lost — the caller's
- * response carries it as `notified: false` so the sender isn't told "File staged"
- * with no hint the recipient never learns of it (#723).
+ * Notify a mind about a file-share event. Returns whether the mind has been (or will
+ * reliably be) told: delivered now, or queued for a SLEEPING mind's wake flush. A
+ * failed POST to an awake mind returns `false` — the pending event only replays on
+ * the next wake or restart, which may be arbitrarily far off, so claiming "notified"
+ * would recreate the silent-failure shape this fixes. The caller's response carries
+ * the result as `notified` so the sender isn't told "File staged" with no hint the
+ * recipient never learns of it (#723).
  */
 async function notifyMind(mindName: string, message: string): Promise<boolean> {
   const entry = await findMind(mindName);
@@ -26,7 +28,11 @@ async function notifyMind(mindName: string, message: string): Promise<boolean> {
   try {
     const { deliverEvent } = await import("../../lib/chat/system-events.js");
     const result = await deliverEvent(mindName, { type: "file-share", body: message });
-    return result.delivered || result.id != null;
+    if (result.delivered) return true;
+    if (result.id == null) return false;
+    const { getSleepManagerIfReady } = await import("../../lib/daemon/sleep-manager.js");
+    const { getBaseName } = await import("../../lib/mind/registry.js");
+    return getSleepManagerIfReady()?.isSleeping(await getBaseName(mindName)) ?? false;
   } catch (err) {
     log.warn(`[file-sharing] notify mind ${mindName} failed`, log.errorData(err));
     return false;

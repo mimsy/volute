@@ -153,11 +153,23 @@ function spiritAck(spirit: SpiritStatus | undefined): string | null {
 }
 
 /**
+ * Print the daemon's advisory tail for a completed send: any notice (e.g. a recipient
+ * holding the message pending channel approval) and the spirit availability ack. Shared
+ * by the normal confirmation and the --wait path (which skips the confirmation but must
+ * still surface these — a gated recipient or unavailable spirit won't reply).
+ */
+function printSendAdvisories(data: SendResult): void {
+  if (data.notice) console.log(data.notice);
+  const ack = spiritAck(data.spirit);
+  if (ack) console.log(ack);
+}
+
+/**
  * Print the outcome of a POST /chat send to stdout. A "held" send (a peer posted
  * while the mind was composing) prints the daemon's plain notice so the mind can
  * revise or re-send; a normal send prints the sent confirmation + outbound marker,
- * plus any daemon notice (e.g. a recipient holding the message pending channel
- * approval) so a "sent" message that won't be seen isn't silently confirmed.
+ * plus any daemon advisories so a "sent" message that won't be seen isn't silently
+ * confirmed.
  */
 function printSendResult(data: SendResult): void {
   if (data.held) {
@@ -170,9 +182,7 @@ function printSendResult(data: SendResult): void {
   } else {
     console.log(`Message sent.${outboundId != null ? `\n[volute:outbound:${outboundId}]` : ""}`);
   }
-  if (data.notice) console.log(data.notice);
-  const ack = spiritAck(data.spirit);
-  if (ack) console.log(ack);
+  printSendAdvisories(data);
 }
 
 const cmd = command({
@@ -449,11 +459,7 @@ const cmd = command({
       if (data.held || !flags.wait || flags.file) {
         printSendResult(data);
       } else {
-        // A hold notice still matters under --wait: a gated recipient won't reply.
-        if (data.notice) console.log(data.notice);
-        // The spirit ack still matters — especially "unavailable", where no reply is coming.
-        const ack = spiritAck(data.spirit);
-        if (ack) console.log(ack);
+        printSendAdvisories(data);
       }
       // The daemon just said nothing will answer — don't block --wait on a reply
       // that will never come.
