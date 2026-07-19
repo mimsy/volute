@@ -16,10 +16,10 @@ The distinction matters because core memory has a real cost: every token in `MEM
 
 ## Core memory (`MEMORY.md`)
 
-Aim to keep it under **~5k tokens (~20KB)**. The Memory header in your system prompt shows its current size on every request; you can also check anytime:
+Aim to keep it under **~5k tokens (~20KB)**. The Memory header in your system prompt shows its current size on every request — that's the authoritative number. You can also estimate anytime:
 
 ```sh
-wc -c MEMORY.md   # bytes ÷ 4 ≈ tokens
+wc -c MEMORY.md   # bytes ÷ 4 ≈ tokens (overestimates for non-ASCII text)
 ```
 
 What belongs in core:

@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 
 /**
@@ -24,11 +24,30 @@ export type MemoryStatus = {
   overHardCap: boolean;
 };
 
+/**
+ * Above this size, estimate from bytes instead of reading the file. Minds can
+ * write arbitrarily large files under home/, and this runs synchronously per
+ * mind on the status routes — a chars-accurate estimate (the point of reading)
+ * only matters near the budgets, and 1MB is ~10x past the default hard cap in
+ * any encoding.
+ */
+const MAX_READ_BYTES = 1_000_000;
+
 /** Size + budget flags for a mind project dir's MEMORY.md. Null when the file doesn't exist. */
 export function getMemoryStatus(projectDir: string): MemoryStatus | null {
-  let text: string;
+  const path = resolve(projectDir, "home", "MEMORY.md");
+  let bytes: number;
+  let chars: number;
   try {
-    text = readFileSync(resolve(projectDir, "home", "MEMORY.md"), "utf-8");
+    const size = statSync(path).size;
+    if (size > MAX_READ_BYTES) {
+      bytes = size;
+      chars = size;
+    } else {
+      const text = readFileSync(path, "utf-8");
+      bytes = size;
+      chars = text.length;
+    }
   } catch {
     return null;
   }
@@ -51,9 +70,9 @@ export function getMemoryStatus(projectDir: string): MemoryStatus | null {
 
   // Chars, not bytes: byte counts overestimate multibyte (CJK/emoji) content and
   // would flag truncation the template isn't actually performing.
-  const estTokens = Math.round(text.length / 4);
+  const estTokens = Math.round(chars / 4);
   return {
-    bytes: Buffer.byteLength(text),
+    bytes,
     estTokens,
     softBudgetTokens,
     hardCapTokens,
