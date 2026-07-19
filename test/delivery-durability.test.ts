@@ -575,6 +575,62 @@ describe("DeliveryManager durability", () => {
     await removeMind(name);
   });
 
+  it("dead-lettering also notifies a mind sender, naming the recipient for DM channels", async () => {
+    const name = `dur-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    await addMind(name, 4901);
+
+    manager = new DeliveryManager();
+    manager.setRunningCheck(() => true);
+    manager.setFailureNotifier(async () => {});
+    const senderNotices: { sender: string; channel: string; reason: string }[] = [];
+    manager.setSenderFailureNotifier(async (sender, channel, reason) => {
+      senderNotices.push({ sender, channel, reason });
+    });
+
+    // Two rows crossing the ceiling at once: a DM (channel named after the sender, as the
+    // recipient's queue sees it) and a shared channel. The sender name is deliberately NOT
+    // slug-identical (uppercase + underscore) — fan-out stores DM slugs as @slugify(sender),
+    // so the rename must compare against the slugified name, not the raw one.
+    const db = await getDb();
+    const values = [
+      { channel: "@peer-mind", sender: "Peer_Mind" }, // DM: recipient-side slug names the sender
+      { channel: "test:ch", sender: "Peer_Mind" }, // shared channel: same slug for both sides
+    ].map((v) => ({
+      mind: name,
+      thread: "main",
+      status: "pending",
+      attempts: MAX_DELIVERY_ATTEMPTS - 1,
+      payload: "{}",
+      ...v,
+    }));
+    const inserted = await db
+      .insert(deliveryQueue)
+      .values(values)
+      .returning({ id: deliveryQueue.id });
+
+    const anyMgr = manager as unknown as {
+      scheduleRetry: (ids: number[], opts: { liveRejection: boolean }) => Promise<void>;
+    };
+    await anyMgr.scheduleRetry(
+      inserted.map((r) => r.id),
+      { liveRejection: true },
+    );
+
+    assert.equal((await queueRows(name, "dead")).length, 2);
+    assert.equal(senderNotices.length, 2, "one sender notice per distinct (sender, channel)");
+    const channels = senderNotices.map((n) => n.channel).sort();
+    assert.deepEqual(
+      channels,
+      [`@${name}`, "test:ch"],
+      "DM channel renamed to the recipient from the sender's perspective",
+    );
+    for (const n of senderNotices) {
+      assert.equal(n.sender, "Peer_Mind");
+      assert.match(n.reason, /rejected/);
+    }
+    await removeMind(name);
+  });
+
   it("removeMind purges the mind's delivery_queue rows (owned and variant-targeted)", async () => {
     const db = await getDb();
     const base = `dur-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;

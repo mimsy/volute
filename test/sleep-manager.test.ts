@@ -565,6 +565,22 @@ describe("SleepManager state transitions", () => {
     assert.equal(state.voluntaryWakeAt, wakeAt);
   });
 
+  // #367: a crash during a trigger-wake discards the mid-wake work — the next real
+  // wake must find a notice explaining the gap, not silent amnesia.
+  it("returnToSleepAfterCrash records a crash notice for the next wake", async () => {
+    const { drainEvents } = await import("../packages/daemon/src/lib/chat/system-events.js");
+    const sm = new TestSleepManager();
+    const name = `crash-notice-${Date.now()}`;
+    sm.setStateForTest(name, sleepingState({ wokenByTrigger: true }));
+
+    await sm.returnToSleepAfterCrash(name);
+
+    const drained = await drainEvents(name, "main");
+    assert.equal(drained.length, 1, "the crash leaves a mind-level notice");
+    assert.match(drained[0].body, /woken by a trigger/);
+    assert.match(drained[0].body, /may be incomplete/);
+  });
+
   it("returnToSleepAfterCrash recomputes scheduledWakeAt when no voluntary wake", async () => {
     const sm = new TestSleepManager();
     sm.setSleepConfigForTest("test-mind", { schedule: { wake: "0 8 * * *" } });

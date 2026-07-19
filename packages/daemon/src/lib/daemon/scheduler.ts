@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import { CronExpressionParser } from "cron-parser";
-import { deliverEvent } from "../chat/system-events.js";
+import { deliverEvent, MIND_LEVEL_THREAD, recordNotice } from "../chat/system-events.js";
 import { loadMergedEnv } from "../config/env.js";
 import {
   findMind,
@@ -12,6 +12,7 @@ import {
 } from "../mind/registry.js";
 import { isSandboxEnabled, wrapForSandbox } from "../mind/sandbox.js";
 import { readVoluteConfig, type Schedule, writeVoluteConfig } from "../mind/volute-config.js";
+import { getPrompt } from "../prompts.js";
 import { exec } from "../util/exec.js";
 import { clearJsonMap, loadJsonMap, saveJsonMapAsync } from "../util/json-state.js";
 import log from "../util/logger.js";
@@ -229,6 +230,26 @@ export class Scheduler {
       }
     } catch (err) {
       slog.warn(`failed to fire "${schedule.id}" for ${mindName}`, log.errorData(err));
+      // The schedule fired but the mind never heard it — leave a notice rather than
+      // only a daemon log the mind can't see (#366). recordNotice never throws.
+      // A literal ephemeral thread would strand the notice in a session that never
+      // runs another turn, so those fall back to mind-level ("$new" is collapsed by
+      // deliverEvent itself).
+      const detail = await getPrompt("schedule_failure_notice", {
+        id: schedule.id,
+        reason: err instanceof Error && err.message ? err.message : String(err),
+      });
+      const thread =
+        schedule.thread && !schedule.thread.startsWith("new-")
+          ? schedule.thread
+          : MIND_LEVEL_THREAD;
+      await recordNotice({
+        mind: mindName,
+        thread,
+        kind: "delivery_failed",
+        reason: "schedule_failed",
+        detail,
+      });
     }
   }
 

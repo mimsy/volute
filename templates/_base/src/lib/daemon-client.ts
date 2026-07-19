@@ -124,6 +124,41 @@ export async function daemonEmit(event: DaemonEvent): Promise<void> {
   }
 }
 
+/**
+ * Record a notice with the daemon — it reaches the mind through the next-turn
+ * notices drain (the pre-prompt hook). Use for failures the daemon can't see
+ * itself, like context loss inside the mind process. `thread` scopes the notice
+ * to one thread's drain; omitted, any thread's next turn picks it up.
+ * Best-effort: logs on failure, never throws.
+ */
+export async function daemonNotice(input: {
+  kind: string;
+  message: string;
+  thread?: string;
+}): Promise<void> {
+  if (!port || !mind) {
+    console.error("[volute] daemonNotice: VOLUTE_DAEMON_PORT or VOLUTE_MIND not set");
+    return;
+  }
+  try {
+    const res = await fetch(
+      `http://127.0.0.1:${port}/api/minds/${encodeURIComponent(mind)}/notices`,
+      {
+        method: "POST",
+        headers: headers(),
+        body: JSON.stringify(input),
+      },
+    );
+    if (!res.ok) {
+      console.error(
+        `[volute] daemonNotice failed: ${res.status} ${await res.text().catch(() => "")}`,
+      );
+    }
+  } catch (err) {
+    console.error("[volute] daemonNotice request errored:", err);
+  }
+}
+
 export async function daemonSendFile(
   targetMind: string,
   filePath: string,

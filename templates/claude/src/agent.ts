@@ -13,7 +13,7 @@ import {
   readSdkInstructions,
   readSkillDescriptions,
 } from "./lib/context-breakdown.js";
-import { daemonEmit } from "./lib/daemon-client.js";
+import { daemonEmit, daemonNotice } from "./lib/daemon-client.js";
 import { compactTimestamp } from "./lib/format-prefix.js";
 import { runHooks } from "./lib/hook-loader.js";
 import { createAutoCommitHook } from "./lib/hooks/auto-commit.js";
@@ -557,9 +557,21 @@ export function createMind(options: {
               session.rotationCut = null;
               session.rotationPhase = undefined; // state machine consumed
               if (!rotatedId) {
-                // Rotation couldn't proceed — fall back to a fresh session (no seed,
-                // no note). Fresh is a far smaller cliff now that seeding exists.
+                // Rotation couldn't proceed — fall back to a fresh session (no seed).
+                // Unlike a successful rotation (boundary note, verbatim tail, archived
+                // transcript), this genuinely loses the live context — say so (#367).
                 log("mind", `session "${session.name}": rotation failed, starting fresh`);
+                daemonNotice({
+                  kind: "context_lost",
+                  thread: session.name,
+                  message:
+                    "Session rotation failed at the context limit and this thread was " +
+                    "reset — conversation context before this point was lost. Your turn " +
+                    "summaries survive in `volute mind history`; check your journal for " +
+                    "where you left off.",
+                }).catch((err) =>
+                  log("mind", `session "${session.name}": failed to record notice:`, err),
+                );
                 sessionStore.delete(session.name);
                 currentSessionId = undefined;
                 session.seeded = false;
@@ -603,6 +615,13 @@ export function createMind(options: {
         session.messageChannels.clear();
         if (currentSessionId) {
           log("mind", `session "${session.name}": resume failed, starting fresh:`, err);
+          daemonNotice({
+            kind: "context_lost",
+            thread: session.name,
+            message:
+              "Your session couldn't be resumed after an error, so you're starting fresh. " +
+              "Recent context may be in memory/journal/.",
+          }).catch((e) => log("mind", `session "${session.name}": failed to record notice:`, e));
           sessionStore.delete(session.name);
           currentSessionId = undefined;
           // We fell back to a truly empty session — don't tell the mind its
@@ -667,6 +686,15 @@ export function createMind(options: {
       log("mind", `session "${name}": stored session ${savedSessionId} not found, starting fresh`);
       sessionStore.delete(name);
       savedSessionId = undefined;
+      // Worded so it stays true whether or not transcript seeding (below) partially
+      // restores context: the live session is gone either way.
+      daemonNotice({
+        kind: "context_lost",
+        thread: name,
+        message:
+          "Your previous session couldn't be restored (session file missing), so this " +
+          "thread was reset. Recent context may be in memory/journal/.",
+      }).catch((err) => log("mind", `session "${name}": failed to record notice:`, err));
     }
     if (savedSessionId) {
       log("mind", `session "${name}": resuming ${savedSessionId}`);

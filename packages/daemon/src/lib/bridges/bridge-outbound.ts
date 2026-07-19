@@ -3,6 +3,7 @@
  * send the message to the external platform via the channel driver.
  */
 import type { ContentBlock } from "@volute/api";
+import { recordSenderDeliveryFailure } from "../chat/delivery-notices.js";
 import { readEnv, sharedEnvPath } from "../config/env.js";
 import { getChannelName, getConversation, getParticipants } from "../events/conversations.js";
 import { mindDir } from "../mind/registry.js";
@@ -82,7 +83,23 @@ async function routeChannelOutbound(
   const env = readEnv(sharedEnvPath());
   env.VOLUTE_SENDER = senderName;
 
-  await driver.send(env, bridgeInfo.externalChannel, text, images.length > 0 ? images : undefined);
+  try {
+    await driver.send(
+      env,
+      bridgeInfo.externalChannel,
+      text,
+      images.length > 0 ? images : undefined,
+    );
+  } catch (err) {
+    // The message reached the Volute conversation but not the external platform —
+    // tell the sending mind instead of leaving it believing it was heard (#366).
+    await recordSenderDeliveryFailure(
+      senderName,
+      channelName,
+      err instanceof Error && err.message ? err.message : String(err),
+    );
+    throw err;
+  }
   log.debug(`bridge outbound: sent to ${bridgeInfo.platform}:${bridgeInfo.externalChannel}`);
 }
 
@@ -135,6 +152,11 @@ async function routeDMOutbound(
       log.debug(`bridge outbound DM: sent to ${platform}:${externalUserId}`);
     } catch (err) {
       log.error(`bridge outbound DM failed for puppet ${puppet.username}`, log.errorData(err));
+      await recordSenderDeliveryFailure(
+        senderName,
+        puppet.username,
+        err instanceof Error && err.message ? err.message : String(err),
+      );
     }
   }
 }
