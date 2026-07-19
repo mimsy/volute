@@ -144,6 +144,17 @@ export function createEventHandler(session: EventSession, options: EventHandlerO
         if (messageId) {
           session.messageChannels.delete(messageId);
         }
+        // pi's agent loop drains every queued prompt (follow-ups, steers) before
+        // a final agent_end, so anything still pending here was consumed by this
+        // turn. Prune it all — a stranded id would be shifted in as the NEXT
+        // turn's id, tagging that turn's rows with the wrong channel (#700).
+        // Exception: on a retryable error the loop emits agent_end WITHOUT
+        // draining and the session retries — those queued prompts haven't run
+        // yet, so they keep their entries for the continuation.
+        if (!event.willRetry) {
+          session.messageIds.length = 0;
+          session.messageChannels.clear();
+        }
         const channel = messageId ? session.messageChannels.get(messageId)?.channel : undefined;
         log("mind", `session "${session.name}": turn done`);
         // Collect any agent-level errors (e.g. a provider 401 reported inside agent_end).
