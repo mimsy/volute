@@ -352,7 +352,7 @@ export function createMind(options: {
     // transcript so the mind experiences the conversation continuing rather than
     // waking into an empty context. seedPiSession no-ops when a live session
     // already exists (continueRecent will resume that instead). Ephemeral
-    // `new-*` sessions are never persisted or archived, so they never seed.
+    // `new-*` sessions are one-offs — they never seed at start.
     const seeded = isEphemeral
       ? null
       : seedPiSession({
@@ -362,9 +362,15 @@ export function createMind(options: {
           seedTokens,
         });
 
-    const sessionManager = isEphemeral
-      ? SessionManager.inMemory()
-      : SessionManager.continueRecent(options.cwd, resolvePath(options.sessionsDir, session.name));
+    // Every session (ephemeral too) is file-backed under its own name-scoped dir,
+    // so rotation applies uniformly at the context limit. Ephemerality is only that
+    // `new-*` sessions never seed at start and never archive on rotation — not a
+    // different backing store. Their unique `new-<ts>-<rand>` names mean the dir is
+    // always fresh, so continueRecent starts them empty (no seed to adopt).
+    const sessionManager = SessionManager.continueRecent(
+      options.cwd,
+      resolvePath(options.sessionsDir, session.name),
+    );
 
     // If continueRecent adopted our seed file, its header id is the seeded id;
     // if it fell back to a truly fresh session it minted a different id, so the
@@ -433,7 +439,7 @@ export function createMind(options: {
     /**
      * Rotate the session in place onto a synthetic session holding the verbatim recent
      * tail (from the pinned cut), then switch the running SessionManager to it. Returns
-     * false if rotation can't proceed (inMemory session, or the file build failed) so
+     * false if rotation can't proceed (session not ready, or the file build failed) so
      * the caller can fall back to a fresh session. The setSessionFile + state.messages
      * re-sync is the load-bearing adoption step: the agent caches context in
      * state.messages, so swapping the file alone wouldn't change what the mind sees
@@ -442,7 +448,7 @@ export function createMind(options: {
     function rotateInPlace(): boolean {
       const as = session.agentSession;
       const sourcePath = as?.sessionManager.getSessionFile();
-      if (!as || !sourcePath) return false; // ephemeral inMemory / not ready
+      if (!as || !sourcePath) return false; // not ready — fall back to fresh
       const newPath = rotatePiSession({
         cwd: options.cwd,
         sessionsDir: options.sessionsDir,
@@ -485,15 +491,15 @@ export function createMind(options: {
     }
 
     /**
-     * The SDK's native compaction, used as a backstop in the two cases rotation can't
-     * cover: an ephemeral inMemory session (no transcript file to seed a tail from) and
-     * past the runaway cap (rotation can't relieve context — e.g. the system prompt
-     * alone fills most of the window). The sole remaining use of the custom instructions.
+     * The SDK's native compaction, used as the emergency backstop past the runaway cap —
+     * when rotation can't relieve context (e.g. the system prompt alone fills most of the
+     * window, so no tail fits under the threshold). The sole remaining use of the custom
+     * compaction instructions.
      */
     function runBackstopCompact() {
       manualCompactPending = true;
       compactionInProgress = true;
-      log("mind", `session "${session.name}": native compaction backstop`);
+      log("mind", `session "${session.name}": rotation cap reached — native compaction backstop`);
       Promise.resolve(session.agentSession?.compact(compactionInstructions))
         .catch((err) => log("mind", `session "${session.name}": backstop compact() failed:`, err))
         .finally(() => {
@@ -612,19 +618,13 @@ export function createMind(options: {
                 // place onto the verbatim tail, honoring the pinned cut.
                 if (compactOnNextTurnEnd) {
                   compactOnNextTurnEnd = false;
-                  // Ephemeral `new-*` sessions are inMemory (no transcript file), so the
-                  // file-based rotation can't seed a tail — keep the SDK's native
-                  // compaction for them. Same backstop past the runaway cap (rotation
-                  // isn't relieving context — e.g. the system prompt fills the window).
-                  const canRotate = !!session.agentSession?.sessionManager.getSessionFile();
-                  if (
-                    !canRotate ||
-                    (session.consecutiveRotations ?? 0) >= MAX_CONSECUTIVE_ROTATIONS
-                  ) {
+                  if ((session.consecutiveRotations ?? 0) >= MAX_CONSECUTIVE_ROTATIONS) {
+                    // Runaway guard: rotation isn't relieving context (system prompt too
+                    // large to fit the tail under the threshold) — defer to the SDK.
                     runBackstopCompact();
                   } else if (!rotateInPlace()) {
-                    // Persistent rotation couldn't proceed — fresh session, not a
-                    // silent native compaction.
+                    // Rotation couldn't proceed — fresh session, not a silent native
+                    // compaction.
                     freshFallback();
                   }
                   return;

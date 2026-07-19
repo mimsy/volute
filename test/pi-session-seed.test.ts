@@ -738,3 +738,75 @@ describe("rotatePiSession + SessionManager adoption (real SDK)", () => {
     assert.equal(reopened.getSessionId(), sm.getSessionId());
   });
 });
+
+// --- Ephemeral new-* sessions are file-backed (so rotation applies) --------
+
+describe("ephemeral new-* sessions (file-backed, real SDK)", () => {
+  it("continueRecent on a fresh new-* dir creates a real file-backed session", () => {
+    const home = resolve(scratch(), "home");
+    mkdirSync(home, { recursive: true });
+    const piSessionsDir = resolve(scratch(), ".mind/pi-sessions");
+    // Exactly as agent.ts now creates ephemerals: continueRecent on a name-scoped dir.
+    const sm = SessionManager.continueRecent(home, resolve(piSessionsDir, "new-123-abc"));
+    // Not inMemory: it is persisted and has a concrete session file path — so the
+    // file-based rotation applies to it just like a persistent session.
+    assert.ok(sm.isPersisted());
+    assert.ok(sm.getSessionFile());
+  });
+
+  it("a persistent 'main' start never adopts an ephemeral's session file", () => {
+    const home = resolve(scratch(), "home");
+    mkdirSync(home, { recursive: true });
+    const piSessionsDir = resolve(scratch(), ".mind/pi-sessions");
+    // An ephemeral's transcript exists under its own name-scoped dir, with a
+    // matching cwd (so it's not the cwd filter that saves us — it's name scoping).
+    const ephDir = resolve(piSessionsDir, "new-123-abc");
+    mkdirSync(ephDir, { recursive: true });
+    writeFileSync(
+      resolve(ephDir, "2026-07-19T00-00-00-000Z_eph.jsonl"),
+      `${[header("eph-id", resolve(home)), userMsg("u1", null, "ephemeral turn")].join("\n")}\n`,
+    );
+    // A fresh 'main' resumes from its OWN (empty) dir, never the ephemeral's.
+    const sm = SessionManager.continueRecent(home, resolve(piSessionsDir, "main"));
+    assert.notEqual(sm.getSessionId(), "eph-id");
+    assert.doesNotMatch(JSON.stringify(sm.buildSessionContext().messages), /ephemeral turn/);
+  });
+
+  it("rotates a file-backed ephemeral onto the tail but writes no archive", () => {
+    const home = resolve(scratch(), "home");
+    mkdirSync(home, { recursive: true });
+    const piSessionsDir = resolve(scratch(), ".mind/pi-sessions");
+    const ephDir = resolve(piSessionsDir, "new-xyz");
+    mkdirSync(ephDir, { recursive: true });
+    writeFileSync(
+      resolve(ephDir, "2026-07-19T00-00-00-000Z_eph.jsonl"),
+      `${[
+        header("eph-id", resolve(home)),
+        userMsg("u1", null, "first"),
+        assistantMsg("a1", "u1", [{ type: "text", text: "hi" }]),
+        userMsg("u2", "a1", "second"),
+        assistantMsg("a2", "u2", [{ type: "text", text: "done" }]),
+      ].join("\n")}\n`,
+    );
+
+    const sm = SessionManager.continueRecent(home, ephDir);
+    const sourcePath = sm.getSessionFile();
+    assert.ok(sourcePath);
+    const newPath = rotatePiSession({
+      cwd: home,
+      sessionsDir: piSessionsDir,
+      name: "new-xyz",
+      sourcePath,
+      cut: { boundaryId: "u2", boundaryTimestamp: null },
+      seedTokens: 1,
+    });
+    assert.ok(newPath);
+    // Ephemeral rotation writes no archive (no pointer/archive for one-offs).
+    assert.equal(readdirSync(piSessionsDir).includes("archive"), false);
+    // Adoption still works: switch the live SM to the rotated tail.
+    sm.setSessionFile(newPath);
+    const text = JSON.stringify(sm.buildSessionContext().messages);
+    assert.match(text, /second/);
+    assert.doesNotMatch(text, /first/);
+  });
+});
