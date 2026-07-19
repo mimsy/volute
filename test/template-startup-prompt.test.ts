@@ -134,9 +134,11 @@ describe("loadSystemPrompt", () => {
     assert.equal(out.match(/~1k tokens/g)?.length, 2);
     assert.ok(!out.includes("${date}"));
 
-    // The shipped default renders with no leftover placeholders.
+    // The shipped default renders with no leftover placeholders except ${cutoff},
+    // which each agent fills per warning with the pinned rotation boundary.
     const rendered = renderCompactionWarning(DEFAULT_PROMPTS.compaction_warning);
-    assert.ok(!rendered.includes("${"), rendered);
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: literal placeholder under test
+    assert.ok(!rendered.replaceAll("${cutoff}", "").includes("${"), rendered);
   });
 
   it("honors memory budget overrides from home/.config/config.json (#569)", () => {
