@@ -35,6 +35,14 @@ const cmd = command({
       stage?: string;
       parent?: string;
       model?: string;
+      memory?: {
+        bytes: number;
+        estTokens: number;
+        softBudgetTokens: number;
+        hardCapTokens: number;
+        overBudget: boolean;
+        overHardCap: boolean;
+      } | null;
       templateStale?: boolean;
       channels?: Array<{ name: string; displayName?: string; status: string }>;
       variants?: Array<{ name: string; status: string }>;
@@ -49,6 +57,16 @@ const cmd = command({
     if (mind.stage) console.log(`Stage:   ${mind.stage}`);
     if (mind.parent) console.log(`Parent:  ${mind.parent}`);
     if (mind.model) console.log(`Model:   ${mind.model}`);
+    if (mind.memory) {
+      const fmt = (t: number) => (t >= 1000 ? `~${Math.round(t / 1000)}k` : `~${t}`);
+      let line = `Memory:  ${fmt(mind.memory.estTokens)} tokens (${Math.round(mind.memory.bytes / 1024)}KB), always loaded`;
+      if (mind.memory.overHardCap) {
+        line += ` — exceeds the ${fmt(mind.memory.hardCapTokens)} token load cap; only the head is loaded`;
+      } else if (mind.memory.overBudget) {
+        line += ` — over the ${fmt(mind.memory.softBudgetTokens)} token budget; consider consolidating`;
+      }
+      console.log(line);
+    }
     if (mind.templateStale) {
       console.log(`Template: outdated — run 'volute mind upgrade ${mind.name}'`);
     }

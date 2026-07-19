@@ -38,7 +38,7 @@ import {
 } from "./lib/session-seed.js";
 import { createSessionStore } from "./lib/session-store.js";
 import type { EffortLevel, ThinkingConfig } from "./lib/startup.js";
-import { loadPrompts, type SubagentConfig } from "./lib/startup.js";
+import { loadPrompts, memorySizeLabel, type SubagentConfig } from "./lib/startup.js";
 import { consumeStream } from "./lib/stream-consumer.js";
 import type {
   HandlerMeta,
@@ -138,10 +138,14 @@ export function createMind(options: {
 
   const sessions = new Map<string, Session>();
   const prompts = loadPrompts();
-  const today = new Date().toLocaleDateString("en-CA");
-  const compactionMessage =
-    // biome-ignore lint/suspicious/noTemplateCurlyInString: literal ${date} in prompt template
-    options.compactionMessage ?? prompts.compaction_warning.replace("${date}", today);
+  // Built per warning: the date rolls over and MEMORY.md changes as the mind edits it.
+  const compactionMessage = () =>
+    options.compactionMessage ??
+    prompts.compaction_warning
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: literal ${date} in prompt template
+      .replace("${date}", new Date().toLocaleDateString("en-CA"))
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: literal ${memory_size} in prompt template
+      .replace("${memory_size}", memorySizeLabel());
   const maxContextTokens = options.maxContextTokens;
   const seedTokens = options.seedTokens ?? DEFAULT_SEED_TOKENS;
 
@@ -431,7 +435,7 @@ export function createMind(options: {
           }
         }
         // biome-ignore lint/suspicious/noTemplateCurlyInString: literal ${cutoff} prompt placeholder
-        const warning = compactionMessage.replaceAll("${cutoff}", cutoffLabel);
+        const warning = compactionMessage().replaceAll("${cutoff}", cutoffLabel);
         session.rotationPhase =
           session.currentMessageId !== undefined ? "warned" : "rotateAfterTurn";
         session.messageIds.push(undefined);

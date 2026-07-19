@@ -50,6 +50,12 @@ export type MindConfig = {
    * tokens) is copied into it so the conversation continues. Default 30000; 0 disables.
    */
   continuity?: { seedTokens?: number };
+  /**
+   * MEMORY.md token budgets (estimated as chars/4). Over `softBudgetTokens` a
+   * consolidation nudge is added to the system prompt; over `hardCapTokens` only
+   * the head of the file is loaded (the file on disk is never modified).
+   */
+  memory?: { softBudgetTokens?: number; hardCapTokens?: number };
   subagents?: Record<string, SubagentConfig>;
   // Template-specific config fields (claude, pi, codex)
   thinking?: ThinkingConfig;
@@ -77,7 +83,61 @@ function loadFile(path: string): string {
   }
 }
 
-export function loadSystemPrompt(): string {
+/** Default MEMORY.md budgets, overridable via `memory` in home/.config/config.json. */
+export const MEMORY_SOFT_BUDGET_TOKENS = 5000;
+export const MEMORY_HARD_CAP_TOKENS = 25000;
+
+export function estimateTokens(chars: number): number {
+  return Math.round(chars / 4);
+}
+
+export function formatTokens(tokens: number): string {
+  return tokens >= 1000 ? `~${Math.round(tokens / 1000)}k tokens` : `~${tokens} tokens`;
+}
+
+/** Current MEMORY.md size as a "~Nk tokens" label, for prompt substitution. */
+export function memorySizeLabel(): string {
+  return formatTokens(estimateTokens(loadFile(resolve("home/MEMORY.md")).length));
+}
+
+function headAtLineBoundary(text: string, maxChars: number): string {
+  const cut = text.lastIndexOf("\n", maxChars);
+  return cut > 0 ? text.slice(0, cut) : text.slice(0, maxChars);
+}
+
+/**
+ * The Memory section of the system prompt: header carries the token cost so the
+ * mind sees what its memory weighs on every request; over the soft budget a
+ * consolidation nudge is added; over the hard cap only the head is loaded (the
+ * file on disk is never touched) with a loud notice explaining how to recover.
+ */
+export function buildMemorySection(memory: string, config: MindConfig): string {
+  const softBudget = config.memory?.softBudgetTokens ?? MEMORY_SOFT_BUDGET_TOKENS;
+  const hardCap = config.memory?.hardCapTokens ?? MEMORY_HARD_CAP_TOKENS;
+  const totalTokens = estimateTokens(memory.length);
+
+  let body = memory;
+  let notice = "";
+  if (totalTokens > hardCap) {
+    body = headAtLineBoundary(memory, hardCap * 4);
+    notice =
+      `\n\n⚠ MEMORY.md is ${formatTokens(totalTokens)} — only the first ` +
+      `${formatTokens(hardCap)} are loaded. The full file is untouched on disk. ` +
+      `Consolidate it to restore your full memory.`;
+  }
+
+  const loadedTokens = estimateTokens(body.length);
+  let header = `## Memory (${formatTokens(loadedTokens)}, always loaded)`;
+  if (!notice && loadedTokens > softBudget) {
+    header +=
+      `\n\nYour memory exceeds the recommended budget of ${formatTokens(softBudget)} — ` +
+      `consider consolidating; see the memory skill.`;
+  }
+
+  return `${header}\n\n${body}${notice}`;
+}
+
+export function loadSystemPrompt(config: MindConfig = loadConfig()): string {
   const soulPath = resolve("home/SOUL.md");
   const spiritPath = resolve("home/SPIRIT.md");
   const memoryPath = resolve("home/MEMORY.md");
@@ -98,7 +158,7 @@ export function loadSystemPrompt(): string {
   const promptParts = [soul];
   if (spirit) promptParts.push(spirit);
   if (volute) promptParts.push(volute);
-  if (memory) promptParts.push(`## Memory\n\n${memory}`);
+  if (memory) promptParts.push(buildMemorySection(memory, config));
   return promptParts.join("\n\n---\n\n");
 }
 
@@ -172,8 +232,8 @@ export type MindPrompts = {
  */
 export const DEFAULT_PROMPTS: MindPrompts = {
   compaction_warning:
-    // biome-ignore lint/suspicious/noTemplateCurlyInString: literal ${cutoff}/${date} prompt template
-    "Context limit approaching — this session will rotate shortly. Turns before ${cutoff} will be collapsed to their summaries; turns from ${cutoff} on are kept verbatim in the continued session, so there's no need to re-describe them.\n\nFor the turns that will collapse, make sure they read the way you'd want: `volute mind history --provisional` shows the provisional summaries, and `volute mind history --write --turn <id> --text \"...\"` replaces any with your own account. Also save anything important to your files (MEMORY.md, memory/journal/${date}.md). Provisional summaries are kept if you write nothing — nothing blocks on this.",
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: literal ${cutoff}/${date}/${memory_size} prompt template
+    "Context limit approaching — this session will rotate shortly. Turns before ${cutoff} will be collapsed to their summaries; turns from ${cutoff} on are kept verbatim in the continued session, so there's no need to re-describe them.\n\nFor the turns that will collapse, make sure they read the way you'd want: `volute mind history --provisional` shows the provisional summaries, and `volute mind history --write --turn <id> --text \"...\"` replaces any with your own account. Also save anything important to your files (memory/journal/${date}.md, or a memory/ file). Provisional summaries are kept if you write nothing — nothing blocks on this.\n\nYour MEMORY.md is currently ${memory_size}. It is loaded into every request, so consolidate rather than append — distill detail into memory/ files and keep MEMORY.md lean (see the memory skill).",
   compaction_instructions:
     "Preserve your sense of who you are, what matters to you, what happened in this conversation, and the threads of thought and connection you'd want to return to.",
   // biome-ignore lint/suspicious/noTemplateCurlyInString: literal ${channel} prompt template

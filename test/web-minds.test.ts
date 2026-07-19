@@ -560,6 +560,58 @@ describe("web minds routes", () => {
     }
   });
 
+  it("GET /:name — reports MEMORY.md size with budget flags (#569)", async () => {
+    const { mkdirSync, rmSync, writeFileSync } = await import("node:fs");
+    const { resolve } = await import("node:path");
+    const { addMind, mindDir, removeMind } = await import(
+      "../packages/daemon/src/lib/mind/registry.js"
+    );
+    const { initMindManager, tryGetMindManager } = await import(
+      "../packages/daemon/src/lib/daemon/mind-manager.js"
+    );
+    if (!tryGetMindManager()) initMindManager();
+
+    const name = `web-memsize-${Date.now()}`;
+    const dir = resolve(mindDir(name));
+    mkdirSync(resolve(dir, "home"), { recursive: true });
+    // 40,000 bytes ≈ 10k tokens: over the 5k soft budget, under the 25k hard cap.
+    writeFileSync(resolve(dir, "home/MEMORY.md"), "m".repeat(40_000));
+    await addMind(name, 4195, undefined, "claude");
+
+    try {
+      const cookie = await setupAuth();
+      const { default: app } = await import("../packages/daemon/src/web/app.js");
+      const res = await app.request(`/api/minds/${name}`, {
+        headers: { Cookie: `volute_session=${cookie}` },
+      });
+      assert.equal(res.status, 200);
+      const body = (await res.json()) as {
+        memory?: { estTokens: number; overBudget: boolean; overHardCap: boolean } | null;
+      };
+      assert.ok(body.memory, "memory status present");
+      assert.equal(body.memory.estTokens, 10_000);
+      assert.equal(body.memory.overBudget, true);
+      assert.equal(body.memory.overHardCap, false);
+
+      // Rides the public projection too — the mind itself (a non-privileged
+      // caller) is exactly who this visibility is for.
+      const user2 = await createUser("regular-user2", "pass");
+      await approveUser(user2.id);
+      const cookie2 = await createSession(user2.id);
+      const res2 = await app.request(`/api/minds/${name}`, {
+        headers: { Cookie: `volute_session=${cookie2}` },
+      });
+      assert.equal(res2.status, 200);
+      const body2 = (await res2.json()) as { memory?: { overBudget: boolean } | null };
+      assert.ok(body2.memory, "non-privileged callers see memory status");
+      assert.equal(body2.memory.overBudget, true);
+      await deleteSession(cookie2);
+    } finally {
+      await removeMind(name);
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("GET /:name — omits the sprout checklist for sprouted minds (#664)", async () => {
     const { mkdirSync, rmSync } = await import("node:fs");
     const { resolve } = await import("node:path");
@@ -613,6 +665,7 @@ describe("toPublicMind", () => {
         detail: "Your last turn failed with an error: raw-private-text",
         at: "2026-07-10 12:00:00",
       },
+      memory: null,
       channels: [],
       displayName: undefined,
       description: undefined,

@@ -71,6 +71,7 @@ import {
   isIsolationEnabled,
 } from "../../lib/mind/isolation.js";
 import { commitSrcChanges, rollbackSrcChanges } from "../../lib/mind/last-known-good.js";
+import { getMemoryStatus } from "../../lib/mind/memory-size.js";
 import { npmInstallAsMind, npmInstallNeeded } from "../../lib/mind/npm-install.js";
 import {
   addMind,
@@ -228,10 +229,15 @@ async function getMindStatus(
   const seedChecklist =
     seed?.stage === "seed" ? evaluateSeedChecklist(seed.dir ?? mindDir(name)) : undefined;
 
+  // MEMORY.md size — read from disk so it's accurate for stopped minds and minds
+  // on stale templates that don't yet report their own memory cost (#569).
+  const memory = getMemoryStatus(seed?.dir ?? mindDir(name));
+
   return {
     status,
     wakeAt,
     lastError,
+    memory,
     channels,
     displayName: config?.profile?.displayName,
     description: config?.profile?.description,
@@ -273,6 +279,7 @@ export function toPublicMind(
     lastError: status.lastError
       ? { kind: status.lastError.kind, reason: status.lastError.reason, at: status.lastError.at }
       : null,
+    memory: status.memory,
     channels: status.channels,
     displayName: status.displayName,
     description: status.description,
