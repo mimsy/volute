@@ -34,6 +34,7 @@ import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { findCodexSessionFile } from "./context-breakdown.js";
 import { log } from "./logger.js";
+import { parseArchiveTimestamp } from "./seed-note.js";
 
 /** Default seed budget (estimated tokens) when config omits continuity.seedTokens. */
 export const DEFAULT_SEED_TOKENS = 30000;
@@ -54,12 +55,16 @@ type RolloutLine = Record<string, unknown> & {
   };
 };
 
+/** A resolved archive pointer: the previous thread id and when it was archived. */
+export type ArchivedThread = { threadId: string; archivedAt: number | null };
+
 /**
- * Newest archived codex thread id for `<name>` under `<sessionsDir>/archive/`,
- * or null if there's no matching pointer (or it can't be read). Codex pointer
- * files hold `{ threadId }` (see the codex template's session-store).
+ * Newest archived codex thread for `<name>` under `<sessionsDir>/archive/`, or
+ * null if there's no matching pointer (or it can't be read). Codex pointer files
+ * hold `{ threadId }` (see the codex template's session-store). `archivedAt` is
+ * the archive timestamp in epoch millis (null if unparseable).
  */
-export function findLatestArchivedThreadId(sessionsDir: string, name: string): string | null {
+export function findLatestArchivedThread(sessionsDir: string, name: string): ArchivedThread | null {
   const archiveDir = resolve(sessionsDir, "archive");
   let files: string[];
   try {
@@ -85,7 +90,8 @@ export function findLatestArchivedThreadId(sessionsDir: string, name: string): s
 
   try {
     const data = JSON.parse(readFileSync(resolve(archiveDir, bestFile), "utf-8"));
-    return typeof data.threadId === "string" ? data.threadId : null;
+    if (typeof data.threadId !== "string") return null;
+    return { threadId: data.threadId, archivedAt: parseArchiveTimestamp(bestTs) };
   } catch {
     return null;
   }
@@ -235,19 +241,22 @@ function pad2(n: number): string {
   return String(n).padStart(2, "0");
 }
 
+/** Result of a successful codex seed: the new thread id and when the source was archived. */
+export type SeededThreadOutcome = { threadId: string; archivedAt: number | null };
+
 /**
  * Seed a fresh persistent codex session from the mind's previous archived
  * rollout. Writes the synthetic rollout under `.mind/codex/sessions/YYYY/MM/DD/`
- * (matching the real Codex layout) and returns the new thread id, or null if
- * there's nothing to seed. Never throws — any failure returns null so session
- * start is never blocked.
+ * (matching the real Codex layout) and returns the new thread id plus the
+ * archived-at time (for the gap note), or null if there's nothing to seed. Never
+ * throws — any failure returns null so session start is never blocked.
  */
 export function seedCodexSession(opts: {
   mindDir: string;
   name: string;
   seedTokens: number;
   now?: Date;
-}): string | null {
+}): SeededThreadOutcome | null {
   const { mindDir, name, seedTokens } = opts;
   const now = opts.now ?? new Date();
   // Ephemeral `new-*` sessions are never persisted or archived, so they never
@@ -257,8 +266,9 @@ export function seedCodexSession(opts: {
 
   try {
     const sessionsDir = resolve(mindDir, ".mind", "codex-sessions");
-    const oldThreadId = findLatestArchivedThreadId(sessionsDir, name);
-    if (!oldThreadId) return null;
+    const archived = findLatestArchivedThread(sessionsDir, name);
+    if (!archived) return null;
+    const oldThreadId = archived.threadId;
 
     const sourcePath = findCodexSessionFile(oldThreadId, mindDir);
     if (!sourcePath) return null; // rollout didn't survive archival — start clean
@@ -288,7 +298,7 @@ export function seedCodexSession(opts: {
       "mind",
       `session "${name}": seeded ${seeded.lines.length} line(s) from ${oldThreadId} → ${threadId}`,
     );
-    return threadId;
+    return { threadId, archivedAt: archived.archivedAt };
   } catch (err) {
     log("mind", `session "${name}": codex seeding failed, starting fresh:`, err);
     return null;

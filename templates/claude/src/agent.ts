@@ -22,6 +22,7 @@ import { createPreCompactHook } from "./lib/hooks/pre-compact.js";
 import { createReplyInstructionsHook } from "./lib/hooks/reply-instructions.js";
 import { log } from "./lib/logger.js";
 import { createMessageChannel } from "./lib/message-channel.js";
+import { buildSeededNote } from "./lib/seed-note.js";
 import {
   isSessionReapable,
   reapSessionQuery,
@@ -59,18 +60,13 @@ type Session = {
   lastActivityAt: number;
   /**
    * True when this session was seeded from the previous session's transcript.
-   * Consumed once, on the first prompt, to inject the honest-boundary note.
+   * Injects the honest-boundary note on each prompt until a turn resolves (see
+   * the pre-prompt hook and onTurnEnd), so an interrupted first turn re-offers it.
    */
   seeded: boolean;
+  /** When the seeded-from session was archived (epoch ms), for the gap note; null if unknown. */
+  seededArchivedAt: number | null;
 };
-
-/**
- * Injected on the first prompt of a seeded session so the mind knows the
- * conversation above was restored from its previous (archived) session rather
- * than lived through continuously in this one.
- */
-const SEEDED_SESSION_NOTE =
-  "Note: this session continues from your previous session's transcript (restored after archival). The conversation above happened before the break; a fresh session begins here.";
 
 export function createMind(options: {
   systemPrompt: string;
@@ -260,13 +256,32 @@ export function createMind(options: {
         // Only UserPromptSubmit hooks can inject additionalContext into the conversation
         if (event !== "pre-prompt") return {};
         let additionalContext = result.additionalContext;
-        // On the first prompt of a seeded session, prepend the honest-boundary
-        // note (consumed once), even if the pre-prompt hooks produced nothing.
+        // On a seeded session, prepend the honest-boundary note. Deliberately NOT
+        // cleared here: this hook only hands the note to the SDK at *dispatch*, and
+        // the SDK cancels UserPromptSubmit hooks when an interrupt arrives (a
+        // `hook_cancelled` transcript entry). That's most likely on the seeded first
+        // turn post-wake, when queued inbound messages flood in — exactly when we'd
+        // lose the note. Clearing on a mere injection attempt could drop it forever
+        // and silently. So the flag is cleared only when a turn actually resolves
+        // (onTurnEnd); an interrupted turn re-offers the note next prompt. Worst case
+        // it fires twice (cosmetic) instead of zero times (unrecoverable, invisible).
         if (session.seeded) {
-          session.seeded = false;
-          additionalContext = additionalContext
-            ? `${SEEDED_SESSION_NOTE}\n\n${additionalContext}`
-            : SEEDED_SESSION_NOTE;
+          const note = buildSeededNote(session.seededArchivedAt);
+          additionalContext = additionalContext ? `${note}\n\n${additionalContext}` : note;
+          // Also surface the note as its own context event (matching codex/pi) so it
+          // isn't delivered only in the same low-salience container as routine
+          // per-prompt hooks. Once per injection attempt; a duplicate on re-offer is fine.
+          const channel = session.currentMessageId
+            ? session.messageChannels.get(session.currentMessageId)?.channel
+            : undefined;
+          daemonEmit({
+            type: "context",
+            content: note,
+            metadata: { source: "seeded-session" },
+            session: session.name,
+            channel,
+            messageId: session.currentMessageId,
+          }).catch((err) => log("mind", "seeded-session context emit failed:", err));
         }
         if (!additionalContext) return {};
         return {
@@ -367,6 +382,11 @@ export function createMind(options: {
           // in-flight set so a later compaction abort won't re-feed it.
           session.channel.ack();
           session.lastActivityAt = Date.now();
+          // A turn resolved — the seeded note's injection had its chance to land
+          // (the pre-prompt hook ran and wasn't cancelled by an interrupt), so stop
+          // re-offering it. This is the honest place to clear: a completed turn is
+          // the closest-to-arrival signal available without reading the transcript back.
+          session.seeded = false;
           await autoCommit.flushFileChanges();
           const wasCompacting = compactionTriggered.get(session.name);
           compactionTriggered.set(session.name, false);
@@ -561,6 +581,7 @@ export function createMind(options: {
       contextTokens: 0,
       lastActivityAt: Date.now(),
       seeded: false,
+      seededArchivedAt: null,
     };
     sessions.set(name, session);
 
@@ -579,17 +600,21 @@ export function createMind(options: {
       // Fresh persistent session — seed it from the previous session's archived
       // transcript so the mind experiences the conversation continuing rather
       // than waking into an empty context. Ephemeral `new-*` sessions never seed.
-      const seededId = seedSession({
+      const seeded = seedSession({
         cwd: options.cwd,
         sessionsDir: options.sessionsDir,
         name,
         seedTokens: options.seedTokens ?? DEFAULT_SEED_TOKENS,
       });
-      if (seededId) {
-        sessionStore.save(name, seededId);
-        savedSessionId = seededId;
+      if (seeded) {
+        sessionStore.save(name, seeded.sessionId);
+        savedSessionId = seeded.sessionId;
         session.seeded = true;
-        log("mind", `session "${name}": seeded from previous transcript, resuming ${seededId}`);
+        session.seededArchivedAt = seeded.archivedAt;
+        log(
+          "mind",
+          `session "${name}": seeded from previous transcript, resuming ${seeded.sessionId}`,
+        );
       } else {
         log("mind", `session "${name}": starting fresh`);
       }

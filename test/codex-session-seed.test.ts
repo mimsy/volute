@@ -12,7 +12,7 @@ import { resolve } from "node:path";
 import { describe, it } from "node:test";
 import {
   buildSeededRollout,
-  findLatestArchivedThreadId,
+  findLatestArchivedThread,
   generateThreadId,
   seedCodexSession,
 } from "../templates/_base/src/lib/codex-session-seed.js";
@@ -328,16 +328,16 @@ describe("generateThreadId", () => {
   });
 });
 
-describe("findLatestArchivedThreadId", () => {
+describe("findLatestArchivedThread", () => {
   function scratch(): string {
     return mkdtempSync(resolve(tmpdir(), "codex-seed-archive-"));
   }
 
   it("returns null when the archive dir is missing", () => {
-    assert.equal(findLatestArchivedThreadId(scratch(), "main"), null);
+    assert.equal(findLatestArchivedThread(scratch(), "main"), null);
   });
 
-  it("returns the newest pointer's threadId by timestamp suffix", () => {
+  it("returns the newest pointer's threadId and archived-at by timestamp suffix", () => {
     const dir = scratch();
     const archive = resolve(dir, "archive");
     mkdirSync(archive, { recursive: true });
@@ -353,7 +353,9 @@ describe("findLatestArchivedThreadId", () => {
       resolve(archive, "main-2026-07-17T23-59.json"),
       JSON.stringify({ threadId: "older" }),
     );
-    assert.equal(findLatestArchivedThreadId(dir, "main"), "new");
+    const found = findLatestArchivedThread(dir, "main");
+    assert.equal(found?.threadId, "new");
+    assert.equal(found?.archivedAt, Date.UTC(2026, 6, 18, 14, 30));
   });
 
   it("does not confuse `main` with a differently-named session", () => {
@@ -368,8 +370,8 @@ describe("findLatestArchivedThreadId", () => {
       resolve(archive, "@suzy-2026-07-18T14-30.json"),
       JSON.stringify({ threadId: "s" }),
     );
-    assert.equal(findLatestArchivedThreadId(dir, "main"), "m");
-    assert.equal(findLatestArchivedThreadId(dir, "@suzy"), "s");
+    assert.equal(findLatestArchivedThread(dir, "main")?.threadId, "m");
+    assert.equal(findLatestArchivedThread(dir, "@suzy")?.threadId, "s");
   });
 
   it("returns null when the pointer is invalid JSON or lacks threadId", () => {
@@ -377,7 +379,7 @@ describe("findLatestArchivedThreadId", () => {
     const archive = resolve(dir, "archive");
     mkdirSync(archive, { recursive: true });
     writeFileSync(resolve(archive, "main-2026-07-18T10-00.json"), "{bad");
-    assert.equal(findLatestArchivedThreadId(dir, "main"), null);
+    assert.equal(findLatestArchivedThread(dir, "main"), null);
 
     const dir2 = scratch();
     const archive2 = resolve(dir2, "archive");
@@ -386,7 +388,7 @@ describe("findLatestArchivedThreadId", () => {
       resolve(archive2, "main-2026-07-18T10-00.json"),
       JSON.stringify({ sessionId: "x" }),
     );
-    assert.equal(findLatestArchivedThreadId(dir2, "main"), null);
+    assert.equal(findLatestArchivedThread(dir2, "main"), null);
   });
 });
 
@@ -415,11 +417,13 @@ describe("seedCodexSession", () => {
 
   const rollout = [sessionMeta(OLD), message("user", "hello"), message("assistant", "hi there")];
 
-  it("seeds a fresh persistent session: writes a rollout under today's date and returns its id", () => {
+  it("seeds a fresh persistent session: writes a rollout under today's date and returns its id + archived-at", () => {
     const mindDir = setup(OLD, rollout);
-    const newId = seedCodexSession({ mindDir, name: "main", seedTokens: 30000, now: NOW });
-    assert.ok(newId);
-    assert.notEqual(newId, OLD);
+    const seeded = seedCodexSession({ mindDir, name: "main", seedTokens: 30000, now: NOW });
+    assert.ok(seeded);
+    assert.notEqual(seeded.threadId, OLD);
+    // Archived-at parsed from the pointer filename (`main-2026-07-18T10-00.json`).
+    assert.equal(seeded.archivedAt, Date.UTC(2026, 6, 18, 10, 0));
     // Written under .mind/codex/sessions/2026/07/18/ (NOW's local date) with the
     // rollout-<ts>-<threadId>.jsonl name Codex uses.
     const y = String(NOW.getFullYear());
@@ -430,10 +434,10 @@ describe("seedCodexSession", () => {
     assert.equal(files.length, 1);
     assert.match(
       files[0],
-      new RegExp(`^rollout-\\d{4}-\\d{2}-\\d{2}T\\d{2}-\\d{2}-\\d{2}-${newId}\\.jsonl$`),
+      new RegExp(`^rollout-\\d{4}-\\d{2}-\\d{2}T\\d{2}-\\d{2}-\\d{2}-${seeded.threadId}\\.jsonl$`),
     );
     const objs = parseLines(readFileSync(resolve(dayDir, files[0]), "utf-8").trim().split("\n"));
-    assert.equal(objs[0].payload.session_id, newId);
+    assert.equal(objs[0].payload.session_id, seeded.threadId);
     assert.equal(objs[1].payload.content[0].text, "hello");
   });
 
@@ -485,13 +489,13 @@ describe("seedCodexSession", () => {
 
     const prevHome = process.env.HOME;
     process.env.HOME = home;
-    let newId: string | null;
+    let seeded: ReturnType<typeof seedCodexSession>;
     try {
-      newId = seedCodexSession({ mindDir, name: "main", seedTokens: 30000, now: NOW });
+      seeded = seedCodexSession({ mindDir, name: "main", seedTokens: 30000, now: NOW });
     } finally {
       process.env.HOME = prevHome;
     }
-    assert.ok(newId);
+    assert.ok(seeded);
     // Seed lands under ~/.codex/sessions/<today>, where Codex resume will find it —
     // and NOT under mindDir/.mind/codex/sessions.
     const y = String(NOW.getFullYear());

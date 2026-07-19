@@ -17,6 +17,7 @@ import {
 import { daemonEmit, daemonRestart, type EventType } from "./lib/daemon-client.js";
 import { runHooks } from "./lib/hook-loader.js";
 import { log, warn } from "./lib/logger.js";
+import { buildSeededNote } from "./lib/seed-note.js";
 import { createSessionStore } from "./lib/session-store.js";
 import { getStartupContext, loadPrompts, loadSystemPrompt } from "./lib/startup.js";
 import { filterEvent, loadTransparencyPreset } from "./lib/transparency.js";
@@ -57,15 +58,9 @@ type CodexSession = {
    * Consumed once, on the first turn, to inject the honest-boundary note.
    */
   seeded: boolean;
+  /** When the seeded-from session was archived (epoch ms), for the gap note; null if unknown. */
+  seededArchivedAt: number | null;
 };
-
-/**
- * Injected on the first turn of a seeded session so the mind knows the
- * conversation above was restored from its previous (archived) session rather
- * than lived through continuously in this one.
- */
-const SEEDED_SESSION_NOTE =
-  "Note: this session continues from your previous session's transcript (restored after archival). The conversation above happened before the break; a fresh session begins here.";
 
 // Loaded once at startup
 const preset = loadTransparencyPreset();
@@ -167,6 +162,7 @@ export function createMind(options: {
       eventNoteFired: false,
       cumulativeInputTokens: 0,
       seeded: false,
+      seededArchivedAt: null,
     };
     sessions.set(name, session);
 
@@ -185,14 +181,15 @@ export function createMind(options: {
         // Fresh persistent session — seed it from the previous session's archived
         // rollout so the mind experiences the conversation continuing rather than
         // waking into an empty context.
-        const seededId = seedCodexSession({
+        const seeded = seedCodexSession({
           mindDir: options.mindDir,
           name: session.name,
           seedTokens: options.seedTokens ?? DEFAULT_SEED_TOKENS,
         });
-        if (seededId) {
-          resumeThreadId = seededId;
+        if (seeded) {
+          resumeThreadId = seeded.threadId;
           session.seeded = true;
+          session.seededArchivedAt = seeded.archivedAt;
           log("mind", `session "${session.name}": seeded from previous transcript`);
         }
       }
@@ -277,15 +274,17 @@ export function createMind(options: {
     }
 
     // On the first turn of a seeded session, prepend the honest-boundary note
-    // (consumed once) so the mind knows the conversation above was restored.
+    // (consumed once) so the mind knows the conversation above was restored. The
+    // note carries a coarse gap-duration clause when the archive time is known.
     if (session.seeded) {
       session.seeded = false;
+      const note = buildSeededNote(session.seededArchivedAt);
       emit(session, {
         type: "context",
-        content: SEEDED_SESSION_NOTE,
+        content: note,
         metadata: { source: "seeded-session" },
       });
-      text = `${SEEDED_SESSION_NOTE}\n\n${text}`;
+      text = `${note}\n\n${text}`;
     }
 
     // Run pre-prompt hooks

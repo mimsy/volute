@@ -29,6 +29,7 @@ import { log } from "./lib/logger.js";
 import { DEFAULT_SEED_TOKENS, seedPiSession } from "./lib/pi-session-seed.js";
 import { createReplyInstructionsExtension } from "./lib/reply-instructions-extension.js";
 import { resolveModel } from "./lib/resolve-model.js";
+import { buildSeededNote } from "./lib/seed-note.js";
 import { getStartupContext, loadPrompts, type SubagentConfig } from "./lib/startup.js";
 import { createSubagentExtension, type SubagentDefinition } from "./lib/subagents.js";
 import type {
@@ -58,15 +59,9 @@ type PiSession = {
    * Consumed once, on the first turn, to inject the honest-boundary note.
    */
   seeded?: boolean;
+  /** When the seeded-from session was archived (epoch ms), for the gap note; null if unknown. */
+  seededArchivedAt?: number | null;
 };
-
-/**
- * Injected on the first turn of a seeded session so the mind knows the
- * conversation above was restored from its previous (archived) session rather
- * than lived through continuously in this one.
- */
-const SEEDED_SESSION_NOTE =
-  "Note: this session continues from your previous session's transcript (restored after archival). The conversation above happened before the break; a fresh session begins here.";
 
 export function createMind(options: {
   systemPrompt: string;
@@ -206,12 +201,13 @@ export function createMind(options: {
           // for a continuously-lived conversation.
           if (session.seeded) {
             session.seeded = false;
+            const note = buildSeededNote(session.seededArchivedAt ?? null);
             emit(session, {
               type: "context",
-              content: SEEDED_SESSION_NOTE,
+              content: note,
               metadata: { source: "seeded-session" },
             });
-            parts.push(SEEDED_SESSION_NOTE);
+            parts.push(note);
           }
           const startupContext = await startupContextPromise;
           if (startupContext) {
@@ -308,7 +304,7 @@ export function createMind(options: {
     // waking into an empty context. seedPiSession no-ops when a live session
     // already exists (continueRecent will resume that instead). Ephemeral
     // `new-*` sessions are never persisted or archived, so they never seed.
-    const seededId = isEphemeral
+    const seeded = isEphemeral
       ? null
       : seedPiSession({
           cwd: options.cwd,
@@ -324,8 +320,9 @@ export function createMind(options: {
     // If continueRecent adopted our seed file, its header id is the seeded id;
     // if it fell back to a truly fresh session it minted a different id, so the
     // honest-boundary note never lies about a conversation that didn't continue.
-    if (seededId && sessionManager.getSessionId() === seededId) {
+    if (seeded && sessionManager.getSessionId() === seeded.sessionId) {
       session.seeded = true;
+      session.seededArchivedAt = seeded.archivedAt;
       log("mind", `session "${session.name}": seeded from previous transcript`);
     }
 

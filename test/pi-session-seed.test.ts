@@ -6,7 +6,7 @@ import { describe, it } from "node:test";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import {
   buildSeededPiTranscript,
-  findLatestArchivedPiSessionDir,
+  findLatestArchivedPiSession,
   hasLivePiSession,
   seedPiSession,
 } from "../templates/_base/src/lib/pi-session-seed.js";
@@ -269,19 +269,20 @@ describe("buildSeededPiTranscript — degenerate inputs", () => {
 
 // --- Archive directory lookup + name disambiguation ------------------------
 
-describe("findLatestArchivedPiSessionDir", () => {
+describe("findLatestArchivedPiSession", () => {
   it("returns null when there is no archive dir", () => {
     const base = scratch();
-    assert.equal(findLatestArchivedPiSessionDir(resolve(base, ".mind/pi-sessions"), "main"), null);
+    assert.equal(findLatestArchivedPiSession(resolve(base, ".mind/pi-sessions"), "main"), null);
   });
 
-  it("picks the newest archived dir for the exact session name", () => {
+  it("picks the newest archived dir for the exact session name, with archived-at", () => {
     const piSessionsDir = resolve(scratch(), ".mind/pi-sessions");
     makeArchive(piSessionsDir, "main", "2026-07-18T00-00", [header(), userMsg("u1", null, "a")]);
     makeArchive(piSessionsDir, "main", "2026-07-18T09-30", [header(), userMsg("u1", null, "b")]);
-    const found = findLatestArchivedPiSessionDir(piSessionsDir, "main");
+    const found = findLatestArchivedPiSession(piSessionsDir, "main");
     assert.ok(found);
-    assert.match(found, /main-2026-07-18T09-30$/);
+    assert.match(found.dir, /main-2026-07-18T09-30$/);
+    assert.equal(found.archivedAt, Date.UTC(2026, 6, 18, 9, 30));
   });
 
   it("disambiguates `main` from `main-thread`", () => {
@@ -291,18 +292,18 @@ describe("findLatestArchivedPiSessionDir", () => {
       header(),
       userMsg("u1", null, "b"),
     ]);
-    const main = findLatestArchivedPiSessionDir(piSessionsDir, "main");
+    const main = findLatestArchivedPiSession(piSessionsDir, "main");
     assert.ok(main);
-    assert.match(main, /\/main-2026-07-18T00-00$/);
-    const thread = findLatestArchivedPiSessionDir(piSessionsDir, "main-thread");
+    assert.match(main.dir, /\/main-2026-07-18T00-00$/);
+    const thread = findLatestArchivedPiSession(piSessionsDir, "main-thread");
     assert.ok(thread);
-    assert.match(thread, /main-thread-2026-07-18T09-30$/);
+    assert.match(thread.dir, /main-thread-2026-07-18T09-30$/);
   });
 
   it("ignores dirs whose suffix is not a valid timestamp", () => {
     const piSessionsDir = resolve(scratch(), ".mind/pi-sessions");
     makeArchive(piSessionsDir, "main", "not-a-timestamp", [header(), userMsg("u1", null, "a")]);
-    assert.equal(findLatestArchivedPiSessionDir(piSessionsDir, "main"), null);
+    assert.equal(findLatestArchivedPiSession(piSessionsDir, "main"), null);
   });
 });
 
@@ -331,20 +332,21 @@ describe("seedPiSession", () => {
     assistantMsg("a2", "u2", [{ type: "text", text: "done" }]),
   ];
 
-  it("writes a seed file into a fresh live dir and returns the new session id", () => {
+  it("writes a seed file into a fresh live dir and returns the new session id + archived-at", () => {
     const home = resolve(scratch(), "home");
     const piSessionsDir = resolve(scratch(), ".mind/pi-sessions");
     makeArchive(piSessionsDir, "main", "2026-07-18T09-30", transcript());
 
-    const id = seedPiSession({ cwd: home, piSessionsDir, name: "main", seedTokens: 1_000_000 });
-    assert.ok(id);
+    const seeded = seedPiSession({ cwd: home, piSessionsDir, name: "main", seedTokens: 1_000_000 });
+    assert.ok(seeded);
+    assert.equal(seeded.archivedAt, Date.UTC(2026, 6, 18, 9, 30));
 
     const liveDir = resolve(piSessionsDir, "main");
     const files = readdirSync(liveDir).filter((f) => f.endsWith(".jsonl"));
     assert.equal(files.length, 1);
     const written = readFileSync(resolve(liveDir, files[0]), "utf-8").trim().split("\n");
     const h = JSON.parse(written[0]);
-    assert.equal(h.id, id);
+    assert.equal(h.id, seeded.sessionId);
     assert.equal(h.cwd, resolve(home));
   });
 
@@ -417,18 +419,18 @@ describe("seedPiSession + SessionManager.continueRecent (real SDK)", () => {
       assistantMsg("a2", "u2", [{ type: "text", text: "all done" }]),
     ]);
 
-    const seededId = seedPiSession({
+    const seeded = seedPiSession({
       cwd: home,
       piSessionsDir,
       name: "main",
       seedTokens: 1_000_000,
     });
-    assert.ok(seededId);
+    assert.ok(seeded);
 
     // Exactly as agent.ts calls it: cwd = home dir, sessionDir = <base>/<name>.
     const sm = SessionManager.continueRecent(home, resolve(piSessionsDir, "main"));
     // The SDK adopted our seed: its header id is the one we generated.
-    assert.equal(sm.getSessionId(), seededId);
+    assert.equal(sm.getSessionId(), seeded.sessionId);
 
     // The prior conversation is present in the resumed context.
     const { messages } = sm.buildSessionContext();
@@ -447,13 +449,13 @@ describe("seedPiSession + SessionManager.continueRecent (real SDK)", () => {
       userMsg("u1", null, "hi"),
       assistantMsg("a1", "u1", [{ type: "text", text: "yo" }]),
     ]);
-    const seededId = seedPiSession({
+    const seeded = seedPiSession({
       cwd: home,
       piSessionsDir,
       name: "main",
       seedTokens: 1_000_000,
     });
-    assert.ok(seededId);
+    assert.ok(seeded);
 
     // Resume with a DIFFERENT cwd than the seed header records: the SDK's cwd
     // filter rejects the file and mints a fresh session instead.
@@ -461,6 +463,6 @@ describe("seedPiSession + SessionManager.continueRecent (real SDK)", () => {
       resolve(home, "elsewhere"),
       resolve(piSessionsDir, "main"),
     );
-    assert.notEqual(sm.getSessionId(), seededId);
+    assert.notEqual(sm.getSessionId(), seeded.sessionId);
   });
 });

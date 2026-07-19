@@ -21,6 +21,7 @@ import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { findClaudeSessionFile } from "./context-breakdown.js";
 import { log } from "./logger.js";
+import { parseArchiveTimestamp } from "./seed-note.js";
 
 /** Default seed budget (estimated tokens) when config omits continuity.seedTokens. */
 export const DEFAULT_SEED_TOKENS = 30000;
@@ -39,11 +40,18 @@ type JsonlLine = Record<string, unknown> & {
   message?: { role?: string; content?: unknown };
 };
 
+/** A resolved archive pointer: the previous session id and when it was archived. */
+export type ArchivedSession = { sessionId: string; archivedAt: number | null };
+
 /**
- * Newest archived session-pointer id for `<name>` under `<sessionsDir>/archive/`,
- * or null if there's no matching pointer (or it can't be read).
+ * Newest archived session pointer for `<name>` under `<sessionsDir>/archive/`,
+ * or null if there's no matching pointer (or it can't be read). `archivedAt` is
+ * the archive timestamp in epoch millis (null if unparseable).
  */
-export function findLatestArchivedSessionId(sessionsDir: string, name: string): string | null {
+export function findLatestArchivedSession(
+  sessionsDir: string,
+  name: string,
+): ArchivedSession | null {
   const archiveDir = resolve(sessionsDir, "archive");
   let files: string[];
   try {
@@ -69,7 +77,8 @@ export function findLatestArchivedSessionId(sessionsDir: string, name: string): 
 
   try {
     const data = JSON.parse(readFileSync(resolve(archiveDir, bestFile), "utf-8"));
-    return typeof data.sessionId === "string" ? data.sessionId : null;
+    if (typeof data.sessionId !== "string") return null;
+    return { sessionId: data.sessionId, archivedAt: parseArchiveTimestamp(bestTs) };
   } catch {
     return null;
   }
@@ -172,18 +181,22 @@ export function buildSeededTranscript(jsonl: string, seedTokens: number): Seeded
   return { sessionId: newId, lines };
 }
 
+/** Result of a successful seed: the new session id and when the source was archived. */
+export type SeedOutcome = { sessionId: string; archivedAt: number | null };
+
 /**
  * Seed a fresh persistent session from the mind's previous archived transcript.
  * Writes the synthetic transcript next to the source file (same project dir) and
- * returns the new SDK session id, or null if there's nothing to seed. Never
- * throws — any failure returns null so session start is never blocked.
+ * returns the new SDK session id plus the archived-at time (for the gap note), or
+ * null if there's nothing to seed. Never throws — any failure returns null so
+ * session start is never blocked.
  */
 export function seedSession(opts: {
   cwd: string;
   sessionsDir: string;
   name: string;
   seedTokens: number;
-}): string | null {
+}): SeedOutcome | null {
   const { cwd, sessionsDir, name, seedTokens } = opts;
   // Ephemeral `new-*` sessions are never persisted or archived, so they never
   // seed. The agent caller already gates on this; guard here too so the invariant
@@ -192,10 +205,10 @@ export function seedSession(opts: {
   if (seedTokens <= 0) return null; // seeding disabled
 
   try {
-    const oldSessionId = findLatestArchivedSessionId(sessionsDir, name);
-    if (!oldSessionId) return null;
+    const archived = findLatestArchivedSession(sessionsDir, name);
+    if (!archived) return null;
 
-    const sourcePath = findClaudeSessionFile(cwd, oldSessionId);
+    const sourcePath = findClaudeSessionFile(cwd, archived.sessionId);
     if (!sourcePath) return null; // transcript didn't survive archival — start clean
 
     const seeded = buildSeededTranscript(readFileSync(sourcePath, "utf-8"), seedTokens);
@@ -205,9 +218,9 @@ export function seedSession(opts: {
     writeFileSync(destPath, `${seeded.lines.join("\n")}\n`);
     log(
       "mind",
-      `session "${name}": seeded ${seeded.lines.length} line(s) from ${oldSessionId} → ${seeded.sessionId}`,
+      `session "${name}": seeded ${seeded.lines.length} line(s) from ${archived.sessionId} → ${seeded.sessionId}`,
     );
-    return seeded.sessionId;
+    return { sessionId: seeded.sessionId, archivedAt: archived.archivedAt };
   } catch (err) {
     log("mind", `session "${name}": seeding failed, starting fresh:`, err);
     return null;

@@ -34,6 +34,7 @@ import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, resolve } from "node:path";
 import { findPiSessionFile } from "./context-breakdown.js";
 import { log } from "./logger.js";
+import { parseArchiveTimestamp } from "./seed-note.js";
 import { DEFAULT_SEED_TOKENS } from "./session-seed.js";
 
 export { DEFAULT_SEED_TOKENS };
@@ -61,11 +62,18 @@ type PiEntry = Record<string, unknown> & {
   message?: { role?: string };
 };
 
+/** A resolved archive directory: its absolute path and when it was archived. */
+export type ArchivedPiSession = { dir: string; archivedAt: number | null };
+
 /**
- * Absolute path of the newest archived pi-session directory for `<name>` under
- * `<piSessionsDir>/archive/`, or null if there's no matching directory.
+ * Newest archived pi-session directory for `<name>` under `<piSessionsDir>/archive/`,
+ * or null if there's no matching directory. `dir` is the absolute path;
+ * `archivedAt` is the archive timestamp in epoch millis (null if unparseable).
  */
-export function findLatestArchivedPiSessionDir(piSessionsDir: string, name: string): string | null {
+export function findLatestArchivedPiSession(
+  piSessionsDir: string,
+  name: string,
+): ArchivedPiSession | null {
   const archiveDir = resolve(piSessionsDir, "archive");
   let entries: import("node:fs").Dirent[];
   try {
@@ -87,7 +95,8 @@ export function findLatestArchivedPiSessionDir(piSessionsDir: string, name: stri
       bestDir = entry.name;
     }
   }
-  return bestDir ? resolve(archiveDir, bestDir) : null;
+  if (!bestDir) return null;
+  return { dir: resolve(archiveDir, bestDir), archivedAt: parseArchiveTimestamp(bestTs) };
 }
 
 /** A turn boundary is a genuine incoming prompt: a `user`-role message entry. */
@@ -200,19 +209,22 @@ export function hasLivePiSession(piSessionsDir: string, name: string): boolean {
   }
 }
 
+/** Result of a successful pi seed: the new session id and when the source was archived. */
+export type SeededPiOutcome = { sessionId: string; archivedAt: number | null };
+
 /**
  * Seed a fresh persistent pi session from the mind's previous archived transcript.
  * Writes the synthetic session file into `<piSessionsDir>/<name>/` and returns the
- * new session id (the header id continueRecent will adopt), or null if there's
- * nothing to seed. Never throws — any failure returns null so session start is
- * never blocked.
+ * new session id (the header id continueRecent will adopt) plus the archived-at
+ * time (for the gap note), or null if there's nothing to seed. Never throws — any
+ * failure returns null so session start is never blocked.
  */
 export function seedPiSession(opts: {
   cwd: string;
   piSessionsDir: string;
   name: string;
   seedTokens: number;
-}): string | null {
+}): SeededPiOutcome | null {
   const { cwd, piSessionsDir, name, seedTokens } = opts;
   // Ephemeral `new-*` sessions are never persisted or archived, so they never
   // seed. The agent caller already gates on this; guard here too so the invariant
@@ -223,12 +235,12 @@ export function seedPiSession(opts: {
   if (hasLivePiSession(piSessionsDir, name)) return null;
 
   try {
-    const archiveDir = findLatestArchivedPiSessionDir(piSessionsDir, name);
-    if (!archiveDir) return null;
+    const archived = findLatestArchivedPiSession(piSessionsDir, name);
+    if (!archived) return null;
 
     // findPiSessionFile picks the latest `.jsonl` in `<base>/<subdir>`; here the
     // subdir is the archived `<name>-<ts>` directory we just located.
-    const sourcePath = findPiSessionFile(resolve(piSessionsDir, "archive"), basename(archiveDir));
+    const sourcePath = findPiSessionFile(resolve(piSessionsDir, "archive"), basename(archived.dir));
     if (!sourcePath) return null; // no transcript survived archival — start clean
 
     const seeded = buildSeededPiTranscript(readFileSync(sourcePath, "utf-8"), {
@@ -247,7 +259,7 @@ export function seedPiSession(opts: {
       "mind",
       `session "${name}": seeded ${seeded.lines.length - 1} entr(ies) from ${sourcePath} → ${seeded.sessionId}`,
     );
-    return seeded.sessionId;
+    return { sessionId: seeded.sessionId, archivedAt: archived.archivedAt };
   } catch (err) {
     log("mind", `session "${name}": seeding failed, starting fresh:`, err);
     return null;
