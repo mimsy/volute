@@ -6,24 +6,37 @@ import { describe, it } from "node:test";
 import {
   buildSeededNote,
   parseArchiveTimestamp,
+  ROTATED_SESSION_NOTE,
   SEEDED_SESSION_NOTE_BASE,
 } from "../templates/_base/src/lib/seed-note.js";
 import {
+  archivePointerTimestamp,
   buildSeededTranscript,
+  buildSeededTranscriptFromCut,
+  computeSeedCut,
   findLatestArchivedSession,
+  rotateSession,
   seedSession,
+  writeRotationArchivePointer,
 } from "../templates/_base/src/lib/session-seed.js";
+import { DEFAULT_PROMPTS } from "../templates/_base/src/lib/startup.js";
 
 // --- Transcript line builders (approximate real SDK jsonl shapes) ---
 
 const OLD = "old-session-0000";
 
-function userPrompt(uuid: string, parentUuid: string | null, text: string): string {
+function userPrompt(
+  uuid: string,
+  parentUuid: string | null,
+  text: string,
+  timestamp = "2026-07-19T12:00:00.000Z",
+): string {
   return JSON.stringify({
     type: "user",
     uuid,
     parentUuid,
     sessionId: OLD,
+    timestamp,
     message: { role: "user", content: text },
     version: "2.1.210",
   });
@@ -303,26 +316,44 @@ describe("buildSeededNote / parseArchiveTimestamp", () => {
     assert.equal(parseArchiveTimestamp("2026-07-18T14-30-00"), null); // has seconds → no match
   });
 
-  it("returns the base note unchanged when the archived-at is unknown", () => {
-    assert.equal(buildSeededNote(null), SEEDED_SESSION_NOTE_BASE);
+  it("returns the base restored note unchanged when the archived-at is unknown", () => {
+    assert.equal(
+      buildSeededNote({ cause: "restored", archivedAtMs: null }),
+      SEEDED_SESSION_NOTE_BASE,
+    );
+    // Cause defaults to restored.
+    assert.equal(buildSeededNote({}), SEEDED_SESSION_NOTE_BASE);
   });
 
   it("adds a coarse gap clause in minutes / hours / days", () => {
     const base = Date.UTC(2026, 6, 18, 12, 0);
-    assert.match(buildSeededNote(base, base + 6 * 3_600_000), /the break lasted about 6 hours\)/);
-    assert.match(buildSeededNote(base, base + 45 * 60_000), /the break lasted about 45 minutes\)/);
-    assert.match(buildSeededNote(base, base + 2 * 86_400_000), /the break lasted about 2 days\)/);
+    const note = (nowMs: number) =>
+      buildSeededNote({ cause: "restored", archivedAtMs: base, nowMs });
+    assert.match(note(base + 6 * 3_600_000), /the break lasted about 6 hours\)/);
+    assert.match(note(base + 45 * 60_000), /the break lasted about 45 minutes\)/);
+    assert.match(note(base + 2 * 86_400_000), /the break lasted about 2 days\)/);
     // Singular forms.
-    assert.match(buildSeededNote(base, base + 60 * 60_000), /about 1 hour\)/);
+    assert.match(note(base + 60 * 60_000), /about 1 hour\)/);
     // Sub-minute gap.
-    assert.match(buildSeededNote(base, base + 5_000), /the break lasted less than a minute\)/);
+    assert.match(note(base + 5_000), /the break lasted less than a minute\)/);
     // The rest of the note text is preserved.
-    assert.match(buildSeededNote(base, base + 3_600_000), /a fresh session begins here\.$/);
+    assert.match(note(base + 3_600_000), /a fresh session begins here\.$/);
   });
 
   it("falls back to the base note for a negative (clock-skew) gap", () => {
     const base = Date.UTC(2026, 6, 18, 12, 0);
-    assert.equal(buildSeededNote(base, base - 60_000), SEEDED_SESSION_NOTE_BASE);
+    assert.equal(
+      buildSeededNote({ cause: "restored", archivedAtMs: base, nowMs: base - 60_000 }),
+      SEEDED_SESSION_NOTE_BASE,
+    );
+  });
+
+  it("returns the rotation note (no gap clause) for the rotation cause", () => {
+    const note = buildSeededNote({ cause: "rotation", archivedAtMs: Date.UTC(2026, 6, 18, 12, 0) });
+    assert.equal(note, ROTATED_SESSION_NOTE);
+    assert.doesNotMatch(note, /the break lasted/);
+    assert.match(note, /rotated in place at the context limit/);
+    assert.match(note, /volute mind history/);
   });
 });
 
@@ -405,5 +436,239 @@ describe("seedSession", () => {
       JSON.stringify({ sessionId: "missing-id" }),
     );
     assert.equal(seedSession({ cwd: home, sessionsDir, name: "main", seedTokens: 30000 }), null);
+  });
+});
+
+// --- computeSeedCut: pin the boundary the mind is warned about ---
+
+describe("computeSeedCut", () => {
+  it("pins the newest-fitting boundary's uuid and timestamp for a budget", () => {
+    const lines = [
+      userPrompt("u1", null, "x".repeat(4000), "2026-07-19T10:00:00.000Z"), // ~1000 tok turn
+      assistant("a1", "u1", [{ type: "text", text: "ok" }]),
+      userPrompt("u2", "a1", "second", "2026-07-19T11:30:00.000Z"),
+      assistant("a2", "u2", [{ type: "text", text: "done" }]),
+    ];
+    // Budget fits only the final turn → cut at u2.
+    const cut = computeSeedCut(lines.join("\n"), 200);
+    assert.ok(cut);
+    assert.equal(cut.boundaryUuid, "u2");
+    assert.equal(cut.boundaryTimestamp, "2026-07-19T11:30:00.000Z");
+  });
+
+  it("takes as many whole turns as fit (pin moves earlier with a bigger budget)", () => {
+    const lines = [
+      userPrompt("u1", null, "first", "2026-07-19T10:00:00.000Z"),
+      assistant("a1", "u1", [{ type: "text", text: "ok" }]),
+      userPrompt("u2", "a1", "second", "2026-07-19T11:00:00.000Z"),
+      assistant("a2", "u2", [{ type: "text", text: "done" }]),
+    ];
+    // Large budget → both turns fit → cut at the earliest turn (u1).
+    assert.equal(computeSeedCut(lines.join("\n"), 1_000_000)?.boundaryUuid, "u1");
+  });
+
+  it("returns null when there are no genuine turns", () => {
+    assert.equal(computeSeedCut([marker("mode")].join("\n"), 30000), null);
+    assert.equal(computeSeedCut("", 30000), null);
+  });
+
+  it("is lenient about a trailing partial line (transcript still mid-write)", () => {
+    // A half-flushed final line must not defeat pinning.
+    const lines = [
+      userPrompt("u1", null, "hello", "2026-07-19T10:00:00.000Z"),
+      assistant("a1", "u1", [{ type: "text", text: "hi" }]),
+      '{"type":"assistant","uuid":"a2","parentUu', // truncated mid-write
+    ];
+    const cut = computeSeedCut(lines.join("\n"), 1_000_000);
+    assert.ok(cut);
+    assert.equal(cut.boundaryUuid, "u1");
+  });
+});
+
+// --- buildSeededTranscriptFromCut: honor the pinned boundary ---
+
+describe("buildSeededTranscriptFromCut", () => {
+  it("copies the tail from the pinned uuid to EOF, including turns added after the pin", () => {
+    // The pin (u2) was computed at warn time; a wrap-up turn (u3) landed afterward.
+    const lines = [
+      userPrompt("u1", null, "first"),
+      assistant("a1", "u1", [{ type: "text", text: "hi" }]),
+      userPrompt("u2", "a1", "second"),
+      assistant("a2", "u2", [{ type: "text", text: "done" }]),
+      userPrompt("u3", "a2", "wrap-up"), // rides along
+      assistant("a3", "u3", [{ type: "text", text: "saved" }]),
+    ];
+    const res = buildSeededTranscriptFromCut(lines.join("\n"), "u2");
+    assert.ok(res);
+    const objs = parse(res.lines);
+    assert.equal(objs.length, 4); // u2, a2, u3, a3
+    assert.equal(objs[0].uuid, "u2");
+    assert.equal(objs[0].parentUuid, null); // detached
+    assert.equal(objs[3].uuid, "a3");
+    // sessionId rewritten on every line to the new id.
+    for (const o of objs) assert.equal(o.sessionId, res.sessionId);
+    assert.notEqual(res.sessionId, OLD);
+  });
+
+  it("returns null when the pinned uuid is not in the transcript", () => {
+    const lines = [userPrompt("u1", null, "hi"), assistant("a1", "u1", [])];
+    assert.equal(buildSeededTranscriptFromCut(lines.join("\n"), "nope"), null);
+  });
+
+  it("returns null on a corrupt line", () => {
+    const lines = [userPrompt("u1", null, "hi"), "{bad", assistant("a1", "u1", [])];
+    assert.equal(buildSeededTranscriptFromCut(lines.join("\n"), "u1"), null);
+  });
+});
+
+// --- archive pointer format (must match sleep-manager's archiveSessions) ---
+
+describe("archivePointerTimestamp / writeRotationArchivePointer", () => {
+  it("formats the timestamp as UTC minute-precision, matching sleep archival", () => {
+    const d = new Date("2026-07-19T14:30:45.123Z");
+    // sleep-manager: toISOString().replace(/[:.]/g,"-").slice(0,16)
+    assert.equal(archivePointerTimestamp(d), "2026-07-19T14-30");
+  });
+
+  it("writes a pointer that findLatestArchivedSession reads back", () => {
+    const dir = mkdtempSync(resolve(tmpdir(), "rot-archive-"));
+    const now = new Date("2026-07-19T14:30:00.000Z");
+    writeRotationArchivePointer(dir, "main", "rotated-out-id", now);
+    // File lands at <dir>/archive/main-2026-07-19T14-30.json holding { sessionId }.
+    const written = JSON.parse(
+      readFileSync(resolve(dir, "archive", "main-2026-07-19T14-30.json"), "utf-8"),
+    );
+    assert.deepEqual(written, { sessionId: "rotated-out-id" });
+    const found = findLatestArchivedSession(dir, "main");
+    assert.equal(found?.sessionId, "rotated-out-id");
+    assert.equal(found?.archivedAt, Date.UTC(2026, 6, 19, 14, 30));
+  });
+});
+
+// --- rotateSession: end-to-end in-place rotation ---
+
+describe("rotateSession", () => {
+  /** Mind-like layout: <home>/.claude/projects/proj/<oldId>.jsonl + a sessions dir. */
+  function setup(oldId: string, transcript: string) {
+    const root = mkdtempSync(resolve(tmpdir(), "rotate-"));
+    const home = resolve(root, "home");
+    const projectDir = resolve(home, ".claude", "projects", "proj");
+    mkdirSync(projectDir, { recursive: true });
+    writeFileSync(resolve(projectDir, `${oldId}.jsonl`), `${transcript}\n`);
+    const sessionsDir = resolve(root, ".mind", "sessions");
+    mkdirSync(sessionsDir, { recursive: true });
+    return { home, sessionsDir, projectDir };
+  }
+
+  // Rotation-time transcript: two early turns + a wrap-up turn appended after warn.
+  const rotationTranscript = [
+    userPrompt("u1", null, "first"),
+    assistant("a1", "u1", [{ type: "text", text: "hi" }]),
+    userPrompt("u2", "a1", "second"),
+    assistant("a2", "u2", [{ type: "text", text: "done" }]),
+    userPrompt("u3", "a2", "wrap-up"),
+    assistant("a3", "u3", [{ type: "text", text: "saved" }]),
+  ].join("\n");
+
+  it("honors the pinned cut, writes the synthetic tail, and archives the rotated-out pointer", () => {
+    const { home, sessionsDir, projectDir } = setup(OLD, rotationTranscript);
+    const newId = rotateSession({
+      cwd: home,
+      sessionsDir,
+      name: "main",
+      oldSessionId: OLD,
+      cut: { boundaryUuid: "u2", boundaryTimestamp: "2026-07-19T11:00:00.000Z" },
+      seedTokens: 30000,
+    });
+    assert.ok(newId);
+    assert.notEqual(newId, OLD);
+    // Synthetic file written next to the source, starting at the pinned boundary.
+    const objs = parse(
+      readFileSync(resolve(projectDir, `${newId}.jsonl`), "utf-8")
+        .trim()
+        .split("\n"),
+    );
+    assert.equal(objs.length, 4); // u2, a2, u3 (wrap-up rides along), a3
+    assert.equal(objs[0].uuid, "u2");
+    assert.equal(objs[0].parentUuid, null);
+    // Rotated-out session archived so the full transcript stays findable.
+    const found = findLatestArchivedSession(sessionsDir, "main");
+    assert.equal(found?.sessionId, OLD);
+  });
+
+  it("falls back to a budget-based tail when no cut is pinned", () => {
+    const { home, sessionsDir, projectDir } = setup(OLD, rotationTranscript);
+    const newId = rotateSession({
+      cwd: home,
+      sessionsDir,
+      name: "main",
+      oldSessionId: OLD,
+      cut: null,
+      seedTokens: 1_000_000, // large → whole transcript
+    });
+    assert.ok(newId);
+    const objs = parse(
+      readFileSync(resolve(projectDir, `${newId}.jsonl`), "utf-8")
+        .trim()
+        .split("\n"),
+    );
+    assert.equal(objs[0].uuid, "u1"); // budget kept everything
+  });
+
+  it("rotates an ephemeral new-* session without writing an archive pointer", () => {
+    const { home, sessionsDir, projectDir } = setup(OLD, rotationTranscript);
+    const newId = rotateSession({
+      cwd: home,
+      sessionsDir,
+      name: "new-abc",
+      oldSessionId: OLD,
+      cut: { boundaryUuid: "u2", boundaryTimestamp: null },
+      seedTokens: 30000,
+    });
+    assert.ok(newId);
+    // Synthetic file exists (needed to resume) ...
+    assert.ok(readFileSync(resolve(projectDir, `${newId}.jsonl`), "utf-8"));
+    // ... but no archive pointer for an ephemeral session.
+    assert.equal(findLatestArchivedSession(sessionsDir, "new-abc"), null);
+  });
+
+  it("returns null when the live transcript can't be found", () => {
+    const root = mkdtempSync(resolve(tmpdir(), "rotate-none-"));
+    const home = resolve(root, "home");
+    mkdirSync(home, { recursive: true });
+    const sessionsDir = resolve(root, ".mind", "sessions");
+    mkdirSync(sessionsDir, { recursive: true });
+    assert.equal(
+      rotateSession({
+        cwd: home,
+        sessionsDir,
+        name: "main",
+        oldSessionId: "missing",
+        cut: null,
+        seedTokens: 30000,
+      }),
+      null,
+    );
+  });
+});
+
+// --- ${cutoff} interpolation + graceful degradation ---
+
+describe("compaction warning ${cutoff} mechanics", () => {
+  it("the default warning carries the ${cutoff} placeholder (twice) and ${date}", () => {
+    const w = DEFAULT_PROMPTS.compaction_warning;
+    assert.equal(w.match(/\$\{cutoff\}/g)?.length, 2);
+    assert.ok(w.includes("${date}"));
+  });
+
+  it("replaceAll fills every ${cutoff} with the cut time", () => {
+    const filled = DEFAULT_PROMPTS.compaction_warning.replaceAll("${cutoff}", "2026-07-19 12:00");
+    assert.doesNotMatch(filled, /\$\{cutoff\}/);
+    assert.ok(filled.includes("2026-07-19 12:00"));
+  });
+
+  it("degrades gracefully: a custom warning without ${cutoff} is left unchanged", () => {
+    const custom = "Heads up — the session will rotate soon. Save your files.";
+    assert.equal(custom.replaceAll("${cutoff}", "2026-07-19 12:00"), custom);
   });
 });

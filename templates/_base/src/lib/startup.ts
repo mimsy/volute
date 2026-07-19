@@ -172,8 +172,8 @@ export type MindPrompts = {
  */
 export const DEFAULT_PROMPTS: MindPrompts = {
   compaction_warning:
-    // biome-ignore lint/suspicious/noTemplateCurlyInString: literal ${date} prompt template
-    "Compaction approaching — this conversation will be summarized soon. Take a moment to save anything important to your files (MEMORY.md, memory/journal/${date}.md) so it's preserved. Focus on decisions made, open threads, and anything you'd want to pick up again.\n\nIf you'd like this session kept in your own words, run `volute mind history --provisional` to review the provisional turn summaries and `volute mind history --write --turn <id> --text \"...\"` to replace any with your own account.",
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: literal ${cutoff}/${date} prompt template
+    "Context limit approaching — this session will rotate shortly. Turns before ${cutoff} will be collapsed to their summaries; turns from ${cutoff} on are kept verbatim in the continued session, so there's no need to re-describe them.\n\nFor the turns that will collapse, make sure they read the way you'd want: `volute mind history --provisional` shows the provisional summaries, and `volute mind history --write --turn <id> --text \"...\"` replaces any with your own account. Also save anything important to your files (MEMORY.md, memory/journal/${date}.md). Provisional summaries are kept if you write nothing — nothing blocks on this.",
   compaction_instructions:
     "Preserve your sense of who you are, what matters to you, what happened in this conversation, and the threads of thought and connection you'd want to return to.",
   // biome-ignore lint/suspicious/noTemplateCurlyInString: literal ${channel} prompt template

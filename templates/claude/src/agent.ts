@@ -14,6 +14,7 @@ import {
   readSkillDescriptions,
 } from "./lib/context-breakdown.js";
 import { daemonEmit } from "./lib/daemon-client.js";
+import { compactTimestamp } from "./lib/format-prefix.js";
 import { runHooks } from "./lib/hook-loader.js";
 import { createAutoCommitHook } from "./lib/hooks/auto-commit.js";
 import { createIdentityReloadHook } from "./lib/hooks/identity-reload.js";
@@ -22,13 +23,19 @@ import { createPreCompactHook } from "./lib/hooks/pre-compact.js";
 import { createReplyInstructionsHook } from "./lib/hooks/reply-instructions.js";
 import { log } from "./lib/logger.js";
 import { createMessageChannel } from "./lib/message-channel.js";
-import { buildSeededNote } from "./lib/seed-note.js";
+import { buildSeededNote, type SeedCause } from "./lib/seed-note.js";
 import {
   isSessionReapable,
   reapSessionQuery,
   reapSessionsForShutdown,
 } from "./lib/session-reaper.js";
-import { DEFAULT_SEED_TOKENS, seedSession } from "./lib/session-seed.js";
+import {
+  computeSeedCut,
+  DEFAULT_SEED_TOKENS,
+  rotateSession,
+  type SeedCut,
+  seedSession,
+} from "./lib/session-seed.js";
 import { createSessionStore } from "./lib/session-store.js";
 import type { EffortLevel, ThinkingConfig } from "./lib/startup.js";
 import { loadPrompts, type SubagentConfig } from "./lib/startup.js";
@@ -66,7 +73,25 @@ type Session = {
   seeded: boolean;
   /** When the seeded-from session was archived (epoch ms), for the gap note; null if unknown. */
   seededArchivedAt: number | null;
+  /** Why the tail is seeded — picks the boundary note's wording. Last cause wins. */
+  seededCause: SeedCause;
+  /**
+   * The cut point pinned at warn time (the first-kept turn the mind was told would
+   * survive verbatim). Honored at rotation so the promise in the warning holds even
+   * though the transcript grows after the warning. Null until a warning fires.
+   */
+  rotationCut: SeedCut | null;
+  /**
+   * Back-to-back rotations that did NOT bring context under the threshold (reset by
+   * any healthy turn). Guards against a runaway loop when the tail alone can't fit —
+   * e.g. a system prompt (large MEMORY.md) that already fills most of the window, which
+   * rotation can't trim. Past the cap we stop rotating and defer to native compaction.
+   */
+  consecutiveRotations: number;
 };
+
+/** Stop self-rotating after this many back-to-back rotations that didn't reduce context. */
+const MAX_CONSECUTIVE_ROTATIONS = 3;
 
 export function createMind(options: {
   systemPrompt: string;
@@ -104,8 +129,8 @@ export function createMind(options: {
   const compactionMessage =
     // biome-ignore lint/suspicious/noTemplateCurlyInString: literal ${date} in prompt template
     options.compactionMessage ?? prompts.compaction_warning.replace("${date}", today);
-  const compactionInstructions = prompts.compaction_instructions;
   const maxContextTokens = options.maxContextTokens;
+  const seedTokens = options.seedTokens ?? DEFAULT_SEED_TOKENS;
 
   if (maxContextTokens) {
     log("mind", `compaction threshold: ${maxContextTokens} tokens`);
@@ -266,7 +291,10 @@ export function createMind(options: {
         // (onTurnEnd); an interrupted turn re-offers the note next prompt. Worst case
         // it fires twice (cosmetic) instead of zero times (unrecoverable, invisible).
         if (session.seeded) {
-          const note = buildSeededNote(session.seededArchivedAt);
+          const note = buildSeededNote({
+            cause: session.seededCause,
+            archivedAtMs: session.seededArchivedAt,
+          });
           additionalContext = additionalContext ? `${note}\n\n${additionalContext}` : note;
           // Also surface the note as its own context event (matching codex/pi) so it
           // isn't delivered only in the same low-salience container as routine
@@ -358,17 +386,57 @@ export function createMind(options: {
       let currentSessionId = savedSessionId;
       let streamAbort = new AbortController();
 
-      const preCompact = createPreCompactHook(() => {
+      /**
+       * Warn the mind that the session will rotate at the context limit and pin the
+       * cut point it's told about. Computes which whole turns fit in `seedTokens`
+       * from the live transcript, pins the first-kept turn (so rotation honors the
+       * same boundary even as the transcript grows), interpolates its time into the
+       * `${cutoff}` placeholder, marks the session for rotation, and pushes the
+       * warning as the wrap-up prompt. Shared by the threshold and PreCompact paths.
+       */
+      function warnAndPinRotation() {
+        let cutoffLabel = "the cutoff";
+        session.rotationCut = null;
+        if (currentSessionId) {
+          try {
+            const path = findClaudeSessionFile(options.cwd, currentSessionId);
+            const cut = path ? computeSeedCut(readFileSync(path, "utf-8"), seedTokens) : null;
+            if (cut) {
+              session.rotationCut = cut;
+              if (cut.boundaryTimestamp) {
+                const d = new Date(cut.boundaryTimestamp);
+                if (!Number.isNaN(d.getTime())) cutoffLabel = compactTimestamp(d);
+              }
+            }
+          } catch (err) {
+            log("mind", `session "${session.name}": failed to pin rotation cut:`, err);
+          }
+        }
+        // biome-ignore lint/suspicious/noTemplateCurlyInString: literal ${cutoff} prompt placeholder
+        const warning = compactionMessage.replaceAll("${cutoff}", cutoffLabel);
+        compactionTriggered.set(session.name, true);
         session.messageIds.push(undefined);
         session.channel.push({
           type: "user",
           session_id: "",
-          message: {
-            role: "user",
-            content: [{ type: "text", text: compactionMessage }],
-          },
+          message: { role: "user", content: [{ type: "text", text: warning }] },
           parent_tool_use_id: null,
         });
+      }
+
+      // PreCompact backstop: first fire warns + pins + marks for rotation (unless the
+      // threshold path already did); second fire allows the SDK's native compaction as
+      // an emergency backstop (only reachable if rotation never happened).
+      const preCompact = createPreCompactHook(() => {
+        if (
+          !compactionTriggered.get(session.name) &&
+          session.consecutiveRotations < MAX_CONSECUTIVE_ROTATIONS
+        ) {
+          warnAndPinRotation();
+        }
+        // If we don't warn (already triggered, or the rotation cap is hit), the hook
+        // still blocks the first fire and allows native compaction on the second —
+        // the emergency backstop when rotation can't bring context under control.
       });
 
       const callbacks = {
@@ -391,11 +459,14 @@ export function createMind(options: {
           const wasCompacting = compactionTriggered.get(session.name);
           compactionTriggered.set(session.name, false);
           if (wasCompacting) {
-            // Mind's turn after compaction warning is done — abort the stream to run /compact
-            log("mind", `session "${session.name}": aborting stream for compaction`);
+            // The wrap-up turn is done — abort the stream to rotate the session in place.
+            log("mind", `session "${session.name}": aborting stream to rotate`);
             streamAbort.abort(new CompactionAbort());
-          } else if (identityReload.shouldRequestReload()) {
-            options.onIdentityReload?.();
+          } else {
+            // A healthy turn (context under the threshold) — the rotation streak, if
+            // any, is over, so re-arm the self-rotation cap.
+            session.consecutiveRotations = 0;
+            if (identityReload.shouldRequestReload()) options.onIdentityReload?.();
           }
         },
         onContextTokens: (tokens: number) => {
@@ -403,63 +474,17 @@ export function createMind(options: {
           if (
             maxContextTokens &&
             tokens >= maxContextTokens &&
-            !compactionTriggered.get(session.name)
+            !compactionTriggered.get(session.name) &&
+            session.consecutiveRotations < MAX_CONSECUTIVE_ROTATIONS
           ) {
-            compactionTriggered.set(session.name, true);
             log(
               "mind",
-              `session "${session.name}": ${tokens} tokens >= ${maxContextTokens} — triggering compaction`,
+              `session "${session.name}": ${tokens} tokens >= ${maxContextTokens} — warning + pinning rotation`,
             );
-            session.messageIds.push(undefined);
-            session.channel.push({
-              type: "user",
-              session_id: "",
-              message: {
-                role: "user",
-                content: [{ type: "text", text: compactionMessage }],
-              },
-              parent_tool_use_id: null,
-            });
+            warnAndPinRotation();
           }
         },
       };
-
-      async function runCompact(sessionId: string) {
-        log("mind", `session "${session.name}": compacting with custom instructions`);
-        const compactAbort = new AbortController();
-        // Forward mind-level abort to the compact query
-        options.abortController.signal.addEventListener("abort", () => compactAbort.abort(), {
-          once: true,
-        });
-        const compactQuery = query({
-          prompt: `/compact ${compactionInstructions}`,
-          options: {
-            systemPrompt: options.systemPrompt,
-            permissionMode: "bypassPermissions",
-            allowDangerouslySkipPermissions: true,
-            settingSources: ["project", "user"],
-            skills: installedSkills(),
-            env: sdkEnv,
-            cwd: options.cwd,
-            abortController: compactAbort,
-            model: options.model,
-            resume: sessionId,
-          },
-        });
-        let gotResult = false;
-        for await (const msg of compactQuery) {
-          if ("session_id" in msg && msg.session_id) {
-            currentSessionId = msg.session_id as string;
-            if (!session.name.startsWith("new-")) {
-              sessionStore.save(session.name, currentSessionId);
-            }
-          }
-          if (msg.type === "result") gotResult = true;
-        }
-        if (!gotResult)
-          log("mind", `session "${session.name}": compaction stream ended without result`);
-        log("mind", `session "${session.name}": compaction complete`);
-      }
 
       /** Emit done to both local listeners and the daemon (best-effort with retries). */
       function emitDone() {
@@ -503,30 +528,56 @@ export function createMind(options: {
               streamAbort.signal.reason instanceof CompactionAbort &&
               currentSessionId
             ) {
-              // Stream was aborted for compaction — run /compact, then loop to resume
-              try {
-                await runCompact(currentSessionId);
-              } catch (compactErr) {
-                log(
-                  "mind",
-                  `session "${session.name}": custom compaction failed, starting fresh:`,
-                  compactErr,
-                );
+              // Stream was aborted to rotate: replace the session with a synthetic one
+              // holding the verbatim recent tail (from the pinned cut), then resume it.
+              const rotatedId = rotateSession({
+                cwd: options.cwd,
+                sessionsDir: options.sessionsDir,
+                name: session.name,
+                oldSessionId: currentSessionId,
+                cut: session.rotationCut,
+                seedTokens,
+              });
+              session.rotationCut = null;
+              if (!rotatedId) {
+                // Rotation couldn't proceed — fall back to a fresh session (no seed,
+                // no note). Fresh is a far smaller cliff now that seeding exists.
+                log("mind", `session "${session.name}": rotation failed, starting fresh`);
                 sessionStore.delete(session.name);
                 currentSessionId = undefined;
+                session.seeded = false;
                 streamAbort = new AbortController();
                 session.channel = createMessageChannel();
                 break;
               }
+              // Point the live pointer at the rotated session and arm the boundary
+              // note (rotation cause — no gap). Ephemeral `new-*` keep no pointer.
+              if (!session.name.startsWith("new-")) sessionStore.save(session.name, rotatedId);
+              currentSessionId = rotatedId;
+              session.seeded = true;
+              session.seededCause = "rotation";
+              session.seededArchivedAt = null;
+              // Count this rotation; a healthy turn resets it. If back-to-back rotations
+              // don't reduce context (system prompt too large to fit the tail under the
+              // threshold), the cap stops the loop and defers to native compaction.
+              session.consecutiveRotations++;
+              if (session.consecutiveRotations >= MAX_CONSECUTIVE_ROTATIONS) {
+                log(
+                  "mind",
+                  `session "${session.name}": ${session.consecutiveRotations} rotations without relief — deferring further compaction to the SDK (system prompt likely too large)`,
+                );
+              }
+              // Re-arm the PreCompact backstop so a future auto-compact blocks + rotates
+              // again rather than falling straight through to native compaction.
+              preCompact.reset();
               streamAbort = new AbortController();
-              // Recover input the aborted stream had already pulled but not
-              // finished (the compaction wrap-up plus any messages that arrived
-              // mid-turn) alongside anything queued during /compact, so nothing
-              // is dropped when the killed subprocess takes its buffer with it.
+              // Recover input the aborted stream had already pulled but not finished
+              // (the wrap-up warning plus anything that arrived mid-turn) so nothing is
+              // dropped when the killed subprocess takes its buffer with it.
               const pending = session.channel.recover();
               session.channel = createMessageChannel();
               for (const msg of pending) session.channel.push(msg);
-              continue; // restart the stream loop
+              continue; // restart the stream loop on the rotated session
             }
             throw err; // rethrow non-compaction errors
           }
@@ -582,6 +633,9 @@ export function createMind(options: {
       lastActivityAt: Date.now(),
       seeded: false,
       seededArchivedAt: null,
+      seededCause: "restored",
+      rotationCut: null,
+      consecutiveRotations: 0,
     };
     sessions.set(name, session);
 
@@ -611,6 +665,7 @@ export function createMind(options: {
         savedSessionId = seeded.sessionId;
         session.seeded = true;
         session.seededArchivedAt = seeded.archivedAt;
+        session.seededCause = "restored";
         log(
           "mind",
           `session "${name}": seeded from previous transcript, resuming ${seeded.sessionId}`,

@@ -201,7 +201,10 @@ export function createMind(options: {
           // for a continuously-lived conversation.
           if (session.seeded) {
             session.seeded = false;
-            const note = buildSeededNote(session.seededArchivedAt ?? null);
+            const note = buildSeededNote({
+              cause: "restored",
+              archivedAtMs: session.seededArchivedAt ?? null,
+            });
             emit(session, {
               type: "context",
               content: note,

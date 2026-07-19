@@ -17,7 +17,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { findClaudeSessionFile } from "./context-breakdown.js";
 import { log } from "./logger.js";
@@ -37,6 +37,7 @@ type JsonlLine = Record<string, unknown> & {
   uuid?: string;
   parentUuid?: string | null;
   sessionId?: string;
+  timestamp?: string;
   message?: { role?: string; content?: unknown };
 };
 
@@ -112,38 +113,50 @@ function estimateTokens(raw: string): number {
   return raw.length / 4;
 }
 
-export type SeededTranscript = { sessionId: string; lines: string[] };
-
 /**
- * Build the seeded transcript from an old transcript's raw jsonl text: take as
- * many whole trailing turns as fit in `seedTokens` (always at least the final
- * turn), rewrite the session id on every line, and null the first chain event's
- * parentUuid. Returns null if there's nothing seedable (empty, no genuine turn,
- * or a corrupt line — in which case the caller starts clean).
+ * Parse jsonl into aligned parsed/raw arrays. In strict mode a corrupt line aborts
+ * (returns null — used when copying verbatim, where a broken line means we can't
+ * faithfully reconstruct the chain). In lenient mode corrupt lines are skipped
+ * (used when reading a transcript that may still be mid-write, e.g. computing the
+ * cut point while the SDK is streaming).
  */
-export function buildSeededTranscript(jsonl: string, seedTokens: number): SeededTranscript | null {
+function parseJsonl(
+  jsonl: string,
+  lenient: boolean,
+): { parsed: JsonlLine[]; raws: string[] } | null {
   const rawLines = jsonl.split("\n").filter((l) => l.trim().length > 0);
-  if (rawLines.length === 0) return null;
-
   const parsed: JsonlLine[] = [];
   const raws: string[] = [];
   for (const raw of rawLines) {
+    let obj: JsonlLine;
     try {
-      parsed.push(JSON.parse(raw));
+      obj = JSON.parse(raw);
     } catch {
-      // A corrupt line means we can't faithfully reconstruct the chain — start
-      // clean rather than seed a broken transcript.
+      if (lenient) continue;
       return null;
     }
+    parsed.push(obj);
     raws.push(raw);
   }
+  return { parsed, raws };
+}
 
+/** Indices (into parsed) of the genuine turn boundaries. */
+function turnBoundaries(parsed: JsonlLine[]): number[] {
   const boundaries: number[] = [];
   for (let i = 0; i < parsed.length; i++) {
     if (isTurnBoundary(parsed[i])) boundaries.push(i);
   }
-  if (boundaries.length === 0) return null;
+  return boundaries;
+}
 
+/**
+ * Choose the first-kept line index: walk backward from the final turn, taking as
+ * many whole turns as fit in `seedTokens` (always at least the final turn even if
+ * it alone exceeds the budget). Returns the parsed index of the chosen boundary.
+ */
+function tailStartByBudget(parsed: JsonlLine[], raws: string[], seedTokens: number): number {
+  const boundaries = turnBoundaries(parsed);
   // Turn t spans lines [boundaries[t], boundaries[t+1]); the last turn runs to EOF.
   const turnTokens = (t: number): number => {
     const start = boundaries[t];
@@ -152,9 +165,6 @@ export function buildSeededTranscript(jsonl: string, seedTokens: number): Seeded
     for (let i = start; i < end; i++) sum += estimateTokens(raws[i]);
     return sum;
   };
-
-  // Walk backward from the final turn, adding earlier whole turns while they fit.
-  // The final turn is always included even if it alone exceeds the budget.
   const last = boundaries.length - 1;
   let startTurn = last;
   let accum = turnTokens(last);
@@ -164,8 +174,15 @@ export function buildSeededTranscript(jsonl: string, seedTokens: number): Seeded
     accum += cost;
     startTurn = t;
   }
+  return boundaries[startTurn];
+}
 
-  const startLine = boundaries[startTurn];
+/**
+ * Copy the tail from `startLine` to EOF into a fresh synthetic transcript,
+ * rewriting the sessionId on every line and nulling the first chain event's
+ * parentUuid (to detach the tail from the dropped history).
+ */
+function emitTail(parsed: JsonlLine[], startLine: number): SeededTranscript {
   const newId = randomUUID();
   const lines: string[] = [];
   let firstChainSeen = false;
@@ -179,6 +196,62 @@ export function buildSeededTranscript(jsonl: string, seedTokens: number): Seeded
     lines.push(JSON.stringify(obj));
   }
   return { sessionId: newId, lines };
+}
+
+export type SeededTranscript = { sessionId: string; lines: string[] };
+
+/** A pinned cut point for rotation: where the verbatim tail begins. */
+export type SeedCut = { boundaryUuid: string; boundaryTimestamp: string | null };
+
+/**
+ * Build the seeded transcript from an old transcript's raw jsonl text: take as
+ * many whole trailing turns as fit in `seedTokens` (always at least the final
+ * turn), rewrite the session id on every line, and null the first chain event's
+ * parentUuid. Returns null if there's nothing seedable (empty, no genuine turn,
+ * or a corrupt line — in which case the caller starts clean).
+ */
+export function buildSeededTranscript(jsonl: string, seedTokens: number): SeededTranscript | null {
+  const p = parseJsonl(jsonl, false);
+  if (!p || p.parsed.length === 0) return null;
+  if (turnBoundaries(p.parsed).length === 0) return null;
+  const startLine = tailStartByBudget(p.parsed, p.raws, seedTokens);
+  return emitTail(p.parsed, startLine);
+}
+
+/**
+ * Compute the cut point (the first-kept turn's identity) for a `seedTokens` budget,
+ * from raw jsonl. Parsed leniently because the live transcript may still be
+ * mid-write when this runs at warn time. Returns null if there's no genuine turn
+ * or the chosen boundary lacks a uuid.
+ */
+export function computeSeedCut(jsonl: string, seedTokens: number): SeedCut | null {
+  const p = parseJsonl(jsonl, true);
+  if (!p || p.parsed.length === 0) return null;
+  if (turnBoundaries(p.parsed).length === 0) return null;
+  const startLine = tailStartByBudget(p.parsed, p.raws, seedTokens);
+  const boundary = p.parsed[startLine];
+  if (typeof boundary.uuid !== "string") return null;
+  return {
+    boundaryUuid: boundary.uuid,
+    boundaryTimestamp: typeof boundary.timestamp === "string" ? boundary.timestamp : null,
+  };
+}
+
+/**
+ * Build the seeded transcript starting at a pinned boundary uuid (the whole tail
+ * from that line through EOF). Used by rotation to honor the cut point the mind
+ * was warned about, regardless of how much the transcript grew after the warning.
+ * Returns null if the boundary uuid isn't found or a line is corrupt.
+ */
+export function buildSeededTranscriptFromCut(
+  jsonl: string,
+  boundaryUuid: string,
+): SeededTranscript | null {
+  const p = parseJsonl(jsonl, false);
+  if (!p || p.parsed.length === 0) return null;
+  const startLine = p.parsed.findIndex((o) => o.uuid === boundaryUuid);
+  if (startLine < 0) return null;
+  return emitTail(p.parsed, startLine);
 }
 
 /** Result of a successful seed: the new session id and when the source was archived. */
@@ -223,6 +296,80 @@ export function seedSession(opts: {
     return { sessionId: seeded.sessionId, archivedAt: archived.archivedAt };
   } catch (err) {
     log("mind", `session "${name}": seeding failed, starting fresh:`, err);
+    return null;
+  }
+}
+
+/**
+ * Archive-pointer timestamp, matching the daemon sleep-manager's archiveSessions:
+ * `new Date().toISOString().replace(/[:.]/g, "-").slice(0, 16)` → UTC `YYYY-MM-DDTHH-MM`.
+ */
+export function archivePointerTimestamp(now: Date = new Date()): string {
+  return now.toISOString().replace(/[:.]/g, "-").slice(0, 16);
+}
+
+/**
+ * Write an archive pointer for a rotated-out session, matching exactly how sleep
+ * archival preserves the live pointer: `<sessionsDir>/archive/<name>-<UTC-ts>.json`
+ * holding `{ sessionId }` (the session-store format). Keeps the name→session chain
+ * uniform so the full transcript stays findable after a rotation.
+ */
+export function writeRotationArchivePointer(
+  sessionsDir: string,
+  name: string,
+  sessionId: string,
+  now: Date = new Date(),
+): void {
+  const archiveDir = resolve(sessionsDir, "archive");
+  mkdirSync(archiveDir, { recursive: true });
+  const dest = resolve(archiveDir, `${name}-${archivePointerTimestamp(now)}.json`);
+  writeFileSync(dest, JSON.stringify({ sessionId }));
+}
+
+/**
+ * Rotate a session in place at the context limit. Reads the live transcript, builds
+ * a seeded tail from the pinned `cut` (falling back to a budget-based tail when the
+ * pin can't be honored), writes it as a new synthetic session file next to the
+ * source, and — for persistent sessions — archives the rotated-out pointer so the
+ * full transcript stays findable. Returns the new session id, or null if rotation
+ * can't proceed (the caller then falls back to a fresh session). Never throws.
+ */
+export function rotateSession(opts: {
+  cwd: string;
+  sessionsDir: string;
+  name: string;
+  oldSessionId: string;
+  cut: SeedCut | null;
+  seedTokens: number;
+}): string | null {
+  const { cwd, sessionsDir, name, oldSessionId, cut, seedTokens } = opts;
+  try {
+    const sourcePath = findClaudeSessionFile(cwd, oldSessionId);
+    if (!sourcePath) return null; // live transcript not found — fall back to fresh
+    const jsonl = readFileSync(sourcePath, "utf-8");
+    // Honor the pinned boundary the mind was warned about; only fall back to a
+    // budget-based tail if the pin can't be resolved (missing/renamed uuid).
+    const seeded =
+      (cut ? buildSeededTranscriptFromCut(jsonl, cut.boundaryUuid) : null) ??
+      buildSeededTranscript(jsonl, seedTokens);
+    if (!seeded) return null;
+
+    writeFileSync(
+      resolve(dirname(sourcePath), `${seeded.sessionId}.jsonl`),
+      `${seeded.lines.join("\n")}\n`,
+    );
+    // Ephemeral `new-*` sessions rotate too, but leave no pointer/archive behind
+    // (they're one-offs and never seed at a true session start).
+    if (!name.startsWith("new-")) {
+      writeRotationArchivePointer(sessionsDir, name, oldSessionId);
+    }
+    log(
+      "mind",
+      `session "${name}": rotated ${oldSessionId} → ${seeded.sessionId} (${seeded.lines.length} lines)`,
+    );
+    return seeded.sessionId;
+  } catch (err) {
+    log("mind", `session "${name}": rotation failed:`, err);
     return null;
   }
 }

@@ -278,7 +278,7 @@ export function createMind(options: {
     // note carries a coarse gap-duration clause when the archive time is known.
     if (session.seeded) {
       session.seeded = false;
-      const note = buildSeededNote(session.seededArchivedAt);
+      const note = buildSeededNote({ cause: "restored", archivedAtMs: session.seededArchivedAt });
       emit(session, {
         type: "context",
         content: note,
