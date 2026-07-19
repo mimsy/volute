@@ -30,7 +30,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { basename, resolve } from "node:path";
 import { findPiSessionFile } from "./context-breakdown.js";
 import { log } from "./logger.js";
@@ -59,6 +59,7 @@ type PiEntry = Record<string, unknown> & {
   type?: string;
   id?: string;
   parentId?: string | null;
+  timestamp?: string;
   message?: { role?: string };
 };
 
@@ -109,48 +110,64 @@ function estimateTokens(raw: string): number {
   return raw.length / 4;
 }
 
-export type SeededPiTranscript = { sessionId: string; lines: string[] };
-
 /**
- * Build the seeded transcript from a source pi session file's raw jsonl text:
- * take as many whole trailing turns as fit in `seedTokens` (always at least the
- * final turn), keeping the tail entries verbatim; then prepend a fresh header
- * (new id, `cwd`, source recorded as `parentSession`) and null the first kept
- * entry's parentId. Returns null if there's nothing seedable (no header, no
- * genuine turn, or a corrupt line — in which case the caller starts clean).
+ * Parse pi jsonl into aligned parsed/raw arrays (header at index 0). In strict mode
+ * a corrupt line aborts (returns null — used when copying verbatim, where a broken
+ * line means we can't faithfully reconstruct the tail). In lenient mode corrupt
+ * lines are skipped (used at warn time, when the live transcript may be mid-write).
  */
-export function buildSeededPiTranscript(
+function parsePiJsonl(
   jsonl: string,
-  opts: { cwd: string; seedTokens: number; sourcePath?: string },
-): SeededPiTranscript | null {
+  lenient: boolean,
+): { parsed: PiEntry[]; raws: string[] } | null {
   const rawLines = jsonl.split("\n").filter((l) => l.trim().length > 0);
-  if (rawLines.length === 0) return null;
-
   const parsed: PiEntry[] = [];
+  const raws: string[] = [];
   for (const raw of rawLines) {
+    let obj: PiEntry;
     try {
-      parsed.push(JSON.parse(raw));
+      obj = JSON.parse(raw);
     } catch {
-      // A corrupt line means we can't faithfully reconstruct the tree — start
-      // clean rather than seed a broken transcript.
+      if (lenient) continue;
       return null;
     }
+    parsed.push(obj);
+    raws.push(raw);
   }
+  return { parsed, raws };
+}
 
-  // First line must be a valid session header (pi rejects files otherwise).
-  const header = parsed[0];
-  if (header.type !== "session" || typeof header.id !== "string") return null;
+/**
+ * Split a parsed transcript into its header and the entries after it (with aligned
+ * raw lines). Returns null if the first line isn't a valid session header — pi
+ * rejects files whose first line isn't `{type:"session", id, …}`.
+ */
+function splitPiHeader(
+  parsed: PiEntry[],
+  raws: string[],
+): { header: PiHeader; entries: PiEntry[]; entryRaws: string[] } | null {
+  const header = parsed[0] as PiHeader | undefined;
+  if (header?.type !== "session" || typeof header.id !== "string") return null;
+  return { header, entries: parsed.slice(1), entryRaws: raws.slice(1) };
+}
 
-  // Entries are everything after the header; keep raws aligned for cost estimates.
-  const entries = parsed.slice(1);
-  const entryRaws = rawLines.slice(1);
-
+/** Indices (into entries) of the genuine turn boundaries (user-role messages). */
+function turnBoundaries(entries: PiEntry[]): number[] {
   const boundaries: number[] = [];
   for (let i = 0; i < entries.length; i++) {
     if (isTurnBoundary(entries[i])) boundaries.push(i);
   }
-  if (boundaries.length === 0) return null;
+  return boundaries;
+}
 
+/**
+ * Choose the first-kept entry index: walk backward from the final turn, taking as
+ * many whole turns as fit in `seedTokens` (always at least the final turn even if
+ * it alone exceeds the budget). Returns a boundary index, or -1 if there's no turn.
+ */
+function tailStartByBudget(entries: PiEntry[], entryRaws: string[], seedTokens: number): number {
+  const boundaries = turnBoundaries(entries);
+  if (boundaries.length === 0) return -1;
   // Turn t spans entries [boundaries[t], boundaries[t+1]); the last runs to EOF.
   const turnTokens = (t: number): number => {
     const start = boundaries[t];
@@ -159,42 +176,110 @@ export function buildSeededPiTranscript(
     for (let i = start; i < end; i++) sum += estimateTokens(entryRaws[i]);
     return sum;
   };
-
-  // Walk backward from the final turn, adding earlier whole turns while they fit.
-  // The final turn is always included even if it alone exceeds the budget.
   const last = boundaries.length - 1;
   let startTurn = last;
   let accum = turnTokens(last);
   for (let t = last - 1; t >= 0; t--) {
     const cost = turnTokens(t);
-    if (accum + cost > opts.seedTokens) break;
+    if (accum + cost > seedTokens) break;
     accum += cost;
     startTurn = t;
   }
+  return boundaries[startTurn];
+}
 
-  const startIdx = boundaries[startTurn];
+export type SeededPiTranscript = { sessionId: string; lines: string[] };
+
+/**
+ * Emit the seeded transcript: a fresh header (new id, rewritten cwd, source recorded
+ * as `parentSession`) followed by the tail from `startIdx` through EOF. The tail is
+ * copied byte-for-byte from the original raw lines; only the first kept entry is
+ * re-serialized, to null its parentId (detaching the tail into a clean root).
+ */
+function emitPiTail(
+  header: PiHeader,
+  entries: PiEntry[],
+  entryRaws: string[],
+  startIdx: number,
+  cwd: string,
+  sourcePath?: string,
+): SeededPiTranscript {
   const newId = randomUUID();
   const newHeader: PiHeader = {
     type: "session",
     version: typeof header.version === "number" ? header.version : 3,
     id: newId,
     timestamp: new Date().toISOString(),
-    cwd: resolve(opts.cwd),
-    ...(opts.sourcePath ? { parentSession: opts.sourcePath } : {}),
+    cwd: resolve(cwd),
+    ...(sourcePath ? { parentSession: sourcePath } : {}),
   };
-
-  // Copy the tail byte-for-byte (tool calls and all), rewriting only the first
-  // kept entry's parentId to null so the tail becomes a clean root. Every other
-  // entry is emitted from its original raw line, so nothing is re-serialized.
   const lines: string[] = [JSON.stringify(newHeader)];
   for (let i = startIdx; i < entries.length; i++) {
-    if (i === startIdx) {
-      lines.push(JSON.stringify({ ...entries[i], parentId: null }));
-    } else {
-      lines.push(entryRaws[i]);
-    }
+    lines.push(i === startIdx ? JSON.stringify({ ...entries[i], parentId: null }) : entryRaws[i]);
   }
   return { sessionId: newId, lines };
+}
+
+/**
+ * Build the seeded transcript from a source pi session file's raw jsonl text: take
+ * as many whole trailing turns as fit in `seedTokens` (always at least the final
+ * turn), keeping the tail entries verbatim. Returns null if there's nothing
+ * seedable (no header, no genuine turn, or a corrupt line — start clean instead).
+ */
+export function buildSeededPiTranscript(
+  jsonl: string,
+  opts: { cwd: string; seedTokens: number; sourcePath?: string },
+): SeededPiTranscript | null {
+  const p = parsePiJsonl(jsonl, false);
+  if (!p) return null;
+  const h = splitPiHeader(p.parsed, p.raws);
+  if (!h) return null;
+  const startIdx = tailStartByBudget(h.entries, h.entryRaws, opts.seedTokens);
+  if (startIdx < 0) return null;
+  return emitPiTail(h.header, h.entries, h.entryRaws, startIdx, opts.cwd, opts.sourcePath);
+}
+
+/** A pinned cut point for rotation: where the verbatim tail begins. */
+export type PiSeedCut = { boundaryId: string; boundaryTimestamp: string | null };
+
+/**
+ * Compute the cut point (the first-kept turn's identity) for a `seedTokens` budget,
+ * from raw jsonl. Parsed leniently because the live transcript may still be mid-write
+ * when this runs at warn time. Returns null if there's no genuine turn or the chosen
+ * boundary entry lacks an id.
+ */
+export function computePiSeedCut(jsonl: string, seedTokens: number): PiSeedCut | null {
+  const p = parsePiJsonl(jsonl, true);
+  if (!p) return null;
+  const h = splitPiHeader(p.parsed, p.raws);
+  if (!h) return null;
+  const startIdx = tailStartByBudget(h.entries, h.entryRaws, seedTokens);
+  if (startIdx < 0) return null;
+  const boundary = h.entries[startIdx];
+  if (typeof boundary.id !== "string") return null;
+  return {
+    boundaryId: boundary.id,
+    boundaryTimestamp: typeof boundary.timestamp === "string" ? boundary.timestamp : null,
+  };
+}
+
+/**
+ * Build the seeded transcript starting at a pinned boundary entry id (the whole tail
+ * from that entry through EOF). Used by rotation to honor the cut point the mind was
+ * warned about, regardless of how much the transcript grew after the warning.
+ * Returns null if the boundary id isn't found or a line is corrupt.
+ */
+export function buildSeededPiTranscriptFromCut(
+  jsonl: string,
+  opts: { cwd: string; boundaryId: string; sourcePath?: string },
+): SeededPiTranscript | null {
+  const p = parsePiJsonl(jsonl, false);
+  if (!p) return null;
+  const h = splitPiHeader(p.parsed, p.raws);
+  if (!h) return null;
+  const startIdx = h.entries.findIndex((e) => e.id === opts.boundaryId);
+  if (startIdx < 0) return null;
+  return emitPiTail(h.header, h.entries, h.entryRaws, startIdx, opts.cwd, opts.sourcePath);
 }
 
 /**
@@ -262,6 +347,88 @@ export function seedPiSession(opts: {
     return { sessionId: seeded.sessionId, archivedAt: archived.archivedAt };
   } catch (err) {
     log("mind", `session "${name}": seeding failed, starting fresh:`, err);
+    return null;
+  }
+}
+
+/**
+ * Archive-directory timestamp for a rotated-out pi session, matching the daemon
+ * sleep-manager's archiveSessions: `toISOString().replace(/[:.]/g,"-").slice(0,16)`
+ * → UTC `YYYY-MM-DDTHH-MM`.
+ */
+export function archivePiSessionTimestamp(now: Date = new Date()): string {
+  return now.toISOString().replace(/[:.]/g, "-").slice(0, 16);
+}
+
+/**
+ * Relocate the rotated-out session file into `<piSessionsDir>/archive/<name>-<ts>/`,
+ * mirroring how sleep archival preserves pi sessions (a `<name>-<ts>/` directory of
+ * jsonl files — pi archives whole directories, not pointer files). Keeps the full
+ * transcript findable and leaves the live dir holding only the new session.
+ */
+function archiveRotatedPiFile(
+  piSessionsDir: string,
+  name: string,
+  sourcePath: string,
+  now: Date = new Date(),
+): void {
+  const dest = resolve(piSessionsDir, "archive", `${name}-${archivePiSessionTimestamp(now)}`);
+  mkdirSync(dest, { recursive: true });
+  renameSync(sourcePath, resolve(dest, basename(sourcePath)));
+}
+
+/**
+ * Rotate a pi session in place at the context limit. Reads the live session file,
+ * builds a seeded tail from the pinned `cut` (falling back to a budget-based tail
+ * when the pin can't be honored), writes it as a new session file in the same live
+ * dir, and — for persistent sessions — archives the rotated-out file so the full
+ * transcript stays findable. Returns the new session file **path** (the caller
+ * switches the running SessionManager to it), or null if rotation can't proceed
+ * (the caller then falls back to a fresh session). Never throws.
+ */
+export function rotatePiSession(opts: {
+  cwd: string;
+  sessionsDir: string;
+  name: string;
+  sourcePath: string;
+  cut: PiSeedCut | null;
+  seedTokens: number;
+}): string | null {
+  const { cwd, sessionsDir, name, sourcePath, cut, seedTokens } = opts;
+  try {
+    const jsonl = readFileSync(sourcePath, "utf-8");
+    // Honor the pinned boundary the mind was warned about; only fall back to a
+    // budget-based tail if the pin can't be resolved (missing/renamed id).
+    const seeded =
+      (cut
+        ? buildSeededPiTranscriptFromCut(jsonl, { cwd, boundaryId: cut.boundaryId, sourcePath })
+        : null) ?? buildSeededPiTranscript(jsonl, { cwd, seedTokens, sourcePath });
+    if (!seeded) return null;
+
+    const liveDir = resolve(sessionsDir, name);
+    mkdirSync(liveDir, { recursive: true });
+    const fileTimestamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const destPath = resolve(liveDir, `${fileTimestamp}_${seeded.sessionId}.jsonl`);
+    writeFileSync(destPath, `${seeded.lines.join("\n")}\n`);
+
+    // Archive the rotated-out session (mirrors sleep archival's dir layout). A
+    // failure here is non-fatal — the new file is already live; the stale old file
+    // just lingers (continueRecent still picks the newer one). Ephemeral `new-*`
+    // sessions never reach here (they're inMemory, with no source file).
+    if (!name.startsWith("new-")) {
+      try {
+        archiveRotatedPiFile(sessionsDir, name, sourcePath);
+      } catch (err) {
+        log("mind", `session "${name}": archiving rotated-out file failed:`, err);
+      }
+    }
+    log(
+      "mind",
+      `session "${name}": rotated ${basename(sourcePath)} → ${seeded.sessionId} (${seeded.lines.length - 1} entries)`,
+    );
+    return destPath;
+  } catch (err) {
+    log("mind", `session "${name}": rotation failed:`, err);
     return null;
   }
 }
