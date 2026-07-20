@@ -21,6 +21,7 @@ export default createExtension({
   initDb,
   skillsDir,
   standardSkill: true,
+  spiritSkills: ["plan-coordinator"],
   ui: {
     assetsDir,
     systemSection: { id: "plan", label: "Plan", urlPatterns: ["/plan"] },
