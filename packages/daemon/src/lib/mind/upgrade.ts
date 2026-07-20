@@ -552,7 +552,7 @@ export async function runUpgrade(
   } catch (err) {
     // Merge failed — clean up
     try {
-      await cleanupVariant(variantName, mindName, dir, worktreeDir);
+      await cleanupVariant(variantName, mindName, dir, worktreeDir, { branch: UPGRADE_BRANCH });
     } catch (cleanupErr) {
       log.warn(`cleanup failed after upgrade error for ${mindName}`, log.errorData(cleanupErr));
     }

@@ -2058,6 +2058,7 @@ const app = new Hono<AuthEnv>()
             ok: false,
             conflicts: true,
             worktreeDir: result.worktreeDir,
+            files: result.files,
             message:
               result.message ?? "Merge conflicts detected. Resolve them, then run with continue.",
           });
@@ -2109,6 +2110,7 @@ const app = new Hono<AuthEnv>()
           ok: false,
           conflicts: true,
           worktreeDir: result.worktreeDir,
+          files: result.files,
           message:
             result.message ?? "Merge conflicts detected. Resolve them, then run with continue.",
         });

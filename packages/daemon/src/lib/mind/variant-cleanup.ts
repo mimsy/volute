@@ -34,10 +34,15 @@ export async function cleanupVariant(
     }
   }
 
-  // Get the branch name from the variant entry before removing from DB
-  const { findMind } = await import("./registry.js");
-  const variantEntry = await findMind(variantName);
-  const branchName = opts?.branch ?? variantEntry?.branch ?? variantName;
+  // Get the branch name from the variant entry before removing from DB — skip
+  // the lookup entirely when the caller already knows the real branch (the
+  // upgrade flow's "variant" has no DB row to look up in the first place).
+  let branchName = opts?.branch;
+  if (!branchName) {
+    const { findMind } = await import("./registry.js");
+    const variantEntry = await findMind(variantName);
+    branchName = variantEntry?.branch ?? variantName;
+  }
 
   if (existsSync(variantPath)) {
     try {
