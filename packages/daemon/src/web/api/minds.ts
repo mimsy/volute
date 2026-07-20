@@ -100,7 +100,9 @@ import { cleanupVariant } from "../../lib/mind/variant-cleanup.js";
 import {
   findUnresolvedHomeFiles,
   formatUnresolvedHomeFilesMessage,
+  mergeOrAbort,
   mergeVariantExcludingMemory,
+  restoreMergeDeletedHomeFiles,
   validateBranchName,
 } from "../../lib/mind/variants.js";
 import { readVoluteConfig, writeVoluteConfig } from "../../lib/mind/volute-config.js";
@@ -460,7 +462,42 @@ async function mergeUpgradeAndRestart(
   }
 
   const preMergeHead = (await gitExec(["rev-parse", "HEAD"], { cwd: dir })).trim();
-  await gitExec(["merge", upgradeBranch], { cwd: dir });
+  // On failure this aborts the half-applied merge, rolling back the home/
+  // deletions a conflicted merge has already made to the live working tree.
+  await mergeOrAbort(dir, upgradeBranch);
+
+  // The allowlist-migration prep commit records pre-allowlist home/ files as
+  // deleted, so the merge just removed them from the live working tree. Put
+  // the content back, untracked — first, before any later step can fail.
+  let restoreWarning: string | undefined;
+  let restored: string[] = [];
+  try {
+    restored = await restoreMergeDeletedHomeFiles(dir, preMergeHead);
+    if (restored.length > 0) {
+      log.info(
+        `restored ${restored.length} home files untracked by the allowlist migration for ${mindName}`,
+      );
+    }
+  } catch (err) {
+    log.error(`failed to restore merge-deleted home files for ${mindName}`, log.errorData(err));
+    restoreWarning =
+      `Upgrade merged but restoring home files the allowlist migration deleted failed: ` +
+      `${err instanceof Error ? err.message : String(err)}. Recover them manually: list them ` +
+      `with \`git diff --name-only --diff-filter=D --no-renames ${preMergeHead} HEAD -- home/\`, ` +
+      `then restore each with \`git restore --source=${preMergeHead} --worktree -- <path>\`.`;
+  }
+  if (restored.length > 0) {
+    try {
+      await chownMindDir(dir, mindName);
+    } catch (err) {
+      // cleanupVariant's own chown usually repairs this right after; log rather
+      // than misreport it as a restore failure.
+      log.warn(`failed to chown restored home files for ${mindName}`, log.errorData(err));
+    }
+  }
+  /** Prefix any later warning with the restore failure — it's mind data, it goes first. */
+  const withRestoreWarning = (warning?: string): string | undefined =>
+    [restoreWarning, warning].filter(Boolean).join(" ") || undefined;
 
   // Merge succeeded — everything below is best-effort cleanup/restart
   try {
@@ -506,7 +543,9 @@ async function mergeUpgradeAndRestart(
       log.warn(`failed to swap template home files for ${mindName}`, log.errorData(err));
       return {
         ok: true,
-        warning: `Upgrade merged but template switch ${oldTemplate}→${template} failed: ${err instanceof Error ? err.message : String(err)}. The mind is still registered as ${oldTemplate}; re-run the switch or fix home/ manually.`,
+        warning: withRestoreWarning(
+          `Upgrade merged but template switch ${oldTemplate}→${template} failed: ${err instanceof Error ? err.message : String(err)}. The mind is still registered as ${oldTemplate}; re-run the switch or fix home/ manually.`,
+        ),
       };
     }
   }
@@ -529,7 +568,9 @@ async function mergeUpgradeAndRestart(
       log.warn(`npm install failed after upgrade merge for ${mindName}`, log.errorData(err));
       return {
         ok: true,
-        warning: `Upgrade merged but npm install failed: ${err instanceof Error ? err.message : String(err)}. You may need to run npm install manually.`,
+        warning: withRestoreWarning(
+          `Upgrade merged but npm install failed: ${err instanceof Error ? err.message : String(err)}. You may need to run npm install manually.`,
+        ),
       };
     }
   } else {
@@ -550,11 +591,13 @@ async function mergeUpgradeAndRestart(
   } catch (e) {
     return {
       ok: true,
-      warning: `Upgrade merged but mind restart failed: ${e instanceof Error ? e.message : String(e)}`,
+      warning: withRestoreWarning(
+        `Upgrade merged but mind restart failed: ${e instanceof Error ? e.message : String(e)}`,
+      ),
     };
   }
 
-  return { ok: true, warning: switchWarning };
+  return { ok: true, warning: withRestoreWarning(switchWarning) };
 }
 
 /** Import a mind from a .volute archive (extracted to tempDir by CLI). */
