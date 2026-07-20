@@ -13,14 +13,29 @@ import { findMind, mindDir } from "../../lib/mind/registry.js";
 import log from "../../lib/util/logger.js";
 import { type AuthEnv, requireSelf } from "../middleware/auth.js";
 
-async function notifyMind(mindName: string, message: string) {
+/**
+ * Notify a mind about a file-share event. Returns whether the mind has been (or will
+ * reliably be) told: delivered now, or queued for a SLEEPING mind's wake flush. A
+ * failed POST to an awake mind returns `false` — the pending event only replays on
+ * the next wake or restart, which may be arbitrarily far off, so claiming "notified"
+ * would recreate the silent-failure shape this fixes. The caller's response carries
+ * the result as `notified` so the sender isn't told "File staged" with no hint the
+ * recipient never learns of it (#723).
+ */
+async function notifyMind(mindName: string, message: string): Promise<boolean> {
   const entry = await findMind(mindName);
-  if (!entry) return;
+  if (!entry) return false;
   try {
     const { deliverEvent } = await import("../../lib/chat/system-events.js");
-    await deliverEvent(mindName, { type: "file-share", body: message });
+    const result = await deliverEvent(mindName, { type: "file-share", body: message });
+    if (result.delivered) return true;
+    if (result.id == null) return false;
+    const { getSleepManagerIfReady } = await import("../../lib/daemon/sleep-manager.js");
+    const { getBaseName } = await import("../../lib/mind/registry.js");
+    return getSleepManagerIfReady()?.isSleeping(await getBaseName(mindName)) ?? false;
   } catch (err) {
     log.warn(`[file-sharing] notify mind ${mindName} failed`, log.errorData(err));
+    return false;
   }
 }
 
@@ -76,12 +91,12 @@ const app = new Hono<AuthEnv>()
     const { id } = stageFile(body.targetMind, senderName, filename, content, body.filePath);
 
     // Notify receiver
-    await notifyMind(
+    const notified = await notifyMind(
       body.targetMind,
       `[file] ${senderName} sent ${filename} (${sizeStr}) — run: volute chat accept ${id}`,
     );
 
-    return c.json({ status: "pending", id }, 200);
+    return c.json({ status: "pending", id, notified }, 200);
   })
 
   // List pending incoming files
@@ -117,9 +132,9 @@ const app = new Hono<AuthEnv>()
     }
 
     // Notify sender that file was accepted
-    await notifyMind(result.sender, `[file] ${name} accepted ${result.filename}`);
+    const notified = await notifyMind(result.sender, `[file] ${name} accepted ${result.filename}`);
 
-    return c.json({ ok: true, destPath: result.destPath });
+    return c.json({ ok: true, destPath: result.destPath, notified });
   })
 
   // Reject a pending file
@@ -142,9 +157,9 @@ const app = new Hono<AuthEnv>()
     }
 
     // Notify sender that file was rejected
-    await notifyMind(result.sender, `[file] ${name} rejected ${result.filename}`);
+    const notified = await notifyMind(result.sender, `[file] ${name} rejected ${result.filename}`);
 
-    return c.json({ ok: true });
+    return c.json({ ok: true, notified });
   })
 
   // Stage a file from an external sender (CLI user, not a mind).
@@ -182,12 +197,12 @@ const app = new Hono<AuthEnv>()
     const { id } = stageFile(receiverName, body.sender, body.filename, content, body.filename);
 
     // Notify receiver
-    await notifyMind(
+    const notified = await notifyMind(
       receiverName,
       `[file] ${body.sender} sent ${body.filename} (${sizeStr}) — run: volute chat accept ${id}`,
     );
 
-    return c.json({ status: "pending", id }, 200);
+    return c.json({ status: "pending", id, notified }, 200);
   });
 
 export default app;

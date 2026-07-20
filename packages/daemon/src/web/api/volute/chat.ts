@@ -391,7 +391,7 @@ export const unifiedChatApp = new Hono<AuthEnv>().post(
 
     // Fan out to running mind participants
     const isDM = conv.type === "dm";
-    await fanOutToMinds({
+    const { gatedRecipients } = await fanOutToMinds({
       conversationId: conversationId!,
       contentBlocks,
       senderName,
@@ -404,7 +404,23 @@ export const unifiedChatApp = new Hono<AuthEnv>().post(
         : undefined,
     });
 
-    return c.json({ ok: true, conversationId, outboundId, spirit: spiritStatus, spiritName });
+    // The message is saved, but a recipient whose routing gates this channel won't see it
+    // until they accept the channel — say so in the 200 instead of a bare "sent" (#723).
+    const notice =
+      gatedRecipients.length > 0
+        ? `Note: your message is held for ${gatedRecipients.join(", ")} pending channel ` +
+          `approval — they haven't routed this channel yet. It will be delivered if they ` +
+          `accept the channel.`
+        : undefined;
+
+    return c.json({
+      ok: true,
+      conversationId,
+      outboundId,
+      spirit: spiritStatus,
+      spiritName,
+      ...(notice ? { notice } : {}),
+    });
   },
 );
 
