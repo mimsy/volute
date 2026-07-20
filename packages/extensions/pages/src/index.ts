@@ -6,7 +6,7 @@ import { initDb, syncSystemPages } from "./db.js";
 import { createPublicRoutes, createRoutes } from "./routes.js";
 import {
   addPagesWorktree,
-  collectHtmlFiles,
+  collectPageFiles,
   ensurePagesRepo,
   hashFiles,
   isolationFrom,
@@ -57,7 +57,7 @@ export default createExtension({
         if (ctx.db) {
           const repoDir = resolve(ctx.dataDir, "repo");
           try {
-            syncSystemPages(ctx.db, hashFiles(repoDir, collectHtmlFiles(repoDir)));
+            syncSystemPages(ctx.db, hashFiles(repoDir, collectPageFiles(repoDir)));
           } catch (err) {
             console.error("[pages] failed to sync system pages to DB:", err);
           }
