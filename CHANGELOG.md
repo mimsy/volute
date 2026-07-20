@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.53.0](https://github.com/mimsy/volute/compare/volute-v0.52.0...volute-v0.53.0) (2026-07-19)
+
+
+### Features
+
+* add /volute-coder skill and the guestbook ([#749](https://github.com/mimsy/volute/issues/749)) ([02cfb01](https://github.com/mimsy/volute/commit/02cfb01ca23b07a0cc405100b888e887f822c697))
+* host-optional spirit avatar and description in setup wizard ([#754](https://github.com/mimsy/volute/issues/754)) ([a363d13](https://github.com/mimsy/volute/commit/a363d1328b2f18506e5448cf8bad75a34a27e4a9))
+* MEMORY.md size hygiene — token-cost visibility, load backstop, core+recall memory skill ([#763](https://github.com/mimsy/volute/issues/763)) ([532bcf9](https://github.com/mimsy/volute/commit/532bcf9970f1a059d21760dfc8ab37b7879ed888))
+* mind-authored compaction — rotate sessions in place at the context limit (all templates) ([#761](https://github.com/mimsy/volute/issues/761)) ([480c375](https://github.com/mimsy/volute/commit/480c3750952b6adcd59acdbc7c4f5a96d11210fe))
+* mind-authored turn summaries supersede provisional AI summaries ([#758](https://github.com/mimsy/volute/issues/758)) ([9dd48eb](https://github.com/mimsy/volute/commit/9dd48eba93a9b24c95a85020127305e79d5adee2))
+* notify minds on delivery failures and context loss ([#366](https://github.com/mimsy/volute/issues/366), [#367](https://github.com/mimsy/volute/issues/367)) ([#762](https://github.com/mimsy/volute/issues/762)) ([fb42186](https://github.com/mimsy/volute/commit/fb4218668d27d5a4065cb4e94f10ec75ce426710))
+* seed fresh persistent sessions from the prior session's transcript (all templates) ([#759](https://github.com/mimsy/volute/issues/759)) ([86bfa18](https://github.com/mimsy/volute/commit/86bfa188d1da2ca6005f6577a2f2ffa7f2eeb95a))
+* spirit orientation — SPIRIT.md doctrine split, first-waking event, orientation arc ([#751](https://github.com/mimsy/volute/issues/751)) ([93c8ef1](https://github.com/mimsy/volute/commit/93c8ef19d32975bec5e6eec82dc9fb1bda6262b5))
+
+
+### Bug Fixes
+
+* make history summaries accurate (sender attribution, anchored voice, labeled rollups) ([#756](https://github.com/mimsy/volute/issues/756)) ([3cf8c99](https://github.com/mimsy/volute/commit/3cf8c99034c170928f9fd043ee2606e7473ed825))
+* stale messageChannels entry misroutes the next turn's replies ([#765](https://github.com/mimsy/volute/issues/765)) ([8f5dd5a](https://github.com/mimsy/volute/commit/8f5dd5a1e6680df9dfba1acbd068e013ca983e48))
+
 ## [0.52.0](https://github.com/mimsy/volute/compare/volute-v0.51.0...volute-v0.52.0) (2026-07-17)
 
 
