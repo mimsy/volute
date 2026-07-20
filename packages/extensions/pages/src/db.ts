@@ -124,6 +124,15 @@ export function getSystemPages(db: Database): SiteEntry | null {
   };
 }
 
+/** Minds (excluding _system) that have at least one published page. */
+export function getMindsWithSites(db: Database): string[] {
+  return (
+    db
+      .prepare("SELECT DISTINCT mind FROM published_pages WHERE mind != '_system' ORDER BY mind")
+      .all() as { mind: string }[]
+  ).map((r) => r.mind);
+}
+
 export function syncSystemPages(db: Database, pages: PageInput[], author?: string): void {
   const existing = new Map(
     (

@@ -3,7 +3,8 @@ import { relative, resolve } from "node:path";
 
 import type { ExtensionCommand } from "@volute/extensions";
 
-import { getPublishedPages, syncPublishedPages, syncSystemPages } from "./db.js";
+import { commonsReport } from "./commons.js";
+import { getMindsWithSites, getPublishedPages, syncPublishedPages, syncSystemPages } from "./db.js";
 import {
   collectPageFiles,
   hashFiles,
@@ -337,6 +338,37 @@ export function createCommands(): Record<string, ExtensionCommand> {
         } catch (err) {
           return { error: `Failed to read shared log: ${(err as Error).message}` };
         }
+      },
+    },
+
+    commons: {
+      description: "Curation report for the commons: index, orphaned pages, unrepresented minds",
+      handler: async (_parsed, ctx) => {
+        const db = ctx.db;
+        if (!db) return { error: "Database not available" };
+
+        const repoDir = resolve(ctx.dataDir, "repo");
+        const files = collectPageFiles(repoDir);
+        const report = commonsReport(repoDir, files, getMindsWithSites(db));
+
+        const lines: string[] = [];
+        if (!report.hasIndex) {
+          lines.push("The commons has no index page yet (index.md or index.html).");
+        } else {
+          lines.push(`Index: ok (${files.length} pages in the commons)`);
+        }
+        lines.push(
+          report.orphanPages.length > 0
+            ? `Orphaned pages (not reachable from the index): ${report.orphanPages.join(", ")}`
+            : "Orphaned pages: none",
+        );
+        lines.push(
+          report.unlinkedMinds.length > 0
+            ? `Minds with sites not linked from the commons: ${report.unlinkedMinds.join(", ")}`
+            : "Resident sites: all linked",
+        );
+
+        return { output: lines.join("\n") };
       },
     },
   };
