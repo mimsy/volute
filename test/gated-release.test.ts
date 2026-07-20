@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { and, eq } from "drizzle-orm";
@@ -19,11 +19,13 @@ function mindName(): string {
   return `gated-test-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
 }
 
+function routesPath(name: string): string {
+  return resolve(process.env.VOLUTE_HOME!, "minds", name, "home/.config/routes.json");
+}
+
 function writeRoutes(name: string, config: RoutingConfig | object): void {
-  const dir = resolve(process.env.VOLUTE_HOME!, "minds", name);
-  const configDir = resolve(dir, "home/.config");
-  mkdirSync(configDir, { recursive: true });
-  writeFileSync(resolve(configDir, "routes.json"), JSON.stringify(config));
+  mkdirSync(resolve(process.env.VOLUTE_HOME!, "minds", name, "home/.config"), { recursive: true });
+  writeFileSync(routesPath(name), JSON.stringify(config));
   clearConfigCache(name);
 }
 
@@ -162,10 +164,25 @@ describe("gated-channel release (#537)", () => {
       assert.ok(invites[0].includes("Platform: discord"), "renders the Platform line");
       assert.ok(invites[0].includes("Participants: 3"), "renders the Participants line");
       assert.ok(invites[0].includes("Preview: hello"), "still renders the preview after details");
-      // The decline hint (real command) must be present — pins the prompt to reality.
+      // Every command the invite names must be a real one — this prompt is the mind's only
+      // instruction on what to do about a held channel, so a stale command strands it.
+      assert.ok(
+        invites[0].includes("volute chat channels accept discord:general"),
+        "renders the real accept command",
+      );
+      assert.ok(
+        invites[0].includes("volute chat channels peek discord:general"),
+        "renders the real peek command",
+      );
       assert.ok(
         invites[0].includes("volute chat channels decline discord:general"),
         "renders the real decline command",
+      );
+      // `chat read` cannot show gated messages (they have no conversation) — the old invite
+      // pointed there and left minds with no way to see what was held.
+      assert.ok(
+        !invites[0].includes("volute chat read"),
+        "does not point at chat read, which cannot reach held messages",
       );
     });
   });
@@ -342,6 +359,12 @@ describe("gated-channel release (#537)", () => {
       assert.equal(summaries.length, 1, "exactly one summary, not a flood");
       assert.ok(summaries[0].text.includes("discord:general"));
       assert.ok(summaries[0].text.includes("15 earlier"));
+      // The summary must point somewhere that actually shows the archived 15.
+      assert.ok(
+        summaries[0].text.includes("volute chat channels peek discord:general"),
+        "points at peek for the truncated remainder",
+      );
+      assert.ok(!summaries[0].text.includes("volute chat read"), "does not point at chat read");
 
       // Only the promoted (delivered) rows become inbound history — the archived 15 stay
       // inert and are never claimed as "received" (#420).
@@ -442,6 +465,335 @@ describe("gated-channel release (#537)", () => {
       const after = await rows(name);
       assert.equal(after.filter((r) => r.status === "gated").length, 1, "still held");
       assert.equal(after.filter((r) => r.status === "pending").length, 0);
+    });
+  });
+
+  describe("release serialization", () => {
+    it("records each released message exactly once under concurrent releases", async () => {
+      const name = createMind({ rules: [], default: "main" });
+      cleanup.push(name);
+      const m = makeManager();
+      manager = m.manager;
+
+      for (let i = 0; i < 5; i++) await gate(manager, name, "discord:general", `msg ${i}`);
+      writeRoutes(name, { rules: [{ channel: "discord:*", thread: "discord" }], default: "main" });
+
+      // Two releases racing: both read the gated rows before either promotes, so without
+      // serialization each writes its own inbound history row for the same message. The
+      // promote UPDATE is idempotent; the INSERT is not.
+      await Promise.all([manager.releaseGated(name), manager.releaseGated(name)]);
+
+      const db = await getDb();
+      const inbound = await db
+        .select()
+        .from(mindHistory)
+        .where(and(eq(mindHistory.mind, name), eq(mindHistory.type, "inbound")));
+      assert.equal(inbound.length, 5, "no duplicate inbound rows from overlapping releases");
+    });
+  });
+
+  describe("acceptChannel", () => {
+    it("adds the rule, releases the backlog, and reports the count", async () => {
+      const name = createMind({ rules: [], default: "main" });
+      cleanup.push(name);
+      const m = makeManager();
+      manager = m.manager;
+
+      for (let i = 0; i < 3; i++) await gate(manager, name, "discord:general", `msg ${i}`);
+
+      const result = await manager.acceptChannel(name, "discord:general");
+      assert.equal(result.ruleAdded, true);
+      assert.equal(result.released, 3, "reports what it actually released");
+      assert.equal(result.archived, 0);
+
+      const after = await rows(name);
+      assert.equal(after.filter((r) => r.status === "pending").length, 3, "backlog released");
+
+      // The rule must land in the file the router reads, or the next message re-gates.
+      const written = JSON.parse(readFileSync(routesPath(name), "utf-8")) as RoutingConfig;
+      assert.deepEqual(written.rules, [{ channel: "discord:general", thread: "${channel}" }]);
+    });
+
+    it("routes to an explicit thread when given one", async () => {
+      const name = createMind({ rules: [], default: "main" });
+      cleanup.push(name);
+      const m = makeManager();
+      manager = m.manager;
+
+      await gate(manager, name, "mail:noreply@github.com");
+      const result = await manager.acceptChannel(name, "mail:noreply@github.com", "mail");
+      assert.equal(result.thread, "mail");
+
+      const row = (await rows(name)).find((r) => r.channel === "mail:noreply@github.com");
+      assert.equal(row?.status, "pending");
+      assert.equal(row?.thread, "mail", "released into the requested thread");
+    });
+
+    it("adds the rule even with nothing held, so future messages route", async () => {
+      const name = createMind({ rules: [], default: "main" });
+      cleanup.push(name);
+      const m = makeManager();
+      manager = m.manager;
+
+      const result = await manager.acceptChannel(name, "discord:quiet", "quiet");
+      assert.equal(result.ruleAdded, true);
+      assert.equal(result.released, 0);
+
+      const outcome = await gate(manager, name, "discord:quiet");
+      assert.equal(outcome.routed && outcome.mode, "immediate", "no longer gated");
+    });
+
+    it("un-declines a channel so accepting after declining works", async () => {
+      const name = createMind({ rules: [], default: "main" });
+      cleanup.push(name);
+      const m = makeManager();
+      manager = m.manager;
+
+      await gate(manager, name, "discord:general");
+      await manager.declineChannel(name, "discord:general");
+      await manager.acceptChannel(name, "discord:general", "discord");
+
+      const db = await getDb();
+      const gateRows = await db
+        .select()
+        .from(channelGates)
+        .where(and(eq(channelGates.mind, name), eq(channelGates.channel, "discord:general")));
+      assert.equal(gateRows.length, 0, "the decline is cleared");
+
+      // A declined channel archives on arrival; after accepting, messages must flow again.
+      const outcome = await gate(manager, name, "discord:general");
+      assert.equal(outcome.routed && outcome.mode, "immediate");
+    });
+
+    it("is idempotent — a second accept adds no duplicate rule", async () => {
+      const name = createMind({ rules: [], default: "main" });
+      cleanup.push(name);
+      const m = makeManager();
+      manager = m.manager;
+
+      await manager.acceptChannel(name, "discord:general", "discord");
+      const second = await manager.acceptChannel(name, "discord:general", "discord");
+      assert.equal(second.ruleAdded, false, "reports the rule already existed");
+      assert.equal(second.thread, "discord");
+
+      const written = JSON.parse(readFileSync(routesPath(name), "utf-8")) as RoutingConfig;
+      assert.equal(written.rules?.length, 1, "no duplicate rule");
+    });
+
+    it("appends, preserving existing rule order", async () => {
+      const name = createMind({
+        rules: [
+          { channel: "web", thread: "web" },
+          { channel: "#*", thread: "${channel}" },
+        ],
+        default: "main",
+      });
+      cleanup.push(name);
+      const m = makeManager();
+      manager = m.manager;
+
+      await manager.acceptChannel(name, "discord:general", "discord");
+
+      const written = JSON.parse(readFileSync(routesPath(name), "utf-8")) as RoutingConfig;
+      assert.deepEqual(written.rules, [
+        { channel: "web", thread: "web" },
+        { channel: "#*", thread: "${channel}" },
+        { channel: "discord:general", thread: "discord" },
+      ]);
+    });
+
+    it("does not append a rule that an existing broader rule would shadow", async () => {
+      // The docs tell minds that accept is idempotent and safe to run after hand-editing.
+      // A wildcard rule already covering the channel means an appended exact rule would sit
+      // where it can never match — so accept must report the thread that actually applies,
+      // not the one that was asked for.
+      const name = createMind({
+        rules: [{ channel: "discord:*", thread: "chat" }],
+        default: "main",
+      });
+      cleanup.push(name);
+      const m = makeManager();
+      manager = m.manager;
+
+      const result = await manager.acceptChannel(name, "discord:general", "somewhere-else");
+      assert.equal(result.ruleAdded, false, "already routed — nothing to add");
+      assert.equal(result.thread, "chat", "reports where messages actually land");
+
+      const written = JSON.parse(readFileSync(routesPath(name), "utf-8")) as RoutingConfig;
+      assert.equal(written.rules?.length, 1, "no shadowed rule appended");
+    });
+
+    it("reports the resolved thread, expanding ${channel}", async () => {
+      const name = createMind({ rules: [], default: "main" });
+      cleanup.push(name);
+      const m = makeManager();
+      manager = m.manager;
+
+      const result = await manager.acceptChannel(name, "discord:general");
+      assert.equal(result.thread, "discord:general", "not the literal '${channel}'");
+    });
+
+    it("counts only the accepted channel's messages, not the whole mind's", async () => {
+      // The release is mind-wide by design (accepting one channel must not strand another
+      // a rule already covers), so the counts must be scoped separately or they over-report.
+      const name = createMind({ rules: [], default: "main" });
+      cleanup.push(name);
+      const m = makeManager();
+      manager = m.manager;
+
+      for (let i = 0; i < 2; i++) await gate(manager, name, "discord:general");
+      for (let i = 0; i < 3; i++) await gate(manager, name, "slack:general");
+      // A rule covering the *other* channel, so its backlog also releases in the same run.
+      writeRoutes(name, { rules: [{ channel: "slack:*", thread: "slack" }], default: "main" });
+
+      const result = await manager.acceptChannel(name, "discord:general", "discord");
+      assert.equal(result.released, 2, "counts discord's 2, not all 5");
+    });
+
+    it("refuses an array-form routes.json instead of silently dropping the rule", async () => {
+      const name = createMind({ rules: [], default: "main" });
+      cleanup.push(name);
+      const m = makeManager();
+      manager = m.manager;
+
+      // Valid JSON, wrong shape. A top-level array has no `rules`, so such a mind gates
+      // everything — precisely the case accept exists for. Setting `.rules` on an array
+      // and stringifying drops it, which would report success having changed nothing.
+      const arrayForm = JSON.stringify([{ channel: "web", thread: "web" }]);
+      writeFileSync(routesPath(name), arrayForm);
+
+      await assert.rejects(() => manager!.acceptChannel(name, "discord:general"), /malformed/);
+      assert.equal(readFileSync(routesPath(name), "utf-8"), arrayForm, "file left untouched");
+    });
+
+    it("does not lose a rule when two accepts run concurrently", async () => {
+      const name = createMind({ rules: [], default: "main" });
+      cleanup.push(name);
+      const m = makeManager();
+      manager = m.manager;
+
+      // Both would read the same config and the second write would drop the first's rule.
+      await Promise.all([
+        manager.acceptChannel(name, "discord:a", "a"),
+        manager.acceptChannel(name, "discord:b", "b"),
+      ]);
+
+      const written = JSON.parse(readFileSync(routesPath(name), "utf-8")) as RoutingConfig;
+      assert.deepEqual(
+        written.rules?.map((r) => r.channel).sort(),
+        ["discord:a", "discord:b"],
+        "both rules survive",
+      );
+    });
+
+    it("refuses to touch a malformed routes.json", async () => {
+      const name = createMind({ rules: [], default: "main" });
+      cleanup.push(name);
+      const m = makeManager();
+      manager = m.manager;
+
+      // routes.json is a mind-owned file — overwriting a broken one would destroy routing
+      // the mind wrote by hand, which is worse than failing loudly.
+      const broken = '{ "rules": [ }';
+      writeFileSync(routesPath(name), broken);
+
+      await assert.rejects(
+        () => manager!.acceptChannel(name, "discord:general"),
+        /malformed/,
+        "rejects rather than clobbering",
+      );
+      assert.equal(readFileSync(routesPath(name), "utf-8"), broken, "file left untouched");
+    });
+  });
+
+  describe("peekChannel", () => {
+    it("returns held messages oldest-first without changing anything", async () => {
+      const name = createMind({ rules: [], default: "main" });
+      cleanup.push(name);
+      const m = makeManager();
+      manager = m.manager;
+
+      for (let i = 0; i < 3; i++) await gate(manager, name, "discord:general", `msg ${i}`);
+
+      const peeked = await manager.peekChannel(name, "discord:general");
+      assert.equal(peeked.count, 3);
+      assert.deepEqual(
+        peeked.messages.map((p) => p.content),
+        ["msg 0", "msg 1", "msg 2"],
+      );
+      assert.equal(peeked.messages[0].sender, "alice");
+      assert.equal(peeked.messages[0].status, "gated");
+
+      const after = await rows(name);
+      assert.equal(after.filter((r) => r.status === "gated").length, 3, "peek changes no state");
+    });
+
+    it("still shows a declined channel's archived backlog", async () => {
+      const name = createMind({ rules: [], default: "main" });
+      cleanup.push(name);
+      const m = makeManager();
+      manager = m.manager;
+
+      for (let i = 0; i < 2; i++) await gate(manager, name, "discord:spam", `spam ${i}`);
+      await manager.declineChannel(name, "discord:spam");
+
+      const peeked = await manager.peekChannel(name, "discord:spam");
+      assert.equal(peeked.count, 2, "archived messages stay readable");
+      assert.ok(peeked.messages.every((p) => p.status === "archived"));
+    });
+
+    it("caps how much it returns but reports the true total", async () => {
+      const name = createMind({ rules: [], default: "main" });
+      cleanup.push(name);
+      const m = makeManager();
+      manager = m.manager;
+
+      for (let i = 0; i < 55; i++) await gate(manager, name, "discord:flood", `msg ${i}`);
+
+      const peeked = await manager.peekChannel(name, "discord:flood");
+      assert.equal(peeked.count, 55, "reports the real backlog size");
+      assert.equal(peeked.shown, 50, "returns at most the cap");
+      assert.equal(peeked.messages[0].content, "msg 5", "keeps the most recent window");
+      assert.equal(peeked.messages.at(-1)?.content, "msg 54");
+    });
+
+    it("returns an empty result for a channel with nothing held", async () => {
+      const name = createMind({ rules: [], default: "main" });
+      cleanup.push(name);
+      const m = makeManager();
+      manager = m.manager;
+
+      const peeked = await manager.peekChannel(name, "discord:nothing");
+      assert.equal(peeked.count, 0);
+      assert.deepEqual(peeked.messages, []);
+    });
+  });
+
+  describe("releaseGatedSweep", () => {
+    it("releases messages held by routes.json edits made while the daemon was down", async () => {
+      const a = createMind({ rules: [], default: "main" });
+      const b = createMind({ rules: [], default: "main" });
+      cleanup.push(a, b);
+      const m = makeManager();
+      manager = m.manager;
+
+      await gate(manager, a, "discord:general", "for a");
+      await gate(manager, b, "slack:general", "for b");
+
+      // Edit both configs with the change listener inert — exactly what a daemon that was
+      // down sees at boot: matching rules on disk, messages still held.
+      writeRoutes(a, { rules: [{ channel: "discord:*", thread: "discord" }], default: "main" });
+      writeRoutes(b, { rules: [{ channel: "slack:*", thread: "slack" }], default: "main" });
+
+      const stillGated = async (n: string) =>
+        (await rows(n)).filter((r) => r.status === "gated").length;
+      assert.equal(await stillGated(a), 1, "editing the file alone releases nothing");
+      assert.equal(await stillGated(b), 1);
+
+      await manager.releaseGatedSweep();
+
+      assert.equal(await stillGated(a), 0, "sweep released the first mind");
+      assert.equal(await stillGated(b), 0, "sweep released the second mind");
     });
   });
 

@@ -131,13 +131,18 @@ export function registerMindDir(name: string, dir: string): void {
   dirOverrides.set(name, dir);
 }
 
-function configPath(mindName: string): string {
+/**
+ * Absolute path of the routes.json the router actually reads for a mind (honouring the
+ * spirit/variant directory overrides). Exported so writers — e.g. `acceptChannel` — edit
+ * the same file the router loads.
+ */
+export function routesConfigPath(mindName: string): string {
   const dir = dirOverrides.get(mindName) ?? mindDir(mindName);
   return resolve(dir, "home/.config/routes.json");
 }
 
 export function getRoutingConfig(mindName: string): RoutingConfig {
-  const path = configPath(mindName);
+  const path = routesConfigPath(mindName);
 
   // Skip statSync if we checked recently and have a cached config
   const now = Date.now();
@@ -183,13 +188,20 @@ export function getRoutingConfig(mindName: string): RoutingConfig {
 
 const globRegexCache = new Map<string, RegExp>();
 
-export function clearConfigCache(mindName?: string): void {
+/**
+ * Drop a mind's cached routing config (or every mind's, with no argument).
+ *
+ * Pass `{ notify: false }` when the caller releases gated messages itself and awaits the
+ * result — the listener-driven release runs detached, so leaving it on would race the
+ * awaited run and make its counts unreliable.
+ */
+export function clearConfigCache(mindName?: string, opts?: { notify?: boolean }): void {
   if (mindName) {
     configCache.delete(mindName);
     statCheckCache.delete(mindName);
     // An explicit invalidation typically follows a routes.json write — re-evaluate
     // gated messages against the (about to be reloaded) rules.
-    notifyRoutesChanged(mindName);
+    if (opts?.notify !== false) notifyRoutesChanged(mindName);
   } else {
     configCache.clear();
     statCheckCache.clear();
