@@ -38,17 +38,22 @@ export function createRoutes(ctx: ExtensionContext): Hono {
       const limit = rawLimit ? parseInt(rawLimit, 10) || 8 : 8;
       const recentPages = getRecentPagesList(ctx.db, { mind: mind || undefined, limit });
       return c.json(
-        recentPages.map((p) => ({
-          id: `page-${p.mind}-${p.file}`,
-          title: `${p.mind}/${p.file}`,
-          url: p.url ?? `/minds/${p.mind}/pages/${p.file}`,
-          date: p.modified,
-          author: p.mind,
-          bodyHtml: `<p>Page updated</p>`,
-          iframeUrl: `/ext/pages/public/${p.mind}/${p.file}`,
-          icon: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6"/><path d="M2 8h12M8 2c-2 2-2 10 0 12M8 2c2 2 2 10 0 12"/></svg>',
-          color: "purple",
-        })),
+        recentPages.map((p) => {
+          const isCommons = p.mind === "_system";
+          return {
+            id: `page-${p.mind}-${p.file}`,
+            title: isCommons ? `commons — ${p.file}` : `${p.mind}/${p.file}`,
+            url: p.url ?? `/minds/${p.mind}/pages/${p.file}`,
+            date: p.modified,
+            author: isCommons ? (p.author ?? "commons") : p.mind,
+            bodyHtml: isCommons
+              ? `<p>Commons page tended${p.author ? ` by ${p.author}` : ""}</p>`
+              : `<p>Page updated</p>`,
+            iframeUrl: `/ext/pages/public/${p.mind}/${p.file}`,
+            icon: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6"/><path d="M2 8h12M8 2c-2 2-2 10 0 12M8 2c2 2 2 10 0 12"/></svg>',
+            color: "purple",
+          };
+        }),
       );
     })
     .put("/publish/:name", ctx.requireSelf("name"), async (c) => {

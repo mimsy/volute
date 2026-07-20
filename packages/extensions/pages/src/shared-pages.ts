@@ -416,7 +416,13 @@ export async function pagesPullAndMerge(
   dataDir: string,
   message: string,
   isolation?: IsolationInfo,
-): Promise<{ ok: boolean; conflicts?: boolean; message?: string }> {
+): Promise<{
+  ok: boolean;
+  conflicts?: boolean;
+  message?: string;
+  changedFiles?: string[];
+  priorAuthors?: Record<string, string[]>;
+}> {
   return withPagesLock(async () => {
     const wt = worktreePath(mindDir);
     const dir = pagesRepoDir(dataDir);
@@ -494,6 +500,32 @@ export async function pagesPullAndMerge(
       isolation,
     );
 
+    // Contributor bookkeeping for the caller's social events. Inside the lock on
+    // purpose: HEAD is guaranteed to still be our squash commit.
+    let changedFiles: string[] = [];
+    const priorAuthors: Record<string, string[]> = {};
+    try {
+      changedFiles = (
+        await gitExec(["diff", "--name-only", "HEAD^", "HEAD"], { cwd: dir }, isolation)
+      )
+        .trim()
+        .split("\n")
+        .filter(Boolean);
+      for (const file of changedFiles) {
+        const names = (
+          await gitExec(["log", "--format=%an", "HEAD^", "--", file], { cwd: dir }, isolation)
+        )
+          .trim()
+          .split("\n")
+          .filter(Boolean);
+        // "volute" is the committer identity used for the repo-init commit — not a mind.
+        const unique = [...new Set(names)].filter((n) => n !== mindName && n !== "volute");
+        if (unique.length > 0) priorAuthors[file] = unique;
+      }
+    } catch (err) {
+      console.warn(`[pages] contributor lookup failed: ${(err as Error).message}`);
+    }
+
     // Reset mind's branch to main
     try {
       await gitExec(["reset", "--hard", "main"], { cwd: wt }, isolation);
@@ -502,6 +534,8 @@ export async function pagesPullAndMerge(
       return {
         ok: true,
         message: "Published to main, but branch reset failed — run 'volute pages pull' to sync",
+        changedFiles,
+        priorAuthors,
       };
     }
 
@@ -513,12 +547,12 @@ export async function pagesPullAndMerge(
       }
     }
 
-    return { ok: true };
+    return { ok: true, changedFiles, priorAuthors };
   });
 }
 
-/** Recursively collect HTML files in a directory, returning paths relative to baseDir. */
-export function collectHtmlFiles(dir: string): string[] {
+/** Recursively collect HTML and Markdown files in a directory, returning paths relative to baseDir. */
+export function collectPageFiles(dir: string): string[] {
   const files: string[] = [];
   function walk(d: string) {
     let items: string[];
@@ -533,7 +567,7 @@ export function collectHtmlFiles(dir: string): string[] {
       const full = resolve(d, item);
       try {
         const s = statSync(full);
-        if (s.isFile() && item.endsWith(".html")) {
+        if (s.isFile() && (item.endsWith(".html") || item.endsWith(".md"))) {
           files.push(relative(dir, full));
         } else if (s.isDirectory()) {
           walk(full);
@@ -556,6 +590,11 @@ export function hashFiles(baseDir: string, files: string[]): { file: string; has
       .update(readFileSync(resolve(baseDir, file)))
       .digest("hex"),
   }));
+}
+
+/** Whether a file path is a page file we track (HTML or Markdown). */
+function isPageFile(f: string): boolean {
+  return f.endsWith(".html") || f.endsWith(".md");
 }
 
 /** Show files in the mind's shared pages worktree with draft/published status. */
@@ -598,16 +637,16 @@ export async function pagesStatus(mindDir: string, isolation?: IsolationInfo): P
     }
   }
 
-  const mainSet = new Set(mainFiles.filter((f) => f.endsWith(".html")));
-  const allHtml = new Set([
-    ...mainFiles.filter((f) => f.endsWith(".html")),
-    ...branchFiles.filter((f) => f.endsWith(".html")),
-    ...[...uncommittedFiles].filter((f) => f.endsWith(".html")),
+  const mainSet = new Set(mainFiles.filter(isPageFile));
+  const allPageFiles = new Set([
+    ...mainFiles.filter(isPageFile),
+    ...branchFiles.filter(isPageFile),
+    ...[...uncommittedFiles].filter(isPageFile),
   ]);
 
-  if (allHtml.size === 0) return "No shared pages found.";
+  if (allPageFiles.size === 0) return "No shared pages found.";
 
-  const lines = [...allHtml].sort().map((file) => {
+  const lines = [...allPageFiles].sort().map((file) => {
     const onMain = mainSet.has(file);
     const isUncommitted = uncommittedFiles.has(file);
     let status: string;

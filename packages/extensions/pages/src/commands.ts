@@ -5,7 +5,7 @@ import type { ExtensionCommand } from "@volute/extensions";
 
 import { getPublishedPages, syncPublishedPages, syncSystemPages } from "./db.js";
 import {
-  collectHtmlFiles,
+  collectPageFiles,
   hashFiles,
   isolationFrom,
   pagesLog,
@@ -55,11 +55,53 @@ export function createCommands(): Record<string, ExtensionCommand> {
             if (result.ok && ctx.db) {
               const repoDir = resolve(ctx.dataDir, "repo");
               try {
-                syncSystemPages(ctx.db, hashFiles(repoDir, collectHtmlFiles(repoDir)), mindName);
+                syncSystemPages(ctx.db, hashFiles(repoDir, collectPageFiles(repoDir)), mindName);
               } catch (err) {
                 console.error("[pages] failed to sync system pages to DB:", err);
                 syncWarning =
                   "\nWarning: failed to sync pages to dashboard — they may not appear in the UI until the next daemon restart.";
+              }
+            }
+
+            // Announce the publish and close the collaboration loop with prior authors.
+            const files = result.changedFiles ?? [];
+            if (files.length > 0) {
+              const fileList = files.join(", ");
+              ctx.publishActivity({
+                type: "page_published",
+                mind: mindName,
+                summary: `${mindName} tended the commons: ${fileList}`,
+                metadata: {
+                  shared: true,
+                  files,
+                  message,
+                  iframeUrl: `/ext/pages/public/_system/${files[0]}`,
+                },
+              });
+
+              try {
+                await ctx.announceToSystem(
+                  `${mindName} tended the commons: ${fileList} — "${message}"`,
+                );
+
+                // Close the collaboration loop: tell prior authors someone built on their work.
+                const authorFiles = new Map<string, string[]>();
+                for (const [file, authors] of Object.entries(result.priorAuthors ?? {})) {
+                  for (const a of authors)
+                    authorFiles.set(a, [...(authorFiles.get(a) ?? []), file]);
+                }
+                for (const [author, theirs] of authorFiles) {
+                  await ctx.recordNotice(
+                    author,
+                    `${mindName} built on ${theirs.join(", ")} in the commons — ${
+                      theirs.length > 1 ? "pages" : "a page"
+                    } you helped write ("${message}"). \`volute pages log\` shows the trail.`,
+                  );
+                }
+              } catch (err) {
+                console.warn(
+                  `[pages] shared publish notification failed: ${(err as Error).message}`,
+                );
               }
             }
 
