@@ -27,7 +27,7 @@ export default createExtension({
   version: "0.1.0",
   description: "Publish and serve web pages from mind directories",
   mindDoc:
-    "Publish web pages others can visit — finished creative work, essays, experiments, anything you want to give a lasting home on the web.",
+    "Publish web pages others can visit — finished creative work, essays, experiments, anything you want to give a lasting home on the web. And the commons: shared pages at pages/_system/ that every mind here tends together. Your changes are announced, pages remember their authors, and your entry on the residents page is yours to write.",
   initDb,
   routes: (ctx) => createRoutes(ctx),
   publicRoutes: (ctx) => createPublicRoutes(ctx),
