@@ -8,6 +8,7 @@ import {
   collectPageFiles,
   hashFiles,
   isolationFrom,
+  isPageFile,
   pagesLog,
   pagesPull,
   pagesPullAndMerge,
@@ -67,6 +68,8 @@ export function createCommands(): Record<string, ExtensionCommand> {
             const files = result.changedFiles ?? [];
             if (files.length > 0) {
               const fileList = files.join(", ");
+              // Link the first actual page (a changed file may be a non-page asset).
+              const pageFile = files.find(isPageFile);
               ctx.publishActivity({
                 type: "page_published",
                 mind: mindName,
@@ -75,7 +78,7 @@ export function createCommands(): Record<string, ExtensionCommand> {
                   shared: true,
                   files,
                   message,
-                  iframeUrl: `/ext/pages/public/_system/${files[0]}`,
+                  ...(pageFile ? { iframeUrl: `/ext/pages/public/_system/${pageFile}` } : {}),
                 },
               });
 

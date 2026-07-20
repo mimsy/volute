@@ -593,7 +593,7 @@ export function hashFiles(baseDir: string, files: string[]): { file: string; has
 }
 
 /** Whether a file path is a page file we track (HTML or Markdown). */
-function isPageFile(f: string): boolean {
+export function isPageFile(f: string): boolean {
   return f.endsWith(".html") || f.endsWith(".md");
 }
 
