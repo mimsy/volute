@@ -960,7 +960,7 @@ export function _registerExtensionForTest(manifest: ExtensionManifest): void {
   loaded.push({ manifest, context: {} as ExtensionContext });
 }
 
-/** Test-only: clear extensions registered via _registerExtensionForTest. */
+/** Test-only: empty the entire loaded-extension list (not just test-registered entries). */
 export function _clearLoadedExtensionsForTest(): void {
   loaded.length = 0;
 }
