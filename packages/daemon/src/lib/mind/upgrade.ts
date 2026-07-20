@@ -21,6 +21,16 @@ export type UpgradeOutcome =
   | { status: "upgraded"; warning?: string }
   | { status: "conflicts"; worktreeDir: string; files: string[]; message?: string };
 
+/** Thrown by runUpgrade when an upgrade worktree exists and is genuinely mid-conflict-resolution (not a stale orphan). */
+export class UpgradeInProgressError extends Error {
+  worktreeDir: string;
+  constructor(worktreeDir: string) {
+    super("Upgrade variant already exists. Use continue or delete it first.");
+    this.name = "UpgradeInProgressError";
+    this.worktreeDir = worktreeDir;
+  }
+}
+
 /** The orphan branch tracking the latest composed template files. */
 export const TEMPLATE_BRANCH = "volute/template";
 
@@ -246,7 +256,9 @@ async function mergeUpgradeAndRestart(
 
   // Merge succeeded — everything below is best-effort cleanup/restart
   try {
-    await cleanupVariant(upgradeVariantName, mindName, dir, worktreeDir);
+    await cleanupVariant(upgradeVariantName, mindName, dir, worktreeDir, {
+      branch: UPGRADE_BRANCH,
+    });
   } catch (err) {
     log.warn(`failed to clean up upgrade worktree for ${mindName}`, log.errorData(err));
   }
@@ -357,6 +369,22 @@ export function upgradeInProgress(mindName: string): boolean {
   return existsSync(upgradeWorktreeDir(mindDir(mindName)));
 }
 
+/**
+ * True if the upgrade worktree is mid-conflict-resolution: reads the worktree's
+ * `.git` file to find its gitdir, then checks for MERGE_HEAD there. Any failure
+ * reading that (e.g. the worktree is mid-repair) is treated as "not mid-merge"
+ * so a stale orphan doesn't get stuck behind a false positive.
+ */
+function upgradeMidResolution(worktreeDir: string): boolean {
+  try {
+    const gitDirContent = readFileSync(resolve(worktreeDir, ".git"), "utf-8").trim();
+    const gitDir = gitDirContent.replace("gitdir: ", "");
+    return existsSync(resolve(gitDir, "MERGE_HEAD"));
+  } catch {
+    return false;
+  }
+}
+
 /** Diff preview (HEAD...volute/template). */
 export async function upgradeDiff(mindName: string, template?: string): Promise<string> {
   const entry = await findMind(mindName);
@@ -392,6 +420,17 @@ export async function runUpgrade(
 
   const variantName = upgradeVariantName(mindName);
   const worktreeDir = upgradeWorktreeDir(dir);
+
+  // An upgrade worktree from a prior run may still be sitting here — either a
+  // daemon restart orphaned it mid-run, or a caller is genuinely mid-conflict-
+  // resolution. Only the latter should keep blocking a fresh upgrade.
+  if (existsSync(worktreeDir)) {
+    if (upgradeMidResolution(worktreeDir)) {
+      throw new UpgradeInProgressError(worktreeDir);
+    }
+    log.warn(`clearing stale orphaned upgrade worktree for ${mindName}`);
+    await abortUpgrade(mindName);
+  }
 
   // Initialize git repo if missing (minds created before git config was fixed)
   if (!existsSync(resolve(dir, ".git"))) {
@@ -613,21 +652,12 @@ export async function abortUpgrade(mindName: string): Promise<void> {
   }
 
   // Abort merge if mid-merge
-  try {
-    const gitDirContent = readFileSync(resolve(worktreeDir, ".git"), "utf-8").trim();
-    const gitDir = gitDirContent.replace("gitdir: ", "");
-    if (existsSync(resolve(gitDir, "MERGE_HEAD"))) {
-      await gitExec(["merge", "--abort"], { cwd: worktreeDir });
-    }
-  } catch {}
-
-  await cleanupVariant(variantName, mindName, dir, worktreeDir, { stop: true });
-
-  // Also delete the upgrade branch directly — cleanupVariant uses the variant
-  // name as fallback branch, but the actual branch is UPGRADE_BRANCH
-  try {
-    await gitExec(["branch", "-D", UPGRADE_BRANCH], { cwd: dir });
-  } catch {
-    // Branch may already be deleted by cleanupVariant
+  if (upgradeMidResolution(worktreeDir)) {
+    await gitExec(["merge", "--abort"], { cwd: worktreeDir }).catch(() => {});
   }
+
+  await cleanupVariant(variantName, mindName, dir, worktreeDir, {
+    stop: true,
+    branch: UPGRADE_BRANCH,
+  });
 }

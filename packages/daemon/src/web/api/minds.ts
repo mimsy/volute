@@ -100,6 +100,7 @@ import {
   continueUpgrade,
   runUpgrade,
   TEMPLATE_BRANCH,
+  UpgradeInProgressError,
   upgradeDiff,
   upgradeInProgress,
 } from "../../lib/mind/upgrade.js";
@@ -2099,14 +2100,8 @@ const app = new Hono<AuthEnv>()
       }
     }
 
-    // Fresh upgrade
-    if (upgradeInProgress(mindName)) {
-      return c.json(
-        { error: "Upgrade variant already exists. Use continue or delete it first." },
-        409,
-      );
-    }
-
+    // Fresh upgrade. A stale worktree from an orphaned prior run self-heals inside
+    // runUpgrade; only a worktree that's genuinely mid-conflict-resolution 409s.
     try {
       const result = await runUpgrade(mindName, { template });
       if (result.status === "conflicts") {
@@ -2120,6 +2115,9 @@ const app = new Hono<AuthEnv>()
       }
       return c.json({ ok: true, warning: result.warning });
     } catch (err) {
+      if (err instanceof UpgradeInProgressError) {
+        return c.json({ error: err.message }, 409);
+      }
       return c.json({ error: err instanceof Error ? err.message : "Failed to merge upgrade" }, 500);
     }
   })

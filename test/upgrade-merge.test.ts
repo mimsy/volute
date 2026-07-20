@@ -4,7 +4,9 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { mergeWithUntrackResolution } from "../packages/daemon/src/lib/mind/upgrade.js";
+import { cleanupVariant } from "../packages/daemon/src/lib/mind/variant-cleanup.js";
 import { gitExec } from "../packages/daemon/src/lib/util/exec.js";
+import { logBuffer } from "../packages/daemon/src/lib/util/log-buffer.js";
 
 let repo: string;
 
@@ -176,5 +178,58 @@ describe("mergeWithUntrackResolution", () => {
       assert.ok(result.files.includes(".gitignore"));
     }
     assert.ok(!existsSync(resolve(repo, ".git/MERGE_HEAD")));
+  });
+});
+
+describe("cleanupVariant branch resolution", () => {
+  let worktree: string;
+
+  beforeEach(async () => {
+    repo = mkdtempSync(join(tmpdir(), "cleanup-variant-test-"));
+    worktree = resolve(repo, ".variants", "upgrade");
+    await git("init", "-b", "main");
+    await git("config", "user.name", "test");
+    await git("config", "user.email", "test@example.com");
+    write("file.txt", "base\n");
+    await commitAll("initial");
+    await git("worktree", "add", "-b", "upgrade", worktree);
+  });
+
+  afterEach(() => {
+    rmSync(repo, { recursive: true, force: true });
+  });
+
+  // The upgrade "variant" has no DB row (it's a worktree/branch, not a
+  // registered variant mind), so cleanupVariant's DB/name fallback lands on a
+  // branch name ("<mind>-upgrade") that was never real — opts.branch overrides
+  // that with the actual branch.
+  it("opts.branch deletes the real branch instead of the DB-less name fallback", async () => {
+    await cleanupVariant("somemind-upgrade", "somemind", repo, worktree, { branch: "upgrade" });
+
+    const branches = (await git("branch", "--list", "upgrade")).trim();
+    assert.equal(branches, "", "the real branch should have been deleted");
+    assert.ok(!existsSync(worktree), "worktree should be removed");
+  });
+
+  it("downgrades a not-found branch delete to log.info instead of log.warn", async () => {
+    const entries: { level: string; msg: string }[] = [];
+    const unsub = logBuffer.subscribe((e) => entries.push(e));
+    try {
+      // No opts.branch — falls back to the variant name, which was never a real branch.
+      await cleanupVariant("somemind-upgrade", "somemind", repo, worktree);
+    } finally {
+      unsub();
+    }
+
+    const warnings = entries.filter(
+      (e) => e.level === "warn" && e.msg.includes("failed to delete branch"),
+    );
+    assert.equal(
+      warnings.length,
+      0,
+      `should not warn on an expected not-found delete: ${JSON.stringify(warnings)}`,
+    );
+    const infos = entries.filter((e) => e.level === "info" && e.msg.includes("already deleted"));
+    assert.ok(infos.length > 0, "should log at info that the branch was already deleted");
   });
 });

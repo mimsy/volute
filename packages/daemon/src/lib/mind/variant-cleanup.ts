@@ -14,13 +14,17 @@ import { deleteMindDbFootprint, mindDir, readAllMinds, removeMind } from "./regi
  * `baseName` is the parent mind that owns projectRoot — passed explicitly because
  * upgrade variants have no DB row to derive it from, and a wrong fallback chowns
  * the mind dir to a nonexistent user, leaving merge-written files root-owned.
+ *
+ * `opts.branch` overrides the DB/name-fallback branch to delete — upgrade-flow
+ * callers pass the real branch (`UPGRADE_BRANCH`) since the upgrade "variant"
+ * has no DB row and the name-fallback branch never exists.
  */
 export async function cleanupVariant(
   variantName: string,
   baseName: string,
   projectRoot: string,
   variantPath: string,
-  opts?: { stop?: boolean },
+  opts?: { stop?: boolean; branch?: string },
 ): Promise<void> {
   if (opts?.stop) {
     try {
@@ -33,7 +37,7 @@ export async function cleanupVariant(
   // Get the branch name from the variant entry before removing from DB
   const { findMind } = await import("./registry.js");
   const variantEntry = await findMind(variantName);
-  const branchName = variantEntry?.branch ?? variantName;
+  const branchName = opts?.branch ?? variantEntry?.branch ?? variantName;
 
   if (existsSync(variantPath)) {
     try {
@@ -51,7 +55,14 @@ export async function cleanupVariant(
   try {
     await gitExec(["branch", "-D", branchName], { cwd: projectRoot });
   } catch (err) {
-    log.warn(`failed to delete branch ${branchName} for ${variantName}`, log.errorData(err));
+    const stderr = (err as { stderr?: string })?.stderr ?? "";
+    if (stderr.includes("not found")) {
+      // Already deleted (e.g. by a sibling explicit `git branch -D` in the
+      // upgrade flow) — not a real failure, don't warn about it.
+      log.info(`branch ${branchName} already deleted for ${variantName}`);
+    } else {
+      log.warn(`failed to delete branch ${branchName} for ${variantName}`, log.errorData(err));
+    }
   }
 
   try {
