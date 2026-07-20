@@ -237,7 +237,12 @@ export function resolveSleepAction(
  * them (#420). Resolved from the same routing config the delivery manager uses, so the two
  * stay in lockstep.
  */
-function willGate(baseName: string, payload: DeliveryPayload): boolean {
+type GateMeta = Pick<
+  DeliveryPayload,
+  "channel" | "sender" | "isDM" | "participantCount" | "session"
+>;
+
+function willGate(baseName: string, payload: GateMeta): boolean {
   if (payload.session) return false; // explicit session bypasses routing
   const config = getRoutingConfig(baseName);
   const route = resolveRoute(config, {
@@ -247,6 +252,18 @@ function willGate(baseName: string, payload: DeliveryPayload): boolean {
     participantCount: payload.participantCount,
   });
   return shouldGate(config, route);
+}
+
+/**
+ * Public will-gate predicate: whether a message to `mindName` on this payload's channel
+ * would be held in the gate rather than delivered. Used by the chat API to warn the
+ * sender in the 200 response that the message is held pending channel approval (#723).
+ * Resolved from the same routing config the delivery manager uses, so the prediction
+ * matches what deliverMessage will actually do.
+ */
+export async function willGateMessage(mindName: string, payload: GateMeta): Promise<boolean> {
+  const baseName = await getBaseName(mindName);
+  return willGate(baseName, payload);
 }
 
 /**

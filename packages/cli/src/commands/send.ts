@@ -153,9 +153,23 @@ function spiritAck(spirit: SpiritStatus | undefined): string | null {
 }
 
 /**
+ * Print the daemon's advisory tail for a completed send: any notice (e.g. a recipient
+ * holding the message pending channel approval) and the spirit availability ack. Shared
+ * by the normal confirmation and the --wait path (which skips the confirmation but must
+ * still surface these — a gated recipient or unavailable spirit won't reply).
+ */
+function printSendAdvisories(data: SendResult): void {
+  if (data.notice) console.log(data.notice);
+  const ack = spiritAck(data.spirit);
+  if (ack) console.log(ack);
+}
+
+/**
  * Print the outcome of a POST /chat send to stdout. A "held" send (a peer posted
  * while the mind was composing) prints the daemon's plain notice so the mind can
- * revise or re-send; a normal send prints the sent confirmation + outbound marker.
+ * revise or re-send; a normal send prints the sent confirmation + outbound marker,
+ * plus any daemon advisories so a "sent" message that won't be seen isn't silently
+ * confirmed.
  */
 function printSendResult(data: SendResult): void {
   if (data.held) {
@@ -168,8 +182,7 @@ function printSendResult(data: SendResult): void {
   } else {
     console.log(`Message sent.${outboundId != null ? `\n[volute:outbound:${outboundId}]` : ""}`);
   }
-  const ack = spiritAck(data.spirit);
-  if (ack) console.log(ack);
+  printSendAdvisories(data);
 }
 
 const cmd = command({
@@ -290,7 +303,10 @@ const cmd = command({
 
       // Wrap the staging call so a network error or a non-JSON error body is framed
       // the same way as a clean daemon error (never an uncaught throw after send).
-      const postStaging = async (path: string, body: unknown): Promise<string> => {
+      const postStaging = async (
+        path: string,
+        body: unknown,
+      ): Promise<{ id: string; notified: boolean }> => {
         let res: Response;
         try {
           res = await daemonFetch(path, {
@@ -305,18 +321,30 @@ const cmd = command({
           const data = (await res.json().catch(() => ({}))) as { error?: string };
           return failStaging(data.error ?? `daemon returned ${res.status}`);
         }
-        const data = (await res.json().catch(() => ({}))) as { id?: string };
-        return data.id ?? "?";
+        const data = (await res.json().catch(() => ({}))) as { id?: string; notified?: boolean };
+        return { id: data.id ?? "?", notified: data.notified !== false };
+      };
+
+      // The file is staged either way; when the daemon says the recipient could not be
+      // notified, say so — otherwise "File staged" implies they know it's waiting (#723).
+      const printStaged = (targetName: string, staged: { id: string; notified: boolean }) => {
+        console.log(`File staged for ${targetName} (id: ${staged.id})`);
+        if (!staged.notified) {
+          console.log(
+            `Warning: ${targetName} could not be notified of the file — mention it to them ` +
+              `directly (they can run: volute chat files).`,
+          );
+        }
       };
 
       // For mind senders, use the daemon file-send API (reads from mind's home/)
       const mindSelf = process.env.VOLUTE_MIND;
       if (mindSelf) {
-        const id = await postStaging(`/api/minds/${encodeURIComponent(mindSelf)}/files/send`, {
+        const staged = await postStaging(`/api/minds/${encodeURIComponent(mindSelf)}/files/send`, {
           targetMind: targetName,
           filePath,
         });
-        console.log(`File staged for ${targetName} (id: ${id})`);
+        printStaged(targetName, staged);
       } else {
         // For CLI (human) senders, read file locally and stage via daemon API
         if (!existsSync(filePath)) {
@@ -331,12 +359,15 @@ const cmd = command({
         }
 
         const content = readFileSync(filePath);
-        const id = await postStaging(`/api/minds/${encodeURIComponent(targetName)}/files/stage`, {
-          sender: flags.sender || userInfo().username,
-          filename: basename(filePath),
-          data: content.toString("base64"),
-        });
-        console.log(`File staged for ${targetName} (id: ${id})`);
+        const staged = await postStaging(
+          `/api/minds/${encodeURIComponent(targetName)}/files/stage`,
+          {
+            sender: flags.sender || userInfo().username,
+            filename: basename(filePath),
+            data: content.toString("base64"),
+          },
+        );
+        printStaged(targetName, staged);
       }
     };
 
@@ -428,9 +459,7 @@ const cmd = command({
       if (data.held || !flags.wait || flags.file) {
         printSendResult(data);
       } else {
-        // The spirit ack still matters — especially "unavailable", where no reply is coming.
-        const ack = spiritAck(data.spirit);
-        if (ack) console.log(ack);
+        printSendAdvisories(data);
       }
       // The daemon just said nothing will answer — don't block --wait on a reply
       // that will never come.
