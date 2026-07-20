@@ -162,42 +162,54 @@ export async function mergeWithUntrackResolution(
     await gitExec(["merge", branch], { cwd: dir });
     return { merged: true };
   } catch {
-    // Conflict (or other failure) — inspect state. If not actually mid-merge, rethrow below.
+    // Conflict (or other failure) — inspect state below. Everything past this
+    // point runs inside a try/catch whose catch always attempts merge --abort
+    // before rethrowing, so an unexpected failure here can never leave dir
+    // mid-merge.
   }
-  const unmergedRaw = await gitExec(["diff", "--name-only", "--diff-filter=U"], { cwd: dir });
-  const unmerged = unmergedRaw.split("\n").filter(Boolean);
-  if (unmerged.length === 0) {
-    // merge failed for a non-conflict reason; make sure we're not mid-merge, then throw
-    await gitExec(["merge", "--abort"], { cwd: dir }).catch(() => {});
-    throw new Error(`git merge ${branch} failed without conflicts`);
-  }
-  // Which unmerged paths does the merged .gitignore (from `branch`) ignore?
-  // check-ignore --no-index consults the working tree's .gitignore; during the
-  // merge the working tree already has the merged .gitignore when it doesn't
-  // itself conflict. If .gitignore IS conflicted, treat nothing as ignorable.
-  const resolvable: string[] = [];
-  if (!unmerged.includes(".gitignore")) {
-    for (const file of unmerged) {
-      try {
-        await gitExec(["check-ignore", "--no-index", "-q", "--", file], { cwd: dir });
-        resolvable.push(file); // exit 0 → ignored → resolvable by untracking
-      } catch {
-        // exit 1 → not ignored → real conflict
+  try {
+    const unmergedRaw = await gitExec(["diff", "--name-only", "--diff-filter=U"], { cwd: dir });
+    const unmerged = unmergedRaw.split("\n").filter(Boolean);
+    if (unmerged.length === 0) {
+      // merge failed for a non-conflict reason
+      throw new Error(`git merge ${branch} failed without conflicts`);
+    }
+    // Which unmerged paths does the merged .gitignore (from `branch`) ignore?
+    // check-ignore --no-index consults the working tree's .gitignore; during the
+    // merge the working tree already has the merged .gitignore when it doesn't
+    // itself conflict. If .gitignore IS conflicted, treat nothing as ignorable.
+    const resolvable: string[] = [];
+    if (!unmerged.includes(".gitignore")) {
+      for (const file of unmerged) {
+        try {
+          await gitExec(["check-ignore", "--no-index", "-q", "--", file], { cwd: dir });
+          resolvable.push(file); // exit 0 → ignored → resolvable by untracking
+        } catch {
+          // exit 1 → not ignored → real conflict
+        }
       }
     }
+    const remaining = unmerged.filter((f) => !resolvable.includes(f));
+    if (remaining.length > 0) {
+      await gitExec(["merge", "--abort"], { cwd: dir });
+      return { merged: false, files: unmerged };
+    }
+    for (const file of resolvable) {
+      // A UU (both-modified) conflict leaves <<<<<<< marker-polluted content in
+      // the working tree file; checkout --ours restores main's clean content
+      // before untracking. For modify/delete conflicts this is a no-op change
+      // (the working tree already holds ours), so it's safe either way.
+      await gitExec(["checkout", "--ours", "--", file], { cwd: dir });
+      await gitExec(["rm", "--cached", "--", file], { cwd: dir });
+    }
+    await gitExec(["commit", "-m", "merge template update (auto-untrack ignored files)"], {
+      cwd: dir,
+    });
+    return { merged: true };
+  } catch (err) {
+    await gitExec(["merge", "--abort"], { cwd: dir }).catch(() => {});
+    throw err instanceof Error ? err : new Error(String(err));
   }
-  const remaining = unmerged.filter((f) => !resolvable.includes(f));
-  if (remaining.length > 0) {
-    await gitExec(["merge", "--abort"], { cwd: dir });
-    return { merged: false, files: unmerged };
-  }
-  for (const file of resolvable) {
-    await gitExec(["rm", "--cached", "--", file], { cwd: dir });
-  }
-  await gitExec(["commit", "-m", "merge template update (auto-untrack ignored files)"], {
-    cwd: dir,
-  });
-  return { merged: true };
 }
 
 /**
