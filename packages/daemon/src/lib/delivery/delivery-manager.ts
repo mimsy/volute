@@ -1,5 +1,5 @@
-import { realpath } from "node:fs/promises";
-import { resolve } from "node:path";
+import { mkdir, readFile, realpath, rename, writeFile } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { MIND_LEVEL_THREAD, type RecordNoticeInput } from "../chat/system-events.js";
 import { getTypingMap, publishTypingForChannels } from "../chat/typing.js";
@@ -17,6 +17,7 @@ import log from "../util/logger.js";
 import { newEphemeralSession } from "../util/session-name.js";
 import { slugify } from "../util/slugify.js";
 import {
+  clearConfigCache,
   type DeliveryPayload,
   extractTextContent,
   getRoutingConfig,
@@ -24,8 +25,10 @@ import {
   type ParticipantProfile,
   type ResolvedDeliveryMode,
   type ResolvedSessionConfig,
+  type RoutingConfig,
   resolveDeliveryMode,
   resolveRoute,
+  routesConfigPath,
   setRoutesChangeListener,
   shouldGate,
 } from "./delivery-router.js";
@@ -55,6 +58,10 @@ const GATED_RELEASE_LIMIT_PER_CHANNEL = 10;
 // mind should be able to tell "nobody is talking to me" from "I've been deaf for
 // months". #537
 const GATED_NOTIFY_EVERY = 10;
+// Most-recent messages returned by a peek. Peeking is how a mind decides whether to accept
+// a channel; dumping an unbounded backlog into its context to answer that would defeat the
+// point of gating in the first place. The true total is reported alongside.
+const PEEK_LIMIT = 50;
 
 const mentionRegexCache = new Map<string, RegExp>();
 
@@ -119,6 +126,19 @@ export class DeliveryManager {
    * messages to the same session can't be reordered by resolvePort/enrichment latency.
    */
   private drainChains = new Map<string, Promise<unknown>>();
+
+  /**
+   * Per-`baseName` promise chain that serializes gated releases. `releaseGated` reads gated
+   * rows and then writes `mind_history`; the promote UPDATE is idempotent but the history
+   * INSERT is not, so two overlapping runs would record the same message twice.
+   */
+  private releaseChains = new Map<string, Promise<void>>();
+
+  /**
+   * Per-`baseName` promise chain serializing accepts, whose read-modify-write of
+   * routes.json would otherwise lose a rule when two run concurrently.
+   */
+  private acceptChains = new Map<string, Promise<void>>();
 
   private redriveTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -409,9 +429,34 @@ export class DeliveryManager {
    *    in one sweep (#537 bug 2), and the mind gets one summary rather than a flood.
    * Rows resolving to a `file` destination are archived (the delivery manager doesn't
    * deliver file routes). Declined channels are skipped entirely — they stay gated.
+   *
+   * Releases are serialized per mind: the promote step reads gated rows and then writes
+   * `mind_history`, and while the promote UPDATE is idempotent the history INSERT is not —
+   * two overlapping runs would both see the same rows and record the message twice.
    */
-  async releaseGated(mindName: string): Promise<void> {
+  async releaseGated(mindName: string): Promise<{ released: number; archived: number }> {
     const baseName = await getBaseName(mindName);
+    const prev = this.releaseChains.get(baseName) ?? Promise.resolve();
+    // `prev` never rejects (both outcomes are swallowed below), so one handler is enough.
+    const run = prev.then(() => this.releaseGatedInner(mindName, baseName));
+    const chain = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.releaseChains.set(baseName, chain);
+    try {
+      return await run;
+    } finally {
+      // Drop the entry only if nothing queued behind this run, so the map doesn't keep
+      // one permanent entry per mind ever released.
+      if (this.releaseChains.get(baseName) === chain) this.releaseChains.delete(baseName);
+    }
+  }
+
+  private async releaseGatedInner(
+    mindName: string,
+    baseName: string,
+  ): Promise<{ released: number; archived: number }> {
     const config = getRoutingConfig(baseName);
     let rows: (typeof deliveryQueue.$inferSelect)[];
     try {
@@ -422,7 +467,7 @@ export class DeliveryManager {
         .where(and(eq(deliveryQueue.mind, baseName), eq(deliveryQueue.status, "gated")));
     } catch (err) {
       dlog.warn(`failed to read gated rows for ${baseName}`, log.errorData(err));
-      return;
+      return { released: 0, archived: 0 };
     }
 
     // Group newly-matching mind-route rows by channel, recomputing the session so the
@@ -489,8 +534,8 @@ export class DeliveryManager {
       if (drop.length > 0) {
         truncationNotes.push(
           `${channel}: released the ${keep.length} most recent message(s); ${drop.length} earlier ` +
-            `message(s) were held while unrouted and remain in the channel history ` +
-            `(volute chat read ${channel}).`,
+            `message(s) were held while unrouted and stay readable ` +
+            `(volute chat channels peek ${channel}).`,
         );
         dlog.info(
           `truncated gated release for ${baseName} on ${channel}: kept ${keep.length}, archived ${drop.length}`,
@@ -516,7 +561,7 @@ export class DeliveryManager {
 
     if (promote.length === 0) {
       if (truncationNotes.length > 0) await this.sendReleaseSummary(mindName, truncationNotes);
-      return;
+      return { released: 0, archived: archiveIds.length };
     }
 
     // Record inbound history AND promote to pending atomically, oldest-first. Gated
@@ -526,6 +571,9 @@ export class DeliveryManager {
     // row makes that ordering crash-safe: a failure rolls back both, leaving the row `gated`
     // (retried on the next release) rather than delivered-without-history or duplicated.
     const orderedPromote = [...promote].sort((a, b) => a.id - b.id);
+    // Counted per committed transaction, not from promote.length, so a failure partway
+    // through reports what actually reached the mind rather than zero.
+    let committed = 0;
     try {
       const db = await getDb();
       for (const p of orderedPromote) {
@@ -542,8 +590,9 @@ export class DeliveryManager {
             .set({ status: "pending", thread: p.session, attempts: 0, next_attempt_at: null })
             .where(eq(deliveryQueue.id, p.id));
         });
+        committed++;
       }
-      dlog.info(`released ${promote.length} gated message(s) for ${baseName} after route change`);
+      dlog.info(`released ${committed} gated message(s) for ${baseName} after route change`);
     } catch (err) {
       // This is the ONLY recording point for gated traffic — a permanent failure here is a
       // silent history gap, so surface it loudly with enough context to find the messages.
@@ -551,7 +600,7 @@ export class DeliveryManager {
         `failed to record+promote gated rows for ${baseName} (channels: ${[...byChannel.keys()].join(", ")})`,
         log.errorData(err),
       );
-      return;
+      return { released: committed, archived: archiveIds.length };
     }
 
     // Publish the inbound events after commit so live streams reflect the released backlog.
@@ -568,6 +617,7 @@ export class DeliveryManager {
     if (truncationNotes.length > 0) await this.sendReleaseSummary(mindName, truncationNotes);
     // Deliver immediately rather than waiting for the next sweep.
     await this.redrive();
+    return { released: committed, archived: archiveIds.length };
   }
 
   /**
@@ -619,6 +669,232 @@ export class DeliveryManager {
       `declined channel ${channel} for ${baseName}; archived ${archived.length} held row(s)`,
     );
     return archived.length;
+  }
+
+  /**
+   * Accept an unrouted (gated) channel: add a routing rule for it to the mind's routes.json
+   * and release its held messages immediately.
+   *
+   * This exists because a hand-edited routes.json is only noticed lazily, when the *next*
+   * inbound message triggers a config read — so editing the file on a quiet mind releases
+   * nothing and the held messages sit there indefinitely. Accept applies the change and
+   * reports what it actually released. #537
+   */
+  async acceptChannel(
+    mindName: string,
+    channel: string,
+    thread?: string,
+  ): Promise<{ ruleAdded: boolean; thread: string; released: number; archived: number }> {
+    const baseName = await getBaseName(mindName);
+    // Serialize the whole read-modify-write per mind: two concurrent accepts (an agent
+    // issuing parallel tool calls, say) would otherwise both read the old config and the
+    // second write would drop the first one's rule — silently, after reporting success.
+    const prev = this.acceptChains.get(baseName) ?? Promise.resolve();
+    const run = prev.then(() => this.acceptChannelInner(mindName, baseName, channel, thread));
+    const chain = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.acceptChains.set(baseName, chain);
+    try {
+      return await run;
+    } finally {
+      if (this.acceptChains.get(baseName) === chain) this.acceptChains.delete(baseName);
+    }
+  }
+
+  private async acceptChannelInner(
+    mindName: string,
+    baseName: string,
+    channel: string,
+    thread?: string,
+  ): Promise<{ ruleAdded: boolean; thread: string; released: number; archived: number }> {
+    const path = routesConfigPath(baseName);
+
+    let config: RoutingConfig;
+    try {
+      const parsed: unknown = JSON.parse(await readFile(path, "utf-8"));
+      // Valid JSON that isn't an object (an array — a shape this codebase has seen on disk,
+      // see migrate-thread-config.ts — or null, or a string) would let the rule silently
+      // vanish at stringify time while we reported success. And an array-form config is
+      // exactly a mind with no `rules`, i.e. one gating everything: the case this exists for.
+      if (parsed == null || typeof parsed !== "object" || Array.isArray(parsed)) {
+        throw new Error(`routes.json for ${baseName} is malformed (not a JSON object)`);
+      }
+      config = parsed as RoutingConfig;
+    } catch (err) {
+      // No routes.json yet is fine — accept creates one. Anything else (malformed JSON,
+      // unreadable file) must NOT be overwritten: it's a mind-owned file and clobbering it
+      // would lose routing the mind wrote by hand.
+      if ((err as NodeJS.ErrnoException)?.code !== "ENOENT") {
+        throw new Error(
+          `routes.json for ${baseName} is unreadable or malformed — not modifying it`,
+        );
+      }
+      config = {};
+    }
+
+    const rules = Array.isArray(config.rules) ? config.rules : [];
+    const targetThread = thread ?? "${channel}";
+
+    // Is the channel already routed? Ask the router rather than pattern-matching the rules
+    // ourselves: a broader rule (`discord:*`) covers `discord:general` without being equal
+    // to it, and appending a redundant rule *after* it would sit somewhere it can never
+    // match — leaving `--thread` silently ineffective and the reported thread a lie.
+    const existing = resolveRoute({ ...config, rules }, { channel });
+    const ruleAdded = !existing.matched;
+
+    if (ruleAdded) {
+      // Append: nothing matches the channel today, so a rule at the end can't be shadowed,
+      // and the mind's own rule ordering is preserved.
+      rules.push({ channel, thread: targetThread });
+      config.rules = rules;
+      await mkdir(dirname(path), { recursive: true });
+      // Write-then-rename: truncating in place means a crash mid-write leaves an
+      // unparseable routes.json, which getRoutingConfig degrades to `{}` — and with
+      // gateUnmatched defaulting on, that is a total delivery blackout for the mind.
+      const tmp = `${path}.${process.pid}.tmp`;
+      await writeFile(tmp, `${JSON.stringify(config, null, 2)}\n`);
+      await rename(tmp, path);
+    }
+
+    // Clear any decline so re-accepting after a decline actually works.
+    const db = await getDb();
+    await db
+      .delete(channelGates)
+      .where(and(eq(channelGates.mind, baseName), eq(channelGates.channel, channel)));
+
+    // Snapshot this channel's held rows so the counts we report describe the channel the
+    // caller named. The release itself is mind-wide (accepting one channel must not strand
+    // another that a rule already covers), so its totals would over-report here.
+    const heldBefore = await db
+      .select({ id: deliveryQueue.id })
+      .from(deliveryQueue)
+      .where(
+        and(
+          eq(deliveryQueue.mind, baseName),
+          eq(deliveryQueue.channel, channel),
+          eq(deliveryQueue.status, "gated"),
+        ),
+      );
+
+    // Suppress the listener-driven release: it runs detached, and racing it against the
+    // awaited run below would make the returned counts unreliable.
+    clearConfigCache(baseName, { notify: false });
+    await this.releaseGated(mindName);
+
+    let released = 0;
+    let archived = 0;
+    const ids = heldBefore.map((r) => r.id);
+    // Chunked to stay under SQLite's ~999 bound-variable limit on a long backlog.
+    for (let i = 0; i < ids.length; i += 500) {
+      const after = await db
+        .select({ status: deliveryQueue.status })
+        .from(deliveryQueue)
+        .where(inArray(deliveryQueue.id, ids.slice(i, i + 500)));
+      for (const row of after) {
+        if (row.status === "archived") archived++;
+        else if (row.status !== "gated") released++;
+      }
+    }
+
+    dlog.info(
+      `accepted channel ${channel} for ${baseName} (rule ${ruleAdded ? "added" : "already present"}); ` +
+        `released ${released}, archived ${archived}`,
+    );
+    // Report where messages will actually land, resolved through the same router the
+    // delivery path uses — so template expansion (`${channel}`) and any pre-existing
+    // broader rule are both reflected, rather than echoing back what was asked for.
+    const finalRoute = ruleAdded ? resolveRoute({ ...config, rules }, { channel }) : existing;
+    return {
+      ruleAdded,
+      thread: finalRoute.destination === "file" ? finalRoute.path : finalRoute.session,
+      released,
+      archived,
+    };
+  }
+
+  /**
+   * Read the messages held on a channel without changing anything. Archived rows are
+   * included: a truncated or declined backlog stays readable, which is what the invite and
+   * release-summary texts promise. Gated messages have no conversation, so `volute chat
+   * read` can't show them — this is the only way to see them.
+   *
+   * Returns the most recent {@link PEEK_LIMIT} messages (oldest-first within that window)
+   * alongside the true total, so peeking at a spam channel with a huge backlog can't dump
+   * all of it into the mind's context — the same reason releases are truncated. #537
+   */
+  async peekChannel(
+    mindName: string,
+    channel: string,
+  ): Promise<{
+    channel: string;
+    count: number;
+    shown: number;
+    messages: { sender: string | null; content: string; createdAt: string; status: string }[];
+  }> {
+    const baseName = await getBaseName(mindName);
+    const db = await getDb();
+    const rows = await db
+      .select()
+      .from(deliveryQueue)
+      .where(
+        and(
+          eq(deliveryQueue.mind, baseName),
+          eq(deliveryQueue.channel, channel),
+          inArray(deliveryQueue.status, ["gated", "archived"]),
+        ),
+      );
+
+    const messages = rows
+      .sort((a, b) => a.id - b.id)
+      .slice(-PEEK_LIMIT)
+      .map((row) => {
+        let content = "";
+        try {
+          content = extractTextContent((JSON.parse(row.payload) as DeliveryPayload).content);
+        } catch {
+          content = "(unreadable payload)";
+        }
+        return {
+          sender: row.sender,
+          content,
+          createdAt: row.created_at,
+          status: row.status,
+        };
+      });
+
+    return { channel, count: rows.length, shown: messages.length, messages };
+  }
+
+  /**
+   * Re-evaluate every mind's held messages against its current routes.json. Run at daemon
+   * startup: routes.json edits made while the daemon was down would otherwise not be noticed
+   * until the next inbound message on that channel — which, for a quiet channel, may be never.
+   */
+  async releaseGatedSweep(): Promise<void> {
+    let minds: { mind: string }[];
+    try {
+      const db = await getDb();
+      minds = await db
+        .selectDistinct({ mind: deliveryQueue.mind })
+        .from(deliveryQueue)
+        .where(eq(deliveryQueue.status, "gated"));
+    } catch (err) {
+      dlog.warn("failed to list minds with gated messages", log.errorData(err));
+      return;
+    }
+
+    for (const { mind } of minds) {
+      try {
+        const { released, archived } = await this.releaseGated(mind);
+        if (released > 0 || archived > 0) {
+          dlog.info(`startup sweep for ${mind}: released ${released}, archived ${archived}`);
+        }
+      } catch (err) {
+        dlog.warn(`startup gated sweep failed for ${mind}`, log.errorData(err));
+      }
+    }
   }
 
   /**

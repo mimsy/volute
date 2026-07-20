@@ -407,6 +407,14 @@ export async function startDaemon(opts: {
   });
   delivery.startRedrive();
 
+  // Re-evaluate held (gated) messages against current routing (non-blocking). routes.json
+  // edits made while the daemon was down are otherwise only noticed on the next inbound
+  // message for that channel — which on a quiet channel may never come. Touches only
+  // `gated` rows, so it's independent of the `pending` restore above.
+  delivery.releaseGatedSweep().catch((err) => {
+    log.warn("failed to sweep gated messages", log.errorData(err));
+  });
+
   // Clean up expired sessions and old log entries (non-blocking)
   cleanExpiredSessions().catch((err) => {
     log.warn("failed to clean expired sessions", log.errorData(err));

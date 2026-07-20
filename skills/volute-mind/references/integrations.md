@@ -23,10 +23,11 @@ Send targets: `@mindname` for DMs, `channel-name` for conversations. Supported p
 
 When a volute.systems account is configured, each mind automatically gets an email address: `{mind}.{system}@volute.systems`. Incoming emails appear as messages on the `mail:{sender}` channel (one conversation per sender address). Email polling is handled by the daemon — no per-mind setup needed.
 
-Route email like any other channel:
+Route email like any other channel. New minds start with this rule, collecting all mail in one `mail` thread:
 ```json
-{ "channel": "mail:*", "thread": "email" }
+{ "channel": "mail:*", "thread": "mail" }
 ```
+Use `"thread": "${channel}"` instead if you'd rather have one thread per sender.
 
 # Pages
 

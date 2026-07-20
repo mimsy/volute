@@ -38,7 +38,10 @@ const channelsListCmd = command({
         `${(p.channel ?? "unknown").padEnd(chW)}  ${String(p.count).padStart(4)}  ${p.firstSeen}`,
       );
     }
-    console.log(`\nRoute one to hear it, or 'volute chat channels decline <channel>' to opt out.`);
+    console.log(
+      `\n'volute chat channels peek <channel>' to read what's held, ` +
+        `'accept <channel>' to start hearing it, 'decline <channel>' to opt out.`,
+    );
   },
 });
 
@@ -70,6 +73,91 @@ const channelsDeclineCmd = command({
   },
 });
 
+const channelsAcceptCmd = command({
+  name: "volute chat channels accept",
+  description: "Accept an unrouted channel: add a routing rule and deliver its held backlog",
+  args: [{ name: "channel", required: true, description: "Channel to accept (e.g. #bardo)" }],
+  flags: {
+    mind: { type: "string", description: "Mind name" },
+    thread: { type: "string", description: "Thread to route it to (default: one per channel)" },
+  },
+  run: async ({ args, flags }) => {
+    const mind = resolveMindName(flags);
+    const channel = args.channel!;
+
+    const res = await daemonFetch(`/api/minds/${encodeURIComponent(mind)}/gates/accept`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ channel, thread: flags.thread }),
+    });
+
+    if (!res.ok) {
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      console.error(data.error ?? `Failed to accept channel: ${res.status}`);
+      process.exit(1);
+    }
+
+    const data = (await res.json()) as {
+      ruleAdded: boolean;
+      thread: string;
+      released: number;
+      archived: number;
+    };
+    const note = data.ruleAdded ? "" : " (rule already existed)";
+    console.log(
+      `Accepted ${channel} → thread ${data.thread}${note}; released ${data.released} held message(s).`,
+    );
+    if (data.archived > 0) {
+      console.log(
+        `${data.archived} older message(s) were not delivered — read them with ` +
+          `'volute chat channels peek ${channel}'.`,
+      );
+    }
+  },
+});
+
+const channelsPeekCmd = command({
+  name: "volute chat channels peek",
+  description: "Read the messages held on an unrouted channel without accepting it",
+  args: [{ name: "channel", required: true, description: "Channel to peek at (e.g. #bardo)" }],
+  flags: {
+    mind: { type: "string", description: "Mind name" },
+  },
+  run: async ({ args, flags }) => {
+    const mind = resolveMindName(flags);
+    const channel = args.channel!;
+
+    const res = await daemonFetch(
+      `/api/minds/${encodeURIComponent(mind)}/gates/peek?channel=${encodeURIComponent(channel)}`,
+    );
+
+    if (!res.ok) {
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      console.error(data.error ?? `Failed to read held messages: ${res.status}`);
+      process.exit(1);
+    }
+
+    const data = (await res.json()) as {
+      count: number;
+      shown: number;
+      messages: { sender: string | null; content: string; createdAt: string; status: string }[];
+    };
+
+    if (data.count === 0) {
+      console.log(`No held messages on ${channel}.`);
+      return;
+    }
+
+    if (data.shown < data.count) {
+      console.log(`Showing the ${data.shown} most recent of ${data.count} held message(s).\n`);
+    }
+    for (const m of data.messages) {
+      const mark = m.status === "archived" ? " (archived)" : "";
+      console.log(`[${m.createdAt}] ${m.sender ?? "unknown"}${mark}: ${m.content}`);
+    }
+  },
+});
+
 const cmd = subcommands({
   name: "volute chat channels",
   description: "Manage unrouted (gated) channels",
@@ -77,6 +165,14 @@ const cmd = subcommands({
     list: {
       description: "List unrouted channels holding messages",
       run: channelsListCmd.execute,
+    },
+    peek: {
+      description: "Read messages held on an unrouted channel",
+      run: channelsPeekCmd.execute,
+    },
+    accept: {
+      description: "Accept an unrouted channel and deliver its held backlog",
+      run: channelsAcceptCmd.execute,
     },
     decline: {
       description: "Decline an unrouted channel",

@@ -1,6 +1,7 @@
 {
   "gateUnmatched": true,
   "rules": [
+    { "channel": "mail:*", "thread": "mail" },
     { "channel": "*", "isDM": true, "thread": "${channel}" },
     { "channel": "#*", "thread": "${channel}" }
   ],

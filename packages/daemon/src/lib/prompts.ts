@@ -151,7 +151,7 @@ export const PROMPT_DEFAULTS: Record<PromptKey, PromptMeta> = {
     category: "mind",
   },
   channel_invite: {
-    content: `[New channel: \${channel}]\n\${heldLine}\nSender: \${sender}\n\${details}Preview: \${preview}\n\nTo start hearing this channel, add a routing rule for "\${channel}" to .config/routes.json — only the \${limit} most recent held messages are replayed; older ones stay in the channel history (volute chat read \${channel}).\nTo stop hearing about it, decline the channel: volute chat channels decline \${channel}`,
+    content: `[New channel: \${channel}]\n\${heldLine}\nSender: \${sender}\n\${details}Preview: \${preview}\n\nTo read what's being held: volute chat channels peek \${channel}\nTo start hearing this channel: volute chat channels accept \${channel} — routes it and delivers the \${limit} most recent held messages; older ones stay readable via peek.\nTo stop hearing about it: volute chat channels decline \${channel}`,
     description:
       "Notification sent to a mind when a message arrives on an unrouted (gated) channel",
     variables: ["channel", "heldLine", "sender", "details", "preview", "limit"],

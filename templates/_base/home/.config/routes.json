@@ -1,5 +1,5 @@
 {
-  "rules": [{ "channel": "#*", "thread": "${channel}" }],
+  "rules": [{ "channel": "mail:*", "thread": "mail" }, { "channel": "#*", "thread": "${channel}" }],
   "threads": {
     "#*": { "batch": { "debounce": 20, "maxWait": 120, "triggers": ["@{{name}}"] } }
   }

@@ -2864,6 +2864,47 @@ const app = new Hono<AuthEnv>()
       return c.json({ error: "Failed to decline channel" }, 500);
     }
   })
+  // Accept an unrouted (gated) channel: adds a routing rule and releases the held backlog
+  // immediately. Channel is in the body for the same reason as decline (slugs contain slashes).
+  .post("/:name/gates/accept", requireSelf(), async (c) => {
+    const name = c.req.param("name");
+    const body = (await c.req.json().catch(() => ({}))) as { channel?: string; thread?: string };
+    const channel = body.channel?.trim();
+    if (!channel) return c.json({ error: "channel required" }, 400);
+    // Accept writes to the mind's home directory — refuse rather than fabricate a path.
+    if (!(await findMind(name))) return c.json({ error: "Mind not found" }, 404);
+    try {
+      const result = await getDeliveryManager().acceptChannel(name, channel, body.thread?.trim());
+      return c.json({ ok: true, channel, ...result });
+    } catch (err) {
+      if (err instanceof Error && err.message.includes("not initialized")) {
+        return c.json({ error: "Delivery manager not available" }, 503);
+      }
+      if (err instanceof Error && err.message.includes("malformed")) {
+        return c.json({ error: err.message }, 409);
+      }
+      log.error(`failed to accept channel ${channel} for ${name}`, log.errorData(err));
+      return c.json({ error: "Failed to accept channel" }, 500);
+    }
+  })
+  // Read the messages held on a gated channel, without changing anything. Gated rows have no
+  // conversation, so `volute chat read` can't reach them.
+  .get("/:name/gates/peek", requireSelf(), async (c) => {
+    const name = c.req.param("name");
+    const channel = c.req.query("channel")?.trim();
+    if (!channel) return c.json({ error: "channel required" }, 400);
+    try {
+      return c.json(await getDeliveryManager().peekChannel(name, channel));
+    } catch (err) {
+      // Never answer "nothing is held" for a subsystem that simply isn't up — a mind
+      // checking whether messages are stranded would read that as a confident no.
+      if (err instanceof Error && err.message.includes("not initialized")) {
+        return c.json({ error: "Delivery manager not available" }, 503);
+      }
+      log.error(`failed to peek channel ${channel} for ${name}`, log.errorData(err));
+      return c.json({ error: "Failed to read held messages" }, 500);
+    }
+  })
   // AI completion proxy for minds
   .post("/:name/ai/complete", requireSelf(), async (c) => {
     const body = (await c.req.json()) as { systemPrompt: string; message: string; model?: string };
