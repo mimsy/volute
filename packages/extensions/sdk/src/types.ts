@@ -63,6 +63,8 @@ export type ExtensionContext = {
   isIsolationEnabled: () => boolean;
   /** Get the OS username for a mind under user isolation (e.g. "mind-lyra"). */
   getMindUser: (mindName: string) => string;
+  /** Configured name of the system spirit, or null when no spirit is set up. */
+  getSpiritName: () => string | null;
   dataDir: string;
 };
 
@@ -150,6 +152,9 @@ export type ExtensionManifest = {
   skillsDir?: string;
   /** Whether these skills should be auto-installed on new minds */
   standardSkill?: boolean;
+  /** Skill names (subdirs of skillsDir) installed for the system spirit rather than
+   *  the standard mind skill set. Excluded from standardSkill distribution. */
+  spiritSkills?: string[];
   initDb?: (db: Database) => void;
   commands?: Record<string, ExtensionCommand>;
   onDaemonStart?: (ctx: ExtensionContext) => void;

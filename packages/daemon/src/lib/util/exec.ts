@@ -1,20 +1,27 @@
 import { execFile as execFileCb, execFileSync, spawn } from "node:child_process";
 import { wrapForIsolation } from "../mind/isolation.js";
 
-/** Promise wrapper around child_process.execFile. Returns stdout as a string. */
+/** Promise wrapper around child_process.execFile. Returns stdout as a string.
+ * `stdin`, when given, is written to the child's stdin and the stream closed. */
 export async function exec(
   cmd: string,
   args: string[],
-  options?: { cwd?: string; mindName?: string; env?: NodeJS.ProcessEnv },
+  options?: {
+    cwd?: string;
+    mindName?: string;
+    env?: NodeJS.ProcessEnv;
+    maxBuffer?: number;
+    stdin?: string;
+  },
 ): Promise<string> {
   const [wrappedCmd, wrappedArgs] = options?.mindName
     ? await wrapForIsolation(cmd, args, options.mindName)
     : [cmd, args];
   return new Promise((resolve, reject) => {
-    execFileCb(
+    const child = execFileCb(
       wrappedCmd,
       wrappedArgs,
-      { cwd: options?.cwd, env: options?.env },
+      { cwd: options?.cwd, env: options?.env, maxBuffer: options?.maxBuffer },
       (err, stdout, stderr) => {
         if (err) {
           (err as Error & { stderr?: string; stdout?: string }).stderr = stderr;
@@ -25,6 +32,12 @@ export async function exec(
         }
       },
     );
+    if (options?.stdin !== undefined && child.stdin) {
+      // EPIPE here (child exited before reading) surfaces through the exit
+      // callback above; swallow the stream-level duplicate.
+      child.stdin.on("error", () => {});
+      child.stdin.end(options.stdin);
+    }
   });
 }
 
@@ -36,7 +49,13 @@ export async function exec(
  */
 export function gitExec(
   args: string[],
-  options: { cwd: string; mindName?: string; env?: NodeJS.ProcessEnv },
+  options: {
+    cwd: string;
+    mindName?: string;
+    env?: NodeJS.ProcessEnv;
+    maxBuffer?: number;
+    stdin?: string;
+  },
 ): Promise<string> {
   const fullArgs =
     process.env.VOLUTE_ISOLATION === "user" ? ["-c", "safe.directory=*", ...args] : args;

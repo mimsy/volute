@@ -148,6 +148,128 @@ export function formatUnresolvedHomeFilesMessage(
 }
 
 /**
+ * A pre-allowlist mind's home can hold tens of thousands of tracked files
+ * (auto-commit was `git add -A`), so path lists must be chunked below argv
+ * limits (macOS ARG_MAX is 1 MiB) and the diff read with a raised maxBuffer.
+ */
+const RESTORE_PATH_CHUNK = 500;
+const RESTORE_DIFF_MAX_BUFFER = 64 * 1024 * 1024;
+
+/**
+ * Merge `branch` into the current branch at `cwd`; on failure, best-effort
+ * `git merge --abort` before rethrowing.
+ *
+ * A conflicted merge still applies every *cleanly*-merged change to the
+ * working tree — including the upgrade migration's home/ deletions — and
+ * leaves the repo mid-merge (MERGE_HEAD present), where a live mind's next
+ * auto-commit (`git add -A` + commit) would conclude the merge and bake those
+ * deletions in permanently. Aborting rolls the working tree back to the
+ * pre-merge state, so nothing is deleted and nothing is left half-merged.
+ */
+export async function mergeOrAbort(cwd: string, branch: string): Promise<void> {
+  try {
+    await gitExec(["merge", branch], { cwd });
+  } catch (err) {
+    let aborted = false;
+    try {
+      await gitExec(["merge", "--abort"], { cwd });
+      aborted = true;
+    } catch {
+      // No merge was in progress (the failure predated the merge starting),
+      // or the abort itself failed — the original error is the one to surface.
+    }
+    if (aborted) {
+      // git's own message says "fix conflicts and then commit the result",
+      // which is no longer true — the merge state is gone. Conflict details
+      // land on stdout, which execFile's error message omits; carry them.
+      const e = err as Error & { stdout?: string };
+      const detail = [e.message, e.stdout?.trim()].filter(Boolean).join("\n");
+      throw new Error(
+        `merge of '${branch}' failed and was aborted; the working tree was rolled back unchanged.\n${detail}`,
+      );
+    }
+    throw err;
+  }
+}
+
+/**
+ * Restore home/ files a merge physically deleted from the working tree, as
+ * untracked content, from `sourceCommit` (the pre-merge HEAD).
+ *
+ * The upgrade's "prepare for home/ allowlist migration" step untracks home/
+ * with `git rm --cached`. That leaves the files on disk *in the upgrade
+ * worktree*, but records them as deleted in the upgrade branch's history — so
+ * when the branch merges back into the live mind dir, git applies those
+ * deletions to the real working tree, and every file tracked pre-upgrade but
+ * outside the new .gitignore allowlist is removed from the mind's live home.
+ * This puts the content back the way the migration always claimed to leave
+ * it: on disk, no longer versioned. `git restore --worktree` touches only the
+ * working tree, and the allowlist .gitignore keeps the files untracked.
+ *
+ * Only paths the current .gitignore *ignores* are restored — those are
+ * exactly the migration's victims. A deleted path git would still track was
+ * deleted deliberately by the template merge; resurrecting it would hand it
+ * straight back to auto-commit as a zombie file, re-created on every future
+ * upgrade.
+ *
+ * @returns the repo-relative paths restored — empty when the merge deleted
+ *   nothing under home/ (the common already-migrated case). Throws on git
+ *   failure; callers must surface that rather than swallow it, because a
+ *   silent failure here is silent data loss.
+ */
+export async function restoreMergeDeletedHomeFiles(
+  cwd: string,
+  sourceCommit: string,
+): Promise<string[]> {
+  // --no-renames: rename detection would pair a deleted home file with a
+  // similar added file and report R instead of D, silently dropping it here.
+  const raw = await gitExec(
+    [
+      "diff",
+      "--name-only",
+      "--diff-filter=D",
+      "--no-renames",
+      "-z",
+      sourceCommit,
+      "HEAD",
+      "--",
+      "home/",
+    ],
+    { cwd, maxBuffer: RESTORE_DIFF_MAX_BUFFER },
+  );
+  const deleted = raw.split("\0").filter(Boolean);
+  if (deleted.length === 0) return [];
+
+  // Keep only paths the post-merge .gitignore ignores (see doc comment).
+  // NUL-delimited stdin/stdout keeps pathnames literal (no core.quotePath
+  // mangling) and clear of argv limits. check-ignore exits 1 when none match.
+  let paths: string[] = [];
+  try {
+    const ignoredRaw = await gitExec(["check-ignore", "--stdin", "-z"], {
+      cwd,
+      maxBuffer: RESTORE_DIFF_MAX_BUFFER,
+      stdin: deleted.join("\0"),
+    });
+    paths = ignoredRaw.split("\0").filter(Boolean);
+  } catch (err) {
+    if ((err as { code?: number }).code !== 1) throw err;
+    // exit 1: no deleted path is ignored — nothing was a migration victim
+  }
+  if (paths.length === 0) return [];
+
+  for (let i = 0; i < paths.length; i += RESTORE_PATH_CHUNK) {
+    // :(literal) — these are exact paths from git's own diff output, not
+    // patterns; without it a filename containing `*` or `[` would be
+    // glob-interpreted.
+    const pathspecs = paths.slice(i, i + RESTORE_PATH_CHUNK).map((p) => `:(literal)${p}`);
+    await gitExec(["restore", `--source=${sourceCommit}`, "--worktree", "--", ...pathspecs], {
+      cwd,
+    });
+  }
+  return paths;
+}
+
+/**
  * Merge a variant branch into the parent worktree, excluding the mind's living
  * memory (MEMORY.md, memory/journal/) from the textual merge. The parent keeps
  * its own copy of those files; the variant's delta is returned so it can be

@@ -268,6 +268,7 @@ async function buildContext(
     },
     isIsolationEnabled,
     getMindUser: mindUserName,
+    getSpiritName: () => readGlobalConfig().setup?.spiritName ?? null,
     dataDir,
   };
 }
@@ -881,13 +882,23 @@ export function getExtensionStandardSkills(): string[] {
     if (!manifest.standardSkill) continue;
     const dir = resolveSkillsDir(manifest);
     if (!dir) continue;
+    const spiritSet = new Set(manifest.spiritSkills ?? []);
     try {
       for (const entry of readdirSync(dir, { withFileTypes: true })) {
-        if (entry.isDirectory()) skills.push(entry.name);
+        if (entry.isDirectory() && !spiritSet.has(entry.name)) skills.push(entry.name);
       }
     } catch (err) {
       log.warn(`failed to read skills dir for extension ${manifest.id}`, log.errorData(err));
     }
+  }
+  return skills;
+}
+
+/** Extension-declared skill names to install for the system spirit (spiritSkills manifests). */
+export function getExtensionSpiritSkills(): string[] {
+  const skills: string[] = [];
+  for (const { manifest } of loaded) {
+    for (const name of manifest.spiritSkills ?? []) skills.push(name);
   }
   return skills;
 }
@@ -938,4 +949,18 @@ export function notifyExtensionsMindStop(mindName: string): void {
       log.error(`extension ${manifest.id}: onMindStop failed for ${mindName}`, log.errorData(err));
     }
   }
+}
+
+/**
+ * Test-only: register a manifest directly into the loaded-extension list, bypassing file
+ * discovery and route mounting. For unit-testing skill-set derivation
+ * (getExtensionStandardSkills, getExtensionSpiritSkills) without a full extension load.
+ */
+export function _registerExtensionForTest(manifest: ExtensionManifest): void {
+  loaded.push({ manifest, context: {} as ExtensionContext });
+}
+
+/** Test-only: empty the entire loaded-extension list (not just test-registered entries). */
+export function _clearLoadedExtensionsForTest(): void {
+  loaded.length = 0;
 }

@@ -16,6 +16,7 @@ import { chownMindDir, isIsolationEnabled } from "./isolation.js";
 import { npmInstallAsMind, npmInstallNeeded } from "./npm-install.js";
 import { findMind, mindDir, setMindTemplate, setMindTemplateHash } from "./registry.js";
 import { cleanupVariant } from "./variant-cleanup.js";
+import { restoreMergeDeletedHomeFiles } from "./variants.js";
 
 export type UpgradeOutcome =
   | { status: "upgraded"; warning?: string }
@@ -254,6 +255,47 @@ async function mergeUpgradeAndRestart(
     return { ok: false, conflicts: true, files: mergeResult.files };
   }
 
+  // The allowlist-migration prep commit records pre-allowlist home/ files as
+  // deleted, so the merge just removed them from the live working tree. Put
+  // the content back, untracked — first, before any later step can fail.
+  //
+  // mergeWithUntrackResolution's own auto-untrack step (checkout --ours + git
+  // rm --cached, for ignored paths that conflicted) also makes those paths
+  // show up as deleted in preMergeHead..HEAD -- home/, so they land in this
+  // restore pass too. That's harmless: checkout --ours already reset the
+  // working-tree content to preMergeHead's version before untracking, so
+  // restoring "from preMergeHead" here just rewrites the same bytes already
+  // on disk.
+  let restoreWarning: string | undefined;
+  let restored: string[] = [];
+  try {
+    restored = await restoreMergeDeletedHomeFiles(dir, preMergeHead);
+    if (restored.length > 0) {
+      log.info(
+        `restored ${restored.length} home files untracked by the allowlist migration for ${mindName}`,
+      );
+    }
+  } catch (err) {
+    log.error(`failed to restore merge-deleted home files for ${mindName}`, log.errorData(err));
+    restoreWarning =
+      `Upgrade merged but restoring home files the allowlist migration deleted failed: ` +
+      `${err instanceof Error ? err.message : String(err)}. Recover them manually: list them ` +
+      `with \`git diff --name-only --diff-filter=D --no-renames ${preMergeHead} HEAD -- home/\`, ` +
+      `then restore each with \`git restore --source=${preMergeHead} --worktree -- <path>\`.`;
+  }
+  if (restored.length > 0) {
+    try {
+      await chownMindDir(dir, mindName);
+    } catch (err) {
+      // cleanupVariant's own chown usually repairs this right after; log rather
+      // than misreport it as a restore failure.
+      log.warn(`failed to chown restored home files for ${mindName}`, log.errorData(err));
+    }
+  }
+  /** Prefix any later warning with the restore failure — it's mind data, it goes first. */
+  const withRestoreWarning = (warning?: string): string | undefined =>
+    [restoreWarning, warning].filter(Boolean).join(" ") || undefined;
+
   // Merge succeeded — everything below is best-effort cleanup/restart
   try {
     await cleanupVariant(upgradeVariantName, mindName, dir, worktreeDir, {
@@ -300,7 +342,9 @@ async function mergeUpgradeAndRestart(
       log.warn(`failed to swap template home files for ${mindName}`, log.errorData(err));
       return {
         ok: true,
-        warning: `Upgrade merged but template switch ${oldTemplate}→${template} failed: ${err instanceof Error ? err.message : String(err)}. The mind is still registered as ${oldTemplate}; re-run the switch or fix home/ manually.`,
+        warning: withRestoreWarning(
+          `Upgrade merged but template switch ${oldTemplate}→${template} failed: ${err instanceof Error ? err.message : String(err)}. The mind is still registered as ${oldTemplate}; re-run the switch or fix home/ manually.`,
+        ),
       };
     }
   }
@@ -323,7 +367,9 @@ async function mergeUpgradeAndRestart(
       log.warn(`npm install failed after upgrade merge for ${mindName}`, log.errorData(err));
       return {
         ok: true,
-        warning: `Upgrade merged but npm install failed: ${err instanceof Error ? err.message : String(err)}. You may need to run npm install manually.`,
+        warning: withRestoreWarning(
+          `Upgrade merged but npm install failed: ${err instanceof Error ? err.message : String(err)}. You may need to run npm install manually.`,
+        ),
       };
     }
   } else {
@@ -333,7 +379,7 @@ async function mergeUpgradeAndRestart(
   const manager = getMindManager();
   if (!restart) {
     manager.setPendingContext(mindName, { type: "upgraded" });
-    return { ok: true, warning: switchWarning };
+    return { ok: true, warning: withRestoreWarning(switchWarning) };
   }
 
   // Restart mind with upgrade context
@@ -349,11 +395,13 @@ async function mergeUpgradeAndRestart(
   } catch (e) {
     return {
       ok: true,
-      warning: `Upgrade merged but mind restart failed: ${e instanceof Error ? e.message : String(e)}`,
+      warning: withRestoreWarning(
+        `Upgrade merged but mind restart failed: ${e instanceof Error ? e.message : String(e)}`,
+      ),
     };
   }
 
-  return { ok: true, warning: switchWarning };
+  return { ok: true, warning: withRestoreWarning(switchWarning) };
 }
 
 function upgradeVariantName(mindName: string): string {
