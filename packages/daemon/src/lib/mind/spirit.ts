@@ -17,7 +17,25 @@ import { readVoluteConfig, type Schedule, writeVoluteConfig } from "./volute-con
 
 const slog = log.child("spirit");
 
-const SPIRIT_SKILLS = ["volute-admin", "memory", "seed-nurture", "tending", "plan-coordinator"];
+const SPIRIT_SKILLS = ["volute-admin", "memory", "seed-nurture", "tending"];
+
+/**
+ * Builtin spirit skills plus extension-declared ones (spiritSkills manifests).
+ * Extensions are notified of daemon start (and thus loaded) before this is ever
+ * called: notifyExtensionsDaemonStart() runs ahead of ensureSpiritProject/
+ * syncSpiritTemplate in daemon.ts startup, so extension spirit skills are always
+ * available by the time either install loop below runs.
+ */
+export async function allSpiritSkills(): Promise<string[]> {
+  let ext: string[] = [];
+  try {
+    const { getExtensionSpiritSkills } = await import("../extensions.js");
+    ext = getExtensionSpiritSkills();
+  } catch {
+    // extensions not loaded (tests, early boot) — builtin list still applies
+  }
+  return [...new Set([...SPIRIT_SKILLS, ...ext])];
+}
 
 const TENDING_SCHEDULE = {
   id: "tending",
@@ -319,7 +337,7 @@ export async function ensureSpiritProject(): Promise<void> {
     }
 
     // Install spirit skills from shared pool (after git init)
-    for (const skillId of SPIRIT_SKILLS) {
+    for (const skillId of await allSpiritSkills()) {
       try {
         const shared = await getSharedSkill(skillId);
         if (shared) {
@@ -556,7 +574,7 @@ export async function syncSpiritTemplate(): Promise<void> {
   }
 
   // Ensure all spirit skills are installed (handles upgrades when new skills are added)
-  for (const skillId of SPIRIT_SKILLS) {
+  for (const skillId of await allSpiritSkills()) {
     const skillDir = resolve(mindSkillsDir(dir), skillId);
     if (existsSync(skillDir)) continue;
     try {
