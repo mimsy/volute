@@ -19,13 +19,17 @@ import { cleanupVariant } from "./variant-cleanup.js";
 
 export type UpgradeOutcome =
   | { status: "upgraded"; warning?: string }
-  | { status: "conflicts"; worktreeDir: string; files: string[] };
+  | { status: "conflicts"; worktreeDir: string; files: string[]; message?: string };
 
 /** The orphan branch tracking the latest composed template files. */
 export const TEMPLATE_BRANCH = "volute/template";
 
 /** The worktree branch used to stage an in-progress upgrade merge. */
 export const UPGRADE_BRANCH = "upgrade";
+
+/** Message returned when the final merge into main conflicts (as opposed to the earlier template merge in the upgrade worktree). */
+const FINAL_MERGE_CONFLICTS_MESSAGE =
+  "Merge conflicts detected at the final merge step. The mind's directory has been restored to its pre-merge state; the upgrade worktree has been left in place for manual resolution.";
 
 /** Configure per-repo git identity for a mind: name = mind name, email = [mind].[system]@volute.systems. */
 export async function configureGitIdentity(
@@ -145,8 +149,62 @@ async function mergeTemplateBranch(worktreeDir: string): Promise<boolean> {
 }
 
 /**
+ * Attempt `git merge <branch>` in dir. On conflict, auto-resolve modify/delete
+ * conflicts for paths ignored by the merged .gitignore (git rm --cached; file
+ * stays on disk) and commit. If other conflicts remain, `git merge --abort` and
+ * return { merged: false, files }. Never leaves dir mid-merge.
+ */
+export async function mergeWithUntrackResolution(
+  dir: string,
+  branch: string,
+): Promise<{ merged: true } | { merged: false; files: string[] }> {
+  try {
+    await gitExec(["merge", branch], { cwd: dir });
+    return { merged: true };
+  } catch {
+    // Conflict (or other failure) — inspect state. If not actually mid-merge, rethrow below.
+  }
+  const unmergedRaw = await gitExec(["diff", "--name-only", "--diff-filter=U"], { cwd: dir });
+  const unmerged = unmergedRaw.split("\n").filter(Boolean);
+  if (unmerged.length === 0) {
+    // merge failed for a non-conflict reason; make sure we're not mid-merge, then throw
+    await gitExec(["merge", "--abort"], { cwd: dir }).catch(() => {});
+    throw new Error(`git merge ${branch} failed without conflicts`);
+  }
+  // Which unmerged paths does the merged .gitignore (from `branch`) ignore?
+  // check-ignore --no-index consults the working tree's .gitignore; during the
+  // merge the working tree already has the merged .gitignore when it doesn't
+  // itself conflict. If .gitignore IS conflicted, treat nothing as ignorable.
+  const resolvable: string[] = [];
+  if (!unmerged.includes(".gitignore")) {
+    for (const file of unmerged) {
+      try {
+        await gitExec(["check-ignore", "--no-index", "-q", "--", file], { cwd: dir });
+        resolvable.push(file); // exit 0 → ignored → resolvable by untracking
+      } catch {
+        // exit 1 → not ignored → real conflict
+      }
+    }
+  }
+  const remaining = unmerged.filter((f) => !resolvable.includes(f));
+  if (remaining.length > 0) {
+    await gitExec(["merge", "--abort"], { cwd: dir });
+    return { merged: false, files: unmerged };
+  }
+  for (const file of resolvable) {
+    await gitExec(["rm", "--cached", "--", file], { cwd: dir });
+  }
+  await gitExec(["commit", "-m", "merge template update (auto-untrack ignored files)"], {
+    cwd: dir,
+  });
+  return { merged: true };
+}
+
+/**
  * Merge the upgrade branch back into main, clean up, install deps, and restart.
- * Returns { ok, warning? } on success, throws on merge failure.
+ * Returns { ok: true, warning? } on success, { ok: false, conflicts, files } if
+ * the final merge couldn't be auto-resolved (main is left clean either way — see
+ * mergeWithUntrackResolution), throws on other merge failures.
  */
 async function mergeUpgradeAndRestart(
   mindName: string,
@@ -157,7 +215,7 @@ async function mergeUpgradeAndRestart(
   template: string,
   oldTemplate: string,
   restart: boolean,
-): Promise<{ ok: true; warning?: string }> {
+): Promise<{ ok: true; warning?: string } | { ok: false; conflicts: true; files: string[] }> {
   const templateChanged = template !== oldTemplate;
   // Auto-commit any uncommitted changes in main worktree
   const mainStatus = (await gitExec(["status", "--porcelain"], { cwd: dir })).trim();
@@ -167,7 +225,12 @@ async function mergeUpgradeAndRestart(
   }
 
   const preMergeHead = (await gitExec(["rev-parse", "HEAD"], { cwd: dir })).trim();
-  await gitExec(["merge", upgradeBranch], { cwd: dir });
+  const mergeResult = await mergeWithUntrackResolution(dir, upgradeBranch);
+  if (!mergeResult.merged) {
+    // main is restored to its pre-merge state; leave the upgrade worktree/branch
+    // in place for manual resolution rather than cleaning them up.
+    return { ok: false, conflicts: true, files: mergeResult.files };
+  }
 
   // Merge succeeded — everything below is best-effort cleanup/restart
   try {
@@ -426,6 +489,14 @@ export async function runUpgrade(
       oldTemplate,
       restart,
     );
+    if (!result.ok) {
+      return {
+        status: "conflicts",
+        worktreeDir,
+        files: result.files,
+        message: FINAL_MERGE_CONFLICTS_MESSAGE,
+      };
+    }
     return { status: "upgraded", warning: result.warning };
   } catch (err) {
     // Merge failed — clean up
@@ -508,6 +579,14 @@ export async function continueUpgrade(
     oldTemplate,
     restart,
   );
+  if (!result.ok) {
+    return {
+      status: "conflicts",
+      worktreeDir,
+      files: result.files,
+      message: FINAL_MERGE_CONFLICTS_MESSAGE,
+    };
+  }
   return { status: "upgraded", warning: result.warning };
 }
 
