@@ -1227,6 +1227,96 @@ describe("daemon e2e", { timeout: 420000 }, () => {
     await daemonRequest(`/api/minds/${TEST_MIND}/stop`, { method: "POST" });
   });
 
+  it("upgrade: self-heals a stale orphaned upgrade worktree left by a prior run", async () => {
+    await ensureTestMind();
+    const dir = mindDir(TEST_MIND);
+    const worktreeDir = resolve(dir, ".variants", "upgrade");
+
+    // Manually recreate an orphan: a worktree + branch left behind exactly as a
+    // daemon restart mid-upgrade would leave them, with no merge in progress.
+    execFileSync("git", ["worktree", "add", "-b", "upgrade", worktreeDir], {
+      cwd: dir,
+      stdio: "pipe",
+      env: cleanEnv,
+    });
+    assert.ok(existsSync(worktreeDir), "orphan worktree should exist before the upgrade call");
+
+    // Previously this 409'd forever (#whorl) because nothing ever cleared the
+    // orphan. It should now self-heal and complete the upgrade normally.
+    const res = await daemonRequest(`/api/minds/${TEST_MIND}/upgrade`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    assert.equal(
+      res.status,
+      200,
+      `Upgrade should self-heal the orphan and proceed: ${res.status} ${await res.clone().text()}`,
+    );
+    const body = (await res.json()) as { ok?: boolean; conflicts?: boolean };
+    assert.equal(body.ok, true, `Upgrade not ok: ${JSON.stringify(body)}`);
+    assert.notEqual(body.conflicts, true, "self-healed upgrade should not conflict");
+
+    assert.ok(
+      !existsSync(worktreeDir),
+      "upgrade worktree should be cleaned up after the self-healed upgrade",
+    );
+
+    // Upgrade restarts the mind; stop it so later tests see the usual state.
+    await daemonRequest(`/api/minds/${TEST_MIND}/stop`, { method: "POST" });
+  });
+
+  it("upgrade: a worktree genuinely mid-conflict-resolution still 409s (not treated as a stale orphan)", async () => {
+    await ensureTestMind();
+    const dir = mindDir(TEST_MIND);
+    const worktreeDir = resolve(dir, ".variants", "upgrade");
+
+    execFileSync("git", ["worktree", "add", "-b", "upgrade", worktreeDir], {
+      cwd: dir,
+      stdio: "pipe",
+      env: cleanEnv,
+    });
+
+    // Simulate an unresolved merge by writing MERGE_HEAD into the worktree's
+    // gitdir — the same technique runUpgrade/abortUpgrade use to detect it,
+    // resolved via the worktree's `.git` file (`gitdir: <path>`).
+    const gitFileContent = readFileSync(resolve(worktreeDir, ".git"), "utf-8").trim();
+    const gitDir = gitFileContent.replace("gitdir: ", "");
+    const headSha = execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: dir,
+      encoding: "utf-8",
+      env: cleanEnv,
+    }).trim();
+    writeFileSync(resolve(gitDir, "MERGE_HEAD"), `${headSha}\n`);
+
+    const res = await daemonRequest(`/api/minds/${TEST_MIND}/upgrade`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    assert.equal(
+      res.status,
+      409,
+      `Mid-resolution worktree should still 409: ${res.status} ${await res.clone().text()}`,
+    );
+    const body = (await res.json()) as { error?: string };
+    assert.match(body.error ?? "", /already exists/i);
+    assert.ok(existsSync(worktreeDir), "mid-resolution worktree should not be touched");
+
+    // Clean up via abort so later tests see the usual state.
+    const abortRes = await daemonRequest(`/api/minds/${TEST_MIND}/upgrade`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ abort: true }),
+    });
+    assert.equal(
+      abortRes.status,
+      200,
+      `Cleanup abort: ${abortRes.status} ${await abortRes.clone().text()}`,
+    );
+    assert.ok(!existsSync(worktreeDir), "worktree should be gone after abort");
+  });
+
   it("unified chat: send via /api/v1/chat", async () => {
     await ensureTestMind();
     const brain = await ensureBrainParticipant("unified");

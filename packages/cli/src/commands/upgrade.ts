@@ -39,6 +39,7 @@ const cmd = command({
       worktreeDir?: string;
       diff?: string;
       message?: string;
+      files?: string[];
       warning?: string;
     };
 
@@ -58,8 +59,14 @@ const cmd = command({
     }
 
     if (data.conflicts) {
-      console.log("\nMerge conflicts detected. Resolve them in:");
+      console.log(`\n${data.message ?? "Merge conflicts detected."} Resolve them in:`);
       console.log(`  ${data.worktreeDir}`);
+      if (data.files && data.files.length > 0) {
+        console.log(`\nConflicted files:`);
+        for (const file of data.files) {
+          console.log(`  ${file}`);
+        }
+      }
       console.log(`\nThen run:`);
       console.log(`  volute mind upgrade ${mindName} --continue`);
       console.log(`\nOr abort:`);
