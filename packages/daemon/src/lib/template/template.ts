@@ -104,6 +104,14 @@ export function composeTemplate(
 
 /**
  * Copy a composed template to the destination directory with name substitution.
+ *
+ * `manifest.substitute` is the single source of truth for which files carry
+ * `{{name}}`, and its paths are relative to the *composed* layout — so a file
+ * that ships via `.init/` must be listed under its `.init/...` path, not the
+ * `home/...` path it eventually lands at. Substitution runs here, before
+ * applyInitFiles() overlays `.init/` onto `home/`; listing the `home/` path for
+ * a file that `.init/` shadows substitutes a copy that is then overwritten
+ * (which is how `@{{name}}` shipped verbatim in every mind's routes.json).
  */
 export function copyTemplateToDir(
   composedDir: string,

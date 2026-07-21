@@ -124,6 +124,64 @@ describe("template helpers", () => {
     rmSync(dest, { recursive: true });
   });
 
+  /** Create a mind from `template` the way mind creation does, and return its dir. */
+  function scaffold(template: string, mindName: string, label: string): string {
+    const dest = join(tmpDir, `${label}-${template}`);
+    if (existsSync(dest)) rmSync(dest, { recursive: true });
+
+    const templatesRoot = findTemplatesRoot();
+    const { composedDir, manifest } = composeTemplate(templatesRoot, template);
+    try {
+      copyTemplateToDir(composedDir, dest, mindName, manifest);
+    } finally {
+      rmSync(composedDir, { recursive: true, force: true });
+    }
+    applyInitFiles(dest);
+    return dest;
+  }
+
+  // Regression: `.init/` is overlaid onto home/ *after* substitution runs, so any
+  // {{name}} in a .init/ file that the manifest doesn't list survives verbatim into
+  // the created mind. That shipped `"triggers": ["@{{name}}"]` in every mind's
+  // routes.json, which can never match — so an @-mention in a #channel never flushed
+  // the batch early. This asserts the whole class, not just that one file.
+  for (const template of ["claude", "pi", "codex"]) {
+    it(`leaves no {{...}} placeholder under home/ for the ${template} template`, () => {
+      const dest = scaffold(template, "test-mind", "placeholder-test");
+
+      const homeDir = join(dest, "home");
+      const offenders: string[] = [];
+      for (const file of listFiles(homeDir)) {
+        const content = readFileSync(join(homeDir, file), "utf-8");
+        if (content.includes("{{")) offenders.push(file);
+      }
+      assert.deepEqual(
+        offenders,
+        [],
+        `unsubstituted {{...}} placeholder(s) in home/ — add the file's composed path ` +
+          `(e.g. ".init/.config/routes.json") to ${template}/volute-template.json's "substitute"`,
+      );
+
+      rmSync(dest, { recursive: true });
+    });
+  }
+
+  // routes.json lives once, in _base/.init/. Every template must inherit it through
+  // composition with the batch trigger naming the mind — this is what catches both a
+  // missed manifest entry and a template accidentally losing the inherited file.
+  for (const template of ["claude", "pi", "codex"]) {
+    it(`ships a name-substituted batch trigger in home/ routes.json (${template})`, () => {
+      const dest = scaffold(template, "test-mind", "routes-subst-test");
+
+      const routes = JSON.parse(
+        readFileSync(join(dest, "home", ".config", "routes.json"), "utf-8"),
+      );
+      assert.deepEqual(routes.threads["#*"].batch.triggers, ["@test-mind"]);
+
+      rmSync(dest, { recursive: true });
+    });
+  }
+
   it("listFiles returns relative paths excluding .git", () => {
     const dir = join(tmpDir, "list-test");
     if (existsSync(dir)) rmSync(dir, { recursive: true });
