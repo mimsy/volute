@@ -11,7 +11,8 @@ import type { MessageIdEntry } from "./stream-consumer.js";
  */
 export const RECOVERED_MESSAGE_NOTE =
   "Note: this message is being redelivered after a session interruption. You may already " +
-  "have handled it — check your recent work (e.g. journal, files) before repeating anything.";
+  "have handled it — check your recent work (e.g. journal, files, messages you've already " +
+  "sent) before repeating anything.";
 
 export function markRecovered(msg: SDKUserMessage): SDKUserMessage {
   const content = msg.message.content;
