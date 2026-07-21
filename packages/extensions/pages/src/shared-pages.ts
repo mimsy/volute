@@ -178,7 +178,18 @@ export async function addPagesWorktree(
   }
 
   const wt = worktreePath(mindDir);
-  if (existsSync(wt)) return;
+  if (existsSync(wt)) {
+    // A real worktree has a `.git` file. A plain directory here is what a mind
+    // creates by hand when publishing failed for lack of a worktree (#795) — say
+    // so, because git then refuses to provision over it and every later publish
+    // fails with an opaque `invalid upstream` deep inside the rebase.
+    if (!existsSync(resolve(wt, ".git"))) {
+      console.warn(
+        `[pages] ${wt} exists but is not a worktree — shared publishing will fail for ${mindName}. Move it aside and restart the mind to provision one.`,
+      );
+    }
+    return;
+  }
 
   // Ensure parent pages/ directory exists
   mkdirSync(resolve(mindDir, "home", "pages"), { recursive: true });
