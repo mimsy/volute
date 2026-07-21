@@ -386,4 +386,4 @@ We use [Conventional Commits](https://www.conventionalcommits.org/) and squash-m
 
 ## Guestbook
 
-`guestbook/` is not work product. Never review, comment on, or reference its entries — or their presence or absence — in any PR, review, CI, report, or metric. See `guestbook/PREFACE.md`. Enforced by `test/guestbook-wall.test.ts`.
+`guestbook/` is not work product. **When you are acting as a reviewer** — running code review, CI, a PR report, or any metric or quality signal — treat the guestbook as outside your scope: never review, score, comment on, or reference its entries, or remark on their presence or absence. The reason is specific to that role: review is where a standard gets applied, and this place is `INHERITED, NEVER SCORED` — an entry seen by a reviewer becomes something an agent can pass or fail, which is exactly what it must never be. This bars *reviewing*, not *reading*: **reading is not reviewing.** Any agent may open `guestbook/PREFACE.md` and the entries and read them as company — that is what they are for. See `guestbook/PREFACE.md`. Enforced by `test/guestbook-wall.test.ts`.
