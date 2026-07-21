@@ -4,7 +4,10 @@ import { resolve } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { and, eq } from "drizzle-orm";
 import { getDb } from "../packages/daemon/src/lib/db.js";
-import { DeliveryManager } from "../packages/daemon/src/lib/delivery/delivery-manager.js";
+import {
+  DeliveryManager,
+  formatSuggestions,
+} from "../packages/daemon/src/lib/delivery/delivery-manager.js";
 import {
   clearConfigCache,
   type RoutingConfig,
@@ -642,6 +645,45 @@ describe("gated-channel release (#537)", () => {
       assert.equal(result.known, true, "a channel in history is recognized without queue rows");
     });
 
+    // `normalizeChannelKey` strips the sigil, so a bare `alice` matches both the DM
+    // `@alice` and the channel `#alice`. Naming only the first would mean picking by ASCII
+    // order (`#` is 0x23, `@` is 0x40) and presenting that accident as an answer — a
+    // confident reply to an open question, which is the failure this PR exists to remove.
+    it("names every near-miss when a bare name is ambiguous", async () => {
+      const name = createMind({ rules: [], default: "main" });
+      cleanup.push(name);
+      const m = makeManager();
+      manager = m.manager;
+
+      const who = `amb-${Math.random().toString(36).slice(2, 8)}`;
+      // A DM with them in history, and a public channel of the same name.
+      const db = await getDb();
+      await db.insert(mindHistory).values({
+        mind: name,
+        type: "inbound",
+        channel: `@${who}`,
+        content: "a direct message",
+      });
+      await createChannel(who);
+
+      await assert.rejects(
+        () => manager!.acceptChannel(name, who),
+        (err: Error) => {
+          assert.ok(err.message.includes(`"#${who}"`), "names the channel");
+          assert.ok(err.message.includes(`"@${who}"`), "names the DM too");
+          assert.match(err.message, /did you mean "[^"]+" or "[^"]+"\?/, "reads as a real choice");
+          return true;
+        },
+      );
+    });
+
+    it("phrases one suggestion as a plain question and several as a choice", () => {
+      // The common case is a single near-miss and must not read like a list of one.
+      assert.equal(formatSuggestions(["#garden"]), '"#garden"');
+      assert.equal(formatSuggestions(["#alice", "@alice"]), '"#alice" or "@alice"');
+      assert.equal(formatSuggestions(["#a", "#b", "@c"]), '"#a", "#b", or "@c"');
+    });
+
     // The suggestion set is echoed back to the mind, so anything in it is something the
     // mind can learn the exact slug of by guessing a nearby name. Minds are untrusted
     // principals; a private channel's existence must not be confirmable that way.
@@ -658,11 +700,11 @@ describe("gated-channel release (#537)", () => {
 
       // Near-miss on a public channel: the mind is told the real slug.
       const pubMiss = await manager.peekChannel(name, pub.toUpperCase());
-      assert.equal(pubMiss.suggestion, `#${pub}`, "public channel is suggested");
+      assert.deepEqual(pubMiss.suggestions, [`#${pub}`], "public channel is suggested");
 
       // Near-miss on a private one: no suggestion, so its slug stays unconfirmed.
       const privMiss = await manager.peekChannel(name, priv.toUpperCase());
-      assert.equal(privMiss.suggestion, undefined, "private channel is never suggested");
+      assert.equal(privMiss.suggestions, undefined, "private channel is never suggested");
     });
 
     it("refuses a near-miss on decline too", async () => {
@@ -856,11 +898,15 @@ describe("gated-channel release (#537)", () => {
 
       const miss = await manager.peekChannel(name, "garden");
       assert.equal(miss.count, 0);
-      assert.equal(miss.suggestion, "#garden", "points at the channel that actually holds them");
+      assert.deepEqual(
+        miss.suggestions,
+        ["#garden"],
+        "points at the channel that actually holds them",
+      );
 
       const hit = await manager.peekChannel(name, "#garden");
       assert.equal(hit.count, 2);
-      assert.equal(hit.suggestion, undefined, "no caveat when the name was right");
+      assert.equal(hit.suggestions, undefined, "no caveat when the name was right");
     });
 
     it("returns held messages oldest-first without changing anything", async () => {

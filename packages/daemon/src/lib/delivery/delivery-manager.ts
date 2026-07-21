@@ -48,18 +48,35 @@ function normalizeChannelKey(channel: string): string {
 }
 
 /**
+ * Quote and join candidate slugs for a "did you mean" message. One candidate reads as a
+ * plain question (`"#alice"`) rather than a list of one; two or more are spelled out in
+ * full, because naming only the first would be a confident answer to an open question.
+ */
+export function formatSuggestions(suggestions: string[]): string {
+  const quoted = suggestions.map((s) => `"${s}"`);
+  if (quoted.length <= 1) return quoted.join("");
+  if (quoted.length === 2) return `${quoted[0]} or ${quoted[1]}`;
+  return `${quoted.slice(0, -1).join(", ")}, or ${quoted[quoted.length - 1]}`;
+}
+
+/**
  * A channel name that matches nothing, where something close does exist. Carries its own
  * type rather than relying on the caller sniffing `err.message`: #778 flagged that
  * string-matching pattern as fragile ("a reworded message silently changes the status
  * code") and this is the third site that would have used it, so it's worth doing properly.
+ *
+ * Carries *every* near-miss, not the closest one. `normalizeChannelKey` strips the sigil,
+ * so a DM `@alice` and a channel `#alice` both match a bare `alice` — and picking one
+ * would have meant picking by ASCII order (`#` is 0x23, `@` is 0x40), then presenting that
+ * accident as an answer. Naming both is the honest reply to an ambiguous name.
  */
 export class UnknownChannelError extends Error {
   constructor(
     readonly channel: string,
-    readonly suggestion: string,
+    readonly suggestions: string[],
   ) {
     super(
-      `no channel named "${channel}" — did you mean "${suggestion}"? ` +
+      `no channel named "${channel}" — did you mean ${formatSuggestions(suggestions)}? ` +
         `(quote it: the shell strips an unquoted #name)`,
     );
     this.name = "UnknownChannelError";
@@ -704,7 +721,7 @@ export class DeliveryManager {
   private async matchChannelName(
     baseName: string,
     channel: string,
-  ): Promise<{ known: boolean; suggestion?: string }> {
+  ): Promise<{ known: boolean; suggestions: string[] }> {
     let all: string[];
     try {
       all = await this.knownChannels(baseName);
@@ -712,12 +729,15 @@ export class DeliveryManager {
       // Never turn a lookup failure into a refusal: that would block a legitimate accept
       // on a DB hiccup. Degrade to today's permissive behaviour.
       dlog.warn(`failed to list known channels for ${baseName}`, log.errorData(err));
-      return { known: true };
+      return { known: true, suggestions: [] };
     }
-    if (all.includes(channel)) return { known: true };
+    if (all.includes(channel)) return { known: true, suggestions: [] };
     const key = normalizeChannelKey(channel);
+    // Every near-miss, not the best one: a bare `alice` can mean the DM `@alice` or the
+    // channel `#alice`, and there is no basis for preferring either. Sorted only so the
+    // message is stable between runs.
     const near = all.filter((c) => normalizeChannelKey(c) === key).sort();
-    return near.length > 0 ? { known: false, suggestion: near[0] } : { known: false };
+    return { known: false, suggestions: near };
   }
 
   /**
@@ -749,7 +769,7 @@ export class DeliveryManager {
     // Same near-miss guard as accept: declining "garden" would record a permanent opt-out
     // against a name nothing sends from, while "#garden" kept right on notifying.
     const match = await this.matchChannelName(baseName, channel);
-    if (match.suggestion) throw new UnknownChannelError(channel, match.suggestion);
+    if (match.suggestions.length > 0) throw new UnknownChannelError(channel, match.suggestions);
     const db = await getDb();
     await db
       .insert(channelGates)
@@ -827,7 +847,7 @@ export class DeliveryManager {
   }> {
     // Check the name before touching routes.json: a near-miss must not leave a rule behind.
     const match = await this.matchChannelName(baseName, channel);
-    if (match.suggestion) throw new UnknownChannelError(channel, match.suggestion);
+    if (match.suggestions.length > 0) throw new UnknownChannelError(channel, match.suggestions);
 
     const path = routesConfigPath(baseName);
 
@@ -952,7 +972,7 @@ export class DeliveryManager {
     channel: string;
     count: number;
     shown: number;
-    suggestion?: string;
+    suggestions?: string[];
     messages: { sender: string | null; content: string; createdAt: string; status: string }[];
   }> {
     const baseName = await getBaseName(mindName);
@@ -989,10 +1009,16 @@ export class DeliveryManager {
     // "No held messages on garden" is a confident answer to the wrong question when the
     // caller meant "#garden". Peek doesn't refuse — reading is harmless and an empty
     // backlog is a real answer — but it must not let a near-miss read as an all-clear.
-    const suggestion =
-      rows.length === 0 ? (await this.matchChannelName(baseName, channel)).suggestion : undefined;
+    const near =
+      rows.length === 0 ? (await this.matchChannelName(baseName, channel)).suggestions : [];
 
-    return { channel, count: rows.length, shown: messages.length, suggestion, messages };
+    return {
+      channel,
+      count: rows.length,
+      shown: messages.length,
+      suggestions: near.length > 0 ? near : undefined,
+      messages,
+    };
   }
 
   /**

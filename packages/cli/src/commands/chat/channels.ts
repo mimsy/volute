@@ -1,3 +1,4 @@
+import { formatSuggestions } from "@volute/daemon/lib/delivery/delivery-manager.js";
 import { command, subcommands } from "../../lib/command.js";
 import { daemonFetch } from "../../lib/daemon-client.js";
 import { resolveMindName } from "../../lib/resolve-mind-name.js";
@@ -153,14 +154,16 @@ const channelsPeekCmd = command({
     const data = (await res.json()) as {
       count: number;
       shown: number;
-      suggestion?: string;
+      suggestions?: string[];
       messages: { sender: string | null; content: string; createdAt: string; status: string }[];
     };
 
     if (data.count === 0) {
       console.log(`No held messages on ${channel}.`);
-      if (data.suggestion) {
-        console.log(`No channel by that name exists — did you mean "${data.suggestion}"?`);
+      if (data.suggestions?.length) {
+        console.log(
+          `No channel by that name exists — did you mean ${formatSuggestions(data.suggestions)}?`,
+        );
       }
       return;
     }
