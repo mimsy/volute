@@ -24,25 +24,13 @@ import {
 import { daemonEmit } from "./lib/daemon-client.js";
 import { dispatchPrompt } from "./lib/dispatch.js";
 import { createEventHandler, emit } from "./lib/event-handler.js";
-import { compactTimestamp } from "./lib/format-prefix.js";
 import { runHooks } from "./lib/hook-loader.js";
 import { log } from "./lib/logger.js";
-import {
-  computePiSeedCut,
-  DEFAULT_SEED_TOKENS,
-  type PiSeedCut,
-  rotatePiSession,
-  seedPiSession,
-} from "./lib/pi-session-seed.js";
+import { DEFAULT_SEED_TOKENS, rotatePiSession, seedPiSession } from "./lib/pi-session-seed.js";
 import { createReplyInstructionsExtension } from "./lib/reply-instructions-extension.js";
 import { resolveModel } from "./lib/resolve-model.js";
 import { buildSeededNote, type SeedCause } from "./lib/seed-note.js";
-import {
-  getStartupContext,
-  loadPrompts,
-  renderCompactionWarning,
-  type SubagentConfig,
-} from "./lib/startup.js";
+import { getStartupContext, loadPrompts, type SubagentConfig } from "./lib/startup.js";
 import { createSubagentExtension, type SubagentDefinition } from "./lib/subagents.js";
 import type {
   HandlerMeta,
@@ -82,12 +70,6 @@ type PiSession = {
    */
   rotationNotePending?: boolean;
   /**
-   * The cut point pinned at warn time (the first-kept turn the mind was told would
-   * survive verbatim). Honored at rotation so the promise in the warning holds even
-   * though the transcript grows after the warning. Null until a warning fires.
-   */
-  rotationCut?: PiSeedCut | null;
-  /**
    * Back-to-back rotations that did NOT bring context under the threshold (reset by
    * any healthy turn). Guards against a runaway loop when the tail alone can't fit —
    * e.g. a system prompt (large MEMORY.md) that already fills most of the window,
@@ -107,7 +89,6 @@ export function createMind(options: {
   sessionsDir: string;
   model?: string;
   thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
-  compactionMessage?: string;
   maxContextTokens?: number;
   /** Estimated-token budget for seeding a fresh persistent session. 0 disables. Default 30000. */
   seedTokens?: number;
@@ -119,8 +100,6 @@ export function createMind(options: {
 } {
   const sessions = new Map<string, PiSession>();
   const prompts = loadPrompts();
-  const compactionMessage = () =>
-    options.compactionMessage ?? renderCompactionWarning(prompts.compaction_warning);
   const compactionInstructions = prompts.compaction_instructions;
   const maxContextTokens = options.maxContextTokens;
   const seedTokens = options.seedTokens ?? DEFAULT_SEED_TOKENS;
@@ -387,62 +366,26 @@ export function createMind(options: {
 
     log("mind", `session "${session.name}": ${isEphemeral ? "ephemeral" : "persistent"}`);
 
-    // Compaction state machine (rotation, not SDK /compact):
-    // 1. threshold (onContextTokens) or native PreCompact -> warnAndPinRotation:
-    //    pin the cut from the live transcript, interpolate it into the ${cutoff}
-    //    warning, send it as the wrap-up prompt, set compactionTriggered
-    // 2. onTurnEnd (after warning turn): compactionTriggered -> compactOnNextTurnEnd
-    // 3. onTurnEnd (after mind's wrap-up turn): compactOnNextTurnEnd -> rotateInPlace
-    //    (or, past the runaway cap, the native compact() backstop)
+    // Compaction is rotation (not SDK /compact), and it's silent: crossing the
+    // threshold (onContextTokens) or a native PreCompact just sets rotatePending; the
+    // session rotates in place at the end of the turn that crossed it — no warning, no
+    // wrap-up turn. The auto summarizer's turn summaries are the record of collapsed
+    // turns, and the one-line rotation note marks the boundary on the next turn. Past
+    // the runaway cap, onTurnEnd defers to the native compact() backstop instead.
     let compactBlocked = false;
     let manualCompactPending = false;
-    let compactionTriggered = false;
-    let compactOnNextTurnEnd = false;
+    let rotatePending = false;
     let compactionInProgress = false;
 
     function resetCompactionState() {
-      compactionTriggered = false;
-      compactOnNextTurnEnd = false;
+      rotatePending = false;
       compactionInProgress = false;
     }
 
     /**
-     * Warn the mind that the session will rotate at the context limit and pin the cut
-     * point it's told about. Computes which whole turns fit in `seedTokens` from the
-     * live transcript, pins the first-kept turn (so rotation honors the same boundary
-     * even as the transcript grows), interpolates its local time into the `${cutoff}`
-     * placeholder, and sends the warning as the wrap-up prompt. Shared by the
-     * threshold and native-PreCompact paths.
-     */
-    function warnAndPinRotation() {
-      let cutoffLabel = "the cutoff";
-      session.rotationCut = null;
-      const sourcePath = session.agentSession?.sessionManager.getSessionFile();
-      if (sourcePath) {
-        try {
-          const cut = computePiSeedCut(readFileSync(sourcePath, "utf-8"), seedTokens);
-          if (cut) {
-            session.rotationCut = cut;
-            if (cut.boundaryTimestamp) {
-              const d = new Date(cut.boundaryTimestamp);
-              if (!Number.isNaN(d.getTime())) cutoffLabel = compactTimestamp(d);
-            }
-          }
-        } catch (err) {
-          log("mind", `session "${session.name}": failed to pin rotation cut:`, err);
-        }
-      }
-      // biome-ignore lint/suspicious/noTemplateCurlyInString: literal ${cutoff} prompt placeholder
-      const warning = compactionMessage().replaceAll("${cutoff}", cutoffLabel);
-      compactionTriggered = true;
-      session.messageIds.push(undefined);
-      session.agentSession?.prompt(warning, { streamingBehavior: "followUp" });
-    }
-
-    /**
      * Rotate the session in place onto a synthetic session holding the verbatim recent
-     * tail (from the pinned cut), then switch the running SessionManager to it. Returns
-     * false if rotation can't proceed (session not ready, or the file build failed) so
+     * tail (the seedTokens-budget tail), then switch the running SessionManager to it.
+     * Returns false if rotation can't proceed (session not ready, or the file build failed) so
      * the caller can fall back to a fresh session. The setSessionFile + state.messages
      * re-sync is the load-bearing adoption step: the agent caches context in
      * state.messages, so swapping the file alone wouldn't change what the mind sees
@@ -457,10 +400,8 @@ export function createMind(options: {
         sessionsDir: options.sessionsDir,
         name: session.name,
         sourcePath,
-        cut: session.rotationCut ?? null,
         seedTokens,
       });
-      session.rotationCut = null;
       if (!newPath) return false;
       as.sessionManager.setSessionFile(newPath);
       as.state.messages = as.sessionManager.buildSessionContext().messages;
@@ -487,7 +428,6 @@ export function createMind(options: {
         as.sessionManager.newSession();
         as.state.messages = [];
       }
-      session.rotationCut = null;
       session.consecutiveRotations = 0;
       compactBlocked = false;
       log("mind", `session "${session.name}": rotation failed, starting fresh`);
@@ -520,23 +460,22 @@ export function createMind(options: {
         }
 
         // The SDK's native auto-compaction wants to fire. Converge it onto rotation:
-        // the first pass warns + pins + marks for rotation (unless the threshold path
-        // already did, or the runaway cap is hit) and blocks the native compaction;
-        // the second pass allows native compaction as the emergency backstop (only
-        // reachable if rotation never brought context under control).
+        // the first pass marks the session for rotation at turn end (unless the
+        // threshold path already did, or the runaway cap is hit) and blocks the native
+        // compaction; the second pass allows native compaction as the emergency
+        // backstop (only reachable if rotation never brought context under control).
         if (!compactBlocked) {
           compactBlocked = true;
           if (
-            !compactionTriggered &&
-            !compactOnNextTurnEnd &&
+            !rotatePending &&
             !compactionInProgress &&
             (session.consecutiveRotations ?? 0) < MAX_CONSECUTIVE_ROTATIONS
           ) {
             log(
               "mind",
-              `session "${session.name}": native compaction — warning + pinning rotation`,
+              `session "${session.name}": native compaction — rotation pending at turn end`,
             );
-            warnAndPinRotation();
+            rotatePending = true;
           } else {
             log("mind", `session "${session.name}": blocking native compaction (rotation pending)`);
           }
@@ -595,8 +534,7 @@ export function createMind(options: {
           if (
             maxContextTokens &&
             tokens >= maxContextTokens &&
-            !compactionTriggered &&
-            !compactOnNextTurnEnd &&
+            !rotatePending &&
             !compactionInProgress &&
             (session.consecutiveRotations ?? 0) < MAX_CONSECUTIVE_ROTATIONS
           ) {
@@ -609,18 +547,18 @@ export function createMind(options: {
             }
             log(
               "mind",
-              `session "${session.name}": ${tokens} tokens >= ${maxContextTokens} — warning + pinning rotation`,
+              `session "${session.name}": ${tokens} tokens >= ${maxContextTokens} — rotation pending at turn end`,
             );
-            warnAndPinRotation();
+            rotatePending = true;
           }
         },
         onTurnEnd: maxContextTokens
           ? () => {
               try {
-                // The wrap-up turn (after the warning) is done — rotate the session in
-                // place onto the verbatim tail, honoring the pinned cut.
-                if (compactOnNextTurnEnd) {
-                  compactOnNextTurnEnd = false;
+                // The turn that crossed the threshold is done — rotate the session in
+                // place onto the verbatim recent tail. Silent: no warning, no wrap-up.
+                if (rotatePending) {
+                  rotatePending = false;
                   if ((session.consecutiveRotations ?? 0) >= MAX_CONSECUTIVE_ROTATIONS) {
                     // Runaway guard: rotation isn't relieving context (system prompt too
                     // large to fit the tail under the threshold) — defer to the SDK.
@@ -630,11 +568,6 @@ export function createMind(options: {
                     // compaction.
                     freshFallback();
                   }
-                  return;
-                }
-                if (compactionTriggered) {
-                  compactionTriggered = false;
-                  compactOnNextTurnEnd = true;
                   return;
                 }
                 // A healthy turn (context under the threshold) — the rotation streak,
