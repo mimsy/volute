@@ -221,6 +221,16 @@ export async function startSpiritFull(name: string): Promise<void> {
   // Load spirit schedules with explicit dir (spirit lives outside ~/.volute/minds/)
   getScheduler().loadSchedules(name, entry?.dir ?? spiritDir());
 
+  // The spirit is a mind as far as extensions are concerned — it has a registry
+  // row, a directory, and its own pages/notes/intentions. Skipping this left it
+  // with no pages worktree, so the mind whose job is tending the commons was the
+  // one mind that could never publish to it (#795).
+  try {
+    notifyExtensionsMindStart(name);
+  } catch (err) {
+    log.error(`failed to notify extensions of spirit start for ${name}`, log.errorData(err));
+  }
+
   publishActivity({
     type: "mind_started",
     mind: name,
@@ -232,6 +242,7 @@ export async function startSpiritFull(name: string): Promise<void> {
  * Stop a spirit process.
  */
 export async function stopSpiritFull(name: string): Promise<void> {
+  notifyExtensionsMindStop(name);
   markIdle(name);
   getScheduler().unloadSchedules(name);
   await getMindManager().stopMind(name);
