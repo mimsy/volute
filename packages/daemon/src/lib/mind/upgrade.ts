@@ -42,6 +42,27 @@ export const UPGRADE_BRANCH = "upgrade";
 const FINAL_MERGE_CONFLICTS_MESSAGE =
   "Merge conflicts detected at the final merge step. The mind's directory has been restored to its pre-merge state; the upgrade worktree has been left in place for manual resolution.";
 
+/** Per-mind chain of in-flight upgrade operations, used by {@link withUpgradeLock}. */
+const upgradeLocks = new Map<string, Promise<unknown>>();
+
+/**
+ * Serializes upgrade operations (runUpgrade/continueUpgrade/abortUpgrade) for a
+ * single mind so a manual call and the auto-upgrade pass can never race on the
+ * same worktree — e.g. one treating the other's in-progress merge as a stale
+ * orphan and aborting it out from under it. Different mind names run unaffected.
+ * A rejected op is swallowed before chaining the next one, so a single failure
+ * never wedges the queue for that mind.
+ */
+export async function withUpgradeLock<T>(mindName: string, fn: () => Promise<T>): Promise<T> {
+  const prior = upgradeLocks.get(mindName) ?? Promise.resolve();
+  const run = prior.catch(() => {}).then(fn);
+  upgradeLocks.set(
+    mindName,
+    run.catch(() => {}),
+  );
+  return run;
+}
+
 /** Configure per-repo git identity for a mind: name = mind name, email = [mind].[system]@volute.systems. */
 export async function configureGitIdentity(
   mindName: string,
@@ -459,6 +480,13 @@ export async function runUpgrade(
   mindName: string,
   opts?: { template?: string; restart?: boolean },
 ): Promise<UpgradeOutcome> {
+  return withUpgradeLock(mindName, () => runUpgradeCore(mindName, opts));
+}
+
+async function runUpgradeCore(
+  mindName: string,
+  opts?: { template?: string; restart?: boolean },
+): Promise<UpgradeOutcome> {
   const entry = await findMind(mindName);
   if (!entry) throw new Error("Mind not found");
   const dir = mindDir(mindName);
@@ -471,13 +499,15 @@ export async function runUpgrade(
 
   // An upgrade worktree from a prior run may still be sitting here — either a
   // daemon restart orphaned it mid-run, or a caller is genuinely mid-conflict-
-  // resolution. Only the latter should keep blocking a fresh upgrade.
+  // resolution. Only the latter should keep blocking a fresh upgrade. Calls the
+  // unlocked core directly — runUpgradeCore already holds this mind's lock, and
+  // going through the public abortUpgrade would deadlock waiting on itself.
   if (existsSync(worktreeDir)) {
     if (upgradeMidResolution(worktreeDir)) {
       throw new UpgradeInProgressError(worktreeDir);
     }
     log.warn(`clearing stale orphaned upgrade worktree for ${mindName}`);
-    await abortUpgrade(mindName);
+    await abortUpgradeCore(mindName);
   }
 
   // Initialize git repo if missing (minds created before git config was fixed)
@@ -613,6 +643,13 @@ export async function continueUpgrade(
   mindName: string,
   opts?: { template?: string; restart?: boolean },
 ): Promise<UpgradeOutcome> {
+  return withUpgradeLock(mindName, () => continueUpgradeCore(mindName, opts));
+}
+
+async function continueUpgradeCore(
+  mindName: string,
+  opts?: { template?: string; restart?: boolean },
+): Promise<UpgradeOutcome> {
   const entry = await findMind(mindName);
   if (!entry) throw new Error("Mind not found");
   const dir = mindDir(mindName);
@@ -691,6 +728,10 @@ export async function continueUpgrade(
 
 /** Abort an in-progress upgrade: abort worktree merge if mid-merge, cleanupVariant, delete branch. */
 export async function abortUpgrade(mindName: string): Promise<void> {
+  return withUpgradeLock(mindName, () => abortUpgradeCore(mindName));
+}
+
+async function abortUpgradeCore(mindName: string): Promise<void> {
   const dir = mindDir(mindName);
   const variantName = upgradeVariantName(mindName);
   const worktreeDir = upgradeWorktreeDir(dir);

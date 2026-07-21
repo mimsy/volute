@@ -45,6 +45,7 @@ const cmd = command({
         overHardCap: boolean;
       } | null;
       templateStale?: boolean;
+      upgradeBlocked?: string;
       channels?: Array<{ name: string; displayName?: string; status: string }>;
       variants?: Array<{ name: string; status: string }>;
       hasPages?: boolean;
@@ -69,6 +70,9 @@ const cmd = command({
     }
     if (mind.templateStale) {
       console.log(`Template: outdated — run 'volute mind upgrade ${mind.name}'`);
+    }
+    if (mind.upgradeBlocked) {
+      console.log(`[upgrade blocked: ${mind.upgradeBlocked}]`);
     }
 
     // Surface the newest un-drained failure notice so a silent mind explains itself

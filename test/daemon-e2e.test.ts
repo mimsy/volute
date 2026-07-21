@@ -26,9 +26,14 @@ import {
   voluteSystemDir,
 } from "../packages/daemon/src/lib/mind/registry.js";
 import {
+  readVoluteConfig,
+  writeVoluteConfig,
+} from "../packages/daemon/src/lib/mind/volute-config.js";
+import {
   activity,
   deliveryQueue,
   mindHistory,
+  minds,
   summaries,
   systemEvents,
   turns,
@@ -190,6 +195,58 @@ describe("daemon e2e", { timeout: 420000 }, () => {
     );
   }
 
+  function listeningPids(port: number): number[] {
+    try {
+      const out = execFileSync("lsof", ["-ti", `:${port}`, "-sTCP:LISTEN"], {
+        encoding: "utf-8",
+      }).trim();
+      return out
+        .split("\n")
+        .filter(Boolean)
+        .map((p) => parseInt(p, 10));
+    } catch {
+      // lsof exits non-zero when nothing is listening
+      return [];
+    }
+  }
+
+  /**
+   * Wait for `port` to have no listener, reaping a lingering one if it outlasts
+   * a grace period. `npx tsx daemon.ts` hands off to a distinct `tsx`-spawned
+   * `node` grandchild that runs the actual daemon (confirmed via `ps` — this is
+   * how tsx enables its loader hooks, which must be set at process start); a
+   * SIGTERM to the outer process this test spawned does not reliably reach that
+   * grandchild, so `daemon.on("exit")` firing doesn't guarantee the port is
+   * released. Left unreaped, the orphan fails the next daemon's own bind
+   * ("port already in use") and then out-survives the test file itself.
+   */
+  async function waitForPortFree(port: number, graceMs: number): Promise<void> {
+    const deadline = Date.now() + graceMs;
+    while (Date.now() < deadline) {
+      if (listeningPids(port).length === 0) return;
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    for (const pid of listeningPids(port)) {
+      try {
+        process.kill(pid, "SIGTERM");
+      } catch {}
+    }
+    await new Promise((r) => setTimeout(r, 1000));
+    for (const pid of listeningPids(port)) {
+      process.stderr.write(
+        `[test] port ${port} still held by pid ${pid} after SIGTERM — SIGKILL\n`,
+      );
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch {}
+    }
+    await new Promise((r) => setTimeout(r, 500));
+    const remaining = listeningPids(port);
+    if (remaining.length > 0) {
+      throw new Error(`port ${port} still has listener(s) ${remaining.join(",")} after SIGKILL`);
+    }
+  }
+
   /** Poll the daemon API until the test mind reports status "running". */
   async function waitForMindRunning(timeoutMs = 30000): Promise<void> {
     const deadline = Date.now() + timeoutMs;
@@ -269,6 +326,26 @@ describe("daemon e2e", { timeout: 420000 }, () => {
       createRes.status === 200 || createRes.status === 201,
       `Create mind: ${createRes.status} ${await createRes.text()}`,
     );
+
+    // Mind creation defaults `sleep.enabled` to true with a 00:00/08:00 UTC
+    // schedule (packages/daemon/src/web/api/minds.ts). If this suite runs inside
+    // that window, the daemon's SleepManager would put the shared test mind to
+    // sleep mid-run and derail unrelated assertions (running-status checks,
+    // history/notice counts). Disable the *schedule* here so the mind never
+    // auto-sleeps; tests that exercise sleep do so explicitly (POST .../sleep),
+    // which is unaffected since manual sleep doesn't check `sleep.enabled`.
+    {
+      const testMindDir = mindDir(TEST_MIND);
+      const config = readVoluteConfig(testMindDir);
+      assert.ok(config, "volute.json should exist after mind create");
+      config.sleep = { ...config.sleep, enabled: false };
+      writeVoluteConfig(testMindDir, config);
+      assert.equal(
+        readVoluteConfig(testMindDir)?.sleep?.enabled,
+        false,
+        "scheduled sleep should be disabled for the shared e2e test mind",
+      );
+    }
 
     // Install mind dependencies
     const dir = mindDir(TEST_MIND);
@@ -1315,6 +1392,127 @@ describe("daemon e2e", { timeout: 420000 }, () => {
       `Cleanup abort: ${abortRes.status} ${await abortRes.clone().text()}`,
     );
     assert.ok(!existsSync(worktreeDir), "worktree should be gone after abort");
+  });
+
+  it("auto-upgrade: a stale running mind is upgraded automatically on daemon startup", {
+    timeout: 240000,
+  }, async (t) => {
+    await ensureTestMind();
+    const dir = mindDir(TEST_MIND);
+    const serverPath = resolve(dir, "src", "server.ts");
+    const db = await getDb();
+
+    // Snapshot state this test is about to mutate, so it can always be put back —
+    // even if the test itself fails or times out partway through — rather than
+    // leaking a marked-up server.ts / stale template_hash into later tests that
+    // reuse this same mind (e.g. the last-known-good test).
+    const originalSource = readFileSync(serverPath, "utf-8");
+    const originalEntry = await findMind(TEST_MIND);
+    const originalTemplateHash = originalEntry?.templateHash ?? null;
+    t.after(async () => {
+      writeFileSync(serverPath, originalSource);
+      await db
+        .update(minds)
+        .set({ template_hash: originalTemplateHash })
+        .where(eq(minds.name, TEST_MIND));
+      // Restart (not just start): the marked-up src/ this test committed during
+      // the merge is now the mind's git HEAD, so a plain revert of the working
+      // tree alone leaves that commit behind. Last-known-good recovery restores
+      // src/ from HEAD on a broken restart (see last-known-good.ts), so a later
+      // test's rollback would resurrect the marker straight out of history. A
+      // successful restart on this now-clean working tree makes the daemon call
+      // commitSrcChanges() itself, advancing HEAD past the marker commit — the
+      // same way a real successful restart establishes a new known-good baseline.
+      await daemonRequest(`/api/minds/${TEST_MIND}/restart`, { method: "POST" }).catch(() => {});
+    });
+
+    // Start the mind and wait for it to be running — the auto-upgrade pass must
+    // see it as previously-running so it restarts the mind after the merge (the
+    // "never call runUpgrade with restart:false on a running mind" footgun).
+    const startRes = await daemonRequest(`/api/minds/${TEST_MIND}/start`, { method: "POST" });
+    assert.ok(
+      startRes.status === 200 || startRes.status === 409,
+      `Start: expected 200 or 409, got ${startRes.status}`,
+    );
+    await waitForMindRunning();
+
+    // Make the mind stale: drift its on-disk template copy AND clear the stored
+    // template_hash — isTemplateStale's fast path trusts a matching stored hash,
+    // so a stale hash left in place would mask the on-disk drift.
+    const marker = "// auto-upgrade-e2e-marker\n";
+    writeFileSync(serverPath, `${originalSource}${marker}`);
+    await db.update(minds).set({ template_hash: null }).where(eq(minds.name, TEST_MIND));
+
+    // Restart the daemon (simulates `volute down && volute up`) so the
+    // post-startup auto-upgrade pass runs fresh. `daemon.kill()`/`.on("exit")`
+    // target the `npx` process this test spawned, but `npx tsx ...` hands off
+    // to `tsx` as a distinct child — npx exiting doesn't guarantee the actual
+    // daemon (and its listening socket) is gone yet. Give shutdown a generous
+    // budget for CI load, then wait for the daemon's own port to actually free
+    // before spawning the replacement; otherwise the new daemon's own bind can
+    // fail with EADDRINUSE ("port already in use") and exit immediately, and
+    // the mind never gets auto-upgraded. (The mind's own port doesn't need the
+    // same care — manager.startMind() already self-heals a stale process
+    // holding a mind's port before starting it.)
+    daemon.kill("SIGTERM");
+    await new Promise<void>((res) => {
+      daemon.on("exit", () => res());
+      setTimeout(() => {
+        try {
+          daemon.kill("SIGKILL");
+        } catch {}
+        res();
+      }, 20000);
+    });
+    await waitForPortFree(PORT, 20000);
+
+    daemon = spawn(
+      "npx",
+      ["tsx", "packages/daemon/src/daemon.ts", "--port", String(PORT), "--foreground"],
+      {
+        cwd: process.cwd(),
+        stdio: ["ignore", "pipe", "pipe"],
+        env: {
+          ...cleanEnv,
+          VOLUTE_DAEMON_TOKEN: TOKEN,
+          VOLUTE_BASE_PORT: String(MIND_BASE_PORT),
+        },
+      },
+    );
+    daemon.stderr?.on("data", (data: Buffer) => {
+      process.stderr.write(`[daemon] ${data}`);
+    });
+
+    await waitForHealth();
+
+    // Poll until the auto-upgrade pass has merged the template update and
+    // restarted the mind.
+    const deadline = Date.now() + 120000;
+    let upgraded = false;
+    let lastStatus: { status?: string; templateStale?: boolean } = {};
+    while (Date.now() < deadline) {
+      const res = await daemonRequest(`/api/minds/${TEST_MIND}`);
+      lastStatus = (await res.json()) as { status?: string; templateStale?: boolean };
+      if (lastStatus.status === "running" && lastStatus.templateStale === false) {
+        upgraded = true;
+        break;
+      }
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+    assert.ok(
+      upgraded,
+      `mind should be auto-upgraded and running within budget; last status: ${JSON.stringify(lastStatus)}`,
+    );
+
+    // The merge must preserve local drift rather than overwrite it.
+    const finalContent = readFileSync(serverPath, "utf-8");
+    assert.ok(
+      finalContent.includes(marker.trim()),
+      "auto-upgrade should merge, not overwrite, the mind's local changes",
+    );
+
+    // Stop the mind so later tests see the usual state.
+    await daemonRequest(`/api/minds/${TEST_MIND}/stop`, { method: "POST" });
   });
 
   it("unified chat: send via /api/v1/chat", async () => {

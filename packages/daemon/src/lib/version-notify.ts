@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { deliverEvent } from "./chat/system-events.js";
 import { mindDir, readRegistry, setMindTemplateHash, voluteSystemDir } from "./mind/registry.js";
 import { computeMindTemplateHash } from "./mind/template-staleness.js";
+import { readVoluteConfig } from "./mind/volute-config.js";
 import { parseReleaseNotes } from "./release-notes.js";
 import { computeTemplateHash } from "./template/template-hash.js";
 import { getCurrentVersion } from "./update-check.js";
@@ -113,8 +114,15 @@ export async function notifyVersionUpdate(): Promise<void> {
     const tmpl = entry.template ?? "claude";
     const currentHash = templateHashes.get(tmpl);
     const needsUpgrade = shouldSuggestUpgrade(entry, currentHash);
+    const autoUpgrade = readVoluteConfig(mindDir(entry.name))?.upgrades !== "manual";
 
-    const message = formatNotification(currentVersion, releaseNotes, needsUpgrade, entry.name);
+    const message = formatNotification(
+      currentVersion,
+      releaseNotes,
+      needsUpgrade,
+      entry.name,
+      autoUpgrade,
+    );
 
     // Immediate (triggers a turn): an idle mind — exactly the stale mind that needs the
     // upgrade nudge — never drains a next-turn event, and pre-events templates lack the
@@ -151,11 +159,19 @@ export function shouldSuggestUpgrade(
   );
 }
 
-function formatNotification(
+/**
+ * Format the version-update message sent to a mind. When a template update is
+ * available, the hint differs by whether the mind has opted out of the
+ * post-startup auto-upgrade pass (`autoUpgrade` — see readVoluteConfig's
+ * `upgrades` field): opted-in minds are told the upgrade is automatic,
+ * opted-out minds are told to run it themselves.
+ */
+export function formatNotification(
   version: string,
   releaseNotes: string | null,
   needsUpgrade: boolean,
   mindName: string,
+  autoUpgrade: boolean,
 ): string {
   let message = `Volute has been updated to v${version}.`;
 
@@ -164,7 +180,9 @@ function formatNotification(
   }
 
   if (needsUpgrade) {
-    message += `\n\n---\n\nA template update is available for you. To upgrade, run:\n  volute mind upgrade ${mindName}`;
+    message += autoUpgrade
+      ? `\n\n---\n\nA template update is available. It will be applied automatically in a few minutes (set "upgrades": "manual" in home/.config/volute.json to manage upgrades yourself).`
+      : `\n\n---\n\nA template update is available for you. To upgrade, run:\n  volute mind upgrade ${mindName}`;
   }
 
   return message;
