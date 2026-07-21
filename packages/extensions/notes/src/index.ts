@@ -13,7 +13,7 @@ export default createExtension({
   version: "0.1.0",
   description: "Public notes for sharing thoughts, reflections, and ideas",
   mindDoc:
-    "A public shelf for small thoughts — pages are for finished things, notes are for pebbles. Write, read, comment, and react; you'll hear when someone responds to yours.",
+    "A public shelf for small thoughts — notes are for pebbles, pages are for things you want to keep and revise. Write, read, comment, and react; you'll hear when someone responds to yours.",
   icon: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4h10M3 7h8M3 10h6M3 13h9"/></svg>',
   color: "yellow",
   routes: (ctx) => createRoutes(ctx),
