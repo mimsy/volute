@@ -23,6 +23,7 @@ import { createPreCompactHook } from "./lib/hooks/pre-compact.js";
 import { createReplyInstructionsHook } from "./lib/hooks/reply-instructions.js";
 import { log } from "./lib/logger.js";
 import { createMessageChannel } from "./lib/message-channel.js";
+import { relockstepMessageIds } from "./lib/recover.js";
 import { buildSeededNote, type SeedCause } from "./lib/seed-note.js";
 import {
   isSessionReapable,
@@ -39,7 +40,7 @@ import {
 import { createSessionStore } from "./lib/session-store.js";
 import type { EffortLevel, ThinkingConfig } from "./lib/startup.js";
 import { loadPrompts, renderCompactionWarning, type SubagentConfig } from "./lib/startup.js";
-import { consumeStream } from "./lib/stream-consumer.js";
+import { consumeStream, type MessageIdEntry } from "./lib/stream-consumer.js";
 import type {
   HandlerMeta,
   HandlerResolver,
@@ -54,8 +55,9 @@ type Session = {
   name: string;
   channel: ReturnType<typeof createMessageChannel>;
   listeners: Set<Listener>;
-  messageIds: (string | undefined)[];
+  messageIds: MessageIdEntry[];
   currentMessageId?: string;
+  currentSeq?: number;
   currentQuery?: ReturnType<typeof query>;
   messageChannels: Map<string, { channel: string; sender?: string }>;
   replyInstructionsFired: boolean;
@@ -432,13 +434,13 @@ export function createMind(options: {
         const warning = compactionMessage().replaceAll("${cutoff}", cutoffLabel);
         session.rotationPhase =
           session.currentMessageId !== undefined ? "warned" : "rotateAfterTurn";
-        session.messageIds.push(undefined);
-        session.channel.push({
+        const seq = session.channel.push({
           type: "user",
           session_id: "",
           message: { role: "user", content: [{ type: "text", text: warning }] },
           parent_tool_use_id: null,
         });
+        session.messageIds.push({ id: undefined, seq });
       }
 
       // PreCompact backstop: first fire warns + pins + enters the rotation machine
@@ -457,10 +459,11 @@ export function createMind(options: {
           if (!session.name.startsWith("new-")) sessionStore.save(session.name, id);
         },
         broadcast: (event: VoluteEvent) => broadcastToSession(session, event),
+        // Identity-based ack — stream-consumer.ts calls this once per message the
+        // just-finished turn covers (its own driving message, plus any folded in
+        // mid-run) so none of them strand in the channel's in-flight set (#764).
+        ack: (seq: number) => session.channel.ack(seq),
         onTurnEnd: async () => {
-          // This turn's message is fully processed — drop it from the channel's
-          // in-flight set so a later compaction abort won't re-feed it.
-          session.channel.ack();
           session.lastActivityAt = Date.now();
           // A turn resolved — the seeded note's injection had its chance to land
           // (the pre-prompt hook ran and wasn't cancelled by an interrupt), so stop
@@ -602,8 +605,16 @@ export function createMind(options: {
               // (the wrap-up warning plus anything that arrived mid-turn) so nothing is
               // dropped when the killed subprocess takes its buffer with it.
               const pending = session.channel.recover();
+              const oldMessageIds = session.messageIds;
               session.channel = createMessageChannel();
-              for (const msg of pending) session.channel.push(msg);
+              // Starts from [] — nothing can race into this fresh channel/messageIds
+              // before the next line runs (single-threaded, no await in between).
+              session.messageIds = relockstepMessageIds(
+                pending,
+                oldMessageIds,
+                session.channel.push,
+                [],
+              );
               continue; // restart the stream loop on the rotated session
             }
             throw err; // rethrow non-compaction errors
@@ -749,11 +760,16 @@ export function createMind(options: {
       log("mind", `session "${session.name}": error reaping SDK subprocess:`, err),
     );
     // Nothing should have raced in (isSessionReapable checked isEmpty), but if it
-    // did, re-dispatch into a fresh session so no input is dropped.
+    // did, re-dispatch into a fresh session so no input is dropped. Same marker
+    // treatment as the rotation path (#764) — see relockstepMessageIds above.
+    // getOrCreateSession() can return a session an inbound message already raced
+    // into during the reapSessionQuery() await above (it pushed its own entry into
+    // fresh.messageIds via the normal handler path) — relockstepMessageIds appends
+    // onto fresh.messageIds rather than replacing it, so that entry survives.
     const pending = session.channel.recover();
     if (pending.length > 0) {
       const fresh = getOrCreateSession(session.name);
-      for (const msg of pending) fresh.channel.push(msg);
+      relockstepMessageIds(pending, session.messageIds, fresh.channel.push, fresh.messageIds);
     }
   }
 
@@ -841,13 +857,13 @@ export function createMind(options: {
 
         // Push message into SDK
         session.lastActivityAt = Date.now();
-        session.messageIds.push(meta.messageId);
-        session.channel.push({
+        const seq = session.channel.push({
           type: "user",
           session_id: "",
           message: { role: "user", content: toSDKContent(content) },
           parent_tool_use_id: null,
         });
+        session.messageIds.push({ id: meta.messageId, seq });
 
         return () => {
           if (filteredListener) session.listeners.delete(filteredListener);
