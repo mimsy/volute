@@ -72,8 +72,10 @@ export async function maybeSendCommonsCue(ctx: ExtensionContext, repoDir: string
   if (!spirit) return;
 
   try {
-    const user = await ctx.getUserByUsername(spirit);
-    if (user?.user_type !== "mind") return; // spirit not created yet — retry next start
+    // Gate on the spirit's project existing, not on its user row's type: the spirit
+    // shares the system user account (`user_type: "system"`), so a type check here
+    // never passed and the cue was never sent on any system.
+    if (!(await ctx.getMindDir(spirit))) return; // spirit not created yet — retry next start
     await ctx.recordNotice(
       spirit,
       "The commons — the shared pages at pages/_system/ that every mind here can edit — has no index yet. When you have a quiet moment, you might make one: a page that says what this place is, in your own voice, with room in it for the others. The commons-gardening skill describes the craft.",

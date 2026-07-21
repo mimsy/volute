@@ -23,6 +23,7 @@ import {
   loadAllExtensions,
   notifyExtensionsDaemonStart,
   notifyExtensionsDaemonStop,
+  notifyExtensionsSpiritReady,
 } from "./lib/extensions.js";
 import {
   ensureSystemDir,
@@ -355,6 +356,13 @@ export async function startDaemon(opts: {
       }
 
       await syncSpiritTemplate();
+
+      // Let extensions run spirit-dependent bootstrap now that the spirit project
+      // exists — after the template sync so nothing they write gets clobbered, and
+      // before startSpiritFull so any schedule they provision is loaded this boot
+      // rather than the next one.
+      if (spiritEntry) await notifyExtensionsSpiritReady();
+
       if (spiritEntry && !manager.isRunning(spiritName)) {
         await startSpiritFull(spiritName);
       }

@@ -23,9 +23,11 @@ export default createExtension({
   skillsDir,
   standardSkill: true,
   spiritSkills: ["intention-review"],
-  onDaemonStart: (ctx) => {
+  // onSpiritReady, not onDaemonStart: on a fresh install the spirit doesn't exist
+  // yet when extensions load, so provisioning there skipped the first boot entirely.
+  onSpiritReady: async (ctx) => {
     try {
-      provisionSpiritSchedule(ctx);
+      await provisionSpiritSchedule(ctx);
     } catch (err) {
       console.warn("[intentions] failed to provision spirit schedule:", err);
     }

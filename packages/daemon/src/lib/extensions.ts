@@ -16,11 +16,11 @@ import { type AuthEnv, requireSelf } from "../web/middleware/auth.js";
 import { getUser, getUserByUsername } from "./auth.js";
 import { announceToSystem } from "./chat/system-channel.js";
 import { MIND_LEVEL_THREAD, recordNotice as recordMindNotice } from "./chat/system-events.js";
-import { readGlobalConfig, writeGlobalConfig } from "./config/setup.js";
+import { getSpiritName, readGlobalConfig, writeGlobalConfig } from "./config/setup.js";
 import { readSystemsConfig } from "./config/systems-config.js";
 import { publish } from "./events/activity-events.js";
 import { isIsolationEnabled, mindUserName } from "./mind/isolation.js";
-import { mindDir, voluteHome, voluteSystemDir } from "./mind/registry.js";
+import { findMind, resolveMindDir, voluteHome, voluteSystemDir } from "./mind/registry.js";
 import { hashSkillDir, importSkillFromDir, removeSharedSkill, sharedSkillsDir } from "./skills.js";
 import log from "./util/logger.js";
 import { sanitizeSvgIcon } from "./util/sanitize-svg.js";
@@ -189,7 +189,12 @@ async function openExtensionDb(_id: string, dataDir: string): Promise<Database> 
   return new Database(dbPath);
 }
 
-async function buildContext(
+/**
+ * Build the context handed to an extension's routes and lifecycle hooks.
+ * Exported so tests can exercise the real helpers (spirit dir resolution, notice
+ * gating) rather than a hand-rolled fake that can drift from this implementation.
+ */
+export async function buildExtensionContext(
   manifest: ExtensionManifest,
   dataDir: string,
   authMw: MiddlewareHandler,
@@ -234,9 +239,11 @@ async function buildContext(
         log.error(`extension ${manifest.id}: failed to publish activity`, log.errorData(err)),
       );
     },
-    getMindDir: (name: string) => {
+    // Registry-backed, not path-convention: the spirit lives under the system dir
+    // and variants live in worktrees, so mindDir(name) alone resolves neither.
+    getMindDir: async (name: string) => {
       try {
-        const dir = mindDir(name);
+        const dir = await resolveMindDir(name);
         return existsSync(dir) ? dir : null;
       } catch (err) {
         log.warn(
@@ -250,8 +257,10 @@ async function buildContext(
     announceToSystem: (text: string) => announceToSystem(text),
     recordNotice: async (mindName: string, text: string) => {
       try {
-        const user = await getUserByUsername(mindName);
-        if (user?.user_type !== "mind") return;
+        // Gate on the minds registry rather than the users table: the spirit is a
+        // mind but shares the system user account (`user_type: "system"`), so a
+        // user_type check would silently drop every notice addressed to it.
+        if (!(await findMind(mindName))) return;
         await recordMindNotice({
           mind: mindName,
           thread: MIND_LEVEL_THREAD,
@@ -268,7 +277,10 @@ async function buildContext(
     },
     isIsolationEnabled,
     getMindUser: mindUserName,
-    getSpiritName: () => readGlobalConfig().setup?.spiritName ?? null,
+    // Delegate to the daemon's single source of truth, which falls back to "volute"
+    // on installs that predate spirit naming. Reading setup.spiritName directly
+    // returned null on those systems, so extension spirit paths no-opped forever.
+    getSpiritName: () => getSpiritName(),
     dataDir,
   };
 }
@@ -285,7 +297,7 @@ async function loadExtension(
   const dataDir = extensionDataDir(manifest.id);
   mkdirSync(dataDir, { recursive: true });
 
-  const context = await buildContext(manifest, dataDir, authMw);
+  const context = await buildExtensionContext(manifest, dataDir, authMw);
 
   // Mount authenticated API routes
   const routesApp = manifest.routes(context);
@@ -909,6 +921,24 @@ export function notifyExtensionsDaemonStart(): void {
       manifest.onDaemonStart?.(context);
     } catch (err) {
       log.error(`extension ${manifest.id}: onDaemonStart failed`, log.errorData(err));
+    }
+  }
+}
+
+/**
+ * Fire `onSpiritReady` for every loaded extension. Called once per daemon start,
+ * after the spirit project exists and is registered — `onDaemonStart` runs long
+ * before that on a fresh install, so spirit bootstrap hooks that ran there skipped
+ * the very boot that created the spirit and only fired on the next one.
+ * Awaited so an extension's bootstrap failure is logged, never unhandled.
+ */
+export async function notifyExtensionsSpiritReady(): Promise<void> {
+  for (const { manifest, context } of loaded) {
+    if (!manifest.onSpiritReady) continue;
+    try {
+      await manifest.onSpiritReady(context);
+    } catch (err) {
+      log.error(`extension ${manifest.id}: onSpiritReady failed`, log.errorData(err));
     }
   }
 }

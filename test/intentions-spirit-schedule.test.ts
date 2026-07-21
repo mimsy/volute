@@ -14,7 +14,7 @@ import { provisionSpiritSchedule } from "../packages/extensions/intentions/src/s
 function makeCtx(overrides: {
   db: ExtDb;
   getSpiritName: () => string | null;
-  getMindDir: () => string | null;
+  getMindDir: () => Promise<string | null>;
 }): ExtensionContext {
   return {
     db: overrides.db,
@@ -65,22 +65,22 @@ describe("provisionSpiritSchedule", () => {
     return !!db.prepare("SELECT 1 FROM meta WHERE key = 'spirit_schedule_provisioned'").get();
   }
 
-  it("provisions the schedule and sets the marker when a spirit exists", () => {
+  it("provisions the schedule and sets the marker when a spirit exists", async () => {
     writeConfig({ schedules: [] });
-    const ctx = makeCtx({ db, getSpiritName: () => "volute", getMindDir: () => spiritDir });
+    const ctx = makeCtx({ db, getSpiritName: () => "volute", getMindDir: async () => spiritDir });
 
-    provisionSpiritSchedule(ctx);
+    await provisionSpiritSchedule(ctx);
 
     const config = readConfig();
     assert.ok(config.schedules?.some((s) => s.id === "intention-review"));
     assert.equal(isMarked(), true);
   });
 
-  it("does not duplicate an already-present schedule but still marks provisioned", () => {
+  it("does not duplicate an already-present schedule but still marks provisioned", async () => {
     writeConfig({ schedules: [{ id: "intention-review", cron: "0 0 * * *", enabled: true }] });
-    const ctx = makeCtx({ db, getSpiritName: () => "volute", getMindDir: () => spiritDir });
+    const ctx = makeCtx({ db, getSpiritName: () => "volute", getMindDir: async () => spiritDir });
 
-    provisionSpiritSchedule(ctx);
+    await provisionSpiritSchedule(ctx);
 
     const matches = (readConfig().schedules ?? []).filter((s) => s.id === "intention-review");
     assert.equal(matches.length, 1);
@@ -89,12 +89,12 @@ describe("provisionSpiritSchedule", () => {
 
   // The important case: a host or the spirit deleting the schedule on purpose
   // must not have it silently come back on the next daemon start.
-  it("is a no-op once the marker is set, even if the schedule row is gone", () => {
+  it("is a no-op once the marker is set, even if the schedule row is gone", async () => {
     writeConfig({ schedules: [] });
     db.prepare("INSERT INTO meta (key, value) VALUES ('spirit_schedule_provisioned', 'x')").run();
-    const ctx = makeCtx({ db, getSpiritName: () => "volute", getMindDir: () => spiritDir });
+    const ctx = makeCtx({ db, getSpiritName: () => "volute", getMindDir: async () => spiritDir });
 
-    provisionSpiritSchedule(ctx);
+    await provisionSpiritSchedule(ctx);
 
     assert.equal(
       (readConfig().schedules ?? []).length,
@@ -103,47 +103,47 @@ describe("provisionSpiritSchedule", () => {
     );
   });
 
-  it("does nothing and does not mark when there is no spirit configured yet", () => {
+  it("does nothing and does not mark when there is no spirit configured yet", async () => {
     writeConfig({ schedules: [] });
-    const ctx = makeCtx({ db, getSpiritName: () => null, getMindDir: () => spiritDir });
+    const ctx = makeCtx({ db, getSpiritName: () => null, getMindDir: async () => spiritDir });
 
-    provisionSpiritSchedule(ctx);
+    await provisionSpiritSchedule(ctx);
 
     assert.equal(isMarked(), false);
     assert.equal((readConfig().schedules ?? []).length, 0);
   });
 
-  it("does nothing and does not mark when the spirit's directory does not exist yet", () => {
-    const ctx = makeCtx({ db, getSpiritName: () => "volute", getMindDir: () => null });
+  it("does nothing and does not mark when the spirit's directory does not exist yet", async () => {
+    const ctx = makeCtx({ db, getSpiritName: () => "volute", getMindDir: async () => null });
 
-    provisionSpiritSchedule(ctx);
+    await provisionSpiritSchedule(ctx);
 
     assert.equal(isMarked(), false);
   });
 
-  it("does not throw and does not mark when volute.json is missing", () => {
+  it("does not throw and does not mark when volute.json is missing", async () => {
     rmSync(configPath, { force: true });
-    const ctx = makeCtx({ db, getSpiritName: () => "volute", getMindDir: () => spiritDir });
+    const ctx = makeCtx({ db, getSpiritName: () => "volute", getMindDir: async () => spiritDir });
 
-    assert.doesNotThrow(() => provisionSpiritSchedule(ctx));
+    await assert.doesNotReject(() => provisionSpiritSchedule(ctx));
     assert.equal(isMarked(), false);
   });
 
-  it("does not throw and does not mark when volute.json is unparseable", () => {
+  it("does not throw and does not mark when volute.json is unparseable", async () => {
     writeFileSync(configPath, "not json");
-    const ctx = makeCtx({ db, getSpiritName: () => "volute", getMindDir: () => spiritDir });
+    const ctx = makeCtx({ db, getSpiritName: () => "volute", getMindDir: async () => spiritDir });
 
-    assert.doesNotThrow(() => provisionSpiritSchedule(ctx));
+    await assert.doesNotReject(() => provisionSpiritSchedule(ctx));
     assert.equal(isMarked(), false);
   });
 
-  it("does not throw when volute.json is unwritable", () => {
+  it("does not throw when volute.json is unwritable", async () => {
     writeConfig({ schedules: [] });
     chmodSync(configPath, 0o444);
-    const ctx = makeCtx({ db, getSpiritName: () => "volute", getMindDir: () => spiritDir });
+    const ctx = makeCtx({ db, getSpiritName: () => "volute", getMindDir: async () => spiritDir });
 
     try {
-      assert.doesNotThrow(() => provisionSpiritSchedule(ctx));
+      await assert.doesNotReject(() => provisionSpiritSchedule(ctx));
       // root ignores the read-only bit, so skip the "stays unmarked" assertion
       // when tests happen to run as root — the throw-safety is the real guarantee.
       if (process.getuid?.() !== 0) {

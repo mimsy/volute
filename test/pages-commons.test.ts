@@ -83,7 +83,7 @@ describe("maybeSendCommonsCue", () => {
       getUserByUsername: async (username: string) =>
         ({ id: 1, username, role: "user", user_type: "mind" }) as User,
       publishActivity: () => {},
-      getMindDir: () => null,
+      getMindDir: async () => "/spirit/dir",
       getSystemsConfig: () => null,
       announceToSystem: async () => {},
       recordNotice: async (mind: string, text: string) => {
@@ -139,21 +139,25 @@ describe("maybeSendCommonsCue", () => {
     assert.ok(!existsSync(resolve(dataDir, ".commons-cue-sent")));
   });
 
-  it("does not send or write the flag when the spirit user doesn't exist yet", async () => {
-    const { ctx, notices } = makeCtx({ getUserByUsername: async () => null });
+  it("does not send or write the flag when the spirit project doesn't exist yet", async () => {
+    const { ctx, notices } = makeCtx({ getMindDir: async () => null });
     await maybeSendCommonsCue(ctx, repoDir);
     assert.equal(notices.length, 0);
     assert.ok(!existsSync(resolve(dataDir, ".commons-cue-sent")));
   });
 
-  it("does not send when the spirit username resolves to a non-mind user", async () => {
+  // Regression: the spirit shares the system user account (`user_type: "system"`),
+  // so gating the cue on the users table meant it never fired on any install.
+  // The gate is the spirit's project existing, not what its user row says it is.
+  it("sends to the spirit even though its user row is user_type system", async () => {
     const { ctx, notices } = makeCtx({
       getUserByUsername: async (username: string) =>
-        ({ id: 1, username, role: "admin", user_type: "human" }) as User,
+        ({ id: 1, username, role: "system", user_type: "system" }) as unknown as User,
     });
     await maybeSendCommonsCue(ctx, repoDir);
-    assert.equal(notices.length, 0);
-    assert.ok(!existsSync(resolve(dataDir, ".commons-cue-sent")));
+    assert.equal(notices.length, 1);
+    assert.equal(notices[0].mind, "aria");
+    assert.ok(existsSync(resolve(dataDir, ".commons-cue-sent")));
   });
 
   it("index.html also counts as an index", async () => {

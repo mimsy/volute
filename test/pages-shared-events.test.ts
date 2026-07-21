@@ -108,7 +108,7 @@ describe("shared publish command events", () => {
       getUser: async () => null,
       getUserByUsername: async () => null,
       publishActivity: (e: any) => activity.push(e),
-      getMindDir: (name: string) => (name === mindName ? mindDir : null),
+      getMindDir: async (name: string) => (name === mindName ? mindDir : null),
       getSystemsConfig: () => null,
       announceToSystem: async (text: string) => {
         announcements.push(text);

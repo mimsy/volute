@@ -43,13 +43,15 @@ function markProvisioned(db: Database): void {
  * doesn't exist yet (or whose config is missing/unparseable/unwritable) is
  * left alone and retried on the next daemon start.
  */
-export function provisionSpiritSchedule(ctx: ExtensionContext): void {
+export async function provisionSpiritSchedule(ctx: ExtensionContext): Promise<void> {
   if (!ctx.db || isProvisioned(ctx.db)) return;
 
   const spiritName = ctx.getSpiritName();
   if (!spiritName) return; // no spirit configured yet
 
-  const spiritDir = ctx.getMindDir(spiritName);
+  // Registry-backed lookup — the spirit's directory is under the system dir, not
+  // the minds dir, so a path-convention resolve finds nothing and skips forever.
+  const spiritDir = await ctx.getMindDir(spiritName);
   if (!spiritDir) return; // spirit not created yet — try again next boot
 
   const configPath = resolve(spiritDir, "home/.config/volute.json");

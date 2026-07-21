@@ -55,7 +55,7 @@ An extension manifest can provide:
 - **Feed sources** — cards on the home and mind feeds
 - **Skills** — contributed via `skillsDir`, synced to the shared pool on load
 - **Database tables** — each extension gets its own SQLite DB at `~/.volute/system/extension-data/{id}/data.db`
-- **Lifecycle hooks** — `onDaemonStart`, `onDaemonStop`, `onMindStart`, `onMindStop`
+- **Lifecycle hooks** — `onDaemonStart`, `onSpiritReady`, `onDaemonStop`, `onMindStart`, `onMindStop`
 
 Extension UI is rendered in iframes and shares the Volute theme via an auto-generated `ext-theme.css`.
 

@@ -30,7 +30,7 @@ export function createCommands(): Record<string, ExtensionCommand> {
         if (!mindName) return { error: "No mind specified (use --mind or VOLUTE_MIND)" };
 
         if (flags.shared) {
-          const mindDir = ctx.getMindDir(mindName);
+          const mindDir = await ctx.getMindDir(mindName);
           if (!mindDir) return { error: `Mind not found: ${mindName}` };
 
           const message = args.message?.trim();
@@ -117,7 +117,7 @@ export function createCommands(): Record<string, ExtensionCommand> {
 
         const remote = flags.remote as boolean;
 
-        const mindDir = ctx.getMindDir(mindName);
+        const mindDir = await ctx.getMindDir(mindName);
         if (!mindDir) return { error: `Mind not found: ${mindName}` };
 
         const sourceDir = resolve(mindDir, "home", "pages");
@@ -260,7 +260,7 @@ export function createCommands(): Record<string, ExtensionCommand> {
         if (!mindName) return { error: "No mind specified (use --mind or VOLUTE_MIND)" };
 
         if (flags.shared) {
-          const mindDir = ctx.getMindDir(mindName);
+          const mindDir = await ctx.getMindDir(mindName);
           if (!mindDir) return { error: `Mind not found: ${mindName}` };
 
           try {
@@ -272,7 +272,7 @@ export function createCommands(): Record<string, ExtensionCommand> {
         }
 
         // List current mind's pages with status
-        const mindDir = ctx.getMindDir(mindName);
+        const mindDir = await ctx.getMindDir(mindName);
         if (!mindDir) return { error: `Mind not found: ${mindName}` };
 
         const sourceDir = resolve(mindDir, "home", "pages");
@@ -303,7 +303,7 @@ export function createCommands(): Record<string, ExtensionCommand> {
         const mindName = ctx.mindName;
         if (!mindName) return { error: "No mind specified (use --mind or VOLUTE_MIND)" };
 
-        const mindDir = ctx.getMindDir(mindName);
+        const mindDir = await ctx.getMindDir(mindName);
         if (!mindDir) return { error: `Mind not found: ${mindName}` };
 
         try {
@@ -327,7 +327,7 @@ export function createCommands(): Record<string, ExtensionCommand> {
         const mindName = ctx.mindName;
         if (!mindName) return { error: "No mind specified (use --mind or VOLUTE_MIND)" };
 
-        const mindDir = ctx.getMindDir(mindName);
+        const mindDir = await ctx.getMindDir(mindName);
         if (!mindDir) return { error: `Mind not found: ${mindName}` };
 
         const limit = (flags.limit as number | undefined) ?? 20;

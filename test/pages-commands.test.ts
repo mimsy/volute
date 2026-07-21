@@ -313,7 +313,7 @@ describe("pages commands", () => {
       getUser: async () => null,
       getUserByUsername: async () => null,
       publishActivity: (e: any) => events.push(e),
-      getMindDir: (name: string) => (name === mindName ? mindDir : null),
+      getMindDir: async (name: string) => (name === mindName ? mindDir : null),
       getSystemsConfig: () => null,
       announceToSystem: async () => {},
       isIsolationEnabled: () => false,
