@@ -654,6 +654,6 @@ describe("buildSeededNote — cause", () => {
   it("restored cause yields the restored note", () => {
     const note = buildSeededNote({ cause: "restored", archivedAtMs: null });
     assert.match(note, /restored after archival/);
-    assert.doesNotMatch(note, /rotated in place/);
+    assert.doesNotMatch(note, /consolidated at the context limit/);
   });
 });

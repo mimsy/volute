@@ -8,9 +8,9 @@ import { log } from "../logger.js";
  * session in place. This hook covers the case where the SDK decides to auto-compact
  * before (or instead of) that threshold firing:
  *
- *   - First fire: run `onCompact` (warn the mind + pin the rotation boundary, same
- *     as the threshold path) and BLOCK the SDK's native compaction. The wrap-up
- *     turn then ends and the session rotates.
+ *   - First fire: run `onCompact` (schedule a rotation — mark the session to rotate
+ *     at turn end) and BLOCK the SDK's native compaction, so the session rotates
+ *     instead of being natively compacted.
  *   - Second fire: allow the SDK's native compaction as an emergency backstop —
  *     only reachable if rotation never happened (a hung turn, or rotation failed).
  *
@@ -32,10 +32,10 @@ export function createPreCompactHook(onCompact: () => void) {
       return {};
     }
 
-    // Auto-compaction: first pass warns + marks for rotation and blocks; second
-    // pass allows the native compaction as the emergency backstop.
+    // Auto-compaction: first pass schedules a rotation and blocks; second pass
+    // allows the native compaction as the emergency backstop.
     if (!compactBlocked) {
-      log("mind", "blocking auto-compaction — warning mind + marking session for rotation");
+      log("mind", "blocking auto-compaction — marking session for rotation");
       try {
         onCompact();
         compactBlocked = true;
