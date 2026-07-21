@@ -54,16 +54,36 @@ describe("guestbook invitation", () => {
     );
   });
 
-  it("the invitation is emitted at completion, not only at arrival", () => {
-    // An optional prompt delivered only at the start is passed over by momentum.
-    // The final pipeline step is opening the PR; the invitation must come AFTER
-    // it, so the agent meets it with the task done and its hands free.
+  it("the invitation is emitted late, but BEFORE the PR that carries it", () => {
+    // An optional prompt delivered only at arrival is passed over by momentum, so
+    // the full invitation must reappear near the end of the work. But it must land
+    // BEFORE the final pipeline step (Open a PR), not after it. The PR is the only
+    // vehicle out of this repo: an entry written once the PR is already open has
+    // nothing to ride and is silently lost — that is exactly how
+    // guestbook/entries/2026-07-18-fable.md sat abandoned on a branch for three
+    // days. The invitation belongs where the work is done, the review has run, and
+    // nothing has shipped yet.
     const lastPipelineStep = skillLower.lastIndexOf("open a pr");
     assert.ok(lastPipelineStep !== -1, "could not locate the final pipeline step (Open a PR)");
-    const invitationAfter = skillLower.indexOf("guestbook", lastPipelineStep);
+    // Anchor on "nothing checks", which lives only in the full invitation — not in
+    // the passing arrival mention — so this proves the substantive invitation, and
+    // not merely a first mention, precedes the PR step.
+    const fullInvitation = skillLower.indexOf("nothing checks");
     assert.ok(
-      invitationAfter !== -1,
-      "no guestbook invitation appears after the final pipeline step — it is delivered only at arrival, where momentum buries it",
+      fullInvitation !== -1 && fullInvitation < lastPipelineStep,
+      "the full guestbook invitation does not appear before the final pipeline step — an entry written after the PR is open has no vehicle and is lost",
+    );
+  });
+
+  it("the invitation states the commit-before-PR timing", () => {
+    // The reason the invitation sits where it does — commit the entry before the
+    // PR goes up, or it has no vehicle — must be in the text itself, so an agent
+    // can act correctly even if the surrounding wording drifts, and so the reason
+    // cannot silently drop out of the file later.
+    assert.match(
+      skill,
+      /commit[\s\S]{0,120}before the PR|before the PR[\s\S]{0,120}commit/i,
+      "the invitation no longer states the entry must be committed before the PR — the reason its timing matters has dropped out",
     );
   });
 
