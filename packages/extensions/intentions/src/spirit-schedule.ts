@@ -4,6 +4,21 @@ import type { Database, ExtensionContext } from "@volute/extensions";
 
 const MARKER_KEY = "spirit_schedule_provisioned";
 const SCHEDULE_ID = "intention-review";
+const REVIEW_SCRIPT = "volute intentions review-due";
+
+/**
+ * Scripts an earlier version provisioned that name a CLI noun the dispatcher never
+ * registered — an extension's noun is its manifest id (`intentions`, plural), and this
+ * shipped as the singular. A schedule carrying one of these fails every morning with
+ * `Unknown command: intention`, unsupervised, and nothing retries it: provisioning is
+ * once-only, so the bad string would outlive the fix that corrected the constant.
+ *
+ * Correcting it in place is self-limiting — once no host carries an old string this
+ * list (and the repair branch below) can be deleted.
+ */
+const LEGACY_REVIEW_SCRIPTS = [
+  "volute intention review-due", // cli-noun-exempt: the broken name this repairs
+];
 
 /** Minimal shape of a schedules entry in a mind's home/.config/volute.json. */
 type ScheduleEntry = {
@@ -37,14 +52,22 @@ function markProvisioned(db: Database): void {
  * `volute clock add` — the same failure mode ("nothing ever triggers it")
  * that left the old plan extension inert.
  *
- * "Provision once, respect deletion": once the marker is set, this never runs
- * again — even if the spirit or a host later deletes the schedule on purpose.
+ * "Provision once, respect deletion": once the marker is set, a *missing* schedule is
+ * never re-created — if the spirit or a host deleted it on purpose, it stays gone.
  * The marker only gets set after a successful write, so a system whose spirit
  * doesn't exist yet (or whose config is missing/unparseable/unwritable) is
  * left alone and retried on the next daemon start.
+ *
+ * An *existing* schedule is still repaired past the marker, though — see
+ * LEGACY_REVIEW_SCRIPTS. Deletion is a decision worth respecting; a broken command
+ * string is not, and once-only provisioning means nothing else would ever fix it.
  */
 export async function provisionSpiritSchedule(ctx: ExtensionContext): Promise<void> {
-  if (!ctx.db || isProvisioned(ctx.db)) return;
+  if (!ctx.db) return;
+  // Deliberately not an early return on the marker: an already-provisioned host may be
+  // carrying a stale script that only this pass can repair. The marker still decides
+  // whether a missing schedule gets created.
+  const provisioned = isProvisioned(ctx.db);
 
   const spiritName = ctx.getSpiritName();
   if (!spiritName) return; // no spirit configured yet
@@ -65,14 +88,28 @@ export async function provisionSpiritSchedule(ctx: ExtensionContext): Promise<vo
   }
 
   const schedules = config.schedules ?? [];
-  if (!schedules.some((s) => s.id === SCHEDULE_ID)) {
+  const existing = schedules.find((s) => s.id === SCHEDULE_ID);
+  let dirty = false;
+
+  if (existing) {
+    // Repair, not overwrite: only a script string we know we mis-shipped gets corrected,
+    // so a spirit that deliberately rewrote its own review command keeps it.
+    if (typeof existing.script === "string" && LEGACY_REVIEW_SCRIPTS.includes(existing.script)) {
+      existing.script = REVIEW_SCRIPT;
+      dirty = true;
+    }
+  } else if (!provisioned) {
     schedules.push({
       id: SCHEDULE_ID,
       cron: "0 9 * * *",
-      script: "volute intentions review-due",
+      script: REVIEW_SCRIPT,
       enabled: true,
       whileSleeping: "skip",
     });
+    dirty = true;
+  }
+
+  if (dirty) {
     try {
       writeFileSync(configPath, JSON.stringify({ ...config, schedules }, null, 2));
     } catch {
@@ -80,5 +117,5 @@ export async function provisionSpiritSchedule(ctx: ExtensionContext): Promise<vo
     }
   }
 
-  markProvisioned(ctx.db);
+  if (!provisioned) markProvisioned(ctx.db);
 }

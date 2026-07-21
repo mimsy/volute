@@ -103,6 +103,67 @@ describe("provisionSpiritSchedule", () => {
     );
   });
 
+  // Provisioning is once-only, so a schedule written with the old singular noun
+  // (`volute intention review-due` — a noun the CLI never registered) would fail
+  // silently every morning forever. Correcting the constant isn't enough; the
+  // already-written string has to be repaired past the marker.
+  it("repairs an already-provisioned schedule carrying the old singular command", async () => {
+    writeConfig({
+      schedules: [
+        {
+          id: "intention-review",
+          cron: "0 9 * * *",
+          script: "volute intention review-due",
+          enabled: true,
+        },
+      ],
+    });
+    db.prepare("INSERT INTO meta (key, value) VALUES ('spirit_schedule_provisioned', 'x')").run();
+    const ctx = makeCtx({ db, getSpiritName: () => "volute", getMindDir: async () => spiritDir });
+
+    await provisionSpiritSchedule(ctx);
+
+    const entry = (readConfig().schedules ?? []).find((s) => s.id === "intention-review") as
+      | { script?: string; cron?: string; enabled?: boolean }
+      | undefined;
+    assert.equal(entry?.script, "volute intentions review-due");
+    assert.equal(entry?.cron, "0 9 * * *", "repair must not reset the host's cron");
+    assert.equal(entry?.enabled, true, "repair must not re-enable or disable the schedule");
+  });
+
+  // The repair is narrow on purpose: only strings we know we mis-shipped get rewritten.
+  it("leaves a script the spirit chose for itself alone", async () => {
+    writeConfig({
+      schedules: [
+        { id: "intention-review", script: "volute intentions review-due --mind me", enabled: true },
+      ],
+    });
+    db.prepare("INSERT INTO meta (key, value) VALUES ('spirit_schedule_provisioned', 'x')").run();
+    const ctx = makeCtx({ db, getSpiritName: () => "volute", getMindDir: async () => spiritDir });
+
+    await provisionSpiritSchedule(ctx);
+
+    const entry = (readConfig().schedules ?? []).find((s) => s.id === "intention-review") as
+      | { script?: string }
+      | undefined;
+    assert.equal(entry?.script, "volute intentions review-due --mind me");
+  });
+
+  // The repair must not become a back door around "respect deletion".
+  it("does not resurrect a deleted schedule while repairing", async () => {
+    writeConfig({ schedules: [{ id: "something-else", script: "volute intentions list" }] });
+    db.prepare("INSERT INTO meta (key, value) VALUES ('spirit_schedule_provisioned', 'x')").run();
+    const ctx = makeCtx({ db, getSpiritName: () => "volute", getMindDir: async () => spiritDir });
+
+    await provisionSpiritSchedule(ctx);
+
+    assert.equal(
+      (readConfig().schedules ?? []).some((s) => s.id === "intention-review"),
+      false,
+      "a deliberately deleted schedule must stay deleted",
+    );
+  });
+
   it("does nothing and does not mark when there is no spirit configured yet", async () => {
     writeConfig({ schedules: [] });
     const ctx = makeCtx({ db, getSpiritName: () => null, getMindDir: async () => spiritDir });

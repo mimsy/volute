@@ -74,7 +74,16 @@ const PLACEHOLDER_NOUNS = new Set(["cmd", "command", "noun", "subcommand"]);
  */
 const INVOCATION = /\bvolute\s+([a-z][a-z-]*)\s+([a-z][a-z-]*)/g;
 
-const SCANNED_EXTENSIONS = new Set([".ts", ".js", ".md", ".json", ".svelte"]);
+/**
+ * A line carrying this marker is intentionally recording a command string that does NOT
+ * work — the legacy-script list `spirit-schedule.ts` repairs against is the reason this
+ * exists. Those lines name a command to fix, not one to run. Keep the exemption on the
+ * single line that needs it, so it stays visible in review rather than widening the
+ * scanner's blind spot.
+ */
+const EXEMPT_MARKER = "cli-noun-exempt";
+
+const SCANNED_EXTENSIONS = new Set([".ts", ".js", ".md", ".json", ".svelte", ".sh"]);
 
 function walk(dir: string): string[] {
   let out: string[] = [];
@@ -100,10 +109,16 @@ type Invocation = { noun: string; subcommand: string; source: string };
 
 function invocationsIn(text: string, source: string): Invocation[] {
   const found: Invocation[] = [];
-  for (const m of text.matchAll(INVOCATION)) {
-    const [, noun, subcommand] = m;
-    if (PLACEHOLDER_NOUNS.has(noun)) continue;
-    found.push({ noun, subcommand, source });
+  // Line-by-line so an exemption applies only to the line that carries it.
+  const lines = text.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (line.includes(EXEMPT_MARKER)) continue;
+    for (const m of line.matchAll(INVOCATION)) {
+      const [, noun, subcommand] = m;
+      if (PLACEHOLDER_NOUNS.has(noun)) continue;
+      found.push({ noun, subcommand, source: `${source}:${i + 1}` });
+    }
   }
   return found;
 }
@@ -116,9 +131,15 @@ describe("extension CLI command names", () => {
 
   // Every documented invocation across all built-in extensions, gathered once.
   const invocations: Invocation[] = [];
+  const filesPerExtension = new Map<string, number>();
   for (const ext of EXTENSIONS) {
+    // Assumes the on-disk directory is named for the manifest id — true for every
+    // built-in. If that ever stops holding, the file count below catches it rather
+    // than the extension silently going unscanned.
     const dir = join(ROOT, "packages", "extensions", ext.id);
-    for (const file of walk(dir)) {
+    const files = walk(dir);
+    filesPerExtension.set(ext.id, files.length);
+    for (const file of files) {
       invocations.push(...invocationsIn(readFileSync(file, "utf8"), relative(ROOT, file)));
     }
     if (ext.mindDoc) {
@@ -126,11 +147,18 @@ describe("extension CLI command names", () => {
     }
   }
 
-  it("finds invocations to check (guards against the scanner silently matching nothing)", () => {
+  it("actually scans every built-in extension", () => {
+    // A scanner that quietly reads nothing passes every other assertion in this file.
+    const unscanned = [...filesPerExtension].filter(([, count]) => count === 0).map(([id]) => id);
+    assert.deepEqual(
+      unscanned,
+      [],
+      "these extensions produced zero scanned files — the directory is probably not named " +
+        "for the manifest id, so their docs are going unchecked",
+    );
     assert.ok(
       invocations.length > 10,
-      `expected to scan a meaningful number of documented invocations, got ${invocations.length} — ` +
-        "the scanner or the extension layout probably changed",
+      `expected a meaningful number of documented invocations, got ${invocations.length}`,
     );
   });
 
@@ -169,7 +197,7 @@ describe("extension CLI command names", () => {
     );
     assert.match(
       schedule,
-      /script: "volute intentions review-due"/,
+      /const REVIEW_SCRIPT = "volute intentions review-due"/,
       "the spirit's provisioned schedule must invoke the registered noun",
     );
   });
