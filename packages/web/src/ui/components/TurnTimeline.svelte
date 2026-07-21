@@ -1120,7 +1120,7 @@ function jumpToLatest() {
                   />
                 {:else}
                   {@const groups = streamingGroups.get(turn.id) ?? []}
-                  {@const startTime = new Date(turn.created_at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                  {@const startTime = new Date(normalizeTimestamp(turn.created_at)).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
                   <TimelineBranch gap={24} reach={11} noReturn>
                     {#snippet header()}
                       <div class="active-turn-header">
@@ -1170,7 +1170,7 @@ function jumpToLatest() {
                 <TimelineBranch gap={24} reach={11} noReturn>
                   {#snippet header()}
                     <div class="active-turn-header">
-                      <span class="active-turn-time">{new Date(pendingInbounds[0].created_at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })} – now</span>
+                      <span class="active-turn-time">{new Date(normalizeTimestamp(pendingInbounds[0].created_at)).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })} – now</span>
                     </div>
                   {/snippet}
                   {#snippet children()}
