@@ -759,10 +759,16 @@ export function createMind(options: {
     // Nothing should have raced in (isSessionReapable checked isEmpty), but if it
     // did, re-dispatch into a fresh session so no input is dropped. Same lockstep +
     // marker treatment as the rotation path (#764) — see relockstepMessageIds above.
+    // getOrCreateSession() can return a session an inbound message already raced
+    // into during the reapSessionQuery() await above (it pushed its own entry into
+    // fresh.messageIds via the normal handler path) — append, don't overwrite, or
+    // that racing message's id is silently discarded.
     const pending = session.channel.recover();
     if (pending.length > 0) {
       const fresh = getOrCreateSession(session.name);
-      fresh.messageIds = relockstepMessageIds(pending, session.messageIds, fresh.channel.push);
+      fresh.messageIds.push(
+        ...relockstepMessageIds(pending, session.messageIds, fresh.channel.push),
+      );
     }
   }
 

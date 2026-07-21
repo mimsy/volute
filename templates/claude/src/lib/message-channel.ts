@@ -3,6 +3,15 @@ import type { SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 /** A queued/in-flight message paired with the sequence number that identifies it. */
 export type ChannelEntry = { msg: SDKUserMessage; seq: number };
 
+// Module-scoped, not per-channel: rotation and the idle reaper both replace a
+// session's channel with a fresh instance while carrying seqs forward (relocking
+// old entries to new ones — see relockstepMessageIds in recover.ts). A per-instance
+// counter would restart at 0 on every fresh channel, so a seq minted by one channel
+// generation could collide with one minted by another; a single global counter makes
+// every seq unique for the process's lifetime, so a stale seq can never be mistaken
+// for a different message.
+let nextSeq = 0;
+
 export type MessageChannel = {
   /** Returns the sequence number minted for this message — the identity `ack()` needs. */
   push: (msg: SDKUserMessage) => number;
@@ -41,7 +50,6 @@ export function createMessageChannel(): MessageChannel {
   const inFlight: ChannelEntry[] = [];
   let resolve: ((value: IteratorResult<SDKUserMessage>) => void) | null = null;
   let closed = false;
-  let nextSeq = 0;
 
   function deliver(entry: ChannelEntry): IteratorResult<SDKUserMessage> {
     inFlight.push(entry);

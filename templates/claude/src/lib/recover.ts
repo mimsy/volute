@@ -14,18 +14,16 @@ export const RECOVERED_MESSAGE_NOTE =
   "have handled it — check your recent work (e.g. journal, files) before repeating anything.";
 
 export function markRecovered(msg: SDKUserMessage): SDKUserMessage {
-  const marker = { type: "text" as const, text: RECOVERED_MESSAGE_NOTE };
   const content = msg.message.content;
-  return {
-    ...msg,
-    message: {
-      ...msg.message,
-      content:
-        typeof content === "string"
-          ? [marker, { type: "text" as const, text: content }]
-          : [marker, ...content],
-    },
-  };
+  const blocks = typeof content === "string" ? [{ type: "text" as const, text: content }] : content;
+  // A message can be recovered twice (consecutive rotations, up to
+  // MAX_CONSECUTIVE_ROTATIONS) — don't stack the note on each pass.
+  const first = blocks[0];
+  if (first && "type" in first && first.type === "text" && first.text === RECOVERED_MESSAGE_NOTE) {
+    return { ...msg, message: { ...msg.message, content: blocks } };
+  }
+  const marker = { type: "text" as const, text: RECOVERED_MESSAGE_NOTE };
+  return { ...msg, message: { ...msg.message, content: [marker, ...blocks] } };
 }
 
 /**
@@ -33,17 +31,11 @@ export function markRecovered(msg: SDKUserMessage): SDKUserMessage {
  * lockstep with it. Each entry's `id` carries over — matched by its *old* `seq` —
  * to the *new* seq the fresh channel mints on push, so the next turn's
  * currentMessageId/channel routing isn't corrupted by stale or missing ids (#764).
- *
- * Depends on `oldMessageIds` covering every id in `pending`: it relies on the current
- * turn (session.currentMessageId/currentSeq — not part of session.messageIds) being
- * complete and already acked by the time `recover()` runs, so its entry is absent from
- * both `pending` and `oldMessageIds` and never needs a match. That holds today because
- * the only abort site (agent.ts, in onTurnEnd) fires after the result handler has
- * cleared currentMessageId/currentSeq and acked the turn — abort never happens
- * mid-turn. If a future change (e.g. a hung-turn watchdog) aborts mid-turn, that
- * in-flight message would have no entry in oldMessageIds and would silently lose its
- * `id` here (see the `idBySeq.get` fallback to `undefined` below) — no test would catch
- * it, since the mismatch is silent misrouting, not a thrown error.
+ * A `pending` entry with no match in `oldMessageIds` gets `id: undefined` (see the
+ * `idBySeq.get` fallback below) rather than throwing — safe because `seq` is now
+ * globally unique (message-channel.ts), so this can only happen if `oldMessageIds`
+ * itself was incomplete, and losing routing info for one message beats losing the
+ * message.
  */
 export function relockstepMessageIds(
   pending: ChannelEntry[],

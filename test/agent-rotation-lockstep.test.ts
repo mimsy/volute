@@ -41,11 +41,15 @@ function fakeMsg(text: string) {
 
 describe("claude template: relockstepMessageIds", () => {
   let relockstepMessageIds: typeof import("../templates/claude/src/lib/recover.js")["relockstepMessageIds"];
+  let markRecovered: typeof import("../templates/claude/src/lib/recover.js")["markRecovered"];
+  let RECOVERED_MESSAGE_NOTE: typeof import("../templates/claude/src/lib/recover.js")["RECOVERED_MESSAGE_NOTE"];
 
   before(async () => {
     const dir = composeTemplate(templatesRoot, "claude").composedDir;
     composed.push(dir);
-    ({ relockstepMessageIds } = await import(resolvePath(dir, "src/lib/recover.js")));
+    ({ relockstepMessageIds, markRecovered, RECOVERED_MESSAGE_NOTE } = await import(
+      resolvePath(dir, "src/lib/recover.js")
+    ));
   });
 
   it("carries each entry's id over via its old seq, remapped to the new channel's seq", () => {
@@ -136,5 +140,79 @@ describe("claude template: relockstepMessageIds", () => {
     assert.equal(pushedMsgs.length, 1);
     assert.deepEqual(pushedMsgs[0].message.content[0], marker);
     assert.equal(pushedMsgs[0].message.content[1].text, "original");
+  });
+
+  it("uses markRecovered as the default transform — every message production re-pushes gets it", () => {
+    // All four tests above pass an explicit transform; production never does. This
+    // drives the real default so RECOVERED_MESSAGE_NOTE is proven to actually reach
+    // a re-pushed message, for both content shapes SDKUserMessage allows.
+    const oldMessageIds = [
+      { id: "m1", seq: 1 },
+      { id: "m2", seq: 2 },
+    ];
+    const arrayContentMsg = fakeMsg("original array content");
+    const stringContentMsg = {
+      type: "user" as const,
+      session_id: "",
+      message: { role: "user" as const, content: "original string content" },
+      parent_tool_use_id: null,
+    };
+    const pending = [
+      { msg: arrayContentMsg, seq: 1 },
+      { msg: stringContentMsg, seq: 2 },
+    ];
+    const pushedMsgs: { message: { content: { type: string; text: string }[] } }[] = [];
+    const push = (msg: (typeof pushedMsgs)[number]) => {
+      pushedMsgs.push(msg);
+      return pushedMsgs.length;
+    };
+
+    relockstepMessageIds(pending, oldMessageIds, push); // no transform arg — uses markRecovered
+
+    assert.equal(pushedMsgs.length, 2);
+    for (const msg of pushedMsgs) {
+      assert.equal(msg.message.content[0].type, "text");
+      assert.equal(
+        msg.message.content[0].text,
+        RECOVERED_MESSAGE_NOTE,
+        "the note must be the first content block",
+      );
+    }
+    assert.equal(pushedMsgs[0].message.content[1].text, "original array content");
+    assert.equal(pushedMsgs[1].message.content[1].text, "original string content");
+  });
+
+  it("does not stack the note on a message recovered twice (consecutive rotations)", () => {
+    const once = markRecovered(fakeMsg("original"));
+    const twice = markRecovered(once);
+    const noteBlocks = twice.message.content.filter(
+      (b) => "type" in b && b.type === "text" && "text" in b && b.text === RECOVERED_MESSAGE_NOTE,
+    );
+    assert.equal(noteBlocks.length, 1, "the note must appear once, not once per rotation survived");
+  });
+
+  it("reap-race: appending relockstepMessageIds to an existing messageIds array preserves a racing message's entry (#764 regression)", () => {
+    // Mirrors agent.ts's idle-reap path: reapSession() deletes the session from the
+    // map, then awaits the SDK subprocess's shutdown. During that await, an inbound
+    // message can race in via getOrCreateSession(), creating a fresh session and
+    // pushing its own {id, seq} into fresh.messageIds — before reapSession ever
+    // calls relockstepMessageIds for whatever (rare) input the OLD channel recovers.
+    // fresh.messageIds must be appended to, not overwritten, or the racer's entry —
+    // and with it its channel/sender routing — is silently discarded.
+    const racerEntry = { id: "racer-msg", seq: 0 };
+    const freshMessageIds = [racerEntry]; // already populated before the recovered ones arrive
+
+    const oldMessageIds = [{ id: "recovered-msg", seq: 42 }];
+    const pending = [{ msg: fakeMsg("recovered"), seq: 42 }];
+    let nextFreshSeq = 1; // fresh channel already minted seq 0 for the racer
+    const push = () => nextFreshSeq++;
+
+    freshMessageIds.push(...relockstepMessageIds(pending, oldMessageIds, push, (m) => m));
+
+    assert.deepEqual(
+      freshMessageIds,
+      [racerEntry, { id: "recovered-msg", seq: 1 }],
+      "the racer's entry must survive alongside the relockstepped recovered entry",
+    );
   });
 });
