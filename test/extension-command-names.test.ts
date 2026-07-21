@@ -34,29 +34,30 @@ import pages from "@volute/pages";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 
-/** Core CLI nouns — the `case` labels of the top-level switch in `src/cli.ts`. */
-const CORE_NOUNS = new Set([
-  "setup",
-  "mind",
-  "seed",
-  "chat",
-  "variant",
-  "clock",
-  "skill",
-  "env",
-  "config",
-  "up",
-  "backup",
-  "down",
-  "restart",
-  "update",
-  "status",
-  "extension",
-  "systems",
-  "login",
-  "logout",
-  "service",
-]);
+/**
+ * Core CLI nouns, read from the `case` labels of the dispatch switch in `src/cli.ts`.
+ *
+ * Parsed rather than imported: `cli.ts` is an entry point that dispatches off
+ * `process.argv` and calls `process.exit` at import time, so a test cannot import it,
+ * and exporting the list would mean extracting a new module just for this. There is
+ * exactly one `switch (command)` in the file, so anchoring to it is unambiguous.
+ *
+ * A hand-maintained copy would defeat the point: this test exists to catch documentation
+ * drifting from the dispatcher, and it shouldn't itself be a mirror that can drift.
+ * Adding a core noun without updating a hardcoded set fails loudly, but *removing* one
+ * would pass silently.
+ */
+function readCoreNouns(): Set<string> {
+  const source = readFileSync(join(ROOT, "src/cli.ts"), "utf8");
+  const switchAt = source.indexOf("switch (command) {");
+  if (switchAt === -1) return new Set();
+  // Case labels only occur inside that switch; `case undefined:` is unquoted and so
+  // is skipped, as are the `--help`/`-h` labels, which are flags rather than nouns.
+  const labels = source.slice(switchAt).matchAll(/^\s*case "([^"]+)":/gm);
+  return new Set([...labels].map((m) => m[1]).filter((label) => !label.startsWith("-")));
+}
+
+const CORE_NOUNS = readCoreNouns();
 
 const EXTENSIONS = [intentions, notes, pages];
 
@@ -146,6 +147,22 @@ describe("extension CLI command names", () => {
       invocations.push(...invocationsIn(ext.mindDoc, `${ext.id} manifest mindDoc`));
     }
   }
+
+  it("reads the core CLI nouns out of the dispatch switch", () => {
+    // If the parse breaks, CORE_NOUNS empties and every core-noun usage below starts
+    // reporting as unknown — loud, but confusing. Fail here with the real reason.
+    assert.ok(
+      CORE_NOUNS.size > 10,
+      `parsed ${CORE_NOUNS.size} core nouns from src/cli.ts — the dispatch switch has ` +
+        "probably been restructured, so this test is no longer reading the real noun list",
+    );
+    // Spot-check a couple that have no reason to move, to catch a regex that matches
+    // the right *number* of wrong things.
+    for (const noun of ["mind", "chat", "clock"]) {
+      assert.ok(CORE_NOUNS.has(noun), `expected "${noun}" among the parsed core nouns`);
+    }
+    assert.equal(CORE_NOUNS.has("--help"), false, "flags are not nouns");
+  });
 
   it("actually scans every built-in extension", () => {
     // A scanner that quietly reads nothing passes every other assertion in this file.
