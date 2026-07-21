@@ -216,4 +216,25 @@ describe("resolveDeliveryMode", () => {
     const r = resolveDeliveryMode(config, "main");
     assert.equal(r.instructions, "Be brief.");
   });
+
+  it("defaults interrupt to false with no threads config", () => {
+    const r = resolveDeliveryMode({}, "main");
+    assert.equal(r.interrupt, false);
+  });
+
+  it("defaults interrupt to false when a thread config matches but doesn't set it", () => {
+    const config: RoutingConfig = {
+      threads: { main: { delivery: "batch" } },
+    };
+    const r = resolveDeliveryMode(config, "main");
+    assert.equal(r.interrupt, false);
+  });
+
+  it("honors an explicit interrupt: true in the matched thread config", () => {
+    const config: RoutingConfig = {
+      threads: { main: { interrupt: true } },
+    };
+    const r = resolveDeliveryMode(config, "main");
+    assert.equal(r.interrupt, true);
+  });
 });

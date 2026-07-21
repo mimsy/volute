@@ -461,36 +461,36 @@ describe("resolveRoute", () => {
 describe("resolveSessionConfig", () => {
   it("returns defaults when no sessions configured", () => {
     const r = resolveSessionConfig({}, "main");
-    assert.equal(r.interrupt, true);
+    assert.equal(r.interrupt, false);
     assert.equal(r.batch, undefined);
     assert.equal(r.instructions, undefined);
   });
 
   it("matches exact session name", () => {
     const config: RoutingConfig = {
-      threads: { discord: { interrupt: false } },
+      threads: { discord: { interrupt: true } },
     };
     const r = resolveSessionConfig(config, "discord");
-    assert.equal(r.interrupt, false);
+    assert.equal(r.interrupt, true);
   });
 
   it("matches glob pattern", () => {
     const config: RoutingConfig = {
-      threads: { "@*": { interrupt: false } },
+      threads: { "@*": { interrupt: true } },
     };
     const r = resolveSessionConfig(config, "@conv-abc");
-    assert.equal(r.interrupt, false);
+    assert.equal(r.interrupt, true);
   });
 
   it("first match wins", () => {
     const config: RoutingConfig = {
       threads: {
-        "discord:*": { interrupt: false },
-        "*": { interrupt: true },
+        "discord:*": { interrupt: true },
+        "*": { interrupt: false },
       },
     };
     const r = resolveSessionConfig(config, "discord:general");
-    assert.equal(r.interrupt, false);
+    assert.equal(r.interrupt, true);
   });
 
   it("normalizes batch number (minutes) to BatchConfig", () => {
@@ -521,10 +521,10 @@ describe("resolveSessionConfig", () => {
 
   it("returns defaults for unmatched session", () => {
     const config: RoutingConfig = {
-      threads: { discord: { interrupt: false } },
+      threads: { discord: { interrupt: true } },
     };
     const r = resolveSessionConfig(config, "slack");
-    assert.equal(r.interrupt, true);
+    assert.equal(r.interrupt, false);
     assert.equal(r.batch, undefined);
   });
 

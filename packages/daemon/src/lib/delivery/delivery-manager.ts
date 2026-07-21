@@ -1340,6 +1340,7 @@ export class DeliveryManager {
         ...enrichedPayload,
         session,
         instructions: sessionConfig.instructions,
+        interrupt: sessionConfig.interrupt,
       });
 
       try {
@@ -1460,6 +1461,7 @@ export class DeliveryManager {
         session,
         batch: { channels },
         instructions: sessionConfig.instructions,
+        interrupt: sessionConfig.interrupt,
       });
 
       try {

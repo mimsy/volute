@@ -387,7 +387,7 @@ export async function deliverBatch(
     const res = await fetch(`http://127.0.0.1:${entry.port}/message`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ session, batch: { channels } }),
+      body: JSON.stringify({ session, batch: { channels }, interrupt: false }),
     });
     return res.ok;
   } catch (err) {

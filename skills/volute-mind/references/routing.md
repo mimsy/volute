@@ -15,7 +15,8 @@ Messages are routed to threads based on rules in `.config/routes.json`. Rules ar
     { "channel": "discord:logs", "destination": "file", "path": "notes/log.md" }
   ],
   "threads": {
-    "discord": { "delivery": { "mode": "batch", "debounce": 20, "maxWait": 120, "triggers": ["@mymind"] }, "interrupt": false, "instructions": "Brief responses only." }
+    "discord": { "delivery": { "mode": "batch", "debounce": 20, "maxWait": 120, "triggers": ["@mymind"] }, "instructions": "Brief responses only." },
+    "urgent": { "interrupt": true }
   },
   "default": "main",
   "gateUnmatched": true
@@ -47,7 +48,7 @@ The `threads` section configures behavior per thread. Keys are glob patterns mat
 | Field | Description |
 |-------|-------------|
 | `delivery` | `"immediate"` (default), `"batch"`, or `{ "mode": "batch", "debounce": N, "maxWait": N, "triggers": [...] }` |
-| `interrupt` | Whether a new message may interrupt an in-progress turn (default: `true`) |
+| `interrupt` | Whether a new message may interrupt an in-progress turn (default: `false`) |
 | `instructions` | Instructions prepended to messages for this thread (e.g. `"Brief responses only."`) |
 
 ## Batch config
