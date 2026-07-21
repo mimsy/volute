@@ -278,49 +278,6 @@ export function buildSeededRollout(
   return emitFromKept(p.meta, p.kept, tailStartByBudget(p.kept, seedTokens), threadId, now);
 }
 
-/**
- * A pinned cut point for rotation. Codex `response_item` message lines carry no
- * stable id, so we pin the boundary by its top-level `timestamp` (millisecond
- * precision — unique in practice). Rotation locates the same turn by matching it.
- */
-export type CodexSeedCut = { boundaryTimestamp: string };
-
-/**
- * Compute the cut point (the first-kept turn's timestamp) for a `seedTokens` budget,
- * from raw jsonl. Parsed leniently because the live rollout may still be mid-write
- * when this runs at warn time. Returns null if there's no genuine turn or the chosen
- * boundary lacks a timestamp to pin on.
- */
-export function computeCodexSeedCut(jsonl: string, seedTokens: number): CodexSeedCut | null {
-  const p = parseRollout(jsonl, true);
-  if (!p || p.kept.length === 0) return null;
-  if (keptBoundaries(p.kept).length === 0) return null;
-  const boundary = p.kept[tailStartByBudget(p.kept, seedTokens)].obj;
-  if (typeof boundary.timestamp !== "string") return null;
-  return { boundaryTimestamp: boundary.timestamp };
-}
-
-/**
- * Build the seeded rollout starting at a pinned boundary timestamp (the whole tail
- * from that turn through EOF). Used by rotation to honor the cut point the mind was
- * warned about, regardless of how much the rollout grew after the warning. Returns
- * null if the boundary isn't found or a line is corrupt.
- */
-export function buildSeededRolloutFromCut(
-  jsonl: string,
-  threadId: string,
-  boundaryTimestamp: string,
-  now: Date = new Date(),
-): SeededRollout | null {
-  const p = parseRollout(jsonl, false);
-  if (!p || p.kept.length === 0) return null;
-  const startIdx = p.kept.findIndex(
-    (k) => isTurnBoundary(k.obj) && k.obj.timestamp === boundaryTimestamp,
-  );
-  if (startIdx < 0) return null;
-  return emitFromKept(p.meta, p.kept, startIdx, threadId, now);
-}
-
 /** Two-digit zero-padded string for date/time components. */
 function pad2(n: number): string {
   return String(n).padStart(2, "0");
@@ -417,32 +374,26 @@ export function writeCodexRotationArchivePointer(
 
 /**
  * Rotate a codex session in place at the context limit. Reads the live rollout, builds
- * a seeded tail from the pinned `cut` (falling back to a budget-based tail when the pin
- * can't be honored), writes it as a new synthetic rollout next to the source, and — for
- * persistent sessions — archives the rotated-out thread pointer so the full transcript
- * stays findable. Returns the new thread id, or null if rotation can't proceed (the
- * caller then leaves the old thread in place). Never throws.
+ * a seeded budget-based tail, writes it as a new synthetic rollout next to the source,
+ * and — for persistent sessions — archives the rotated-out thread pointer so the full
+ * transcript stays findable. Returns the new thread id, or null if rotation can't proceed
+ * (the caller then leaves the old thread in place). Never throws.
  */
 export function rotateCodexSession(opts: {
   mindDir: string;
   name: string;
   oldThreadId: string;
-  cut: CodexSeedCut | null;
   seedTokens: number;
   now?: Date;
 }): string | null {
-  const { mindDir, name, oldThreadId, cut, seedTokens } = opts;
+  const { mindDir, name, oldThreadId, seedTokens } = opts;
   const now = opts.now ?? new Date();
   try {
     const sourcePath = findCodexSessionFile(oldThreadId, mindDir);
     if (!sourcePath) return null; // live rollout not found — leave the old thread
     const jsonl = readFileSync(sourcePath, "utf-8");
     const threadId = generateThreadId(now);
-    // Honor the pinned boundary the mind was warned about; only fall back to a
-    // budget-based tail if the pin can't be resolved (missing/renamed boundary).
-    const seeded =
-      (cut ? buildSeededRolloutFromCut(jsonl, threadId, cut.boundaryTimestamp, now) : null) ??
-      buildSeededRollout(jsonl, threadId, seedTokens, now);
+    const seeded = buildSeededRollout(jsonl, threadId, seedTokens, now);
     if (!seeded) return null;
 
     writeSeededRollout(sourcePath, seeded, now);

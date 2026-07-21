@@ -12,8 +12,6 @@ import { resolve } from "node:path";
 import { describe, it } from "node:test";
 import {
   buildSeededRollout,
-  buildSeededRolloutFromCut,
-  computeCodexSeedCut,
   findLatestArchivedThread,
   generateThreadId,
   rotateCodexSession,
@@ -525,79 +523,6 @@ describe("seedCodexSession", () => {
 
 const T0 = "2026-07-19T00:00:00.000Z";
 const T1 = "2026-07-19T00:01:00.000Z";
-const T2 = "2026-07-19T00:02:00.000Z";
-
-describe("computeCodexSeedCut", () => {
-  it("pins the first-kept boundary's timestamp for the budget", () => {
-    // Three ~1000-est-token turns; budget fits two, so the cut is the 2nd turn.
-    const jsonl = [
-      sessionMeta(OLD),
-      messageAt("user", `1:${"z".repeat(4000)}`, T0),
-      messageAt("user", `2:${"z".repeat(4000)}`, T1),
-      messageAt("user", `3:${"z".repeat(4000)}`, T2),
-    ].join("\n");
-    const cut = computeCodexSeedCut(jsonl, 2500);
-    assert.ok(cut);
-    assert.equal(cut.boundaryTimestamp, T1);
-  });
-
-  it("parses leniently — a torn mid-write final line doesn't break the cut", () => {
-    const jsonl = [
-      sessionMeta(OLD),
-      messageAt("user", "first", T0),
-      messageAt("user", "second", T1),
-      '{"timestamp":"2026-07-19T00:03:00.000Z","type":"response_item","payl', // torn
-    ].join("\n");
-    const cut = computeCodexSeedCut(jsonl, 1_000_000);
-    assert.ok(cut);
-    // Budget is huge, so the cut is the earliest turn; the torn tail is ignored.
-    assert.equal(cut.boundaryTimestamp, T0);
-  });
-
-  it("returns null when there is no user-message boundary", () => {
-    const jsonl = [sessionMeta(OLD), message("developer", "x"), reasoning()].join("\n");
-    assert.equal(computeCodexSeedCut(jsonl, 30000), null);
-  });
-});
-
-describe("buildSeededRolloutFromCut", () => {
-  it("builds the tail from the pinned boundary through EOF", () => {
-    const jsonl = [
-      sessionMeta(OLD),
-      messageAt("user", "turn one", T0),
-      message("assistant", "reply one"),
-      messageAt("user", "turn two", T1),
-      message("assistant", "reply two"),
-    ].join("\n");
-    const res = buildSeededRolloutFromCut(jsonl, NEW, T1, NOW);
-    assert.ok(res);
-    const objs = parseLines(res.lines);
-    // session_meta + the pinned turn (user + assistant) — turn one is dropped.
-    assert.equal(objs.length, 3);
-    assert.equal(objs[0].payload.session_id, NEW);
-    assert.equal(objs[1].payload.content[0].text, "turn two");
-  });
-
-  it("honors the pin over budget — a large wrap-up turn after the cut rides along", () => {
-    // The cut is turn one; turn two (after it) is huge. A budget-based tail would drop
-    // turn one, but the pin keeps everything from turn one onward.
-    const jsonl = [
-      sessionMeta(OLD),
-      messageAt("user", "turn one", T0),
-      messageAt("user", `big:${"z".repeat(400000)}`, T1),
-    ].join("\n");
-    const res = buildSeededRolloutFromCut(jsonl, NEW, T0, NOW);
-    assert.ok(res);
-    const msgs = parseLines(res.lines).filter((o) => o.payload?.type === "message");
-    assert.equal(msgs.length, 2);
-    assert.equal(msgs[0].payload.content[0].text, "turn one");
-  });
-
-  it("returns null when the pinned boundary is not found", () => {
-    const jsonl = [sessionMeta(OLD), messageAt("user", "only", T0)].join("\n");
-    assert.equal(buildSeededRolloutFromCut(jsonl, NEW, "2099-01-01T00:00:00.000Z", NOW), null);
-  });
-});
 
 describe("writeCodexRotationArchivePointer", () => {
   it("writes {threadId} at archive/<name>-<UTC-ts>.json, findable by findLatestArchivedThread", () => {
@@ -641,14 +566,13 @@ describe("rotateCodexSession", () => {
     return resolve(mindDir, ".mind", "codex", "sessions", y, mo, d);
   }
 
-  it("writes the seeded rollout + archives the old thread, honoring the pinned cut", () => {
+  it("writes a budget tail rollout + archives the old thread", () => {
     const mindDir = setup(OLD, rollout);
     const newId = rotateCodexSession({
       mindDir,
       name: "main",
       oldThreadId: OLD,
-      cut: { boundaryTimestamp: T1 },
-      seedTokens: 30000,
+      seedTokens: 30,
       now: NOW,
     });
     assert.ok(newId);
@@ -657,7 +581,7 @@ describe("rotateCodexSession", () => {
     const files = readdirSync(todayDir(mindDir));
     assert.equal(files.length, 1);
     assert.ok(files[0].includes(newId));
-    // Honored the pin: tail starts at turn two.
+    // Tight budget keeps only the final turn.
     const objs = parseLines(
       readFileSync(resolve(todayDir(mindDir), files[0]), "utf-8")
         .trim()
@@ -670,13 +594,12 @@ describe("rotateCodexSession", () => {
     assert.equal(archived?.threadId, OLD);
   });
 
-  it("falls back to a budget tail when the pinned boundary can't be found", () => {
+  it("keeps as many whole trailing turns as fit the budget", () => {
     const mindDir = setup(OLD, rollout);
     const newId = rotateCodexSession({
       mindDir,
       name: "main",
       oldThreadId: OLD,
-      cut: { boundaryTimestamp: "2099-01-01T00:00:00.000Z" }, // not present
       seedTokens: 30000,
       now: NOW,
     });
@@ -698,7 +621,6 @@ describe("rotateCodexSession", () => {
       mindDir,
       name: "new-abc",
       oldThreadId: OLD,
-      cut: { boundaryTimestamp: T1 },
       seedTokens: 30000,
       now: NOW,
     });
@@ -714,7 +636,6 @@ describe("rotateCodexSession", () => {
       mindDir,
       name: "main",
       oldThreadId: "019f-missing",
-      cut: null,
       seedTokens: 30000,
       now: NOW,
     });
