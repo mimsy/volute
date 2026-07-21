@@ -27,25 +27,36 @@ export function markRecovered(msg: SDKUserMessage): SDKUserMessage {
 }
 
 /**
- * Re-push `recover()`'s output into a fresh channel and rebuild `messageIds` in
- * lockstep with it. Each entry's `id` carries over — matched by its *old* `seq` —
- * to the *new* seq the fresh channel mints on push, so the next turn's
- * currentMessageId/channel routing isn't corrupted by stale or missing ids (#764).
- * A `pending` entry with no match in `oldMessageIds` gets `id: undefined` (see the
- * `idBySeq.get` fallback below) rather than throwing — safe because `seq` is now
- * globally unique (message-channel.ts), so this can only happen if `oldMessageIds`
- * itself was incomplete, and losing routing info for one message beats losing the
- * message.
+ * Re-push `recover()`'s output into a fresh channel and append the result onto
+ * `existingMessageIds` — mutated in place and returned, rather than replacing it.
+ * That's not incidental: `existingMessageIds` may already hold an entry for a
+ * message that raced in and was pushed into the SAME fresh channel/messageIds
+ * while `recover()` was still pending (the idle reaper awaits the SDK subprocess's
+ * shutdown before recovering — see agent.ts). Returning a fresh array for the
+ * caller to assign over would silently discard that entry (#764) — appending
+ * in place makes that mistake impossible at the call site.
+ *
+ * Each entry's `id` carries over — matched by its *old* `seq` — to the *new* seq
+ * the fresh channel mints on push, so the next turn's currentMessageId/channel
+ * routing isn't corrupted by stale or missing ids. A `pending` entry with no
+ * match in `oldMessageIds` gets `id: undefined` (see the `idBySeq.get` fallback
+ * below) rather than throwing — safe because `seq` is now globally unique
+ * (message-channel.ts), so this can only happen if `oldMessageIds` itself was
+ * incomplete, and losing routing info for one message beats losing the message.
  */
 export function relockstepMessageIds(
   pending: ChannelEntry[],
   oldMessageIds: MessageIdEntry[],
   push: (msg: SDKUserMessage) => number,
+  existingMessageIds: MessageIdEntry[] = [],
   transform: (msg: SDKUserMessage) => SDKUserMessage = markRecovered,
 ): MessageIdEntry[] {
   const idBySeq = new Map(oldMessageIds.map((e) => [e.seq, e.id]));
-  return pending.map((entry) => ({
-    id: idBySeq.get(entry.seq),
-    seq: push(transform(entry.msg)),
-  }));
+  existingMessageIds.push(
+    ...pending.map((entry) => ({
+      id: idBySeq.get(entry.seq),
+      seq: push(transform(entry.msg)),
+    })),
+  );
+  return existingMessageIds;
 }

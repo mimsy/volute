@@ -71,7 +71,7 @@ describe("claude template: relockstepMessageIds", () => {
       return nextSeq++;
     };
 
-    const result = relockstepMessageIds(pending, oldMessageIds, push, (m) => m);
+    const result = relockstepMessageIds(pending, oldMessageIds, push, [], (m) => m);
 
     assert.deepEqual(
       result.map((e) => e.id),
@@ -103,7 +103,7 @@ describe("claude template: relockstepMessageIds", () => {
       return () => n++;
     })();
 
-    const result = relockstepMessageIds(pending, oldMessageIds, push, (m) => m);
+    const result = relockstepMessageIds(pending, oldMessageIds, push, [], (m) => m);
     assert.deepEqual(
       result.map((e) => e.id),
       ["earlier", "later"],
@@ -117,7 +117,13 @@ describe("claude template: relockstepMessageIds", () => {
       let n = 0;
       return () => n++;
     })();
-    const result = relockstepMessageIds([{ msg: fakeMsg("orphan"), seq: 999 }], [], push, (m) => m);
+    const result = relockstepMessageIds(
+      [{ msg: fakeMsg("orphan"), seq: 999 }],
+      [],
+      push,
+      [],
+      (m) => m,
+    );
     assert.deepEqual(result, [{ id: undefined, seq: 0 }]);
   });
 
@@ -135,7 +141,7 @@ describe("claude template: relockstepMessageIds", () => {
       message: { ...m.message, content: [marker, ...m.message.content] },
     });
 
-    relockstepMessageIds(pending, oldMessageIds, push, transform);
+    relockstepMessageIds(pending, oldMessageIds, push, [], transform);
 
     assert.equal(pushedMsgs.length, 1);
     assert.deepEqual(pushedMsgs[0].message.content[0], marker);
@@ -191,14 +197,18 @@ describe("claude template: relockstepMessageIds", () => {
     assert.equal(noteBlocks.length, 1, "the note must appear once, not once per rotation survived");
   });
 
-  it("reap-race: appending relockstepMessageIds to an existing messageIds array preserves a racing message's entry (#764 regression)", () => {
-    // Mirrors agent.ts's idle-reap path: reapSession() deletes the session from the
-    // map, then awaits the SDK subprocess's shutdown. During that await, an inbound
-    // message can race in via getOrCreateSession(), creating a fresh session and
-    // pushing its own {id, seq} into fresh.messageIds — before reapSession ever
+  it("reap-race: a pre-existing messageIds entry survives relockstepMessageIds (#764 regression)", () => {
+    // Mirrors agent.ts's idle-reap path exactly, calling the SAME exported function
+    // agent.ts calls with the SAME argument shape: reapSession() deletes the session
+    // from the map, then awaits the SDK subprocess's shutdown. During that await, an
+    // inbound message can race in via getOrCreateSession(), creating a fresh session
+    // and pushing its own {id, seq} into fresh.messageIds — before reapSession ever
     // calls relockstepMessageIds for whatever (rare) input the OLD channel recovers.
-    // fresh.messageIds must be appended to, not overwritten, or the racer's entry —
-    // and with it its channel/sender routing — is silently discarded.
+    // relockstepMessageIds is handed fresh.messageIds directly as existingMessageIds
+    // and must append to it, in place, rather than the caller replacing it — a
+    // caller-side `x = relockstepMessageIds(...)` mistake (the actual #764 bug) would
+    // discard this racer entry, since the OLD (pre-fix) signature took no such
+    // parameter and would treat this array as the transform, throwing.
     const racerEntry = { id: "racer-msg", seq: 0 };
     const freshMessageIds = [racerEntry]; // already populated before the recovered ones arrive
 
@@ -207,8 +217,9 @@ describe("claude template: relockstepMessageIds", () => {
     let nextFreshSeq = 1; // fresh channel already minted seq 0 for the racer
     const push = () => nextFreshSeq++;
 
-    freshMessageIds.push(...relockstepMessageIds(pending, oldMessageIds, push, (m) => m));
+    const result = relockstepMessageIds(pending, oldMessageIds, push, freshMessageIds, (m) => m);
 
+    assert.equal(result, freshMessageIds, "must mutate and return the SAME array, not a fresh one");
     assert.deepEqual(
       freshMessageIds,
       [racerEntry, { id: "recovered-msg", seq: 1 }],

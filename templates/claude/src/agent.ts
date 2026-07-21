@@ -607,10 +607,13 @@ export function createMind(options: {
               const pending = session.channel.recover();
               const oldMessageIds = session.messageIds;
               session.channel = createMessageChannel();
+              // Starts from [] — nothing can race into this fresh channel/messageIds
+              // before the next line runs (single-threaded, no await in between).
               session.messageIds = relockstepMessageIds(
                 pending,
                 oldMessageIds,
                 session.channel.push,
+                [],
               );
               continue; // restart the stream loop on the rotated session
             }
@@ -757,18 +760,16 @@ export function createMind(options: {
       log("mind", `session "${session.name}": error reaping SDK subprocess:`, err),
     );
     // Nothing should have raced in (isSessionReapable checked isEmpty), but if it
-    // did, re-dispatch into a fresh session so no input is dropped. Same lockstep +
-    // marker treatment as the rotation path (#764) — see relockstepMessageIds above.
+    // did, re-dispatch into a fresh session so no input is dropped. Same marker
+    // treatment as the rotation path (#764) — see relockstepMessageIds above.
     // getOrCreateSession() can return a session an inbound message already raced
     // into during the reapSessionQuery() await above (it pushed its own entry into
-    // fresh.messageIds via the normal handler path) — append, don't overwrite, or
-    // that racing message's id is silently discarded.
+    // fresh.messageIds via the normal handler path) — relockstepMessageIds appends
+    // onto fresh.messageIds rather than replacing it, so that entry survives.
     const pending = session.channel.recover();
     if (pending.length > 0) {
       const fresh = getOrCreateSession(session.name);
-      fresh.messageIds.push(
-        ...relockstepMessageIds(pending, session.messageIds, fresh.channel.push),
-      );
+      relockstepMessageIds(pending, session.messageIds, fresh.channel.push, fresh.messageIds);
     }
   }
 
