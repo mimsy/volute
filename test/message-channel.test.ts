@@ -45,15 +45,29 @@ describe("createMessageChannel", () => {
     assert.equal((result.value.message.content[0] as any).text, "delayed");
   });
 
+  it("push returns a monotonically increasing seq, the message's identity", () => {
+    const ch = createMessageChannel();
+    const s1 = ch.push(msg("a"));
+    const s2 = ch.push(msg("b"));
+    const s3 = ch.push(msg("c"));
+    assert.equal(typeof s1, "number");
+    assert.ok(s2 > s1);
+    assert.ok(s3 > s2);
+  });
+
   describe("recover()", () => {
-    it("returns all queued messages and empties the queue", async () => {
+    it("returns all queued messages (with seq) and empties the queue", async () => {
       const ch = createMessageChannel();
       ch.push(msg("x"));
       ch.push(msg("y"));
       ch.push(msg("z"));
 
       const recovered = ch.recover();
-      assert.deepEqual(recovered.map(text), ["x", "y", "z"]);
+      assert.deepEqual(
+        recovered.map((e) => text(e.msg)),
+        ["x", "y", "z"],
+      );
+      for (const e of recovered) assert.equal(typeof e.seq, "number");
 
       // Queue should now be empty — next push goes to a fresh queue
       ch.push(msg("after"));
@@ -75,7 +89,21 @@ describe("createMessageChannel", () => {
       ch.push(msg("after1"));
       ch.push(msg("after2"));
       const recovered2 = ch.recover();
-      assert.deepEqual(recovered2.map(text), ["after1", "after2"]);
+      assert.deepEqual(
+        recovered2.map((e) => text(e.msg)),
+        ["after1", "after2"],
+      );
+    });
+
+    it("round-trips seq: recovered entries carry the same seq push() returned", () => {
+      const ch = createMessageChannel();
+      const s1 = ch.push(msg("a"));
+      const s2 = ch.push(msg("b"));
+      const recovered = ch.recover();
+      assert.deepEqual(
+        recovered.map((e) => e.seq),
+        [s1, s2],
+      );
     });
 
     it("recovers a message consumed via the read-ahead fast-path (not lost)", async () => {
@@ -91,7 +119,10 @@ describe("createMessageChannel", () => {
 
       // Its turn never completed (no ack), so recovery must return it.
       const recovered = ch.recover();
-      assert.deepEqual(recovered.map(text), ["consumed"]);
+      assert.deepEqual(
+        recovered.map((e) => text(e.msg)),
+        ["consumed"],
+      );
     });
 
     it("returns delivered-unacked messages before still-queued ones, in order", async () => {
@@ -107,7 +138,10 @@ describe("createMessageChannel", () => {
       ch.push(msg("m2"));
       ch.push(msg("m3"));
 
-      assert.deepEqual(ch.recover().map(text), ["m1", "m2", "m3"]);
+      assert.deepEqual(
+        ch.recover().map((e) => text(e.msg)),
+        ["m1", "m2", "m3"],
+      );
     });
 
     it("recover while iterator is waiting terminates the pending iterator", async () => {
@@ -126,7 +160,49 @@ describe("createMessageChannel", () => {
 
       // Push to the same channel — goes to the queue (not the old resolve)
       ch.push(msg("new"));
-      assert.deepEqual(ch.recover().map(text), ["new"]);
+      assert.deepEqual(
+        ch.recover().map((e) => text(e.msg)),
+        ["new"],
+      );
+    });
+
+    it("does NOT return a message that was folded into a completed turn (#764)", async () => {
+      // Regression test for the duplicate-event-on-rotation bug: the SDK folds
+      // messages that arrive mid-run into the active run, so a folded message
+      // never gets a `result`/ack of its own. The mind's turn-loop is
+      // responsible for acking every message a turn covers (its driving message
+      // plus anything folded in) — this test drives the channel the way
+      // stream-consumer.ts does and checks recover() afterward.
+      const ch = createMessageChannel();
+      const iter = ch.iterable[Symbol.asyncIterator]();
+
+      // Message A starts a turn (delivered to the SDK's read-ahead consumer).
+      const pA = iter.next();
+      const seqA = ch.push(msg("A"));
+      await pA;
+
+      // Message B arrives while A's turn is still live — the SDK folds it into
+      // the running turn (delivered immediately via the read-ahead fast path,
+      // same as A).
+      const pB = iter.next();
+      const seqB = ch.push(msg("B"));
+      await pB;
+
+      // A genuinely-unprocessed message C is queued after — no turn has
+      // started for it yet.
+      ch.push(msg("C"));
+
+      // The turn resolves once: ack both A (its own driver) and B (folded in),
+      // exactly as stream-consumer.ts's result handler does by seq.
+      ch.ack(seqA);
+      ch.ack(seqB);
+
+      const recovered = ch.recover();
+      assert.deepEqual(
+        recovered.map((e) => text(e.msg)),
+        ["C"],
+        "B was folded into A's completed turn and must not be replayed; C is still owed a turn",
+      );
     });
   });
 
@@ -154,9 +230,9 @@ describe("createMessageChannel", () => {
       const ch = createMessageChannel();
       const iter = ch.iterable[Symbol.asyncIterator]();
       const pending = iter.next();
-      ch.push(msg("done"));
+      const seq = ch.push(msg("done"));
       await pending;
-      ch.ack();
+      ch.ack(seq);
       assert.equal(ch.isEmpty(), true);
     });
   });
@@ -185,7 +261,10 @@ describe("createMessageChannel", () => {
       const ch = createMessageChannel();
       ch.push(msg("raced"));
       ch.close();
-      assert.deepEqual(ch.recover().map(text), ["raced"]);
+      assert.deepEqual(
+        ch.recover().map((e) => text(e.msg)),
+        ["raced"],
+      );
     });
   });
 
@@ -195,22 +274,22 @@ describe("createMessageChannel", () => {
       const iter = ch.iterable[Symbol.asyncIterator]();
 
       const pending = iter.next();
-      ch.push(msg("done"));
+      const seq = ch.push(msg("done"));
       await pending;
 
       // The turn completed — acknowledge it.
-      ch.ack();
+      ch.ack(seq);
       assert.deepEqual(ch.recover(), []);
     });
 
-    it("acks the oldest delivered message (FIFO), recovering the rest", async () => {
+    it("is identity-based: acking one delivered message doesn't touch the others", async () => {
       // Mirrors the compaction race: m1 is mid-turn when m2 and m3 are
       // read-ahead-delivered; m1's turn completes, then compaction recovers.
       const ch = createMessageChannel();
       const iter = ch.iterable[Symbol.asyncIterator]();
 
       const p1 = iter.next();
-      ch.push(msg("m1"));
+      const seq1 = ch.push(msg("m1"));
       await p1;
       const p2 = iter.next();
       ch.push(msg("m2"));
@@ -219,14 +298,34 @@ describe("createMessageChannel", () => {
       ch.push(msg("m3"));
       await p3;
 
-      ch.ack(); // m1's turn finished
+      ch.ack(seq1); // m1's turn finished
 
-      assert.deepEqual(ch.recover().map(text), ["m2", "m3"]);
+      assert.deepEqual(
+        ch.recover().map((e) => text(e.msg)),
+        ["m2", "m3"],
+      );
     });
 
-    it("is a no-op when nothing is in flight", () => {
+    it("does not remove a pre-turn-queued message when a later seq is acked", async () => {
+      // The bug this identity-based ack replaces: a positional (shift-based) ack
+      // would wrongly consume the oldest entry regardless of which turn actually
+      // finished. Pushing m1, m2 then acking m2's seq specifically must leave m1
+      // (still genuinely unprocessed) recoverable.
       const ch = createMessageChannel();
-      assert.doesNotThrow(() => ch.ack());
+      ch.push(msg("m1"));
+      const seq2 = ch.push(msg("m2"));
+
+      ch.ack(seq2);
+
+      assert.deepEqual(
+        ch.recover().map((e) => text(e.msg)),
+        ["m1"],
+      );
+    });
+
+    it("is a no-op when the seq is not in flight or queued", () => {
+      const ch = createMessageChannel();
+      assert.doesNotThrow(() => ch.ack(999));
       assert.deepEqual(ch.recover(), []);
     });
   });

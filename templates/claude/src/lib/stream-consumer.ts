@@ -4,10 +4,14 @@ import { log, warn } from "./logger.js";
 import { filterEvent, loadTransparencyPreset } from "./transparency.js";
 import type { VoluteEvent } from "./types.js";
 
+/** A pending message's daemon-facing id (routing/channel key) paired with its channel `seq`. */
+export type MessageIdEntry = { id: string | undefined; seq: number };
+
 export type StreamSession = {
   name: string;
-  messageIds: (string | undefined)[];
+  messageIds: MessageIdEntry[];
   currentMessageId?: string;
+  currentSeq?: number;
   messageChannels: Map<string, { channel: string; sender?: string }>;
 };
 
@@ -16,6 +20,11 @@ export type StreamCallbacks = {
   broadcast: (event: VoluteEvent) => void;
   onTurnEnd?: () => void;
   onContextTokens?: (tokens: number) => void;
+  /**
+   * Acknowledge the message channel entry with this `seq` — its turn is done (either
+   * it drove this turn directly, or it was folded into it; see the `result` handler).
+   */
+  ack: (seq: number) => void;
 };
 
 // Loaded once at startup — mind restarts on config changes
@@ -48,7 +57,9 @@ export async function consumeStream(
   let preTurnPending = 0;
   for await (const msg of stream) {
     if (session.currentMessageId === undefined) {
-      session.currentMessageId = session.messageIds.shift();
+      const entry = session.messageIds.shift();
+      session.currentMessageId = entry?.id;
+      session.currentSeq = entry?.seq;
       preTurnPending = session.messageIds.length;
     }
     if ("session_id" in msg && msg.session_id) {
@@ -123,14 +134,20 @@ export async function consumeStream(
       if (session.currentMessageId) {
         session.messageChannels.delete(session.currentMessageId);
       }
+      // Ack this turn's driving message, identified by seq (not position — see
+      // message-channel.ts). Without this the channel's inFlight set strands an
+      // entry per turn, which gets replayed verbatim on the next rotation (#764).
+      if (session.currentSeq !== undefined) callbacks.ack(session.currentSeq);
       // Prune every id folded into this turn — the ones pushed after it started
       // — not just currentMessageId. The SDK folds mid-run arrivals into the
       // active run (they never see a result of their own), and a stranded entry
       // would be shifted in as the NEXT turn's id, tagging that turn's rows with
       // the wrong channel (#700). Ids queued before the turn started stay: each
-      // still gets a run (and result) of its own.
-      for (const id of session.messageIds.splice(preTurnPending)) {
-        if (id !== undefined) session.messageChannels.delete(id);
+      // still gets a run (and result) of its own. Ack each folded entry too — same
+      // reasoning as above, applied to every message the fold absorbed.
+      for (const entry of session.messageIds.splice(preTurnPending)) {
+        if (entry.id !== undefined) session.messageChannels.delete(entry.id);
+        callbacks.ack(entry.seq);
       }
       log("mind", `session "${session.name}": turn done`);
       // Log any error messages from the result
@@ -154,6 +171,7 @@ export async function consumeStream(
       callbacks.broadcast({ type: "done" });
       emit(session, { type: "done" });
       session.currentMessageId = undefined;
+      session.currentSeq = undefined;
       callbacks.onTurnEnd?.();
     }
   }

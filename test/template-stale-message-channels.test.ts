@@ -41,11 +41,14 @@ describe("claude template: folded messages leave no stale messageChannels entry"
     ({ consumeStream } = await import(resolvePath(dir, "src/lib/stream-consumer.js")));
   });
 
+  type MessageIdEntry = { id: string | undefined; seq: number };
+
   function newSession() {
     return {
       name: "main",
-      messageIds: [] as (string | undefined)[],
+      messageIds: [] as MessageIdEntry[],
       currentMessageId: undefined as string | undefined,
+      currentSeq: undefined as number | undefined,
       messageChannels: new Map() as MessageChannels,
     };
   }
@@ -60,14 +63,24 @@ describe("claude template: folded messages leave no stale messageChannels entry"
     usage: { input_tokens: 1, output_tokens: 1 },
   });
 
-  const callbacks = { broadcast: () => {}, onTurnEnd: () => {} };
+  function newCallbacks() {
+    const acked: number[] = [];
+    return {
+      broadcast: () => {},
+      onTurnEnd: () => {},
+      ack: (seq: number) => acked.push(seq),
+      acked,
+    };
+  }
 
   it("a message folded into the running turn is pruned with it, and the next turn claims its own id", async () => {
     const session = newSession();
-    session.messageIds.push("m1");
+    const callbacks = newCallbacks();
+    session.messageIds.push({ id: "m1", seq: 1 });
     session.messageChannels.set("m1", { channel: "@alice", sender: "alice" });
 
-    let afterTurn1: { ids: (string | undefined)[]; channels: string[] } | undefined;
+    let afterTurn1: { ids: MessageIdEntry[]; channels: string[] } | undefined;
+    let ackedAfterTurn1: number[] | undefined;
     let claimedInTurn2: string | undefined;
 
     // The generator resumes after each yielded message has been fully processed,
@@ -76,14 +89,15 @@ describe("claude template: folded messages leave no stale messageChannels entry"
       yield assistant("replying to alice"); // turn 1 claims m1
       // A system event arrives mid-run — the SDK folds it into the active turn,
       // which will emit a single result for both messages.
-      session.messageIds.push("m2");
+      session.messageIds.push({ id: "m2", seq: 2 });
       session.messageChannels.set("m2", { channel: "event:schedule:42" });
       yield result(); // turn 1 done — must consume m1 AND the folded m2
       afterTurn1 = {
         ids: [...session.messageIds],
         channels: [...session.messageChannels.keys()],
       };
-      session.messageIds.push("m3");
+      ackedAfterTurn1 = [...callbacks.acked];
+      session.messageIds.push({ id: "m3", seq: 3 });
       session.messageChannels.set("m3", { channel: "@bob", sender: "bob" });
       yield assistant("replying to bob"); // turn 2 must claim m3, not the stale m2
       claimedInTurn2 = session.currentMessageId;
@@ -103,6 +117,11 @@ describe("claude template: folded messages leave no stale messageChannels entry"
       "the next turn must be tagged with its own message, not the stale event entry",
     );
     assert.equal(session.messageChannels.size, 0);
+    // Regression guard for #764: the driving message AND the folded one must both
+    // be acked by the time turn 1's result is fully handled — a stranded
+    // (never-acked) entry is what got replayed verbatim on the next session
+    // rotation.
+    assert.deepEqual(ackedAfterTurn1, [1, 2], "both m1 and the folded m2 must be acked");
   });
 
   it("messages queued before the turn started keep their entries — each still gets its own run", async () => {
@@ -111,11 +130,12 @@ describe("claude template: folded messages leave no stale messageChannels entry"
     // second message's entry at the first result, or its turn would lose its
     // channel (and a first-of-session message its reply instructions).
     const session = newSession();
-    session.messageIds.push("m1", "m2");
+    const callbacks = newCallbacks();
+    session.messageIds.push({ id: "m1", seq: 1 }, { id: "m2", seq: 2 });
     session.messageChannels.set("m1", { channel: "@alice", sender: "alice" });
     session.messageChannels.set("m2", { channel: "@bob", sender: "bob" });
 
-    let afterRun1: { ids: (string | undefined)[]; channels: string[] } | undefined;
+    let afterRun1: { ids: MessageIdEntry[]; channels: string[] } | undefined;
     let claimedInRun2: string | undefined;
 
     async function* stream() {
@@ -134,11 +154,13 @@ describe("claude template: folded messages leave no stale messageChannels entry"
 
     assert.deepEqual(
       afterRun1,
-      { ids: ["m2"], channels: ["m2"] },
+      { ids: [{ id: "m2", seq: 2 }], channels: ["m2"] },
       "a pre-turn queued message keeps its entry until its own run completes",
     );
     assert.equal(claimedInRun2, "m2");
     assert.equal(session.messageChannels.size, 0);
+    // Each run acks only its own driving message — not the other, still-pending one.
+    assert.deepEqual(callbacks.acked, [1, 2]);
   });
 });
 

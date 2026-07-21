@@ -1,16 +1,25 @@
 import type { SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 
+/** A queued/in-flight message paired with the sequence number that identifies it. */
+export type ChannelEntry = { msg: SDKUserMessage; seq: number };
+
 export type MessageChannel = {
-  push: (msg: SDKUserMessage) => void;
-  /** Acknowledge that the oldest in-flight message's turn has completed. */
-  ack: () => void;
+  /** Returns the sequence number minted for this message — the identity `ack()` needs. */
+  push: (msg: SDKUserMessage) => number;
+  /**
+   * Acknowledge that the message with this `seq` has completed its turn. Identity-based
+   * (not positional): the SDK folds messages that arrive mid-run into the active run, so
+   * a turn's `result` can cover more than just the oldest in-flight message — see the
+   * caller in stream-consumer.ts.
+   */
+  ack: (seq: number) => void;
   /**
    * Return every message that has not been fully processed — those delivered to
    * the consumer but not yet acked (their turn never finished) followed by those
-   * still queued — and reset the channel. Used to re-feed the stream after a
-   * compaction abort so in-flight input is never lost.
+   * still queued — paired with their `seq`, and reset the channel. Used to re-feed
+   * the stream after a compaction abort so in-flight input is never lost.
    */
-  recover: () => SDKUserMessage[];
+  recover: () => ChannelEntry[];
   /**
    * Terminate the input iterable: resolve any pending `next()` with `done: true`
    * and make subsequent `next()` calls return done. The SDK sees end-of-input and
@@ -23,33 +32,44 @@ export type MessageChannel = {
 };
 
 export function createMessageChannel(): MessageChannel {
-  const queue: SDKUserMessage[] = [];
+  const queue: ChannelEntry[] = [];
   // Messages handed to the consumer (the SDK's read-ahead) whose turn has not yet
   // completed. The SDK's streamInput loop pulls messages eagerly and writes them
   // to the CLI subprocess, so once delivered they no longer live in `queue`. We
   // retain them here so a compaction abort — which kills that subprocess — can
   // re-feed the unprocessed ones instead of dropping them.
-  const inFlight: SDKUserMessage[] = [];
+  const inFlight: ChannelEntry[] = [];
   let resolve: ((value: IteratorResult<SDKUserMessage>) => void) | null = null;
   let closed = false;
+  let nextSeq = 0;
 
-  function deliver(msg: SDKUserMessage): IteratorResult<SDKUserMessage> {
-    inFlight.push(msg);
-    return { value: msg, done: false };
+  function deliver(entry: ChannelEntry): IteratorResult<SDKUserMessage> {
+    inFlight.push(entry);
+    return { value: entry.msg, done: false };
   }
 
   return {
     push(msg: SDKUserMessage) {
+      const entry: ChannelEntry = { msg, seq: nextSeq++ };
       if (resolve) {
         const r = resolve;
         resolve = null;
-        r(deliver(msg));
+        r(deliver(entry));
       } else {
-        queue.push(msg);
+        queue.push(entry);
       }
+      return entry.seq;
     },
-    ack() {
-      inFlight.shift();
+    ack(seq: number) {
+      let i = inFlight.findIndex((e) => e.seq === seq);
+      if (i !== -1) {
+        inFlight.splice(i, 1);
+        return;
+      }
+      // Defensive: shouldn't normally be in the queue when acked, but remove it
+      // there too rather than leave a stranded entry if it somehow is.
+      i = queue.findIndex((e) => e.seq === seq);
+      if (i !== -1) queue.splice(i, 1);
     },
     recover() {
       // Resolve any pending iterator wait with done:true so it doesn't
