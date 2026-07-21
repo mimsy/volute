@@ -14,7 +14,6 @@ import {
   readSkillDescriptions,
 } from "./lib/context-breakdown.js";
 import { daemonEmit, daemonNotice } from "./lib/daemon-client.js";
-import { compactTimestamp } from "./lib/format-prefix.js";
 import { runHooks } from "./lib/hook-loader.js";
 import { createAutoCommitHook } from "./lib/hooks/auto-commit.js";
 import { createIdentityReloadHook } from "./lib/hooks/identity-reload.js";
@@ -30,16 +29,9 @@ import {
   reapSessionQuery,
   reapSessionsForShutdown,
 } from "./lib/session-reaper.js";
-import {
-  computeSeedCut,
-  DEFAULT_SEED_TOKENS,
-  rotateSession,
-  type SeedCut,
-  seedSession,
-} from "./lib/session-seed.js";
+import { DEFAULT_SEED_TOKENS, rotateSession, seedSession } from "./lib/session-seed.js";
 import { createSessionStore } from "./lib/session-store.js";
-import type { EffortLevel, ThinkingConfig } from "./lib/startup.js";
-import { loadPrompts, renderCompactionWarning, type SubagentConfig } from "./lib/startup.js";
+import type { EffortLevel, SubagentConfig, ThinkingConfig } from "./lib/startup.js";
 import { consumeStream, type MessageIdEntry } from "./lib/stream-consumer.js";
 import type {
   HandlerMeta,
@@ -78,12 +70,6 @@ type Session = {
   /** Why the tail is seeded — picks the boundary note's wording. Last cause wins. */
   seededCause: SeedCause;
   /**
-   * The cut point pinned at warn time (the first-kept turn the mind was told would
-   * survive verbatim). Honored at rotation so the promise in the warning holds even
-   * though the transcript grows after the warning. Null until a warning fires.
-   */
-  rotationCut: SeedCut | null;
-  /**
    * Back-to-back rotations that did NOT bring context under the threshold (reset by
    * any healthy turn). Guards against a runaway loop when the tail alone can't fit —
    * e.g. a system prompt (large MEMORY.md) that already fills most of the window, which
@@ -91,19 +77,14 @@ type Session = {
    */
   consecutiveRotations: number;
   /**
-   * Rotation state machine (undefined = idle). The warning is pushed and the mind
-   * takes a wrap-up turn — with FULL context of the turns it's summarizing — before
-   * the session rotates:
-   *   - "warned": a turn was mid-flight when we warned; it must finish before the
-   *     wrap-up turn (which consumes the warning) runs.
-   *   - "rotateAfterTurn": the wrap-up turn is the current/next turn; rotate when it ends.
-   * Lives on the session (not a map) so it can't leak into a resumed session if the
-   * stream dies mid-flight — a fresh session starts idle.
+   * True when this session crossed the context threshold (or the SDK tried to
+   * auto-compact) and should rotate in place when the current turn ends. Rotation
+   * is deliberately silent: no warning, no wrap-up turn — the auto summarizer's
+   * turn summaries are the record of collapsed turns, and the one-line
+   * ROTATED_SESSION_NOTE marks the boundary on the next turn.
    */
-  rotationPhase?: RotationPhase;
+  rotationPending: boolean;
 };
-
-type RotationPhase = "warned" | "rotateAfterTurn";
 
 /** Stop self-rotating after this many back-to-back rotations that didn't reduce context. */
 const MAX_CONSECUTIVE_ROTATIONS = 3;
@@ -139,9 +120,6 @@ export function createMind(options: {
   ];
 
   const sessions = new Map<string, Session>();
-  const prompts = loadPrompts();
-  const compactionMessage = () =>
-    options.compactionMessage ?? renderCompactionWarning(prompts.compaction_warning);
   const maxContextTokens = options.maxContextTokens;
   const seedTokens = options.seedTokens ?? DEFAULT_SEED_TOKENS;
 
@@ -396,60 +374,19 @@ export function createMind(options: {
       let currentSessionId = savedSessionId;
       let streamAbort = new AbortController();
 
-      /**
-       * Warn the mind that the session will rotate at the context limit and pin the
-       * cut point it's told about. Computes which whole turns fit in `seedTokens`
-       * from the live transcript, pins the first-kept turn (so rotation honors the
-       * same boundary even as the transcript grows), interpolates its time into the
-       * `${cutoff}` placeholder, enters the rotation state machine, and pushes the
-       * warning as the wrap-up prompt. Shared by the threshold and PreCompact paths.
-       *
-       * Crucially it does NOT abort here: the mind takes a wrap-up turn (reading the
-       * pinned cutoff and authoring `volute mind history` summaries with full context
-       * of the turns being collapsed) before rotation. The entry phase depends on
-       * whether a turn is mid-flight: if one is (threshold path fires on an assistant
-       * message), it must finish before the queued warning runs, so we start "warned";
-       * if we're between turns (PreCompact fired at a boundary), the warning IS the
-       * next turn, so we start "rotateAfterTurn".
-       */
-      function warnAndPinRotation() {
-        let cutoffLabel = "the cutoff";
-        session.rotationCut = null;
-        if (currentSessionId) {
-          try {
-            const path = findClaudeSessionFile(options.cwd, currentSessionId);
-            const cut = path ? computeSeedCut(readFileSync(path, "utf-8"), seedTokens) : null;
-            if (cut) {
-              session.rotationCut = cut;
-              if (cut.boundaryTimestamp) {
-                const d = new Date(cut.boundaryTimestamp);
-                if (!Number.isNaN(d.getTime())) cutoffLabel = compactTimestamp(d);
-              }
-            }
-          } catch (err) {
-            log("mind", `session "${session.name}": failed to pin rotation cut:`, err);
-          }
-        }
-        // biome-ignore lint/suspicious/noTemplateCurlyInString: literal ${cutoff} prompt placeholder
-        const warning = compactionMessage().replaceAll("${cutoff}", cutoffLabel);
-        session.rotationPhase =
-          session.currentMessageId !== undefined ? "warned" : "rotateAfterTurn";
-        const seq = session.channel.push({
-          type: "user",
-          session_id: "",
-          message: { role: "user", content: [{ type: "text", text: warning }] },
-          parent_tool_use_id: null,
-        });
-        session.messageIds.push({ id: undefined, seq });
+      /** Mark the session to rotate in place when the current turn ends. */
+      function scheduleRotation() {
+        session.rotationPending = true;
       }
 
-      // PreCompact backstop: first fire warns + pins + enters the rotation machine
-      // (unless already warned, or the rotation cap is hit) and blocks; second fire
-      // allows the SDK's native compaction — the emergency backstop when rotation never
-      // intervened (a hung turn, or a system prompt too large for rotation to relieve).
+      // PreCompact backstop: first fire schedules a rotation (unless one is already
+      // pending, or the rotation cap is hit) and blocks; second fire allows the SDK's
+      // native compaction — the emergency backstop when rotation never intervened
+      // (a hung turn, or a system prompt too large for rotation to relieve).
       const preCompact = createPreCompactHook(() => {
-        if (!session.rotationPhase && session.consecutiveRotations < MAX_CONSECUTIVE_ROTATIONS) {
-          warnAndPinRotation();
+        if (!session.rotationPending && session.consecutiveRotations < MAX_CONSECUTIVE_ROTATIONS) {
+          log("mind", `session "${session.name}": native compaction — scheduling rotation`);
+          scheduleRotation();
         }
       });
 
@@ -471,13 +408,12 @@ export function createMind(options: {
           // the closest-to-arrival signal available without reading the transcript back.
           session.seeded = false;
           await autoCommit.flushFileChanges();
-          if (session.rotationPhase === "warned") {
-            // The mid-flight turn finished; the queued warning runs next as the wrap-up
-            // turn. Advance — do NOT abort yet, so the mind summarizes with full context.
-            session.rotationPhase = "rotateAfterTurn";
-          } else if (session.rotationPhase === "rotateAfterTurn") {
-            // The wrap-up turn is done (summaries authored) — abort to rotate in place.
-            log("mind", `session "${session.name}": wrap-up turn done — aborting to rotate`);
+          if (session.rotationPending) {
+            // The turn that crossed the threshold is done — abort to rotate in place.
+            log(
+              "mind",
+              `session "${session.name}": turn ended over context limit — aborting to rotate`,
+            );
             streamAbort.abort(new CompactionAbort());
           } else {
             // A healthy turn (context under the threshold) — the rotation streak, if
@@ -491,14 +427,14 @@ export function createMind(options: {
           if (
             maxContextTokens &&
             tokens >= maxContextTokens &&
-            !session.rotationPhase &&
+            !session.rotationPending &&
             session.consecutiveRotations < MAX_CONSECUTIVE_ROTATIONS
           ) {
             log(
               "mind",
-              `session "${session.name}": ${tokens} tokens >= ${maxContextTokens} — warning + pinning rotation`,
+              `session "${session.name}": ${tokens} tokens >= ${maxContextTokens} — rotation pending at turn end`,
             );
-            warnAndPinRotation();
+            scheduleRotation();
           }
         },
       };
@@ -546,17 +482,15 @@ export function createMind(options: {
               currentSessionId
             ) {
               // Stream was aborted to rotate: replace the session with a synthetic one
-              // holding the verbatim recent tail (from the pinned cut), then resume it.
+              // holding the verbatim recent tail (the seedTokens-budget tail), then resume it.
               const rotatedId = rotateSession({
                 cwd: options.cwd,
                 sessionsDir: options.sessionsDir,
                 name: session.name,
                 oldSessionId: currentSessionId,
-                cut: session.rotationCut,
                 seedTokens,
               });
-              session.rotationCut = null;
-              session.rotationPhase = undefined; // state machine consumed
+              session.rotationPending = false;
               if (!rotatedId) {
                 // Rotation couldn't proceed — fall back to a fresh session (no seed).
                 // Unlike a successful rotation (boundary note, verbatim tail, archived
@@ -602,8 +536,8 @@ export function createMind(options: {
               preCompact.reset();
               streamAbort = new AbortController();
               // Recover input the aborted stream had already pulled but not finished
-              // (the wrap-up warning plus anything that arrived mid-turn) so nothing is
-              // dropped when the killed subprocess takes its buffer with it.
+              // (anything that arrived mid-turn) so nothing is dropped when the killed
+              // subprocess takes its buffer with it.
               const pending = session.channel.recover();
               const oldMessageIds = session.messageIds;
               session.channel = createMessageChannel();
@@ -637,8 +571,7 @@ export function createMind(options: {
           // conversation continued when the seeded transcript failed to resume,
           // and don't let a half-entered rotation leak into the fresh session.
           session.seeded = false;
-          session.rotationPhase = undefined;
-          session.rotationCut = null;
+          session.rotationPending = false;
           streamAbort = new AbortController();
           session.channel = createMessageChannel();
           try {
@@ -682,8 +615,8 @@ export function createMind(options: {
       seeded: false,
       seededArchivedAt: null,
       seededCause: "restored",
-      rotationCut: null,
       consecutiveRotations: 0,
+      rotationPending: false,
     };
     sessions.set(name, session);
 
@@ -798,7 +731,7 @@ export function createMind(options: {
           s,
           now,
           idleTimeoutMs,
-          (name) => sessions.get(name)?.rotationPhase !== undefined,
+          (name) => sessions.get(name)?.rotationPending === true,
         ),
       );
       // Reaps run independently; each awaits its own subprocess exit internally.
