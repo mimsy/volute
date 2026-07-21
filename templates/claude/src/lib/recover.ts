@@ -43,12 +43,18 @@ export function markRecovered(msg: SDKUserMessage): SDKUserMessage {
  * below) rather than throwing — safe because `seq` is now globally unique
  * (message-channel.ts), so this can only happen if `oldMessageIds` itself was
  * incomplete, and losing routing info for one message beats losing the message.
+ *
+ * `existingMessageIds` has no default — deliberately. `= []` would let a call site
+ * omit it and get back a fresh array to assign over, which is exactly the #764
+ * clobber: silently discarding whatever the target array already held. Making it
+ * required turns that omission into a compile error at every call site, including
+ * ones written later.
  */
 export function relockstepMessageIds(
   pending: ChannelEntry[],
   oldMessageIds: MessageIdEntry[],
   push: (msg: SDKUserMessage) => number,
-  existingMessageIds: MessageIdEntry[] = [],
+  existingMessageIds: MessageIdEntry[],
   transform: (msg: SDKUserMessage) => SDKUserMessage = markRecovered,
 ): MessageIdEntry[] {
   const idBySeq = new Map(oldMessageIds.map((e) => [e.seq, e.id]));

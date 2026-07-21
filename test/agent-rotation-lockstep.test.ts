@@ -173,7 +173,7 @@ describe("claude template: relockstepMessageIds", () => {
       return pushedMsgs.length;
     };
 
-    relockstepMessageIds(pending, oldMessageIds, push); // no transform arg — uses markRecovered
+    relockstepMessageIds(pending, oldMessageIds, push, []); // no transform arg — uses markRecovered
 
     assert.equal(pushedMsgs.length, 2);
     for (const msg of pushedMsgs) {
