@@ -39,14 +39,14 @@
     "packages/extensions/notes/skills/",
     "packages/extensions/pages/dist/ui/",
     "packages/extensions/pages/skills/",
-    "packages/extensions/plan/dist/ui/",
-    "packages/extensions/plan/skills/"
+    "packages/extensions/intentions/dist/ui/",
+    "packages/extensions/intentions/skills/"
   ],
   "scripts": {
     "dev": "tsx src/cli.ts",
     "build": "npm run build:ext && tsup && cp -r skills dist/skills && npm run build:web",
     "ext-theme": "npm run build:ext-theme --workspace=packages/ui && cp packages/ui/dist/ext-theme.css packages/web/public/ext-theme.css",
-    "build:ext": "npm run ext-theme && npm run build:ui --workspace=packages/extensions/notes && npm run build:ui --workspace=packages/extensions/pages && npm run build:ui --workspace=packages/extensions/plan",
+    "build:ext": "npm run ext-theme && npm run build:ui --workspace=packages/extensions/notes && npm run build:ui --workspace=packages/extensions/pages && npm run build:ui --workspace=packages/extensions/intentions",
     "build:web": "npm run ext-theme && npm run build:ui --workspace=packages/web",
     "dev:web": "npm run ext-theme && npm run dev --workspace=packages/web",
     "test": "node --import tsx --import ./test/setup.ts --test --test-force-exit --test-concurrency=4 $(find test -name '*.test.ts' ! -name 'daemon-e2e.test.ts' | sort)",

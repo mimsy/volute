@@ -495,7 +495,7 @@ async function discoverBuiltinExtensions(disabledIds: Set<string>): Promise<Exte
   const builtins: { id: string; load: () => Promise<ExtensionManifest> }[] = [
     { id: "notes", load: async () => (await import("@volute/notes")).default },
     { id: "pages", load: async () => (await import("@volute/pages")).default },
-    { id: "plan", load: async () => (await import("@volute/plan")).default },
+    { id: "intentions", load: async () => (await import("@volute/intentions")).default },
   ];
   const results: ExtensionManifest[] = [];
   for (const { id, load } of builtins) {

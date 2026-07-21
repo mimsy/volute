@@ -53,7 +53,7 @@ test("built-in extensions load from the tsup bundle", async () => {
       ids.add(manifest.id);
     }
 
-    assert.deepEqual([...ids].sort(), ["notes", "pages", "plan"]);
+    assert.deepEqual([...ids].sort(), ["intentions", "notes", "pages"]);
   } finally {
     rmSync(outDir, { recursive: true, force: true });
   }
