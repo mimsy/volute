@@ -116,10 +116,12 @@ Unified `users` table with `user_type` discrimination (`"human"` or `"mind"`) st
 
 Templates have a `.init/` directory containing identity and config files. On `volute mind create`, these are copied into `home/` and `.init/` is deleted. On `volute mind upgrade`, `.init/` files are excluded so identity files are never overwritten.
 
-- **`_base/.init/`**: SOUL.md, MEMORY.md, memory/journal/, .config/prompts.json, .local/hooks/startup-context.ts, .local/hooks/wake-context.sh, .local/hooks/pre-prompt/ (session-activity.ts, notices.ts), .local/bin/volute
-- **`claude/.init/`**: CLAUDE.md, .claude/settings.json, .config/routes.json
-- **`pi/.init/`**: MINDS.md, .config/routes.json
-- **`codex/.init/`**: AGENTS.md, .config/routes.json
+- **`_base/.init/`**: SOUL.md, MEMORY.md, memory/journal/, .config/prompts.json, .config/routes.json, .local/hooks/startup-context.ts, .local/hooks/wake-context.sh, .local/hooks/pre-prompt/ (session-activity.ts, notices.ts), .local/bin/volute
+- **`claude/.init/`**: CLAUDE.md, .claude/settings.json
+- **`pi/.init/`**: MINDS.md
+- **`codex/.init/`**: AGENTS.md
+
+`.init/` layers like the rest of the template — `_base` first, then the template dir overlaid on top — so a template that needs its own version of a `_base/.init/` file can ship one and it wins. Files carrying `{{name}}` must be listed in the manifest's `substitute` under their **composed** path (`.init/...`, not the `home/...` path they land at); substitution runs before `applyInitFiles()` overlays `.init/` onto `home/`.
 
 ### Web dashboard
 

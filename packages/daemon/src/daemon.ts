@@ -155,6 +155,16 @@ export async function startDaemon(opts: {
     log.warn("session→thread config migration failed", log.errorData(err));
   }
 
+  // Substitute the leftover `{{name}}` placeholder in each mind's routes.json —
+  // template .init/ files shipped it unsubstituted, leaving every mind with a
+  // channel batch trigger ("@{{name}}") that can never match. Non-fatal per mind.
+  try {
+    const { migrateNamePlaceholders } = await import("./lib/mind/migrate-name-placeholder.js");
+    await migrateNamePlaceholders();
+  } catch (err) {
+    log.warn("{{name}} placeholder migration failed", log.errorData(err));
+  }
+
   // Initialize sandbox runtime for mind process isolation
   const { initSandbox } = await import("./lib/mind/sandbox.js");
   await initSandbox();
