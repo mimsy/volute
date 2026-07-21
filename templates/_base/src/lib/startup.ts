@@ -40,7 +40,6 @@ export type EffortLevel = "low" | "medium" | "high" | "xhigh" | "max";
 export type MindConfig = {
   model?: string;
   logLevel?: "error" | "warn" | "info" | "debug";
-  compactionMessage?: string;
   compaction?: { maxContextTokens?: number };
   /** Idle minutes before a session's SDK subprocess is reaped. 0 disables. Default 30. */
   sessionIdleMinutes?: number;
@@ -101,21 +100,6 @@ export function formatTokens(tokens: number): string {
 /** Current MEMORY.md size as a "~Nk tokens" label, for prompt substitution. */
 export function memorySizeLabel(): string {
   return formatTokens(estimateTokens(loadFile(resolve("home/MEMORY.md")).length));
-}
-
-/**
- * Render the compaction warning for sending: substitute ${date} and
- * ${memory_size} with current values. Called per send — the date rolls over
- * and MEMORY.md changes as the mind edits it.
- */
-export function renderCompactionWarning(template: string): string {
-  return (
-    template
-      // biome-ignore lint/suspicious/noTemplateCurlyInString: literal ${date} placeholder
-      .replaceAll("${date}", new Date().toLocaleDateString("en-CA"))
-      // biome-ignore lint/suspicious/noTemplateCurlyInString: literal ${memory_size} placeholder
-      .replaceAll("${memory_size}", memorySizeLabel())
-  );
 }
 
 function headAtLineBoundary(text: string, maxChars: number): string {
@@ -251,7 +235,6 @@ export async function getStartupContext(): Promise<string | null> {
 }
 
 export type MindPrompts = {
-  compaction_warning: string;
   compaction_instructions: string;
   reply_instructions: string;
   event_instructions: string;
@@ -264,9 +247,6 @@ export type MindPrompts = {
  * (the copy the Prompt Library UI edits); test/prompts.test.ts fails if they drift.
  */
 export const DEFAULT_PROMPTS: MindPrompts = {
-  compaction_warning:
-    // biome-ignore lint/suspicious/noTemplateCurlyInString: literal ${cutoff}/${date}/${memory_size} prompt template
-    "Context limit approaching — this session will rotate shortly. Turns before ${cutoff} will be collapsed to their summaries; turns from ${cutoff} on are kept verbatim in the continued session, so there's no need to re-describe them.\n\nFor the turns that will collapse, make sure they read the way you'd want: `volute mind history --provisional` shows the provisional summaries, and `volute mind history --write --turn <id> --text \"...\"` replaces any with your own account. Also save anything important to your files (memory/journal/${date}.md, or a memory/ file). Provisional summaries are kept if you write nothing — nothing blocks on this.\n\nYour MEMORY.md is currently ${memory_size}. It is loaded into every request, so consolidate rather than append — distill detail into memory/ files and keep MEMORY.md lean (see the memory skill).",
   compaction_instructions:
     "Preserve your sense of who you are, what matters to you, what happened in this conversation, and the threads of thought and connection you'd want to return to.",
   // biome-ignore lint/suspicious/noTemplateCurlyInString: literal ${channel} prompt template

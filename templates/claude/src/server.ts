@@ -33,7 +33,6 @@ const mind = createMind({
   thinking: config.thinking,
   effort: config.effort,
   sessionsDir,
-  compactionMessage: config.compactionMessage,
   maxContextTokens: config.compaction?.maxContextTokens,
   sessionIdleMinutes: config.sessionIdleMinutes,
   seedTokens: config.continuity?.seedTokens,

@@ -21,7 +21,6 @@ export const PROMPT_KEYS = [
   "upgrade_message",
   "split_message",
   "farewell_message",
-  "compaction_warning",
   "compaction_instructions",
   "reply_instructions",
   "event_instructions",
@@ -121,13 +120,6 @@ export const PROMPT_DEFAULTS: Record<PromptKey, PromptMeta> = {
     description: "Sent to a variant for its final turn before a merge",
     variables: ["parent", "path"],
     category: "system",
-  },
-  compaction_warning: {
-    content: `Context limit approaching — this session will rotate shortly. Turns before \${cutoff} will be collapsed to their summaries; turns from \${cutoff} on are kept verbatim in the continued session, so there's no need to re-describe them.\n\nFor the turns that will collapse, make sure they read the way you'd want: \`volute mind history --provisional\` shows the provisional summaries, and \`volute mind history --write --turn <id> --text "..."\` replaces any with your own account. Also save anything important to your files (memory/journal/\${date}.md, or a memory/ file). Provisional summaries are kept if you write nothing — nothing blocks on this.\n\nYour MEMORY.md is currently \${memory_size}. It is loaded into every request, so consolidate rather than append — distill detail into memory/ files and keep MEMORY.md lean (see the memory skill).`,
-    description:
-      "Pre-rotation warning: which turns collapse (before the cutoff) vs survive verbatim",
-    variables: ["cutoff", "date", "memory_size"],
-    category: "mind",
   },
   compaction_instructions: {
     content:

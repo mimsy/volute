@@ -27,7 +27,6 @@ describe("prompts library", () => {
 
   it("PROMPT_KEYS includes all expected keys", () => {
     assert.ok(PROMPT_KEYS.includes("seed_soul"));
-    assert.ok(PROMPT_KEYS.includes("compaction_warning"));
     assert.ok(PROMPT_KEYS.includes("compaction_instructions"));
     assert.ok(PROMPT_KEYS.includes("reply_instructions"));
     assert.ok(PROMPT_KEYS.includes("event_instructions"));
@@ -79,18 +78,6 @@ describe("prompts library", () => {
       );
     }
     assert.ok(compared > 0, "expected to compare at least one shared prompt");
-  });
-
-  it("compaction_warning states the memory cost and teaches consolidation, not appending (#569)", () => {
-    // Compaction is when the memory tax bites; the warning must carry the current
-    // MEMORY.md size and point away from append-forever growth.
-    const { content, variables } = PROMPT_DEFAULTS.compaction_warning;
-    // biome-ignore lint/suspicious/noTemplateCurlyInString: literal ${memory_size} in prompt
-    assert.ok(content.includes("${memory_size}"));
-    assert.ok(variables.includes("memory_size"));
-    assert.match(content, /consolidate rather than append/);
-    // The old text told minds to save things *to* MEMORY.md — the backwards direction.
-    assert.ok(!content.includes("(MEMORY.md"));
   });
 
   it("stamped prompts.json matches the template defaults minds fall back to", () => {
@@ -151,9 +138,9 @@ describe("prompts library", () => {
   });
 
   it("getPrompt preserves unmatched variables", async () => {
-    const content = await getPrompt("compaction_warning");
-    // biome-ignore lint/suspicious/noTemplateCurlyInString: testing literal ${date} in prompt
-    assert.ok(content.includes("${date}"));
+    const content = await getPrompt("reply_instructions");
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: testing literal ${channel} in prompt
+    assert.ok(content.includes("${channel}"));
   });
 
   it("getPrompt returns empty string for invalid key", async () => {
@@ -179,24 +166,23 @@ describe("prompts library", () => {
     assert.equal(result, null);
   });
 
-  it("getMindPromptDefaults returns 5 mind-category prompts", async () => {
+  it("getMindPromptDefaults returns 4 mind-category prompts", async () => {
     const defaults = await getMindPromptDefaults();
-    assert.ok("compaction_warning" in defaults);
     assert.ok("compaction_instructions" in defaults);
     assert.ok("reply_instructions" in defaults);
     assert.ok("event_instructions" in defaults);
     assert.ok("channel_invite" in defaults);
-    assert.equal(Object.keys(defaults).length, 5);
+    assert.equal(Object.keys(defaults).length, 4);
   });
 
   it("getMindPromptDefaults uses DB overrides", async () => {
     const db = await getDb();
     await db
       .insert(systemPrompts)
-      .values({ key: "compaction_warning", content: "Custom compaction" });
+      .values({ key: "compaction_instructions", content: "Custom compaction" });
 
     const defaults = await getMindPromptDefaults();
-    assert.equal(defaults.compaction_warning, "Custom compaction");
+    assert.equal(defaults.compaction_instructions, "Custom compaction");
     // Others should still be defaults
     assert.equal(defaults.reply_instructions, PROMPT_DEFAULTS.reply_instructions.content);
   });

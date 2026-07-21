@@ -17,7 +17,6 @@ import {
   seedSession,
   writeRotationArchivePointer,
 } from "../templates/_base/src/lib/session-seed.js";
-import { DEFAULT_PROMPTS } from "../templates/_base/src/lib/startup.js";
 
 // --- Transcript line builders (approximate real SDK jsonl shapes) ---
 
@@ -567,26 +566,5 @@ describe("rotateSession", () => {
       }),
       null,
     );
-  });
-});
-
-// --- ${cutoff} interpolation + graceful degradation ---
-
-describe("compaction warning ${cutoff} mechanics", () => {
-  it("the default warning carries the ${cutoff} placeholder (twice) and ${date}", () => {
-    const w = DEFAULT_PROMPTS.compaction_warning;
-    assert.equal(w.match(/\$\{cutoff\}/g)?.length, 2);
-    assert.ok(w.includes("${date}"));
-  });
-
-  it("replaceAll fills every ${cutoff} with the cut time", () => {
-    const filled = DEFAULT_PROMPTS.compaction_warning.replaceAll("${cutoff}", "2026-07-19 12:00");
-    assert.doesNotMatch(filled, /\$\{cutoff\}/);
-    assert.ok(filled.includes("2026-07-19 12:00"));
-  });
-
-  it("degrades gracefully: a custom warning without ${cutoff} is left unchanged", () => {
-    const custom = "Heads up — the session will rotate soon. Save your files.";
-    assert.equal(custom.replaceAll("${cutoff}", "2026-07-19 12:00"), custom);
   });
 });

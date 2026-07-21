@@ -97,7 +97,6 @@ export function createMind(options: {
   thinking?: ThinkingConfig;
   effort?: EffortLevel;
   sessionsDir: string;
-  compactionMessage?: string;
   maxContextTokens?: number;
   subagents?: Record<string, SubagentConfig>;
   onIdentityReload?: () => Promise<void>;
