@@ -21,12 +21,12 @@ export const SEEDED_SESSION_NOTE_BASE =
   "Note: this session continues from your previous session's transcript (restored after archival). The conversation above happened before the break; a fresh session begins here.";
 
 /**
- * Note for the "rotation" cause. No gap clause (the break is instantaneous — the
- * context limit, not a sleep). Points at `volute mind history` for the collapsed
- * turns, whose summaries the mind was asked to author at warn time.
+ * Note for the "rotation" cause. One line, low-salience by design: rotation is
+ * meant to be near-invisible — no gap clause (the break is instantaneous), no
+ * task, just an honest pointer to where the collapsed turns' summaries live.
  */
 export const ROTATED_SESSION_NOTE =
-  "Note: this session was rotated in place at the context limit. The turns above are your most recent, kept verbatim; earlier turns have been collapsed — your summaries of them are in your history (`volute mind history`). A fresh session continues from here.";
+  "Note: this session was consolidated at the context limit — the turns above are kept verbatim; summaries of older turns are in your history (`volute mind history`).";
 
 /**
  * Parse an archive-pointer timestamp into epoch millis, or null if it doesn't

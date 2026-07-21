@@ -670,7 +670,7 @@ describe("rotatePiSession", () => {
 describe("rotation boundary note", () => {
   it("uses the rotation wording (context limit, points at history) not the restored one", () => {
     const note = buildSeededNote({ cause: "rotation" });
-    assert.match(note, /rotated in place at the context limit/);
+    assert.match(note, /consolidated at the context limit/);
     assert.match(note, /volute mind history/);
     assert.doesNotMatch(note, /restored after archival/);
   });

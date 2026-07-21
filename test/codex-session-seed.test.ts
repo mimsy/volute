@@ -725,7 +725,7 @@ describe("rotateCodexSession", () => {
 describe("buildSeededNote — cause", () => {
   it("rotation cause yields the rotation note (no gap clause, points at history)", () => {
     const note = buildSeededNote({ cause: "rotation" });
-    assert.match(note, /rotated in place at the context limit/);
+    assert.match(note, /consolidated at the context limit/);
     assert.match(note, /volute mind history/);
     assert.doesNotMatch(note, /restored after archival/);
   });

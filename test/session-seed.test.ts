@@ -352,8 +352,13 @@ describe("buildSeededNote / parseArchiveTimestamp", () => {
     const note = buildSeededNote({ cause: "rotation", archivedAtMs: Date.UTC(2026, 6, 18, 12, 0) });
     assert.equal(note, ROTATED_SESSION_NOTE);
     assert.doesNotMatch(note, /the break lasted/);
-    assert.match(note, /rotated in place at the context limit/);
     assert.match(note, /volute mind history/);
+  });
+
+  it("rotation note is a single line and points at history", () => {
+    assert.ok(!ROTATED_SESSION_NOTE.includes("\n"), "must be one line");
+    assert.ok(ROTATED_SESSION_NOTE.includes("volute mind history"));
+    assert.ok(ROTATED_SESSION_NOTE.length < 300, "keep it short");
   });
 });
 
