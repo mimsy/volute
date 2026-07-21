@@ -137,7 +137,10 @@ export const PROMPT_DEFAULTS: Record<PromptKey, PromptMeta> = {
     category: "mind",
   },
   reply_instructions: {
-    content: 'To reply to this message, use: volute chat send ${channel} "your message"',
+    // Quoted for the same reason as channel_invite: `${channel}` is `#garden` for any
+    // Volute channel, and unquoted that is a shell comment. This hint is injected on the
+    // first message of every session, so it is the command minds copy most often.
+    content: 'To reply to this message, use: volute chat send "${channel}" "your message"',
     description: "First-message reply hint injected via hook",
     variables: ["channel"],
     category: "mind",
@@ -151,7 +154,11 @@ export const PROMPT_DEFAULTS: Record<PromptKey, PromptMeta> = {
     category: "mind",
   },
   channel_invite: {
-    content: `[New channel: \${channel}]\n\${heldLine}\nSender: \${sender}\n\${details}Preview: \${preview}\n\nTo read what's being held: volute chat channels peek \${channel}\nTo start hearing this channel: volute chat channels accept \${channel} — routes it and delivers the \${limit} most recent held messages; older ones stay readable via peek.\nTo stop hearing about it: volute chat channels decline \${channel}`,
+    // Channel slugs are quoted in every command below because they routinely contain
+    // characters a shell eats — `#` starts a comment, so an unquoted `#garden` is stripped
+    // before the CLI ever sees it and the command fails with "Missing required argument".
+    // A mind pastes these verbatim, so they have to work verbatim.
+    content: `[New channel: \${channel}]\n\${heldLine}\nSender: \${sender}\n\${details}Preview: \${preview}\n\nTo read what's being held: volute chat channels peek "\${channel}"\nTo start hearing this channel: volute chat channels accept "\${channel}" — routes it and delivers the \${limit} most recent held messages; older ones stay readable via peek.\nTo stop hearing about it: volute chat channels decline "\${channel}"`,
     description:
       "Notification sent to a mind when a message arrives on an unrouted (gated) channel",
     variables: ["channel", "heldLine", "sender", "details", "preview", "limit"],

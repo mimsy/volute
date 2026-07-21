@@ -50,7 +50,7 @@ import { getTokenBudget } from "../../lib/daemon/token-budget.js";
 import { handleMindEvent, setNoticeDrainWatermark } from "../../lib/daemon/turn-lifecycle.js";
 import { getActiveTurnId } from "../../lib/daemon/turn-tracker.js";
 import { getDb } from "../../lib/db.js";
-import { getDeliveryManager } from "../../lib/delivery/delivery-manager.js";
+import { getDeliveryManager, UnknownChannelError } from "../../lib/delivery/delivery-manager.js";
 import { broadcast } from "../../lib/events/activity-events.js";
 import {
   getConversation,
@@ -2399,6 +2399,8 @@ const app = new Hono<AuthEnv>()
       if (err instanceof Error && err.message.includes("not initialized")) {
         return c.json({ error: "Delivery manager not available" }, 503);
       }
+      // A name that matches no real channel is caller error, not a server fault.
+      if (err instanceof UnknownChannelError) return c.json({ error: err.message }, 400);
       log.error(`failed to decline channel ${channel} for ${name}`, log.errorData(err));
       return c.json({ error: "Failed to decline channel" }, 500);
     }
@@ -2422,6 +2424,8 @@ const app = new Hono<AuthEnv>()
       if (err instanceof Error && err.message.includes("malformed")) {
         return c.json({ error: err.message }, 409);
       }
+      // A name that matches no real channel is caller error, not a server fault.
+      if (err instanceof UnknownChannelError) return c.json({ error: err.message }, 400);
       log.error(`failed to accept channel ${channel} for ${name}`, log.errorData(err));
       return c.json({ error: "Failed to accept channel" }, 500);
     }

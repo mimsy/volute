@@ -205,7 +205,7 @@ const cmd = command({
   },
   examples: [
     'volute chat send @alice "hello"',
-    'volute chat send #general "announcement"',
+    'volute chat send "#general" "announcement"',
     "echo hi | volute chat send @alice",
   ],
   async run({ args, flags }) {
@@ -222,7 +222,7 @@ const cmd = command({
       console.error("");
       console.error("Examples:");
       console.error('  volute chat send @other-mind "hello"');
-      console.error('  volute chat send #animal-chat "hello everyone"');
+      console.error('  volute chat send "#animal-chat" "hello everyone"');
       console.error('  volute chat send @mind "check this out" --image photo.png');
       console.error("  volute chat send @mind --image photo.png");
       console.error('  volute chat send @mind "check this out" --file notes.txt');
@@ -470,7 +470,7 @@ const cmd = command({
         console.error(
           `Mind "${parsed.identifier}" not found.\n` +
             `  To send a DM:      volute chat send @${parsed.identifier} "..."\n` +
-            `  To send to channel: volute chat send #${parsed.identifier} "..."`,
+            `  To send to channel: volute chat send "#${parsed.identifier}" "..."`,
         );
         process.exit(1);
       }

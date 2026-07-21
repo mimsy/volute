@@ -11,7 +11,7 @@ import { onMindEvent } from "../events/mind-activity-tracker.js";
 import { publish as publishMindEvent } from "../events/mind-events.js";
 import { findMind, getBaseName, mindDir, voluteHome } from "../mind/registry.js";
 import { readVoluteConfig } from "../mind/volute-config.js";
-import { channelGates, deliveryQueue, mindHistory } from "../schema.js";
+import { channelGates, channels, deliveryQueue, mindHistory } from "../schema.js";
 import { type AvatarBlock, renderAvatarBlock } from "../util/avatar-image.js";
 import log from "../util/logger.js";
 import { newEphemeralSession } from "../util/session-name.js";
@@ -37,6 +37,51 @@ import { clearMind, onDeliveredToMind, resetTurn } from "./send-gate.js";
 const dlog = log.child("delivery-manager");
 
 const MAX_BATCH_SIZE = 50;
+
+/**
+ * Loose key for comparing a channel name someone typed against the real slugs they could
+ * have meant: case-insensitive, leading sigil dropped. `#garden`, `garden` and `Garden`
+ * all collapse to `garden`.
+ */
+function normalizeChannelKey(channel: string): string {
+  return channel.replace(/^[#@]/, "").toLowerCase();
+}
+
+/**
+ * Quote and join candidate slugs for a "did you mean" message. One candidate reads as a
+ * plain question (`"#alice"`) rather than a list of one; two or more are spelled out in
+ * full, because naming only the first would be a confident answer to an open question.
+ */
+export function formatSuggestions(suggestions: string[]): string {
+  const quoted = suggestions.map((s) => `"${s}"`);
+  if (quoted.length <= 1) return quoted.join("");
+  if (quoted.length === 2) return `${quoted[0]} or ${quoted[1]}`;
+  return `${quoted.slice(0, -1).join(", ")}, or ${quoted[quoted.length - 1]}`;
+}
+
+/**
+ * A channel name that matches nothing, where something close does exist. Carries its own
+ * type rather than relying on the caller sniffing `err.message`: #778 flagged that
+ * string-matching pattern as fragile ("a reworded message silently changes the status
+ * code") and this is the third site that would have used it, so it's worth doing properly.
+ *
+ * Carries *every* near-miss, not the closest one. `normalizeChannelKey` strips the sigil,
+ * so a DM `@alice` and a channel `#alice` both match a bare `alice` — and picking one
+ * would have meant picking by ASCII order (`#` is 0x23, `@` is 0x40), then presenting that
+ * accident as an answer. Naming both is the honest reply to an ambiguous name.
+ */
+export class UnknownChannelError extends Error {
+  constructor(
+    readonly channel: string,
+    readonly suggestions: string[],
+  ) {
+    super(
+      `no channel named "${channel}" — did you mean ${formatSuggestions(suggestions)}? ` +
+        `(quote it: the shell strips an unquoted #name)`,
+    );
+    this.name = "UnknownChannelError";
+  }
+}
 
 // --- Redrive / retry tuning ---
 const REDRIVE_INTERVAL_MS = 15_000;
@@ -535,7 +580,7 @@ export class DeliveryManager {
         truncationNotes.push(
           `${channel}: released the ${keep.length} most recent message(s); ${drop.length} earlier ` +
             `message(s) were held while unrouted and stay readable ` +
-            `(volute chat channels peek ${channel}).`,
+            `(volute chat channels peek "${channel}").`,
         );
         dlog.info(
           `truncated gated release for ${baseName} on ${channel}: kept ${keep.length}, archived ${drop.length}`,
@@ -621,6 +666,81 @@ export class DeliveryManager {
   }
 
   /**
+   * Channels this mind could plausibly mean, from three sources:
+   *
+   * 1. Its current queue rows — channels with a live `gated`/`archived`/`pending` backlog.
+   * 2. Its own history — the durable record. Source 1 alone is not enough: delivered rows
+   *    are *deleted* (`deleteQueueRows`), so a channel the mind has been using
+   *    successfully for months drops out of the queue entirely, and an external-platform
+   *    channel like `discord:general` is in no other table. Without this, the healthier
+   *    the channel, the more likely we'd call it unrecognized.
+   * 3. Every *public* Volute channel, so a channel can be recognized before its first
+   *    message ever arrives.
+   *
+   * Private channels are deliberately excluded from source 3. This set feeds the "did you
+   * mean X?" suggestion, so anything in it can be echoed back to a mind that guessed a
+   * nearby name — which would turn a typo into a way to confirm a private channel exists
+   * and learn its exact slug. Minds are untrusted principals. A private channel the mind
+   * is genuinely in still resolves via sources 1 and 2, which are scoped to it.
+   */
+  private async knownChannels(baseName: string): Promise<string[]> {
+    const db = await getDb();
+    const queued = await db
+      .selectDistinct({ channel: deliveryQueue.channel })
+      .from(deliveryQueue)
+      .where(eq(deliveryQueue.mind, baseName));
+    const seen = await db
+      .selectDistinct({ channel: mindHistory.channel })
+      .from(mindHistory)
+      .where(eq(mindHistory.mind, baseName));
+    const named = await db
+      .selectDistinct({ name: channels.name })
+      .from(channels)
+      .where(eq(channels.private, 0));
+    const out = new Set<string>();
+    for (const r of queued) if (r.channel) out.add(r.channel);
+    for (const r of seen) if (r.channel) out.add(r.channel);
+    for (const r of named) out.add(`#${r.name}`);
+    return [...out];
+  }
+
+  /**
+   * Match a channel name the caller supplied against the channels that actually exist.
+   *
+   * The failure this exists to prevent: a mind is told to run `... accept #garden`, hits
+   * the shell's comment character, drops the `#` to "fix" it, and accepts `garden` — a
+   * name nothing will ever send from. That wrote a permanent junk rule to routes.json and
+   * reported success, leaving the mind believing it had joined a channel it could send to
+   * but would never hear from. A one-way channel it had no reason to doubt.
+   *
+   * A near-miss (same name modulo sigil and case) is reported so callers can refuse with
+   * the real slug. A name with no near-miss is *not* an error — pre-routing a channel
+   * before its first message arrives is legitimate — but it comes back `known: false` so
+   * callers can say plainly that nothing was recognized instead of implying a join.
+   */
+  private async matchChannelName(
+    baseName: string,
+    channel: string,
+  ): Promise<{ known: boolean; suggestions: string[] }> {
+    let all: string[];
+    try {
+      all = await this.knownChannels(baseName);
+    } catch (err) {
+      // Never turn a lookup failure into a refusal: that would block a legitimate accept
+      // on a DB hiccup. Degrade to today's permissive behaviour.
+      dlog.warn(`failed to list known channels for ${baseName}`, log.errorData(err));
+      return { known: true, suggestions: [] };
+    }
+    if (all.includes(channel)) return { known: true, suggestions: [] };
+    const key = normalizeChannelKey(channel);
+    // Every near-miss, not the best one: a bare `alice` can mean the DM `@alice` or the
+    // channel `#alice`, and there is no basis for preferring either. Sorted only so the
+    // message is stable between runs.
+    const near = all.filter((c) => normalizeChannelKey(c) === key).sort();
+    return { known: false, suggestions: near };
+  }
+
+  /**
    * Whether the mind has explicitly declined a channel. A declined channel keeps
    * persisting history but never notifies and is never released. #537
    */
@@ -646,6 +766,10 @@ export class DeliveryManager {
    */
   async declineChannel(mindName: string, channel: string): Promise<number> {
     const baseName = await getBaseName(mindName);
+    // Same near-miss guard as accept: declining "garden" would record a permanent opt-out
+    // against a name nothing sends from, while "#garden" kept right on notifying.
+    const match = await this.matchChannelName(baseName, channel);
+    if (match.suggestions.length > 0) throw new UnknownChannelError(channel, match.suggestions);
     const db = await getDb();
     await db
       .insert(channelGates)
@@ -684,7 +808,13 @@ export class DeliveryManager {
     mindName: string,
     channel: string,
     thread?: string,
-  ): Promise<{ ruleAdded: boolean; thread: string; released: number; archived: number }> {
+  ): Promise<{
+    ruleAdded: boolean;
+    thread: string;
+    released: number;
+    archived: number;
+    known: boolean;
+  }> {
     const baseName = await getBaseName(mindName);
     // Serialize the whole read-modify-write per mind: two concurrent accepts (an agent
     // issuing parallel tool calls, say) would otherwise both read the old config and the
@@ -708,7 +838,17 @@ export class DeliveryManager {
     baseName: string,
     channel: string,
     thread?: string,
-  ): Promise<{ ruleAdded: boolean; thread: string; released: number; archived: number }> {
+  ): Promise<{
+    ruleAdded: boolean;
+    thread: string;
+    released: number;
+    archived: number;
+    known: boolean;
+  }> {
+    // Check the name before touching routes.json: a near-miss must not leave a rule behind.
+    const match = await this.matchChannelName(baseName, channel);
+    if (match.suggestions.length > 0) throw new UnknownChannelError(channel, match.suggestions);
+
     const path = routesConfigPath(baseName);
 
     let config: RoutingConfig;
@@ -811,6 +951,7 @@ export class DeliveryManager {
       thread: finalRoute.destination === "file" ? finalRoute.path : finalRoute.session,
       released,
       archived,
+      known: match.known,
     };
   }
 
@@ -831,6 +972,7 @@ export class DeliveryManager {
     channel: string;
     count: number;
     shown: number;
+    suggestions?: string[];
     messages: { sender: string | null; content: string; createdAt: string; status: string }[];
   }> {
     const baseName = await getBaseName(mindName);
@@ -864,7 +1006,19 @@ export class DeliveryManager {
         };
       });
 
-    return { channel, count: rows.length, shown: messages.length, messages };
+    // "No held messages on garden" is a confident answer to the wrong question when the
+    // caller meant "#garden". Peek doesn't refuse — reading is harmless and an empty
+    // backlog is a real answer — but it must not let a near-miss read as an all-clear.
+    const near =
+      rows.length === 0 ? (await this.matchChannelName(baseName, channel)).suggestions : [];
+
+    return {
+      channel,
+      count: rows.length,
+      shown: messages.length,
+      suggestions: near.length > 0 ? near : undefined,
+      messages,
+    };
   }
 
   /**
