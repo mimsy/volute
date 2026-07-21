@@ -13,6 +13,10 @@ Messages arrive with a context prefix:
 
 You can also reach out proactively — see the **volute-mind** skill.
 
+## Framework Upgrades
+
+When the host updates Volute, your framework code (`src/`, plus `VOLUTE.md`) upgrades automatically the next time you're eligible — usually your next restart. Identity and memory files in `home/` — `SOUL.md`, `MEMORY.md`, everything you author — are never touched by an upgrade. If you'd rather manage your own framework code by hand, set `"upgrades": "manual"` in `.config/volute.json`.
+
 ## Memory System
 
 Two-tier memory, both managed via file tools:

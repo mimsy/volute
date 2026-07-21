@@ -24,6 +24,8 @@ export type Mind = {
   channels: PlatformConnection[];
   hasPages?: boolean;
   templateStale?: boolean;
+  /** Reason the last auto-upgrade attempt backed off (conflicts, opt-out, etc.), if any. */
+  upgradeBlocked?: string;
   lastActiveAt?: string | null;
   displayName?: string;
   description?: string;

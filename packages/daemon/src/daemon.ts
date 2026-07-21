@@ -386,16 +386,23 @@ export async function startDaemon(opts: {
     const { backfillTemplateHashes, notifyVersionUpdate, warnStaleTemplates } = await import(
       "./lib/version-notify.js"
     );
-    // Backfill first (measures on-disk hashes), then warn about stale minds.
-    backfillTemplateHashes()
-      .then(() => warnStaleTemplates())
+    // Notify first — a mind opted into auto-upgrade is told "it will be applied
+    // automatically in a few minutes", so that notice must go out before the pass
+    // below actually runs it, not after. Then backfill on-disk hashes, warn about
+    // stale minds, then run the serialized auto-upgrade pass over eligible ones.
+    notifyVersionUpdate()
       .catch((err) => {
-        log.warn("failed to check template staleness", log.errorData(err));
+        log.warn("failed to send version update notifications", log.errorData(err));
+      })
+      .then(() => backfillTemplateHashes())
+      .then(() => warnStaleTemplates())
+      .then(async () => {
+        const { runAutoUpgrades } = await import("./lib/daemon/auto-upgrade.js");
+        await runAutoUpgrades();
+      })
+      .catch((err) => {
+        log.warn("template staleness/auto-upgrade pass failed", log.errorData(err));
       });
-    // Fire-and-forget notification (non-blocking)
-    notifyVersionUpdate().catch((err) => {
-      log.warn("failed to send version update notifications", log.errorData(err));
-    });
   } catch (err) {
     log.warn("failed to initialize version notifications", log.errorData(err));
   }

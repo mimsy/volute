@@ -287,6 +287,12 @@ let isSystemActive = $derived(
                         use:tooltipAction={{ text: `Running an outdated template — run 'volute mind upgrade ${mind.name}'`, position: "right" }}
                       >outdated</span>
                     {/if}
+                    {#if mind.upgradeBlocked}
+                      <span
+                        class="upgrade-blocked-badge"
+                        use:tooltipAction={{ text: mind.upgradeBlocked, position: "right" }}
+                      >upgrade blocked</span>
+                    {/if}
                     {#if mindUnread > 0}
                       <span class="unread-dot"></span>
                     {/if}
@@ -641,6 +647,16 @@ let isSystemActive = $derived(
     border-radius: var(--radius);
     background: var(--yellow-bg);
     color: var(--yellow);
+    font-size: 10px;
+    font-weight: 500;
+    flex-shrink: 0;
+  }
+
+  .upgrade-blocked-badge {
+    padding: 1px 6px;
+    border-radius: var(--radius);
+    background: var(--red-bg);
+    color: var(--red);
     font-size: 10px;
     font-weight: 500;
     flex-shrink: 0;

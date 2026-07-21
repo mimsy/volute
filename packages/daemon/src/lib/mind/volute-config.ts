@@ -66,6 +66,8 @@ export type VoluteConfig = CognitionConfig & {
   sleep?: SleepConfig;
   echoText?: boolean;
   unescapeNewlines?: boolean;
+  /** Opt out of the post-startup auto-upgrade pass. Absent/"auto" → eligible. */
+  upgrades?: "auto" | "manual";
   [key: string]: unknown;
 };
 

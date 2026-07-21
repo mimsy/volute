@@ -38,6 +38,7 @@ import {
   recordNotice,
 } from "../../lib/chat/system-events.js";
 import { getSpiritName } from "../../lib/config/setup.js";
+import { getUpgradeBlocked } from "../../lib/daemon/auto-upgrade.js";
 import { getMindManager, MindStartupError } from "../../lib/daemon/mind-manager.js";
 // Lifecycle functions from mind-service.ts
 import {
@@ -1189,6 +1190,7 @@ const app = new Hono<AuthEnv>()
           ...mindStatus,
           hasPages,
           templateStale: isTemplateStale(entry),
+          upgradeBlocked: getUpgradeBlocked(entry.name)?.reason,
           lastActiveAt,
         };
       }),
@@ -1240,6 +1242,7 @@ const app = new Hono<AuthEnv>()
       variants: variantStatuses,
       hasPages,
       templateStale: isTemplateStale(entry),
+      upgradeBlocked: getUpgradeBlocked(name)?.reason,
       ...(notice && {
         lastNotice: {
           kind: notice.kind,

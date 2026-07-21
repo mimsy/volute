@@ -40,6 +40,7 @@ const cmd = command({
       stage?: string;
       created?: string;
       templateStale?: boolean;
+      upgradeBlocked?: string;
     }>;
 
     if (minds.length === 0) {
@@ -53,7 +54,10 @@ const cmd = command({
       const age = mind.created ? relativeAge(mind.created) : "";
       const ageLabel = age ? `  ${age} old` : "";
       const template = mind.templateStale ? "  [template: outdated]" : "";
-      console.log(`  ${mind.name}: ${status}${label}${ageLabel}${template}`);
+      const upgradeBlocked = mind.upgradeBlocked
+        ? `  [upgrade blocked: ${mind.upgradeBlocked}]`
+        : "";
+      console.log(`  ${mind.name}: ${status}${label}${ageLabel}${template}${upgradeBlocked}`);
     }
   },
 });
