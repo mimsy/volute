@@ -17,5 +17,11 @@ export function initDb(db: Database): void {
     CREATE INDEX IF NOT EXISTS idx_intentions_mind ON intentions(mind_name);
     CREATE INDEX IF NOT EXISTS idx_intentions_status ON intentions(status);
     CREATE INDEX IF NOT EXISTS idx_intentions_review ON intentions(review_at);
+
+    -- Small key/value store for one-time bootstrap markers (see spirit-schedule.ts).
+    CREATE TABLE IF NOT EXISTS meta (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
   `);
 }

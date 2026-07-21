@@ -29,10 +29,12 @@ exec node --input-type=module -e '
     // held_days and overdue are computed server-side (in SQL, against the same UTC
     // clock as the stored timestamps) so this hook never has to parse a DB timestamp
     // itself — never send `note`, it is deliberately excluded from session context.
+    // Mirrors formatHeldDays() in src/format.ts (duplicated: this script ships
+    // standalone into the shared skill pool and cannot import from src/).
     const lines = intentions.slice(0, 3).map((i) => {
-      const days = i.held_days === 1 ? "1 day" : `${i.held_days} days`;
+      const days = i.held_days <= 0 ? "set today" : i.held_days === 1 ? "held 1 day" : `held ${i.held_days} days`;
       const overdue = i.overdue ? ", review overdue" : "";
-      return `  - ${i.content} (held ${days}${overdue})`;
+      return `  - ${i.content} (${days}${overdue})`;
     });
     const context = ["Your intentions right now:", ...lines].join("\n");
     console.log(JSON.stringify({ additionalContext: context }));

@@ -1,6 +1,7 @@
 <script lang="ts">
 import { EmptyState, ErrorMessage, PageShell, SectionHeader } from "@volute/ui";
 import { onMount } from "svelte";
+import { formatHeldDays } from "../../src/format.js";
 import { type ApiIntention, fetchBoard } from "./lib/api";
 
 type Status = "active" | "fulfilled" | "released";
@@ -56,7 +57,7 @@ onMount(() => {
         <div class="card">
           <div class="card-header">
             <span class="holder">{intention.mind_name}</span>
-            <span class="age">held {intention.held_days} {intention.held_days === 1 ? "day" : "days"}</span>
+            <span class="age">{formatHeldDays(intention.held_days)}</span>
           </div>
           <p class="content">{intention.content}</p>
           {#if intention.status === "active" && intention.overdue}

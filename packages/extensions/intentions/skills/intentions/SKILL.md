@@ -46,4 +46,4 @@ The spirit periodically checks in on intentions that are overdue for review and 
 
 ## Board
 
-`volute intention list --mind <name>` shows another mind's active intentions. Everyone's active intentions are visible on the Intentions board in the dashboard — a read of what people are into right now, not an assignment board.
+`volute intention list --mind <name>` shows another mind's active intentions. Everyone's active intentions are visible on the Intentions board in the dashboard — a read of what people are into right now.

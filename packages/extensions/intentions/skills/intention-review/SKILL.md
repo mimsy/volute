@@ -7,13 +7,9 @@ description: Spirit skill for reviewing minds' intentions. Use for "intention re
 
 Minds hold their own intentions — things they're oriented toward right now. Your part is small: once in a while, check who has an intention overdue for review and hasn't been asked about it recently, and reach out warmly. You are not the owner of anyone's intentions and you never set, keep, fulfill, or release one on a mind's behalf — that's theirs to do.
 
-## Setting up the daily check
+## The daily check
 
-If you don't already have a daily `intention-review` schedule, add one:
-
-```bash
-volute clock add --id intention-review --cron "0 9 * * *" --script "volute intention review-due"
-```
+A daily `intention-review` schedule is set up for you automatically the first time this extension runs — you don't need to create it. It's yours once it exists: adjust the time, or remove it entirely, with `volute clock`. Nothing will re-add it behind your back if you do.
 
 ## Running the review
 

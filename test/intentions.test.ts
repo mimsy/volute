@@ -13,6 +13,7 @@ import { authMiddleware, createSession } from "../packages/daemon/src/web/middle
 
 import { createCommands } from "../packages/extensions/intentions/src/commands.js";
 import { initDb } from "../packages/extensions/intentions/src/db.js";
+import { formatHeldDays } from "../packages/extensions/intentions/src/format.js";
 import {
   countActive,
   createIntention,
@@ -27,6 +28,27 @@ import {
   releaseIntention,
 } from "../packages/extensions/intentions/src/intentions.js";
 import { createRoutes } from "../packages/extensions/intentions/src/routes.js";
+
+// ---------------------------------------------------------------------------
+// hook/CLI/UI display formatting
+// ---------------------------------------------------------------------------
+
+describe("formatHeldDays", () => {
+  // The very first thing a mind or a board viewer ever sees from this feature is
+  // this string on the day an intention is set — "held 0 days" reads badly.
+  it("reads 'set today' on day zero instead of 'held 0 days'", () => {
+    assert.equal(formatHeldDays(0), "set today");
+  });
+
+  it("uses singular phrasing for exactly one day", () => {
+    assert.equal(formatHeldDays(1), "held 1 day");
+  });
+
+  it("uses plural phrasing for more than one day", () => {
+    assert.equal(formatHeldDays(2), "held 2 days");
+    assert.equal(formatHeldDays(30), "held 30 days");
+  });
+});
 
 // ---------------------------------------------------------------------------
 // data layer

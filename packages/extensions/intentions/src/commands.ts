@@ -1,5 +1,6 @@
 import type { ExtensionCommand } from "@volute/extensions";
 
+import { formatHeldDays } from "./format.js";
 import {
   countActive,
   createIntention,
@@ -88,9 +89,8 @@ export function createCommands(): Record<string, ExtensionCommand> {
         if (intentions.length === 0) return { output: `No active intentions for ${target}.` };
 
         const lines = intentions.map((i) => {
-          const days = i.held_days === 1 ? "1 day" : `${i.held_days} days`;
           const overdue = i.overdue ? ", review overdue" : "";
-          return `  [${i.id}] ${i.content} (held ${days}${overdue})`;
+          return `  [${i.id}] ${i.content} (${formatHeldDays(i.held_days)}${overdue})`;
         });
         return { output: lines.join("\n") };
       },
@@ -199,7 +199,7 @@ export function createCommands(): Record<string, ExtensionCommand> {
         if (due.length === 0) return { output: "No intentions due for review." };
 
         const lines = due.map(
-          (i) => `  [${i.id}] ${i.mind_name}: ${i.content} (held ${i.held_days}d)`,
+          (i) => `  [${i.id}] ${i.mind_name}: ${i.content} (${formatHeldDays(i.held_days)})`,
         );
         return { output: lines.join("\n") };
       },

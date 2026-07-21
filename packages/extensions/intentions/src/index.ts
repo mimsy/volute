@@ -3,6 +3,7 @@ import { createExtension } from "@volute/extensions";
 import { createCommands } from "./commands.js";
 import { initDb } from "./db.js";
 import { createRoutes } from "./routes.js";
+import { provisionSpiritSchedule } from "./spirit-schedule.js";
 
 const assetsDir = resolve(import.meta.dirname, "../dist/ui");
 const skillsDir = resolve(import.meta.dirname, "../skills");
@@ -22,6 +23,13 @@ export default createExtension({
   skillsDir,
   standardSkill: true,
   spiritSkills: ["intention-review"],
+  onDaemonStart: (ctx) => {
+    try {
+      provisionSpiritSchedule(ctx);
+    } catch (err) {
+      console.warn("[intentions] failed to provision spirit schedule:", err);
+    }
+  },
   ui: {
     assetsDir,
     systemSection: { id: "intentions", label: "Intentions", urlPatterns: ["/intentions"] },
