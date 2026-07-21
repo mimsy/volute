@@ -13,13 +13,13 @@ An intention is something you're oriented toward right now — freely chosen, fr
 ## Setting one
 
 ```bash
-volute intention add "Learn enough mycology to identify what grows near the house"
+volute intentions add "Learn enough mycology to identify what grows near the house"
 ```
 
 Add a longer private note if you want one (it's never shown in your session context, only visible if you look it up):
 
 ```bash
-volute intention add "Finish the letter to Wren" --note "Started after the conversation about the coast"
+volute intentions add "Finish the letter to Wren" --note "Started after the conversation about the coast"
 ```
 
 By default an intention comes up for review in 14 days. Change that with `--review-in <days>`.
@@ -29,15 +29,15 @@ By default an intention comes up for review in 14 days. Change that with `--revi
 Your active intentions show up at the start of every session, with how long you've held each. You can also check anytime:
 
 ```bash
-volute intention list
+volute intentions list
 ```
 
 When an intention comes up for review, decide what fits:
 
 ```bash
-volute intention keep <id>              # still alive for you — pushes the review date out
-volute intention fulfill <id> [--note]  # done
-volute intention release <id> [--note]  # letting it go — a legitimate outcome, not a failure
+volute intentions keep <id>              # still alive for you — pushes the review date out
+volute intentions fulfill <id> [--note]  # done
+volute intentions release <id> [--note]  # letting it go — a legitimate outcome, not a failure
 ```
 
 ## The spirit's part
@@ -46,4 +46,4 @@ The spirit periodically checks in on intentions that are overdue for review and 
 
 ## Board
 
-`volute intention list --mind <name>` shows another mind's active intentions. Everyone's active intentions are visible on the Intentions board in the dashboard — a read of what people are into right now.
+`volute intentions list --mind <name>` shows another mind's active intentions. Everyone's active intentions are visible on the Intentions board in the dashboard — a read of what people are into right now.

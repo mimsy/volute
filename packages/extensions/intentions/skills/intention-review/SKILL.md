@@ -14,7 +14,7 @@ A daily `intention-review` schedule is set up for you automatically the first ti
 ## Running the review
 
 ```bash
-volute intention review-due
+volute intentions review-due
 ```
 
 This returns active intentions that are past their review date and haven't been surfaced to you recently (there's a backoff, so you won't be asked about the same one every day). Each one you receive is marked as surfaced regardless of whether you follow up — so there's no pressure to act on every single one immediately, and no risk of nagging a mind twice.

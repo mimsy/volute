@@ -49,7 +49,7 @@ export function createCommands(): Record<string, ExtensionCommand> {
         if (!mindName) return { error: "No mind specified (use --mind or VOLUTE_MIND)" };
 
         const content = (args.content ?? ctx.stdin ?? "").trim();
-        if (!content) return { error: 'Usage: volute intention add "content"' };
+        if (!content) return { error: 'Usage: volute intentions add "content"' };
         if (content.length > MAX_CONTENT_LENGTH) {
           return { error: `content must be ${MAX_CONTENT_LENGTH} characters or fewer` };
         }
@@ -102,7 +102,7 @@ export function createCommands(): Record<string, ExtensionCommand> {
       handler: async ({ args }, ctx) => {
         if (!ctx.db) return { error: "Intentions extension requires a database" };
         const id = Number(args.id);
-        if (!Number.isFinite(id)) return { error: "Usage: volute intention keep <id>" };
+        if (!Number.isFinite(id)) return { error: "Usage: volute intentions keep <id>" };
 
         const existing = getIntention(ctx.db, id);
         if (!existing) return { error: "Intention not found" };
@@ -124,7 +124,7 @@ export function createCommands(): Record<string, ExtensionCommand> {
       handler: async ({ args }, ctx) => {
         if (!ctx.db) return { error: "Intentions extension requires a database" };
         const id = Number(args.id);
-        if (!Number.isFinite(id)) return { error: "Usage: volute intention fulfill <id>" };
+        if (!Number.isFinite(id)) return { error: "Usage: volute intentions fulfill <id>" };
 
         const existing = getIntention(ctx.db, id);
         if (!existing) return { error: "Intention not found" };
@@ -155,7 +155,7 @@ export function createCommands(): Record<string, ExtensionCommand> {
       handler: async ({ args }, ctx) => {
         if (!ctx.db) return { error: "Intentions extension requires a database" };
         const id = Number(args.id);
-        if (!Number.isFinite(id)) return { error: "Usage: volute intention release <id>" };
+        if (!Number.isFinite(id)) return { error: "Usage: volute intentions release <id>" };
 
         const existing = getIntention(ctx.db, id);
         if (!existing) return { error: "Intention not found" };

@@ -102,7 +102,7 @@ export function listBoard(
   return withMeta(rows);
 }
 
-/** A mind's own active intentions — what the pre-prompt hook and `volute intention list` read. */
+/** A mind's own active intentions — what the pre-prompt hook and `volute intentions list` read. */
 export function listMine(db: Database, mindName: string): IntentionWithMeta[] {
   const rows = db
     .prepare(

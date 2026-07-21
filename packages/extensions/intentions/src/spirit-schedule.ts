@@ -69,7 +69,7 @@ export async function provisionSpiritSchedule(ctx: ExtensionContext): Promise<vo
     schedules.push({
       id: SCHEDULE_ID,
       cron: "0 9 * * *",
-      script: "volute intention review-due",
+      script: "volute intentions review-due",
       enabled: true,
       whileSleeping: "skip",
     });
