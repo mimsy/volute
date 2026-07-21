@@ -679,4 +679,68 @@ describe("DeliveryManager durability", () => {
     assert.deepEqual(texts, ["one", "two"], "messages delivered in submission order");
     await removeMind(name);
   });
+
+  describe("interrupt field on delivery POSTs", () => {
+    it("sends interrupt: false by default (no threads config)", async () => {
+      const srv = await startMindServer();
+      servers.push(srv.server);
+      const name = await registerMind(srv.port, IMMEDIATE);
+
+      manager = new DeliveryManager();
+      manager.setRunningCheck(() => true);
+
+      await manager.routeAndDeliver(name, { channel: "test:ch", sender: "alice", content: "hi" });
+
+      assert.equal(srv.received.length, 1);
+      assert.equal((srv.received[0] as { interrupt?: boolean }).interrupt, false);
+      await removeMind(name);
+    });
+
+    it("sends interrupt: true when the mind's routes.json thread config opts in", async () => {
+      const srv = await startMindServer();
+      servers.push(srv.server);
+      const name = await registerMind(srv.port, {
+        rules: [{ channel: "*", thread: "main" }],
+        threads: { main: { interrupt: true } },
+        gateUnmatched: false,
+      });
+
+      manager = new DeliveryManager();
+      manager.setRunningCheck(() => true);
+
+      await manager.routeAndDeliver(name, { channel: "test:ch", sender: "alice", content: "hi" });
+
+      assert.equal(srv.received.length, 1);
+      assert.equal((srv.received[0] as { interrupt?: boolean }).interrupt, true);
+      await removeMind(name);
+    });
+
+    it("sends interrupt: false on a batch delivery POST", async () => {
+      const srv = await startMindServer();
+      servers.push(srv.server);
+      const name = await registerMind(srv.port, {
+        rules: [{ channel: "test:*", thread: "group" }],
+        threads: { group: { delivery: { mode: "batch", debounce: 0, maxWait: 0 } } },
+        gateUnmatched: false,
+      });
+
+      manager = new DeliveryManager();
+      manager.setRunningCheck(() => true);
+
+      const msg = (sender: string, content: string) => ({
+        payload: { channel: "test:ch", sender, content },
+        channel: "test:ch",
+        sender,
+        createdAt: Date.now(),
+      });
+      await (manager as any).deliverBatchToMind(name, "group", [msg("alice", "one")], {
+        delivery: { mode: "immediate" },
+        interrupt: false,
+      });
+
+      assert.equal(srv.received.length, 1);
+      assert.equal((srv.received[0] as { interrupt?: boolean }).interrupt, false);
+      await removeMind(name);
+    });
+  });
 });

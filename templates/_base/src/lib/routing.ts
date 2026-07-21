@@ -156,7 +156,7 @@ export function resolveSessionConfig(
   config: RoutingConfig,
   sessionName: string,
 ): ResolvedSessionConfig {
-  const defaults: ResolvedSessionConfig = { interrupt: true, replyInstructions: "once" };
+  const defaults: ResolvedSessionConfig = { interrupt: false, replyInstructions: "once" };
 
   if (!config.threads) return defaults;
 
@@ -165,7 +165,7 @@ export function resolveSessionConfig(
       const batch = sessionConfig.batch != null ? normalizeBatch(sessionConfig.batch) : undefined;
       return {
         batch,
-        interrupt: sessionConfig.interrupt ?? true,
+        interrupt: sessionConfig.interrupt ?? false,
         instructions: sessionConfig.instructions,
         replyInstructions: sessionConfig.replyInstructions ?? "once",
       };

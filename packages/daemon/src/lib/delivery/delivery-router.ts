@@ -27,6 +27,7 @@ export type BatchConfig = {
 export type SessionConfig = {
   instructions?: string;
   delivery?: DeliveryMode;
+  interrupt?: boolean;
 };
 
 export type DeliveryMode =
@@ -58,6 +59,7 @@ export type ResolvedDeliveryMode =
 export type ResolvedSessionConfig = {
   delivery: ResolvedDeliveryMode;
   instructions?: string;
+  interrupt: boolean;
 };
 
 export type MatchMeta = {
@@ -340,6 +342,7 @@ export function resolveDeliveryMode(
   const ruleBatch = rule?.batch;
   const defaults: ResolvedSessionConfig = {
     delivery: { mode: "immediate" },
+    interrupt: false,
   };
 
   if (!config.threads) {
@@ -352,6 +355,7 @@ export function resolveDeliveryMode(
           maxWait: batch.maxWait ?? DEFAULT_BATCH_MAX_WAIT,
           triggers: batch.triggers,
         },
+        interrupt: false,
       };
     }
     return defaults;
@@ -381,6 +385,7 @@ export function resolveDeliveryMode(
       return {
         delivery,
         instructions: sessionConfig.instructions,
+        interrupt: sessionConfig.interrupt ?? false,
       };
     }
   }
@@ -395,6 +400,7 @@ export function resolveDeliveryMode(
         maxWait: batch.maxWait ?? DEFAULT_BATCH_MAX_WAIT,
         triggers: batch.triggers,
       },
+      interrupt: false,
     };
   }
 
