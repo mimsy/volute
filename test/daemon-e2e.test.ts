@@ -26,6 +26,10 @@ import {
   voluteSystemDir,
 } from "../packages/daemon/src/lib/mind/registry.js";
 import {
+  readVoluteConfig,
+  writeVoluteConfig,
+} from "../packages/daemon/src/lib/mind/volute-config.js";
+import {
   activity,
   deliveryQueue,
   mindHistory,
@@ -322,6 +326,26 @@ describe("daemon e2e", { timeout: 420000 }, () => {
       createRes.status === 200 || createRes.status === 201,
       `Create mind: ${createRes.status} ${await createRes.text()}`,
     );
+
+    // Mind creation defaults `sleep.enabled` to true with a 00:00/08:00 UTC
+    // schedule (packages/daemon/src/web/api/minds.ts). If this suite runs inside
+    // that window, the daemon's SleepManager would put the shared test mind to
+    // sleep mid-run and derail unrelated assertions (running-status checks,
+    // history/notice counts). Disable the *schedule* here so the mind never
+    // auto-sleeps; tests that exercise sleep do so explicitly (POST .../sleep),
+    // which is unaffected since manual sleep doesn't check `sleep.enabled`.
+    {
+      const testMindDir = mindDir(TEST_MIND);
+      const config = readVoluteConfig(testMindDir);
+      assert.ok(config, "volute.json should exist after mind create");
+      config.sleep = { ...config.sleep, enabled: false };
+      writeVoluteConfig(testMindDir, config);
+      assert.equal(
+        readVoluteConfig(testMindDir)?.sleep?.enabled,
+        false,
+        "scheduled sleep should be disabled for the shared e2e test mind",
+      );
+    }
 
     // Install mind dependencies
     const dir = mindDir(TEST_MIND);
