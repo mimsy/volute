@@ -1,7 +1,7 @@
 {
-  "name": "@volute/plan",
+  "name": "@volute/intentions",
   "version": "0.1.0",
-  "description": "System-wide plans and goals for coordinated mind activity",
+  "description": "Per-mind intentions — what a mind is oriented toward right now",
   "type": "module",
   "main": "src/index.ts",
   "exports": {

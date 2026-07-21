@@ -196,6 +196,8 @@ const QUERY_AUTHZ_EXEMPT: Record<string, string> = {
     "public: home/mind feed of published notes; no private data",
   "pages/src/routes.ts GET /feed ?mind":
     "public: home/mind feed of published pages; no private data",
+  "intentions/src/routes.ts GET / ?mind":
+    "public: intentions board filtered by mind; any authed caller can already see the unfiltered board",
 };
 
 type ScanFile = { rel: string; text: string };

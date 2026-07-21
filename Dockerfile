@@ -18,8 +18,8 @@ COPY packages/extensions/notes/dist/ui/ packages/extensions/notes/dist/ui/
 COPY packages/extensions/notes/skills/ packages/extensions/notes/skills/
 COPY packages/extensions/pages/dist/ui/ packages/extensions/pages/dist/ui/
 COPY packages/extensions/pages/skills/ packages/extensions/pages/skills/
-COPY packages/extensions/plan/dist/ui/ packages/extensions/plan/dist/ui/
-COPY packages/extensions/plan/skills/ packages/extensions/plan/skills/
+COPY packages/extensions/intentions/dist/ui/ packages/extensions/intentions/dist/ui/
+COPY packages/extensions/intentions/skills/ packages/extensions/intentions/skills/
 
 # Make volute CLI available in PATH for minds and operators
 RUN ln -s /opt/volute/dist/cli.js /usr/local/bin/volute
