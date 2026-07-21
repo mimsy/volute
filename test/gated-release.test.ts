@@ -167,15 +167,15 @@ describe("gated-channel release (#537)", () => {
       // Every command the invite names must be a real one — this prompt is the mind's only
       // instruction on what to do about a held channel, so a stale command strands it.
       assert.ok(
-        invites[0].includes("volute chat channels accept discord:general"),
+        invites[0].includes('volute chat channels accept "discord:general"'),
         "renders the real accept command",
       );
       assert.ok(
-        invites[0].includes("volute chat channels peek discord:general"),
+        invites[0].includes('volute chat channels peek "discord:general"'),
         "renders the real peek command",
       );
       assert.ok(
-        invites[0].includes("volute chat channels decline discord:general"),
+        invites[0].includes('volute chat channels decline "discord:general"'),
         "renders the real decline command",
       );
       // `chat read` cannot show gated messages (they have no conversation) — the old invite
@@ -184,6 +184,35 @@ describe("gated-channel release (#537)", () => {
         !invites[0].includes("volute chat read"),
         "does not point at chat read, which cannot reach held messages",
       );
+    });
+
+    // BUG 3. The invite is the mind's only instruction on what to do about a held channel,
+    // and minds paste it verbatim. An unquoted `#garden` is a comment to the shell: the arg
+    // is stripped and the command dies with "Missing required argument". Observed live —
+    // the mind concluded the `#` itself was the problem and dropped it, which is BUG 4.
+    it("quotes the channel so the commands survive a shell", async () => {
+      const name = createMind({ rules: [] });
+      cleanup.push(name);
+      const m = makeManager();
+      manager = m.manager;
+      const invites: string[] = [];
+      manager.setNotifier(async (_mind, text) => {
+        if (text.startsWith("[New channel:")) invites.push(text);
+      });
+
+      await gate(manager, name, "#garden");
+
+      assert.equal(invites.length, 1, "one invite fired");
+      for (const verb of ["peek", "accept", "decline"]) {
+        assert.ok(
+          invites[0].includes(`volute chat channels ${verb} "#garden"`),
+          `${verb} names the channel quoted`,
+        );
+        assert.ok(
+          !new RegExp(`volute chat channels ${verb} #garden`).test(invites[0]),
+          `${verb} never names the channel bare — the shell would eat it`,
+        );
+      }
     });
   });
 
@@ -361,7 +390,7 @@ describe("gated-channel release (#537)", () => {
       assert.ok(summaries[0].text.includes("15 earlier"));
       // The summary must point somewhere that actually shows the archived 15.
       assert.ok(
-        summaries[0].text.includes("volute chat channels peek discord:general"),
+        summaries[0].text.includes('volute chat channels peek "discord:general"'),
         "points at peek for the truncated remainder",
       );
       assert.ok(!summaries[0].text.includes("volute chat read"), "does not point at chat read");
@@ -543,6 +572,67 @@ describe("gated-channel release (#537)", () => {
       assert.equal(outcome.routed && outcome.mode, "immediate", "no longer gated");
     });
 
+    // BUG 4. Pushed by the unquoted invite (BUG 3) into dropping the `#`, a mind accepted
+    // `garden` while the real slug was `#garden`. That appended a permanent rule matching
+    // nothing, released 0 of the held messages, and exited 0 reporting success — leaving
+    // the mind with a channel it could send to but would never hear from, and no reason to
+    // doubt it. Refusing with the real slug is the whole point.
+    it("refuses a near-miss channel name instead of writing a rule that never matches", async () => {
+      const name = createMind({ rules: [], default: "main" });
+      cleanup.push(name);
+      const m = makeManager();
+      manager = m.manager;
+
+      for (let i = 0; i < 2; i++) await gate(manager, name, "#garden");
+
+      await assert.rejects(
+        () => manager!.acceptChannel(name, "garden"),
+        /did you mean "#garden"/,
+        "names the slug the mind actually meant",
+      );
+
+      const written = JSON.parse(readFileSync(routesPath(name), "utf-8")) as RoutingConfig;
+      assert.deepEqual(written.rules, [], "no junk rule left behind");
+      const after = await rows(name);
+      assert.equal(after.filter((r) => r.status === "gated").length, 2, "backlog still held");
+
+      // And the correct form still works, releasing what was held.
+      const ok = await manager.acceptChannel(name, "#garden");
+      assert.equal(ok.released, 2, "the quoted form releases the backlog");
+    });
+
+    it("flags an unrecognized channel rather than implying a join", async () => {
+      const name = createMind({ rules: [], default: "main" });
+      cleanup.push(name);
+      const m = makeManager();
+      manager = m.manager;
+
+      // Nothing held, nothing by this name anywhere. Pre-routing is legitimate, so this is
+      // allowed — but `known: false` is what stops the CLI printing a bare success line.
+      const result = await manager.acceptChannel(name, "totally-made-up-channel");
+      assert.equal(result.known, false, "reports that nothing by this name is known");
+      assert.equal(result.released, 0);
+
+      // A channel it has actually heard from is known, so no caveat is printed.
+      await gate(manager, name, "discord:general");
+      const real = await manager.acceptChannel(name, "discord:general");
+      assert.equal(real.known, true, "a channel with queue rows is recognized");
+    });
+
+    it("refuses a near-miss on decline too", async () => {
+      const name = createMind({ rules: [], default: "main" });
+      cleanup.push(name);
+      const m = makeManager();
+      manager = m.manager;
+
+      await gate(manager, name, "#garden");
+      await assert.rejects(() => manager!.declineChannel(name, "garden"), /did you mean "#garden"/);
+
+      const db = await getDb();
+      const gateRows = await db.select().from(channelGates).where(eq(channelGates.mind, name));
+      assert.equal(gateRows.length, 0, "no opt-out recorded against a name nothing sends from");
+    });
+
     it("un-declines a channel so accepting after declining works", async () => {
       const name = createMind({ rules: [], default: "main" });
       cleanup.push(name);
@@ -707,6 +797,26 @@ describe("gated-channel release (#537)", () => {
   });
 
   describe("peekChannel", () => {
+    // Peek doesn't refuse — reading is harmless and an empty backlog is a real answer —
+    // but "No held messages on garden" is a confident all-clear to a mind that meant
+    // "#garden" and has two messages waiting. That is how BUG 3 became BUG 4.
+    it("suggests the real slug rather than reporting an empty backlog", async () => {
+      const name = createMind({ rules: [], default: "main" });
+      cleanup.push(name);
+      const m = makeManager();
+      manager = m.manager;
+
+      for (let i = 0; i < 2; i++) await gate(manager, name, "#garden");
+
+      const miss = await manager.peekChannel(name, "garden");
+      assert.equal(miss.count, 0);
+      assert.equal(miss.suggestion, "#garden", "points at the channel that actually holds them");
+
+      const hit = await manager.peekChannel(name, "#garden");
+      assert.equal(hit.count, 2);
+      assert.equal(hit.suggestion, undefined, "no caveat when the name was right");
+    });
+
     it("returns held messages oldest-first without changing anything", async () => {
       const name = createMind({ rules: [], default: "main" });
       cleanup.push(name);

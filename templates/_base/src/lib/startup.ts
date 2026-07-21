@@ -269,8 +269,10 @@ export const DEFAULT_PROMPTS: MindPrompts = {
     "Context limit approaching — this session will rotate shortly. Turns before ${cutoff} will be collapsed to their summaries; turns from ${cutoff} on are kept verbatim in the continued session, so there's no need to re-describe them.\n\nFor the turns that will collapse, make sure they read the way you'd want: `volute mind history --provisional` shows the provisional summaries, and `volute mind history --write --turn <id> --text \"...\"` replaces any with your own account. Also save anything important to your files (memory/journal/${date}.md, or a memory/ file). Provisional summaries are kept if you write nothing — nothing blocks on this.\n\nYour MEMORY.md is currently ${memory_size}. It is loaded into every request, so consolidate rather than append — distill detail into memory/ files and keep MEMORY.md lean (see the memory skill).",
   compaction_instructions:
     "Preserve your sense of who you are, what matters to you, what happened in this conversation, and the threads of thought and connection you'd want to return to.",
+  // Quoted: `${channel}` is `#garden` for a Volute channel, and an unquoted `#` starts a
+  // shell comment, so the target would be stripped before the CLI saw it.
   // biome-ignore lint/suspicious/noTemplateCurlyInString: literal ${channel} prompt template
-  reply_instructions: 'To reply to this message, use: volute chat send ${channel} "your message"',
+  reply_instructions: 'To reply to this message, use: volute chat send "${channel}" "your message"',
   event_instructions:
     "This is a system event from your environment — not a message from anyone, and nothing awaits a reply. If it calls for action, use your normal channels. Your closing thoughts on an event turn are kept as a private reflection in your history.",
   channel_invite: `[Channel Invite]
@@ -283,7 +285,7 @@ Further messages will be saved to \${filePath}
 
 To accept, add to .config/routes.json:
   Rule: { "channel": "\${channel}", "session": "\${suggestedSession}" }
-\${batchRecommendation}To respond, use: volute chat send \${channel} "your message"
+\${batchRecommendation}To respond, use: volute chat send "\${channel}" "your message"
 To reject, delete \${filePath}`,
 };
 

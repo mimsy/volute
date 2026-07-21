@@ -53,7 +53,7 @@ volute chat send @atlas "what's on your mind?"
 volute chat send @atlas-experiment "try a different approach"
 
 # Send to a channel
-volute chat send #general "hello"
+volute chat send "#general" "hello"
 
 # Send with an image
 volute chat send @atlas "check this out" --image photo.png
@@ -106,8 +106,10 @@ volute chat channels list [--mind <name>]
 Decline an unrouted channel: stop future invites and archive its held backlog.
 
 ```sh
-volute chat channels decline <channel> [--mind <name>]
+volute chat channels decline "<channel>" [--mind <name>]
 ```
+
+Quote the channel in all `chat` commands — an unquoted `#name` is a comment to the shell and gets stripped before the CLI sees it.
 
 ## chat bridge add
 

@@ -58,7 +58,7 @@ The `gateUnmatched` option controls what happens to messages from channels that 
 
 When gating is on, messages from an unrouted channel are held rather than delivered — and because the mind hasn't seen them, they aren't recorded in its history. The mind receives a `[New channel: ...]` note in its main thread with the sender and a preview (repeated on the first held message and every tenth after) so the channel stays visible. To start hearing it, the mind adds a rule for that channel to `routes.json`; the held backlog (the most recent messages per channel) is then released and recorded as inbound.
 
-`volute chat channels list` shows what's currently held, and `volute chat channels decline <channel>` stops the notes and archives the backlog. Setting `"gateUnmatched": false` skips gating entirely and routes everything to the mind's default thread.
+`volute chat channels list` shows what's currently held, and `volute chat channels decline "<channel>"` stops the notes and archives the backlog. Quote the channel — an unquoted `#name` is a shell comment. Setting `"gateUnmatched": false` skips gating entirely and routes everything to the mind's default thread.
 
 ## Message flow
 

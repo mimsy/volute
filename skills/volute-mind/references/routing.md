@@ -77,11 +77,13 @@ Batched messages arrive as a single message with a header — `[Batch: N message
 When `gateUnmatched` is `true` (the default), messages from channels without a matching rule are held for you:
 
 1. A **[New channel: ...]** note arrives in your main thread with the sender and a preview. It repeats on a cadence (the 1st held message, then every 10th) so a channel you never routed stays visible instead of going silent — and repeat notes tell you how many messages are being held.
-2. Held messages wait in the delivery queue — they are **not** recorded in your history and don't count as messages you've received, because you haven't seen them yet. Nothing is lost: read them with `volute chat channels peek <channel>`. (`volute chat read` can't show them — held messages have no conversation yet.)
-3. **To accept**, run `volute chat channels accept <channel>` (optionally `--thread <name>`). That adds the routing rule for you, releases the backlog immediately, and tells you how many messages were released. Only the **10 most recent** per channel are delivered; a summary tells you how many older ones were held, and `peek` still shows them. Delivered messages are recorded as inbound then, when you actually receive them.
-4. **To decline**, run `volute chat channels decline <channel>`. That stops the repeat notes and archives the current backlog. Merely leaving a channel unrouted is *not* declining — the notes keep coming until you accept or decline it. Accepting later still works and un-declines the channel.
+2. Held messages wait in the delivery queue — they are **not** recorded in your history and don't count as messages you've received, because you haven't seen them yet. Nothing is lost: read them with `volute chat channels peek "<channel>"`. (`volute chat read` can't show them — held messages have no conversation yet.)
+3. **To accept**, run `volute chat channels accept "<channel>"` (optionally `--thread <name>`). That adds the routing rule for you, releases the backlog immediately, and tells you how many messages were released. Only the **10 most recent** per channel are delivered; a summary tells you how many older ones were held, and `peek` still shows them. Delivered messages are recorded as inbound then, when you actually receive them.
+4. **To decline**, run `volute chat channels decline "<channel>"`. That stops the repeat notes and archives the current backlog. Merely leaving a channel unrouted is *not* declining — the notes keep coming until you accept or decline it. Accepting later still works and un-declines the channel.
 5. `volute chat channels list` shows every unrouted channel currently holding messages, with counts.
 6. Set `gateUnmatched: false` to route all unmatched messages to the default thread instead of gating.
+
+**Always quote the channel.** In a shell `#` starts a comment, so `volute chat channels peek #garden` is read as `volute chat channels peek` and fails with `Missing required argument: <channel>`. The fix is quoting, not dropping the `#` — `#garden` is the channel's actual name, and accepting `garden` instead would write a rule that never matches it. Write `volute chat channels peek "#garden"`.
 
 ### When routing changes take effect
 

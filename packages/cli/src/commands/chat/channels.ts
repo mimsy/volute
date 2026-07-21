@@ -39,8 +39,10 @@ const channelsListCmd = command({
       );
     }
     console.log(
-      `\n'volute chat channels peek <channel>' to read what's held, ` +
-        `'accept <channel>' to start hearing it, 'decline <channel>' to opt out.`,
+      `\nQuote the channel — an unquoted #name is a comment to the shell.\n` +
+        `  volute chat channels peek "<channel>"     read what's held\n` +
+        `  volute chat channels accept "<channel>"   start hearing it\n` +
+        `  volute chat channels decline "<channel>"  opt out`,
     );
   },
 });
@@ -48,7 +50,7 @@ const channelsListCmd = command({
 const channelsDeclineCmd = command({
   name: "volute chat channels decline",
   description: "Decline an unrouted channel: stop invites and archive its held backlog",
-  args: [{ name: "channel", required: true, description: "Channel to decline (e.g. #bardo)" }],
+  args: [{ name: "channel", required: true, description: 'Channel to decline (e.g. "#bardo")' }],
   flags: {
     mind: { type: "string", description: "Mind name" },
   },
@@ -76,7 +78,7 @@ const channelsDeclineCmd = command({
 const channelsAcceptCmd = command({
   name: "volute chat channels accept",
   description: "Accept an unrouted channel: add a routing rule and deliver its held backlog",
-  args: [{ name: "channel", required: true, description: "Channel to accept (e.g. #bardo)" }],
+  args: [{ name: "channel", required: true, description: 'Channel to accept (e.g. "#bardo")' }],
   flags: {
     mind: { type: "string", description: "Mind name" },
     thread: { type: "string", description: "Thread to route it to (default: one per channel)" },
@@ -102,15 +104,26 @@ const channelsAcceptCmd = command({
       thread: string;
       released: number;
       archived: number;
+      known: boolean;
     };
     const note = data.ruleAdded ? "" : " (rule already existed)";
     console.log(
       `Accepted ${channel} → thread ${data.thread}${note}; released ${data.released} held message(s).`,
     );
+    // Don't let "Accepted X ... released 0" read as a join when nothing by that name is
+    // known. The rule is real and will route future traffic, but if the name is wrong it
+    // will route nothing, forever, and silence is indistinguishable from a quiet channel.
+    if (!data.known) {
+      console.log(
+        `Note: no channel named ${channel} is known here and nothing was held for it. ` +
+          `The rule will route future messages if the name is right — ` +
+          `check it against 'volute chat channels list'.`,
+      );
+    }
     if (data.archived > 0) {
       console.log(
         `${data.archived} older message(s) were not delivered — read them with ` +
-          `'volute chat channels peek ${channel}'.`,
+          `'volute chat channels peek "${channel}"'.`,
       );
     }
   },
@@ -119,7 +132,7 @@ const channelsAcceptCmd = command({
 const channelsPeekCmd = command({
   name: "volute chat channels peek",
   description: "Read the messages held on an unrouted channel without accepting it",
-  args: [{ name: "channel", required: true, description: "Channel to peek at (e.g. #bardo)" }],
+  args: [{ name: "channel", required: true, description: 'Channel to peek at (e.g. "#bardo")' }],
   flags: {
     mind: { type: "string", description: "Mind name" },
   },
@@ -140,11 +153,15 @@ const channelsPeekCmd = command({
     const data = (await res.json()) as {
       count: number;
       shown: number;
+      suggestion?: string;
       messages: { sender: string | null; content: string; createdAt: string; status: string }[];
     };
 
     if (data.count === 0) {
       console.log(`No held messages on ${channel}.`);
+      if (data.suggestion) {
+        console.log(`No channel by that name exists — did you mean "${data.suggestion}"?`);
+      }
       return;
     }
 

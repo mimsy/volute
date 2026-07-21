@@ -92,7 +92,7 @@ A channel on an external platform is bridged by mapping it to a Volute channel. 
 volute chat bridge map discord:my-server/general team
 
 # Send to it like any other channel
-volute chat send #team "hello"
+volute chat send "#team" "hello"
 
 # Remove a mapping
 volute chat bridge unmap discord:my-server/general
