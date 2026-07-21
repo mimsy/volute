@@ -10,6 +10,7 @@ import {
   type RoutingConfig,
   setRoutesChangeListener,
 } from "../packages/daemon/src/lib/delivery/delivery-router.js";
+import { createChannel } from "../packages/daemon/src/lib/events/conversations.js";
 import { addMind, removeMind } from "../packages/daemon/src/lib/mind/registry.js";
 import { channelGates, deliveryQueue, mindHistory } from "../packages/daemon/src/lib/schema.js";
 
@@ -617,6 +618,51 @@ describe("gated-channel release (#537)", () => {
       await gate(manager, name, "discord:general");
       const real = await manager.acceptChannel(name, "discord:general");
       assert.equal(real.known, true, "a channel with queue rows is recognized");
+    });
+
+    // Delivered queue rows are *deleted*, so a channel the mind has been using
+    // successfully has no queue rows left — and an external-platform channel is in no
+    // other table. Keyed only off the queue, the healthier the channel the more likely
+    // we'd call it unrecognized, which inverts the whole point of the flag.
+    it("still recognizes a channel whose queue rows are gone but history remains", async () => {
+      const name = createMind({ rules: [], default: "main" });
+      cleanup.push(name);
+      const m = makeManager();
+      manager = m.manager;
+
+      const db = await getDb();
+      await db.insert(mindHistory).values({
+        mind: name,
+        type: "inbound",
+        channel: "discord:general",
+        content: "an established conversation",
+      });
+
+      const result = await manager.acceptChannel(name, "discord:general");
+      assert.equal(result.known, true, "a channel in history is recognized without queue rows");
+    });
+
+    // The suggestion set is echoed back to the mind, so anything in it is something the
+    // mind can learn the exact slug of by guessing a nearby name. Minds are untrusted
+    // principals; a private channel's existence must not be confirmable that way.
+    it("suggests a public channel but never a private one", async () => {
+      const name = createMind({ rules: [], default: "main" });
+      cleanup.push(name);
+      const m = makeManager();
+      manager = m.manager;
+
+      const pub = `pub-${Math.random().toString(36).slice(2, 8)}`;
+      const priv = `priv-${Math.random().toString(36).slice(2, 8)}`;
+      await createChannel(pub);
+      await createChannel(priv, undefined, { private: true });
+
+      // Near-miss on a public channel: the mind is told the real slug.
+      const pubMiss = await manager.peekChannel(name, pub.toUpperCase());
+      assert.equal(pubMiss.suggestion, `#${pub}`, "public channel is suggested");
+
+      // Near-miss on a private one: no suggestion, so its slug stays unconfirmed.
+      const privMiss = await manager.peekChannel(name, priv.toUpperCase());
+      assert.equal(privMiss.suggestion, undefined, "private channel is never suggested");
     });
 
     it("refuses a near-miss on decline too", async () => {

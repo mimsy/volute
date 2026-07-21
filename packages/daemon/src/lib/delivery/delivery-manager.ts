@@ -47,6 +47,25 @@ function normalizeChannelKey(channel: string): string {
   return channel.replace(/^[#@]/, "").toLowerCase();
 }
 
+/**
+ * A channel name that matches nothing, where something close does exist. Carries its own
+ * type rather than relying on the caller sniffing `err.message`: #778 flagged that
+ * string-matching pattern as fragile ("a reworded message silently changes the status
+ * code") and this is the third site that would have used it, so it's worth doing properly.
+ */
+export class UnknownChannelError extends Error {
+  constructor(
+    readonly channel: string,
+    readonly suggestion: string,
+  ) {
+    super(
+      `no channel named "${channel}" — did you mean "${suggestion}"? ` +
+        `(quote it: the shell strips an unquoted #name)`,
+    );
+    this.name = "UnknownChannelError";
+  }
+}
+
 // --- Redrive / retry tuning ---
 const REDRIVE_INTERVAL_MS = 15_000;
 const RETRY_BASE_MS = 5_000;
@@ -630,8 +649,22 @@ export class DeliveryManager {
   }
 
   /**
-   * Channels this mind could plausibly mean: every channel it has queue rows for (held,
-   * archived, or already delivered) plus every Volute channel that exists.
+   * Channels this mind could plausibly mean, from three sources:
+   *
+   * 1. Its current queue rows — channels with a live `gated`/`archived`/`pending` backlog.
+   * 2. Its own history — the durable record. Source 1 alone is not enough: delivered rows
+   *    are *deleted* (`deleteQueueRows`), so a channel the mind has been using
+   *    successfully for months drops out of the queue entirely, and an external-platform
+   *    channel like `discord:general` is in no other table. Without this, the healthier
+   *    the channel, the more likely we'd call it unrecognized.
+   * 3. Every *public* Volute channel, so a channel can be recognized before its first
+   *    message ever arrives.
+   *
+   * Private channels are deliberately excluded from source 3. This set feeds the "did you
+   * mean X?" suggestion, so anything in it can be echoed back to a mind that guessed a
+   * nearby name — which would turn a typo into a way to confirm a private channel exists
+   * and learn its exact slug. Minds are untrusted principals. A private channel the mind
+   * is genuinely in still resolves via sources 1 and 2, which are scoped to it.
    */
   private async knownChannels(baseName: string): Promise<string[]> {
     const db = await getDb();
@@ -639,9 +672,17 @@ export class DeliveryManager {
       .selectDistinct({ channel: deliveryQueue.channel })
       .from(deliveryQueue)
       .where(eq(deliveryQueue.mind, baseName));
-    const named = await db.selectDistinct({ name: channels.name }).from(channels);
+    const seen = await db
+      .selectDistinct({ channel: mindHistory.channel })
+      .from(mindHistory)
+      .where(eq(mindHistory.mind, baseName));
+    const named = await db
+      .selectDistinct({ name: channels.name })
+      .from(channels)
+      .where(eq(channels.private, 0));
     const out = new Set<string>();
     for (const r of queued) if (r.channel) out.add(r.channel);
+    for (const r of seen) if (r.channel) out.add(r.channel);
     for (const r of named) out.add(`#${r.name}`);
     return [...out];
   }
@@ -708,12 +749,7 @@ export class DeliveryManager {
     // Same near-miss guard as accept: declining "garden" would record a permanent opt-out
     // against a name nothing sends from, while "#garden" kept right on notifying.
     const match = await this.matchChannelName(baseName, channel);
-    if (match.suggestion) {
-      throw new Error(
-        `no channel named "${channel}" — did you mean "${match.suggestion}"? ` +
-          `(quote it: the shell strips an unquoted #name)`,
-      );
-    }
+    if (match.suggestion) throw new UnknownChannelError(channel, match.suggestion);
     const db = await getDb();
     await db
       .insert(channelGates)
@@ -791,12 +827,7 @@ export class DeliveryManager {
   }> {
     // Check the name before touching routes.json: a near-miss must not leave a rule behind.
     const match = await this.matchChannelName(baseName, channel);
-    if (match.suggestion) {
-      throw new Error(
-        `no channel named "${channel}" — did you mean "${match.suggestion}"? ` +
-          `(quote it: the shell strips an unquoted #name)`,
-      );
-    }
+    if (match.suggestion) throw new UnknownChannelError(channel, match.suggestion);
 
     const path = routesConfigPath(baseName);
 
