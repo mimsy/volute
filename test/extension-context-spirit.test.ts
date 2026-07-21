@@ -10,7 +10,12 @@ import type { MiddlewareHandler } from "hono";
 import { MIND_LEVEL_THREAD } from "../packages/daemon/src/lib/chat/system-events.js";
 import { getSpiritName } from "../packages/daemon/src/lib/config/setup.js";
 import { getDb } from "../packages/daemon/src/lib/db.js";
-import { buildExtensionContext } from "../packages/daemon/src/lib/extensions.js";
+import {
+  _clearLoadedExtensionsForTest,
+  _registerExtensionForTest,
+  buildExtensionContext,
+  notifyExtensionsSpiritReady,
+} from "../packages/daemon/src/lib/extensions.js";
 import {
   addMind,
   addSpirit,
@@ -132,5 +137,36 @@ describe("extension context: spirit resolution", () => {
       config.schedules?.some((s) => s.id === "intention-review"),
       "spirit must get its daily intention-review schedule",
     );
+  });
+});
+
+describe("notifyExtensionsSpiritReady", () => {
+  after(() => _clearLoadedExtensionsForTest());
+
+  it("fires every extension's hook and contains one that throws", async () => {
+    _clearLoadedExtensionsForTest();
+    const fired: string[] = [];
+    _registerExtensionForTest({
+      id: "boom",
+      name: "Boom",
+      version: "0",
+      onSpiritReady: async () => {
+        fired.push("boom");
+        throw new Error("bootstrap exploded");
+      },
+    } as unknown as ExtensionManifest);
+    _registerExtensionForTest({
+      id: "after",
+      name: "After",
+      version: "0",
+      onSpiritReady: async () => {
+        fired.push("after");
+      },
+    } as unknown as ExtensionManifest);
+
+    // A failing extension must not swallow the ones registered behind it, and must
+    // not reject into the daemon startup path that calls this.
+    await assert.doesNotReject(() => notifyExtensionsSpiritReady());
+    assert.deepEqual(fired, ["boom", "after"]);
   });
 });

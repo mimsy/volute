@@ -72,9 +72,12 @@ export type ExtensionContext = {
   /** Get the OS username for a mind under user isolation (e.g. "mind-lyra"). */
   getMindUser: (mindName: string) => string;
   /**
-   * Name of the system spirit. Mirrors the daemon's own `getSpiritName()`, which
-   * defaults to "volute" when the host never named one — so this is null only on
-   * a system with no spirit concept at all, not merely an unconfigured one.
+   * Name of the system spirit. Under the daemon this mirrors its own
+   * `getSpiritName()`, which falls back to "volute" on installs predating spirit
+   * naming and so never returns null — an earlier implementation read
+   * `setup.spiritName` directly and returned null there, silently killing every
+   * spirit-dependent extension path on those systems. The type stays nullable for
+   * hosts that embed the SDK without a spirit at all; treat null as "no spirit".
    */
   getSpiritName: () => string | null;
   dataDir: string;

@@ -148,7 +148,9 @@ describe("maybeSendCommonsCue", () => {
 
   // Regression: the spirit shares the system user account (`user_type: "system"`),
   // so gating the cue on the users table meant it never fired on any install.
-  // The gate is the spirit's project existing, not what its user row says it is.
+  // The gate is the spirit's project existing, not what its user row says it is —
+  // hence the production-shaped user row here, which fails the moment anyone
+  // reintroduces a `user_type === "mind"` check (verified by reverting the fix).
   it("sends to the spirit even though its user row is user_type system", async () => {
     const { ctx, notices } = makeCtx({
       getUserByUsername: async (username: string) =>

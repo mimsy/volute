@@ -76,7 +76,16 @@ export default createExtension({
   // onDaemonStart because the spirit isn't created yet at that point on a fresh
   // install. maybeSendCommonsCue handles its own errors and never rejects.
   async onSpiritReady(ctx) {
-    await (repoReady ?? Promise.resolve()).catch(() => {});
+    // Only cue once the repo has actually initialized. The cue is one-shot (it
+    // writes a flag file), so sending it after a failed init would permanently
+    // invite the spirit to tend a commons that isn't there. A failed init is
+    // already logged in onDaemonStart and retries on the next daemon start.
+    if (!repoReady) return;
+    try {
+      await repoReady;
+    } catch {
+      return;
+    }
     await maybeSendCommonsCue(ctx, resolve(ctx.dataDir, "repo"));
   },
 
