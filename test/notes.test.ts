@@ -524,7 +524,7 @@ describe("notes commands stdin", () => {
       publishActivity: (e: { type: string; metadata?: Record<string, unknown> }) => {
         activities.push(e);
       },
-      getMindDir: () => null,
+      getMindDir: async () => null,
       getSystemsConfig: () => null,
       announceToSystem: async (text: string) => {
         announced.push(text);

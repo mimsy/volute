@@ -49,12 +49,20 @@ export type ExtensionContext = {
   getUser: (id: number) => Promise<User | null>;
   getUserByUsername: (username: string) => Promise<User | null>;
   publishActivity: (event: ActivityEvent) => void;
-  getMindDir: (name: string) => string | null;
+  /**
+   * Resolve a mind's project directory, or null when it doesn't exist on disk.
+   * Registry-backed, so it also resolves minds whose directory isn't the
+   * path-convention default: the system spirit (which lives under the system
+   * dir, never the minds dir) and variants (which live in git worktrees).
+   */
+  getMindDir: (name: string) => Promise<string | null>;
   getSystemsConfig: () => SystemsConfig | null;
   announceToSystem: (text: string) => Promise<void>;
   /**
    * Queue an ambient, non-interrupting notification for a mind, delivered as context
-   * on the mind's next turn (via the notices system). No-op if the target isn't a mind.
+   * on the mind's next turn (via the notices system). No-op if the target isn't a
+   * registered mind — which includes the system spirit, even though the spirit's
+   * user row is `user_type: "system"` rather than `"mind"`.
    * Use for low-urgency signals (a comment on a note, a reaction) that shouldn't trigger
    * a turn on their own. Never throws.
    */
@@ -63,7 +71,14 @@ export type ExtensionContext = {
   isIsolationEnabled: () => boolean;
   /** Get the OS username for a mind under user isolation (e.g. "mind-lyra"). */
   getMindUser: (mindName: string) => string;
-  /** Configured name of the system spirit, or null when no spirit is set up. */
+  /**
+   * Name of the system spirit. Under the daemon this mirrors its own
+   * `getSpiritName()`, which falls back to "volute" on installs predating spirit
+   * naming and so never returns null — an earlier implementation read
+   * `setup.spiritName` directly and returned null there, silently killing every
+   * spirit-dependent extension path on those systems. The type stays nullable for
+   * hosts that embed the SDK without a spirit at all; treat null as "no spirit".
+   */
   getSpiritName: () => string | null;
   dataDir: string;
 };
@@ -158,6 +173,14 @@ export type ExtensionManifest = {
   initDb?: (db: Database) => void;
   commands?: Record<string, ExtensionCommand>;
   onDaemonStart?: (ctx: ExtensionContext) => void;
+  /**
+   * Fires once per daemon start, after the system spirit's project exists and is
+   * registered. Use this — not `onDaemonStart` — for bootstrap that reads or writes
+   * the spirit's directory: on a fresh install `onDaemonStart` runs well before the
+   * spirit is created, so spirit-dependent work there silently skips the very boot
+   * that creates it. Not called when there is no spirit (e.g. setup incomplete).
+   */
+  onSpiritReady?: (ctx: ExtensionContext) => void | Promise<void>;
   onDaemonStop?: () => void;
   onMindStart?: (mindName: string, ctx: ExtensionContext) => void;
   onMindStop?: (mindName: string) => void;

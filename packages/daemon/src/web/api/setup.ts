@@ -17,6 +17,7 @@ import {
   readSystemsConfig,
   writeSystemsConfig,
 } from "../../lib/config/systems-config.js";
+import { notifyExtensionsSpiritReady } from "../../lib/extensions.js";
 import { findMind, validateSpiritName, voluteSystemDir } from "../../lib/mind/registry.js";
 import { normalizeAvatar } from "../../lib/util/avatar-image.js";
 import log from "../../lib/util/logger.js";
@@ -520,6 +521,11 @@ setup.post("/complete", async (c) => {
 
     await ensureSpiritProject();
     await syncSpiritTemplate();
+
+    // Fresh installs create the spirit here, not at daemon boot — extensions
+    // loaded long before this point, so without firing the hook now their
+    // spirit bootstrap would wait for a daemon restart to run at all.
+    await notifyExtensionsSpiritReady();
 
     const warnings: string[] = [];
 

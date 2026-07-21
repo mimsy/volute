@@ -145,7 +145,7 @@ Extensions add functionality to Volute — custom UI sections, API routes, datab
 - `skillsDir?` — directory of skills synced on load; `standardSkill?` adds them to the default skill set
 - `mindDoc?` — markdown appended to minds' VOLUTE.md; `commands?` — extension-provided CLI subcommands
 - `initDb?(db)` — per-extension SQLite DB at `~/.volute/system/extension-data/{id}/data.db`
-- `onDaemonStart?()`, `onDaemonStop?()`, `onMindStart?(name, ctx)`, `onMindStop?(name)` — lifecycle hooks
+- `onDaemonStart?()`, `onSpiritReady?(ctx)`, `onDaemonStop?()`, `onMindStart?(name, ctx)`, `onMindStop?(name)` — lifecycle hooks. Spirit-dependent bootstrap belongs in `onSpiritReady`: `onDaemonStart` runs before the spirit exists on a fresh install
 
 **Extension context** (passed to `routes()`/`publicRoutes()`): `db`, `dataDir`, `authMiddleware`, `requireSelf`, `resolveUser(c)`, `getUser`/`getUserByUsername`/`getMindUser`, `publishActivity(event)`, `announceToSystem`, `recordNotice`, `getMindDir(name)`, `isIsolationEnabled`, `getSystemsConfig()`.
 

@@ -65,25 +65,40 @@ export default createExtension({
             console.error("[pages] failed to sync system pages to DB:", err);
           }
         }
-
-        // One-time bootstrap: invite the spirit to create a commons index if
-        // one doesn't exist yet. Flag file makes it fire at most once.
-        // maybeSendCommonsCue handles its own errors and never rejects.
-        void maybeSendCommonsCue(ctx, repoDir);
       })
       .catch((err) => {
         console.error("[pages] failed to initialize pages repo:", err);
       });
   },
 
+  // One-time bootstrap: invite the spirit to create a commons index if one doesn't
+  // exist yet. Flag file makes it fire at most once. Runs here rather than in
+  // onDaemonStart because the spirit isn't created yet at that point on a fresh
+  // install. maybeSendCommonsCue handles its own errors and never rejects.
+  async onSpiritReady(ctx) {
+    // Only cue once the repo has actually initialized. The cue is one-shot (it
+    // writes a flag file), so sending it after a failed init would permanently
+    // invite the spirit to tend a commons that isn't there. A failed init is
+    // already logged in onDaemonStart and retries on the next daemon start.
+    if (!repoReady) return;
+    try {
+      await repoReady;
+    } catch {
+      return;
+    }
+    await maybeSendCommonsCue(ctx, resolve(ctx.dataDir, "repo"));
+  },
+
   onMindStart(mindName, ctx) {
-    const mindDir = ctx.getMindDir(mindName);
-    if (!mindDir) return;
     // Wait for repo init; its failures are already logged in onDaemonStart, and
     // addPagesWorktree self-skips if the repo is still unusable.
     (repoReady ?? Promise.resolve())
       .catch(() => {})
-      .then(() => addPagesWorktree(mindName, mindDir, ctx.dataDir, isolationFrom(ctx)))
+      .then(async () => {
+        const mindDir = await ctx.getMindDir(mindName);
+        if (!mindDir) return;
+        await addPagesWorktree(mindName, mindDir, ctx.dataDir, isolationFrom(ctx));
+      })
       .catch((err) => {
         console.warn(
           `[pages] failed to add pages worktree for ${mindName}: ${(err as Error).message}`,

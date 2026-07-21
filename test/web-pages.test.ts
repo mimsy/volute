@@ -260,7 +260,7 @@ function makeCtx(dir: string) {
     authMiddleware: (() => {}) as any,
     getUser: async () => null,
     getUserByUsername: async () => null,
-    getMindDir: () => null,
+    getMindDir: async () => null,
     getSystemsConfig: () => null,
     resolveUser: () => null,
     publishActivity: () => {},
