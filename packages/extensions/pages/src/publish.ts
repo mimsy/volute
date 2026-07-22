@@ -32,9 +32,11 @@ export const QUICK_DIR = "notes";
  * Read each page once and report everything the DB wants to know about it: the
  * content hash, whether its frontmatter closes comments, and which minds it cites.
  *
- * This replaces a bare `hashFiles()` on the paths that feed `syncPublishedPages` /
- * `syncSystemPages`, because those already pay for the read — pulling the
- * frontmatter and the mentions out of the same read costs nothing extra.
+ * This is the single hashing path feeding `syncPublishedPages` / `syncSystemPages`.
+ * It replaced a bare hash-only helper, which already paid for the read — pulling
+ * the frontmatter and the mentions out of that same read costs nothing extra, and
+ * keeping one implementation means the hash can't drift between callers and
+ * spuriously mark every page as changed.
  *
  * Only markdown carries frontmatter and citations. An HTML page is left alone:
  * `commentsClosed` stays undefined (open, unchanged) and it cites nobody.

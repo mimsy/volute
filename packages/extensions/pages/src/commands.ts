@@ -445,8 +445,9 @@ export function createCommands(): Record<string, ExtensionCommand> {
               // again. In the thread, a page's history reads as conversation rather
               // than as a diff log — which is what a commons needs to coordinate.
               const author = await ctx.getUserByUsername(mindName);
+              const pageFiles = files.filter(isPageFile);
               if (author && ctx.db) {
-                for (const file of files.filter(isPageFile)) {
+                for (const file of pageFiles) {
                   try {
                     await addComment(
                       ctx.db,
@@ -461,6 +462,17 @@ export function createCommands(): Record<string, ExtensionCommand> {
                       `[pages] failed to record publish message on _system/${file}: ${(err as Error).message}`,
                     );
                   }
+                }
+                // A publish message is a comment, so naming a mind in one is a hail
+                // like any other. Hailed once for the publish rather than once per
+                // changed file: one act of writing should cost one notice, however
+                // many pages that act happened to touch.
+                if (pageFiles.length > 0) {
+                  await notifyMentionedInComment(message, ctx, {
+                    actor: mindName,
+                    ref: { mind: "_system", file: pageFiles[0] },
+                    where: `the commons (${pageFiles.join(", ")})`,
+                  });
                 }
               }
 

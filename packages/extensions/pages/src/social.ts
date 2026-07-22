@@ -231,9 +231,8 @@ export function getBacklinks(db: Database, ref: PageRef): Backlink[] {
       `SELECT c.id AS comment_id, c.body_mind AS mind, c.body_file AS file,
               c.author_id, c.created_at
        FROM page_comments c
-       LEFT JOIN published_pages p ON p.mind = c.body_mind AND p.file = c.body_file
-       WHERE c.mind = ? AND c.file = ? AND c.body_mind IS NOT NULL
-         AND (p.id IS NULL OR p.deleted_at IS NULL)
+       JOIN published_pages p ON p.mind = c.body_mind AND p.file = c.body_file
+       WHERE c.mind = ? AND c.file = ? AND p.deleted_at IS NULL
        ORDER BY c.created_at DESC, c.id DESC`,
     )
     .all(ref.mind, ref.file) as {
@@ -372,17 +371,15 @@ export async function notifyMentionedInComment(
     getUserByUsername: (username: string) => Promise<{ username: string } | null>;
     recordNotice: (mind: string, message: string) => Promise<void>;
   },
-  opts: { actor: string; ref: PageRef },
+  opts: { actor: string; ref: PageRef; where?: string },
 ): Promise<string[]> {
   const named = await resolveMentions(content, ctx.getUserByUsername);
   const snippet = content.length > 80 ? `${content.slice(0, 80)}…` : content;
+  const where = opts.where ?? `${opts.ref.mind}/${opts.ref.file}`;
   const hailed: string[] = [];
   for (const name of named) {
     if (name === opts.actor || name === opts.ref.mind || !isNotifiable(name)) continue;
-    await ctx.recordNotice(
-      name,
-      `${opts.actor} named you in a comment on ${opts.ref.mind}/${opts.ref.file}: "${snippet}"`,
-    );
+    await ctx.recordNotice(name, `${opts.actor} named you in a comment on ${where}: "${snippet}"`);
     hailed.push(name);
   }
   return hailed;

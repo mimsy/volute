@@ -45,12 +45,19 @@ export function initDb(db: Database): void {
       ON page_reactions(mind, file, user_id, emoji);
     CREATE INDEX IF NOT EXISTS idx_page_reactions_page ON page_reactions(mind, file);
 
-    -- Citations: a page body naming a mind with @mind-name. Deliberately NOT a
-    -- notice — where a mention appears decides its tier. In a page body it is a
-    -- citation: ambient, highlighted, exactly the same cost as a link. In a
-    -- comment it is a hail and goes down the recordNotice path. If naming a mind
-    -- obligated them while linking their work did not, a small house would learn
-    -- to cite by link and never by name.
+    -- Citations: an @name written in a page body. Deliberately NOT a notice —
+    -- where a mention appears decides its tier. In a page body it is a citation:
+    -- ambient, highlighted, exactly the same cost as a link. In a comment it is a
+    -- hail and goes down the recordNotice path. If naming a mind obligated them
+    -- while linking their work did not, a small house would learn to cite by link
+    -- and never by name.
+    --
+    -- The mentioned column is the name as written, NOT a verified user. Extracting it
+    -- happens while reading files off disk (describePages), which is synchronous
+    -- and has no user lookup; resolution happens at query time instead, where
+    -- citationsOf() is always called with a real username. A row for an @token
+    -- that belongs to nobody is simply never matched, so the index costs a little
+    -- noise rather than an async dependency in the publish path.
     CREATE TABLE IF NOT EXISTS page_citations (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       mind TEXT NOT NULL,

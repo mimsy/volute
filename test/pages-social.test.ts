@@ -401,6 +401,19 @@ describe("a comment may carry a page pointer", () => {
     assert.equal(thread.comments[0].id, c.id);
   });
 
+  it("drops a backlink whose page was hard-deleted, same as a tombstoned one", async () => {
+    publish("mimsy", "notes/a.md", "h1");
+    publish("pip", "notes/reply.md", "h2");
+    await addComment(db, getUser, ref, 2, "with a page", {
+      body: { mind: "pip", file: "notes/reply.md" },
+    });
+    // pip's page carried no thread of its own, so deleting it removes the row
+    // outright rather than leaving a tombstone. Either way it is not a response.
+    syncPublishedPages(db, "pip", []);
+    assert.equal(getPage(db, "pip", "notes/reply.md"), null);
+    assert.deepEqual(getBacklinks(db, ref), []);
+  });
+
   describe("promotion", () => {
     it("turns a comment into a page and leaves the comment as its pointer", async () => {
       publish("mimsy", "notes/a.md", "h1");
@@ -569,6 +582,21 @@ describe("@mind-name: where it appears decides its tier", () => {
       });
       assert.deepEqual(hailed, []);
       assert.deepEqual(ctx.notices, []);
+    });
+
+    it("hails once for a publish that touched several pages, not once per page", async () => {
+      const ctx = noticeCtx();
+      // A publish message is a comment, so naming a mind in one is a hail — but
+      // one act of writing should cost the named mind one notice, however many
+      // files that act happened to change.
+      const hailed = await notifyMentionedInComment("reworked @pip's section", ctx, {
+        actor: "gardener",
+        ref: { mind: "_system", file: "index.md" },
+        where: "the commons (index.md, garden/lore.md)",
+      });
+      assert.deepEqual(hailed, ["pip"]);
+      assert.equal(ctx.notices.length, 1);
+      assert.match(ctx.notices[0].message, /the commons \(index\.md, garden\/lore\.md\)/);
     });
 
     it("does not notify the author for naming themselves, or names nobody holds", async () => {

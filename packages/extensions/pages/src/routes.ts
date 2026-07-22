@@ -69,6 +69,7 @@ function serializeThread(thread: PageThread) {
     ...thread,
     deleted_at: thread.deleted_at ? toIso(thread.deleted_at) : null,
     comments: thread.comments.map((c) => ({ ...c, created_at: toIso(c.created_at) })),
+    backlinks: thread.backlinks.map((b) => ({ ...b, created_at: toIso(b.created_at) })),
   };
 }
 
@@ -193,7 +194,11 @@ export function createRoutes(ctx: ExtensionContext): Hono {
       // and the comment stays in the thread as a pointer to it. Like the delete
       // route above, a comment id is globally unique so this path carries no mind
       // segment and authorization is in-handler: only the comment's own author may
-      // promote it. Covered by "promotion" in test/pages-social.test.ts.
+      // promote it. The primitives this composes (setCommentBody, getComment,
+      // defaultPromotionTitle, writeQuickPage's address allocation) are covered by
+      // "promotion" in test/pages-social.test.ts; the handler's own branches — the
+      // author check below, the already-promoted 409, the missing-mind 404 — are
+      // not exercised by a test that drives the route.
       .post("/comments/:id/promote", async (c) => {
         if (!ctx.db) return c.json({ error: "Pages database not available" }, 503);
         const actor = ctx.resolveUser(c);
