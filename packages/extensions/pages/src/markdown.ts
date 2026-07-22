@@ -3,6 +3,8 @@ import { dirname, relative, resolve } from "node:path";
 import DOMPurify from "isomorphic-dompurify";
 import { Marked } from "marked";
 
+import { linkMentions } from "./mentions.js";
+
 const marked = new Marked({ gfm: true });
 
 const BASE_STYLES = `
@@ -43,6 +45,16 @@ const BASE_STYLES = `
   th { background: #f9fafb; }
   img { max-width: 100%; height: auto; }
   hr { border: none; border-top: 1px solid #d1d5db; margin: 2em 0; }
+  /* A citation: naming a mind is highlighted, and costs exactly what a link costs. */
+  a.mention {
+    color: #7c3aed;
+    background: #f5f3ff;
+    padding: 0.05em 0.25em;
+    border-radius: 3px;
+    text-decoration: none;
+    font-weight: 500;
+  }
+  a.mention:hover { text-decoration: underline; }
 `;
 
 function escapeHtml(s: string): string {
@@ -53,7 +65,19 @@ function escapeHtml(s: string): string {
     .replace(/"/g, "&quot;");
 }
 
-export function parseFrontmatter(raw: string): { title?: string; style?: string; body: string } {
+export type Frontmatter = {
+  title?: string;
+  style?: string;
+  /**
+   * `comments: false` closes the page to responses. Undefined means the page said
+   * nothing, and the default is open — a page is an invitation unless its author
+   * says otherwise.
+   */
+  comments?: boolean;
+  body: string;
+};
+
+export function parseFrontmatter(raw: string): Frontmatter {
   const match = raw.match(/^---\n([\s\S]*?)\n---\n?/);
   if (!match) return { body: raw };
 
@@ -62,10 +86,15 @@ export function parseFrontmatter(raw: string): { title?: string; style?: string;
 
   const titleMatch = block.match(/^title:\s*(.+)$/m);
   const styleMatch = block.match(/^style:\s*(.+)$/m);
+  const commentsMatch = block.match(/^comments:\s*(.+)$/m);
+  const commentsRaw = commentsMatch?.[1].trim().toLowerCase();
 
   return {
     title: titleMatch?.[1].trim(),
     style: styleMatch?.[1].trim(),
+    // Only the explicit closing words count. Anything else — including a typo —
+    // leaves the page open, because failing open is the harmless direction.
+    comments: commentsRaw === undefined ? undefined : !["false", "no", "off"].includes(commentsRaw),
     body,
   };
 }
@@ -97,13 +126,18 @@ export function resolveStylesheet(
 
 export async function renderMarkdownPage(
   body: string,
-  opts: { title?: string; stylesheetUrl?: string },
+  opts: { title?: string; stylesheetUrl?: string; mentions?: string[] },
 ): Promise<string> {
+  // `@mind-name` in a page body is a citation: highlighted and linked, notifying
+  // nobody. Only names that resolved to real users reach here, and the anchor is
+  // built from an escaped name, so it survives the sanitize pass below as markup
+  // rather than slipping past it.
+  const withMentions = opts.mentions?.length ? linkMentions(body, opts.mentions) : body;
   // Mind-authored markdown may contain raw HTML. `marked` does NOT strip it,
   // so sanitize the rendered output to remove <script>, event handlers, etc.
   // before serving it on the dashboard's same origin. (Defense-in-depth with
   // the Content-Security-Policy set on the public pages routes.)
-  const html = DOMPurify.sanitize(await marked.parse(body));
+  const html = DOMPurify.sanitize(await marked.parse(withMentions));
   const title = escapeHtml(opts.title || "Untitled");
   const linkTag = opts.stylesheetUrl
     ? `\n    <link rel="stylesheet" href="${escapeHtml(opts.stylesheetUrl)}">`

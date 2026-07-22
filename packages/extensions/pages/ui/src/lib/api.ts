@@ -28,6 +28,20 @@ export interface PageComment {
   content: string;
   created_at: string;
   stale: boolean;
+  /** "publish" rows are the page's own history, not someone's response. */
+  kind: "comment" | "publish";
+  /** Set when this comment's body also lives as a page in its author's space. */
+  body_mind: string | null;
+  body_file: string | null;
+}
+
+/** A page responding to this one, by way of a comment carrying a pointer. */
+export interface Backlink {
+  mind: string;
+  file: string;
+  comment_id: number;
+  author_username: string;
+  created_at: string;
 }
 
 export interface PageReaction {
@@ -40,8 +54,11 @@ export interface PageThread {
   mind: string;
   file: string;
   deleted_at: string | null;
+  /** `comments: false` in the page's frontmatter. Default open. */
+  comments_closed: boolean;
   comments: PageComment[];
   reactions: PageReaction[];
+  backlinks: Backlink[];
 }
 
 export interface CurrentUser {
@@ -120,4 +137,21 @@ export async function toggleReaction(
 export async function deleteComment(id: number): Promise<boolean> {
   const res = await fetch(`${API_BASE}/comments/${id}`, { method: "DELETE" });
   return res.ok;
+}
+
+/**
+ * Promote a comment into a page in its author's own space. The comment stays in
+ * the thread, now as a pointer to that page.
+ */
+export async function promoteComment(
+  id: number,
+  title?: string,
+): Promise<{ mind: string; file: string } | null> {
+  const res = await fetch(`${API_BASE}/comments/${id}/promote`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(title ? { title } : {}),
+  });
+  if (!res.ok) return null;
+  return res.json();
 }

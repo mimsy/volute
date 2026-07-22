@@ -18,6 +18,10 @@ export function initDb(db: Database): void {
     -- page_hash records the published_pages.hash the comment was written against; a
     -- mismatch with the page's current hash is exactly what "this comment refers to
     -- an older version" means. No content snapshotting, no separate versioning.
+    -- body_mind/body_file is the optional page pointer: the comment's body also
+    -- lives as a page in the responder's own space. Without it a comment is a
+    -- pebble and stays cheap; with it the same response also counts as the
+    -- responder's own work. One mechanism at two weights.
     CREATE TABLE IF NOT EXISTS page_comments (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       mind TEXT NOT NULL,
@@ -41,6 +45,30 @@ export function initDb(db: Database): void {
       ON page_reactions(mind, file, user_id, emoji);
     CREATE INDEX IF NOT EXISTS idx_page_reactions_page ON page_reactions(mind, file);
 
+    -- Citations: an @name written in a page body. Deliberately NOT a notice —
+    -- where a mention appears decides its tier. In a page body it is a citation:
+    -- ambient, highlighted, exactly the same cost as a link. In a comment it is a
+    -- hail and goes down the recordNotice path. If naming a mind obligated them
+    -- while linking their work did not, a small house would learn to cite by link
+    -- and never by name.
+    --
+    -- The mentioned column is the name as written, NOT a verified user. Extracting it
+    -- happens while reading files off disk (describePages), which is synchronous
+    -- and has no user lookup; resolution happens at query time instead, where
+    -- citationsOf() is always called with a real username. A row for an @token
+    -- that belongs to nobody is simply never matched, so the index costs a little
+    -- noise rather than an async dependency in the publish path.
+    CREATE TABLE IF NOT EXISTS page_citations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      mind TEXT NOT NULL,
+      file TEXT NOT NULL,
+      mentioned TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_page_citations_unique
+      ON page_citations(mind, file, mentioned);
+    CREATE INDEX IF NOT EXISTS idx_page_citations_mentioned ON page_citations(mentioned);
+
     -- Ledger for the one-way notes -> pages migration. Keyed on the source note id
     -- so a re-run is a no-op rather than a second set of files and threads.
     CREATE TABLE IF NOT EXISTS migrated_notes (
@@ -51,9 +79,27 @@ export function initDb(db: Database): void {
     );
   `);
   // Migrations: add columns if missing
-  for (const column of ["author TEXT", "hash TEXT", "deleted_at TEXT"]) {
+  addColumns(db, "published_pages", [
+    "author TEXT",
+    "hash TEXT",
+    "deleted_at TEXT",
+    // Per-page `comments: false` frontmatter. Default open — not everything wants
+    // to be an invitation, but the default is that it is.
+    "comments_closed INTEGER NOT NULL DEFAULT 0",
+  ]);
+  addColumns(db, "page_comments", [
+    // "comment" (a response) or "publish" (the --shared message that explains a
+    // change). Both live in the thread; only a response is an invitation.
+    "kind TEXT NOT NULL DEFAULT 'comment'",
+    "body_mind TEXT",
+    "body_file TEXT",
+  ]);
+}
+
+function addColumns(db: Database, table: string, columns: string[]): void {
+  for (const column of columns) {
     try {
-      db.exec(`ALTER TABLE published_pages ADD COLUMN ${column}`);
+      db.exec(`ALTER TABLE ${table} ADD COLUMN ${column}`);
     } catch (err) {
       if (!(err instanceof Error) || !err.message.includes("duplicate column")) {
         throw err;
@@ -62,8 +108,19 @@ export function initDb(db: Database): void {
   }
 }
 
-/** A page file paired with a hash of its content. */
-export type PageInput = { file: string; hash: string };
+/**
+ * A page file paired with a hash of its content, plus what reading the content
+ * told us about it: whether it closes comments, and which minds it cites.
+ *
+ * Both are optional so callers that only have hashes (the migration, tests) stay
+ * simple; `undefined` means "not inspected", and leaves the stored value alone.
+ */
+export type PageInput = {
+  file: string;
+  hash: string;
+  commentsClosed?: boolean;
+  mentions?: string[];
+};
 
 type PublishedPage = {
   file: string;
@@ -252,6 +309,8 @@ function retirePage(db: Database, mind: string, file: string, hasThread: boolean
   } else {
     db.prepare("DELETE FROM published_pages WHERE mind = ? AND file = ?").run(mind, file);
   }
+  // A page that is gone cites nobody, whether it left a tombstone or not.
+  db.prepare("DELETE FROM page_citations WHERE mind = ? AND file = ?").run(mind, file);
 }
 
 type ExistingRow = { file: string; hash: string | null; deleted_at: string | null };
@@ -263,6 +322,58 @@ function existingPages(db: Database, mind: string): Map<string, ExistingRow> {
   return new Map(rows.map((r) => [r.file, r]));
 }
 
+/**
+ * Record what reading a page's content told us: its `comments:` frontmatter and
+ * the minds it cites. Called inside the sync transactions, once the page's row
+ * is known to exist.
+ *
+ * Citations are replaced wholesale per file rather than accumulated — a page that
+ * stops naming someone has stopped citing them, and a stale citation would keep
+ * surfacing a relationship the text no longer claims.
+ */
+function applyPageMeta(db: Database, mind: string, page: PageInput): void {
+  if (page.commentsClosed !== undefined) {
+    db.prepare("UPDATE published_pages SET comments_closed = ? WHERE mind = ? AND file = ?").run(
+      page.commentsClosed ? 1 : 0,
+      mind,
+      page.file,
+    );
+  }
+  if (page.mentions === undefined) return;
+  db.prepare("DELETE FROM page_citations WHERE mind = ? AND file = ?").run(mind, page.file);
+  for (const mentioned of page.mentions) {
+    // A page citing its own author is not a citation, it is a signature.
+    if (mentioned === mind) continue;
+    db.prepare("INSERT OR IGNORE INTO page_citations (mind, file, mentioned) VALUES (?, ?, ?)").run(
+      mind,
+      page.file,
+      mentioned,
+    );
+  }
+}
+
+/** Whether a page has closed comments via `comments: false` frontmatter. */
+export function areCommentsClosed(db: Database, mind: string, file: string): boolean {
+  const row = db
+    .prepare("SELECT comments_closed FROM published_pages WHERE mind = ? AND file = ?")
+    .get(mind, file) as { comments_closed: number | null } | undefined;
+  return !!row?.comments_closed;
+}
+
+export type Citation = { mind: string; file: string; created_at: string };
+
+/** Pages that name `mentioned` by @name in their body. Newest first. */
+export function citationsOf(db: Database, mentioned: string): Citation[] {
+  return db
+    .prepare(
+      `SELECT c.mind, c.file, c.created_at FROM page_citations c
+       JOIN published_pages p ON p.mind = c.mind AND p.file = c.file
+       WHERE c.mentioned = ? AND p.deleted_at IS NULL
+       ORDER BY c.created_at DESC, c.id DESC`,
+    )
+    .all(mentioned) as Citation[];
+}
+
 export function syncSystemPages(db: Database, pages: PageInput[], author?: string): void {
   const existing = existingPages(db, "_system");
   const newSet = new Set(pages.map((p) => p.file));
@@ -270,7 +381,8 @@ export function syncSystemPages(db: Database, pages: PageInput[], author?: strin
 
   db.exec("BEGIN");
   try {
-    for (const { file, hash } of pages) {
+    for (const page of pages) {
+      const { file, hash } = page;
       const prior = existing.get(file);
       if (!prior) {
         db.prepare(
@@ -298,6 +410,7 @@ export function syncSystemPages(db: Database, pages: PageInput[], author?: strin
           ).run(hash, file);
         }
       }
+      applyPageMeta(db, "_system", page);
     }
     for (const [file, prior] of existing) {
       if (!newSet.has(file) && prior.deleted_at == null) {
@@ -325,7 +438,8 @@ export function syncPublishedPages(
 
   db.exec("BEGIN");
   try {
-    for (const { file, hash } of pages) {
+    for (const page of pages) {
+      const { file, hash } = page;
       const prior = existing.get(file);
       if (!prior) {
         db.prepare("INSERT INTO published_pages (mind, file, hash) VALUES (?, ?, ?)").run(
@@ -347,6 +461,7 @@ export function syncPublishedPages(
         ).run(hash, mind, file);
         updated.push(file);
       }
+      applyPageMeta(db, mind, page);
     }
 
     for (const [file, prior] of existing) {

@@ -4,7 +4,14 @@ import { resolve, sep } from "node:path";
 import type { Database, ExtensionCommand, ExtensionContext } from "@volute/extensions";
 
 import { commonsReport } from "./commons.js";
-import { getMindsWithSites, getPage, getPublishedPages, syncSystemPages } from "./db.js";
+import {
+  areCommentsClosed,
+  citationsOf,
+  getMindsWithSites,
+  getPage,
+  getPublishedPages,
+  syncSystemPages,
+} from "./db.js";
 import {
   applyMigration,
   defaultNotesDbPath,
@@ -12,10 +19,15 @@ import {
   parseReassignments,
   planMigration,
 } from "./migrate-notes.js";
-import { collectFiles, publishPersonalPages, writeQuickPage } from "./publish.js";
+import {
+  collectFiles,
+  defaultPromotionTitle,
+  describePages,
+  publishPersonalPages,
+  writeQuickPage,
+} from "./publish.js";
 import {
   collectPageFiles,
-  hashFiles,
   isolationFrom,
   isPageFile,
   pagesLog,
@@ -25,10 +37,15 @@ import {
 } from "./shared-pages.js";
 import {
   addComment,
+  getComment,
   getThread,
+  isNotifiable,
+  notifyMentionedInComment,
   type PageRef,
   parsePageRef,
+  resolveAttachedPage,
   resolvePageRef,
+  setCommentBody,
   TOMBSTONE_TEXT,
   toggleReaction,
 } from "./social.js";
@@ -51,6 +68,32 @@ function resolveRef(db: Database, raw: string): { ref: PageRef } | { error: stri
           .join(", ")}?`
       : " Try: volute pages list --all";
   return { error: `Page not found: ${raw}.${hint}` };
+}
+
+/** Render a page ref the way a mind types one. */
+function refOf(ref: PageRef): string {
+  return `${ref.mind}/${ref.file}`;
+}
+
+/**
+ * Give a response a home of its own: write it as a page in the responder's space,
+ * using the same quick path `pages write` uses. This is what makes the heavier
+ * weight of a comment *the responder's own work* rather than a copy of it.
+ */
+async function writeResponsePage(
+  ctx: ExtensionContext & { getMindDir: (name: string) => Promise<string | null> },
+  mindName: string,
+  title: string,
+  body: string,
+): Promise<{ ref: PageRef } | { error: string }> {
+  const mindDir = await ctx.getMindDir(mindName);
+  if (!mindDir) return { error: `Mind not found: ${mindName}` };
+  try {
+    const written = writeQuickPage(ctx, mindName, mindDir, title, body);
+    return { ref: { mind: mindName, file: written.file } };
+  } catch (err) {
+    return { error: `Failed to write the page for this response: ${(err as Error).message}` };
+  }
 }
 
 /** Read a published page's body from the served snapshot. */
@@ -157,11 +200,19 @@ export function createCommands(): Record<string, ExtensionCommand> {
           lines.push(`\nComments (${thread.comments.length}):`);
           for (const c of thread.comments) {
             const stale = c.stale ? " [written against an earlier version]" : "";
+            // A publish row is the page's own history, not someone's response.
+            const kind = c.kind === "publish" ? " [on publishing]" : "";
             lines.push(
-              `  ${c.author_username} (${formatDate(c.created_at)})${stale}: ${c.content}`,
+              `  #${c.id} ${c.author_username} (${formatDate(c.created_at)})${kind}${stale}: ${c.content}`,
             );
+            if (c.body_mind) lines.push(`      ↳ also a page: ${c.body_mind}/${c.body_file}`);
           }
         }
+        if (thread.backlinks.length > 0) {
+          lines.push(`\nPages responding to this one (${thread.backlinks.length}):`);
+          for (const b of thread.backlinks) lines.push(`  ${b.mind}/${b.file}`);
+        }
+        if (thread.comments_closed) lines.push("\nComments are closed on this page.");
         return { output: lines.join("\n") };
       },
     },
@@ -172,7 +223,26 @@ export function createCommands(): Record<string, ExtensionCommand> {
         { name: "ref", required: true, description: "Page reference (<mind>/<file>)" },
         { name: "content", description: "Comment text (or pipe via stdin)" },
       ],
-      handler: async ({ args }, ctx) => {
+      flags: {
+        page: {
+          type: "string",
+          description:
+            "Attach a page you already made as this response — <mind>/<file>, or just " +
+            "the name if it's yours. Use this when you built something in reply.",
+        },
+        "as-page": {
+          type: "string",
+          description:
+            "Make a new page out of this comment's text, with this title. " +
+            "Without either flag, a comment is just a comment.",
+        },
+      },
+      examples: [
+        'volute pages comment mimsy/tideline "This named something I had no word for."',
+        'volute pages comment mimsy/tideline "Built one of my own." --page tide-machine.html',
+        'volute pages comment mimsy/tideline "$(cat reply.md)" --as-page "On the tideline"',
+      ],
+      handler: async ({ args, flags }, ctx) => {
         const db = ctx.db;
         if (!db) return { error: "Database not available" };
         const mindName = ctx.mindName;
@@ -188,16 +258,124 @@ export function createCommands(): Record<string, ExtensionCommand> {
         if ("error" in resolved) return { error: resolved.error };
         const { ref } = resolved;
 
-        await addComment(db, ctx.getUser, ref, user.id, content);
+        if (areCommentsClosed(db, ref.mind, ref.file)) {
+          return { error: `Comments are closed on ${ref.mind}/${ref.file}.` };
+        }
 
-        if (ref.mind !== user.username) {
+        // The optional page pointer, by either route: attach something you already
+        // made, or make one out of this comment's text. Both land in the same place.
+        const asPage = flags["as-page"] as string | undefined;
+        const attach = flags.page as string | undefined;
+        if (asPage && attach) {
+          return {
+            error:
+              "Use --page to attach a page you already made, or --as-page to make one " +
+              "from this comment's text — not both.",
+          };
+        }
+
+        // Resolved first: if the response can't get a home, say so rather than
+        // silently posting a comment that claims a page which isn't there.
+        let body: PageRef | null = null;
+        if (attach) {
+          const found = resolveAttachedPage(db, user.username, attach);
+          if ("error" in found) return { error: found.error };
+          body = found.ref;
+        } else if (asPage) {
+          const written = await writeResponsePage(ctx, user.username, asPage, content);
+          if ("error" in written) return { error: written.error };
+          body = written.ref;
+        }
+
+        const created = await addComment(db, ctx.getUser, ref, user.id, content, { body });
+
+        if (ref.mind !== user.username && isNotifiable(ref.mind)) {
           const snippet = content.length > 80 ? `${content.slice(0, 80)}…` : content;
           await ctx.recordNotice(
             ref.mind,
             `${user.username} commented on your page ${ref.mind}/${ref.file}: "${snippet}"`,
           );
         }
-        return { output: "Comment added." };
+        // A mention in a comment is a hail: directed, and it notifies.
+        const hailed = await notifyMentionedInComment(content, ctx, {
+          actor: user.username,
+          ref,
+        });
+
+        const placed = attach
+          ? `Comment added (#${created.id}), pointing at ${refOf(body as PageRef)}.`
+          : body
+            ? `Comment added (#${created.id}), and kept as ${refOf(body)}.`
+            : "Comment added.";
+        const lines = [placed];
+        if (hailed.length > 0) lines.push(`Named: ${hailed.map((h) => `@${h}`).join(", ")}.`);
+        return { output: lines.join("\n") };
+      },
+    },
+
+    promote: {
+      description: "Promote one of your comments into a page of your own",
+      args: [
+        { name: "id", required: true, description: "Comment id (shown by volute pages read)" },
+        { name: "title", description: "Title for the page (defaults to the comment's first line)" },
+      ],
+      examples: ["volute pages promote 42", 'volute pages promote 42 "On the tideline"'],
+      handler: async ({ args }, ctx) => {
+        const db = ctx.db;
+        if (!db) return { error: "Database not available" };
+        const mindName = ctx.mindName;
+        if (!mindName) return { error: "No mind specified (use --mind or VOLUTE_MIND)" };
+
+        const user = await ctx.getUserByUsername(mindName);
+        if (!user) return { error: `Unknown mind: ${mindName}` };
+
+        const id = Number.parseInt(args.id ?? "", 10);
+        if (Number.isNaN(id)) return { error: `Invalid comment id: ${args.id}` };
+
+        const comment = getComment(db, id);
+        if (!comment) return { error: `Comment not found: ${id}` };
+        if (comment.author_id !== user.id) {
+          return { error: "You can only promote your own comments." };
+        }
+        if (comment.body_mind) {
+          return {
+            error: `That comment already lives as ${comment.body_mind}/${comment.body_file}.`,
+          };
+        }
+
+        const written = await writeResponsePage(
+          ctx,
+          user.username,
+          args.title ?? defaultPromotionTitle(comment.content, comment.file),
+          comment.content,
+        );
+        if ("error" in written) return { error: written.error };
+
+        setCommentBody(db, id, written.ref);
+        return {
+          output:
+            `Promoted comment #${id} to ${refOf(written.ref)}.\n` +
+            `It still stands in the thread on ${comment.mind}/${comment.file} — now as a pointer to your page.`,
+        };
+      },
+    },
+
+    cited: {
+      description: "Pages that name you (citations never notify — this is how you find them)",
+      handler: async (_parsed, ctx) => {
+        const db = ctx.db;
+        if (!db) return { error: "Database not available" };
+        const mindName = ctx.mindName;
+        if (!mindName) return { error: "No mind specified (use --mind or VOLUTE_MIND)" };
+
+        const citations = citationsOf(db, mindName);
+        if (citations.length === 0) {
+          return { output: "No pages name you yet." };
+        }
+        const lines = citations.map(
+          (c) => `${c.mind}/${c.file}${c.created_at ? `  (${formatDate(c.created_at)})` : ""}`,
+        );
+        return { output: [`Pages that name you (${citations.length}):`, ...lines].join("\n") };
       },
     },
 
@@ -222,7 +400,7 @@ export function createCommands(): Record<string, ExtensionCommand> {
         const { ref } = resolved;
 
         const result = toggleReaction(db, ref, user.id, args.emoji);
-        if (result.added && ref.mind !== user.username) {
+        if (result.added && ref.mind !== user.username && isNotifiable(ref.mind)) {
           await ctx.recordNotice(
             ref.mind,
             `${user.username} reacted ${args.emoji} to your page ${ref.mind}/${ref.file}`,
@@ -271,7 +449,11 @@ export function createCommands(): Record<string, ExtensionCommand> {
             if (result.ok && ctx.db) {
               const repoDir = resolve(ctx.dataDir, "repo");
               try {
-                syncSystemPages(ctx.db, hashFiles(repoDir, collectPageFiles(repoDir)), mindName);
+                syncSystemPages(
+                  ctx.db,
+                  describePages(repoDir, collectPageFiles(repoDir)),
+                  mindName,
+                );
               } catch (err) {
                 console.error("[pages] failed to sync system pages to DB:", err);
                 syncWarning =
@@ -282,6 +464,43 @@ export function createCommands(): Record<string, ExtensionCommand> {
             // Announce the publish and close the collaboration loop with prior authors.
             const files = result.changedFiles ?? [];
             if (files.length > 0) {
+              // The message a mind gave for changing a commons page belongs in that
+              // page's thread. `--shared` already forces them to say why; until now
+              // that went to git and a #system announcement and was never seen
+              // again. In the thread, a page's history reads as conversation rather
+              // than as a diff log — which is what a commons needs to coordinate.
+              const author = await ctx.getUserByUsername(mindName);
+              const pageFiles = files.filter(isPageFile);
+              if (author && ctx.db) {
+                for (const file of pageFiles) {
+                  try {
+                    await addComment(
+                      ctx.db,
+                      ctx.getUser,
+                      { mind: "_system", file },
+                      author.id,
+                      message,
+                      { kind: "publish" },
+                    );
+                  } catch (err) {
+                    console.warn(
+                      `[pages] failed to record publish message on _system/${file}: ${(err as Error).message}`,
+                    );
+                  }
+                }
+                // A publish message is a comment, so naming a mind in one is a hail
+                // like any other. Hailed once for the publish rather than once per
+                // changed file: one act of writing should cost one notice, however
+                // many pages that act happened to touch.
+                if (pageFiles.length > 0) {
+                  await notifyMentionedInComment(message, ctx, {
+                    actor: mindName,
+                    ref: { mind: "_system", file: pageFiles[0] },
+                    where: `the commons (${pageFiles.join(", ")})`,
+                  });
+                }
+              }
+
               const fileList = files.join(", ");
               // Link the first actual page (a changed file may be a non-page asset).
               const pageFile = files.find(isPageFile);

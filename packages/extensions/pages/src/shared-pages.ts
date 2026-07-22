@@ -5,7 +5,6 @@
  * Each mind gets a worktree at <mindDir>/home/pages/_system/ on a per-mind branch.
  */
 import { execFile as execFileCb } from "node:child_process";
-import { createHash } from "node:crypto";
 import {
   chmodSync,
   existsSync,
@@ -591,16 +590,6 @@ export function collectPageFiles(dir: string): string[] {
   }
   walk(dir);
   return files.sort();
-}
-
-/** Pair each file (relative to baseDir) with a sha256 hash of its content. */
-export function hashFiles(baseDir: string, files: string[]): { file: string; hash: string }[] {
-  return files.map((file) => ({
-    file,
-    hash: createHash("sha256")
-      .update(readFileSync(resolve(baseDir, file)))
-      .digest("hex"),
-  }));
 }
 
 /** Whether a file path is a page file we track (HTML or Markdown). */
