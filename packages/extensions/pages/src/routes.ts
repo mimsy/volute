@@ -18,6 +18,7 @@ import {
   type PageRef,
   type PageThread,
   parsePageRef,
+  resolveAttachedPage,
   setCommentBody,
   toggleReaction,
 } from "./social.js";
@@ -128,7 +129,7 @@ export function createRoutes(ctx: ExtensionContext): Hono {
         const actor = ctx.resolveUser(c);
         if (!actor || actor.id === 0) return c.json({ error: "Unauthorized" }, 401);
 
-        const body = await parseJson<{ file?: string; content?: string }>(c);
+        const body = await parseJson<{ file?: string; content?: string; page?: string }>(c);
         if (!body) return c.json({ error: "Invalid JSON body" }, 400);
         const ref = validateRef(c.req.param("mind"), body.file);
         if (!ref) return c.json({ error: "Invalid page reference" }, 400);
@@ -138,7 +139,19 @@ export function createRoutes(ctx: ExtensionContext): Hono {
           return c.json({ error: "Comments are closed on this page" }, 403);
         }
 
-        const created = await addComment(ctx.db, ctx.getUser, ref, actor.id, body.content);
+        // Optionally attach a page the responder already made, so work built in
+        // reply can be the reply. Ownership is checked against the actor, never
+        // against the `:mind` in the path.
+        let attached: PageRef | null = null;
+        if (body.page) {
+          const found = resolveAttachedPage(ctx.db, actor.username, body.page);
+          if ("error" in found) return c.json({ error: found.error }, 400);
+          attached = found.ref;
+        }
+
+        const created = await addComment(ctx.db, ctx.getUser, ref, actor.id, body.content, {
+          body: attached,
+        });
         const comment = { ...created, created_at: toIso(created.created_at) };
         if (ref.mind !== actor.username && isNotifiable(ref.mind)) {
           const snippet = body.content.length > 80 ? `${body.content.slice(0, 80)}…` : body.content;

@@ -36,6 +36,7 @@ import {
   isNotifiable,
   notifyMentionedInComment,
   parsePageRef,
+  resolveAttachedPage,
   resolvePageRef,
   setCommentBody,
   toggleReaction,
@@ -412,6 +413,82 @@ describe("a comment may carry a page pointer", () => {
     syncPublishedPages(db, "pip", []);
     assert.equal(getPage(db, "pip", "notes/reply.md"), null);
     assert.deepEqual(getBacklinks(db, ref), []);
+  });
+
+  describe("attaching a page you already made", () => {
+    it("resolves one of your own published pages, extension and all", () => {
+      publish("pip", "experiments/tide-machine.html", "h1");
+      const found = resolveAttachedPage(db, "pip", "pip/experiments/tide-machine.html");
+      assert.deepEqual(found, { ref: { mind: "pip", file: "experiments/tide-machine.html" } });
+    });
+
+    it("reads a bare name as your own page, since it has to be yours anyway", () => {
+      publish("pip", "experiments/tide-machine.html", "h1");
+      const found = resolveAttachedPage(db, "pip", "tide-machine");
+      assert.deepEqual(found, { ref: { mind: "pip", file: "experiments/tide-machine.html" } });
+    });
+
+    it("reads a path like notes/x.md as your own file, not as mind 'notes'", () => {
+      // The form `pages list` prints, and what the quick path produces. It is also
+      // a plausible <mind>/<file> split, so owner-relative has to win or a mind
+      // pasting what it sees gets told its own page belongs to someone else.
+      publish("pip", "notes/reply.md", "h1");
+      const found = resolveAttachedPage(db, "pip", "notes/reply.md");
+      assert.deepEqual(found, { ref: { mind: "pip", file: "notes/reply.md" } });
+    });
+
+    it("still accepts the fully-qualified form of your own page", () => {
+      publish("pip", "notes/reply.md", "h1");
+      const found = resolveAttachedPage(db, "pip", "pip/notes/reply.md");
+      assert.deepEqual(found, { ref: { mind: "pip", file: "notes/reply.md" } });
+    });
+
+    it("lets an HTML page be the reply — the point of the whole path", async () => {
+      publish("mimsy", "notes/a.md", "h1");
+      publish("pip", "tide-machine.html", "h2");
+      const found = resolveAttachedPage(db, "pip", "tide-machine.html");
+      assert.ok("ref" in found);
+
+      const c = await addComment(db, getUser, ref, 2, "Built one of my own.", { body: found.ref });
+      assert.equal(c.body_file, "tide-machine.html");
+      assert.deepEqual(
+        getBacklinks(db, ref).map((b) => `${b.mind}/${b.file}`),
+        ["pip/tide-machine.html"],
+      );
+    });
+
+    it("refuses a page belonging to someone else", () => {
+      publish("mimsy", "notes/tideline.md", "h1");
+      const found = resolveAttachedPage(db, "pip", "mimsy/notes/tideline.md");
+      assert.ok("error" in found);
+      assert.match(found.error, /isn't yours/);
+    });
+
+    it("refuses a commons page, which belongs to everyone rather than to you", () => {
+      publish("_system", "index.md", "h1");
+      const found = resolveAttachedPage(db, "pip", "_system/index.md");
+      assert.ok("error" in found);
+      assert.match(found.error, /belongs to everyone/);
+    });
+
+    it("refuses a page that was never published, and offers what you do have", () => {
+      publish("pip", "notes/something-else.md", "h1");
+      const found = resolveAttachedPage(db, "pip", "tide-machine.html");
+      assert.ok("error" in found);
+      assert.match(found.error, /no published page/);
+      assert.match(found.error, /notes\/something-else\.md/, "suggests a real candidate");
+    });
+
+    it("refuses a tombstone — a thread shouldn't point at a gravestone", async () => {
+      publish("pip", "notes/reply.md", "h1");
+      await addComment(db, getUser, { mind: "pip", file: "notes/reply.md" }, 1, "keeps a thread");
+      syncPublishedPages(db, "pip", []);
+      assert.ok(getPage(db, "pip", "notes/reply.md")?.deleted_at, "tombstoned, not gone");
+
+      const found = resolveAttachedPage(db, "pip", "notes/reply.md");
+      assert.ok("error" in found);
+      assert.match(found.error, /gravestone/);
+    });
   });
 
   describe("promotion", () => {

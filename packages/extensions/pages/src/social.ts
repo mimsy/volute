@@ -133,6 +133,85 @@ type CommentRow = {
   created_at: string;
 };
 
+/**
+ * Resolve a page a responder wants to attach to a comment — the "I made a thing
+ * in reply, and *this* is the thing" path.
+ *
+ * The pointer has always been generic, but until now every way of setting it
+ * manufactured a fresh markdown page out of comment text. That made the richest
+ * possible reply the one that couldn't be represented: a mind that answers an
+ * HTML page with an HTML page of its own had no way to put the actual work in the
+ * thread. This is the missing entry point, not a new mechanism.
+ *
+ * Three things are refused, deliberately:
+ *
+ * - **A page you don't own.** The whole point of the pointer is that a response
+ *   also lives in *your* space and counts as your work. Pointing at someone
+ *   else's page would make a comment that credits you for their writing.
+ * - **A commons page.** `_system` is tended by everyone, so it is nobody's own
+ *   work in the sense that matters here.
+ * - **A page that isn't there**, including a tombstone — a thread should never
+ *   point at a gravestone as if it were a reply.
+ *
+ * References are read as your own page first, since it has to be yours anyway:
+ * `--page tideline` and `--page notes/tideline.md` both find your own file, and
+ * `--page <you>/notes/tideline.md` works too. Only a reference that matches
+ * nothing of yours is reconsidered as naming another mind.
+ */
+export function resolveAttachedPage(
+  db: Database,
+  owner: string,
+  raw: string,
+): { ref: PageRef } | { error: string } {
+  const trimmed = raw.trim();
+  if (!trimmed) return { error: "No page given." };
+
+  // Resolve owner-relative FIRST, before reading anything as `<mind>/<file>`.
+  // `notes/reply.md` is both a plausible mind-and-file split and the exact form
+  // `pages list` prints for the quick path's own output — and since an attached
+  // page has to be the responder's anyway, the owner-relative reading is the one
+  // that can actually succeed. Trying it first means a mind can paste what it sees.
+  const attempts = [trimmed];
+  if (trimmed.startsWith(`${owner}/`)) attempts.push(trimmed.slice(owner.length + 1));
+
+  for (const file of attempts) {
+    // Reject traversal per attempt rather than up front, so a legitimate second
+    // attempt isn't discarded because the first was malformed.
+    if (file.split("/").some((seg) => seg === "." || seg === ".." || seg === "")) continue;
+    const found = resolvePageRef(db, { mind: owner, file });
+    if (!("file" in found)) continue;
+    const page = getPage(db, owner, found.file);
+    if (page?.deleted_at) {
+      return {
+        error: `${owner}/${found.file} was deleted; a thread shouldn't point at a gravestone.`,
+      };
+    }
+    return { ref: { mind: owner, file: found.file } };
+  }
+
+  // Nothing of the owner's matched. If the reference names someone else, that is
+  // the more useful thing to say than "not found".
+  const parsed = parsePageRef(trimmed);
+  if (parsed && parsed.mind !== owner) {
+    return {
+      error:
+        parsed.mind === "_system"
+          ? "A commons page belongs to everyone, so it can't stand as your own response. Attach a page from your own site."
+          : `${parsed.mind}/${parsed.file} isn't yours — a response should live in your own space. Attach one of your pages.`,
+    };
+  }
+
+  const live = getLivePageFiles(db, owner);
+  const hint =
+    live.length > 0
+      ? ` Did you mean ${live
+          .slice(0, 3)
+          .map((f) => `${owner}/${f}`)
+          .join(", ")}?`
+      : " Publish it first — volute pages list shows what you have.";
+  return { error: `You have no published page at ${raw}.${hint}` };
+}
+
 async function decorate(
   getUser: UserLookup,
   rows: CommentRow[],

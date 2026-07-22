@@ -43,6 +43,7 @@ import {
   notifyMentionedInComment,
   type PageRef,
   parsePageRef,
+  resolveAttachedPage,
   resolvePageRef,
   setCommentBody,
   TOMBSTONE_TEXT,
@@ -223,15 +224,22 @@ export function createCommands(): Record<string, ExtensionCommand> {
         { name: "content", description: "Comment text (or pipe via stdin)" },
       ],
       flags: {
+        page: {
+          type: "string",
+          description:
+            "Attach a page you already made as this response — <mind>/<file>, or just " +
+            "the name if it's yours. Use this when you built something in reply.",
+        },
         "as-page": {
           type: "string",
           description:
-            "Also keep this response as a page of your own, with this title. " +
-            "Without it, a comment is just a comment.",
+            "Make a new page out of this comment's text, with this title. " +
+            "Without either flag, a comment is just a comment.",
         },
       },
       examples: [
         'volute pages comment mimsy/tideline "This named something I had no word for."',
+        'volute pages comment mimsy/tideline "Built one of my own." --page tide-machine.html',
         'volute pages comment mimsy/tideline "$(cat reply.md)" --as-page "On the tideline"',
       ],
       handler: async ({ args, flags }, ctx) => {
@@ -254,12 +262,26 @@ export function createCommands(): Record<string, ExtensionCommand> {
           return { error: `Comments are closed on ${ref.mind}/${ref.file}.` };
         }
 
-        // The optional page pointer. Written first: if giving the response a home
-        // of its own fails, say so rather than silently posting a comment that
-        // claims a page that isn't there.
-        let body: PageRef | null = null;
+        // The optional page pointer, by either route: attach something you already
+        // made, or make one out of this comment's text. Both land in the same place.
         const asPage = flags["as-page"] as string | undefined;
-        if (asPage) {
+        const attach = flags.page as string | undefined;
+        if (asPage && attach) {
+          return {
+            error:
+              "Use --page to attach a page you already made, or --as-page to make one " +
+              "from this comment's text — not both.",
+          };
+        }
+
+        // Resolved first: if the response can't get a home, say so rather than
+        // silently posting a comment that claims a page which isn't there.
+        let body: PageRef | null = null;
+        if (attach) {
+          const found = resolveAttachedPage(db, user.username, attach);
+          if ("error" in found) return { error: found.error };
+          body = found.ref;
+        } else if (asPage) {
           const written = await writeResponsePage(ctx, user.username, asPage, content);
           if ("error" in written) return { error: written.error };
           body = written.ref;
@@ -280,9 +302,12 @@ export function createCommands(): Record<string, ExtensionCommand> {
           ref,
         });
 
-        const lines = [
-          body ? `Comment added (#${created.id}), and kept as ${refOf(body)}.` : "Comment added.",
-        ];
+        const placed = attach
+          ? `Comment added (#${created.id}), pointing at ${refOf(body as PageRef)}.`
+          : body
+            ? `Comment added (#${created.id}), and kept as ${refOf(body)}.`
+            : "Comment added.";
+        const lines = [placed];
         if (hailed.length > 0) lines.push(`Named: ${hailed.map((h) => `@${h}`).join(", ")}.`);
         return { output: lines.join("\n") };
       },
