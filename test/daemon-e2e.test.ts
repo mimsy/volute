@@ -1066,6 +1066,38 @@ describe("daemon e2e", { timeout: 420000 }, () => {
     assert.equal(patched.settings?.description, "set by member");
   });
 
+  it("GET /:name/turn-context returns null when no extension has anything to say", async () => {
+    await ensureTestMind();
+
+    // Silence is the normal answer: the pre-prompt hook calls this every turn and
+    // must get a cheap, well-formed `null` when nothing is around. An unrecognized
+    // reason falls back to the smaller per-turn budget rather than erroring.
+    for (const reason of ["turn", "wake", "nonsense-falls-back-to-turn"]) {
+      const res = await daemonRequest(
+        `/api/minds/${TEST_MIND}/turn-context?reason=${encodeURIComponent(reason)}`,
+      );
+      assert.equal(res.status, 200, `reason=${reason}`);
+      const body = (await res.json()) as { context: string | null };
+      assert.equal(body.context, null, `reason=${reason} should yield no ambient context`);
+    }
+  });
+
+  it("GET /:name/turn-context is mind-scoped: another mind gets 403, anonymous 401", async () => {
+    await ensureTestMind();
+
+    const anon = await fetch(`${BASE_URL}/api/minds/${TEST_MIND}/turn-context`);
+    assert.equal(anon.status, 401);
+
+    // A different mind principal must not be able to read this mind's ambient context.
+    const otherMind = await getOrCreateMindUser("e2e-turn-context-other");
+    const otherSession = await createSession(otherMind.id);
+    const headers = new Headers();
+    headers.set("Authorization", `Bearer ${otherSession}`);
+    headers.set("Origin", BASE_URL);
+    const res = await fetch(`${BASE_URL}/api/minds/${TEST_MIND}/turn-context`, { headers });
+    assert.equal(res.status, 403);
+  });
+
   it("GET /api/minds withholds port/dir from non-privileged (mind) callers (#503)", async () => {
     await ensureTestMind();
 

@@ -11,6 +11,9 @@ export type {
   FlagDef,
   MindSection,
   SystemSection,
+  TurnContextOptions,
+  TurnContextProvider,
+  TurnContextReason,
   User,
 } from "./types.js";
 

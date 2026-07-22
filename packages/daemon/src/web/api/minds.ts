@@ -144,6 +144,7 @@ import {
   type TemplateManifest,
 } from "../../lib/template/template.js";
 import { computeTemplateHash } from "../../lib/template/template-hash.js";
+import { collectTurnContext } from "../../lib/turn-context.js";
 import { gitExec } from "../../lib/util/exec.js";
 import { checkHealth } from "../../lib/util/health.js";
 import log from "../../lib/util/logger.js";
@@ -2828,6 +2829,19 @@ const app = new Hono<AuthEnv>()
     setNoticeDrainWatermark(baseName, session, maxId);
 
     return c.json({ context: formatEvents(notices), notices });
+  })
+  // Ambient turn context contributed by extensions — "here is what's around", as
+  // opposed to the directed notices drained above. The pre-prompt hook calls this with
+  // reason=turn; the wake path collects reason=wake daemon-side in SleepManager.
+  //
+  // The daemon owns the budget: collectTurnContext enforces a total cap across all
+  // extensions and drops any that throws, hangs, or overruns. `context: null` — nothing
+  // is around — is the normal response.
+  .get("/:name/turn-context", requireSelf(), async (c) => {
+    const name = c.req.param("name");
+    const baseName = await getBaseName(name);
+    const reason = c.req.query("reason") === "wake" ? "wake" : "turn";
+    return c.json({ context: await collectTurnContext(baseName, reason) });
   })
   // Record a notice for a mind (mind → daemon). Templates use this to surface
   // context-loss the daemon can't see (missing session file, compaction failure) so

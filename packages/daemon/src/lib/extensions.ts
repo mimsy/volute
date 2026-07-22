@@ -1023,6 +1023,25 @@ export function notifyExtensionsMindStop(mindName: string): void {
   }
 }
 
+export type TurnContextProviderEntry = {
+  id: string;
+  manifest: ExtensionManifest;
+  context: ExtensionContext;
+};
+
+/**
+ * Every loaded extension that declares `turnContext`, in a deterministic order
+ * (by extension id). Order is load-order-independent on purpose: which extension
+ * gets asked first decides who gets first claim on the shared budget, and that must
+ * not depend on discovery order, which varies with npm/local install state.
+ */
+export function getTurnContextProviders(): TurnContextProviderEntry[] {
+  return loaded
+    .filter(({ manifest }) => typeof manifest.turnContext === "function")
+    .map(({ manifest, context }) => ({ id: manifest.id, manifest, context }))
+    .sort((a, b) => a.id.localeCompare(b.id));
+}
+
 /**
  * Test-only: register a manifest directly into the loaded-extension list, bypassing file
  * discovery and route mounting. For unit-testing skill-set derivation
