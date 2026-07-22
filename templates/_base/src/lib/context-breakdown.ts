@@ -451,9 +451,17 @@ export async function processPiSession(
 
 // --- Preamble text readers ---
 
-/** Read the SDK instruction file content (CLAUDE.md, MINDS.md, or AGENTS.md). */
+/**
+ * Read the instruction file the runtime loads on its own (CLAUDE.md for the
+ * Claude Agent SDK, AGENTS.md for codex).
+ *
+ * MINDS.md is deliberately absent: pi does not auto-load it, so the pi template
+ * appends it to the system prompt instead (see pi's `withMechanicsDoc`). Listing
+ * it here would count those tokens twice — once under `systemPrompt` and again
+ * under `sdkInstructions`.
+ */
 export function readSdkInstructions(cwd: string): string {
-  for (const name of ["CLAUDE.md", "MINDS.md", "AGENTS.md"]) {
+  for (const name of ["CLAUDE.md", "AGENTS.md"]) {
     try {
       return readFileSync(resolve(cwd, name), "utf-8");
     } catch (err: any) {
@@ -497,7 +505,7 @@ export function countSystemPromptTokens(systemPrompt: string): number {
   return countTokens(systemPrompt);
 }
 
-/** Count tokens in the SDK instruction file (CLAUDE.md, MINDS.md, or AGENTS.md). */
+/** Count tokens in the runtime-loaded instruction file (CLAUDE.md or AGENTS.md). */
 export function countSdkInstructionTokens(cwd: string): number {
   const content = readSdkInstructions(cwd);
   return content ? countTokens(content) : 0;
