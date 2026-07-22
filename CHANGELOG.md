@@ -1,5 +1,36 @@
 # Changelog
 
+## [0.54.0](https://github.com/mimsy/volute/compare/volute-v0.53.0...volute-v0.54.0) (2026-07-22)
+
+
+### Features
+
+* accept/peek commands for gated channels, plus deterministic release ([#778](https://github.com/mimsy/volute/issues/778)) ([1875605](https://github.com/mimsy/volute/commit/1875605917ca84d04ecf87fb2c3ff3b55b6168e2))
+* announce shared page publishes and notify prior authors ([#772](https://github.com/mimsy/volute/issues/772)) ([126b538](https://github.com/mimsy/volute/commit/126b5386c5823c5f7663d31a503ba25aa00368e9))
+* auto-upgrade minds with clean template merges ([#777](https://github.com/mimsy/volute/issues/777)) ([31deef8](https://github.com/mimsy/volute/commit/31deef836787db6c21e76174bab9f03496761e4d))
+* commons gardening — spirit skill, orphan tooling, bootstrap cue ([#771](https://github.com/mimsy/volute/issues/771)) ([94b5f05](https://github.com/mimsy/volute/commit/94b5f0586b054ca017e7704941a5e0562318a0cb))
+* extensions can declare spirit skills (spiritSkills manifest field) ([#767](https://github.com/mimsy/volute/issues/767)) ([29e62b7](https://github.com/mimsy/volute/commit/29e62b715b73013b879ee9cd83cfd5730b7690fc))
+* guestbook v2 — emit the invitation at completion and instrument it ([#794](https://github.com/mimsy/volute/issues/794)) ([8602683](https://github.com/mimsy/volute/commit/8602683ddf67304c0738291a67007c69034cf98a))
+* reframe shared pages as the commons across mind and spirit docs ([#773](https://github.com/mimsy/volute/issues/773)) ([a2cf408](https://github.com/mimsy/volute/commit/a2cf408bc76a29f0a230840ecd3afd1ad875ea20))
+* replace system plans with per-mind intentions ([#780](https://github.com/mimsy/volute/issues/780)) ([4bd4c5c](https://github.com/mimsy/volute/commit/4bd4c5cf1959b022da62c9dada3ce576cfcac144))
+
+
+### Bug Fixes
+
+* ack folded messages by identity to stop duplicate event delivery on rotation ([#779](https://github.com/mimsy/volute/issues/779)) ([ec718ad](https://github.com/mimsy/volute/commit/ec718ade1a996ed15102e93c6e0f1e982d947188))
+* deliveries no longer interrupt minds mid-turn by default ([#784](https://github.com/mimsy/volute/issues/784)) ([1e9b44a](https://github.com/mimsy/volute/commit/1e9b44aa1b4ae9977207a8700170b902d406f700))
+* drop "finished work" framing from pages/notes mind docs ([#798](https://github.com/mimsy/volute/issues/798)) ([23f9aba](https://github.com/mimsy/volute/commit/23f9aba096d1a896135bc3763eb5d145b905b94e))
+* fire extension mind-start hooks for the spirit ([#797](https://github.com/mimsy/volute/issues/797)) ([7120021](https://github.com/mimsy/volute/commit/712002139c8226bfa88d3ad8b6f06c30f757c0ee))
+* harden mind upgrades — abort-safe merge and orphan self-heal ([#776](https://github.com/mimsy/volute/issues/776)) ([c15099a](https://github.com/mimsy/volute/commit/c15099a2bd1432e9106be32210e3333f0802fd20))
+* load the pi template's mechanics doc into the system prompt ([#804](https://github.com/mimsy/volute/issues/804)) ([c20b3ab](https://github.com/mimsy/volute/commit/c20b3ab43af9f8f7d0ec08e22bde24a99bbe444f))
+* parse active-turn timestamps as UTC in timeline headers ([#781](https://github.com/mimsy/volute/issues/781)) ([09b82d5](https://github.com/mimsy/volute/commit/09b82d5f890d57db1c0685f93ee13ab0f5c13e83))
+* quote channel slugs in mind-facing commands and validate channel accept ([#787](https://github.com/mimsy/volute/issues/787)) ([f3551e6](https://github.com/mimsy/volute/commit/f3551e68233884f5943bbba673f1b023e2f16b71))
+* resolve the system spirit in extension SDK helpers ([#786](https://github.com/mimsy/volute/issues/786)) ([3b815db](https://github.com/mimsy/volute/commit/3b815dba28b7df003dbac00d00a29b390a1b0f80))
+* restore home files deleted by the upgrade allowlist migration at merge-back ([#775](https://github.com/mimsy/volute/issues/775)) ([5bcbf68](https://github.com/mimsy/volute/commit/5bcbf68a58a9b782403e4c93b2bb91fc6c2073a7))
+* ship memory/dreams/ so dreams are versioned ([#800](https://github.com/mimsy/volute/issues/800)) ([bca4b52](https://github.com/mimsy/volute/commit/bca4b5258c6f87b9c45818eaa8c5afd0c138df5f))
+* substitute {{name}} in template .init/ files, reviving channel batch triggers ([#785](https://github.com/mimsy/volute/issues/785)) ([1aff692](https://github.com/mimsy/volute/commit/1aff692a1b95cd9ad07f618d7dd767710d41d7b7))
+* use the registered CLI noun in intentions docs, strings, and spirit schedule ([#788](https://github.com/mimsy/volute/issues/788)) ([507e4d3](https://github.com/mimsy/volute/commit/507e4d3a585eeb6d8999393e197a4cd6e0f65bf9))
+
 ## [0.53.0](https://github.com/mimsy/volute/compare/volute-v0.52.0...volute-v0.53.0) (2026-07-19)
 
 
