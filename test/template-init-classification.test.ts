@@ -51,6 +51,7 @@ const EXPECTED: Record<string, "identity" | "infrastructure"> = {
   ".local/hooks/wake-context.sh": "infrastructure",
   ".local/hooks/pre-prompt/notices.ts": "infrastructure",
   ".local/hooks/pre-prompt/session-activity.ts": "infrastructure",
+  ".local/hooks/pre-prompt/turn-context.ts": "infrastructure",
 };
 
 describe("`.init/` identity vs infrastructure classification", () => {

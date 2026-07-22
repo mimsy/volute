@@ -112,6 +112,55 @@ export type ExtensionFeedItem = {
   iframeUrl?: string;
 };
 
+/**
+ * Why the daemon is asking for turn context.
+ *
+ * - `"turn"` — before an ordinary turn. "What changed": small, forward-looking,
+ *   and paid for on every single turn, so silence is the right answer almost always.
+ * - `"wake"` — once, on waking from sleep. Retrospective: the mind has been away, so
+ *   a digest of what it missed is appropriate and the budget is correspondingly larger.
+ */
+export type TurnContextReason = "turn" | "wake";
+
+export type TurnContextOptions = {
+  /**
+   * Hard character ceiling for this extension's block on this call. A block longer
+   * than `budget` is **dropped**, not truncated — a half-sentence in a mind's context
+   * is worse than nothing, and dropping keeps the incentive on the extension to
+   * summarize rather than to overrun and hope.
+   *
+   * This is a fair share of what is left, not a per-extension constant: the daemon
+   * enforces a *total* cap across all extensions and hands each one
+   * `remaining / providers-still-to-ask`. Returning `null` therefore donates your
+   * share to the extensions asked after you.
+   */
+  budget: number;
+  reason: TurnContextReason;
+};
+
+/**
+ * Ambient material for a mind's turn — "here is what is around", as opposed to
+ * `recordNotice`, which is directed ("someone acted on your thing").
+ *
+ * **`null` is the normal return.** This text competes directly with the mind's own
+ * thinking for its context window, and a heavy system prompt is what caused
+ * compaction thrash in this codebase before. Speak when there is genuinely something
+ * new past your own watermark; stay quiet otherwise. Extensions keep their own
+ * watermark state in their own DB — the daemon stores none.
+ *
+ * Present material, never requests: an ambient block a mind can decline without
+ * failure is the whole point of the tier (see issue #807, design principle 2).
+ *
+ * Failures are contained, not propagated: throwing, exceeding `budget`, or running
+ * past the daemon's deadline drops this extension from that turn's context and
+ * leaves the mind's turn untouched.
+ */
+export type TurnContextProvider = (
+  mindName: string,
+  ctx: ExtensionContext,
+  opts: TurnContextOptions,
+) => Promise<string | null>;
+
 export type ArgDef = {
   name: string;
   required?: boolean;
@@ -172,6 +221,11 @@ export type ExtensionManifest = {
   spiritSkills?: string[];
   initDb?: (db: Database) => void;
   commands?: Record<string, ExtensionCommand>;
+  /**
+   * Contribute ambient material to a mind's turn. See {@link TurnContextProvider} —
+   * the budget is the daemon's to set, and `null` is the normal answer.
+   */
+  turnContext?: TurnContextProvider;
   onDaemonStart?: (ctx: ExtensionContext) => void;
   /**
    * Fires once per daemon start, after the system spirit's project exists and is

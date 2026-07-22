@@ -31,6 +31,7 @@ import { findMind, mindDir, voluteSystemDir } from "../mind/registry.js";
 import { readVoluteConfig, resolveWakeTriggers, type SleepConfig } from "../mind/volute-config.js";
 import { getPrompt } from "../prompts.js";
 import { deliveryQueue } from "../schema.js";
+import { collectTurnContext } from "../turn-context.js";
 import log from "../util/logger.js";
 import { getMindManager } from "./mind-manager.js";
 import { sleepMind, wakeMind } from "./mind-service.js";
@@ -400,7 +401,18 @@ export class SleepManager {
         );
         const queuedSummary = await this.buildQueuedSummary(name);
         const eventsSummary = pendingEventsLine(await pendingEventCount(name));
-        const sleepActivity = [triggerWakeSummary, wakeContext, queuedSummary, eventsSummary]
+        // Ambient material from extensions — what's around after being away. Collected
+        // daemon-side rather than via a hook: the wake path runs one fixed script
+        // (wake-context.sh), which minds and skills already append to, so there is no
+        // per-file drop-in slot the way pre-prompt has. Never throws, usually null.
+        const extensionContext = await collectTurnContext(name, "wake");
+        const sleepActivity = [
+          triggerWakeSummary,
+          wakeContext,
+          queuedSummary,
+          eventsSummary,
+          extensionContext,
+        ]
           .filter(Boolean)
           .join("\n\n");
 
