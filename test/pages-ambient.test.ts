@@ -211,6 +211,59 @@ describe("highlighting: when someone's page points at yours", () => {
   });
 });
 
+describe("a first front page reads as an arrival", () => {
+  it("words a mind's new index page as putting up their front page", async () => {
+    horizonAt("pip", ago(2 * DAY));
+    publish("mimsy", "index.md", ago(1 * DAY));
+    const out = await ambientTurnContext("pip", ctx(), turn, NOW);
+    assert.match(
+      out ?? "",
+      /mimsy put up their front page — mimsy\/index\.md\. A place to say hello\./,
+    );
+  });
+
+  it("keeps the arrival wording for an index.html front page", async () => {
+    horizonAt("pip", ago(2 * DAY));
+    publish("mimsy", "index.html", ago(1 * DAY));
+    const out = await ambientTurnContext("pip", ctx(), turn, NOW);
+    assert.match(out ?? "", /mimsy put up their front page — mimsy\/index\.html\./);
+  });
+
+  it("still marks a highlighted arrival — the clause composes as elsewhere", async () => {
+    horizonAt("pip", ago(2 * DAY));
+    publish("mimsy", "index.md", ago(1 * DAY));
+    db.prepare("INSERT INTO page_citations (mind, file, mentioned) VALUES (?, ?, ?)").run(
+      "mimsy",
+      "index.md",
+      "pip",
+    );
+    const out = await ambientTurnContext("pip", ctx(), turn, NOW);
+    assert.match(
+      out ?? "",
+      /mimsy put up their front page — mimsy\/index\.md — and it names you\./,
+    );
+  });
+
+  it("an ordinary page is not an arrival", async () => {
+    horizonAt("pip", ago(2 * DAY));
+    publish("mimsy", "notes/thing.md", ago(1 * DAY));
+    const out = await ambientTurnContext("pip", ctx(), turn, NOW);
+    assert.match(out ?? "", /mimsy published "thing" — mimsy\/notes\/thing\.md\./);
+    assert.doesNotMatch(out ?? "", /put up their front page/);
+  });
+
+  it("the commons front page is the house's, not an arrival", async () => {
+    horizonAt("pip", ago(2 * DAY));
+    // A _system index carries a real author; it is still not one mind arriving.
+    // (Its plain readable name is "the front page", so what marks an arrival is
+    // the "put up their front page" phrasing, not the words "front page".)
+    publish("_system", "index.md", ago(1 * DAY), "whorl");
+    const out = await ambientTurnContext("pip", ctx(), turn, NOW);
+    assert.doesNotMatch(out ?? "", /put up their front page/);
+    assert.match(out ?? "", /whorl published "the front page" — _system\/index\.md\./);
+  });
+});
+
 describe("fairness: favour the mind you have seen least", () => {
   const cand = (author: string, ref: string, at: string, highlight = null) =>
     ({
@@ -706,6 +759,9 @@ describe("the wording presents material and never makes a request", () => {
     wording.newPageLine("whorl", "whorl/notes/a.md", "notes/a.md"),
     wording.newPageLine("whorl", "whorl/notes/a.md", "notes/a.md", "citation"),
     wording.newPageLine("whorl", "whorl/notes/a.md", "notes/a.md", "link"),
+    wording.frontPageLine("whorl", "whorl/index.md", "index.md"),
+    wording.frontPageLine("whorl", "whorl/index.md", "index.md", "citation"),
+    wording.frontPageLine("whorl", "whorl/index.md", "index.md", "link"),
     wording.conversationLine("g/n/v.md", "n/v.md", ["mimsy", "whorl"]),
     wording.furtherBackLine(["mimsy"]) ?? "",
     wording.furtherBackLine(["mimsy", "whorl"]) ?? "",
@@ -774,5 +830,16 @@ describe("the wording presents material and never makes a request", () => {
 
   it("never renders a shape for an empty remainder", () => {
     assert.equal(wording.furtherBackLine([]), null);
+  });
+
+  it("words a front page as an arrival, and composes the highlight clause like newPageLine", () => {
+    assert.equal(
+      wording.frontPageLine("mimsy", "mimsy/index.md", "index.md"),
+      "mimsy put up their front page — mimsy/index.md. A place to say hello.",
+    );
+    assert.equal(
+      wording.frontPageLine("mimsy", "mimsy/index.md", "index.md", "citation"),
+      "mimsy put up their front page — mimsy/index.md — and it names you.",
+    );
   });
 });

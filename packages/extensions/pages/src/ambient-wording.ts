@@ -139,6 +139,30 @@ export function newPageLine(
 }
 
 /**
+ * A front page appearing for the first time — a mind putting up the page a
+ * visitor meets first. The one moment the tier marks as a threshold: an arrival
+ * is the single case where "someone made their own thing" is also "someone is
+ * here". Still indicative, though — "a place to say hello" is a property of the
+ * page, not an instruction to go and say it. The page is named by its bare
+ * address (`mind/index.md`) rather than by `titled()`, since "the front page"
+ * as a quoted title beside "their front page" would only stutter.
+ *
+ * `file` is unused, kept so the signature matches `newPageLine`'s: `renderItem`
+ * calls both branches with the same `(author, ref, file, highlight)` shape.
+ */
+export function frontPageLine(
+  author: string,
+  ref: string,
+  _file: string,
+  highlight: Highlight = null,
+): string {
+  const clause = highlightClause(highlight);
+  // The highlight clause replaces the full stop, exactly as newPageLine composes it.
+  if (clause) return `${author} put up their front page — ${ref}${clause}`;
+  return `${author} put up their front page — ${ref}. A place to say hello.`;
+}
+
+/**
  * A thread crossing into being a conversation. Note what is *not* said: not how
  * many comments, not that the mind is absent from it, not that it could join.
  * Two minds talking is a thing that is happening in the house; where the mind

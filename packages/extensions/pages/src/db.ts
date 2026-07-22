@@ -209,6 +209,15 @@ export function initDb(db: Database): void {
       file TEXT NOT NULL,
       migrated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
+
+    -- One-time homepage invitations. A row means the cue was delivered — written
+    -- only after a successful recordNotice, so a failed send retries on the next
+    -- mind start rather than being lost. Per-mind rather than a flag file (the way
+    -- the commons cue flags the spirit) because every mind gets one, not just the spirit.
+    CREATE TABLE IF NOT EXISTS homepage_cue_sent (
+      mind TEXT PRIMARY KEY,
+      sent_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
   `);
   // Migrations: add columns if missing
   addColumns(db, "published_pages", [
@@ -277,14 +286,14 @@ type SiteEntry = {
 };
 
 /** A page is a site's "home" when it's a top-level index.html/index.md. */
-function isIndex(file: string): boolean {
+export function isSiteHome(file: string): boolean {
   return file === "index.html" || file === "index.md";
 }
 
 /** Sort a site's files so the index (home) leads, then most-recently-updated. */
 function sortSiteFiles(files: SiteFile[]): SiteFile[] {
   return [...files].sort((a, b) => {
-    if (isIndex(a.file) !== isIndex(b.file)) return isIndex(a.file) ? -1 : 1;
+    if (isSiteHome(a.file) !== isSiteHome(b.file)) return isSiteHome(a.file) ? -1 : 1;
     return b.updated_at.localeCompare(a.updated_at);
   });
 }

@@ -53,6 +53,7 @@ import type { Database, ExtensionContext, TurnContextOptions } from "@volute/ext
 import {
   archiveLine,
   conversationLine,
+  frontPageLine,
   furtherBackLine,
   type Highlight,
   LIVE_HEADER,
@@ -63,6 +64,7 @@ import {
   WAKE_HEADER,
   whenWritten,
 } from "./ambient-wording.js";
+import { isSiteHome } from "./db.js";
 import { COMMONS_MIND } from "./social.js";
 import { parseDbTimestamp } from "./time.js";
 
@@ -528,6 +530,13 @@ export function selectFairly(
 function renderItem(c: Candidate): string {
   if (c.kind === "thread") {
     return conversationLine(c.ref, c.file, c.participants ?? []);
+  }
+  // A first-appearing front page reads as an arrival — the one threshold the tier
+  // marks. Ambient candidacy is keyed on published_at (see newPages), so any index
+  // candidate here is a first appearance, never a revision. The commons front page
+  // is the house's, not a mind's arrival, so it keeps the plain wording.
+  if (c.mind !== COMMONS_MIND && isSiteHome(c.file)) {
+    return frontPageLine(c.author, c.ref, c.file, c.highlight);
   }
   return newPageLine(c.author, c.ref, c.file, c.highlight);
 }
