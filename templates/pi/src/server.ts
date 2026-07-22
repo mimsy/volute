@@ -2,6 +2,7 @@ import { resolve } from "node:path";
 import { createMind } from "./agent.js";
 import { createFileHandlerResolver } from "./lib/file-handler.js";
 import { log, setLevel } from "./lib/logger.js";
+import { withMechanicsDoc } from "./lib/mechanics-doc.js";
 import { createRouter } from "./lib/router.js";
 import {
   loadConfig,
@@ -18,7 +19,8 @@ if (config.logLevel) setLevel(config.logLevel);
 if (config.model) log("server", `using model: ${config.model}`);
 if (config.thinkingLevel) log("server", `thinking level: ${config.thinkingLevel}`);
 
-const systemPrompt = loadSystemPrompt(config);
+// pi does not auto-load MINDS.md, so the mechanics doc is appended by hand.
+const systemPrompt = withMechanicsDoc(loadSystemPrompt(config), resolve("home"));
 const pkg = loadPackageInfo();
 
 const mindDir = resolve(".");
