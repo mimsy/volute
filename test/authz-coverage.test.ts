@@ -324,6 +324,11 @@ const EXT_AUTHZ_EXEMPT: Record<string, string> = {
     "interaction: any authenticated user may comment; authored as actor.id",
   "pages/src/routes.ts POST /thread/:mind/reactions":
     "interaction: any authenticated user may react; keyed by actor.id",
+  "pages/src/routes.ts POST /thread/:mind/reads":
+    "interaction: any authenticated user may open any published page; the read is " +
+    "recorded against actor.id, never the :mind in the path. The response carries " +
+    "reader names only when the actor is the page's own author (getPresence), so " +
+    "this cannot be used to learn who read someone else's page",
 };
 
 function extractExtensionRoutes(): Route[] {

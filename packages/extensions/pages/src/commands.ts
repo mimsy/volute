@@ -43,6 +43,7 @@ import {
   notifyMentionedInComment,
   type PageRef,
   parsePageRef,
+  recordRead,
   resolveAttachedPage,
   resolvePageRef,
   setCommentBody,
@@ -179,8 +180,17 @@ export function createCommands(): Record<string, ExtensionCommand> {
         if ("error" in resolved) return { error: resolved.error };
         const { ref } = resolved;
 
+        // Opening a page is what records a read — this command, not a page fetch.
+        // The served route is anonymous and is loaded by thumbnails and the feed
+        // without anyone reading anything, so it cannot tell arrival from
+        // rendering. Asking for a page by name can.
+        const reader = ctx.mindName ? await ctx.getUserByUsername(ctx.mindName) : null;
+        // recordRead ignores the author's own read and a page that is gone, so
+        // there is nothing to check here.
+        if (reader) recordRead(db, ref, reader);
+
         const page = getPage(db, ref.mind, ref.file);
-        const thread = await getThread(db, ctx.getUser, ref);
+        const thread = await getThread(db, ctx.getUser, ref, reader?.username ?? null);
 
         const lines: string[] = [`# ${ref.mind}/${ref.file}\n`];
         if (page?.deleted_at) {
@@ -196,6 +206,10 @@ export function createCommands(): Record<string, ExtensionCommand> {
           );
           lines.push(`Reactions: ${parts.join("  ")}`);
         }
+        // Presence sits with the reactions, not in a footer: it belongs with who
+        // has been here, and it is never a tally of the page. A page nobody has
+        // opened prints nothing rather than a zero.
+        if (thread.presence?.text) lines.push(thread.presence.text);
         if (thread.comments.length > 0) {
           lines.push(`\nComments (${thread.comments.length}):`);
           for (const c of thread.comments) {

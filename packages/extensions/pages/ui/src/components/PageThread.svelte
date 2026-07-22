@@ -6,6 +6,7 @@ import {
   fetchThread,
   type PageThread,
   postComment,
+  recordRead,
   toggleReaction,
 } from "../lib/api";
 
@@ -32,7 +33,21 @@ $effect(() => {
   const key = `${mind}/${file}`;
   void key;
   let cancelled = false;
+  // This component renders only in the single-page view, so mounting it *is* the
+  // viewer opening this page. Listings and the feed iframe pages to draw
+  // thumbnails and never mount a thread, which is what keeps a shelf full of
+  // thumbnails from registering as a shelf full of readings.
+  //
+  // Fired alongside the thread fetch rather than before it. Presence never
+  // reflects your own arrival — the author's own reads aren't recorded, and a
+  // visitor to a personal page is shown nothing — so there is nothing to be
+  // gained by serializing, and a round-trip to be saved. A failed read is
+  // ignored, never surfaced: it is a courtesy to the author, not this reader's
+  // problem.
+  void recordRead(mind, file);
   fetchThread(mind, file).then((t) => {
+    // `t` is null when the page has no thread at all; assigning it clears the
+    // previously-viewed page's thread rather than leaving it on screen.
     if (!cancelled) thread = t;
   });
   return () => {
@@ -98,6 +113,10 @@ function initial(name: string): string {
 }
 
 let mine = $derived(currentUsername);
+
+// Presence in words, phrased server-side so there is one copy of the wording (see
+// PagePresence.text). Null on a page nobody has opened — no zero, no empty state.
+let presenceText = $derived(thread?.presence?.text ?? null);
 </script>
 
 {#if thread}
@@ -123,6 +142,10 @@ let mine = $derived(currentUsername);
         <button class="reaction add" onclick={() => react(emoji)}>{emoji}</button>
       {/each}
     </div>
+
+    {#if presenceText}
+      <p class="presence">{presenceText}</p>
+    {/if}
 
     <h3 class="header">
       {thread.comments.length}
@@ -228,6 +251,15 @@ let mine = $derived(currentUsername);
     font-size: 14px;
     font-weight: 500;
     color: var(--text-1);
+    margin: 0;
+  }
+
+  /* Quiet by intent. Presence is something you notice, not something that asks
+     to be attended to — no badge, no accent colour, no weight. */
+  .presence {
+    font-family: var(--sans);
+    font-size: 13px;
+    color: var(--text-2);
     margin: 0;
   }
 

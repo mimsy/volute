@@ -12,12 +12,14 @@ import {
   addComment,
   deleteComment,
   getComment,
+  getPresence,
   getThread,
   isNotifiable,
   notifyMentionedInComment,
   type PageRef,
   type PageThread,
   parsePageRef,
+  recordRead,
   resolveAttachedPage,
   setCommentBody,
   toggleReaction,
@@ -116,7 +118,10 @@ export function createRoutes(ctx: ExtensionContext): Hono {
         if (!ctx.db) return c.json({ error: "Pages database not available" }, 503);
         const ref = validateRef(c.req.param("mind"), c.req.query("file"));
         if (!ref) return c.json({ error: "Invalid page reference" }, 400);
-        const thread = await getThread(ctx.db, ctx.getUser, ref);
+        // The viewer decides whether presence carries names or only a count; an
+        // unauthenticated or unknown caller gets the count.
+        const viewer = ctx.resolveUser(c);
+        const thread = await getThread(ctx.db, ctx.getUser, ref, viewer?.username ?? null);
         const page = getPage(ctx.db, ref.mind, ref.file);
         // A page nobody has published and nobody has responded to has no thread.
         if (!page && thread.comments.length === 0 && thread.reactions.length === 0) {
@@ -165,6 +170,34 @@ export function createRoutes(ctx: ExtensionContext): Hono {
         await notifyMentionedInComment(body.content, ctx, { actor: actor.username, ref });
         return c.json(comment, 201);
       })
+      // Opening a page in the dashboard. This is a POST rather than a side effect
+      // of GET /thread on purpose: the thread is fetched to render, and a read has
+      // to mean somebody arrived. The UI calls this only from the single-page view
+      // — never from the site listing or the feed, both of which iframe every page
+      // on the shelf to draw thumbnails and would otherwise manufacture reads that
+      // nobody performed. The same reasoning rules out counting the public route:
+      // it is anonymous, and it cannot tell a reader from a crawler or a prefetch.
+      .post("/thread/:mind/reads", async (c) => {
+        if (!ctx.db) return c.json({ error: "Pages database not available" }, 503);
+        const actor = ctx.resolveUser(c);
+        if (!actor || actor.id === 0) return c.json({ error: "Unauthorized" }, 401);
+
+        const body = await parseJson<{ file?: string }>(c);
+        if (!body) return c.json({ error: "Invalid JSON body" }, 400);
+        const ref = validateRef(c.req.param("mind"), body.file);
+        if (!ref) return c.json({ error: "Invalid page reference" }, 400);
+        if (!getPage(ctx.db, ref.mind, ref.file)) return c.json({ error: "Page not found" }, 404);
+
+        // recordRead decides for itself whether this read means anything (not the
+        // author's own, page still standing). Deliberately no notice: being read
+        // is something an author finds when they look at their own page, not an
+        // event anyone has to keep up with.
+        recordRead(ctx.db, ref, actor);
+        // Null for a visitor to a personal page — they are told nothing, which is
+        // the point. The response exists so the author's own view can refresh.
+        const presence = await getPresence(ctx.db, ctx.getUser, ref, actor.username);
+        return c.json({ presence });
+      })
       .post("/thread/:mind/reactions", async (c) => {
         if (!ctx.db) return c.json({ error: "Pages database not available" }, 503);
         const actor = ctx.resolveUser(c);
@@ -184,7 +217,7 @@ export function createRoutes(ctx: ExtensionContext): Hono {
             `${actor.username} reacted ${body.emoji} to your page ${ref.mind}/${ref.file}`,
           );
         }
-        const thread = await getThread(ctx.db, ctx.getUser, ref);
+        const thread = await getThread(ctx.db, ctx.getUser, ref, actor.username);
         return c.json({ ...result, reactions: thread.reactions });
       })
       // A comment id is globally unique, so this route carries no mind segment and
