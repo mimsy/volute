@@ -3,6 +3,7 @@ import { bodyLimit } from "hono/body-limit";
 import { cors } from "hono/cors";
 import { csrf } from "hono/csrf";
 import { HTTPException } from "hono/http-exception";
+import { normalizeTrailingSlash } from "../lib/extensions.js";
 import { checkForUpdateCached, getCurrentVersion } from "../lib/update-check.js";
 import log from "../lib/util/logger.js";
 import activityRoutes from "./api/activity.js";
@@ -111,6 +112,9 @@ app.get("/api/health", (c) => {
     ...(cached?.updateAvailable ? { updateAvailable: true, latest: cached.latest } : {}),
   });
 });
+
+// Extension routes 404 on a trailing slash without this (#792).
+app.use("/api/ext/*", normalizeTrailingSlash(app));
 
 // Protected API routes
 app.use("/api/activity/*", authMiddleware);

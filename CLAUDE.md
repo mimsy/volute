@@ -150,7 +150,7 @@ Extensions add functionality to Volute — custom UI sections, API routes, datab
 - `routes(ctx)` — Hono app mounted at `/api/ext/{id}/` (authenticated); `publicRoutes?(ctx)` at `/ext/{id}/public/` (no auth)
 - `ui.assetsDir?` — built UI assets served at `/ext/{id}/`; `ui.systemSection?` (singular, with `urlPatterns` for system-level routing); `ui.mindSections?` (array); `ui.feedSource?`
 - `skillsDir?` — directory of skills synced on load; `standardSkill?` adds them to the default skill set
-- `mindDoc?` — markdown appended to minds' VOLUTE.md; `commands?` — extension-provided CLI subcommands
+- `mindDoc?` — mind-facing markdown served from `GET /api/extensions/mind-docs` and injected into session-start context by the `startup-context.ts` hook (it is *not* written into VOLUTE.md); `commands?` — extension-provided CLI subcommands
 - `initDb?(db)` — per-extension SQLite DB at `~/.volute/system/extension-data/{id}/data.db`
 - `onDaemonStart?()`, `onSpiritReady?(ctx)`, `onDaemonStop?()`, `onMindStart?(name, ctx)`, `onMindStop?(name)` — lifecycle hooks. Spirit-dependent bootstrap belongs in `onSpiritReady`: `onDaemonStart` runs before the spirit exists on a fresh install
 

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { resolve } from "node:path";
 import { describe, it } from "node:test";
 import { Hono } from "hono";
+import { normalizeTrailingSlash } from "../packages/daemon/src/lib/extensions.js";
 import { createExtension } from "../packages/extensions/sdk/src/index.js";
 
 describe("createExtension", () => {
@@ -127,5 +128,58 @@ describe("extension asset path traversal", () => {
     // Path traversal should be blocked (resolve normalizes ..)
     const traversal = resolve(assetsDir, "../../../etc/passwd");
     assert.ok(!isAllowed(traversal));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #792: extension routes 404 on a trailing slash
+// ---------------------------------------------------------------------------
+
+describe("extension trailing-slash normalization", () => {
+  function buildApp(): Hono {
+    const ext = new Hono()
+      .get("/", (c) => c.text("root"))
+      .get("/items", (c) => c.text("items"))
+      .post("/items", async (c) => c.json(await c.req.json()));
+
+    const app = new Hono();
+    app.use("/api/ext/*", normalizeTrailingSlash(app));
+    app.route("/api/ext/demo", ext);
+    app.notFound((c) => c.json({ error: "Not found" }, 404));
+    return app;
+  }
+
+  it("serves an extension's root route with and without a trailing slash", async () => {
+    const app = buildApp();
+    for (const path of ["/api/ext/demo", "/api/ext/demo/"]) {
+      const res = await app.request(`http://localhost${path}`);
+      assert.equal(res.status, 200, `${path} should resolve`);
+      assert.equal(await res.text(), "root");
+    }
+  });
+
+  it("normalizes nested routes too, not just the mount root", async () => {
+    const app = buildApp();
+    const res = await app.request("http://localhost/api/ext/demo/items/");
+    assert.equal(res.status, 200);
+    assert.equal(await res.text(), "items");
+  });
+
+  // A 301 would only rescue GET/HEAD — the whole reason this rewrites instead.
+  it("preserves method and body when normalizing a POST", async () => {
+    const app = buildApp();
+    const res = await app.request("http://localhost/api/ext/demo/items/", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ hello: "world" }),
+    });
+    assert.equal(res.status, 200);
+    assert.deepEqual(await res.json(), { hello: "world" });
+  });
+
+  it("leaves unslashed paths alone and still 404s genuinely missing routes", async () => {
+    const app = buildApp();
+    const res = await app.request("http://localhost/api/ext/demo/nope");
+    assert.equal(res.status, 404);
   });
 });

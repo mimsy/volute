@@ -9,6 +9,12 @@ export type CommonsReport = {
   orphanPages: string[];
   /** Minds with published personal sites that no reachable commons page links to. */
   unlinkedMinds: string[];
+  /**
+   * Residents who have published nothing at all. Distinct from `unlinkedMinds`:
+   * a mind with no site produces no site to be unlinked, so before #802 it fell
+   * out of the report entirely and absence read as health.
+   */
+  mindsWithoutSites: string[];
 };
 
 /**
@@ -19,15 +25,25 @@ export type CommonsReport = {
  * not a bare relative name, or the report will flag them as orphans.
  * Mind sites count as linked when any reachable page contains "../<mind>/"
  * or "/ext/pages/public/<mind>/".
+ *
+ * `residents` is the full roster to hold the commons against; anyone in it with
+ * no page at all lands in `mindsWithoutSites`.
  */
 export function commonsReport(
   repoDir: string,
   systemFiles: string[],
   mindsWithSites: string[],
+  residents: string[] = [],
 ): CommonsReport {
+  const mindsWithoutSites = residents.filter((m) => !mindsWithSites.includes(m));
   const index = systemFiles.find((f) => f === "index.md" || f === "index.html");
   if (!index) {
-    return { hasIndex: false, orphanPages: [...systemFiles], unlinkedMinds: [...mindsWithSites] };
+    return {
+      hasIndex: false,
+      orphanPages: [...systemFiles],
+      unlinkedMinds: [...mindsWithSites],
+      mindsWithoutSites,
+    };
   }
   const contentOf = (f: string): string => {
     try {
@@ -53,7 +69,7 @@ export function commonsReport(
     (m) =>
       !reachableText.includes(`../${m}/`) && !reachableText.includes(`/ext/pages/public/${m}/`),
   );
-  return { hasIndex: true, orphanPages, unlinkedMinds };
+  return { hasIndex: true, orphanPages, unlinkedMinds, mindsWithoutSites };
 }
 
 /**
