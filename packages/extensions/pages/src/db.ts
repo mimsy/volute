@@ -12,6 +12,10 @@ export function initDb(db: Database): void {
     );
     CREATE UNIQUE INDEX IF NOT EXISTS idx_pp_mind_file ON published_pages(mind, file);
     CREATE INDEX IF NOT EXISTS idx_pp_updated_at ON published_pages(updated_at);
+    -- The ambient tier filters and orders on published_at (an artifact appears when
+    -- it came into existence, not when it was last edited), and does so on every
+    -- turn of every mind. updated_at was the only indexed date before this.
+    CREATE INDEX IF NOT EXISTS idx_pp_published_at ON published_pages(published_at);
 
     -- Social layer, keyed on page identity (mind, file) rather than a row id, so a
     -- thread survives the page being rewritten, republished, or deleted.
@@ -32,6 +36,9 @@ export function initDb(db: Database): void {
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
     CREATE INDEX IF NOT EXISTS idx_page_comments_page ON page_comments(mind, file);
+    -- The ambient tier asks "which pages have been spoken on since the horizon" on
+    -- every turn, to avoid grouping over every comment ever written.
+    CREATE INDEX IF NOT EXISTS idx_page_comments_created_at ON page_comments(created_at);
 
     CREATE TABLE IF NOT EXISTS page_reactions (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -99,6 +106,85 @@ export function initDb(db: Database): void {
       ON page_reads(mind, file, reader_id);
     CREATE INDEX IF NOT EXISTS idx_page_reads_page ON page_reads(mind, file);
 
+    -- Links from a page to another mind's site. The second highlighting signal in
+    -- the ambient tier, alongside page_citations, and the same weight as one: a
+    -- page that links your work is highlighted, never promoted to a notice.
+    --
+    -- Same shape and same honesty as page_citations: target is the name as
+    -- written, not a verified user, because extraction happens while reading files
+    -- off disk and has no user lookup. Detection is the crude substring test from
+    -- commonsReport rather than a second, cleverer one — see links.ts.
+    CREATE TABLE IF NOT EXISTS page_links (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      mind TEXT NOT NULL,
+      file TEXT NOT NULL,
+      target TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_page_links_unique
+      ON page_links(mind, file, target);
+    CREATE INDEX IF NOT EXISTS idx_page_links_target ON page_links(target);
+
+    -- What the ambient tier has already put in front of a mind.
+    --
+    -- Read this next to ambient_state, because the pair is the whole of #807's
+    -- "watermark, never an unread set", and it is easy to mistake this table for
+    -- the thing that rule forbids.
+    --
+    -- The forbidden structure is a set of things a mind *has not* seen: it grows
+    -- when the house is productive, it is answerable to "how many are left", and
+    -- it turns into a backlog the moment anything renders it. This table is the
+    -- exact inverse — a record of what has *already* been shown, which only ever
+    -- suppresses. It cannot be counted into a debt because everything in it is
+    -- done. Nothing outside the selection filter ever reads it, and no query here
+    -- asks it what is missing.
+    --
+    -- The watermark alone would very nearly do this job, and briefly did: advance
+    -- it past everything considered, and an artifact is structurally unrepeatable.
+    -- It is kept as well because #807 says "at most once, **ever**", and a
+    -- timestamp comparison quietly stops guaranteeing that whenever a timestamp
+    -- moves — republishing over a tombstone revives published_at, and the notes
+    -- migration writes historical ones. A guarantee that survives only while
+    -- nobody rewrites a date is not the guarantee that was asked for.
+    --
+    -- The author column is denormalized so fairness weighting is one grouped read on the
+    -- turn path: "whose work has this mind met least" is the selection's central
+    -- question and must not cost a join per candidate.
+    CREATE TABLE IF NOT EXISTS ambient_shown (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      viewer TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      ref TEXT NOT NULL,
+      author TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_ambient_shown_unique
+      ON ambient_shown(viewer, kind, ref);
+    CREATE INDEX IF NOT EXISTS idx_ambient_shown_author ON ambient_shown(viewer, author);
+
+    -- Per-mind ambient state: how far back to look, and when we last spoke.
+    --
+    -- The watermark is a horizon, not a queue head. It advances to *now* whenever a
+    -- block is emitted, which means anything new that the block did not select is
+    -- dropped from the live tier rather than held for later. That is deliberate
+    -- and it is the design: a mind returning meets what is on the shelf now, not
+    -- an accumulation. Work that falls past the horizon is not lost — the
+    -- retrospective tier reaches into the archive, which is precisely where old
+    -- work belongs.
+    --
+    -- A row is created with watermark = now on a mind's first ask, so a mind
+    -- that has just arrived is not handed the entire history as though it were
+    -- news. Its introduction to the archive is the retrospective tier's job, at a
+    -- pace that tier chooses.
+    --
+    -- The last_block_at column is the rate limit. A burst of publishes produces one block,
+    -- not one per page.
+    CREATE TABLE IF NOT EXISTS ambient_state (
+      viewer TEXT PRIMARY KEY,
+      watermark TEXT NOT NULL,
+      last_block_at TEXT
+    );
+
     -- Ledger for the one-way notes -> pages migration. Keyed on the source note id
     -- so a re-run is a no-op rather than a second set of files and threads.
     CREATE TABLE IF NOT EXISTS migrated_notes (
@@ -150,6 +236,12 @@ export type PageInput = {
   hash: string;
   commentsClosed?: boolean;
   mentions?: string[];
+  /**
+   * Minds whose sites this page links to. Unlike `mentions`, this is collected for
+   * HTML pages as well as markdown — a link is a plain substring either way, and
+   * the house's most prolific publisher writes HTML.
+   */
+  links?: string[];
 };
 
 type PublishedPage = {
@@ -351,8 +443,9 @@ function retirePage(db: Database, mind: string, file: string, hasThread: boolean
     // opened something that lived here".
     db.prepare("DELETE FROM page_reads WHERE mind = ? AND file = ?").run(mind, file);
   }
-  // A page that is gone cites nobody, whether it left a tombstone or not.
+  // A page that is gone cites and links nobody, whether it left a tombstone or not.
   db.prepare("DELETE FROM page_citations WHERE mind = ? AND file = ?").run(mind, file);
+  db.prepare("DELETE FROM page_links WHERE mind = ? AND file = ?").run(mind, file);
 }
 
 type ExistingRow = { file: string; hash: string | null; deleted_at: string | null };
@@ -380,6 +473,22 @@ function applyPageMeta(db: Database, mind: string, page: PageInput): void {
       mind,
       page.file,
     );
+  }
+  if (page.links !== undefined) {
+    // Replaced wholesale for the same reason citations are: a page that stops
+    // linking somewhere has stopped linking there, and a stale row would keep
+    // claiming a relationship the text no longer makes.
+    db.prepare("DELETE FROM page_links WHERE mind = ? AND file = ?").run(mind, page.file);
+    for (const target of page.links) {
+      // A page linking around its own site is navigation, not a reference to
+      // another mind's work.
+      if (target === mind) continue;
+      db.prepare("INSERT OR IGNORE INTO page_links (mind, file, target) VALUES (?, ?, ?)").run(
+        mind,
+        page.file,
+        target,
+      );
+    }
   }
   if (page.mentions === undefined) return;
   db.prepare("DELETE FROM page_citations WHERE mind = ? AND file = ?").run(mind, page.file);

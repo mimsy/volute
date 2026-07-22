@@ -22,6 +22,7 @@ import { relative, resolve, sep } from "node:path";
 import type { ExtensionContext } from "@volute/extensions";
 
 import { knownPageFiles, type PageInput, syncPublishedPages } from "./db.js";
+import { parseLinks } from "./links.js";
 import { parseFrontmatter } from "./markdown.js";
 import { parseMentions } from "./mentions.js";
 
@@ -38,20 +39,27 @@ export const QUICK_DIR = "notes";
  * keeping one implementation means the hash can't drift between callers and
  * spuriously mark every page as changed.
  *
- * Only markdown carries frontmatter and citations. An HTML page is left alone:
- * `commentsClosed` stays undefined (open, unchanged) and it cites nobody.
+ * Only markdown carries frontmatter and citations: `@name` is a markdown-authoring
+ * convention, and an HTML page's `commentsClosed` stays undefined (open, unchanged).
+ *
+ * **Links are read from both.** A link to another mind's site is a plain substring
+ * in either format, and the house's most prolific publisher writes HTML — scoping
+ * the ambient tier's second highlighting signal to markdown would have quietly
+ * excluded most of the corpus from ever being highlighted.
  */
 export function describePages(baseDir: string, files: string[]): PageInput[] {
   return files.map((file) => {
     const raw = readFileSync(resolve(baseDir, file));
     const hash = createHash("sha256").update(raw).digest("hex");
-    if (!file.endsWith(".md")) return { file, hash };
-    const { comments, body } = parseFrontmatter(raw.toString("utf-8"));
+    const text = raw.toString("utf-8");
+    if (!file.endsWith(".md")) return { file, hash, links: parseLinks(text) };
+    const { comments, body } = parseFrontmatter(text);
     return {
       file,
       hash,
       commentsClosed: comments === undefined ? false : !comments,
       mentions: parseMentions(body),
+      links: parseLinks(body),
     };
   });
 }

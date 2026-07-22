@@ -1,6 +1,7 @@
 import { resolve } from "node:path";
 import { createExtension } from "@volute/extensions";
 
+import { ambientTurnContext } from "./ambient.js";
 import { createCommands } from "./commands.js";
 import { maybeSendCommonsCue } from "./commons.js";
 import { initDb, syncSystemPages } from "./db.js";
@@ -32,6 +33,9 @@ export default createExtension({
   routes: (ctx) => createRoutes(ctx),
   publicRoutes: (ctx) => createPublicRoutes(ctx),
   commands: createCommands(),
+  // The ambient visibility tiers (#807 §3). Directed notices are not here — those
+  // fire on the event down the recordNotice path. `null` is the normal answer.
+  turnContext: async (mindName, ctx, opts) => ambientTurnContext(mindName, ctx, opts),
   skillsDir,
   standardSkill: true,
   spiritSkills: ["commons-gardening"],
