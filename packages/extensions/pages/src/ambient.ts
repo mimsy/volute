@@ -102,6 +102,38 @@ const CONVERSATION_COMMENTERS = 2;
 const ARCHIVE_MIN_AGE_MS = 14 * 24 * 60 * 60 * 1000;
 
 /**
+ * How long before the archive may offer the same page to the same mind again.
+ *
+ * Once-per-artifact-ever is right for the *live* tier — a page is announced as
+ * newly published once — and wrong for the archive. Applied here it produces a
+ * terminal state: at this corpus size a mind walks the whole shelf in weeks, and
+ * then that tier is silent forever. A quiet house then makes a quiet digest makes
+ * a quiet house, which is the spiral the retrospective tier exists to break.
+ *
+ * So the archive revisits. Re-encountering something you read half a year ago is
+ * not repetition; it is the thing an archive is for, and it lands differently the
+ * second time — which is the whole argument for keeping old work reachable.
+ *
+ * **These are floors, not schedules.** Selection prefers never-shown material
+ * absolutely (see {@link pickArchive}), so a mind meets everything unseen before
+ * anything comes back around, whatever the size of the corpus. The interval only
+ * governs how long a *revisit* must wait, and its real job is to stop a house with
+ * three old pages from cycling the same three every wake.
+ *
+ * Someone else's work waits longer than the mind's own. The mind's own archive is
+ * both much smaller — a few pages each, against the house's whole shelf — and the
+ * scarcer offer, since #807 observes that nothing else in this environment brings
+ * a mind back to what it made. A six-month floor on a corpus of four pages is
+ * silence dressed as restraint.
+ *
+ * Reasoned, not measured. There is no production data on any of this, because the
+ * tier has never existed. Revisit against the #807 re-measure alongside the budget
+ * numbers from #813.
+ */
+const ARCHIVE_REVISIT_MS = 180 * 24 * 60 * 60 * 1000;
+const OWN_REVISIT_MS = 90 * 24 * 60 * 60 * 1000;
+
+/**
  * What kind of artifact an ambient appearance was, and the `ambient_shown` key
  * that makes "at most once, ever" hold per artifact.
  *
@@ -196,14 +228,20 @@ export function getAmbientState(db: Database, viewer: string, now: Date): Ambien
  */
 function commit(db: Database, viewer: string, shown: Candidate[], now: Date): void {
   const stamp = sqlNow(now);
+  // Upsert rather than INSERT OR IGNORE: created_at must keep the first-ever time
+  // (the live tier's once-ever key, and the series the #807 re-measure reads),
+  // while last_shown_at has to move or the archive cooldown never restarts and a
+  // revisited page becomes eligible again on every subsequent wake.
   const mark = db.prepare(
-    "INSERT OR IGNORE INTO ambient_shown (viewer, kind, ref, author) VALUES (?, ?, ?, ?)",
+    `INSERT INTO ambient_shown (viewer, kind, ref, author, last_shown_at)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(viewer, kind, ref) DO UPDATE SET last_shown_at = excluded.last_shown_at`,
   );
   for (const c of shown) {
-    mark.run(viewer, c.kind, c.ref, c.author);
+    mark.run(viewer, c.kind, c.ref, c.author, stamp);
     // Artifacts folded into this one: named in the line that was printed, so
     // genuinely met, and not to be announced again later under another kind.
-    for (const kind of c.subsumes ?? []) mark.run(viewer, kind, c.ref, c.author);
+    for (const kind of c.subsumes ?? []) mark.run(viewer, kind, c.ref, c.author, stamp);
   }
   db.prepare(
     `INSERT INTO ambient_state (viewer, watermark, last_block_at) VALUES (?, ?, ?)
@@ -219,6 +257,22 @@ function alreadyShown(db: Database, viewer: string): Set<string> {
     ref: string;
   }[];
   return new Set(rows.map((r) => `${r.kind}:${r.ref}`));
+}
+
+/**
+ * When each artifact was last shown to this mind, for the archive's cooldown.
+ *
+ * COALESCE because `last_shown_at` was added after the table: a row written
+ * before the archive could revisit anything has only its first-shown time, which
+ * is exactly the right answer for it.
+ */
+function lastShownAt(db: Database, viewer: string): Map<string, string> {
+  const rows = db
+    .prepare(
+      "SELECT kind, ref, COALESCE(last_shown_at, created_at) AS at FROM ambient_shown WHERE viewer = ?",
+    )
+    .all(viewer) as { kind: string; ref: string; at: string }[];
+  return new Map(rows.map((r) => [`${r.kind}:${r.ref}`, r.at]));
 }
 
 /**
@@ -550,7 +604,41 @@ async function retrospective(
   }
 
   // The quiet case — the common one. Reach into the archive.
-  return quiet(db, viewer, shown, seen, budget, now);
+  return quiet(db, viewer, seen, budget, now);
+}
+
+/**
+ * Pick one archive page: everything never shown before anything shown before.
+ *
+ * The preference for unseen material is **absolute**, not weighted. That is what
+ * lets the cooldown be a floor rather than a schedule — a mind meets every page it
+ * has not seen before any page comes back around, whatever the size of the corpus,
+ * so the interval never has to be tuned against how much the house has written.
+ *
+ * Among unseen pages, ordinary fairness weighting applies. Among seen ones, the
+ * longest-ago comes first, which makes revisits a slow rotation through the shelf
+ * rather than a fixation on whatever happens to sort first.
+ */
+function pickArchive(
+  candidates: Candidate[],
+  seen: Map<string, number>,
+  shownAt: Map<string, string>,
+  cooldownMs: number,
+  now: Date,
+): Candidate | null {
+  const fresh: Candidate[] = [];
+  const revisit: { c: Candidate; at: string }[] = [];
+  for (const c of candidates) {
+    const at = shownAt.get(`${c.kind}:${c.ref}`);
+    if (at === undefined) {
+      fresh.push(c);
+    } else if (now.getTime() - parseDbTimestamp(at).getTime() >= cooldownMs) {
+      revisit.push({ c, at });
+    }
+  }
+  if (fresh.length > 0) return selectFairly(fresh, seen, 1)[0] ?? null;
+  revisit.sort((a, b) => (a.at !== b.at ? (a.at < b.at ? -1 : 1) : a.c.ref < b.c.ref ? -1 : 1));
+  return revisit[0]?.c ?? null;
 }
 
 /**
@@ -558,14 +646,19 @@ async function retrospective(
  * else in this environment brings a mind back to what it made.
  *
  * Both are offered when both exist, which is the shape worth having: someone
- * else's, and yours. Each is marked shown, so the archive is walked rather than
- * looped — when it runs out, this returns null and the tier goes quiet, which is
- * the honest thing for it to do.
+ * else's, and yours.
+ *
+ * The archive **walks and then slowly rotates**, rather than walking and stopping.
+ * Unseen pages come first and each is marked as it goes; once they run out, pages
+ * become eligible again after their cooldown. So this tier can be quiet — for a
+ * while, on a small or young shelf — but it cannot go permanently silent while any
+ * old page exists, which is the property that matters. Silence here would be
+ * self-reinforcing: the tier that exists to break a quiet house must not be the
+ * thing that seals it.
  */
 function quiet(
   db: Database,
   viewer: string,
-  shown: Set<string>,
   seen: Map<string, number>,
   budget: number,
   now: Date,
@@ -593,31 +686,29 @@ function quiet(
       at: r.published_at,
       highlight: null,
     };
-    if (shown.has(`page:${c.ref}`)) continue;
-    if (author === viewer) {
-      // Own work is tracked under its own kind so it can be met again as the
-      // mind's own even if the live tier never had cause to show it.
-      if (shown.has(`own:${c.ref}`)) continue;
-      own.push({ ...c, kind: "own" });
-    } else {
-      others.push(c);
-    }
+    // Own work is tracked under its own kind so it can be met again as the mind's
+    // own even if the live tier never had cause to show it. Eligibility is no
+    // longer "never shown" — pickArchive decides, since the archive revisits.
+    if (author === viewer) own.push({ ...c, kind: "own" });
+    else others.push(c);
   }
+
+  const shownAt = lastShownAt(db, viewer);
 
   // The lead-in stands for no artifact, which is exactly why lines carry their
   // artifact rather than being matched to one by position.
   const lines: Line[] = [{ text: QUIET_LEAD, artifact: null }];
 
-  const [other] = selectFairly(others, seen, 1);
+  const other = pickArchive(others, seen, shownAt, ARCHIVE_REVISIT_MS, now);
   if (other) {
     lines.push({
       text: archiveLine(other.author, other.ref, other.file, whenWritten(other.at, now)),
       artifact: other,
     });
   }
-  // Oldest first: the mind's own furthest-back work is the part it is least
-  // likely to have met again.
-  const mine = own[0];
+  // The mind's own work waits a shorter cooldown than anyone else's: its own
+  // archive is far smaller, and it is the scarcer offer of the two.
+  const mine = pickArchive(own, seen, shownAt, OWN_REVISIT_MS, now);
   if (mine) {
     lines.push({
       text: ownArchiveLine(mine.ref, mine.file, whenWritten(mine.at, now)),
