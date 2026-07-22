@@ -43,7 +43,7 @@ test("built-in extensions load from the tsup bundle", async () => {
     }
 
     assert.ok(specifiers, "could not locate discoverBuiltinExtensions in the bundle");
-    assert.equal(specifiers.length, 3, "expected 3 built-in extension chunk imports");
+    assert.equal(specifiers.length, 2, "expected 2 built-in extension chunk imports");
 
     const ids = new Set<string>();
     for (const spec of specifiers) {
@@ -53,7 +53,7 @@ test("built-in extensions load from the tsup bundle", async () => {
       ids.add(manifest.id);
     }
 
-    assert.deepEqual([...ids].sort(), ["intentions", "notes", "pages"]);
+    assert.deepEqual([...ids].sort(), ["intentions", "pages"]);
   } finally {
     rmSync(outDir, { recursive: true, force: true });
   }

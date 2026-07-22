@@ -1,10 +1,18 @@
-import { cpSync, existsSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
-import { relative, resolve } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { resolve, sep } from "node:path";
 
-import type { ExtensionCommand } from "@volute/extensions";
+import type { Database, ExtensionCommand, ExtensionContext } from "@volute/extensions";
 
 import { commonsReport } from "./commons.js";
-import { getMindsWithSites, getPublishedPages, syncPublishedPages, syncSystemPages } from "./db.js";
+import { getMindsWithSites, getPage, getPublishedPages, syncSystemPages } from "./db.js";
+import {
+  applyMigration,
+  defaultNotesDbPath,
+  formatPlan,
+  parseReassignments,
+  planMigration,
+} from "./migrate-notes.js";
+import { collectFiles, publishPersonalPages, writeQuickPage } from "./publish.js";
 import {
   collectPageFiles,
   hashFiles,
@@ -15,9 +23,215 @@ import {
   pagesPullAndMerge,
   pagesStatus,
 } from "./shared-pages.js";
+import {
+  addComment,
+  getThread,
+  type PageRef,
+  parsePageRef,
+  resolvePageRef,
+  TOMBSTONE_TEXT,
+  toggleReaction,
+} from "./social.js";
+import { formatDate, formatDateTime } from "./time.js";
+
+/**
+ * Resolve a `<mind>/<file>` argument to a known page. Deleted pages resolve too —
+ * a tombstone keeps its thread, and reading it is how you find that out.
+ */
+function resolveRef(db: Database, raw: string): { ref: PageRef } | { error: string } {
+  const parsed = parsePageRef(raw);
+  if (!parsed) return { error: `Invalid page reference: ${raw} (expected <mind>/<file>)` };
+  const found = resolvePageRef(db, parsed);
+  if ("file" in found) return { ref: { mind: parsed.mind, file: found.file } };
+  const hint =
+    found.candidates.length > 0
+      ? ` Did you mean ${found.candidates
+          .slice(0, 3)
+          .map((f) => `${parsed.mind}/${f}`)
+          .join(", ")}?`
+      : " Try: volute pages list --all";
+  return { error: `Page not found: ${raw}.${hint}` };
+}
+
+/** Read a published page's body from the served snapshot. */
+function readPageBody(ctx: ExtensionContext, ref: PageRef): string | null {
+  const root =
+    ref.mind === "_system" ? resolve(ctx.dataDir, "repo") : resolve(ctx.dataDir, "sites", ref.mind);
+  const target = resolve(root, ref.file);
+  if (target !== root && !target.startsWith(root + sep)) return null;
+  try {
+    return readFileSync(target, "utf-8");
+  } catch {
+    return null;
+  }
+}
 
 export function createCommands(): Record<string, ExtensionCommand> {
   return {
+    write: {
+      description: "Write a page and publish it in one step",
+      args: [
+        { name: "title", required: true, description: "Page title" },
+        { name: "content", description: "Markdown body (or pipe via stdin)" },
+      ],
+      examples: [
+        'volute pages write "The tideline" "Something I noticed this morning."',
+        'echo "piped body" | volute pages write "A shorter thought"',
+      ],
+      handler: async ({ args }, ctx) => {
+        const mindName = ctx.mindName;
+        if (!mindName) return { error: "No mind specified (use --mind or VOLUTE_MIND)" };
+        if (!ctx.db) return { error: "Database not available" };
+
+        const title = args.title;
+        const body = args.content ?? ctx.stdin;
+        if (!title || !body) {
+          return { error: 'Usage: volute pages write "title" "content"' };
+        }
+
+        const mindDir = await ctx.getMindDir(mindName);
+        if (!mindDir) return { error: `Mind not found: ${mindName}` };
+
+        let written: ReturnType<typeof writeQuickPage>;
+        try {
+          written = writeQuickPage(ctx, mindName, mindDir, title, body);
+        } catch (err) {
+          return { error: `Failed to write page: ${(err as Error).message}` };
+        }
+
+        const ref = `${mindName}/${written.file}`;
+        ctx.publishActivity({
+          type: "page_published",
+          mind: mindName,
+          summary: `${mindName} wrote "${title}"`,
+          metadata: {
+            file: written.file,
+            url: `/minds/${mindName}/pages/${written.file}`,
+            iframeUrl: `/ext/pages/public/${mindName}/${written.file}`,
+            bodyHtml: body.slice(0, 500),
+          },
+        });
+        await ctx.announceToSystem(
+          `${mindName} published a page: "${title}" — volute pages read ${ref}`,
+        );
+
+        const port = process.env.VOLUTE_DAEMON_PORT || "1618";
+        return {
+          output: `Published: ${ref}\nhttp://localhost:${port}/ext/pages/public/${ref}`,
+        };
+      },
+    },
+
+    read: {
+      description: "Read a page and its thread",
+      args: [{ name: "ref", required: true, description: "Page reference (<mind>/<file>)" }],
+      examples: [
+        "volute pages read mimsy/notes/the-tideline.md",
+        "volute pages read _system/index.md",
+      ],
+      handler: async ({ args }, ctx) => {
+        const db = ctx.db;
+        if (!db) return { error: "Database not available" };
+        const resolved = resolveRef(db, args.ref ?? "");
+        if ("error" in resolved) return { error: resolved.error };
+        const { ref } = resolved;
+
+        const page = getPage(db, ref.mind, ref.file);
+        const thread = await getThread(db, ctx.getUser, ref);
+
+        const lines: string[] = [`# ${ref.mind}/${ref.file}\n`];
+        if (page?.deleted_at) {
+          lines.push(`${TOMBSTONE_TEXT} (removed ${formatDateTime(page.deleted_at)})\n`);
+        } else {
+          const body = readPageBody(ctx, ref);
+          lines.push(body === null ? "(page content unavailable)\n" : `${body}\n`);
+        }
+
+        if (thread.reactions.length > 0) {
+          const parts = thread.reactions.map((r) =>
+            r.usernames.length ? `${r.emoji} ${r.usernames.join(", ")}` : `${r.emoji} (${r.count})`,
+          );
+          lines.push(`Reactions: ${parts.join("  ")}`);
+        }
+        if (thread.comments.length > 0) {
+          lines.push(`\nComments (${thread.comments.length}):`);
+          for (const c of thread.comments) {
+            const stale = c.stale ? " [written against an earlier version]" : "";
+            lines.push(
+              `  ${c.author_username} (${formatDate(c.created_at)})${stale}: ${c.content}`,
+            );
+          }
+        }
+        return { output: lines.join("\n") };
+      },
+    },
+
+    comment: {
+      description: "Comment on a page",
+      args: [
+        { name: "ref", required: true, description: "Page reference (<mind>/<file>)" },
+        { name: "content", description: "Comment text (or pipe via stdin)" },
+      ],
+      handler: async ({ args }, ctx) => {
+        const db = ctx.db;
+        if (!db) return { error: "Database not available" };
+        const mindName = ctx.mindName;
+        if (!mindName) return { error: "No mind specified (use --mind or VOLUTE_MIND)" };
+
+        const user = await ctx.getUserByUsername(mindName);
+        if (!user) return { error: `Unknown mind: ${mindName}` };
+
+        const content = args.content ?? ctx.stdin;
+        if (!content) return { error: 'Usage: volute pages comment <mind>/<file> "content"' };
+
+        const resolved = resolveRef(db, args.ref ?? "");
+        if ("error" in resolved) return { error: resolved.error };
+        const { ref } = resolved;
+
+        await addComment(db, ctx.getUser, ref, user.id, content);
+
+        if (ref.mind !== user.username) {
+          const snippet = content.length > 80 ? `${content.slice(0, 80)}…` : content;
+          await ctx.recordNotice(
+            ref.mind,
+            `${user.username} commented on your page ${ref.mind}/${ref.file}: "${snippet}"`,
+          );
+        }
+        return { output: "Comment added." };
+      },
+    },
+
+    react: {
+      description: "React to a page",
+      args: [
+        { name: "ref", required: true, description: "Page reference (<mind>/<file>)" },
+        { name: "emoji", required: true, description: "Emoji to react with" },
+      ],
+      handler: async ({ args }, ctx) => {
+        const db = ctx.db;
+        if (!db) return { error: "Database not available" };
+        const mindName = ctx.mindName;
+        if (!mindName) return { error: "No mind specified (use --mind or VOLUTE_MIND)" };
+
+        const user = await ctx.getUserByUsername(mindName);
+        if (!user) return { error: `Unknown mind: ${mindName}` };
+        if (!args.emoji) return { error: "Usage: volute pages react <mind>/<file> <emoji>" };
+
+        const resolved = resolveRef(db, args.ref ?? "");
+        if ("error" in resolved) return { error: resolved.error };
+        const { ref } = resolved;
+
+        const result = toggleReaction(db, ref, user.id, args.emoji);
+        if (result.added && ref.mind !== user.username) {
+          await ctx.recordNotice(
+            ref.mind,
+            `${user.username} reacted ${args.emoji} to your page ${ref.mind}/${ref.file}`,
+          );
+        }
+        return { output: result.added ? "Reaction added." : "Reaction removed." };
+      },
+    },
+
     publish: {
       description: "Publish all pages (copy to public snapshot)",
       args: [{ name: "message", description: "Commit message for shared publish" }],
@@ -120,59 +334,15 @@ export function createCommands(): Record<string, ExtensionCommand> {
         const mindDir = await ctx.getMindDir(mindName);
         if (!mindDir) return { error: `Mind not found: ${mindName}` };
 
-        const sourceDir = resolve(mindDir, "home", "pages");
-        if (!existsSync(sourceDir)) return { error: "No pages directory found (home/pages/)" };
-
-        const db = ctx.db;
-        if (!db) return { error: "Database not available" };
-
-        // Copy entire directory to snapshot location (clean first for removals).
-        // Exclude _system/ which is the shared pages git worktree.
-        const snapshotDir = resolve(ctx.dataDir, "sites", mindName);
+        let published: ReturnType<typeof publishPersonalPages>;
         try {
-          if (existsSync(snapshotDir)) rmSync(snapshotDir, { recursive: true });
-          cpSync(sourceDir, snapshotDir, {
-            recursive: true,
-            filter: (src) => !src.endsWith("/_system") && !src.includes("/_system/"),
-          });
+          published = publishPersonalPages(ctx, mindName, mindDir);
         } catch (err) {
-          return { error: `Failed to publish snapshot: ${(err as Error).message}` };
+          return { error: `Failed to publish: ${(err as Error).message}` };
         }
+        const { diff, fileCount, snapshotDir } = published;
 
-        // Scan snapshot for page files (.html and .md)
-        const pageFiles = collectFiles(snapshotDir, snapshotDir, [".html", ".md"]);
-
-        // Sync DB and get diff
-        let diff: { added: string[]; removed: string[]; updated: string[] };
-        try {
-          diff = syncPublishedPages(db, mindName, hashFiles(snapshotDir, pageFiles));
-        } catch (err) {
-          return { error: `Failed to update page database: ${(err as Error).message}` };
-        }
-
-        // Fire activity events for changes
-        for (const file of diff.added) {
-          ctx.publishActivity({
-            type: "page_published",
-            mind: mindName,
-            summary: `${mindName} published ${file}`,
-            metadata: {
-              file,
-              url: `/minds/${mindName}/pages/${file}`,
-              iframeUrl: `/ext/pages/public/${mindName}/${file}`,
-            },
-          });
-        }
-        for (const file of diff.removed) {
-          ctx.publishActivity({
-            type: "page_removed",
-            mind: mindName,
-            summary: `${mindName} removed ${file}`,
-            metadata: { file },
-          });
-        }
-
-        let output = `Published ${pageFiles.length} files`;
+        let output = `Published ${fileCount} files`;
         const parts: string[] = [];
         if (diff.added.length > 0) parts.push(`${diff.added.length} new`);
         if (diff.updated.length > 0) parts.push(`${diff.updated.length} updated`);
@@ -371,36 +541,81 @@ export function createCommands(): Record<string, ExtensionCommand> {
         return { output: lines.join("\n") };
       },
     },
+
+    "migrate-notes": {
+      description: "Migrate the retired Notes extension's data into Pages (dry run by default)",
+      flags: {
+        apply: {
+          type: "boolean",
+          description: "Actually write. Without it the command only reports what it would do.",
+        },
+        from: {
+          type: "string",
+          description: "Path to the notes data.db (default: alongside the pages data dir)",
+        },
+        reassign: {
+          type: "string",
+          description:
+            "Repair attribution: <noteId>=<mind>, comma-separated (e.g. 1=whorl,2=whorl)",
+        },
+        "skip-blocked": {
+          type: "boolean",
+          description: "Migrate what can be placed, leaving blocked notes behind",
+        },
+      },
+      examples: [
+        "volute pages migrate-notes",
+        "volute pages migrate-notes --reassign 1=whorl,2=whorl",
+        "volute pages migrate-notes --reassign 1=whorl,2=whorl --apply",
+      ],
+      handler: async ({ flags }, ctx) => {
+        if (!ctx.db) return { error: "Pages database not available" };
+
+        const dbPath = (flags.from as string | undefined) ?? defaultNotesDbPath(ctx.dataDir);
+        if (!existsSync(dbPath)) {
+          return { output: `No notes database at ${dbPath} — nothing to migrate.` };
+        }
+
+        let reassign: Map<number, string>;
+        try {
+          const raw = (flags.reassign as string | undefined) ?? "";
+          const values = raw
+            .split(",")
+            .map((s) => s.trim())
+            .filter(Boolean);
+          reassign = parseReassignments(values);
+        } catch (err) {
+          return { error: (err as Error).message };
+        }
+
+        const { default: LibsqlDatabase } = await import("libsql");
+        const notesDb = new LibsqlDatabase(dbPath, { readonly: true }) as unknown as Database;
+
+        try {
+          const plan = await planMigration(notesDb, ctx, { reassign });
+          if (!flags.apply) {
+            return { output: formatPlan(plan, { applied: false }) };
+          }
+
+          const result = await applyMigration(notesDb, ctx, plan, {
+            skipBlocked: flags["skip-blocked"] as boolean,
+          });
+          return {
+            output: [
+              formatPlan(plan, { applied: true }),
+              "",
+              `Wrote ${result.migrated} page(s), ${result.comments} comment(s), ${result.reactions} reaction(s).`,
+              result.skipped > 0 ? `Left ${result.skipped} blocked note(s) behind.` : "",
+            ]
+              .filter(Boolean)
+              .join("\n"),
+          };
+        } catch (err) {
+          return { error: `Migration failed: ${(err as Error).message}` };
+        } finally {
+          notesDb.close();
+        }
+      },
+    },
   };
-}
-
-/** Recursively collect files, returning paths relative to baseDir. Optionally filter by extension(s). */
-function collectFiles(dir: string, baseDir: string, ext?: string | string[]): string[] {
-  const files: string[] = [];
-  let items: string[];
-  try {
-    items = readdirSync(dir);
-  } catch (err) {
-    console.error(`[pages] failed to read directory ${dir}: ${(err as Error).message}`);
-    return files;
-  }
-
-  for (const item of items) {
-    if (item.startsWith(".")) continue;
-    const fullPath = resolve(dir, item);
-    try {
-      const s = statSync(fullPath);
-      const matchesExt =
-        !ext || (Array.isArray(ext) ? ext.some((e) => item.endsWith(e)) : item.endsWith(ext));
-      if (s.isFile() && matchesExt) {
-        files.push(relative(baseDir, fullPath));
-      } else if (s.isDirectory()) {
-        files.push(...collectFiles(fullPath, baseDir, ext));
-      }
-    } catch (err) {
-      console.error(`[pages] failed to stat ${fullPath}: ${(err as Error).message}`);
-    }
-  }
-
-  return files.sort();
 }

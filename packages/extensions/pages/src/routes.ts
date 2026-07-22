@@ -4,7 +4,18 @@ import type { ExtensionContext } from "@volute/extensions";
 import { Hono } from "hono";
 
 import { getRecentPagesList, getSites } from "./cache.js";
+import { getPage } from "./db.js";
 import { parseFrontmatter, renderMarkdownPage, resolveStylesheet } from "./markdown.js";
+import {
+  addComment,
+  deleteComment,
+  getThread,
+  type PageRef,
+  type PageThread,
+  parsePageRef,
+  toggleReaction,
+} from "./social.js";
+import { toIso } from "./time.js";
 
 const MIME_TYPES: Record<string, string> = {
   ".html": "text/html",
@@ -23,73 +34,184 @@ const MIME_TYPES: Record<string, string> = {
   ".xml": "application/xml",
 };
 
+async function parseJson<T>(c: { req: { json: () => Promise<unknown> } }): Promise<T | null> {
+  try {
+    return (await c.req.json()) as T;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Validate a `(mind, file)` page identity supplied by a request. The pair only
+ * ever reaches parameterized DB queries here, never the filesystem, but a `..`
+ * segment would still let a caller key a thread to an identity no page can have —
+ * so it is rejected at the door.
+ */
+function validateRef(mind: string, file: unknown): PageRef | null {
+  if (typeof file !== "string" || !file) return null;
+  return parsePageRef(`${mind}/${file}`);
+}
+
+/**
+ * Normalize a thread's zone-less DB timestamps to ISO-8601 UTC on the way out.
+ * The DB layer keeps the raw values; the boundary that hands them to a browser is
+ * where `new Date(...)` would otherwise reinterpret them as local time.
+ */
+function serializeThread(thread: PageThread) {
+  return {
+    ...thread,
+    deleted_at: thread.deleted_at ? toIso(thread.deleted_at) : null,
+    comments: thread.comments.map((c) => ({ ...c, created_at: toIso(c.created_at) })),
+  };
+}
+
 export function createRoutes(ctx: ExtensionContext): Hono {
-  return new Hono()
-    .get("/", async (c) => {
-      if (!ctx.db) return c.json({ error: "Pages database not available" }, 503);
-      const { sites, systemSite } = getSites(ctx.db);
-      const recentPages = getRecentPagesList(ctx.db, { limit: 12 });
-      return c.json({ sites, systemSite, recentPages });
-    })
-    .get("/feed", async (c) => {
-      if (!ctx.db) return c.json({ error: "Pages database not available" }, 503);
-      const mind = c.req.query("mind");
-      const rawLimit = c.req.query("limit");
-      const limit = rawLimit ? parseInt(rawLimit, 10) || 8 : 8;
-      const recentPages = getRecentPagesList(ctx.db, { mind: mind || undefined, limit });
-      return c.json(
-        recentPages.map((p) => {
-          const isCommons = p.mind === "_system";
-          return {
-            id: `page-${p.mind}-${p.file}`,
-            title: isCommons ? `commons — ${p.file}` : `${p.mind}/${p.file}`,
-            url: p.url ?? `/minds/${p.mind}/pages/${p.file}`,
-            date: p.modified,
-            author: isCommons ? (p.author ?? "commons") : p.mind,
-            bodyHtml: isCommons
-              ? `<p>Commons page tended${p.author ? ` by ${p.author}` : ""}</p>`
-              : `<p>Page updated</p>`,
-            iframeUrl: `/ext/pages/public/${p.mind}/${p.file}`,
-            icon: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6"/><path d="M2 8h12M8 2c-2 2-2 10 0 12M8 2c2 2 2 10 0 12"/></svg>',
-            color: "purple",
-          };
-        }),
-      );
-    })
-    .put("/publish/:name", ctx.requireSelf("name"), async (c) => {
-      const name = c.req.param("name");
-      const config = ctx.getSystemsConfig();
-      if (!config) return c.json({ error: "Not connected to volute.systems" }, 400);
-      const body = await c.req.text();
-      try {
-        const res = await fetch(`${config.apiUrl}/api/pages/publish/${name}`, {
-          method: "PUT",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${config.apiKey}`,
-          },
-          body,
-        });
-        const data = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
-        return c.json(data as Record<string, unknown>, res.status as any);
-      } catch (err) {
-        return c.json({ error: `Connection failed: ${(err as Error).message}` }, 502);
-      }
-    })
-    .get("/status/:name", ctx.requireSelf("name"), async (c) => {
-      const name = c.req.param("name");
-      const config = ctx.getSystemsConfig();
-      if (!config) return c.json({ error: "Not connected to volute.systems" }, 400);
-      try {
-        const res = await fetch(`${config.apiUrl}/api/pages/status/${name}`, {
-          headers: { Authorization: `Bearer ${config.apiKey}` },
-        });
-        const data = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
-        return c.json(data as Record<string, unknown>, res.status as any);
-      } catch (err) {
-        return c.json({ error: `Connection failed: ${(err as Error).message}` }, 502);
-      }
-    });
+  return (
+    new Hono()
+      .get("/", async (c) => {
+        if (!ctx.db) return c.json({ error: "Pages database not available" }, 503);
+        const { sites, systemSite } = getSites(ctx.db);
+        const recentPages = getRecentPagesList(ctx.db, { limit: 12 });
+        return c.json({ sites, systemSite, recentPages });
+      })
+      .get("/feed", async (c) => {
+        if (!ctx.db) return c.json({ error: "Pages database not available" }, 503);
+        const mind = c.req.query("mind");
+        const rawLimit = c.req.query("limit");
+        const limit = rawLimit ? parseInt(rawLimit, 10) || 8 : 8;
+        const recentPages = getRecentPagesList(ctx.db, { mind: mind || undefined, limit });
+        return c.json(
+          recentPages.map((p) => {
+            const isCommons = p.mind === "_system";
+            return {
+              id: `page-${p.mind}-${p.file}`,
+              title: isCommons ? `commons — ${p.file}` : `${p.mind}/${p.file}`,
+              url: p.url ?? `/minds/${p.mind}/pages/${p.file}`,
+              date: p.modified,
+              author: isCommons ? (p.author ?? "commons") : p.mind,
+              bodyHtml: isCommons
+                ? `<p>Commons page tended${p.author ? ` by ${p.author}` : ""}</p>`
+                : `<p>Page updated</p>`,
+              iframeUrl: `/ext/pages/public/${p.mind}/${p.file}`,
+              icon: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6"/><path d="M2 8h12M8 2c-2 2-2 10 0 12M8 2c2 2 2 10 0 12"/></svg>',
+              color: "purple",
+            };
+          }),
+        );
+      })
+      // --- Social layer: a page's thread, keyed on (mind, file) ---
+      // `file` travels as a query/body value rather than a path wildcard because a
+      // page path has its own slashes; there is no route shape that carries it
+      // unambiguously.
+      .get("/thread/:mind", async (c) => {
+        if (!ctx.db) return c.json({ error: "Pages database not available" }, 503);
+        const ref = validateRef(c.req.param("mind"), c.req.query("file"));
+        if (!ref) return c.json({ error: "Invalid page reference" }, 400);
+        const thread = await getThread(ctx.db, ctx.getUser, ref);
+        const page = getPage(ctx.db, ref.mind, ref.file);
+        // A page nobody has published and nobody has responded to has no thread.
+        if (!page && thread.comments.length === 0 && thread.reactions.length === 0) {
+          return c.json({ error: "Page not found" }, 404);
+        }
+        return c.json(serializeThread(thread));
+      })
+      .post("/thread/:mind/comments", async (c) => {
+        if (!ctx.db) return c.json({ error: "Pages database not available" }, 503);
+        const actor = ctx.resolveUser(c);
+        if (!actor || actor.id === 0) return c.json({ error: "Unauthorized" }, 401);
+
+        const body = await parseJson<{ file?: string; content?: string }>(c);
+        if (!body) return c.json({ error: "Invalid JSON body" }, 400);
+        const ref = validateRef(c.req.param("mind"), body.file);
+        if (!ref) return c.json({ error: "Invalid page reference" }, 400);
+        if (!body.content) return c.json({ error: "content is required" }, 400);
+        if (!getPage(ctx.db, ref.mind, ref.file)) return c.json({ error: "Page not found" }, 404);
+
+        const created = await addComment(ctx.db, ctx.getUser, ref, actor.id, body.content);
+        const comment = { ...created, created_at: toIso(created.created_at) };
+        if (ref.mind !== actor.username) {
+          const snippet = body.content.length > 80 ? `${body.content.slice(0, 80)}…` : body.content;
+          await ctx.recordNotice(
+            ref.mind,
+            `${actor.username} commented on your page ${ref.mind}/${ref.file}: "${snippet}"`,
+          );
+        }
+        return c.json(comment, 201);
+      })
+      .post("/thread/:mind/reactions", async (c) => {
+        if (!ctx.db) return c.json({ error: "Pages database not available" }, 503);
+        const actor = ctx.resolveUser(c);
+        if (!actor || actor.id === 0) return c.json({ error: "Unauthorized" }, 401);
+
+        const body = await parseJson<{ file?: string; emoji?: string }>(c);
+        if (!body) return c.json({ error: "Invalid JSON body" }, 400);
+        const ref = validateRef(c.req.param("mind"), body.file);
+        if (!ref) return c.json({ error: "Invalid page reference" }, 400);
+        if (!body.emoji) return c.json({ error: "emoji is required" }, 400);
+        if (!getPage(ctx.db, ref.mind, ref.file)) return c.json({ error: "Page not found" }, 404);
+
+        const result = toggleReaction(ctx.db, ref, actor.id, body.emoji);
+        if (result.added && ref.mind !== actor.username) {
+          await ctx.recordNotice(
+            ref.mind,
+            `${actor.username} reacted ${body.emoji} to your page ${ref.mind}/${ref.file}`,
+          );
+        }
+        const thread = await getThread(ctx.db, ctx.getUser, ref);
+        return c.json({ ...result, reactions: thread.reactions });
+      })
+      // A comment id is globally unique, so this route carries no mind segment and
+      // therefore falls outside test/authz-coverage.test.ts's mind-scoped net (which
+      // matches :name/:mind/:author). That net covered the Notes route this replaces,
+      // so state the replacement explicitly: authorization is in-handler, in
+      // `deleteComment` (comment author, page owner, or admin), and is covered by
+      // "comment moderation" in test/pages-social.test.ts.
+      .delete("/comments/:id", async (c) => {
+        if (!ctx.db) return c.json({ error: "Pages database not available" }, 503);
+        const actor = ctx.resolveUser(c);
+        if (!actor || actor.id === 0) return c.json({ error: "Unauthorized" }, 401);
+        const id = Number.parseInt(c.req.param("id"), 10);
+        if (Number.isNaN(id)) return c.json({ error: "Invalid comment ID" }, 400);
+        const deleted = deleteComment(ctx.db, id, actor);
+        if (!deleted) return c.json({ error: "Comment not found or not authorized" }, 404);
+        return c.json({ ok: true });
+      })
+      .put("/publish/:name", ctx.requireSelf("name"), async (c) => {
+        const name = c.req.param("name");
+        const config = ctx.getSystemsConfig();
+        if (!config) return c.json({ error: "Not connected to volute.systems" }, 400);
+        const body = await c.req.text();
+        try {
+          const res = await fetch(`${config.apiUrl}/api/pages/publish/${name}`, {
+            method: "PUT",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${config.apiKey}`,
+            },
+            body,
+          });
+          const data = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+          return c.json(data as Record<string, unknown>, res.status as any);
+        } catch (err) {
+          return c.json({ error: `Connection failed: ${(err as Error).message}` }, 502);
+        }
+      })
+      .get("/status/:name", ctx.requireSelf("name"), async (c) => {
+        const name = c.req.param("name");
+        const config = ctx.getSystemsConfig();
+        if (!config) return c.json({ error: "Not connected to volute.systems" }, 400);
+        try {
+          const res = await fetch(`${config.apiUrl}/api/pages/status/${name}`, {
+            headers: { Authorization: `Bearer ${config.apiKey}` },
+          });
+          const data = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+          return c.json(data as Record<string, unknown>, res.status as any);
+        } catch (err) {
+          return c.json({ error: `Connection failed: ${(err as Error).message}` }, 502);
+        }
+      })
+  );
 }
 
 // Mind-authored pages are served on the dashboard's own origin, but minds are
