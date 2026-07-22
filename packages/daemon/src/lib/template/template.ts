@@ -1,4 +1,5 @@
 import {
+  chmodSync,
   cpSync,
   existsSync,
   mkdirSync,
@@ -11,7 +12,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 
 export type TemplateManifest = {
   rename: Record<string, string>;
@@ -23,7 +24,14 @@ export type TemplateManifest = {
  * Returns the parent `templates/` directory (not a specific template).
  */
 let _templatesRoot: string | null = null;
-export function findTemplatesRoot(): string {
+
+/**
+ * Locate the templates root, returning null instead of exiting when it isn't
+ * found. Callers running inside the long-lived daemon must use this: the
+ * `process.exit(1)` in {@link findTemplatesRoot} is appropriate for one-shot CLI
+ * use but would take down every mind on the host, and no try/catch can stop it.
+ */
+export function locateTemplatesRoot(): string | null {
   if (_templatesRoot) return _templatesRoot;
   let dir = dirname(new URL(import.meta.url).pathname);
   for (let i = 0; i < 7; i++) {
@@ -34,6 +42,12 @@ export function findTemplatesRoot(): string {
     }
     dir = dirname(dir);
   }
+  return null;
+}
+
+export function findTemplatesRoot(): string {
+  const root = locateTemplatesRoot();
+  if (root) return root;
   console.error(
     "Templates directory not found. Searched up from:",
     dirname(new URL(import.meta.url).pathname),
@@ -178,6 +192,125 @@ export function applyInitFiles(destDir: string) {
   }
 
   rmSync(initDir, { recursive: true, force: true });
+}
+
+/**
+ * The `.init/` subtrees that hold *infrastructure* rather than *identity*.
+ *
+ * Every file under `.init/` is copied into `home/` once, at mind creation, and
+ * upgrades deliberately never touch `.init/` again — that exclusion is what
+ * keeps a mind's SOUL.md and MEMORY.md safe from the template. But `.init/`
+ * carries two different kinds of thing, and the exclusion was blocking both.
+ *
+ * The property that separates them is authorship: **could this mind have
+ * written it about itself?** SOUL.md, MEMORY.md, `memory/`, and `.config/` are
+ * the mind's own — what it is, what it remembers, how it is wired. Re-adding
+ * those would be the framework talking over the mind.
+ *
+ * `home/.local/` is the opposite: it is Volute's machinery namespace inside the
+ * home directory. The daemon generates skill shims into `.local/bin/` and
+ * executes `.local/hooks/<event>/` itself. Those are safe to *add*, and are
+ * added by {@link backfillInitInfrastructure} on upgrade.
+ *
+ * "Add, never overwrite" still holds inside `.local/`: a mind may have edited
+ * its own hook (the shipped ones invite exactly that in their header comments),
+ * and that edit is authorship too.
+ *
+ * One honest limit: absence is ambiguous. The backfill cannot tell "this mind
+ * predates the hook" from "this mind deleted the hook on purpose", so a
+ * deliberately removed hook comes back on the next upgrade. Deleting is a form
+ * of authorship and this does override it. Distinguishing the two needs
+ * per-mind tombstone state that does not exist today; until it does, a mind
+ * that wants a hook gone should empty the file rather than remove it — a
+ * present-but-empty hook is respected forever, and hook-loader treats it as a
+ * no-op.
+ *
+ * This is a subtree rule, not a filename list, so a hook added under
+ * `.local/hooks/` in future is covered the day it ships with no second edit
+ * here. `test/template-init-classification.test.ts` pins the classification of
+ * every `.init/` file the templates ship, so any newly shipped `.init/` file,
+ * at any depth, fails the suite until someone classifies it on purpose.
+ */
+export const INIT_INFRASTRUCTURE_PREFIXES = [".local/"] as const;
+
+/** Whether a `.init/`-relative path is framework infrastructure (see {@link INIT_INFRASTRUCTURE_PREFIXES}). */
+export function isInitInfrastructure(relPath: string): boolean {
+  const normalized = relPath.split(sep).join("/");
+  return INIT_INFRASTRUCTURE_PREFIXES.some((prefix) => normalized.startsWith(prefix));
+}
+
+/**
+ * Copy `.init/` infrastructure files that are *missing* from a mind's `home/`.
+ *
+ * The upgrade-side counterpart to {@link applyInitFiles}. Without it, any
+ * capability shipped as a new hook or shim reaches only minds created after it
+ * existed, while the daemon-side half of the feature ships and looks healthy —
+ * which is how every mind on the production host but the newest ended up unable
+ * to read its own next-turn system events (#808).
+ *
+ * Never overwrites: a file already present is the mind's, whether it authored
+ * the content or merely kept it. Returns the `home/`-relative paths added.
+ *
+ * These paths live under `home/.local/`, which the template `.gitignore` does
+ * not allowlist, so this writes untracked files and cannot interact with the
+ * upgrade's git merge.
+ *
+ * Throws rather than exiting when the template can't be composed. Both callers
+ * run inside the daemon, and `composeTemplate`/`findTemplatesRoot` `process.exit(1)`
+ * on a missing templates root, template dir, or manifest — uncatchable, and fatal
+ * to every mind on the host. The pre-checks below cover exactly those exit paths
+ * so a broken install degrades to one warning.
+ */
+export function backfillInitInfrastructure(
+  homeDir: string,
+  template: string,
+  mindName: string,
+): string[] {
+  const root = locateTemplatesRoot();
+  if (!root) throw new Error("templates root not found on disk");
+  if (!existsSync(resolve(root, template, "volute-template.json"))) {
+    throw new Error(`template "${template}" is missing or has no manifest at ${root}`);
+  }
+
+  const { composedDir, manifest } = composeTemplate(root, template);
+  try {
+    const initDir = resolve(composedDir, ".init");
+    if (!existsSync(initDir)) return [];
+
+    // manifest.substitute paths are relative to the composed layout (".init/..."),
+    // while listFiles() below yields paths relative to .init/ itself.
+    const substitute = new Set(
+      manifest.substitute
+        .map((p) => p.split(sep).join("/"))
+        .filter((p) => p.startsWith(".init/"))
+        .map((p) => p.slice(".init/".length)),
+    );
+    const added: string[] = [];
+
+    for (const file of listFiles(initDir)) {
+      const rel = file.split(sep).join("/");
+      if (!isInitInfrastructure(rel)) continue;
+
+      const dest = resolve(homeDir, file);
+      if (existsSync(dest)) continue;
+
+      const src = resolve(initDir, file);
+      mkdirSync(dirname(dest), { recursive: true });
+      if (substitute.has(rel)) {
+        writeFileSync(dest, readFileSync(src, "utf-8").replaceAll("{{name}}", mindName));
+        // cpSync would have carried the source mode across; a substituted file is
+        // written fresh, so restore it (the `volute` shim has to stay executable).
+        chmodSync(dest, statSync(src).mode);
+      } else {
+        cpSync(src, dest);
+      }
+      added.push(rel);
+    }
+
+    return added;
+  } finally {
+    rmSync(composedDir, { recursive: true, force: true });
+  }
 }
 
 /** Per-runtime mechanics doc filename by template. */

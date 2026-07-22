@@ -166,6 +166,18 @@ export async function startDaemon(opts: {
     log.warn("{{name}} placeholder migration failed", log.errorData(err));
   }
 
+  // Add `.init/` infrastructure files (hooks, bin shims) minds never received —
+  // the upgrade's `.init/` exclusion protects identity files but also blocked
+  // these, leaving minds created before a hook existed permanently without it.
+  // Notably the notices drain hook, the sole reader of next-turn system events
+  // (#808). Adds only what's missing, never overwrites. Non-fatal per mind.
+  try {
+    const { migrateInitInfrastructure } = await import("./lib/mind/migrate-init-infrastructure.js");
+    await migrateInitInfrastructure();
+  } catch (err) {
+    log.warn("`.init/` infrastructure backfill failed", log.errorData(err));
+  }
+
   // Initialize sandbox runtime for mind process isolation
   const { initSandbox } = await import("./lib/mind/sandbox.js");
   await initSandbox();

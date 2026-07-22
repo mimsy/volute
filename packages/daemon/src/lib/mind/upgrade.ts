@@ -5,6 +5,7 @@ import { getMindManager } from "../daemon/mind-manager.js";
 import { migrateSkillsToTemplate } from "../skills.js";
 import {
   applyTemplateHomeFiles,
+  backfillInitInfrastructure,
   composeTemplate,
   copyTemplateToDir,
   findTemplatesRoot,
@@ -368,6 +369,27 @@ async function mergeUpgradeAndRestart(
         ),
       };
     }
+  }
+
+  // Add `.init/` infrastructure (hooks, shims) this mind never had. The template
+  // merge can't do this: `.init/` is stripped from the template branch so the
+  // merge never overwrites identity files, which also meant a mind created
+  // before a hook existed could never acquire it (#808). Runs after any template
+  // switch so it picks up the *new* template's composition — which is why this is
+  // here and not only in the startup pass (migrate-init-infrastructure.ts), which
+  // is the one that reaches minds upgrade never touches. Untracked paths, so no
+  // commit is needed; backfillInitInfrastructure throws rather than exiting, so a
+  // broken template install is a warning here, not a failed upgrade.
+  try {
+    const added = backfillInitInfrastructure(resolve(dir, "home"), template, mindName);
+    if (added.length > 0) {
+      log.info(`backfilled ${added.length} missing infrastructure files for ${mindName}`, {
+        files: added,
+      });
+      await chownMindDir(dir, mindName);
+    }
+  } catch (err) {
+    log.warn(`failed to backfill infrastructure files for ${mindName}`, log.errorData(err));
   }
 
   // Persist the template field only after any switch swap succeeded, so the DB
