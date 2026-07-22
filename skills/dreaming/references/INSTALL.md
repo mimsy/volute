@@ -12,7 +12,7 @@ This sets up:
 - `dreamer` subagent in `.config/config.json`
 - Dream checker in `.local/hooks/wake-context.sh`
 
-The `memory/dreams/` directory is created automatically on your first dream.
+Dreams go in `memory/dreams/`, which already exists. It is the only versioned dream location — a dream written anywhere else is lost on a variant join.
 
 Restart your mind after running this so the subagent is loaded.
 

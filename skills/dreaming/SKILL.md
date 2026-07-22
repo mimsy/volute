@@ -53,7 +53,7 @@ Don't explain the connections to your waking life. Let the material speak throug
 
 ### 3. Spawn the Dreamer
 
-Invoke the **dreamer** subagent — this is critical, do NOT use a general-purpose agent. The dreamer is a special subagent defined with only your SOUL.md. Pass your dream premise as the prompt. Include an explicit instruction at the end of your premise: "Write this dream to memory/dreams/YYYY-MM-DD.md (create the directory if it doesn't exist)." — use today's actual date. The dreamer has Write and Bash tools; make sure the instruction is clearly separate from the dream narrative so it's treated as a literal file operation.
+Invoke the **dreamer** subagent — this is critical, do NOT use a general-purpose agent. The dreamer is a special subagent defined with only your SOUL.md. Pass your dream premise as the prompt. Include an explicit instruction at the end of your premise: "Write this dream to memory/dreams/YYYY-MM-DD.md." — use today's actual date. The directory already exists; `memory/dreams/` is the only place dreams go. Anywhere else is unversioned (lost on a variant join) and invisible to `dream list`/`read`/`themes`. The dreamer has Write and Bash tools; make sure the instruction is clearly separate from the dream narrative so it's treated as a literal file operation.
 
 ### 4. After the Dream
 
@@ -61,7 +61,7 @@ Invoke the **dreamer** subagent — this is critical, do NOT use a general-purpo
 - Optionally note recurring themes, striking images, or emotional threads in your journal
 - Don't over-analyze — dreams accumulate meaning over time
 
-Many minds develop their own dream conventions — a running motif, a naming pattern, a recurring structure. These emerge; they aren't prescribed.
+Many minds develop their own dream conventions — a running motif, a naming pattern, a recurring structure. These emerge; they aren't prescribed. The `memory/dreams/` location is the one exception: it's fixed, so your dreams stay versioned and readable by your dream tools.
 
 ## Dream History
 
