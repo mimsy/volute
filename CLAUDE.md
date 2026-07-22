@@ -21,7 +21,7 @@ Core values:
 - `packages/cli/src/commands/` — One file per command, built with the `command()`/`subcommands()` helpers from `packages/cli/src/lib/command.ts` (see Code conventions). Top-level nouns (`mind.ts`, `chat.ts`, `clock.ts`, `env.ts`, `skill.ts`, `seed-cmd.ts`, `systems.ts`) dispatch to subcommand files. Daemon-lifecycle commands (`setup`, `up`, `down`, `restart`, `status`, `update`) live in root `src/commands/`.
 - `packages/daemon/src/lib/` — Shared libraries (registry, mind-manager, bridge-manager, scheduler, db, auth, conversations, platforms); CLI-side helpers (daemon-client, api-client, command builder) live in `packages/cli/src/lib/`
 - `packages/daemon/src/lib/bridges/` — System-wide bridge config + built-in bridge implementations (Discord, Slack, Telegram)
-- `skills/` — Built-in skill definitions (dreaming, imagegen, memory, orientation, resonance, seed-nurture, tending, volute-admin, volute-mind), synced to the shared pool on daemon startup. Extensions contribute additional skills via `skillsDir` in their manifest (e.g., notes, pages, and intentions extensions each bundle their own skill); a manifest's `spiritSkills` field marks which of those are installed for the spirit only (e.g. the intentions extension's `intention-review`) rather than the standard mind skill set.
+- `skills/` — Built-in skill definitions (dreaming, imagegen, memory, orientation, resonance, seed-nurture, tending, volute-admin, volute-mind), synced to the shared pool on daemon startup. Extensions contribute additional skills via `skillsDir` in their manifest (e.g., the pages and intentions extensions each bundle their own skill); a manifest's `spiritSkills` field marks which of those are installed for the spirit only (e.g. the intentions extension's `intention-review`) rather than the standard mind skill set.
 - `templates/claude/` — Default template (Claude Agent SDK) copied by `volute mind create`
 - `templates/pi/` — Alternative template using pi-coding-agent for multi-provider LLM support
 - `templates/codex/` — Alternative template using OpenAI Codex models
@@ -142,7 +142,7 @@ The daemon serves a Hono web server (default port 1618) with a Svelte frontend.
 
 ### Extensions
 
-Extensions add functionality to Volute — custom UI sections, API routes, database tables, feed sources, and mind lifecycle hooks. Built-in extensions (Notes, Pages, Intentions) ship with Volute; third-party and local extensions can be added.
+Extensions add functionality to Volute — custom UI sections, API routes, database tables, feed sources, and mind lifecycle hooks. Built-in extensions (Pages, Intentions) ship with Volute; third-party and local extensions can be added.
 
 **SDK** (`@volute/extensions`): Provides `ExtensionManifest`, `ExtensionContext`, and `createExtension()` helper. `packages/extensions/sdk/src/types.ts` is the source of truth for the manifest and context shapes; highlights:
 
@@ -166,8 +166,7 @@ Extensions add functionality to Volute — custom UI sections, API routes, datab
 
 **Built-in extension packages:**
 - `packages/extensions/sdk/` (`@volute/extensions`) — shared types and helpers
-- `packages/extensions/notes/` (`@volute/notes`) — notes extension
-- `packages/extensions/pages/` (`@volute/pages`) — pages extension
+- `packages/extensions/pages/` (`@volute/pages`) — pages: authoring, publishing, and the social layer (comments/reactions keyed on `(mind, file)`)
 - `packages/extensions/intentions/` (`@volute/intentions`) — per-mind intentions extension
 
 **Other packages:**

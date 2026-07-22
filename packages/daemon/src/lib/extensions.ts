@@ -21,7 +21,13 @@ import { readSystemsConfig } from "./config/systems-config.js";
 import { publish } from "./events/activity-events.js";
 import { isIsolationEnabled, mindUserName } from "./mind/isolation.js";
 import { findMind, resolveMindDir, voluteHome, voluteSystemDir } from "./mind/registry.js";
-import { hashSkillDir, importSkillFromDir, removeSharedSkill, sharedSkillsDir } from "./skills.js";
+import {
+  hashSkillDir,
+  importSkillFromDir,
+  listSharedSkills,
+  removeSharedSkill,
+  sharedSkillsDir,
+} from "./skills.js";
 import log from "./util/logger.js";
 import { sanitizeSvgIcon } from "./util/sanitize-svg.js";
 
@@ -505,7 +511,6 @@ function resolveSkillsDir(manifest: ExtensionManifest): string | null {
 
 async function discoverBuiltinExtensions(disabledIds: Set<string>): Promise<ExtensionManifest[]> {
   const builtins: { id: string; load: () => Promise<ExtensionManifest> }[] = [
-    { id: "notes", load: async () => (await import("@volute/notes")).default },
     { id: "pages", load: async () => (await import("@volute/pages")).default },
     { id: "intentions", load: async () => (await import("@volute/intentions")).default },
   ];
@@ -653,6 +658,8 @@ export async function loadAllExtensions(app: Hono, authMw: MiddlewareHandler): P
       log.error(`failed to load extension: ${manifest.id}`, log.errorData(err));
     }
   }
+
+  await pruneOrphanedExtensionSkills();
 
   // Discovery endpoint for CLI dynamic dispatch
   app.get("/api/extensions/commands", (c) => {
@@ -858,6 +865,41 @@ export async function uninstallNpmExtension(pkg: string): Promise<void> {
   }
 
   log.info(`uninstalled extension package: ${pkg}`);
+}
+
+/**
+ * Remove shared-pool skills belonging to an extension that is no longer present.
+ *
+ * `uninstallNpmExtension` cleans up after itself, but an extension that simply
+ * stops shipping — a built-in dropped from `discoverBuiltinExtensions`, or a local
+ * directory deleted by hand — leaves its skills in the pool forever, because the
+ * pool is otherwise add-only. The orphan then stays in `defaultSkills` and every
+ * new mind tries to install a skill whose extension is gone.
+ *
+ * The `author` column is what makes this safe to do generically: extension skills
+ * are imported as `ext:<id>`, built-ins as `volute`, and a mind's own published
+ * skill under its own name. Only the first kind is considered, and only when its
+ * extension is neither loaded nor merely disabled — a disabled extension is meant
+ * to come back, so its skills stay put.
+ */
+async function pruneOrphanedExtensionSkills(): Promise<void> {
+  try {
+    const present = new Set(discovered.map((e) => e.manifest.id));
+    const skills = await listSharedSkills();
+    for (const skill of skills) {
+      if (!skill.author?.startsWith("ext:")) continue;
+      const extId = skill.author.slice("ext:".length);
+      if (present.has(extId)) continue;
+      try {
+        await removeSharedSkill(skill.id);
+        log.info(`removed orphaned skill "${skill.id}" from absent extension ${extId}`);
+      } catch (err) {
+        log.warn(`failed to remove orphaned skill "${skill.id}"`, log.errorData(err));
+      }
+    }
+  } catch (err) {
+    log.warn("could not prune orphaned extension skills", log.errorData(err));
+  }
 }
 
 async function cleanupExtensionSkills(pkg: string): Promise<void> {

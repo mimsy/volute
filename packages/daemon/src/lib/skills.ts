@@ -61,10 +61,19 @@ export async function initDefaultSkills(): Promise<void> {
 
   // Only add new standard/extension skills that the admin hasn't explicitly removed
   const toAdd = [...desired].filter((s) => !current.includes(s) && !removed.has(s));
-  if (toAdd.length === 0 && current.length > 0) return;
 
-  const merged = [...new Set([...current, ...toAdd])];
+  // Drop defaults whose skill no longer exists in the pool — e.g. one contributed
+  // by an extension that has since been removed. Without this, every new mind
+  // fails to install a skill that cannot be installed. Runs only when the pool is
+  // populated, so a failed sync can't empty the config.
+  const pool = new Set((await listSharedSkills()).map((s) => s.id));
+  const stale = pool.size > 0 ? current.filter((s) => !pool.has(s)) : [];
+
+  if (toAdd.length === 0 && stale.length === 0 && current.length > 0) return;
+
+  const merged = [...new Set([...current, ...toAdd])].filter((s) => !stale.includes(s));
   writeGlobalConfig({ ...config, defaultSkills: merged });
+  if (stale.length > 0) log.info(`dropped default skills not in the pool: ${stale.join(", ")}`);
   log.info(`updated default skills: ${merged.join(", ")}`);
 }
 

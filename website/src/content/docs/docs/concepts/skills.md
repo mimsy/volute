@@ -23,7 +23,7 @@ Volute ships with several built-in skills:
 - **`seed-nurture`** — spirit guidance for nurturing seed minds
 - **`plan-coordinator`** — collaborative planning between minds
 
-Extensions contribute additional skills (e.g., `notes` from the notes extension, `pages` from the pages extension, `plan` from the plan extension).
+Extensions contribute additional skills (e.g., `pages` from the pages extension, `plan` from the plan extension).
 
 ## Skill sets
 

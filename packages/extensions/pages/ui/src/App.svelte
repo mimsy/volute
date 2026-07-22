@@ -1,13 +1,20 @@
 <script lang="ts">
 import { onMount } from "svelte";
-import { fetchPagesData, type Site } from "./lib/api";
+import PageThread from "./components/PageThread.svelte";
+import { fetchCurrentUser, fetchPagesData, type Site } from "./lib/api";
 import PagesDashboard from "./pages/PagesDashboard.svelte";
 import SiteView from "./pages/SiteView.svelte";
 
 let hash = $state(window.location.hash);
 let pageIframe = $state<HTMLIFrameElement>();
+let username = $state("");
+let userAvatarUrl = $state<string | null>(null);
 
 onMount(() => {
+  fetchCurrentUser().then((u) => {
+    username = u.username;
+    userAvatarUrl = u.avatarUrl;
+  });
   const handler = () => {
     hash = window.location.hash;
   };
@@ -112,12 +119,20 @@ function handleSelectSite(name: string) {
 
 <div class="ext-app" class:full-page={route.view === "page"}>
   {#if route.view === "page"}
-    <iframe
-      bind:this={pageIframe}
-      src="/ext/pages/public/{route.name}/{route.path}"
-      class="full-page-iframe"
-      title="{route.name}/{route.path}"
-    ></iframe>
+    <div class="page-with-thread">
+      <iframe
+        bind:this={pageIframe}
+        src="/ext/pages/public/{route.name}/{route.path}"
+        class="full-page-iframe"
+        title="{route.name}/{route.path}"
+      ></iframe>
+      <PageThread
+        mind={route.name}
+        file={route.path}
+        currentUsername={username}
+        {userAvatarUrl}
+      />
+    </div>
   {:else if (route.view === "site" || route.view === "mind") && selectedSite}
     <SiteView site={selectedSite} onSelectPage={handleSelectPage} />
   {:else}
@@ -138,10 +153,25 @@ function handleSelectSite(name: string) {
     height: 100%;
   }
 
+  .page-with-thread {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+  }
+
   .full-page-iframe {
     width: 100%;
-    height: 100%;
+    flex: 1 1 60%;
+    min-height: 0;
     border: none;
     background: white;
+  }
+
+  /* The thread sits under the page rather than beside it: a page is the thing,
+     and the conversation is what has gathered under it. Capped so a long thread
+     never crowds out the page it is about. */
+  .page-with-thread :global(.thread) {
+    flex: 0 1 auto;
+    max-height: 40%;
   }
 </style>

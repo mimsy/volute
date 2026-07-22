@@ -63,7 +63,6 @@ export default defineConfig({
             { label: "daemon", slug: "docs/commands/daemon" },
             { label: "extension", slug: "docs/commands/extension" },
             { label: "systems", slug: "docs/commands/systems" },
-            { label: "notes", slug: "docs/commands/notes" },
             { label: "pages", slug: "docs/commands/pages" },
             { label: "plan", slug: "docs/commands/plan" },
           ],

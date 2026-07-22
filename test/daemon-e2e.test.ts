@@ -294,7 +294,7 @@ describe("daemon e2e", { timeout: 420000 }, () => {
     assert.ok(Array.isArray(body));
   });
 
-  it("GET /api/extensions/mind-docs lists notes with a mindDoc and commands", async () => {
+  it("GET /api/extensions/mind-docs lists pages with a mindDoc and commands", async () => {
     const res = await daemonRequest("/api/extensions/mind-docs");
     assert.equal(res.status, 200);
     const body = (await res.json()) as {
@@ -304,10 +304,14 @@ describe("daemon e2e", { timeout: 420000 }, () => {
       commands: string[];
     }[];
     assert.ok(Array.isArray(body));
-    const notes = body.find((e) => e.id === "notes");
-    assert.ok(notes, "notes extension should be present in mind-docs");
-    assert.ok(notes.mindDoc.length > 0, "notes should expose a mindDoc");
-    assert.ok(notes.commands.includes("write"), "notes commands should include write");
+    const pages = body.find((e) => e.id === "pages");
+    assert.ok(pages, "pages extension should be present in mind-docs");
+    assert.ok(pages.mindDoc.length > 0, "pages should expose a mindDoc");
+    assert.ok(pages.commands.includes("write"), "pages commands should include write");
+    assert.ok(
+      !body.some((e) => e.id === "notes"),
+      "the notes extension was merged into pages and must no longer be advertised to minds",
+    );
   });
 
   it("unauthenticated mind-docs request returns 401", async () => {
@@ -3020,46 +3024,74 @@ describe("daemon e2e", { timeout: 420000 }, () => {
       });
       assert.equal(apRes.status, 200, `approve ${username}: ${apRes.status}`);
     }
-    await registerAndApprove("e2e-notes-attacker");
-    await registerAndApprove("e2e-notes-victim");
+    await registerAndApprove("e2e-cmd-attacker");
 
     // Log in as attacker to obtain a non-admin session token.
     const loginRes = await daemonRequest("/api/auth/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username: "e2e-notes-attacker", password: "attack-pass-123" }),
+      body: JSON.stringify({ username: "e2e-cmd-attacker", password: "attack-pass-123" }),
     });
     const loginBody = (await loginRes.json()) as { sessionId: string };
     assert.equal(loginRes.status, 200, `login: ${JSON.stringify(loginBody)}`);
     const { sessionId } = loginBody;
     assert.ok(sessionId, "login should return a session token");
 
-    // Attacker attempts to publish a note authored as the victim via body.mind.
-    const attackRes = await fetch(`${BASE_URL}/api/ext/notes/commands/write`, {
+    // The victim is TEST_MIND, a real mind with a pages directory. (The merged
+    // `pages write` writes into the acting mind's home, so the target has to be a
+    // mind rather than the bare brain user the notes version could get away with.)
+    const attackTitle = "Impersonation Attempt";
+
+    // Attacker attempts to publish a page authored as TEST_MIND via body.mind.
+    const attackRes = await fetch(`${BASE_URL}/api/ext/pages/commands/write`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${sessionId}`,
         Origin: BASE_URL,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ mind: "e2e-notes-victim", args: ["Impersonation Attempt", "body"] }),
+      body: JSON.stringify({ mind: TEST_MIND, args: [attackTitle, "body"] }),
     });
     assert.equal(attackRes.status, 200, `write: ${await attackRes.clone().text()}`);
     const attackBody = (await attackRes.json()) as { output?: string; error?: string };
-    assert.ok(attackBody.output, `expected output, got ${JSON.stringify(attackBody)}`);
-    // body.mind must be ignored: the note is authored by the caller, not the victim.
-    assert.match(attackBody.output, /Published: e2e-notes-attacker\//);
-    assert.doesNotMatch(attackBody.output, /Published: e2e-notes-victim\//);
 
-    // An admin (daemon token) can still target a specific mind via body.mind.
-    const adminRes = await daemonRequest("/api/ext/notes/commands/write", {
+    // body.mind must be ignored: the command acts as the caller. The caller is a
+    // brain user with no mind directory, so the command fails — and the failure
+    // names the attacker, proving whose identity the daemon resolved.
+    assert.match(
+      attackBody.error ?? attackBody.output ?? "",
+      /e2e-cmd-attacker/,
+      `command should have acted as the caller, got ${JSON.stringify(attackBody)}`,
+    );
+    assert.doesNotMatch(
+      attackBody.error ?? attackBody.output ?? "",
+      new RegExp(`Published: ${TEST_MIND}/`),
+      "attacker must not publish as TEST_MIND",
+    );
+
+    // The load-bearing check: nothing was written into the victim's site. An
+    // impersonation that produced no output would still be a breach.
+    const victimPagesRes = await daemonRequest(`/api/ext/pages/commands/list`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ mind: "e2e-notes-victim", args: ["Admin Targeted", "body"] }),
+      body: JSON.stringify({ mind: TEST_MIND, args: [] }),
+    });
+    const victimPages = (await victimPagesRes.json()) as { output?: string };
+    assert.doesNotMatch(
+      victimPages.output ?? "",
+      /impersonation-attempt/,
+      "the attacker's page must not exist in the victim's site",
+    );
+
+    // An admin (daemon token) can still target a specific mind via body.mind.
+    const adminRes = await daemonRequest("/api/ext/pages/commands/write", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mind: TEST_MIND, args: ["Admin Targeted", "body"] }),
     });
     assert.equal(adminRes.status, 200, `admin write: ${await adminRes.clone().text()}`);
     const adminBody = (await adminRes.json()) as { output?: string; error?: string };
     assert.ok(adminBody.output, `expected output, got ${JSON.stringify(adminBody)}`);
-    assert.match(adminBody.output, /Published: e2e-notes-victim\//);
+    assert.match(adminBody.output, new RegExp(`Published: ${TEST_MIND}/notes/admin-targeted\\.md`));
   });
 });

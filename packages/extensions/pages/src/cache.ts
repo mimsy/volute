@@ -1,6 +1,7 @@
 import type { Database } from "@volute/extensions";
 
 import { getAllSites, getRecentPages, getSystemPages } from "./db.js";
+import { toIso } from "./time.js";
 
 type SitePage = { file: string; modified: string; url: string; author?: string | null };
 type Site = { name: string; label: string; pages: SitePage[] };
@@ -18,7 +19,9 @@ function mapFiles(
 ): SitePage[] {
   return files.map((f) => ({
     file: f.file,
-    modified: f.updated_at,
+    // DB timestamps are zone-less UTC; hand the frontend an unambiguous ISO
+    // string so `new Date(...)` there can't reinterpret it as local time.
+    modified: toIso(f.updated_at),
     url: `/ext/pages/public/${mind}/${f.file}`,
     author: f.author,
   }));
@@ -47,7 +50,7 @@ export function getRecentPagesList(
   return rows.map((r) => ({
     mind: r.mind,
     file: r.file,
-    modified: r.updated_at,
+    modified: toIso(r.updated_at),
     url: `/ext/pages/public/${r.mind}/${r.file}`,
     author: r.author,
   }));

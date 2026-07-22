@@ -190,10 +190,6 @@ const DATAFLOW_AUTHZ_RE = /resolveMindFilter|getBaseName|\bprivileged\b|\.role\b
 // Query-param reads that are genuinely public (feeds/listings of already-public
 // content) and therefore need no per-caller authorization. Documented, honest.
 const QUERY_AUTHZ_EXEMPT: Record<string, string> = {
-  "notes/src/routes.ts GET / ?author":
-    "public: lists published notes filtered by author; no private data",
-  "notes/src/routes.ts GET /feed ?mind":
-    "public: home/mind feed of published notes; no private data",
   "pages/src/routes.ts GET /feed ?mind":
     "public: home/mind feed of published pages; no private data",
   "intentions/src/routes.ts GET / ?mind":
@@ -316,18 +312,18 @@ const EXT_ROUTE_RE =
 
 const EXT_AUTHZ_EXEMPT: Record<string, string> = {
   // Public reads of already-published content.
-  "notes/src/routes.ts GET /:author/:slug": "public: reads a single published note",
   "pages/src/routes.ts GET /:name/*":
     "public route (createPublicRoutes, no auth): serves published page snapshots; " +
     "path traversal contained by an in-handler prefix check",
+  "pages/src/routes.ts GET /thread/:mind":
+    "public: reads the comment/reaction thread on an already-published page; no private data",
   // Interaction endpoints: any authenticated user may react/comment on any
-  // author's note; write ownership is enforced by actor.id, not the :author.
-  "notes/src/routes.ts POST /:author/:slug/reactions":
+  // mind's published page — that is what a commons is. Write ownership is
+  // enforced by actor.id, not by the :mind in the path.
+  "pages/src/routes.ts POST /thread/:mind/comments":
+    "interaction: any authenticated user may comment; authored as actor.id",
+  "pages/src/routes.ts POST /thread/:mind/reactions":
     "interaction: any authenticated user may react; keyed by actor.id",
-  "notes/src/routes.ts POST /:author/:slug/comments":
-    "interaction: any authenticated user may comment; keyed by actor.id",
-  "notes/src/routes.ts DELETE /:author/:slug/comments/:id":
-    "in-handler authz: deletes the caller's own comment (actor.id ownership), not author-scoped",
 };
 
 function extractExtensionRoutes(): Route[] {

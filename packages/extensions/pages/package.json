@@ -15,6 +15,7 @@
     "@volute/extensions": "*",
     "@volute/ui": "*",
     "isomorphic-dompurify": "^3.18.0",
+    "libsql": "*",
     "marked": "^18.0.6"
   },
   "peerDependencies": {
