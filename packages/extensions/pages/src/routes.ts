@@ -4,15 +4,21 @@ import type { ExtensionContext } from "@volute/extensions";
 import { Hono } from "hono";
 
 import { getRecentPagesList, getSites } from "./cache.js";
-import { getPage } from "./db.js";
+import { areCommentsClosed, getPage } from "./db.js";
 import { parseFrontmatter, renderMarkdownPage, resolveStylesheet } from "./markdown.js";
+import { resolveMentions } from "./mentions.js";
+import { defaultPromotionTitle, writeQuickPage } from "./publish.js";
 import {
   addComment,
   deleteComment,
+  getComment,
   getThread,
+  isNotifiable,
+  notifyMentionedInComment,
   type PageRef,
   type PageThread,
   parsePageRef,
+  setCommentBody,
   toggleReaction,
 } from "./social.js";
 import { toIso } from "./time.js";
@@ -127,16 +133,22 @@ export function createRoutes(ctx: ExtensionContext): Hono {
         if (!ref) return c.json({ error: "Invalid page reference" }, 400);
         if (!body.content) return c.json({ error: "content is required" }, 400);
         if (!getPage(ctx.db, ref.mind, ref.file)) return c.json({ error: "Page not found" }, 404);
+        if (areCommentsClosed(ctx.db, ref.mind, ref.file)) {
+          return c.json({ error: "Comments are closed on this page" }, 403);
+        }
 
         const created = await addComment(ctx.db, ctx.getUser, ref, actor.id, body.content);
         const comment = { ...created, created_at: toIso(created.created_at) };
-        if (ref.mind !== actor.username) {
+        if (ref.mind !== actor.username && isNotifiable(ref.mind)) {
           const snippet = body.content.length > 80 ? `${body.content.slice(0, 80)}…` : body.content;
           await ctx.recordNotice(
             ref.mind,
             `${actor.username} commented on your page ${ref.mind}/${ref.file}: "${snippet}"`,
           );
         }
+        // A mention in a comment is a hail — directed, and it notifies. The same
+        // name in a page body is a citation and notifies nobody.
+        await notifyMentionedInComment(body.content, ctx, { actor: actor.username, ref });
         return c.json(comment, 201);
       })
       .post("/thread/:mind/reactions", async (c) => {
@@ -152,7 +164,7 @@ export function createRoutes(ctx: ExtensionContext): Hono {
         if (!getPage(ctx.db, ref.mind, ref.file)) return c.json({ error: "Page not found" }, 404);
 
         const result = toggleReaction(ctx.db, ref, actor.id, body.emoji);
-        if (result.added && ref.mind !== actor.username) {
+        if (result.added && ref.mind !== actor.username && isNotifiable(ref.mind)) {
           await ctx.recordNotice(
             ref.mind,
             `${actor.username} reacted ${body.emoji} to your page ${ref.mind}/${ref.file}`,
@@ -176,6 +188,41 @@ export function createRoutes(ctx: ExtensionContext): Hono {
         const deleted = deleteComment(ctx.db, id, actor);
         if (!deleted) return c.json({ error: "Comment not found or not authorized" }, 404);
         return c.json({ ok: true });
+      })
+      // Promotion: a comment that grew becomes a page in its author's own space,
+      // and the comment stays in the thread as a pointer to it. Like the delete
+      // route above, a comment id is globally unique so this path carries no mind
+      // segment and authorization is in-handler: only the comment's own author may
+      // promote it. Covered by "promotion" in test/pages-social.test.ts.
+      .post("/comments/:id/promote", async (c) => {
+        if (!ctx.db) return c.json({ error: "Pages database not available" }, 503);
+        const actor = ctx.resolveUser(c);
+        if (!actor || actor.id === 0) return c.json({ error: "Unauthorized" }, 401);
+        const id = Number.parseInt(c.req.param("id"), 10);
+        if (Number.isNaN(id)) return c.json({ error: "Invalid comment ID" }, 400);
+
+        const body = await parseJson<{ title?: string }>(c);
+        if (body === null) return c.json({ error: "Invalid JSON body" }, 400);
+
+        const comment = getComment(ctx.db, id);
+        if (!comment) return c.json({ error: "Comment not found" }, 404);
+        if (comment.author_id !== actor.id) return c.json({ error: "Forbidden" }, 403);
+        if (comment.body_mind) {
+          return c.json({ error: "That comment already lives as a page" }, 409);
+        }
+
+        // The page lands in the *author's* space, which is the whole point — a
+        // thought that grows moves into their own body of work.
+        const mindDir = await ctx.getMindDir(actor.username);
+        if (!mindDir) return c.json({ error: "Mind not found" }, 404);
+        const title = body?.title?.trim() || defaultPromotionTitle(comment.content, comment.file);
+        try {
+          const written = writeQuickPage(ctx, actor.username, mindDir, title, comment.content);
+          setCommentBody(ctx.db, id, { mind: actor.username, file: written.file });
+          return c.json({ ok: true, mind: actor.username, file: written.file });
+        } catch (err) {
+          return c.json({ error: `Failed to write page: ${(err as Error).message}` }, 500);
+        }
       })
       .put("/publish/:name", ctx.requireSelf("name"), async (c) => {
         const name = c.req.param("name");
@@ -311,7 +358,14 @@ export function createPublicRoutes(ctx: ExtensionContext): Hono {
           const { title, style, body } = parseFrontmatter(content);
           const cssRelPath = resolveStylesheet(fileToServe, pagesRoot, style);
           const cssUrl = cssRelPath ? `/ext/pages/public/${name}/${cssRelPath}` : undefined;
-          const html = await renderMarkdownPage(body, { title, stylesheetUrl: cssUrl });
+          // `@mind-name` in a page body is a citation: highlighted and linked, and
+          // it notifies nobody. Only names that belong to someone here are linked.
+          const mentions = await resolveMentions(body, ctx.getUserByUsername);
+          const html = await renderMarkdownPage(body, {
+            title,
+            stylesheetUrl: cssUrl,
+            mentions,
+          });
           return c.body(injectNavShim(html), 200, { "Content-Type": "text/html; charset=utf-8" });
         }
 

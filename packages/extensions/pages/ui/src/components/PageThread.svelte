@@ -2,6 +2,7 @@
 import { renderMarkdown } from "@volute/ui/markdown";
 import {
   deleteComment as apiDeleteComment,
+  promoteComment as apiPromoteComment,
   fetchThread,
   type PageThread,
   postComment,
@@ -73,6 +74,19 @@ async function remove(id: number) {
   if (await apiDeleteComment(id)) await reload();
 }
 
+// Promotion: a comment that grew gets a home of its own. The comment stays put.
+async function promote(id: number) {
+  if (busy) return;
+  busy = true;
+  await apiPromoteComment(id);
+  await reload();
+  busy = false;
+}
+
+function pageUrl(mind: string, file: string): string {
+  return `/ext/pages/public/${encodeURIComponent(mind)}/${file}`;
+}
+
 // The API serializes thread timestamps as ISO-8601 UTC, so no zone repair here.
 function formatDate(iso: string): string {
   const d = new Date(iso);
@@ -116,23 +130,56 @@ let mine = $derived(currentUsername);
     </h3>
 
     {#each thread.comments as comment (comment.id)}
-      <div class="comment">
+      <div class="comment" class:publish={comment.kind === "publish"}>
         <div class="comment-header">
           <span class="author">{comment.author_display_name ?? comment.author_username}</span>
+          {#if comment.kind === "publish"}
+            <span class="badge" title="The message given when this page was changed">
+              on publishing
+            </span>
+          {/if}
           <span class="date">{formatDate(comment.created_at)}</span>
           {#if comment.stale}
             <span class="stale" title="The page has changed since this was written">
               on an earlier version
             </span>
           {/if}
-          {#if comment.author_username === mine || mind === mine}
-            <button class="delete" onclick={() => remove(comment.id)}>delete</button>
-          {/if}
+          <span class="actions">
+            {#if comment.author_username === mine && comment.kind === "comment" && !comment.body_mind}
+              <button
+                class="linkish"
+                title="Keep this response as a page of your own"
+                onclick={() => promote(comment.id)}
+              >
+                keep as a page
+              </button>
+            {/if}
+            {#if comment.author_username === mine || mind === mine}
+              <button class="linkish delete" onclick={() => remove(comment.id)}>delete</button>
+            {/if}
+          </span>
         </div>
         <div class="body markdown-body">{@html renderMarkdown(comment.content)}</div>
+        {#if comment.body_mind && comment.body_file}
+          <a class="pointer" href={pageUrl(comment.body_mind, comment.body_file)}>
+            ↳ also a page: {comment.body_mind}/{comment.body_file}
+          </a>
+        {/if}
       </div>
     {/each}
 
+    {#if thread.backlinks.length > 0}
+      <div class="backlinks">
+        <h3 class="header">Pages responding to this one</h3>
+        {#each thread.backlinks as b (b.comment_id)}
+          <a class="pointer" href={pageUrl(b.mind, b.file)}>{b.mind}/{b.file}</a>
+        {/each}
+      </div>
+    {/if}
+
+    {#if thread.comments_closed}
+      <p class="closed">Comments are closed on this page.</p>
+    {:else}
     <div class="compose">
       <div class="avatar">
         {#if userAvatarUrl}
@@ -155,6 +202,7 @@ let mine = $derived(currentUsername);
         </div>
       </div>
     </div>
+    {/if}
   </section>
 {/if}
 
@@ -255,8 +303,13 @@ let mine = $derived(currentUsername);
     font-style: italic;
   }
 
-  .delete {
+  .actions {
     margin-left: auto;
+    display: inline-flex;
+    gap: 10px;
+  }
+
+  .linkish {
     background: none;
     border: none;
     font-size: 12px;
@@ -265,8 +318,52 @@ let mine = $derived(currentUsername);
     padding: 0;
   }
 
+  .linkish:hover {
+    color: var(--text-0);
+  }
+
   .delete:hover {
     color: #e55;
+  }
+
+  /* A publish message is the page's own history, not an invitation to respond. */
+  .comment.publish {
+    background: none;
+    border-style: dashed;
+  }
+
+  .badge {
+    font-size: 11px;
+    color: var(--text-2);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 0 6px;
+  }
+
+  .pointer {
+    display: block;
+    margin-top: 6px;
+    font-size: 12px;
+    color: var(--accent);
+    text-decoration: none;
+    word-break: break-word;
+  }
+
+  .pointer:hover {
+    text-decoration: underline;
+  }
+
+  .backlinks {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .closed {
+    font-size: 13px;
+    color: var(--text-2);
+    font-style: italic;
+    margin: 0;
   }
 
   .body {

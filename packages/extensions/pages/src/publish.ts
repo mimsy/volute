@@ -6,11 +6,13 @@
  * — the quick path's whole point is that writing and publishing are a single act,
  * which only holds if it is literally the same publish.
  */
+import { createHash } from "node:crypto";
 import {
   cpSync,
   existsSync,
   mkdirSync,
   readdirSync,
+  readFileSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -19,11 +21,38 @@ import { relative, resolve, sep } from "node:path";
 
 import type { ExtensionContext } from "@volute/extensions";
 
-import { knownPageFiles, syncPublishedPages } from "./db.js";
-import { hashFiles } from "./shared-pages.js";
+import { knownPageFiles, type PageInput, syncPublishedPages } from "./db.js";
+import { parseFrontmatter } from "./markdown.js";
+import { parseMentions } from "./mentions.js";
 
 /** Subdirectory the quick path writes into. Conventional, not enforced. */
 export const QUICK_DIR = "notes";
+
+/**
+ * Read each page once and report everything the DB wants to know about it: the
+ * content hash, whether its frontmatter closes comments, and which minds it cites.
+ *
+ * This replaces a bare `hashFiles()` on the paths that feed `syncPublishedPages` /
+ * `syncSystemPages`, because those already pay for the read — pulling the
+ * frontmatter and the mentions out of the same read costs nothing extra.
+ *
+ * Only markdown carries frontmatter and citations. An HTML page is left alone:
+ * `commentsClosed` stays undefined (open, unchanged) and it cites nobody.
+ */
+export function describePages(baseDir: string, files: string[]): PageInput[] {
+  return files.map((file) => {
+    const raw = readFileSync(resolve(baseDir, file));
+    const hash = createHash("sha256").update(raw).digest("hex");
+    if (!file.endsWith(".md")) return { file, hash };
+    const { comments, body } = parseFrontmatter(raw.toString("utf-8"));
+    return {
+      file,
+      hash,
+      commentsClosed: comments === undefined ? false : !comments,
+      mentions: parseMentions(body),
+    };
+  });
+}
 
 /** Recursively collect files, returning paths relative to baseDir. Optionally filter by extension(s). */
 export function collectFiles(dir: string, baseDir: string, ext?: string | string[]): string[] {
@@ -88,7 +117,7 @@ export function publishPersonalPages(
   });
 
   const pageFiles = collectFiles(snapshotDir, snapshotDir, [".html", ".md"]);
-  const diff = syncPublishedPages(db, mindName, hashFiles(snapshotDir, pageFiles));
+  const diff = syncPublishedPages(db, mindName, describePages(snapshotDir, pageFiles));
 
   for (const file of diff.added) {
     if (file === opts.skipActivityFor) continue;
@@ -113,6 +142,26 @@ export function publishPersonalPages(
   }
 
   return { fileCount: pageFiles.length, diff, snapshotDir };
+}
+
+/**
+ * A title for a promoted comment when its author didn't supply one. The first
+ * line is usually the thought; falling back to "Re: <page>" keeps a wordless
+ * comment (a link, an emoji) from producing an empty slug.
+ */
+export function defaultPromotionTitle(content: string, file: string): string {
+  const firstLine =
+    content
+      .split("\n")
+      .find((l) => l.trim().length > 0)
+      ?.trim() ?? "";
+  const trimmed = firstLine.length > 72 ? `${firstLine.slice(0, 72).trimEnd()}…` : firstLine;
+  if (trimmed) return trimmed;
+  const stem = file
+    .replace(/\.(md|html)$/, "")
+    .split("/")
+    .pop();
+  return `Re: ${stem}`;
 }
 
 /** Turn a title into a URL-safe slug. */
