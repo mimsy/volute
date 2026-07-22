@@ -405,6 +405,17 @@ async function newConversations(
  * and burying it under fairness would discard the one thing known to work. It is
  * one slot, not a priority ordering, so a prolific mind cannot take over the tier
  * by linking generously; the rest is pure fairness.
+ *
+ * **Precondition: candidates must already have been through {@link foldSameAddress}.**
+ * This function identifies artifacts by `kind:ref`, so a page and the conversation
+ * on it are two different things to it and it will happily select both — which is
+ * correct in the abstract and reads as the same address named twice in one block.
+ * The fold is what guarantees that pair never arrives here, which makes it
+ * load-bearing rather than defensive. Deduplicating by address here as well would
+ * be the wrong repair: it would hide a mis-wired call site instead of failing on
+ * it, and it would contradict the model in which the two really are separate
+ * artifacts met at separate times. A new call site adds the fold; it does not
+ * teach this function to tolerate its absence.
  */
 export function selectFairly(
   candidates: Candidate[],

@@ -363,6 +363,28 @@ describe("conversations: a thread becoming a room", () => {
     assert.deepEqual(kinds, ["page", "thread"]);
   });
 
+  it("folds at every entry point, so no block can name one address twice", async () => {
+    // selectFairly identifies artifacts by kind:ref and will select both a page
+    // and the conversation on it — correct in the abstract, and read as the same
+    // address twice. foldSameAddress is what guarantees that pair never reaches
+    // it, which makes the fold load-bearing rather than defensive. This pins the
+    // property at the surface that matters (no block repeats an address) for both
+    // tiers, so a future third entry point that forgets the fold fails here
+    // rather than shipping a stutter.
+    for (const reason of ["turn", "wake"] as const) {
+      db = new Database(":memory:") as unknown as ExtDb;
+      initDb(db);
+      horizonAt("pip", ago(3 * DAY));
+      publish("gardener", "notes/view.md", ago(2 * DAY));
+      comment("gardener", "notes/view.md", 1, ago(2 * DAY));
+      comment("gardener", "notes/view.md", 2, ago(1 * DAY));
+
+      const out = (await ambientTurnContext("pip", ctx(), { budget: 3000, reason }, NOW)) ?? "";
+      const addresses = out.match(/gardener\/notes\/view\.md/g) ?? [];
+      assert.equal(addresses.length, 1, `${reason} block named one address ${addresses.length}x`);
+    }
+  });
+
   it("does not point a mind at a conversation on a page that has been deleted", async () => {
     // A tombstoned page keeps its thread so the conversation still reads — but
     // sending someone to it means sending them to a page that is not there.
