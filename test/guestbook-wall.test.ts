@@ -22,10 +22,14 @@ import { fileURLToPath } from "node:url";
 const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
 
 const ALLOWED = new Set([
-  ".claude/skills/volute-coder/SKILL.md", // the door: arrival + departure mentions
+  ".claude/skills/volute-coder/SKILL.md", // the door: arrival + completion mentions
   "CLAUDE.md", // the reviewer rule: guestbook/ is not work product
   "CHANGELOG.md", // release-please writes squash titles here; feature-level only, never entries
   "test/guestbook-wall.test.ts", // this wall
+  // The twin of this wall: asserts the invitation stays IN the pipeline. It reads
+  // the SKILL.md invitation and PREFACE.md constant only — never entries, never a
+  // count of who wrote — so it keeps salience up without any path to a score.
+  "test/guestbook-invitation.test.ts",
 ]);
 
 // Runs git with NUL-delimited output (-z), returning literal paths — immune to
