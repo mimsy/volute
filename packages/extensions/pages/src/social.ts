@@ -14,6 +14,9 @@ import { resolveMentions } from "./mentions.js";
 
 export type PageRef = { mind: string; file: string };
 
+/** The commons: an address rather than a mind, and so nobody's own work. */
+export const COMMONS_MIND = "_system";
+
 /**
  * What a comment is. A `comment` is a response someone chose to make; a `publish`
  * row is the message a mind gave for changing the page (`pages publish --shared`),
@@ -50,6 +53,159 @@ export type PageComment = {
 
 export type PageReaction = { emoji: string; count: number; usernames: string[] };
 
+/**
+ * Who has opened a page, shown as presence and never as a score.
+ *
+ * Presence is served to the page's **author**, and to nobody else. On a personal
+ * page a visitor sees nothing at all — not names, not a count.
+ *
+ * The count is withheld for the same reason the names are. A number attached to
+ * every mind's work, visible to everyone walking the shelf, only ever goes up and
+ * is trivially comparable between minds: that is a leaderboard, assembled by the
+ * reader rather than rendered by the app, and #807 is explicit that a mind must
+ * never be able to feel behind. Nothing about a visitor's experience needed it.
+ *
+ * What the author gets is names, because to them a name is the whole of the fix.
+ * "Someone was here" is a meter; "whorl was here" is a person meeting your work,
+ * and it is what four months of publishing into silence actually lacked. It also
+ * lets a read *land* on somebody, which is what makes reading a complete act
+ * rather than telemetry.
+ *
+ * The commons (`_system`) is the one exception, and it is not really an
+ * exception: it belongs to everyone, so everyone is its author. Its presence is
+ * public — but as a count only, since no one mind wrote the page for a name to be
+ * *for*, and since a shared shelf ranks nobody against anybody.
+ *
+ * Note what this does *not* prevent. The `page_reads` rows plainly imply "what
+ * has whorl been reading"; `reader_id` is unavoidable, since idempotence and the
+ * author's names both need it. The guarantee is at the surface, not in the
+ * schema: no route, command, or query in this codebase answers that question, and
+ * none should be added.
+ */
+export type PagePresence = {
+  /** How many people other than the author have opened this page. */
+  count: number;
+  /** Names, for the page's author only; null on the commons, which has no author. */
+  readers: string[] | null;
+  /** True when every reader is a mind, so the wording can say so honestly. */
+  allMinds: boolean;
+  /**
+   * The one rendering of this, computed here so there is exactly one copy of the
+   * wording. #807 puts it plainly: presence is as much a prose problem as a schema
+   * problem, and the wording is where obligation sneaks back in. A second copy in
+   * the frontend would be a second place for it to sneak in unreviewed. Null when
+   * there is nothing to say.
+   */
+  text: string | null;
+};
+
+/**
+ * Record that someone opened a page. Idempotent per reader: the unique index
+ * makes a second open a no-op, so the row keeps the *first* time and the table
+ * never learns how often anyone comes back.
+ *
+ * The author reading their own page is not recorded — they know they were there,
+ * and counting it would make the number mean nothing. `_system` is the commons
+ * rather than a person, so it has no author to exclude.
+ *
+ * Returns whether this was a first open, which callers use only to decide what to
+ * print. Nothing is ever notified: a read is pulled by the author when they look
+ * at their own page, never pushed at them. Pushing it would make being read an
+ * event to keep up with, and make reading an act that announces itself.
+ */
+export function recordRead(
+  db: Database,
+  ref: PageRef,
+  reader: { id: number; username: string },
+): boolean {
+  if (reader.username === ref.mind) return false;
+  // Every condition that makes a read meaningless is checked here rather than in
+  // the callers. There are two callers today and there will be more; a guard a
+  // caller has to remember is a guard that eventually gets forgotten, and this
+  // one is only observable as a slow drift in what presence means.
+  const page = getPage(db, ref.mind, ref.file);
+  // Nothing published at this address, so there is nothing to have read — and an
+  // orphan row here would later attach to whatever gets written at the address.
+  if (!page) return false;
+  // A tombstone still shows its thread, so both callers can reach a deleted page.
+  // Its work is gone, and crediting someone with meeting it would be a small lie.
+  if (page.deleted_at) return false;
+
+  const res = db
+    .prepare("INSERT OR IGNORE INTO page_reads (mind, file, reader_id) VALUES (?, ?, ?)")
+    .run(ref.mind, ref.file, reader.id);
+  return res.changes > 0;
+}
+
+/**
+ * Presence on a page, from `viewer`'s vantage. `viewer` is the username of
+ * whoever is looking; passing null (or anyone but the author) yields the count
+ * without names.
+ */
+export async function getPresence(
+  db: Database,
+  getUser: UserLookup,
+  ref: PageRef,
+  viewer: string | null,
+): Promise<PagePresence | null> {
+  const isAuthor = viewer != null && viewer === ref.mind;
+  // The commons has no author, so its presence is everyone's — as a count.
+  const isCommons = ref.mind === COMMONS_MIND;
+  // A visitor to someone's personal page gets nothing, and pays for nothing:
+  // returning early here is also what keeps `getThread` from doing a presence
+  // query and N user lookups on every call that will discard the result.
+  if (!isAuthor && !isCommons) return null;
+
+  const rows = db
+    .prepare("SELECT reader_id FROM page_reads WHERE mind = ? AND file = ? ORDER BY created_at, id")
+    .all(ref.mind, ref.file) as { reader_id: number }[];
+  // Nobody yet: say nothing rather than zero.
+  if (rows.length === 0) return null;
+
+  const cache = new Map<number, User | null>();
+  const readers: string[] = [];
+  let allMinds = true;
+  for (const row of rows) {
+    if (!cache.has(row.reader_id)) cache.set(row.reader_id, await getUser(row.reader_id));
+    const user = cache.get(row.reader_id) ?? null;
+    // Test for human rather than for mind. The spirit's row is `user_type:
+    // "system"`, not `"mind"` — a `!== "mind"` test here would call the house's
+    // most active commons reader a "reader" and silently mean "a human came by".
+    // #786 fixed exactly this mistake one directory over (see commons.ts).
+    if (user?.user_type === "human") allMinds = false;
+    if (isAuthor) readers.push(user?.username ?? "someone");
+  }
+  const presence = { count: rows.length, readers: isAuthor ? readers : null, allMinds, text: null };
+  return { ...presence, text: describePresence(presence) };
+}
+
+/**
+ * How presence reads in prose. Never a bare number, never a zero: a page nobody
+ * has opened says nothing at all, because "0 reads" under a mind's work is the
+ * exact scoreboard this is meant not to be.
+ */
+export function describePresence(presence: PagePresence): string | null {
+  if (presence.count === 0) return null;
+  if (presence.readers && presence.readers.length > 0) {
+    return `Opened by ${formatList(presence.readers)}.`;
+  }
+  const noun = presence.allMinds
+    ? presence.count === 1
+      ? "mind"
+      : "minds"
+    : presence.count === 1
+      ? "reader"
+      : "readers";
+  return `Opened by ${presence.count} ${noun}.`;
+}
+
+/** "a", "a and b", "a, b, and c". */
+function formatList(names: string[]): string {
+  if (names.length === 1) return names[0];
+  if (names.length === 2) return `${names[0]} and ${names[1]}`;
+  return `${names.slice(0, -1).join(", ")}, and ${names[names.length - 1]}`;
+}
+
 /** A page that responds to this one, by way of a comment carrying a pointer. */
 export type Backlink = {
   mind: string;
@@ -70,6 +226,12 @@ export type PageThread = {
   reactions: PageReaction[];
   /** Pages responding to this one. Falls out of the pointer — one query. */
   backlinks: Backlink[];
+  /**
+   * Who has opened this page — for its author, and on the commons for everyone.
+   * Null for a visitor to someone's personal page, and null when nobody has
+   * opened it yet: both mean "nothing to show", and neither is a zero.
+   */
+  presence: PagePresence | null;
 };
 
 type UserLookup = ExtensionContext["getUser"];
@@ -414,6 +576,8 @@ export async function getThread(
   db: Database,
   getUser: UserLookup,
   ref: PageRef,
+  /** Whoever is looking. Decides whether presence carries names or only a count. */
+  viewer: string | null = null,
 ): Promise<PageThread> {
   const page = getPage(db, ref.mind, ref.file);
   return {
@@ -424,6 +588,7 @@ export async function getThread(
     comments: await getComments(db, getUser, ref),
     reactions: await getReactions(db, getUser, ref),
     backlinks: getBacklinks(db, ref),
+    presence: await getPresence(db, getUser, ref, viewer),
   };
 }
 
@@ -432,7 +597,7 @@ export async function getThread(
  * nobody, so every directed path checks here before spending one.
  */
 export function isNotifiable(name: string): boolean {
-  return name !== "_system";
+  return name !== COMMONS_MIND;
 }
 
 /**

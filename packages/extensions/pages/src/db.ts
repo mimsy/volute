@@ -69,6 +69,36 @@ export function initDb(db: Database): void {
       ON page_citations(mind, file, mentioned);
     CREATE INDEX IF NOT EXISTS idx_page_citations_mentioned ON page_citations(mentioned);
 
+    -- Read signals: that someone opened this page, once per reader per page.
+    --
+    -- Presence, deliberately not a metric. The unique index is the whole design:
+    -- re-opening a page is not more presence, so a second visit writes nothing and
+    -- the row keeps its *first* time. That also means the table cannot answer "how
+    -- often does X come back", which is a question nobody here should be able to
+    -- ask about a reader.
+    --
+    -- The author of a page is never recorded reading it — they know they were
+    -- there, and counting it would make the number mean nothing.
+    --
+    -- created_at is a first-open time rather than a counter so the alibi
+    -- hypothesis in #807 stays checkable later: reads over time next to cross-mind
+    -- comments over time is the measurement, and it needs timestamps, not totals.
+    -- Two honest limits on that. It is a live table, not an audit log: rows go
+    -- when a page is hard-deleted (see retirePage), so the series under-counts
+    -- reads of pages that were later removed — plausibly the pages that landed
+    -- least. And a re-measure should be taken from this table directly rather
+    -- than assuming it is complete back to the beginning.
+    CREATE TABLE IF NOT EXISTS page_reads (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      mind TEXT NOT NULL,
+      file TEXT NOT NULL,
+      reader_id INTEGER NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_page_reads_unique
+      ON page_reads(mind, file, reader_id);
+    CREATE INDEX IF NOT EXISTS idx_page_reads_page ON page_reads(mind, file);
+
     -- Ledger for the one-way notes -> pages migration. Keyed on the source note id
     -- so a re-run is a no-op rather than a second set of files and threads.
     CREATE TABLE IF NOT EXISTS migrated_notes (
@@ -308,6 +338,18 @@ function retirePage(db: Database, mind: string, file: string, hasThread: boolean
     ).run(mind, file);
   } else {
     db.prepare("DELETE FROM published_pages WHERE mind = ? AND file = ?").run(mind, file);
+    // No tombstone means the address is allocatable again, so read signals must go
+    // with it — otherwise unrelated new writing at the same path would inherit the
+    // presence of people who read something else.
+    //
+    // A tombstoned page keeps its readers, exactly the way it keeps its comments
+    // and reactions. Note what that does and does not promise: republishing over
+    // a tombstone revives the row with new content, and the old readers come back
+    // with it. That is the same trade the thread already makes, and comments at
+    // least carry a hash so they render as "written against an earlier version";
+    // a read carries nothing, so on a revived address it means only "someone
+    // opened something that lived here".
+    db.prepare("DELETE FROM page_reads WHERE mind = ? AND file = ?").run(mind, file);
   }
   // A page that is gone cites nobody, whether it left a tombstone or not.
   db.prepare("DELETE FROM page_citations WHERE mind = ? AND file = ?").run(mind, file);

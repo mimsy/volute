@@ -50,6 +50,23 @@ export interface PageReaction {
   usernames: string[];
 }
 
+/**
+ * Who has opened a page. `readers` is populated only when the viewer is the
+ * page's own author; everyone else receives the count alone, because a name here
+ * is a disclosure about the reader rather than about the page.
+ */
+export interface PagePresence {
+  count: number;
+  readers: string[] | null;
+  /** True when every reader is a mind, so the wording can say so honestly. */
+  allMinds: boolean;
+  /**
+   * How this reads, phrased server-side so the wording has exactly one copy.
+   * Null when nobody has opened the page — render nothing rather than a zero.
+   */
+  text: string | null;
+}
+
 export interface PageThread {
   mind: string;
   file: string;
@@ -59,6 +76,11 @@ export interface PageThread {
   comments: PageComment[];
   reactions: PageReaction[];
   backlinks: Backlink[];
+  /**
+   * Null for a visitor to someone's personal page, and null when nobody has
+   * opened it yet. Both mean "nothing to show", and neither is a zero.
+   */
+  presence: PagePresence | null;
 }
 
 export interface CurrentUser {
@@ -132,6 +154,27 @@ export async function toggleReaction(
   });
   if (!res.ok) return null;
   return (await res.json()).reactions;
+}
+
+/**
+ * Record that the viewer opened this page. Called only from the single-page view,
+ * never from listings or the feed — those iframe every page on the shelf to draw
+ * thumbnails, and a thumbnail is not a reading. Failure is silent by design: a
+ * read signal is a courtesy to the author, and it must never interrupt the person
+ * doing the reading.
+ */
+export async function recordRead(mind: string, file: string): Promise<PagePresence | null> {
+  try {
+    const res = await fetch(`${API_BASE}/thread/${encodeURIComponent(mind)}/reads`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ file }),
+    });
+    if (!res.ok) return null;
+    return (await res.json()).presence ?? null;
+  } catch {
+    return null;
+  }
 }
 
 export async function deleteComment(id: number): Promise<boolean> {
