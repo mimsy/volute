@@ -12,14 +12,11 @@ import {
 import {
   archivePointerTimestamp,
   buildSeededTranscript,
-  buildSeededTranscriptFromCut,
-  computeSeedCut,
   findLatestArchivedSession,
   rotateSession,
   seedSession,
   writeRotationArchivePointer,
 } from "../templates/_base/src/lib/session-seed.js";
-import { DEFAULT_PROMPTS } from "../templates/_base/src/lib/startup.js";
 
 // --- Transcript line builders (approximate real SDK jsonl shapes) ---
 
@@ -352,8 +349,13 @@ describe("buildSeededNote / parseArchiveTimestamp", () => {
     const note = buildSeededNote({ cause: "rotation", archivedAtMs: Date.UTC(2026, 6, 18, 12, 0) });
     assert.equal(note, ROTATED_SESSION_NOTE);
     assert.doesNotMatch(note, /the break lasted/);
-    assert.match(note, /rotated in place at the context limit/);
     assert.match(note, /volute mind history/);
+  });
+
+  it("rotation note is a single line and points at history", () => {
+    assert.ok(!ROTATED_SESSION_NOTE.includes("\n"), "must be one line");
+    assert.ok(ROTATED_SESSION_NOTE.includes("volute mind history"));
+    assert.ok(ROTATED_SESSION_NOTE.length < 300, "keep it short");
   });
 });
 
@@ -439,88 +441,6 @@ describe("seedSession", () => {
   });
 });
 
-// --- computeSeedCut: pin the boundary the mind is warned about ---
-
-describe("computeSeedCut", () => {
-  it("pins the newest-fitting boundary's uuid and timestamp for a budget", () => {
-    const lines = [
-      userPrompt("u1", null, "x".repeat(4000), "2026-07-19T10:00:00.000Z"), // ~1000 tok turn
-      assistant("a1", "u1", [{ type: "text", text: "ok" }]),
-      userPrompt("u2", "a1", "second", "2026-07-19T11:30:00.000Z"),
-      assistant("a2", "u2", [{ type: "text", text: "done" }]),
-    ];
-    // Budget fits only the final turn → cut at u2.
-    const cut = computeSeedCut(lines.join("\n"), 200);
-    assert.ok(cut);
-    assert.equal(cut.boundaryUuid, "u2");
-    assert.equal(cut.boundaryTimestamp, "2026-07-19T11:30:00.000Z");
-  });
-
-  it("takes as many whole turns as fit (pin moves earlier with a bigger budget)", () => {
-    const lines = [
-      userPrompt("u1", null, "first", "2026-07-19T10:00:00.000Z"),
-      assistant("a1", "u1", [{ type: "text", text: "ok" }]),
-      userPrompt("u2", "a1", "second", "2026-07-19T11:00:00.000Z"),
-      assistant("a2", "u2", [{ type: "text", text: "done" }]),
-    ];
-    // Large budget → both turns fit → cut at the earliest turn (u1).
-    assert.equal(computeSeedCut(lines.join("\n"), 1_000_000)?.boundaryUuid, "u1");
-  });
-
-  it("returns null when there are no genuine turns", () => {
-    assert.equal(computeSeedCut([marker("mode")].join("\n"), 30000), null);
-    assert.equal(computeSeedCut("", 30000), null);
-  });
-
-  it("is lenient about a trailing partial line (transcript still mid-write)", () => {
-    // A half-flushed final line must not defeat pinning.
-    const lines = [
-      userPrompt("u1", null, "hello", "2026-07-19T10:00:00.000Z"),
-      assistant("a1", "u1", [{ type: "text", text: "hi" }]),
-      '{"type":"assistant","uuid":"a2","parentUu', // truncated mid-write
-    ];
-    const cut = computeSeedCut(lines.join("\n"), 1_000_000);
-    assert.ok(cut);
-    assert.equal(cut.boundaryUuid, "u1");
-  });
-});
-
-// --- buildSeededTranscriptFromCut: honor the pinned boundary ---
-
-describe("buildSeededTranscriptFromCut", () => {
-  it("copies the tail from the pinned uuid to EOF, including turns added after the pin", () => {
-    // The pin (u2) was computed at warn time; a wrap-up turn (u3) landed afterward.
-    const lines = [
-      userPrompt("u1", null, "first"),
-      assistant("a1", "u1", [{ type: "text", text: "hi" }]),
-      userPrompt("u2", "a1", "second"),
-      assistant("a2", "u2", [{ type: "text", text: "done" }]),
-      userPrompt("u3", "a2", "wrap-up"), // rides along
-      assistant("a3", "u3", [{ type: "text", text: "saved" }]),
-    ];
-    const res = buildSeededTranscriptFromCut(lines.join("\n"), "u2");
-    assert.ok(res);
-    const objs = parse(res.lines);
-    assert.equal(objs.length, 4); // u2, a2, u3, a3
-    assert.equal(objs[0].uuid, "u2");
-    assert.equal(objs[0].parentUuid, null); // detached
-    assert.equal(objs[3].uuid, "a3");
-    // sessionId rewritten on every line to the new id.
-    for (const o of objs) assert.equal(o.sessionId, res.sessionId);
-    assert.notEqual(res.sessionId, OLD);
-  });
-
-  it("returns null when the pinned uuid is not in the transcript", () => {
-    const lines = [userPrompt("u1", null, "hi"), assistant("a1", "u1", [])];
-    assert.equal(buildSeededTranscriptFromCut(lines.join("\n"), "nope"), null);
-  });
-
-  it("returns null on a corrupt line", () => {
-    const lines = [userPrompt("u1", null, "hi"), "{bad", assistant("a1", "u1", [])];
-    assert.equal(buildSeededTranscriptFromCut(lines.join("\n"), "u1"), null);
-  });
-});
-
 // --- archive pointer format (must match sleep-manager's archiveSessions) ---
 
 describe("archivePointerTimestamp / writeRotationArchivePointer", () => {
@@ -560,59 +480,58 @@ describe("rotateSession", () => {
     return { home, sessionsDir, projectDir };
   }
 
-  // Rotation-time transcript: two early turns + a wrap-up turn appended after warn.
+  // Rotation-time transcript: three whole turns.
   const rotationTranscript = [
     userPrompt("u1", null, "first"),
     assistant("a1", "u1", [{ type: "text", text: "hi" }]),
     userPrompt("u2", "a1", "second"),
     assistant("a2", "u2", [{ type: "text", text: "done" }]),
-    userPrompt("u3", "a2", "wrap-up"),
+    userPrompt("u3", "a2", "third"),
     assistant("a3", "u3", [{ type: "text", text: "saved" }]),
   ].join("\n");
 
-  it("honors the pinned cut, writes the synthetic tail, and archives the rotated-out pointer", () => {
+  it("writes the budget tail synthetic session and archives the rotated-out pointer", () => {
     const { home, sessionsDir, projectDir } = setup(OLD, rotationTranscript);
     const newId = rotateSession({
       cwd: home,
       sessionsDir,
       name: "main",
       oldSessionId: OLD,
-      cut: { boundaryUuid: "u2", boundaryTimestamp: "2026-07-19T11:00:00.000Z" },
-      seedTokens: 30000,
-    });
-    assert.ok(newId);
-    assert.notEqual(newId, OLD);
-    // Synthetic file written next to the source, starting at the pinned boundary.
-    const objs = parse(
-      readFileSync(resolve(projectDir, `${newId}.jsonl`), "utf-8")
-        .trim()
-        .split("\n"),
-    );
-    assert.equal(objs.length, 4); // u2, a2, u3 (wrap-up rides along), a3
-    assert.equal(objs[0].uuid, "u2");
-    assert.equal(objs[0].parentUuid, null);
-    // Rotated-out session archived so the full transcript stays findable.
-    const found = findLatestArchivedSession(sessionsDir, "main");
-    assert.equal(found?.sessionId, OLD);
-  });
-
-  it("falls back to a budget-based tail when no cut is pinned", () => {
-    const { home, sessionsDir, projectDir } = setup(OLD, rotationTranscript);
-    const newId = rotateSession({
-      cwd: home,
-      sessionsDir,
-      name: "main",
-      oldSessionId: OLD,
-      cut: null,
       seedTokens: 1_000_000, // large → whole transcript
     });
     assert.ok(newId);
+    assert.notEqual(newId, OLD);
+    // Synthetic file written next to the source, the budget-based trailing tail.
     const objs = parse(
       readFileSync(resolve(projectDir, `${newId}.jsonl`), "utf-8")
         .trim()
         .split("\n"),
     );
     assert.equal(objs[0].uuid, "u1"); // budget kept everything
+    assert.equal(objs[0].parentUuid, null); // detached from dropped history
+    // Rotated-out session archived so the full transcript stays findable.
+    const found = findLatestArchivedSession(sessionsDir, "main");
+    assert.equal(found?.sessionId, OLD);
+  });
+
+  it("keeps only the trailing turns that fit a tight budget", () => {
+    const { home, sessionsDir, projectDir } = setup(OLD, rotationTranscript);
+    const newId = rotateSession({
+      cwd: home,
+      sessionsDir,
+      name: "main",
+      oldSessionId: OLD,
+      seedTokens: 30, // tight → only the final turn survives
+    });
+    assert.ok(newId);
+    const objs = parse(
+      readFileSync(resolve(projectDir, `${newId}.jsonl`), "utf-8")
+        .trim()
+        .split("\n"),
+    );
+    assert.equal(objs.length, 2); // u3, a3
+    assert.equal(objs[0].uuid, "u3");
+    assert.equal(objs[0].parentUuid, null);
   });
 
   it("rotates an ephemeral new-* session without writing an archive pointer", () => {
@@ -622,7 +541,6 @@ describe("rotateSession", () => {
       sessionsDir,
       name: "new-abc",
       oldSessionId: OLD,
-      cut: { boundaryUuid: "u2", boundaryTimestamp: null },
       seedTokens: 30000,
     });
     assert.ok(newId);
@@ -644,31 +562,9 @@ describe("rotateSession", () => {
         sessionsDir,
         name: "main",
         oldSessionId: "missing",
-        cut: null,
         seedTokens: 30000,
       }),
       null,
     );
-  });
-});
-
-// --- ${cutoff} interpolation + graceful degradation ---
-
-describe("compaction warning ${cutoff} mechanics", () => {
-  it("the default warning carries the ${cutoff} placeholder (twice) and ${date}", () => {
-    const w = DEFAULT_PROMPTS.compaction_warning;
-    assert.equal(w.match(/\$\{cutoff\}/g)?.length, 2);
-    assert.ok(w.includes("${date}"));
-  });
-
-  it("replaceAll fills every ${cutoff} with the cut time", () => {
-    const filled = DEFAULT_PROMPTS.compaction_warning.replaceAll("${cutoff}", "2026-07-19 12:00");
-    assert.doesNotMatch(filled, /\$\{cutoff\}/);
-    assert.ok(filled.includes("2026-07-19 12:00"));
-  });
-
-  it("degrades gracefully: a custom warning without ${cutoff} is left unchanged", () => {
-    const custom = "Heads up — the session will rotate soon. Save your files.";
-    assert.equal(custom.replaceAll("${cutoff}", "2026-07-19 12:00"), custom);
   });
 });

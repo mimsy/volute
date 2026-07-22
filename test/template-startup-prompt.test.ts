@@ -3,11 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { afterEach, describe, it } from "node:test";
-import {
-  DEFAULT_PROMPTS,
-  loadSystemPrompt,
-  renderCompactionWarning,
-} from "../templates/_base/src/lib/startup.js";
+import { loadSystemPrompt } from "../templates/_base/src/lib/startup.js";
 
 describe("loadSystemPrompt", () => {
   const origCwd = process.cwd();
@@ -124,21 +120,6 @@ describe("loadSystemPrompt", () => {
     const prompt = loadSystemPrompt();
     assert.ok(prompt.includes("only the first ~25k tokens are loaded"));
     assert.ok(prompt.length > 90_000, `most of the allowed head is loaded (got ${prompt.length})`);
-  });
-
-  it("renderCompactionWarning substitutes every ${date} and ${memory_size} occurrence", () => {
-    const dir = makeHome({ "SOUL.md": "S", "MEMORY.md": "m".repeat(4000) });
-    process.chdir(dir);
-    // biome-ignore lint/suspicious/noTemplateCurlyInString: literal placeholders under test
-    const out = renderCompactionWarning("size ${memory_size} and again ${memory_size} on ${date}");
-    assert.equal(out.match(/~1k tokens/g)?.length, 2);
-    assert.ok(!out.includes("${date}"));
-
-    // The shipped default renders with no leftover placeholders except ${cutoff},
-    // which each agent fills per warning with the pinned rotation boundary.
-    const rendered = renderCompactionWarning(DEFAULT_PROMPTS.compaction_warning);
-    // biome-ignore lint/suspicious/noTemplateCurlyInString: literal placeholder under test
-    assert.ok(!rendered.replaceAll("${cutoff}", "").includes("${"), rendered);
   });
 
   it("honors memory budget overrides from home/.config/config.json (#569)", () => {

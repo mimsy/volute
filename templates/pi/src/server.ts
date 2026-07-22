@@ -31,7 +31,6 @@ const mind = createMind({
   sessionsDir: resolve(".mind/pi-sessions"),
   model: config.model,
   thinkingLevel: config.thinkingLevel,
-  compactionMessage: config.compactionMessage,
   maxContextTokens: config.compaction?.maxContextTokens,
   seedTokens: config.continuity?.seedTokens,
   subagents: config.subagents,

@@ -6,8 +6,6 @@ import { describe, it } from "node:test";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import {
   buildSeededPiTranscript,
-  buildSeededPiTranscriptFromCut,
-  computePiSeedCut,
   findLatestArchivedPiSession,
   hasLivePiSession,
   rotatePiSession,
@@ -471,83 +469,6 @@ describe("seedPiSession + SessionManager.continueRecent (real SDK)", () => {
   });
 });
 
-// --- computePiSeedCut ------------------------------------------------------
-
-describe("computePiSeedCut", () => {
-  it("pins the first-kept turn's id and timestamp under the budget", () => {
-    const big = "z".repeat(4000); // ~1000 est tokens per turn
-    const lines = [
-      header(),
-      userMsg("u1", null, big),
-      userMsg("u2", "u1", big),
-      userMsg("u3", "u2", big),
-    ];
-    // Budget fits two turns (~2000) but not three (~3000): cut at u2.
-    const cut = computePiSeedCut(lines.join("\n"), 2500);
-    assert.ok(cut);
-    assert.equal(cut.boundaryId, "u2");
-    assert.equal(cut.boundaryTimestamp, "2026-07-18T00:00:01.000Z");
-  });
-
-  it("parses leniently — a trailing half-written line doesn't defeat the pin", () => {
-    const lines = [
-      header(),
-      userMsg("u1", null, "first"),
-      assistantMsg("a1", "u1", [{ type: "text", text: "hi" }]),
-      userMsg("u2", "a1", "second"),
-      '{"type":"message","id":"a2","parentId":"u2","messa', // torn mid-write
-    ];
-    const cut = computePiSeedCut(lines.join("\n"), 1_000_000);
-    assert.ok(cut);
-    // Both whole turns fit; the torn line is skipped, so the pin is the first turn.
-    assert.equal(cut.boundaryId, "u1");
-  });
-
-  it("returns null when there is no genuine turn", () => {
-    const lines = [header(), assistantMsg("a1", "root", [{ type: "text", text: "x" }])];
-    assert.equal(computePiSeedCut(lines.join("\n"), 1000), null);
-  });
-});
-
-// --- buildSeededPiTranscriptFromCut ----------------------------------------
-
-describe("buildSeededPiTranscriptFromCut", () => {
-  it("keeps the whole tail from the pinned id through EOF, even over budget", () => {
-    const srcU2 = userMsg("u2", "a1", "second");
-    const srcA2 = assistantMsg("a2", "u2", [{ type: "text", text: "y".repeat(8000) }]);
-    const lines = [
-      header(),
-      userMsg("u1", null, "first"),
-      assistantMsg("a1", "u1", [{ type: "text", text: "hi" }]),
-      srcU2,
-      srcA2,
-    ];
-    const res = buildSeededPiTranscriptFromCut(lines.join("\n"), {
-      cwd: "/new/home",
-      boundaryId: "u2",
-      sourcePath: "/archive/src.jsonl",
-    });
-    assert.ok(res);
-    // header + u2 + a2 (the pinned turn rides along regardless of size).
-    assert.equal(res.lines.length, 3);
-    const objs = parse(res.lines);
-    assert.equal(objs[0].cwd, resolve("/new/home"));
-    assert.equal(objs[0].parentSession, "/archive/src.jsonl");
-    assert.equal(objs[1].id, "u2");
-    assert.equal(objs[1].parentId, null); // detached to a clean root
-    // Later entry copied byte-for-byte from the source line.
-    assert.equal(res.lines[2], srcA2);
-  });
-
-  it("returns null when the pinned id isn't present", () => {
-    const lines = [header(), userMsg("u1", null, "first")];
-    assert.equal(
-      buildSeededPiTranscriptFromCut(lines.join("\n"), { cwd: "/home", boundaryId: "nope" }),
-      null,
-    );
-  });
-});
-
 // --- rotatePiSession: orchestrator over the filesystem ---------------------
 
 describe("rotatePiSession", () => {
@@ -568,7 +489,7 @@ describe("rotatePiSession", () => {
     return path;
   }
 
-  it("honors the pinned cut, writes the tail into the live dir, and archives the old file", () => {
+  it("writes the budget tail into the live dir and archives the old file", () => {
     const home = resolve(scratch(), "home");
     const piSessionsDir = resolve(scratch(), ".mind/pi-sessions");
     const sourcePath = makeLive(piSessionsDir, "main", liveTranscript());
@@ -578,8 +499,7 @@ describe("rotatePiSession", () => {
       sessionsDir: piSessionsDir,
       name: "main",
       sourcePath,
-      cut: { boundaryId: "u2", boundaryTimestamp: null },
-      seedTokens: 1_000_000,
+      seedTokens: 1_000_000, // large → whole transcript
     });
     assert.ok(newPath);
 
@@ -589,13 +509,15 @@ describe("rotatePiSession", () => {
     assert.equal(liveFiles.length, 1);
     assert.equal(resolve(liveDir, liveFiles[0]), newPath);
 
-    // The new file is the pinned tail (u2 onward); the collapsed turn is gone.
+    // The new file is the budget-based tail; here the budget kept the whole
+    // transcript, with the first kept entry detached to a clean root.
     const rotated = readFileSync(newPath, "utf-8").trim().split("\n");
     const objs = parse(rotated);
     assert.equal(objs[0].cwd, resolve(home));
+    assert.equal(objs[1].parentId, null);
     assert.deepEqual(
       objs.slice(1).map((o) => o.id),
-      ["u2", "a2"],
+      ["u1", "a1", "u2", "a2"],
     );
 
     // Old file archived under archive/<name>-<ts>/, matching sleep-manager's layout.
@@ -607,7 +529,7 @@ describe("rotatePiSession", () => {
     assert.ok(archivedFiles.some((f) => f.endsWith(".jsonl")));
   });
 
-  it("falls back to a budget-based tail when no cut is pinned", () => {
+  it("keeps only the trailing turns that fit a tight budget", () => {
     const home = resolve(scratch(), "home");
     const piSessionsDir = resolve(scratch(), ".mind/pi-sessions");
     // Two turns; a tiny budget keeps only the last.
@@ -621,7 +543,6 @@ describe("rotatePiSession", () => {
       sessionsDir: piSessionsDir,
       name: "main",
       sourcePath,
-      cut: null,
       seedTokens: 10,
     });
     assert.ok(newPath);
@@ -640,7 +561,6 @@ describe("rotatePiSession", () => {
         sessionsDir: piSessionsDir,
         name: "main",
         sourcePath: resolve(piSessionsDir, "main", "missing.jsonl"),
-        cut: null,
         seedTokens: 1000,
       }),
       null,
@@ -656,7 +576,6 @@ describe("rotatePiSession", () => {
       sessionsDir: piSessionsDir,
       name: "new-abc",
       sourcePath,
-      cut: null,
       seedTokens: 1_000_000,
     });
     assert.ok(newPath);
@@ -670,7 +589,7 @@ describe("rotatePiSession", () => {
 describe("rotation boundary note", () => {
   it("uses the rotation wording (context limit, points at history) not the restored one", () => {
     const note = buildSeededNote({ cause: "rotation" });
-    assert.match(note, /rotated in place at the context limit/);
+    assert.match(note, /consolidated at the context limit/);
     assert.match(note, /volute mind history/);
     assert.doesNotMatch(note, /restored after archival/);
   });
@@ -705,16 +624,14 @@ describe("rotatePiSession + SessionManager adoption (real SDK)", () => {
     // Full history is present before rotation.
     assert.ok(sm.buildSessionContext().messages.length >= 6);
 
-    // Pin the cut at the middle turn, then rotate — this is what warnAndPinRotation +
-    // rotateInPlace do, minus the agent.state re-sync (which assigns the value below).
-    const cut = computePiSeedCut(readFileSync(sourcePath, "utf-8"), 1);
+    // Rotate onto the budget tail — this is what rotateInPlace does, minus the
+    // agent.state re-sync (which assigns the value below). A tight budget keeps only
+    // the final turn (u3 onward), so the assertion is deterministic.
     const newPath = rotatePiSession({
       cwd: home,
       sessionsDir: piSessionsDir,
       name: "main",
       sourcePath,
-      // Force the pin to u3 to make the assertion deterministic regardless of budget math.
-      cut: cut ? { ...cut, boundaryId: "u3" } : { boundaryId: "u3", boundaryTimestamp: null },
       seedTokens: 1,
     });
     assert.ok(newPath);
@@ -723,7 +640,7 @@ describe("rotatePiSession + SessionManager adoption (real SDK)", () => {
     sm.setSessionFile(newPath);
     const adopted = sm.buildSessionContext();
 
-    // The SM now reports the rotated session id and only the pinned tail (u3 onward);
+    // The SM now reports the rotated session id and only the budget tail (u3 onward);
     // the collapsed turns are gone. rotateInPlace assigns exactly adopted.messages to
     // the agent's live context, so this is what the mind would see post-rotation.
     assert.notEqual(sm.getSessionId(), SRC_ID);
@@ -797,7 +714,6 @@ describe("ephemeral new-* sessions (file-backed, real SDK)", () => {
       sessionsDir: piSessionsDir,
       name: "new-xyz",
       sourcePath,
-      cut: { boundaryId: "u2", boundaryTimestamp: null },
       seedTokens: 1,
     });
     assert.ok(newPath);

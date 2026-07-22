@@ -117,8 +117,7 @@ function estimateTokens(raw: string): number {
  * Parse jsonl into aligned parsed/raw arrays. In strict mode a corrupt line aborts
  * (returns null — used when copying verbatim, where a broken line means we can't
  * faithfully reconstruct the chain). In lenient mode corrupt lines are skipped
- * (used when reading a transcript that may still be mid-write, e.g. computing the
- * cut point while the SDK is streaming).
+ * (tolerating a transcript that may still be mid-write).
  */
 function parseJsonl(
   jsonl: string,
@@ -200,9 +199,6 @@ function emitTail(parsed: JsonlLine[], startLine: number): SeededTranscript {
 
 export type SeededTranscript = { sessionId: string; lines: string[] };
 
-/** A pinned cut point for rotation: where the verbatim tail begins. */
-export type SeedCut = { boundaryUuid: string; boundaryTimestamp: string | null };
-
 /**
  * Build the seeded transcript from an old transcript's raw jsonl text: take as
  * many whole trailing turns as fit in `seedTokens` (always at least the final
@@ -215,42 +211,6 @@ export function buildSeededTranscript(jsonl: string, seedTokens: number): Seeded
   if (!p || p.parsed.length === 0) return null;
   if (turnBoundaries(p.parsed).length === 0) return null;
   const startLine = tailStartByBudget(p.parsed, p.raws, seedTokens);
-  return emitTail(p.parsed, startLine);
-}
-
-/**
- * Compute the cut point (the first-kept turn's identity) for a `seedTokens` budget,
- * from raw jsonl. Parsed leniently because the live transcript may still be
- * mid-write when this runs at warn time. Returns null if there's no genuine turn
- * or the chosen boundary lacks a uuid.
- */
-export function computeSeedCut(jsonl: string, seedTokens: number): SeedCut | null {
-  const p = parseJsonl(jsonl, true);
-  if (!p || p.parsed.length === 0) return null;
-  if (turnBoundaries(p.parsed).length === 0) return null;
-  const startLine = tailStartByBudget(p.parsed, p.raws, seedTokens);
-  const boundary = p.parsed[startLine];
-  if (typeof boundary.uuid !== "string") return null;
-  return {
-    boundaryUuid: boundary.uuid,
-    boundaryTimestamp: typeof boundary.timestamp === "string" ? boundary.timestamp : null,
-  };
-}
-
-/**
- * Build the seeded transcript starting at a pinned boundary uuid (the whole tail
- * from that line through EOF). Used by rotation to honor the cut point the mind
- * was warned about, regardless of how much the transcript grew after the warning.
- * Returns null if the boundary uuid isn't found or a line is corrupt.
- */
-export function buildSeededTranscriptFromCut(
-  jsonl: string,
-  boundaryUuid: string,
-): SeededTranscript | null {
-  const p = parseJsonl(jsonl, false);
-  if (!p || p.parsed.length === 0) return null;
-  const startLine = p.parsed.findIndex((o) => o.uuid === boundaryUuid);
-  if (startLine < 0) return null;
   return emitTail(p.parsed, startLine);
 }
 
@@ -328,30 +288,25 @@ export function writeRotationArchivePointer(
 
 /**
  * Rotate a session in place at the context limit. Reads the live transcript, builds
- * a seeded tail from the pinned `cut` (falling back to a budget-based tail when the
- * pin can't be honored), writes it as a new synthetic session file next to the
- * source, and — for persistent sessions — archives the rotated-out pointer so the
- * full transcript stays findable. Returns the new session id, or null if rotation
- * can't proceed (the caller then falls back to a fresh session). Never throws.
+ * a budget-based tail (as many whole trailing turns as fit in `seedTokens`), writes
+ * it as a new synthetic session file next to the source, and — for persistent
+ * sessions — archives the rotated-out pointer so the full transcript stays findable.
+ * Returns the new session id, or null if rotation can't proceed (the caller then
+ * falls back to a fresh session). Never throws.
  */
 export function rotateSession(opts: {
   cwd: string;
   sessionsDir: string;
   name: string;
   oldSessionId: string;
-  cut: SeedCut | null;
   seedTokens: number;
 }): string | null {
-  const { cwd, sessionsDir, name, oldSessionId, cut, seedTokens } = opts;
+  const { cwd, sessionsDir, name, oldSessionId, seedTokens } = opts;
   try {
     const sourcePath = findClaudeSessionFile(cwd, oldSessionId);
     if (!sourcePath) return null; // live transcript not found — fall back to fresh
     const jsonl = readFileSync(sourcePath, "utf-8");
-    // Honor the pinned boundary the mind was warned about; only fall back to a
-    // budget-based tail if the pin can't be resolved (missing/renamed uuid).
-    const seeded =
-      (cut ? buildSeededTranscriptFromCut(jsonl, cut.boundaryUuid) : null) ??
-      buildSeededTranscript(jsonl, seedTokens);
+    const seeded = buildSeededTranscript(jsonl, seedTokens);
     if (!seeded) return null;
 
     writeFileSync(

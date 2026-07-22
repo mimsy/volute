@@ -3,8 +3,6 @@ import { resolve as resolvePath } from "node:path";
 import { Codex } from "@openai/codex-sdk";
 import { flushFileChanges, trackFileChange } from "./lib/auto-commit.js";
 import {
-  type CodexSeedCut,
-  computeCodexSeedCut,
   DEFAULT_SEED_TOKENS,
   rotateCodexSession,
   seedCodexSession,
@@ -21,17 +19,11 @@ import {
   readSkillDescriptions,
 } from "./lib/context-breakdown.js";
 import { daemonEmit, daemonRestart, type EventType } from "./lib/daemon-client.js";
-import { compactTimestamp } from "./lib/format-prefix.js";
 import { runHooks } from "./lib/hook-loader.js";
 import { log, warn } from "./lib/logger.js";
 import { buildSeededNote, type SeedCause } from "./lib/seed-note.js";
 import { createSessionStore } from "./lib/session-store.js";
-import {
-  getStartupContext,
-  loadPrompts,
-  loadSystemPrompt,
-  renderCompactionWarning,
-} from "./lib/startup.js";
+import { getStartupContext, loadPrompts, loadSystemPrompt } from "./lib/startup.js";
 import { filterEvent, loadTransparencyPreset } from "./lib/transparency.js";
 import { turnContextFor } from "./lib/turn-context.js";
 import type {
@@ -52,7 +44,7 @@ type CodexThread = {
   ): Promise<{ events: AsyncIterable<Record<string, any>> }>;
 };
 
-type QueuedMessage = { text: string; meta: HandlerMeta; isRotationWarning?: boolean };
+type QueuedMessage = { text: string; meta: HandlerMeta };
 
 type CodexSession = {
   name: string;
@@ -81,14 +73,6 @@ type CodexSession = {
   currentThreadId: string | null;
   /** Why the tail is seeded — picks the boundary note's wording. Last cause wins. */
   seededCause: SeedCause;
-  /**
-   * The cut point pinned at warn time (the first-kept turn the mind was told would
-   * survive verbatim). Honored at rotation so the promise in the warning holds even
-   * though the rollout grows after the warning. Null until a warning fires.
-   */
-  rotationCut: CodexSeedCut | null;
-  /** A rotation warning turn is queued/in-flight — suppress re-triggering until it rotates. */
-  rotatePending: boolean;
   /**
    * Back-to-back rotations that did NOT bring context under the threshold (reset by any
    * healthy turn). Guards against a runaway loop when the tail alone can't fit — e.g. a
@@ -139,12 +123,6 @@ export function createMind(options: {
   const maxContextTokens = options.maxContextTokens;
   const seedTokens = options.seedTokens ?? DEFAULT_SEED_TOKENS;
 
-  // The warning the mind gets when the context limit approaches: it authors summaries
-  // of the turns that will collapse, then the session rotates onto the verbatim tail.
-  // ${date}/${memory_size} are filled per-warning (the date rolls over and MEMORY.md
-  // changes as the mind edits it); ${cutoff} is filled with the pinned boundary.
-  const compactionMessage = () => renderCompactionWarning(prompts.compaction_warning);
-
   if (maxContextTokens) {
     log("mind", `compaction threshold: ${maxContextTokens} tokens`);
   }
@@ -173,11 +151,11 @@ export function createMind(options: {
     ...(apiKey ? { apiKey } : {}),
     config: {
       model_instructions_file: promptPath,
-      // Rotation (mind-authored compaction) is the primary path: at maxContextTokens we
-      // warn the mind and rotate onto the verbatim tail. The SDK's native auto-compaction
-      // is only an emergency backstop — set above the volute threshold (1.5×) so it fires
-      // solely when rotation can't relieve context (e.g. a system prompt too large to fit
-      // the tail under the threshold), after the runaway guard stops self-rotating.
+      // Rotation is the primary path: at maxContextTokens we silently rotate onto the
+      // verbatim tail between turns. The SDK's native auto-compaction is only an emergency
+      // backstop — set above the volute threshold (1.5×) so it fires solely when rotation
+      // can't relieve context (e.g. a system prompt too large to fit the tail under the
+      // threshold), after the runaway guard stops self-rotating.
       model_auto_compact_token_limit: maxContextTokens
         ? Math.floor(maxContextTokens * 1.5)
         : 999999999,
@@ -217,8 +195,6 @@ export function createMind(options: {
       seededArchivedAt: null,
       currentThreadId: null,
       seededCause: "restored",
-      rotationCut: null,
-      rotatePending: false,
       consecutiveRotations: 0,
     };
     sessions.set(name, session);
@@ -642,62 +618,22 @@ export function createMind(options: {
     session.currentMessageId = undefined;
   }
 
-  // --- Rotation (mind-authored compaction) ---
+  // --- Rotation (silent, at turn end) ---
 
   /**
-   * Warn the mind that the session will rotate at the context limit and pin the cut
-   * point it's told about. Computes which whole turns fit in `seedTokens` from the live
-   * rollout, pins the first-kept turn's timestamp (so rotation honors the same boundary
-   * even as the rollout grows), interpolates its local time into the `${cutoff}`
-   * placeholder, and queues the warning as the mind's next (wrap-up) turn.
-   */
-  function warnAndPinRotation(session: CodexSession) {
-    let cutoffLabel = "the cutoff";
-    session.rotationCut = null;
-    const threadId = session.currentThreadId;
-    if (threadId) {
-      try {
-        const path = findCodexSessionFile(threadId, options.mindDir);
-        const cut = path ? computeCodexSeedCut(readFileSync(path, "utf-8"), seedTokens) : null;
-        if (cut) {
-          session.rotationCut = cut;
-          const d = new Date(cut.boundaryTimestamp);
-          if (!Number.isNaN(d.getTime())) cutoffLabel = compactTimestamp(d);
-        }
-      } catch (err) {
-        log("mind", `session "${session.name}": failed to pin rotation cut:`, err);
-      }
-    }
-    // biome-ignore lint/suspicious/noTemplateCurlyInString: literal ${cutoff} prompt placeholder
-    const warning = compactionMessage().replaceAll("${cutoff}", cutoffLabel);
-    session.rotatePending = true;
-    // Run the warning next, ahead of any queued messages, so the mind wraps up before
-    // more context piles on. Remaining queued messages then run on the rotated thread.
-    session.messageQueue.unshift({
-      text: warning,
-      meta: { messageId: `rotation-warning-${Date.now()}` },
-      isRotationWarning: true,
-    });
-  }
-
-  /**
-   * After the wrap-up warning turn completes, rotate the thread in place: build a seeded
-   * rollout from the pinned cut out of the live rollout, archive the rotated-out thread,
-   * and resume the new thread. On any failure we leave the old thread in place and let
-   * the SDK's native backstop handle it if context keeps climbing.
+   * Rotate the thread in place: build a seeded budget-tail rollout out of the live
+   * rollout, archive the rotated-out thread, and resume the new thread. On any failure
+   * we leave the old thread in place and let the SDK's native backstop handle it if
+   * context keeps climbing.
    */
   function performRotation(session: CodexSession) {
-    session.rotatePending = false;
     const oldThreadId = session.currentThreadId;
-    const cut = session.rotationCut;
-    session.rotationCut = null;
 
     const newThreadId = oldThreadId
       ? rotateCodexSession({
           mindDir: options.mindDir,
           name: session.name,
           oldThreadId,
-          cut,
           seedTokens,
         })
       : null;
@@ -733,22 +669,24 @@ export function createMind(options: {
   }
 
   /**
-   * Decide, after a normal (non-warning) turn, whether to warn + pin a rotation: only when
-   * a threshold is configured, context is at/over it, no rotation is already pending, and
-   * we're under the runaway cap. A turn that came back under the threshold ends any streak.
+   * Decide, after a turn, whether to rotate in place: only when a threshold is
+   * configured, context is at/over it, and we're under the runaway cap (past the
+   * cap, the SDK's native backstop takes over). A turn that came back under the
+   * threshold ends any streak. Rotation is silent — the one-line rotation note
+   * arms via seededCause and lands on the next turn.
    */
-  function maybeWarnRotation(session: CodexSession) {
+  function maybeRotate(session: CodexSession) {
     if (!maxContextTokens) return;
     if (session.cumulativeInputTokens < maxContextTokens) {
       session.consecutiveRotations = 0; // healthy turn — streak over
       return;
     }
-    if (session.rotatePending || session.consecutiveRotations >= MAX_CONSECUTIVE_ROTATIONS) return;
+    if (session.consecutiveRotations >= MAX_CONSECUTIVE_ROTATIONS) return;
     log(
       "mind",
-      `session "${session.name}": ${session.cumulativeInputTokens} tokens >= ${maxContextTokens} — warning + pinning rotation`,
+      `session "${session.name}": ${session.cumulativeInputTokens} tokens >= ${maxContextTokens} — rotating`,
     );
-    warnAndPinRotation(session);
+    performRotation(session);
   }
 
   // --- Message queue processing ---
@@ -761,12 +699,8 @@ export function createMind(options: {
       const next = session.messageQueue.shift()!;
       session.currentMessageId = next.meta.messageId;
       await runTurn(session, next.text, next.meta);
-      if (next.isRotationWarning) {
-        // The wrap-up warning turn is done — rotate the thread in place.
-        performRotation(session);
-      } else {
-        maybeWarnRotation(session);
-      }
+      // Post-turn is between-turns for the queue, so rotate here if we're over.
+      maybeRotate(session);
     }
 
     session.processing = false;

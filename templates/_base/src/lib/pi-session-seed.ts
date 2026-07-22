@@ -239,49 +239,6 @@ export function buildSeededPiTranscript(
   return emitPiTail(h.header, h.entries, h.entryRaws, startIdx, opts.cwd, opts.sourcePath);
 }
 
-/** A pinned cut point for rotation: where the verbatim tail begins. */
-export type PiSeedCut = { boundaryId: string; boundaryTimestamp: string | null };
-
-/**
- * Compute the cut point (the first-kept turn's identity) for a `seedTokens` budget,
- * from raw jsonl. Parsed leniently because the live transcript may still be mid-write
- * when this runs at warn time. Returns null if there's no genuine turn or the chosen
- * boundary entry lacks an id.
- */
-export function computePiSeedCut(jsonl: string, seedTokens: number): PiSeedCut | null {
-  const p = parsePiJsonl(jsonl, true);
-  if (!p) return null;
-  const h = splitPiHeader(p.parsed, p.raws);
-  if (!h) return null;
-  const startIdx = tailStartByBudget(h.entries, h.entryRaws, seedTokens);
-  if (startIdx < 0) return null;
-  const boundary = h.entries[startIdx];
-  if (typeof boundary.id !== "string") return null;
-  return {
-    boundaryId: boundary.id,
-    boundaryTimestamp: typeof boundary.timestamp === "string" ? boundary.timestamp : null,
-  };
-}
-
-/**
- * Build the seeded transcript starting at a pinned boundary entry id (the whole tail
- * from that entry through EOF). Used by rotation to honor the cut point the mind was
- * warned about, regardless of how much the transcript grew after the warning.
- * Returns null if the boundary id isn't found or a line is corrupt.
- */
-export function buildSeededPiTranscriptFromCut(
-  jsonl: string,
-  opts: { cwd: string; boundaryId: string; sourcePath?: string },
-): SeededPiTranscript | null {
-  const p = parsePiJsonl(jsonl, false);
-  if (!p) return null;
-  const h = splitPiHeader(p.parsed, p.raws);
-  if (!h) return null;
-  const startIdx = h.entries.findIndex((e) => e.id === opts.boundaryId);
-  if (startIdx < 0) return null;
-  return emitPiTail(h.header, h.entries, h.entryRaws, startIdx, opts.cwd, opts.sourcePath);
-}
-
 /**
  * True if `<piSessionsDir>/<name>/` already holds a live pi `.jsonl` session —
  * in which case continueRecent will resume it and we must not seed over it.
@@ -379,30 +336,24 @@ function archiveRotatedPiFile(
 
 /**
  * Rotate a pi session in place at the context limit. Reads the live session file,
- * builds a seeded tail from the pinned `cut` (falling back to a budget-based tail
- * when the pin can't be honored), writes it as a new session file in the same live
- * dir, and — for persistent sessions — archives the rotated-out file so the full
- * transcript stays findable. Returns the new session file **path** (the caller
- * switches the running SessionManager to it), or null if rotation can't proceed
- * (the caller then falls back to a fresh session). Never throws.
+ * builds a budget-based tail (as many whole trailing turns as fit in `seedTokens`),
+ * writes it as a new session file in the same live dir, and — for persistent
+ * sessions — archives the rotated-out file so the full transcript stays findable.
+ * Returns the new session file **path** (the caller switches the running
+ * SessionManager to it), or null if rotation can't proceed (the caller then falls
+ * back to a fresh session). Never throws.
  */
 export function rotatePiSession(opts: {
   cwd: string;
   sessionsDir: string;
   name: string;
   sourcePath: string;
-  cut: PiSeedCut | null;
   seedTokens: number;
 }): string | null {
-  const { cwd, sessionsDir, name, sourcePath, cut, seedTokens } = opts;
+  const { cwd, sessionsDir, name, sourcePath, seedTokens } = opts;
   try {
     const jsonl = readFileSync(sourcePath, "utf-8");
-    // Honor the pinned boundary the mind was warned about; only fall back to a
-    // budget-based tail if the pin can't be resolved (missing/renamed id).
-    const seeded =
-      (cut
-        ? buildSeededPiTranscriptFromCut(jsonl, { cwd, boundaryId: cut.boundaryId, sourcePath })
-        : null) ?? buildSeededPiTranscript(jsonl, { cwd, seedTokens, sourcePath });
+    const seeded = buildSeededPiTranscript(jsonl, { cwd, seedTokens, sourcePath });
     if (!seeded) return null;
 
     const liveDir = resolve(sessionsDir, name);
