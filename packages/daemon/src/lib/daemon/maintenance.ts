@@ -1,5 +1,5 @@
 import { cleanExpiredSessions } from "../../web/middleware/auth.js";
-import { cleanExpiredEvents } from "../chat/system-events.js";
+import { cleanExpiredEvents, findStrandedEventMinds } from "../chat/system-events.js";
 import { cleanExpiredLogs } from "../util/history-cleanup.js";
 import log from "../util/logger.js";
 
@@ -25,6 +25,31 @@ export async function runMaintenance(): Promise<void> {
     await cleanExpiredEvents();
   } catch (err) {
     log.warn("maintenance: failed to clean expired events", log.errorData(err));
+  }
+  try {
+    await warnStrandedEvents();
+  } catch (err) {
+    log.warn("maintenance: failed to check for stranded events", log.errorData(err));
+  }
+}
+
+/**
+ * Warn about minds whose next-turn system events are accumulating undrained.
+ *
+ * Re-warns on every sweep rather than once per process: the condition is a live
+ * breakage (the mind is not hearing crash notices, delivery failures, or anything
+ * else on that channel), and one hourly line per affected mind stops the moment
+ * the drain works again. Silence here is the failure mode this exists to prevent.
+ */
+async function warnStrandedEvents(): Promise<void> {
+  for (const s of await findStrandedEventMinds()) {
+    log.warn(
+      `${s.mind} has ${s.pending} undelivered next-turn system event${s.pending === 1 ? "" : "s"} ` +
+        `and has completed ${s.turnsSince} turns without draining them (oldest is ${s.ageHours}h old). ` +
+        `Its pre-prompt drain hook is missing or failing — check ` +
+        `home/.local/hooks/pre-prompt/notices.ts and run \`volute mind upgrade ${s.mind}\`.`,
+      { mind: s.mind, pending: s.pending, turnsSince: s.turnsSince, ageHours: s.ageHours },
+    );
   }
 }
 

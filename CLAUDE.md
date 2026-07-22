@@ -114,7 +114,14 @@ Unified `users` table with `user_type` discrimination (`"human"` or `"mind"`) st
 
 ### Template .init/ directory
 
-Templates have a `.init/` directory containing identity and config files. On `volute mind create`, these are copied into `home/` and `.init/` is deleted. On `volute mind upgrade`, `.init/` files are excluded so identity files are never overwritten.
+Templates have a `.init/` directory containing identity and config files. On `volute mind create`, these are copied into `home/` and `.init/` is deleted. On `volute mind upgrade`, `.init/` is stripped from the template branch so identity files are never overwritten.
+
+`.init/` holds two kinds of file, split by authorship — *could this mind have written it about itself?*
+
+- **Identity** (SOUL.md, MEMORY.md, `memory/`, `.config/`, the mechanics doc) — the mind's own. Never re-added, never overwritten, not even when missing.
+- **Infrastructure** (`.local/**` — hooks and bin shims) — Volute's machinery namespace, which the daemon itself generates into and executes. Upgrades **add** any of these the mind is missing via `backfillInitInfrastructure()`, and never overwrite one that is present (a mind may have edited its own hook).
+
+The rule is the `.local/` subtree, not a filename list, so a hook added under `.local/hooks/` is covered the day it ships. `test/template-init-classification.test.ts` pins the classification of every shipped `.init/` file, so any newly shipped `.init/` file fails CI until it is classified on purpose. The backfill cannot distinguish "predates this hook" from "deleted it deliberately" — a mind declining a hook should empty the file rather than remove it (hook-loader treats an empty script as a no-op). Skipping the backfill is how a capability shipped as a new hook reaches only minds created after it existed while the daemon-side half looks healthy (#808 — the notices drain hook, the sole reader of next-turn system events).
 
 - **`_base/.init/`**: SOUL.md, MEMORY.md, memory/journal/, memory/dreams/, .config/prompts.json, .config/routes.json, .local/hooks/startup-context.ts, .local/hooks/wake-context.sh, .local/hooks/pre-prompt/ (session-activity.ts, notices.ts), .local/bin/volute
 - **`claude/.init/`**: CLAUDE.md, .claude/settings.json

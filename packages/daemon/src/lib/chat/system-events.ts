@@ -5,6 +5,7 @@ import { findMind, getBaseName } from "../mind/registry.js";
 import { mindHistory, systemEvents, turns } from "../schema.js";
 import log from "../util/logger.js";
 import { newEphemeralSession } from "../util/session-name.js";
+import { parseDbTimestamp } from "../util/time.js";
 
 const elog = log.child("system-events");
 
@@ -800,6 +801,91 @@ export async function hasUndeliveredEvent(mind: string, reason: string): Promise
     .limit(1)
     .get();
   return row != null;
+}
+
+/**
+ * Completed turns a mind may run with a next-turn event still pending before the
+ * drain is presumed broken. A next-turn event is meant to be picked up by the very
+ * next clean turn, so any double-digit number of turns without one is not a slow
+ * mind — it is a mind that cannot read this channel at all.
+ */
+const STRANDED_EVENT_TURN_THRESHOLD = 10;
+
+export type StrandedEvents = {
+  mind: string;
+  /** Undelivered next-turn events for this mind. */
+  pending: number;
+  /** Completed turns since the oldest pending event was recorded. */
+  turnsSince: number;
+  /** Age of the oldest pending event in hours. */
+  ageHours: number;
+};
+
+/**
+ * Minds whose next-turn events are piling up while the mind keeps taking turns —
+ * i.e. nothing is draining them.
+ *
+ * The drain lives in the mind's own `home/.local/hooks/pre-prompt/notices.ts`, so
+ * it can be absent (#808: minds created before that hook existed never received
+ * it), deleted, or broken, and the daemon side goes on recording events that look
+ * healthy in the table and are never read. Four minds went six days at zero
+ * deliveries and it took a hand-written DB query to notice.
+ *
+ * Deliberately generic: it detects "events go in, nothing comes out" whatever the
+ * cause, rather than testing for one missing file. Reported through the log rather
+ * than as a system event — a system event is precisely the channel this says is
+ * broken.
+ */
+export async function findStrandedEventMinds(
+  turnThreshold = STRANDED_EVENT_TURN_THRESHOLD,
+): Promise<StrandedEvents[]> {
+  const db = await getDb();
+  const groups = await db
+    .select({
+      mind: systemEvents.mind,
+      pending: sql<number>`count(*)`,
+      oldestId: sql<number>`min(${systemEvents.id})`,
+    })
+    .from(systemEvents)
+    .where(and(eq(systemEvents.delivery, "next-turn"), isNull(systemEvents.delivered_at)))
+    .groupBy(systemEvents.mind);
+
+  const stranded: StrandedEvents[] = [];
+  for (const group of groups) {
+    const oldest = await db
+      .select({ created_at: systemEvents.created_at })
+      .from(systemEvents)
+      .where(eq(systemEvents.id, group.oldestId))
+      .get();
+    if (!oldest) continue;
+
+    // Both sides are zone-less UTC "YYYY-MM-DD HH:MM:SS", so lexical comparison
+    // in SQL is chronological. Only the age below leaves SQL, and it goes through
+    // parseDbTimestamp — new Date() on these reads them as local time.
+    const turnCount = await db
+      .select({ n: sql<number>`count(*)` })
+      .from(turns)
+      .where(
+        and(
+          eq(turns.mind, group.mind),
+          eq(turns.status, "complete"),
+          gt(turns.created_at, oldest.created_at),
+        ),
+      )
+      .get();
+    const turnsSince = turnCount?.n ?? 0;
+    if (turnsSince < turnThreshold) continue;
+
+    stranded.push({
+      mind: group.mind,
+      pending: group.pending,
+      turnsSince,
+      ageHours: Math.round(
+        (Date.now() - parseDbTimestamp(oldest.created_at).getTime()) / (60 * 60 * 1000),
+      ),
+    });
+  }
+  return stranded;
 }
 
 /** List events for a mind, newest first (for the events API/UI). */
