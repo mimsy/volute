@@ -141,11 +141,26 @@ export function initDb(db: Database): void {
     --
     -- The watermark alone would very nearly do this job, and briefly did: advance
     -- it past everything considered, and an artifact is structurally unrepeatable.
-    -- It is kept as well because #807 says "at most once, **ever**", and a
-    -- timestamp comparison quietly stops guaranteeing that whenever a timestamp
-    -- moves — republishing over a tombstone revives published_at, and the notes
-    -- migration writes historical ones. A guarantee that survives only while
-    -- nobody rewrites a date is not the guarantee that was asked for.
+    -- It is kept as well because a timestamp comparison quietly stops guaranteeing
+    -- anything whenever a timestamp moves — republishing over a tombstone revives
+    -- published_at, and the notes migration writes historical ones. A guarantee
+    -- that survives only while nobody rewrites a date is not a guarantee.
+    --
+    -- Two timestamps, because the tiers ask different questions of this table:
+    --
+    --   created_at    — the FIRST time this artifact was ever put in front of this
+    --                   mind. The ambient *live* tier keys off mere existence of
+    --                   the row: a page is announced as new exactly once, ever.
+    --   last_shown_at — the MOST RECENT time. The *archive* tier keys off this,
+    --                   because it is allowed to come back around.
+    --
+    -- Once-ever is right for "whorl published a thing" and wrong for the archive.
+    -- Applied to the archive it produces a terminal state: a mind that has walked
+    -- the whole shelf never hears from that tier again — weeks away at this
+    -- corpus size, not years — and then a quiet house makes a quiet digest makes a
+    -- quiet house. That spiral is the exact thing the retrospective tier exists to
+    -- break, so it must not be the tier that starts it. Re-encountering a page you
+    -- read half a year ago is not repetition; it is what an archive is *for*.
     --
     -- The author column is denormalized so fairness weighting is one grouped read on the
     -- turn path: "whose work has this mind met least" is the selection's central
@@ -155,6 +170,7 @@ export function initDb(db: Database): void {
       viewer TEXT NOT NULL,
       kind TEXT NOT NULL,
       ref TEXT NOT NULL,
+      last_shown_at TEXT,
       author TEXT NOT NULL,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
@@ -203,6 +219,9 @@ export function initDb(db: Database): void {
     // to be an invitation, but the default is that it is.
     "comments_closed INTEGER NOT NULL DEFAULT 0",
   ]);
+  // Also listed here so a worktree that created ambient_shown before the archive
+  // cooldown existed picks the column up rather than failing every ambient query.
+  addColumns(db, "ambient_shown", ["last_shown_at TEXT"]);
   addColumns(db, "page_comments", [
     // "comment" (a response) or "publish" (the --shared message that explains a
     // change). Both live in the thread; only a response is an invitation.

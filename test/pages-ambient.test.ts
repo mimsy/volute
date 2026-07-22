@@ -477,12 +477,84 @@ describe("ambient retrospective at wake", () => {
     assert.match(second, /Something of your own: you wrote "mine"/);
   });
 
-  it("walks the archive rather than looping it, and goes quiet when spent", async () => {
+  it("meets everything unseen before anything comes back around", async () => {
+    horizonAt("pip", ago(1 * DAY));
+    for (let i = 0; i < 4; i++) publish("gardener", `notes/p${i}.md`, ago((100 + i) * DAY));
+
+    // Four wakes a week apart: four distinct pages, no repeats. Unseen material is
+    // preferred absolutely, which is what lets the cooldown be a floor rather than
+    // a schedule that has to be tuned against how much the house has written.
+    const met = new Set<string>();
+    for (let w = 0; w < 4; w++) {
+      const at = new Date(NOW.getTime() + w * 7 * DAY);
+      const out = (await ambientTurnContext("pip", ctx(), wake, at)) ?? "";
+      const ref = out.match(/gardener\/notes\/p\d\.md/)?.[0];
+      assert.ok(ref, `wake ${w} said nothing`);
+      assert.ok(!met.has(ref), `wake ${w} repeated ${ref} while unseen pages remained`);
+      met.add(ref);
+    }
+    assert.equal(met.size, 4);
+  });
+
+  it("is quiet between revisits rather than cycling a small shelf", async () => {
     horizonAt("pip", ago(1 * DAY));
     publish("gardener", "notes/only.md", ago(120 * DAY));
     assert.ok(await ambientTurnContext("pip", ctx(), wake, NOW));
-    const later = new Date(NOW.getTime() + 3 * DAY);
-    assert.equal(await ambientTurnContext("pip", ctx(), wake, later), null);
+    // The next day, and a month later, it does not say the same thing again.
+    assert.equal(await ambientTurnContext("pip", ctx(), wake, new Date(NOW.getTime() + DAY)), null);
+    assert.equal(
+      await ambientTurnContext("pip", ctx(), wake, new Date(NOW.getTime() + 30 * DAY)),
+      null,
+    );
+  });
+
+  it("can never go permanently silent while any old page exists", async () => {
+    // The property, not the constant. Once-per-artifact-ever applied to the
+    // archive produces a terminal state — a mind walks the shelf in weeks and
+    // that tier never speaks again — and a quiet house then makes a quiet digest
+    // makes a quiet house. The tier that exists to break that spiral must not be
+    // what seals it.
+    horizonAt("pip", ago(1 * DAY));
+    publish("gardener", "notes/theirs.md", ago(200 * DAY));
+    publish("pip", "notes/mine.md", ago(200 * DAY));
+
+    // Walk it to exhaustion.
+    assert.ok(await ambientTurnContext("pip", ctx(), wake, NOW));
+    assert.equal(
+      await ambientTurnContext("pip", ctx(), wake, new Date(NOW.getTime() + 30 * DAY)),
+      null,
+      "spent, as expected, during the cooldown",
+    );
+
+    // Past the mind's own cooldown (90d), its own work comes back.
+    const afterOwn = (await ambientTurnContext("pip", ctx(), wake, dayssAfter(100))) ?? "";
+    assert.match(afterOwn, /Something of your own: you wrote "mine"/);
+    assert.doesNotMatch(afterOwn, /From further back/, "another mind's waits longer");
+
+    // Past the longer cooldown (180d), someone else's does too.
+    const afterOther = (await ambientTurnContext("pip", ctx(), wake, dayssAfter(200))) ?? "";
+    assert.match(afterOther, /From further back: gardener's "theirs"/);
+
+    function dayssAfter(n: number): Date {
+      return new Date(NOW.getTime() + n * DAY);
+    }
+  });
+
+  it("restarts the cooldown on a revisit rather than re-offering every wake", async () => {
+    // If last_shown_at didn't move on a revisit, a page would clear its cooldown
+    // once and then be eligible forever after — the archive would fixate instead
+    // of rotating.
+    horizonAt("pip", ago(1 * DAY));
+    publish("gardener", "notes/only.md", ago(400 * DAY));
+    assert.ok(await ambientTurnContext("pip", ctx(), wake, NOW));
+
+    const revisit = new Date(NOW.getTime() + 200 * DAY);
+    assert.ok(await ambientTurnContext("pip", ctx(), wake, revisit), "comes back after cooldown");
+    assert.equal(
+      await ambientTurnContext("pip", ctx(), wake, new Date(revisit.getTime() + 30 * DAY)),
+      null,
+      "and then waits again",
+    );
   });
 });
 
@@ -515,6 +587,39 @@ describe("the budget is the daemon's, and an over-budget block is dropped", () =
     // Only the artifact that actually made it is marked shown.
     const shown = db.prepare("SELECT COUNT(*) AS n FROM ambient_shown").get() as { n: number };
     assert.equal(shown.n, 1);
+  });
+
+  it("marks nothing shown that does not appear in the text, at any budget", async () => {
+    // The general form of the off-by-one above, swept rather than spot-checked.
+    // It matters more now that the archive revisits: an artifact spent on a block
+    // that had no room to print it is not merely lost, it starts a cooldown, so
+    // the mind is denied it for months on the strength of an encounter that never
+    // happened.
+    //
+    // A folded page is the one documented exception, and it holds here too: it
+    // shares an address with the conversation line that did print.
+    for (const reason of ["turn", "wake"] as const) {
+      for (const budget of [20, 40, 60, 90, 120, 160, 200, 300, 600, 1200]) {
+        db = new Database(":memory:") as unknown as ExtDb;
+        initDb(db);
+        horizonAt("pip", ago(5 * DAY));
+        publish("whorl", "notes/aaa.md", ago(4 * DAY));
+        publish("gardener", "notes/bbb.md", ago(3 * DAY));
+        publish("mimsy", "notes/ccc.md", ago(2 * DAY));
+        publish("pip", "notes/own.md", ago(200 * DAY));
+
+        const out = (await ambientTurnContext("pip", ctx(), { budget, reason }, NOW)) ?? "";
+        assert.ok(out.length <= budget, `${reason}@${budget} overran its budget`);
+
+        const marked = db.prepare("SELECT ref FROM ambient_shown").all() as { ref: string }[];
+        for (const { ref } of marked) {
+          assert.ok(
+            out.includes(ref),
+            `${reason}@${budget} marked ${ref} shown but never printed it`,
+          );
+        }
+      }
+    }
   });
 
   it("never throws, whatever the state of the database", async () => {
