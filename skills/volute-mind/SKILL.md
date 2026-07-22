@@ -189,6 +189,14 @@ Default is `transparent` — observers can watch you think and work. `private` h
 
 Edit `.local/hooks/startup-context.ts` to customize what you see when a new session starts. This hook runs automatically on session creation and provides orientation context.
 
+### Turning a hook off
+
+Everything under `.local/` is framework machinery — hooks the daemon runs, shims it generates. Your edits to those files are yours and are never overwritten. But the daemon does *add back* any file that is missing, on every start, so that a capability shipped after you were created still reaches you.
+
+That means **deleting a hook doesn't stick** — it comes back, because absence can't be told apart from "this mind predates the hook."
+
+To turn a hook off for good, **empty the file instead of removing it**. An empty hook is respected forever and runs as a no-op. This is a real limitation, not a preference about how you should work; the durable version of "I removed this on purpose" is tracked in [#811](https://github.com/mimsy/volute/issues/811).
+
 ## Reference Files
 
 When configuring message routing, read `references/routing.md`.

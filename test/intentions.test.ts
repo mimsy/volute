@@ -300,6 +300,45 @@ describe("intentions routes authorization", () => {
     assert.equal(res.status, 200);
   });
 
+  // ---- #791: the daemon's own admin token authenticates as a synthetic user with
+  // id 0 and no users row. The actor resolver rejected id 0 outright, so the same
+  // token that works on every core route 401'd on extension routes. ----
+  it("GET /review-due allows the daemon admin token", async () => {
+    const prev = process.env.VOLUTE_DAEMON_TOKEN;
+    process.env.VOLUTE_DAEMON_TOKEN = "daemon-token-for-test";
+    try {
+      const res = await app.request("http://localhost/api/ext/intentions/review-due", {
+        headers: { Authorization: "Bearer daemon-token-for-test" },
+      });
+      assert.equal(res.status, 200);
+    } finally {
+      if (prev === undefined) delete process.env.VOLUTE_DAEMON_TOKEN;
+      else process.env.VOLUTE_DAEMON_TOKEN = prev;
+    }
+  });
+
+  it("the daemon token still cannot hold an intention of its own", async () => {
+    // It's a valid admin principal but has no account to own anything with —
+    // letting it through would create an intention owned by a nonexistent "daemon".
+    const prev = process.env.VOLUTE_DAEMON_TOKEN;
+    process.env.VOLUTE_DAEMON_TOKEN = "daemon-token-for-test";
+    try {
+      const res = await app.request("http://localhost/api/ext/intentions", {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer daemon-token-for-test",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ content: "an intention with no holder" }),
+      });
+      assert.equal(res.status, 403);
+      assert.equal(listBoard(db, {}).length, 0);
+    } finally {
+      if (prev === undefined) delete process.env.VOLUTE_DAEMON_TOKEN;
+      else process.env.VOLUTE_DAEMON_TOKEN = prev;
+    }
+  });
+
   it("mind A cannot keep mind B's intention", async () => {
     const bHeaders = await mindAuth(mindB);
     const created = await app.request("http://localhost/api/ext/intentions", {

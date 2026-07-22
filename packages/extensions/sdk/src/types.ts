@@ -33,6 +33,14 @@ export type SystemsConfig = {
   apiUrl: string;
 };
 
+/** A mind as seen by an extension: enough to tell spirits, seeds, and full minds apart. */
+export type ExtensionMind = {
+  name: string;
+  mindType: "mind" | "spirit";
+  /** Seeds haven't oriented yet — usually they should be exempt from expectations. */
+  stage?: "seed" | "sprouted";
+};
+
 export type ExtensionContext = {
   db: Database | null;
   authMiddleware: MiddlewareHandler;
@@ -56,6 +64,13 @@ export type ExtensionContext = {
    * dir, never the minds dir) and variants (which live in git worktrees).
    */
   getMindDir: (name: string) => Promise<string | null>;
+  /**
+   * The mind roster: base minds and the spirit, never variants. Extensions that
+   * report on who is *absent* from something need this — a per-extension table
+   * only knows the minds that already participate, so absence and health are
+   * indistinguishable without the roster to compare against (#802).
+   */
+  listMinds: () => Promise<ExtensionMind[]>;
   getSystemsConfig: () => SystemsConfig | null;
   announceToSystem: (text: string) => Promise<void>;
   /**

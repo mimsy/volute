@@ -58,6 +58,30 @@ describe("commonsReport", () => {
     assert.deepEqual(r.unlinkedMinds, []);
   });
 
+  it("reports a resident who has published nothing at all (#802)", () => {
+    // The failure this guards: thea had zero pages, so she produced no site to be
+    // unlinked and fell out of the check entirely — the report went green and
+    // told the spirit nobody needed a nudge.
+    writeFileSync(resolve(dir, "index.md"), "see [alpha](../alpha/)");
+    const r = commonsReport(dir, ["index.md"], ["alpha"], ["alpha", "thea"]);
+    assert.deepEqual(r.unlinkedMinds, []);
+    assert.deepEqual(r.mindsWithoutSites, ["thea"]);
+  });
+
+  it("is all-clear only when every resident is present and linked", () => {
+    writeFileSync(resolve(dir, "index.md"), "see [alpha](../alpha/)");
+    const r = commonsReport(dir, ["index.md"], ["alpha"], ["alpha"]);
+    assert.deepEqual(r.unlinkedMinds, []);
+    assert.deepEqual(r.mindsWithoutSites, []);
+  });
+
+  it("counts absent residents even when the commons has no index", () => {
+    writeFileSync(resolve(dir2, "a.md"), "hello");
+    const r = commonsReport(dir2, ["a.md"], ["alpha"], ["alpha", "thea"]);
+    assert.equal(r.hasIndex, false);
+    assert.deepEqual(r.mindsWithoutSites, ["thea"]);
+  });
+
   it("recognizes mind links via the public iframe URL form too", () => {
     writeFileSync(resolve(dir, "index.md"), "see [alpha](/ext/pages/public/alpha/index.html)");
     const r = commonsReport(dir, ["index.md"], ["alpha"]);

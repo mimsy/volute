@@ -18,10 +18,23 @@ import {
 
 type Actor = { id: number; username: string; role?: string; user_type?: string };
 
+/**
+ * The authenticated caller. Note the daemon's own admin token authenticates as a
+ * synthetic user with `id: 0` and no row in the users table — rejecting it here
+ * made the daemon token 401 on extension routes while working fine on core ones
+ * (#791). It's a legitimate admin principal, so it passes; what it can't do is
+ * *own* anything, which `canOwn` below enforces at the one route that assigns
+ * ownership.
+ */
 function resolveActor(c: { get: (key: string) => unknown }): Actor | null {
   const user = c.get("user") as Actor | undefined;
-  if (!user || user.id === 0) return null;
+  if (!user) return null;
   return user;
+}
+
+/** Holding an intention requires a real account to hold it — id 0 is the row-less daemon. */
+function canOwn(actor: Actor): boolean {
+  return actor.id !== 0;
 }
 
 async function parseJson<T>(c: { req: { json: () => Promise<unknown> } }): Promise<T | null> {
@@ -63,7 +76,7 @@ export function createRoutes(ctx: ExtensionContext): Hono {
     .post("/", async (c) => {
       const actor = resolveActor(c);
       if (!actor) return c.json({ error: "Unauthorized" }, 401);
-      if (actor.user_type !== "mind" && actor.role !== "admin") {
+      if ((actor.user_type !== "mind" && actor.role !== "admin") || !canOwn(actor)) {
         return c.json({ error: "Only a mind can hold intentions" }, 403);
       }
 

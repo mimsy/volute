@@ -752,7 +752,13 @@ export function createCommands(): Record<string, ExtensionCommand> {
 
         const repoDir = resolve(ctx.dataDir, "repo");
         const files = collectPageFiles(repoDir);
-        const report = commonsReport(repoDir, files, getMindsWithSites(db));
+        // Residents are sprouted, non-spirit minds. Seeds haven't oriented yet and
+        // the spirit tends the commons rather than living in it, so neither is
+        // expected to have a personal site.
+        const residents = (await ctx.listMinds())
+          .filter((m) => m.mindType === "mind" && m.stage !== "seed")
+          .map((m) => m.name);
+        const report = commonsReport(repoDir, files, getMindsWithSites(db), residents);
 
         const lines: string[] = [];
         if (!report.hasIndex) {
@@ -765,11 +771,21 @@ export function createCommands(): Record<string, ExtensionCommand> {
             ? `Orphaned pages (not reachable from the index): ${report.orphanPages.join(", ")}`
             : "Orphaned pages: none",
         );
-        lines.push(
-          report.unlinkedMinds.length > 0
-            ? `Minds with sites not linked from the commons: ${report.unlinkedMinds.join(", ")}`
-            : "Resident sites: all linked",
-        );
+        // Three states, not two: linked, existing-but-unlinked, and absent
+        // entirely. Only claim all-clear when the third bucket is empty too —
+        // reporting "all linked" at a commons nobody has joined is the failure
+        // this report was built to prevent (#802).
+        if (report.unlinkedMinds.length > 0) {
+          lines.push(
+            `Minds with sites not linked from the commons: ${report.unlinkedMinds.join(", ")}`,
+          );
+        }
+        if (report.mindsWithoutSites.length > 0) {
+          lines.push(`Residents without a site: ${report.mindsWithoutSites.join(", ")}`);
+        }
+        if (report.unlinkedMinds.length === 0 && report.mindsWithoutSites.length === 0) {
+          lines.push("Resident sites: all present and linked");
+        }
 
         return { output: lines.join("\n") };
       },

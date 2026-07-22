@@ -303,11 +303,12 @@ describe("pages commands", () => {
     db.close();
   });
 
-  function makeCtx(mindName = "test-mind") {
+  function makeCtx(mindName = "test-mind", minds?: { name: string; mindType: any; stage?: any }[]) {
     const events: any[] = [];
     return {
       mindName,
       db,
+      listMinds: async () => minds ?? [{ name: mindName, mindType: "mind", stage: "sprouted" }],
       authMiddleware: (() => {}) as any,
       resolveUser: () => null,
       getUser: async () => null,
@@ -534,6 +535,65 @@ describe("pages commands", () => {
     );
     assert.ok("output" in result);
     assert.ok(result.output.includes("mind-a"));
+  });
+
+  // ---- #802: a resident who has published nothing produces no site to be
+  // unlinked, so the report used to skip them entirely and print an all-clear at
+  // a commons most residents were absent from. ----
+  it("commons report names residents who have no site at all", async () => {
+    const repoDir = resolve(dataDir, "repo");
+    mkdirSync(repoDir, { recursive: true });
+    writeFileSync(resolve(repoDir, "index.md"), "welcome — see [oren](../oren/)");
+    syncPublishedPages(db, "oren", ph("index.html"));
+
+    const commands = createCommands();
+    const ctx = makeCtx("oren", [
+      { name: "oren", mindType: "mind", stage: "sprouted" },
+      { name: "thea", mindType: "mind", stage: "sprouted" },
+    ]);
+    const result = await commands.commons.handler({ args: {}, flags: {}, rest: [] }, ctx);
+
+    assert.ok("output" in result);
+    assert.ok(
+      result.output.includes("Residents without a site: thea"),
+      `expected thea to be named, got:\n${result.output}`,
+    );
+    assert.ok(
+      !result.output.includes("all present and linked"),
+      "must not claim all-clear while a resident is absent",
+    );
+  });
+
+  it("commons report is all-clear only when every resident is present and linked", async () => {
+    const repoDir = resolve(dataDir, "repo");
+    mkdirSync(repoDir, { recursive: true });
+    writeFileSync(resolve(repoDir, "index.md"), "welcome — see [oren](../oren/)");
+    syncPublishedPages(db, "oren", ph("index.html"));
+
+    const commands = createCommands();
+    const ctx = makeCtx("oren", [{ name: "oren", mindType: "mind", stage: "sprouted" }]);
+    const result = await commands.commons.handler({ args: {}, flags: {}, rest: [] }, ctx);
+
+    assert.ok("output" in result);
+    assert.ok(result.output.includes("all present and linked"));
+  });
+
+  it("commons report exempts the spirit and unsprouted seeds from needing a site", async () => {
+    const repoDir = resolve(dataDir, "repo");
+    mkdirSync(repoDir, { recursive: true });
+    writeFileSync(resolve(repoDir, "index.md"), "welcome — see [oren](../oren/)");
+    syncPublishedPages(db, "oren", ph("index.html"));
+
+    const commands = createCommands();
+    const ctx = makeCtx("oren", [
+      { name: "oren", mindType: "mind", stage: "sprouted" },
+      { name: "volute", mindType: "spirit", stage: "sprouted" },
+      { name: "sprig", mindType: "mind", stage: "seed" },
+    ]);
+    const result = await commands.commons.handler({ args: {}, flags: {}, rest: [] }, ctx);
+
+    assert.ok("output" in result);
+    assert.ok(result.output.includes("all present and linked"));
   });
 });
 

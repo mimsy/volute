@@ -20,7 +20,13 @@ import { getSpiritName, readGlobalConfig, writeGlobalConfig } from "./config/set
 import { readSystemsConfig } from "./config/systems-config.js";
 import { publish } from "./events/activity-events.js";
 import { isIsolationEnabled, mindUserName } from "./mind/isolation.js";
-import { findMind, resolveMindDir, voluteHome, voluteSystemDir } from "./mind/registry.js";
+import {
+  findMind,
+  readRegistry,
+  resolveMindDir,
+  voluteHome,
+  voluteSystemDir,
+} from "./mind/registry.js";
 import {
   hashSkillDir,
   importSkillFromDir,
@@ -196,6 +202,27 @@ async function openExtensionDb(_id: string, dataDir: string): Promise<Database> 
 }
 
 /**
+ * Extension routes are mounted with `app.route()`, and a mounted sub-app's "/"
+ * doesn't match a request path carrying a trailing slash — so every extension
+ * route 404s on the slashed form, root and nested alike (#792). This normalizes
+ * the path and re-dispatches.
+ *
+ * Rewrite rather than a 301: a redirect only rescues GET/HEAD, which would leave
+ * a POST to a slashed path still silently 404ing. Recursion is impossible because
+ * the rewritten path no longer ends in a slash.
+ */
+export function normalizeTrailingSlash(app: Hono): MiddlewareHandler {
+  return async (c, next) => {
+    const url = new URL(c.req.url);
+    if (url.pathname.length > 1 && url.pathname.endsWith("/")) {
+      url.pathname = url.pathname.replace(/\/+$/, "");
+      return app.fetch(new Request(url, c.req.raw), c.env);
+    }
+    await next();
+  };
+}
+
+/**
  * Build the context handed to an extension's routes and lifecycle hooks.
  * Exported so tests can exercise the real helpers (spirit dir resolution, notice
  * gating) rather than a hand-rolled fake that can drift from this implementation.
@@ -257,6 +284,20 @@ export async function buildExtensionContext(
           log.errorData(err),
         );
         return null;
+      }
+    },
+    listMinds: async () => {
+      try {
+        // readRegistry already excludes variants (parent is null) and non-mind
+        // rows, so this is the roster an extension means by "everyone here".
+        return (await readRegistry()).map((m) => ({
+          name: m.name,
+          mindType: m.mindType === "spirit" ? ("spirit" as const) : ("mind" as const),
+          stage: m.stage,
+        }));
+      } catch (err) {
+        log.warn(`extension ${manifest.id}: failed to list minds`, log.errorData(err));
+        return [];
       }
     },
     getSystemsConfig: () => readSystemsConfig(),
