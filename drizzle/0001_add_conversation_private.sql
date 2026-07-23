@@ -1,1 +1,0 @@
-ALTER TABLE `conversations` ADD `private` integer NOT NULL DEFAULT 0;
