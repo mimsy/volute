@@ -159,6 +159,63 @@ install_ripgrep() {
   fi
 }
 
+# --- browser installation (for 'volute pages preview') ---
+
+browser_present() {
+  command -v google-chrome &>/dev/null || command -v google-chrome-stable &>/dev/null || \
+    command -v chromium &>/dev/null || command -v chromium-browser &>/dev/null || \
+    command -v brave-browser &>/dev/null || command -v microsoft-edge &>/dev/null
+}
+
+install_browser() {
+  if browser_present; then
+    echo "Browser already present (for pages preview), skipping."
+    return
+  fi
+
+  # No browser found — 'volute pages preview' needs one. Decide whether to install.
+  if [ -t 0 ]; then
+    printf "No browser found. 'volute pages preview' needs one. Install chromium now? [Y/n] "
+    read -r reply
+    case "$reply" in
+      [Nn]*)
+        echo "Skipping browser install — 'volute pages preview' will be unavailable until you install one."
+        return
+        ;;
+    esac
+  elif [ "${VOLUTE_INSTALL_BROWSER:-}" != "1" ]; then
+    echo "No browser detected — 'volute pages preview' needs Chrome/Chromium."
+    echo "  Install later, or re-run with VOLUTE_INSTALL_BROWSER=1."
+    return
+  fi
+
+  echo "Installing chromium..."
+  local ok=true
+  case "$DISTRO" in
+    debian|ubuntu)
+      if ! { apt-get update && apt-get install -y --no-install-recommends chromium; }; then
+        apt-get install -y --no-install-recommends chromium-browser || ok=false
+      fi
+      ;;
+    rhel|fedora|centos|amzn)
+      if command -v dnf &>/dev/null; then
+        dnf install -y chromium || ok=false
+      else
+        yum install -y chromium || ok=false
+      fi
+      ;;
+    sles|opensuse*)
+      zypper install -y chromium || ok=false
+      ;;
+    *)
+      ok=false
+      ;;
+  esac
+  if [ "$ok" = false ]; then
+    echo "Warning: browser install failed — pages preview will be unavailable until you install one."
+  fi
+}
+
 # --- Main ---
 
 main() {
@@ -170,6 +227,7 @@ main() {
   install_node
   install_git
   install_ripgrep
+  install_browser
 
   # Set system-wide git identity for daemon commits if not already configured
   if ! git config --system user.name >/dev/null 2>&1 || ! git config --system user.email >/dev/null 2>&1; then

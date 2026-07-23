@@ -1,7 +1,15 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { basename, resolve, sep } from "node:path";
+import {
+  accessSync,
+  constants,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { basename, delimiter, join, resolve, sep } from "node:path";
 
 import { parseFrontmatter, renderMarkdownPage, resolveStylesheet } from "./markdown.js";
 
@@ -19,8 +27,75 @@ import { parseFrontmatter, renderMarkdownPage, resolveStylesheet } from "./markd
  * Nothing here is mind-writable, so no ownership handoff is needed.
  */
 
-function chromiumBin(): string {
-  return process.env.VOLUTE_CHROMIUM || "chromium";
+/**
+ * macOS install locations for the Chrome-family browsers, in preference order.
+ * Chrome, Chromium, Brave, and Edge all accept the exact --headless=new /
+ * --screenshot / --user-data-dir flags we use, so one code path covers them all.
+ */
+const MAC_CANDIDATES = [
+  "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+  "/Applications/Chromium.app/Contents/MacOS/Chromium",
+  "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+  "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+];
+
+/** PATH command names for the same browser family on Linux/other, in preference order. */
+const PATH_CANDIDATES = [
+  "google-chrome",
+  "google-chrome-stable",
+  "chromium",
+  "chromium-browser",
+  "brave-browser",
+  "microsoft-edge",
+];
+
+/** Default predicate: is `p` an existing, executable file (like `command -v` requires). */
+function isExecutable(p: string): boolean {
+  try {
+    accessSync(p, constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Resolve the browser binary to drive. Returns the first available Chrome-family
+ * browser, or null if none is found. Inputs are injectable so this is unit-testable
+ * without depending on what happens to be installed on the test host.
+ *
+ * Order: explicit VOLUTE_CHROMIUM override → macOS app bundles → PATH lookup.
+ */
+export function resolveBrowser(opts?: {
+  override?: string;
+  platform?: NodeJS.Platform;
+  pathEnv?: string;
+  macCandidates?: string[];
+  pathCandidates?: string[];
+  exists?: (p: string) => boolean;
+}): string | null {
+  const override = opts?.override ?? process.env.VOLUTE_CHROMIUM;
+  if (override) return override;
+
+  const exists = opts?.exists ?? isExecutable;
+  const platform = opts?.platform ?? process.platform;
+
+  if (platform === "darwin") {
+    for (const candidate of opts?.macCandidates ?? MAC_CANDIDATES) {
+      if (exists(candidate)) return candidate;
+    }
+    return null;
+  }
+
+  // Linux/other: walk PATH dirs looking for an executable, `command -v` style.
+  const dirs = (opts?.pathEnv ?? process.env.PATH ?? "").split(delimiter).filter(Boolean);
+  for (const name of opts?.pathCandidates ?? PATH_CANDIDATES) {
+    for (const dir of dirs) {
+      const full = join(dir, name);
+      if (exists(full)) return full;
+    }
+  }
+  return null;
 }
 
 /**
@@ -62,6 +137,14 @@ export async function renderPreview(opts: {
     return { error: "Preview renders .html and .md pages." };
   }
 
+  const browser = resolveBrowser();
+  if (!browser) {
+    return {
+      error:
+        "No Chrome-family browser found. Install Chrome or Chromium, or set VOLUTE_CHROMIUM to a browser binary.",
+    };
+  }
+
   // Unique per invocation so concurrent previews never share a chromium
   // user-data-dir or temp-file name (process.pid alone is the constant daemon pid).
   const token = `${process.pid}-${previewSeq++}-${randomUUID()}`;
@@ -95,7 +178,7 @@ export async function renderPreview(opts: {
 
   try {
     await run(
-      chromiumBin(),
+      browser,
       [
         "--headless=new",
         "--no-sandbox",
