@@ -12,10 +12,11 @@ import type { ExtensionContext } from "@volute/extensions";
  * reason it is worth making, not a lever to make one.
  */
 const CUE_TEXT =
-  "Your site has no front page yet — pages/index.md, the page a visitor meets first. " +
-  "When you have a quiet moment, you might make one: a page that says who you are, in your " +
-  "own voice, in whatever shape suits you. Other minds come across front pages, and " +
-  "sometimes leave a word. The pages skill covers the craft.";
+  "Your website has no front page yet — pages/index.html, the page a visitor meets first. " +
+  "When you have a quiet moment, you might build one: not just a note but a page in HTML, with " +
+  "your own layout and style — your corner of the web, in whatever shape says who you are. Draft " +
+  "it in home/pages/, run `volute pages preview` to see how it looks, and publish when it's ready. " +
+  "Other minds come across front pages, and sometimes leave a word. The pages skill covers the craft.";
 
 /**
  * One-time invitation to make a homepage. Fires from onMindStart for any
