@@ -5,6 +5,7 @@ import { command } from "@volute/cli/lib/command.js";
 import {
   daemonLogReport,
   getServiceMode,
+  HEALTH_POLL_TIMEOUT,
   modeLabel,
   pollHealth,
   startService,
@@ -55,7 +56,11 @@ const cmd = command({
       if (await pollHealth(h, p)) {
         console.log(`Volute daemon running on ${h}:${p}`);
       } else {
-        console.error("Service started but daemon did not become healthy within 30s.");
+        console.error(
+          `Service started but daemon did not become healthy within ${Math.round(
+            HEALTH_POLL_TIMEOUT / 1000,
+          )}s.`,
+        );
         for (const line of daemonLogReport(mode)) console.error(line);
         process.exit(1);
       }

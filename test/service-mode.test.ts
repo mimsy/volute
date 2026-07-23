@@ -25,7 +25,7 @@ describe("service-mode constants", () => {
     assert.ok(USER_SYSTEMD_UNIT.endsWith(".config/systemd/user/volute.service"));
     assert.equal(LAUNCHD_PLIST_LABEL, "com.volute.daemon");
     assert.ok(LAUNCHD_PLIST_PATH.endsWith("Library/LaunchAgents/com.volute.daemon.plist"));
-    assert.equal(HEALTH_POLL_TIMEOUT, 30_000);
+    assert.equal(HEALTH_POLL_TIMEOUT, 120_000);
     assert.equal(STOP_GRACE_TIMEOUT, 10_000);
     assert.equal(POLL_INTERVAL, 500);
   });

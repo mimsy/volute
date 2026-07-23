@@ -19,7 +19,10 @@ export const LAUNCHD_PLIST_PATH = resolve(
 );
 export const SYSTEM_LAUNCHD_PLIST_PATH = "/Library/LaunchDaemons/com.volute.daemon.plist";
 
-export const HEALTH_POLL_TIMEOUT = 30_000;
+// The daemon binds its HTTP server early (before skill sync / auto-update), so
+// health normally answers within seconds. This ceiling is a belt-and-suspenders
+// margin for a slow first boot, not the expected wait (#510).
+export const HEALTH_POLL_TIMEOUT = 120_000;
 export const STOP_GRACE_TIMEOUT = 10_000;
 export const POLL_INTERVAL = 500;
 
