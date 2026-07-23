@@ -2,7 +2,7 @@ FROM node:24-slim
 
 # git needed for mind git init + variants; procps/lsof for process management; curl for hooks/scripts; restic for backups;
 # tini as PID 1 so orphaned mind grandchildren get reaped instead of piling up as <defunct> zombies
-RUN apt-get update && apt-get install -y --no-install-recommends git procps lsof ca-certificates curl restic tini \
+RUN apt-get update && apt-get install -y --no-install-recommends git procps lsof ca-certificates curl restic tini chromium fonts-liberation \
     && rm -rf /var/lib/apt/lists/* \
     && git config --system user.name "Volute" \
     && git config --system user.email "volute@localhost"
@@ -14,8 +14,6 @@ COPY dist/ dist/
 COPY drizzle/ drizzle/
 COPY templates/ templates/
 COPY skills/ skills/
-COPY packages/extensions/notes/dist/ui/ packages/extensions/notes/dist/ui/
-COPY packages/extensions/notes/skills/ packages/extensions/notes/skills/
 COPY packages/extensions/pages/dist/ui/ packages/extensions/pages/dist/ui/
 COPY packages/extensions/pages/skills/ packages/extensions/pages/skills/
 COPY packages/extensions/intentions/dist/ui/ packages/extensions/intentions/dist/ui/

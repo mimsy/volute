@@ -19,6 +19,7 @@ import {
   parseReassignments,
   planMigration,
 } from "./migrate-notes.js";
+import { renderPreview } from "./preview.js";
 import {
   collectFiles,
   defaultPromotionTitle,
@@ -162,6 +163,33 @@ export function createCommands(): Record<string, ExtensionCommand> {
         const port = process.env.VOLUTE_DAEMON_PORT || "1618";
         return {
           output: `Published: ${ref}\nhttp://localhost:${port}/ext/pages/public/${ref}`,
+        };
+      },
+    },
+
+    preview: {
+      description: "Render a draft page to an image so you can see how it looks",
+      args: [
+        {
+          name: "file",
+          description: "Page file under pages/ (default: index.html)",
+        },
+      ],
+      examples: ["volute pages preview", "volute pages preview about.html"],
+      handler: async ({ args }, ctx) => {
+        const mindName = ctx.mindName;
+        if (!mindName) return { error: "No mind specified (use --mind or VOLUTE_MIND)" };
+        const mindDir = await ctx.getMindDir(mindName);
+        if (!mindDir) return { error: `Mind not found: ${mindName}` };
+
+        const file = (args.file ?? "index.html").trim();
+        const result = await renderPreview({ mindDir, file });
+        if ("error" in result) return { error: result.error };
+
+        return {
+          output:
+            `Rendered pages/${file} → ${result.rel}\n` +
+            "Open that image to see how your page looks in a browser, then revise and preview again.",
         };
       },
     },

@@ -2365,6 +2365,11 @@ describe("daemon e2e", { timeout: 420000 }, () => {
     await ensureTestMind();
     const session = "notices-401";
 
+    // A fresh mind also has the one-time homepage cue pending (#822); flush any
+    // pre-existing notices so this test observes only its own failure notice.
+    await daemonRequest(`/api/minds/${TEST_MIND}/history/notices?session=${session}`);
+    await emitEvent(session, { type: "done" });
+
     // Turn 1 fails with a 401 — the daemon records a notice, not delivered yet.
     await emitEvent(session, { type: "error", content: "API Error: 401 authentication_error" });
     await emitEvent(session, { type: "done" });
