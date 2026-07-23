@@ -9,7 +9,6 @@ import {
   isSetupComplete,
   readGlobalConfig,
   type SetupConfig,
-  type SetupType,
   writeGlobalConfig,
 } from "../../lib/config/setup.js";
 import {
@@ -89,39 +88,6 @@ setup.get("/status", async (c) => {
     setupType: config.setup?.type ?? null,
     spiritName: config.setup?.spiritName ?? null,
   });
-});
-
-// Legacy configure endpoint (kept for backwards compatibility with CLI setup)
-setup.post("/configure", async (c) => {
-  if (isSetupComplete()) {
-    return c.json({ error: "Setup already complete" }, 400);
-  }
-
-  let body: { name: string; type?: SetupType };
-  try {
-    body = await c.req.json();
-  } catch {
-    return c.json({ error: "Invalid JSON in request body" }, 400);
-  }
-
-  if (!body.name?.trim()) {
-    return c.json({ error: "System name is required" }, 400);
-  }
-
-  const setupType: SetupType = body.type ?? "local";
-
-  if (setupType !== "local") {
-    return c.json({ error: "Web setup only supports local install type" }, 400);
-  }
-
-  try {
-    const config = writeSetupConfig(body.name.trim());
-    config.setupCompleted = true;
-    writeGlobalConfig(config);
-    return c.json({ ok: true, config: { name: config.name, setup: config.setup } });
-  } catch (err) {
-    return c.json({ error: `Failed to write configuration: ${(err as Error).message}` }, 500);
-  }
 });
 
 // Step 1: Configure system (name + description + remote access)

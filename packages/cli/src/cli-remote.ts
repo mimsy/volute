@@ -1,6 +1,7 @@
 // Stripped-down CLI entry point for remote use (no local daemon required).
 // Connects to a daemon via VOLUTE_DAEMON_URL or stored session URL.
 export {};
+
 process.noDeprecation = true;
 
 const command = process.argv[2];
@@ -23,9 +24,6 @@ switch (command) {
     break;
   case "chat":
     await import("./commands/chat.js").then((m) => m.run(args));
-    break;
-  case "variant":
-    await import("./commands/variant.js").then((m) => m.run(args));
     break;
   case "clock":
     await import("./commands/clock.js").then((m) => m.run(args));

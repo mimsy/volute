@@ -8,27 +8,9 @@ import { resolveMindToken } from "../../lib/daemon/mind-tokens.js";
 import { getDb } from "../../lib/db.js";
 import { getBaseName } from "../../lib/mind/registry.js";
 import { sessions } from "../../lib/schema.js";
-import log from "../../lib/util/logger.js";
 
 const MIND_USER_CACHE_TTL = 5 * 60 * 1000;
 const mindUserCache = new Map<string, { user: User; ts: number }>();
-
-const alog = log.child("auth");
-
-// Minds already warned about sending the pre-rename X-Volute-Session header, so
-// a chatty un-upgraded mind logs once per daemon lifetime, not once per request.
-// No fallback read — the hard cut stands; such minds degrade to marker-based
-// turn attribution until upgraded.
-const legacySessionHeaderWarned = new Set<string>();
-
-function warnLegacySessionHeader(legacyHeader: string | undefined, mindName: string): void {
-  if (!legacyHeader || legacySessionHeaderWarned.has(mindName)) return;
-  legacySessionHeaderWarned.add(mindName);
-  alog.warn(
-    `mind ${mindName} sent legacy X-Volute-Session header (now X-Volute-Thread); ` +
-      `run \`volute mind upgrade ${mindName}\` to update its template`,
-  );
-}
 
 export function invalidateMindUserCache(mindName: string): void {
   mindUserCache.delete(mindName);
@@ -176,7 +158,6 @@ export const authMiddleware = createMiddleware<AuthEnv>(async (c, next) => {
       // Capture mind session for turn resolution
       const mindSessionHeader = c.req.header("X-Volute-Thread");
       if (mindSessionHeader) c.set("mindSession", mindSessionHeader);
-      else warnLegacySessionHeader(c.req.header("X-Volute-Session"), mindName);
       await next();
       return;
     }

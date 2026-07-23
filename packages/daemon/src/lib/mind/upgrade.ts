@@ -375,9 +375,7 @@ async function mergeUpgradeAndRestart(
   // merge can't do this: `.init/` is stripped from the template branch so the
   // merge never overwrites identity files, which also meant a mind created
   // before a hook existed could never acquire it (#808). Runs after any template
-  // switch so it picks up the *new* template's composition — which is why this is
-  // here and not only in the startup pass (migrate-init-infrastructure.ts), which
-  // is the one that reaches minds upgrade never touches. Untracked paths, so no
+  // switch so it picks up the *new* template's composition. Untracked paths, so no
   // commit is needed; backfillInitInfrastructure throws rather than exiting, so a
   // broken template install is a warning here, not a failed upgrade.
   try {

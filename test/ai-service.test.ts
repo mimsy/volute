@@ -9,8 +9,6 @@ import {
   getAvailableModels,
   getCustomModels,
   getEnabledModels,
-  getUtilityModel,
-  migrateAiModelQualification,
   missingCredentialWarning,
   OAuthRefreshError,
   qualifyModelId,
@@ -21,10 +19,8 @@ import {
   resolveOAuthCredentials,
   saveProviderConfig,
   setEnabledModels,
-  setUtilityModel,
   unqualifyModelId,
 } from "../packages/daemon/src/lib/ai-service.js";
-import { readGlobalConfig, writeGlobalConfig } from "../packages/daemon/src/lib/config/setup.js";
 
 describe("ai-service config", () => {
   it("returns null when not configured", () => {
@@ -351,59 +347,6 @@ describe("findModel provider-qualified resolution", () => {
     const found = findModel(builtin.id);
     assert.ok(found);
     assert.equal(found.id, builtin.id);
-  });
-});
-
-describe("migrateAiModelQualification", () => {
-  it("expands a bare enabled id to every configured provider serving it", () => {
-    removeAiConfig();
-    saveProviderConfig("openai-codex", { apiKey: "sk-codex" });
-    saveProviderConfig("github-copilot", { apiKey: "sk-copilot" });
-    setEnabledModels(["gpt-5.5"]);
-
-    migrateAiModelQualification();
-
-    assert.deepEqual(getEnabledModels(), ["openai-codex:gpt-5.5", "github-copilot:gpt-5.5"]);
-  });
-
-  it("qualifies bare spiritModel and utilityModel to the first configured provider", () => {
-    removeAiConfig();
-    saveProviderConfig("openai-codex", { apiKey: "sk-codex" });
-    saveProviderConfig("github-copilot", { apiKey: "sk-copilot" });
-    setUtilityModel("gpt-5.5");
-    const cfg = readGlobalConfig();
-    writeGlobalConfig({ ...cfg, spiritModel: "gpt-5.5" });
-
-    migrateAiModelQualification();
-
-    assert.equal(readGlobalConfig().spiritModel, "openai-codex:gpt-5.5");
-    assert.equal(getUtilityModel(), "openai-codex:gpt-5.5");
-  });
-
-  it("leaves already-qualified values untouched and is idempotent", () => {
-    removeAiConfig();
-    saveProviderConfig("openai-codex", { apiKey: "sk-codex" });
-    setEnabledModels(["openai-codex:gpt-5.5"]);
-    const cfg = readGlobalConfig();
-    writeGlobalConfig({ ...cfg, spiritModel: "openai-codex:gpt-5.5" });
-
-    migrateAiModelQualification();
-    assert.deepEqual(getEnabledModels(), ["openai-codex:gpt-5.5"]);
-
-    // Second run is a no-op.
-    migrateAiModelQualification();
-    assert.deepEqual(getEnabledModels(), ["openai-codex:gpt-5.5"]);
-    assert.equal(readGlobalConfig().spiritModel, "openai-codex:gpt-5.5");
-  });
-
-  it("drops a bare enabled id no configured provider serves", () => {
-    removeAiConfig();
-    saveProviderConfig("anthropic", { apiKey: "sk-ant" });
-    setEnabledModels(["gpt-5.5"]); // anthropic does not serve gpt-5.5
-
-    migrateAiModelQualification();
-
-    assert.deepEqual(getEnabledModels(), []);
   });
 });
 

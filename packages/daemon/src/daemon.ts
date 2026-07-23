@@ -109,19 +109,6 @@ export async function startDaemon(opts: {
   mkdirSync(home, { recursive: true });
   ensureSystemDir();
 
-  // Split provider credentials into secrets.json and relax config.json to 0644 so
-  // non-root host CLI commands can read it (v0.41.1 regression). Runs as root.
-  const { migrateConfigSecrets, migrateSetupCompleted } = await import("./lib/config/setup.js");
-  migrateConfigSecrets();
-
-  // Migrate pre-existing installations (setup field without setupCompleted)
-  migrateSetupCompleted();
-
-  // Migrate bare model ids to provider-qualified form before the spirit starts,
-  // so syncSpiritTemplate reads a qualified spiritModel.
-  const { migrateAiModelQualification } = await import("./lib/ai-service.js");
-  migrateAiModelQualification();
-
   // Initialize database (runs drizzle migrations + creates raw connection)
   await (await import("./lib/db.js")).getDb();
 
@@ -144,38 +131,6 @@ export async function startDaemon(opts: {
     await migrateAvatarSizes();
   } catch (err) {
     log.warn("avatar size migration failed", log.errorData(err));
-  }
-
-  // Rename legacy "session" keys to "thread" in each mind's routes.json and
-  // volute.json (#493) — a leftover `session` rule key makes the whole rule
-  // unmatchable, which gates the channel's messages. Non-fatal per file.
-  try {
-    const { migrateThreadConfigs } = await import("./lib/mind/migrate-thread-config.js");
-    await migrateThreadConfigs();
-  } catch (err) {
-    log.warn("session→thread config migration failed", log.errorData(err));
-  }
-
-  // Substitute the leftover `{{name}}` placeholder in each mind's routes.json —
-  // template .init/ files shipped it unsubstituted, leaving every mind with a
-  // channel batch trigger ("@{{name}}") that can never match. Non-fatal per mind.
-  try {
-    const { migrateNamePlaceholders } = await import("./lib/mind/migrate-name-placeholder.js");
-    await migrateNamePlaceholders();
-  } catch (err) {
-    log.warn("{{name}} placeholder migration failed", log.errorData(err));
-  }
-
-  // Add `.init/` infrastructure files (hooks, bin shims) minds never received —
-  // the upgrade's `.init/` exclusion protects identity files but also blocked
-  // these, leaving minds created before a hook existed permanently without it.
-  // Notably the notices drain hook, the sole reader of next-turn system events
-  // (#808). Adds only what's missing, never overwrites. Non-fatal per mind.
-  try {
-    const { migrateInitInfrastructure } = await import("./lib/mind/migrate-init-infrastructure.js");
-    await migrateInitInfrastructure();
-  } catch (err) {
-    log.warn("`.init/` infrastructure backfill failed", log.errorData(err));
   }
 
   // Initialize sandbox runtime for mind process isolation

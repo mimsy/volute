@@ -2028,7 +2028,7 @@ describe("daemon e2e", { timeout: 420000 }, () => {
         message: "dream",
         id: "test-sleep-sched",
         whileSleeping: "trigger-wake",
-        channel: "system:dream",
+        thread: "system:dream",
       }),
     });
     assert.equal(addRes.status, 201, `Add: ${await addRes.clone().text()}`);
@@ -2038,12 +2038,12 @@ describe("daemon e2e", { timeout: 420000 }, () => {
     const schedules = (await listRes.json()) as {
       id: string;
       whileSleeping?: string;
-      channel?: string;
+      thread?: string;
     }[];
     const sched = schedules.find((s) => s.id === "test-sleep-sched");
     assert.ok(sched);
     assert.equal(sched.whileSleeping, "trigger-wake");
-    assert.equal(sched.channel, "system:dream");
+    assert.equal(sched.thread, "system:dream");
 
     // Update whileSleeping
     const updateRes = await daemonRequest(`/api/minds/${TEST_MIND}/schedules/test-sleep-sched`, {

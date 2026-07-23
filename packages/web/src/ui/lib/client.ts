@@ -260,18 +260,10 @@ export function fetchHistory(
 
 export function fetchTurnEvents(
   name: string,
-  opts: ({ turnId: string } | { session: string; fromId: number; toId: number }) & {
-    detail?: boolean;
-  },
+  opts: { turnId: string; detail?: boolean },
 ): Promise<HistoryMessage[]> {
   const params = new URLSearchParams();
-  if ("turnId" in opts) {
-    params.set("turn_id", opts.turnId);
-  } else {
-    params.set("session", opts.session);
-    params.set("from_id", String(opts.fromId));
-    params.set("to_id", String(opts.toId));
-  }
+  params.set("turn_id", opts.turnId);
   if (opts.detail) params.set("detail", "1");
   return get(`${V1}/minds/${enc(name)}/history/turn?${params}`);
 }
