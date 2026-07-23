@@ -23,6 +23,11 @@ const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
 
 const ALLOWED = new Set([
   ".claude/skills/volute-coder/SKILL.md", // the door: arrival + completion mentions
+  // The conductor's door and its reviewer-role wall. References the guestbook only
+  // to (a) bind the conductor to never observe/score coder entries and (b) offer the
+  // conductor its own entry via its own chore PR — it never reads entries, counts
+  // them, or records who wrote.
+  ".claude/skills/volute-conductor/SKILL.md",
   "CLAUDE.md", // the reviewer rule: guestbook/ is not work product
   "CHANGELOG.md", // release-please writes squash titles here; feature-level only, never entries
   "test/guestbook-wall.test.ts", // this wall
