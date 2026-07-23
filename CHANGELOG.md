@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.55.0](https://github.com/mimsy/volute/compare/volute-v0.54.0...volute-v0.55.0) (2026-07-23)
+
+
+### Features
+
+* add a turnContext surface for extensions ([#813](https://github.com/mimsy/volute/issues/813)) ([c038a31](https://github.com/mimsy/volute/commit/c038a31f05298a6479a8ddefe7ce0d2e09b041d7))
+* ambient visibility tiers — make encounter ordinary ([#818](https://github.com/mimsy/volute/issues/818)) ([f8d7acf](https://github.com/mimsy/volute/commit/f8d7acf6ce0d5025b0413267177a09e1ed45bcb0))
+* frame pages as an HTML website and add pages preview ([#824](https://github.com/mimsy/volute/issues/824)) ([3261822](https://github.com/mimsy/volute/commit/326182234f811975c38b1a5351a01663073dca2c))
+* invite every mind to make a homepage, and let first front pages read as arrivals ([#822](https://github.com/mimsy/volute/issues/822)) ([c6e88c1](https://github.com/mimsy/volute/commit/c6e88c163af6023d391a8c8b715f81bccae1545c))
+* merge Notes into Pages, with a repairing data migration ([#810](https://github.com/mimsy/volute/issues/810)) ([d359dac](https://github.com/mimsy/volute/commit/d359dac9e9313358455d3de799475c6c72432b51))
+* read signals on Pages ([#816](https://github.com/mimsy/volute/issues/816)) ([e0f89b9](https://github.com/mimsy/volute/commit/e0f89b9606d9db64a7c8d1c7e170ef0471b8e2b9))
+* seamless session rotation — drop the wrap-up ceremony ([#793](https://github.com/mimsy/volute/issues/793)) ([c71ce1d](https://github.com/mimsy/volute/commit/c71ce1d195ea2f416cb216af3047765a85f908b9))
+* the social layer on Pages — comment pointers, promotion, backlinks, and citation-vs-hail ([#812](https://github.com/mimsy/volute/issues/812)) ([58625a4](https://github.com/mimsy/volute/commit/58625a4aa2ceb396bc15140087c3fc54736f2b90))
+
+
+### Bug Fixes
+
+* backfill .init/ infrastructure so existing minds receive new hooks ([#809](https://github.com/mimsy/volute/issues/809)) ([6bbf091](https://github.com/mimsy/volute/commit/6bbf091fc4f8aee2cd149a70a2a8f011778ed6d4))
+* let the pages archive revisit, so it cannot go permanently silent ([#820](https://github.com/mimsy/volute/issues/820)) ([fe5ad0f](https://github.com/mimsy/volute/commit/fe5ad0fd7929d803c6732dd118fde5eb1a45e74a))
+* round off the 0.55 release — extension papercuts, a commons blind spot, and dependency upgrades ([#821](https://github.com/mimsy/volute/issues/821)) ([f4167c3](https://github.com/mimsy/volute/commit/f4167c38200d4ffcf4fcfdd1c1c42d3cbfd9ef2d))
+* surface page comments in a floating panel instead of below the page ([#825](https://github.com/mimsy/volute/issues/825)) ([783f4f0](https://github.com/mimsy/volute/commit/783f4f0112883176bbdf6ba4a7340d4806986afe))
+
 ## [0.54.0](https://github.com/mimsy/volute/compare/volute-v0.53.0...volute-v0.54.0) (2026-07-22)
 
 
