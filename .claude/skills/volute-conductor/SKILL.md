@@ -43,6 +43,7 @@ Rules:
   it can destroy another agent's work.
 - Never bypass hooks: no --no-verify, no LEFTHOOK=0.
 - Stay inside your worktree; touch nothing outside it.
+- Leave your worktree standing when you finish — its cleanup is mine.
 - Prefix every scratchpad file with your agent name — the scratchpad
   is shared across agents.
 ```
@@ -80,7 +81,11 @@ Expect fast merges to serialize your rebases, and know that two individually-gre
 
 ## 6. Wrap up
 
-File every follow-up you discovered — not silently fixed in-batch, not silently dropped. Then report: PRs opened and their status, what review found and how it was addressed, follow-ups filed, questions still open.
+File every follow-up you discovered — not silently fixed in-batch, not silently dropped.
+
+Clean the workshop: once a branch's PR is up and any rebase you ran is pushed, remove its worktree — `git worktree remove <dir>`, then `git worktree prune`. If removal refuses because the tree is dirty, that's uncommitted work from a hand you didn't watch: read it before you decide anything. Stale worktrees accumulate one skipped cleanup at a time; a real batch season left fifty behind.
+
+Then report: PRs opened and their status, what review found and how it was addressed, follow-ups filed, questions still open.
 
 ---
 
