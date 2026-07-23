@@ -15,11 +15,15 @@ let {
   file,
   currentUsername,
   userAvatarUrl = null,
+  onCount,
 }: {
   mind: string;
   file: string;
   currentUsername: string;
   userAvatarUrl?: string | null;
+  // Reports the running interaction count (comments + reactions) so a host can
+  // show a badge without opening the thread. Fires on every thread change.
+  onCount?: (count: number) => void;
 } = $props();
 
 const QUICK_REACTIONS = ["🌱", "✨", "👀", "💭"];
@@ -113,6 +117,16 @@ function initial(name: string): string {
 }
 
 let mine = $derived(currentUsername);
+
+// Comments plus reactions: what the badge counts. Reported to the host on every
+// change (initial load and after posting/reacting/deleting) so the affordance
+// stays in sync without the host reaching into the thread.
+let interactionCount = $derived(
+  thread ? thread.comments.length + thread.reactions.reduce((n, r) => n + r.count, 0) : 0,
+);
+$effect(() => {
+  onCount?.(interactionCount);
+});
 
 // Presence in words, phrased server-side so there is one copy of the wording (see
 // PagePresence.text). Null on a page nobody has opened — no zero, no empty state.
