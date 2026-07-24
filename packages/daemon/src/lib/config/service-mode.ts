@@ -30,38 +30,66 @@ export type ManagedServiceMode = Exclude<ServiceMode, "manual">;
 
 // --- Detection ---
 
-export function getServiceMode(): ServiceMode {
+/** Probes injected into `resolveServiceMode` so the decision logic can be tested without a real host. */
+export interface ServiceModeProbes {
+  fileExists: (path: string) => boolean;
+  /**
+   * Whether the systemd unit is a managed install — enabled *or* active. A
+   * disabled-but-running service (e.g. started once without `enable`) is still a
+   * real install; gating on `is-enabled` alone misclassifies it as manual (#826).
+   */
+  systemdManaged: (scope: "system" | "user") => boolean;
+  platform: NodeJS.Platform;
+}
+
+function systemctlSucceeds(args: string[]): boolean {
+  try {
+    execFileSync("systemctl", args, { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function systemdManaged(scope: "system" | "user"): boolean {
+  const prefix = scope === "user" ? ["--user"] : [];
+  return (
+    systemctlSucceeds([...prefix, "is-enabled", "--quiet", "volute"]) ||
+    systemctlSucceeds([...prefix, "is-active", "--quiet", "volute"])
+  );
+}
+
+/** Pure service-mode decision; `getServiceMode` supplies the real host probes. */
+export function resolveServiceMode(probes: ServiceModeProbes): ServiceMode {
   // System-level systemd service
-  if (existsSync(SYSTEM_SERVICE_PATH)) {
-    try {
-      execFileSync("systemctl", ["is-enabled", "--quiet", "volute"]);
-      return "system";
-    } catch {
-      // Unit file exists but not enabled — fall through
-    }
+  if (probes.fileExists(SYSTEM_SERVICE_PATH) && probes.systemdManaged("system")) {
+    return "system";
   }
 
   // User-level systemd service
-  if (existsSync(USER_SYSTEMD_UNIT)) {
-    try {
-      execFileSync("systemctl", ["--user", "is-enabled", "--quiet", "volute"]);
-      return "user-systemd";
-    } catch {
-      // Unit file exists but not enabled — fall through
-    }
+  if (probes.fileExists(USER_SYSTEMD_UNIT) && probes.systemdManaged("user")) {
+    return "user-systemd";
   }
 
   // System-level macOS LaunchDaemon
-  if (process.platform === "darwin" && existsSync(SYSTEM_LAUNCHD_PLIST_PATH)) {
+  if (probes.platform === "darwin" && probes.fileExists(SYSTEM_LAUNCHD_PLIST_PATH)) {
     return "system-launchd";
   }
 
   // macOS launchd
-  if (process.platform === "darwin" && existsSync(LAUNCHD_PLIST_PATH)) {
+  if (probes.platform === "darwin" && probes.fileExists(LAUNCHD_PLIST_PATH)) {
     return "user-launchd";
   }
 
   return "manual";
+}
+
+export function getServiceMode(): ServiceMode {
+  return resolveServiceMode({
+    fileExists: existsSync,
+    systemdManaged,
+    platform: process.platform,
+  });
 }
 
 // --- Helpers ---

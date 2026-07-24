@@ -13,8 +13,11 @@ import {
   POLL_INTERVAL,
   pollHealth,
   pollHealthDown,
+  resolveServiceMode,
   type ServiceMode,
+  type ServiceModeProbes,
   STOP_GRACE_TIMEOUT,
+  SYSTEM_LAUNCHD_PLIST_PATH,
   SYSTEM_SERVICE_PATH,
   USER_SYSTEMD_UNIT,
 } from "../packages/daemon/src/lib/config/service-mode.js";
@@ -36,6 +39,69 @@ describe("getServiceMode", () => {
     const mode = getServiceMode();
     const validModes: ServiceMode[] = ["manual", "system", "user-systemd", "user-launchd"];
     assert.ok(validModes.includes(mode), `got unexpected mode: ${mode}`);
+  });
+});
+
+describe("resolveServiceMode", () => {
+  const linuxProbes = (overrides: Partial<ServiceModeProbes> = {}): ServiceModeProbes => ({
+    fileExists: () => false,
+    systemdManaged: () => false,
+    platform: "linux",
+    ...overrides,
+  });
+
+  it("returns 'system' when the unit file exists and systemd manages it", () => {
+    const mode = resolveServiceMode(
+      linuxProbes({
+        fileExists: (p) => p === SYSTEM_SERVICE_PATH,
+        systemdManaged: (scope) => scope === "system",
+      }),
+    );
+    assert.equal(mode, "system");
+  });
+
+  it("returns 'system' for a disabled-but-active system install (#826)", () => {
+    // is-enabled=disabled but is-active=active → systemdManaged is still true.
+    const mode = resolveServiceMode(
+      linuxProbes({
+        fileExists: (p) => p === SYSTEM_SERVICE_PATH,
+        systemdManaged: (scope) => scope === "system",
+      }),
+    );
+    assert.equal(mode, "system");
+  });
+
+  it("returns 'user-systemd' for a disabled-but-active user install (#826)", () => {
+    const mode = resolveServiceMode(
+      linuxProbes({
+        fileExists: (p) => p === USER_SYSTEMD_UNIT,
+        systemdManaged: (scope) => scope === "user",
+      }),
+    );
+    assert.equal(mode, "user-systemd");
+  });
+
+  it("returns 'manual' when a leftover unit file is neither enabled nor active", () => {
+    const mode = resolveServiceMode(
+      linuxProbes({
+        fileExists: (p) => p === SYSTEM_SERVICE_PATH,
+        systemdManaged: () => false,
+      }),
+    );
+    assert.equal(mode, "manual");
+  });
+
+  it("returns 'manual' when nothing is installed", () => {
+    assert.equal(resolveServiceMode(linuxProbes()), "manual");
+  });
+
+  it("detects launchd modes only on darwin", () => {
+    const fileExists = (p: string) => p === SYSTEM_LAUNCHD_PLIST_PATH;
+    assert.equal(
+      resolveServiceMode(linuxProbes({ fileExists, platform: "darwin" })),
+      "system-launchd",
+    );
+    assert.equal(resolveServiceMode(linuxProbes({ fileExists, platform: "linux" })), "manual");
   });
 });
 
