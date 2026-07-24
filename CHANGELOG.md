@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.56.0](https://github.com/mimsy/volute/compare/volute-v0.55.0...volute-v0.56.0) (2026-07-24)
+
+
+### Features
+
+* add /volute-conductor skill and teach /volute-coder its conducted mode ([#835](https://github.com/mimsy/volute/issues/835)) ([ddb8383](https://github.com/mimsy/volute/commit/ddb8383cc6f906665d0ede7fc749fd62c4b595ba))
+* add volute doctor command for self-diagnosis and bug-report bundles ([#829](https://github.com/mimsy/volute/issues/829)) ([#839](https://github.com/mimsy/volute/issues/839)) ([f973487](https://github.com/mimsy/volute/commit/f973487c83dfb2348d589721eded38b1c2495ae0))
+
+
+### Bug Fixes
+
+* bind daemon HTTP server before slow skill sync ([#510](https://github.com/mimsy/volute/issues/510)) ([#840](https://github.com/mimsy/volute/issues/840)) ([c02faf1](https://github.com/mimsy/volute/commit/c02faf1e1e733980c220029f37c580fa00267a1d))
+* detect disabled-but-running systemd installs as system service mode ([#826](https://github.com/mimsy/volute/issues/826)) ([#838](https://github.com/mimsy/volute/issues/838)) ([314da5d](https://github.com/mimsy/volute/commit/314da5d8619bec2ee2e234dbb67863ce8b25782e))
+* squash drizzle migrations into one idempotent baseline ([#713](https://github.com/mimsy/volute/issues/713)) ([#837](https://github.com/mimsy/volute/issues/837)) ([be10ae6](https://github.com/mimsy/volute/commit/be10ae6299d25276294f19c8724098e7bcab61e0))
+
 ## [0.55.0](https://github.com/mimsy/volute/compare/volute-v0.54.0...volute-v0.55.0) (2026-07-23)
 
 
