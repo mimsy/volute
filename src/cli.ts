@@ -36,6 +36,7 @@ const ungatedCommands = new Set([
   "login",
   "logout",
   "service",
+  "doctor", // diagnostics must run on a broken/half-set-up machine
   undefined,
 ]);
 // A mind only exists because a set-up daemon spawned it, so the gate has nothing
@@ -111,6 +112,9 @@ switch (command) {
   case "status":
     await import("./commands/status.js").then((m) => m.run(args));
     break;
+  case "doctor":
+    await import("@volute/cli/commands/doctor.js").then((m) => m.run(args));
+    break;
   case "extension":
     await import("@volute/cli/commands/extension.js").then((m) => m.run(args));
     break;
@@ -160,6 +164,7 @@ System:
   setup [--system] [--cli]          First-time setup
   up / down / restart              Daemon control
   status                           Show daemon & service status
+  doctor [--bundle]                Diagnose the install / write a bug-report bundle
   backup init/create/list/restore  Back up and restore the system
   extension list/install/uninstall Manage extensions
   login / logout                   CLI authentication
