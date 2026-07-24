@@ -384,16 +384,14 @@ describe("cross-version upgrade e2e", { timeout: 600000 }, () => {
   it("migrations apply forward and the mind's state survives the upgrade", async (t) => {
     if (skipReason) return t.skip(skipReason);
 
-    // DB is fully migrated to the working tree's expectation. When the prior
-    // release already shared this migration set, this proves the DB opens
-    // forward-compatibly; the day a release adds a migration, it becomes a live
-    // forward-migration assertion. A count mismatch catches a migration that
-    // half-applied yet still let the daemon boot.
-    const [applied, expected] = [await appliedMigrationCount(), headMigrationCount()];
-    assert.equal(
-      applied,
-      expected,
-      `expected ${expected} applied migrations (working-tree drizzle/), found ${applied}`,
+    // After migration squash (#713), the prior release may have more migrations
+    // applied than HEAD ships (HEAD has 1 idempotent baseline; prior had 20).
+    // The baseline runs as a no-op on existing installs, so we just verify the
+    // DB is healthy with at least the HEAD count applied.
+    const [applied, minExpected] = [await appliedMigrationCount(), headMigrationCount()];
+    assert.ok(
+      applied >= minExpected,
+      `expected at least ${minExpected} applied migrations (working-tree drizzle/), found ${applied}`,
     );
 
     // The mind the prior release created starts and responds under the new code.
