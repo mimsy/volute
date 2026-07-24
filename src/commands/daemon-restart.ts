@@ -1,6 +1,7 @@
 import { command } from "@volute/cli/lib/command.js";
 import {
   getServiceMode,
+  HEALTH_POLL_TIMEOUT,
   modeLabel,
   pollHealth,
   readDaemonConfig,
@@ -30,7 +31,11 @@ const cmd = command({
       if (await pollHealth("127.0.0.1", config.internalPort ?? config.port)) {
         console.log("Daemon restarted.");
       } else {
-        console.error("Service restarted but daemon did not become healthy within 30s.");
+        console.error(
+          `Service restarted but daemon did not become healthy within ${Math.round(
+            HEALTH_POLL_TIMEOUT / 1000,
+          )}s.`,
+        );
         process.exit(1);
       }
       return;

@@ -137,14 +137,11 @@ export async function startDaemon(opts: {
   const { initSandbox } = await import("./lib/mind/sandbox.js");
   await initSandbox();
 
-  // Sync built-in skills into the shared pool (non-fatal)
-  try {
-    await syncBuiltinSkills();
-  } catch (err) {
-    log.error("failed to sync built-in skills", log.errorData(err));
-  }
-
-  // Load extensions (non-fatal)
+  // Load extensions (non-fatal). This must run BEFORE the HTTP server binds:
+  // extensions mount routes on `app`, and Hono freezes its route matcher on the
+  // first request, so a route added after the first health poll would throw. The
+  // skill sync / auto-update housekeeping below touches only the shared pool and
+  // mind dirs (not `app`), so it's deferred until after the server is listening.
   try {
     await loadAllExtensions(app, authMiddleware);
     notifyExtensionsDaemonStart();
@@ -152,7 +149,78 @@ export async function startDaemon(opts: {
     log.error("failed to load extensions", log.errorData(err));
   }
 
-  // Initialize default skills config if not set (after extensions load so their skills are included)
+  // Use existing token if set (for testing), otherwise generate one
+  const token = process.env.VOLUTE_DAEMON_TOKEN || randomBytes(32).toString("hex");
+
+  // Tailscale HTTPS setup (CLI flag or config)
+  const { readGlobalConfig } = await import("./lib/config/setup.js");
+  const globalCfg = readGlobalConfig();
+  let tls: { key: Buffer; cert: Buffer } | undefined;
+  if (opts.tailscale || globalCfg.tailscale) {
+    try {
+      const { getTailscaleTls } = await import("./lib/tailscale.js");
+      const tlsConfig = await getTailscaleTls();
+      tls = { key: tlsConfig.key, cert: tlsConfig.cert };
+      log.info("Tailscale HTTPS enabled", { hostname: tlsConfig.hostname });
+    } catch (err) {
+      log.error(
+        "Tailscale TLS setup failed — starting without HTTPS. Ensure Tailscale is running, or disable tailscale in config.",
+        log.errorData(err),
+      );
+    }
+  }
+
+  // Start the web server EARLY — before the slow skill sync / auto-update pass
+  // below — so `/api/health` means "daemon alive" and answers within seconds.
+  // Previously the server only bound after ~2.5min of per-mind skill git work,
+  // which blew past `volute update`'s health poll on multi-mind system installs
+  // and made a healthy restart report as failed (#510). Must succeed before
+  // writing PID/config files, otherwise a failed startup (e.g. EADDRINUSE) would
+  // overwrite files belonging to a running daemon.
+  let result: Awaited<ReturnType<typeof startServer>>;
+  try {
+    result = await startServer({ port, hostname: "0.0.0.0", tls });
+  } catch (err) {
+    const e = err as NodeJS.ErrnoException;
+    if (e.code === "EADDRINUSE") {
+      log.error(`port ${port} is already in use`);
+      process.exit(1);
+    }
+    throw err;
+  }
+  const { server, internalPort } = result;
+
+  // Internal communication always uses HTTP on localhost
+  // When TLS is enabled, minds/CLI talk to the secondary HTTP port
+  const daemonPort = internalPort ?? port;
+  process.env.VOLUTE_DAEMON_TOKEN = token;
+  process.env.VOLUTE_DAEMON_PORT = String(daemonPort);
+  process.env.VOLUTE_DAEMON_HOSTNAME = hostname;
+
+  // Server is listening — safe to write PID and config
+  writeFileSync(DAEMON_PID_PATH, myPid, { mode: 0o644 });
+  const daemonConfig: Record<string, unknown> = { port, hostname };
+  if (internalPort) daemonConfig.internalPort = internalPort;
+  if (tls) daemonConfig.tls = true;
+  // daemon.json is host-readable (0644); the admin token is written separately at 0600.
+  writeDaemonConfig(systemDir, daemonConfig, token);
+
+  // --- Post-bind housekeeping ---
+  // The HTTP server is already listening and answering /api/health, so the slow
+  // steps below no longer gate daemon health (#510). They stay in their original
+  // order (sync before defaults) and are awaited before mind startup, so minds
+  // still boot against a fully-synced skill pool exactly as before — only the
+  // server bind moved earlier.
+
+  // Sync built-in skills into the shared pool (non-fatal)
+  try {
+    await syncBuiltinSkills();
+  } catch (err) {
+    log.error("failed to sync built-in skills", log.errorData(err));
+  }
+
+  // Initialize default skills config if not set (after extensions load + builtin
+  // sync so their skills are present in the pool)
   await initDefaultSkills();
 
   // Auto-update skills for all minds (non-fatal)
@@ -188,58 +256,6 @@ export async function startDaemon(opts: {
       log.errorData(err),
     );
   }
-
-  // Use existing token if set (for testing), otherwise generate one
-  const token = process.env.VOLUTE_DAEMON_TOKEN || randomBytes(32).toString("hex");
-
-  // Tailscale HTTPS setup (CLI flag or config)
-  const { readGlobalConfig } = await import("./lib/config/setup.js");
-  const globalCfg = readGlobalConfig();
-  let tls: { key: Buffer; cert: Buffer } | undefined;
-  if (opts.tailscale || globalCfg.tailscale) {
-    try {
-      const { getTailscaleTls } = await import("./lib/tailscale.js");
-      const tlsConfig = await getTailscaleTls();
-      tls = { key: tlsConfig.key, cert: tlsConfig.cert };
-      log.info("Tailscale HTTPS enabled", { hostname: tlsConfig.hostname });
-    } catch (err) {
-      log.error(
-        "Tailscale TLS setup failed — starting without HTTPS. Ensure Tailscale is running, or disable tailscale in config.",
-        log.errorData(err),
-      );
-    }
-  }
-
-  // Start web server — must succeed before writing PID/config files,
-  // otherwise a failed startup (e.g. EADDRINUSE) would overwrite files
-  // belonging to a running daemon.
-  let result: Awaited<ReturnType<typeof startServer>>;
-  try {
-    result = await startServer({ port, hostname: "0.0.0.0", tls });
-  } catch (err) {
-    const e = err as NodeJS.ErrnoException;
-    if (e.code === "EADDRINUSE") {
-      log.error(`port ${port} is already in use`);
-      process.exit(1);
-    }
-    throw err;
-  }
-  const { server, internalPort } = result;
-
-  // Internal communication always uses HTTP on localhost
-  // When TLS is enabled, minds/CLI talk to the secondary HTTP port
-  const daemonPort = internalPort ?? port;
-  process.env.VOLUTE_DAEMON_TOKEN = token;
-  process.env.VOLUTE_DAEMON_PORT = String(daemonPort);
-  process.env.VOLUTE_DAEMON_HOSTNAME = hostname;
-
-  // Server is listening — safe to write PID and config
-  writeFileSync(DAEMON_PID_PATH, myPid, { mode: 0o644 });
-  const daemonConfig: Record<string, unknown> = { port, hostname };
-  if (internalPort) daemonConfig.internalPort = internalPort;
-  if (tls) daemonConfig.tls = true;
-  // daemon.json is host-readable (0644); the admin token is written separately at 0600.
-  writeDaemonConfig(systemDir, daemonConfig, token);
 
   // Start delivery manager, mind manager, bridge manager, and scheduler
   const delivery = initDeliveryManager();
