@@ -74,3 +74,22 @@ jobs:
           git config --global user.email "ci@test.com"
           git config --global user.name "CI"
       - run: npm run test:e2e
+
+  test-upgrade:
+    runs-on: ubuntu-latest
+    steps:
+      # fetch-depth: 0 pulls full history + tags — the upgrade test resolves the
+      # prior release from `volute-v*` git tags (it skips gracefully without them).
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Configure git identity
+        run: |
+          git config --global user.email "ci@test.com"
+          git config --global user.name "CI"
+      - run: npm run test:upgrade
