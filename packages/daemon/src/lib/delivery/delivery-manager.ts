@@ -854,8 +854,8 @@ export class DeliveryManager {
     let config: RoutingConfig;
     try {
       const parsed: unknown = JSON.parse(await readFile(path, "utf-8"));
-      // Valid JSON that isn't an object (an array — a shape this codebase has seen on disk,
-      // see migrate-thread-config.ts — or null, or a string) would let the rule silently
+      // Valid JSON that isn't an object (an array — a shape this codebase has seen on disk
+      // — or null, or a string) would let the rule silently
       // vanish at stringify time while we reported success. And an array-form config is
       // exactly a mind with no `rules`, i.e. one gating everything: the case this exists for.
       if (parsed == null || typeof parsed !== "object" || Array.isArray(parsed)) {

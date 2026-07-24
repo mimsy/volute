@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { voluteSystemDir } from "../mind/registry.js";
 import type { CognitionConfig, Schedule, SleepConfig } from "../mind/volute-config.js";
@@ -267,39 +267,6 @@ export function writeGlobalConfig(config: GlobalConfig): void {
 }
 
 /**
- * Move provider credentials out of a legacy single-file config.json (which
- * v0.41.1 locked to 0600 root-only, breaking non-root host CLI commands)
- * into secrets.json, and relax config.json back to 0644. Idempotent; must run as
- * the config owner (root on a system install), so it lives on the daemon startup
- * path. A no-op once config.json is already split and 0644.
- */
-export function migrateConfigSecrets(): void {
-  const path = configPath();
-  if (!existsSync(path)) return;
-  let raw: string;
-  try {
-    raw = readFileSync(path, "utf-8"); // skip silently if we're not the owner
-  } catch {
-    return;
-  }
-  let parsed: GlobalConfig;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return;
-  }
-  const embedsSecrets =
-    hasEntries(parsed.ai?.providers) ||
-    hasEntries(parsed.imagegen?.providers) ||
-    !!parsed.backup?.password ||
-    hasEntries(parsed.backup?.env);
-  const mode = statSync(path).mode & 0o777;
-  if (!embedsSecrets && mode === 0o644) return; // already migrated
-  _resetConfigCache();
-  writeGlobalConfig(readGlobalConfig()); // re-split with correct perms
-}
-
-/**
  * Setup lifecycle state:
  * - `complete` — the full flow finished (or a legacy install predating the flag).
  * - `in-progress` — a setup entry point ran (`volute setup` CLI or a wizard step)
@@ -313,8 +280,6 @@ export type SetupStatus = "complete" | "in-progress" | "none";
 export function computeSetupStatus(config: GlobalConfig): SetupStatus {
   if (config.setupCompleted === true) return "complete";
   // Legacy install: has a setup block but predates the `setupCompleted` flag.
-  // migrateSetupCompleted() persists these as complete on daemon start; the CLI
-  // gate must agree even before the daemon has run that migration.
   if (config.setup != null && config.setupCompleted == null) return "complete";
   // A setup entry point ran but the browser wizard hasn't finished.
   if (config.setup != null) return "in-progress";
@@ -407,13 +372,4 @@ export function mindLimitError(count: number, limit: number | undefined): string
     return `Mind limit reached (${count}/${limit}). An admin can raise maxMinds in Settings.`;
   }
   return null;
-}
-
-/** Migrate pre-existing installations that have setup but not setupCompleted. */
-export function migrateSetupCompleted(): void {
-  const config = readGlobalConfig();
-  if (config.setup != null && config.setupCompleted == null) {
-    config.setupCompleted = true;
-    writeGlobalConfig(config);
-  }
 }

@@ -54,60 +54,6 @@ describe("web setup routes", () => {
     assert.ok(body.config);
   });
 
-  it("POST /api/setup/configure — creates config", async () => {
-    const app = createApp();
-    const res = await app.request("/api/setup/configure", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: "my-system" }),
-    });
-    assert.equal(res.status, 200);
-    const body = await res.json();
-    assert.equal(body.ok, true);
-    assert.equal(body.config.name, "my-system");
-    assert.equal(body.config.setup.type, "local");
-    assert.equal(body.config.setup.isolation, "sandbox");
-
-    // Verify config was written
-    const config = readGlobalConfig();
-    assert.equal(config.name, "my-system");
-  });
-
-  it("POST /api/setup/configure — rejects empty name", async () => {
-    const app = createApp();
-    const res = await app.request("/api/setup/configure", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: "" }),
-    });
-    assert.equal(res.status, 400);
-  });
-
-  it("POST /api/setup/configure — rejects duplicate setup", async () => {
-    writeGlobalConfig({
-      name: "test",
-      setup: { type: "local", mindsDir: "/tmp/minds", isolation: "sandbox", service: false },
-      setupCompleted: true,
-    });
-    const app = createApp();
-    const res = await app.request("/api/setup/configure", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: "another" }),
-    });
-    assert.equal(res.status, 400);
-  });
-
-  it("POST /api/setup/configure — rejects system type", async () => {
-    const app = createApp();
-    const res = await app.request("/api/setup/configure", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: "test", type: "system" }),
-    });
-    assert.equal(res.status, 400);
-  });
-
   it("POST /api/setup/spirit — stores name and temperament", async () => {
     writeGlobalConfig({
       name: "test",

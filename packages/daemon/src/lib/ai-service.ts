@@ -284,63 +284,6 @@ export function setEnabledModels(modelIds: string[]): void {
   writeGlobalConfig({ ...config, ai });
 }
 
-/**
- * One-time migration: convert bare model ids in `ai.models`, `spiritModel`, and
- * `ai.utilityModel` to provider-qualified `provider:model` form. A bare id is
- * ambiguous (many providers serve the same id), so this pins each to the
- * explicitly-configured provider(s) that serve it: the enabled list expands to
- * one entry per configured provider, and the single-value defaults qualify to
- * the first configured provider that serves them. Idempotent — a no-op once
- * every stored id already contains a ":".
- */
-export function migrateAiModelQualification(): void {
-  const config = readGlobalConfig();
-  const ai = config.ai;
-  const isBare = (id?: string): id is string => id != null && !id.includes(":");
-
-  const hasBareInList = (ai?.models ?? []).some(isBare);
-  if (!hasBareInList && !isBare(config.spiritModel) && !isBare(ai?.utilityModel)) return;
-
-  // Only providers the admin explicitly added (with credentials) — not ambient
-  // env/OAuth providers — are candidates, matching what the user configured.
-  const providers = ai ? Object.keys(ai.providers) : [];
-  const customModels = ai?.customModels ?? [];
-  const providersServing = (bareId: string): string[] =>
-    providers.filter(
-      (p) =>
-        getBuiltinModel(p as never, bareId as never) != null ||
-        customModels.some((cm) => cm.provider === p && cm.id === bareId),
-    );
-
-  let changed = false;
-
-  if (ai?.models) {
-    const expanded: string[] = [];
-    for (const id of ai.models) {
-      if (!isBare(id)) {
-        expanded.push(id);
-        continue;
-      }
-      changed = true;
-      for (const p of providersServing(id)) expanded.push(`${p}:${id}`);
-    }
-    ai.models = expanded.length > 0 ? [...new Set(expanded)] : undefined;
-    if (!ai.models) delete ai.models;
-  }
-
-  const qualifyOne = (id: string | undefined): string | undefined => {
-    if (!isBare(id)) return id;
-    const [provider] = providersServing(id);
-    if (!provider) return id; // no configured provider serves it — leave as-is
-    changed = true;
-    return `${provider}:${id}`;
-  };
-  config.spiritModel = qualifyOne(config.spiritModel);
-  if (ai) ai.utilityModel = qualifyOne(ai.utilityModel);
-
-  if (changed) writeGlobalConfig(config);
-}
-
 /** Get the admin-defined custom models (not in pi-ai's built-in catalog). */
 export function getCustomModels(): CustomModel[] {
   return getAiConfig()?.customModels ?? [];

@@ -72,22 +72,6 @@ const cmd = subcommands({
       description: "Join a variant back into its parent",
       run: (args) => import("./join.js").then((m) => m.run(args)),
     },
-    sleep: {
-      description: "(legacy) Use 'volute clock sleep' instead",
-      run: (args) => import("./mind-sleep.js").then((m) => m.run(args)),
-    },
-    wake: {
-      description: "(legacy) Use 'volute clock wake' instead",
-      run: (args) => import("./mind-wake.js").then((m) => m.run(args)),
-    },
-    seed: {
-      description: "(legacy) Use 'volute seed create' instead",
-      run: (args) => import("./seed.js").then((m) => m.run(args)),
-    },
-    sprout: {
-      description: "(legacy) Use 'volute seed sprout' instead",
-      run: (args) => import("./sprout.js").then((m) => m.run(args)),
-    },
   },
   footer: "Mind name can be omitted (where applicable) if VOLUTE_MIND is set.",
 });

@@ -10,7 +10,6 @@ export type Schedule = {
   script?: string;
   enabled: boolean;
   whileSleeping?: "skip" | "queue" | "trigger-wake";
-  channel?: string; // deprecated — use thread instead
   thread?: string; // target thread name (e.g. "$new" for isolated thread)
 };
 

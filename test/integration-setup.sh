@@ -141,10 +141,9 @@ fi
 
 # Write setup config so CLI commands work inside the container. The `setupCompleted`
 # field is what `isSetupComplete()` checks; the container entrypoint never runs
-# `volute setup`, and `migrateSetupCompleted()` only runs at daemon startup (after
-# config.json already exists), so we must write the flag explicitly. config.json was
-# absent when the daemon started, so its config cache is empty and this fresh write
-# is picked up without a daemon restart.
+# `volute setup`, so we must write the flag explicitly. config.json was absent when
+# the daemon started, so its config cache is empty and this fresh write is picked up
+# without a daemon restart.
 echo "Writing setup config..."
 docker exec "$CONTAINER" sh -c \
   'mkdir -p /data/system && echo '"'"'{"setup":{"type":"system","isolation":"user"},"setupCompleted":true}'"'"' > /data/system/config.json'

@@ -88,27 +88,6 @@ const cmd = subcommands({
       description: "Check service status",
       run: async () => status(),
     },
-    install: {
-      description: "(deprecated) Use 'volute setup' instead",
-      run: async () => {
-        console.log("'volute service install' has been replaced by 'volute setup'.");
-        console.log("Run `volute setup` to configure your installation.");
-      },
-    },
-    uninstall: {
-      description: "(deprecated) Use 'volute setup' instead",
-      run: async () => {
-        console.log("'volute service uninstall' has been replaced by 'volute setup'.");
-        console.log("To uninstall the service, remove the service file manually:");
-        if (process.platform === "darwin") {
-          console.log("  launchctl unload ~/Library/LaunchAgents/com.volute.daemon.plist");
-          console.log("  rm ~/Library/LaunchAgents/com.volute.daemon.plist");
-        } else {
-          console.log("  systemctl --user disable --now volute");
-          console.log("  rm ~/.config/systemd/user/volute.service");
-        }
-      },
-    },
   },
 });
 

@@ -2018,7 +2018,6 @@ const app = new Hono<AuthEnv>()
       template?: string;
       continue?: boolean;
       abort?: boolean;
-      accept?: boolean;
       diff?: boolean;
     } = {};
     try {
@@ -2075,18 +2074,6 @@ const app = new Hono<AuthEnv>()
         }
         return c.json({ error: msg }, 500);
       }
-    }
-
-    if (body.accept) {
-      // Legacy — upgrades now auto-merge. Clean up any old-style upgrade state.
-      if (upgradeInProgress(mindName)) {
-        try {
-          await abortUpgrade(mindName);
-        } catch (err) {
-          log.warn(`failed to clean up legacy upgrade variant for ${mindName}`, log.errorData(err));
-        }
-      }
-      return c.json({ error: "Upgrades now auto-merge. Run 'volute mind upgrade' again." }, 400);
     }
 
     if (body.diff) {
@@ -2698,37 +2685,15 @@ const app = new Hono<AuthEnv>()
       ? undefined
       : sql`${mindHistory.type} IN ('inbound','event','outbound','tool_use','tool_result','text','thinking','activity')`;
 
-    // Prefer turn_id-based query; fall back to legacy session+range
-    let rows: Array<typeof mindHistory.$inferSelect>;
-    if (turnId) {
-      rows = await db
-        .select()
-        .from(mindHistory)
-        .where(and(eq(mindHistory.mind, name), eq(mindHistory.turn_id, turnId), typeFilter))
-        .orderBy(mindHistory.id);
-    } else {
-      // Legacy: session + from_id/to_id range
-      const session = c.req.query("session");
-      const fromId = parseInt(c.req.query("from_id") ?? "", 10);
-      const toId = parseInt(c.req.query("to_id") ?? "", 10);
-      if (!session || Number.isNaN(fromId) || Number.isNaN(toId)) {
-        return c.json({ error: "turn_id, or session with from_id and to_id, required" }, 400);
-      }
-
-      rows = await db
-        .select()
-        .from(mindHistory)
-        .where(
-          and(
-            eq(mindHistory.mind, name),
-            eq(mindHistory.thread, session),
-            sql`${mindHistory.id} >= ${fromId}`,
-            sql`${mindHistory.id} <= ${toId}`,
-            typeFilter,
-          ),
-        )
-        .orderBy(mindHistory.id);
+    if (!turnId) {
+      return c.json({ error: "turn_id required" }, 400);
     }
+
+    const rows = await db
+      .select()
+      .from(mindHistory)
+      .where(and(eq(mindHistory.mind, name), eq(mindHistory.turn_id, turnId), typeFilter))
+      .orderBy(mindHistory.id);
 
     return c.json(rows);
   })

@@ -4,7 +4,6 @@ import { resolve } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import {
   _resetConfigCache,
-  migrateConfigSecrets,
   secretsPath,
   writeGlobalConfig,
 } from "../packages/daemon/src/lib/config/setup.js";
@@ -124,40 +123,6 @@ describe("readGlobalConfig", () => {
     assert.equal(config.backup?.env?.AWS_SECRET_ACCESS_KEY, "aws-secret");
     assert.equal(config.backup?.repository, "s3:s3.amazonaws.com/bucket/volute");
     assert.equal(config.backup?.enabled, true);
-  });
-
-  it("migrateConfigSecrets splits a legacy single-file config and relaxes perms", () => {
-    // Simulate a v0.41.1 install: everything (incl. secrets) in a 0600 config.json.
-    mkdirSync(voluteSystemDir(), { recursive: true });
-    writeFileSync(
-      configPath(),
-      JSON.stringify({
-        hostname: "legacy",
-        ai: { providers: { anthropic: { apiKey: "sk-legacy" } } },
-      }),
-      { mode: 0o600 },
-    );
-    _resetConfigCache();
-    migrateConfigSecrets();
-    // config.json is now host-readable and stripped of secrets.
-    assert.equal(statSync(configPath()).mode & 0o777, 0o644);
-    assert.ok(!readFileSync(configPath(), "utf-8").includes("sk-legacy"));
-    // secrets.json now holds the key at 0600.
-    assert.equal(statSync(secretsPath()).mode & 0o777, 0o600);
-    assert.ok(readFileSync(secretsPath(), "utf-8").includes("sk-legacy"));
-    // The merged view is unchanged for callers.
-    _resetConfigCache();
-    assert.equal(readGlobalConfig().ai?.providers.anthropic.apiKey, "sk-legacy");
-  });
-
-  it("migrateConfigSecrets is a no-op once already split and 0644", () => {
-    mkdirSync(voluteSystemDir(), { recursive: true });
-    writeGlobalConfig({ hostname: "h", ai: { providers: { anthropic: { apiKey: "sk" } } } });
-    const before = readFileSync(secretsPath(), "utf-8");
-    _resetConfigCache();
-    migrateConfigSecrets();
-    assert.equal(statSync(configPath()).mode & 0o777, 0o644);
-    assert.equal(readFileSync(secretsPath(), "utf-8"), before);
   });
 
   it("cached config is not corrupted by caller mutation", () => {

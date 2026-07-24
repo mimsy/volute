@@ -155,22 +155,14 @@ async function handleClick() {
   if (event.type === "summary" && expandable) {
     turnExpanded = !turnExpanded;
     if (turnExpanded && turnEvents.length === 0) {
-      // Prefer turn_id when available; fall back to legacy session+range
-      const hasTurnId = !!event.turn_id;
-      const hasLegacy = event.thread && meta?.from_id && meta?.to_id;
-      if (!hasTurnId && !hasLegacy) {
+      if (!event.turn_id) {
         turnError = "Missing turn data";
         return;
       }
       turnLoading = true;
       turnError = "";
       try {
-        turnEvents = await fetchTurnEvents(
-          mindName,
-          hasTurnId
-            ? { turnId: event.turn_id! }
-            : { session: event.thread!, fromId: meta.from_id, toId: meta.to_id },
-        );
+        turnEvents = await fetchTurnEvents(mindName, { turnId: event.turn_id });
       } catch (e) {
         turnError = "Failed to load turn details";
         console.warn("Failed to fetch turn events:", e);
@@ -248,15 +240,11 @@ async function handleClick() {
             if (!fullDetail && detailEvents.length === 0) {
               detailLoading = true;
               try {
-                const hasTurnId = !!event.turn_id;
-                const hasLegacy = event.thread && meta?.from_id && meta?.to_id;
-                if (hasTurnId || hasLegacy) {
-                  detailEvents = await fetchTurnEvents(
-                    mindName,
-                    hasTurnId
-                      ? { turnId: event.turn_id!, detail: true }
-                      : { session: event.thread!, fromId: meta.from_id, toId: meta.to_id, detail: true },
-                  );
+                if (event.turn_id) {
+                  detailEvents = await fetchTurnEvents(mindName, {
+                    turnId: event.turn_id,
+                    detail: true,
+                  });
                 }
               } catch (err) {
                 console.warn("Failed to fetch detail events:", err);

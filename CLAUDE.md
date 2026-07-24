@@ -48,7 +48,7 @@ Bridges are **system-wide**, not per-mind. Config lives in `~/.volute/system/bri
 
 ### Centralized state directory
 
-Volute per-mind system state (logs, env, bridge PIDs) lives in `~/.volute/state/<name>/`, separate from mind directories. This keeps mind projects portable — they contain only mind-owned state (sessions, cursors). The `stateDir(name)` helper in `packages/daemon/src/lib/mind/registry.ts` resolves state paths. On daemon startup, `migrateDotVoluteDir()` renames any legacy `<mindDir>/.volute/` to `<mindDir>/.mind/`, then `migrateMindState()` copies `env.json` and `logs/` from the mind's `.mind/` to the centralized state dir.
+Volute per-mind system state (logs, env, bridge PIDs) lives in `~/.volute/state/<name>/`, separate from mind directories. This keeps mind projects portable — they contain only mind-owned state (sessions, cursors). The `stateDir(name)` helper in `packages/daemon/src/lib/mind/registry.ts` resolves state paths.
 
 Minds receive `VOLUTE_MIND`, `VOLUTE_STATE_DIR`, `VOLUTE_MIND_DIR`, `VOLUTE_MIND_PORT`, `VOLUTE_DAEMON_PORT`, and `VOLUTE_MIND_TOKEN` env vars from the daemon. The mind env is built from an allowlist (benign system vars, outbound proxy / custom-CA vars, + `VOLUTE_*`), not a full `process.env` spread, so ambient host secrets are withheld. `VOLUTE_MIND_TOKEN` is a per-mind, non-admin token — distinct from the daemon's own admin `VOLUTE_DAEMON_TOKEN`, which is never handed to minds. Instead of file-based IPC (restart.json, merged.json), minds call the daemon's REST API via `daemonRestart()` and `daemonSend()` from `templates/_base/src/lib/daemon-client.ts`. The daemon delivers post-restart context (merge info) to minds via HTTP POST to the mind's `/message` endpoint.
 
@@ -220,7 +220,7 @@ Extensions add functionality to Volute — custom UI sections, API routes, datab
 | `volute service status` | Show service status |
 | `volute update` | Check for updates |
 
-Mind-scoped commands (`chat`, `clock`, `skill`) use `--mind <name>` or `VOLUTE_MIND` env var. Legacy aliases (`volute mind seed/sprout/sleep/wake`, `volute variant ...`) forward to the current nouns. Full flags: `volute <cmd> --help`.
+Mind-scoped commands (`chat`, `clock`, `skill`) use `--mind <name>` or `VOLUTE_MIND` env var. Full flags: `volute <cmd> --help`.
 
 ## Directory guide
 

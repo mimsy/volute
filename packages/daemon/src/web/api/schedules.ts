@@ -305,7 +305,6 @@ const app = new Hono<AuthEnv>()
     if (body.message) schedule.message = body.message;
     if (body.messages?.length) schedule.messages = body.messages;
     if (body.script) schedule.script = body.script;
-    if (body.channel) schedule.channel = body.channel;
     if (body.thread) schedule.thread = body.thread;
     if (body.whileSleeping) schedule.whileSleeping = body.whileSleeping;
     schedules.push(schedule);
@@ -374,7 +373,6 @@ const app = new Hono<AuthEnv>()
       );
     }
     if (body.enabled !== undefined) schedules[idx].enabled = body.enabled;
-    if (body.channel !== undefined) schedules[idx].channel = body.channel || undefined;
     if (body.thread !== undefined) schedules[idx].thread = body.thread || undefined;
     if (body.whileSleeping !== undefined)
       schedules[idx].whileSleeping = body.whileSleeping || undefined;

@@ -80,8 +80,7 @@ describe("setup config", () => {
   });
 
   it("isSetupComplete treats a legacy config (setup block, no setupCompleted flag) as complete", () => {
-    // Predates the setupCompleted flag; migrateSetupCompleted() persists these as
-    // complete on daemon start, so the CLI gate must agree even before that runs.
+    // Predates the setupCompleted flag; a setup block with no flag reads as complete.
     writeGlobalConfig({
       name: "test",
       setup: { type: "local", mindsDir: "/tmp", isolation: "sandbox", service: false },

@@ -79,9 +79,6 @@ switch (command) {
   case "chat":
     await import("@volute/cli/commands/chat.js").then((m) => m.run(args));
     break;
-  case "variant":
-    await import("@volute/cli/commands/variant.js").then((m) => m.run(args));
-    break;
   case "clock":
     await import("@volute/cli/commands/clock.js").then((m) => m.run(args));
     break;
