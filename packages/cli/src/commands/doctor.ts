@@ -1,4 +1,6 @@
 import {
+  accessSync,
+  constants,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -9,7 +11,7 @@ import {
 } from "node:fs";
 import { statfs } from "node:fs/promises";
 import { arch, homedir, platform, release, tmpdir, type } from "node:os";
-import { resolve } from "node:path";
+import { delimiter, join, resolve } from "node:path";
 import { sharedEnvPath } from "@volute/daemon/lib/config/env.js";
 import {
   daemonLogSource,
@@ -37,6 +39,61 @@ type CheckState = "pass" | "fail" | "warn";
 type Check = { label: string; state: CheckState; detail?: string };
 
 const ICON: Record<CheckState, string> = { pass: "✓", fail: "✗", warn: "⚠" };
+
+// --- Chrome/Chromium detection for pages preview ---
+
+const MAC_CHROME_CANDIDATES = [
+  "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+  "/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary",
+  "/Applications/Chromium.app/Contents/MacOS/Chromium",
+  "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+  "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+];
+
+const PATH_CHROME_CANDIDATES = [
+  "google-chrome",
+  "google-chrome-stable",
+  "chromium",
+  "chromium-browser",
+  "brave-browser",
+  "microsoft-edge",
+];
+
+function isExecutable(p: string): boolean {
+  try {
+    accessSync(p, constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Locate a Chrome-family browser for `volute pages preview`. Returns the path if
+ * found, null otherwise. Mirrors the logic in @volute/pages preview.ts so doctor
+ * reports the same result as the actual preview command.
+ */
+function findChromeBrowser(): string | null {
+  const override = process.env.VOLUTE_CHROMIUM;
+  if (override) return override;
+
+  if (platform() === "darwin") {
+    for (const candidate of MAC_CHROME_CANDIDATES) {
+      if (isExecutable(candidate)) return candidate;
+    }
+    return null;
+  }
+
+  // Linux/other: walk PATH looking for an executable.
+  const dirs = (process.env.PATH ?? "").split(delimiter).filter(Boolean);
+  for (const name of PATH_CHROME_CANDIDATES) {
+    for (const dir of dirs) {
+      const full = join(dir, name);
+      if (isExecutable(full)) return full;
+    }
+  }
+  return null;
+}
 
 function dbPath(): string {
   return process.env.VOLUTE_DB_PATH || resolve(voluteSystemDir(), "volute.db");
@@ -186,6 +243,18 @@ async function runDiagnostics(): Promise<Diagnostics> {
     isolation
       ? { label: "Isolation mode", state: "pass", detail: isolation }
       : { label: "Isolation mode", state: "warn", detail: "not configured (none)" },
+  );
+
+  // --- Chrome for pages preview ---
+  const chromePath = findChromeBrowser();
+  checks.push(
+    chromePath
+      ? { label: "Chrome (pages preview)", state: "pass", detail: chromePath }
+      : {
+          label: "Chrome (pages preview)",
+          state: "warn",
+          detail: "no Chrome-family browser found — `volute pages preview` won't work",
+        },
   );
 
   // --- Disk space in ~/.volute ---
