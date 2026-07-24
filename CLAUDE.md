@@ -138,6 +138,7 @@ The daemon serves a Hono web server (default port 1618) with a Svelte frontend.
 - **Frontend** (`packages/web/`): Svelte 5 SPA with login, dashboard, and mind detail pages (chat, logs, files, variants, connections tabs). Shared UI components imported from `@volute/ui`
 - **Auth**: Cookie-based (`volute_session`), in-memory session map, first user auto-admin; durable `vmt_` API tokens in the `api_tokens` table
 - **Database**: libSQL at `~/.volute/system/volute.db`. The Drizzle schema (`packages/daemon/src/lib/schema.ts`) is the source of truth for the table list — don't enumerate tables in docs
+- **Migrations**: All migrations must be generated from `schema.ts` via `npm run db:generate` — **never write SQL migration files by hand**. Hand-written SQL breaks the Drizzle snapshot chain in `drizzle/meta/`, leaving the next `db:generate` out of sync. See `drizzle/README.md` for the full workflow.
 - **Build**: `vite build` → `dist/web-assets/`
 
 ### Extensions
