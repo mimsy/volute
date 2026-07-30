@@ -271,6 +271,53 @@ describe("commons channel", () => {
     assert.equal(events.length, 0, "announcements are channel messages, not system events");
   });
 
+  it("announceToCommons delivers to the spirit participant, sender-less (#817)", async () => {
+    // The commons is the spirit's room, so it must perceive announcements there too.
+    // The spirit is a `user_type: "spirit"` participant that `isMind` excludes; delivery
+    // must still reach it — on the same sender-less channel path minds get — because
+    // removing that inclusion is exactly the regression this guards.
+    await addSpirit("volute", 4906, "claude", "/tmp/spirit");
+    await joinCommonsChannelForSpirit();
+    await addMind("commons-mind", 4901, "sprouted");
+    await joinCommonsChannelForMind("commons-mind");
+    // Disable gating so the (dead-port) delivery still records the inbound for both.
+    writeCommonsRoutes("volute", { gateUnmatched: false });
+    writeCommonsRoutes("commons-mind", { gateUnmatched: false });
+
+    await announceToCommons("atlas has joined");
+
+    // Delivery is fire-and-forget; poll for the spirit's recorded inbound.
+    const db = await getDb();
+    let spiritRow: { sender: string | null; channel: string | null } | undefined;
+    for (let i = 0; i < 50 && !spiritRow; i++) {
+      const inbound = await db
+        .select()
+        .from(mindHistory)
+        .where(and(eq(mindHistory.mind, "volute"), eq(mindHistory.type, "inbound")))
+        .all();
+      spiritRow = inbound.find((r) => r.content?.includes("atlas has joined"));
+      if (!spiritRow) await new Promise((res) => setTimeout(res, 20));
+    }
+    assert.ok(spiritRow, "the announcement should be delivered to the spirit participant");
+    assert.equal(
+      spiritRow!.sender,
+      null,
+      "spirit delivery must be sender-less — not its own voice",
+    );
+    assert.equal(spiritRow!.channel, "#commons", "delivered on the #commons channel");
+
+    // Mind delivery is unchanged: the mind participant still receives it too.
+    const mindInbound = await db
+      .select()
+      .from(mindHistory)
+      .where(and(eq(mindHistory.mind, "commons-mind"), eq(mindHistory.type, "inbound")))
+      .all();
+    assert.ok(
+      mindInbound.some((r) => r.content?.includes("atlas has joined")),
+      "mind participants still receive the announcement",
+    );
+  });
+
   it("announceToCommons follows a renamed default channel's slug", async () => {
     // A house kept a proper name on its commons. The delivered routing slug must
     // track that name, not a hardcoded "#commons".
