@@ -109,7 +109,7 @@ describe("maybeSendCommonsCue", () => {
       publishActivity: () => {},
       getMindDir: async () => "/spirit/dir",
       getSystemsConfig: () => null,
-      announceToSystem: async () => {},
+      announceToCommons: async () => {},
       recordNotice: async (mind: string, text: string) => {
         notices.push({ mind, text });
       },

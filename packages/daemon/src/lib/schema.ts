@@ -261,10 +261,19 @@ export const channels = sqliteTable(
     rules: text("rules"),
     char_limit: integer("char_limit"),
     private: integer("private").notNull().default(0),
+    // The commons marker (#819). The default channel — the shared room every mind
+    // and the spirit gather in — is identified by this flag, NOT by its name, so a
+    // house may rename its commons and the daemon still knows which channel is home.
+    is_default: integer("is_default").notNull().default(0),
     created_at: text("created_at").notNull().default(sql`(datetime('now'))`),
     updated_at: text("updated_at").notNull().default(sql`(datetime('now'))`),
   },
-  (table) => [uniqueIndex("idx_channels_name").on(table.name)],
+  (table) => [
+    uniqueIndex("idx_channels_name").on(table.name),
+    // At most one commons per install: a partial unique index over the marker so
+    // the "which channel is home" invariant is enforced by the DB, not by convention.
+    uniqueIndex("idx_channels_default").on(table.is_default).where(sql`is_default = 1`),
+  ],
 );
 
 export const messages = sqliteTable(

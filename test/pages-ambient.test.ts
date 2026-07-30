@@ -254,13 +254,13 @@ describe("a first front page reads as an arrival", () => {
 
   it("the commons front page is the house's, not an arrival", async () => {
     horizonAt("pip", ago(2 * DAY));
-    // A _system index carries a real author; it is still not one mind arriving.
+    // A _commons index carries a real author; it is still not one mind arriving.
     // (Its plain readable name is "the front page", so what marks an arrival is
     // the "put up their front page" phrasing, not the words "front page".)
-    publish("_system", "index.md", ago(1 * DAY), "whorl");
+    publish("_commons", "index.md", ago(1 * DAY), "whorl");
     const out = await ambientTurnContext("pip", ctx(), turn, NOW);
     assert.doesNotMatch(out ?? "", /put up their front page/);
-    assert.match(out ?? "", /whorl published "the front page" — _system\/index\.md\./);
+    assert.match(out ?? "", /whorl published "the front page" — _commons\/index\.md\./);
   });
 });
 

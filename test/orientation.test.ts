@@ -5,9 +5,9 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 import { eq } from "drizzle-orm";
 import { createUser } from "../packages/daemon/src/lib/auth.js";
 import {
-  ensureSystemChannel,
-  resetSystemChannelCache,
-} from "../packages/daemon/src/lib/chat/system-channel.js";
+  ensureCommonsChannel,
+  resetCommonsChannelCache,
+} from "../packages/daemon/src/lib/chat/commons-channel.js";
 import {
   initMindManager,
   tryGetMindManager,
@@ -16,7 +16,7 @@ import { startMindFull } from "../packages/daemon/src/lib/daemon/mind-service.js
 import { getDb } from "../packages/daemon/src/lib/db.js";
 import {
   deleteConversation,
-  getChannelSettings,
+  getDefaultChannelRow,
   getParticipants,
 } from "../packages/daemon/src/lib/events/conversations.js";
 import {
@@ -30,16 +30,16 @@ import {
 import { users } from "../packages/daemon/src/lib/schema.js";
 import { createSession } from "../packages/daemon/src/web/middleware/auth.js";
 
-/** Usernames present in the #system channel, for membership assertions. */
-async function systemChannelMembers(): Promise<string[]> {
-  const id = await ensureSystemChannel();
+/** Usernames present in the commons channel, for membership assertions. */
+async function commonsChannelMembers(): Promise<string[]> {
+  const id = await ensureCommonsChannel();
   return (await getParticipants(id)).map((p) => p.username);
 }
 
-/** Remove the #system channel so each test exercises fresh membership. */
-async function resetSystemChannel(): Promise<void> {
-  resetSystemChannelCache();
-  const ch = await getChannelSettings("system");
+/** Remove the commons channel so each test exercises fresh membership. */
+async function resetCommonsChannel(): Promise<void> {
+  resetCommonsChannelCache();
+  const ch = await getDefaultChannelRow();
   if (ch) await deleteConversation(ch.conversation_id);
 }
 
@@ -197,7 +197,7 @@ describe("seed gating", () => {
   });
 });
 
-// #617: seeds must stay out of the #system commons until they sprout. The spawn
+// #617: seeds must stay out of the commons until they sprout. The spawn
 // path (startMindFull) excludes seeds; the sprout endpoint is the moment a mind
 // joins. These lock both halves of that invariant.
 describe("system commons sprout gate", () => {
@@ -209,7 +209,7 @@ describe("system commons sprout gate", () => {
     await db.delete(users).where(eq(users.username, "commons-gate-admin"));
     await db.delete(users).where(eq(users.username, mindName));
     await removeMind(mindName);
-    await resetSystemChannel();
+    await resetCommonsChannel();
   }
 
   beforeEach(async () => {
@@ -219,7 +219,7 @@ describe("system commons sprout gate", () => {
   });
   afterEach(cleanup);
 
-  it("startMindFull does not join a seed to #system", async () => {
+  it("startMindFull does not join a seed to the commons", async () => {
     // Stub the mind manager so startMind is a no-op — we exercise startMindFull's
     // membership logic, not a real process spawn.
     const mgr = tryGetMindManager() ?? initMindManager();
@@ -232,15 +232,15 @@ describe("system commons sprout gate", () => {
       await startMindFull(mindName);
       // let fire-and-forget seed orientation settle before asserting
       await new Promise((r) => setTimeout(r, 300));
-      const members = await systemChannelMembers();
-      assert.ok(!members.includes(mindName), "seed must not be a #system member on spawn");
+      const members = await commonsChannelMembers();
+      assert.ok(!members.includes(mindName), "seed must not be a commons member on spawn");
     } finally {
       mgr.startMind = origStart;
       mgr.isRunning = origRunning;
     }
   });
 
-  it("sprouting joins the mind to #system", async () => {
+  it("sprouting joins the mind to the commons", async () => {
     await addMind(mindName, 4198, "seed");
     // Minimal mind dir so the sprout endpoint's dreaming/config steps have a home
     const dir = resolve(voluteHome(), "minds", mindName);
@@ -248,8 +248,8 @@ describe("system commons sprout gate", () => {
     writeFileSync(resolve(dir, "home/.config/volute.json"), "{}");
 
     // Not in the commons while still a seed
-    let members = await systemChannelMembers();
-    assert.ok(!members.includes(mindName), "seed should not be in #system before sprout");
+    let members = await commonsChannelMembers();
+    assert.ok(!members.includes(mindName), "seed should not be in the commons before sprout");
 
     const { default: app } = await import("../packages/daemon/src/web/app.js");
     const res = await app.request(`http://localhost/api/minds/${mindName}/sprout`, {
@@ -258,7 +258,7 @@ describe("system commons sprout gate", () => {
     });
     assert.equal(res.status, 200);
 
-    members = await systemChannelMembers();
-    assert.ok(members.includes(mindName), "sprouted mind should join #system");
+    members = await commonsChannelMembers();
+    assert.ok(members.includes(mindName), "sprouted mind should join the commons");
   });
 });

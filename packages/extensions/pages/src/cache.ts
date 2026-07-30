@@ -36,7 +36,7 @@ export function getSites(db: Database): { sites: Site[]; systemSite: Site | null
 
   const system = getSystemPages(db);
   const systemSite = system
-    ? { name: "_system", label: "Shared Pages", pages: mapFiles("_system", system.files) }
+    ? { name: "_commons", label: "Shared Pages", pages: mapFiles("_commons", system.files) }
     : null;
 
   return { sites, systemSite };

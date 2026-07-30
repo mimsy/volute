@@ -15,6 +15,13 @@
       "when": 1785424941257,
       "tag": "0001_migrate_spirit_user_type",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1785433691413,
+      "tag": "0002_closed_payback",
+      "breakpoints": true
     }
   ]
 }

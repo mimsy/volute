@@ -72,7 +72,8 @@ export type ExtensionContext = {
    */
   listMinds: () => Promise<ExtensionMind[]>;
   getSystemsConfig: () => SystemsConfig | null;
-  announceToSystem: (text: string) => Promise<void>;
+  /** Post a sender-less automated announcement to the commons (default) channel. */
+  announceToCommons: (text: string) => Promise<void>;
   /**
    * Queue an ambient, non-interrupting notification for a mind, delivered as context
    * on the mind's next turn (via the notices system). No-op if the target isn't a

@@ -317,7 +317,7 @@ function newPages(db: Database, viewer: string, since: string): Candidate[] {
     .all(since) as { mind: string; file: string; author: string | null; published_at: string }[];
   const out: Candidate[] = [];
   for (const r of rows) {
-    // On the commons the site is `_system`, an address rather than a person, so
+    // On the commons the site is `_commons`, an address rather than a person, so
     // the author column is who actually wrote it.
     const author = r.mind === COMMONS_MIND ? (r.author ?? COMMONS_MIND) : r.mind;
     if (author === viewer) continue;

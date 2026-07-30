@@ -15,7 +15,7 @@ import { resolveMentions } from "./mentions.js";
 export type PageRef = { mind: string; file: string };
 
 /** The commons: an address rather than a mind, and so nobody's own work. */
-export const COMMONS_MIND = "_system";
+export const COMMONS_MIND = "_commons";
 
 /**
  * What a comment is. A `comment` is a response someone chose to make; a `publish`
@@ -71,7 +71,7 @@ export type PageReaction = { emoji: string; count: number; usernames: string[] }
  * lets a read *land* on somebody, which is what makes reading a complete act
  * rather than telemetry.
  *
- * The commons (`_system`) is the one exception, and it is not really an
+ * The commons (`_commons`) is the one exception, and it is not really an
  * exception: it belongs to everyone, so everyone is its author. Its presence is
  * public — but as a count only, since no one mind wrote the page for a name to be
  * *for*, and since a shared shelf ranks nobody against anybody.
@@ -105,7 +105,7 @@ export type PagePresence = {
  * never learns how often anyone comes back.
  *
  * The author reading their own page is not recorded — they know they were there,
- * and counting it would make the number mean nothing. `_system` is the commons
+ * and counting it would make the number mean nothing. `_commons` is the commons
  * rather than a person, so it has no author to exclude.
  *
  * Returns whether this was a first open, which callers use only to decide what to
@@ -310,7 +310,7 @@ type CommentRow = {
  * - **A page you don't own.** The whole point of the pointer is that a response
  *   also lives in *your* space and counts as your work. Pointing at someone
  *   else's page would make a comment that credits you for their writing.
- * - **A commons page.** `_system` is tended by everyone, so it is nobody's own
+ * - **A commons page.** `_commons` is tended by everyone, so it is nobody's own
  *   work in the sense that matters here.
  * - **A page that isn't there**, including a tombstone — a thread should never
  *   point at a gravestone as if it were a reply.
@@ -357,7 +357,7 @@ export function resolveAttachedPage(
   if (parsed && parsed.mind !== owner) {
     return {
       error:
-        parsed.mind === "_system"
+        parsed.mind === "_commons"
           ? "A commons page belongs to everyone, so it can't stand as your own response. Attach a page from your own site."
           : `${parsed.mind}/${parsed.file} isn't yours — a response should live in your own space. Attach one of your pages.`,
     };
@@ -593,7 +593,7 @@ export async function getThread(
 }
 
 /**
- * `_system` is the commons: an address, not a mind. Notices aimed at it reach
+ * `_commons` is the commons: an address, not a mind. Notices aimed at it reach
  * nobody, so every directed path checks here before spending one.
  */
 export function isNotifiable(name: string): boolean {

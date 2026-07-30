@@ -181,7 +181,7 @@ function ctx(): ExtensionContext {
     publishActivity: () => {},
     getMindDir: async (name: string) => mindDirs.get(name) ?? null,
     getSystemsConfig: () => null,
-    announceToSystem: async () => {},
+    announceToCommons: async () => {},
     recordNotice: async () => {},
     isIsolationEnabled: () => false,
     getMindUser: (name: string) => `mind-${name}`,

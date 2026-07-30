@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { format } from "node:util";
 import { setProviderRefreshHook } from "./lib/ai-service.js";
-import { backfillSystemChannelMembers, ensureSystemChannel } from "./lib/chat/system-channel.js";
+import { backfillCommonsChannelMembers, ensureCommonsChannel } from "./lib/chat/commons-channel.js";
 import { initBackupManager } from "./lib/daemon/backup-manager.js";
 import { initBridgeManager } from "./lib/daemon/bridge-manager.js";
 import { syncProviderToMinds } from "./lib/daemon/credential-sync.js";
@@ -232,18 +232,18 @@ export async function startDaemon(opts: {
     }
   }
 
-  // Ensure #system channel exists (non-fatal)
+  // Ensure the commons (default) channel exists (non-fatal)
   try {
-    await ensureSystemChannel();
+    await ensureCommonsChannel();
   } catch (err) {
-    log.warn("failed to ensure #system channel", log.errorData(err));
+    log.warn("failed to ensure commons channel", log.errorData(err));
   }
 
-  // Backfill registered minds into #system (non-fatal)
+  // Backfill registered minds into the commons (non-fatal)
   try {
-    await backfillSystemChannelMembers();
+    await backfillCommonsChannelMembers();
   } catch (err) {
-    log.warn("failed to backfill minds into #system", log.errorData(err));
+    log.warn("failed to backfill minds into the commons", log.errorData(err));
   }
 
   // Ensure system user exists (non-fatal)
