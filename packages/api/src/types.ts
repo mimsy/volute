@@ -2,6 +2,8 @@
 // Entity types use snake_case fields to match database columns.
 // SSE event types in events.ts use camelCase because they're constructed in JS.
 
+import type { UserType } from "./user-type.js";
+
 export type ContentBlock =
   | { type: "text"; text: string }
   | { type: "tool_use"; name: string; input: unknown }
@@ -92,7 +94,7 @@ export type Conversation = {
 export type Participant = {
   userId: number;
   username: string;
-  userType: "human" | "mind" | "puppet" | "system";
+  userType: UserType;
   role: "owner" | "member";
   displayName?: string | null;
   description?: string | null;
@@ -225,7 +227,9 @@ export type AvailableUser = {
   id: number;
   username: string;
   role: "admin" | "user" | "pending" | "mind" | "system";
-  user_type: "human" | "mind" | "system";
+  user_type: UserType;
+  /** Server-computed locality flag for `mind` rows (see `isExternal`); absent otherwise. */
+  external?: boolean;
   display_name?: string | null;
   description?: string | null;
   avatar?: string | null;

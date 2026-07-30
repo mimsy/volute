@@ -4,6 +4,7 @@
  * This is the single fan-out path used by both the chat API (`/chat`) and the
  * bridge inbound path.
  */
+import { isLocalMind, isMind, isSystemSpirit } from "@volute/api/user-type";
 import { recordDeliveryFailure } from "../chat/delivery-notices.js";
 import { getTypingMap } from "../chat/typing.js";
 import { getMindManager } from "../daemon/mind-manager.js";
@@ -42,9 +43,7 @@ export interface FanOutResult {
 
 export async function fanOutToMinds(opts: FanOutOpts): Promise<FanOutResult> {
   const participants = opts.participants ?? (await getParticipants(opts.conversationId));
-  const mindParticipants = participants.filter(
-    (p) => p.userType === "mind" || p.userType === "system",
-  );
+  const mindParticipants = participants.filter(isLocalMind);
   const participantNames = participants.map((p) => p.username);
   const isDM = opts.isDM ?? participants.length === 2;
 
@@ -99,7 +98,7 @@ export async function fanOutToMinds(opts: FanOutOpts): Promise<FanOutResult> {
             `fan-out: skipping ${ap.username} (not running) for conversation ${opts.conversationId}`,
           );
           reportFailure(`${ap.username} is not running`);
-        } else if (ap.userType === "mind") {
+        } else if (isMind(ap)) {
           // External mind (no registry row): it pulls its messages, so this is its
           // expected steady state — but a stale registry (mind deleted, user row and
           // participation left behind) looks identical, so leave a trace (#723).
@@ -108,7 +107,7 @@ export async function fanOutToMinds(opts: FanOutOpts): Promise<FanOutResult> {
               `participant) for conversation ${opts.conversationId}`,
           );
         }
-        if (ap.userType === "system") {
+        if (isSystemSpirit(ap)) {
           // A stopped spirit reached outside POST /chat (bridge inbound, channels): start
           // it fire-and-forget so the NEXT message reaches it — this one is missed, same
           // as for any stopped mind. Advisory and never throws; there is no response

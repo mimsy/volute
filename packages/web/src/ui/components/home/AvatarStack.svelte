@@ -1,5 +1,6 @@
 <script lang="ts">
 import type { Participant } from "@volute/api";
+import { isMind } from "@volute/api/user-type";
 
 type AvatarParticipant = Pick<Participant, "username" | "userType" | "displayName" | "avatar">;
 
@@ -16,7 +17,7 @@ let overflow = $derived(Math.max(0, participants.length - max));
 
 function avatarUrl(p: AvatarParticipant): string | null {
   if (!p.avatar) return null;
-  return p.userType === "mind"
+  return isMind(p)
     ? `/api/minds/${encodeURIComponent(p.username)}/avatar`
     : `/api/auth/avatars/${encodeURIComponent(p.avatar)}`;
 }

@@ -1,5 +1,6 @@
 <script lang="ts">
 import type { ConversationWithParticipants, Mind } from "@volute/api";
+import { isMind, isSystemSpirit } from "@volute/api/user-type";
 import { Icon } from "@volute/ui";
 import { mindDotColor } from "../lib/format";
 import { activeMinds, onlineBrains } from "../lib/stores.svelte";
@@ -26,11 +27,11 @@ let typingSet = $derived(new Set(typingNames));
 
 let mindParticipants = $derived(
   conversation.participants
-    .filter((p) => p.userType === "mind")
+    .filter((p) => isMind(p))
     .map((p) => ({ participant: p, mind: mindsByName.get(p.username) })),
 );
 
-let userParticipants = $derived(conversation.participants.filter((p) => p.userType !== "mind"));
+let userParticipants = $derived(conversation.participants.filter((p) => !isMind(p)));
 
 let isChannel = $derived(conversation.type === "channel" && !!conversation.channel_name);
 let showInvite = $state(false);
@@ -104,7 +105,7 @@ function isBrainIridescent(username: string): boolean {
       }}>
         {#snippet children()}
           <div class="member-row">
-            {#if participant.userType === "system"}
+            {#if isSystemSpirit(participant)}
               <span
                 class="status-dot"
                 style:background="var(--text-0)"
@@ -119,7 +120,7 @@ function isBrainIridescent(username: string): boolean {
             <span class="member-name">
               {participant.displayName ?? participant.username}
             </span>
-            <Icon kind={participant.userType === "system" ? "spiral" : "brain"} class="type-icon" />
+            <Icon kind={isSystemSpirit(participant) ? "spiral" : "brain"} class="type-icon" />
           </div>
         {/snippet}
       </ProfileHoverCard>

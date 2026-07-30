@@ -2,3 +2,4 @@ export * from "./client.js";
 export * from "./events.js";
 export * from "./pagination.js";
 export * from "./types.js";
+export * from "./user-type.js";

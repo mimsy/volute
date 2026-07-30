@@ -1,5 +1,6 @@
 <script lang="ts">
 import type { ConversationWithParticipants, Mind } from "@volute/api";
+import { isMind } from "@volute/api/user-type";
 import { Dropdown } from "@volute/ui";
 import { setConversationPrivate } from "../../lib/client";
 import { getConversationLabel, mindDotColor } from "../../lib/format";
@@ -103,7 +104,7 @@ function openMenu(e: MouseEvent, convId: string) {
       </div>
     {/if}
     {#each directMessages as conv (conv.id)}
-      {@const otherMind = conv.participants?.find((p) => p.userType === "mind" && p.username !== username)}
+      {@const otherMind = conv.participants?.find((p) => isMind(p) && p.username !== username)}
       {@const isSeed = otherMind ? minds.find((m) => m.name === otherMind.username)?.stage === "seed" : false}
       {@const dmInfo = getDmInfo(conv)}
       {@const isGroup = (conv.participants?.length ?? 0) > 2}

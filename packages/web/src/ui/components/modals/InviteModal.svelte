@@ -1,5 +1,6 @@
 <script lang="ts">
 import type { AvailableUser, Mind } from "@volute/api";
+import { isMind } from "@volute/api/user-type";
 import { Modal } from "@volute/ui";
 import { fetchAvailableUsers, inviteToChannel } from "../../lib/client";
 import { mindDotColor } from "../../lib/format";
@@ -59,7 +60,7 @@ async function handleInvite(username: string) {
 }
 
 function dotColor(user: AvailableUser): string | undefined {
-  if (user.user_type === "mind") {
+  if (isMind(user)) {
     const mind = mindsByName.get(user.username);
     if (mind && activeMinds.has(mind.name)) return undefined;
     if (mind) return mindDotColor(mind);
@@ -70,7 +71,7 @@ function dotColor(user: AvailableUser): string | undefined {
 }
 
 function isIridescent(user: AvailableUser): boolean {
-  return user.user_type === "mind" && activeMinds.has(user.username);
+  return isMind(user) && activeMinds.has(user.username);
 }
 </script>
 

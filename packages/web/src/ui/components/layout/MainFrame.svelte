@@ -1,5 +1,6 @@
 <script lang="ts">
 import type { ConversationWithParticipants, Mind } from "@volute/api";
+import { isMind } from "@volute/api/user-type";
 import type { Selection } from "../../lib/navigate";
 import Home from "../../pages/Home.svelte";
 import MindPage from "../../pages/MindPage.svelte";
@@ -40,7 +41,7 @@ let channelConv = $derived.by(() => {
 
 let channelMindName = $derived.by(() => {
   if (!channelConv) return "";
-  const mindParticipant = channelConv.participants?.find((p) => p.userType === "mind");
+  const mindParticipant = channelConv.participants?.find((p) => isMind(p));
   return mindParticipant?.username ?? "";
 });
 
