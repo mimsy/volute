@@ -500,7 +500,7 @@ describe("intentions commands", () => {
     const ctx = makeCtx("volute", {
       username: "volute",
       role: "system",
-      user_type: "system",
+      user_type: "spirit",
     } as User);
     const result = await commands["review-due"].handler({ args: {}, flags: {}, rest: [] }, ctx);
     assert.ok("output" in result);

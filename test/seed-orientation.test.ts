@@ -22,8 +22,8 @@ describe("buildSeedOrientation", () => {
     assert.ok(msg.includes("Your creator is another mind, orchid."));
   });
 
-  it("words the spirit (system) creator as the spirit of this system", () => {
-    const msg = buildSeedOrientation("volute", "system");
+  it("words the spirit creator as the spirit of this system", () => {
+    const msg = buildSeedOrientation("volute", "spirit");
     assert.ok(msg.includes("Your creator is the spirit of this system (volute)."));
   });
 

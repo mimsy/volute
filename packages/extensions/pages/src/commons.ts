@@ -89,7 +89,7 @@ export async function maybeSendCommonsCue(ctx: ExtensionContext, repoDir: string
 
   try {
     // Gate on the spirit's project existing, not on its user row's type: the spirit
-    // shares the system user account (`user_type: "system"`), so a type check here
+    // shares the system user account (`user_type: "spirit"`), so a type check here
     // never passed and the cue was never sent on any system.
     if (!(await ctx.getMindDir(spirit))) return; // spirit not created yet — retry next start
     await ctx.recordNotice(

@@ -170,15 +170,15 @@ describe("maybeSendCommonsCue", () => {
     assert.ok(!existsSync(resolve(dataDir, ".commons-cue-sent")));
   });
 
-  // Regression: the spirit shares the system user account (`user_type: "system"`),
+  // Regression: the spirit shares the system user account (`user_type: "spirit"`),
   // so gating the cue on the users table meant it never fired on any install.
   // The gate is the spirit's project existing, not what its user row says it is —
   // hence the production-shaped user row here, which fails the moment anyone
   // reintroduces a `user_type === "mind"` check (verified by reverting the fix).
-  it("sends to the spirit even though its user row is user_type system", async () => {
+  it("sends to the spirit even though its user row is user_type spirit", async () => {
     const { ctx, notices } = makeCtx({
       getUserByUsername: async (username: string) =>
-        ({ id: 1, username, role: "system", user_type: "system" }) as unknown as User,
+        ({ id: 1, username, role: "system", user_type: "spirit" }) as unknown as User,
     });
     await maybeSendCommonsCue(ctx, repoDir);
     assert.equal(notices.length, 1);

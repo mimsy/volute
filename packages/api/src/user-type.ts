@@ -3,10 +3,9 @@
 // raw `user_type === "mind"` comparison — which is wrong by default and right by
 // accident (it silently excludes the spirit and puppets). See issue #817.
 //
-// The stored `user_type` values are FROZEN this wave: renaming any of them
-// (e.g. "system" → "spirit", "brain" → "human") is a separate later migration.
-// Centralizing the checks here is what makes that rename a change to these
-// predicate bodies plus one DB migration, not a sweep of ~30 call sites.
+// Renaming a stored `user_type` value is a change to these predicate bodies plus
+// one DB migration, not a sweep of ~30 call sites — that centralization is the
+// whole point. The `"system" → "spirit"` rename (#819) was exactly that edit.
 
 /**
  * Every `user_type` value written to the `users` table. This must stay in sync
@@ -14,10 +13,10 @@
  * type-check as something it isn't (a puppet slipping through a `"human" | "mind"
  * | "system"` union is exactly the bug at issue). Empirically, four values are
  * written: humans default to `"human"`, minds (local and external) to `"mind"`,
- * bridge stand-ins to `"puppet"`, and the system spirit to `"system"`. `"brain"`
+ * bridge stand-ins to `"puppet"`, and the system spirit to `"spirit"`. `"brain"`
  * is NOT a live `user_type` value (the `brain_*` activity events are unrelated).
  */
-export type UserType = "human" | "mind" | "puppet" | "system";
+export type UserType = "human" | "mind" | "puppet" | "spirit";
 
 /**
  * The minimal shape the predicates read. Deliberately loose so it accepts every
@@ -56,11 +55,12 @@ export function isMind(u: UserTypeCarrier): boolean {
 
 /**
  * The system spirit (the keeper) — the actor with the special coordinator
- * attributes/abilities. Currently the sole `user_type: "system"` row. Kept as its
- * own predicate so the later `"system" → "spirit"` rename is a one-line edit here.
+ * attributes/abilities. The sole `user_type: "spirit"` row. Kept as its own
+ * predicate (named `isSystemSpirit`, referenced across packages) so the stored
+ * value could flip here in one line.
  */
 export function isSystemSpirit(u: UserTypeCarrier): boolean {
-  return userTypeOf(u) === "system";
+  return userTypeOf(u) === "spirit";
 }
 
 /**
@@ -76,7 +76,7 @@ export function isSystemSpirit(u: UserTypeCarrier): boolean {
  */
 export function isLocalMind(u: UserTypeCarrier): boolean {
   const t = userTypeOf(u);
-  return t === "system" || (t === "mind" && u.external !== true);
+  return t === "spirit" || (t === "mind" && u.external !== true);
 }
 
 /**

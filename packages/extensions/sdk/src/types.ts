@@ -21,7 +21,7 @@ export type User = {
   id: number;
   username: string;
   role: "admin" | "user" | "pending" | "system";
-  user_type: "human" | "mind" | "system";
+  user_type: "human" | "mind" | "spirit";
   display_name: string | null;
   description: string | null;
   avatar: string | null;
@@ -77,7 +77,7 @@ export type ExtensionContext = {
    * Queue an ambient, non-interrupting notification for a mind, delivered as context
    * on the mind's next turn (via the notices system). No-op if the target isn't a
    * registered mind — which includes the system spirit, even though the spirit's
-   * user row is `user_type: "system"` rather than `"mind"`.
+   * user row is `user_type: "spirit"` rather than `"mind"`.
    * Use for low-urgency signals (a comment on a note, a reaction) that shouldn't trigger
    * a turn on their own. Never throws.
    */

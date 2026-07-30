@@ -32,7 +32,7 @@ describe("system user", () => {
   it("getOrCreateSystemUser creates user with correct fields", async () => {
     const user = await getOrCreateSystemUser();
     assert.equal(user.username, "volute");
-    assert.equal(user.user_type, "system");
+    assert.equal(user.user_type, "spirit");
     assert.equal(user.display_name, "volute");
     assert.equal(user.role, "system");
   });

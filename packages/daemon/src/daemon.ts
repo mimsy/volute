@@ -120,7 +120,7 @@ export async function startDaemon(opts: {
     await db
       .update(users)
       .set({ role: "system" })
-      .where(and(eq(users.user_type, "system"), eq(users.role, "user")));
+      .where(and(eq(users.user_type, "spirit"), eq(users.role, "user")));
   } catch (err) {
     log.warn("failed to migrate system user role", log.errorData(err));
   }

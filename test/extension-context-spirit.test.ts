@@ -30,7 +30,7 @@ import { provisionSpiritSchedule } from "../packages/extensions/intentions/src/s
  * The extension SDK's context helpers used to assume every mind looks like a
  * mind: a `user_type: "mind"` row, living at `$VOLUTE_MINDS_DIR/<name>`. The
  * system spirit is neither — it shares the system user account (`user_type:
- * "system"`) and lives under the system dir. Both assumptions silently no-opped
+ * "spirit"`) and lives under the system dir. Both assumptions silently no-opped
  * the spirit bootstrap paths of the pages and intentions extensions, so these
  * tests exercise the real context rather than a fake.
  */
@@ -84,7 +84,7 @@ describe("extension context: spirit resolution", () => {
     assert.equal(ctx.getSpiritName(), spiritName);
   });
 
-  it("records a notice for the spirit despite its user_type being system", async () => {
+  it("records a notice for the spirit despite its user_type being spirit", async () => {
     const ctx = await buildExtensionContext(manifest, dataDir, noopMw);
     await ctx.recordNotice(spiritName, "commons has no index yet");
 

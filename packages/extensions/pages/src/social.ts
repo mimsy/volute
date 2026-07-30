@@ -169,7 +169,7 @@ export async function getPresence(
     if (!cache.has(row.reader_id)) cache.set(row.reader_id, await getUser(row.reader_id));
     const user = cache.get(row.reader_id) ?? null;
     // Test for human rather than for mind. The spirit's row is `user_type:
-    // "system"`, not `"mind"` — a `!== "mind"` test here would call the house's
+    // "spirit"`, not `"mind"` — a `!== "mind"` test here would call the house's
     // most active commons reader a "reader" and silently mean "a human came by".
     // #786 fixed exactly this mistake one directory over (see commons.ts).
     if (user?.user_type === "human") allMinds = false;

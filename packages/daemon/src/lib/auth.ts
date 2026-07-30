@@ -12,7 +12,7 @@ export type User = {
   id: number;
   username: string;
   role: "admin" | "user" | "pending" | "system";
-  user_type: "human" | "mind" | "system";
+  user_type: "human" | "mind" | "spirit";
   display_name: string | null;
   description: string | null;
   avatar: string | null;
@@ -146,7 +146,7 @@ export async function getOrCreateMindUser(mindName: string): Promise<User> {
     .where(
       and(
         eq(users.username, mindName),
-        or(eq(users.user_type, "mind"), eq(users.user_type, "system")),
+        or(eq(users.user_type, "mind"), eq(users.user_type, "spirit")),
       ),
     )
     .get();
@@ -171,7 +171,7 @@ export async function getOrCreateMindUser(mindName: string): Promise<User> {
       .where(
         and(
           eq(users.username, mindName),
-          or(eq(users.user_type, "mind"), eq(users.user_type, "system")),
+          or(eq(users.user_type, "mind"), eq(users.user_type, "spirit")),
         ),
       )
       .get();
@@ -190,7 +190,7 @@ export async function getOrCreateSystemUser(): Promise<User> {
   const existing = await db
     .select(userSelectFields)
     .from(users)
-    .where(eq(users.user_type, "system"))
+    .where(eq(users.user_type, "spirit"))
     .get();
   if (existing) {
     if ((existing as User).username !== spiritName) {
@@ -211,7 +211,7 @@ export async function getOrCreateSystemUser(): Promise<User> {
         username: spiritName,
         password_hash: "!system",
         role: "system",
-        user_type: "system",
+        user_type: "spirit",
         display_name: spiritName,
       })
       .returning(userSelectFields);
@@ -221,7 +221,7 @@ export async function getOrCreateSystemUser(): Promise<User> {
       const retried = await db
         .select(userSelectFields)
         .from(users)
-        .where(eq(users.user_type, "system"))
+        .where(eq(users.user_type, "spirit"))
         .get();
       if (retried) return retried as User;
     }

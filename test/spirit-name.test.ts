@@ -88,7 +88,7 @@ describe("name validation with a named spirit", () => {
 describe("system user follows the spirit name", () => {
   async function deleteSystemUsers() {
     const db = await getDb();
-    await db.delete(users).where(eq(users.user_type, "system"));
+    await db.delete(users).where(eq(users.user_type, "spirit"));
   }
 
   afterEach(async () => {
@@ -110,7 +110,7 @@ describe("system user follows the spirit name", () => {
     const after = await getOrCreateSystemUser();
     assert.equal(after.id, before.id, "same user, renamed");
     assert.equal(after.username, "iris");
-    assert.equal(after.user_type, "system");
+    assert.equal(after.user_type, "spirit");
   });
 
   it("getOrCreateMindUser returns the system user for the spirit name", async () => {
@@ -120,6 +120,6 @@ describe("system user follows the spirit name", () => {
     const systemUser = await getOrCreateSystemUser();
     const mindUser = await getOrCreateMindUser("iris");
     assert.equal(mindUser.id, systemUser.id);
-    assert.equal(mindUser.user_type, "system");
+    assert.equal(mindUser.user_type, "spirit");
   });
 });
