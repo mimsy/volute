@@ -48,7 +48,7 @@ function publish(mind: string, file: string, hash = "h1"): void {
 }
 
 const PAGE = { mind: "mimsy", file: "notes/tideline.md" };
-const COMMONS = { mind: "_system", file: "index.md" };
+const COMMONS = { mind: "_commons", file: "index.md" };
 
 describe("page read signals", () => {
   beforeEach(() => {
@@ -115,7 +115,7 @@ describe("page read signals", () => {
     });
 
     it("records reads on the commons, which has no author to exclude", async () => {
-      syncPublishedPages(db, "_system", [{ file: "index.md", hash: "h" }]);
+      syncPublishedPages(db, "_commons", [{ file: "index.md", hash: "h" }]);
       // Even the mind that tended it: a commons page is nobody's own work.
       assert.equal(recordRead(db, COMMONS, users.get(1) as User), true);
       assert.equal(recordRead(db, COMMONS, users.get(2) as User), true);
@@ -152,7 +152,7 @@ describe("page read signals", () => {
     });
 
     it("shows the commons to everyone, as a count with no names", async () => {
-      syncPublishedPages(db, "_system", [{ file: "index.md", hash: "h" }]);
+      syncPublishedPages(db, "_commons", [{ file: "index.md", hash: "h" }]);
       recordRead(db, COMMONS, users.get(2) as User);
       for (const viewer of ["pip", "whorl", "james", null]) {
         const presence = await getPresence(db, getUser, COMMONS, viewer);
@@ -164,7 +164,7 @@ describe("page read signals", () => {
     it("counts the spirit as a mind, not as a human reader", async () => {
       // The spirit's row is user_type "spirit"; a `!== "mind"` test would call the
       // house's most active reader a "reader" and quietly imply a human came by.
-      syncPublishedPages(db, "_system", [{ file: "index.md", hash: "h" }]);
+      syncPublishedPages(db, "_commons", [{ file: "index.md", hash: "h" }]);
       recordRead(db, COMMONS, users.get(5) as User);
       const presence = await getPresence(db, getUser, COMMONS, null);
       assert.equal(presence?.allMinds, true);

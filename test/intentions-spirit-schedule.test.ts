@@ -26,7 +26,7 @@ function makeCtx(overrides: {
     publishActivity: () => {},
     getMindDir: overrides.getMindDir,
     getSystemsConfig: () => null,
-    announceToSystem: async () => {},
+    announceToCommons: async () => {},
     recordNotice: async () => {},
     isIsolationEnabled: () => false,
     getMindUser: (name: string) => `mind-${name}`,

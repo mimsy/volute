@@ -22,9 +22,9 @@ import {
 import { deleteMindUser, getDisplayNames, withSenderDisplayNames } from "../../lib/auth.js";
 import {
   announceSprout,
-  announceToSystem,
-  joinSystemChannelForMind,
-} from "../../lib/chat/system-channel.js";
+  announceToCommons,
+  joinCommonsChannelForMind,
+} from "../../lib/chat/commons-channel.js";
 import {
   drainEvents,
   eventLabel,
@@ -948,12 +948,12 @@ const app = new Hono<AuthEnv>()
         },
       });
 
-      // Announce to #system channel. Fire-and-forget, but surface failures — this is the
-      // primary producer of #system event rows, and announceToSystem propagates DB errors
-      // (ensureSystemChannel/addMessage/getParticipants), so a silent swallow would make the
+      // Announce to the commons channel. Fire-and-forget, but surface failures — this is the
+      // primary producer of commons event rows, and announceToCommons propagates DB errors
+      // (ensureCommonsChannel/addMessage/getParticipants), so a silent swallow would make the
       // join moment vanish without a trace.
-      announceToSystem(`${name} has joined`).catch((err) =>
-        log.warn(`failed to announce ${name} joining #system`, log.errorData(err)),
+      announceToCommons(`${name} has joined`).catch((err) =>
+        log.warn(`failed to announce ${name} joining the commons`, log.errorData(err)),
       );
 
       // Warn (don't block) when the mind will spawn without usable model credentials,
@@ -1858,18 +1858,18 @@ const app = new Hono<AuthEnv>()
     }
     await setMindStage(name, "sprouted");
 
-    // Join the #system commons now. Seeds are deliberately kept out until they
+    // Join the commons now. Seeds are deliberately kept out until they
     // sprout (backfill and the spawn path both exclude stage="seed"), so sprouting
     // is the moment a mind enters the commons. Joining here — rather than relying on
     // the incidental restart that follows — makes membership a direct consequence of
     // sprouting for every caller. Idempotent; fail-soft so a join hiccup can't block
     // the sprout itself.
-    await joinSystemChannelForMind(name).catch((err) =>
-      log.warn(`failed to join #system on sprout for ${name}`, log.errorData(err)),
+    await joinCommonsChannelForMind(name).catch((err) =>
+      log.warn(`failed to join the commons on sprout for ${name}`, log.errorData(err)),
     );
 
     // Make sprouting a visible event (#665): prompt the spirit to hand-write a
-    // welcome in #system, plus a persisted `mind_sprouted` activity event
+    // welcome in the commons, plus a persisted `mind_sprouted` activity event
     // (home-feed card + immediate stage-badge refresh). Fail-soft — see
     // announceSprout.
     await announceSprout(name);

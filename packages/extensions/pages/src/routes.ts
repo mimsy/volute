@@ -93,7 +93,7 @@ export function createRoutes(ctx: ExtensionContext): Hono {
         const recentPages = getRecentPagesList(ctx.db, { mind: mind || undefined, limit });
         return c.json(
           recentPages.map((p) => {
-            const isCommons = p.mind === "_system";
+            const isCommons = p.mind === "_commons";
             return {
               id: `page-${p.mind}-${p.file}`,
               title: isCommons ? `commons — ${p.file}` : `${p.mind}/${p.file}`,
@@ -357,7 +357,7 @@ export function createPublicRoutes(ctx: ExtensionContext): Hono {
 
       let pagesRoot: string;
       let blockDotfiles = false;
-      if (name === "_system") {
+      if (name === "_commons") {
         // Serve from the pages repo root (main branch checked out here).
         // Block dotfiles since .git/ is present in this directory.
         pagesRoot = resolve(ctx.dataDir, "repo");

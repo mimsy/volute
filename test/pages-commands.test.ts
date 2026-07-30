@@ -154,14 +154,14 @@ describe("pages db", () => {
     assert.equal(pages[0].mind, "mind1");
   });
 
-  it("syncSystemPages syncs _system entries", () => {
+  it("syncSystemPages syncs _commons entries", () => {
     syncSystemPages(db, ph("index.html", "about.html"));
-    const pages = getPublishedPages(db, "_system");
+    const pages = getPublishedPages(db, "_commons");
     assert.equal(pages.length, 2);
 
     // Removes deleted files, keeps existing
     syncSystemPages(db, ph("index.html"));
-    const after = getPublishedPages(db, "_system");
+    const after = getPublishedPages(db, "_commons");
     assert.equal(after.length, 1);
     assert.equal(after[0].file, "index.html");
   });
@@ -199,7 +199,7 @@ describe("pages db", () => {
     assert.equal(sites[0].files[1].file, "about.html");
   });
 
-  it("getAllSites excludes _system pages", () => {
+  it("getAllSites excludes _commons pages", () => {
     syncPublishedPages(db, "mind1", ph("index.html"));
     syncSystemPages(db, ph("shared.html"));
 
@@ -210,14 +210,14 @@ describe("pages db", () => {
 
   it("syncSystemPages stores author", () => {
     syncSystemPages(db, ph("index.html"), "alice");
-    const pages = getPublishedPages(db, "_system");
+    const pages = getPublishedPages(db, "_commons");
     assert.equal(pages[0].author, "alice");
   });
 
   it("syncSystemPages updates author when content changes", () => {
     syncSystemPages(db, ph("index.html"), "alice");
     syncSystemPages(db, [{ file: "index.html", hash: "changed" }], "bob");
-    const pages = getPublishedPages(db, "_system");
+    const pages = getPublishedPages(db, "_commons");
     assert.equal(pages[0].author, "bob");
   });
 
@@ -235,7 +235,7 @@ describe("pages db", () => {
       "bob",
     );
 
-    const pages = getPublishedPages(db, "_system");
+    const pages = getPublishedPages(db, "_commons");
     const index = pages.find((p) => p.file === "index.html");
     const about = pages.find((p) => p.file === "about.html");
     assert.equal(index?.author, "alice");
@@ -247,7 +247,7 @@ describe("pages db", () => {
   it("syncSystemPages preserves author when not provided", () => {
     syncSystemPages(db, ph("index.html"), "alice");
     syncSystemPages(db, [{ file: "index.html", hash: "changed" }]);
-    const pages = getPublishedPages(db, "_system");
+    const pages = getPublishedPages(db, "_commons");
     assert.equal(pages[0].author, "alice");
   });
 
@@ -261,12 +261,12 @@ describe("pages db", () => {
     syncSystemPages(db, ph("index.html", "about.html"), "alice");
     // ...and make about.html strictly newer, so recency alone would rank it first.
     db.prepare(
-      "UPDATE published_pages SET updated_at = '2999-01-01 00:00:00' WHERE mind = '_system' AND file = 'about.html'",
+      "UPDATE published_pages SET updated_at = '2999-01-01 00:00:00' WHERE mind = '_commons' AND file = 'about.html'",
     ).run();
 
     const site = getSystemPages(db);
     assert.ok(site);
-    assert.equal(site.mind, "_system");
+    assert.equal(site.mind, "_commons");
     assert.equal(site.files.length, 2);
     // index leads despite about.html being both newer and higher-id
     assert.equal(site.files[0].file, "index.html");
@@ -316,7 +316,7 @@ describe("pages commands", () => {
       publishActivity: (e: any) => events.push(e),
       getMindDir: async (name: string) => (name === mindName ? mindDir : null),
       getSystemsConfig: () => null,
-      announceToSystem: async () => {},
+      announceToCommons: async () => {},
       isIsolationEnabled: () => false,
       getMindUser: (name: string) => `mind-${name}`,
       dataDir,
@@ -518,7 +518,7 @@ describe("pages commands", () => {
       ctx,
     );
     assert.ok("output" in result);
-    assert.ok(result.output.includes("_system"));
+    assert.ok(result.output.includes("_commons"));
     assert.ok(result.output.includes("alice"));
     assert.ok(result.output.includes("mind-a"));
   });

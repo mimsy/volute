@@ -465,8 +465,8 @@ describe("a comment may carry a page pointer", () => {
     });
 
     it("refuses a commons page, which belongs to everyone rather than to you", () => {
-      publish("_system", "index.md", "h1");
-      const found = resolveAttachedPage(db, "pip", "_system/index.md");
+      publish("_commons", "index.md", "h1");
+      const found = resolveAttachedPage(db, "pip", "_commons/index.md");
       assert.ok("error" in found);
       assert.match(found.error, /belongs to everyone/);
     });
@@ -668,7 +668,7 @@ describe("@mind-name: where it appears decides its tier", () => {
       // files that act happened to change.
       const hailed = await notifyMentionedInComment("reworked @pip's section", ctx, {
         actor: "gardener",
-        ref: { mind: "_system", file: "index.md" },
+        ref: { mind: "_commons", file: "index.md" },
         where: "the commons (index.md, garden/lore.md)",
       });
       assert.deepEqual(hailed, ["pip"]);
@@ -687,8 +687,8 @@ describe("@mind-name: where it appears decides its tier", () => {
     });
   });
 
-  it("never spends a notice on _system, which is an address and not a mind", () => {
-    assert.equal(isNotifiable("_system"), false);
+  it("never spends a notice on _commons, which is an address and not a mind", () => {
+    assert.equal(isNotifiable("_commons"), false);
     assert.equal(isNotifiable("mimsy"), true);
   });
 });
@@ -761,8 +761,8 @@ describe("the publish message lands in the page's thread", () => {
   afterEach(() => db.close());
 
   it("is recorded as a publish row, distinguishable from a response", async () => {
-    publish("_system", "index.md", "h1");
-    const ref = { mind: "_system", file: "index.md" };
+    publish("_commons", "index.md", "h1");
+    const ref = { mind: "_commons", file: "index.md" };
     await addComment(db, getUser, ref, 1, "added a residents section", { kind: "publish" });
     await addComment(db, getUser, ref, 1, "and a thought about it");
 
@@ -791,7 +791,7 @@ function fakeCtx(mindDir: string): ExtensionContext {
     publishActivity: () => {},
     getMindDir: async () => mindDir,
     getSystemsConfig: () => null,
-    announceToSystem: async () => {},
+    announceToCommons: async () => {},
     recordNotice: async () => {},
     isIsolationEnabled: () => false,
     getMindUser: (name: string) => `mind-${name}`,

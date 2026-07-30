@@ -493,6 +493,7 @@ export type ChannelRow = {
   rules: string | null;
   char_limit: number | null;
   private: number;
+  is_default: number;
   created_at: string;
   updated_at: string;
 };
@@ -554,6 +555,38 @@ export async function getChannelByName(name: string): Promise<Conversation | nul
   const ch = await db.select().from(channels).where(eq(channels.name, name)).get();
   if (!ch) return null;
   return getConversation(ch.conversation_id);
+}
+
+/**
+ * The commons: the default channel, resolved by its `is_default` marker rather
+ * than by a magic name (#819). Returns the raw channel row, or null when no
+ * channel is marked default yet (a fresh install before `ensureCommonsChannel`).
+ */
+export async function getDefaultChannelRow(): Promise<ChannelRow | null> {
+  const db = await getDb();
+  const row = await db.select().from(channels).where(eq(channels.is_default, 1)).get();
+  return (row as ChannelRow) ?? null;
+}
+
+/** The default channel as a Conversation, resolved by marker. Null if none marked. */
+export async function getDefaultChannel(): Promise<Conversation | null> {
+  const row = await getDefaultChannelRow();
+  if (!row) return null;
+  return getConversation(row.conversation_id);
+}
+
+/**
+ * Mark a channel as the commons (the default). Clears any prior marker first so
+ * the "at most one default" invariant (a partial unique index) always holds —
+ * re-pointing the commons is a supported move now that identity isn't its name.
+ */
+export async function markChannelDefault(conversationId: string): Promise<void> {
+  const db = await getDb();
+  await db.update(channels).set({ is_default: 0 }).where(eq(channels.is_default, 1));
+  await db
+    .update(channels)
+    .set({ is_default: 1 })
+    .where(eq(channels.conversation_id, conversationId));
 }
 
 export async function getChannelSettings(name: string): Promise<ChannelRow | null> {

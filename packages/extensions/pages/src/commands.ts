@@ -101,7 +101,9 @@ async function writeResponsePage(
 /** Read a published page's body from the served snapshot. */
 function readPageBody(ctx: ExtensionContext, ref: PageRef): string | null {
   const root =
-    ref.mind === "_system" ? resolve(ctx.dataDir, "repo") : resolve(ctx.dataDir, "sites", ref.mind);
+    ref.mind === "_commons"
+      ? resolve(ctx.dataDir, "repo")
+      : resolve(ctx.dataDir, "sites", ref.mind);
   const target = resolve(root, ref.file);
   if (target !== root && !target.startsWith(root + sep)) return null;
   try {
@@ -156,7 +158,7 @@ export function createCommands(): Record<string, ExtensionCommand> {
             bodyHtml: body.slice(0, 500),
           },
         });
-        await ctx.announceToSystem(
+        await ctx.announceToCommons(
           `${mindName} published a page: "${title}" — volute pages read ${ref}`,
         );
 
@@ -199,7 +201,7 @@ export function createCommands(): Record<string, ExtensionCommand> {
       args: [{ name: "ref", required: true, description: "Page reference (<mind>/<file>)" }],
       examples: [
         "volute pages read mimsy/notes/the-tideline.md",
-        "volute pages read _system/index.md",
+        "volute pages read _commons/index.md",
       ],
       handler: async ({ args }, ctx) => {
         const db = ctx.db;
@@ -519,14 +521,14 @@ export function createCommands(): Record<string, ExtensionCommand> {
                     await addComment(
                       ctx.db,
                       ctx.getUser,
-                      { mind: "_system", file },
+                      { mind: "_commons", file },
                       author.id,
                       message,
                       { kind: "publish" },
                     );
                   } catch (err) {
                     console.warn(
-                      `[pages] failed to record publish message on _system/${file}: ${(err as Error).message}`,
+                      `[pages] failed to record publish message on _commons/${file}: ${(err as Error).message}`,
                     );
                   }
                 }
@@ -537,7 +539,7 @@ export function createCommands(): Record<string, ExtensionCommand> {
                 if (pageFiles.length > 0) {
                   await notifyMentionedInComment(message, ctx, {
                     actor: mindName,
-                    ref: { mind: "_system", file: pageFiles[0] },
+                    ref: { mind: "_commons", file: pageFiles[0] },
                     where: `the commons (${pageFiles.join(", ")})`,
                   });
                 }
@@ -554,12 +556,12 @@ export function createCommands(): Record<string, ExtensionCommand> {
                   shared: true,
                   files,
                   message,
-                  ...(pageFile ? { iframeUrl: `/ext/pages/public/_system/${pageFile}` } : {}),
+                  ...(pageFile ? { iframeUrl: `/ext/pages/public/_commons/${pageFile}` } : {}),
                 },
               });
 
               try {
-                await ctx.announceToSystem(
+                await ctx.announceToCommons(
                   `${mindName} tended the commons: ${fileList} — "${message}"`,
                 );
 
@@ -671,9 +673,9 @@ export function createCommands(): Record<string, ExtensionCommand> {
 
           if (system) {
             for (const f of system.files) {
-              const url = `http://localhost:${port}/ext/pages/public/_system/${f.file}`;
+              const url = `http://localhost:${port}/ext/pages/public/_commons/${f.file}`;
               const author = f.author ? ` (${f.author})` : "";
-              lines.push(`_system${author.padStart(10)} ${f.file.padEnd(25)} ${url}`);
+              lines.push(`_commons${author.padStart(10)} ${f.file.padEnd(25)} ${url}`);
             }
           }
           for (const site of sites) {

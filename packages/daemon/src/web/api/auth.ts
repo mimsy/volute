@@ -23,7 +23,7 @@ import {
   updateUserProfile,
   verifyUser,
 } from "../../lib/auth.js";
-import { joinSystemChannel } from "../../lib/chat/system-channel.js";
+import { joinCommonsChannel } from "../../lib/chat/commons-channel.js";
 import { getDb } from "../../lib/db.js";
 import { broadcast } from "../../lib/events/activity-events.js";
 import {
@@ -54,10 +54,10 @@ async function withExternalFlag<T extends { username: string; user_type: string 
   return list.map((u) => (isMind(u) ? { ...u, external: !local.has(u.username) } : u));
 }
 
-/** Only join system channel when running inside the daemon (not in tests). */
-function tryJoinSystem(userId: number): void {
+/** Only join the commons channel when running inside the daemon (not in tests). */
+function tryJoinCommons(userId: number): void {
   if (!process.env.VOLUTE_DAEMON_TOKEN) return;
-  joinSystemChannel(userId).catch(() => {});
+  joinCommonsChannel(userId).catch(() => {});
 }
 
 import {
@@ -428,8 +428,8 @@ const app = new Hono()
       setCookie(c, "volute_session", sessionId, SESSION_COOKIE_OPTIONS);
     }
 
-    // Auto-join #system channel
-    tryJoinSystem(user.id);
+    // Auto-join the commons channel
+    tryJoinCommons(user.id);
 
     return c.json({ id: user.id, username: user.username, role: user.role });
   })
@@ -444,8 +444,8 @@ const app = new Hono()
     const sessionId = await createSession(user.id);
     setCookie(c, "volute_session", sessionId, SESSION_COOKIE_OPTIONS);
 
-    // Auto-join #system channel
-    tryJoinSystem(user.id);
+    // Auto-join the commons channel
+    tryJoinCommons(user.id);
 
     return c.json({ id: user.id, username: user.username, role: user.role, sessionId });
   })

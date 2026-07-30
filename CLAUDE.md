@@ -155,7 +155,7 @@ Extensions add functionality to Volute — custom UI sections, API routes, datab
 - `initDb?(db)` — per-extension SQLite DB at `~/.volute/system/extension-data/{id}/data.db`
 - `onDaemonStart?()`, `onSpiritReady?(ctx)`, `onDaemonStop?()`, `onMindStart?(name, ctx)`, `onMindStop?(name)` — lifecycle hooks. Spirit-dependent bootstrap belongs in `onSpiritReady`: `onDaemonStart` runs before the spirit exists on a fresh install
 
-**Extension context** (passed to `routes()`/`publicRoutes()`): `db`, `dataDir`, `authMiddleware`, `requireSelf`, `resolveUser(c)`, `getUser`/`getUserByUsername`/`getMindUser`, `publishActivity(event)`, `announceToSystem`, `recordNotice`, `getMindDir(name)`, `isIsolationEnabled`, `getSystemsConfig()`.
+**Extension context** (passed to `routes()`/`publicRoutes()`): `db`, `dataDir`, `authMiddleware`, `requireSelf`, `resolveUser(c)`, `getUser`/`getUserByUsername`/`getMindUser`, `publishActivity(event)`, `announceToCommons`, `recordNotice`, `getMindDir(name)`, `isIsolationEnabled`, `getSystemsConfig()`.
 
 **Extension UI** — standalone Svelte apps built with Vite, served as static assets at `/ext/{id}/`, rendered in iframes by the main app. Uses hash routing internally; communicates navigation to parent via `window.parent.postMessage({ type: "navigate", path })`. Extensions can import shared UI components from `@volute/ui` (add `"@volute/ui": "*"` to dependencies). Theme is shared via auto-generated `ext-theme.css` (built from `@volute/ui`'s `theme.css` + `base.css`).
 

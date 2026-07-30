@@ -264,7 +264,7 @@ function makeCtx(dir: string) {
     getSystemsConfig: () => null,
     resolveUser: () => null,
     publishActivity: () => {},
-    announceToSystem: async () => {},
+    announceToCommons: async () => {},
     isIsolationEnabled: () => false,
     getMindUser: (name: string) => `mind-${name}`,
   };

@@ -238,6 +238,38 @@ export function initDb(db: Database): void {
     "body_mind TEXT",
     "body_file TEXT",
   ]);
+  migrateCommonsMind(db);
+}
+
+/**
+ * #819: the commons pages identity moved `_system` → `_commons`. Rewrite every
+ * persisted reference in place (data-preserving — the page files themselves live
+ * in the git repo and are untouched here). The social tables key on `(mind, file)`
+ * matching `published_pages`, so all of them must move together or the commons'
+ * comments, reactions, reads, citations and links would orphan. `ambient_shown`
+ * keys pages by a `mind/file` ref, so its commons rows get their prefix rewritten
+ * too (otherwise a commons page a mind already met would resurface once).
+ *
+ * Forward-idempotent: keyed on the exact old value, so it can never touch a real
+ * mind, and it is a no-op once no `_system` rows remain. Wrapped so a failure logs
+ * rather than taking down extension init.
+ */
+function migrateCommonsMind(db: Database): void {
+  try {
+    db.exec(`
+      UPDATE published_pages SET mind = '_commons' WHERE mind = '_system';
+      UPDATE page_comments   SET mind = '_commons' WHERE mind = '_system';
+      UPDATE page_comments   SET body_mind = '_commons' WHERE body_mind = '_system';
+      UPDATE page_reactions  SET mind = '_commons' WHERE mind = '_system';
+      UPDATE page_citations  SET mind = '_commons' WHERE mind = '_system';
+      UPDATE page_reads      SET mind = '_commons' WHERE mind = '_system';
+      UPDATE page_links      SET mind = '_commons' WHERE mind = '_system';
+      UPDATE ambient_shown   SET ref = '_commons/' || substr(ref, length('_system/') + 1)
+        WHERE ref LIKE '_system/%';
+    `);
+  } catch (err) {
+    console.error(`[pages] commons _system → _commons migration failed: ${(err as Error).message}`);
+  }
 }
 
 function addColumns(db: Database, table: string, columns: string[]): void {
@@ -330,13 +362,13 @@ export function getRecentPages(
 }
 
 export function getAllSites(db: Database): SiteEntry[] {
-  // Exclude _system pages — those are shown separately. Order globally by
+  // Exclude _commons pages — those are shown separately. Order globally by
   // recency (id breaks same-second ties) so the first row seen for each mind is
   // its most-recent page — that gives us sites ranked by recent activity.
   const rows = db
     .prepare(
       `SELECT mind, file, updated_at, author FROM published_pages
-       WHERE mind != '_system' AND deleted_at IS NULL ORDER BY updated_at DESC, id DESC`,
+       WHERE mind != '_commons' AND deleted_at IS NULL ORDER BY updated_at DESC, id DESC`,
     )
     .all() as RecentPage[];
 
@@ -361,25 +393,25 @@ export function getSystemPages(db: Database): SiteEntry | null {
   const rows = db
     .prepare(
       `SELECT mind, file, updated_at, author FROM published_pages
-       WHERE mind = '_system' AND deleted_at IS NULL ORDER BY updated_at DESC, id DESC`,
+       WHERE mind = '_commons' AND deleted_at IS NULL ORDER BY updated_at DESC, id DESC`,
     )
     .all() as RecentPage[];
   if (rows.length === 0) return null;
   return {
-    mind: "_system",
+    mind: "_commons",
     files: sortSiteFiles(
       rows.map((r) => ({ file: r.file, updated_at: r.updated_at, author: r.author })),
     ),
   };
 }
 
-/** Minds (excluding _system) that have at least one published page. */
+/** Minds (excluding _commons) that have at least one published page. */
 export function getMindsWithSites(db: Database): string[] {
   return (
     db
       .prepare(
         `SELECT DISTINCT mind FROM published_pages
-         WHERE mind != '_system' AND deleted_at IS NULL ORDER BY mind`,
+         WHERE mind != '_commons' AND deleted_at IS NULL ORDER BY mind`,
       )
       .all() as { mind: string }[]
   ).map((r) => r.mind);
@@ -554,9 +586,9 @@ export function citationsOf(db: Database, mentioned: string): Citation[] {
 }
 
 export function syncSystemPages(db: Database, pages: PageInput[], author?: string): void {
-  const existing = existingPages(db, "_system");
+  const existing = existingPages(db, "_commons");
   const newSet = new Set(pages.map((p) => p.file));
-  const threaded = pagesWithThreads(db, "_system");
+  const threaded = pagesWithThreads(db, "_commons");
 
   db.exec("BEGIN");
   try {
@@ -565,7 +597,7 @@ export function syncSystemPages(db: Database, pages: PageInput[], author?: strin
       const prior = existing.get(file);
       if (!prior) {
         db.prepare(
-          "INSERT INTO published_pages (mind, file, hash, author) VALUES ('_system', ?, ?, ?)",
+          "INSERT INTO published_pages (mind, file, hash, author) VALUES ('_commons', ?, ?, ?)",
         ).run(file, hash, author ?? null);
       } else if (prior.deleted_at != null) {
         // Republished over a tombstone: revive the identity so the surviving
@@ -574,26 +606,26 @@ export function syncSystemPages(db: Database, pages: PageInput[], author?: strin
           `UPDATE published_pages
            SET deleted_at = NULL, updated_at = datetime('now'), hash = ?,
                author = COALESCE(?, author)
-           WHERE mind = '_system' AND file = ?`,
+           WHERE mind = '_commons' AND file = ?`,
         ).run(hash, author ?? null, file);
       } else if (prior.hash !== hash) {
         // Only touch files whose content actually changed — unchanged files
         // keep their updated_at and author (the publisher didn't author them).
         if (author) {
           db.prepare(
-            "UPDATE published_pages SET updated_at = datetime('now'), hash = ?, author = ? WHERE mind = '_system' AND file = ?",
+            "UPDATE published_pages SET updated_at = datetime('now'), hash = ?, author = ? WHERE mind = '_commons' AND file = ?",
           ).run(hash, author, file);
         } else {
           db.prepare(
-            "UPDATE published_pages SET updated_at = datetime('now'), hash = ? WHERE mind = '_system' AND file = ?",
+            "UPDATE published_pages SET updated_at = datetime('now'), hash = ? WHERE mind = '_commons' AND file = ?",
           ).run(hash, file);
         }
       }
-      applyPageMeta(db, "_system", page);
+      applyPageMeta(db, "_commons", page);
     }
     for (const [file, prior] of existing) {
       if (!newSet.has(file) && prior.deleted_at == null) {
-        retirePage(db, "_system", file, threaded.has(file));
+        retirePage(db, "_commons", file, threaded.has(file));
       }
     }
     db.exec("COMMIT");

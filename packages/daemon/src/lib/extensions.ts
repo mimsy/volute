@@ -14,7 +14,7 @@ import type {
 import type { Context, Hono, MiddlewareHandler } from "hono";
 import { type AuthEnv, requireSelf } from "../web/middleware/auth.js";
 import { getUser, getUserByUsername } from "./auth.js";
-import { announceToSystem } from "./chat/system-channel.js";
+import { announceToCommons } from "./chat/commons-channel.js";
 import { MIND_LEVEL_THREAD, recordNotice as recordMindNotice } from "./chat/system-events.js";
 import { getSpiritName, readGlobalConfig, writeGlobalConfig } from "./config/setup.js";
 import { readSystemsConfig } from "./config/systems-config.js";
@@ -301,7 +301,7 @@ export async function buildExtensionContext(
       }
     },
     getSystemsConfig: () => readSystemsConfig(),
-    announceToSystem: (text: string) => announceToSystem(text),
+    announceToCommons: (text: string) => announceToCommons(text),
     recordNotice: async (mindName: string, text: string) => {
       try {
         // Gate on the minds registry rather than the users table: the spirit is a

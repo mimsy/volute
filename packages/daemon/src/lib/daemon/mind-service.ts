@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { missingCredentialWarning } from "../ai-service.js";
 import { syncMindProfile } from "../auth.js";
-import { joinSystemChannelForMind, joinSystemChannelForSpirit } from "../chat/system-channel.js";
+import { joinCommonsChannelForMind, joinCommonsChannelForSpirit } from "../chat/commons-channel.js";
 import { ensureSystemDM } from "../chat/system-chat.js";
 import { deliverEvent } from "../chat/system-events.js";
 import { getSystemName } from "../config/setup.js";
@@ -99,12 +99,12 @@ export async function startMindFull(name: string): Promise<void> {
     );
   }
 
-  // Auto-join #system channel. Only sprouted minds reach here — seeds returned
+  // Auto-join the commons channel. Only sprouted minds reach here — seeds returned
   // early above, so they stay out of the commons until they sprout (#617).
   // warn, not error: membership self-heals (idempotent join, retried on every
   // start and by the daemon-startup backfill), so a single miss isn't fatal.
-  joinSystemChannelForMind(baseName).catch((err: unknown) =>
-    log.warn(`failed to join #system for ${baseName}`, log.errorData(err)),
+  joinCommonsChannelForMind(baseName).catch((err: unknown) =>
+    log.warn(`failed to join the commons for ${baseName}`, log.errorData(err)),
   );
 
   if (config?.tokenBudget) {
@@ -214,8 +214,8 @@ export async function startSpiritFull(name: string): Promise<void> {
   await getMindManager().startMind(name);
 
   // The spirit shares the commons with the minds it tends
-  joinSystemChannelForSpirit().catch((err: unknown) =>
-    log.error(`failed to join #system for ${name}`, log.errorData(err)),
+  joinCommonsChannelForSpirit().catch((err: unknown) =>
+    log.error(`failed to join the commons for ${name}`, log.errorData(err)),
   );
 
   // Load spirit schedules with explicit dir (spirit lives outside ~/.volute/minds/)

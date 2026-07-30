@@ -110,7 +110,7 @@ describe("shared publish command events", () => {
       publishActivity: (e: any) => activity.push(e),
       getMindDir: async (name: string) => (name === mindName ? mindDir : null),
       getSystemsConfig: () => null,
-      announceToSystem: async (text: string) => {
+      announceToCommons: async (text: string) => {
         announcements.push(text);
       },
       recordNotice: async (mind: string, text: string) => {

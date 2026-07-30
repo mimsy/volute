@@ -6,21 +6,23 @@ import { and, eq } from "drizzle-orm";
 import { createUser } from "../packages/daemon/src/lib/auth.js";
 import {
   announceSprout,
-  announceToSystem,
-  backfillSystemChannelMembers,
-  ensureSystemChannel,
-  joinSystemChannel,
-  joinSystemChannelForMind,
-  joinSystemChannelForSpirit,
-  resetSystemChannelCache,
-} from "../packages/daemon/src/lib/chat/system-channel.js";
+  announceToCommons,
+  backfillCommonsChannelMembers,
+  ensureCommonsChannel,
+  joinCommonsChannel,
+  joinCommonsChannelForMind,
+  joinCommonsChannelForSpirit,
+  resetCommonsChannelCache,
+} from "../packages/daemon/src/lib/chat/commons-channel.js";
 import { getDb } from "../packages/daemon/src/lib/db.js";
 import { clearConfigCache } from "../packages/daemon/src/lib/delivery/delivery-router.js";
 import {
   createChannel,
   deleteConversation,
   getChannelSettings,
+  getDefaultChannelRow,
   getParticipants,
+  markChannelDefault,
 } from "../packages/daemon/src/lib/events/conversations.js";
 import {
   addMind,
@@ -30,6 +32,7 @@ import {
 } from "../packages/daemon/src/lib/mind/registry.js";
 import {
   activity,
+  channels,
   messages,
   mindHistory,
   systemEvents,
@@ -55,7 +58,7 @@ const TEST_MINDS = [
   "commons-sprout",
 ];
 
-/** Write a routes.json for a test mind so its #system routing decision is deterministic. */
+/** Write a routes.json for a test mind so its commons routing decision is deterministic. */
 function writeCommonsRoutes(name: string, config: object): void {
   const configDir = resolve(process.env.VOLUTE_HOME!, "minds", name, "home/.config");
   mkdirSync(configDir, { recursive: true });
@@ -64,7 +67,7 @@ function writeCommonsRoutes(name: string, config: object): void {
 }
 
 async function cleanup() {
-  resetSystemChannelCache();
+  resetCommonsChannelCache();
   clearConfigCache();
   const db = await getDb();
   for (const username of TEST_USERNAMES) {
@@ -76,76 +79,110 @@ async function cleanup() {
     await db.delete(systemEvents).where(eq(systemEvents.mind, mind));
     await removeMind(mind);
   }
-  // Remove the #system channel so each test exercises fresh creation
-  const ch = await getChannelSettings("system");
-  if (ch) await deleteConversation(ch.conversation_id);
+  // Remove every channel so each test exercises fresh creation / resolution.
+  for (const ch of await db.select().from(channels).all()) {
+    await deleteConversation(ch.conversation_id);
+  }
 }
 
-describe("system channel", () => {
+describe("commons channel", () => {
   beforeEach(cleanup);
   afterEach(cleanup);
 
-  it("ensureSystemChannel creates channel on first call", async () => {
-    const id = await ensureSystemChannel();
+  it("ensureCommonsChannel creates channel on first call", async () => {
+    const id = await ensureCommonsChannel();
     assert.ok(id, "should return a conversation ID");
   });
 
-  it("ensureSystemChannel is idempotent", async () => {
-    const id1 = await ensureSystemChannel();
-    const id2 = await ensureSystemChannel();
+  it("ensureCommonsChannel is idempotent", async () => {
+    const id1 = await ensureCommonsChannel();
+    const id2 = await ensureCommonsChannel();
     assert.equal(id1, id2, "should return the same conversation ID");
   });
 
-  it("ensureSystemChannel sets a default description", async () => {
-    await ensureSystemChannel();
-    const settings = await getChannelSettings("system");
-    assert.ok(settings?.description?.includes("commons"), "should describe the shared room");
+  it("a fresh install's commons is named #commons and carries the default marker", async () => {
+    await ensureCommonsChannel();
+    const row = await getDefaultChannelRow();
+    assert.ok(row, "the default channel should be resolvable by its marker");
+    assert.equal(row!.name, "commons", "new installs get a channel named 'commons'");
+    assert.equal(row!.is_default, 1, "and it is marked default");
   });
 
-  it("ensureSystemChannel fills in the description for a pre-existing bare channel", async () => {
-    await createChannel("system"); // legacy channel, no description
-    await ensureSystemChannel();
+  it("resolves the default channel by marker, not by name — a renamed house keeps its commons", async () => {
+    // A house that renamed its commons long ago: a channel named "town-square",
+    // carrying the default marker. ensureCommonsChannel must resolve THIS, never go
+    // hunting for a channel literally named "commons" (which would strand the real
+    // commons and spin up a duplicate). This is the guard against the default
+    // reverting to a name-based lookup.
+    const legacy = await createChannel("town-square");
+    await markChannelDefault(legacy.id);
+    resetCommonsChannelCache();
+
+    const id = await ensureCommonsChannel();
+    assert.equal(id, legacy.id, "must resolve the marked channel regardless of its name");
+
+    const db = await getDb();
+    const chans = await db.select().from(channels).all();
+    assert.equal(chans.length, 1, "must not create a second channel");
+    assert.equal(chans[0].name, "town-square", "the earned name is left untouched");
+  });
+
+  it("ensureCommonsChannel sets a default description", async () => {
+    await ensureCommonsChannel();
+    const row = await getDefaultChannelRow();
+    assert.ok(row?.description?.includes("commons"), "should describe the shared room");
+  });
+
+  it("ensureCommonsChannel fills in the description for a pre-existing bare default channel", async () => {
+    // A legacy default channel (any name) with no description — the migration backfills
+    // the marker; ensureCommonsChannel then backfills the description.
+    const legacy = await createChannel("system"); // legacy name, no description
+    await markChannelDefault(legacy.id);
+    resetCommonsChannelCache();
+    await ensureCommonsChannel();
     const settings = await getChannelSettings("system");
     assert.ok(settings?.description?.includes("commons"), "should backfill the description");
   });
 
-  it("ensureSystemChannel never clobbers a host-set description", async () => {
-    await createChannel("system", undefined, { description: "our house rules" });
-    await ensureSystemChannel();
+  it("ensureCommonsChannel never clobbers a host-set description", async () => {
+    const legacy = await createChannel("system", undefined, { description: "our house rules" });
+    await markChannelDefault(legacy.id);
+    resetCommonsChannelCache();
+    await ensureCommonsChannel();
     const settings = await getChannelSettings("system");
     assert.equal(settings?.description, "our house rules");
   });
 
-  it("joinSystemChannel adds user to channel", async () => {
+  it("joinCommonsChannel adds user to channel", async () => {
     const user = await createUser("testbrain", "pass123");
-    await joinSystemChannel(user.id);
+    await joinCommonsChannel(user.id);
     // Joining again should be idempotent
-    await joinSystemChannel(user.id);
-    const id = await ensureSystemChannel();
+    await joinCommonsChannel(user.id);
+    const id = await ensureCommonsChannel();
     const participants = await getParticipants(id);
     const joined = participants.filter((p) => p.username === "testbrain");
     assert.equal(joined.length, 1, "user should be a participant exactly once");
   });
 
-  it("joinSystemChannelForSpirit adds the system user as a participant", async () => {
-    await joinSystemChannelForSpirit();
-    const id = await ensureSystemChannel();
+  it("joinCommonsChannelForSpirit adds the system user as a participant", async () => {
+    await joinCommonsChannelForSpirit();
+    const id = await ensureCommonsChannel();
     const participants = await getParticipants(id);
     const spirit = participants.find((p) => p.username === "volute");
     assert.ok(spirit, "spirit should be a participant");
     assert.equal(spirit.userType, "spirit", "spirit should be the system user, not a mind user");
   });
 
-  it("backfillSystemChannelMembers joins sprouted minds and spirits, skips seeds and variants", async () => {
+  it("backfillCommonsChannelMembers joins sprouted minds and spirits, skips seeds and variants", async () => {
     await addMind("commons-mind", 4901, "sprouted");
     await addMind("commons-seed", 4902, "seed");
     await addMind("commons-legacy", 4903); // pre-stage-field mind: stage null → sprouted
     await addSpirit("volute", 4904, "claude", "/tmp/spirit");
     await addVariant("commons-mind-v1", "commons-mind", 4905, "/tmp/variant", "variant-branch");
 
-    await backfillSystemChannelMembers();
+    await backfillCommonsChannelMembers();
 
-    const id = await ensureSystemChannel();
+    const id = await ensureCommonsChannel();
     const participants = await getParticipants(id);
     const names = participants.map((p) => p.username);
     assert.ok(names.includes("commons-mind"), "sprouted mind should be joined");
@@ -157,33 +194,33 @@ describe("system channel", () => {
     assert.equal(spirit?.userType, "spirit", "spirit joins as the system user");
   });
 
-  it("backfillSystemChannelMembers is idempotent", async () => {
+  it("backfillCommonsChannelMembers is idempotent", async () => {
     await addMind("commons-mind", 4901, "sprouted");
-    await backfillSystemChannelMembers();
-    await backfillSystemChannelMembers();
-    const id = await ensureSystemChannel();
+    await backfillCommonsChannelMembers();
+    await backfillCommonsChannelMembers();
+    const id = await ensureCommonsChannel();
     const participants = await getParticipants(id);
     const joined = participants.filter((p) => p.username === "commons-mind");
     assert.equal(joined.length, 1, "mind should be a participant exactly once");
   });
 
-  it("backfillSystemChannelMembers keeps going when one entry fails", async () => {
+  it("backfillCommonsChannelMembers keeps going when one entry fails", async () => {
     // A brain user squatting on a mind's name makes getOrCreateMindUser throw
     await createUser("commons-clash", "pass123");
     await addMind("commons-clash", 4901, "sprouted");
     await addMind("commons-mind", 4902, "sprouted");
 
-    await backfillSystemChannelMembers(); // must not throw
+    await backfillCommonsChannelMembers(); // must not throw
 
-    const id = await ensureSystemChannel();
+    const id = await ensureCommonsChannel();
     const participants = await getParticipants(id);
     const names = participants.map((p) => p.username);
     assert.ok(names.includes("commons-mind"), "later entries should still be joined");
     assert.ok(!names.includes("commons-clash"), "failed entry should not be joined");
   });
 
-  it("announceToSystem posts a sender-less event row, never the spirit's voice (#687)", async () => {
-    await announceToSystem("test announcement");
+  it("announceToCommons posts a sender-less event row, never the spirit's voice (#687)", async () => {
+    await announceToCommons("test announcement");
     const db = await getDb();
     const msgs = await db.select().from(messages).all();
     const found = msgs.find((m) => m.content.includes("test announcement"));
@@ -196,16 +233,16 @@ describe("system channel", () => {
     );
   });
 
-  it("announceToSystem delivers to mind participants sender-less on the channel path (#687)", async () => {
+  it("announceToCommons delivers to mind participants sender-less on the channel path (#687)", async () => {
     await addMind("commons-mind", 4901, "sprouted");
-    await joinSystemChannelForMind("commons-mind");
+    await joinCommonsChannelForMind("commons-mind");
     // Disable gating so the (dead-port) delivery still records the inbound: the mind never acks,
     // but recordInbound runs first on the normal channel path and captures the delivered shape.
     writeCommonsRoutes("commons-mind", { gateUnmatched: false });
 
-    await announceToSystem("atlas has joined");
+    await announceToCommons("atlas has joined");
 
-    // Delivery is fire-and-forget inside announceToSystem, so poll for the recorded inbound.
+    // Delivery is fire-and-forget inside announceToCommons, so poll for the recorded inbound.
     const db = await getDb();
     let row: { sender: string | null; channel: string | null } | undefined;
     for (let i = 0; i < 50 && !row; i++) {
@@ -221,8 +258,8 @@ describe("system channel", () => {
     assert.equal(row!.sender, null, "delivery must be sender-less — never the spirit");
     assert.equal(
       row!.channel,
-      "#system",
-      "delivered on the #system channel, following its routing",
+      "#commons",
+      "delivered on the #commons channel, following its routing",
     );
 
     // And it must NOT go out as a system event any more — announcements are channel messages.
@@ -234,6 +271,33 @@ describe("system channel", () => {
     assert.equal(events.length, 0, "announcements are channel messages, not system events");
   });
 
+  it("announceToCommons follows a renamed default channel's slug", async () => {
+    // A house kept a proper name on its commons. The delivered routing slug must
+    // track that name, not a hardcoded "#commons".
+    const legacy = await createChannel("system");
+    await markChannelDefault(legacy.id);
+    resetCommonsChannelCache();
+    await addMind("commons-mind", 4901, "sprouted");
+    await joinCommonsChannelForMind("commons-mind");
+    writeCommonsRoutes("commons-mind", { gateUnmatched: false });
+
+    await announceToCommons("atlas has joined");
+
+    const db = await getDb();
+    let row: { channel: string | null } | undefined;
+    for (let i = 0; i < 50 && !row; i++) {
+      const inbound = await db
+        .select()
+        .from(mindHistory)
+        .where(and(eq(mindHistory.mind, "commons-mind"), eq(mindHistory.type, "inbound")))
+        .all();
+      row = inbound.find((r) => (r as { content: string | null }).content?.includes("atlas"));
+      if (!row) await new Promise((res) => setTimeout(res, 20));
+    }
+    assert.ok(row, "delivered to the mind");
+    assert.equal(row!.channel, "#system", "routing slug follows the channel's actual name");
+  });
+
   // Register the spirit (dead port — the event stays pending, which is fine: the
   // prompt is a durable system event redelivered on the spirit's next start).
   async function registerSpirit(): Promise<void> {
@@ -241,7 +305,7 @@ describe("system channel", () => {
   }
 
   it("announceSprout prompts the spirit to write the welcome and records a mind_sprouted activity", async () => {
-    // The spirit hand-writes the #system welcome (#665); the daemon only sends
+    // The spirit hand-writes the commons welcome (#665); the daemon only sends
     // it a prompt — now a lifecycle system event, not a DM.
     await registerSpirit();
 
@@ -255,7 +319,7 @@ describe("system channel", () => {
       .all();
     const prompt = events.find((e) => e.body.includes("@commons-sprout"));
     assert.ok(prompt, "spirit should receive an event prompting it to welcome the sprouted mind");
-    assert.ok(prompt!.body.includes("#system"), "prompt should point the spirit at #system");
+    assert.ok(prompt!.body.includes("#commons"), "prompt should point the spirit at the commons");
     assert.equal(prompt!.type, "lifecycle");
 
     // No canned message is posted anywhere — the spirit composes its own.
@@ -281,7 +345,7 @@ describe("system channel", () => {
   });
 
   it("announceSprout uses the mind's display name when set", async () => {
-    // The real sprout flow joins the mind to #system (creating its user row)
+    // The real sprout flow joins the mind to the commons (creating its user row)
     // before announcing, so the display-name branch is the production path.
     const db = await getDb();
     await db.insert(users).values({
