@@ -1,5 +1,6 @@
 import { mkdir, readFile, realpath, rename, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
+import { isMind } from "@volute/api/user-type";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { MIND_LEVEL_THREAD, type RecordNoticeInput } from "../chat/system-events.js";
 import { getTypingMap, publishTypingForChannels } from "../chat/typing.js";
@@ -1934,7 +1935,7 @@ export class DeliveryManager {
 
       try {
         let filePath: string;
-        if (p.userType === "mind") {
+        if (isMind(p)) {
           const dir = mindDir(p.username);
           const config = readVoluteConfig(dir);
           if (!config?.profile?.avatar) continue;

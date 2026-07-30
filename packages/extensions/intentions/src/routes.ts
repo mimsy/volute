@@ -1,3 +1,4 @@
+import { isMind, isSystemSpirit } from "@volute/api/user-type";
 import type { ExtensionContext } from "@volute/extensions";
 import { Hono } from "hono";
 
@@ -66,7 +67,7 @@ export function createRoutes(ctx: ExtensionContext): Hono {
     // for a non-mind caller; just returns nothing to inject.
     .get("/mine", async (c) => {
       const actor = resolveActor(c);
-      if (actor?.user_type !== "mind") return c.json([]);
+      if (!actor || !isMind(actor)) return c.json([]);
       return c.json(listMine(db, actor.username));
     })
 
@@ -76,7 +77,7 @@ export function createRoutes(ctx: ExtensionContext): Hono {
     .post("/", async (c) => {
       const actor = resolveActor(c);
       if (!actor) return c.json({ error: "Unauthorized" }, 401);
-      if ((actor.user_type !== "mind" && actor.role !== "admin") || !canOwn(actor)) {
+      if ((!isMind(actor) && actor.role !== "admin") || !canOwn(actor)) {
         return c.json({ error: "Only a mind can hold intentions" }, 403);
       }
 
@@ -173,15 +174,13 @@ export function createRoutes(ctx: ExtensionContext): Hono {
       return c.json(intention);
     })
 
-    // Review-due — spirit or admin only. Do NOT use user_type === "mind" as a proxy
-    // for "is the spirit": that was the old plan extension's bug, and it granted
-    // coordinator powers to every mind on the system. The spirit shares the system
-    // user account (role: "system"); gate on that plus "admin", mirroring
-    // requireAdminOrSystem in the daemon's own web middleware.
+    // Review-due — the spirit (a coordinator power) or an admin only. `isSystemSpirit`
+    // states that intent directly, so a plain mind can no longer slip through a
+    // `user_type === "mind"` proxy the way the old plan extension's bug did.
     .get("/review-due", async (c) => {
       const actor = resolveActor(c);
       if (!actor) return c.json({ error: "Unauthorized" }, 401);
-      if (actor.role !== "admin" && actor.role !== "system") {
+      if (!isSystemSpirit(actor) && actor.role !== "admin") {
         return c.json({ error: "Forbidden" }, 403);
       }
 

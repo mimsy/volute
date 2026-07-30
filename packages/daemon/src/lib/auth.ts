@@ -1,3 +1,4 @@
+import { isMind, isSystemSpirit } from "@volute/api/user-type";
 import { compareSync, hashSync } from "bcryptjs";
 import { and, count, eq, inArray, or } from "drizzle-orm";
 import { getSpiritName } from "./config/setup.js";
@@ -52,7 +53,7 @@ export async function verifyUser(username: string, password: string): Promise<Us
   const db = await getDb();
   const row = await db.select().from(users).where(eq(users.username, username)).get();
   if (!row) return null;
-  if (row.user_type === "mind" || row.user_type === "system") return null; // minds and system users can't log in
+  if (isMind(row) || isSystemSpirit(row)) return null; // minds and the spirit can't log in
   if (!compareSync(password, row.password_hash)) return null;
   const { password_hash: _, ...user } = row;
   return user as User;
@@ -301,7 +302,7 @@ export async function deleteExternalMindUser(id: number): Promise<void> {
     .where(eq(users.id, id))
     .get();
   if (!target) throw new Error("User not found");
-  if (target.user_type !== "mind") throw new Error("Not a mind account");
+  if (!isMind(target)) throw new Error("Not a mind account");
   if (await findMind(target.username)) {
     throw new Error("Use the mind deletion API to delete minds");
   }

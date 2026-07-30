@@ -1,4 +1,5 @@
 import type { Mind } from "@volute/api";
+import { isMind } from "@volute/api/user-type";
 
 export function mindDotColor(mind: Mind): string {
   const s = getDisplayStatus(mind);
@@ -42,7 +43,7 @@ export function getConversationLabel(
     const other = participants.find((p) => p.username !== currentUsername);
     if (other) return `@${other.username}`;
   }
-  const mindParticipants = participants.filter((p) => p.userType === "mind");
+  const mindParticipants = participants.filter((p) => isMind(p));
   if (mindParticipants.length > 0) return mindParticipants.map((a) => a.username).join(", ");
   return "Untitled";
 }

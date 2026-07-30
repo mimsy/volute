@@ -1,4 +1,6 @@
 <script lang="ts">
+import type { UserType } from "@volute/api/user-type";
+import { isMind } from "@volute/api/user-type";
 import type { Snippet } from "svelte";
 import { normalizeTimestamp } from "../lib/format";
 
@@ -7,7 +9,7 @@ export type HoverProfile = {
   displayName?: string | null;
   description?: string | null;
   avatarUrl?: string | null;
-  userType: "human" | "mind" | "puppet" | "system";
+  userType: UserType;
   created?: string;
 };
 
@@ -113,7 +115,7 @@ function handleMouseLeave() {
         <span class="description">{profile.description}</span>
       {/if}
       <span class="meta">@{profile.name}{#if profile.created} &middot; since {formatCreated(profile.created)}{/if}</span>
-      {#if profile.userType === "mind"}
+      {#if isMind(profile)}
         <a href="/minds/{profile.name}" class="view-profile">View profile</a>
       {/if}
     </div>

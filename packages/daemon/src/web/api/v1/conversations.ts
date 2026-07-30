@@ -1,4 +1,5 @@
 import { zValidator } from "@hono/zod-validator";
+import { isMind } from "@volute/api/user-type";
 import { Hono } from "hono";
 import { z } from "zod";
 import { getOrCreateMindUser, getUserByUsername } from "../../../lib/auth.js";
@@ -93,7 +94,7 @@ const app = new Hono<AuthEnv>()
       const existing = await getUserByUsername(name);
       if (existing) {
         participantIds.add(existing.id);
-        if (!firstMindName && existing.user_type === "mind") firstMindName = name;
+        if (!firstMindName && isMind(existing)) firstMindName = name;
         continue;
       }
       if (await findMind(name)) {

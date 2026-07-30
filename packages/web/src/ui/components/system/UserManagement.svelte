@@ -1,5 +1,6 @@
 <script lang="ts">
 import type { Mind } from "@volute/api";
+import { isMind } from "@volute/api/user-type";
 import { Button } from "@volute/ui";
 import { onMount } from "svelte";
 import { slide } from "svelte/transition";
@@ -135,7 +136,7 @@ async function handleRevokeToken(user: AuthUser, tokenId: number) {
 }
 
 function statusDotStyle(u: AuthUser): string | undefined {
-  if (u.user_type === "mind") {
+  if (isMind(u)) {
     if (activeMinds.has(u.username)) return undefined; // iridescent handles it
     const mind = mindsByName.get(u.username);
     return mind ? mindDotColor(mind) : "var(--text-2)";
@@ -184,7 +185,7 @@ async function handleDelete(user: AuthUser) {
   try {
     // An external mind has no directory or process to tear down — deleting the
     // account IS the whole operation. The daemon re-checks this either way.
-    if (user.user_type === "mind" && !isExternal(user)) {
+    if (isMind(user) && !isExternal(user)) {
       try {
         await deleteMind(user.username, true);
         data.minds = data.minds.filter((m) => m.name !== user.username);
@@ -239,7 +240,7 @@ function isProfileDirty(user: AuthUser): boolean {
         <div class="user-row" role="button" tabindex="0" onclick={() => toggleExpand(u)} onkeydown={(e) => e.key === 'Enter' && toggleExpand(u)}>
           <span
             class="status-dot"
-            class:iridescent={u.user_type === "mind" && activeMinds.has(u.username)}
+            class:iridescent={isMind(u) && activeMinds.has(u.username)}
             style:background={statusDotStyle(u)}
           ></span>
           <span class="avatar">
@@ -247,7 +248,7 @@ function isProfileDirty(user: AuthUser): boolean {
               <img src={avatar} alt="" />
             {:else}
               <svg class="type-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                {#if u.user_type === "mind"}
+                {#if isMind(u)}
                   <rect x="4" y="8" width="16" height="12" rx="2" />
                   <circle cx="9" cy="14" r="1.5" />
                   <circle cx="15" cy="14" r="1.5" />

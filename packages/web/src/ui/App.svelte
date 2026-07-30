@@ -1,5 +1,6 @@
 <script lang="ts">
 import type { Conversation, Mind } from "@volute/api";
+import { isMind } from "@volute/api/user-type";
 import { Icon, Modal, tooltip } from "@volute/ui";
 import { icons } from "@volute/ui/icons";
 import { sanitizeSvg } from "@volute/ui/sanitize";
@@ -287,9 +288,7 @@ let headerMindActive = $derived.by(() => {
     const conv = data.conversations.find(
       (c) => c.type === "channel" && c.channel_name === sel.slug,
     );
-    return (conv?.participants ?? []).some(
-      (p) => p.userType === "mind" && activeMinds.has(p.username),
-    );
+    return (conv?.participants ?? []).some((p) => isMind(p) && activeMinds.has(p.username));
   }
   return false;
 });
@@ -478,7 +477,7 @@ $effect(() => {
     selection = { kind: "channel", slug: conv.channel_name };
   } else {
     const mindParticipant = conv.participants?.find(
-      (p) => p.userType === "mind" && p.username !== auth.user?.username,
+      (p) => isMind(p) && p.username !== auth.user?.username,
     );
     if (mindParticipant) {
       selection = { kind: "mind", name: mindParticipant.username };
@@ -522,9 +521,7 @@ function handleSelectConversation(id: string) {
   if (conv?.type === "channel" && conv.channel_name) {
     selection = { kind: "channel", slug: conv.channel_name };
   } else {
-    const other = conv?.participants?.find(
-      (p) => p.userType === "mind" && p.username !== auth.user?.username,
-    );
+    const other = conv?.participants?.find((p) => isMind(p) && p.username !== auth.user?.username);
     if (other) {
       selection = { kind: "mind", name: other.username };
     }

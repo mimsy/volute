@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { userInfo } from "node:os";
 import { basename, extname } from "node:path";
+import { isMind as isMindUser } from "@volute/api/user-type";
 import { formatFileSize } from "@volute/daemon/lib/chat/file-sharing.js";
 import type { SpiritStatus } from "@volute/daemon/lib/chat/spirit-availability.js";
 import type { ImageAttachment } from "@volute/daemon/lib/platforms.js";
@@ -492,7 +493,7 @@ const cmd = command({
       };
 
       // Find a participant mind to use as context for the chat API
-      const mindParticipant = channelData.participants?.find((p) => p.userType === "mind");
+      const mindParticipant = channelData.participants?.find((p) => isMindUser(p));
       const contextMind = mindSelf ?? mindParticipant?.username;
       if (!contextMind) {
         console.error("No mind is a member of this channel. A mind must join the channel first.");

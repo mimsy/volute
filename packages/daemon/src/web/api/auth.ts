@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { extname, resolve } from "node:path";
 import { zValidator } from "@hono/zod-validator";
+import { isMind } from "@volute/api/user-type";
 import { Hono } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { z } from "zod";
@@ -48,9 +49,9 @@ import { fileEtag, isNotModified } from "../../lib/util/http-cache.js";
 async function withExternalFlag<T extends { username: string; user_type: string }>(
   list: T[],
 ): Promise<(T & { external?: boolean })[]> {
-  if (!list.some((u) => u.user_type === "mind")) return list;
+  if (!list.some((u) => isMind(u))) return list;
   const local = new Set((await readAllMinds()).map((m) => m.name));
-  return list.map((u) => (u.user_type === "mind" ? { ...u, external: !local.has(u.username) } : u));
+  return list.map((u) => (isMind(u) ? { ...u, external: !local.has(u.username) } : u));
 }
 
 /** Only join system channel when running inside the daemon (not in tests). */
@@ -391,7 +392,7 @@ const admin = new Hono<AuthEnv>()
       const adminCount = await countAdmins();
       if (adminCount <= 1) return c.json({ error: "Cannot delete the last admin" }, 400);
     }
-    if (target.user_type === "mind") {
+    if (isMind(target)) {
       // Only a mind the daemon spawns needs the mind-deletion API, which exists to
       // stop the process and remove the directory. An external mind has neither, so
       // deleting its account is the whole teardown — and the mind API would 404 on

@@ -1,4 +1,5 @@
 import { zValidator } from "@hono/zod-validator";
+import { isLocalMind, isMind, isSystemSpirit } from "@volute/api/user-type";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { z } from "zod";
@@ -151,8 +152,8 @@ export const unifiedChatApp = new Hono<AuthEnv>().post(
     // sender too — this matches only the spirit, never a plain system principal.
     const senderIsMind =
       (user.id === 0 && body.sender && (await findMind(body.sender))) ||
-      user.user_type === "mind" ||
-      (user.user_type === "system" && !!(await findMind(user.username)));
+      isMind(user) ||
+      (isSystemSpirit(user) && !!(await findMind(user.username)));
 
     // Track baseName and variant-aware targetName callback for the targetMind flow
     let baseName: string | undefined;
@@ -229,7 +230,7 @@ export const unifiedChatApp = new Hono<AuthEnv>().post(
         fileTargets = [baseName];
       } else {
         fileTargets = participants
-          .filter((p) => p.userType === "mind" && p.username !== senderName)
+          .filter((p) => isMind(p) && p.username !== senderName)
           .map((p) => p.username);
       }
       const { notifications, error } = stageFilesForMinds(body.files, fileTargets, senderName);
@@ -363,12 +364,10 @@ export const unifiedChatApp = new Hono<AuthEnv>().post(
     let spiritName: string | undefined;
     try {
       const mindishRecipients = participants.filter(
-        (p) => (p.userType === "mind" || p.userType === "system") && p.username !== senderName,
+        (p) => isLocalMind(p) && p.username !== senderName,
       );
       const spiritRecipient =
-        conv.type === "dm" &&
-        mindishRecipients.length === 1 &&
-        mindishRecipients[0].userType === "system"
+        conv.type === "dm" && mindishRecipients.length === 1 && isSystemSpirit(mindishRecipients[0])
           ? mindishRecipients[0]
           : undefined;
       if (spiritRecipient) {
