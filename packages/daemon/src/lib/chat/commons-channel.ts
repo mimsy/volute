@@ -1,4 +1,4 @@
-import { isMind } from "@volute/api/user-type";
+import { isMind, isSystemSpirit } from "@volute/api/user-type";
 import { getOrCreateMindUser, getOrCreateSystemUser, getUserByUsername } from "../auth.js";
 import { getSpiritName } from "../config/setup.js";
 import { deliverMessage } from "../delivery/message-delivery.js";
@@ -109,11 +109,12 @@ export async function backfillCommonsChannelMembers(): Promise<void> {
  * spirit's hand-written messages (#687).
  *
  * The channel row is stored with `role: "event"` and no sender so web chat and `chat read`
- * render it as an event. It is delivered to mind participants through the normal channel-message
- * path (so it follows each mind's commons routing, batching, gating, and file destinations
- * exactly like any channel message) — but with a null sender, so the prefix the mind receives
- * frames it by channel and never names the spirit or invents a sender. The spirit's own
- * hand-written messages are unaffected.
+ * render it as an event. It is delivered to mind participants — and to the spirit (#817),
+ * whose room the commons is — through the normal channel-message path (so it follows each
+ * recipient's commons routing, batching, gating, and file destinations exactly like any
+ * channel message) — but with a null sender, so the prefix the recipient receives frames it
+ * by channel and never names the spirit or invents a sender. The spirit's own hand-written
+ * messages are unaffected.
  */
 export async function announceToCommons(text: string): Promise<void> {
   await ensureCommonsChannel();
@@ -123,17 +124,25 @@ export async function announceToCommons(text: string): Promise<void> {
   const channelId = row.conversation_id;
   await addMessage(channelId, "event", null, [{ type: "text", text }]);
 
-  // Deliver to all mind participants of the commons, sender-less, on the ordinary channel path.
+  // Deliver sender-less on the ordinary channel path to every mind participant AND the
+  // spirit (#817). The commons is the spirit's own room, so it should perceive
+  // joins/publishes there — the same way it already perceives real channel messages, which
+  // fan-out delivers to it via `isLocalMind`. `isMind` excludes the spirit by design, so it
+  // is added explicitly via `isSystemSpirit`: the set of *minds* that receive is exactly as
+  // before, and this only adds the spirit as a recipient. The null sender is preserved, so
+  // the spirit sees an event in its commons, never a message attributed to its own voice.
+  //
+  // Self-echo: a few announcements are the spirit's own action ("<spirit> published a
+  // page …"). The actor is only embedded in the free-form announcement text, not a
+  // structured field, so suppressing self-echo would need a fragile name match. The rare
+  // self-echo (still a sender-less event, not the spirit's voice) is accepted instead.
   const participants = await getParticipants(channelId);
-  // Note: this excludes the spirit (user_type "spirit"). Preserved as-is; whether
-  // commons announcements should also reach the spirit is a behavior question for
-  // review, not this refactor (#817).
-  const mindParticipants = participants.filter(isMind);
+  const recipients = participants.filter((p) => isMind(p) || isSystemSpirit(p));
   // The routing slug follows the channel's actual name (`#commons` on new installs,
   // an earned name like `#system` on migrated houses), not a hardcoded string.
   const channel = `#${row.name}`;
-  for (const mind of mindParticipants) {
-    deliverMessage(mind.username, {
+  for (const recipient of recipients) {
+    deliverMessage(recipient.username, {
       content: [{ type: "text", text }],
       channel,
       conversationId: channelId,
@@ -142,7 +151,10 @@ export async function announceToCommons(text: string): Promise<void> {
       participantCount: participants.length,
       isDM: false,
     }).catch((err) => {
-      log.warn(`failed to deliver commons announcement to ${mind.username}`, log.errorData(err));
+      log.warn(
+        `failed to deliver commons announcement to ${recipient.username}`,
+        log.errorData(err),
+      );
     });
   }
 }
