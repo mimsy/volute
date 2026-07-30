@@ -147,7 +147,7 @@ export const unifiedChatApp = new Hono<AuthEnv>().post(
     const senderName = user.id === 0 && body.sender ? body.sender : user.username;
 
     // Detect if sender is a mind. The spirit authenticates with its
-    // mind token but resolves to the shared system user (user_type "system"), so
+    // mind token but resolves to the shared system user (user_type "spirit"), so
     // classify a system principal whose username is a registered mind as a mind
     // sender too — this matches only the spirit, never a plain system principal.
     const senderIsMind =

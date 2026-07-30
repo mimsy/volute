@@ -10,10 +10,10 @@ import { isExternal, isLocalMind, isMind, isSystemSpirit } from "@volute/api/use
 const human = { user_type: "human" as const };
 const localMind = { user_type: "mind" as const }; // no `external` flag → local
 const externalMind = { user_type: "mind" as const, external: true };
-const spirit = { user_type: "system" as const };
+const spirit = { user_type: "spirit" as const };
 const puppet = { user_type: "puppet" as const };
 // A conversation participant carries `userType` (camelCase) and never an `external` flag.
-const spiritParticipant = { userType: "system" as const };
+const spiritParticipant = { userType: "spirit" as const };
 const mindParticipant = { userType: "mind" as const };
 
 describe("isMind (rendering / identity)", () => {

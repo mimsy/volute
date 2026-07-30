@@ -261,7 +261,7 @@ export async function stopSpiritFull(name: string): Promise<void> {
  */
 export function buildSeedOrientation(
   createdBy?: string | null,
-  creatorType?: "human" | "mind" | "system",
+  creatorType?: "human" | "mind" | "spirit",
 ): string {
   const intro = `You've just been created as a seed on ${getSystemName()}. Start a conversation — introduce yourself, ask questions, and begin exploring who you want to be.`;
   if (!createdBy) return intro;
@@ -269,7 +269,7 @@ export function buildSeedOrientation(
   const who =
     creatorType === "mind"
       ? `another mind, ${createdBy}`
-      : creatorType === "system"
+      : creatorType === "spirit"
         ? `the spirit of this system (${createdBy})`
         : createdBy;
   return `${intro} Your creator is ${who}. Send them a message to introduce yourself.`;
@@ -277,7 +277,7 @@ export function buildSeedOrientation(
 
 /** Look up the creator's user_type, build the orientation message, and send it. */
 async function sendSeedOrientation(mindName: string, createdBy?: string | null): Promise<void> {
-  let creatorType: "human" | "mind" | "system" | undefined;
+  let creatorType: "human" | "mind" | "spirit" | undefined;
   if (createdBy) {
     const { getUserByUsername } = await import("../auth.js");
     creatorType = (await getUserByUsername(createdBy))?.user_type;

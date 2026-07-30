@@ -24,7 +24,7 @@ const users = new Map<number, User>();
 function register(
   id: number,
   username: string,
-  userType: "human" | "mind" | "system" = "mind",
+  userType: "human" | "mind" | "spirit" = "mind",
 ): User {
   const user: User = {
     id,
@@ -59,7 +59,7 @@ describe("page read signals", () => {
     register(2, "pip");
     register(3, "whorl");
     register(4, "james", "human");
-    register(5, "volute", "system"); // the spirit
+    register(5, "volute", "spirit"); // the spirit
     publish("mimsy", "notes/tideline.md");
   });
   afterEach(() => db.close());
@@ -162,7 +162,7 @@ describe("page read signals", () => {
     });
 
     it("counts the spirit as a mind, not as a human reader", async () => {
-      // The spirit's row is user_type "system"; a `!== "mind"` test would call the
+      // The spirit's row is user_type "spirit"; a `!== "mind"` test would call the
       // house's most active reader a "reader" and quietly imply a human came by.
       syncPublishedPages(db, "_system", [{ file: "index.md", hash: "h" }]);
       recordRead(db, COMMONS, users.get(5) as User);

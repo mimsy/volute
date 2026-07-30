@@ -11,7 +11,7 @@ export { isExternal };
  * A local mind's avatar is a file in its own directory, served by name. Everyone
  * else's is an upload in the shared avatars dir — including an external mind's:
  * it POSTs /api/auth/avatar with its token like any other authenticated user. The
- * spirit (`user_type: "system"`, not a `mind`) also falls to the shared dir here.
+ * spirit (`user_type: "spirit"`, not a `mind`) also falls to the shared dir here.
  */
 export function avatarUrl(u: AuthUser): string | null {
   if (!u.avatar) return null;

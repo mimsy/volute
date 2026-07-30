@@ -113,7 +113,7 @@ export async function announceToSystem(text: string): Promise<void> {
 
   // Deliver to all mind participants of #system, sender-less, on the ordinary channel path.
   const participants = await getParticipants(channelId);
-  // Note: this excludes the spirit (user_type "system"). Preserved as-is; whether
+  // Note: this excludes the spirit (user_type "spirit"). Preserved as-is; whether
   // #system announcements should also reach the spirit is a behavior question for
   // review, not this refactor (#817).
   const mindParticipants = participants.filter(isMind);

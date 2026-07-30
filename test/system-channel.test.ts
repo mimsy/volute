@@ -133,7 +133,7 @@ describe("system channel", () => {
     const participants = await getParticipants(id);
     const spirit = participants.find((p) => p.username === "volute");
     assert.ok(spirit, "spirit should be a participant");
-    assert.equal(spirit.userType, "system", "spirit should be the system user, not a mind user");
+    assert.equal(spirit.userType, "spirit", "spirit should be the system user, not a mind user");
   });
 
   it("backfillSystemChannelMembers joins sprouted minds and spirits, skips seeds and variants", async () => {
@@ -154,7 +154,7 @@ describe("system channel", () => {
     assert.ok(!names.includes("commons-seed"), "seed should not be joined");
     assert.ok(!names.includes("commons-mind-v1"), "variant should not be joined");
     const spirit = participants.find((p) => p.username === "volute");
-    assert.equal(spirit?.userType, "system", "spirit joins as the system user");
+    assert.equal(spirit?.userType, "spirit", "spirit joins as the system user");
   });
 
   it("backfillSystemChannelMembers is idempotent", async () => {

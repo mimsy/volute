@@ -305,7 +305,7 @@ export async function buildExtensionContext(
     recordNotice: async (mindName: string, text: string) => {
       try {
         // Gate on the minds registry rather than the users table: the spirit is a
-        // mind but shares the system user account (`user_type: "system"`), so a
+        // mind but shares the system user account (`user_type: "spirit"`), so a
         // user_type check would silently drop every notice addressed to it.
         if (!(await findMind(mindName))) return;
         await recordMindNotice({
