@@ -226,7 +226,7 @@ export type FileContent = {
 export type AvailableUser = {
   id: number;
   username: string;
-  role: "admin" | "user" | "pending" | "mind" | "system";
+  role: "admin" | "user" | "pending" | "mind" | "spirit";
   user_type: UserType;
   /** Server-computed locality flag for `mind` rows (see `isExternal`); absent otherwise. */
   external?: boolean;

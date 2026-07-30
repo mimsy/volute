@@ -11,7 +11,7 @@ import { users } from "./schema.js";
 export type User = {
   id: number;
   username: string;
-  role: "admin" | "user" | "pending" | "system";
+  role: "admin" | "user" | "pending" | "spirit";
   user_type: "human" | "mind" | "spirit";
   display_name: string | null;
   description: string | null;
@@ -210,7 +210,7 @@ export async function getOrCreateSystemUser(): Promise<User> {
       .values({
         username: spiritName,
         password_hash: "!system",
-        role: "system",
+        role: "spirit",
         user_type: "spirit",
         display_name: spiritName,
       })

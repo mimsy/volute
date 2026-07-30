@@ -39,7 +39,7 @@ type HistoryEnv = {
  */
 async function resolveMindFilter(c: Context<HistoryEnv>): Promise<string | undefined> {
   const user = c.get("user");
-  const privileged = user.role === "admin" || user.role === "system";
+  const privileged = user.role === "admin" || user.role === "spirit";
   return privileged ? (c.req.query("mind") ?? undefined) : getBaseName(user.username);
 }
 
@@ -728,7 +728,7 @@ const history = new Hono<HistoryEnv>()
   })
   .get("/summaries", async (c) => {
     const user = c.get("user");
-    const privileged = user.role === "admin" || user.role === "system";
+    const privileged = user.role === "admin" || user.role === "spirit";
     // mindFilter is the caller's allowed scope: the requested mind for
     // privileged callers (undefined if none), or the caller's own base name for
     // minds. Summaries default an unscoped privileged read to the system

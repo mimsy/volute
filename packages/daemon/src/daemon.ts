@@ -112,17 +112,24 @@ export async function startDaemon(opts: {
   // Initialize database (runs drizzle migrations + creates raw connection)
   await (await import("./lib/db.js")).getDb();
 
-  // Migrate system user role to "system" (existing installs have "user")
+  // Migrate the spirit user's role to "spirit". Fresh installs still carry the
+  // default "user" role; installs from the earlier wave carry "system". Both
+  // updates are guarded and idempotent — no-ops once the row already reads "spirit".
   try {
     const { eq, and } = await import("drizzle-orm");
     const { users } = await import("./lib/schema.js");
     const db = await (await import("./lib/db.js")).getDb();
     await db
       .update(users)
-      .set({ role: "system" })
+      .set({ role: "spirit" })
       .where(and(eq(users.user_type, "spirit"), eq(users.role, "user")));
+    // Existing installs (e.g. bardo) already carry the earlier "system" value.
+    await db
+      .update(users)
+      .set({ role: "spirit" })
+      .where(and(eq(users.user_type, "spirit"), eq(users.role, "system")));
   } catch (err) {
-    log.warn("failed to migrate system user role", log.errorData(err));
+    log.warn("failed to migrate spirit user role", log.errorData(err));
   }
 
   // Downscale oversized avatars uploaded before resize-on-upload existed (non-fatal)

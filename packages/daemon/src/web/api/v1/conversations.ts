@@ -35,7 +35,7 @@ async function canReadConversation(
   const conv = await getConversation(id);
   if (!conv) return false;
   if (conv.private !== 1) return true;
-  if (user.id === 0 || user.role === "admin" || user.role === "system") return true;
+  if (user.id === 0 || user.role === "admin" || user.role === "spirit") return true;
   return isParticipantOrOwner(id, user.id);
 }
 

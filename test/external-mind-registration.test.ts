@@ -66,9 +66,9 @@ async function cleanup() {
  * `createUser` only auto-admins the FIRST human user in the DB, which isn't
  * reliable in a shared test DB — set the role explicitly. Written straight to the
  * row rather than via `setUserRole`, whose contract is only "admin" | "user";
- * the gate has to be provable against "system" and "pending" callers too.
+ * the gate has to be provable against "spirit" and "pending" callers too.
  */
-async function makeUser(username: string, role: "admin" | "user" | "system" | "pending") {
+async function makeUser(username: string, role: "admin" | "user" | "spirit" | "pending") {
   const user = await createUser(username, "pw-123456");
   const db = await getDb();
   await db.update(users).set({ role }).where(eq(users.id, user.id));
@@ -154,12 +154,12 @@ describe("external mind registration", () => {
 
   // The gate that matters: registration mints a durable credential, so it is
   // requireAdmin — human-gated — exactly like the R1 token routes. The injectable
-  // `system` principal (the spirit) must NOT be able to mint one for itself. This
-  // test fails if anyone re-widens the route to admit "system".
-  it("refuses a role:system caller, and creates nothing", async () => {
-    const { sessionId } = await makeUser(SYSTEM_CALLER, "system");
+  // `spirit` principal must NOT be able to mint one for itself. This test fails if
+  // anyone re-widens the route to admit "spirit".
+  it("refuses a role:spirit caller, and creates nothing", async () => {
+    const { sessionId } = await makeUser(SYSTEM_CALLER, "spirit");
     const res = await register(sessionId, { name: NEW_MIND });
-    assert.equal(res.status, 403, "system must not mint durable credentials without a human");
+    assert.equal(res.status, 403, "the spirit must not mint durable credentials without a human");
     assert.equal(await getUserByUsername(NEW_MIND), null);
   });
 

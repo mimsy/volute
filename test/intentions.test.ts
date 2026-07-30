@@ -492,14 +492,14 @@ describe("intentions commands", () => {
     assert.match(result.error, /Forbidden/);
   });
 
-  it("review-due command allows the spirit (role: system)", async () => {
+  it("review-due command allows the spirit (role: spirit)", async () => {
     createIntention(db, "aria", "overdue thing", undefined, undefined);
     db.prepare("UPDATE intentions SET review_at = datetime('now', '-1 day')").run();
 
     const commands = createCommands();
     const ctx = makeCtx("volute", {
       username: "volute",
-      role: "system",
+      role: "spirit",
       user_type: "spirit",
     } as User);
     const result = await commands["review-due"].handler({ args: {}, flags: {}, rest: [] }, ctx);

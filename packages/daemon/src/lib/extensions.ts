@@ -373,7 +373,7 @@ async function loadExtension(
         // Minds are untrusted principals — only privileged callers (admin/system)
         // may target another mind via body.mind. Otherwise the acting mind is the
         // authenticated identity, so a mind cannot impersonate another.
-        const privileged = user?.role === "admin" || user?.role === "system";
+        const privileged = user?.role === "admin" || user?.role === "spirit";
         const mindName = privileged ? body.mind || user?.username : user?.username;
         const session = c.get("mindSession") as string | undefined;
         try {
