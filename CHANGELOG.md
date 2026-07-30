@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.57.0](https://github.com/mimsy/volute/compare/volute-v0.56.0...volute-v0.57.0) (2026-07-30)
+
+
+### Features
+
+* deliver commons announcements to the spirit too ([#817](https://github.com/mimsy/volute/issues/817)) ([#856](https://github.com/mimsy/volute/issues/856)) ([cbcc148](https://github.com/mimsy/volute/commit/cbcc148c3c77dab4b2a79722677338f0955e6902))
+
+
+### Bug Fixes
+
+* redirect old _system commons page URLs to _commons ([#857](https://github.com/mimsy/volute/issues/857)) ([f76f0c9](https://github.com/mimsy/volute/commit/f76f0c90c4e857d2f94ac283fce1259814faf776))
+
 ## [0.56.0](https://github.com/mimsy/volute/compare/volute-v0.55.0...volute-v0.56.0) (2026-07-24)
 
 
