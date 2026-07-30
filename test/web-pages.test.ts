@@ -293,6 +293,55 @@ describe("createPublicRoutes name traversal", () => {
   });
 });
 
+describe("_system → _commons redirect", () => {
+  beforeEach(cleanup);
+  afterEach(cleanup);
+
+  async function makeApp(dir: string) {
+    const { createPublicRoutes } = await import("../packages/extensions/pages/src/routes.js");
+    const publicApp = new Hono();
+    publicApp.route("/public", createPublicRoutes(makeCtx(dir)));
+    return publicApp;
+  }
+
+  it("301s an old _system page URL to its _commons equivalent", async () => {
+    const dir = setupTestDir();
+    const app = await makeApp(dir);
+
+    const res = await app.request("/public/_system/index.html");
+    assert.equal(res.status, 301);
+    assert.equal(res.headers.get("location"), "/ext/pages/public/_commons/index.html");
+  });
+
+  it("preserves nested asset paths and query strings", async () => {
+    const dir = setupTestDir();
+    const app = await makeApp(dir);
+
+    const res = await app.request("/public/_system/garden/style.css?v=2");
+    assert.equal(res.status, 301);
+    assert.equal(res.headers.get("location"), "/ext/pages/public/_commons/garden/style.css?v=2");
+  });
+
+  it("does not redirect a real _commons URL", async () => {
+    const dir = setupTestDir();
+    const app = await makeApp(dir);
+
+    // _commons serves from dataDir/repo, which this fixture doesn't populate — the
+    // point is only that it is NOT a 301 redirect (no accidental catch-all).
+    const res = await app.request("/public/_commons/index.html");
+    assert.notEqual(res.status, 301);
+  });
+
+  it("does not redirect a normal mind URL", async () => {
+    const dir = setupTestDir();
+    const app = await makeApp(dir);
+
+    const res = await app.request("/public/test-mind/index.html");
+    assert.equal(res.status, 200);
+    assert.notEqual(res.status, 301);
+  });
+});
+
 describe("markdown page rendering", () => {
   beforeEach(cleanup);
   afterEach(cleanup);

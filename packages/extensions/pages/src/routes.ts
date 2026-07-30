@@ -355,6 +355,18 @@ export function createPublicRoutes(ctx: ExtensionContext): Hono {
       if (name.includes("/") || name.includes("\\") || name === "." || name === "..")
         return c.text("Not found", 404);
 
+      // The pages commons identity moved `_system` → `_commons` (#819). Published
+      // pages are public, so old URLs live on in external citations and bookmarks;
+      // permanently redirect any `_system` page/asset path to its `_commons`
+      // equivalent, preserving the rest of the path and the query string.
+      if (name === "_system") {
+        const prefix = `/public/${name}`;
+        const idx = c.req.path.indexOf(prefix);
+        const wildcard = idx >= 0 ? c.req.path.slice(idx + prefix.length) : "/";
+        const search = new URL(c.req.url).search;
+        return c.redirect(`/ext/pages/public/_commons${wildcard}${search}`, 301);
+      }
+
       let pagesRoot: string;
       let blockDotfiles = false;
       if (name === "_commons") {
