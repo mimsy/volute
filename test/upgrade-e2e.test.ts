@@ -109,6 +109,13 @@ const HOME_DIR = resolve(SCRATCH, "home");
 const INSTALL_PREFIX = resolve(SCRATCH, "prior");
 const MIND_DIR = resolve(HOME_DIR, "minds", MIND);
 const DB_PATH = resolve(HOME_DIR, "system", "volute.db");
+const PAGES_DB_PATH = resolve(HOME_DIR, "system", "extension-data", "pages", "data.db");
+
+// A second mind created *after* the upgrade — its "has joined" is the announcement
+// the migrated spirit must receive (assertion: commons delivery, #817).
+const NEW_MIND = "commons-newcomer";
+// The commons page seeded under the pre-migration `_system` identity.
+const COMMONS_PAGE_FILE = "e2e-commons-note.html";
 
 function req(path: string, options?: RequestInit): Promise<Response> {
   const headers = new Headers(options?.headers);
@@ -209,11 +216,43 @@ function headMigrationCount(): number {
   return readdirSync(resolve(REPO_ROOT, "drizzle")).filter((f) => f.endsWith(".sql")).length;
 }
 
+/**
+ * Raw libsql read/write against a scratch DB file. The in-process getDb() is bound
+ * to the per-process test home (test/setup.ts), so it can't see this scratch
+ * VOLUTE_HOME — the migration assertions and prior-state seeding must go straight to
+ * the file, exactly like appliedMigrationCount() above.
+ */
+async function queryDb<T = Record<string, unknown>>(
+  dbPath: string,
+  sql: string,
+  args: (string | number | null)[] = [],
+): Promise<T[]> {
+  const client = createClient({ url: `file:${dbPath}` });
+  try {
+    const r = await client.execute({ sql, args });
+    return r.rows as unknown as T[];
+  } finally {
+    client.close();
+  }
+}
+
 // State captured while the prior release is running, verified after the upgrade.
 let conversationId = "";
 let skipReason: string | null = PRIOR_VERSION ? null : "no prior release tag found";
 let priorDaemon: ChildProcess | undefined;
 let headDaemon: ChildProcess | undefined;
+
+// The prior release's pre-migration shapes, captured off the scratch DB after the
+// prior daemon stops (files unlocked) and before the HEAD daemon runs its
+// migrations. These are both the step-0 premise (0.56.0 predates all three
+// migrations) and the inputs the post-upgrade assertions compare against.
+let priorChannelName: string | null = null;
+let priorHadIsDefaultColumn = true;
+let priorSpiritRole: string | null = null;
+let priorSpiritUserType: string | null = null;
+// null once the prior `_system` pages row is seeded; otherwise the reason the pages
+// data-migration assertion must skip (never assert vacuously on an unseeded shape).
+let pagesSeedReason: string | null = null;
 
 describe("cross-version upgrade e2e", { timeout: 600000 }, () => {
   before(async () => {
@@ -359,6 +398,62 @@ describe("cross-version upgrade e2e", { timeout: 600000 }, () => {
     await reapPort(DAEMON_PORT);
     await reapPort(MIND_BASE_PORT);
 
+    // --- Both daemons are down, so the scratch DB files are unlocked. Capture the
+    //     prior release's pre-migration shapes (step 0) and seed the pages migration
+    //     input, before the HEAD daemon runs its migrations against this state. ---
+
+    // channels: 0.56.0 predates the `is_default` column; its sole default channel is
+    // named "system" (ensureSystemChannel), created without any default marker.
+    const chanCols = await queryDb<{ name: string }>(DB_PATH, "PRAGMA table_info(channels)");
+    priorHadIsDefaultColumn = chanCols.some((c) => c.name === "is_default");
+    // Capture by the same identity the 0002 migration keys on (name in system/#system),
+    // not "the only channel", so an unrelated channel can't perturb the premise.
+    const chanRows = await queryDb<{ name: string }>(
+      DB_PATH,
+      "SELECT name FROM channels WHERE name IN ('system', '#system')",
+    );
+    priorChannelName = chanRows.length === 1 ? chanRows[0].name : null;
+
+    // users: 0.56.0 writes the spirit (the shared system user) as role='system',
+    // user_type='system' — the shape all three 0.57.0 migrations move off of.
+    const spiritRows = await queryDb<{ role: string; user_type: string }>(
+      DB_PATH,
+      "SELECT role, user_type FROM users WHERE user_type IN ('system', 'spirit')",
+    );
+    if (spiritRows.length === 1) {
+      priorSpiritRole = spiritRows[0].role;
+      priorSpiritUserType = spiritRows[0].user_type;
+    }
+
+    // pages: seed a commons page under the OLD `_system` identity so the pages
+    // extension's initDb data-migration (`_system` → `_commons`, #819) has real
+    // pre-existing data to move. This is a DIRECT libsql INSERT, NOT the real publish
+    // path: publishing a commons page through the 0.56.0 API needs a git worktree +
+    // spirit pipeline not worth standing up here, and the brief sanctions the insert
+    // fallback. A paired page_comments row gives the page a thread, so HEAD's on-boot
+    // syncSystemPages tombstones the (disk-absent) page instead of deleting an orphan
+    // — leaving the row present under the migrated `_commons` mind, which is what the
+    // assertion checks. The 301-redirect assertion is a pure route and needs none of
+    // this seeding.
+    if (!existsSync(PAGES_DB_PATH)) {
+      pagesSeedReason = `prior pages DB absent at ${PAGES_DB_PATH}`;
+    } else {
+      try {
+        await queryDb(
+          PAGES_DB_PATH,
+          "INSERT INTO published_pages (mind, file, author) VALUES ('_system', ?, ?)",
+          [COMMONS_PAGE_FILE, "e2e"],
+        );
+        await queryDb(
+          PAGES_DB_PATH,
+          "INSERT INTO page_comments (mind, file, author_id, content) VALUES ('_system', ?, ?, ?)",
+          [COMMONS_PAGE_FILE, 1, "e2e thread keeper"],
+        );
+      } catch (err) {
+        pagesSeedReason = `could not seed prior pages _system row: ${(err as Error).message.slice(0, 200)}`;
+      }
+    }
+
     headDaemon = spawn(
       "npx",
       ["tsx", "packages/daemon/src/daemon.ts", "--port", String(DAEMON_PORT), "--foreground"],
@@ -438,5 +533,183 @@ describe("cross-version upgrade e2e", { timeout: 600000 }, () => {
     assert.equal(body.ok, true, `upgrade not ok: ${JSON.stringify(body)}`);
     assert.notEqual(body.conflicts, true, "template upgrade should not conflict");
     if (body.warning) process.stderr.write(`[upgrade-e2e] upgrade warning: ${body.warning}\n`);
+  });
+
+  // ---------------------------------------------------------------------------
+  // 0.57.0 (milestone 9) is almost entirely migrations against live data. The
+  // per-PR unit tests prove each migration on a fresh DB; the following assert the
+  // same three migrations + the redirect + the spirit announcement landed on the
+  // *real pre-existing* 0.56.0 state seeded above — the proof a fresh-DB test can't
+  // give. Each is written to FAIL if its migration were reverted, and to SKIP (never
+  // fail) wherever the harness itself skips.
+  // ---------------------------------------------------------------------------
+
+  it("prior 0.56.0 carried the pre-migration shapes (premise)", async (t) => {
+    if (skipReason) return t.skip(skipReason);
+
+    // If any of these drift, the upgrade assertions below would pass vacuously
+    // against an already-new shape — so fail loudly here rather than silently.
+    assert.equal(
+      priorHadIsDefaultColumn,
+      false,
+      "0.56.0 channels should predate the is_default column",
+    );
+    assert.ok(
+      priorChannelName === "system" || priorChannelName === "#system",
+      `expected a single legacy default channel named system/#system, got ${JSON.stringify(priorChannelName)}`,
+    );
+    assert.equal(
+      priorSpiritUserType,
+      "system",
+      "0.56.0 should write the spirit as user_type='system'",
+    );
+    assert.equal(priorSpiritRole, "system", "0.56.0 should write the spirit as role='system'");
+  });
+
+  it("channels: is_default backfilled onto the one default channel, name preserved", async (t) => {
+    if (skipReason) return t.skip(skipReason);
+
+    // Needs no seeding — the prior boot auto-created the default channel; the 0002
+    // migration marks it.
+    const rows = await queryDb<{ name: string; is_default: number }>(
+      DB_PATH,
+      "SELECT name, is_default FROM channels",
+    );
+    const defaults = rows.filter((r) => Number(r.is_default) === 1);
+    assert.equal(
+      defaults.length,
+      1,
+      `exactly one channel should carry is_default=1, got ${JSON.stringify(rows)}`,
+    );
+    // Marked, never renamed: the flag lands on the exact legacy name 0.56.0 created.
+    assert.equal(
+      defaults[0].name,
+      priorChannelName,
+      `default channel was renamed across upgrade (prior name: ${priorChannelName})`,
+    );
+  });
+
+  it("users: the spirit's role and user_type migrate to 'spirit'", async (t) => {
+    if (skipReason) return t.skip(skipReason);
+
+    // Needs no seeding — the prior boot auto-created the spirit. Drizzle 0001 moves
+    // user_type 'system' → 'spirit'; the daemon.ts boot-migration then moves role.
+    const rows = await queryDb<{ role: string; user_type: string }>(
+      DB_PATH,
+      "SELECT role, user_type FROM users WHERE user_type = 'spirit'",
+    );
+    assert.equal(rows.length, 1, `exactly one spirit user expected, got ${JSON.stringify(rows)}`);
+    assert.equal(rows[0].user_type, "spirit", "0001 should rewrite user_type 'system' → 'spirit'");
+    assert.equal(rows[0].role, "spirit", "the boot-migration should rewrite the spirit's role");
+    const legacy = await queryDb(DB_PATH, "SELECT 1 FROM users WHERE user_type = 'system'");
+    assert.equal(legacy.length, 0, "no user_type='system' rows should survive the upgrade");
+  });
+
+  it("pages: legacy _system URLs 301-redirect to _commons", async (t) => {
+    if (skipReason) return t.skip(skipReason);
+
+    // A pure route (no DB dependency), so it always asserts. redirect:"manual" is
+    // mandatory — a real fetch auto-follows the 301 and hides it. 0.56.0 served
+    // _system content here; HEAD redirects, so this fails if the redirect is reverted.
+    const res = await fetch(`${BASE_URL}/ext/pages/public/_system/${COMMONS_PAGE_FILE}`, {
+      redirect: "manual",
+    });
+    assert.equal(res.status, 301, `expected a 301 for a legacy _system URL, got ${res.status}`);
+    assert.equal(
+      res.headers.get("location"),
+      `/ext/pages/public/_commons/${COMMONS_PAGE_FILE}`,
+      "the _system URL should redirect to its _commons equivalent",
+    );
+  });
+
+  it("pages: persisted _system commons rows migrate to _commons", async (t) => {
+    if (skipReason) return t.skip(skipReason);
+    if (pagesSeedReason) return t.skip(`pages row migration not asserted: ${pagesSeedReason}`);
+
+    // The seeded `_system` row must have moved to `_commons` (initDb data-migration),
+    // and no `_system` row may remain.
+    const rows = await queryDb<{ mind: string }>(
+      PAGES_DB_PATH,
+      "SELECT mind FROM published_pages WHERE file = ?",
+      [COMMONS_PAGE_FILE],
+    );
+    assert.ok(rows.length >= 1, "the seeded commons page row should survive the upgrade");
+    assert.ok(
+      rows.every((r) => r.mind === "_commons"),
+      `seeded _system row not migrated to _commons: ${JSON.stringify(rows)}`,
+    );
+    const stragglers = await queryDb(
+      PAGES_DB_PATH,
+      "SELECT 1 FROM published_pages WHERE mind = '_system'",
+    );
+    assert.equal(stragglers.length, 0, "no published_pages rows should remain under _system");
+  });
+
+  it("spirit receives a commons announcement when a new mind joins", async (t) => {
+    if (skipReason) return t.skip(skipReason);
+
+    // The announcement is delivered to commons *participants*; the migrated spirit
+    // becomes one via the HEAD boot's spirit bootstrap (or already was, having joined
+    // #system under 0.56.0). Wait for that membership, then skip — not fail — if it
+    // never establishes in this environment: that's a bootstrap gap, not the delivery
+    // regression this guards. What #817 added is spirit *inclusion* in
+    // announceToCommons (isMind excludes the spirit user_type), so: given membership,
+    // does a sender-less announcement reach the spirit? — reverting #817 fails this.
+    let joined = false;
+    for (let i = 0; i < 120 && !joined; i++) {
+      const m = await queryDb(
+        DB_PATH,
+        `SELECT 1 FROM conversation_participants cp
+           JOIN users u ON u.id = cp.user_id
+           JOIN channels ch ON ch.conversation_id = cp.conversation_id
+          WHERE ch.is_default = 1 AND u.user_type = 'spirit'`,
+      );
+      joined = m.length > 0;
+      if (!joined) await new Promise((r) => setTimeout(r, 500));
+    }
+    if (!joined) return t.skip("spirit never joined the commons channel in this environment");
+
+    // Derive the spirit's name from the DB rather than hardcoding the "volute"
+    // default — mind_history keys on the registry name, which equals the spirit
+    // user's username, so this stays correct even if the house named its spirit.
+    const spiritUser = await queryDb<{ username: string }>(
+      DB_PATH,
+      "SELECT username FROM users WHERE user_type = 'spirit'",
+    );
+    const spiritName = spiritUser[0]?.username ?? "volute";
+    const channelSlug = `#${priorChannelName}`; // delivery slug follows the channel's name
+
+    // Trigger "X has joined" by creating a fresh sprouted mind through the API.
+    const createRes = await req("/api/minds", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: NEW_MIND }),
+    });
+    assert.ok(
+      createRes.status === 200 || createRes.status === 201,
+      `create ${NEW_MIND}: ${createRes.status} ${await createRes.text()}`,
+    );
+
+    // Delivery is fire-and-forget; poll the spirit's inbound history for the row.
+    let row: { sender: string | null; channel: string | null; content: string | null } | undefined;
+    for (let i = 0; i < 100 && !row; i++) {
+      const inbound = await queryDb<{
+        sender: string | null;
+        channel: string | null;
+        content: string | null;
+      }>(DB_PATH, "SELECT sender, channel, content FROM mind_history WHERE mind = ? AND type = ?", [
+        spiritName,
+        "inbound",
+      ]);
+      row = inbound.find((r) => r.content?.includes(`${NEW_MIND} has joined`));
+      if (!row) await new Promise((r) => setTimeout(r, 250));
+    }
+    assert.ok(row, `spirit did not receive the '${NEW_MIND} has joined' announcement`);
+    assert.equal(
+      row!.sender,
+      null,
+      "the announcement must be sender-less — never the spirit's voice",
+    );
+    assert.equal(row!.channel, channelSlug, "announcement delivered on the wrong channel slug");
   });
 });
