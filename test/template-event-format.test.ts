@@ -106,6 +106,37 @@ describe("sender-less channel announcements (#687)", () => {
   });
 });
 
+// #493: the participant label a mind reads is the display term for a user's type. Humans render
+// as `[human]` — the retired "brain" jargon must never surface here. The label is the raw
+// user_type today (there is no "brain" value to migrate), so this test guards against a
+// regression that reintroduces a human→"brain" mapping in the prefix formatter.
+describe("participant profile labels (#493)", () => {
+  it("labels a human participant [human] and never [brain]", () => {
+    const prefix = formatPrefix(
+      {
+        channel: "#garden",
+        sender: "alice",
+        participantProfiles: [{ username: "alice", userType: "human", displayName: "Alice" }],
+      },
+      "2026-07-12 07:30",
+    );
+    assert.ok(prefix.includes("alice (Alice) [human]"), "human renders as [human]");
+    assert.ok(!prefix.toLowerCase().includes("brain"), "the retired [brain] label must not return");
+  });
+
+  it("labels a mind participant [mind]", () => {
+    const prefix = formatPrefix(
+      {
+        channel: "#garden",
+        sender: "atlas",
+        participantProfiles: [{ username: "atlas", userType: "mind" }],
+      },
+      "2026-07-12 07:30",
+    );
+    assert.ok(prefix.includes("atlas [mind]"), "mind renders as [mind]");
+  });
+});
+
 describe("router event dispatch", () => {
   it("applies the system-event heading and no sender/DM framing to an event dispatch", () => {
     const handled: { content: VoluteContentPart[]; meta: HandlerMeta }[] = [];
