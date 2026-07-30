@@ -178,7 +178,7 @@ describe("maybeSendCommonsCue", () => {
   it("sends to the spirit even though its user row is user_type spirit", async () => {
     const { ctx, notices } = makeCtx({
       getUserByUsername: async (username: string) =>
-        ({ id: 1, username, role: "system", user_type: "spirit" }) as unknown as User,
+        ({ id: 1, username, role: "spirit", user_type: "spirit" }) as unknown as User,
     });
     await maybeSendCommonsCue(ctx, repoDir);
     assert.equal(notices.length, 1);

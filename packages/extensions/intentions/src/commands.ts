@@ -188,7 +188,7 @@ export function createCommands(): Record<string, ExtensionCommand> {
         // generic command dispatcher does not let an ordinary mind spoof --mind), so
         // this role lookup always reflects the real caller, not an attacker-chosen name.
         const actor = await ctx.getUserByUsername(ctx.mindName);
-        if (!actor || (actor.role !== "admin" && actor.role !== "system")) {
+        if (!actor || (actor.role !== "admin" && actor.role !== "spirit")) {
           return { error: "Forbidden: review-due is spirit/admin only" };
         }
 

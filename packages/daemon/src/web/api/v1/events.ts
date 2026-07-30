@@ -34,7 +34,7 @@ const app = new Hono<AuthEnv>().use("*", authMiddleware).get("/", async (c) => {
   // Minds are untrusted: a non-admin/system principal may only see its own
   // activity (activity.summary is an AI-generated summary of a mind's turn).
   // `activityMind === undefined` means a privileged caller with the global feed.
-  const privileged = user.role === "admin" || user.role === "system";
+  const privileged = user.role === "admin" || user.role === "spirit";
   const activityMind = privileged ? undefined : await getBaseName(user.username);
 
   return streamSSE(c, async (stream) => {

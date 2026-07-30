@@ -257,7 +257,7 @@ type MindStatus = Awaited<ReturnType<typeof getMindStatus>>;
 /** True for the daemon's own privileged principals: admin users and the system spirit. */
 function isPrivileged(c: Context<AuthEnv>): boolean {
   const role = c.get("user").role;
-  return role === "admin" || role === "system";
+  return role === "admin" || role === "spirit";
 }
 
 /**

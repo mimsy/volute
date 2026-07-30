@@ -44,7 +44,8 @@ describe("0001 migrate spirit user_type", () => {
 
     // The value flipped...
     assert.equal(spirit.user_type, "spirit");
-    // ...but role (a separate axis, renamed in a later wave) did not...
+    // ...but role (a separate axis, renamed by a distinct boot migration, not this
+    // SQL) is left exactly as the legacy row carried it — here the old "system".
     assert.equal(spirit.role, "system");
     // ...and non-spirit rows are untouched.
     assert.equal(mind.user_type, "mind");

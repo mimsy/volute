@@ -133,8 +133,8 @@ const app = new Hono<AuthEnv>()
     const ch = await getChannelByName(name);
     if (!ch) return c.json({ error: "Channel not found" }, 404);
 
-    // In-handler authz: only a channel member (or admin/system) may change settings.
-    if (user.role !== "admin" && user.role !== "system" && !(await isParticipant(ch.id, user.id))) {
+    // In-handler authz: only a channel member (or admin/spirit) may change settings.
+    if (user.role !== "admin" && user.role !== "spirit" && !(await isParticipant(ch.id, user.id))) {
       return c.json({ error: "Forbidden" }, 403);
     }
 
@@ -179,10 +179,10 @@ const app = new Hono<AuthEnv>()
     const ch = await getChannelByName(name);
     if (!ch) return c.json({ error: "Channel not found" }, 404);
 
-    // In-handler authz: only a channel member (or admin/system) may add members.
+    // In-handler authz: only a channel member (or admin/spirit) may add members.
     if (
       inviter.role !== "admin" &&
-      inviter.role !== "system" &&
+      inviter.role !== "spirit" &&
       !(await isParticipant(ch.id, inviter.id))
     ) {
       return c.json({ error: "Forbidden" }, 403);

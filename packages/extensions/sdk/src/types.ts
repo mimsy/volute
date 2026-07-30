@@ -20,7 +20,7 @@ export type ActivityEvent = {
 export type User = {
   id: number;
   username: string;
-  role: "admin" | "user" | "pending" | "system";
+  role: "admin" | "user" | "pending" | "spirit";
   user_type: "human" | "mind" | "spirit";
   display_name: string | null;
   description: string | null;

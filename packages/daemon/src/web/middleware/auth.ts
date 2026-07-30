@@ -88,10 +88,10 @@ export const requireAdmin = createMiddleware<AuthEnv>(async (c, next) => {
   await next();
 });
 
-/** Allow admin users and the system user (role: "system"). */
+/** Allow admin users and the spirit user (role: "spirit"). */
 export const requireAdminOrSystem = createMiddleware<AuthEnv>(async (c, next) => {
   const user = c.get("user");
-  if (user.role !== "admin" && user.role !== "system") {
+  if (user.role !== "admin" && user.role !== "spirit") {
     return c.json({ error: "Forbidden" }, 403);
   }
   await next();
@@ -206,7 +206,7 @@ export const authMiddleware = createMiddleware<AuthEnv>(async (c, next) => {
 export const requireSelf = (paramName = "name") =>
   createMiddleware<AuthEnv>(async (c, next) => {
     const user = c.get("user");
-    if (user.role !== "admin" && user.role !== "system") {
+    if (user.role !== "admin" && user.role !== "spirit") {
       const target = c.req.param(paramName) ?? "";
       const baseName = await getBaseName(target);
       // Base-map the caller too: a variant's token resolves to its own name,

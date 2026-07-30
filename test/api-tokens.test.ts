@@ -180,11 +180,11 @@ describe("api tokens", () => {
     });
     assert.equal(listForbidden.status, 403);
 
-    // Nor the system principal (the spirit): durable issuance is human-gated, so
-    // even role:"system" is rejected — closing the prompt-injection path where
+    // Nor the spirit principal: durable issuance is human-gated, so even
+    // role:"spirit" is rejected — closing the prompt-injection path where
     // untrusted text could talk the spirit into minting a credential.
     const systemUser = await getOrCreateMindUser(OTHER_MIND);
-    await setUserRole(systemUser.id, "system");
+    await setUserRole(systemUser.id, "spirit");
     const { token: systemToken } = await issueApiToken(systemUser.id, "system-principal");
     const systemForbidden = await authApp.request(`/users/${mindUser.id}/tokens`, {
       method: "POST",
