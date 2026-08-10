@@ -16,6 +16,7 @@ import {
   setConversationPrivate,
 } from "../../../lib/events/conversations.js";
 import { findMind } from "../../../lib/mind/registry.js";
+import { parseIntParam } from "../../../lib/util/query-params.js";
 import { type AuthEnv, authMiddleware } from "../../middleware/auth.js";
 
 const createSchema = z.object({
@@ -57,14 +58,9 @@ const app = new Hono<AuthEnv>()
       return c.json({ error: "Conversation not found" }, 404);
     }
 
-    const beforeStr = c.req.query("before");
-    const limitStr = c.req.query("limit");
-    const before = beforeStr ? parseInt(beforeStr, 10) : undefined;
-    const limit = limitStr ? parseInt(limitStr, 10) : undefined;
-    if (
-      (before !== undefined && Number.isNaN(before)) ||
-      (limit !== undefined && Number.isNaN(limit))
-    ) {
+    const before = parseIntParam(c.req.query("before"));
+    const limit = parseIntParam(c.req.query("limit"));
+    if (before === null || limit === null) {
       return c.json({ error: "Invalid cursor params: before and limit must be integers" }, 400);
     }
 

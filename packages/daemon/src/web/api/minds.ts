@@ -149,6 +149,7 @@ import { gitExec } from "../../lib/util/exec.js";
 import { checkHealth } from "../../lib/util/health.js";
 import log from "../../lib/util/logger.js";
 import { safeResolveWithinBase } from "../../lib/util/paths.js";
+import { parseIntParam } from "../../lib/util/query-params.js";
 import { parseDbTimestamp } from "../../lib/util/time.js";
 import { fireWebhook } from "../../lib/webhook.js";
 import {
@@ -2163,12 +2164,9 @@ const app = new Hono<AuthEnv>()
       const msgs = await getMessages(convId);
       return c.json({ items: await withSenderDisplayNames(msgs), hasMore: false });
     }
-    const before = beforeStr ? parseInt(beforeStr, 10) : undefined;
-    const limit = limitStr ? parseInt(limitStr, 10) : undefined;
-    if (
-      (before !== undefined && Number.isNaN(before)) ||
-      (limit !== undefined && Number.isNaN(limit))
-    ) {
+    const before = parseIntParam(beforeStr);
+    const limit = parseIntParam(limitStr);
+    if (before === null || limit === null) {
       return c.json({ error: "Invalid pagination parameters" }, 400);
     }
     const result = await getMessagesPaginated(convId, { before, limit });
