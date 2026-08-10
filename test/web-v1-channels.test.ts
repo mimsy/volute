@@ -15,6 +15,7 @@ import {
 } from "../packages/daemon/src/lib/events/conversations.js";
 import { addMind, removeMind } from "../packages/daemon/src/lib/mind/registry.js";
 import { users } from "../packages/daemon/src/lib/schema.js";
+import conversationsRoute from "../packages/daemon/src/web/api/v1/conversations.js";
 import channelsRoute from "../packages/daemon/src/web/api/volute/channels.js";
 import { authMiddleware, createSession } from "../packages/daemon/src/web/middleware/auth.js";
 
@@ -27,6 +28,14 @@ function createApp() {
   const app = new Hono();
   app.use("/api/v1/channels/*", authMiddleware);
   app.route("/api/v1/channels", channelsRoute);
+  return app;
+}
+
+/** Deleting a channel goes through the conversations router, not the channels one. */
+function createDeleteApp() {
+  const app = new Hono();
+  app.use("/api/v1/conversations/*", authMiddleware);
+  app.route("/api/v1/conversations", conversationsRoute);
   return app;
 }
 
@@ -659,16 +668,24 @@ describe("web v1 channels routes", () => {
     assert.equal(body.settings.rateLimit, 20);
     assert.equal(body.settings.rateWindow, 60);
 
-    // A count without a window (or vice versa) is meaningless, so it's refused outright.
-    assert.equal((await patch({ rateLimit: 5 })).status, 400);
-    assert.equal((await patch({ rateWindow: 30 })).status, 400);
+    // Coherence is judged against the row as the patch will leave it, not the request alone.
+    // With 20/60 already stored, changing one half is fine — the pair stays complete.
+    assert.equal((await patch({ rateLimit: 5 })).status, 200);
+    assert.equal((await getChannelSettings("paced"))?.rate_limit, 5);
+    assert.equal((await patch({ rateWindow: 30 })).status, 200);
+    assert.equal((await getChannelSettings("paced"))?.rate_window, 30);
+
+    // But clearing only one half would leave a limit that silently stops being enforced
+    // while the API still reports it, so that is refused.
+    assert.equal((await patch({ rateWindow: null })).status, 400);
+    assert.equal((await patch({ rateLimit: null })).status, 400);
     assert.equal((await patch({ rateLimit: 5, rateWindow: null })).status, 400);
     assert.equal((await patch({ rateLimit: 0, rateWindow: 60 })).status, 400);
 
     // None of the rejects changed anything.
     const still = await getChannelSettings("paced");
-    assert.equal(still?.rate_limit, 20);
-    assert.equal(still?.rate_window, 60);
+    assert.equal(still?.rate_limit, 5);
+    assert.equal(still?.rate_window, 30);
 
     // Both null clears it.
     assert.equal((await patch({ rateLimit: null, rateWindow: null })).status, 200);
@@ -677,6 +694,36 @@ describe("web v1 channels routes", () => {
     assert.equal(cleared?.rate_window, null);
 
     await deleteConversation(ch.id);
+  });
+
+  it("DELETE a channel conversation needs ownership, not just membership", async () => {
+    const adminCookie = await setupAuth();
+    const app = createDeleteApp();
+
+    const bob = await createUser("bob", "pass");
+    await setUserRole(bob.id, "user");
+    const bobCookie = await createSession(bob.id);
+
+    // The admin creates a limited channel; bob is only a member. If a member could delete it,
+    // the owner-only settings guard would be worthless — bob could destroy the channel and
+    // re-create it as owner with no limits at all.
+    const ch = await createChannel("undeletable", userId, { charLimit: 100 });
+    await joinChannel(ch.id, bob.id);
+
+    const denied = await app.request(`/api/v1/conversations/${ch.id}`, {
+      method: "DELETE",
+      headers: { Cookie: `volute_session=${bobCookie}` },
+    });
+    assert.equal(denied.status, 403, "a member who didn't create the channel may not delete it");
+    assert.ok(await getChannelByName("undeletable"), "the channel still exists");
+
+    // The creator/admin can.
+    const ok = await app.request(`/api/v1/conversations/${ch.id}`, {
+      method: "DELETE",
+      headers: { Cookie: `volute_session=${adminCookie}` },
+    });
+    assert.equal(ok.status, 200);
+    assert.equal(await getChannelByName("undeletable"), null, "the channel is gone");
   });
 
   it("PATCH /:name — 400 for invalid charLimit", async () => {

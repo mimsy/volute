@@ -29,17 +29,18 @@ const channelSettingsFields = z.object({
   private: z.boolean().optional(),
 });
 
-// A rate limit is meaningless without its window, so the pair moves together: send both to
-// configure it, both null to clear it. Enforced on create and on update alike.
+// A rate limit is meaningless without its window, so the pair moves together: a count and a
+// window, or neither.
 const RATE_PAIR_MESSAGE = "rateLimit and rateWindow must be set together, or both null";
-const ratePairIsCoherent = (v: { rateLimit?: number | null; rateWindow?: number | null }) =>
-  (v.rateLimit ?? null) === null
-    ? (v.rateWindow ?? null) === null
-    : (v.rateWindow ?? null) !== null;
+const ratePairIsCoherent = (limit: number | null, window: number | null) =>
+  (limit === null) === (window === null);
 
-const channelSettingsSchema = channelSettingsFields.refine(ratePairIsCoherent, {
-  message: RATE_PAIR_MESSAGE,
-});
+// A PATCH is a partial update, so coherence has to be judged against the row as it will end
+// up — not against the request alone. Judging the request in isolation both accepts
+// `{rateWindow: null}` (leaving a stored count with no window, which silently stops being
+// enforced while the API still reports it) and then rejects the follow-up `{rateLimit: 5}`
+// that would have repaired it.
+const channelSettingsSchema = channelSettingsFields;
 
 const createSchema = z
   .object({
@@ -51,7 +52,10 @@ const createSchema = z
     participantNames: z.array(z.string().min(1)).optional(),
   })
   .merge(channelSettingsFields)
-  .refine(ratePairIsCoherent, { message: RATE_PAIR_MESSAGE });
+  // On create there is no prior state, so the request is the whole story.
+  .refine((v) => ratePairIsCoherent(v.rateLimit ?? null, v.rateWindow ?? null), {
+    message: RATE_PAIR_MESSAGE,
+  });
 
 const inviteSchema = z.object({
   username: z.string().min(1),
@@ -159,6 +163,17 @@ const app = new Hono<AuthEnv>()
       (await getParticipantRole(ch.id, user.id)) !== "owner"
     ) {
       return c.json({ error: "Forbidden" }, 403);
+    }
+
+    // Judge the rate pair against the row as this patch will leave it, so a partial update
+    // can neither create a half-set limit nor be blocked from repairing one.
+    const current = await getChannelSettings(name);
+    const nextRateLimit =
+      body.rateLimit !== undefined ? body.rateLimit : (current?.rate_limit ?? null);
+    const nextRateWindow =
+      body.rateWindow !== undefined ? body.rateWindow : (current?.rate_window ?? null);
+    if (!ratePairIsCoherent(nextRateLimit, nextRateWindow)) {
+      return c.json({ error: RATE_PAIR_MESSAGE }, 400);
     }
 
     await updateChannelSettings(name, body);

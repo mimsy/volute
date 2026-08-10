@@ -2,8 +2,9 @@ import assert from "node:assert/strict";
 import { afterEach, before, beforeEach, describe, it } from "node:test";
 import { eq, sql } from "drizzle-orm";
 import { Hono } from "hono";
-import { createUser } from "../packages/daemon/src/lib/auth.js";
+import { createUser, getOrCreateMindUser } from "../packages/daemon/src/lib/auth.js";
 import { checkChannelLimits } from "../packages/daemon/src/lib/chat/channel-limits.js";
+import { listPending as listPendingFiles } from "../packages/daemon/src/lib/chat/file-sharing.js";
 import {
   initMindManager,
   tryGetMindManager,
@@ -15,14 +16,17 @@ import {
   createConversation,
   deleteConversation,
   getMessages,
+  joinChannel,
   updateChannelSettings,
 } from "../packages/daemon/src/lib/events/conversations.js";
+import { addMind, removeMind } from "../packages/daemon/src/lib/mind/registry.js";
 import { messages, users } from "../packages/daemon/src/lib/schema.js";
 import { unifiedChatApp } from "../packages/daemon/src/web/api/volute/chat.js";
 import { authMiddleware, createSession } from "../packages/daemon/src/web/middleware/auth.js";
 
-const TEST_USERNAMES = ["limits-host"];
+const TEST_USERNAMES = ["limits-host", "limits-file-mind"];
 const CHANNEL = "limits-test";
+const FILE_MIND = "limits-file-mind";
 
 let convId: string;
 
@@ -30,6 +34,7 @@ async function cleanup() {
   const db = await getDb();
   if (convId) await deleteConversation(convId).catch(() => {});
   convId = "";
+  await removeMind(FILE_MIND).catch(() => {});
   for (const username of TEST_USERNAMES) {
     await db.delete(users).where(eq(users.username, username));
   }
@@ -151,19 +156,30 @@ describe("channel limits", () => {
       );
     });
 
-    it("does not spend the budget on system messages", async () => {
+    it("does not spend the budget on anything the environment wrote", async () => {
       const ch = await createChannel(CHANNEL, undefined, { rateLimit: 2, rateWindow: 60 });
       convId = ch.id;
 
-      // Invite notices and commons events are posted with role "system". If they counted,
-      // a channel could rate-limit itself into silence without anyone having spoken.
+      // Invite notices use role "system" (channels.ts) and commons announcements use role
+      // "event" (commons-channel.ts). Neither was said by anyone, so neither may spend a
+      // budget meant for speech — otherwise a channel rate-limits itself into silence.
       await addMessage(convId, "system", "system", [{ type: "text", text: "a joined" }]);
       await addMessage(convId, "system", "system", [{ type: "text", text: "b joined" }]);
-      await addMessage(convId, "system", "system", [{ type: "text", text: "c joined" }]);
+      await addMessage(convId, "event", null, [{ type: "text", text: "mimsy published a page" }]);
+      await addMessage(convId, "event", null, [{ type: "text", text: "bardo joined the commons" }]);
+      await addMessage(convId, "event", null, [{ type: "text", text: "a page was archived" }]);
 
       assert.equal(
         await checkChannelLimits({ conversationId: convId, channelName: CHANNEL, text: "hi" }),
         null,
+      );
+
+      // One real message still counts, and the second fills the window.
+      await postMessages(2);
+      assert.equal(
+        (await checkChannelLimits({ conversationId: convId, channelName: CHANNEL, text: "hi" }))
+          ?.status,
+        429,
       );
     });
 
@@ -264,6 +280,33 @@ describe("channel limits", () => {
       assert.equal(rejected.status, 429);
       assert.match((await rejected.json()).error, /rate limited/);
       assert.equal((await getMessages(convId)).length, 2, "the third was not persisted");
+    });
+
+    it("does not stage attached files for a message the limit refuses", async () => {
+      const host = await createUser("limits-host", "pass");
+      const cookie = await createSession(host.id);
+      await addMind(FILE_MIND, 4399);
+      const mindUser = await getOrCreateMindUser(FILE_MIND);
+      const ch = await createChannel(CHANNEL, host.id, { charLimit: 10 });
+      convId = ch.id;
+      await joinChannel(convId, mindUser.id);
+
+      const res = await createApp().request("/api/v1/chat", {
+        method: "POST",
+        headers: { Cookie: `volute_session=${cookie}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          conversationId: convId,
+          message: "x".repeat(50),
+          files: [{ filename: "notes.txt", data: Buffer.from("hello").toString("base64") }],
+        }),
+      });
+
+      assert.equal(res.status, 400);
+      // Staging runs per recipient mind and persists a pending offer. Checking the limit after
+      // it would leave the mind holding an offer for a message that was never sent — and each
+      // retry would stage another copy.
+      assert.equal(listPendingFiles(FILE_MIND).length, 0, "a refused message must not stage files");
+      assert.equal((await getMessages(convId)).length, 0);
     });
 
     it("leaves DMs unlimited", async () => {

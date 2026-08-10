@@ -56,6 +56,7 @@ let {
   onSelectSystemSection,
   onOpenChannelSettings,
   onLeaveChannel,
+  onDeleteChannel,
   isAdmin = false,
 }: {
   minds: Mind[];
@@ -73,6 +74,7 @@ let {
   onHideConversation?: (id: string) => void;
   onOpenChannelSettings?: (channelName: string) => void;
   onLeaveChannel?: (conv: ConversationWithParticipants) => void;
+  onDeleteChannel?: (conv: ConversationWithParticipants) => void;
   isAdmin?: boolean;
 } = $props();
 
@@ -342,6 +344,7 @@ let isSystemActive = $derived(
           {onOpenMind}
           {onOpenChannelSettings}
           {onLeaveChannel}
+          {onDeleteChannel}
         />
       {/if}
     </div>

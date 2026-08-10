@@ -1,4 +1,4 @@
-import { and, desc, eq, ne } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { getDb } from "../db.js";
 import { getChannelSettings } from "../events/conversations.js";
 import { messages } from "../schema.js";
@@ -17,6 +17,13 @@ export type LimitRejection = {
  * Channel policy checks for an outbound message: the per-message character limit and the
  * channel-wide rate limit. Applies to every sender — minds and humans alike — so a channel's
  * limits mean the same thing whoever is writing.
+ *
+ * Callers: the `/api/v1/chat` handler (every API send) and `echoTextToChannel` (a mind's
+ * mirrored turn output). Deliberately NOT the bridge inbound routes: a message from Discord
+ * or Slack has already been said, and refusing it here would delete someone's words from a
+ * conversation Volute doesn't own. Those messages still count toward the window — a channel
+ * carrying a busy bridge genuinely is busy — so a bridged channel can throttle its Volute
+ * senders. Set limits on bridged channels with that in mind.
  *
  * Returns a rejection to hand straight back to the caller, or null to allow the send.
  * Fails open: if the settings or the message history can't be read, the message goes through
@@ -59,11 +66,16 @@ async function checkRateLimit(
   // The Nth-newest message decides it: if the limit'th most recent message is still inside
   // the window, the window is already full. One bounded read instead of counting every row
   // in the window, and the same row's timestamp gives the exact retry-after.
+  //
+  // Only messages somebody sent count. Everything the environment writes into a channel
+  // uses another role — "system" for join/invite notices, "event" for commons
+  // announcements — and those must not spend a budget meant for speech, or a channel could
+  // rate-limit itself into silence with nobody having said a word.
   const db = await getDb();
   const nth = await db
     .select({ created_at: messages.created_at })
     .from(messages)
-    .where(and(eq(messages.conversation_id, conversationId), ne(messages.role, "system")))
+    .where(and(eq(messages.conversation_id, conversationId), eq(messages.role, "user")))
     .orderBy(desc(messages.id))
     .limit(1)
     .offset(limit - 1)

@@ -222,6 +222,27 @@ export const unifiedChatApp = new Hono<AuthEnv>().post(
     const convName = conv.type === "channel" ? await getChannelName(conversationId!) : null;
     const participants = await getParticipants(conversationId!);
 
+    // Normalize the sender's own text first: fixModelEscapes changes its length, and the
+    // channel's character limit has to measure the text that will actually be stored.
+    let messageText = body.message ?? "";
+    if (senderIsMind && messageText) {
+      const vCfg = readVoluteConfig(await resolveMindDir(baseName ?? senderName));
+      messageText = fixModelEscapes(messageText, vCfg?.unescapeNewlines === true);
+    }
+
+    // Enforce the channel's character and rate limits before anything is written or staged.
+    // Ordering matters: staging persists a pending file offer per recipient, so checking
+    // after it would leave minds holding offers for a message that was never sent — and
+    // every retry would stage another copy.
+    if (conv.type === "channel" && convName) {
+      const rejection = await checkChannelLimits({
+        conversationId: conversationId!,
+        channelName: convName,
+        text: messageText,
+      });
+      if (rejection) return c.json({ error: rejection.error }, rejection.status);
+    }
+
     // Stage files
     const fileNotifications: string[] = [];
     if (body.files && body.files.length > 0) {
@@ -238,12 +259,11 @@ export const unifiedChatApp = new Hono<AuthEnv>().post(
       fileNotifications.push(...notifications);
     }
 
-    // Build content blocks. The sender's own text is held separately: the file-share
-    // notifications below are system-generated, and must not count against the sender's
-    // character budget for text they didn't write.
+    // Build content blocks. The file-share notifications are system-generated text appended
+    // alongside the sender's message — deliberately not part of what the character limit
+    // measured above, since the sender didn't write them.
     const contentBlocks: ContentBlock[] = [];
-    const messageBlock = body.message ? { type: "text" as const, text: body.message } : null;
-    if (messageBlock) contentBlocks.push(messageBlock);
+    if (messageText) contentBlocks.push({ type: "text", text: messageText });
     for (const note of fileNotifications) {
       contentBlocks.push({ type: "text", text: note });
     }
@@ -251,29 +271,6 @@ export const unifiedChatApp = new Hono<AuthEnv>().post(
       for (const img of body.images) {
         contentBlocks.push({ type: "image", media_type: img.media_type, data: img.data });
       }
-    }
-
-    // Fix common model escape errors in mind-sent messages
-    if (senderIsMind) {
-      const vCfg = readVoluteConfig(await resolveMindDir(baseName ?? senderName));
-      const shouldUnescapeNewlines = vCfg?.unescapeNewlines === true;
-      for (const block of contentBlocks) {
-        if (block.type === "text") {
-          block.text = fixModelEscapes(block.text, shouldUnescapeNewlines);
-        }
-      }
-    }
-
-    // Enforce the channel's character and rate limits. Applies to every sender — a channel's
-    // limits mean the same thing whoever is writing — and is checked after fixModelEscapes so
-    // the length measured is the text that will actually be stored.
-    if (conv.type === "channel" && convName) {
-      const rejection = await checkChannelLimits({
-        conversationId: conversationId!,
-        channelName: convName,
-        text: messageBlock?.text ?? "",
-      });
-      if (rejection) return c.json({ error: rejection.error }, rejection.status);
     }
 
     // Resolve the sending mind's active turn from the per-request X-Volute-Thread header

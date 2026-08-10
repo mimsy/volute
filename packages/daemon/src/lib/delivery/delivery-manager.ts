@@ -124,6 +124,13 @@ type SessionState = {
   lastDeliverySenders: Set<string>;
   lastDeliveryChannels: Set<string>;
   seenChannelProfiles: Set<string>;
+  /**
+   * Channel key → the `updated_at` of the settings last announced to this session. Separate
+   * from seenChannelProfiles so a settings change re-announces the channel's card without
+   * re-sending every participant profile and avatar, and so a failed read doesn't count as
+   * "already introduced".
+   */
+  announcedChannelInfo: Map<string, string>;
 };
 
 // --- Batch buffer ---
@@ -1888,36 +1895,51 @@ export class DeliveryManager {
     if (!state) return payload;
 
     const channelKey = payload.channel;
-    if (state.seenChannelProfiles.has(channelKey)) return payload;
+    const profilesSeen = state.seenChannelProfiles.has(channelKey);
+
+    // The channel introduces itself: what it's for, its rules, and the limits it enforces.
+    // Without this a mind meets a limit only by being rejected by it, and never learns the
+    // rules at all. Re-announced whenever the settings change — a limit added an hour into a
+    // long session is exactly the case the card exists for — so this is keyed on the row's
+    // updated_at rather than riding the once-per-session profiles gate. A failed read records
+    // nothing, so it is retried on the next delivery instead of being lost for the session.
+    const ctx = await this.loadChannelContext(payload);
+    const freshChannelInfo =
+      ctx && state.announcedChannelInfo.get(channelKey) !== ctx.updatedAt ? ctx : null;
+
+    if (profilesSeen && !freshChannelInfo) return payload;
 
     try {
-      const participants = await getParticipants(payload.conversationId);
-      const profiles: ParticipantProfile[] = participants.map((p) => ({
-        username: p.username,
-        userType: p.userType,
-        displayName: p.displayName,
-        description: p.description,
-      }));
+      const enriched: DeliveryPayload = { ...payload };
 
-      // Read avatar images and prepend as image blocks
-      const avatarBlocks = await this.loadAvatarBlocks(participants);
-
-      // The channel introduces itself alongside its participants: what it's for, its rules,
-      // and the limits it enforces. Without this a mind meets a limit only by being rejected
-      // by it, and never learns the rules at all.
-      const channelInfo = await this.loadChannelContext(payload);
-
-      state.seenChannelProfiles.add(channelKey);
-      const enriched: DeliveryPayload = { ...payload, participantProfiles: profiles };
-      if (channelInfo) enriched.channelInfo = channelInfo;
-      if (avatarBlocks.length > 0) {
-        const existing = Array.isArray(payload.content)
-          ? payload.content
-          : typeof payload.content === "string"
-            ? [{ type: "text" as const, text: payload.content }]
-            : [];
-        enriched.content = [...avatarBlocks, ...existing];
+      if (freshChannelInfo) {
+        enriched.channelInfo = freshChannelInfo.info;
+        state.announcedChannelInfo.set(channelKey, freshChannelInfo.updatedAt);
       }
+
+      if (!profilesSeen) {
+        const participants = await getParticipants(payload.conversationId);
+        enriched.participantProfiles = participants.map((p) => ({
+          username: p.username,
+          userType: p.userType,
+          displayName: p.displayName,
+          description: p.description,
+        })) satisfies ParticipantProfile[];
+
+        // Read avatar images and prepend as image blocks
+        const avatarBlocks = await this.loadAvatarBlocks(participants);
+
+        state.seenChannelProfiles.add(channelKey);
+        if (avatarBlocks.length > 0) {
+          const existing = Array.isArray(payload.content)
+            ? payload.content
+            : typeof payload.content === "string"
+              ? [{ type: "text" as const, text: payload.content }]
+              : [];
+          enriched.content = [...avatarBlocks, ...existing];
+        }
+      }
+
       return enriched;
     } catch (err) {
       dlog.warn(`failed to fetch participant profiles for ${mindName}`, log.errorData(err));
@@ -1926,12 +1948,15 @@ export class DeliveryManager {
   }
 
   /**
-   * A channel's self-description for the mind's first message from it this session: what the
-   * channel is for, its rules, and the limits its sends are held to. Returns null for DMs, for
-   * channels that have set none of these, and on any read failure — this is context, not
-   * policy, so it never blocks a delivery.
+   * A channel's self-description: what the channel is for, its rules, and the limits its
+   * sends are held to, paired with the row's `updated_at` so the caller can tell a changed
+   * card from one already announced. Returns null for DMs, for channels that have set none of
+   * these, and on any read failure — this is context, not policy, so it never blocks a
+   * delivery.
    */
-  private async loadChannelContext(payload: DeliveryPayload): Promise<ChannelContext | null> {
+  private async loadChannelContext(
+    payload: DeliveryPayload,
+  ): Promise<{ info: ChannelContext; updatedAt: string } | null> {
     if (!payload.conversationId) return null;
     try {
       const channelName = await getChannelName(payload.conversationId);
@@ -1946,7 +1971,7 @@ export class DeliveryManager {
         rateWindow: row.rate_window,
       };
       const hasAnything = Object.values(info).some((v) => v != null);
-      return hasAnything ? info : null;
+      return hasAnything ? { info, updatedAt: row.updated_at } : null;
     } catch (err) {
       dlog.warn("failed to load channel context, sending without it", log.errorData(err));
       return null;
@@ -2035,6 +2060,7 @@ export class DeliveryManager {
       lastDeliverySenders: new Set<string>(),
       lastDeliveryChannels: new Set<string>(),
       seenChannelProfiles: new Set<string>(),
+      announcedChannelInfo: new Map<string, string>(),
     };
     state.activeCount++;
     state.lastDeliveredAt = Date.now();

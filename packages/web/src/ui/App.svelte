@@ -32,7 +32,7 @@ import UpdateBanner from "./components/system/UpdateBanner.svelte";
 import TurnTimeline from "./components/TurnTimeline.svelte";
 import { resolveScreen } from "./lib/app-screen";
 import { type AuthUser, fetchMe } from "./lib/auth";
-import { fetchChannelSettings, leaveVoluteChannel } from "./lib/client";
+import { deleteConversation, fetchChannelSettings, leaveVoluteChannel } from "./lib/client";
 import {
   daemon,
   detectConnection,
@@ -560,20 +560,40 @@ async function handleLeaveChannel(conv: ConversationWithParticipants) {
   }
 }
 
-async function handleOpenChannelSettings(channelName: string) {
-  channelModalName = channelName;
-  channelModalSettings = null;
-  channelModalLoadFailed = false;
-  activeModal = "channelSettings";
+async function handleDeleteChannel(conv: ConversationWithParticipants) {
   try {
-    const data = await fetchChannelSettings(channelName);
-    // Ignore a slow response for a channel the host has since navigated away from.
-    if (channelModalName !== channelName) return;
-    channelModalSettings = data.settings;
+    // Server-side this needs owner-or-admin: it removes the channel and its whole history
+    // for everyone, not just for the caller.
+    await deleteConversation(conv.id);
+  } catch (err) {
+    console.error("Failed to delete channel:", err);
+    return;
+  }
+  connectActivity();
+  if (activeConversationId === conv.id) {
+    selection = { kind: "home" };
+  }
+}
+
+async function handleOpenChannelSettings(channelName: string) {
+  // Load BEFORE mounting. The modal seeds its form from the settings prop once, at mount, so
+  // opening it while the fetch is still in flight would show an empty form for a channel that
+  // has settings — and saving that form would wipe the description, rules and both limits,
+  // and flip a private channel public.
+  channelModalName = channelName;
+  let settings: ChannelSettings | null = null;
+  let failed = false;
+  try {
+    settings = (await fetchChannelSettings(channelName)).settings;
   } catch (err) {
     console.error("Failed to load channel settings:", err);
-    if (channelModalName === channelName) channelModalLoadFailed = true;
+    failed = true;
   }
+  // A newer open (or a close) won this race — drop this response.
+  if (channelModalName !== channelName) return;
+  channelModalSettings = settings;
+  channelModalLoadFailed = failed;
+  activeModal = "channelSettings";
 }
 
 function handleConversationId(id: string) {
@@ -779,6 +799,7 @@ function handleGlobalClick(e: MouseEvent) {
           onBrowseChannels={() => (activeModal = "channelBrowser")}
           onOpenChannelSettings={handleOpenChannelSettings}
           onLeaveChannel={handleLeaveChannel}
+          onDeleteChannel={handleDeleteChannel}
           isAdmin={auth.user.role === "admin"}
           onOpenMind={handleOpenMindModal}
           onSeed={() => (activeModal = "seed")}

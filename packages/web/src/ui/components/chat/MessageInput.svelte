@@ -11,11 +11,12 @@ let {
   charLimit = null,
 }: {
   sending: boolean;
+  /** Resolves false when the send was refused, so the composer can hand the text back. */
   onSend: (
     message: string,
     images: Array<{ media_type: string; data: string }>,
     files: Array<{ filename: string; data: string }>,
-  ) => void;
+  ) => Promise<boolean>;
   mindName?: string;
   conversationId?: string | null;
   username?: string;
@@ -41,13 +42,17 @@ function toggleAttachMenu() {
   showAttach = !showAttach;
 }
 
-function handleSend() {
+async function handleSend() {
   const message = input.trim();
   if (!message && pendingImages.length === 0 && pendingFiles.length === 0) return;
   if (sending || overLimit) return;
 
   const images = pendingImages.map(({ media_type, data }) => ({ media_type, data }));
   const files = [...pendingFiles];
+  // Keep what was composed. Channels can refuse a send outright (over the character limit,
+  // or the rate window is full), and the composer is the only place the text still exists —
+  // so on a refusal it goes back rather than being lost.
+  const composed = { message: input, images: [...pendingImages], files: [...pendingFiles] };
   input = "";
   pendingImages = [];
   pendingFiles = [];
@@ -59,7 +64,12 @@ function handleSend() {
     reportTyping(mindName, conversationId, username, false);
     typingTimer = 0;
   }
-  onSend(message, images, files);
+  const sent = await onSend(message, images, files);
+  if (sent === false) {
+    input = composed.message;
+    pendingImages = composed.images;
+    pendingFiles = composed.files;
+  }
 }
 
 function handleKeyDown(e: KeyboardEvent) {
