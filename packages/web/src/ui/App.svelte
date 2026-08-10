@@ -1,5 +1,10 @@
 <script lang="ts">
-import type { Conversation, Mind } from "@volute/api";
+import type {
+  ChannelSettings,
+  Conversation,
+  ConversationWithParticipants,
+  Mind,
+} from "@volute/api";
 import { isMind } from "@volute/api/user-type";
 import { Icon, Modal, tooltip } from "@volute/ui";
 import { icons } from "@volute/ui/icons";
@@ -16,6 +21,7 @@ import MindSettings from "./components/mind/MindSettings.svelte";
 import MindVariants from "./components/mind/MindVariants.svelte";
 import PendingFiles from "./components/mind/PendingFiles.svelte";
 import ChannelBrowserModal from "./components/modals/ChannelBrowserModal.svelte";
+import ChannelSettingsModal from "./components/modals/ChannelSettingsModal.svelte";
 import ContextModal from "./components/modals/ContextModal.svelte";
 import SeedModal from "./components/modals/SeedModal.svelte";
 import UserSettingsModal from "./components/modals/UserSettingsModal.svelte";
@@ -26,7 +32,7 @@ import UpdateBanner from "./components/system/UpdateBanner.svelte";
 import TurnTimeline from "./components/TurnTimeline.svelte";
 import { resolveScreen } from "./lib/app-screen";
 import { type AuthUser, fetchMe } from "./lib/auth";
-import { deleteConversation } from "./lib/client";
+import { fetchChannelSettings, leaveVoluteChannel } from "./lib/client";
 import {
   daemon,
   detectConnection,
@@ -107,6 +113,7 @@ let activeSystemSection = $derived.by((): string | null => {
 // Modals
 type ModalType =
   | "channelBrowser"
+  | "channelSettings"
   | "seed"
   | "userSettings"
   | "mind"
@@ -122,6 +129,11 @@ type ModalType =
 let activeModal = $state<ModalType>(null);
 let selectedModalMind = $state<Mind | null>(null);
 let mindModalName = $state<string | null>(null);
+// Sidebar-triggered channel settings. Chat.svelte owns its own gear-triggered instance; this
+// one exists so a channel can be configured without first opening it.
+let channelModalName = $state<string | null>(null);
+let channelModalSettings = $state<ChannelSettings | null>(null);
+let channelModalLoadFailed = $state(false);
 
 // Resize state
 let resizing = $state(false);
@@ -534,16 +546,33 @@ function handleSelectConversation(id: string) {
   }
 }
 
-async function handleDeleteConversation(id: string) {
+async function handleLeaveChannel(conv: ConversationWithParticipants) {
+  if (!conv.channel_name) return;
   try {
-    await deleteConversation(id);
+    await leaveVoluteChannel(conv.channel_name);
   } catch (err) {
-    console.error("Failed to delete conversation:", err);
+    console.error("Failed to leave channel:", err);
     return;
   }
   connectActivity();
-  if (activeConversationId === id) {
+  if (activeConversationId === conv.id) {
     selection = { kind: "home" };
+  }
+}
+
+async function handleOpenChannelSettings(channelName: string) {
+  channelModalName = channelName;
+  channelModalSettings = null;
+  channelModalLoadFailed = false;
+  activeModal = "channelSettings";
+  try {
+    const data = await fetchChannelSettings(channelName);
+    // Ignore a slow response for a channel the host has since navigated away from.
+    if (channelModalName !== channelName) return;
+    channelModalSettings = data.settings;
+  } catch (err) {
+    console.error("Failed to load channel settings:", err);
+    if (channelModalName === channelName) channelModalLoadFailed = true;
   }
 }
 
@@ -747,8 +776,10 @@ function handleGlobalClick(e: MouseEvent) {
             else if (section === "logs") activeModal = "systemLogs";
           }}
           onSelectConversation={handleSelectConversation}
-          onDeleteConversation={handleDeleteConversation}
           onBrowseChannels={() => (activeModal = "channelBrowser")}
+          onOpenChannelSettings={handleOpenChannelSettings}
+          onLeaveChannel={handleLeaveChannel}
+          isAdmin={auth.user.role === "admin"}
           onOpenMind={handleOpenMindModal}
           onSeed={() => (activeModal = "seed")}
           onHideConversation={handleHideConversation}
@@ -909,6 +940,15 @@ function handleGlobalClick(e: MouseEvent) {
     <ChannelBrowserModal
       onClose={() => (activeModal = null)}
       onJoined={handleChannelJoined}
+    />
+  {/if}
+  {#if activeModal === "channelSettings" && channelModalName}
+    <ChannelSettingsModal
+      channelName={channelModalName}
+      settings={channelModalSettings}
+      loadFailed={channelModalLoadFailed}
+      onClose={() => { activeModal = null; channelModalName = null; }}
+      onSaved={() => { activeModal = null; channelModalName = null; }}
     />
   {/if}
   {#if activeModal === "seed"}

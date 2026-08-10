@@ -48,13 +48,15 @@ let {
   onHome,
   onSelectMind,
   onSelectConversation,
-  onDeleteConversation,
   onBrowseChannels,
   onOpenMind,
   onSeed,
   onHideConversation,
   onSelectMindSection,
   onSelectSystemSection,
+  onOpenChannelSettings,
+  onLeaveChannel,
+  isAdmin = false,
 }: {
   minds: Mind[];
   conversations: ConversationWithParticipants[];
@@ -65,11 +67,13 @@ let {
   onSelectMindSection: (name: string, section: string) => void;
   onSelectSystemSection: (section: string) => void;
   onSelectConversation: (id: string) => void;
-  onDeleteConversation: (id: string) => void;
   onBrowseChannels: () => void;
   onOpenMind: (mind: Mind) => void;
   onSeed: () => void;
   onHideConversation?: (id: string) => void;
+  onOpenChannelSettings?: (channelName: string) => void;
+  onLeaveChannel?: (conv: ConversationWithParticipants) => void;
+  isAdmin?: boolean;
 } = $props();
 
 type Section = "minds" | "channels";
@@ -333,9 +337,11 @@ let isSystemActive = $derived(
           activeId={activeChannelId}
           {username}
           mode="channels"
+          {isAdmin}
           onSelect={onSelectConversation}
-          onDelete={onDeleteConversation}
           {onOpenMind}
+          {onOpenChannelSettings}
+          {onLeaveChannel}
         />
       {/if}
     </div>

@@ -142,6 +142,32 @@ export async function isParticipant(conversationId: string, userId: number): Pro
   return row != null;
 }
 
+/**
+ * A participant's role in a conversation, or null when they aren't one. The creator is
+ * stamped "owner" at creation time (see createConversation), so this is how a channel's
+ * creator is identified — there is no separate owner column. Note that leaving drops the
+ * row entirely: an owner who leaves and rejoins comes back as a plain member, and a
+ * channel created without a creator (the commons) has no owner at all.
+ */
+export async function getParticipantRole(
+  conversationId: string,
+  userId: number,
+): Promise<"owner" | "member" | null> {
+  const db = await getDb();
+  const row = await db
+    .select({ role: conversationParticipants.role })
+    .from(conversationParticipants)
+    .where(
+      and(
+        eq(conversationParticipants.conversation_id, conversationId),
+        eq(conversationParticipants.user_id, userId),
+      ),
+    )
+    .get();
+  if (!row) return null;
+  return row.role === "owner" ? "owner" : "member";
+}
+
 export async function listConversationsForUser(userId: number): Promise<Conversation[]> {
   const db = await getDb();
   // Get conversation IDs this user participates in
@@ -492,6 +518,8 @@ export type ChannelRow = {
   description: string | null;
   rules: string | null;
   char_limit: number | null;
+  rate_limit: number | null;
+  rate_window: number | null;
   private: number;
   is_default: number;
   created_at: string;
@@ -502,6 +530,9 @@ export type ChannelSettingsInput = {
   description?: string | null;
   rules?: string | null;
   charLimit?: number | null;
+  /** Channel-wide rate limit: max messages per `rateWindow` seconds. Paired with rateWindow. */
+  rateLimit?: number | null;
+  rateWindow?: number | null;
   private?: boolean;
 };
 
@@ -524,6 +555,8 @@ export async function createChannel(
       description: settings?.description ?? null,
       rules: settings?.rules ?? null,
       char_limit: settings?.charLimit ?? null,
+      rate_limit: settings?.rateLimit ?? null,
+      rate_window: settings?.rateWindow ?? null,
       private: isPrivate,
     });
     if (isPrivate) {
@@ -601,6 +634,8 @@ export function formatChannelSettings(row: ChannelRow | null) {
     description: row.description,
     rules: row.rules,
     charLimit: row.char_limit,
+    rateLimit: row.rate_limit,
+    rateWindow: row.rate_window,
     private: !!row.private,
   };
 }
@@ -631,6 +666,8 @@ export async function updateChannelSettings(
   if (settings.description !== undefined) updates.description = settings.description;
   if (settings.rules !== undefined) updates.rules = settings.rules;
   if (settings.charLimit !== undefined) updates.char_limit = settings.charLimit;
+  if (settings.rateLimit !== undefined) updates.rate_limit = settings.rateLimit;
+  if (settings.rateWindow !== undefined) updates.rate_window = settings.rateWindow;
   if (settings.private !== undefined) updates.private = settings.private ? 1 : 0;
   await db.update(channels).set(updates).where(eq(channels.name, name));
   // Keep conversations.private in sync

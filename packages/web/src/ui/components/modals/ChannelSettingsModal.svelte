@@ -23,26 +23,52 @@ let {
 let description = $state(settings?.description ?? "");
 // svelte-ignore state_referenced_locally
 let rules = $state(settings?.rules ?? "");
+// The numeric fields are `bind:value` on <input type="number">, which hands back a number
+// once edited (and null when cleared) — never a string. They're typed for all three.
 // svelte-ignore state_referenced_locally
-let charLimit = $state(settings?.charLimit != null ? String(settings.charLimit) : "");
+let charLimit = $state<number | string | null>(settings?.charLimit ?? null);
+// svelte-ignore state_referenced_locally
+let rateLimit = $state<number | string | null>(settings?.rateLimit ?? null);
+// svelte-ignore state_referenced_locally
+let rateWindow = $state<number | string | null>(settings?.rateWindow ?? null);
 // svelte-ignore state_referenced_locally
 let isPrivate = $state(settings?.private ?? false);
 let saving = $state(false);
 let error = $state("");
 
+/**
+ * Parse an optional positive-integer field: null when empty, undefined when invalid.
+ * Accepts a number or a string, since the binding yields either depending on whether the
+ * field has been edited.
+ */
+function parsePositive(raw: number | string | null | undefined): number | null | undefined {
+  const value = typeof raw === "string" ? raw.trim() : raw;
+  if (value === null || value === undefined || value === "") return null;
+  const n = Number(value);
+  if (!Number.isInteger(n) || n <= 0) return undefined;
+  return n;
+}
+
 async function handleSave() {
   if (saving) return;
   error = "";
 
-  const trimmedLimit = charLimit.trim();
-  let parsedLimit: number | null = null;
-  if (trimmedLimit) {
-    const n = Number(trimmedLimit);
-    if (!Number.isInteger(n) || n <= 0) {
-      error = "Char limit must be a positive whole number.";
-      return;
-    }
-    parsedLimit = n;
+  const parsedLimit = parsePositive(charLimit);
+  if (parsedLimit === undefined) {
+    error = "Char limit must be a positive whole number.";
+    return;
+  }
+
+  const parsedRate = parsePositive(rateLimit);
+  const parsedWindow = parsePositive(rateWindow);
+  if (parsedRate === undefined || parsedWindow === undefined) {
+    error = "Rate limit must be a positive whole number of messages and seconds.";
+    return;
+  }
+  // The server rejects a half-set pair, so catch it here with a clearer message.
+  if ((parsedRate === null) !== (parsedWindow === null)) {
+    error = "Set both the message count and the time window, or leave both empty.";
+    return;
   }
 
   saving = true;
@@ -50,6 +76,8 @@ async function handleSave() {
     description: description.trim() || null,
     rules: rules.trim() || null,
     charLimit: parsedLimit,
+    rateLimit: parsedRate,
+    rateWindow: parsedWindow,
     private: isPrivate,
   };
   try {
@@ -101,6 +129,17 @@ async function handleSave() {
       />
       <span class="hint">Leave empty for no limit.</span>
     </label>
+
+    <div class="field">
+      <span class="field-label">Rate limit</span>
+      <div class="rate-row">
+        <input type="number" min="1" bind:value={rateLimit} placeholder="None" />
+        <span class="rate-sep">messages per</span>
+        <input type="number" min="1" bind:value={rateWindow} placeholder="60" />
+        <span class="rate-sep">seconds</span>
+      </div>
+      <span class="hint">Counted across everyone in the channel. Leave empty for no limit.</span>
+    </div>
 
     <label class="checkbox-field">
       <input type="checkbox" bind:checked={isPrivate} />
@@ -163,6 +202,23 @@ async function handleSave() {
   .hint {
     font-size: 12px;
     color: var(--text-2);
+  }
+
+  .rate-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .rate-row input[type="number"] {
+    width: 5.5em;
+    flex: 0 0 auto;
+  }
+
+  .rate-sep {
+    font-size: 13px;
+    color: var(--text-2);
+    white-space: nowrap;
   }
 
   .checkbox-field {

@@ -7,7 +7,7 @@ import { getTypingMap, publishTypingForChannels } from "../chat/typing.js";
 import { tryGetMindManager } from "../daemon/mind-manager.js";
 import { linkInboundToActiveTurn } from "../daemon/turn-tracker.js";
 import { getDb } from "../db.js";
-import { getParticipants } from "../events/conversations.js";
+import { getChannelName, getChannelSettings, getParticipants } from "../events/conversations.js";
 import { onMindEvent } from "../events/mind-activity-tracker.js";
 import { publish as publishMindEvent } from "../events/mind-events.js";
 import { findMind, getBaseName, mindDir, voluteHome } from "../mind/registry.js";
@@ -18,6 +18,7 @@ import log from "../util/logger.js";
 import { newEphemeralSession } from "../util/session-name.js";
 import { slugify } from "../util/slugify.js";
 import {
+  type ChannelContext,
   clearConfigCache,
   type DeliveryPayload,
   extractTextContent,
@@ -1901,8 +1902,14 @@ export class DeliveryManager {
       // Read avatar images and prepend as image blocks
       const avatarBlocks = await this.loadAvatarBlocks(participants);
 
+      // The channel introduces itself alongside its participants: what it's for, its rules,
+      // and the limits it enforces. Without this a mind meets a limit only by being rejected
+      // by it, and never learns the rules at all.
+      const channelInfo = await this.loadChannelContext(payload);
+
       state.seenChannelProfiles.add(channelKey);
       const enriched: DeliveryPayload = { ...payload, participantProfiles: profiles };
+      if (channelInfo) enriched.channelInfo = channelInfo;
       if (avatarBlocks.length > 0) {
         const existing = Array.isArray(payload.content)
           ? payload.content
@@ -1915,6 +1922,34 @@ export class DeliveryManager {
     } catch (err) {
       dlog.warn(`failed to fetch participant profiles for ${mindName}`, log.errorData(err));
       return payload;
+    }
+  }
+
+  /**
+   * A channel's self-description for the mind's first message from it this session: what the
+   * channel is for, its rules, and the limits its sends are held to. Returns null for DMs, for
+   * channels that have set none of these, and on any read failure — this is context, not
+   * policy, so it never blocks a delivery.
+   */
+  private async loadChannelContext(payload: DeliveryPayload): Promise<ChannelContext | null> {
+    if (!payload.conversationId) return null;
+    try {
+      const channelName = await getChannelName(payload.conversationId);
+      if (!channelName) return null;
+      const row = await getChannelSettings(channelName);
+      if (!row) return null;
+      const info: ChannelContext = {
+        description: row.description,
+        rules: row.rules,
+        charLimit: row.char_limit,
+        rateLimit: row.rate_limit,
+        rateWindow: row.rate_window,
+      };
+      const hasAnything = Object.values(info).some((v) => v != null);
+      return hasAnything ? info : null;
+    } catch (err) {
+      dlog.warn("failed to load channel context, sending without it", log.errorData(err));
+      return null;
     }
   }
 

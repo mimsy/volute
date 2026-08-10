@@ -299,8 +299,17 @@ export type ChannelSettings = {
   description: string | null;
   rules: string | null;
   charLimit: number | null;
+  /** Channel-wide: at most `rateLimit` messages per `rateWindow` seconds, all senders pooled. */
+  rateLimit: number | null;
+  rateWindow: number | null;
   private: boolean;
 };
+
+/**
+ * What a channel tells a mind about itself — delivered once per channel per session,
+ * alongside the participant profiles. Its own privacy isn't part of the introduction.
+ */
+export type ChannelContext = Omit<ChannelSettings, "private">;
 
 export type ChannelInfo = Conversation & {
   channel_name: string;

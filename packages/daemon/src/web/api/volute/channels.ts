@@ -9,6 +9,7 @@ import {
   formatChannelSettings,
   getChannelByName,
   getChannelSettings,
+  getParticipantRole,
   getParticipants,
   isParticipant,
   joinChannel,
@@ -19,11 +20,25 @@ import {
 import { findMind } from "../../../lib/mind/registry.js";
 import type { AuthEnv } from "../../middleware/auth.js";
 
-const channelSettingsSchema = z.object({
+const channelSettingsFields = z.object({
   description: z.string().nullable().optional(),
   rules: z.string().nullable().optional(),
   charLimit: z.number().int().positive().nullable().optional(),
+  rateLimit: z.number().int().positive().nullable().optional(),
+  rateWindow: z.number().int().positive().nullable().optional(),
   private: z.boolean().optional(),
+});
+
+// A rate limit is meaningless without its window, so the pair moves together: send both to
+// configure it, both null to clear it. Enforced on create and on update alike.
+const RATE_PAIR_MESSAGE = "rateLimit and rateWindow must be set together, or both null";
+const ratePairIsCoherent = (v: { rateLimit?: number | null; rateWindow?: number | null }) =>
+  (v.rateLimit ?? null) === null
+    ? (v.rateWindow ?? null) === null
+    : (v.rateWindow ?? null) !== null;
+
+const channelSettingsSchema = channelSettingsFields.refine(ratePairIsCoherent, {
+  message: RATE_PAIR_MESSAGE,
 });
 
 const createSchema = z
@@ -35,7 +50,8 @@ const createSchema = z
       .regex(/^[a-z0-9][a-z0-9-]*$/, "Channel names must be lowercase alphanumeric with hyphens"),
     participantNames: z.array(z.string().min(1)).optional(),
   })
-  .merge(channelSettingsSchema);
+  .merge(channelSettingsFields)
+  .refine(ratePairIsCoherent, { message: RATE_PAIR_MESSAGE });
 
 const inviteSchema = z.object({
   username: z.string().min(1),
@@ -133,8 +149,15 @@ const app = new Hono<AuthEnv>()
     const ch = await getChannelByName(name);
     if (!ch) return c.json({ error: "Channel not found" }, 404);
 
-    // In-handler authz: only a channel member (or admin/spirit) may change settings.
-    if (user.role !== "admin" && user.role !== "spirit" && !(await isParticipant(ch.id, user.id))) {
+    // In-handler authz: only the channel's creator (stamped "owner" at creation) or an
+    // admin/spirit may change settings. Plain members deliberately cannot — otherwise a mind
+    // could lift a limit that was set to restrain it. Channels with no owner (the commons, or
+    // one whose creator left) are admin-only.
+    if (
+      user.role !== "admin" &&
+      user.role !== "spirit" &&
+      (await getParticipantRole(ch.id, user.id)) !== "owner"
+    ) {
       return c.json({ error: "Forbidden" }, 403);
     }
 

@@ -8,6 +8,7 @@ let {
   mindName = "",
   conversationId = null,
   username = "",
+  charLimit = null,
 }: {
   sending: boolean;
   onSend: (
@@ -18,6 +19,8 @@ let {
   mindName?: string;
   conversationId?: string | null;
   username?: string;
+  /** The channel's per-message character limit, enforced server-side. Null when unlimited. */
+  charLimit?: number | null;
 } = $props();
 
 let input = $state("");
@@ -30,6 +33,10 @@ let typingTimer = 0;
 let inputFocused = $state(false);
 let showAttach = $state(false);
 
+// The trimmed text is what actually gets sent, so that's what the limit is measured against.
+let messageLength = $derived(input.trim().length);
+let overLimit = $derived(charLimit != null && messageLength > charLimit);
+
 function toggleAttachMenu() {
   showAttach = !showAttach;
 }
@@ -37,7 +44,7 @@ function toggleAttachMenu() {
 function handleSend() {
   const message = input.trim();
   if (!message && pendingImages.length === 0 && pendingFiles.length === 0) return;
-  if (sending) return;
+  if (sending || overLimit) return;
 
   const images = pendingImages.map(({ media_type, data }) => ({ media_type, data }));
   const files = [...pendingFiles];
@@ -190,9 +197,12 @@ $effect(() => {
       rows={1}
       class="chat-input"
     ></textarea>
+    {#if charLimit != null && messageLength > 0}
+      <span class="char-count" class:over={overLimit}>{messageLength}/{charLimit}</span>
+    {/if}
     <button
       onclick={handleSend}
-      disabled={sending || (!input.trim() && pendingImages.length === 0 && pendingFiles.length === 0)}
+      disabled={sending || overLimit || (!input.trim() && pendingImages.length === 0 && pendingFiles.length === 0)}
       class="inline-btn send"
       class:active={!!input.trim() || pendingImages.length > 0 || pendingFiles.length > 0}
       title="Send message"
@@ -207,6 +217,19 @@ $effect(() => {
 </div>
 
 <style>
+  .char-count {
+    align-self: flex-end;
+    flex-shrink: 0;
+    padding-bottom: 8px;
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-2);
+  }
+
+  .char-count.over {
+    color: var(--red);
+  }
+
   .image-strip {
     display: flex;
     gap: 8px;

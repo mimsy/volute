@@ -9,6 +9,15 @@ export type ParticipantProfile = {
   description?: string | null;
 };
 
+/** What a channel says about itself: what it's for, its rules, and the limits it enforces. */
+export type ChannelInfo = {
+  description?: string | null;
+  rules?: string | null;
+  charLimit?: number | null;
+  rateLimit?: number | null;
+  rateWindow?: number | null;
+};
+
 export type ChannelMeta = {
   channel?: string;
   sender?: string;
@@ -26,6 +35,8 @@ export type ChannelMeta = {
   participants?: string[];
   participantCount?: number;
   participantProfiles?: ParticipantProfile[];
+  /** The channel's own description, rules, and limits — sent once per channel per session. */
+  channelInfo?: ChannelInfo;
   typing?: string[];
   replyInstructions?: "once" | "always" | "never";
   interrupt?: boolean;

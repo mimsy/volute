@@ -69,6 +69,13 @@ let channelSettings = $state<ChannelSettings | null>(null);
 let settingsLoadFailed = $state(false);
 let showSettings = $state(false);
 
+// Only the channel's creator (stamped "owner") or an admin may change its settings, so only
+// they are offered the gear — mirrors the server's rule rather than 403ing at save time.
+let canEditChannel = $derived(
+  auth.user?.role === "admin" ||
+    participants.find((p) => p.username === username)?.role === "owner",
+);
+
 $effect(() => {
   // Reset first so a failed or in-flight fetch can never leave another
   // channel's settings behind (the modal seeds its form from this state).
@@ -242,10 +249,11 @@ async function handleSend(
     userBlocks.push({ type: "text", text: `[file] ${file.filename}` });
   }
 
+  const optimisticId = nextEntryId++;
   entries = [
     ...entries,
     {
-      id: nextEntryId++,
+      id: optimisticId,
       role: "user",
       blocks: userBlocks,
       senderName: username,
@@ -287,12 +295,16 @@ async function handleSend(
     if (isNewConversation) onConversationId(resultConvId);
   } catch (err) {
     console.error("Failed to send message:", err);
+    // A rejected send is a normal outcome now that channels enforce character and rate
+    // limits, so show the server's reason and take back the optimistic bubble — leaving it
+    // in place would claim a message was sent that never was.
+    const reason = err instanceof Error && err.message ? err.message : "Failed to send message.";
     entries = [
-      ...entries,
+      ...entries.filter((e) => e.id !== optimisticId),
       {
         id: nextEntryId++,
         role: "assistant",
-        blocks: [{ type: "text", text: "*Failed to send message. Please try again.*" }],
+        blocks: [{ type: "text", text: `*${reason}*` }],
         senderName: "system",
       },
     ];
@@ -318,9 +330,11 @@ async function handleSend(
           <span class="channel-description">{channelSettings.description}</span>
         {/if}
       </div>
-      <button class="settings-btn" title="Channel settings" onclick={() => (showSettings = true)}>
-        <Icon kind="gear" />
-      </button>
+      {#if canEditChannel}
+        <button class="settings-btn" title="Channel settings" onclick={() => (showSettings = true)}>
+          <Icon kind="gear" />
+        </button>
+      {/if}
     </div>
   {/if}
 
@@ -353,6 +367,7 @@ async function handleSend(
     mindName={name}
     {conversationId}
     {username}
+    charLimit={convType === "channel" ? (channelSettings?.charLimit ?? null) : null}
   />
 </div>
 

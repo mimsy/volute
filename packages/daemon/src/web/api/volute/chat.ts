@@ -5,6 +5,7 @@ import { streamSSE } from "hono/streaming";
 import { z } from "zod";
 import { getOrCreateMindUser, getOrCreateSystemUser } from "../../../lib/auth.js";
 import { routeOutboundBridge } from "../../../lib/bridges/bridge-outbound.js";
+import { checkChannelLimits } from "../../../lib/chat/channel-limits.js";
 import { formatFileSize, stageFile, validateFilePath } from "../../../lib/chat/file-sharing.js";
 import {
   ensureSpiritAvailable,
@@ -23,7 +24,6 @@ import {
   createConversation,
   findDMConversation,
   getChannelName,
-  getChannelSettings,
   getConversation,
   getLastMessageBySender,
   getParticipants,
@@ -238,9 +238,12 @@ export const unifiedChatApp = new Hono<AuthEnv>().post(
       fileNotifications.push(...notifications);
     }
 
-    // Build content blocks
+    // Build content blocks. The sender's own text is held separately: the file-share
+    // notifications below are system-generated, and must not count against the sender's
+    // character budget for text they didn't write.
     const contentBlocks: ContentBlock[] = [];
-    if (body.message) contentBlocks.push({ type: "text", text: body.message });
+    const messageBlock = body.message ? { type: "text" as const, text: body.message } : null;
+    if (messageBlock) contentBlocks.push(messageBlock);
     for (const note of fileNotifications) {
       contentBlocks.push({ type: "text", text: note });
     }
@@ -261,25 +264,16 @@ export const unifiedChatApp = new Hono<AuthEnv>().post(
       }
     }
 
-    // Enforce char_limit for mind senders in channels
-    if (senderIsMind && conv.type === "channel" && convName) {
-      try {
-        const chSettings = await getChannelSettings(convName);
-        if (chSettings?.char_limit) {
-          for (const block of contentBlocks) {
-            if (block.type === "text" && block.text.length > chSettings.char_limit) {
-              return c.json(
-                {
-                  error: `Message exceeds channel character limit (${chSettings.char_limit}). Shorten your message and try again.`,
-                },
-                400,
-              );
-            }
-          }
-        }
-      } catch (err) {
-        log.warn("failed to look up channel char_limit, skipping enforcement", log.errorData(err));
-      }
+    // Enforce the channel's character and rate limits. Applies to every sender — a channel's
+    // limits mean the same thing whoever is writing — and is checked after fixModelEscapes so
+    // the length measured is the text that will actually be stored.
+    if (conv.type === "channel" && convName) {
+      const rejection = await checkChannelLimits({
+        conversationId: conversationId!,
+        channelName: convName,
+        text: messageBlock?.text ?? "",
+      });
+      if (rejection) return c.json({ error: rejection.error }, rejection.status);
     }
 
     // Resolve the sending mind's active turn from the per-request X-Volute-Thread header
