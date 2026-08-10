@@ -13,6 +13,7 @@ import {
   writeGlobalConfig,
 } from "../packages/daemon/src/lib/config/setup.js";
 import { voluteSystemDir } from "../packages/daemon/src/lib/mind/registry.js";
+import { generateSystemUnit } from "../src/commands/setup.js";
 
 function configPath() {
   return resolve(voluteSystemDir(), "config.json");
@@ -196,5 +197,31 @@ describe("mindLimitError", () => {
 
   it("rejects over the cap", () => {
     assert.ok(mindLimitError(6, 5));
+  });
+});
+
+describe("generateSystemUnit", () => {
+  const unit = () => generateSystemUnit("/usr/local/bin/volute", 1618, "0.0.0.0");
+
+  it("runs the daemon in the foreground with the system paths", () => {
+    const text = unit();
+    assert.match(text, /ExecStart=\/usr\/local\/bin\/volute up --foreground --port 1618/);
+    assert.ok(text.includes("Environment=VOLUTE_HOME=/var/lib/volute"));
+    assert.ok(text.includes("Environment=VOLUTE_MINDS_DIR=/minds"));
+    assert.ok(text.includes("Environment=VOLUTE_ISOLATION=user"));
+  });
+
+  it("keeps the hardening that does not conflict with mind isolation", () => {
+    const text = unit();
+    assert.ok(text.includes("ProtectSystem=true"));
+    assert.ok(text.includes("ReadWritePaths=/var/lib/volute /minds"));
+    assert.ok(text.includes("PrivateTmp=yes"));
+  });
+
+  // #832: RestrictSUIDSGID=yes EPERMs git's adjust_shared_perm() setgid chmods in the
+  // `--shared=group` pages repo, so `_system` worktrees never provision and publishing
+  // fails with "unable to create temporary file". systemd has no per-path carve-out.
+  it("does not set RestrictSUIDSGID, which breaks shared pages under user isolation", () => {
+    assert.ok(!unit().includes("RestrictSUIDSGID"));
   });
 });

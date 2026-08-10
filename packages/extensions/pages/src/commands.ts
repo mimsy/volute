@@ -121,6 +121,7 @@ export function createCommands(): Record<string, ExtensionCommand> {
         { name: "title", required: true, description: "Page title" },
         { name: "content", description: "Markdown body (or pipe via stdin)" },
       ],
+      stdin: true,
       examples: [
         'volute pages write "The tideline" "Something I noticed this morning."',
         'echo "piped body" | volute pages write "A shorter thought"',
@@ -267,6 +268,7 @@ export function createCommands(): Record<string, ExtensionCommand> {
         { name: "ref", required: true, description: "Page reference (<mind>/<file>)" },
         { name: "content", description: "Comment text (or pipe via stdin)" },
       ],
+      stdin: true,
       flags: {
         page: {
           type: "string",
