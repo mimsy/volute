@@ -1,23 +1,12 @@
 import { resolve } from "node:path";
 import { CronExpressionParser } from "cron-parser";
 import { deliverEvent, MIND_LEVEL_THREAD, recordNotice } from "../chat/system-events.js";
-import { loadMergedEnv } from "../config/env.js";
-import {
-  findMind,
-  mindDir,
-  mindTmpDir,
-  mindTmpEnv,
-  stateDir,
-  voluteSystemDir,
-} from "../mind/registry.js";
-import { isSandboxEnabled, wrapForSandbox } from "../mind/sandbox.js";
+import { mindDir, voluteSystemDir } from "../mind/registry.js";
 import { readVoluteConfig, type Schedule, writeVoluteConfig } from "../mind/volute-config.js";
 import { getPrompt } from "../prompts.js";
-import { exec } from "../util/exec.js";
 import { clearJsonMap, loadJsonMap, saveJsonMapAsync } from "../util/json-state.js";
 import log from "../util/logger.js";
-import { buildMindBaseEnv } from "./mind-manager.js";
-import { generateMindToken, getMindToken } from "./mind-tokens.js";
+import { runMindScript } from "./mind-script.js";
 
 const slog = log.child("scheduler");
 
@@ -284,48 +273,13 @@ export class Scheduler {
   protected async runScript(script: string, cwd: string, mindName: string): Promise<string> {
     // Scheduled scripts run with the same environment a mind process gets —
     // scoped to the mind's own non-admin token — so that a script invoking the
-    // `volute` CLI authenticates as the mind instead of getting 401s.
-    const env = await this.buildScriptEnv(mindName);
-
-    // Mind-authored scripts must never run in the daemon's trust domain. Under
-    // sandbox mode, wrap with the mind's sandbox (exec only applies user
-    // isolation, never the sandbox). Isolation and sandbox modes are mutually
-    // exclusive, so we pass mindName to exec only in the non-sandbox case.
-    if (isSandboxEnabled()) {
-      const dir = this.mindDirs.get(mindName) ?? mindDir(mindName);
-      const [cmd, args] = await wrapForSandbox("bash", ["-c", script], dir, mindName, [
-        dir,
-        mindTmpDir(dir),
-      ]);
-      return exec(cmd, args, { cwd, env });
-    }
-    return exec("bash", ["-c", script], { cwd, mindName, env });
-  }
-
-  /**
-   * Build the environment for a scheduled script — mirrors the mind process env
-   * (allowlisted base + merged mind env + VOLUTE_* runtime vars), authenticated
-   * with the mind's own per-mind, non-admin token. Reuses the running mind's
-   * token when present; otherwise mints one (stable across fires, regenerated on
-   * next mind start). The daemon admin token is never included.
-   */
-  private async buildScriptEnv(mindName: string): Promise<Record<string, string | undefined>> {
-    const dir = this.mindDirs.get(mindName) ?? mindDir(mindName);
-    const entry = await findMind(mindName);
-    const token = getMindToken(mindName) ?? generateMindToken(mindName);
-    const mindLocalBin = resolve(dir, "home", ".local", "bin");
-    const currentPath = process.env.PATH ?? "";
-    return {
-      ...buildMindBaseEnv(),
-      ...loadMergedEnv(mindName),
-      VOLUTE_MIND: mindName,
-      VOLUTE_STATE_DIR: stateDir(mindName),
-      VOLUTE_MIND_DIR: dir,
-      VOLUTE_MIND_PORT: entry ? String(entry.port) : undefined,
-      VOLUTE_MIND_TOKEN: token,
-      ...mindTmpEnv(dir),
-      PATH: `${mindLocalBin}:${currentPath}`,
-    };
+    // `volute` CLI authenticates as the mind instead of getting 401s, and they
+    // never run in the daemon's trust domain. runMindScript owns both halves.
+    return runMindScript("bash", ["-c", script], {
+      mindName,
+      dir: this.mindDirs.get(mindName),
+      cwd,
+    });
   }
 
   protected async deliverSystem(

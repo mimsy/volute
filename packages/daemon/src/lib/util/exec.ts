@@ -12,6 +12,8 @@ export async function exec(
     env?: NodeJS.ProcessEnv;
     maxBuffer?: number;
     stdin?: string;
+    /** Milliseconds before the child is killed; the callback then rejects. */
+    timeout?: number;
   },
 ): Promise<string> {
   const [wrappedCmd, wrappedArgs] = options?.mindName
@@ -21,7 +23,12 @@ export async function exec(
     const child = execFileCb(
       wrappedCmd,
       wrappedArgs,
-      { cwd: options?.cwd, env: options?.env, maxBuffer: options?.maxBuffer },
+      {
+        cwd: options?.cwd,
+        env: options?.env,
+        maxBuffer: options?.maxBuffer,
+        timeout: options?.timeout,
+      },
       (err, stdout, stderr) => {
         if (err) {
           (err as Error & { stderr?: string; stdout?: string }).stderr = stderr;
@@ -33,8 +40,18 @@ export async function exec(
       },
     );
     if (options?.stdin !== undefined && child.stdin) {
-      // EPIPE here (child exited before reading) surfaces through the exit
-      // callback above; swallow the stream-level duplicate.
+      // Discard stdin stream errors. EPIPE here means the child exited without
+      // reading its input, which is legitimate — a hook may not want stdin at all —
+      // and an unhandled 'error' event on this stream takes the whole process down
+      // (#864: it killed the daemon, every mind with it).
+      //
+      // Be clear about the cost: this is the ONLY record of the failed write. The
+      // execFile callback does not also see it — verified: a write past the pipe
+      // buffer to an already-exited child raises EPIPE on the stream while the
+      // callback fires with `err: null` and empty stdout. So a write that never
+      // landed is indistinguishable here from one that did. That trade is right
+      // only because this input is an offer the child may decline; a caller whose
+      // child MUST receive its stdin cannot learn otherwise from this wrapper.
       child.stdin.on("error", () => {});
       child.stdin.end(options.stdin);
     }

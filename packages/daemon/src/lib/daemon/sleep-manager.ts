@@ -1,4 +1,4 @@
-import { execFile, spawn as spawnChild } from "node:child_process";
+import { execFile } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -34,6 +34,7 @@ import { deliveryQueue } from "../schema.js";
 import { collectTurnContext } from "../turn-context.js";
 import log from "../util/logger.js";
 import { getMindManager } from "./mind-manager.js";
+import { runMindScript } from "./mind-script.js";
 import { sleepMind, wakeMind } from "./mind-service.js";
 
 const slog = log.child("sleep");
@@ -931,36 +932,29 @@ export class SleepManager {
     });
 
     try {
-      const result = await new Promise<string>((resolvePromise, reject) => {
-        const child = spawnChild("bash", [scriptPath], {
-          cwd: mindDir(name),
-          timeout: 5000,
-          env: { ...process.env, VOLUTE_MIND: name },
-          stdio: ["pipe", "pipe", "pipe"],
-        });
-        let stdout = "";
-        let stderr = "";
-        child.stdout.on("data", (data: Buffer) => {
-          stdout += data.toString();
-        });
-        child.stderr.on("data", (data: Buffer) => {
-          stderr += data.toString();
-        });
-        child.on("close", (code) => {
-          if (code === 0) resolvePromise(stdout);
-          else
-            reject(
-              new Error(
-                `wake-context script exited with code ${code}${stderr ? `: ${stderr.trim()}` : ""}`,
-              ),
-            );
-        });
-        child.on("error", reject);
-        child.stdin.end(input);
+      // The hook is mind-authored, so it goes through runMindScript rather than a
+      // bare spawn (#871): the allowlisted mind env unconditionally, and the mind's
+      // sandbox or OS user under the `sandbox`/`user` isolation modes. Under
+      // isolation `none` there is no process isolation to apply and the hook runs
+      // as the daemon's user — see runMindScript's docblock for why that is the
+      // mode's meaning rather than a hole here.
+      //
+      // runMindScript writes stdin through the exec wrapper, whose stdin error
+      // guard keeps a hook that never reads its input (the shipped default is
+      // comments only) from EPIPE-ing the daemon to death (#864).
+      const result = await runMindScript("bash", [scriptPath], {
+        mindName: name,
+        cwd: mindDir(name),
+        stdin: input,
+        timeout: 5000,
       });
       return result.trim();
     } catch (err) {
-      slog.warn(`wake-context script failed for ${name}`, log.errorData(err));
+      const stderr = (err as { stderr?: string })?.stderr?.trim();
+      slog.warn(`wake-context script failed for ${name}`, {
+        ...log.errorData(err),
+        ...(stderr ? { stderr } : {}),
+      });
       return "";
     }
   }
