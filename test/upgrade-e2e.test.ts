@@ -97,6 +97,25 @@ for (const [k, v] of Object.entries(process.env)) {
 if (!cleanEnv.ANTHROPIC_API_KEY) cleanEnv.ANTHROPIC_API_KEY = "sk-ant-e2e-dummy-key";
 
 const PRIOR_VERSION = resolvePriorVersion();
+
+/**
+ * Why the 0.57.0-migration assertions below need a gate: `PRIOR_VERSION` tracks the
+ * latest release, so from 0.57.1 onward the prior release already *contains* those
+ * migrations and their "pre-migration shape" premises are false by construction.
+ * Reason string (null = the assertions apply), so each skip says why out loud.
+ *
+ * This gate narrows *when* those assertions run, never *what* they assert: pointed
+ * at a pre-0.57.0 prior (`VOLUTE_UPGRADE_FROM=0.56.0`) every one of them still runs
+ * unchanged, and still fails if its migration were reverted.
+ */
+const PRE_057_SKIP: string | null = (() => {
+  const prior = PRIOR_VERSION ? parseVersion(PRIOR_VERSION) : null;
+  if (!prior) return "prior version unparseable — cannot establish a pre-0.57.0 baseline";
+  return compareVersion(prior, [0, 57, 0]) < 0
+    ? null
+    : `prior ${PRIOR_VERSION} already carries the 0.57.0 migrations (needs VOLUTE_UPGRADE_FROM=0.56.0)`;
+})();
+
 const MIND = "upgrade-mind";
 const TOKEN = `upgrade-e2e-token-${process.pid}`;
 const DAEMON_PORT = 18100 + Math.floor(Math.random() * 700);
@@ -542,10 +561,17 @@ describe("cross-version upgrade e2e", { timeout: 600000 }, () => {
   // *real pre-existing* 0.56.0 state seeded above — the proof a fresh-DB test can't
   // give. Each is written to FAIL if its migration were reverted, and to SKIP (never
   // fail) wherever the harness itself skips.
+  //
+  // The three that read a *pre-migration* shape carry `PRE_057_SKIP`: they are
+  // assertions about the 0.56.0 → 0.57.0 boundary specifically, and a prior release
+  // at or past 0.57.0 arrives already migrated. The two that seed their own input
+  // (pages redirect, `_system` → `_commons` rows) stay ungated — they exercise HEAD's
+  // live behaviour against data this test writes, whatever the prior version is.
   // ---------------------------------------------------------------------------
 
   it("prior 0.56.0 carried the pre-migration shapes (premise)", async (t) => {
     if (skipReason) return t.skip(skipReason);
+    if (PRE_057_SKIP) return t.skip(PRE_057_SKIP);
 
     // If any of these drift, the upgrade assertions below would pass vacuously
     // against an already-new shape — so fail loudly here rather than silently.
@@ -568,6 +594,7 @@ describe("cross-version upgrade e2e", { timeout: 600000 }, () => {
 
   it("channels: is_default backfilled onto the one default channel, name preserved", async (t) => {
     if (skipReason) return t.skip(skipReason);
+    if (PRE_057_SKIP) return t.skip(PRE_057_SKIP);
 
     // Needs no seeding — the prior boot auto-created the default channel; the 0002
     // migration marks it.
@@ -591,6 +618,10 @@ describe("cross-version upgrade e2e", { timeout: 600000 }, () => {
 
   it("users: the spirit's role and user_type migrate to 'spirit'", async (t) => {
     if (skipReason) return t.skip(skipReason);
+    // Gated even though it would pass against a 0.57.0 prior: that prior writes the
+    // spirit as 'spirit' already, so the assertion would hold without any migration
+    // having run — a pass that proves nothing is the thing this file refuses.
+    if (PRE_057_SKIP) return t.skip(PRE_057_SKIP);
 
     // Needs no seeding — the prior boot auto-created the spirit. Drizzle 0001 moves
     // user_type 'system' → 'spirit'; the daemon.ts boot-migration then moves role.
@@ -677,7 +708,21 @@ describe("cross-version upgrade e2e", { timeout: 600000 }, () => {
       "SELECT username FROM users WHERE user_type = 'spirit'",
     );
     const spiritName = spiritUser[0]?.username ?? "volute";
-    const channelSlug = `#${priorChannelName}`; // delivery slug follows the channel's name
+
+    // Read the default channel's name post-upgrade rather than reusing the captured
+    // prior name: this test is about *delivery*, not about the rename, and the prior
+    // name is only meaningful when the prior predates 0.57.0. Preservation of that
+    // name across the upgrade is the (gated) channels assertion's job.
+    const defaultChannel = await queryDb<{ name: string }>(
+      DB_PATH,
+      "SELECT name FROM channels WHERE is_default = 1",
+    );
+    assert.equal(
+      defaultChannel.length,
+      1,
+      `expected exactly one default channel, got ${JSON.stringify(defaultChannel)}`,
+    );
+    const channelSlug = `#${defaultChannel[0].name}`; // delivery slug follows the channel's name
 
     // Trigger "X has joined" by creating a fresh sprouted mind through the API.
     const createRes = await req("/api/minds", {
