@@ -210,6 +210,9 @@ export async function getStartupContext(): Promise<string | null> {
       child.stdout.on("data", (d: Buffer) => {
         out += d.toString();
       });
+      // Ignore stdin errors — the hook may exit before reading (EPIPE); an
+      // unhandled stream error here would kill the mind's server process.
+      child.stdin.on("error", () => {});
       child.stdin.end(JSON.stringify({ source: "startup" }));
       child.on("close", (code) =>
         code === 0 ? resolve(out) : reject(new Error(`exit code ${code}`)),

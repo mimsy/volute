@@ -3131,4 +3131,88 @@ describe("daemon e2e", { timeout: 420000 }, () => {
     assert.ok(adminBody.output, `expected output, got ${JSON.stringify(adminBody)}`);
     assert.match(adminBody.output, new RegExp(`Published: ${TEST_MIND}/notes/admin-targeted\\.md`));
   });
+
+  // The wake path runs the mind's own `wake-context.sh`. It used to be a raw spawn
+  // carrying the daemon's environment with an unguarded write to the hook's stdin:
+  // a hook that never read its input could EPIPE and kill the daemon outright —
+  // every mind with it, 16 times in 9 days on one production host, all inside the
+  // wake window (#864). And the hook ran wherever the daemon ran, as root on a
+  // --system install, whatever isolation was configured (#871).
+  //
+  // This drives the real cross-process wake with the shipped hook's shape (comments
+  // only, never reads stdin). The EPIPE itself is a race the daemon usually wins, so
+  // the deterministic reproduction lives in test/wake-context-hook.test.ts; what this
+  // pins is that a real wake still runs the hook, survives it, and does not hand it
+  // the daemon's admin token.
+  it("wake runs the mind's hook without the daemon's identity — or its life", {
+    timeout: 120000,
+  }, async () => {
+    await ensureTestMind();
+
+    const hooksDir = resolve(mindDir(TEST_MIND), "home", ".local", "hooks");
+    const hookPath = resolve(hooksDir, "wake-context.sh");
+    const markerPath = resolve(mindDir(TEST_MIND), ".mind", "e2e-wake-hook.txt");
+    const original = existsSync(hookPath) ? readFileSync(hookPath, "utf-8") : null;
+
+    async function isSleeping(): Promise<boolean> {
+      const res = await daemonRequest(`/api/minds/${TEST_MIND}/sleep`);
+      return ((await res.json()) as { sleeping: boolean }).sleeping;
+    }
+
+    async function waitForSleeping(sleeping: boolean, timeoutMs = 30000): Promise<void> {
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline) {
+        if ((await isSleeping()) === sleeping) return;
+        await new Promise((r) => setTimeout(r, 300));
+      }
+      throw new Error(`mind did not reach sleeping=${sleeping}`);
+    }
+
+    try {
+      rmSync(markerPath, { force: true });
+      mkdirSync(hooksDir, { recursive: true });
+      mkdirSync(resolve(mindDir(TEST_MIND), ".mind"), { recursive: true });
+      // Never reads stdin, exactly like the shipped default. Installed before the
+      // wake, since the wake is what runs it.
+      writeFileSync(
+        hookPath,
+        "#!/bin/bash\n" +
+          `printf 'admin=[%s]\\ntoken=[%s]\\n' "$VOLUTE_DAEMON_TOKEN" "$VOLUTE_MIND_TOKEN" > ${markerPath}\n` +
+          "exit 0\n",
+      );
+
+      // Get the mind asleep without assuming what earlier tests left behind — some
+      // of them leave it sleeping. Sleep from a stopped state so no model turn runs
+      // (CI has no real key).
+      if (!(await isSleeping())) {
+        await daemonRequest(`/api/minds/${TEST_MIND}/stop`, { method: "POST" });
+        const sleepRes = await daemonRequest(`/api/minds/${TEST_MIND}/sleep`, { method: "POST" });
+        assert.equal(sleepRes.status, 200, `sleep: ${await sleepRes.clone().text()}`);
+        await waitForSleeping(true);
+      }
+
+      const wakeRes = await daemonRequest(`/api/minds/${TEST_MIND}/wake`, { method: "POST" });
+      assert.equal(wakeRes.status, 200, `wake: ${await wakeRes.clone().text()}`);
+      await waitForSleeping(false);
+
+      const deadline = Date.now() + 30000;
+      while (!existsSync(markerPath) && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 300));
+      }
+      assert.ok(existsSync(markerPath), "the wake path should have run the mind's hook");
+
+      // The daemon is still alive to answer — the whole point of #864.
+      const health = await fetch(`${BASE_URL}/api/health`);
+      assert.ok(health.ok, "daemon must survive a hook that ignores its stdin");
+
+      const marker = readFileSync(markerPath, "utf-8");
+      assert.match(marker, /admin=\[\]/, "the daemon's admin token must never reach the hook");
+      assert.doesNotMatch(marker, new RegExp(TOKEN), "admin token leaked into the hook env");
+      assert.doesNotMatch(marker, /token=\[\]/, "the hook should get the mind's own token");
+    } finally {
+      rmSync(markerPath, { force: true });
+      if (original !== null) writeFileSync(hookPath, original);
+      else rmSync(hookPath, { force: true });
+    }
+  });
 });
