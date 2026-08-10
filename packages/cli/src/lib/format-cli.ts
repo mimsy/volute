@@ -48,8 +48,11 @@ export function formatMessageLine(msg: ReadLineMessage, compact: boolean): strin
         .map((b) => b.text)
         .join("")
     : msg.content;
+  // Compact output is terse, but never date-less: a transcript spanning days read as one
+  // afternoon, and minds reasoned from it (#869). Each line carries its own date so it
+  // stays true when quoted out of the transcript into memory or a page.
   const time = compact
-    ? compactTime(msg.created_at)
+    ? compactDateTime(msg.created_at)
     : new Date(
         msg.created_at.endsWith("Z") ? msg.created_at : `${msg.created_at}Z`,
       ).toLocaleString();

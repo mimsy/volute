@@ -76,6 +76,53 @@ describe("formatMessageLine", () => {
     assert.match(line, /· atlas has joined$/);
   });
 
+  // Shape, not value: compactDateTime renders in local time, so asserting the literal
+  // date would flip days on a runner in a distant timezone.
+  const DATED = /^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}\] /;
+
+  it("stamps compact lines with the date, not just the time (#869)", () => {
+    // A date-less `[HH:MM]` made a multi-day transcript read as one afternoon.
+    const line = formatMessageLine(
+      {
+        role: "user",
+        sender_name: "cricket",
+        content: [{ type: "text", text: "hi" }],
+        created_at: at,
+      },
+      true,
+    );
+    assert.match(line, DATED);
+    assert.match(line, /cricket: hi$/);
+  });
+
+  it("dates compact event lines too (#869)", () => {
+    const line = formatMessageLine(
+      {
+        role: "event",
+        sender_name: null,
+        content: [{ type: "text", text: "atlas has joined" }],
+        created_at: at,
+      },
+      true,
+    );
+    assert.match(line, DATED);
+  });
+
+  it("distinguishes messages from different days in compact mode (#869)", () => {
+    const render = (created_at: string) =>
+      formatMessageLine(
+        {
+          role: "user",
+          sender_name: "cricket",
+          content: [{ type: "text", text: "hi" }],
+          created_at,
+        },
+        true,
+      );
+    // Same wall-clock time, three days apart: the lines must not be identical.
+    assert.notEqual(render("2026-07-16 17:30:00"), render("2026-07-19 17:30:00"));
+  });
+
   it("keeps an event sender-less even if a sender_name is present — role wins (#687)", () => {
     const line = formatMessageLine(
       {

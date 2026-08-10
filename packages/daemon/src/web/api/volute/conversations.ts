@@ -19,6 +19,7 @@ import {
   listConversationsForUser,
 } from "../../../lib/events/conversations.js";
 import { findMind } from "../../../lib/mind/registry.js";
+import { parseIntParam } from "../../../lib/util/query-params.js";
 import type { AuthEnv } from "../../middleware/auth.js";
 
 const createConvSchema = z.object({
@@ -137,12 +138,9 @@ const app = new Hono<AuthEnv>()
       const msgs = await getMessages(id);
       return c.json({ items: await withSenderDisplayNames(msgs), hasMore: false });
     }
-    const limit = limitStr ? parseInt(limitStr, 10) : undefined;
-    const before = beforeStr ? parseInt(beforeStr, 10) : undefined;
-    if (
-      (limit !== undefined && !Number.isFinite(limit)) ||
-      (before !== undefined && !Number.isFinite(before))
-    ) {
+    const limit = parseIntParam(limitStr);
+    const before = parseIntParam(beforeStr);
+    if (limit === null || before === null) {
       return c.json({ error: "Invalid pagination parameters" }, 400);
     }
     const result = await getMessagesPaginated(id, { before, limit });
