@@ -118,9 +118,88 @@ const clockStatusCmd = command({
   },
 });
 
+/** One printable row of the clock, whichever store in volute.json it came from. */
+type ClockRow = {
+  id: string;
+  schedule: string;
+  enabled: boolean;
+  action: string;
+  /** The volute.json key this row lives under — `schedules[]` or `sleep.schedule`. */
+  source: string;
+};
+
+/**
+ * Build the rows `clock list` prints. The clock has two stores in volute.json —
+ * `schedules[]` and `sleep.schedule` — and both are managed by `volute clock`,
+ * so both belong in the command whose name promises the whole clock (#870).
+ *
+ * They carry their source rather than being merged, and the renderer prints them
+ * as separate sections: the ids `sleep` and `wake` are not reserved, so a mind
+ * can and does name its own schedules that (`sleep-prep-v2` today), and two rows
+ * sharing an id where only one answers to `clock remove --id` would be its own
+ * small lie.
+ */
+export function buildClockRows(
+  schedules: Schedule[],
+  sleepConfig: { enabled?: boolean; schedule?: { sleep: string; wake: string } } | null,
+  fmtTime: (iso: string) => string,
+): ClockRow[] {
+  const rows: ClockRow[] = schedules.map((s) => ({
+    id: s.id,
+    schedule: s.cron ?? (s.fireAt ? `at ${fmtTime(s.fireAt)}` : ""),
+    enabled: s.enabled,
+    action: s.script
+      ? `[script] ${s.script}`
+      : s.messages?.length
+        ? `[rotating x${s.messages.length}] ${s.messages[0]}`
+        : (s.message ?? ""),
+    source: "schedules[]",
+  }));
+
+  // Sleep crons are listed whether or not sleep is enabled — "sleep is off" is an
+  // answer to "what wakes me?", and a missing row is not.
+  if (sleepConfig?.schedule) {
+    // Truthy, matching the authoritative gate in sleep-manager's evaluateMind
+    // (`if (!config?.enabled ...) return`) and `clock status` above. `enabled`
+    // is reachable as undefined — PUT /sleep/config only writes the field when
+    // the body carries it, and minds hand-edit volute.json — and reading that as
+    // on would print crons as armed that can never fire. #870 was a partial
+    // instrument producing a confident false negative; this is the same class of
+    // error pointing the other way.
+    const enabled = sleepConfig.enabled === true;
+    rows.push({
+      id: "sleep",
+      schedule: sleepConfig.schedule.sleep,
+      enabled,
+      action: "go to sleep",
+      source: "sleep.schedule",
+    });
+    rows.push({
+      id: "wake",
+      schedule: sleepConfig.schedule.wake,
+      enabled,
+      action: "wake up",
+      source: "sleep.schedule",
+    });
+  }
+  return rows;
+}
+
+/** Render one aligned table of rows, with a header. Assumes rows.length > 0. */
+function printClockTable(rows: ClockRow[]): void {
+  const idW = Math.max(2, ...rows.map((r) => r.id.length));
+  const schedW = Math.max(8, ...rows.map((r) => r.schedule.length));
+  console.log(`${"ID".padEnd(idW)}  ${"SCHEDULE".padEnd(schedW)}  ENABLED  ACTION`);
+  for (const r of rows) {
+    console.log(
+      `${r.id.padEnd(idW)}  ${r.schedule.padEnd(schedW)}  ${String(r.enabled).padEnd(7)}  ${r.action}`,
+    );
+  }
+}
+
 const listSchedulesCmd = command({
   name: "volute clock list",
-  description: "List schedules",
+  description: "List schedules, including the sleep/wake crons",
   flags: {
     mind: { type: "string", description: "Mind name" },
   },
@@ -128,8 +207,9 @@ const listSchedulesCmd = command({
     const mind = resolveMindName(flags);
     const client = getClient();
 
+    // clock/status carries both stores (schedules[] and sleep.schedule) in one call.
     const res = await daemonFetch(
-      urlOf(client.api.minds[":name"].schedules.$url({ param: { name: mind } })),
+      urlOf(client.api.minds[":name"].clock.status.$url({ param: { name: mind } })),
     );
     if (!res.ok) {
       const data = (await res.json()) as { error?: string };
@@ -137,38 +217,40 @@ const listSchedulesCmd = command({
       process.exit(1);
     }
 
-    const schedules = (await res.json()) as Schedule[];
-    if (schedules.length === 0) {
-      console.log("No schedules configured.");
+    const status = (await res.json()) as ClockStatus;
+    const compact = isCompact();
+    const fmtTime = (s: string) => (compact ? compactDateTime(s) : new Date(s).toLocaleString());
+    const rows = buildClockRows(status.schedules, status.sleepConfig, fmtTime);
+    const scheduleRows = rows.filter((r) => r.source === "schedules[]");
+    const sleepRows = rows.filter((r) => r.source === "sleep.schedule");
+
+    if (compact) {
+      for (const r of rows) {
+        console.log(`${r.id}  ${r.schedule}  ${r.enabled}  ${r.action}  (${r.source})`);
+      }
+      if (sleepRows.length === 0) console.log("(no sleep/wake schedule set)");
       return;
     }
 
-    const compact = isCompact();
-    const fmtTime = (s: string) => (compact ? compactDateTime(s) : new Date(s).toLocaleString());
-    const scheduleOf = (s: Schedule) => s.cron ?? (s.fireAt ? `at ${fmtTime(s.fireAt)}` : "");
-
-    const actionLabel = (s: Schedule) =>
-      s.script
-        ? `[script] ${s.script}`
-        : s.messages?.length
-          ? `[rotating x${s.messages.length}] ${s.messages[0]}`
-          : (s.message ?? "");
-
-    if (compact) {
-      for (const s of schedules) {
-        console.log(`${s.id}  ${scheduleOf(s)}  ${actionLabel(s)}`);
-      }
+    if (scheduleRows.length === 0) {
+      console.log("No schedules configured.");
     } else {
-      const idW = Math.max(2, ...schedules.map((s) => s.id.length));
-      const schedW = Math.max(8, ...schedules.map((s) => scheduleOf(s).length));
-      console.log(`${"ID".padEnd(idW)}  ${"SCHEDULE".padEnd(schedW)}  ENABLED  ACTION`);
-      for (const s of schedules) {
-        const sched = scheduleOf(s);
-        console.log(
-          `${s.id.padEnd(idW)}  ${sched.padEnd(schedW)}  ${String(s.enabled).padEnd(7)}  ${actionLabel(s)}`,
-        );
-      }
+      printClockTable(scheduleRows);
     }
+
+    // Always say something about the sleep store. #870's incident was a mind
+    // reading an incomplete `clock list`, concluding nothing woke it, and writing
+    // that to its permanent record — so silence here is not an acceptable answer
+    // to "what wakes me?".
+    console.log("");
+    if (sleepRows.length === 0) {
+      console.log("No sleep/wake schedule set (sleep.schedule in .config/volute.json).");
+      return;
+    }
+    console.log(
+      "From sleep.schedule — managed by `volute clock sleep`/`wake`, not `clock remove`:",
+    );
+    printClockTable(sleepRows);
   },
 });
 

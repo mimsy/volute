@@ -77,11 +77,7 @@ export async function startMindFull(name: string): Promise<void> {
   );
 
   const dir = mindDir(baseName);
-  try {
-    getScheduler().loadSchedules(baseName);
-  } catch (err) {
-    log.error(`failed to load schedules for ${baseName}`, log.errorData(err));
-  }
+  await restoreMindRuntimeState(baseName);
   try {
     getSleepManagerIfReady()?.loadSleepConfig(baseName);
   } catch (err) {
@@ -107,22 +103,50 @@ export async function startMindFull(name: string): Promise<void> {
     log.warn(`failed to join the commons for ${baseName}`, log.errorData(err)),
   );
 
-  if (config?.tokenBudget) {
-    try {
+  try {
+    notifyExtensionsMindStart(baseName);
+  } catch (err) {
+    log.error(`failed to notify extensions of mind start for ${baseName}`, log.errorData(err));
+  }
+}
+
+/**
+ * Restore the mind-owned runtime state that outlives the mind's *process*:
+ * schedules and token budget.
+ *
+ * `sleepMind` stops the process but deliberately keeps these — "stop process
+ * only, leave schedules/budget running" — so a sleeping mind is a mind with no
+ * process and a live clock. Anything that reconstructs a sleeping mind's state
+ * without spawning it (daemon boot, wake) has to restore them too, or the mind
+ * comes back looking healthy with a clock that holds nothing and no instrument
+ * anywhere saying so (#865). Kept in one function precisely so the boot, wake,
+ * and start paths cannot drift apart again.
+ *
+ * Sprouted base minds only. Seeds are excluded on purpose: `startMindFull`
+ * returns before schedules for them, but every mind is created with a default
+ * heartbeat already on disk, so a seed that slept and woke would otherwise come
+ * back with a clock it was never meant to have. Variants get neither, and the
+ * spirit loads its schedules with an explicit dir in `startSpiritFull`.
+ */
+export async function restoreMindRuntimeState(baseName: string): Promise<void> {
+  const entry = await findMind(baseName);
+  if (!entry || entry.parent || entry.stage === "seed") return;
+  try {
+    getScheduler().loadSchedules(baseName);
+  } catch (err) {
+    log.error(`failed to load schedules for ${baseName}`, log.errorData(err));
+  }
+  try {
+    const config = readVoluteConfig(mindDir(baseName));
+    if (config?.tokenBudget) {
       getTokenBudget().setBudget(
         baseName,
         config.tokenBudget,
         config.tokenBudgetPeriodMinutes ?? DEFAULT_BUDGET_PERIOD_MINUTES,
       );
-    } catch (err) {
-      log.error(`failed to set token budget for ${baseName}`, log.errorData(err));
     }
-  }
-
-  try {
-    notifyExtensionsMindStart(baseName);
   } catch (err) {
-    log.error(`failed to notify extensions of mind start for ${baseName}`, log.errorData(err));
+    log.error(`failed to set token budget for ${baseName}`, log.errorData(err));
   }
 }
 
@@ -187,10 +211,16 @@ export async function sleepMind(name: string): Promise<void> {
 }
 
 /**
- * Wake a sleeping mind: start process only.
+ * Wake a sleeping mind: start the process and restore the clock.
+ *
+ * Unlike `startMindFull` this is not a cold start — the mind was only asleep —
+ * but its schedules and budget may have been lost with a previous daemon
+ * process, so restore them here. `restoreMindRuntimeState` is idempotent, so
+ * waking a mind whose clock is already live is a no-op (#865).
  */
 export async function wakeMind(name: string): Promise<void> {
   await getMindManager().startMind(name);
+  await restoreMindRuntimeState(name);
 
   publishActivity({
     type: "mind_waking",

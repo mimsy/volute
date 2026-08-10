@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
-import { mkdirSync, unlinkSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { mkdirSync, mkdtempSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { _resetConfigCache } from "../packages/daemon/src/lib/config/setup.js";
 import {
@@ -10,6 +11,7 @@ import {
 import { Scheduler } from "../packages/daemon/src/lib/daemon/scheduler.js";
 import { voluteSystemDir } from "../packages/daemon/src/lib/mind/registry.js";
 import { SandboxUnavailableError } from "../packages/daemon/src/lib/mind/sandbox.js";
+import type { Schedule } from "../packages/daemon/src/lib/mind/volute-config.js";
 
 type SystemDelivery = {
   mindName: string;
@@ -20,6 +22,18 @@ type SystemDelivery = {
 
 /** Test subclass that captures calls instead of running real exec/deliver */
 class TestScheduler extends Scheduler {
+  /**
+   * Each instance persists to its own file. Production has one Scheduler and one
+   * path, but these tests build many, and several fire un-awaited saves — sharing
+   * the real `voluteSystemDir()` file let one instance's late write clobber
+   * another's, which is a flake in the test rig, not in the scheduler.
+   */
+  readonly stateFile = resolve(mkdtempSync(join(tmpdir(), "sched-state-")), "state.json");
+
+  protected override get statePath(): string {
+    return this.stateFile;
+  }
+
   systemDeliveries: SystemDelivery[] = [];
   scriptCalls: { script: string; cwd: string; mindName: string }[] = [];
   scriptResult: string | Error = "";
@@ -45,6 +59,17 @@ class TestScheduler extends Scheduler {
   ): Promise<{ id?: number; delivered: boolean }> {
     this.systemDeliveries.push({ mindName, scheduleId, text, opts });
     return this.deliverResult;
+  }
+
+  /** Skip notices the scheduler tried to hand the mind — stubbed off the DB. */
+  skipNotices: { mind: string; id: string; lateBy: number }[] = [];
+
+  protected override async noticeSkippedFire(
+    mindName: string,
+    schedule: Schedule,
+    lateBy: number,
+  ): Promise<void> {
+    this.skipNotices.push({ mind: mindName, id: schedule.id, lateBy });
   }
 }
 
@@ -350,6 +375,318 @@ describe("scheduler", () => {
   });
 });
 
+describe("scheduler one-time consumption (#866)", () => {
+  /** A fire()-able scheduler whose removeSchedule is captured instead of writing config. */
+  function schedulerWithRemovals() {
+    const scheduler = new TestScheduler();
+    const removed: string[] = [];
+    (scheduler as any).removeSchedule = (_mind: string, id: string) => removed.push(id);
+    return { scheduler, removed };
+  }
+
+  const past = () => new Date(Date.now() - 60000).toISOString();
+
+  it("consumes a one-time script that produced no output", async () => {
+    // The common case: a one-timer whose whole job is a side effect prints
+    // nothing by design. Skipping delivery is right; skipping consumption left
+    // it re-firing every tick forever.
+    const { scheduler, removed } = schedulerWithRemovals();
+    scheduler.scriptResult = "";
+
+    await (scheduler as any).fire("test-mind", {
+      id: "quiet-timer",
+      fireAt: past(),
+      script: "touch /tmp/whatever",
+      enabled: true,
+    });
+
+    assert.equal(scheduler.systemDeliveries.length, 0, "nothing to deliver");
+    assert.deepEqual(removed, ["quiet-timer"], "but the one-timer is consumed");
+  });
+
+  it("leaves a recurring no-output script alone", async () => {
+    // The consumption rule is about one-timers only — a cron script that prints
+    // nothing must keep running on its schedule.
+    const { scheduler, removed } = schedulerWithRemovals();
+    scheduler.scriptResult = "";
+
+    await (scheduler as any).fire("test-mind", {
+      id: "quiet-cron",
+      cron: "* * * * *",
+      script: "true",
+      enabled: true,
+    });
+
+    assert.deepEqual(removed, [], "recurring schedules are never consumed");
+  });
+
+  it("consumes a one-timer that can never act (hand-edited config)", async () => {
+    // Actionless and malformed-pool entries can only come from a hand-edited
+    // volute.json (the API validates), and a one-timer that can never deliver
+    // anything is dead — consume it rather than warn every minute forever.
+    const { scheduler, removed } = schedulerWithRemovals();
+
+    await (scheduler as any).fire("test-mind", {
+      id: "actionless",
+      fireAt: past(),
+      enabled: true,
+    });
+    await (scheduler as any).fire("test-mind", {
+      id: "malformed",
+      fireAt: past(),
+      messages: [42],
+      enabled: true,
+    });
+
+    assert.equal(scheduler.systemDeliveries.length, 0);
+    assert.deepEqual(removed, ["actionless", "malformed"]);
+  });
+
+  // The negative case — a one-timer kept armed when the event row could not be
+  // recorded at all — is covered by "fireAt is retained when the event row could
+  // not be recorded at all" above.
+});
+
+describe("scheduler state honesty (#867)", () => {
+  const nowMin = () => Math.floor(Date.now() / 60000);
+
+  /** Read one schedule's bookkeeping out of the in-memory map. */
+  function stateOf(scheduler: Scheduler, mind: string, id: string) {
+    return ((scheduler as any).state as Map<string, any>).get(`${mind}:${id}`);
+  }
+
+  /** Read the persisted state file — the surface a host actually inspects. */
+  function readStateFile(scheduler: TestScheduler): Record<string, any> {
+    return JSON.parse(readFileSync(scheduler.stateFile, "utf-8"));
+  }
+
+  it("records firedAt only when a fire was actually dispatched", async () => {
+    const scheduler = new TestScheduler();
+    (scheduler as any).state.set("test-mind:beat", { slot: nowMin() });
+
+    // Capture before firing: firedAt is stamped inside fire(), and comparing it
+    // to a second Date.now() at assert time straddles the minute boundary.
+    const before = nowMin();
+    await (scheduler as any).fire("test-mind", {
+      id: "beat",
+      cron: "* * * * *",
+      message: "hi",
+      enabled: true,
+    });
+
+    const state = stateOf(scheduler, "test-mind", "beat");
+    assert.ok(
+      state?.firedAt !== undefined && state.firedAt >= before,
+      "a delivered fire is recorded as delivered",
+    );
+    assert.equal(state?.skippedAt, undefined);
+  });
+
+  it("does not record firedAt when the event row could not be recorded", async () => {
+    const scheduler = new TestScheduler();
+    (scheduler as any).state.set("test-mind:beat", { slot: nowMin() });
+    scheduler.deliverResult = { id: undefined, delivered: false };
+
+    await (scheduler as any).fire("test-mind", {
+      id: "beat",
+      cron: "* * * * *",
+      message: "hi",
+      enabled: true,
+    });
+
+    assert.equal(stateOf(scheduler, "test-mind", "beat")?.firedAt, undefined);
+  });
+
+  it("records a silent script's fire — a side-effect script that ran is not 'never ran'", async () => {
+    const scheduler = new TestScheduler();
+    scheduler.scriptResult = "";
+    (scheduler as any).state.set("test-mind:backup", { slot: nowMin() });
+    const before = nowMin();
+
+    await (scheduler as any).fire("test-mind", {
+      id: "backup",
+      cron: "0 4 * * *",
+      script: "restic backup",
+      enabled: true,
+    });
+
+    const state = stateOf(scheduler, "test-mind", "backup");
+    assert.ok(state?.firedAt !== undefined && state.firedAt >= before);
+  });
+
+  it("a stale skip is recorded as a skip, not as a fire, and reaches the mind", () => {
+    // The production failure: mimsy:dream showed a slot cursor at 03:00 for a
+    // dream that provably never ran, and the only other trace was a daemon log
+    // line a mind's sandbox cannot read.
+    const scheduler = new TestScheduler();
+    const realMin = nowMin();
+    const epochMinute = realMin + 20;
+    (scheduler as any).state.set("test-mind:dream", { slot: realMin - 30 });
+
+    const result = (scheduler as any).shouldFire(
+      { id: "dream", cron: "* * * * *", enabled: true },
+      epochMinute,
+      "test-mind",
+      new Map(),
+    );
+
+    assert.equal(result, false);
+    const state = stateOf(scheduler, "test-mind", "dream");
+    assert.equal(state?.slot, realMin, "cursor advanced so it isn't retried");
+    assert.equal(state?.skippedAt, epochMinute, "skippedAt is when we acted, like firedAt");
+    assert.equal(state?.skipReason, "stale_catchup");
+    assert.equal(state?.firedAt, undefined);
+    assert.deepEqual(scheduler.skipNotices, [{ mind: "test-mind", id: "dream", lateBy: 20 }]);
+  });
+
+  it("persists a skip-only tick to disk, so a restart doesn't re-skip and re-notify", async () => {
+    // The notice is durable but the cursor advance was not: tick() saved only
+    // when something fired, so a tick of pure skips mutated memory and wrote
+    // nothing. After a restart the old slot returned, the same missed fire was
+    // skipped again, and the mind got a second notice for it — turning a fix for
+    // dropped fires into a source of duplicate ones.
+    const scheduler = new TestScheduler();
+    const realMin = nowMin();
+    const key = "persist-mind:dream";
+    (scheduler as any).state.set(key, { slot: realMin - 5000 });
+    (scheduler as any).schedules.set("persist-mind", [
+      { id: "dream", cron: "0 3 * * *", message: "dream", enabled: true },
+    ]);
+
+    await (scheduler as any).tick();
+
+    assert.equal(scheduler.systemDeliveries.length, 0, "the stale fire was skipped, not delivered");
+    assert.equal(scheduler.skipNotices.length, 1, "and the mind was told once");
+
+    const onDisk = readStateFile(scheduler)[key];
+    assert.ok(onDisk, "the skip reached disk");
+    assert.equal(onDisk.skipReason, "stale_catchup");
+    assert.ok(
+      onDisk.slot > realMin - 5000,
+      "the advanced cursor is durable, so the next boot won't re-skip",
+    );
+
+    scheduler.clearState();
+  });
+
+  it("records how late a one-timer was, so late never reads as punctual", () => {
+    const scheduler = new TestScheduler();
+    const due = new Date(Date.now() - 3 * 3600_000);
+    const result = (scheduler as any).shouldFire(
+      { id: "walk", fireAt: due.toISOString(), enabled: true },
+      nowMin(),
+      "test-mind",
+      new Map(),
+    );
+    // Deliberate asymmetry with recurring fires: a one-time reminder is the only
+    // copy of that intention, so lateness never becomes a drop.
+    assert.equal(result, true);
+    assert.equal(scheduler.skipNotices.length, 0);
+
+    const state = stateOf(scheduler, "test-mind", "walk");
+    assert.equal(state?.dueAt, Math.floor(due.getTime() / 60000), "when it was due");
+    assert.equal(state?.slot, nowMin(), "and when we acted — the gap is the lateness");
+  });
+
+  it("drops the state key when a schedule is removed, so a reused id starts clean", () => {
+    // `clock add --id reminder --in 5m` is a natural repeat. A surviving key
+    // would hand the new schedule the old one's slot and firedAt.
+    const scheduler = new TestScheduler();
+    const key = "reuse-mind:reminder";
+    (scheduler as any).state.set(key, { slot: 100, firedAt: 100 });
+    (scheduler as any).schedules.set("reuse-mind", [
+      { id: "reminder", fireAt: new Date().toISOString(), message: "hi", enabled: true },
+    ]);
+
+    (scheduler as any).removeSchedule("reuse-mind", "reminder");
+
+    assert.equal(stateOf(scheduler, "reuse-mind", "reminder"), undefined);
+    scheduler.clearState();
+  });
+
+  it("addresses the skip notice mind-level so it can't strand on a dead thread", async () => {
+    // The notice is about a fire that did NOT happen, and a schedule's thread is
+    // often a thread only that schedule ever opens (a dream prompt opens the
+    // dream thread). A next-turn event on a named thread is drained only by that
+    // thread's turns, so addressing it there would strand it in exactly the case
+    // it exists for. Mind-level events are drained by any thread's next turn.
+    const { getDb } = await import("../packages/daemon/src/lib/db.js");
+    const { systemEvents } = await import("../packages/daemon/src/lib/schema.js");
+    const { eq } = await import("drizzle-orm");
+    const mind = "skip-notice-mind";
+
+    const scheduler = new Scheduler();
+    await (scheduler as any).noticeSkippedFire(
+      mind,
+      { id: "dream", cron: "0 3 * * *", enabled: true, thread: "dream" },
+      241,
+    );
+
+    const db = await getDb();
+    const rows = await db.select().from(systemEvents).where(eq(systemEvents.mind, mind)).all();
+    assert.equal(rows.length, 1, "one notice recorded");
+    assert.equal(rows[0].thread, "", "mind-level, not the schedule's own thread");
+    assert.equal(rows[0].delivery, "next-turn");
+    assert.match(rows[0].meta ?? "", /schedule_skipped_stale/);
+    assert.match(rows[0].body, /dream/);
+    assert.match(rows[0].body, /241/);
+    assert.doesNotMatch(
+      rows[0].body,
+      /daemon was down/,
+      "must not assert a cause it cannot know — a deliberate stop produces this too",
+    );
+
+    await db.delete(systemEvents).where(eq(systemEvents.mind, mind));
+  });
+
+  it("tells the mind when a malformed schedule could not send anything", async () => {
+    // Hand-edit-only states. A one-timer in this shape is consumed below, so
+    // without a notice the mind's reminder would vanish over a typo with nothing
+    // but a daemon log line it cannot read.
+    const { getDb } = await import("../packages/daemon/src/lib/db.js");
+    const { systemEvents } = await import("../packages/daemon/src/lib/schema.js");
+    const { eq } = await import("drizzle-orm");
+    const mind = "invalid-sched-mind";
+
+    const scheduler = new TestScheduler();
+    await (scheduler as any).fire(mind, {
+      id: "typo",
+      fireAt: new Date(Date.now() - 60000).toISOString(),
+      messages: [42],
+      enabled: true,
+    });
+
+    const db = await getDb();
+    const rows = await db.select().from(systemEvents).where(eq(systemEvents.mind, mind)).all();
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].thread, "");
+    assert.match(rows[0].meta ?? "", /schedule_invalid/);
+    assert.match(rows[0].body, /typo/);
+    assert.match(rows[0].body, /removed/, "and says the one-timer is gone");
+
+    await db.delete(systemEvents).where(eq(systemEvents.mind, mind));
+  });
+
+  it("round-trips the fire history through the state file", async () => {
+    const scheduler = new TestScheduler();
+    (scheduler as any).state.set("rt-mind:dream", {
+      slot: 999,
+      skippedAt: 1000,
+      skipReason: "stale_catchup",
+      dueAt: 998,
+    });
+    await scheduler.saveState();
+    (scheduler as any).loadState();
+    assert.deepEqual(stateOf(scheduler, "rt-mind", "dream"), {
+      slot: 999,
+      skippedAt: 1000,
+      skipReason: "stale_catchup",
+      dueAt: 998,
+    });
+    scheduler.clearState();
+  });
+});
+
 describe("scheduler runScript sandboxing", () => {
   const origSandbox = process.env.VOLUTE_SANDBOX;
   const origOptional = process.env.VOLUTE_SANDBOX_OPTIONAL;
@@ -482,13 +819,13 @@ describe("scheduler catch-up (level-triggered cron)", () => {
     const scheduler = new TestScheduler();
     const epochMinute = nowMin();
     const key = "test-mind:heartbeat";
-    // Last acted-on minute is 3 minutes stale (missed ticks).
-    (scheduler as any).lastFired.set(key, epochMinute - 3);
+    // Last acted-on slot is 3 minutes stale (missed ticks).
+    (scheduler as any).state.set(key, { slot: epochMinute - 3 });
 
     const first = (scheduler as any).shouldFire(heartbeat, epochMinute, "test-mind", new Map());
     assert.equal(first, true);
-    // lastFired advances to the fired cron minute (== epochMinute for every-minute cron).
-    assert.equal((scheduler as any).lastFired.get(key), epochMinute);
+    // The slot cursor advances to the fired cron minute (== epochMinute for every-minute cron).
+    assert.equal((scheduler as any).state.get(key).slot, epochMinute);
 
     // Same minute again → no double fire.
     const second = (scheduler as any).shouldFire(heartbeat, epochMinute, "test-mind", new Map());
@@ -498,18 +835,18 @@ describe("scheduler catch-up (level-triggered cron)", () => {
   it("does not fire when already up to date this minute", () => {
     const scheduler = new TestScheduler();
     const epochMinute = nowMin();
-    (scheduler as any).lastFired.set("test-mind:heartbeat", epochMinute);
+    (scheduler as any).state.set("test-mind:heartbeat", { slot: epochMinute });
     const result = (scheduler as any).shouldFire(heartbeat, epochMinute, "test-mind", new Map());
     assert.equal(result, false);
   });
 
-  it("skips a stale catch-up fire but still advances lastFired", () => {
+  it("skips a stale catch-up fire but still advances the slot cursor", () => {
     const scheduler = new TestScheduler();
     const realMin = nowMin();
     // Pretend we're evaluating 20 minutes after the cron minute (long downtime).
     const epochMinute = realMin + 20;
     const key = "test-mind:dream";
-    (scheduler as any).lastFired.set(key, realMin - 30);
+    (scheduler as any).state.set(key, { slot: realMin - 30 });
 
     const result = (scheduler as any).shouldFire(
       { id: "dream", cron: "* * * * *", enabled: true },
@@ -519,8 +856,8 @@ describe("scheduler catch-up (level-triggered cron)", () => {
     );
     // Too stale to deliver...
     assert.equal(result, false);
-    // ...but lastFired advanced to the cron minute so it won't be retried.
-    assert.equal((scheduler as any).lastFired.get(key), realMin);
+    // ...but the cursor advanced to the cron minute so it won't be retried.
+    assert.equal((scheduler as any).state.get(key).slot, realMin);
   });
 });
 
@@ -535,19 +872,19 @@ describe("scheduler loadSchedules bookkeeping", () => {
     const dir = resolve(voluteSystemDir(), "sched-bookkeep-mind");
     writeConfig(dir, [{ id: "heartbeat", cron: "* * * * *", message: "hi", enabled: true }]);
 
-    const lf = (scheduler as any).lastFired as Map<string, number>;
+    const lf = (scheduler as any).state as Map<string, { slot: number }>;
     // Pre-seed: a stale key for this mind + a live key for another mind.
-    lf.set("sched-bookkeep-mind:old-removed", 100);
-    lf.set("other-mind:keepme", 200);
+    lf.set("sched-bookkeep-mind:old-removed", { slot: 100 });
+    lf.set("other-mind:keepme", { slot: 200 });
 
     scheduler.loadSchedules("sched-bookkeep-mind", dir);
 
     // Stale key for this mind pruned (#428).
     assert.equal(lf.has("sched-bookkeep-mind:old-removed"), false);
     // Other mind's key untouched — prune is per-mind only.
-    assert.equal(lf.get("other-mind:keepme"), 200);
+    assert.equal(lf.get("other-mind:keepme")?.slot, 200);
     // New schedule baselined to the current minute (#453) so no history replay.
-    assert.equal(lf.get("sched-bookkeep-mind:heartbeat"), Math.floor(Date.now() / 60000));
+    assert.equal(lf.get("sched-bookkeep-mind:heartbeat")?.slot, Math.floor(Date.now() / 60000));
   });
 
   it("baseline prevents an immediate replay for a freshly loaded schedule", () => {

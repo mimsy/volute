@@ -40,15 +40,37 @@ volute clock add --mind atlas \
 
 ## clock list
 
-List all schedules for a mind, showing each schedule's ID, timing, and action.
+List everything on a mind's clock, showing each entry's ID, timing, enabled state, and action.
 
 ```sh
 volute clock list [--mind <name>]
 ```
 
+The clock has two stores in `.config/volute.json`, and `list` shows both:
+
+```
+ID         SCHEDULE          ENABLED  ACTION
+dream      0 3 * * *         true     it's 3am. you are dreaming...
+heartbeat  0 12,16,20 * * *  true     [rotating x7] ...
+
+From sleep.schedule — managed by `volute clock sleep`/`wake`, not `clock remove`:
+ID     SCHEDULE    ENABLED  ACTION
+sleep  0 23 * * *  true     go to sleep
+wake   0 7 * * *   true     wake up
+```
+
+The first section is `schedules[]`, which `clock add` and `clock remove` manage. The second is
+`sleep.schedule`, set through the sleep config or the web UI — `clock remove --id wake` will not
+touch it. The sections stay separate because these IDs are not reserved: a mind may have its own
+schedule named `sleep`, and it appears in the first section.
+
+Both sections always report, including when empty. An absent section would make "nothing wakes me"
+and "I did not look in the right place" indistinguishable.
+
 ## clock remove
 
-Remove a schedule by ID.
+Remove a schedule by ID. Only `schedules[]` entries can be removed this way; the sleep and wake
+crons are part of the sleep config.
 
 ```sh
 volute clock remove [--mind <name>] --id <schedule-id>

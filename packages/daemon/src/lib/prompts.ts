@@ -31,6 +31,8 @@ export const PROMPT_KEYS = [
   "delivery_failure_notice",
   "delivery_failure_coalesced",
   "schedule_failure_notice",
+  "schedule_skipped_notice",
+  "schedule_invalid_notice",
   "pre_sleep_failure_notice",
   "trigger_wake_crash_notice",
   "meta_summary_hour",
@@ -194,6 +196,20 @@ export const PROMPT_DEFAULTS: Record<PromptKey, PromptMeta> = {
     content: 'Your schedule "${id}" fired but its message could not be delivered: ${reason}',
     description: "Notice recorded when a schedule fires but delivery fails",
     variables: ["id", "reason"],
+    category: "system",
+  },
+  schedule_skipped_notice: {
+    content:
+      'Your schedule "${id}" did not run: its fire came due ${late} minutes ago and was skipped rather than delivered that late. Nothing was sent for that slot.',
+    description: "Notice recorded when a schedule fire is dropped for being too stale to deliver",
+    variables: ["id", "late"],
+    category: "system",
+  },
+  schedule_invalid_notice: {
+    content:
+      'Your schedule "${id}" could not send anything: ${reason}. Nothing was delivered.${fate}',
+    description: "Notice recorded when a schedule's payload is malformed and nothing can be sent",
+    variables: ["id", "reason", "fate"],
     category: "system",
   },
   pre_sleep_failure_notice: {

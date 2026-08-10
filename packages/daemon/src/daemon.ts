@@ -11,7 +11,7 @@ import { syncProviderToMinds } from "./lib/daemon/credential-sync.js";
 import { initMailPoller } from "./lib/daemon/mail-poller.js";
 import { startMaintenanceInterval } from "./lib/daemon/maintenance.js";
 import { getMindManager, initMindManager } from "./lib/daemon/mind-manager.js";
-import { startMindFull } from "./lib/daemon/mind-service.js";
+import { restoreMindRuntimeState, startMindFull } from "./lib/daemon/mind-service.js";
 import { initScheduler } from "./lib/daemon/scheduler.js";
 import { initSleepManager } from "./lib/daemon/sleep-manager.js";
 import { initSummarizer } from "./lib/daemon/summarizer.js";
@@ -76,6 +76,44 @@ export function writeDaemonConfig(
   const tokenPath = resolve(systemDir, "daemon-token");
   writeFileSync(tokenPath, `${token}\n`, { mode: 0o600 });
   chmodSync(tokenPath, 0o600);
+}
+
+/** The registry fields the boot filter needs. */
+type BootCandidate = {
+  name: string;
+  running: boolean;
+  parent?: string | null;
+  mindType?: string | null;
+};
+
+/**
+ * Should this registry row enter the daemon's boot loop?
+ *
+ * Two distinct populations: minds whose *process* must come back (`running`),
+ * and minds whose *clock* must come back. The second is why sleeping minds are
+ * here at all — sleep persists `running = 0`, so filtering on `running` alone
+ * made the loop's sleeping branch dead code and a mind asleep across a restart
+ * came back with no schedules while `clock list` reported them all armed (#865).
+ *
+ * A mind is only in sleep state because it or its host asked for sleep: the
+ * sleep-onset path requires a running mind, `POST /:name/stop` refuses a mind
+ * that isn't running, and a mind stopped mid-trigger-wake reads `wokenByTrigger`
+ * and so is not `isSleeping`. So "sleeping" always means a deliberate sleep, and
+ * restoring its clock is honouring that request — including a `trigger-wake`
+ * schedule, which the sleep manager would in any case wake it for at its wake
+ * time. A mind stopped with `mind stop` and never slept has no sleep state and
+ * stays out, its schedules unloaded by `stopMindFull` as intended.
+ *
+ * Exported for tests: the claim in the paragraph above is the kind that rots.
+ */
+export function shouldBootEntry(
+  entry: BootCandidate,
+  isSleeping: (name: string) => boolean,
+): boolean {
+  if (entry.mindType === "spirit") return false;
+  if (entry.running) return true;
+  // Variants have no independent clock and never sleep on their own.
+  return !entry.parent && isSleeping(entry.name);
 }
 
 export async function startDaemon(opts: {
@@ -304,32 +342,35 @@ export async function startDaemon(opts: {
     log.error("failed to reconcile variants", log.errorData(err));
   }
 
-  // Start all minds + variants that were previously running (parallel, concurrency limit of 5)
-  // Skip sleeping minds — they only need connectors, not the mind process
+  // Start all minds + variants that were previously running (parallel, concurrency limit of 5).
+  // Sleeping minds enter the loop too, but only to have their clock restored —
+  // see shouldBootEntry.
   const allMinds = await readAllMinds();
-  const runningEntries = allMinds.filter((e) => e.running && e.mindType !== "spirit");
+  const bootEntries = allMinds.filter((e) =>
+    shouldBootEntry(e, (name) => sleepManager.isSleeping(name)),
+  );
   {
-    const queue = [...runningEntries];
+    const queue = [...bootEntries];
     const workers = Array.from({ length: Math.min(5, queue.length) }, async () => {
       while (queue.length > 0) {
         const entry = queue.shift()!;
         if (!entry.parent && sleepManager.isSleeping(entry.name)) {
-          // Sleeping mind: start schedules but not the process
-          try {
-            scheduler.loadSchedules(entry.name);
-          } catch (err) {
-            log.error(
-              `failed to start schedules for sleeping mind ${entry.name}`,
-              log.errorData(err),
-            );
-          }
+          // Sleeping mind: restore the clock but not the process
+          await restoreMindRuntimeState(entry.name);
           continue;
         }
+        // The sleep manager's tick is already running, so a mind can wake between
+        // the filter above and this dequeue (up to 5 workers, seconds apart). It is
+        // then already running: starting it again throws, and the catch below would
+        // record a *live* mind as stopped — a mind running while the registry says
+        // otherwise, which is #865's own failure mode.
+        if (manager.isRunning(entry.name)) continue;
         try {
           await startMindFull(entry.name);
         } catch (err) {
           log.error(`failed to start mind ${entry.name}`, log.errorData(err));
-          await setMindRunning(entry.name, false);
+          // Never mark a mind stopped that is in fact running (see above).
+          if (!manager.isRunning(entry.name)) await setMindRunning(entry.name, false);
         }
       }
     });
