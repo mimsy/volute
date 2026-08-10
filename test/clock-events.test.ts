@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { buildClockRows } from "../packages/cli/src/commands/clock.js";
 import type { Schedule } from "../packages/daemon/src/lib/mind/volute-config.js";
 import { computeClockEvents } from "../packages/daemon/src/web/api/schedules.js";
 
@@ -185,5 +186,102 @@ describe("computeClockEvents", () => {
       upcoming.some((e) => e.id === "past"),
       false,
     ); // past timer not upcoming
+  });
+});
+
+describe("buildClockRows (#870)", () => {
+  const fmt = (iso: string) => iso;
+  const heartbeat: Schedule = { id: "heartbeat", cron: "0 * * * *", enabled: true, message: "hi" };
+
+  it("lists the sleep/wake crons alongside schedules[], labelled by source", () => {
+    const rows = buildClockRows(
+      [heartbeat],
+      { enabled: true, schedule: { sleep: "0 23 * * *", wake: "0 7 * * *" } },
+      fmt,
+    );
+    assert.deepEqual(
+      rows.map((r) => [r.id, r.schedule, r.source]),
+      [
+        ["heartbeat", "0 * * * *", "schedules[]"],
+        ["sleep", "0 23 * * *", "sleep.schedule"],
+        ["wake", "0 7 * * *", "sleep.schedule"],
+      ],
+    );
+  });
+
+  it("still reports the wake cron when there are no schedules[] at all", () => {
+    // The production failure: a mind read an empty `clock list`, concluded there
+    // was no 7am wake, wrote that to her permanent record — and woke at 07:01.
+    const rows = buildClockRows(
+      [],
+      { enabled: true, schedule: { sleep: "0 23 * * *", wake: "0 7 * * *" } },
+      fmt,
+    );
+    assert.ok(
+      rows.some((r) => r.id === "wake" && r.schedule === "0 7 * * *"),
+      "an empty schedules[] must not read as an empty clock",
+    );
+  });
+
+  it("shows a disabled sleep schedule rather than hiding it", () => {
+    const rows = buildClockRows(
+      [],
+      { enabled: false, schedule: { sleep: "0 23 * * *", wake: "0 7 * * *" } },
+      fmt,
+    );
+    assert.equal(rows.length, 2);
+    assert.ok(rows.every((r) => r.enabled === false));
+  });
+
+  it("treats a missing `enabled` as OFF, matching the sleep manager", () => {
+    // sleep-manager's evaluateMind gates on `!config?.enabled`, so undefined
+    // means sleep never fires. PUT /sleep/config only writes the field when the
+    // body carries it, and minds hand-edit volute.json, so this state is real.
+    // Printing these as enabled would be a confident false positive about what
+    // wakes the mind — the same class of error as #870, pointing the other way.
+    const rows = buildClockRows([], { schedule: { sleep: "0 23 * * *", wake: "0 7 * * *" } }, fmt);
+    assert.equal(rows.length, 2);
+    assert.ok(
+      rows.every((r) => r.enabled === false),
+      "undefined enabled must not read as armed",
+    );
+  });
+
+  it("keeps a user schedule named `sleep` distinct from the sleep.schedule cron", () => {
+    // Ids are not reserved and minds name their own schedules; the two rows are
+    // told apart by source, and the renderer prints them in separate sections.
+    const rows = buildClockRows(
+      [{ id: "sleep", cron: "0 22 * * *", enabled: true, message: "wind down" }],
+      { enabled: true, schedule: { sleep: "0 23 * * *", wake: "0 7 * * *" } },
+      fmt,
+    );
+    const sleeps = rows.filter((r) => r.id === "sleep");
+    assert.equal(sleeps.length, 2);
+    assert.deepEqual(
+      sleeps.map((r) => r.source),
+      ["schedules[]", "sleep.schedule"],
+    );
+    assert.equal(sleeps[0].schedule, "0 22 * * *");
+    assert.equal(sleeps[1].schedule, "0 23 * * *");
+  });
+
+  it("omits sleep rows only when no sleep schedule is configured", () => {
+    assert.deepEqual(
+      buildClockRows([heartbeat], null, fmt).map((r) => r.id),
+      ["heartbeat"],
+    );
+    assert.deepEqual(
+      buildClockRows([heartbeat], { enabled: true }, fmt).map((r) => r.id),
+      ["heartbeat"],
+    );
+  });
+
+  it("renders a one-time fireAt through the time formatter", () => {
+    const rows = buildClockRows(
+      [{ id: "walk", fireAt: "2026-08-09T09:33:00.000Z", enabled: true, message: "walk" }],
+      null,
+      () => "Aug 9 09:33",
+    );
+    assert.equal(rows[0].schedule, "at Aug 9 09:33");
   });
 });

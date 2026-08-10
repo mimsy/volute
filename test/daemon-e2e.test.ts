@@ -2076,12 +2076,21 @@ describe("daemon e2e", { timeout: 420000 }, () => {
 
     const body = (await res.json()) as {
       sleep: unknown;
-      sleepConfig: unknown;
+      sleepConfig: { schedule?: { sleep: string; wake: string } } | null;
       schedules: { id: string }[];
       upcoming: { id: string; at: string; type: string }[];
     };
     assert.ok(Array.isArray(body.schedules), "schedules should be an array");
     assert.ok(Array.isArray(body.upcoming), "upcoming should be an array");
+
+    // `clock list` builds its sleep/wake rows from this field (#870). Without
+    // this assertion, dropping or renaming `sleepConfig` here would leave every
+    // buildClockRows unit test green while `clock list` silently went back to
+    // answering "what wakes me?" with nothing — the exact #870 failure.
+    assert.ok(
+      body.sleepConfig?.schedule?.wake,
+      `clock/status must carry sleepConfig.schedule for clock list: ${JSON.stringify(body.sleepConfig)}`,
+    );
     assert.ok(
       body.schedules.some((s) => s.id === "test-status"),
       `Expected test-status in schedules: ${JSON.stringify(body.schedules)}`,
@@ -2589,6 +2598,128 @@ describe("daemon e2e", { timeout: 420000 }, () => {
     );
 
     await daemonRequest(`/api/minds/${TEST_MIND}/stop`, { method: "POST" });
+  });
+
+  it("a sleeping mind keeps its schedules across a daemon restart (#865)", {
+    timeout: 180000,
+  }, async () => {
+    // Sleep persists `running = 0`, so a boot loop that filters on `running`
+    // never reaches the branch that restores a sleeping mind's schedules. The
+    // process came back healthy, the clock came back empty, and both CLI
+    // surfaces — which read volute.json off disk — reported every schedule
+    // armed. On a production host that cost two minds a full day of fires.
+    const SCHED_ID = "e2e-sleep-restart-beat";
+    await ensureTestMind();
+    const db = await getDb();
+
+    // Sleeping from a stopped state makes initiateSleep short-circuit to
+    // markSleeping — no 120s wind-down wait for a turn the keyless CI mind
+    // can't run. A far-future explicit wake pins the wake time so no cron
+    // wakes the mind mid-test.
+    await daemonRequest(`/api/minds/${TEST_MIND}/stop`, { method: "POST" });
+    const sleepRes = await daemonRequest(`/api/minds/${TEST_MIND}/sleep`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ wakeAt: new Date(Date.now() + 3600_000).toISOString() }),
+    });
+    assert.equal(sleepRes.status, 200, `sleep: ${await sleepRes.clone().text()}`);
+
+    const sleepDeadline = Date.now() + 20000;
+    let asleep = false;
+    while (Date.now() < sleepDeadline) {
+      const res = await daemonRequest(`/api/minds/${TEST_MIND}/sleep`);
+      if (((await res.json()) as { sleeping: boolean }).sleeping) {
+        asleep = true;
+        break;
+      }
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    assert.ok(asleep, "mind should be asleep before the restart");
+
+    // Arm a once-a-minute schedule. It queues while asleep, so every fire
+    // leaves a durable system_events row — the observable that says the
+    // scheduler is actually holding this mind's schedules.
+    const addRes = await daemonRequest(`/api/minds/${TEST_MIND}/schedules`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: SCHED_ID,
+        cron: "* * * * *",
+        message: "still ticking",
+        whileSleeping: "queue",
+      }),
+    });
+    assert.equal(addRes.status, 201, `add schedule: ${await addRes.clone().text()}`);
+
+    daemon.kill("SIGTERM");
+    await new Promise<void>((resolve) => {
+      daemon.on("exit", () => resolve());
+      setTimeout(() => {
+        try {
+          daemon.kill("SIGKILL");
+        } catch {}
+        resolve();
+      }, 5000);
+    });
+
+    daemon = spawn(
+      "npx",
+      ["tsx", "packages/daemon/src/daemon.ts", "--port", String(PORT), "--foreground"],
+      {
+        cwd: process.cwd(),
+        stdio: ["ignore", "pipe", "pipe"],
+        env: { ...cleanEnv, VOLUTE_DAEMON_TOKEN: TOKEN, VOLUTE_BASE_PORT: String(MIND_BASE_PORT) },
+      },
+    );
+    daemon.stderr?.on("data", (data: Buffer) => {
+      process.stderr.write(`[daemon] ${data}`);
+    });
+    await waitForHealth();
+
+    // Cleanup must run even when the assertion fails: leaving TEST_MIND asleep
+    // with a `* * * * *` schedule armed and a 1h wakeAt cascades into the next
+    // test, which sleeps that same mind and counts its queued rows.
+    try {
+      // Only fires from the *new* daemon count, so ignore anything the old one
+      // may have managed between arming the schedule and the SIGTERM.
+      const priorRows = await db
+        .select({ id: systemEvents.id })
+        .from(systemEvents)
+        .where(eq(systemEvents.mind, TEST_MIND))
+        .all();
+      const priorMaxId = priorRows.reduce((max, r) => Math.max(max, r.id), 0);
+
+      // A `* * * * *` cron fires on the first tick after boot — the pre-restart
+      // baseline survives in scheduler-state.json, so no re-baseline delays it.
+      // 90s covers that tick plus a straddled minute boundary; more would risk
+      // the describe-level suite budget, which cancels every later test.
+      const fireDeadline = Date.now() + 90000;
+      let fired = false;
+      while (Date.now() < fireDeadline && !fired) {
+        await new Promise((r) => setTimeout(r, 2000));
+        const rows = await db
+          .select({ id: systemEvents.id, type: systemEvents.type, meta: systemEvents.meta })
+          .from(systemEvents)
+          .where(eq(systemEvents.mind, TEST_MIND))
+          .all();
+        fired = rows.some(
+          (r) => r.id > priorMaxId && r.type === "schedule" && (r.meta ?? "").includes(SCHED_ID),
+        );
+      }
+      assert.ok(fired, "the restarted daemon should still fire a sleeping mind's schedules");
+    } finally {
+      // Drop the schedule, wake the mind, and leave it stopped and awake for the
+      // tests that follow.
+      await daemonRequest(`/api/minds/${TEST_MIND}/schedules/${SCHED_ID}`, { method: "DELETE" });
+      await daemonRequest(`/api/minds/${TEST_MIND}/wake`, { method: "POST" });
+      const wakeDeadline = Date.now() + 30000;
+      while (Date.now() < wakeDeadline) {
+        const res = await daemonRequest(`/api/minds/${TEST_MIND}/sleep`);
+        if (!((await res.json()) as { sleeping: boolean }).sleeping) break;
+        await new Promise((r) => setTimeout(r, 500));
+      }
+      await daemonRequest(`/api/minds/${TEST_MIND}/stop`, { method: "POST" });
+    }
   });
 
   // Regression guard for the batched queued-flush contract (#382, PR #530): a sleeping
