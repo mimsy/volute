@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.57.1](https://github.com/mimsy/volute/compare/volute-v0.57.0...volute-v0.57.1) (2026-08-10)
+
+
+### Bug Fixes
+
+* extension CLI commands hang on open stdin, and shared pages break under user isolation ([#879](https://github.com/mimsy/volute/issues/879)) ([71160dd](https://github.com/mimsy/volute/commit/71160ddf87c93abe4ce580ce964a21d9271f740b))
+* reject non-integer message cursors and show dates in chat read ([#875](https://github.com/mimsy/volute/issues/875)) ([ae5bfc7](https://github.com/mimsy/volute/commit/ae5bfc735f73c84d320415c3f645af11c333d1b3))
+* schedules survive sleep and restarts, and the clock reports what actually happened ([#882](https://github.com/mimsy/volute/issues/882)) ([32f227d](https://github.com/mimsy/volute/commit/32f227d4d8c96ac38da090ff4964ec59defd1518))
+* unhandled EPIPE on the wake-context hook crashes the daemon ([#881](https://github.com/mimsy/volute/issues/881)) ([3461ed4](https://github.com/mimsy/volute/commit/3461ed4f76bb07a28595d7b6fb8ef9bf66abb824))
+
 ## [0.57.0](https://github.com/mimsy/volute/compare/volute-v0.56.0...volute-v0.57.0) (2026-07-30)
 
 
