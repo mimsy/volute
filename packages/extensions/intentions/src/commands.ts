@@ -36,6 +36,7 @@ export function createCommands(): Record<string, ExtensionCommand> {
           description: "What you're oriented toward (or pipe via stdin)",
         },
       ],
+      stdin: true,
       flags: {
         note: {
           type: "string",
@@ -121,6 +122,7 @@ export function createCommands(): Record<string, ExtensionCommand> {
         { name: "id", required: true, description: "Intention id" },
         { name: "note", description: "Optional closing note (or pipe via stdin)" },
       ],
+      stdin: true,
       handler: async ({ args }, ctx) => {
         if (!ctx.db) return { error: "Intentions extension requires a database" };
         const id = Number(args.id);
@@ -152,6 +154,7 @@ export function createCommands(): Record<string, ExtensionCommand> {
         { name: "id", required: true, description: "Intention id" },
         { name: "note", description: "Optional closing note (or pipe via stdin)" },
       ],
+      stdin: true,
       handler: async ({ args }, ctx) => {
         if (!ctx.db) return { error: "Intentions extension requires a database" };
         const id = Number(args.id);

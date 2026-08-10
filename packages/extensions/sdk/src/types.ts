@@ -201,6 +201,14 @@ export type ExtensionCommand = {
   description: string;
   args?: ArgDef[];
   flags?: Record<string, FlagDef>;
+  /**
+   * This command accepts piped input, exposed to the handler as `ctx.stdin`.
+   * Opt-in because the CLI reads stdin to EOF before dispatching, and a caller
+   * whose stdin is a pipe nobody closes (an agent's shell tool, cron, `ssh host
+   * cmd`) then hangs forever with no output at all (#872). Commands that never
+   * read `ctx.stdin` must leave this unset so they never wait on the stream.
+   */
+  stdin?: boolean;
   examples?: string[];
   handler: CommandHandler;
 };

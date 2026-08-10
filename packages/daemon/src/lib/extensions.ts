@@ -91,7 +91,12 @@ export function enrichActivityMetadata(
   return enriched;
 }
 
-function toCommandInfo(cmd: ExtensionCommand): ExtensionCommandInfo {
+/**
+ * The command definition as the CLI sees it over `/api/extensions/commands`:
+ * everything except the handler, which cannot cross the wire. Metadata the CLI
+ * acts on before dispatch — notably `stdin` (#872) — reaches it only through here.
+ */
+export function toCommandInfo(cmd: ExtensionCommand): ExtensionCommandInfo {
   const { handler: _, ...info } = cmd;
   return info;
 }

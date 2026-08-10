@@ -89,7 +89,30 @@ function generateSystemPlist(voluteBin: string, opts?: { port?: number; host?: s
 </plist>`;
 }
 
-function generateSystemUnit(voluteBin: string, port?: number, host?: string): string {
+/**
+ * The systemd unit for a `--system` install.
+ *
+ * Deliberately does *not* set `RestrictSUIDSGID=yes`. A system install always runs
+ * per-mind user isolation, and the shared pages repo is created `--shared=group` so
+ * several mind users can work in it. Git then calls `adjust_shared_perm()`, which
+ * chmods the setgid bit onto directories and index/object temp files — exactly the
+ * syscall that directive blocks, for root included. With it set, `_system` worktrees
+ * never provision and publishing fails with "unable to create temporary file:
+ * Operation not permitted" (#832). systemd has no per-path carve-out for it.
+ *
+ * This is the second feature to hit it, not a one-off: #75 (714cb31d) removed the
+ * directive in Feb 2026 because the then-shared CLAUDE_CONFIG_DIR needed the same sgid
+ * chmods, and #77 (d4e56003) restored it on a stated precondition — "the sgid chmod
+ * that required its removal is no longer needed". Shared pages made that precondition
+ * false again.
+ *
+ * So the bar for restoring it is that precondition, not a judgement call: remove the
+ * setgid dependency first (nothing in the system may need a setgid chmod), and only
+ * then put the directive back. Restoring it while shared pages still uses
+ * `--shared=group` silently re-breaks publishing on every system install, which is
+ * exactly how this shipped broken. `test/setup.test.ts` pins its absence.
+ */
+export function generateSystemUnit(voluteBin: string, port?: number, host?: string): string {
   const args = ["up", "--foreground"];
   if (port != null) args.push("--port", String(port));
   if (host) args.push("--host", host);
@@ -119,7 +142,7 @@ function generateSystemUnit(voluteBin: string, port?: number, host?: string): st
     lines.push("ProtectHome=yes");
   }
 
-  lines.push("RestrictSUIDSGID=yes", "", "[Install]", "WantedBy=multi-user.target", "");
+  lines.push("", "[Install]", "WantedBy=multi-user.target", "");
   return lines.join("\n");
 }
 

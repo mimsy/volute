@@ -312,8 +312,14 @@ use --mind <name> or VOLUTE_MIND env var to identify the mind.`);
             mind = cmdArgs[mindIdx + 1];
             cmdArgs.splice(mindIdx, 2);
           }
-          const { readStdin } = await import("@volute/cli/lib/read-stdin.js");
-          const stdin = await readStdin();
+          // Only commands that declare `stdin` have their input read. Reading it for
+          // every command hung the CLI forever whenever the caller's stdin was a pipe
+          // nobody closes — an agent's shell tool, cron, `ssh host cmd` (#872).
+          let stdin: string | undefined;
+          if (ext.commands[subcommand].stdin) {
+            const { readStdin } = await import("@volute/cli/lib/read-stdin.js");
+            stdin = await readStdin();
+          }
           const cmdRes = await daemonFetch(`/api/ext/${command}/commands/${subcommand}`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
