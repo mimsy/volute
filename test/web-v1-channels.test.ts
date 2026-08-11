@@ -11,9 +11,11 @@ import {
   getChannelSettings,
   getMessages,
   getParticipants,
+  joinChannel,
 } from "../packages/daemon/src/lib/events/conversations.js";
 import { addMind, removeMind } from "../packages/daemon/src/lib/mind/registry.js";
 import { users } from "../packages/daemon/src/lib/schema.js";
+import conversationsRoute from "../packages/daemon/src/web/api/v1/conversations.js";
 import channelsRoute from "../packages/daemon/src/web/api/volute/channels.js";
 import { authMiddleware, createSession } from "../packages/daemon/src/web/middleware/auth.js";
 
@@ -26,6 +28,14 @@ function createApp() {
   const app = new Hono();
   app.use("/api/v1/channels/*", authMiddleware);
   app.route("/api/v1/channels", channelsRoute);
+  return app;
+}
+
+/** Deleting a channel goes through the conversations router, not the channels one. */
+function createDeleteApp() {
+  const app = new Hono();
+  app.use("/api/v1/conversations/*", authMiddleware);
+  app.route("/api/v1/conversations", conversationsRoute);
   return app;
 }
 
@@ -550,7 +560,7 @@ describe("web v1 channels routes", () => {
     await deleteConversation(ch.id);
   });
 
-  it("PATCH /:name — non-admin channel member may update settings", async () => {
+  it("PATCH /:name — a non-admin who created the channel may update its settings", async () => {
     await setupAuth(); // first user (admin) exists but is not used as the caller
     const app = createApp();
 
@@ -558,23 +568,162 @@ describe("web v1 channels routes", () => {
     await setUserRole(bob.id, "user");
     const bobCookie = await createSession(bob.id);
 
-    // bob is an ordinary member (creator) of the channel — the isParticipant
-    // allow branch, which every mind relies on, must permit the edit.
-    const ch = await createChannel("member-edit", bob.id);
+    // bob created the channel, so he's stamped "owner" — that's what grants the edit,
+    // and it's the branch minds rely on for channels they open themselves.
+    const ch = await createChannel("creator-edit", bob.id);
 
-    const res = await app.request("/api/v1/channels/member-edit", {
+    const res = await app.request("/api/v1/channels/creator-edit", {
       method: "PATCH",
       headers: {
         Cookie: `volute_session=${bobCookie}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ description: "set by member" }),
+      body: JSON.stringify({ description: "set by creator" }),
     });
     assert.equal(res.status, 200);
-    const settings = await getChannelSettings("member-edit");
-    assert.equal(settings?.description, "set by member");
+    const settings = await getChannelSettings("creator-edit");
+    assert.equal(settings?.description, "set by creator");
 
     await deleteConversation(ch.id);
+  });
+
+  it("PATCH /:name — a member who didn't create the channel may not update its settings", async () => {
+    const adminCookie = await setupAuth();
+    const app = createApp();
+
+    const bob = await createUser("bob", "pass");
+    await setUserRole(bob.id, "user");
+    const bobCookie = await createSession(bob.id);
+
+    // The admin creates it; bob merely joins. Membership alone must not grant the edit —
+    // otherwise any mind in a channel could lift a limit set to restrain it.
+    const ch = await createChannel("owned-elsewhere", userId, { charLimit: 100 });
+    await joinChannel(ch.id, bob.id);
+
+    const res = await app.request("/api/v1/channels/owned-elsewhere", {
+      method: "PATCH",
+      headers: {
+        Cookie: `volute_session=${bobCookie}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ charLimit: null }),
+    });
+    assert.equal(res.status, 403);
+    // The limit is untouched.
+    assert.equal((await getChannelSettings("owned-elsewhere"))?.char_limit, 100);
+
+    // The creator (here also an admin) still can.
+    const ok = await app.request("/api/v1/channels/owned-elsewhere", {
+      method: "PATCH",
+      headers: {
+        Cookie: `volute_session=${adminCookie}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ charLimit: 200 }),
+    });
+    assert.equal(ok.status, 200);
+
+    await deleteConversation(ch.id);
+  });
+
+  it("PATCH /:name — an admin may edit an ownerless channel (the commons)", async () => {
+    const adminCookie = await setupAuth();
+    const app = createApp();
+
+    // Created with no creator, exactly as the commons is — so no participant is "owner".
+    const ch = await createChannel("ownerless");
+
+    const res = await app.request("/api/v1/channels/ownerless", {
+      method: "PATCH",
+      headers: {
+        Cookie: `volute_session=${adminCookie}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ rules: "House rules" }),
+    });
+    assert.equal(res.status, 200);
+    assert.equal((await getChannelSettings("ownerless"))?.rules, "House rules");
+
+    await deleteConversation(ch.id);
+  });
+
+  it("PATCH /:name — rate limit round-trips, and a half-set pair is rejected", async () => {
+    const cookie = await setupAuth();
+    const app = createApp();
+
+    const ch = await createChannel("paced", userId);
+    const patch = (body: unknown) =>
+      app.request("/api/v1/channels/paced", {
+        method: "PATCH",
+        headers: {
+          Cookie: `volute_session=${cookie}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+      });
+
+    const res = await patch({ rateLimit: 20, rateWindow: 60 });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.settings.rateLimit, 20);
+    assert.equal(body.settings.rateWindow, 60);
+
+    // Coherence is judged against the row as the patch will leave it, not the request alone.
+    // With 20/60 already stored, changing one half is fine — the pair stays complete.
+    assert.equal((await patch({ rateLimit: 5 })).status, 200);
+    assert.equal((await getChannelSettings("paced"))?.rate_limit, 5);
+    assert.equal((await patch({ rateWindow: 30 })).status, 200);
+    assert.equal((await getChannelSettings("paced"))?.rate_window, 30);
+
+    // But clearing only one half would leave a limit that silently stops being enforced
+    // while the API still reports it, so that is refused.
+    assert.equal((await patch({ rateWindow: null })).status, 400);
+    assert.equal((await patch({ rateLimit: null })).status, 400);
+    assert.equal((await patch({ rateLimit: 5, rateWindow: null })).status, 400);
+    assert.equal((await patch({ rateLimit: 0, rateWindow: 60 })).status, 400);
+
+    // None of the rejects changed anything.
+    const still = await getChannelSettings("paced");
+    assert.equal(still?.rate_limit, 5);
+    assert.equal(still?.rate_window, 30);
+
+    // Both null clears it.
+    assert.equal((await patch({ rateLimit: null, rateWindow: null })).status, 200);
+    const cleared = await getChannelSettings("paced");
+    assert.equal(cleared?.rate_limit, null);
+    assert.equal(cleared?.rate_window, null);
+
+    await deleteConversation(ch.id);
+  });
+
+  it("DELETE a channel conversation needs ownership, not just membership", async () => {
+    const adminCookie = await setupAuth();
+    const app = createDeleteApp();
+
+    const bob = await createUser("bob", "pass");
+    await setUserRole(bob.id, "user");
+    const bobCookie = await createSession(bob.id);
+
+    // The admin creates a limited channel; bob is only a member. If a member could delete it,
+    // the owner-only settings guard would be worthless — bob could destroy the channel and
+    // re-create it as owner with no limits at all.
+    const ch = await createChannel("undeletable", userId, { charLimit: 100 });
+    await joinChannel(ch.id, bob.id);
+
+    const denied = await app.request(`/api/v1/conversations/${ch.id}`, {
+      method: "DELETE",
+      headers: { Cookie: `volute_session=${bobCookie}` },
+    });
+    assert.equal(denied.status, 403, "a member who didn't create the channel may not delete it");
+    assert.ok(await getChannelByName("undeletable"), "the channel still exists");
+
+    // The creator/admin can.
+    const ok = await app.request(`/api/v1/conversations/${ch.id}`, {
+      method: "DELETE",
+      headers: { Cookie: `volute_session=${adminCookie}` },
+    });
+    assert.equal(ok.status, 200);
+    assert.equal(await getChannelByName("undeletable"), null, "the channel is gone");
   });
 
   it("PATCH /:name — 400 for invalid charLimit", async () => {

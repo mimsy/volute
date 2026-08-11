@@ -1,6 +1,6 @@
 import { readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
-import type { ParticipantProfile } from "@volute/api";
+import type { ChannelContext, ParticipantProfile } from "@volute/api";
 import { mindDir } from "../mind/registry.js";
 import log from "../util/logger.js";
 
@@ -71,7 +71,7 @@ export type MatchMeta = {
 
 // --- Delivery payload ---
 
-export type { ParticipantProfile };
+export type { ChannelContext, ParticipantProfile };
 
 export interface DeliveryPayload {
   channel: string;
@@ -85,6 +85,8 @@ export interface DeliveryPayload {
   participants?: string[];
   participantCount?: number;
   participantProfiles?: ParticipantProfile[];
+  /** The channel's description, rules, and limits — sent once per channel per session. */
+  channelInfo?: ChannelContext;
   whileSleeping?: "skip" | "queue" | "trigger-wake";
 }
 

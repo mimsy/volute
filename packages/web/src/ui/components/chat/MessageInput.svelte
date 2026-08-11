@@ -8,16 +8,20 @@ let {
   mindName = "",
   conversationId = null,
   username = "",
+  charLimit = null,
 }: {
   sending: boolean;
+  /** Resolves false when the send was refused, so the composer can hand the text back. */
   onSend: (
     message: string,
     images: Array<{ media_type: string; data: string }>,
     files: Array<{ filename: string; data: string }>,
-  ) => void;
+  ) => Promise<boolean>;
   mindName?: string;
   conversationId?: string | null;
   username?: string;
+  /** The channel's per-message character limit, enforced server-side. Null when unlimited. */
+  charLimit?: number | null;
 } = $props();
 
 let input = $state("");
@@ -30,17 +34,25 @@ let typingTimer = 0;
 let inputFocused = $state(false);
 let showAttach = $state(false);
 
+// The trimmed text is what actually gets sent, so that's what the limit is measured against.
+let messageLength = $derived(input.trim().length);
+let overLimit = $derived(charLimit != null && messageLength > charLimit);
+
 function toggleAttachMenu() {
   showAttach = !showAttach;
 }
 
-function handleSend() {
+async function handleSend() {
   const message = input.trim();
   if (!message && pendingImages.length === 0 && pendingFiles.length === 0) return;
-  if (sending) return;
+  if (sending || overLimit) return;
 
   const images = pendingImages.map(({ media_type, data }) => ({ media_type, data }));
   const files = [...pendingFiles];
+  // Keep what was composed. Channels can refuse a send outright (over the character limit,
+  // or the rate window is full), and the composer is the only place the text still exists —
+  // so on a refusal it goes back rather than being lost.
+  const composed = { message: input, images: [...pendingImages], files: [...pendingFiles] };
   input = "";
   pendingImages = [];
   pendingFiles = [];
@@ -52,7 +64,12 @@ function handleSend() {
     reportTyping(mindName, conversationId, username, false);
     typingTimer = 0;
   }
-  onSend(message, images, files);
+  const sent = await onSend(message, images, files);
+  if (sent === false) {
+    input = composed.message;
+    pendingImages = composed.images;
+    pendingFiles = composed.files;
+  }
 }
 
 function handleKeyDown(e: KeyboardEvent) {
@@ -190,9 +207,12 @@ $effect(() => {
       rows={1}
       class="chat-input"
     ></textarea>
+    {#if charLimit != null && messageLength > 0}
+      <span class="char-count" class:over={overLimit}>{messageLength}/{charLimit}</span>
+    {/if}
     <button
       onclick={handleSend}
-      disabled={sending || (!input.trim() && pendingImages.length === 0 && pendingFiles.length === 0)}
+      disabled={sending || overLimit || (!input.trim() && pendingImages.length === 0 && pendingFiles.length === 0)}
       class="inline-btn send"
       class:active={!!input.trim() || pendingImages.length > 0 || pendingFiles.length > 0}
       title="Send message"
@@ -207,6 +227,19 @@ $effect(() => {
 </div>
 
 <style>
+  .char-count {
+    align-self: flex-end;
+    flex-shrink: 0;
+    padding-bottom: 8px;
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-2);
+  }
+
+  .char-count.over {
+    color: var(--red);
+  }
+
   .image-strip {
     display: flex;
     gap: 8px;

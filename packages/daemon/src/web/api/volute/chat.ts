@@ -5,6 +5,7 @@ import { streamSSE } from "hono/streaming";
 import { z } from "zod";
 import { getOrCreateMindUser, getOrCreateSystemUser } from "../../../lib/auth.js";
 import { routeOutboundBridge } from "../../../lib/bridges/bridge-outbound.js";
+import { checkChannelLimits } from "../../../lib/chat/channel-limits.js";
 import { formatFileSize, stageFile, validateFilePath } from "../../../lib/chat/file-sharing.js";
 import {
   ensureSpiritAvailable,
@@ -23,7 +24,6 @@ import {
   createConversation,
   findDMConversation,
   getChannelName,
-  getChannelSettings,
   getConversation,
   getLastMessageBySender,
   getParticipants,
@@ -222,6 +222,27 @@ export const unifiedChatApp = new Hono<AuthEnv>().post(
     const convName = conv.type === "channel" ? await getChannelName(conversationId!) : null;
     const participants = await getParticipants(conversationId!);
 
+    // Normalize the sender's own text first: fixModelEscapes changes its length, and the
+    // channel's character limit has to measure the text that will actually be stored.
+    let messageText = body.message ?? "";
+    if (senderIsMind && messageText) {
+      const vCfg = readVoluteConfig(await resolveMindDir(baseName ?? senderName));
+      messageText = fixModelEscapes(messageText, vCfg?.unescapeNewlines === true);
+    }
+
+    // Enforce the channel's character and rate limits before anything is written or staged.
+    // Ordering matters: staging persists a pending file offer per recipient, so checking
+    // after it would leave minds holding offers for a message that was never sent — and
+    // every retry would stage another copy.
+    if (conv.type === "channel" && convName) {
+      const rejection = await checkChannelLimits({
+        conversationId: conversationId!,
+        channelName: convName,
+        text: messageText,
+      });
+      if (rejection) return c.json({ error: rejection.error }, rejection.status);
+    }
+
     // Stage files
     const fileNotifications: string[] = [];
     if (body.files && body.files.length > 0) {
@@ -238,47 +259,17 @@ export const unifiedChatApp = new Hono<AuthEnv>().post(
       fileNotifications.push(...notifications);
     }
 
-    // Build content blocks
+    // Build content blocks. The file-share notifications are system-generated text appended
+    // alongside the sender's message — deliberately not part of what the character limit
+    // measured above, since the sender didn't write them.
     const contentBlocks: ContentBlock[] = [];
-    if (body.message) contentBlocks.push({ type: "text", text: body.message });
+    if (messageText) contentBlocks.push({ type: "text", text: messageText });
     for (const note of fileNotifications) {
       contentBlocks.push({ type: "text", text: note });
     }
     if (body.images) {
       for (const img of body.images) {
         contentBlocks.push({ type: "image", media_type: img.media_type, data: img.data });
-      }
-    }
-
-    // Fix common model escape errors in mind-sent messages
-    if (senderIsMind) {
-      const vCfg = readVoluteConfig(await resolveMindDir(baseName ?? senderName));
-      const shouldUnescapeNewlines = vCfg?.unescapeNewlines === true;
-      for (const block of contentBlocks) {
-        if (block.type === "text") {
-          block.text = fixModelEscapes(block.text, shouldUnescapeNewlines);
-        }
-      }
-    }
-
-    // Enforce char_limit for mind senders in channels
-    if (senderIsMind && conv.type === "channel" && convName) {
-      try {
-        const chSettings = await getChannelSettings(convName);
-        if (chSettings?.char_limit) {
-          for (const block of contentBlocks) {
-            if (block.type === "text" && block.text.length > chSettings.char_limit) {
-              return c.json(
-                {
-                  error: `Message exceeds channel character limit (${chSettings.char_limit}). Shorten your message and try again.`,
-                },
-                400,
-              );
-            }
-          }
-        }
-      } catch (err) {
-        log.warn("failed to look up channel char_limit, skipping enforcement", log.errorData(err));
       }
     }
 

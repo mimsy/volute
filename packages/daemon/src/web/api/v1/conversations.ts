@@ -5,10 +5,12 @@ import { z } from "zod";
 import { getOrCreateMindUser, getUserByUsername } from "../../../lib/auth.js";
 import {
   createConversation,
+  deleteConversation,
   deleteConversationForUser,
   findDMConversation,
   getConversation,
   getMessagesPaginated,
+  getParticipantRole,
   getParticipants,
   isParticipantOrOwner,
   listConversationsWithParticipants,
@@ -151,6 +153,23 @@ const app = new Hono<AuthEnv>()
   .delete("/:id", async (c) => {
     const id = c.req.param("id");
     const user = c.get("user");
+
+    // A channel is shared, and deleting it destroys the room and its entire history for
+    // every participant. That takes the same authority as changing its settings: otherwise
+    // the owner-only settings guard is trivially bypassed — a mind held to a limit could
+    // delete the channel and re-create it as its own owner with no limits at all.
+    const conv = await getConversation(id);
+    if (conv?.type === "channel") {
+      const isAdmin = user.role === "admin" || user.role === "spirit";
+      if (!isAdmin && (await getParticipantRole(id, user.id)) !== "owner") {
+        return c.json({ error: "Forbidden" }, 403);
+      }
+      // An admin need not be a member to clean up a channel, so bypass the
+      // participant-scoped helper here.
+      await deleteConversation(id);
+      return c.json({ ok: true });
+    }
+
     const deleted = await deleteConversationForUser(id, user.id);
     if (!deleted) return c.json({ error: "Conversation not found" }, 404);
     return c.json({ ok: true });

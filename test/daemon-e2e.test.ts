@@ -1017,7 +1017,7 @@ describe("daemon e2e", { timeout: 420000 }, () => {
     );
   });
 
-  it("channel writes (PATCH settings, invite) require membership for non-admin callers", async () => {
+  it("channel invite needs membership; changing settings needs ownership", async () => {
     // Admin creates a channel.
     const createRes = await daemonRequest("/api/v1/channels", {
       method: "POST",
@@ -1045,25 +1045,44 @@ describe("daemon e2e", { timeout: 420000 }, () => {
     assert.equal(patchDenied.status, 403, "non-member PATCH must be forbidden");
 
     // ...nor invite others.
+    await getOrCreateMindUser("e2e-channel-invitee");
     const inviteDenied = await asOutsider("/api/v1/channels/e2e-authz-channel/invite", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username: "e2e-channel-victim" }),
+      body: JSON.stringify({ username: "e2e-channel-invitee" }),
     });
     assert.equal(inviteDenied.status, 403, "non-member invite must be forbidden");
 
-    // Once the mind joins, it becomes a member and may change settings.
+    // Joining makes the mind a member.
     const joinRes = await asOutsider("/api/v1/channels/e2e-authz-channel/join", { method: "POST" });
     assert.equal(joinRes.status, 200, `join: ${await joinRes.clone().text()}`);
 
-    const patchOk = await asOutsider("/api/v1/channels/e2e-authz-channel", {
+    // Membership is enough to bring others in...
+    const inviteOk = await asOutsider("/api/v1/channels/e2e-authz-channel/invite", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: "e2e-channel-invitee" }),
+    });
+    assert.equal(inviteOk.status, 200, `member invite: ${await inviteOk.clone().text()}`);
+
+    // ...but NOT to change the channel's settings. Only the creator (stamped "owner" when
+    // they made it) or an admin may — otherwise a mind could lift a limit set to restrain it.
+    const patchAsMember = await asOutsider("/api/v1/channels/e2e-authz-channel", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ description: "set by member" }),
     });
-    assert.equal(patchOk.status, 200, `member PATCH: ${await patchOk.clone().text()}`);
+    assert.equal(patchAsMember.status, 403, "a member who didn't create the channel may not edit");
+
+    // The admin who created it still can.
+    const patchOk = await daemonRequest("/api/v1/channels/e2e-authz-channel", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ description: "set by creator" }),
+    });
+    assert.equal(patchOk.status, 200, `creator PATCH: ${await patchOk.clone().text()}`);
     const patched = (await patchOk.json()) as { settings?: { description?: string } };
-    assert.equal(patched.settings?.description, "set by member");
+    assert.equal(patched.settings?.description, "set by creator");
   });
 
   it("GET /:name/turn-context returns null when no extension has anything to say", async () => {
@@ -2651,6 +2670,13 @@ describe("daemon e2e", { timeout: 420000 }, () => {
     });
     assert.equal(addRes.status, 201, `add schedule: ${await addRes.clone().text()}`);
 
+    // Wait for the port itself to free before respawning, exactly as the auto-upgrade
+    // restart above does — see the rationale there. `daemon.on("exit")` only reports the
+    // `npx` wrapper, so without this the replacement daemon can lose the bind with
+    // EADDRINUSE and exit, `waitForHealth()` gets answered by the *outgoing* daemon (whose
+    // HTTP server closes last, long after `scheduler.stop()`), and the assertion below then
+    // waits out its full 90s on a scheduler nobody is running. That failed on CI while
+    // passing locally, which is what this race looks like from the outside.
     daemon.kill("SIGTERM");
     await new Promise<void>((resolve) => {
       daemon.on("exit", () => resolve());
@@ -2659,8 +2685,9 @@ describe("daemon e2e", { timeout: 420000 }, () => {
           daemon.kill("SIGKILL");
         } catch {}
         resolve();
-      }, 5000);
+      }, 20000);
     });
+    await waitForPortFree(PORT, 20000);
 
     daemon = spawn(
       "npx",

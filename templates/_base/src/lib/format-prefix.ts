@@ -1,4 +1,4 @@
-import type { ChannelMeta, ParticipantProfile } from "./types.js";
+import type { ChannelInfo, ChannelMeta, ParticipantProfile } from "./types.js";
 
 /** Compact timestamp: YYYY-MM-DD HH:MM */
 export function compactTimestamp(date: Date = new Date()): string {
@@ -65,7 +65,35 @@ export function formatPrefix(meta: ChannelMeta | undefined, time: string): strin
     prefix += formatParticipantProfiles(meta.participantProfiles);
   }
 
+  // ...and what the channel says about itself, on the same first encounter
+  if (meta.channelInfo) {
+    prefix += formatChannelInfo(meta.channelName ?? meta.channel, meta.channelInfo);
+  }
+
   return prefix;
+}
+
+/**
+ * The channel's own card: what it's for, its rules, and the limits its sends are held to.
+ * Every line is optional — an unset field is omitted rather than shown as empty, and a channel
+ * that has set nothing renders nothing at all.
+ */
+function formatChannelInfo(label: string | undefined, info: ChannelInfo): string {
+  const lines: string[] = [];
+  if (info.rules) lines.push(`  Rules: ${info.rules}`);
+
+  const limits: string[] = [];
+  if (info.charLimit) limits.push(`${info.charLimit} characters per message`);
+  if (info.rateLimit && info.rateWindow) {
+    limits.push(`${info.rateLimit} messages per ${info.rateWindow}s across the channel`);
+  }
+  if (limits.length > 0) lines.push(`  Limits: ${limits.join("; ")}`);
+
+  const heading = label ? `#${label.replace(/^#/, "")}` : "Channel";
+  const desc = info.description ? ` — ${info.description}` : "";
+  if (lines.length === 0 && !info.description) return "";
+  const body = lines.length > 0 ? `\n${lines.join("\n")}` : "";
+  return `[${heading}${desc}${body}]\n`;
 }
 
 function formatParticipantProfiles(profiles: ParticipantProfile[]): string {

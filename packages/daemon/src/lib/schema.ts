@@ -260,6 +260,10 @@ export const channels = sqliteTable(
     description: text("description"),
     rules: text("rules"),
     char_limit: integer("char_limit"),
+    // Channel-wide rate limit: at most `rate_limit` messages per `rate_window`
+    // seconds, counted across all senders. Set together or both null (no limit).
+    rate_limit: integer("rate_limit"),
+    rate_window: integer("rate_window"),
     private: integer("private").notNull().default(0),
     // The commons marker (#819). The default channel — the shared room every mind
     // and the spirit gather in — is identified by this flag, NOT by its name, so a

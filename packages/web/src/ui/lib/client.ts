@@ -455,6 +455,9 @@ export async function updateChannelSettings(
     description?: string | null;
     rules?: string | null;
     charLimit?: number | null;
+    /** Send with rateWindow, or both null to clear — the server rejects a half-set pair. */
+    rateLimit?: number | null;
+    rateWindow?: number | null;
     private?: boolean;
   },
 ): Promise<ChannelSettings> {

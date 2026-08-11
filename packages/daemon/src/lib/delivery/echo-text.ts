@@ -5,6 +5,7 @@
 import type { ContentBlock } from "@volute/api";
 import { getOrCreateMindUser, getUserByUsername } from "../auth.js";
 import { routeOutboundBridge } from "../bridges/bridge-outbound.js";
+import { checkChannelLimits } from "../chat/channel-limits.js";
 import { addMessage, findDMConversation, getChannelByName } from "../events/conversations.js";
 import { publish as publishMindEvent } from "../events/mind-events.js";
 import { mindDir } from "../mind/registry.js";
@@ -100,6 +101,22 @@ export async function echoTextToChannel(
   }
 
   text = fixModelEscapes(text, cfg.unescapeNewlines);
+
+  // A channel's character and rate limits bind this path too. Without the check a mind with
+  // echoText on would never be held to them at all — its text reaches the channel here
+  // rather than through the send API. There is no caller to hand a 4xx to, so an over-limit
+  // echo is dropped and logged; the mind's own text is still in its turn history.
+  const channelName = channel.startsWith("#") ? channel.slice(1) : channel;
+  const rejection = await checkChannelLimits({
+    conversationId,
+    channelName,
+    text,
+  });
+  if (rejection) {
+    dlog.warn(`echo-text: not echoing ${mind} to ${channel} — ${rejection.error}`);
+    return undefined;
+  }
+
   const contentBlocks: ContentBlock[] = [{ type: "text", text }];
 
   const message = await addMessage(conversationId, "user", mind, contentBlocks, {

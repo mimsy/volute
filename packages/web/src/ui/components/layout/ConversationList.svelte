@@ -2,7 +2,7 @@
 import type { ConversationWithParticipants, Mind } from "@volute/api";
 import { isMind } from "@volute/api/user-type";
 import { Dropdown } from "@volute/ui";
-import { setConversationPrivate } from "../../lib/client";
+import { setConversationPrivate, updateChannelSettings } from "../../lib/client";
 import { getConversationLabel, mindDotColor } from "../../lib/format";
 import { activeMinds, unreadCounts } from "../../lib/stores.svelte";
 
@@ -12,22 +12,28 @@ let {
   activeId,
   username,
   mode,
+  isAdmin = false,
   onSelect,
-  onDelete,
   onBrowse,
   onOpenMind,
   onHide,
+  onOpenChannelSettings,
+  onLeaveChannel,
+  onDeleteChannel,
 }: {
   conversations: ConversationWithParticipants[];
   minds: Mind[];
   activeId: string | null;
   username: string;
   mode?: "dms" | "channels";
+  isAdmin?: boolean;
   onSelect: (id: string) => void;
-  onDelete: (id: string) => void;
   onBrowse?: () => void;
   onOpenMind: (mind: Mind) => void;
   onHide?: (id: string) => void;
+  onOpenChannelSettings?: (channelName: string) => void;
+  onLeaveChannel?: (conv: ConversationWithParticipants) => void;
+  onDeleteChannel?: (conv: ConversationWithParticipants) => void;
 } = $props();
 
 let channels = $derived(conversations.filter((c) => c.type === "channel"));
@@ -50,11 +56,49 @@ function getDmInfo(conv: ConversationWithParticipants): {
   return { isMindDm: false, otherName: other.username };
 }
 
+// Irreversible channel actions ask once in place rather than firing on the first click.
+let pendingAction = $state<"leave" | "delete" | null>(null);
+
 function openMenu(e: MouseEvent, convId: string) {
   e.stopPropagation();
   const btn = e.currentTarget as HTMLElement;
   const rect = btn.getBoundingClientRect();
+  pendingAction = null;
   contextMenu = { id: convId, x: rect.right + 4, y: rect.top };
+}
+
+function closeMenu() {
+  contextMenu = null;
+  pendingAction = null;
+}
+
+/** True only for the channel's creator — admins can edit without being the owner. */
+function isChannelOwner(conv: ConversationWithParticipants): boolean {
+  return conv.participants?.find((p) => p.username === username)?.role === "owner";
+}
+
+/**
+ * Only a channel's creator — stamped "owner" when they created it — or an admin may change
+ * its settings. Mirrors the server's rule so a member isn't offered an action that 403s.
+ */
+function canEditChannel(conv: ConversationWithParticipants): boolean {
+  if (isAdmin) return true;
+  return conv.participants?.find((p) => p.username === username)?.role === "owner";
+}
+
+async function toggleChannelPrivate(conv: ConversationWithParticipants) {
+  closeMenu();
+  if (!conv.channel_name) return;
+  const nextPrivate = conv.private !== 1;
+  try {
+    // Channels go through the settings PATCH, which keeps the channels and conversations
+    // rows in step. setConversationPrivate (used for DMs) writes only the latter, which
+    // would leave the sidebar's lock icon and the settings modal disagreeing.
+    await updateChannelSettings(conv.channel_name, { private: nextPrivate });
+    conv.private = nextPrivate ? 1 : 0;
+  } catch (err) {
+    console.error("Failed to update channel privacy:", err);
+  }
 }
 </script>
 
@@ -85,12 +129,14 @@ function openMenu(e: MouseEvent, convId: string) {
               <svg class="lock-icon" viewBox="0 0 16 16" fill="currentColor"><path d="M11 7V5a3 3 0 0 0-6 0v2H4v6h8V7h-1zm-4-2a1 1 0 1 1 2 0v2H7V5z"/></svg>
             {/if}
           </div>
+          <button
+            class="menu-btn"
+            class:visible={conv.id === activeId || conv.id === contextMenu?.id}
+            onclick={(e) => openMenu(e, conv.id)}
+            aria-label="Channel actions"
+          >...</button>
           {#if unread > 0}
             <span class="unread-badge">{unread}</span>
-          {:else}
-            <button class="delete-btn" onclick={(e) => { e.stopPropagation(); onDelete(conv.id); }} aria-label="Remove">
-              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 4l8 8M12 4l-8 8"/></svg>
-            </button>
           {/if}
         </div>
       </div>
@@ -164,32 +210,79 @@ function openMenu(e: MouseEvent, convId: string) {
   {@const menuId = contextMenu.id}
   {@const menuConv = conversations.find((c) => c.id === menuId)}
   {@const menuDmInfo = menuConv ? getDmInfo(menuConv) : { isMindDm: false }}
-  <Dropdown open={!!contextMenu} onclose={() => (contextMenu = null)} position={{ x: contextMenu.x, y: contextMenu.y }}>
-    {#if menuDmInfo.isMindDm && menuDmInfo.mind}
-      <button class="context-item" onclick={() => { onOpenMind(menuDmInfo.mind!); contextMenu = null; }}>
-        Open mind
-      </button>
-    {/if}
-    <button class="context-item" onclick={async () => {
-      const id = contextMenu!.id;
-      const conv = conversations.find((c) => c.id === id);
-      if (conv) {
-        const newPrivate = conv.private !== 1;
-        try {
-          await setConversationPrivate(id, newPrivate);
-          conv.private = newPrivate ? 1 : 0;
-        } catch (err) {
-          console.error("Failed to update conversation privacy:", err);
+  <Dropdown open={!!contextMenu} onclose={closeMenu} position={{ x: contextMenu.x, y: contextMenu.y }}>
+    {#if menuConv && menuConv.type === "channel"}
+      {#if canEditChannel(menuConv)}
+        {#if menuConv.channel_name}
+          <button class="context-item" onclick={() => {
+            onOpenChannelSettings?.(menuConv.channel_name!);
+            closeMenu();
+          }}>
+            Channel settings
+          </button>
+        {/if}
+        <button class="context-item" onclick={() => toggleChannelPrivate(menuConv)}>
+          {menuConv.private === 1 ? "Make public" : "Make private"}
+        </button>
+      {/if}
+      {#if pendingAction === "leave"}
+        <!-- The creator's edit rights live in their participant row, and leaving deletes it.
+             Rejoining comes back as a plain member, so this is one-way. -->
+        <button class="context-item danger" onclick={() => {
+          onLeaveChannel?.(menuConv);
+          closeMenu();
+        }}>
+          Leave — you'll give up settings control for good
+        </button>
+      {:else}
+        <button class="context-item" onclick={() => {
+          if (isChannelOwner(menuConv)) pendingAction = "leave";
+          else { onLeaveChannel?.(menuConv); closeMenu(); }
+        }}>
+          Leave channel
+        </button>
+      {/if}
+      {#if canEditChannel(menuConv)}
+        {#if pendingAction === "delete"}
+          <button class="context-item danger" onclick={() => {
+            onDeleteChannel?.(menuConv);
+            closeMenu();
+          }}>
+            Delete for everyone, with its history
+          </button>
+        {:else}
+          <button class="context-item danger" onclick={() => (pendingAction = "delete")}>
+            Delete channel
+          </button>
+        {/if}
+      {/if}
+    {:else}
+      {#if menuDmInfo.isMindDm && menuDmInfo.mind}
+        <button class="context-item" onclick={() => { onOpenMind(menuDmInfo.mind!); closeMenu(); }}>
+          Open mind
+        </button>
+      {/if}
+      <button class="context-item" onclick={async () => {
+        const id = contextMenu!.id;
+        const conv = conversations.find((c) => c.id === id);
+        if (conv) {
+          const newPrivate = conv.private !== 1;
+          try {
+            await setConversationPrivate(id, newPrivate);
+            conv.private = newPrivate ? 1 : 0;
+          } catch (err) {
+            console.error("Failed to update conversation privacy:", err);
+          }
         }
-      }
-      contextMenu = null;
-    }}>
-      {menuConv?.private === 1 ? "Make public" : "Make private"}
-    </button>
-    {#if onHide}
-      <button class="context-item" onclick={() => { onHide(contextMenu!.id); contextMenu = null; }}>
-        Close chat
+        closeMenu();
+      }}>
+        {menuConv?.private === 1 ? "Make public" : "Make private"}
       </button>
+      {#if onHide}
+        <button class="context-item" onclick={() => { onHide(contextMenu!.id); closeMenu(); }}>
+          Close chat
+        </button>
+      {/if}
     {/if}
   </Dropdown>
 {/if}
@@ -316,33 +409,6 @@ function openMenu(e: MouseEvent, convId: string) {
     flex-shrink: 0;
   }
 
-  .delete-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 18px;
-    height: 18px;
-    background: transparent;
-    color: var(--text-2);
-    flex-shrink: 0;
-    opacity: 0;
-    transition: opacity 0.1s, color 0.1s;
-    padding: 0;
-  }
-
-  .delete-btn svg {
-    width: 12px;
-    height: 12px;
-  }
-
-  .conv-item:hover .delete-btn {
-    opacity: 1;
-  }
-
-  .delete-btn:hover {
-    color: var(--text-0);
-  }
-
   .menu-btn {
     background: transparent;
     color: var(--text-2);
@@ -409,13 +475,18 @@ function openMenu(e: MouseEvent, convId: string) {
     color: var(--text-0);
   }
 
+  .context-item.danger {
+    color: var(--red);
+  }
+
+  .context-item.danger:hover {
+    background: var(--bg-2);
+    color: var(--red);
+  }
+
   @media (max-width: 767px) {
     .conv-item {
       padding: 10px 8px 10px 24px;
-    }
-
-    .delete-btn {
-      opacity: 1;
     }
 
     .menu-btn {
