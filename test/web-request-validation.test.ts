@@ -130,53 +130,53 @@ describe("request-body validation (#333 zValidator sweep)", () => {
     await expectZod400("PUT", "/api/v1/skills/auto-update", { enabled: "yes" });
   });
 
-  // ── file-sharing.ts (bare /api/minds) ──
+  // ── file-sharing.ts (canonical /api/v1/minds) ──
   it("POST /:name/files/send — missing filePath", async () => {
-    await expectZod400("POST", `/api/minds/${MIND}/files/send`, { targetMind: "x" });
+    await expectZod400("POST", `/api/v1/minds/${MIND}/files/send`, { targetMind: "x" });
   });
   it("POST /:name/files/accept — missing id", async () => {
-    await expectZod400("POST", `/api/minds/${MIND}/files/accept`, {});
+    await expectZod400("POST", `/api/v1/minds/${MIND}/files/accept`, {});
   });
   it("POST /:name/files/reject — missing id", async () => {
-    await expectZod400("POST", `/api/minds/${MIND}/files/reject`, {});
+    await expectZod400("POST", `/api/v1/minds/${MIND}/files/reject`, {});
   });
   it("POST /:name/files/stage — missing data", async () => {
-    await expectZod400("POST", `/api/minds/${MIND}/files/stage`, {
+    await expectZod400("POST", `/api/v1/minds/${MIND}/files/stage`, {
       sender: "x",
       filename: "y",
     });
   });
 
-  // ── channels.ts (bare /api/minds) ──
+  // ── channels.ts (canonical /api/v1/minds) ──
   it("POST /:name/channels/create — missing platform", async () => {
-    await expectZod400("POST", `/api/minds/${MIND}/channels/create`, { participants: [] });
+    await expectZod400("POST", `/api/v1/minds/${MIND}/channels/create`, { participants: [] });
   });
 
-  // ── extensions.ts (bare /api/extensions) ──
+  // ── extensions.ts (canonical /api/v1/extensions) ──
   it("PUT /extensions/:id/enabled — non-boolean enabled", async () => {
-    await expectZod400("PUT", "/api/extensions/some-ext/enabled", { enabled: "yes" });
+    await expectZod400("PUT", "/api/v1/extensions/some-ext/enabled", { enabled: "yes" });
   });
   it("POST /extensions/install — missing package", async () => {
-    await expectZod400("POST", "/api/extensions/install", {});
+    await expectZod400("POST", "/api/v1/extensions/install", {});
   });
 
-  // ── setup.ts (bare /api/setup, no auth — zValidator runs before the setup-state guard) ──
+  // ── setup.ts (canonical /api/v1/setup, no auth — zValidator runs before the setup-state guard) ──
   it("POST /setup/system — missing name", async () => {
-    await expectZod400("POST", "/api/setup/system", {}, false);
+    await expectZod400("POST", "/api/v1/setup/system", {}, false);
   });
   it("POST /setup/system/register — missing slug", async () => {
-    await expectZod400("POST", "/api/setup/system/register", {}, false);
+    await expectZod400("POST", "/api/v1/setup/system/register", {}, false);
   });
   it("POST /setup/system/login — missing key", async () => {
-    await expectZod400("POST", "/api/setup/system/login", {}, false);
+    await expectZod400("POST", "/api/v1/setup/system/login", {}, false);
   });
   it("POST /setup/account — missing password", async () => {
-    await expectZod400("POST", "/api/setup/account", { username: "x" }, false);
+    await expectZod400("POST", "/api/v1/setup/account", { username: "x" }, false);
   });
   it("POST /setup/models — missing spiritModel", async () => {
-    await expectZod400("POST", "/api/setup/models", { models: ["a"] }, false);
+    await expectZod400("POST", "/api/v1/setup/models", { models: ["a"] }, false);
   });
   it("POST /setup/spirit — missing name", async () => {
-    await expectZod400("POST", "/api/setup/spirit", {}, false);
+    await expectZod400("POST", "/api/v1/setup/spirit", {}, false);
   });
 });
