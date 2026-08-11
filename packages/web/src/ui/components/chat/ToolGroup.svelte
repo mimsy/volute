@@ -34,14 +34,14 @@ let resultMeta = $derived.by(() => {
 
 let isError = $derived(!!resultMeta?.is_error);
 let isRunning = $derived(!group.toolResult && turnStatus === "active");
-let label = $derived(getToolLabel((meta?.name as string) ?? "tool", group.toolUse.content));
+let label = $derived(getToolLabel((meta?.name as string) ?? "tool", group.toolUse.content ?? ""));
 
 let categoryColor = $derived(getCategoryColor(group.category));
 
 let shellCommand = $derived.by(() => {
   if (group.category !== "shell") return "";
   try {
-    const args = JSON.parse(group.toolUse.content);
+    const args = JSON.parse(group.toolUse.content ?? "");
     return String(args.command ?? "");
   } catch {
     return group.toolUse.content ?? "";
@@ -81,7 +81,7 @@ function formatArgs(args: unknown): string {
         {#if isRunning}
           <div class="terminal-running">running...</div>
         {:else if group.toolResult}
-          <pre class="terminal-output" class:error={isError}>{formatOutput(group.toolResult.content)}</pre>
+          <pre class="terminal-output" class:error={isError}>{formatOutput(group.toolResult.content ?? "")}</pre>
         {/if}
       </div>
     {:else}
@@ -94,7 +94,7 @@ function formatArgs(args: unknown): string {
           <div class="terminal-running">running...</div>
         {:else if group.toolResult}
           <div class="section-label">output</div>
-          <pre class="tool-pre tool-output" class:error={isError}>{formatOutput(group.toolResult.content)}</pre>
+          <pre class="tool-pre tool-output" class:error={isError}>{formatOutput(group.toolResult.content ?? "")}</pre>
         {/if}
       </div>
     {/if}

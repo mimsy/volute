@@ -161,6 +161,7 @@ function plainPreview(text: string): string {
                   content: childTurn.summary ?? "(no summary)",
                   metadata: childTurn.summary_meta ? JSON.stringify(childTurn.summary_meta) : null,
                   turn_id: childTurn.id,
+                  sender_display_name: null,
                   created_at: childTurn.created_at,
                 }}
                 mindName={childTurn.mind}

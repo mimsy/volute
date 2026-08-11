@@ -2,86 +2,80 @@
 // Entity types use snake_case fields to match database columns.
 // SSE event types in events.ts use camelCase because they're constructed in JS.
 
+import type { AppType } from "@volute/daemon/web/app.js";
+import type { hc, InferResponseType } from "hono/client";
 import type { UserType } from "./user-type.js";
 
+// --- Server-derived response types (RPC-first) ---------------------------------
+// A phantom typed client, evaluated only in type space (never constructed at
+// runtime), lets us index AppType's route tree and read each endpoint's inferred
+// JSON response shape. This is the single source of truth: a server change that
+// alters a response body surfaces here as a compile error instead of a runtime
+// surprise. See #333.
+type Client = ReturnType<typeof hc<AppType>>;
+type V1 = Client["api"]["v1"];
+
+/** The JSON body a route returns on success (HTTP 200). */
+type Ok<T> = InferResponseType<T, 200>;
+/** Element type of an array response. */
+type Elem<T> = T extends readonly (infer U)[] ? U : never;
+
+type _MindWire = Elem<Ok<V1["minds"]["$get"]>>;
+
+// --- Kept hand-written (not derived), by category -------------------------------
+// These are deliberate, not derivation oversights. Two reasons a type stays here:
+//   (a) api-owned: the daemon imports the type from @volute/api to annotate the
+//       very handler that returns it, so InferResponseType would resolve straight
+//       back to this alias — a circular self-reference. The type IS the source of
+//       truth; the server borrows it. (ContentBlock, Conversation, Message,
+//       LastMessageSummary, ConversationWithParticipants, Participant,
+//       ParticipantProfile, the Feed* family, ChannelContext.)
+//   (b) not a single /api/v1 response shape: shared vocabulary the web also
+//       constructs (ActivityEventType, ActivityItem, SummaryPeriod, VoluteEvent),
+//       or a shape served by an extension route that AppType doesn't cover
+//       (RecentPage, Site, SitePage).
+// TurnRow and SummaryRow are a third, temporary case — derivable in principle but
+// blocked today; see the note above their definitions.
+
+// kept (a): daemon annotates message/tool payloads with this
 export type ContentBlock =
   | { type: "text"; text: string }
   | { type: "tool_use"; name: string; input: unknown }
   | { type: "tool_result"; output: string; is_error?: boolean }
   | { type: "image"; media_type: string; data: string };
 
-export type Mind = {
-  name: string;
-  // Omitted for non-privileged callers (mind tokens, non-admin users); only
-  // admin/system get the port. See #503.
-  port?: number;
-  created: string;
-  status: "running" | "stopped" | "starting" | "sleeping";
-  /** When status is "sleeping": ISO time of the scheduled wake, if one is set. */
-  wakeAt?: string | null;
-  /** Most recent failure the mind hasn't recovered from (cleared on the next clean turn). */
-  lastError?: MindLastError | null;
-  stage?: "seed" | "sprouted";
-  template?: string;
-  channels: PlatformConnection[];
-  hasPages?: boolean;
-  templateStale?: boolean;
-  /** Reason the last auto-upgrade attempt backed off (conflicts, opt-out, etc.), if any. */
-  upgradeBlocked?: string;
-  lastActiveAt?: string | null;
-  displayName?: string;
-  description?: string;
-  avatar?: string;
-  mindType?: "mind" | "spirit";
-  /** Sprout-checklist state — present only for seed-stage minds. */
-  seedChecklist?: SeedChecklist;
-  /** MEMORY.md size + budget flags. Null when the mind has no MEMORY.md. */
-  memory?: MindMemoryStatus | null;
-};
+// The web dashboard and CLI authenticate as privileged principals (admin user or
+// system spirit), so they receive the full mind shape. GET /minds returns a union
+// of that privileged shape and a reduced public shape (mind-token callers, #503);
+// we select the privileged branch by its `port` discriminant. Still fully
+// server-derived — no hand-invented fields — so a server change to the shape is a
+// compile error here.
+export type Mind = Extract<_MindWire, { port: number }>;
+
+// Sub-shapes of the mind payload, extracted from the derived Mind so they track
+// the server and stay usable on their own. Doc comments describe intent; the
+// shapes are the server's.
 
 /**
  * The cost of a mind's always-loaded MEMORY.md, estimated as bytes/4 tokens.
  * Over `softBudgetTokens` a consolidation nudge is warranted; over `hardCapTokens`
  * the mind's template loads only the head of the file.
  */
-export type MindMemoryStatus = {
-  bytes: number;
-  estTokens: number;
-  softBudgetTokens: number;
-  hardCapTokens: number;
-  overBudget: boolean;
-  overHardCap: boolean;
-};
+export type MindMemoryStatus = NonNullable<Mind["memory"]>;
 
 /** The seed → sprout checklist, as surfaced in a seed's status payload. */
-export type SeedChecklist = {
-  soulWritten: boolean;
-  memoryWritten: boolean;
-  displayNameSet: boolean;
-  avatarSet: boolean;
-  imagegenEnabled: boolean;
-};
+export type SeedChecklist = NonNullable<Mind["seedChecklist"]>;
 
-export type MindLastError = {
-  kind: "turn_error" | "crash" | "startup";
-  reason: string;
-  /**
-   * Full failure detail. Admin/system callers only — omitted for non-privileged
-   * callers because unknown-reason details embed the raw error string, which is
-   * otherwise mind-private (served behind requireSelf).
-   */
-  detail?: string;
-  at: string;
-};
+/**
+ * The mind's most recent unrecovered failure. `detail` is admin/system only —
+ * unknown-reason details embed the raw error string, which is mind-private
+ * (served behind requireSelf), so the public payload omits it.
+ */
+export type MindLastError = NonNullable<Mind["lastError"]>;
 
-export type PlatformConnection = {
-  name: string;
-  displayName: string;
-  status: "connected" | "disconnected";
-  username?: string;
-  connectedAt?: string;
-};
+export type PlatformConnection = Mind["channels"][number];
 
+// kept (a): daemon's conversations lib returns/annotates rows with this
 export type Conversation = {
   id: string;
   type: "dm" | "channel";
@@ -91,6 +85,7 @@ export type Conversation = {
   updated_at: string;
 };
 
+// kept (a): daemon's getParticipants() is annotated Promise<Participant[]>
 export type Participant = {
   userId: number;
   username: string;
@@ -101,6 +96,7 @@ export type Participant = {
   avatar?: string | null;
 };
 
+// kept (a): daemon's getMessagesPaginated() is annotated with Message
 export type Message = {
   id: number;
   conversation_id: string;
@@ -112,6 +108,7 @@ export type Message = {
   created_at: string;
 };
 
+// kept (a): sub-shape of ConversationWithParticipants, which the daemon annotates
 export type LastMessageSummary = {
   role: "user" | "assistant" | "event";
   senderName: string | null;
@@ -119,6 +116,7 @@ export type LastMessageSummary = {
   createdAt: string;
 };
 
+// kept (a): daemon's listConversationsWithParticipants() is annotated with this
 export type ConversationWithParticipants = Conversation & {
   channel_name: string | null;
   participants: Participant[];
@@ -126,6 +124,9 @@ export type ConversationWithParticipants = Conversation & {
   unreadCount?: number;
 };
 
+// kept (b): shared vocabulary — appears in the SSE `activity` stream (events.ts,
+// constructed in JS) as well as GET /history/activity, and its `metadata` hits the
+// same JSONValue transform noted on TurnRow/SummaryRow.
 export type ActivityItem = {
   id: number;
   type: ActivityEventType;
@@ -135,6 +136,7 @@ export type ActivityItem = {
   created_at: string;
 };
 
+// kept (a): the Feed* family is imported by the daemon's feed.ts to build /feed
 /** One snippet line shown on a chat-event card. */
 export type FeedSnippetMessage = {
   role: "user" | "assistant";
@@ -176,6 +178,7 @@ export type FeedResponse = { events: FeedEvent[] };
 /** The AI daily digest header. Empty content means "nothing to show" (frontend hides it). */
 export type FeedDigest = { content: string };
 
+// kept (b): shared enum vocabulary (used by ActivityItem, Feed*, and SSE events)
 export type ActivityEventType =
   | "mind_started"
   | "mind_stopped"
@@ -195,15 +198,13 @@ export type ActivityEventType =
   | "profile_updated"
   | "backup_failed";
 
-export type Variant = {
-  name: string;
-  branch: string;
-  path: string;
-  port: number;
-  created: string;
-  status: "running" | "dead" | "no-server";
-};
+// GET /minds/:name/variants — the server spreads the full registry entry plus a
+// computed `status`, so the derived type is a superset of the fields the old
+// hand-written shape named. Server is the source of truth.
+export type Variant = Elem<Ok<V1["minds"][":name"]["variants"]["$get"]>>;
 
+// kept (b): served by the Pages extension's routes (/api/ext/pages/*), which the
+// core AppType doesn't cover — not derivable from it.
 export type RecentPage = {
   mind: string;
   file: string;
@@ -214,131 +215,81 @@ export type RecentPage = {
 export type SitePage = { file: string; modified: string; url: string };
 export type Site = { name: string; label: string; pages: SitePage[] };
 
+// kept (b): the mind server's stream envelope (server-sent while a turn runs), not
+// a daemon /api/v1 JSON response.
 export type VoluteEvent =
   | { type: "meta"; conversationId: string; senderName?: string }
   | { type: "done" };
 
+// kept (b): request/transport helper shape, not tied to one /api/v1 response.
 export type FileContent = {
   filename: string;
   content: string;
 };
 
-export type AvailableUser = {
-  id: number;
-  username: string;
-  role: "admin" | "user" | "pending" | "mind" | "spirit";
-  user_type: UserType;
-  /** Server-computed locality flag for `mind` rows (see `isExternal`); absent otherwise. */
-  external?: boolean;
-  display_name?: string | null;
-  description?: string | null;
-  avatar?: string | null;
-};
+// GET /auth/users
+export type AvailableUser = Elem<Ok<V1["auth"]["users"]["$get"]>>;
 
+// kept (a): projection of Participant; the daemon imports it to annotate delivery
 export type ParticipantProfile = Pick<
   Participant,
   "username" | "userType" | "displayName" | "description"
 >;
 
-export type Prompt = {
-  key: string;
-  content: string;
-  description: string;
-  variables: string[];
-  isCustom: boolean;
-  category: "creation" | "system" | "mind";
-};
+// GET /prompts
+export type Prompt = Elem<Ok<V1["prompts"]["$get"]>>;
 
-export type SharedSkill = {
-  id: string;
-  name: string;
-  description: string;
-  author: string;
-  version: number;
-  created_at: string;
-  updated_at: string;
-};
+// GET /skills
+export type SharedSkill = Elem<Ok<V1["skills"]["$get"]>>;
 
-export type MindSkillInfo = {
-  id: string;
-  name: string;
-  description: string;
-  upstream: { source: string; version: number; baseCommit: string } | null;
-  updateAvailable: boolean;
-};
+// GET /minds/:name/skills
+export type MindSkillInfo = Elem<Ok<V1["minds"][":name"]["skills"]["$get"]>>;
 
-export type UpdateResult =
-  | { status: "updated" }
-  | { status: "up-to-date" }
-  | { status: "conflict"; conflictFiles: string[] };
+// POST /minds/:name/skills/update
+export type UpdateResult = Ok<V1["minds"][":name"]["skills"]["update"]["$post"]>;
 
-export type MindConfig = {
-  registry: {
-    name: string;
-    port: number;
-    created: string;
-    stage?: string;
-    template?: string;
-  };
-  config: {
-    model: string | null;
-    thinkingLevel: string | null;
-    tokenBudget: number | null;
-    tokenBudgetPeriodMinutes: number | null;
-    compaction: { maxContextTokens?: number | null } | null;
-    unescapeNewlines: boolean;
-  };
-};
+// GET /minds/:name/config
+export type MindConfig = Ok<V1["minds"][":name"]["config"]["$get"]>;
 
-export type MindEnv = {
-  shared: Record<string, string>;
-  mind: Record<string, string>;
-};
+// GET /minds/:name/env
+export type MindEnv = Ok<V1["minds"][":name"]["env"]["$get"]>;
 
-export type ChannelSettings = {
-  description: string | null;
-  rules: string | null;
-  charLimit: number | null;
-  /** Channel-wide: at most `rateLimit` messages per `rateWindow` seconds, all senders pooled. */
-  rateLimit: number | null;
-  rateWindow: number | null;
-  private: boolean;
-};
+// GET /channels/:name — the `settings` field is the server's canonical channel
+// settings (charLimit is channel-wide: at most `rateLimit` messages per
+// `rateWindow` seconds, all senders pooled).
+export type ChannelSettings = NonNullable<Ok<V1["channels"][":name"]["$get"]>["settings"]>;
 
 /**
  * What a channel tells a mind about itself — delivered once per channel per session,
  * alongside the participant profiles. Its own privacy isn't part of the introduction.
+ * Kept hand-written (as a projection of ChannelSettings): the daemon imports this to
+ * annotate delivery, so it's an input to the server, not a response shape to derive.
  */
 export type ChannelContext = Omit<ChannelSettings, "private">;
 
-export type ChannelInfo = Conversation & {
-  channel_name: string;
-  participantCount: number;
-  isMember: boolean;
-  settings?: ChannelSettings;
-};
+// GET /channels
+export type ChannelInfo = Elem<Ok<V1["channels"]["$get"]>>;
 
-export type HistoryMessage = {
-  id: number;
-  mind: string;
-  channel: string;
-  thread: string | null;
-  sender: string | null;
-  message_id: string | null;
-  type: string;
-  content: string;
-  metadata: string | null;
-  turn_id: string | null;
-  created_at: string;
-};
+// GET /minds/:name/history
+export type HistoryMessage = Elem<Ok<V1["minds"][":name"]["history"]["$get"]>>;
 
-export type HistorySession = {
-  thread: string;
-  started_at: string;
-  event_count: number;
-  message_count: number;
-  tool_count: number;
-};
+// GET /minds/:name/history/sessions
+export type HistorySession = Elem<Ok<V1["minds"][":name"]["history"]["sessions"]["$get"]>>;
+
+// NOTE (#333): TurnRow and SummaryRow are the two response shapes that resisted
+// clean derivation from AppType, so they stay hand-written for now. Two concrete
+// blockers, both worth fixing in a follow-up:
+//  1. Hono's InferResponseType models the JSON round-trip, so a handler's
+//     `Record<string, unknown>` metadata comes back as `{ [x: string]: JSONValue }`
+//     and ContentBlock's `input: unknown` widens the block `type` literal. That
+//     clashes with the view-model helpers (timeline-card, RailIcons) typed on
+//     `Record<string, unknown>` / `ContentBlock` — a real impedance mismatch that
+//     needs those helpers re-typed, not a shim.
+//  2. GET /history/summaries returns a two-branch union (fetch-by-ids vs
+//     fetch-by-period); the union hides the period-only `icons` field, so
+//     `SummaryRow["icons"]` and every `row.icons` read stops compiling.
+// Deriving them anyway produced a 14-site cascade (JSONValue mismatches +
+// implicit-any) beyond this types-only PR. Reported, not silently kept.
 
 export type TurnConversation = {
   id: string;
@@ -398,6 +349,7 @@ export type TurnRow = {
   activities: TurnActivity[];
 };
 
+/** The rollup periods a summary can cover — query-param vocabulary shared with the server. */
 export type SummaryPeriod = "turn" | "hour" | "day" | "week" | "month";
 
 /** Grouped per-period icon data, present when summaries are fetched with `include=icons`. */
