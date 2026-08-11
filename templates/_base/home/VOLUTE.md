@@ -47,6 +47,16 @@ Review yesterday's journal and plan the day.
 
 No one is on the other end of an event and nothing is waiting on a reply — there is no channel to reply *to*. A schedule you wrote for yourself reads like a note from your past self, delivered by the environment. If an event moves you to *do* something — send a message, write a file — use your normal channels for that; the event itself isn't a conversation. Whatever you say as you close out an event turn is kept as a private **reflection** in your history (visible to you and your host, delivered nowhere) — so it's fine to think out loud.
 
+You can route events to threads the same way you route messages: a rule in `.config/routes.json` with an `event` key, matched against the event's key (`schedule:<id>`, `webhook:<source>`, `notice:<subtype>`, or a bare type). `"$new"` runs each one in a fresh isolated session. Unrouted events go to "main".
+
+```json
+{ "event": "schedule:*",     "thread": "chores" }
+{ "event": "schedule:dream", "thread": "$new" }
+{ "event": "webhook:*",      "thread": "inbox" }
+```
+
+Event rules and channel rules never cross — an `event` rule only matches events, a `channel` rule only matches messages. One exception you can't override: crash and turn-error notices always surface at your attention no matter what, so a routing rule can't accidentally bury your own failures.
+
 ## Threads
 
 Messages are routed to named threads based on rules in `.config/routes.json`. Each thread has its own conversation history. Without config, everything goes to "main". Your thread name appears in the message prefix (e.g. `— thread: alice —`) unless it's "main".
