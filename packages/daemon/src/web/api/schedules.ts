@@ -2,6 +2,7 @@ import { CronExpressionParser } from "cron-parser";
 import { Hono } from "hono";
 import { getScheduler } from "../../lib/daemon/scheduler.js";
 import { getSleepManagerIfReady } from "../../lib/daemon/sleep-manager.js";
+import { upsertEventRule } from "../../lib/mind/event-routes.js";
 import { findMind, mindDir } from "../../lib/mind/registry.js";
 import {
   readVoluteConfig,
@@ -305,10 +306,12 @@ const app = new Hono<AuthEnv>()
     if (body.message) schedule.message = body.message;
     if (body.messages?.length) schedule.messages = body.messages;
     if (body.script) schedule.script = body.script;
-    if (body.thread) schedule.thread = body.thread;
     if (body.whileSleeping) schedule.whileSleeping = body.whileSleeping;
     schedules.push(schedule);
     writeSchedules(name, dir, schedules);
+    // `--thread` is sugar for a routes.json event rule (#736) — schedule-fire routing
+    // lives in routes.json, not on the schedule itself.
+    if (body.thread) upsertEventRule(dir, `schedule:${id}`, body.thread, name);
     return c.json({ ok: true, id }, 201);
   })
   // Update schedule
@@ -373,7 +376,9 @@ const app = new Hono<AuthEnv>()
       );
     }
     if (body.enabled !== undefined) schedules[idx].enabled = body.enabled;
-    if (body.thread !== undefined) schedules[idx].thread = body.thread || undefined;
+    // `--thread` writes/updates a routes.json event rule (#736); an empty value clears it.
+    if (body.thread !== undefined)
+      upsertEventRule(dir, `schedule:${id}`, body.thread || null, name);
     if (body.whileSleeping !== undefined)
       schedules[idx].whileSleeping = body.whileSleeping || undefined;
 
@@ -404,6 +409,8 @@ const app = new Hono<AuthEnv>()
     }
 
     writeSchedules(name, dir, filtered);
+    // Drop the schedule's routing rule too, so a deleted schedule leaves nothing behind.
+    upsertEventRule(dir, `schedule:${id}`, null, name);
     return c.json({ ok: true });
   })
   // Webhook endpoint
