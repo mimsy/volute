@@ -2670,6 +2670,13 @@ describe("daemon e2e", { timeout: 420000 }, () => {
     });
     assert.equal(addRes.status, 201, `add schedule: ${await addRes.clone().text()}`);
 
+    // Wait for the port itself to free before respawning, exactly as the auto-upgrade
+    // restart above does — see the rationale there. `daemon.on("exit")` only reports the
+    // `npx` wrapper, so without this the replacement daemon can lose the bind with
+    // EADDRINUSE and exit, `waitForHealth()` gets answered by the *outgoing* daemon (whose
+    // HTTP server closes last, long after `scheduler.stop()`), and the assertion below then
+    // waits out its full 90s on a scheduler nobody is running. That failed on CI while
+    // passing locally, which is what this race looks like from the outside.
     daemon.kill("SIGTERM");
     await new Promise<void>((resolve) => {
       daemon.on("exit", () => resolve());
@@ -2678,8 +2685,9 @@ describe("daemon e2e", { timeout: 420000 }, () => {
           daemon.kill("SIGKILL");
         } catch {}
         resolve();
-      }, 5000);
+      }, 20000);
     });
+    await waitForPortFree(PORT, 20000);
 
     daemon = spawn(
       "npx",
