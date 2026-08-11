@@ -45,6 +45,7 @@ export default defineConfig({
             { label: "Skills", slug: "docs/concepts/skills" },
             { label: "Extensions", slug: "docs/concepts/extensions" },
             { label: "Identity", slug: "docs/concepts/identity" },
+            { label: "External minds", slug: "docs/concepts/external-minds" },
             { label: "Mind configuration", slug: "docs/reference/mind-config" },
           ],
         },
