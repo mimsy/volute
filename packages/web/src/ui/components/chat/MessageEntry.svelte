@@ -67,7 +67,7 @@ function profileForSender(name: string): HoverProfile | null {
       name: p.username,
       displayName: p.displayName,
       description: p.description,
-      avatarUrl: p.avatar ? `/api/auth/avatars/${encodeURIComponent(p.avatar)}` : null,
+      avatarUrl: p.avatar ? `/api/v1/auth/avatars/${encodeURIComponent(p.avatar)}` : null,
       userType: p.userType,
     };
   }

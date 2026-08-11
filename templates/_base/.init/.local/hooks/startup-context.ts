@@ -77,7 +77,7 @@ try {
 try {
   const { VOLUTE_DAEMON_PORT, VOLUTE_MIND_TOKEN } = process.env;
   if (VOLUTE_DAEMON_PORT && VOLUTE_MIND_TOKEN) {
-    const res = await fetch(`http://127.0.0.1:${VOLUTE_DAEMON_PORT}/api/extensions/mind-docs`, {
+    const res = await fetch(`http://127.0.0.1:${VOLUTE_DAEMON_PORT}/api/v1/extensions/mind-docs`, {
       headers: { Authorization: `Bearer ${VOLUTE_MIND_TOKEN}` },
     });
     if (res.ok) {

@@ -26,7 +26,7 @@ const cmd = command({
 
     if (sessionId) {
       try {
-        await daemonFetch("/api/auth/logout", {
+        await daemonFetch("/api/v1/auth/logout", {
           method: "POST",
           headers: { Authorization: `Bearer ${sessionId}` },
         });

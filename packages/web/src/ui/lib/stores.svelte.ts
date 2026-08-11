@@ -34,7 +34,7 @@ export const auth = $state({
 
 export async function checkSetup() {
   try {
-    const res = await fetch("/api/setup/status");
+    const res = await fetch("/api/v1/setup/status");
     if (res.ok) {
       const data = await res.json();
       auth.setupComplete = data.complete;

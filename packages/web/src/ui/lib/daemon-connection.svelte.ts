@@ -70,7 +70,7 @@ export async function remoteLogin(
   username: string,
   password: string,
 ): Promise<{ token: string; user: { id: number; username: string; role: string } }> {
-  const url = `${daemonUrl.replace(/\/$/, "")}/api/auth/login`;
+  const url = `${daemonUrl.replace(/\/$/, "")}/api/v1/auth/login`;
   const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

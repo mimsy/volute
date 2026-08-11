@@ -103,7 +103,7 @@ export async function fetchPagesData(): Promise<{
 
 export async function fetchCurrentUser(): Promise<CurrentUser> {
   try {
-    const res = await fetch("/api/auth/me");
+    const res = await fetch("/api/v1/auth/me");
     if (!res.ok) {
       console.warn(`Failed to fetch current user: HTTP ${res.status}`);
       return { username: "", avatarUrl: null };
@@ -111,7 +111,7 @@ export async function fetchCurrentUser(): Promise<CurrentUser> {
     const data = await res.json();
     return {
       username: data?.username ?? "",
-      avatarUrl: data?.avatar ? `/api/auth/avatars/${encodeURIComponent(data.avatar)}` : null,
+      avatarUrl: data?.avatar ? `/api/v1/auth/avatars/${encodeURIComponent(data.avatar)}` : null,
     };
   } catch (err) {
     console.warn("Failed to fetch current user:", err);

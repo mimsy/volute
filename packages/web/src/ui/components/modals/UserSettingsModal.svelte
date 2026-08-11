@@ -34,7 +34,7 @@ async function loadProfile() {
     if (me) {
       displayName = me.display_name ?? "";
       description = me.description ?? "";
-      avatarUrl = me.avatar ? `/api/auth/avatars/${me.avatar}` : null;
+      avatarUrl = me.avatar ? `/api/v1/auth/avatars/${me.avatar}` : null;
     }
   } catch {
     profileError = "Failed to load profile";
@@ -73,7 +73,7 @@ async function handleUploadAvatar() {
   profileError = "";
   try {
     const filename = await uploadAvatar(avatarFile);
-    avatarUrl = `/api/auth/avatars/${filename}`;
+    avatarUrl = `/api/v1/auth/avatars/${filename}`;
     avatarFile = null;
     avatarPreview = null;
   } catch (err) {

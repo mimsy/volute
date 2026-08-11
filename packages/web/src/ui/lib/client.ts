@@ -834,30 +834,30 @@ export type BackupSnapshot = {
 };
 
 export function fetchBackupStatus(): Promise<BackupStatus> {
-  return get("/api/backup/status");
+  return get("/api/v1/backup/status");
 }
 
 export function saveBackupConfig(config: BackupConfigUpdate): Promise<void> {
-  return put("/api/backup/config", config);
+  return put("/api/v1/backup/config", config);
 }
 
 export function initBackupRepo(): Promise<{ ok: true; password: string | null }> {
-  return post("/api/backup/init");
+  return post("/api/v1/backup/init");
 }
 
 export function runBackupNow(): Promise<BackupRunSummary> {
-  return post("/api/backup/run");
+  return post("/api/v1/backup/run");
 }
 
 export function listBackupSnapshots(): Promise<BackupSnapshot[]> {
-  return get("/api/backup/snapshots");
+  return get("/api/v1/backup/snapshots");
 }
 
-// --- Auth (these stay on /api/ since they're not mind-scoped) ---
+// --- Auth ---
 
 export function fetchAvailableUsers(type?: string): Promise<AvailableUser[]> {
   const qs = type ? `?type=${enc(type)}` : "";
-  return get(`/api/auth/users${qs}`);
+  return get(`/api/v1/auth/users${qs}`);
 }
 
 // --- Upload ---
@@ -978,8 +978,8 @@ export function deleteSchedule(name: string, id: string): Promise<void> {
 }
 
 // --- Pending incoming files ---
-// This route lives under /api/minds (not /api/v1), guarded by requireSelf.
-// Read-only by design: accepting or rejecting a file is the mind's decision,
+// Guarded by requireSelf. Read-only by design: accepting or rejecting a file
+// is the mind's decision,
 // made via its own tools (volute chat accept/reject) — the web UI only
 // provides visibility into the queue.
 
@@ -993,7 +993,7 @@ export type PendingFile = {
 };
 
 export function fetchPendingFiles(mind: string): Promise<PendingFile[]> {
-  return get(`/api/minds/${enc(mind)}/files/pending`);
+  return get(`/api/v1/minds/${enc(mind)}/files/pending`);
 }
 
 // --- Profile ---
@@ -1029,19 +1029,19 @@ export async function uploadMindAvatar(name: string, file: File): Promise<void> 
 // --- Extensions management ---
 
 export function fetchAllExtensions(): Promise<ExtensionManagementInfo[]> {
-  return get("/api/extensions/all");
+  return get("/api/v1/extensions/all");
 }
 
 export async function setExtensionEnabled(id: string, enabled: boolean): Promise<void> {
-  await put(`/api/extensions/${enc(id)}/enabled`, { enabled });
+  await put(`/api/v1/extensions/${enc(id)}/enabled`, { enabled });
 }
 
 export async function installExtension(pkg: string): Promise<void> {
-  await post("/api/extensions/install", { package: pkg });
+  await post("/api/v1/extensions/install", { package: pkg });
 }
 
 export async function uninstallExtension(pkg: string): Promise<void> {
-  await del(`/api/extensions/uninstall/${enc(pkg)}`);
+  await del(`/api/v1/extensions/uninstall/${enc(pkg)}`);
 }
 
 // --- Helpers ---

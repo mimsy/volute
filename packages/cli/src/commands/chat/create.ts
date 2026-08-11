@@ -48,7 +48,7 @@ const cmd = command({
       const conv = (await res.json()) as { id: string };
       console.log(`Created channel #${flags.channel}: ${conv.id}`);
     } else {
-      const res = await daemonFetch(`/api/minds/${encodeURIComponent(mindName)}/conversations`, {
+      const res = await daemonFetch(`/api/v1/minds/${encodeURIComponent(mindName)}/conversations`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

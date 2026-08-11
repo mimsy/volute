@@ -47,42 +47,42 @@ async function authPost<T>(path: string, body?: unknown): Promise<T> {
 }
 
 export async function fetchMe(): Promise<AuthUser | null> {
-  const res = await fetch("/api/auth/me");
+  const res = await fetch("/api/v1/auth/me");
   if (!res.ok) return null;
   return res.json();
 }
 
 export function login(username: string, password: string): Promise<AuthUser> {
-  return authPost("/api/auth/login", { username, password });
+  return authPost("/api/v1/auth/login", { username, password });
 }
 
 export function register(username: string, password: string): Promise<AuthUser> {
-  return authPost("/api/auth/register", { username, password });
+  return authPost("/api/v1/auth/register", { username, password });
 }
 
 export async function logout(): Promise<void> {
-  await fetch("/api/auth/logout", { method: "POST" });
+  await fetch("/api/v1/auth/logout", { method: "POST" });
 }
 
 export function fetchUsers(): Promise<AuthUser[]> {
-  return authGet("/api/auth/users");
+  return authGet("/api/v1/auth/users");
 }
 
 export function fetchPendingUsers(): Promise<AuthUser[]> {
-  return authGet("/api/auth/users/pending");
+  return authGet("/api/v1/auth/users/pending");
 }
 
 export function changePassword(currentPassword: string, newPassword: string): Promise<void> {
-  return authPost("/api/auth/change-password", { currentPassword, newPassword });
+  return authPost("/api/v1/auth/change-password", { currentPassword, newPassword });
 }
 
 export async function approveUser(id: number): Promise<void> {
-  const res = await fetch(`/api/auth/users/${id}/approve`, { method: "POST" });
+  const res = await fetch(`/api/v1/auth/users/${id}/approve`, { method: "POST" });
   if (!res.ok) throw new Error("Failed to approve user");
 }
 
 export async function setUserRole(id: number, role: "admin" | "user"): Promise<void> {
-  const res = await fetch(`/api/auth/users/${id}/role`, {
+  const res = await fetch(`/api/v1/auth/users/${id}/role`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ role }),
@@ -97,7 +97,7 @@ export async function updateUserProfile(
   id: number,
   profile: { display_name?: string | null; description?: string | null },
 ): Promise<void> {
-  const res = await fetch(`/api/auth/users/${id}/profile`, {
+  const res = await fetch(`/api/v1/auth/users/${id}/profile`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(profile),
@@ -122,19 +122,19 @@ export function registerExternalMind(body: {
   // The response also carries the created `user`, deliberately left off this type:
   // the server builds it without the `external` flag, so typing it as AuthUser
   // would hand callers a mind that reads as local. Re-read it from the users list.
-  return authPost("/api/auth/minds", body);
+  return authPost("/api/v1/auth/minds", body);
 }
 
 export function fetchUserTokens(id: number): Promise<ApiToken[]> {
-  return authGet(`/api/auth/users/${id}/tokens`);
+  return authGet(`/api/v1/auth/users/${id}/tokens`);
 }
 
 export function issueUserToken(id: number, label?: string): Promise<IssuedToken> {
-  return authPost(`/api/auth/users/${id}/tokens`, { label });
+  return authPost(`/api/v1/auth/users/${id}/tokens`, { label });
 }
 
 export async function revokeUserToken(id: number, tokenId: number): Promise<void> {
-  const res = await fetch(`/api/auth/users/${id}/tokens/${tokenId}`, { method: "DELETE" });
+  const res = await fetch(`/api/v1/auth/users/${id}/tokens/${tokenId}`, { method: "DELETE" });
   if (!res.ok) {
     const data = (await res.json().catch(() => ({}))) as { error?: string };
     throw new Error(data.error || "Failed to revoke token");
@@ -142,7 +142,7 @@ export async function revokeUserToken(id: number, tokenId: number): Promise<void
 }
 
 export async function deleteUser(id: number): Promise<void> {
-  const res = await fetch(`/api/auth/users/${id}`, { method: "DELETE" });
+  const res = await fetch(`/api/v1/auth/users/${id}`, { method: "DELETE" });
   if (!res.ok) {
     const data = (await res.json().catch(() => ({}))) as { error?: string };
     throw new Error(data.error || "Failed to delete user");
@@ -153,7 +153,7 @@ export async function updateProfile(profile: {
   display_name?: string | null;
   description?: string | null;
 }): Promise<void> {
-  const res = await fetch("/api/auth/profile", {
+  const res = await fetch("/api/v1/auth/profile", {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(profile),
@@ -167,7 +167,7 @@ export async function updateProfile(profile: {
 export async function uploadAvatar(file: File): Promise<string> {
   const form = new FormData();
   form.append("file", file);
-  const res = await fetch("/api/auth/avatar", { method: "POST", body: form });
+  const res = await fetch("/api/v1/auth/avatar", { method: "POST", body: form });
   if (!res.ok) {
     const data = (await res.json().catch(() => ({}))) as { error?: string };
     throw new Error(data.error || "Failed to upload avatar");
@@ -177,7 +177,7 @@ export async function uploadAvatar(file: File): Promise<string> {
 }
 
 export async function deleteAvatar(): Promise<void> {
-  const res = await fetch("/api/auth/avatar", { method: "DELETE" });
+  const res = await fetch("/api/v1/auth/avatar", { method: "DELETE" });
   if (!res.ok) {
     const data = (await res.json().catch(() => ({}))) as { error?: string };
     throw new Error(data.error || "Failed to delete avatar");

@@ -19,7 +19,7 @@ function avatarUrl(p: AvatarParticipant): string | null {
   if (!p.avatar) return null;
   return isMind(p)
     ? `/api/v1/minds/${encodeURIComponent(p.username)}/avatar`
-    : `/api/auth/avatars/${encodeURIComponent(p.avatar)}`;
+    : `/api/v1/auth/avatars/${encodeURIComponent(p.avatar)}`;
 }
 
 function initial(p: AvatarParticipant): string {

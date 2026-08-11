@@ -204,7 +204,7 @@ async function handleSystemSubmit(e: Event) {
   error = "";
   loading = true;
   try {
-    const res = await fetch("/api/setup/system", {
+    const res = await fetch("/api/v1/setup/system", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -232,7 +232,7 @@ async function handleAccountSubmit(e: Event) {
   error = "";
   loading = true;
   try {
-    const res = await fetch("/api/setup/account", {
+    const res = await fetch("/api/v1/setup/account", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -261,7 +261,7 @@ async function handleSystemsRegister() {
   systemsError = "";
   systemsLoading = true;
   try {
-    const res = await fetch("/api/setup/system/register", {
+    const res = await fetch("/api/v1/setup/system/register", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ slug: systemsSlug.trim() }),
@@ -285,7 +285,7 @@ async function handleSystemsLogin() {
   systemsError = "";
   systemsLoading = true;
   try {
-    const res = await fetch("/api/setup/system/login", {
+    const res = await fetch("/api/v1/setup/system/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ key: systemsApiKey.trim() }),
@@ -309,7 +309,7 @@ async function handleSystemsDisconnect() {
   systemsError = "";
   systemsLoading = true;
   try {
-    await fetch("/api/setup/system/disconnect", { method: "POST" });
+    await fetch("/api/v1/setup/system/disconnect", { method: "POST" });
     systemsRegistered = false;
     systemsName = "";
   } catch (err) {
@@ -325,7 +325,7 @@ async function handleModelsSubmit(e: Event) {
   loading = true;
   try {
     // Save model config
-    const res = await fetch("/api/setup/models", {
+    const res = await fetch("/api/v1/setup/models", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -351,7 +351,7 @@ async function handleSpiritSubmit(e: Event) {
   error = "";
   loading = true;
   try {
-    const res = await fetch("/api/setup/spirit", {
+    const res = await fetch("/api/v1/setup/spirit", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -381,7 +381,7 @@ async function completeSetup() {
   spiritTimedOut = false;
   loading = true;
   try {
-    const res = await fetch("/api/setup/complete", {
+    const res = await fetch("/api/v1/setup/complete", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({}),
@@ -455,7 +455,7 @@ async function waitForSpiritReply(conversationId: string): Promise<string> {
 // Load systems status when entering the system step
 $effect(() => {
   if (step === "system" && !systemsRegistered) {
-    fetch("/api/setup/system/systems-status")
+    fetch("/api/v1/setup/system/systems-status")
       .then((r) => r.json())
       .then((data: any) => {
         if (data.registered) {

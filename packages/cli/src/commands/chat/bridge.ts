@@ -22,7 +22,7 @@ const bridgeAddCmd = command({
       process.exit(1);
     }
 
-    const res = await daemonFetch(`/api/bridges/${encodeURIComponent(platform)}`, {
+    const res = await daemonFetch(`/api/v1/bridges/${encodeURIComponent(platform)}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ defaultMind }),
@@ -57,7 +57,7 @@ const bridgeRemoveCmd = command({
   run: async ({ args }) => {
     const platform = args.platform!;
 
-    const res = await daemonFetch(`/api/bridges/${encodeURIComponent(platform)}`, {
+    const res = await daemonFetch(`/api/v1/bridges/${encodeURIComponent(platform)}`, {
       method: "DELETE",
     });
 
@@ -76,7 +76,7 @@ const bridgeListCmd = command({
   args: [],
   flags: {},
   run: async () => {
-    const res = await daemonFetch("/api/bridges");
+    const res = await daemonFetch("/api/v1/bridges");
     if (!res.ok) {
       console.error(`Failed to list bridges: ${res.status}`);
       process.exit(1);
@@ -123,7 +123,7 @@ const bridgeMapCmd = command({
     const platform = target.slice(0, colonIdx);
     const externalChannel = target.slice(colonIdx + 1);
 
-    const res = await daemonFetch(`/api/bridges/${encodeURIComponent(platform)}/mappings`, {
+    const res = await daemonFetch(`/api/v1/bridges/${encodeURIComponent(platform)}/mappings`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ externalChannel, voluteChannel }),
@@ -157,7 +157,7 @@ const bridgeUnmapCmd = command({
     const externalChannel = target.slice(colonIdx + 1);
 
     const res = await daemonFetch(
-      `/api/bridges/${encodeURIComponent(platform)}/mappings/${encodeURIComponent(externalChannel)}`,
+      `/api/v1/bridges/${encodeURIComponent(platform)}/mappings/${encodeURIComponent(externalChannel)}`,
       { method: "DELETE" },
     );
 
@@ -179,7 +179,7 @@ const bridgeMappingsCmd = command({
     const platform = args.platform;
 
     if (platform) {
-      const res = await daemonFetch(`/api/bridges/${encodeURIComponent(platform)}/mappings`);
+      const res = await daemonFetch(`/api/v1/bridges/${encodeURIComponent(platform)}/mappings`);
       if (!res.ok) {
         console.error(`Failed to get mappings: ${res.status}`);
         process.exit(1);
@@ -196,7 +196,7 @@ const bridgeMappingsCmd = command({
       }
     } else {
       // List all bridges' mappings
-      const res = await daemonFetch("/api/bridges");
+      const res = await daemonFetch("/api/v1/bridges");
       if (!res.ok) {
         console.error(`Failed to list bridges: ${res.status}`);
         process.exit(1);

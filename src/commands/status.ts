@@ -80,7 +80,7 @@ const cmd = command({
     headers.Origin = baseUrl;
 
     try {
-      const res = await fetch(`${baseUrl}/api/minds`, { headers });
+      const res = await fetch(`${baseUrl}/api/v1/minds`, { headers });
       if (res.ok) {
         const minds = (await res.json()) as Array<{
           name: string;

@@ -12,7 +12,7 @@ const cmd = command({
   async run({ flags }) {
     const mind = resolveMindName(flags);
 
-    const res = await daemonFetch(`/api/minds/${encodeURIComponent(mind)}/files/pending`);
+    const res = await daemonFetch(`/api/v1/minds/${encodeURIComponent(mind)}/files/pending`);
 
     if (!res.ok) {
       const data = (await res.json()) as { error?: string };
