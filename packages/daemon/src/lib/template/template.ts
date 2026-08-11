@@ -20,6 +20,29 @@ export type TemplateManifest = {
 };
 
 /**
+ * Merge a template's manifest over `_base`'s. `_base` ships the shared manifest
+ * (the union of everything every template needs); a per-template manifest exists
+ * only to declare genuine differences — of which there are currently none, so all
+ * three ship `{}`.
+ *
+ * - `substitute`: union of base + template entries (dedup, base order first). A
+ *   path only has to be declared once, in `_base`, and every template inherits it.
+ *   This is the single-source-of-truth that #789 restores: before it, all three
+ *   manifests repeated the same list and all three carried the same wrong path
+ *   (`home/.config/routes.json`), leaving `{{name}}` in every mind's routes.json.
+ * - `rename`: template entries override base on key collision.
+ */
+export function mergeManifests(
+  base: Partial<TemplateManifest>,
+  template: Partial<TemplateManifest>,
+): TemplateManifest {
+  return {
+    rename: { ...base.rename, ...template.rename },
+    substitute: [...new Set([...(base.substitute ?? []), ...(template.substitute ?? [])])],
+  };
+}
+
+/**
  * Find the templates root directory by walking up from the calling module's location.
  * Returns the parent `templates/` directory (not a specific template).
  */
@@ -101,17 +124,30 @@ export function composeTemplate(
     cpSync(src, dest);
   }
 
-  // Read manifest
-  const manifestPath = resolve(composedDir, "volute-template.json");
-  if (!existsSync(manifestPath)) {
+  // Read manifest by merging the template's over _base's, rather than letting the
+  // template's replace it. _base ships the shared manifest; a template's declares
+  // only genuine differences (see mergeManifests). The two source files are read
+  // directly — reading the composed copy would only ever see the template's, since
+  // the file-overlay above already overwrote _base's with it.
+  const baseManifestPath = resolve(baseDir, "volute-template.json");
+  if (!existsSync(baseManifestPath)) {
     rmSync(composedDir, { recursive: true, force: true });
-    console.error(`Template manifest not found: ${templateName}/volute-template.json`);
+    console.error("Base template manifest not found: _base/volute-template.json");
     process.exit(1);
   }
-  const manifest = JSON.parse(readFileSync(manifestPath, "utf-8")) as TemplateManifest;
+  const baseManifest = JSON.parse(
+    readFileSync(baseManifestPath, "utf-8"),
+  ) as Partial<TemplateManifest>;
 
-  // Remove manifest from composed output
-  rmSync(manifestPath);
+  const templateManifestPath = resolve(templateDir, "volute-template.json");
+  const templateManifest = existsSync(templateManifestPath)
+    ? (JSON.parse(readFileSync(templateManifestPath, "utf-8")) as Partial<TemplateManifest>)
+    : {};
+
+  const manifest = mergeManifests(baseManifest, templateManifest);
+
+  // Remove manifest from composed output (the template's overlaid copy).
+  rmSync(resolve(composedDir, "volute-template.json"), { force: true });
 
   return { composedDir, manifest };
 }
@@ -268,8 +304,14 @@ export function backfillInitInfrastructure(
 ): string[] {
   const root = locateTemplatesRoot();
   if (!root) throw new Error("templates root not found on disk");
-  if (!existsSync(resolve(root, template, "volute-template.json"))) {
-    throw new Error(`template "${template}" is missing or has no manifest at ${root}`);
+  if (!existsSync(resolve(root, template))) {
+    throw new Error(`template "${template}" not found at ${root}`);
+  }
+  // _base ships the shared manifest that every template merges into; its absence is
+  // the manifest path composeTemplate process.exit(1)s on (a template's own manifest
+  // is now optional). Pre-check it so a broken install degrades to one warning.
+  if (!existsSync(resolve(root, "_base", "volute-template.json"))) {
+    throw new Error(`base template manifest missing at ${root}/_base`);
   }
 
   const { composedDir, manifest } = composeTemplate(root, template);
