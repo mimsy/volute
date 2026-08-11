@@ -32,7 +32,8 @@ describe("template composition", () => {
       // Base router + file handler
       assert.ok(existsSync(resolve(composedDir, "src/lib/router.ts")));
       assert.ok(existsSync(resolve(composedDir, "src/lib/file-handler.ts")));
-      assert.ok(existsSync(resolve(composedDir, "src/lib/routing.ts")));
+      // #331: the mind-side routing engine was removed — the daemon is the sole router.
+      assert.ok(!existsSync(resolve(composedDir, "src/lib/routing.ts")));
 
       // Template-specific source
       assert.ok(existsSync(resolve(composedDir, "src/server.ts")));
@@ -92,7 +93,8 @@ describe("template composition", () => {
       // Base router + file handler
       assert.ok(existsSync(resolve(composedDir, "src/lib/router.ts")));
       assert.ok(existsSync(resolve(composedDir, "src/lib/file-handler.ts")));
-      assert.ok(existsSync(resolve(composedDir, "src/lib/routing.ts")));
+      // #331: the mind-side routing engine was removed — the daemon is the sole router.
+      assert.ok(!existsSync(resolve(composedDir, "src/lib/routing.ts")));
 
       // Template-specific source
       assert.ok(existsSync(resolve(composedDir, "src/server.ts")));
@@ -139,7 +141,8 @@ describe("template composition", () => {
       // Base router + file handler
       assert.ok(existsSync(resolve(composedDir, "src/lib/router.ts")));
       assert.ok(existsSync(resolve(composedDir, "src/lib/file-handler.ts")));
-      assert.ok(existsSync(resolve(composedDir, "src/lib/routing.ts")));
+      // #331: the mind-side routing engine was removed — the daemon is the sole router.
+      assert.ok(!existsSync(resolve(composedDir, "src/lib/routing.ts")));
 
       // Template-specific source
       assert.ok(existsSync(resolve(composedDir, "src/server.ts")));

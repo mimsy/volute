@@ -257,8 +257,6 @@ export function createVoluteServer(options: {
     res.end("Not Found");
   });
 
-  server.on("close", () => router.close());
-
   let retries = 0;
   const maxRetries = 5;
   server.on("error", (err: NodeJS.ErrnoException) => {

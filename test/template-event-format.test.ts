@@ -79,7 +79,6 @@ describe("sender-less channel announcements (#687)", () => {
     assert.ok(text.includes("atlas has joined"));
     assert.match(text, /^\[Volute: #system/, "framed by channel");
     assert.ok(!text.includes("unknown"), "no phantom sender");
-    router.close();
   });
 
   it("dispatchBatch renders a sender-less announcement without an 'unknown' sender", () => {
@@ -102,7 +101,6 @@ describe("sender-less channel announcements (#687)", () => {
     const text = (handled[0].content[0] as { type: "text"; text: string }).text;
     assert.ok(text.includes("atlas has joined"));
     assert.ok(!text.includes("unknown"), "batch flush must not invent an 'unknown' sender");
-    router.close();
   });
 });
 
@@ -169,6 +167,5 @@ describe("router event dispatch", () => {
     // The event channel rides through to the handler for turn attribution.
     assert.equal(handled[0].meta.channel, "event:schedule:42");
     assert.equal(handled[0].meta.isEvent, true);
-    router.close();
   });
 });

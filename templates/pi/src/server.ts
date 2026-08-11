@@ -1,6 +1,5 @@
 import { resolve } from "node:path";
 import { createMind } from "./agent.js";
-import { createFileHandlerResolver } from "./lib/file-handler.js";
 import { log, setLevel } from "./lib/logger.js";
 import { withMechanicsDoc } from "./lib/mechanics-doc.js";
 import { createRouter } from "./lib/router.js";
@@ -39,7 +38,6 @@ const mind = createMind({
 const router = createRouter({
   configPath: resolve("home/.config/routes.json"),
   mindHandler: mind.resolve,
-  fileHandler: createFileHandlerResolver(resolve("home")),
 });
 
 const server = createVoluteServer({
