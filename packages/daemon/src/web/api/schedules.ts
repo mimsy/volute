@@ -1,5 +1,7 @@
+import { zValidator } from "@hono/zod-validator";
 import { CronExpressionParser } from "cron-parser";
 import { Hono } from "hono";
+import { z } from "zod";
 import { getScheduler } from "../../lib/daemon/scheduler.js";
 import { getSleepManagerIfReady } from "../../lib/daemon/sleep-manager.js";
 import { upsertEventRule } from "../../lib/mind/event-routes.js";
@@ -14,6 +16,35 @@ import { fireWebhook } from "../../lib/webhook.js";
 import { type AuthEnv, requireSelf } from "../middleware/auth.js";
 
 const slog = log.child("schedules");
+
+// Validates the body shape only (types + the whileSleeping enum). Every cross-field
+// rule (cron/fireAt mutual exclusion, cron parse, fireAt date, action-required,
+// non-empty messages) stays in the handler, so the accepted set is unchanged for
+// valid input — malformed *types* now 400 structurally instead of flowing through.
+const scheduleBodySchema = z.object({
+  id: z.string().optional(),
+  cron: z.string().optional(),
+  fireAt: z.string().optional(),
+  message: z.string().optional(),
+  messages: z.array(z.string()).optional(),
+  script: z.string().optional(),
+  enabled: z.boolean().optional(),
+  whileSleeping: z.enum(["skip", "queue", "trigger-wake"]).optional(),
+  thread: z.string().optional(),
+});
+
+const sleepConfigSchema = z.object({
+  enabled: z.boolean().optional(),
+  schedule: z.object({ sleep: z.string(), wake: z.string() }).optional(),
+  wakeTriggers: z
+    .object({
+      mentions: z.boolean().optional(),
+      dms: z.boolean().optional(),
+      channels: z.array(z.string()).optional(),
+      senders: z.array(z.string()).optional(),
+    })
+    .optional(),
+});
 
 function readSchedules(dir: string): Schedule[] {
   return readVoluteConfig(dir)?.schedules ?? [];
@@ -195,21 +226,12 @@ const app = new Hono<AuthEnv>()
     return c.json(config?.sleep ?? { enabled: false });
   })
   // Update sleep config
-  .put("/:name/sleep/config", requireSelf(), async (c) => {
+  .put("/:name/sleep/config", requireSelf(), zValidator("json", sleepConfigSchema), async (c) => {
     const name = c.req.param("name");
     const entry = await findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
 
-    const body = (await c.req.json()) as {
-      enabled?: boolean;
-      schedule?: { sleep: string; wake: string };
-      wakeTriggers?: {
-        mentions?: boolean;
-        dms?: boolean;
-        channels?: string[];
-        senders?: string[];
-      };
-    };
+    const body = c.req.valid("json");
 
     // Validate cron expressions if provided
     if (body.schedule) {
@@ -247,14 +269,14 @@ const app = new Hono<AuthEnv>()
     return c.json(readSchedules(entry.dir ?? mindDir(name)));
   })
   // Add schedule
-  .post("/:name/schedules", requireSelf(), async (c) => {
+  .post("/:name/schedules", requireSelf(), zValidator("json", scheduleBodySchema), async (c) => {
     const name = c.req.param("name");
     const entry = await findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
     if (entry.stage === "seed")
       return c.json({ error: "Seed minds cannot use schedules — sprout first" }, 403);
 
-    const body = (await c.req.json()) as Partial<Schedule>;
+    const body = c.req.valid("json");
     if (!body.id) {
       return c.json({ error: "id is required (a descriptive name for this schedule)" }, 400);
     }
@@ -283,14 +305,6 @@ const app = new Hono<AuthEnv>()
     if (body.fireAt && Number.isNaN(new Date(body.fireAt).getTime())) {
       return c.json({ error: `Invalid fireAt date: ${body.fireAt}` }, 400);
     }
-    if (body.whileSleeping && !["skip", "queue", "trigger-wake"].includes(body.whileSleeping)) {
-      return c.json(
-        {
-          error: `Invalid whileSleeping value: ${body.whileSleeping} (must be skip, queue, or trigger-wake)`,
-        },
-        400,
-      );
-    }
 
     const dir = entry.dir ?? mindDir(name);
     const schedules = readSchedules(dir);
@@ -315,7 +329,7 @@ const app = new Hono<AuthEnv>()
     return c.json({ ok: true, id }, 201);
   })
   // Update schedule
-  .put("/:name/schedules/:id", requireSelf(), async (c) => {
+  .put("/:name/schedules/:id", requireSelf(), zValidator("json", scheduleBodySchema), async (c) => {
     const name = c.req.param("name");
     const id = c.req.param("id");
     const entry = await findMind(name);
@@ -326,7 +340,7 @@ const app = new Hono<AuthEnv>()
     const idx = schedules.findIndex((s) => s.id === id);
     if (idx === -1) return c.json({ error: "Schedule not found" }, 404);
 
-    const body = (await c.req.json()) as Partial<Schedule>;
+    const body = c.req.valid("json");
     const messagesErr = validateMessages(body.messages);
     if (messagesErr) return c.json({ error: messagesErr }, 400);
     if ([body.message, body.messages?.length, body.script].filter(Boolean).length > 1) {
@@ -366,14 +380,6 @@ const app = new Hono<AuthEnv>()
       schedules[idx].script = body.script;
       delete schedules[idx].message;
       delete schedules[idx].messages;
-    }
-    if (body.whileSleeping && !["skip", "queue", "trigger-wake"].includes(body.whileSleeping)) {
-      return c.json(
-        {
-          error: `Invalid whileSleeping value: ${body.whileSleeping} (must be skip, queue, or trigger-wake)`,
-        },
-        400,
-      );
     }
     if (body.enabled !== undefined) schedules[idx].enabled = body.enabled;
     // `--thread` writes/updates a routes.json event rule (#736); an empty value clears it.
