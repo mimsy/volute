@@ -198,7 +198,7 @@ describe("schedules API rotating messages", () => {
     const app = await getApp();
     assert.equal(
       (
-        await app.request(`/api/minds/${mindName}/schedules/dream`, {
+        await app.request(`/api/v1/minds/${mindName}/schedules/dream`, {
           method: "DELETE",
           headers: jsonHeaders(),
         })

@@ -720,7 +720,7 @@ describe("daemon e2e", { timeout: 420000 }, () => {
     const parentDir = mindDir(TEST_MIND);
 
     // Split: create the variant without starting its server.
-    const createRes = await daemonRequest(`/api/minds/${TEST_MIND}/variants`, {
+    const createRes = await daemonRequest(`/api/v1/minds/${TEST_MIND}/variants`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: "e2e-var", noStart: true }),
@@ -819,7 +819,7 @@ describe("daemon e2e", { timeout: 420000 }, () => {
     const parentDir = mindDir(TEST_MIND);
 
     // Split without starting its server.
-    const createRes = await daemonRequest(`/api/minds/${TEST_MIND}/variants`, {
+    const createRes = await daemonRequest(`/api/v1/minds/${TEST_MIND}/variants`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: "e2e-conflict-var", noStart: true }),
