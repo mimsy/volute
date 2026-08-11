@@ -178,6 +178,21 @@ export async function startDaemon(opts: {
     log.warn("avatar size migration failed", log.errorData(err));
   }
 
+  // Move legacy schedule `thread` fields into routes.json event rules (idempotent, #736)
+  try {
+    const { readAllMinds, mindDir } = await import("./lib/mind/registry.js");
+    const { migrateScheduleThreadsToRoutes } = await import("./lib/mind/event-routes.js");
+    for (const m of await readAllMinds()) {
+      try {
+        migrateScheduleThreadsToRoutes(m.dir ?? mindDir(m.name), m.name);
+      } catch (err) {
+        log.warn(`schedule-thread route migration failed for ${m.name}`, log.errorData(err));
+      }
+    }
+  } catch (err) {
+    log.warn("schedule-thread route migration failed", log.errorData(err));
+  }
+
   // Initialize sandbox runtime for mind process isolation
   const { initSandbox } = await import("./lib/mind/sandbox.js");
   await initSandbox();

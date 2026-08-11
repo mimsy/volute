@@ -7,6 +7,13 @@ import log from "../util/logger.js";
 // --- Types ---
 
 export type RoutingRule = {
+  /**
+   * Glob matched against a system event's match key (e.g. "schedule:*",
+   * "webhook:*", "notice:crash") — see `resolveEventRoute`. A rule carrying an
+   * `event` key routes environment signals, not channel content; the two planes
+   * never cross (#736 / scope boundary #719).
+   */
+  event?: string;
   thread?: string;
   destination?: "mind" | "file";
   path?: string;
@@ -227,7 +234,13 @@ function globMatch(pattern: string, value: string): boolean {
 
 const GLOB_MATCH_KEYS = new Set(["channel", "sender"]);
 const NON_MATCH_KEYS = new Set(["thread", "destination", "path", "mode", "batch"]);
-const KNOWN_RULE_KEYS = new Set([...GLOB_MATCH_KEYS, ...NON_MATCH_KEYS, "isDM", "participants"]);
+const KNOWN_RULE_KEYS = new Set([
+  ...GLOB_MATCH_KEYS,
+  ...NON_MATCH_KEYS,
+  "isDM",
+  "participants",
+  "event",
+]);
 
 /**
  * Warn (once per config load, not per message) about rule keys ruleMatches will
@@ -294,6 +307,9 @@ export function resolveRoute(config: RoutingConfig, meta: MatchMeta): ResolvedRo
   }
 
   for (const rule of config.rules) {
+    // Event rules (routes.json's environment-signal plane) never match channel
+    // content — they're resolved by resolveEventRoute (#736).
+    if (typeof rule.event === "string") continue;
     if (ruleMatches(rule, meta)) {
       if (rule.destination === "file") {
         if (!rule.path) {
@@ -313,6 +329,25 @@ export function resolveRoute(config: RoutingConfig, meta: MatchMeta): ResolvedRo
   }
 
   return { destination: "mind", session: fallback, matched: false };
+}
+
+/**
+ * Resolve a system event to a target thread through the mind's routes.json.
+ *
+ * Event rules carry an `event` glob matched against the event's match key (see
+ * `eventMatchKey` in system-events). First match wins; the returned thread may be the
+ * `$new` sentinel, which the caller expands. Returns undefined when no event rule matches,
+ * so the caller keeps its own default thread. This is the sole event-routing plane —
+ * channel rules (no `event` key) are ignored here, and event rules are skipped by
+ * `resolveRoute`, so the two never cross (#736).
+ */
+export function resolveEventRoute(config: RoutingConfig, eventKey: string): string | undefined {
+  if (!config.rules) return undefined;
+  for (const rule of config.rules) {
+    if (typeof rule.event !== "string") continue;
+    if (globMatch(rule.event, eventKey)) return rule.thread;
+  }
+  return undefined;
 }
 
 /**

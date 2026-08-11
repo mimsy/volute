@@ -6,6 +6,7 @@ import { eq } from "drizzle-orm";
 import { createUser } from "../packages/daemon/src/lib/auth.js";
 import { getScheduler, initScheduler } from "../packages/daemon/src/lib/daemon/scheduler.js";
 import { getDb } from "../packages/daemon/src/lib/db.js";
+import { readRoutesConfig } from "../packages/daemon/src/lib/mind/event-routes.js";
 import { addMind, removeMind, voluteHome } from "../packages/daemon/src/lib/mind/registry.js";
 import type { Schedule } from "../packages/daemon/src/lib/mind/volute-config.js";
 import { users } from "../packages/daemon/src/lib/schema.js";
@@ -165,9 +166,13 @@ describe("schedules API rotating messages", () => {
     assert.equal(sched.message, "solo");
   });
 
-  it("POST and PUT persist the thread target", async () => {
-    // POST persists thread (the scheduler fires it into that thread — see
-    // scheduler.test.ts "fire passes session from schedule config").
+  it("POST/PUT --thread is sugar for a routes.json event rule (#736)", async () => {
+    // `--thread` no longer lives on the schedule — it writes a routes.json event rule so
+    // schedule-fire routing lives in one place. The schedule row itself carries no thread.
+    const dir = resolve(voluteHome(), "minds", mindName);
+    const ruleThread = () =>
+      readRoutesConfig(dir).rules?.find((r) => r.event === "schedule:dream")?.thread;
+
     const res = await postSchedule({
       id: "dream",
       cron: "0 3 * * *",
@@ -175,17 +180,31 @@ describe("schedules API rotating messages", () => {
       thread: "$new",
     });
     assert.equal(res.status, 201);
-    let [sched] = await fetchSchedules();
-    assert.equal(sched.thread, "$new");
-
-    // PUT updates it
-    assert.equal((await putSchedule("dream", { thread: "dreams" })).status, 200);
-    [sched] = await fetchSchedules();
-    assert.equal(sched.thread, "dreams");
-
-    // PUT with an empty string clears it
-    assert.equal((await putSchedule("dream", { thread: "" })).status, 200);
-    [sched] = await fetchSchedules();
+    const [sched] = await fetchSchedules();
     assert.equal(sched.thread, undefined);
+    assert.equal(ruleThread(), "$new");
+
+    // PUT updates the rule
+    assert.equal((await putSchedule("dream", { thread: "dreams" })).status, 200);
+    assert.equal(ruleThread(), "dreams");
+
+    // PUT with an empty string removes the rule
+    assert.equal((await putSchedule("dream", { thread: "" })).status, 200);
+    assert.equal(ruleThread(), undefined);
+
+    // POST it back, then DELETE the schedule — the rule is cleaned up too.
+    assert.equal((await putSchedule("dream", { thread: "dreams" })).status, 200);
+    assert.equal(ruleThread(), "dreams");
+    const app = await getApp();
+    assert.equal(
+      (
+        await app.request(`/api/minds/${mindName}/schedules/dream`, {
+          method: "DELETE",
+          headers: jsonHeaders(),
+        })
+      ).status,
+      200,
+    );
+    assert.equal(ruleThread(), undefined);
   });
 });

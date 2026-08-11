@@ -578,25 +578,27 @@ describe("system-events reflection attribution", () => {
 
 describe("system-events next-turn drain", () => {
   it("records and drains notices per session, oldest first", async () => {
+    // Routable notice kinds: they honour the thread they're recorded on (unlike
+    // crash/turn_error, which pin to mind-level — see event-routing.test.ts).
     const mind = uniqueMind();
     await recordNotice({
       mind,
       thread: "main",
-      kind: "turn_error",
+      kind: "delivery_failed",
       reason: "auth_error",
       detail: "first",
     });
     await recordNotice({
       mind,
       thread: "main",
-      kind: "turn_error",
+      kind: "delivery_failed",
       reason: "rate_limit",
       detail: "second",
     });
     await recordNotice({
       mind,
       thread: "other",
-      kind: "crash",
+      kind: "delivery_failed",
       reason: "process_crash",
       detail: "elsewhere",
     });

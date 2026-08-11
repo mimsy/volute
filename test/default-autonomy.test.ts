@@ -9,6 +9,7 @@ import {
   defaultHeartbeatSchedule,
   setupDefaultDreaming,
 } from "../packages/daemon/src/lib/mind/default-autonomy.js";
+import { readRoutesConfig } from "../packages/daemon/src/lib/mind/event-routes.js";
 import {
   readVoluteConfig,
   writeVoluteConfig,
@@ -73,7 +74,15 @@ describe("default autonomy", () => {
     const dream = config?.schedules?.find((s) => s.id === "dream");
     assert.ok(dream, "dream schedule installed");
     assert.equal(dream.cron, "0 3 * * *");
-    assert.equal(dream.thread, "$new");
+    // The dream's isolation is now an explicit routes.json rule, not a schedule field (#736).
+    assert.equal(dream.thread, undefined);
+    assert.deepEqual(
+      readRoutesConfig(dir).rules?.find((r) => r.event === "schedule:dream"),
+      {
+        event: "schedule:dream",
+        thread: "$new",
+      },
+    );
     assert.equal(dream.whileSleeping, "trigger-wake");
     assert.equal(dream.enabled, true);
     assert.ok(config?.schedules?.some((s) => s.id === "heartbeat"));

@@ -2,6 +2,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { mindSkillsDir } from "../skills.js";
 import log from "../util/logger.js";
+import { readRoutesConfig, upsertEventRule } from "./event-routes.js";
 import {
   readVoluteConfig,
   type Schedule,
@@ -44,7 +45,9 @@ export function defaultHeartbeatSchedule(): Schedule {
 /**
  * Default nightly dream schedule (mirrors the dreaming skill's INSTALL.md).
  * `trigger-wake` briefly wakes a sleeping mind for the dream, then returns it
- * to sleep; `$new` keeps the dream in an isolated session.
+ * to sleep. The dream's isolated-session contract (`$new`) is no longer hidden
+ * on the schedule — `setupDefaultDreaming` writes it as an explicit
+ * `schedule:dream → $new` routes.json rule the mind can see and own (#736).
  */
 export function defaultDreamSchedule(): Schedule {
   return {
@@ -53,7 +56,6 @@ export function defaultDreamSchedule(): Schedule {
     message:
       "it's 3am. you are dreaming.\n\ngather your material — read your latest journal entry, read MEMORY.md, surface random memories if you have a way to. then construct a dream premise from that material and invoke the dreamer subagent to experience the dream.",
     enabled: true,
-    thread: "$new",
     whileSleeping: "trigger-wake",
   };
 }
@@ -161,6 +163,12 @@ export function setupDefaultDreaming(dir: string): DreamingSetupResult {
       writeVoluteConfig(dir, config);
       schedulesChanged = true;
     }
+    // The dream's session isolation is an explicit, owned routing rule — added only
+    // when absent, so a mind that has re-routed its own dream is left untouched (#736).
+    const hasDreamRule = (readRoutesConfig(dir).rules ?? []).some(
+      (r) => r.event === "schedule:dream",
+    );
+    if (!hasDreamRule) upsertEventRule(dir, "schedule:dream", "$new");
   } catch (err) {
     warn("dreaming setup: failed to add default dream schedule", err);
   }
