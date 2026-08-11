@@ -1,31 +1,14 @@
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { Hono } from "hono";
 import { getOrCreateMindUser } from "../../lib/auth.js";
 import { deliverEvent } from "../../lib/chat/system-events.js";
 import { getMindManager, tryGetMindManager } from "../../lib/daemon/mind-manager.js";
 import { createConversation, findDMConversation } from "../../lib/events/conversations.js";
 import { runFarewellTurn } from "../../lib/mind/farewell.js";
-import { chownMindDir, isIsolationEnabled, wrapForIsolation } from "../../lib/mind/isolation.js";
-import {
-  addVariant,
-  findMind,
-  findVariants,
-  mindDir,
-  nextPort,
-  setMindRunning,
-} from "../../lib/mind/registry.js";
-import { spawnServer } from "../../lib/mind/spawn-server.js";
+import { chownMindDir } from "../../lib/mind/isolation.js";
+import { createVariant, mergeVariant } from "../../lib/mind/lifecycle.js";
+import { findMind, findVariants, mindDir, setMindRunning } from "../../lib/mind/registry.js";
 import { cleanupVariant } from "../../lib/mind/variant-cleanup.js";
-import {
-  findUnresolvedHomeFiles,
-  formatUnresolvedHomeFilesMessage,
-  mergeVariantExcludingMemory,
-  VariantMergeError,
-  validateBranchName,
-} from "../../lib/mind/variants.js";
-import { verify } from "../../lib/mind/verify.js";
-import { exec, gitExec } from "../../lib/util/exec.js";
+import { validateBranchName } from "../../lib/mind/variants.js";
 import { checkHealth } from "../../lib/util/health.js";
 import log from "../../lib/util/logger.js";
 import { type AuthEnv, requireSelf } from "../middleware/auth.js";
@@ -125,108 +108,17 @@ const app = new Hono<AuthEnv>()
     }
 
     const projectRoot = entry.dir ?? mindDir(mindName);
-    const variantDir = resolve(projectRoot, ".variants", variantName);
 
-    if (existsSync(variantDir)) {
-      return c.json({ error: `Variant directory already exists: ${variantDir}` }, 409);
-    }
-
-    mkdirSync(resolve(projectRoot, ".variants"), { recursive: true });
-
-    // Create git worktree
-    try {
-      await gitExec(["worktree", "add", "-b", variantName, variantDir], { cwd: projectRoot });
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      // mkdirSync + `git worktree add` ran as the daemon (root) and may leave
-      // root-owned files under .variants/ in the mind's tree; hand ownership
-      // back before returning so the mind can retry. Surface a restore failure
-      // so a left-behind-root-files condition isn't hidden.
-      let error = `Failed to create worktree: ${msg}`;
-      try {
-        await chownMindDir(projectRoot, mindName);
-      } catch (err) {
-        log.warn(
-          `failed to restore ownership after worktree-add failure for ${mindName}`,
-          log.errorData(err),
-        );
-        error += ` Restoring mind ownership also failed: ${err instanceof Error ? err.message : String(err)}`;
-      }
-      return c.json({ error }, 500);
-    }
-
-    // Everything after the worktree is created is rolled back on failure so a
-    // retry with the same name isn't blocked by a half-created variant (#444).
-    const rollbackSplit = async () => {
-      try {
-        await cleanupVariant(variantName, mindName, projectRoot, variantDir, { stop: true });
-      } catch (err) {
-        log.warn(`failed to roll back split of ${variantName}`, log.errorData(err));
-      }
-    };
-
-    // Fix ownership before npm install so it runs as the mind user. This is the
-    // first step past worktree creation, so a throw here (chownMindDir re-throws
-    // under isolation) must also roll back or it strands the worktree+branch.
-    try {
-      await chownMindDir(projectRoot, mindName);
-    } catch (e: unknown) {
-      await rollbackSplit();
-      const msg = e instanceof Error ? e.message : String(e);
-      return c.json({ error: `Failed to prepare variant ownership: ${msg}` }, 500);
-    }
-
-    // Install dependencies
-    try {
-      if (isIsolationEnabled()) {
-        const [cmd, args] = await wrapForIsolation("npm", ["install"], mindName);
-        await exec(cmd, args, {
-          cwd: variantDir,
-          env: { ...process.env, HOME: resolve(variantDir, "home") },
-        });
-      } else {
-        await exec("npm", ["install"], { cwd: variantDir });
-      }
-    } catch (e: unknown) {
-      await rollbackSplit();
-      const msg = e instanceof Error ? e.message : String(e);
-      return c.json({ error: `npm install failed: ${msg}` }, 500);
-    }
-
-    // Write SOUL.md if provided
-    if (body.soul) {
-      writeFileSync(resolve(variantDir, "home/SOUL.md"), body.soul);
-    }
-
-    const variantPort = body.port ?? (await nextPort());
-
-    // Register variant in DB
-    try {
-      await addVariant(variantName, mindName, variantPort, variantDir, variantName, purpose);
-    } catch (e: unknown) {
-      await rollbackSplit();
-      const msg = e instanceof Error ? e.message : String(e);
-      return c.json({ error: `Failed to register variant: ${msg}` }, 500);
-    }
-
-    // Queue the variant's birth context now, independent of --no-start: it's the
-    // variant's first message — who it is, where it came from, and why it was split
-    // off — and deliverPendingContext fires on whatever first start happens, so a
-    // variant started manually later still gets oriented. (pendingContext is an
-    // in-memory map, so a daemon restart before that start drops this transient
-    // orientation — acceptable; the variant just starts without the birth message.)
-    const manager = getMindManager();
-    manager.setPendingContext(variantName, { type: "split", parent: mindName, purpose });
-
-    if (!body.noStart) {
-      try {
-        await manager.startMind(variantName);
-      } catch (e: unknown) {
-        await rollbackSplit();
-        const msg = e instanceof Error ? e.message : String(e);
-        return c.json({ error: `Variant created but failed to start: ${msg}` }, 500);
-      }
-    }
+    const result = await createVariant({
+      parentName: mindName,
+      projectRoot,
+      variantName,
+      soul: body.soul,
+      port: body.port,
+      noStart: body.noStart,
+      purpose,
+    });
+    if (!result.ok) return c.json({ error: result.error }, result.status);
 
     // The split has now cleared every rollback point. Establish the parent↔variant
     // relationship as a conversation: open a DM the two can talk in during the
@@ -238,16 +130,7 @@ const app = new Hono<AuthEnv>()
       log.error(`failed to establish variant dialogue for ${variantName}`, log.errorData(e)),
     );
 
-    return c.json({
-      ok: true,
-      variant: {
-        name: variantName,
-        branch: variantName,
-        path: variantDir,
-        port: variantPort,
-        ...(purpose && { purpose }),
-      },
-    });
+    return c.json({ ok: true, variant: result.variant });
   })
   // Merge variant — admin only
   .post("/:name/variants/:variant/merge", requireSelf(), async (c) => {
@@ -339,176 +222,53 @@ const app = new Hono<AuthEnv>()
     // ownership, leaving the parent (and the nested variant tree) root-owned under
     // isolation. The catch funnels those through the same restore path.
     try {
-      // Auto-commit any uncommitted changes in the variant worktree
-      if (existsSync(variantEntry.dir)) {
-        const status = (await gitExec(["status", "--porcelain"], { cwd: variantEntry.dir })).trim();
-        if (status) {
-          try {
-            await gitExec(["add", "-A"], { cwd: variantEntry.dir });
-            await gitExec(["commit", "-m", "Auto-commit uncommitted changes before merge"], {
-              cwd: variantEntry.dir,
-            });
-          } catch (_e) {
-            return failAfterGitWrite(
-              "Failed to auto-commit variant changes. Commit or stash manually before merging.",
-            );
-          }
-        }
-      }
-
-      // Verify variant before merge
-      if (!body.skipVerify) {
-        const result = await spawnServer(variantEntry.dir, 0, {
-          detached: true,
-          mindName: variantName,
-          template: variantEntry.template,
-        });
-        if (!result) {
-          return failAfterGitWrite(
-            "Failed to start server for verification. Use skipVerify to skip.",
-          );
-        }
-
-        const verified = await verify(result.actualPort);
-
-        try {
-          // The verify server is detached (its own process-group leader), so kill
-          // the whole group — under sandbox/isolation the real server is a wrapped
-          // grandchild that a single-PID SIGTERM would leave running.
-          process.kill(-result.child.pid!, "SIGTERM");
-        } catch {}
-
-        if (!verified) {
-          return failAfterGitWrite("Verification failed. Fix issues or use skipVerify to proceed.");
-        }
-      }
-
-      // Auto-commit any uncommitted changes in the main worktree
-      const mainStatus = (await gitExec(["status", "--porcelain"], { cwd: projectRoot })).trim();
-      if (mainStatus) {
-        try {
-          await gitExec(["add", "-A"], { cwd: projectRoot });
-          await gitExec(["commit", "-m", "Auto-commit uncommitted changes before merge"], {
-            cwd: projectRoot,
-          });
-        } catch (_e) {
-          return failAfterGitWrite(
-            "Failed to auto-commit main changes. Commit or stash manually before merging.",
-          );
-        }
-      }
-
-      // Merge the variant into the parent, excluding the mind's living memory and
-      // journal — those ride to the parent as `memoryDelta` (#440) instead of
-      // being line-merged. A real code/config conflict (or a failed restore)
-      // aborts the merge and throws VariantMergeError; route it through
-      // failAfterGitWrite so ownership is restored and the conflicts are reported.
-      let memoryDelta = "";
-      try {
-        memoryDelta = await mergeVariantExcludingMemory(projectRoot, variantEntry.branch);
-      } catch (err) {
-        if (!(err instanceof VariantMergeError)) throw err;
-        // Leave the variant intact so the conflict can be resolved in the variant
-        // and the join retried. If the abort itself failed, the parent is left
-        // mid-merge with conflict markers on disk — say so, since the still-running
-        // mind could auto-commit them.
-        return failAfterGitWrite(
-          err.abortFailed
-            ? "Merge failed and the abort did not complete — the parent worktree may be left mid-merge with conflict markers; manual cleanup may be needed."
-            : "Merge failed. Resolve conflicts in the variant and retry the join.",
-          { conflicts: err.conflicts },
-        );
-      }
-
-      // The daemon can't know what's precious in a mind's home/ — a download, a cloned
-      // repo, a venv could all be exactly what the mind wants kept, so it never guesses.
-      // Checked here, right before the one genuinely destructive step (`cleanupVariant`'s
-      // `git worktree remove`), so it also catches anything the farewell turn above just
-      // wrote — an earlier check, before the farewell turn ran, could miss those. The
-      // merge above already landed (it only pulls in what the variant committed, so it's
-      // safe regardless), but cleanup — and with it, the point of no return — waits until
-      // this comes back clean. Retrying the same join later resumes cleanly: a no-op
-      // merge next time, then cleanup, once the files are resolved.
-      if (existsSync(variantEntry.dir) && !body.discardUnresolved) {
-        let unresolved: Awaited<ReturnType<typeof findUnresolvedHomeFiles>>;
-        try {
-          unresolved = await findUnresolvedHomeFiles(variantEntry.dir);
-        } catch (err) {
-          return failAfterGitWrite(
-            `Could not verify variant ${variantName} has no unresolved home/ files: ${err instanceof Error ? err.message : String(err)}. Variant left intact — retry the join.`,
-          );
-        }
-        if (unresolved.totalCount > 0) {
-          return failAfterGitWrite(
-            formatUnresolvedHomeFilesMessage(variantName, unresolved),
-            {
-              unresolvedFiles: unresolved.files,
-              unresolvedCount: unresolved.totalCount,
-              unresolvedBytes: unresolved.totalBytes,
-            },
-            409,
-          );
-        }
-      }
-
-      await cleanupVariant(variantName, mindName, projectRoot, variantEntry.dir, { stop: true });
-
-      // The merge and cleanup git ops ran as the daemon (root). Hand ownership of
-      // the parent worktree back to the mind user before the wrapped npm install
-      // (which runs as that user) and the restart — otherwise the tree is left
-      // root-owned under isolation. Mirrors the split/create path.
-      await chownMindDir(projectRoot, mindName);
-
-      // Update template hash after upgrade merge
-      if (variantName.endsWith("-upgrade") || variantName === "upgrade") {
-        try {
-          const { computeTemplateHash } = await import("../../lib/template/template-hash.js");
-          const { setMindTemplateHash } = await import("../../lib/mind/registry.js");
-          const tmpl = parentEntry.template ?? "claude";
-          await setMindTemplateHash(mindName, computeTemplateHash(tmpl));
-        } catch (err) {
-          log.warn(`failed to update template hash for ${mindName}`, log.errorData(err));
-        }
-      }
-
-      // Reinstall dependencies
-      let restartWarning: string | undefined;
-      try {
-        if (isIsolationEnabled()) {
-          const [cmd, args] = await wrapForIsolation("npm", ["install"], mindName);
-          await exec(cmd, args, {
-            cwd: projectRoot,
-            env: { ...process.env, HOME: resolve(projectRoot, "home") },
-          });
-        } else {
-          await exec("npm", ["install"], { cwd: projectRoot });
-        }
-      } catch (err) {
-        log.warn(`npm install failed after merge for ${mindName}`, log.errorData(err));
-        restartWarning = `npm install failed after merge — mind may have stale dependencies`;
-      }
-
-      // Restart mind via mind manager with merge context
-      const manager = getMindManager();
       // Fall back to the purpose captured at split so the parent's merge message can
       // recall why the variant existed even when no justification is passed at join.
       // Normalize like the split path so an explicit "" (or whitespace) still falls back.
       const justification = body.justification?.trim() || variantEntry.purpose;
-      const context = {
-        type: "merged",
-        name: variantName,
-        ...(body.summary && { summary: body.summary }),
-        ...(justification && { justification }),
-        ...(body.memory && { memory: body.memory }),
-        ...(memoryDelta && { memoryDelta }),
-        ...(farewell && { farewell }),
-      };
 
+      const merge = await mergeVariant({
+        parentName: mindName,
+        variantName,
+        projectRoot,
+        variantDir: variantEntry.dir,
+        variantBranch: variantEntry.branch,
+        verify: !body.skipVerify,
+        discardUnresolved: body.discardUnresolved === true,
+        variantTemplate: variantEntry.template ?? undefined,
+        parentTemplate: parentEntry.template ?? undefined,
+        contextExtras: { summary: body.summary, justification, memory: body.memory, farewell },
+      });
+
+      switch (merge.status) {
+        case "autocommit_failed":
+        case "verify_failed":
+        case "check_failed":
+          return failAfterGitWrite(merge.message);
+        case "conflict":
+          return failAfterGitWrite(merge.message, { conflicts: merge.conflicts });
+        case "unresolved":
+          return failAfterGitWrite(
+            merge.message,
+            {
+              unresolvedFiles: merge.unresolved.files,
+              unresolvedCount: merge.unresolved.totalCount,
+              unresolvedBytes: merge.unresolved.totalBytes,
+            },
+            409,
+          );
+      }
+
+      // Restart the parent with the merge context. A failed restart (or a stale-deps
+      // npm warning surfaced by mergeVariant) is a warning, not a failure — the merge
+      // and cleanup already landed.
+      let restartWarning = merge.warning;
+      const manager = getMindManager();
       try {
         if (manager.isRunning(mindName)) {
           await manager.stopMind(mindName);
         }
-        manager.setPendingContext(mindName, context);
+        manager.setPendingContext(mindName, merge.context);
         await manager.startMind(mindName);
       } catch (e) {
         restartWarning = `Merge succeeded but mind restart failed: ${e instanceof Error ? e.message : String(e)}`;
