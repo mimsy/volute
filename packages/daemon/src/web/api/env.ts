@@ -1,4 +1,6 @@
+import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
+import { z } from "zod";
 import {
   loadMergedEnv,
   mindEnvPath,
@@ -8,6 +10,8 @@ import {
 } from "../../lib/config/env.js";
 import { findMind } from "../../lib/mind/registry.js";
 import { type AuthEnv, requireAdmin, requireSelf } from "../middleware/auth.js";
+
+const envValueSchema = z.object({ value: z.string() });
 
 // Mind-scoped env routes (mounted at /api/minds)
 const app = new Hono<AuthEnv>()
@@ -27,22 +31,14 @@ const app = new Hono<AuthEnv>()
     if (value === undefined) return c.json({ error: "Key not found" }, 404);
     return c.json({ value });
   })
-  .put("/:name/env/:key", requireSelf(), async (c) => {
+  .put("/:name/env/:key", requireSelf(), zValidator("json", envValueSchema), async (c) => {
     const name = c.req.param("name");
     if (!(await findMind(name))) return c.json({ error: "Mind not found" }, 404);
     const key = c.req.param("key");
-    let body: { value?: string };
-    try {
-      body = await c.req.json();
-    } catch {
-      return c.json({ error: "Invalid JSON body" }, 400);
-    }
-    if (typeof body.value !== "string") {
-      return c.json({ error: "Missing required field: value" }, 400);
-    }
+    const { value } = c.req.valid("json");
     const path = mindEnvPath(name);
     const env = readEnv(path);
-    env[key] = body.value;
+    env[key] = value;
     writeEnv(path, env);
     return c.json({ ok: true });
   })
@@ -63,20 +59,12 @@ export const sharedEnvApp = new Hono<AuthEnv>()
   .get("/", requireAdmin, (c) => {
     return c.json(readEnv(sharedEnvPath()));
   })
-  .put("/:key", requireAdmin, async (c) => {
+  .put("/:key", requireAdmin, zValidator("json", envValueSchema), async (c) => {
     const key = c.req.param("key");
-    let body: { value?: string };
-    try {
-      body = await c.req.json();
-    } catch {
-      return c.json({ error: "Invalid JSON body" }, 400);
-    }
-    if (typeof body.value !== "string") {
-      return c.json({ error: "Missing required field: value" }, 400);
-    }
+    const { value } = c.req.valid("json");
     const path = sharedEnvPath();
     const env = readEnv(path);
-    env[key] = body.value;
+    env[key] = value;
     writeEnv(path, env);
     return c.json({ ok: true });
   })

@@ -198,8 +198,8 @@ describe("web env routes — mind-scoped", () => {
       body: JSON.stringify({}),
     });
     assert.equal(res.status, 400);
-    const body = (await res.json()) as { error: string };
-    assert.ok(body.error.includes("value"));
+    // zValidator returns a structured zod error naming the missing "value" field.
+    assert.match(JSON.stringify(await res.json()), /value/);
   });
 
   it("PUT /:name/env/:key — 404 for nonexistent mind", async () => {

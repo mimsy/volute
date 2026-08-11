@@ -1,4 +1,6 @@
+import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
+import { z } from "zod";
 import { getOrCreateMindUser } from "../../lib/auth.js";
 import { deliverEvent } from "../../lib/chat/system-events.js";
 import { getMindManager, tryGetMindManager } from "../../lib/daemon/mind-manager.js";
@@ -75,63 +77,69 @@ const app = new Hono<AuthEnv>()
     return c.json(results);
   })
   // Create variant — admin only
-  .post("/:name/variants", requireSelf(), async (c) => {
-    const mindName = c.req.param("name");
-    const entry = await findMind(mindName);
-    if (!entry) return c.json({ error: "Mind not found" }, 404);
-    if (entry.stage === "seed")
-      return c.json({ error: "Seed minds cannot create variants — sprout first" }, 403);
-    if (entry.parent)
-      return c.json(
-        { error: "Cannot split from a variant — split from the base mind instead" },
-        403,
+  .post(
+    "/:name/variants",
+    requireSelf(),
+    zValidator(
+      "json",
+      z.object({
+        name: z.string().min(1),
+        soul: z.string().optional(),
+        port: z.number().optional(),
+        noStart: z.boolean().optional(),
+        purpose: z.string().optional(),
+      }),
+    ),
+    async (c) => {
+      const mindName = c.req.param("name");
+      const entry = await findMind(mindName);
+      if (!entry) return c.json({ error: "Mind not found" }, 404);
+      if (entry.stage === "seed")
+        return c.json({ error: "Seed minds cannot create variants — sprout first" }, 403);
+      if (entry.parent)
+        return c.json(
+          { error: "Cannot split from a variant — split from the base mind instead" },
+          403,
+        );
+
+      const body = c.req.valid("json");
+      const variantName = body.name;
+      const purpose = body.purpose?.trim() || undefined;
+
+      const err = validateBranchName(variantName);
+      if (err) return c.json({ error: err }, 400);
+
+      // Check name isn't already taken
+      if (await findMind(variantName)) {
+        return c.json({ error: `Name already in use: ${variantName}` }, 409);
+      }
+
+      const projectRoot = entry.dir ?? mindDir(mindName);
+
+      const result = await createVariant({
+        parentName: mindName,
+        projectRoot,
+        variantName,
+        soul: body.soul,
+        port: body.port,
+        noStart: body.noStart,
+        purpose,
+      });
+      if (!result.ok) return c.json({ error: result.error }, result.status);
+
+      // The split has now cleared every rollback point. Establish the parent↔variant
+      // relationship as a conversation: open a DM the two can talk in during the
+      // variant's life, and tell the parent it has a variant to check in on. Placed
+      // after the last rollback so a failed split never strands a DM or a stale notice.
+      // Best-effort, but logged at error level — a silent failure means the dialogue
+      // this feature exists for never happens.
+      await establishVariantDialogue(mindName, variantName, purpose).catch((e: unknown) =>
+        log.error(`failed to establish variant dialogue for ${variantName}`, log.errorData(e)),
       );
 
-    let body: { name: string; soul?: string; port?: number; noStart?: boolean; purpose?: string };
-    try {
-      body = await c.req.json();
-    } catch {
-      return c.json({ error: "Invalid JSON" }, 400);
-    }
-
-    const variantName = body.name;
-    if (!variantName) return c.json({ error: "Variant name required" }, 400);
-
-    const purpose = body.purpose?.trim() || undefined;
-
-    const err = validateBranchName(variantName);
-    if (err) return c.json({ error: err }, 400);
-
-    // Check name isn't already taken
-    if (await findMind(variantName)) {
-      return c.json({ error: `Name already in use: ${variantName}` }, 409);
-    }
-
-    const projectRoot = entry.dir ?? mindDir(mindName);
-
-    const result = await createVariant({
-      parentName: mindName,
-      projectRoot,
-      variantName,
-      soul: body.soul,
-      port: body.port,
-      noStart: body.noStart,
-      purpose,
-    });
-    if (!result.ok) return c.json({ error: result.error }, result.status);
-
-    // The split has now cleared every rollback point. Establish the parent↔variant
-    // relationship as a conversation: open a DM the two can talk in during the
-    // variant's life, and tell the parent it has a variant to check in on. Placed
-    // after the last rollback so a failed split never strands a DM or a stale notice.
-    // Best-effort, but logged at error level — a silent failure means the dialogue
-    // this feature exists for never happens.
-    await establishVariantDialogue(mindName, variantName, purpose).catch((e: unknown) =>
-      log.error(`failed to establish variant dialogue for ${variantName}`, log.errorData(e)),
-    );
-
-    return c.json({ ok: true, variant: result.variant });
-  })
+      return c.json({ ok: true, variant: result.variant });
+    },
+  )
   // Merge variant — admin only
   .post("/:name/variants/:variant/merge", requireSelf(), async (c) => {
     const mindName = c.req.param("name");
