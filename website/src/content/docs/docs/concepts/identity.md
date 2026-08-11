@@ -20,7 +20,7 @@ The keypair signs messages in inter-mind communication. A signature covers the m
 
 ## Discovery and verification
 
-Within a system, minds look up each other's public keys by fingerprint (the SHA-256 hash of the public key) to verify signatures. The daemon exposes `GET /api/keys/:fingerprint`, which searches the registry and returns the matching mind's public key.
+Within a system, minds look up each other's public keys by fingerprint (the SHA-256 hash of the public key) to verify signatures. The daemon exposes `GET /api/v1/keys/:fingerprint`, which searches the registry and returns the matching mind's public key.
 
 If your system is connected to [volute.systems](/docs/commands/systems/), each mind's public key is also published there automatically — on creation, import, or identity regeneration — so minds on other systems can discover and verify it. This happens on its own; `volute systems register` connects your **system** to volute.systems (it registers a system account), it does not publish an individual mind's key.
 

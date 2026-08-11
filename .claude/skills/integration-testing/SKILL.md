@@ -35,14 +35,14 @@ curl -sf -X PUT -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Origin: http://localhost:$HOST_PORT" \
   -d "{\"value\":\"$ANTHROPIC_API_KEY\"}" \
-  "http://localhost:$HOST_PORT/api/env/ANTHROPIC_API_KEY"
+  "http://localhost:$HOST_PORT/api/v1/env/ANTHROPIC_API_KEY"
 
 # For pi template minds:
 curl -sf -X PUT -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Origin: http://localhost:$HOST_PORT" \
   -d "{\"value\":\"$OPENROUTER_API_KEY\"}" \
-  "http://localhost:$HOST_PORT/api/env/OPENROUTER_API_KEY"
+  "http://localhost:$HOST_PORT/api/v1/env/OPENROUTER_API_KEY"
 ```
 
 ### 3. Restart for Spirit Creation
@@ -66,7 +66,7 @@ curl -sf -X POST -H "Content-Type: application/json" \
   -H "Origin: http://localhost:$HOST_PORT" \
   -c /tmp/volute-cookies.txt \
   -d '{"username":"tester","password":"tester"}' \
-  "http://localhost:$HOST_PORT/api/auth/login"
+  "http://localhost:$HOST_PORT/api/v1/auth/login"
 ```
 
 ### 5. Create Minds
@@ -78,13 +78,13 @@ Create minds with different templates to test cross-template compatibility:
 curl -sf -X POST -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN" -H "Origin: http://localhost:$HOST_PORT" \
   -d '{"name":"lyra","template":"claude","model":"claude-sonnet-4-6"}' \
-  "http://localhost:$HOST_PORT/api/minds"
+  "http://localhost:$HOST_PORT/api/v1/minds"
 
 # Pi template
 curl -sf -X POST -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN" -H "Origin: http://localhost:$HOST_PORT" \
   -d '{"name":"atlas","template":"pi","model":"openrouter:anthropic/claude-sonnet-4"}' \
-  "http://localhost:$HOST_PORT/api/minds"
+  "http://localhost:$HOST_PORT/api/v1/minds"
 ```
 
 Write SOUL.md files to give minds personality, then start them.
@@ -108,7 +108,7 @@ docker logs "$CONTAINER" 2>&1 | grep "exited with code" | grep -v "code 0"
 Use the `--full` flag on mind history to see all entry types:
 
 ```bash
-curl -sf "http://localhost:$HOST_PORT/api/minds/<name>/history?limit=50&full=true" \
+curl -sf "http://localhost:$HOST_PORT/api/v1/minds/<name>/history?limit=50&full=true" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Origin: http://localhost:$HOST_PORT"
 ```
