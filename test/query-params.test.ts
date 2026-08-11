@@ -109,8 +109,9 @@ describe("GET /api/v1/conversations/:id/messages — cursor validation (#868)", 
   it("400s on an ISO timestamp cursor instead of coercing it to a message id", async () => {
     const res = await get("?before=2026-07-18T00:00:00Z&limit=2");
     assert.equal(res.status, 400);
-    const body = await res.json();
-    assert.match(body.error, /integers/);
+    // The shared cursor validator (zValidator) rejects it with a structured zod error
+    // rather than salvaging the leading "2026" as a message id (#868).
+    assert.match(JSON.stringify(await res.json()), /non-negative integer/);
   });
 
   it("400s on a non-integer limit", async () => {

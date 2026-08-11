@@ -90,7 +90,7 @@ import { collectTurnContext } from "../../lib/turn-context.js";
 import { checkHealth } from "../../lib/util/health.js";
 import log from "../../lib/util/logger.js";
 import { safeResolveWithinBase } from "../../lib/util/paths.js";
-import { parseIntParam } from "../../lib/util/query-params.js";
+import { cursorParamsSchema, cursorResponse } from "../../lib/util/query-params.js";
 import { parseDbTimestamp } from "../../lib/util/time.js";
 import { fireWebhook } from "../../lib/webhook.js";
 import {
@@ -1252,47 +1252,42 @@ const app = new Hono<AuthEnv>()
     return c.json(filtered);
   })
   // Read messages from a mind's conversation (privacy-enforced)
-  .get("/:name/conversations/:convId/messages", async (c) => {
-    const name = c.req.param("name");
-    const convId = c.req.param("convId");
-    const entry = await findMind(name);
-    if (!entry) return c.json({ error: "Mind not found" }, 404);
-    // Verify conversation belongs to this mind
-    const belongs = await isConversationForMind(name, convId);
-    if (!belongs) {
-      return c.json({ error: "Conversation not found" }, 404);
-    }
-    // Enforce privacy: if conversation is private, require participant or admin
-    const conv = await getConversation(convId);
-    if (!conv) {
-      return c.json({ error: "Conversation not found" }, 404);
-    }
-    if (conv.private === 1) {
-      const user = c.get("user");
-      if (user.role !== "admin") {
-        const participant = await isParticipant(convId, user.id);
-        if (!participant) {
-          return c.json({ error: "This is a private conversation" }, 403);
+  .get(
+    "/:name/conversations/:convId/messages",
+    zValidator("query", cursorParamsSchema),
+    async (c) => {
+      const name = c.req.param("name");
+      const convId = c.req.param("convId");
+      const entry = await findMind(name);
+      if (!entry) return c.json({ error: "Mind not found" }, 404);
+      // Verify conversation belongs to this mind
+      const belongs = await isConversationForMind(name, convId);
+      if (!belongs) {
+        return c.json({ error: "Conversation not found" }, 404);
+      }
+      // Enforce privacy: if conversation is private, require participant or admin
+      const conv = await getConversation(convId);
+      if (!conv) {
+        return c.json({ error: "Conversation not found" }, 404);
+      }
+      if (conv.private === 1) {
+        const user = c.get("user");
+        if (user.role !== "admin") {
+          const participant = await isParticipant(convId, user.id);
+          if (!participant) {
+            return c.json({ error: "This is a private conversation" }, 403);
+          }
         }
       }
-    }
-    const beforeStr = c.req.query("before");
-    const limitStr = c.req.query("limit");
-    if (!beforeStr && !limitStr) {
-      const msgs = await getMessages(convId);
-      return c.json({ items: await withSenderDisplayNames(msgs), hasMore: false });
-    }
-    const before = parseIntParam(beforeStr);
-    const limit = parseIntParam(limitStr);
-    if (before === null || limit === null) {
-      return c.json({ error: "Invalid pagination parameters" }, 400);
-    }
-    const result = await getMessagesPaginated(convId, { before, limit });
-    return c.json({
-      items: await withSenderDisplayNames(result.messages),
-      hasMore: result.hasMore,
-    });
-  })
+      const { before, limit } = c.req.valid("query");
+      if (before === undefined && limit === undefined) {
+        const msgs = await getMessages(convId);
+        return c.json(cursorResponse(await withSenderDisplayNames(msgs), false));
+      }
+      const result = await getMessagesPaginated(convId, { before, limit });
+      return c.json(cursorResponse(await withSenderDisplayNames(result.messages), result.hasMore));
+    },
+  )
   // Budget status
   .get("/:name/budget", requireSelf(), async (c) => {
     const name = c.req.param("name");

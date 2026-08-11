@@ -18,7 +18,7 @@ import {
   setConversationPrivate,
 } from "../../../lib/events/conversations.js";
 import { findMind } from "../../../lib/mind/registry.js";
-import { parseIntParam } from "../../../lib/util/query-params.js";
+import { cursorParamsSchema, cursorResponse } from "../../../lib/util/query-params.js";
 import { type AuthEnv, authMiddleware } from "../../middleware/auth.js";
 
 const createSchema = z.object({
@@ -49,7 +49,7 @@ const app = new Hono<AuthEnv>()
     const convs = await listConversationsWithParticipants(user.id);
     return c.json(convs);
   })
-  .get("/:id/messages", async (c) => {
+  .get("/:id/messages", zValidator("query", cursorParamsSchema), async (c) => {
     const id = c.req.param("id");
     const user = c.get("user");
     // Non-private conversations are readable by any authenticated user — deliberate;
@@ -60,14 +60,9 @@ const app = new Hono<AuthEnv>()
       return c.json({ error: "Conversation not found" }, 404);
     }
 
-    const before = parseIntParam(c.req.query("before"));
-    const limit = parseIntParam(c.req.query("limit"));
-    if (before === null || limit === null) {
-      return c.json({ error: "Invalid cursor params: before and limit must be integers" }, 400);
-    }
-
+    const { before, limit } = c.req.valid("query");
     const result = await getMessagesPaginated(id, { before, limit });
-    return c.json({ items: result.messages, hasMore: result.hasMore });
+    return c.json(cursorResponse(result.messages, result.hasMore));
   })
   .get("/:id/participants", async (c) => {
     const id = c.req.param("id");
