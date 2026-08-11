@@ -5,6 +5,7 @@ import { describe, it } from "node:test";
 import {
   composeTemplate,
   findTemplatesRoot,
+  mergeManifests,
   renderComposedPackageJson,
 } from "../packages/daemon/src/lib/template/template.js";
 
@@ -216,15 +217,66 @@ describe("template composition", () => {
       !existsSync(resolve(templatesRoot, "_base", ".gitignore")),
       "templates/_base must not ship a real .gitignore (npm pack drops it)",
     );
+    // The rename now lives once in _base and is inherited via the merge, so assert
+    // on the *composed* manifest rather than each template's file (which is empty).
     for (const template of ["claude", "pi", "codex"]) {
-      const manifest = JSON.parse(
-        readFileSync(resolve(templatesRoot, template, "volute-template.json"), "utf-8"),
-      );
-      assert.equal(
-        manifest.rename.gitignore,
-        ".gitignore",
-        `${template} manifest must rename gitignore → .gitignore`,
-      );
+      const { composedDir, manifest } = composeTemplate(templatesRoot, template);
+      try {
+        assert.equal(
+          manifest.rename.gitignore,
+          ".gitignore",
+          `${template} composed manifest must rename gitignore → .gitignore`,
+        );
+      } finally {
+        rmSync(composedDir, { recursive: true, force: true });
+      }
     }
+  });
+
+  // #789: _base ships the one shared manifest and templates *merge* into it rather
+  // than replace it. mergeManifests is that merge in isolation.
+  describe("manifest merge (#789)", () => {
+    it("unions substitute entries (dedup) and lets template entries survive", () => {
+      const merged = mergeManifests(
+        { rename: {}, substitute: ["package.json", ".init/SOUL.md"] },
+        { rename: {}, substitute: [".init/SOUL.md", "template-only.json"] },
+      );
+      // base + template unioned; the shared ".init/SOUL.md" appears once; the
+      // template-only entry survives. A replace would drop "package.json".
+      assert.deepEqual(merged.substitute, ["package.json", ".init/SOUL.md", "template-only.json"]);
+    });
+
+    it("lets template rename override base on key collision", () => {
+      const merged = mergeManifests(
+        { rename: { gitignore: ".gitignore", foo: "base" }, substitute: [] },
+        { rename: { foo: "template" }, substitute: [] },
+      );
+      assert.equal(merged.rename.foo, "template", "template wins the collision");
+      assert.equal(merged.rename.gitignore, ".gitignore", "base-only entry is kept");
+    });
+
+    it("composeTemplate merges _base's manifest in even though templates ship {}", () => {
+      // The revert detector: today every template's volute-template.json is `{}`, so
+      // the whole substitute/rename list lives only in _base. If composeTemplate went
+      // back to *replacing* _base's manifest with the template's, this manifest would
+      // be empty and every {{name}} substitution (routes.json, package.json) would be
+      // skipped — the exact class of failure #785 fixed. Assert the merge stays.
+      for (const template of ["claude", "pi", "codex"]) {
+        const { composedDir, manifest } = composeTemplate(templatesRoot, template);
+        try {
+          assert.ok(
+            manifest.substitute.includes("package.json"),
+            `${template}: base substitute entry must survive the merge`,
+          );
+          assert.ok(
+            manifest.substitute.includes(".init/.config/routes.json"),
+            `${template}: base substitute entry must survive the merge`,
+          );
+          assert.equal(manifest.rename.gitignore, ".gitignore");
+        } finally {
+          rmSync(composedDir, { recursive: true, force: true });
+        }
+      }
+    });
   });
 });

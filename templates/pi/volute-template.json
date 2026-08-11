@@ -1,6 +1,1 @@
-{
-  "rename": {
-    "gitignore": ".gitignore"
-  },
-  "substitute": ["package.json", ".init/SOUL.md", ".init/.config/routes.json"]
-}
+{}
