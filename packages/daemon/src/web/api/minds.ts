@@ -456,7 +456,8 @@ const app = new Hono<AuthEnv>()
       await startMindFullService(name);
       return c.json({ ok: true, port: targetPort });
     } catch (err) {
-      return c.json({ error: err instanceof Error ? err.message : "Failed to start mind" }, 500);
+      log.error(`failed to start mind ${name}`, log.errorData(err));
+      return c.json({ error: "Failed to start mind" }, 500);
     }
   })
   // Restart mind (supports variants) — admin or self
@@ -639,7 +640,7 @@ const app = new Hono<AuthEnv>()
       return c.json({ ok: true, port: targetPort });
     } catch (err) {
       log.error(`failed to restart mind ${name}`, log.errorData(err));
-      return c.json({ error: err instanceof Error ? err.message : "Failed to restart mind" }, 500);
+      return c.json({ error: "Failed to restart mind" }, 500);
     }
   })
   // Stop mind (supports variants) — admin only
@@ -659,7 +660,7 @@ const app = new Hono<AuthEnv>()
       return c.json({ ok: true });
     } catch (err) {
       log.error(`failed to stop mind ${name}`, log.errorData(err));
-      return c.json({ error: err instanceof Error ? err.message : "Failed to stop mind" }, 500);
+      return c.json({ error: "Failed to stop mind" }, 500);
     }
   })
   // Get sleep state
@@ -1164,10 +1165,8 @@ const app = new Hono<AuthEnv>()
         await abortUpgrade(mindName);
         return c.json({ ok: true });
       } catch (err) {
-        return c.json(
-          { error: err instanceof Error ? err.message : "Failed to abort upgrade" },
-          500,
-        );
+        log.error(`failed to abort upgrade for ${mindName}`, log.errorData(err));
+        return c.json({ error: "Failed to abort upgrade" }, 500);
       }
     }
 
@@ -1206,10 +1205,8 @@ const app = new Hono<AuthEnv>()
         const diff = await upgradeDiff(mindName, template);
         return c.json({ ok: true, diff: diff || "(no changes)" });
       } catch (err) {
-        return c.json(
-          { error: err instanceof Error ? err.message : "Failed to generate diff" },
-          500,
-        );
+        log.error(`failed to generate upgrade diff for ${mindName}`, log.errorData(err));
+        return c.json({ error: "Failed to generate diff" }, 500);
       }
     }
 
@@ -1232,7 +1229,8 @@ const app = new Hono<AuthEnv>()
       if (err instanceof UpgradeInProgressError) {
         return c.json({ error: err.message }, 409);
       }
-      return c.json({ error: err instanceof Error ? err.message : "Failed to merge upgrade" }, 500);
+      log.error(`failed to merge upgrade for ${mindName}`, log.errorData(err));
+      return c.json({ error: "Failed to merge upgrade" }, 500);
     }
   })
   // All conversations for a mind (across all channels)
