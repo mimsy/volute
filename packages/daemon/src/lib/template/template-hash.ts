@@ -13,7 +13,7 @@ export function computeTemplateHash(templateName: string): string {
   const cached = hashCache.get(templateName);
   if (cached) return cached;
 
-  // Pre-validate to avoid process.exit() paths in composeTemplate/findTemplatesRoot
+  // Pre-validate for clearer errors than composeTemplate/findTemplatesRoot's generic throws
   const templatesRoot = findTemplatesRoot();
   const baseDir = resolve(templatesRoot, "_base");
   const templateDir = resolve(templatesRoot, templateName);

@@ -71,19 +71,20 @@ export function locateTemplatesRoot(): string | null {
 export function findTemplatesRoot(): string {
   const root = locateTemplatesRoot();
   if (root) return root;
-  console.error(
-    "Templates directory not found. Searched up from:",
-    dirname(new URL(import.meta.url).pathname),
+  // Throw rather than exit: every caller runs inside the long-lived daemon (create,
+  // import, upgrade, staleness, spirit sync), where a process.exit(1) would take down
+  // every mind, bridge, and the web server that no try/catch could stop. Route handlers
+  // catch this and return 500.
+  throw new Error(
+    `Templates directory not found. Searched up from: ${dirname(new URL(import.meta.url).pathname)}`,
   );
-  process.exit(1);
 }
 
 export function findTemplatesDir(template: string): string {
   const root = findTemplatesRoot();
   const dir = resolve(root, template);
   if (!existsSync(dir)) {
-    console.error(`Template not found: ${template}`);
-    process.exit(1);
+    throw new Error(`Template not found: ${template}`);
   }
   return dir;
 }
@@ -100,12 +101,10 @@ export function composeTemplate(
   const templateDir = resolve(templatesRoot, templateName);
 
   if (!existsSync(baseDir)) {
-    console.error("Base template not found:", baseDir);
-    process.exit(1);
+    throw new Error(`Base template not found: ${baseDir}`);
   }
   if (!existsSync(templateDir)) {
-    console.error(`Template not found: ${templateName}`);
-    process.exit(1);
+    throw new Error(`Template not found: ${templateName}`);
   }
 
   // Create a unique temp staging directory. A timestamp suffix is not enough: two
@@ -132,8 +131,7 @@ export function composeTemplate(
   const baseManifestPath = resolve(baseDir, "volute-template.json");
   if (!existsSync(baseManifestPath)) {
     rmSync(composedDir, { recursive: true, force: true });
-    console.error("Base template manifest not found: _base/volute-template.json");
-    process.exit(1);
+    throw new Error("Base template manifest not found: _base/volute-template.json");
   }
   const baseManifest = JSON.parse(
     readFileSync(baseManifestPath, "utf-8"),
@@ -292,10 +290,10 @@ export function isInitInfrastructure(relPath: string): boolean {
  * upgrade's git merge.
  *
  * Throws rather than exiting when the template can't be composed. Both callers
- * run inside the daemon, and `composeTemplate`/`findTemplatesRoot` `process.exit(1)`
- * on a missing templates root, template dir, or manifest — uncatchable, and fatal
- * to every mind on the host. The pre-checks below cover exactly those exit paths
- * so a broken install degrades to one warning.
+ * run inside the daemon; the pre-checks below turn a missing templates root,
+ * template dir, or manifest into a specific error message (rather than
+ * composeTemplate/findTemplatesRoot's generic throw) so a broken install
+ * degrades to one clear warning.
  */
 export function backfillInitInfrastructure(
   homeDir: string,
@@ -308,8 +306,8 @@ export function backfillInitInfrastructure(
     throw new Error(`template "${template}" not found at ${root}`);
   }
   // _base ships the shared manifest that every template merges into; its absence is
-  // the manifest path composeTemplate process.exit(1)s on (a template's own manifest
-  // is now optional). Pre-check it so a broken install degrades to one warning.
+  // the manifest path composeTemplate throws on (a template's own manifest is now
+  // optional). Pre-check it so a broken install degrades to one clear warning.
   if (!existsSync(resolve(root, "_base", "volute-template.json"))) {
     throw new Error(`base template manifest missing at ${root}/_base`);
   }

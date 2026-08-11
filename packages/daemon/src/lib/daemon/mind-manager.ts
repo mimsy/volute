@@ -24,6 +24,11 @@ import log from "../util/logger.js";
 import { RotatingLog } from "../util/rotating-log.js";
 import { injectPiProviderCredentials, writeClaudeCredentials } from "./credential-sync.js";
 import { generateMindToken, revokeMindToken } from "./mind-tokens.js";
+import {
+  clearPendingContext,
+  setPendingContext as persistPendingContext,
+  readPendingContext,
+} from "./pending-context.js";
 import { RestartTracker } from "./restart-tracker.js";
 import { clearMind as clearTurnState, summarizeOrphanedTurns } from "./turn-tracker.js";
 
@@ -176,7 +181,6 @@ export class MindManager {
   private stopping = new Set<string>();
   private shuttingDown = false;
   private restartTracker = new RestartTracker();
-  private pendingContext = new Map<string, Record<string, unknown>>();
   // Per-name lifecycle mutex: start/stop/restart for a given mind serialize so
   // concurrent callers can't double-spawn or have a loser's cleanup delete the
   // winner's tracked child.
@@ -614,20 +618,22 @@ export class MindManager {
   }
 
   setPendingContext(name: string, context: Record<string, unknown>): void {
-    this.pendingContext.set(name, context);
+    persistPendingContext(name, context);
   }
 
   /** Deliver pending context (merge info, sprout, restart) directly to the mind via HTTP.
    *  Intentionally bypasses DeliveryManager — these are system messages that should not be
-   *  routed, gated, or batched. */
+   *  routed, gated, or batched. Backed by a durable per-mind file (#330), so context set
+   *  before a daemon crash is still delivered on the next start rather than lost. */
   private async deliverPendingContext(name: string): Promise<void> {
-    const context = this.pendingContext.get(name);
+    const context = readPendingContext(name);
     if (!context) return;
 
     const tracked = this.minds.get(name);
+    // Leave the queued context on disk for a later start if the mind isn't tracked yet.
     if (!tracked) return;
 
-    this.pendingContext.delete(name);
+    clearPendingContext(name);
 
     const content = await buildPendingContextMessage(name, context);
     const subtype = lifecycleSubtype(context.type);

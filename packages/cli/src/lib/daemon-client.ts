@@ -9,6 +9,7 @@ import { detectSystemInstallHint } from "./system-install.js";
 // `headersTimeout` and abort the CLI's fetch with UND_ERR_HEADERS_TIMEOUT. The
 // daemon is a trusted process on localhost, so disable the headers/body timeouts
 // for CLI→daemon calls (a hung request can still be interrupted with Ctrl-C).
+// TODO(#330 follow-up): restore sane timeouts once lifecycle ops are async jobs.
 export const daemonDispatcher = new Agent({ headersTimeout: 0, bodyTimeout: 0 });
 
 function voluteUserHome(): string {
