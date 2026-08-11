@@ -354,13 +354,27 @@ export function eventMatchKey(type: string, meta: Record<string, unknown>): stri
 }
 
 /**
+ * Failure notices a routing rule must never be able to redirect. Pinned to mind-level
+ * attention so a mind can't accidentally bury its own crash/turn_error in a thread that
+ * never runs a turn. This is a deliberate, reversible default (#736): remove a subtype
+ * here to make that class of notice routable like everything else.
+ */
+const NON_ROUTABLE_NOTICE_SUBTYPES = new Set(["crash", "turn_error"]);
+
+function isNonRoutableNotice(type: string, meta: Record<string, unknown>): boolean {
+  return type === "notice" && NON_ROUTABLE_NOTICE_SUBTYPES.has(String(meta.subtype));
+}
+
+/**
  * Resolve the thread a system event lands on. This is the single daemon-side resolution
  * point that owns ALL thread semantics for events (#736), the same place the delivery
  * manager owns routing for channel content:
  *
- * - The mind's routes.json event rules (`resolveEventRoute`) take precedence; a matched
- *   rule beats the caller's default. The caller's `input.thread` (default "main") is only
- *   the fallback when no rule matches.
+ * - Non-routable failure notices (crash/turn_error) pin to the mind-level drain and cannot
+ *   be routed away — a mind must not be able to hide its own failures.
+ * - Otherwise the mind's routes.json event rules (`resolveEventRoute`) take precedence; a
+ *   matched rule beats the caller's default. The caller's `input.thread` (default "main")
+ *   is only the fallback when no rule matches.
  * - The `$new` isolation convention is expanded here once, for every caller — a fresh
  *   session for `immediate` delivery (which POSTs an envelope and runs a turn in it), or
  *   the mind-level sentinel for `next-turn` (a unique session that never runs a turn would
@@ -372,6 +386,7 @@ async function resolveEventThread(
   delivery: EventDelivery,
 ): Promise<string> {
   const meta = input.meta ?? {};
+  if (isNonRoutableNotice(input.type, meta)) return MIND_LEVEL_THREAD;
   let chosen = input.thread ?? "main";
   try {
     const baseName = await getBaseName(mind);

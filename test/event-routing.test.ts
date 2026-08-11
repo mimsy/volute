@@ -10,6 +10,7 @@ import {
   drainEvents,
   eventMatchKey,
   MIND_LEVEL_THREAD,
+  recordNotice,
 } from "../packages/daemon/src/lib/chat/system-events.js";
 import { getDb } from "../packages/daemon/src/lib/db.js";
 import { clearConfigCache } from "../packages/daemon/src/lib/delivery/delivery-router.js";
@@ -180,6 +181,49 @@ describe("event routing (daemon-side, via routes.json)", () => {
       // Drains into an arbitrary, unrelated thread — proof it isn't stranded.
       const drained = await drainEvents(m.name, "some-unrelated-thread");
       assert.ok(drained.some((e) => e.id === id));
+    } finally {
+      m.close();
+      await cleanup(m.name);
+    }
+  });
+
+  it("non-routable: a crash/turn_error notice ignores a rule that would route it away", async () => {
+    // A mind routes ALL notices to a named thread — but crash/turn_error must land at
+    // mind-level attention regardless, so a routing mistake can't bury a failure notice.
+    const m = await routableMind({ rules: [{ event: "notice:*", thread: "hideaway" }] });
+    try {
+      for (const kind of ["crash", "turn_error"] as const) {
+        await recordNotice({
+          mind: m.name,
+          thread: "somewhere", // a caller-chosen thread the pin overrides
+          kind,
+          reason: `${kind}_test`,
+          detail: "boom",
+        });
+      }
+      const db = await getDb();
+      const rows = await db.select().from(systemEvents).where(eq(systemEvents.mind, m.name)).all();
+      assert.equal(rows.length, 2);
+      assert.equal(
+        rows.every((r) => r.thread === MIND_LEVEL_THREAD),
+        true,
+        "crash/turn_error notices pin to mind-level, not the routed thread",
+      );
+      // A routable notice (delivery_failed) still honours the same rule.
+      await recordNotice({
+        mind: m.name,
+        thread: MIND_LEVEL_THREAD,
+        kind: "delivery_failed",
+        reason: "df",
+        detail: "x",
+      });
+      const df = await db
+        .select()
+        .from(systemEvents)
+        .where(eq(systemEvents.mind, m.name))
+        .orderBy(systemEvents.id)
+        .all();
+      assert.equal(df.at(-1)?.thread, "hideaway");
     } finally {
       m.close();
       await cleanup(m.name);
