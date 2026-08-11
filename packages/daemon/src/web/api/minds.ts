@@ -14,7 +14,6 @@ import {
   latestFailureEvent,
   listEvents,
   MIND_LEVEL_THREAD,
-  type NoticeKind,
   parseMeta,
   recordNotice,
 } from "../../lib/chat/system-events.js";
@@ -302,28 +301,32 @@ const app = new Hono<AuthEnv>()
     return c.json(result.body);
   })
   // Import mind from OpenClaw workspace or .volute archive — admin only
-  .post("/import", requireAdmin, async (c) => {
-    let body: {
-      workspacePath?: string;
-      name?: string;
-      template?: string;
-      sessionPath?: string;
-      archivePath?: string;
-      manifest?: ExportManifest;
-    };
-    try {
-      body = await c.req.json();
-    } catch {
-      return c.json({ error: "Invalid JSON" }, 400);
-    }
+  .post(
+    "/import",
+    requireAdmin,
+    zValidator(
+      "json",
+      z.object({
+        workspacePath: z.string().optional(),
+        name: z.string().optional(),
+        template: z.string().optional(),
+        sessionPath: z.string().optional(),
+        archivePath: z.string().optional(),
+        // The archive manifest is validated downstream by importMindFromArchive.
+        manifest: z.custom<ExportManifest>().optional(),
+      }),
+    ),
+    async (c) => {
+      const body = c.req.valid("json");
 
-    const result =
-      body.archivePath && body.manifest
-        ? await importMindFromArchive(body.archivePath, body.name, body.manifest)
-        : await importOpenClawWorkspace(body);
-    if (!result.ok) return c.json({ error: result.error }, result.status);
-    return c.json(result.body);
-  })
+      const result =
+        body.archivePath && body.manifest
+          ? await importMindFromArchive(body.archivePath, body.name, body.manifest)
+          : await importOpenClawWorkspace(body);
+      if (!result.ok) return c.json({ error: result.error }, result.status);
+      return c.json(result.body);
+    },
+  )
   // List all minds
   .get("/", async (c) => {
     const entries = await readRegistry();
@@ -739,49 +742,57 @@ const app = new Hono<AuthEnv>()
     return c.json({ ok: true, flushed });
   })
   // Update mind profile — admin or self
-  .patch("/:name/profile", requireSelf(), async (c) => {
-    const name = c.req.param("name");
-    const entry = await findMind(name);
-    if (!entry) return c.json({ error: "Mind not found" }, 404);
+  .patch(
+    "/:name/profile",
+    requireSelf(),
+    zValidator(
+      "json",
+      z.object({
+        displayName: z.string().optional(),
+        description: z.string().optional(),
+        avatar: z.string().optional(),
+      }),
+    ),
+    async (c) => {
+      const name = c.req.param("name");
+      const entry = await findMind(name);
+      if (!entry) return c.json({ error: "Mind not found" }, 404);
 
-    const body = (await c.req.json()) as {
-      displayName?: string;
-      description?: string;
-      avatar?: string;
-    };
+      const body = c.req.valid("json");
 
-    const dir = entry.dir ?? mindDir(name);
-    const config = readVoluteConfig(dir) ?? {};
-    const profile = config.profile ?? {};
+      const dir = entry.dir ?? mindDir(name);
+      const config = readVoluteConfig(dir) ?? {};
+      const profile = config.profile ?? {};
 
-    if (body.displayName !== undefined) profile.displayName = body.displayName;
-    if (body.description !== undefined) profile.description = body.description;
-    // Store a home-relative path — never persist a value that escapes home/,
-    // since it's later used in filesystem operations (avatar serving/deletion).
-    if (body.avatar !== undefined) {
-      const homeDir = resolve(dir, "home");
-      const avatarPath = safeResolveWithinBase(homeDir, body.avatar);
-      if (!avatarPath) {
-        return c.json({ error: "Avatar path must be inside the mind's home directory" }, 400);
+      if (body.displayName !== undefined) profile.displayName = body.displayName;
+      if (body.description !== undefined) profile.description = body.description;
+      // Store a home-relative path — never persist a value that escapes home/,
+      // since it's later used in filesystem operations (avatar serving/deletion).
+      if (body.avatar !== undefined) {
+        const homeDir = resolve(dir, "home");
+        const avatarPath = safeResolveWithinBase(homeDir, body.avatar);
+        if (!avatarPath) {
+          return c.json({ error: "Avatar path must be inside the mind's home directory" }, 400);
+        }
+        if (!existsSync(avatarPath)) {
+          return c.json({ error: `Avatar file not found: ${relative(homeDir, avatarPath)}` }, 400);
+        }
+        profile.avatar = relative(homeDir, avatarPath);
       }
-      if (!existsSync(avatarPath)) {
-        return c.json({ error: `Avatar file not found: ${relative(homeDir, avatarPath)}` }, 400);
-      }
-      profile.avatar = relative(homeDir, avatarPath);
-    }
 
-    config.profile = profile;
-    writeVoluteConfig(dir, config);
+      config.profile = profile;
+      writeVoluteConfig(dir, config);
 
-    // Sync to users table
-    const { syncMindProfile } = await import("../../lib/auth.js");
-    await syncMindProfile(name, profile);
+      // Sync to users table
+      const { syncMindProfile } = await import("../../lib/auth.js");
+      await syncMindProfile(name, profile);
 
-    // Broadcast profile update
-    broadcast({ type: "profile_updated", mind: name, summary: `${name} profile updated` });
+      // Broadcast profile update
+      broadcast({ type: "profile_updated", mind: name, summary: `${name} profile updated` });
 
-    return c.json({ ok: true });
-  })
+      return c.json({ ok: true });
+    },
+  )
   // Start a background image-generation job. Returns a job id immediately; the
   // daemon generates, writes home/images/<filename>.png, and wakes the mind on
   // completion. requireSelf: a mind may only run jobs for itself.
@@ -1486,49 +1497,58 @@ const app = new Hono<AuthEnv>()
   // Decline an unrouted (gated) channel: stops invites and archives the held backlog.
   // The channel is passed in the body (not the path) since channel slugs can contain
   // slashes (e.g. "discord:server/general") that a path param can't carry.
-  .post("/:name/gates/decline", requireSelf(), async (c) => {
-    const name = c.req.param("name");
-    const body = (await c.req.json().catch(() => ({}))) as { channel?: string };
-    const channel = body.channel?.trim();
-    if (!channel) return c.json({ error: "channel required" }, 400);
-    try {
-      const archived = await getDeliveryManager().declineChannel(name, channel);
-      return c.json({ ok: true, channel, archived });
-    } catch (err) {
-      if (err instanceof Error && err.message.includes("not initialized")) {
-        return c.json({ error: "Delivery manager not available" }, 503);
+  .post(
+    "/:name/gates/decline",
+    requireSelf(),
+    zValidator("json", z.object({ channel: z.string() })),
+    async (c) => {
+      const name = c.req.param("name");
+      const channel = c.req.valid("json").channel.trim();
+      if (!channel) return c.json({ error: "channel required" }, 400);
+      try {
+        const archived = await getDeliveryManager().declineChannel(name, channel);
+        return c.json({ ok: true, channel, archived });
+      } catch (err) {
+        if (err instanceof Error && err.message.includes("not initialized")) {
+          return c.json({ error: "Delivery manager not available" }, 503);
+        }
+        // A name that matches no real channel is caller error, not a server fault.
+        if (err instanceof UnknownChannelError) return c.json({ error: err.message }, 400);
+        log.error(`failed to decline channel ${channel} for ${name}`, log.errorData(err));
+        return c.json({ error: "Failed to decline channel" }, 500);
       }
-      // A name that matches no real channel is caller error, not a server fault.
-      if (err instanceof UnknownChannelError) return c.json({ error: err.message }, 400);
-      log.error(`failed to decline channel ${channel} for ${name}`, log.errorData(err));
-      return c.json({ error: "Failed to decline channel" }, 500);
-    }
-  })
+    },
+  )
   // Accept an unrouted (gated) channel: adds a routing rule and releases the held backlog
   // immediately. Channel is in the body for the same reason as decline (slugs contain slashes).
-  .post("/:name/gates/accept", requireSelf(), async (c) => {
-    const name = c.req.param("name");
-    const body = (await c.req.json().catch(() => ({}))) as { channel?: string; thread?: string };
-    const channel = body.channel?.trim();
-    if (!channel) return c.json({ error: "channel required" }, 400);
-    // Accept writes to the mind's home directory — refuse rather than fabricate a path.
-    if (!(await findMind(name))) return c.json({ error: "Mind not found" }, 404);
-    try {
-      const result = await getDeliveryManager().acceptChannel(name, channel, body.thread?.trim());
-      return c.json({ ok: true, channel, ...result });
-    } catch (err) {
-      if (err instanceof Error && err.message.includes("not initialized")) {
-        return c.json({ error: "Delivery manager not available" }, 503);
+  .post(
+    "/:name/gates/accept",
+    requireSelf(),
+    zValidator("json", z.object({ channel: z.string(), thread: z.string().optional() })),
+    async (c) => {
+      const name = c.req.param("name");
+      const body = c.req.valid("json");
+      const channel = body.channel.trim();
+      if (!channel) return c.json({ error: "channel required" }, 400);
+      // Accept writes to the mind's home directory — refuse rather than fabricate a path.
+      if (!(await findMind(name))) return c.json({ error: "Mind not found" }, 404);
+      try {
+        const result = await getDeliveryManager().acceptChannel(name, channel, body.thread?.trim());
+        return c.json({ ok: true, channel, ...result });
+      } catch (err) {
+        if (err instanceof Error && err.message.includes("not initialized")) {
+          return c.json({ error: "Delivery manager not available" }, 503);
+        }
+        if (err instanceof Error && err.message.includes("malformed")) {
+          return c.json({ error: err.message }, 409);
+        }
+        // A name that matches no real channel is caller error, not a server fault.
+        if (err instanceof UnknownChannelError) return c.json({ error: err.message }, 400);
+        log.error(`failed to accept channel ${channel} for ${name}`, log.errorData(err));
+        return c.json({ error: "Failed to accept channel" }, 500);
       }
-      if (err instanceof Error && err.message.includes("malformed")) {
-        return c.json({ error: err.message }, 409);
-      }
-      // A name that matches no real channel is caller error, not a server fault.
-      if (err instanceof UnknownChannelError) return c.json({ error: err.message }, 400);
-      log.error(`failed to accept channel ${channel} for ${name}`, log.errorData(err));
-      return c.json({ error: "Failed to accept channel" }, 500);
-    }
-  })
+    },
+  )
   // Read the messages held on a gated channel, without changing anything. Gated rows have no
   // conversation, so `volute chat read` can't reach them.
   .get("/:name/gates/peek", requireSelf(), async (c) => {
@@ -1548,51 +1568,62 @@ const app = new Hono<AuthEnv>()
     }
   })
   // AI completion proxy for minds
-  .post("/:name/ai/complete", requireSelf(), async (c) => {
-    const body = (await c.req.json()) as { systemPrompt: string; message: string; model?: string };
-    if (!body.systemPrompt || !body.message) {
-      return c.json({ error: "systemPrompt and message required" }, 400);
-    }
-    const { aiComplete: aiCompleteFn, isAiConfigured } = await import("../../lib/ai-service.js");
-    if (!isAiConfigured()) {
-      return c.json({ error: "AI service not configured" }, 503);
-    }
-    const text = await aiCompleteFn(body.systemPrompt, body.message, body.model);
-    if (text == null) {
-      return c.json({ error: "AI completion failed" }, 502);
-    }
-    return c.json({ text });
-  })
+  .post(
+    "/:name/ai/complete",
+    requireSelf(),
+    zValidator(
+      "json",
+      z.object({ systemPrompt: z.string(), message: z.string(), model: z.string().optional() }),
+    ),
+    async (c) => {
+      const body = c.req.valid("json");
+      if (!body.systemPrompt || !body.message) {
+        return c.json({ error: "systemPrompt and message required" }, 400);
+      }
+      const { aiComplete: aiCompleteFn, isAiConfigured } = await import("../../lib/ai-service.js");
+      if (!isAiConfigured()) {
+        return c.json({ error: "AI service not configured" }, 503);
+      }
+      const text = await aiCompleteFn(body.systemPrompt, body.message, body.model);
+      if (text == null) {
+        return c.json({ error: "AI completion failed" }, 502);
+      }
+      return c.json({ text });
+    },
+  )
   // Receive events from mind, persist to mind_history, publish to pub-sub
-  .post("/:name/events", requireSelf(), async (c) => {
-    const name = c.req.param("name");
-    const baseName = await getBaseName(name);
+  .post(
+    "/:name/events",
+    requireSelf(),
+    zValidator(
+      "json",
+      z.object({
+        type: z.string(),
+        session: z.string().optional(),
+        channel: z.string().optional(),
+        messageId: z.string().optional(),
+        content: z.string().optional(),
+        metadata: z.record(z.string(), z.unknown()).optional(),
+      }),
+    ),
+    async (c) => {
+      const name = c.req.param("name");
+      const baseName = await getBaseName(name);
 
-    let body: {
-      type: string;
-      session?: string;
-      channel?: string;
-      messageId?: string;
-      content?: string;
-      metadata?: Record<string, unknown>;
-    };
-    try {
-      body = await c.req.json();
-    } catch {
-      return c.json({ error: "Invalid JSON" }, 400);
-    }
+      const body = c.req.valid("json");
 
-    if (!body.type) {
-      return c.json({ error: "type required" }, 400);
-    }
-    if (DAEMON_AUTHORED_TYPES.has(body.type)) {
-      return c.json({ error: `type "${body.type}" is daemon-authored` }, 400);
-    }
+      if (!body.type) {
+        return c.json({ error: "type required" }, 400);
+      }
+      if (DAEMON_AUTHORED_TYPES.has(body.type)) {
+        return c.json({ error: `type "${body.type}" is daemon-authored` }, 400);
+      }
 
-    await handleMindEvent(baseName, body);
+      await handleMindEvent(baseName, body);
 
-    return c.json({ ok: true });
-  })
+      return c.json({ ok: true });
+    },
+  )
   // SSE endpoint for mind events
   .get("/:name/events", requireSelf(), async (c) => {
     const name = c.req.param("name");
@@ -1660,43 +1691,46 @@ const app = new Hono<AuthEnv>()
     });
   })
   // Persist external channel send to mind_history
-  .post("/:name/history", requireSelf(), async (c) => {
-    const name = c.req.param("name");
-    const baseName = await getBaseName(name);
+  .post(
+    "/:name/history",
+    requireSelf(),
+    zValidator(
+      "json",
+      z.object({ channel: z.string(), content: z.string(), sender: z.string().optional() }),
+    ),
+    async (c) => {
+      const name = c.req.param("name");
+      const baseName = await getBaseName(name);
 
-    let body: { channel: string; content: string; sender?: string };
-    try {
-      body = await c.req.json();
-    } catch {
-      return c.json({ error: "Invalid JSON" }, 400);
-    }
+      const body = c.req.valid("json");
 
-    if (!body.channel || !body.content) {
-      return c.json({ error: "channel and content required" }, 400);
-    }
+      if (!body.channel || !body.content) {
+        return c.json({ error: "channel and content required" }, 400);
+      }
 
-    // Best-effort turn lookup for external bridge sends (these don't go through
-    // volute chat send, so they won't have tool_result correlation markers).
-    const mindSession = c.get("mindSession");
-    const outboundTurnId = getActiveTurnId(baseName, mindSession);
+      // Best-effort turn lookup for external bridge sends (these don't go through
+      // volute chat send, so they won't have tool_result correlation markers).
+      const mindSession = c.get("mindSession");
+      const outboundTurnId = getActiveTurnId(baseName, mindSession);
 
-    const db = await getDb();
-    try {
-      await db.insert(mindHistory).values({
-        mind: baseName,
-        type: "outbound",
-        channel: body.channel,
-        sender: body.sender ?? baseName,
-        content: body.content,
-        turn_id: outboundTurnId ?? null,
-      });
-    } catch (err) {
-      log.error(`failed to persist external send for ${baseName}`, log.errorData(err));
-      return c.json({ error: "Failed to persist" }, 500);
-    }
+      const db = await getDb();
+      try {
+        await db.insert(mindHistory).values({
+          mind: baseName,
+          type: "outbound",
+          channel: body.channel,
+          sender: body.sender ?? baseName,
+          content: body.content,
+          turn_id: outboundTurnId ?? null,
+        });
+      } catch (err) {
+        log.error(`failed to persist external send for ${baseName}`, log.errorData(err));
+        return c.json({ error: "Failed to persist" }, 500);
+      }
 
-    return c.json({ ok: true });
-  })
+      return c.json({ ok: true });
+    },
+  )
   // Get sessions summary
   .get("/:name/history/sessions", requireSelf(), async (c) => {
     const name = c.req.param("name");
@@ -1929,38 +1963,40 @@ const app = new Hono<AuthEnv>()
   // latestFailureEvent (the host's "last turn failed" surface) and budget becomes a
   // budget event — daemon-authored semantics a mind must not be able to forge about
   // itself (mirrors the DAEMON_AUTHORED_TYPES guard on POST /:name/events).
-  .post("/:name/notices", requireSelf(), async (c) => {
-    const MIND_POSTABLE_KINDS: NoticeKind[] = ["context_lost", "delivery_failed"];
-    const name = c.req.param("name");
-    const baseName = await getBaseName(name);
+  .post(
+    "/:name/notices",
+    requireSelf(),
+    // Deliberately narrower than NOTICE_KINDS: only these two are mind-postable
+    // (see the route comment) — the enum enforces that a mind can't forge a
+    // daemon-authored kind about itself.
+    zValidator(
+      "json",
+      z.object({
+        kind: z.enum(["context_lost", "delivery_failed"]),
+        message: z.string(),
+        thread: z.string().optional(),
+      }),
+    ),
+    async (c) => {
+      const name = c.req.param("name");
+      const baseName = await getBaseName(name);
 
-    let body: { thread?: unknown; kind?: unknown; message?: unknown };
-    try {
-      body = await c.req.json();
-    } catch {
-      return c.json({ error: "Invalid JSON body" }, 400);
-    }
-    const kind = body.kind;
-    if (typeof kind !== "string" || !(MIND_POSTABLE_KINDS as string[]).includes(kind)) {
-      return c.json({ error: `kind must be one of: ${MIND_POSTABLE_KINDS.join(", ")}` }, 400);
-    }
-    const message = typeof body.message === "string" ? body.message.trim() : "";
-    if (!message) return c.json({ error: "message is required" }, 400);
-    if (body.thread !== undefined && typeof body.thread !== "string") {
-      return c.json({ error: "thread must be a string" }, 400);
-    }
+      const body = c.req.valid("json");
+      const message = body.message.trim();
+      if (!message) return c.json({ error: "message is required" }, 400);
 
-    await recordNotice({
-      mind: baseName,
-      thread: (body.thread as string | undefined) ?? MIND_LEVEL_THREAD,
-      kind: kind as NoticeKind,
-      reason: kind,
-      // Bound the size (the body is injected into turn context) without dropping
-      // the notice — a truncated explanation beats a silent 400.
-      detail: message.length > 4000 ? `${message.slice(0, 4000)}…` : message,
-    });
-    return c.json({ ok: true });
-  })
+      await recordNotice({
+        mind: baseName,
+        thread: body.thread ?? MIND_LEVEL_THREAD,
+        kind: body.kind,
+        reason: body.kind,
+        // Bound the size (the body is injected into turn context) without dropping
+        // the notice — a truncated explanation beats a silent 400.
+        detail: message.length > 4000 ? `${message.slice(0, 4000)}…` : message,
+      });
+      return c.json({ ok: true });
+    },
+  )
   // List system events for a mind (schedule fires, wake summaries, lifecycle, notices…)
   // with their reflections. Self-or-admin only. Named /system-events because
   // GET /:name/events is the live SSE stream above.
@@ -1989,48 +2025,44 @@ const app = new Hono<AuthEnv>()
     });
   })
   // Supersede provisional turn summaries with the mind's own words. Self-or-admin only.
-  .put("/:name/turn-summaries", requireSelf(), async (c) => {
-    const name = c.req.param("name");
-    const baseName = await getBaseName(name);
+  .put(
+    "/:name/turn-summaries",
+    requireSelf(),
+    zValidator(
+      "json",
+      z.object({
+        summaries: z
+          .array(z.object({ turnId: z.string().min(1), content: z.string() }))
+          .min(1, "summaries must be a non-empty array"),
+      }),
+    ),
+    async (c) => {
+      const name = c.req.param("name");
+      const baseName = await getBaseName(name);
 
-    let body: { summaries?: Array<{ turnId?: string; content?: string }> };
-    try {
-      body = await c.req.json();
-    } catch {
-      return c.json({ error: "Invalid JSON body" }, 400);
-    }
+      const items = c.req.valid("json").summaries;
 
-    const items = body.summaries;
-    if (!Array.isArray(items) || items.length === 0) {
-      return c.json({ error: "summaries must be a non-empty array" }, 400);
-    }
-
-    let updated = 0;
-    let created = 0;
-    for (const item of items) {
-      if (!item || typeof item.turnId !== "string" || !item.turnId) {
-        return c.json({ error: "each summary needs a turnId" }, 400);
+      let updated = 0;
+      let created = 0;
+      for (const item of items) {
+        const result = await supersedeTurnSummary(baseName, item.turnId, item.content);
+        switch (result.status) {
+          case "invalid":
+            return c.json({ error: result.error }, 400);
+          case "not_found":
+            return c.json({ error: "Turn not found" }, 404);
+          case "forbidden":
+            return c.json({ error: "Forbidden" }, 403);
+          case "ok":
+            if (result.created) created++;
+            else updated++;
+            break;
+        }
       }
-      if (typeof item.content !== "string") {
-        return c.json({ error: "each summary needs content" }, 400);
-      }
-      const result = await supersedeTurnSummary(baseName, item.turnId, item.content);
-      switch (result.status) {
-        case "invalid":
-          return c.json({ error: result.error }, 400);
-        case "not_found":
-          return c.json({ error: "Turn not found" }, 404);
-        case "forbidden":
-          return c.json({ error: "Forbidden" }, 403);
-        case "ok":
-          if (result.created) created++;
-          else updated++;
-          break;
-      }
-    }
 
-    return c.json({ ok: true, updated, created });
-  })
+      return c.json({ ok: true, updated, created });
+    },
+  )
   .get("/:name/history", requireSelf(), async (c) => {
     const name = c.req.param("name");
     const channel = c.req.query("channel");
