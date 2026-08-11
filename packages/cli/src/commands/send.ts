@@ -15,7 +15,7 @@ import { readStdin } from "../lib/read-stdin.js";
 /** Check if a name is a registered mind via the daemon API (avoids direct DB access). */
 async function isMind(name: string): Promise<boolean> {
   try {
-    const res = await daemonFetch(`/api/minds/${encodeURIComponent(name)}`);
+    const res = await daemonFetch(`/api/v1/minds/${encodeURIComponent(name)}`);
     return res.ok;
   } catch {
     return false;
@@ -53,7 +53,7 @@ async function waitForResponse(
 ): Promise<void> {
   const client = getClient();
   const eventPath = urlOf(
-    client.api.minds[":name"].conversations[":id"].events.$url({
+    client.api.v1.minds[":name"].conversations[":id"].events.$url({
       param: { name: mindName, id: conversationId },
     }),
   );

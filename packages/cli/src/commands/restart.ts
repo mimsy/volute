@@ -14,7 +14,7 @@ const cmd = command({
     const client = getClient();
 
     const res = await daemonFetch(
-      urlOf(client.api.minds[":name"].restart.$url({ param: { name } })),
+      urlOf(client.api.v1.minds[":name"].restart.$url({ param: { name } })),
       { method: "POST" },
     );
 

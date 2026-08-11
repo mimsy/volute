@@ -185,7 +185,7 @@ describe("message cursor validation is uniform across all three routes (#868)", 
       name: "minds.ts",
       request: async (query: string) => {
         const { default: app } = await import("../packages/daemon/src/web/app.js");
-        return app.request(`/api/minds/${MIND_NAME}/conversations/${convId}/messages${query}`, {
+        return app.request(`/api/v1/minds/${MIND_NAME}/conversations/${convId}/messages${query}`, {
           headers: { Cookie: `volute_session=${cookie}` },
         });
       },

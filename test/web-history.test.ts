@@ -290,7 +290,7 @@ describe("web history routes", () => {
     assert.equal(res.status, 401);
   });
 
-  it("GET /api/minds/:name/history — annotates senders with display names", async () => {
+  it("GET /api/v1/minds/:name/history — annotates senders with display names", async () => {
     const cookie = await setupAuth();
     const { default: app } = await import("../packages/daemon/src/web/app.js");
     const db = await getDb();
@@ -315,7 +315,7 @@ describe("web history routes", () => {
       content: "boo",
     });
 
-    const res = await app.request("/api/minds/test-history-mind1/history?full=true", {
+    const res = await app.request("/api/v1/minds/test-history-mind1/history?full=true", {
       headers: { Cookie: `volute_session=${cookie}` },
     });
     assert.equal(res.status, 200);

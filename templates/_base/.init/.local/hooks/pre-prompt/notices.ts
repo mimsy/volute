@@ -28,7 +28,7 @@ if (!session) {
 
 try {
   const res = await fetch(
-    `http://127.0.0.1:${VOLUTE_DAEMON_PORT}/api/minds/${VOLUTE_MIND}/history/notices?session=${encodeURIComponent(session)}`,
+    `http://127.0.0.1:${VOLUTE_DAEMON_PORT}/api/v1/minds/${VOLUTE_MIND}/history/notices?session=${encodeURIComponent(session)}`,
     { headers: { Authorization: `Bearer ${VOLUTE_MIND_TOKEN}` } },
   );
   if (!res.ok) {

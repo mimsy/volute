@@ -11,7 +11,7 @@ $effect(() => {
 
   async function poll() {
     try {
-      const res = await fetch("/api/system/info");
+      const res = await fetch("/api/v1/system/info");
       if (!res.ok) {
         console.debug("[provider] poll returned", res.status);
         return;

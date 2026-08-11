@@ -12,7 +12,7 @@ type ModelInfo = {
 async function chooseModel(
   daemonFetch: (path: string, options?: RequestInit) => Promise<Response>,
 ): Promise<string | undefined> {
-  const res = await daemonFetch("/api/system/ai/models");
+  const res = await daemonFetch("/api/v1/system/ai/models");
   if (!res.ok) {
     console.error(`Failed to fetch AI models (HTTP ${res.status}). Is the daemon running?`);
     process.exit(1);
@@ -90,7 +90,7 @@ const cmd = command({
     }
 
     // Create mind as seed
-    const createRes = await daemonFetch(urlOf(client.api.minds.$url()), {
+    const createRes = await daemonFetch(urlOf(client.api.v1.minds.$url()), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -121,7 +121,7 @@ const cmd = command({
 
     // Start the mind
     const startRes = await daemonFetch(
-      urlOf(client.api.minds[":name"].start.$url({ param: { name } })),
+      urlOf(client.api.v1.minds[":name"].start.$url({ param: { name } })),
       { method: "POST" },
     );
 

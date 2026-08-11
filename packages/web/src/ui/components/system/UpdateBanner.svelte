@@ -39,7 +39,7 @@ $effect(() => {
 async function handleUpdate() {
   updating = true;
   try {
-    const res = await fetch("/api/system/update", { method: "POST" });
+    const res = await fetch("/api/v1/system/update", { method: "POST" });
     if (!res.ok) {
       updating = false;
       error = "Update failed";

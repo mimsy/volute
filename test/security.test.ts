@@ -83,7 +83,7 @@ describe("security", () => {
     const { default: appModule } = await import("../packages/daemon/src/web/app.js");
 
     // POST without Origin header triggers CSRF rejection
-    const res = await appModule.request("/api/minds/test/start", {
+    const res = await appModule.request("/api/v1/minds/test/start", {
       method: "POST",
     });
     assert.equal(res.status, 403);

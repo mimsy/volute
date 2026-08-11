@@ -6,7 +6,7 @@ const cmd = command({
   description: "Remove stored volute.systems credentials",
   flags: {},
   run: async () => {
-    const res = await daemonFetch("/api/system/logout", { method: "POST" });
+    const res = await daemonFetch("/api/v1/system/logout", { method: "POST" });
 
     if (!res.ok) {
       const body = (await res.json().catch(() => ({ error: `HTTP ${res.status}` }))) as {

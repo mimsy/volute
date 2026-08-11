@@ -37,9 +37,9 @@ describe("user kind", () => {
   it("serves an external mind's avatar from the shared dir, not the mind dir", () => {
     // The bug this pins: external minds authenticate as ordinary users and can
     // POST /api/auth/avatar, so discarding their avatar loses real data — and
-    // /api/minds/:name/avatar would 404, since they have no directory.
+    // /api/v1/minds/:name/avatar would 404, since they have no directory.
     assert.equal(avatarUrl(externalMind), "/api/auth/avatars/avatar-8.webp");
-    assert.equal(avatarUrl(localMind), "/api/minds/bardo/avatar");
+    assert.equal(avatarUrl(localMind), "/api/v1/minds/bardo/avatar");
     assert.equal(avatarUrl(human), "/api/auth/avatars/avatar-1.webp");
   });
 
@@ -51,7 +51,7 @@ describe("user kind", () => {
   it("escapes names and filenames into the URL", () => {
     assert.equal(
       avatarUrl(user({ username: "a b", user_type: "mind", avatar: "x" })),
-      "/api/minds/a%20b/avatar",
+      "/api/v1/minds/a%20b/avatar",
     );
     assert.equal(avatarUrl(user({ avatar: "a b.webp" })), "/api/auth/avatars/a%20b.webp");
   });

@@ -15,7 +15,7 @@ const cmd = command({
       process.exit(1);
     }
 
-    const res = await daemonFetch(`/api/minds/${encodeURIComponent(name)}`);
+    const res = await daemonFetch(`/api/v1/minds/${encodeURIComponent(name)}`);
     if (!res.ok) {
       if (res.status === 404) {
         console.error(`Mind "${name}" not found`);
@@ -101,7 +101,7 @@ const cmd = command({
     // Surface unrouted (gated) channels holding messages, so a months-long silence
     // is visible without reading the DB. #537
     const pendingRes = await daemonFetch(
-      `/api/minds/${encodeURIComponent(name)}/delivery/pending`,
+      `/api/v1/minds/${encodeURIComponent(name)}/delivery/pending`,
     ).catch(() => null);
     if (pendingRes?.ok) {
       const pending = (await pendingRes.json().catch(() => [])) as Array<{

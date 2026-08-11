@@ -135,9 +135,9 @@ describe("web conversations routes", () => {
   });
 
   it("GET /:name/conversations/:id/messages?limit=N — full app annotates display names (paginated branch)", async () => {
-    // Exercises the route `volute chat read` actually hits: in the composed app,
-    // minds.ts shadows the volute conversations route, and chat read always
-    // paginates (?limit=50), so this pins the paginated branch of minds.ts.
+    // Exercises the route `volute chat read` actually hits: minds.ts serves the
+    // canonical /api/v1/minds/:name/conversations/:id/messages, and chat read
+    // always paginates (?limit=50), so this pins the paginated branch of minds.ts.
     const cookie = await setupAuth();
     const { default: app } = await import("../packages/daemon/src/web/app.js");
     const db = await getDb();
@@ -157,7 +157,7 @@ describe("web conversations routes", () => {
     await addMessage(conv.id, "user", "conv-admin", [{ type: "text", text: "Hi" }]);
 
     const res = await app.request(
-      `/api/minds/conv-display-mind/conversations/${conv.id}/messages?limit=10`,
+      `/api/v1/minds/conv-display-mind/conversations/${conv.id}/messages?limit=10`,
       { headers: { Cookie: `volute_session=${cookie}` } },
     );
     assert.equal(res.status, 200);

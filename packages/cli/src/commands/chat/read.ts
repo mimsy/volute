@@ -17,7 +17,7 @@ async function resolveConversationId(mindName: string, input: string): Promise<s
   }
 
   // Fetch conversation list and try to match
-  const res = await daemonFetch(`/api/minds/${encodeURIComponent(mindName)}/conversations`);
+  const res = await daemonFetch(`/api/v1/minds/${encodeURIComponent(mindName)}/conversations`);
   if (!res.ok) {
     return input; // Fall through to the original behavior
   }
@@ -69,7 +69,7 @@ const cmd = command({
     const limit = String(flags.limit ?? 50);
 
     const res = await daemonFetch(
-      `/api/minds/${encodeURIComponent(mindName)}/conversations/${encodeURIComponent(conversationId)}/messages?limit=${limit}`,
+      `/api/v1/minds/${encodeURIComponent(mindName)}/conversations/${encodeURIComponent(conversationId)}/messages?limit=${limit}`,
     );
     if (!res.ok) {
       console.error(`Failed to read conversation: ${res.status}`);

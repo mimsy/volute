@@ -39,7 +39,7 @@ describe("web minds routes", () => {
     const cookie = await setupAuth();
     const { default: app } = await import("../packages/daemon/src/web/app.js");
 
-    const res = await app.request("/api/minds", {
+    const res = await app.request("/api/v1/minds", {
       headers: { Cookie: `volute_session=${cookie}` },
     });
     assert.equal(res.status, 200);
@@ -51,7 +51,7 @@ describe("web minds routes", () => {
     const cookie = await setupAuth();
     const { default: app } = await import("../packages/daemon/src/web/app.js");
 
-    const res = await app.request("/api/minds/nonexistent-mind-xyz", {
+    const res = await app.request("/api/v1/minds/nonexistent-mind-xyz", {
       headers: { Cookie: `volute_session=${cookie}` },
     });
     assert.equal(res.status, 404);
@@ -63,7 +63,7 @@ describe("web minds routes", () => {
     const cookie = await setupAuth();
     const { default: app } = await import("../packages/daemon/src/web/app.js");
 
-    const res = await app.request("http://localhost/api/minds/nonexistent-mind-xyz/start", {
+    const res = await app.request("http://localhost/api/v1/minds/nonexistent-mind-xyz/start", {
       method: "POST",
       headers: postHeaders(cookie),
     });
@@ -74,7 +74,7 @@ describe("web minds routes", () => {
     const cookie = await setupAuth();
     const { default: app } = await import("../packages/daemon/src/web/app.js");
 
-    const res = await app.request("http://localhost/api/minds/nonexistent-mind-xyz/stop", {
+    const res = await app.request("http://localhost/api/v1/minds/nonexistent-mind-xyz/stop", {
       method: "POST",
       headers: postHeaders(cookie),
     });
@@ -84,7 +84,7 @@ describe("web minds routes", () => {
   it("GET / — requires auth (401 without cookie)", async () => {
     const { default: app } = await import("../packages/daemon/src/web/app.js");
 
-    const res = await app.request("/api/minds");
+    const res = await app.request("/api/v1/minds");
     assert.equal(res.status, 401);
   });
 
@@ -94,7 +94,7 @@ describe("web minds routes", () => {
     process.env.VOLUTE_DAEMON_TOKEN = token;
     try {
       const { default: app } = await import("../packages/daemon/src/web/app.js");
-      const res = await app.request("/api/minds", {
+      const res = await app.request("/api/v1/minds", {
         headers: { Authorization: `Bearer ${token}` },
       });
       assert.equal(res.status, 200);
@@ -114,7 +114,7 @@ describe("web minds routes", () => {
     process.env.VOLUTE_DAEMON_TOKEN = "real-token";
     try {
       const { default: app } = await import("../packages/daemon/src/web/app.js");
-      const res = await app.request("/api/minds", {
+      const res = await app.request("/api/v1/minds", {
         headers: { Authorization: "Bearer wrong-token" },
       });
       assert.equal(res.status, 401);
@@ -130,7 +130,7 @@ describe("web minds routes", () => {
   it("POST /:name/start — blocked by CSRF without origin", async () => {
     const { default: app } = await import("../packages/daemon/src/web/app.js");
 
-    const res = await app.request("/api/minds/test/start", {
+    const res = await app.request("/api/v1/minds/test/start", {
       method: "POST",
     });
     // CSRF middleware rejects POSTs without matching origin
@@ -147,7 +147,7 @@ describe("web minds routes", () => {
 
     const { default: app } = await import("../packages/daemon/src/web/app.js");
 
-    const res = await app.request("http://localhost/api/minds/nonexistent/start", {
+    const res = await app.request("http://localhost/api/v1/minds/nonexistent/start", {
       method: "POST",
       headers: {
         Cookie: `volute_session=${cookie2}`,
@@ -181,7 +181,7 @@ describe("web minds routes", () => {
       writeGlobalConfig({ ...readGlobalConfig(), maxMinds: count });
 
       const { default: app } = await import("../packages/daemon/src/web/app.js");
-      const res = await app.request("http://localhost/api/minds", {
+      const res = await app.request("http://localhost/api/v1/minds", {
         method: "POST",
         headers: { ...postHeaders(cookie), "Content-Type": "application/json" },
         body: JSON.stringify({ name: `cap-over-${Date.now()}` }),
@@ -212,7 +212,7 @@ describe("web minds routes", () => {
       assert.equal(isAiConfigured(), false);
 
       const { default: app } = await import("../packages/daemon/src/web/app.js");
-      const res = await app.request("http://localhost/api/minds", {
+      const res = await app.request("http://localhost/api/v1/minds", {
         method: "POST",
         headers: { ...postHeaders(cookie), "Content-Type": "application/json" },
         body: JSON.stringify({ name: `noprovider-${Date.now()}` }),
@@ -238,7 +238,7 @@ describe("web minds routes", () => {
     const savedConfig = readGlobalConfig();
 
     async function aiConfigured(): Promise<boolean> {
-      const res = await app.request("http://localhost/api/system/info", {
+      const res = await app.request("http://localhost/api/v1/system/info", {
         headers: { Cookie: `volute_session=${cookie}` },
       });
       assert.equal(res.status, 200);
@@ -267,7 +267,7 @@ describe("web minds routes", () => {
     const savedConfig = readGlobalConfig();
     const { default: app } = await import("../packages/daemon/src/web/app.js");
     try {
-      const putRes = await app.request("http://localhost/api/system/max-minds", {
+      const putRes = await app.request("http://localhost/api/v1/system/max-minds", {
         method: "PUT",
         headers: { ...postHeaders(cookie), "Content-Type": "application/json" },
         body: JSON.stringify({ maxMinds: 42 }),
@@ -277,14 +277,14 @@ describe("web minds routes", () => {
       assert.equal(putBody.maxMinds, 42);
       assert.equal(typeof putBody.count, "number");
 
-      const getRes = await app.request("http://localhost/api/system/max-minds", {
+      const getRes = await app.request("http://localhost/api/v1/system/max-minds", {
         headers: { Cookie: `volute_session=${cookie}` },
       });
       assert.equal(getRes.status, 200);
       assert.equal(((await getRes.json()) as { maxMinds: number | null }).maxMinds, 42);
 
       // null clears the cap (unlimited)
-      const clearRes = await app.request("http://localhost/api/system/max-minds", {
+      const clearRes = await app.request("http://localhost/api/v1/system/max-minds", {
         method: "PUT",
         headers: { ...postHeaders(cookie), "Content-Type": "application/json" },
         body: JSON.stringify({ maxMinds: null }),
@@ -302,7 +302,7 @@ describe("web minds routes", () => {
     const cookie = await setupAuth();
     const { default: app } = await import("../packages/daemon/src/web/app.js");
     for (const bad of [0, -1, 1.5]) {
-      const res = await app.request("http://localhost/api/system/max-minds", {
+      const res = await app.request("http://localhost/api/v1/system/max-minds", {
         method: "PUT",
         headers: { ...postHeaders(cookie), "Content-Type": "application/json" },
         body: JSON.stringify({ maxMinds: bad }),
@@ -317,7 +317,7 @@ describe("web minds routes", () => {
     await approveUser(user2.id);
     const cookie2 = await createSession(user2.id);
     const { default: app } = await import("../packages/daemon/src/web/app.js");
-    const res = await app.request("http://localhost/api/system/max-minds", {
+    const res = await app.request("http://localhost/api/v1/system/max-minds", {
       method: "PUT",
       headers: {
         Cookie: `volute_session=${cookie2}`,
@@ -338,7 +338,7 @@ describe("web minds routes", () => {
     await approveUser(user2.id);
     const cookie2 = await createSession(user2.id);
     const { default: app } = await import("../packages/daemon/src/web/app.js");
-    const res = await app.request("http://localhost/api/system/max-minds", {
+    const res = await app.request("http://localhost/api/v1/system/max-minds", {
       headers: { Cookie: `volute_session=${cookie2}` },
     });
     assert.equal(res.status, 403);
@@ -349,7 +349,7 @@ describe("web minds routes", () => {
     const cookie = await setupAuth();
     const { default: app } = await import("../packages/daemon/src/web/app.js");
 
-    const res = await app.request("/api/minds/nonexistent-mind-xyz/history/export", {
+    const res = await app.request("/api/v1/minds/nonexistent-mind-xyz/history/export", {
       headers: { Cookie: `volute_session=${cookie}` },
     });
     assert.equal(res.status, 404);
@@ -363,7 +363,7 @@ describe("web minds routes", () => {
 
     const { default: app } = await import("../packages/daemon/src/web/app.js");
 
-    const res = await app.request("/api/minds", {
+    const res = await app.request("/api/v1/minds", {
       headers: { Cookie: `volute_session=${cookie2}` },
     });
     assert.equal(res.status, 200);
@@ -402,7 +402,7 @@ describe("web minds routes", () => {
     try {
       const cookie = await setupAuth();
       const { default: app } = await import("../packages/daemon/src/web/app.js");
-      const res = await app.request("/api/minds", {
+      const res = await app.request("/api/v1/minds", {
         headers: { Cookie: `volute_session=${cookie}` },
       });
       assert.equal(res.status, 200);
@@ -414,7 +414,7 @@ describe("web minds routes", () => {
       // Drift the mind's framework code and confirm the API flips to stale.
       const agent = resolve(dir, "src", "agent.ts");
       writeFileSync(agent, `${readFileSync(agent, "utf-8")}\n// drift\n`);
-      const res2 = await app.request("/api/minds", {
+      const res2 = await app.request("/api/v1/minds", {
         headers: { Cookie: `volute_session=${cookie}` },
       });
       const body2 = (await res2.json()) as Array<{ name: string; templateStale?: boolean }>;
@@ -452,7 +452,7 @@ describe("web minds routes", () => {
     try {
       const cookie = await setupAuth();
       const { default: app } = await import("../packages/daemon/src/web/app.js");
-      const res = await app.request(`/api/minds/${name}`, {
+      const res = await app.request(`/api/v1/minds/${name}`, {
         headers: { Cookie: `volute_session=${cookie}` },
       });
       assert.equal(res.status, 200);
@@ -469,7 +469,7 @@ describe("web minds routes", () => {
       const user2 = await createUser("regular-user2", "pass");
       await approveUser(user2.id);
       const cookie2 = await createSession(user2.id);
-      const res2 = await app.request(`/api/minds/${name}`, {
+      const res2 = await app.request(`/api/v1/minds/${name}`, {
         headers: { Cookie: `volute_session=${cookie2}` },
       });
       assert.equal(res2.status, 200);
@@ -509,7 +509,7 @@ describe("web minds routes", () => {
     try {
       const cookie = await setupAuth();
       const { default: app } = await import("../packages/daemon/src/web/app.js");
-      const res = await app.request(`/api/minds/${name}`, {
+      const res = await app.request(`/api/v1/minds/${name}`, {
         headers: { Cookie: `volute_session=${cookie}` },
       });
       assert.equal(res.status, 200);
@@ -532,7 +532,7 @@ describe("web minds routes", () => {
       const user2 = await createUser("regular-user2", "pass");
       await approveUser(user2.id);
       const cookie2 = await createSession(user2.id);
-      const res2 = await app.request(`/api/minds/${name}`, {
+      const res2 = await app.request(`/api/v1/minds/${name}`, {
         headers: { Cookie: `volute_session=${cookie2}` },
       });
       const body2 = (await res2.json()) as { seedChecklist?: { soulWritten: boolean } };
@@ -542,7 +542,7 @@ describe("web minds routes", () => {
 
       // The dashboard renders the card from the list route (data.minds), a
       // separate call site from GET /:name — assert the checklist rides it too.
-      const listRes = await app.request("/api/minds", {
+      const listRes = await app.request("/api/v1/minds", {
         headers: { Cookie: `volute_session=${cookie}` },
       });
       assert.equal(listRes.status, 200);
@@ -581,7 +581,7 @@ describe("web minds routes", () => {
     try {
       const cookie = await setupAuth();
       const { default: app } = await import("../packages/daemon/src/web/app.js");
-      const res = await app.request(`/api/minds/${name}`, {
+      const res = await app.request(`/api/v1/minds/${name}`, {
         headers: { Cookie: `volute_session=${cookie}` },
       });
       assert.equal(res.status, 200);
@@ -598,7 +598,7 @@ describe("web minds routes", () => {
       const user2 = await createUser("regular-user2", "pass");
       await approveUser(user2.id);
       const cookie2 = await createSession(user2.id);
-      const res2 = await app.request(`/api/minds/${name}`, {
+      const res2 = await app.request(`/api/v1/minds/${name}`, {
         headers: { Cookie: `volute_session=${cookie2}` },
       });
       assert.equal(res2.status, 200);
@@ -631,7 +631,7 @@ describe("web minds routes", () => {
     try {
       const cookie = await setupAuth();
       const { default: app } = await import("../packages/daemon/src/web/app.js");
-      const res = await app.request(`/api/minds/${name}`, {
+      const res = await app.request(`/api/v1/minds/${name}`, {
         headers: { Cookie: `volute_session=${cookie}` },
       });
       assert.equal(res.status, 200);

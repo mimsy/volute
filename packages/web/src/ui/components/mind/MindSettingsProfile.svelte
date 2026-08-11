@@ -60,7 +60,7 @@ async function saveDescription() {
       <button type="button" class="avatar-wrapper" onclick={() => fileInput?.click()}>
         {#if mind.avatar}
           <img
-            src={`/api/minds/${encodeURIComponent(mind.name)}/avatar`}
+            src={`/api/v1/minds/${encodeURIComponent(mind.name)}/avatar`}
             alt=""
             class="avatar-img"
             loading="lazy"

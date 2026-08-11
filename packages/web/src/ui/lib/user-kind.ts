@@ -16,7 +16,7 @@ export { isExternal };
 export function avatarUrl(u: AuthUser): string | null {
   if (!u.avatar) return null;
   if (isMind(u) && !isExternal(u)) {
-    return `/api/minds/${encodeURIComponent(u.username)}/avatar`;
+    return `/api/v1/minds/${encodeURIComponent(u.username)}/avatar`;
   }
   return `/api/auth/avatars/${encodeURIComponent(u.avatar)}`;
 }

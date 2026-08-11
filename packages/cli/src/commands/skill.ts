@@ -14,7 +14,7 @@ const listSkillsCmd = command({
     if (flags.mind || process.env.VOLUTE_MIND) {
       const mindName = resolveMindName(flags);
       const client = getClient();
-      const url = urlOf(client.api.minds[":name"].skills.$url({ param: { name: mindName } }));
+      const url = urlOf(client.api.v1.minds[":name"].skills.$url({ param: { name: mindName } }));
       const res = await daemonFetch(url);
       if (!res.ok) {
         const body = (await res.json().catch(() => ({ error: "Unknown error" }))) as {
@@ -45,7 +45,7 @@ const listSkillsCmd = command({
       }
     } else {
       const client = getClient();
-      const url = urlOf(client.api.skills.$url());
+      const url = urlOf(client.api.v1.skills.$url());
       const res = await daemonFetch(url);
       if (!res.ok) {
         const body = (await res.json().catch(() => ({ error: "Unknown error" }))) as {
@@ -87,7 +87,7 @@ const infoSkillCmd = command({
     const id = args.name!;
 
     const client = getClient();
-    const url = urlOf(client.api.skills[":id"].$url({ param: { id } }));
+    const url = urlOf(client.api.v1.skills[":id"].$url({ param: { id } }));
     const res = await daemonFetch(url);
     if (!res.ok) {
       const body = (await res.json().catch(() => ({ error: "Unknown error" }))) as {
@@ -128,7 +128,9 @@ const installSkillCmd = command({
     const skillId = args.name!;
 
     const client = getClient();
-    const url = urlOf(client.api.minds[":name"].skills.install.$url({ param: { name: mindName } }));
+    const url = urlOf(
+      client.api.v1.minds[":name"].skills.install.$url({ param: { name: mindName } }),
+    );
     const res = await daemonFetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -162,7 +164,7 @@ const installSkillCmd = command({
 /** Returns true on success, false on failure (for --all loop) */
 async function doUpdate(mindName: string, skillId: string): Promise<boolean> {
   const client = getClient();
-  const url = urlOf(client.api.minds[":name"].skills.update.$url({ param: { name: mindName } }));
+  const url = urlOf(client.api.v1.minds[":name"].skills.update.$url({ param: { name: mindName } }));
   const res = await daemonFetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -214,7 +216,9 @@ const updateSkillCmd = command({
     if (flags.all) {
       // Update all skills
       const client = getClient();
-      const listUrl = urlOf(client.api.minds[":name"].skills.$url({ param: { name: mindName } }));
+      const listUrl = urlOf(
+        client.api.v1.minds[":name"].skills.$url({ param: { name: mindName } }),
+      );
       const listRes = await daemonFetch(listUrl);
       if (!listRes.ok) {
         const body = (await listRes.json().catch(() => ({ error: "Unknown error" }))) as {
@@ -268,7 +272,9 @@ const publishSkillCmd = command({
     const skillId = args.name!;
 
     const client = getClient();
-    const url = urlOf(client.api.minds[":name"].skills.publish.$url({ param: { name: mindName } }));
+    const url = urlOf(
+      client.api.v1.minds[":name"].skills.publish.$url({ param: { name: mindName } }),
+    );
     const res = await daemonFetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -297,7 +303,7 @@ const removeSkillCmd = command({
     const id = args.name!;
 
     const client = getClient();
-    const url = urlOf(client.api.skills[":id"].$url({ param: { id } }));
+    const url = urlOf(client.api.v1.skills[":id"].$url({ param: { id } }));
     const res = await daemonFetch(url, { method: "DELETE" });
 
     if (!res.ok) {
@@ -325,7 +331,7 @@ const uninstallSkillCmd = command({
 
     const client = getClient();
     const url = urlOf(
-      client.api.minds[":name"].skills[":skill"].$url({
+      client.api.v1.minds[":name"].skills[":skill"].$url({
         param: { name: mindName, skill: skillId },
       }),
     );
@@ -348,7 +354,7 @@ const defaultsListCmd = command({
   description: "List default skills for new minds",
   flags: {},
   run: async () => {
-    const res = await daemonFetch("/api/skills/defaults/list");
+    const res = await daemonFetch("/api/v1/skills/defaults/list");
     if (!res.ok) {
       const body = (await res.json().catch(() => ({ error: "Unknown error" }))) as {
         error: string;
@@ -371,7 +377,7 @@ const defaultsAddCmd = command({
   flags: {},
   run: async ({ args }) => {
     const skillId = args.name!;
-    const res = await daemonFetch("/api/skills/defaults/list", {
+    const res = await daemonFetch("/api/v1/skills/defaults/list", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ skill: skillId }),
@@ -394,7 +400,7 @@ const defaultsRemoveCmd = command({
   flags: {},
   run: async ({ args }) => {
     const skillId = args.name!;
-    const res = await daemonFetch(`/api/skills/defaults/list/${encodeURIComponent(skillId)}`, {
+    const res = await daemonFetch(`/api/v1/skills/defaults/list/${encodeURIComponent(skillId)}`, {
       method: "DELETE",
     });
     if (!res.ok) {

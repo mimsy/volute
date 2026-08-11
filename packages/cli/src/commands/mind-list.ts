@@ -24,7 +24,7 @@ const cmd = command({
   description: "List all minds",
   flags: {},
   async run() {
-    const res = await daemonFetch("/api/minds");
+    const res = await daemonFetch("/api/v1/minds");
     if (!res.ok) {
       const body = (await res.json().catch(() => ({ error: `HTTP ${res.status}` }))) as {
         error: string;

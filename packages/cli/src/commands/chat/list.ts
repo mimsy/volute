@@ -12,7 +12,7 @@ const cmd = command({
   async run({ flags }) {
     const mindName = resolveMindName(flags);
 
-    const res = await daemonFetch(`/api/minds/${encodeURIComponent(mindName)}/conversations`);
+    const res = await daemonFetch(`/api/v1/minds/${encodeURIComponent(mindName)}/conversations`);
     if (!res.ok) {
       console.error(`Failed to list conversations: ${res.status}`);
       process.exit(1);

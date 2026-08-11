@@ -18,7 +18,7 @@ let overflow = $derived(Math.max(0, participants.length - max));
 function avatarUrl(p: AvatarParticipant): string | null {
   if (!p.avatar) return null;
   return isMind(p)
-    ? `/api/minds/${encodeURIComponent(p.username)}/avatar`
+    ? `/api/v1/minds/${encodeURIComponent(p.username)}/avatar`
     : `/api/auth/avatars/${encodeURIComponent(p.avatar)}`;
 }
 

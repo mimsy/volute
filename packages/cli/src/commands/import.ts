@@ -33,7 +33,7 @@ export async function run(args: string[]) {
   const { getClient, urlOf } = await import("../lib/api-client.js");
   const client = getClient();
 
-  const res = await daemonFetch(urlOf((client.api.minds as any).import.$url()), {
+  const res = await daemonFetch(urlOf((client.api.v1.minds as any).import.$url()), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -104,7 +104,7 @@ async function importArchive(archivePath: string, nameOverride?: string): Promis
     const { getClient, urlOf } = await import("../lib/api-client.js");
     const client = getClient();
 
-    const res = await daemonFetch(urlOf((client.api.minds as any).import.$url()), {
+    const res = await daemonFetch(urlOf((client.api.v1.minds as any).import.$url()), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

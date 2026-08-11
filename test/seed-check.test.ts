@@ -77,7 +77,7 @@ describe("seed check endpoint", () => {
     await addMind(seedName, 4200);
 
     const { default: app } = await import("../packages/daemon/src/web/app.js");
-    const res = await app.request(`http://localhost/api/minds/${seedName}/seed-check`, {
+    const res = await app.request(`http://localhost/api/v1/minds/${seedName}/seed-check`, {
       headers: postHeaders(cookie),
     });
     assert.equal(res.status, 200);
@@ -87,7 +87,7 @@ describe("seed check endpoint", () => {
 
   it("returns status when seed needs attention", async () => {
     const { default: app } = await import("../packages/daemon/src/web/app.js");
-    const res = await app.request(`http://localhost/api/minds/${seedName}/seed-check`, {
+    const res = await app.request(`http://localhost/api/v1/minds/${seedName}/seed-check`, {
       headers: postHeaders(cookie),
     });
     assert.equal(res.status, 200);
@@ -106,7 +106,7 @@ describe("seed check endpoint", () => {
     );
 
     const { default: app } = await import("../packages/daemon/src/web/app.js");
-    const res = await app.request(`http://localhost/api/minds/${seedName}/seed-check`, {
+    const res = await app.request(`http://localhost/api/v1/minds/${seedName}/seed-check`, {
       headers: postHeaders(cookie),
     });
     assert.equal(res.status, 200);
@@ -131,7 +131,7 @@ describe("seed check endpoint", () => {
     );
 
     const { default: app } = await import("../packages/daemon/src/web/app.js");
-    const res = await app.request(`http://localhost/api/minds/${seedName}/seed-check`, {
+    const res = await app.request(`http://localhost/api/v1/minds/${seedName}/seed-check`, {
       headers: postHeaders(cookie),
     });
     assert.equal(res.status, 200);
@@ -146,7 +146,7 @@ describe("seed check endpoint", () => {
     writeFileSync(resolve(dir, "home/MEMORY.md"), "   \n");
 
     const { default: app } = await import("../packages/daemon/src/web/app.js");
-    const res = await app.request(`http://localhost/api/minds/${seedName}/seed-check`, {
+    const res = await app.request(`http://localhost/api/v1/minds/${seedName}/seed-check`, {
       headers: postHeaders(cookie),
     });
     assert.equal(res.status, 200);
@@ -157,7 +157,7 @@ describe("seed check endpoint", () => {
 
   it("returns 404 for unknown mind", async () => {
     const { default: app } = await import("../packages/daemon/src/web/app.js");
-    const res = await app.request("http://localhost/api/minds/nonexistent-xyz/seed-check", {
+    const res = await app.request("http://localhost/api/v1/minds/nonexistent-xyz/seed-check", {
       headers: postHeaders(cookie),
     });
     assert.equal(res.status, 404);
@@ -175,7 +175,7 @@ describe("seed check endpoint", () => {
     });
 
     const { default: app } = await import("../packages/daemon/src/web/app.js");
-    const res = await app.request(`http://localhost/api/minds/${seedName}/seed-check`, {
+    const res = await app.request(`http://localhost/api/v1/minds/${seedName}/seed-check`, {
       headers: postHeaders(cookie),
     });
     const body = (await res.json()) as { output: string };
@@ -193,7 +193,7 @@ describe("seed check endpoint", () => {
     });
 
     const { default: app } = await import("../packages/daemon/src/web/app.js");
-    const res = await app.request(`http://localhost/api/minds/${seedName}/seed-check`, {
+    const res = await app.request(`http://localhost/api/v1/minds/${seedName}/seed-check`, {
       headers: postHeaders(cookie),
     });
     const body = (await res.json()) as { output: string };
@@ -210,7 +210,7 @@ describe("seed check endpoint", () => {
     });
 
     const { default: app } = await import("../packages/daemon/src/web/app.js");
-    const res = await app.request(`http://localhost/api/minds/${seedName}/seed-check`, {
+    const res = await app.request(`http://localhost/api/v1/minds/${seedName}/seed-check`, {
       headers: postHeaders(cookie),
     });
     const body = (await res.json()) as { output: string };
@@ -241,7 +241,7 @@ describe("seed check endpoint", () => {
     });
 
     const { default: app } = await import("../packages/daemon/src/web/app.js");
-    const res = await app.request(`http://localhost/api/minds/${seedName}/seed-check`, {
+    const res = await app.request(`http://localhost/api/v1/minds/${seedName}/seed-check`, {
       headers: postHeaders(cookie),
     });
     const body = (await res.json()) as { output: string };
@@ -265,7 +265,7 @@ describe("seed check endpoint", () => {
     });
 
     const { default: app } = await import("../packages/daemon/src/web/app.js");
-    const res = await app.request(`http://localhost/api/minds/${seedName}/seed-check`, {
+    const res = await app.request(`http://localhost/api/v1/minds/${seedName}/seed-check`, {
       headers: postHeaders(cookie),
     });
     const body = (await res.json()) as { output: string };
@@ -282,7 +282,7 @@ describe("seed check endpoint", () => {
     });
 
     const { default: app } = await import("../packages/daemon/src/web/app.js");
-    const res = await app.request(`http://localhost/api/minds/${seedName}/seed-check?force=1`, {
+    const res = await app.request(`http://localhost/api/v1/minds/${seedName}/seed-check?force=1`, {
       headers: postHeaders(cookie),
     });
     const body = (await res.json()) as { output: string };
@@ -303,7 +303,7 @@ describe("seed check endpoint", () => {
     });
 
     const { default: app } = await import("../packages/daemon/src/web/app.js");
-    const first = await app.request(`http://localhost/api/minds/${seedName}/seed-check`, {
+    const first = await app.request(`http://localhost/api/v1/minds/${seedName}/seed-check`, {
       headers: postHeaders(cookie),
     });
     const firstBody = (await first.json()) as { output: string };
@@ -317,7 +317,7 @@ describe("seed check endpoint", () => {
       minutesAgo: 0,
     });
 
-    const second = await app.request(`http://localhost/api/minds/${seedName}/seed-check`, {
+    const second = await app.request(`http://localhost/api/v1/minds/${seedName}/seed-check`, {
       headers: postHeaders(cookie),
     });
     const secondBody = (await second.json()) as { output: string };
@@ -342,7 +342,7 @@ describe("seed check endpoint", () => {
     });
 
     const { default: app } = await import("../packages/daemon/src/web/app.js");
-    const res = await app.request(`http://localhost/api/minds/${seedName}/seed-check`, {
+    const res = await app.request(`http://localhost/api/v1/minds/${seedName}/seed-check`, {
       headers: postHeaders(cookie),
     });
     const body = (await res.json()) as { output: string };
@@ -378,7 +378,7 @@ describe("seed check endpoint", () => {
       });
 
       const { default: app } = await import("../packages/daemon/src/web/app.js");
-      const sib = await app.request(`http://localhost/api/minds/${escName}/seed-check`, {
+      const sib = await app.request(`http://localhost/api/v1/minds/${escName}/seed-check`, {
         headers: postHeaders(cookie),
       });
       const sibBody = (await sib.json()) as { output: string };
@@ -394,7 +394,7 @@ describe("seed check endpoint", () => {
         content: `Seed: ${escName}\nLast message to ${escName}: 35 minutes ago (from some-human)`,
         minutesAgo: 1,
       });
-      const exact = await app.request(`http://localhost/api/minds/${escName}/seed-check`, {
+      const exact = await app.request(`http://localhost/api/v1/minds/${escName}/seed-check`, {
         headers: postHeaders(cookie),
       });
       const exactBody = (await exact.json()) as { output: string };
@@ -439,7 +439,7 @@ describe("seed check endpoint", () => {
       ]);
 
       const { default: app } = await import("../packages/daemon/src/web/app.js");
-      const res = await app.request(`http://localhost/api/minds/${seedName}/seed-check`, {
+      const res = await app.request(`http://localhost/api/v1/minds/${seedName}/seed-check`, {
         headers: postHeaders(cookie),
       });
       assert.equal(res.status, 200);
@@ -463,7 +463,7 @@ describe("seed check endpoint", () => {
       });
 
       const { default: app } = await import("../packages/daemon/src/web/app.js");
-      const res = await app.request(`http://localhost/api/minds/${seedName}/seed-check`, {
+      const res = await app.request(`http://localhost/api/v1/minds/${seedName}/seed-check`, {
         headers: postHeaders(cookie),
       });
       assert.equal(res.status, 200);
@@ -508,7 +508,7 @@ describe("seed check nurture gate vs. forced host check", () => {
 
   it("stays silent under the nurture gate when recently attended to", async () => {
     const { default: app } = await import("../packages/daemon/src/web/app.js");
-    const res = await app.request(`http://localhost/api/minds/${seedName}/seed-check`, {
+    const res = await app.request(`http://localhost/api/v1/minds/${seedName}/seed-check`, {
       headers: postHeaders(cookie),
     });
     assert.equal(res.status, 200);
@@ -525,7 +525,7 @@ describe("seed check nurture gate vs. forced host check", () => {
       .where(and(eq(mindHistory.mind, seedName), eq(mindHistory.sender, "volute")));
 
     const { default: app } = await import("../packages/daemon/src/web/app.js");
-    const res = await app.request(`http://localhost/api/minds/${seedName}/seed-check`, {
+    const res = await app.request(`http://localhost/api/v1/minds/${seedName}/seed-check`, {
       headers: postHeaders(cookie),
     });
     assert.equal(res.status, 200);
@@ -535,7 +535,7 @@ describe("seed check nurture gate vs. forced host check", () => {
 
   it("forces the readiness state for a manual host check (?force=1)", async () => {
     const { default: app } = await import("../packages/daemon/src/web/app.js");
-    const res = await app.request(`http://localhost/api/minds/${seedName}/seed-check?force=1`, {
+    const res = await app.request(`http://localhost/api/v1/minds/${seedName}/seed-check?force=1`, {
       headers: postHeaders(cookie),
     });
     assert.equal(res.status, 200);
@@ -549,7 +549,7 @@ describe("seed check nurture gate vs. forced host check", () => {
     await addMind(seedName, 4203);
 
     const { default: app } = await import("../packages/daemon/src/web/app.js");
-    const res = await app.request(`http://localhost/api/minds/${seedName}/seed-check?force=1`, {
+    const res = await app.request(`http://localhost/api/v1/minds/${seedName}/seed-check?force=1`, {
       headers: postHeaders(cookie),
     });
     assert.equal(res.status, 200);
@@ -583,7 +583,7 @@ describe("sprout endpoint cleans up nurture schedule", () => {
   it("POST /api/minds/:name/sprout sets stage to sprouted", async () => {
     const { default: app } = await import("../packages/daemon/src/web/app.js");
 
-    const res = await app.request(`http://localhost/api/minds/${seedName}/sprout`, {
+    const res = await app.request(`http://localhost/api/v1/minds/${seedName}/sprout`, {
       method: "POST",
       headers: postHeaders(cookie),
     });
@@ -618,7 +618,7 @@ describe("profile endpoint", () => {
   it("PATCH /api/minds/:name/profile updates profile", async () => {
     const { default: app } = await import("../packages/daemon/src/web/app.js");
 
-    const res = await app.request(`http://localhost/api/minds/${mindName}/profile`, {
+    const res = await app.request(`http://localhost/api/v1/minds/${mindName}/profile`, {
       method: "PATCH",
       headers: {
         ...postHeaders(cookie),
@@ -643,7 +643,7 @@ describe("profile endpoint", () => {
   it("PATCH /api/minds/:name/profile returns 404 for unknown mind", async () => {
     const { default: app } = await import("../packages/daemon/src/web/app.js");
 
-    const res = await app.request("http://localhost/api/minds/nonexistent-mind/profile", {
+    const res = await app.request("http://localhost/api/v1/minds/nonexistent-mind/profile", {
       method: "PATCH",
       headers: {
         ...postHeaders(cookie),

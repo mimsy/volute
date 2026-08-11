@@ -13,9 +13,12 @@ const cmd = command({
 
     const client = getClient();
 
-    const res = await daemonFetch(urlOf(client.api.minds[":name"].stop.$url({ param: { name } })), {
-      method: "POST",
-    });
+    const res = await daemonFetch(
+      urlOf(client.api.v1.minds[":name"].stop.$url({ param: { name } })),
+      {
+        method: "POST",
+      },
+    );
 
     const data = (await res.json()) as { ok?: boolean; error?: string };
 

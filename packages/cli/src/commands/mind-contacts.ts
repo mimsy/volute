@@ -30,7 +30,7 @@ const cmd = command({
     const name = resolveMindName(flags);
     const client = getClient();
 
-    const url = client.api.minds[":name"].history.contacts.$url({ param: { name } });
+    const url = client.api.v1.minds[":name"].history.contacts.$url({ param: { name } });
     if (flags.hours) url.searchParams.set("hours", flags.hours);
 
     const res = await daemonFetch(urlOf(url));

@@ -16,7 +16,7 @@ const cmd = command({
       process.exit(1);
     }
 
-    const res = await daemonFetch(`/api/minds/${encodeURIComponent(name)}/wake`, {
+    const res = await daemonFetch(`/api/v1/minds/${encodeURIComponent(name)}/wake`, {
       method: "POST",
     });
 

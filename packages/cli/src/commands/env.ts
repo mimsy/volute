@@ -28,7 +28,7 @@ const envSetCmd = command({
     if (flags.mind) {
       res = await daemonFetch(
         urlOf(
-          client.api.minds[":name"].env[":key"].$url({
+          client.api.v1.minds[":name"].env[":key"].$url({
             param: { name: flags.mind, key },
           }),
         ),
@@ -39,7 +39,7 @@ const envSetCmd = command({
         },
       );
     } else {
-      res = await daemonFetch(urlOf(client.api.env[":key"].$url({ param: { key } })), {
+      res = await daemonFetch(urlOf(client.api.v1.env[":key"].$url({ param: { key } })), {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ value }),
@@ -68,7 +68,7 @@ const envGetCmd = command({
     if (flags.mind) {
       const res = await daemonFetch(
         urlOf(
-          client.api.minds[":name"].env[":key"].$url({
+          client.api.v1.minds[":name"].env[":key"].$url({
             param: { name: flags.mind, key },
           }),
         ),
@@ -81,7 +81,7 @@ const envGetCmd = command({
       const data = (await res.json()) as { value: string };
       console.log(data.value);
     } else {
-      const res = await daemonFetch(urlOf(client.api.env.$url()));
+      const res = await daemonFetch(urlOf(client.api.v1.env.$url()));
       if (!res.ok) {
         console.error(`Failed to read shared env`);
         process.exit(1);
@@ -110,7 +110,7 @@ const envListCmd = command({
     const compact = isCompact();
     if (flags.mind) {
       const res = await daemonFetch(
-        urlOf(client.api.minds[":name"].env.$url({ param: { name: flags.mind } })),
+        urlOf(client.api.v1.minds[":name"].env.$url({ param: { name: flags.mind } })),
       );
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
@@ -133,7 +133,7 @@ const envListCmd = command({
         console.log(compact ? `${key}=${value}` : `${key}=${value} [${scope}]`);
       }
     } else {
-      const res = await daemonFetch(urlOf(client.api.env.$url()));
+      const res = await daemonFetch(urlOf(client.api.v1.env.$url()));
       if (!res.ok) {
         console.error("Failed to list shared env");
         process.exit(1);
@@ -167,14 +167,14 @@ const envRemoveCmd = command({
     if (flags.mind) {
       res = await daemonFetch(
         urlOf(
-          client.api.minds[":name"].env[":key"].$url({
+          client.api.v1.minds[":name"].env[":key"].$url({
             param: { name: flags.mind, key },
           }),
         ),
         { method: "DELETE" },
       );
     } else {
-      res = await daemonFetch(urlOf(client.api.env[":key"].$url({ param: { key } })), {
+      res = await daemonFetch(urlOf(client.api.v1.env[":key"].$url({ param: { key } })), {
         method: "DELETE",
       });
     }

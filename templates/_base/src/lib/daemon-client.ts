@@ -39,7 +39,7 @@ export async function daemonRestart(context?: {
   }
   try {
     const res = await fetch(
-      `http://127.0.0.1:${port}/api/minds/${encodeURIComponent(mind)}/restart`,
+      `http://127.0.0.1:${port}/api/v1/minds/${encodeURIComponent(mind)}/restart`,
       {
         method: "POST",
         headers: headers(),
@@ -98,7 +98,7 @@ export async function daemonEmit(event: DaemonEvent): Promise<void> {
     }
     return;
   }
-  const url = `http://127.0.0.1:${port}/api/minds/${encodeURIComponent(mind)}/events`;
+  const url = `http://127.0.0.1:${port}/api/v1/minds/${encodeURIComponent(mind)}/events`;
   const body = JSON.stringify(event);
   // Critical events get retries: `done` (else turns stay stuck) and `error` (else the
   // mind never learns a failure happened). The daemon is local, so retrying against it
@@ -142,7 +142,7 @@ export async function daemonNotice(input: {
   }
   try {
     const res = await fetch(
-      `http://127.0.0.1:${port}/api/minds/${encodeURIComponent(mind)}/notices`,
+      `http://127.0.0.1:${port}/api/v1/minds/${encodeURIComponent(mind)}/notices`,
       {
         method: "POST",
         headers: headers(),

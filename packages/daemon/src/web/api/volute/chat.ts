@@ -122,297 +122,290 @@ async function persistSpiritNotice(
   }
 }
 
-export const unifiedChatApp = new Hono<AuthEnv>().post(
-  "/chat",
-  zValidator("json", chatSchema),
-  async (c) => {
-    const user = c.get("user");
-    const body = c.req.valid("json");
+// Mounted at /api/v1/chat, so the route path is bare "/". See app.ts.
+export const chatApp = new Hono<AuthEnv>().post("/", zValidator("json", chatSchema), async (c) => {
+  const user = c.get("user");
+  const body = c.req.valid("json");
 
-    // Validate content
-    if (
-      !body.message &&
-      (!body.images || body.images.length === 0) &&
-      (!body.files || body.files.length === 0)
-    ) {
-      return c.json({ error: "message, images, or files required" }, 400);
-    }
+  // Validate content
+  if (
+    !body.message &&
+    (!body.images || body.images.length === 0) &&
+    (!body.files || body.files.length === 0)
+  ) {
+    return c.json({ error: "message, images, or files required" }, 400);
+  }
 
-    // Must have conversationId or targetMind
-    if (!body.conversationId && !body.targetMind) {
-      return c.json({ error: "conversationId or targetMind required" }, 400);
-    }
+  // Must have conversationId or targetMind
+  if (!body.conversationId && !body.targetMind) {
+    return c.json({ error: "conversationId or targetMind required" }, 400);
+  }
 
-    // Resolve sender: daemon token + body.sender → override, else user.username
-    const senderName = user.id === 0 && body.sender ? body.sender : user.username;
+  // Resolve sender: daemon token + body.sender → override, else user.username
+  const senderName = user.id === 0 && body.sender ? body.sender : user.username;
 
-    // Detect if sender is a mind. The spirit authenticates with its
-    // mind token but resolves to the shared system user (user_type "spirit"), so
-    // classify a system principal whose username is a registered mind as a mind
-    // sender too — this matches only the spirit, never a plain system principal.
-    const senderIsMind =
-      (user.id === 0 && body.sender && (await findMind(body.sender))) ||
-      isMind(user) ||
-      (isSystemSpirit(user) && !!(await findMind(user.username)));
+  // Detect if sender is a mind. The spirit authenticates with its
+  // mind token but resolves to the shared system user (user_type "spirit"), so
+  // classify a system principal whose username is a registered mind as a mind
+  // sender too — this matches only the spirit, never a plain system principal.
+  const senderIsMind =
+    (user.id === 0 && body.sender && (await findMind(body.sender))) ||
+    isMind(user) ||
+    (isSystemSpirit(user) && !!(await findMind(user.username)));
 
-    // Track baseName and variant-aware targetName callback for the targetMind flow
-    let baseName: string | undefined;
-    let variantName: string | undefined;
+  // Track baseName and variant-aware targetName callback for the targetMind flow
+  let baseName: string | undefined;
+  let variantName: string | undefined;
 
-    let conversationId = body.conversationId;
+  let conversationId = body.conversationId;
 
-    if (body.targetMind) {
-      // --- targetMind flow (was mind-scoped endpoint) ---
-      variantName = body.targetMind;
-      baseName = await getBaseName(body.targetMind);
+  if (body.targetMind) {
+    // --- targetMind flow (was mind-scoped endpoint) ---
+    variantName = body.targetMind;
+    baseName = await getBaseName(body.targetMind);
 
-      const entry = await findMind(baseName);
-      if (!entry) return c.json({ error: "Mind not found" }, 404);
+    const entry = await findMind(baseName);
+    if (!entry) return c.json({ error: "Mind not found" }, 404);
 
-      if (conversationId) {
-        // Daemon token (id: 0) can access any conversation
-        if (user.id !== 0 && !(await isParticipantOrOwner(conversationId, user.id))) {
-          return c.json({ error: "Conversation not found" }, 404);
-        }
-      } else {
-        // Auto-create/reuse DM conversation
-        const mindUser = await getOrCreateMindUser(baseName);
-        const participantIds: number[] = [];
-        if (user.id !== 0) {
-          participantIds.push(user.id);
-        } else if (body.sender) {
-          if (isSpiritName(body.sender)) {
-            const systemUser = await getOrCreateSystemUser();
-            participantIds.push(systemUser.id);
-          } else {
-            const senderMind = await findMind(body.sender);
-            if (senderMind) {
-              const senderMindUser = await getOrCreateMindUser(body.sender);
-              participantIds.push(senderMindUser.id);
-            }
-          }
-        }
-        participantIds.push(mindUser.id);
-
-        // DM reuse: if exactly 2 participants, look for an existing conversation
-        if (participantIds.length === 2) {
-          const existing = await findDMConversation(participantIds as [number, number]);
-          if (existing) {
-            conversationId = existing;
-          }
-        }
-
-        if (!conversationId) {
-          const conv = await createConversation({
-            userId: user.id !== 0 ? user.id : undefined,
-            participantIds,
-          });
-          conversationId = conv.id;
-        }
-      }
-    } else {
-      // --- conversationId-only flow (was unified endpoint) ---
-      if (user.id !== 0 && !(await isParticipantOrOwner(conversationId!, user.id))) {
+    if (conversationId) {
+      // Daemon token (id: 0) can access any conversation
+      if (user.id !== 0 && !(await isParticipantOrOwner(conversationId, user.id))) {
         return c.json({ error: "Conversation not found" }, 404);
       }
-    }
-
-    const conv = await getConversation(conversationId!);
-    if (!conv) return c.json({ error: "Conversation not found" }, 404);
-    const convName = conv.type === "channel" ? await getChannelName(conversationId!) : null;
-    const participants = await getParticipants(conversationId!);
-
-    // Normalize the sender's own text first: fixModelEscapes changes its length, and the
-    // channel's character limit has to measure the text that will actually be stored.
-    let messageText = body.message ?? "";
-    if (senderIsMind && messageText) {
-      const vCfg = readVoluteConfig(await resolveMindDir(baseName ?? senderName));
-      messageText = fixModelEscapes(messageText, vCfg?.unescapeNewlines === true);
-    }
-
-    // Enforce the channel's character and rate limits before anything is written or staged.
-    // Ordering matters: staging persists a pending file offer per recipient, so checking
-    // after it would leave minds holding offers for a message that was never sent — and
-    // every retry would stage another copy.
-    if (conv.type === "channel" && convName) {
-      const rejection = await checkChannelLimits({
-        conversationId: conversationId!,
-        channelName: convName,
-        text: messageText,
-      });
-      if (rejection) return c.json({ error: rejection.error }, rejection.status);
-    }
-
-    // Stage files
-    const fileNotifications: string[] = [];
-    if (body.files && body.files.length > 0) {
-      let fileTargets: string[];
-      if (baseName) {
-        fileTargets = [baseName];
-      } else {
-        fileTargets = participants
-          .filter((p) => isMind(p) && p.username !== senderName)
-          .map((p) => p.username);
+    } else {
+      // Auto-create/reuse DM conversation
+      const mindUser = await getOrCreateMindUser(baseName);
+      const participantIds: number[] = [];
+      if (user.id !== 0) {
+        participantIds.push(user.id);
+      } else if (body.sender) {
+        if (isSpiritName(body.sender)) {
+          const systemUser = await getOrCreateSystemUser();
+          participantIds.push(systemUser.id);
+        } else {
+          const senderMind = await findMind(body.sender);
+          if (senderMind) {
+            const senderMindUser = await getOrCreateMindUser(body.sender);
+            participantIds.push(senderMindUser.id);
+          }
+        }
       }
-      const { notifications, error } = stageFilesForMinds(body.files, fileTargets, senderName);
-      if (error) return c.json({ error: error.message }, error.status);
-      fileNotifications.push(...notifications);
-    }
+      participantIds.push(mindUser.id);
 
-    // Build content blocks. The file-share notifications are system-generated text appended
-    // alongside the sender's message — deliberately not part of what the character limit
-    // measured above, since the sender didn't write them.
-    const contentBlocks: ContentBlock[] = [];
-    if (messageText) contentBlocks.push({ type: "text", text: messageText });
-    for (const note of fileNotifications) {
-      contentBlocks.push({ type: "text", text: note });
-    }
-    if (body.images) {
-      for (const img of body.images) {
-        contentBlocks.push({ type: "image", media_type: img.media_type, data: img.data });
+      // DM reuse: if exactly 2 participants, look for an existing conversation
+      if (participantIds.length === 2) {
+        const existing = await findDMConversation(participantIds as [number, number]);
+        if (existing) {
+          conversationId = existing;
+        }
       }
-    }
 
-    // Resolve the sending mind's active turn from the per-request X-Volute-Thread header
-    // (captured into context as `mindSession`). This is the primary turn-attribution path:
-    // it records turn_id directly on send, replacing the racy process-global VOLUTE_SESSION
-    // lookup and the marker-only correlation that ran after the fact.
-    let outboundTurnId: string | undefined;
-    let senderBase: string | undefined;
-    if (senderIsMind) {
-      senderBase = await getBaseName(senderName);
-      outboundTurnId = getActiveTurnId(senderBase, c.get("mindSession"));
-    }
-
-    // Stale-send hold: if a peer posted to this conversation after this mind's turn began,
-    // don't post — return a plain notice (surfaced as the send command's stdout) so the mind
-    // can revise or re-send. Held at most once per turn. Replaces the destructive mid-turn
-    // interrupt that produced the "tool use rejected" message.
-    if (senderIsMind && senderBase) {
-      const gate = await checkStaleSend(senderBase, conversationId!, [senderName, senderBase]);
-      if (gate.held && gate.unseen) {
-        const label = buildVoluteSlug({
-          participants,
-          mindUsername: senderName,
-          conversationId: conversationId!,
-          convType: conv.type as "dm" | "channel",
-          convName,
+      if (!conversationId) {
+        const conv = await createConversation({
+          userId: user.id !== 0 ? user.id : undefined,
+          participantIds,
         });
-        return c.json({ ok: true, held: true, notice: formatHoldNotice(label, gate.unseen) });
+        conversationId = conv.id;
       }
     }
+  } else {
+    // --- conversationId-only flow (was unified endpoint) ---
+    if (user.id !== 0 && !(await isParticipantOrOwner(conversationId!, user.id))) {
+      return c.json({ error: "Conversation not found" }, 404);
+    }
+  }
 
-    // Save message. turn_id is attributed directly for mind senders (see above); when the
-    // turn can't be resolved it stays null and is linked later via the tool_result marker.
-    const message = await addMessage(conversationId!, "user", senderName, contentBlocks, {
-      turnId: outboundTurnId,
+  const conv = await getConversation(conversationId!);
+  if (!conv) return c.json({ error: "Conversation not found" }, 404);
+  const convName = conv.type === "channel" ? await getChannelName(conversationId!) : null;
+  const participants = await getParticipants(conversationId!);
+
+  // Normalize the sender's own text first: fixModelEscapes changes its length, and the
+  // channel's character limit has to measure the text that will actually be stored.
+  let messageText = body.message ?? "";
+  if (senderIsMind && messageText) {
+    const vCfg = readVoluteConfig(await resolveMindDir(baseName ?? senderName));
+    messageText = fixModelEscapes(messageText, vCfg?.unescapeNewlines === true);
+  }
+
+  // Enforce the channel's character and rate limits before anything is written or staged.
+  // Ordering matters: staging persists a pending file offer per recipient, so checking
+  // after it would leave minds holding offers for a message that was never sent — and
+  // every retry would stage another copy.
+  if (conv.type === "channel" && convName) {
+    const rejection = await checkChannelLimits({
+      conversationId: conversationId!,
+      channelName: convName,
+      text: messageText,
     });
+    if (rejection) return c.json({ error: rejection.error }, rejection.status);
+  }
 
-    let outboundId: number | undefined;
-    if (senderIsMind) {
-      routeOutboundBridge(conversationId!, senderName, contentBlocks).catch((err) => {
-        log.warn("outbound bridge routing failed", log.errorData(err));
-      });
-      const channel = buildVoluteSlug({
+  // Stage files
+  const fileNotifications: string[] = [];
+  if (body.files && body.files.length > 0) {
+    let fileTargets: string[];
+    if (baseName) {
+      fileTargets = [baseName];
+    } else {
+      fileTargets = participants
+        .filter((p) => isMind(p) && p.username !== senderName)
+        .map((p) => p.username);
+    }
+    const { notifications, error } = stageFilesForMinds(body.files, fileTargets, senderName);
+    if (error) return c.json({ error: error.message }, error.status);
+    fileNotifications.push(...notifications);
+  }
+
+  // Build content blocks. The file-share notifications are system-generated text appended
+  // alongside the sender's message — deliberately not part of what the character limit
+  // measured above, since the sender didn't write them.
+  const contentBlocks: ContentBlock[] = [];
+  if (messageText) contentBlocks.push({ type: "text", text: messageText });
+  for (const note of fileNotifications) {
+    contentBlocks.push({ type: "text", text: note });
+  }
+  if (body.images) {
+    for (const img of body.images) {
+      contentBlocks.push({ type: "image", media_type: img.media_type, data: img.data });
+    }
+  }
+
+  // Resolve the sending mind's active turn from the per-request X-Volute-Thread header
+  // (captured into context as `mindSession`). This is the primary turn-attribution path:
+  // it records turn_id directly on send, replacing the racy process-global VOLUTE_SESSION
+  // lookup and the marker-only correlation that ran after the fact.
+  let outboundTurnId: string | undefined;
+  let senderBase: string | undefined;
+  if (senderIsMind) {
+    senderBase = await getBaseName(senderName);
+    outboundTurnId = getActiveTurnId(senderBase, c.get("mindSession"));
+  }
+
+  // Stale-send hold: if a peer posted to this conversation after this mind's turn began,
+  // don't post — return a plain notice (surfaced as the send command's stdout) so the mind
+  // can revise or re-send. Held at most once per turn. Replaces the destructive mid-turn
+  // interrupt that produced the "tool use rejected" message.
+  if (senderIsMind && senderBase) {
+    const gate = await checkStaleSend(senderBase, conversationId!, [senderName, senderBase]);
+    if (gate.held && gate.unseen) {
+      const label = buildVoluteSlug({
         participants,
         mindUsername: senderName,
         conversationId: conversationId!,
         convType: conv.type as "dm" | "channel",
         convName,
       });
-      const text = extractTextContent(contentBlocks);
-      try {
-        outboundId = await recordOutbound(senderName, channel, text, {
-          messageId: message?.id != null ? String(message.id) : undefined,
+      return c.json({ ok: true, held: true, notice: formatHoldNotice(label, gate.unseen) });
+    }
+  }
+
+  // Save message. turn_id is attributed directly for mind senders (see above); when the
+  // turn can't be resolved it stays null and is linked later via the tool_result marker.
+  const message = await addMessage(conversationId!, "user", senderName, contentBlocks, {
+    turnId: outboundTurnId,
+  });
+
+  let outboundId: number | undefined;
+  if (senderIsMind) {
+    routeOutboundBridge(conversationId!, senderName, contentBlocks).catch((err) => {
+      log.warn("outbound bridge routing failed", log.errorData(err));
+    });
+    const channel = buildVoluteSlug({
+      participants,
+      mindUsername: senderName,
+      conversationId: conversationId!,
+      convType: conv.type as "dm" | "channel",
+      convName,
+    });
+    const text = extractTextContent(contentBlocks);
+    try {
+      outboundId = await recordOutbound(senderName, channel, text, {
+        messageId: message?.id != null ? String(message.id) : undefined,
+        turnId: outboundTurnId,
+      });
+      // When the turn is known, publish the outbound to SSE now (correctly tagged).
+      // Otherwise linkToolResultToTurn publishes it when the marker arrives.
+      if (outboundTurnId) {
+        const mindKey = senderBase ?? senderName;
+        publishMindEvent(mindKey, {
+          mind: mindKey,
+          type: "outbound",
+          channel,
+          content: text,
           turnId: outboundTurnId,
         });
-        // When the turn is known, publish the outbound to SSE now (correctly tagged).
-        // Otherwise linkToolResultToTurn publishes it when the marker arrives.
-        if (outboundTurnId) {
-          const mindKey = senderBase ?? senderName;
-          publishMindEvent(mindKey, {
-            mind: mindKey,
-            type: "outbound",
-            channel,
-            content: text,
-            turnId: outboundTurnId,
-          });
-        }
-      } catch (err) {
-        log.warn(`recordOutbound failed for ${senderName}`, log.errorData(err));
-      }
-    }
-
-    // On-demand spirit start + availability surfacing (#434). ADVISORY: this must never
-    // block or break message delivery — any error degrades to "no status, no notice" and
-    // fan-out proceeds. Only a DM whose sole mind-ish recipient is the spirit awaits the
-    // start: fan-out only delivers to running/sleeping minds, so for the DM case the await
-    // IS the delivery guarantee. Channels/groups never block on a spirit start — there,
-    // fan-out's skip path starts a stopped spirit fire-and-forget and this message is
-    // missed, same as for any stopped mind. A sleeping spirit is left alone: its queue
-    // covers the message (don't force-wake, per #418).
-    let spiritStatus: SpiritStatus | undefined;
-    let spiritName: string | undefined;
-    try {
-      const mindishRecipients = participants.filter(
-        (p) => isLocalMind(p) && p.username !== senderName,
-      );
-      const spiritRecipient =
-        conv.type === "dm" && mindishRecipients.length === 1 && isSystemSpirit(mindishRecipients[0])
-          ? mindishRecipients[0]
-          : undefined;
-      if (spiritRecipient) {
-        const availability = await ensureSpiritAvailable();
-        if (availability) {
-          spiritStatus = availability.status;
-          spiritName = spiritRecipient.username;
-          if (availability.status === "unavailable" && availability.notice) {
-            await persistSpiritNotice(
-              conversationId!,
-              spiritRecipient.username,
-              availability.notice,
-            );
-          }
-        }
       }
     } catch (err) {
-      log.error("spirit availability check failed — proceeding with delivery", log.errorData(err));
+      log.warn(`recordOutbound failed for ${senderName}`, log.errorData(err));
     }
+  }
 
-    // Fan out to running mind participants
-    const isDM = conv.type === "dm";
-    const { gatedRecipients } = await fanOutToMinds({
-      conversationId: conversationId!,
-      contentBlocks,
-      senderName,
-      participants,
-      isDM,
-      slugExtra: { convType: conv.type as "dm" | "channel", convName },
-      // Variant-aware targeting: when targetMind is a variant, route to the variant name
-      targetName: baseName
-        ? (username) => (username === baseName ? variantName! : username)
-        : undefined,
-    });
-
-    // The message is saved, but a recipient whose routing gates this channel won't see it
-    // until they accept the channel — say so in the 200 instead of a bare "sent" (#723).
-    const notice =
-      gatedRecipients.length > 0
-        ? `Note: your message is held for ${gatedRecipients.join(", ")} pending channel ` +
-          `approval — they haven't routed this channel yet. It will be delivered if they ` +
-          `accept the channel.`
+  // On-demand spirit start + availability surfacing (#434). ADVISORY: this must never
+  // block or break message delivery — any error degrades to "no status, no notice" and
+  // fan-out proceeds. Only a DM whose sole mind-ish recipient is the spirit awaits the
+  // start: fan-out only delivers to running/sleeping minds, so for the DM case the await
+  // IS the delivery guarantee. Channels/groups never block on a spirit start — there,
+  // fan-out's skip path starts a stopped spirit fire-and-forget and this message is
+  // missed, same as for any stopped mind. A sleeping spirit is left alone: its queue
+  // covers the message (don't force-wake, per #418).
+  let spiritStatus: SpiritStatus | undefined;
+  let spiritName: string | undefined;
+  try {
+    const mindishRecipients = participants.filter(
+      (p) => isLocalMind(p) && p.username !== senderName,
+    );
+    const spiritRecipient =
+      conv.type === "dm" && mindishRecipients.length === 1 && isSystemSpirit(mindishRecipients[0])
+        ? mindishRecipients[0]
         : undefined;
+    if (spiritRecipient) {
+      const availability = await ensureSpiritAvailable();
+      if (availability) {
+        spiritStatus = availability.status;
+        spiritName = spiritRecipient.username;
+        if (availability.status === "unavailable" && availability.notice) {
+          await persistSpiritNotice(conversationId!, spiritRecipient.username, availability.notice);
+        }
+      }
+    }
+  } catch (err) {
+    log.error("spirit availability check failed — proceeding with delivery", log.errorData(err));
+  }
 
-    return c.json({
-      ok: true,
-      conversationId,
-      outboundId,
-      spirit: spiritStatus,
-      spiritName,
-      ...(notice ? { notice } : {}),
-    });
-  },
-);
+  // Fan out to running mind participants
+  const isDM = conv.type === "dm";
+  const { gatedRecipients } = await fanOutToMinds({
+    conversationId: conversationId!,
+    contentBlocks,
+    senderName,
+    participants,
+    isDM,
+    slugExtra: { convType: conv.type as "dm" | "channel", convName },
+    // Variant-aware targeting: when targetMind is a variant, route to the variant name
+    targetName: baseName
+      ? (username) => (username === baseName ? variantName! : username)
+      : undefined,
+  });
+
+  // The message is saved, but a recipient whose routing gates this channel won't see it
+  // until they accept the channel — say so in the 200 instead of a bare "sent" (#723).
+  const notice =
+    gatedRecipients.length > 0
+      ? `Note: your message is held for ${gatedRecipients.join(", ")} pending channel ` +
+        `approval — they haven't routed this channel yet. It will be delivered if they ` +
+        `accept the channel.`
+      : undefined;
+
+  return c.json({
+    ok: true,
+    conversationId,
+    outboundId,
+    spirit: spiritStatus,
+    spiritName,
+    ...(notice ? { notice } : {}),
+  });
+});
 
 // Default export: SSE endpoint only (keeps existing mount points at /api/minds and /api/v1/minds)
 const app = new Hono<AuthEnv>().get("/:name/conversations/:id/events", async (c) => {

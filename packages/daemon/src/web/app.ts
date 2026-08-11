@@ -33,9 +33,9 @@ import v1Events from "./api/v1/events.js";
 import v1Feed from "./api/v1/feed.js";
 import variants from "./api/variants.js";
 import voluteChannels from "./api/volute/channels.js";
-import chat, { unifiedChatApp } from "./api/volute/chat.js";
+import chat, { chatApp } from "./api/volute/chat.js";
 import conversations from "./api/volute/conversations.js";
-import { authMiddleware } from "./middleware/auth.js";
+import { type AuthEnv, authMiddleware } from "./middleware/auth.js";
 
 const httpLog = log.child("http");
 
@@ -116,14 +116,12 @@ app.get("/api/health", (c) => {
 // Extension routes 404 on a trailing slash without this (#792).
 app.use("/api/ext/*", normalizeTrailingSlash(app));
 
-// Protected API routes
+// Protected API routes. The canonical surface is /api/v1/*; the remaining bare
+// /api/* namespaces below are routes that were never dual-mounted under v1
+// (admin/system tooling + the mind-scoped file-sharing/channels/conversations
+// modules), plus the pre-auth /api/setup and /api/auth handled elsewhere.
 app.use("/api/activity/*", authMiddleware);
 app.use("/api/minds/*", authMiddleware);
-app.use("/api/conversations/*", authMiddleware);
-app.use("/api/system/*", authMiddleware);
-app.use("/api/env/*", authMiddleware);
-app.use("/api/prompts/*", authMiddleware);
-app.use("/api/skills/*", authMiddleware);
 app.use("/api/extensions/*", authMiddleware);
 app.use("/api/bridges/*", authMiddleware);
 app.use("/api/config/*", authMiddleware);
@@ -138,55 +136,50 @@ app.route("/api/setup", setup);
 // Config routes (authenticated, no admin required — accessible to minds)
 app.route("/api/config", configRoutes);
 
-// Chain route registrations to capture types
+// The canonical /api/v1 surface, composed as a single sub-app mounted once. This
+// keeps AppType's per-module route schemas merged under one `v1` key rather than
+// piling every module directly onto the root app — the latter overwhelms Hono's
+// RPC type merge and silently collapses `AppType["api"]["v1"]` to a partial type,
+// breaking the CLI's typed client.
+const v1 = new Hono<AuthEnv>()
+  .route("/system", system)
+  .route("/system", update)
+  .route("/minds", minds)
+  .route("/minds", chat)
+  .route("/minds", schedules)
+  .route("/minds", logs)
+  .route("/minds", typing)
+  .route("/minds", variants)
+  .route("/minds", files)
+  .route("/minds", envRoutes)
+  .route("/minds", mindSkills)
+  .route("/env", sharedEnvApp)
+  .route("/prompts", prompts)
+  .route("/skills", skills)
+  .route("/conversations", v1Conversations)
+  .route("/events", v1Events)
+  .route("/feed", v1Feed)
+  .route("/chat", chatApp)
+  .route("/channels", voluteChannels)
+  .route("/history", historyRoutes);
+
+// Single chained registration — one mount per module, so AppType captures the
+// whole surface with no un-chained duplicates. The canonical prefix is /api/v1;
+// the bare /api mounts below are the modules that never had a v1 alias (admin
+// tooling + the mind-scoped file-sharing/channels/conversations routes).
 const routes = app
   .route("/api/activity", activityRoutes)
   .route("/api/keys", keys)
   .route("/api/auth", auth)
-  .route("/api/system", system)
-  .route("/api/system", update)
   .route("/api/backup", backupRoutes)
-  .route("/api/minds", minds)
-  .route("/api/minds", chat)
-  .route("/api/minds", schedules)
-  .route("/api/minds", logs)
-  .route("/api/minds", typing)
-  .route("/api/minds", variants)
-  .route("/api/minds", fileSharing)
-  .route("/api/minds", files)
-  .route("/api/minds", channels)
-  .route("/api/minds", envRoutes)
-  .route("/api/minds", mindSkills)
-  .route("/api/minds", conversations)
-  .route("/api/env", sharedEnvApp)
-  .route("/api/prompts", prompts)
-  .route("/api/skills", skills)
   .route("/api/bridges", bridges)
   .route("/api/extensions", extensionsRoutes)
-  // v1 API routes
-  .route("/api/v1/conversations", v1Conversations)
-  .route("/api/v1/events", v1Events)
-  .route("/api/v1/feed", v1Feed)
-  .route("/api/v1", unifiedChatApp)
-  .route("/api/v1/channels", voluteChannels)
-  .route("/api/v1/history", historyRoutes);
-
-// v1 re-mounts of existing modules (not chained to preserve AppType)
-app.route("/api/v1/minds", minds);
-app.route("/api/v1/minds", chat);
-app.route("/api/v1/minds", typing);
-app.route("/api/v1/minds", variants);
-app.route("/api/v1/minds", files);
-app.route("/api/v1/minds", envRoutes);
-app.route("/api/v1/minds", mindSkills);
-app.route("/api/v1/minds", schedules);
-app.route("/api/v1/minds", logs);
-app.route("/api/v1/system", system);
-app.route("/api/v1/system", update);
-app.route("/api/v1/prompts", prompts);
-app.route("/api/v1/skills", skills);
-app.route("/api/v1/env", sharedEnvApp);
-app.route("/api/conversations", v1Conversations);
+  // Mind-scoped modules that stay on the bare /api prefix (no v1 alias existed).
+  .route("/api/minds", fileSharing)
+  .route("/api/minds", channels)
+  .route("/api/minds", conversations)
+  // v1 API — the canonical surface.
+  .route("/api/v1", v1);
 
 export default app;
 export type AppType = typeof routes;

@@ -56,7 +56,7 @@ function profileForSender(name: string): HoverProfile | null {
       name: mind.name,
       displayName: mind.displayName,
       description: mind.description,
-      avatarUrl: mind.avatar ? `/api/minds/${encodeURIComponent(mind.name)}/avatar` : null,
+      avatarUrl: mind.avatar ? `/api/v1/minds/${encodeURIComponent(mind.name)}/avatar` : null,
       userType: "mind",
       created: mind.created,
     };

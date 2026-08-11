@@ -65,7 +65,7 @@ describe("web env routes — mind-scoped", () => {
 
     const { default: app } = await import("../packages/daemon/src/web/app.js");
 
-    const res = await app.request(`/api/minds/${TEST_MIND}/env`, {
+    const res = await app.request(`/api/v1/minds/${TEST_MIND}/env`, {
       headers: getHeaders(cookie),
     });
     assert.equal(res.status, 200);
@@ -81,7 +81,7 @@ describe("web env routes — mind-scoped", () => {
     const cookie = await setupAuth();
     const { default: app } = await import("../packages/daemon/src/web/app.js");
 
-    const res = await app.request("/api/minds/nonexistent-env-mind/env", {
+    const res = await app.request("/api/v1/minds/nonexistent-env-mind/env", {
       headers: getHeaders(cookie),
     });
     assert.equal(res.status, 404);
@@ -95,7 +95,7 @@ describe("web env routes — mind-scoped", () => {
 
     const { default: app } = await import("../packages/daemon/src/web/app.js");
 
-    const res = await app.request(`http://localhost/api/minds/${TEST_MIND}/env/MY_KEY`, {
+    const res = await app.request(`http://localhost/api/v1/minds/${TEST_MIND}/env/MY_KEY`, {
       method: "PUT",
       headers: postHeaders(cookie),
       body: JSON.stringify({ value: "my_value" }),
@@ -116,7 +116,7 @@ describe("web env routes — mind-scoped", () => {
 
     const { default: app } = await import("../packages/daemon/src/web/app.js");
 
-    const res = await app.request(`/api/minds/${TEST_MIND}/env/TEST_VAR`, {
+    const res = await app.request(`/api/v1/minds/${TEST_MIND}/env/TEST_VAR`, {
       headers: getHeaders(cookie),
     });
     assert.equal(res.status, 200);
@@ -130,7 +130,7 @@ describe("web env routes — mind-scoped", () => {
 
     const { default: app } = await import("../packages/daemon/src/web/app.js");
 
-    const res = await app.request(`/api/minds/${TEST_MIND}/env/NONEXISTENT_KEY`, {
+    const res = await app.request(`/api/v1/minds/${TEST_MIND}/env/NONEXISTENT_KEY`, {
       headers: getHeaders(cookie),
     });
     assert.equal(res.status, 404);
@@ -143,7 +143,7 @@ describe("web env routes — mind-scoped", () => {
 
     const { default: app } = await import("../packages/daemon/src/web/app.js");
 
-    const res = await app.request(`/api/minds/${TEST_MIND}/env/FROM_SHARED`, {
+    const res = await app.request(`/api/v1/minds/${TEST_MIND}/env/FROM_SHARED`, {
       headers: getHeaders(cookie),
     });
     assert.equal(res.status, 200);
@@ -158,7 +158,7 @@ describe("web env routes — mind-scoped", () => {
 
     const { default: app } = await import("../packages/daemon/src/web/app.js");
 
-    const res = await app.request(`http://localhost/api/minds/${TEST_MIND}/env/TO_DELETE`, {
+    const res = await app.request(`http://localhost/api/v1/minds/${TEST_MIND}/env/TO_DELETE`, {
       method: "DELETE",
       headers: {
         Cookie: `volute_session=${cookie}`,
@@ -177,7 +177,7 @@ describe("web env routes — mind-scoped", () => {
     addMind(TEST_MIND, 4150);
     const { default: app } = await import("../packages/daemon/src/web/app.js");
 
-    const res = await app.request(`http://localhost/api/minds/${TEST_MIND}/env/NONEXISTENT`, {
+    const res = await app.request(`http://localhost/api/v1/minds/${TEST_MIND}/env/NONEXISTENT`, {
       method: "DELETE",
       headers: {
         Cookie: `volute_session=${cookie}`,
@@ -192,7 +192,7 @@ describe("web env routes — mind-scoped", () => {
     addMind(TEST_MIND, 4150);
     const { default: app } = await import("../packages/daemon/src/web/app.js");
 
-    const res = await app.request(`http://localhost/api/minds/${TEST_MIND}/env/KEY`, {
+    const res = await app.request(`http://localhost/api/v1/minds/${TEST_MIND}/env/KEY`, {
       method: "PUT",
       headers: postHeaders(cookie),
       body: JSON.stringify({}),
@@ -206,7 +206,7 @@ describe("web env routes — mind-scoped", () => {
     const cookie = await setupAuth();
     const { default: app } = await import("../packages/daemon/src/web/app.js");
 
-    const res = await app.request("http://localhost/api/minds/nonexistent-env-mind/env/KEY", {
+    const res = await app.request("http://localhost/api/v1/minds/nonexistent-env-mind/env/KEY", {
       method: "PUT",
       headers: postHeaders(cookie),
       body: JSON.stringify({ value: "val" }),
@@ -218,7 +218,7 @@ describe("web env routes — mind-scoped", () => {
     const cookie = await setupAuth();
     const { default: app } = await import("../packages/daemon/src/web/app.js");
 
-    const res = await app.request("http://localhost/api/minds/nonexistent-env-mind/env/KEY", {
+    const res = await app.request("http://localhost/api/v1/minds/nonexistent-env-mind/env/KEY", {
       method: "DELETE",
       headers: {
         Cookie: `volute_session=${cookie}`,
@@ -231,7 +231,7 @@ describe("web env routes — mind-scoped", () => {
   it("PUT /:name/env/:key — requires auth (401 without cookie)", async () => {
     const { default: app } = await import("../packages/daemon/src/web/app.js");
 
-    const res = await app.request(`http://localhost/api/minds/${TEST_MIND}/env/KEY`, {
+    const res = await app.request(`http://localhost/api/v1/minds/${TEST_MIND}/env/KEY`, {
       method: "PUT",
       headers: { Origin: "http://localhost", "Content-Type": "application/json" },
       body: JSON.stringify({ value: "val" }),
@@ -248,7 +248,7 @@ describe("web env routes — mind-scoped", () => {
     addMind(TEST_MIND, 4150);
     const { default: app } = await import("../packages/daemon/src/web/app.js");
 
-    const res = await app.request(`http://localhost/api/minds/${TEST_MIND}/env/KEY`, {
+    const res = await app.request(`http://localhost/api/v1/minds/${TEST_MIND}/env/KEY`, {
       method: "PUT",
       headers: {
         Cookie: `volute_session=${cookie2}`,
@@ -272,7 +272,7 @@ describe("web env routes — shared", () => {
 
     const { default: app } = await import("../packages/daemon/src/web/app.js");
 
-    const res = await app.request("/api/env", {
+    const res = await app.request("/api/v1/env", {
       headers: getHeaders(cookie),
     });
     assert.equal(res.status, 200);
@@ -284,7 +284,7 @@ describe("web env routes — shared", () => {
     const cookie = await setupAuth();
     const { default: app } = await import("../packages/daemon/src/web/app.js");
 
-    const res = await app.request("/api/env", {
+    const res = await app.request("/api/v1/env", {
       headers: getHeaders(cookie),
     });
     assert.equal(res.status, 200);
@@ -292,11 +292,11 @@ describe("web env routes — shared", () => {
     assert.deepEqual(body, {});
   });
 
-  it("PUT /api/env/:key — sets shared env var", async () => {
+  it("PUT /api/v1/env/:key — sets shared env var", async () => {
     const cookie = await setupAuth();
     const { default: app } = await import("../packages/daemon/src/web/app.js");
 
-    const res = await app.request("http://localhost/api/env/NEW_KEY", {
+    const res = await app.request("http://localhost/api/v1/env/NEW_KEY", {
       method: "PUT",
       headers: postHeaders(cookie),
       body: JSON.stringify({ value: "new_value" }),
@@ -310,13 +310,13 @@ describe("web env routes — shared", () => {
     assert.equal(env.NEW_KEY, "new_value");
   });
 
-  it("DELETE /api/env/:key — removes shared env var", async () => {
+  it("DELETE /api/v1/env/:key — removes shared env var", async () => {
     const cookie = await setupAuth();
     writeEnv(sharedEnvPath(), { DEL_KEY: "to_delete" });
 
     const { default: app } = await import("../packages/daemon/src/web/app.js");
 
-    const res = await app.request("http://localhost/api/env/DEL_KEY", {
+    const res = await app.request("http://localhost/api/v1/env/DEL_KEY", {
       method: "DELETE",
       headers: {
         Cookie: `volute_session=${cookie}`,
@@ -329,11 +329,11 @@ describe("web env routes — shared", () => {
     assert.equal(env.DEL_KEY, undefined);
   });
 
-  it("DELETE /api/env/:key — 404 for nonexistent key", async () => {
+  it("DELETE /api/v1/env/:key — 404 for nonexistent key", async () => {
     const cookie = await setupAuth();
     const { default: app } = await import("../packages/daemon/src/web/app.js");
 
-    const res = await app.request("http://localhost/api/env/NONEXISTENT", {
+    const res = await app.request("http://localhost/api/v1/env/NONEXISTENT", {
       method: "DELETE",
       headers: {
         Cookie: `volute_session=${cookie}`,
@@ -343,11 +343,11 @@ describe("web env routes — shared", () => {
     assert.equal(res.status, 404);
   });
 
-  it("PUT /api/env/:key — 400 for missing value field", async () => {
+  it("PUT /api/v1/env/:key — 400 for missing value field", async () => {
     const cookie = await setupAuth();
     const { default: app } = await import("../packages/daemon/src/web/app.js");
 
-    const res = await app.request("http://localhost/api/env/KEY", {
+    const res = await app.request("http://localhost/api/v1/env/KEY", {
       method: "PUT",
       headers: postHeaders(cookie),
       body: JSON.stringify({ wrong: "field" }),
@@ -355,10 +355,10 @@ describe("web env routes — shared", () => {
     assert.equal(res.status, 400);
   });
 
-  it("PUT /api/env/:key — requires auth (401 without cookie)", async () => {
+  it("PUT /api/v1/env/:key — requires auth (401 without cookie)", async () => {
     const { default: app } = await import("../packages/daemon/src/web/app.js");
 
-    const res = await app.request("http://localhost/api/env/KEY", {
+    const res = await app.request("http://localhost/api/v1/env/KEY", {
       method: "PUT",
       headers: { Origin: "http://localhost", "Content-Type": "application/json" },
       body: JSON.stringify({ value: "val" }),
@@ -366,17 +366,17 @@ describe("web env routes — shared", () => {
     assert.equal(res.status, 401);
   });
 
-  it("DELETE /api/env/:key — requires auth (401 without cookie)", async () => {
+  it("DELETE /api/v1/env/:key — requires auth (401 without cookie)", async () => {
     const { default: app } = await import("../packages/daemon/src/web/app.js");
 
-    const res = await app.request("http://localhost/api/env/KEY", {
+    const res = await app.request("http://localhost/api/v1/env/KEY", {
       method: "DELETE",
       headers: { Origin: "http://localhost" },
     });
     assert.equal(res.status, 401);
   });
 
-  it("PUT /api/env/:key — non-admin user gets 403", async () => {
+  it("PUT /api/v1/env/:key — non-admin user gets 403", async () => {
     await setupAuth();
     const user2 = await createUser("regular-shared-user", "pass");
     await approveUser(user2.id);
@@ -384,7 +384,7 @@ describe("web env routes — shared", () => {
 
     const { default: app } = await import("../packages/daemon/src/web/app.js");
 
-    const res = await app.request("http://localhost/api/env/KEY", {
+    const res = await app.request("http://localhost/api/v1/env/KEY", {
       method: "PUT",
       headers: {
         Cookie: `volute_session=${cookie2}`,
@@ -407,14 +407,14 @@ describe("web env routes — shared", () => {
 
     const { default: app } = await import("../packages/daemon/src/web/app.js");
 
-    const res = await app.request(`/api/minds/${TEST_MIND}/env`, {
+    const res = await app.request(`/api/v1/minds/${TEST_MIND}/env`, {
       headers: getHeaders(cookie2),
     });
     assert.equal(res.status, 403);
     await deleteSession(cookie2);
   });
 
-  it("GET /api/env/ — non-admin user gets 403 (no shared secret read)", async () => {
+  it("GET /api/v1/env/ — non-admin user gets 403 (no shared secret read)", async () => {
     await setupAuth();
     writeEnv(sharedEnvPath(), { SHARED_KEY: "shared_secret" });
     const user2 = await createUser("regular-shared-user", "pass");
@@ -423,7 +423,7 @@ describe("web env routes — shared", () => {
 
     const { default: app } = await import("../packages/daemon/src/web/app.js");
 
-    const res = await app.request("/api/env", {
+    const res = await app.request("/api/v1/env", {
       headers: getHeaders(cookie2),
     });
     assert.equal(res.status, 403);

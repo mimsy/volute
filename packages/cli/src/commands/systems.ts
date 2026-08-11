@@ -2,7 +2,7 @@ import { subcommands } from "../lib/command.js";
 import { daemonFetch } from "../lib/daemon-client.js";
 
 async function showStatus() {
-  const res = await daemonFetch("/api/system/info");
+  const res = await daemonFetch("/api/v1/system/info");
   if (!res.ok) {
     const body = (await res.json().catch(() => ({ error: `HTTP ${res.status}` }))) as {
       error: string;
