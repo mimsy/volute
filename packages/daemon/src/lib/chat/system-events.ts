@@ -1,5 +1,6 @@
 import { and, asc, desc, eq, gt, isNotNull, isNull, lt, lte, or, sql } from "drizzle-orm";
 import { getDb } from "../db.js";
+import { getRoutingConfig, resolveEventRoute } from "../delivery/delivery-router.js";
 import { publish as publishMindEvent } from "../events/mind-events.js";
 import { findMind, getBaseName } from "../mind/registry.js";
 import { mindHistory, systemEvents, turns } from "../schema.js";
@@ -332,20 +333,57 @@ async function markDelivered(id: number, extraMeta?: Record<string, unknown>): P
 }
 
 /**
- * Resolve an event's stored thread, expanding the `$new` convention ("a fresh isolated
- * session per fire") the same way the message path does. Expansion lives here so every
- * caller passing `$new` — scheduler, default dream autonomy, future — gets isolation without
- * owning the contract itself (#735).
- *
- * `$new` only means something for `immediate` delivery, which POSTs an envelope and runs a
- * turn in the fresh session. A `next-turn` event stamped to a unique session that never runs
- * a turn would strand forever (#356/#721), so it collapses to the mind-level sentinel and
- * drains into whichever thread next runs a clean turn. Uses the shared session-name minter so
- * the name shape is identical to the message path's mind-side.
+ * The routing key a system event is matched against by the mind's routes.json event rules.
+ * Shaped `<type>:<discriminator>` where a discriminator exists (schedule id, webhook
+ * source, notice/lifecycle subtype), else the bare type. Mirrors the discriminators
+ * {@link eventLabel} reads, so a rule `{ event: "schedule:dream" }` targets exactly the
+ * dream fire while `{ event: "schedule:*" }` catches every schedule.
  */
-function resolveEventThread(thread: string, delivery: EventDelivery): string {
-  if (thread !== "$new") return thread;
-  return delivery === "immediate" ? newEphemeralSession() : MIND_LEVEL_THREAD;
+export function eventMatchKey(type: string, meta: Record<string, unknown>): string {
+  const str = (k: string): string | undefined =>
+    typeof meta[k] === "string" && meta[k] ? (meta[k] as string) : undefined;
+  const disc =
+    type === "schedule"
+      ? str("scheduleId")
+      : type === "webhook"
+        ? str("source")
+        : type === "notice" || type === "lifecycle"
+          ? str("subtype")
+          : undefined;
+  return disc ? `${type}:${disc}` : type;
+}
+
+/**
+ * Resolve the thread a system event lands on. This is the single daemon-side resolution
+ * point that owns ALL thread semantics for events (#736), the same place the delivery
+ * manager owns routing for channel content:
+ *
+ * - The mind's routes.json event rules (`resolveEventRoute`) take precedence; a matched
+ *   rule beats the caller's default. The caller's `input.thread` (default "main") is only
+ *   the fallback when no rule matches.
+ * - The `$new` isolation convention is expanded here once, for every caller — a fresh
+ *   session for `immediate` delivery (which POSTs an envelope and runs a turn in it), or
+ *   the mind-level sentinel for `next-turn` (a unique session that never runs a turn would
+ *   strand forever, #356/#721/#735), which drains into whichever thread next runs.
+ */
+async function resolveEventThread(
+  mind: string,
+  input: DeliverEventInput,
+  delivery: EventDelivery,
+): Promise<string> {
+  const meta = input.meta ?? {};
+  let chosen = input.thread ?? "main";
+  try {
+    const baseName = await getBaseName(mind);
+    const routed = resolveEventRoute(getRoutingConfig(baseName), eventMatchKey(input.type, meta));
+    if (routed != null) chosen = routed;
+  } catch (err) {
+    // Routing must never take down delivery — fall back to the caller's thread.
+    elog.warn(`failed to resolve event route for ${mind}`, log.errorData(err));
+  }
+  if (chosen === "$new")
+    return delivery === "immediate" ? newEphemeralSession() : MIND_LEVEL_THREAD;
+  return chosen;
 }
 
 /**
@@ -364,7 +402,7 @@ export async function deliverEvent(
   input: DeliverEventInput,
 ): Promise<{ id?: number; delivered: boolean }> {
   const delivery = input.delivery ?? "immediate";
-  const thread = resolveEventThread(input.thread ?? "main", delivery);
+  const thread = await resolveEventThread(mind, input, delivery);
   let eventId: number | undefined;
   try {
     const db = await getDb();
