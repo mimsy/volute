@@ -3,21 +3,21 @@ import { isLocalMind, isMind, isSystemSpirit } from "@volute/api/user-type";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { z } from "zod";
-import { getOrCreateMindUser, getOrCreateSystemUser } from "../../../lib/auth.js";
-import { routeOutboundBridge } from "../../../lib/bridges/bridge-outbound.js";
-import { checkChannelLimits } from "../../../lib/chat/channel-limits.js";
-import { formatFileSize, stageFile, validateFilePath } from "../../../lib/chat/file-sharing.js";
+import { getOrCreateMindUser, getOrCreateSystemUser } from "../../lib/auth.js";
+import { routeOutboundBridge } from "../../lib/bridges/bridge-outbound.js";
+import { checkChannelLimits } from "../../lib/chat/channel-limits.js";
+import { formatFileSize, stageFile, validateFilePath } from "../../lib/chat/file-sharing.js";
 import {
   ensureSpiritAvailable,
   SPIRIT_NOTICE_PREFIX,
   type SpiritStatus,
-} from "../../../lib/chat/spirit-availability.js";
-import { getActiveTurnId } from "../../../lib/daemon/turn-tracker.js";
-import { extractTextContent } from "../../../lib/delivery/delivery-router.js";
-import { fanOutToMinds } from "../../../lib/delivery/fan-out.js";
-import { recordOutbound } from "../../../lib/delivery/message-delivery.js";
-import { checkStaleSend, formatHoldNotice } from "../../../lib/delivery/send-gate.js";
-import { subscribe } from "../../../lib/events/conversation-events.js";
+} from "../../lib/chat/spirit-availability.js";
+import { getActiveTurnId } from "../../lib/daemon/turn-tracker.js";
+import { extractTextContent } from "../../lib/delivery/delivery-router.js";
+import { fanOutToMinds } from "../../lib/delivery/fan-out.js";
+import { recordOutbound } from "../../lib/delivery/message-delivery.js";
+import { checkStaleSend, formatHoldNotice } from "../../lib/delivery/send-gate.js";
+import { subscribe } from "../../lib/events/conversation-events.js";
 import {
   addMessage,
   type ContentBlock,
@@ -28,14 +28,14 @@ import {
   getLastMessageBySender,
   getParticipants,
   isParticipantOrOwner,
-} from "../../../lib/events/conversations.js";
-import { publish as publishMindEvent } from "../../../lib/events/mind-events.js";
-import { findMind, getBaseName, isSpiritName, resolveMindDir } from "../../../lib/mind/registry.js";
-import { readVoluteConfig } from "../../../lib/mind/volute-config.js";
-import { fixModelEscapes } from "../../../lib/util/fix-model-escapes.js";
-import log from "../../../lib/util/logger.js";
-import { buildVoluteSlug } from "../../../lib/util/slugify.js";
-import type { AuthEnv } from "../../middleware/auth.js";
+} from "../../lib/events/conversations.js";
+import { publish as publishMindEvent } from "../../lib/events/mind-events.js";
+import { findMind, getBaseName, isSpiritName, resolveMindDir } from "../../lib/mind/registry.js";
+import { readVoluteConfig } from "../../lib/mind/volute-config.js";
+import { fixModelEscapes } from "../../lib/util/fix-model-escapes.js";
+import log from "../../lib/util/logger.js";
+import { buildVoluteSlug } from "../../lib/util/slugify.js";
+import type { AuthEnv } from "../middleware/auth.js";
 
 const fileSchema = z.object({
   filename: z.string(),
@@ -407,7 +407,7 @@ export const chatApp = new Hono<AuthEnv>().post("/", zValidator("json", chatSche
   });
 });
 
-// Default export: SSE endpoint only (keeps existing mount points at /api/minds and /api/v1/minds)
+// Default export: SSE endpoint only, mounted on /api/v1/minds.
 const app = new Hono<AuthEnv>().get("/:name/conversations/:id/events", async (c) => {
   const conversationId = c.req.param("id");
   const user = c.get("user");

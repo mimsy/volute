@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { cors } from "hono/cors";
 import { csrf } from "hono/csrf";
+import { createMiddleware } from "hono/factory";
 import { HTTPException } from "hono/http-exception";
 import { normalizeTrailingSlash } from "../lib/extensions.js";
 import { checkForUpdateCached, getCurrentVersion } from "../lib/update-check.js";
@@ -11,6 +12,7 @@ import auth from "./api/auth.js";
 import backupRoutes from "./api/backup.js";
 import bridges from "./api/bridges.js";
 import channels from "./api/channels.js";
+import chat, { chatApp } from "./api/chat.js";
 import configRoutes from "./api/config.js";
 import envRoutes, { sharedEnvApp } from "./api/env.js";
 import extensionsRoutes from "./api/extensions.js";
@@ -33,7 +35,6 @@ import v1Events from "./api/v1/events.js";
 import v1Feed from "./api/v1/feed.js";
 import variants from "./api/variants.js";
 import voluteChannels from "./api/volute/channels.js";
-import chat, { chatApp } from "./api/volute/chat.js";
 import conversations from "./api/volute/conversations.js";
 import { type AuthEnv, authMiddleware } from "./middleware/auth.js";
 
@@ -113,28 +114,30 @@ app.get("/api/health", (c) => {
   });
 });
 
-// Extension routes 404 on a trailing slash without this (#792).
+// Extension routes 404 on a trailing slash without this (#792). Extension apps
+// mount at /api/ext/* dynamically (see extensions.ts), outside the /api/v1 surface,
+// so this normalizer stays on the bare /api/ext prefix.
 app.use("/api/ext/*", normalizeTrailingSlash(app));
 
-// Protected API routes. The canonical surface is /api/v1/*; the remaining bare
-// /api/* namespaces below are routes that were never dual-mounted under v1
-// (admin/system tooling + the mind-scoped file-sharing/channels/conversations
-// modules), plus the pre-auth /api/setup and /api/auth handled elsewhere.
-app.use("/api/activity/*", authMiddleware);
-app.use("/api/minds/*", authMiddleware);
-app.use("/api/extensions/*", authMiddleware);
-app.use("/api/bridges/*", authMiddleware);
-app.use("/api/config/*", authMiddleware);
-app.use("/api/backup/*", authMiddleware);
-
-// v1 API auth
-app.use("/api/v1/*", authMiddleware);
-
-// Setup routes (no auth — needed before first user exists)
-app.route("/api/setup", setup);
-
-// Config routes (authenticated, no admin required — accessible to minds)
-app.route("/api/config", configRoutes);
+// Authentication for the canonical /api/v1 surface. A few sub-surfaces were
+// unauthenticated at their former bare mounts and must stay reachable without a
+// session — exempt them so this move doesn't silently gate them:
+//   /api/v1/setup — first-run setup, runs before the first user exists
+//   /api/v1/auth  — login/register/me/logout/avatars are public; the protected
+//                   routes self-guard via their own authMiddleware (see auth.ts)
+//   /api/v1/keys  — public identity-key lookup used for signature verification
+// Everything else under /api/v1 requires auth.
+const V1_PUBLIC_PREFIXES = ["/api/v1/setup", "/api/v1/auth", "/api/v1/keys"];
+app.use(
+  "/api/v1/*",
+  createMiddleware<AuthEnv>(async (c, next) => {
+    const path = c.req.path;
+    if (V1_PUBLIC_PREFIXES.some((p) => path === p || path.startsWith(`${p}/`))) {
+      return next();
+    }
+    return authMiddleware(c, next);
+  }),
+);
 
 // The canonical /api/v1 surface, composed as a single sub-app mounted once. This
 // keeps AppType's per-module route schemas merged under one `v1` key rather than
@@ -153,6 +156,9 @@ const v1 = new Hono<AuthEnv>()
   .route("/minds", files)
   .route("/minds", envRoutes)
   .route("/minds", mindSkills)
+  .route("/minds", fileSharing)
+  .route("/minds", channels)
+  .route("/minds", conversations)
   .route("/env", sharedEnvApp)
   .route("/prompts", prompts)
   .route("/skills", skills)
@@ -161,25 +167,21 @@ const v1 = new Hono<AuthEnv>()
   .route("/feed", v1Feed)
   .route("/chat", chatApp)
   .route("/channels", voluteChannels)
-  .route("/history", historyRoutes);
+  .route("/history", historyRoutes)
+  .route("/activity", activityRoutes)
+  .route("/keys", keys)
+  .route("/auth", auth)
+  .route("/backup", backupRoutes)
+  .route("/bridges", bridges)
+  .route("/extensions", extensionsRoutes)
+  .route("/config", configRoutes)
+  .route("/setup", setup);
 
-// Single chained registration — one mount per module, so AppType captures the
-// whole surface with no un-chained duplicates. The canonical prefix is /api/v1;
-// the bare /api mounts below are the modules that never had a v1 alias (admin
-// tooling + the mind-scoped file-sharing/channels/conversations routes).
-const routes = app
-  .route("/api/activity", activityRoutes)
-  .route("/api/keys", keys)
-  .route("/api/auth", auth)
-  .route("/api/backup", backupRoutes)
-  .route("/api/bridges", bridges)
-  .route("/api/extensions", extensionsRoutes)
-  // Mind-scoped modules that stay on the bare /api prefix (no v1 alias existed).
-  .route("/api/minds", fileSharing)
-  .route("/api/minds", channels)
-  .route("/api/minds", conversations)
-  // v1 API — the canonical surface.
-  .route("/api/v1", v1);
+// Single chained registration — every module mounted exactly once under the
+// canonical /api/v1 prefix, so AppType captures the whole surface with no bare
+// /api aliases and no un-chained duplicates. The only bare /api routes that
+// remain are /api/health (above) and the /api/ext/* extension mounts.
+const routes = app.route("/api/v1", v1);
 
 export default app;
 export type AppType = typeof routes;

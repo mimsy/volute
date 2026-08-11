@@ -341,10 +341,13 @@ const cmd = command({
       // For mind senders, use the daemon file-send API (reads from mind's home/)
       const mindSelf = process.env.VOLUTE_MIND;
       if (mindSelf) {
-        const staged = await postStaging(`/api/minds/${encodeURIComponent(mindSelf)}/files/send`, {
-          targetMind: targetName,
-          filePath,
-        });
+        const staged = await postStaging(
+          `/api/v1/minds/${encodeURIComponent(mindSelf)}/files/send`,
+          {
+            targetMind: targetName,
+            filePath,
+          },
+        );
         printStaged(targetName, staged);
       } else {
         // For CLI (human) senders, read file locally and stage via daemon API
@@ -361,7 +364,7 @@ const cmd = command({
 
         const content = readFileSync(filePath);
         const staged = await postStaging(
-          `/api/minds/${encodeURIComponent(targetName)}/files/stage`,
+          `/api/v1/minds/${encodeURIComponent(targetName)}/files/stage`,
           {
             sender: flags.sender || userInfo().username,
             filename: basename(filePath),
@@ -412,7 +415,7 @@ const cmd = command({
 
       // Create/find conversation via daemon
       const createRes = await daemonFetch(
-        urlOf(client.api.minds[":name"].channels.create.$url({ param: { name: contextMind } })),
+        urlOf(client.api.v1.minds[":name"].channels.create.$url({ param: { name: contextMind } })),
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },

@@ -13,7 +13,7 @@ import { type AuthEnv, requireAdmin, requireSelf } from "../middleware/auth.js";
 
 const envValueSchema = z.object({ value: z.string() });
 
-// Mind-scoped env routes (mounted at /api/minds)
+// Mind-scoped env routes (mounted at /api/v1/minds)
 const app = new Hono<AuthEnv>()
   .get("/:name/env", requireSelf(), async (c) => {
     const name = c.req.param("name");
@@ -54,7 +54,7 @@ const app = new Hono<AuthEnv>()
     return c.json({ ok: true });
   });
 
-// Shared env routes (mounted at /api/env)
+// Shared env routes (mounted at /api/v1/env)
 export const sharedEnvApp = new Hono<AuthEnv>()
   .get("/", requireAdmin, (c) => {
     return c.json(readEnv(sharedEnvPath()));

@@ -21,7 +21,7 @@ import {
 } from "../packages/daemon/src/lib/events/conversations.js";
 import { addMind, removeMind } from "../packages/daemon/src/lib/mind/registry.js";
 import { messages, users } from "../packages/daemon/src/lib/schema.js";
-import { chatApp } from "../packages/daemon/src/web/api/volute/chat.js";
+import { chatApp } from "../packages/daemon/src/web/api/chat.js";
 import { authMiddleware, createSession } from "../packages/daemon/src/web/middleware/auth.js";
 
 const TEST_USERNAMES = ["limits-host", "limits-file-mind"];

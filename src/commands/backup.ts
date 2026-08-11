@@ -56,14 +56,14 @@ const initCmd = command({
     }
 
     const client = getClient();
-    const putRes = await daemonFetch(urlOf(client.api.backup.config.$url()), {
+    const putRes = await daemonFetch(urlOf(client.api.v1.backup.config.$url()), {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ repository: repo, password: flags.password ?? "" }),
     });
     if (!putRes.ok) await apiError(putRes, "Failed to save backup config");
 
-    const initRes = await daemonFetch(urlOf(client.api.backup.init.$url()), { method: "POST" });
+    const initRes = await daemonFetch(urlOf(client.api.v1.backup.init.$url()), { method: "POST" });
     if (!initRes.ok) await apiError(initRes, "Failed to initialize repository");
     const { password } = (await initRes.json()) as { password: string | null };
 
@@ -81,7 +81,7 @@ const createCmd = command({
   run: async () => {
     const client = getClient();
     console.log("Running backup (this may take a while on first run)...");
-    const res = await daemonFetch(urlOf(client.api.backup.run.$url()), { method: "POST" });
+    const res = await daemonFetch(urlOf(client.api.v1.backup.run.$url()), { method: "POST" });
     if (!res.ok) await apiError(res, "Backup failed");
     const summary = (await res.json()) as BackupSummary;
     const addedMB = (summary.dataAdded / 1024 / 1024).toFixed(1);
@@ -99,7 +99,7 @@ const listCmd = command({
   flags: {},
   run: async () => {
     const client = getClient();
-    const res = await daemonFetch(urlOf(client.api.backup.snapshots.$url()));
+    const res = await daemonFetch(urlOf(client.api.v1.backup.snapshots.$url()));
     if (!res.ok) await apiError(res, "Failed to list snapshots");
     const snapshots = (await res.json()) as Snapshot[];
     if (snapshots.length === 0) {
@@ -132,7 +132,7 @@ const scheduleCmd = command({
       process.exit(1);
     }
     const client = getClient();
-    const res = await daemonFetch(urlOf(client.api.backup.config.$url()), {
+    const res = await daemonFetch(urlOf(client.api.v1.backup.config.$url()), {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -159,7 +159,7 @@ const statusCmd = command({
   flags: {},
   run: async () => {
     const client = getClient();
-    const res = await daemonFetch(urlOf(client.api.backup.status.$url()));
+    const res = await daemonFetch(urlOf(client.api.v1.backup.status.$url()));
     if (!res.ok) await apiError(res, "Failed to get backup status");
     const status = (await res.json()) as {
       resticInstalled: boolean;

@@ -53,7 +53,7 @@ const app = new Hono<AuthEnv>()
     const id = c.req.param("id");
     const user = c.get("user");
     // Non-private conversations are readable by any authenticated user — deliberate;
-    // powers the home feed transcript modal (mirrors GET /api/minds/:name/
+    // powers the home feed transcript modal (mirrors GET /api/v1/minds/:name/
     // conversations/:convId/messages, AUTHZ_EXEMPT). Private conversations stay
     // scoped to participants (or admin/system).
     if (!(await canReadConversation(id, user))) {

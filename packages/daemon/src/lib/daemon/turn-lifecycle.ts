@@ -224,7 +224,7 @@ export async function handleMindEvent(
   }
 
   // Fallback/activity linking via correlation markers. Outbound turn attribution is now
-  // primary via the session header at send time (see volute/chat.ts); linkToolResultToTurn
+  // primary via the session header at send time (see api/chat.ts); linkToolResultToTurn
   // is idempotent (won't re-publish an already-attributed outbound) and still links
   // extension activities and any outbound the direct path couldn't attribute.
   if (event.type === "tool_result" && turnId && event.content) {

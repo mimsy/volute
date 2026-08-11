@@ -18,7 +18,7 @@ const app = new Hono<AuthEnv>()
   .use("*", authMiddleware)
   // The home feed. Any authenticated principal — including minds — sees bursts of
   // NON-private conversations plus whitelisted lifecycle events. This transparency
-  // is deliberate (mirrors GET /api/minds/:name/conversations/:convId/messages).
+  // is deliberate (mirrors GET /api/v1/minds/:name/conversations/:convId/messages).
   // Private conversations never appear; mind_error detail is redacted for
   // non-admin/system callers (#503).
   .get("/", async (c) => {
