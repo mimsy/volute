@@ -10,7 +10,7 @@ import pages from "@volute/pages";
 /**
  * An extension's CLI noun is its manifest `id` — `volute <id> <subcommand>` — derived
  * dynamically at dispatch time (`src/cli.ts` looks the noun up in the map returned by
- * `/api/extensions/commands`, which is keyed by `manifest.id`). Nothing forces the
+ * `/api/v1/extensions/commands`, which is keyed by `manifest.id`). Nothing forces the
  * extension's own prose, skills, usage strings, or generated cron scripts to agree with
  * that id, so they can drift from the only name that actually works.
  *

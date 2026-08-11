@@ -81,7 +81,7 @@ async function main() {
 
   // Step 2: Enable Discord bridge
   console.log("\nEnabling Discord bridge...");
-  const enableRes = await api("/api/bridges/discord", {
+  const enableRes = await api("/api/v1/bridges/discord", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ defaultMind: mindName }),
@@ -96,7 +96,7 @@ async function main() {
 
   // Step 3: Map Discord channel
   console.log(`\nMapping ${discordChannel} -> ${voluteChannelName}`);
-  const mapRes = await api("/api/bridges/discord/mappings", {
+  const mapRes = await api("/api/v1/bridges/discord/mappings", {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -126,7 +126,9 @@ async function main() {
     const ch = channels.find((c) => c.name === voluteChannelName);
 
     if (ch) {
-      const msgsRes = await api(`/api/minds/${mindName}/conversations/${ch.id}/messages?limit=10`);
+      const msgsRes = await api(
+        `/api/v1/minds/${mindName}/conversations/${ch.id}/messages?limit=10`,
+      );
       if (msgsRes.status === 200) {
         const messages = (await msgsRes.json()) as Message[];
         for (const msg of messages) {
@@ -154,7 +156,7 @@ async function main() {
 
   // Step 5: Show bridge status
   console.log("\nBridge status:");
-  const bridgesRes = await api("/api/bridges");
+  const bridgesRes = await api("/api/v1/bridges");
   const bridges = (await bridgesRes.json()) as Bridge[];
   for (const b of bridges) {
     console.log(
@@ -164,7 +166,7 @@ async function main() {
 
   // Cleanup
   console.log("\nCleaning up...");
-  await api("/api/bridges/discord", { method: "DELETE" });
+  await api("/api/v1/bridges/discord", { method: "DELETE" });
   console.log("+ Discord bridge disabled");
 
   console.log("\n=== Done ===");

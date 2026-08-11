@@ -175,9 +175,9 @@ describe("message cursor validation is uniform across all three routes (#868)", 
       name: "volute/conversations.ts",
       request: async (query: string) => {
         const app = new Hono();
-        app.use("/api/minds/*", authMiddleware);
-        app.route("/api/minds", voluteConversationsRoute);
-        return app.request(`/api/minds/${MIND_NAME}/conversations/${convId}/messages${query}`, {
+        app.use("/api/v1/minds/*", authMiddleware);
+        app.route("/api/v1/minds", voluteConversationsRoute);
+        return app.request(`/api/v1/minds/${MIND_NAME}/conversations/${convId}/messages${query}`, {
           headers: { Cookie: `volute_session=${cookie}` },
         });
       },

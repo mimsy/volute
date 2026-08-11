@@ -154,7 +154,7 @@ REGISTER_RESP=$(curl -sf -X POST \
   -H "Content-Type: application/json" \
   -H "Origin: http://localhost:$HOST_PORT" \
   -d '{"username":"tester","password":"tester"}' \
-  "http://localhost:$HOST_PORT/api/auth/register" 2>&1) || true
+  "http://localhost:$HOST_PORT/api/v1/auth/register" 2>&1) || true
 
 if echo "$REGISTER_RESP" | grep -q '"role":"admin"'; then
   echo "  User 'tester' created (admin)"
@@ -168,7 +168,7 @@ ROOT_REGISTER_RESP=$(curl -sf -X POST \
   -H "Content-Type: application/json" \
   -H "Origin: http://localhost:$HOST_PORT" \
   -d '{"username":"root","password":"root"}' \
-  "http://localhost:$HOST_PORT/api/auth/register" 2>&1) || true
+  "http://localhost:$HOST_PORT/api/v1/auth/register" 2>&1) || true
 
 ROOT_USER_ID=$(echo "$ROOT_REGISTER_RESP" | grep -o '"id":[0-9]*' | head -1 | cut -d: -f2)
 if [[ -n "$ROOT_USER_ID" ]]; then
@@ -176,20 +176,20 @@ if [[ -n "$ROOT_USER_ID" ]]; then
   curl -sf -X POST \
     -H "Authorization: Bearer $TOKEN" \
     -H "Origin: http://localhost:$HOST_PORT" \
-    "http://localhost:$HOST_PORT/api/auth/users/$ROOT_USER_ID/approve" >/dev/null 2>&1 || true
+    "http://localhost:$HOST_PORT/api/v1/auth/users/$ROOT_USER_ID/approve" >/dev/null 2>&1 || true
   curl -sf -X POST \
     -H "Content-Type: application/json" \
     -H "Authorization: Bearer $TOKEN" \
     -H "Origin: http://localhost:$HOST_PORT" \
     -d '{"role":"admin"}' \
-    "http://localhost:$HOST_PORT/api/auth/users/$ROOT_USER_ID/role" >/dev/null 2>&1 || true
+    "http://localhost:$HOST_PORT/api/v1/auth/users/$ROOT_USER_ID/role" >/dev/null 2>&1 || true
 
   # Log in as 'root' (now approved) to get a CLI session
   LOGIN_RESP=$(curl -sf -X POST \
     -H "Content-Type: application/json" \
     -H "Origin: http://localhost:$HOST_PORT" \
     -d '{"username":"root","password":"root"}' \
-    "http://localhost:$HOST_PORT/api/auth/login" 2>&1) || true
+    "http://localhost:$HOST_PORT/api/v1/auth/login" 2>&1) || true
 
   ROOT_SESSION_ID=$(echo "$LOGIN_RESP" | grep -o '"sessionId":"[^"]*"' | head -1 | cut -d'"' -f4)
   if [[ -n "$ROOT_SESSION_ID" ]]; then
@@ -211,7 +211,7 @@ if [[ -n "${OPENROUTER_API_KEY:-}" ]]; then
     -H "Authorization: Bearer $TOKEN" \
     -H "Origin: http://localhost:$HOST_PORT" \
     -d "{\"value\":\"$OPENROUTER_API_KEY\"}" \
-    "http://localhost:$HOST_PORT/api/env/OPENROUTER_API_KEY" >/dev/null 2>&1 || true
+    "http://localhost:$HOST_PORT/api/v1/env/OPENROUTER_API_KEY" >/dev/null 2>&1 || true
   echo "  OPENROUTER_API_KEY set for minds"
 fi
 

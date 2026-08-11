@@ -21,8 +21,8 @@ let sessionId: string;
 
 function createApp() {
   const app = new Hono();
-  app.use("/api/minds/*", authMiddleware);
-  app.route("/api/minds", fileSharing);
+  app.use("/api/v1/minds/*", authMiddleware);
+  app.route("/api/v1/minds", fileSharing);
   return app;
 }
 
@@ -82,7 +82,7 @@ describe("web file-sharing routes", () => {
     setupMinds();
     const app = createApp();
 
-    const res = await app.request("/api/minds/fs-sender/files/send", {
+    const res = await app.request("/api/v1/minds/fs-sender/files/send", {
       method: "POST",
       headers: reqHeaders(cookie),
       body: JSON.stringify({ targetMind: "fs-receiver", filePath: "notes.md" }),
@@ -105,7 +105,7 @@ describe("web file-sharing routes", () => {
     setupMinds();
     const app = createApp();
 
-    const res = await app.request("/api/minds/nonexistent/files/send", {
+    const res = await app.request("/api/v1/minds/nonexistent/files/send", {
       method: "POST",
       headers: reqHeaders(cookie),
       body: JSON.stringify({ targetMind: "fs-receiver", filePath: "notes.md" }),
@@ -119,7 +119,7 @@ describe("web file-sharing routes", () => {
     setupMinds();
     const app = createApp();
 
-    const res = await app.request("/api/minds/fs-sender/files/send", {
+    const res = await app.request("/api/v1/minds/fs-sender/files/send", {
       method: "POST",
       headers: reqHeaders(cookie),
       body: JSON.stringify({ targetMind: "nonexistent", filePath: "notes.md" }),
@@ -133,7 +133,7 @@ describe("web file-sharing routes", () => {
     setupMinds();
     const app = createApp();
 
-    const res = await app.request("/api/minds/fs-sender/files/send", {
+    const res = await app.request("/api/v1/minds/fs-sender/files/send", {
       method: "POST",
       headers: reqHeaders(cookie),
       body: JSON.stringify({ targetMind: "fs-receiver", filePath: "../etc/passwd" }),
@@ -147,7 +147,7 @@ describe("web file-sharing routes", () => {
     setupMinds();
     const app = createApp();
 
-    const res = await app.request("/api/minds/fs-sender/files/send", {
+    const res = await app.request("/api/v1/minds/fs-sender/files/send", {
       method: "POST",
       headers: reqHeaders(cookie),
       body: JSON.stringify({ targetMind: "fs-receiver", filePath: "nonexistent.txt" }),
@@ -162,13 +162,13 @@ describe("web file-sharing routes", () => {
     const app = createApp();
 
     // Send a file first to create a pending entry
-    await app.request("/api/minds/fs-sender/files/send", {
+    await app.request("/api/v1/minds/fs-sender/files/send", {
       method: "POST",
       headers: reqHeaders(cookie),
       body: JSON.stringify({ targetMind: "fs-receiver", filePath: "notes.md" }),
     });
 
-    const res = await app.request("/api/minds/fs-receiver/files/pending", {
+    const res = await app.request("/api/v1/minds/fs-receiver/files/pending", {
       headers: reqHeaders(cookie, false),
     });
 
@@ -184,7 +184,7 @@ describe("web file-sharing routes", () => {
     const app = createApp();
 
     // Send a file
-    const sendRes = await app.request("/api/minds/fs-sender/files/send", {
+    const sendRes = await app.request("/api/v1/minds/fs-sender/files/send", {
       method: "POST",
       headers: reqHeaders(cookie),
       body: JSON.stringify({ targetMind: "fs-receiver", filePath: "notes.md" }),
@@ -192,7 +192,7 @@ describe("web file-sharing routes", () => {
     const { id } = (await sendRes.json()) as { id: string };
 
     // Accept it
-    const res = await app.request("/api/minds/fs-receiver/files/accept", {
+    const res = await app.request("/api/v1/minds/fs-receiver/files/accept", {
       method: "POST",
       headers: reqHeaders(cookie),
       body: JSON.stringify({ id }),
@@ -217,7 +217,7 @@ describe("web file-sharing routes", () => {
     const app = createApp();
 
     // Send a file
-    const sendRes = await app.request("/api/minds/fs-sender/files/send", {
+    const sendRes = await app.request("/api/v1/minds/fs-sender/files/send", {
       method: "POST",
       headers: reqHeaders(cookie),
       body: JSON.stringify({ targetMind: "fs-receiver", filePath: "notes.md" }),
@@ -225,7 +225,7 @@ describe("web file-sharing routes", () => {
     const { id } = (await sendRes.json()) as { id: string };
 
     // Accept with custom dest
-    const res = await app.request("/api/minds/fs-receiver/files/accept", {
+    const res = await app.request("/api/v1/minds/fs-receiver/files/accept", {
       method: "POST",
       headers: reqHeaders(cookie),
       body: JSON.stringify({ id, dest: "custom/incoming" }),
@@ -243,7 +243,7 @@ describe("web file-sharing routes", () => {
     const app = createApp();
 
     // Send a file
-    const sendRes = await app.request("/api/minds/fs-sender/files/send", {
+    const sendRes = await app.request("/api/v1/minds/fs-sender/files/send", {
       method: "POST",
       headers: reqHeaders(cookie),
       body: JSON.stringify({ targetMind: "fs-receiver", filePath: "notes.md" }),
@@ -251,7 +251,7 @@ describe("web file-sharing routes", () => {
     const { id } = (await sendRes.json()) as { id: string };
 
     // Reject it
-    const res = await app.request("/api/minds/fs-receiver/files/reject", {
+    const res = await app.request("/api/v1/minds/fs-receiver/files/reject", {
       method: "POST",
       headers: reqHeaders(cookie),
       body: JSON.stringify({ id }),
@@ -270,7 +270,7 @@ describe("web file-sharing routes", () => {
     setupMinds();
     const app = createApp();
 
-    const res = await app.request("/api/minds/fs-receiver/files/accept", {
+    const res = await app.request("/api/v1/minds/fs-receiver/files/accept", {
       method: "POST",
       headers: reqHeaders(cookie),
       body: JSON.stringify({ id: "nonexistent-id" }),
@@ -285,7 +285,7 @@ describe("web file-sharing routes", () => {
     const app = createApp();
 
     const fileData = Buffer.from("test file content").toString("base64");
-    const res = await app.request("/api/minds/fs-receiver/files/stage", {
+    const res = await app.request("/api/v1/minds/fs-receiver/files/stage", {
       method: "POST",
       headers: reqHeaders(cookie),
       body: JSON.stringify({
@@ -312,7 +312,7 @@ describe("web file-sharing routes", () => {
     setupMinds();
     const app = createApp();
 
-    const res = await app.request("/api/minds/fs-receiver/files/stage", {
+    const res = await app.request("/api/v1/minds/fs-receiver/files/stage", {
       method: "POST",
       headers: reqHeaders(cookie),
       body: JSON.stringify({ sender: "human-user" }), // missing filename and data
@@ -327,7 +327,7 @@ describe("web file-sharing routes", () => {
     const app = createApp();
 
     const fileData = Buffer.from("test").toString("base64");
-    const res = await app.request("/api/minds/fs-receiver/files/stage", {
+    const res = await app.request("/api/v1/minds/fs-receiver/files/stage", {
       method: "POST",
       headers: reqHeaders(cookie),
       body: JSON.stringify({
@@ -346,7 +346,7 @@ describe("web file-sharing routes", () => {
     const app = createApp();
 
     // Send a file first
-    const sendRes = await app.request("/api/minds/fs-sender/files/send", {
+    const sendRes = await app.request("/api/v1/minds/fs-sender/files/send", {
       method: "POST",
       headers: reqHeaders(cookie),
       body: JSON.stringify({ targetMind: "fs-receiver", filePath: "notes.md" }),
@@ -354,7 +354,7 @@ describe("web file-sharing routes", () => {
     const { id } = (await sendRes.json()) as { id: string };
 
     // Accept with path traversal dest
-    const res = await app.request("/api/minds/fs-receiver/files/accept", {
+    const res = await app.request("/api/v1/minds/fs-receiver/files/accept", {
       method: "POST",
       headers: reqHeaders(cookie),
       body: JSON.stringify({ id, dest: "../../etc" }),
@@ -367,7 +367,7 @@ describe("web file-sharing routes", () => {
     setupMinds();
     const app = createApp();
 
-    const res = await app.request("/api/minds/fs-receiver/files/pending");
+    const res = await app.request("/api/v1/minds/fs-receiver/files/pending");
     assert.equal(res.status, 401);
   });
 });

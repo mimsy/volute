@@ -227,8 +227,8 @@ describe("backup API authorization", () => {
     const { authMiddleware } = await import("../packages/daemon/src/web/middleware/auth.js");
     const { default: backupRoutes } = await import("../packages/daemon/src/web/api/backup.js");
     const app = new Hono();
-    app.use("/api/backup/*", authMiddleware);
-    app.route("/api/backup", backupRoutes);
+    app.use("/api/v1/backup/*", authMiddleware);
+    app.route("/api/v1/backup", backupRoutes);
     return app;
   }
 
@@ -244,12 +244,12 @@ describe("backup API authorization", () => {
     const headers = { Authorization: `Bearer ${token}` };
 
     for (const [method, path] of [
-      ["GET", "/api/backup/config"],
-      ["PUT", "/api/backup/config"],
-      ["POST", "/api/backup/init"],
-      ["POST", "/api/backup/run"],
-      ["GET", "/api/backup/snapshots"],
-      ["GET", "/api/backup/status"],
+      ["GET", "/api/v1/backup/config"],
+      ["PUT", "/api/v1/backup/config"],
+      ["POST", "/api/v1/backup/init"],
+      ["POST", "/api/v1/backup/run"],
+      ["GET", "/api/v1/backup/snapshots"],
+      ["GET", "/api/v1/backup/status"],
     ] as const) {
       const res = await app.request(path, { method, headers });
       assert.equal(res.status, 403, `${method} ${path} must be admin-only`);
@@ -267,7 +267,7 @@ describe("backup API authorization", () => {
       "Content-Type": "application/json",
     };
 
-    const put = await app.request("/api/backup/config", {
+    const put = await app.request("/api/v1/backup/config", {
       method: "PUT",
       headers,
       body: JSON.stringify({
@@ -281,7 +281,7 @@ describe("backup API authorization", () => {
     assert.ok(!putBody.includes("super-secret-passphrase"));
     assert.ok(!putBody.includes("aws-secret-value"));
 
-    const get = await app.request("/api/backup/config", { headers });
+    const get = await app.request("/api/v1/backup/config", { headers });
     const getBody = (await get.json()) as {
       hasPassword: boolean;
       envKeys: string[];
@@ -293,7 +293,7 @@ describe("backup API authorization", () => {
     assert.ok(!JSON.stringify(getBody).includes("super-secret-passphrase"));
 
     // Saving config without a password keeps the stored one; same for env.
-    const put2 = await app.request("/api/backup/config", {
+    const put2 = await app.request("/api/v1/backup/config", {
       method: "PUT",
       headers,
       body: JSON.stringify({ repository: "/tmp/repo2", password: "" }),
@@ -317,21 +317,21 @@ describe("backup API authorization", () => {
       "Content-Type": "application/json",
     };
 
-    const badCron = await app.request("/api/backup/config", {
+    const badCron = await app.request("/api/v1/backup/config", {
       method: "PUT",
       headers,
       body: JSON.stringify({ schedule: "61 3 * * *" }),
     });
     assert.equal(badCron.status, 400, "a cron typo must not silently disable backups");
 
-    const zeroKeep = await app.request("/api/backup/config", {
+    const zeroKeep = await app.request("/api/v1/backup/config", {
       method: "PUT",
       headers,
       body: JSON.stringify({ keep: { daily: 0, weekly: 0, monthly: 0 } }),
     });
     assert.equal(zeroKeep.status, 400, "all-zero retention would prune every snapshot");
 
-    const goodCron = await app.request("/api/backup/config", {
+    const goodCron = await app.request("/api/v1/backup/config", {
       method: "PUT",
       headers,
       body: JSON.stringify({ schedule: "30 4 * * *" }),
@@ -351,13 +351,13 @@ describe("backup API authorization", () => {
     };
 
     // Unreachable repo → init fails whether or not restic is installed.
-    const put = await app.request("/api/backup/config", {
+    const put = await app.request("/api/v1/backup/config", {
       method: "PUT",
       headers,
       body: JSON.stringify({ repository: "s3:http://127.0.0.1:9/volute-test-nope" }),
     });
     assert.equal(put.status, 200);
-    const init = await app.request("/api/backup/init", { method: "POST", headers });
+    const init = await app.request("/api/v1/backup/init", { method: "POST", headers });
     assert.equal(init.status, 500);
     _resetConfigCache();
     const { readGlobalConfig } = await import("../packages/daemon/src/lib/config/setup.js");

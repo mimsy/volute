@@ -111,7 +111,7 @@ describe("seed mind creation API", () => {
     await cleanup();
   });
 
-  it("POST /api/minds with stage=seed creates mind with correct stage", async () => {
+  it("POST /api/v1/minds with stage=seed creates mind with correct stage", async () => {
     const mindName = `seed-test-${Date.now()}`;
     // Create the mind directory so the route doesn't fail on disk operations
     const mindsDir = resolve(voluteHome(), "minds");

@@ -266,7 +266,7 @@ describe("web env routes — shared", () => {
   beforeEach(cleanup);
   afterEach(cleanup);
 
-  it("GET /api/env — returns shared env dict", async () => {
+  it("GET /api/v1/env — returns shared env dict", async () => {
     const cookie = await setupAuth();
     writeEnv(sharedEnvPath(), { GLOBAL_KEY: "global_val" });
 
@@ -280,7 +280,7 @@ describe("web env routes — shared", () => {
     assert.equal(body.GLOBAL_KEY, "global_val");
   });
 
-  it("GET /api/env — returns empty object when no env set", async () => {
+  it("GET /api/v1/env — returns empty object when no env set", async () => {
     const cookie = await setupAuth();
     const { default: app } = await import("../packages/daemon/src/web/app.js");
 

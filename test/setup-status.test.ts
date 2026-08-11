@@ -10,13 +10,13 @@ import setup from "../packages/daemon/src/web/api/setup.js";
 
 // Guards the fields `volute login` relies on to detect the login-before-wizard
 // case (packages/cli/src/commands/login.ts): when setup is incomplete and no
-// brain account exists, /api/setup/status must report complete:false + hasAccount:false.
+// brain account exists, /api/v1/setup/status must report complete:false + hasAccount:false.
 
 const TEST_USERNAME = "setupstatususer";
 
 function createApp() {
   const app = new Hono();
-  app.route("/api/setup", setup);
+  app.route("/api/v1/setup", setup);
   return app;
 }
 
@@ -30,7 +30,7 @@ async function cleanup() {
   writeGlobalConfig(config);
 }
 
-describe("GET /api/setup/status", () => {
+describe("GET /api/v1/setup/status", () => {
   beforeEach(cleanup);
   afterEach(cleanup);
 
@@ -41,7 +41,7 @@ describe("GET /api/setup/status", () => {
     config.setupCompleted = false;
     writeGlobalConfig(config);
 
-    const res = await createApp().request("/api/setup/status");
+    const res = await createApp().request("/api/v1/setup/status");
     assert.equal(res.status, 200);
     const body = (await res.json()) as { complete: boolean; hasAccount: boolean };
     assert.equal(body.complete, false);
@@ -57,7 +57,7 @@ describe("GET /api/setup/status", () => {
 
     await createUser(TEST_USERNAME, "pass123");
 
-    const res = await createApp().request("/api/setup/status");
+    const res = await createApp().request("/api/v1/setup/status");
     assert.equal(res.status, 200);
     const body = (await res.json()) as { complete: boolean; hasAccount: boolean };
     assert.equal(body.complete, false);

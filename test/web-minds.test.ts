@@ -228,7 +228,7 @@ describe("web minds routes", () => {
     }
   });
 
-  it("GET /api/system/info — aiConfigured tracks whether a model is enabled", async () => {
+  it("GET /api/v1/system/info — aiConfigured tracks whether a model is enabled", async () => {
     const cookie = await setupAuth();
     const { setEnabledModels } = await import("../packages/daemon/src/lib/ai-service.js");
     const { readGlobalConfig, writeGlobalConfig, _resetConfigCache } = await import(
@@ -259,7 +259,7 @@ describe("web minds routes", () => {
     }
   });
 
-  it("GET/PUT /api/system/max-minds — roundtrips the cap and reports the count", async () => {
+  it("GET/PUT /api/v1/system/max-minds — roundtrips the cap and reports the count", async () => {
     const cookie = await setupAuth();
     const { readGlobalConfig, writeGlobalConfig } = await import(
       "../packages/daemon/src/lib/config/setup.js"
@@ -296,7 +296,7 @@ describe("web minds routes", () => {
     }
   });
 
-  it("PUT /api/system/max-minds — rejects non-positive and non-integer caps (400)", async () => {
+  it("PUT /api/v1/system/max-minds — rejects non-positive and non-integer caps (400)", async () => {
     // The Zod schema is the real trust boundary: a cap of 0 would silently block
     // ALL mind creation, so 0/-1/1.5 must never persist.
     const cookie = await setupAuth();
@@ -311,7 +311,7 @@ describe("web minds routes", () => {
     }
   });
 
-  it("PUT /api/system/max-minds — non-admin gets 403", async () => {
+  it("PUT /api/v1/system/max-minds — non-admin gets 403", async () => {
     await setupAuth();
     const user2 = await createUser("regular-user", "pass");
     await approveUser(user2.id);
@@ -330,7 +330,7 @@ describe("web minds routes", () => {
     await deleteSession(cookie2);
   });
 
-  it("GET /api/system/max-minds — non-admin gets 403", async () => {
+  it("GET /api/v1/system/max-minds — non-admin gets 403", async () => {
     // requireAdmin guards GET too, but authz-coverage.test.ts only protects
     // /:name routes, so exercise this literal route directly.
     await setupAuth();

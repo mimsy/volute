@@ -42,8 +42,8 @@ async function cleanup() {
 /** A minimal app exposing a requireSelf-guarded route, mirroring mind-scoped routes. */
 function createApp() {
   const app = new Hono();
-  app.use("/api/minds/*", authMiddleware);
-  app.get("/api/minds/:name/info", requireSelf(), (c) =>
+  app.use("/api/v1/minds/*", authMiddleware);
+  app.get("/api/v1/minds/:name/info", requireSelf(), (c) =>
     c.json({ ok: true, name: c.req.param("name"), caller: c.get("user").username }),
   );
   return app;
@@ -73,7 +73,7 @@ describe("api tokens", () => {
 
     const app = createApp();
 
-    const ok = await app.request(`/api/minds/${EXTERNAL_MIND}/info`, {
+    const ok = await app.request(`/api/v1/minds/${EXTERNAL_MIND}/info`, {
       headers: { Authorization: `Bearer ${token}` },
     });
     assert.equal(ok.status, 200, await ok.clone().text());
@@ -85,7 +85,7 @@ describe("api tokens", () => {
     assert.equal(mindUser.role, "user");
 
     // ...and it cannot reach another mind's route.
-    const forbidden = await app.request(`/api/minds/${OTHER_MIND}/info`, {
+    const forbidden = await app.request(`/api/v1/minds/${OTHER_MIND}/info`, {
       headers: { Authorization: `Bearer ${token}` },
     });
     assert.equal(forbidden.status, 403);
@@ -100,7 +100,7 @@ describe("api tokens", () => {
 
     // ...and the request still authenticates via the session-Bearer branch.
     const app = createApp();
-    const res = await app.request(`/api/minds/${EXTERNAL_MIND}/info`, {
+    const res = await app.request(`/api/v1/minds/${EXTERNAL_MIND}/info`, {
       headers: { Authorization: `Bearer ${sessionId}` },
     });
     assert.equal(res.status, 200, await res.clone().text());
@@ -143,7 +143,7 @@ describe("api tokens", () => {
     assert.ok(issued.token.startsWith("vmt_"));
 
     const app = createApp();
-    const before = await app.request(`/api/minds/${EXTERNAL_MIND}/info`, {
+    const before = await app.request(`/api/v1/minds/${EXTERNAL_MIND}/info`, {
       headers: { Authorization: `Bearer ${issued.token}` },
     });
     assert.equal(before.status, 200);
@@ -156,7 +156,7 @@ describe("api tokens", () => {
 
     // Revoked: the token no longer resolves and the request is unauthenticated.
     assert.equal(await resolveApiToken(issued.token), null);
-    const after = await app.request(`/api/minds/${EXTERNAL_MIND}/info`, {
+    const after = await app.request(`/api/v1/minds/${EXTERNAL_MIND}/info`, {
       headers: { Authorization: `Bearer ${issued.token}` },
     });
     assert.equal(after.status, 401);
@@ -289,7 +289,7 @@ describe("api tokens", () => {
     const { token } = await issueApiToken(user.id, "pending-user");
 
     const app = createApp();
-    const res = await app.request(`/api/minds/${EXTERNAL_MIND}/info`, {
+    const res = await app.request(`/api/v1/minds/${EXTERNAL_MIND}/info`, {
       headers: { Authorization: `Bearer ${token}` },
     });
     assert.equal(res.status, 403);

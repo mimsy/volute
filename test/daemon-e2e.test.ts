@@ -266,6 +266,32 @@ describe("daemon e2e", { timeout: 420000 }, () => {
     assert.equal(body.ok, true);
   });
 
+  it("dropped bare /api/<module> aliases 404 on the real surface (#333)", async () => {
+    // The canonical prefix is /api/v1; the bare /api aliases were removed. One
+    // representative route per former mount group, requested WITH the admin token
+    // so a 404 means "not mounted" (not merely "unauthorized"). /api/health above
+    // and /api/ext/* are the only bare routes that survive.
+    const barePaths = [
+      "/api/setup/status",
+      "/api/auth/me",
+      "/api/config/models",
+      "/api/backup/status",
+      "/api/bridges",
+      "/api/activity",
+      `/api/minds/${TEST_MIND}`,
+      "/api/keys/deadbeef",
+      "/api/extensions/all",
+    ];
+    for (const path of barePaths) {
+      const res = await daemonRequest(path);
+      assert.equal(res.status, 404, `expected 404 for dropped bare path ${path}`);
+    }
+    // The v1 counterpart of one of them is reachable — proving the surface moved,
+    // not vanished.
+    const v1 = await daemonRequest("/api/v1/bridges");
+    assert.notEqual(v1.status, 404);
+  });
+
   it("daemon.json is host-readable (0644) and the admin token is owner-only (0600)", () => {
     // daemon.json (port/hostname) must be readable by a non-root host CLI on a
     // system install; the token lives in a separate 0600 file.
@@ -287,7 +313,7 @@ describe("daemon e2e", { timeout: 420000 }, () => {
     assert.equal(res.status, 401);
   });
 
-  it("GET /api/minds returns empty array initially", async () => {
+  it("GET /api/v1/minds returns empty array initially", async () => {
     const res = await daemonRequest("/api/v1/minds");
     assert.equal(res.status, 200);
     const body = await res.json();
@@ -310,8 +336,8 @@ describe("daemon e2e", { timeout: 420000 }, () => {
     assert.equal((await v1Start.json()).error, "Mind not found");
   });
 
-  it("GET /api/extensions/mind-docs lists pages with a mindDoc and commands", async () => {
-    const res = await daemonRequest("/api/extensions/mind-docs");
+  it("GET /api/v1/extensions/mind-docs lists pages with a mindDoc and commands", async () => {
+    const res = await daemonRequest("/api/v1/extensions/mind-docs");
     assert.equal(res.status, 200);
     const body = (await res.json()) as {
       id: string;
@@ -331,7 +357,7 @@ describe("daemon e2e", { timeout: 420000 }, () => {
   });
 
   it("unauthenticated mind-docs request returns 401", async () => {
-    const res = await fetch(`${BASE_URL}/api/extensions/mind-docs`);
+    const res = await fetch(`${BASE_URL}/api/v1/extensions/mind-docs`);
     assert.equal(res.status, 401);
   });
 
@@ -348,7 +374,7 @@ describe("daemon e2e", { timeout: 420000 }, () => {
     );
 
     // Mind creation defaults `sleep.enabled` to true with a 00:00/08:00 UTC
-    // schedule (packages/daemon/src/web/api/minds.ts). If this suite runs inside
+    // schedule (packages/daemon/src/web/api/v1/minds.ts). If this suite runs inside
     // that window, the daemon's SleepManager would put the shared test mind to
     // sleep mid-run and derail unrelated assertions (running-status checks,
     // history/notice counts). Disable the *schedule* here so the mind never
@@ -631,7 +657,7 @@ describe("daemon e2e", { timeout: 420000 }, () => {
     const mindUser = await getUserByUsername(TEST_MIND);
     assert.ok(mindUser, "test mind should have a user record");
 
-    const issueRes = await daemonRequest(`/api/auth/users/${mindUser.id}/tokens`, {
+    const issueRes = await daemonRequest(`/api/v1/auth/users/${mindUser.id}/tokens`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ label: "e2e-restart" }),
@@ -681,7 +707,7 @@ describe("daemon e2e", { timeout: 420000 }, () => {
     assert.equal(after.status, 200, `after restart: ${await after.clone().text()}`);
 
     // And revocation still takes effect against the new daemon.
-    const del = await daemonRequest(`/api/auth/users/${mindUser.id}/tokens/${tokenId}`, {
+    const del = await daemonRequest(`/api/v1/auth/users/${mindUser.id}/tokens/${tokenId}`, {
       method: "DELETE",
     });
     assert.equal(del.status, 200, `revoke: ${await del.clone().text()}`);
@@ -1133,7 +1159,7 @@ describe("daemon e2e", { timeout: 420000 }, () => {
     assert.equal(res.status, 403);
   });
 
-  it("GET /api/minds withholds port/dir from non-privileged (mind) callers (#503)", async () => {
+  it("GET /api/v1/minds withholds port/dir from non-privileged (mind) callers (#503)", async () => {
     await ensureTestMind();
 
     // A mind principal (untrusted): resolves to a role:"user", user_type:"mind" account.
@@ -1280,7 +1306,7 @@ describe("daemon e2e", { timeout: 420000 }, () => {
     const brain = await ensureBrainParticipant("convo");
 
     // Create a conversation between the test mind and a real second participant.
-    const createRes = await daemonRequest(`/api/minds/${TEST_MIND}/conversations`, {
+    const createRes = await daemonRequest(`/api/v1/minds/${TEST_MIND}/conversations`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -1591,7 +1617,7 @@ describe("daemon e2e", { timeout: 420000 }, () => {
     const brain = await ensureBrainParticipant("unified");
 
     // Create a conversation first (mind + a real second participant)
-    const createRes = await daemonRequest(`/api/minds/${TEST_MIND}/conversations`, {
+    const createRes = await daemonRequest(`/api/v1/minds/${TEST_MIND}/conversations`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -1769,7 +1795,7 @@ describe("daemon e2e", { timeout: 420000 }, () => {
     });
 
     // Add mapping via API
-    const mapRes = await daemonRequest("/api/bridges/test-platform/mappings", {
+    const mapRes = await daemonRequest("/api/v1/bridges/test-platform/mappings", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -1780,25 +1806,25 @@ describe("daemon e2e", { timeout: 420000 }, () => {
     assert.equal(mapRes.status, 200, `Map: ${await mapRes.clone().text()}`);
 
     // Read mappings
-    const mappingsRes = await daemonRequest("/api/bridges/test-platform/mappings");
+    const mappingsRes = await daemonRequest("/api/v1/bridges/test-platform/mappings");
     assert.equal(mappingsRes.status, 200);
     const mappings = (await mappingsRes.json()) as Record<string, string>;
     assert.equal(mappings["server/general"], "test-bridge-channel");
 
     // Remove mapping
     const unmapRes = await daemonRequest(
-      `/api/bridges/test-platform/mappings/${encodeURIComponent("server/general")}`,
+      `/api/v1/bridges/test-platform/mappings/${encodeURIComponent("server/general")}`,
       { method: "DELETE" },
     );
     assert.equal(unmapRes.status, 200);
 
     // Verify removed
-    const afterRes = await daemonRequest("/api/bridges/test-platform/mappings");
+    const afterRes = await daemonRequest("/api/v1/bridges/test-platform/mappings");
     const afterMappings = (await afterRes.json()) as Record<string, string>;
     assert.equal(afterMappings["server/general"], undefined);
 
     // List bridges — should include test-platform
-    const listRes = await daemonRequest("/api/bridges");
+    const listRes = await daemonRequest("/api/v1/bridges");
     assert.equal(listRes.status, 200);
     const bridges = (await listRes.json()) as { platform: string; enabled: boolean }[];
     assert.ok(
@@ -1823,7 +1849,7 @@ describe("daemon e2e", { timeout: 420000 }, () => {
     });
 
     // Send an inbound message (daemon token auth — user.id === 0)
-    const inboundRes = await daemonRequest("/api/bridges/test-inbound/inbound", {
+    const inboundRes = await daemonRequest("/api/v1/bridges/test-inbound/inbound", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -1841,7 +1867,7 @@ describe("daemon e2e", { timeout: 420000 }, () => {
 
     // Verify puppet user in participants
     const participantsRes = await daemonRequest(
-      `/api/minds/${TEST_MIND}/conversations/${inboundBody.conversationId}/participants`,
+      `/api/v1/minds/${TEST_MIND}/conversations/${inboundBody.conversationId}/participants`,
     );
     assert.equal(participantsRes.status, 200);
     const participants = (await participantsRes.json()) as {
@@ -1881,7 +1907,7 @@ describe("daemon e2e", { timeout: 420000 }, () => {
     });
 
     // Send a DM via inbound
-    const inboundRes = await daemonRequest("/api/bridges/test-dm/inbound", {
+    const inboundRes = await daemonRequest("/api/v1/bridges/test-dm/inbound", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -1898,7 +1924,7 @@ describe("daemon e2e", { timeout: 420000 }, () => {
     assert.ok(body1.conversationId);
 
     // Send a second DM from the same user — should reuse the conversation
-    const secondRes = await daemonRequest("/api/bridges/test-dm/inbound", {
+    const secondRes = await daemonRequest("/api/v1/bridges/test-dm/inbound", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -1930,7 +1956,7 @@ describe("daemon e2e", { timeout: 420000 }, () => {
 
   it("bridge enable: returns missing_env when credentials not set", async () => {
     // Try to enable discord bridge without DISCORD_TOKEN
-    const enableRes = await daemonRequest("/api/bridges/discord", {
+    const enableRes = await daemonRequest("/api/v1/bridges/discord", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ defaultMind: TEST_MIND }),
@@ -1956,7 +1982,7 @@ describe("daemon e2e", { timeout: 420000 }, () => {
     });
 
     // Delete it via API
-    const delRes = await daemonRequest("/api/bridges/test-disable", { method: "DELETE" });
+    const delRes = await daemonRequest("/api/v1/bridges/test-disable", { method: "DELETE" });
     assert.equal(delRes.status, 200);
 
     // Verify it's gone (getBridgeConfig returns null for missing configs)
@@ -2601,7 +2627,7 @@ describe("daemon e2e", { timeout: 420000 }, () => {
     const brain = await ensureBrainParticipant("delivery");
 
     // Send through the unified chat endpoint (the real CLI/web send path).
-    const createRes = await daemonRequest(`/api/minds/${TEST_MIND}/conversations`, {
+    const createRes = await daemonRequest(`/api/v1/minds/${TEST_MIND}/conversations`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ title: "delivery round-trip", participantNames: [TEST_MIND, brain] }),
@@ -3006,7 +3032,7 @@ describe("daemon e2e", { timeout: 420000 }, () => {
       const repo = resolve(voluteSystemDir(), "e2e-restic-repo");
       rmSync(repo, { recursive: true, force: true });
 
-      const putRes = await daemonRequest("/api/backup/config", {
+      const putRes = await daemonRequest("/api/v1/backup/config", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ repository: repo }),
@@ -3014,23 +3040,23 @@ describe("daemon e2e", { timeout: 420000 }, () => {
       assert.equal(putRes.status, 200);
 
       // Init generates a passphrase and returns it exactly once.
-      const initRes = await daemonRequest("/api/backup/init", { method: "POST" });
+      const initRes = await daemonRequest("/api/v1/backup/init", { method: "POST" });
       assert.equal(initRes.status, 200, await initRes.clone().text());
       const initBody = (await initRes.json()) as { password: string | null };
       assert.ok(initBody.password, "generated passphrase must be returned at init");
 
-      const runRes = await daemonRequest("/api/backup/run", { method: "POST" });
+      const runRes = await daemonRequest("/api/v1/backup/run", { method: "POST" });
       assert.equal(runRes.status, 200, await runRes.clone().text());
       const summary = (await runRes.json()) as { snapshotId: string; totalFilesProcessed: number };
       assert.ok(summary.snapshotId);
       assert.ok(summary.totalFilesProcessed > 0);
 
-      const listRes = await daemonRequest("/api/backup/snapshots");
+      const listRes = await daemonRequest("/api/v1/backup/snapshots");
       assert.equal(listRes.status, 200);
       const snapshots = (await listRes.json()) as { short_id: string }[];
       assert.equal(snapshots.length, 1);
 
-      const statusRes = await daemonRequest("/api/backup/status");
+      const statusRes = await daemonRequest("/api/v1/backup/status");
       assert.equal(statusRes.status, 200);
       const status = (await statusRes.json()) as {
         resticInstalled: boolean;
@@ -3223,7 +3249,7 @@ describe("daemon e2e", { timeout: 420000 }, () => {
   it("extension command endpoint ignores body.mind for non-admin callers", async () => {
     // Register a seed admin first so subsequent registrations are non-admin.
     // (The first brain user always becomes admin.)
-    await daemonRequest("/api/auth/register", {
+    await daemonRequest("/api/v1/auth/register", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username: "e2e-seed-admin", password: "seed-pass-123" }),
@@ -3231,7 +3257,7 @@ describe("daemon e2e", { timeout: 420000 }, () => {
 
     // Register attacker + victim as non-admin (pending) brain users, then approve.
     async function registerAndApprove(username: string): Promise<void> {
-      const regRes = await daemonRequest("/api/auth/register", {
+      const regRes = await daemonRequest("/api/v1/auth/register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username, password: "attack-pass-123" }),
@@ -3240,7 +3266,7 @@ describe("daemon e2e", { timeout: 420000 }, () => {
       assert.equal(regRes.status, 200, `register ${username}: ${JSON.stringify(regBody)}`);
       assert.notEqual(regBody.role, "admin", `${username} must not be the first (admin) user`);
       // Approve via daemon token (admin).
-      const apRes = await daemonRequest(`/api/auth/users/${regBody.id}/approve`, {
+      const apRes = await daemonRequest(`/api/v1/auth/users/${regBody.id}/approve`, {
         method: "POST",
       });
       assert.equal(apRes.status, 200, `approve ${username}: ${apRes.status}`);
@@ -3248,7 +3274,7 @@ describe("daemon e2e", { timeout: 420000 }, () => {
     await registerAndApprove("e2e-cmd-attacker");
 
     // Log in as attacker to obtain a non-admin session token.
-    const loginRes = await daemonRequest("/api/auth/login", {
+    const loginRes = await daemonRequest("/api/v1/auth/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username: "e2e-cmd-attacker", password: "attack-pass-123" }),

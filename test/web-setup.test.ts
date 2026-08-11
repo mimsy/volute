@@ -18,7 +18,7 @@ const PNG_B64 =
 
 function createApp() {
   const app = new Hono();
-  app.route("/api/setup", setup);
+  app.route("/api/v1/setup", setup);
   return app;
 }
 
@@ -31,37 +31,37 @@ function clearConfig() {
 describe("web setup routes", () => {
   beforeEach(clearConfig);
 
-  it("GET /api/setup/status — reports incomplete when no config", async () => {
+  it("GET /api/v1/setup/status — reports incomplete when no config", async () => {
     const app = createApp();
-    const res = await app.request("/api/setup/status");
+    const res = await app.request("/api/v1/setup/status");
     assert.equal(res.status, 200);
     const body = await res.json();
     assert.equal(body.complete, false);
     assert.equal(body.config, undefined);
   });
 
-  it("GET /api/setup/status — reports complete after setup", async () => {
+  it("GET /api/v1/setup/status — reports complete after setup", async () => {
     writeGlobalConfig({
       name: "test",
       setup: { type: "local", mindsDir: "/tmp/minds", isolation: "sandbox", service: false },
       setupCompleted: true,
     });
     const app = createApp();
-    const res = await app.request("/api/setup/status");
+    const res = await app.request("/api/v1/setup/status");
     assert.equal(res.status, 200);
     const body = await res.json();
     assert.equal(body.complete, true);
     assert.ok(body.config);
   });
 
-  it("POST /api/setup/spirit — stores name and temperament", async () => {
+  it("POST /api/v1/setup/spirit — stores name and temperament", async () => {
     writeGlobalConfig({
       name: "test",
       setup: { type: "local", mindsDir: "/tmp/minds", isolation: "sandbox", service: false },
       setupCompleted: false,
     });
     const app = createApp();
-    const res = await app.request("/api/setup/spirit", {
+    const res = await app.request("/api/v1/setup/spirit", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: "iris", temperament: "warm, wry" }),
@@ -73,12 +73,12 @@ describe("web setup routes", () => {
     assert.equal(config.setup?.spiritTemperament, "warm, wry");
 
     // Status now offers the name for wizard resume
-    const status = await app.request("/api/setup/status");
+    const status = await app.request("/api/v1/setup/status");
     const body = await status.json();
     assert.equal(body.spiritName, "iris");
   });
 
-  it("POST /api/setup/spirit — rejects invalid names", async () => {
+  it("POST /api/v1/setup/spirit — rejects invalid names", async () => {
     writeGlobalConfig({
       name: "test",
       setup: { type: "local", mindsDir: "/tmp/minds", isolation: "sandbox", service: false },
@@ -86,7 +86,7 @@ describe("web setup routes", () => {
     });
     const app = createApp();
     for (const name of ["", "system", "has spaces", "-dash"]) {
-      const res = await app.request("/api/setup/spirit", {
+      const res = await app.request("/api/v1/setup/spirit", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name }),
@@ -95,14 +95,14 @@ describe("web setup routes", () => {
     }
   });
 
-  it("POST /api/setup/spirit — stashes an uploaded avatar and description", async () => {
+  it("POST /api/v1/setup/spirit — stashes an uploaded avatar and description", async () => {
     writeGlobalConfig({
       name: "test",
       setup: { type: "local", mindsDir: "/tmp/minds", isolation: "sandbox", service: false },
       setupCompleted: false,
     });
     const app = createApp();
-    const res = await app.request("/api/setup/spirit", {
+    const res = await app.request("/api/v1/setup/spirit", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -126,14 +126,14 @@ describe("web setup routes", () => {
     rmSync(stashed);
   });
 
-  it("POST /api/setup/spirit — resubmitting without an avatar clears the stash", async () => {
+  it("POST /api/v1/setup/spirit — resubmitting without an avatar clears the stash", async () => {
     writeGlobalConfig({
       name: "test",
       setup: { type: "local", mindsDir: "/tmp/minds", isolation: "sandbox", service: false },
       setupCompleted: false,
     });
     const app = createApp();
-    const upload = await app.request("/api/setup/spirit", {
+    const upload = await app.request("/api/v1/setup/spirit", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: "iris", avatar: `data:image/png;base64,${PNG_B64}` }),
@@ -142,7 +142,7 @@ describe("web setup routes", () => {
     const stashedName = readGlobalConfig().setup?.spiritAvatar;
     assert.ok(stashedName);
 
-    const resubmit = await app.request("/api/setup/spirit", {
+    const resubmit = await app.request("/api/v1/setup/spirit", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: "iris" }),
@@ -152,14 +152,14 @@ describe("web setup routes", () => {
     assert.ok(!existsSync(resolve(voluteSystemDir(), stashedName)), "stash file removed");
   });
 
-  it("POST /api/setup/spirit — rejects a non-image data URI", async () => {
+  it("POST /api/v1/setup/spirit — rejects a non-image data URI", async () => {
     writeGlobalConfig({
       name: "test",
       setup: { type: "local", mindsDir: "/tmp/minds", isolation: "sandbox", service: false },
       setupCompleted: false,
     });
     const app = createApp();
-    const res = await app.request("/api/setup/spirit", {
+    const res = await app.request("/api/v1/setup/spirit", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: "iris", avatar: "data:text/html;base64,PGI+" }),
@@ -167,14 +167,14 @@ describe("web setup routes", () => {
     assert.equal(res.status, 400);
   });
 
-  it("POST /api/setup/spirit — a rejected upload leaves an existing stash intact", async () => {
+  it("POST /api/v1/setup/spirit — a rejected upload leaves an existing stash intact", async () => {
     writeGlobalConfig({
       name: "test",
       setup: { type: "local", mindsDir: "/tmp/minds", isolation: "sandbox", service: false },
       setupCompleted: false,
     });
     const app = createApp();
-    const upload = await app.request("/api/setup/spirit", {
+    const upload = await app.request("/api/v1/setup/spirit", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: "iris", avatar: `data:image/png;base64,${PNG_B64}` }),
@@ -183,7 +183,7 @@ describe("web setup routes", () => {
     const stashedName = readGlobalConfig().setup?.spiritAvatar;
     assert.ok(stashedName);
 
-    const bad = await app.request("/api/setup/spirit", {
+    const bad = await app.request("/api/v1/setup/spirit", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: "iris", avatar: "data:text/html;base64,PGI+" }),
@@ -195,9 +195,9 @@ describe("web setup routes", () => {
     rmSync(stashed);
   });
 
-  it("POST /api/setup/spirit — requires the system step first", async () => {
+  it("POST /api/v1/setup/spirit — requires the system step first", async () => {
     const app = createApp();
-    const res = await app.request("/api/setup/spirit", {
+    const res = await app.request("/api/v1/setup/spirit", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: "iris" }),
@@ -205,14 +205,14 @@ describe("web setup routes", () => {
     assert.equal(res.status, 400);
   });
 
-  it("POST /api/setup/spirit — rejects after setup is complete", async () => {
+  it("POST /api/v1/setup/spirit — rejects after setup is complete", async () => {
     writeGlobalConfig({
       name: "test",
       setup: { type: "local", mindsDir: "/tmp/minds", isolation: "sandbox", service: false },
       setupCompleted: true,
     });
     const app = createApp();
-    const res = await app.request("/api/setup/spirit", {
+    const res = await app.request("/api/v1/setup/spirit", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: "iris" }),
@@ -220,9 +220,9 @@ describe("web setup routes", () => {
     assert.equal(res.status, 400);
   });
 
-  it("POST /api/setup/models — rejects empty model list", async () => {
+  it("POST /api/v1/setup/models — rejects empty model list", async () => {
     const app = createApp();
-    const res = await app.request("/api/setup/models", {
+    const res = await app.request("/api/v1/setup/models", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ models: [], spiritModel: "anthropic:claude-sonnet-4" }),
@@ -230,9 +230,9 @@ describe("web setup routes", () => {
     assert.equal(res.status, 400);
   });
 
-  it("POST /api/setup/models — rejects missing spirit model", async () => {
+  it("POST /api/v1/setup/models — rejects missing spirit model", async () => {
     const app = createApp();
-    const res = await app.request("/api/setup/models", {
+    const res = await app.request("/api/v1/setup/models", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ models: ["anthropic:claude-sonnet-4"], spiritModel: "" }),

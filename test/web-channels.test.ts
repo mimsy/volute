@@ -49,7 +49,7 @@ describe("web channels routes", () => {
     const { default: app } = await import("../packages/daemon/src/web/app.js");
 
     const res = await app.request(
-      "http://localhost/api/minds/nonexistent-ch-mind/channels/create",
+      "http://localhost/api/v1/minds/nonexistent-ch-mind/channels/create",
       {
         method: "POST",
         headers: postHeaders(cookie),
@@ -65,7 +65,7 @@ describe("web channels routes", () => {
     const { default: app } = await import("../packages/daemon/src/web/app.js");
 
     // 'system' has no driver
-    const res = await app.request(`http://localhost/api/minds/${TEST_MIND}/channels/create`, {
+    const res = await app.request(`http://localhost/api/v1/minds/${TEST_MIND}/channels/create`, {
       method: "POST",
       headers: postHeaders(cookie),
       body: JSON.stringify({ platform: "system", participants: ["user1"] }),
@@ -82,7 +82,7 @@ describe("web channels routes", () => {
     addMind(TEST_MIND, 4160);
     const { default: app } = await import("../packages/daemon/src/web/app.js");
 
-    const res = await app.request(`http://localhost/api/minds/${TEST_MIND}/channels/send`, {
+    const res = await app.request(`http://localhost/api/v1/minds/${TEST_MIND}/channels/send`, {
       method: "POST",
       headers: postHeaders(cookie),
       body: JSON.stringify({ platform: "discord", uri: "test:chan", message: "hi" }),
@@ -96,7 +96,7 @@ describe("web channels routes", () => {
     const { default: app } = await import("../packages/daemon/src/web/app.js");
 
     const res = await app.request(
-      `/api/minds/${TEST_MIND}/channels/read?platform=discord&uri=test`,
+      `/api/v1/minds/${TEST_MIND}/channels/read?platform=discord&uri=test`,
       { headers: { Cookie: `volute_session=${cookie}` } },
     );
     assert.equal(res.status, 404);
@@ -107,7 +107,7 @@ describe("web channels routes", () => {
     addMind(TEST_MIND, 4160);
     const { default: app } = await import("../packages/daemon/src/web/app.js");
 
-    const res = await app.request(`/api/minds/${TEST_MIND}/channels/list`, {
+    const res = await app.request(`/api/v1/minds/${TEST_MIND}/channels/list`, {
       headers: { Cookie: `volute_session=${cookie}` },
     });
     assert.equal(res.status, 404);
@@ -118,7 +118,7 @@ describe("web channels routes", () => {
     addMind(TEST_MIND, 4160);
     const { default: app } = await import("../packages/daemon/src/web/app.js");
 
-    const res = await app.request(`/api/minds/${TEST_MIND}/channels/users?platform=discord`, {
+    const res = await app.request(`/api/v1/minds/${TEST_MIND}/channels/users?platform=discord`, {
       headers: { Cookie: `volute_session=${cookie}` },
     });
     assert.equal(res.status, 404);

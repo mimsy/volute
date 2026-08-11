@@ -580,7 +580,7 @@ describe("sprout endpoint cleans up nurture schedule", () => {
 
   afterEach(cleanup);
 
-  it("POST /api/minds/:name/sprout sets stage to sprouted", async () => {
+  it("POST /api/v1/minds/:name/sprout sets stage to sprouted", async () => {
     const { default: app } = await import("../packages/daemon/src/web/app.js");
 
     const res = await app.request(`http://localhost/api/v1/minds/${seedName}/sprout`, {
@@ -615,7 +615,7 @@ describe("profile endpoint", () => {
 
   afterEach(cleanup);
 
-  it("PATCH /api/minds/:name/profile updates profile", async () => {
+  it("PATCH /api/v1/minds/:name/profile updates profile", async () => {
     const { default: app } = await import("../packages/daemon/src/web/app.js");
 
     const res = await app.request(`http://localhost/api/v1/minds/${mindName}/profile`, {
@@ -640,7 +640,7 @@ describe("profile endpoint", () => {
     assert.equal(config?.profile?.description, "A test mind");
   });
 
-  it("PATCH /api/minds/:name/profile returns 404 for unknown mind", async () => {
+  it("PATCH /api/v1/minds/:name/profile returns 404 for unknown mind", async () => {
     const { default: app } = await import("../packages/daemon/src/web/app.js");
 
     const res = await app.request("http://localhost/api/v1/minds/nonexistent-mind/profile", {

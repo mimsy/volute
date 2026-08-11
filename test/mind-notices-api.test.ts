@@ -22,7 +22,7 @@ function postHeaders(token: string) {
   };
 }
 
-describe("POST /api/minds/:name/notices", () => {
+describe("POST /api/v1/minds/:name/notices", () => {
   it("records a mind-level notice a mind can post about itself", async () => {
     const name = `notice-api-${Date.now()}-a`;
     const token = await makeMind(name);
