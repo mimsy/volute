@@ -1,6 +1,6 @@
 import { formatFileSize } from "@volute/daemon/lib/chat/file-sharing.js";
 import { command } from "../../lib/command.js";
-import { daemonFetch } from "../../lib/daemon-client.js";
+import { daemonErrorMessage, daemonFetch } from "../../lib/daemon-client.js";
 import { resolveMindName } from "../../lib/resolve-mind-name.js";
 
 const cmd = command({
@@ -15,8 +15,7 @@ const cmd = command({
     const res = await daemonFetch(`/api/v1/minds/${encodeURIComponent(mind)}/files/pending`);
 
     if (!res.ok) {
-      const data = (await res.json()) as { error?: string };
-      console.error(data.error ?? `Failed to list pending files: ${res.status}`);
+      console.error(await daemonErrorMessage(res, `Failed to list pending files: ${res.status}`));
       process.exit(1);
     }
 

@@ -144,6 +144,25 @@ export function getAuthToken(): string | undefined {
   return process.env.VOLUTE_MIND_TOKEN ?? readCliSession()?.sessionId;
 }
 
+/**
+ * Extract a one-line error message from a failed daemon response. The daemon
+ * usually returns `{ error }` JSON, but a route miss (e.g. a wildcard swallowing
+ * a more-specific sibling) can return a text/plain body like "Not found".
+ * Parsing that as JSON throws SyntaxError; this reads the body once as text,
+ * prefers the JSON `error` field when present, and otherwise falls back to the
+ * raw text (or `fallback` when the body is empty). Never throws.
+ */
+export async function daemonErrorMessage(res: Response, fallback: string): Promise<string> {
+  const text = await res.text().catch(() => "");
+  if (!text) return fallback;
+  try {
+    const data = JSON.parse(text) as { error?: string };
+    return data.error ?? text;
+  } catch {
+    return text;
+  }
+}
+
 export async function daemonFetch(path: string, options?: RequestInit): Promise<Response> {
   const url = resolveDaemonUrl();
   const headers = new Headers(options?.headers);
