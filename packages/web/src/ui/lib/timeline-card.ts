@@ -57,7 +57,7 @@ export function historyEventCardModel(
         iconKind: "chat",
         title: event.channel || "message",
         meta: event.sender ?? "user",
-        body: { kind: "text", text: event.content },
+        body: { kind: "text", text: event.content ?? "" },
         url: "",
       };
     case "outbound":
@@ -66,7 +66,7 @@ export function historyEventCardModel(
         iconKind: "chat",
         title: event.channel || "message",
         meta: mindName,
-        body: { kind: "text", text: event.content },
+        body: { kind: "text", text: event.content ?? "" },
         url: "",
       };
     case "event":
@@ -77,7 +77,7 @@ export function historyEventCardModel(
         iconKind: "gear",
         title: systemEventLabel(meta, event.channel),
         meta: "system event",
-        body: { kind: "text", text: event.content },
+        body: { kind: "text", text: event.content ?? "" },
         url: "",
       };
     case "activity": {
@@ -86,7 +86,7 @@ export function historyEventCardModel(
         color: activityColor(meta),
         icon,
         iconKind: icon ? undefined : "document-lines",
-        title: event.content,
+        title: event.content ?? "",
         meta: typeof meta?.author === "string" ? meta.author : undefined,
         body: activityPeekBody(meta),
         url: activityNavUrl(meta, mindName),

@@ -342,10 +342,10 @@ async function handleClick() {
           <div class="reflection-label">reflection · private</div>
         {/if}
         <div class="inline-text dim" class:inline-text-expanded={expanded}>
-          <div class="markdown-body">{@html renderMarkdown(event.content)}</div>
+          <div class="markdown-body">{@html renderMarkdown(event.content ?? "")}</div>
         </div>
       {:else if event.type === "tool_use"}
-        <span class="inline-text" class:inline-text-expanded={expanded}>{getToolLabel(meta?.name ?? "tool", event.content)}{#if expanded && event.content}{"\n"}{formatArgs(event.content)}{/if}</span>
+        <span class="inline-text" class:inline-text-expanded={expanded}>{getToolLabel(meta?.name ?? "tool", event.content ?? "")}{#if expanded && event.content}{"\n"}{formatArgs(event.content)}{/if}</span>
       {:else if event.type === "tool_result"}
         <span class="inline-text" class:inline-text-expanded={expanded} class:error={meta?.is_error}>{event.content}</span>
       {:else if event.type === "thinking"}

@@ -241,6 +241,7 @@ function buildHistoryMessage(
     content: (d.content as string) ?? "",
     metadata: d.metadata ? JSON.stringify(d.metadata) : null,
     turn_id: null,
+    sender_display_name: (d.sender_display_name as string | null) ?? null,
     created_at: new Date().toISOString(),
     ...overrides,
   };
@@ -1087,6 +1088,7 @@ function jumpToLatest() {
                       content: turn.summary,
                       metadata: turn.summary_meta ? JSON.stringify(turn.summary_meta) : null,
                       turn_id: turn.id,
+                      sender_display_name: null,
                       created_at: turn.created_at,
                     }}
                     mindName={turn.mind}
@@ -1112,6 +1114,7 @@ function jumpToLatest() {
                         : (turn.trigger?.content ?? "(no summary)"),
                       metadata: null,
                       turn_id: turn.id,
+                      sender_display_name: null,
                       created_at: turn.created_at,
                     }}
                     mindName={turn.mind}
