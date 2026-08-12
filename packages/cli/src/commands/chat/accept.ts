@@ -1,5 +1,5 @@
 import { command } from "../../lib/command.js";
-import { daemonFetch } from "../../lib/daemon-client.js";
+import { daemonErrorMessage, daemonFetch } from "../../lib/daemon-client.js";
 import { resolveMindName } from "../../lib/resolve-mind-name.js";
 
 const cmd = command({
@@ -20,8 +20,7 @@ const cmd = command({
     });
 
     if (!res.ok) {
-      const data = (await res.json()) as { error?: string };
-      console.error(data.error ?? `Failed to accept file: ${res.status}`);
+      console.error(await daemonErrorMessage(res, `Failed to accept file: ${res.status}`));
       process.exit(1);
     }
 

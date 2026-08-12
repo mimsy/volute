@@ -153,10 +153,16 @@ const v1 = new Hono<AuthEnv>()
   .route("/minds", logs)
   .route("/minds", typing)
   .route("/minds", variants)
+  // fileSharing must mount before files: the admin file-browser registers the
+  // wildcard GET /minds/:name/files/* (files.ts), and Hono dispatches to the
+  // first matching route, so any more-specific sibling like GET
+  // /minds/:name/files/pending has to be registered first or the wildcard
+  // swallows it (#900 re-ordering regression). The admin file-browser wildcard
+  // must stay last among /minds/:name/files/* registrants; test/route-shadowing.test.ts guards this.
+  .route("/minds", fileSharing)
   .route("/minds", files)
   .route("/minds", envRoutes)
   .route("/minds", mindSkills)
-  .route("/minds", fileSharing)
   .route("/minds", channels)
   .route("/minds", conversations)
   .route("/env", sharedEnvApp)
