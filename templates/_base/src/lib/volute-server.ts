@@ -68,7 +68,7 @@ async function fetchPublicKey(fingerprint: string): Promise<string | null> {
 
   try {
     const res = await fetch(
-      `http://127.0.0.1:${daemonPort}/api/keys/${encodeURIComponent(fingerprint)}`,
+      `http://127.0.0.1:${daemonPort}/api/v1/keys/${encodeURIComponent(fingerprint)}`,
       { headers: { Authorization: `Bearer ${daemonToken}` }, signal: AbortSignal.timeout(2000) },
     );
     if (!res.ok) return null;
