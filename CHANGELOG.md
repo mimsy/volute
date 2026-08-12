@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.58.0](https://github.com/mimsy/volute/compare/volute-v0.57.1...volute-v0.58.0) (2026-08-12)
+
+
+### Features
+
+* **channels:** sidebar settings menu, channel rate limits, limits for everyone ([#892](https://github.com/mimsy/volute/issues/892)) ([0ef3b75](https://github.com/mimsy/volute/commit/0ef3b75255dead9f0ca8e877dea71a48b73fd653))
+* **events:** make system events routable through routes.json ([#736](https://github.com/mimsy/volute/issues/736)) ([#898](https://github.com/mimsy/volute/issues/898)) ([98a4ae9](https://github.com/mimsy/volute/commit/98a4ae913f12239acf6c0c84c0394033ea0f1f83))
+
+
+### Bug Fixes
+
+* **templates:** route mind-template daemon calls through /api/v1 ([#900](https://github.com/mimsy/volute/issues/900) follow-up) ([#905](https://github.com/mimsy/volute/issues/905)) ([750a32d](https://github.com/mimsy/volute/commit/750a32da2226df4e3f2e89cc6cbc4fded0b49048))
+* **web:** unshadow GET /minds/:name/files/pending + guard the class ([#906](https://github.com/mimsy/volute/issues/906)) ([59c9b72](https://github.com/mimsy/volute/commit/59c9b72e7db54103cae258135658327c5f9fe647))
+
 ## [0.57.1](https://github.com/mimsy/volute/compare/volute-v0.57.0...volute-v0.57.1) (2026-08-10)
 
 
