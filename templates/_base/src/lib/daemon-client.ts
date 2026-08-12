@@ -167,7 +167,7 @@ export async function daemonSendFile(
     throw new Error("[volute] daemonSendFile: VOLUTE_DAEMON_PORT or VOLUTE_MIND not set");
   }
   const res = await fetch(
-    `http://127.0.0.1:${port}/api/minds/${encodeURIComponent(mind)}/files/send`,
+    `http://127.0.0.1:${port}/api/v1/minds/${encodeURIComponent(mind)}/files/send`,
     {
       method: "POST",
       headers: headers(),
