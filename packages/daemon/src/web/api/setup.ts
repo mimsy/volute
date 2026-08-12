@@ -1,8 +1,10 @@
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, resolve } from "node:path";
+import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
 import { setCookie } from "hono/cookie";
+import { z } from "zod";
 import {
   type GlobalConfig,
   getSpiritName,
@@ -23,6 +25,36 @@ import log from "../../lib/util/logger.js";
 import { createSession, SESSION_MAX_AGE } from "../middleware/auth.js";
 
 const DEFAULT_API_URL = "https://volute.systems";
+
+// Schemas enforce the declared body types; the semantic checks each route already
+// runs (non-empty-after-trim, spirit-name validation, avatar format) stay inline so
+// the accepted set for valid input is unchanged — only malformed bodies now 400
+// structurally instead of throwing (which surfaced as a 500) or flowing through.
+const systemBodySchema = z.object({
+  name: z.string(),
+  description: z.string().optional(),
+  remote: z.boolean().optional(),
+  service: z.boolean().optional(),
+  tailscale: z.boolean().optional(),
+});
+const registerBodySchema = z.object({ slug: z.string() });
+const loginBodySchema = z.object({ key: z.string() });
+const accountBodySchema = z.object({
+  username: z.string(),
+  password: z.string(),
+  displayName: z.string().optional(),
+});
+const modelsBodySchema = z.object({
+  models: z.array(z.string()),
+  spiritModel: z.string(),
+  utilityModel: z.string().optional(),
+});
+const spiritBodySchema = z.object({
+  name: z.string(),
+  temperament: z.string().optional(),
+  description: z.string().optional(),
+  avatar: z.string().optional(),
+});
 
 const setup = new Hono();
 
@@ -91,25 +123,14 @@ setup.get("/status", async (c) => {
 });
 
 // Step 1: Configure system (name + description + remote access)
-setup.post("/system", async (c) => {
+setup.post("/system", zValidator("json", systemBodySchema), async (c) => {
   if (isSetupComplete()) {
     return c.json({ error: "Setup already complete" }, 400);
   }
 
-  let body: {
-    name: string;
-    description?: string;
-    remote?: boolean;
-    service?: boolean;
-    tailscale?: boolean;
-  };
-  try {
-    body = await c.req.json();
-  } catch {
-    return c.json({ error: "Invalid JSON in request body" }, 400);
-  }
+  const body = c.req.valid("json");
 
-  if (!body.name?.trim()) {
+  if (!body.name.trim()) {
     return c.json({ error: "System name is required" }, 400);
   }
 
@@ -151,19 +172,14 @@ setup.post("/system", async (c) => {
 });
 
 // Register with volute.systems during setup
-setup.post("/system/register", async (c) => {
+setup.post("/system/register", zValidator("json", registerBodySchema), async (c) => {
   if (isSetupComplete()) {
     return c.json({ error: "Setup already complete" }, 400);
   }
 
-  let body: { slug: string };
-  try {
-    body = await c.req.json();
-  } catch {
-    return c.json({ error: "Invalid JSON in request body" }, 400);
-  }
+  const body = c.req.valid("json");
 
-  if (!body.slug?.trim()) {
+  if (!body.slug.trim()) {
     return c.json({ error: "System slug is required" }, 400);
   }
 
@@ -214,19 +230,14 @@ setup.post("/system/register", async (c) => {
 });
 
 // Login to volute.systems with existing API key during setup
-setup.post("/system/login", async (c) => {
+setup.post("/system/login", zValidator("json", loginBodySchema), async (c) => {
   if (isSetupComplete()) {
     return c.json({ error: "Setup already complete" }, 400);
   }
 
-  let body: { key: string };
-  try {
-    body = await c.req.json();
-  } catch {
-    return c.json({ error: "Invalid JSON in request body" }, 400);
-  }
+  const body = c.req.valid("json");
 
-  if (!body.key?.trim()) {
+  if (!body.key.trim()) {
     return c.json({ error: "API key is required" }, 400);
   }
 
@@ -283,23 +294,14 @@ setup.get("/system/systems-status", (c) => {
 });
 
 // Step 2: Create account (user only, system already configured)
-setup.post("/account", async (c) => {
+setup.post("/account", zValidator("json", accountBodySchema), async (c) => {
   if (isSetupComplete()) {
     return c.json({ error: "Setup already complete" }, 400);
   }
 
-  let body: {
-    username: string;
-    password: string;
-    displayName?: string;
-  };
-  try {
-    body = await c.req.json();
-  } catch {
-    return c.json({ error: "Invalid JSON in request body" }, 400);
-  }
+  const body = c.req.valid("json");
 
-  if (!body.username?.trim()) {
+  if (!body.username.trim()) {
     return c.json({ error: "Username is required" }, 400);
   }
   if (!body.password || body.password.length < 1) {
@@ -354,22 +356,17 @@ setup.post("/account", async (c) => {
 });
 
 // Step 3: Configure models
-setup.post("/models", async (c) => {
+setup.post("/models", zValidator("json", modelsBodySchema), async (c) => {
   if (isSetupComplete()) {
     return c.json({ error: "Setup already complete" }, 400);
   }
 
-  let body: { models: string[]; spiritModel: string; utilityModel?: string };
-  try {
-    body = await c.req.json();
-  } catch {
-    return c.json({ error: "Invalid JSON in request body" }, 400);
-  }
+  const body = c.req.valid("json");
 
-  if (!Array.isArray(body.models) || body.models.length === 0) {
+  if (body.models.length === 0) {
     return c.json({ error: "At least one model must be selected" }, 400);
   }
-  if (!body.spiritModel?.trim()) {
+  if (!body.spiritModel.trim()) {
     return c.json({ error: "Spirit model is required" }, 400);
   }
 
@@ -395,19 +392,14 @@ setup.post("/models", async (c) => {
 });
 
 // Step 4: Name the spirit
-setup.post("/spirit", async (c) => {
+setup.post("/spirit", zValidator("json", spiritBodySchema), async (c) => {
   if (isSetupComplete()) {
     return c.json({ error: "Setup already complete" }, 400);
   }
 
-  let body: { name: string; temperament?: string; description?: string; avatar?: string };
-  try {
-    body = await c.req.json();
-  } catch {
-    return c.json({ error: "Invalid JSON in request body" }, 400);
-  }
+  const body = c.req.valid("json");
 
-  const name = body.name?.trim() ?? "";
+  const name = body.name.trim();
   const nameErr = validateSpiritName(name);
   if (nameErr) {
     return c.json({ error: nameErr }, 400);

@@ -110,8 +110,16 @@ describe("schedules API rotating messages", () => {
     for (const messages of ["not-an-array", ["ok", ""], ["ok", "   "], [42]]) {
       const res = await postSchedule({ id: "hb", cron: "0 12 * * *", messages });
       assert.equal(res.status, 400, `expected 400 for messages=${JSON.stringify(messages)}`);
-      const body = (await res.json()) as { error: string };
-      assert.ok(body.error.includes("messages"));
+      // A malformed *type* (non-array, non-string element) now trips the zValidator
+      // schema → structured zod 400 (`success: false`). A present-but-empty/whitespace
+      // element still trips the in-handler validateMessages → `{ error: "…messages…" }`.
+      // Both are 400s about `messages`; accept either shape.
+      const body = (await res.json()) as { success?: boolean; error?: unknown };
+      assert.ok(
+        body.success === false ||
+          (typeof body.error === "string" && body.error.includes("messages")),
+        `expected a messages validation error, got ${JSON.stringify(body)}`,
+      );
     }
   });
 

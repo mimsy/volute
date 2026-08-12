@@ -1,8 +1,10 @@
 import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { zValidator } from "@hono/zod-validator";
 import AdmZip from "adm-zip";
 import { Hono } from "hono";
+import { z } from "zod";
 import { readGlobalConfig, writeGlobalConfig } from "../../lib/config/setup.js";
 import { getExtensionStandardSkills } from "../../lib/extensions.js";
 import {
@@ -27,42 +29,46 @@ const app = new Hono<AuthEnv>()
   .get("/defaults/list", async (c) => {
     return c.json({ skills: getStandardSkillsWithExtensions() });
   })
-  .put("/defaults/list", requireAdmin, async (c) => {
-    const body = await c.req.json<{ skills: string[] }>();
-    if (!Array.isArray(body.skills) || !body.skills.every((s) => typeof s === "string")) {
-      return c.json({ error: "body.skills must be a string array" }, 400);
-    }
-    const config = readGlobalConfig();
-    // Track which standard/extension skills were explicitly removed
-    const allStandard = new Set([...STANDARD_SKILLS, ...getExtensionStandardSkills()]);
-    const newSet = new Set(body.skills);
-    const removed = [...allStandard].filter((s) => !newSet.has(s));
-    const prevRemoved = new Set(config.removedDefaultSkills ?? []);
-    for (const s of removed) prevRemoved.add(s);
-    // Re-added skills should be cleared from the removed list
-    for (const s of body.skills) prevRemoved.delete(s);
-    writeGlobalConfig({
-      ...config,
-      defaultSkills: body.skills,
-      removedDefaultSkills: [...prevRemoved],
-    });
-    return c.json({ skills: body.skills });
-  })
-  .post("/defaults/list", requireAdmin, async (c) => {
-    const body = await c.req.json<{ skill: string }>();
-    if (typeof body.skill !== "string" || !body.skill) {
-      return c.json({ error: "body.skill must be a non-empty string" }, 400);
-    }
-    const current = getStandardSkillsWithExtensions();
-    if (current.includes(body.skill)) {
-      return c.json({ error: `"${body.skill}" is already a default skill` }, 409);
-    }
-    const config = readGlobalConfig();
-    const updated = [...current, body.skill];
-    const removed = (config.removedDefaultSkills ?? []).filter((s) => s !== body.skill);
-    writeGlobalConfig({ ...config, defaultSkills: updated, removedDefaultSkills: removed });
-    return c.json({ skills: updated });
-  })
+  .put(
+    "/defaults/list",
+    requireAdmin,
+    zValidator("json", z.object({ skills: z.array(z.string()) })),
+    async (c) => {
+      const body = c.req.valid("json");
+      const config = readGlobalConfig();
+      // Track which standard/extension skills were explicitly removed
+      const allStandard = new Set([...STANDARD_SKILLS, ...getExtensionStandardSkills()]);
+      const newSet = new Set(body.skills);
+      const removed = [...allStandard].filter((s) => !newSet.has(s));
+      const prevRemoved = new Set(config.removedDefaultSkills ?? []);
+      for (const s of removed) prevRemoved.add(s);
+      // Re-added skills should be cleared from the removed list
+      for (const s of body.skills) prevRemoved.delete(s);
+      writeGlobalConfig({
+        ...config,
+        defaultSkills: body.skills,
+        removedDefaultSkills: [...prevRemoved],
+      });
+      return c.json({ skills: body.skills });
+    },
+  )
+  .post(
+    "/defaults/list",
+    requireAdmin,
+    zValidator("json", z.object({ skill: z.string().min(1) })),
+    async (c) => {
+      const body = c.req.valid("json");
+      const current = getStandardSkillsWithExtensions();
+      if (current.includes(body.skill)) {
+        return c.json({ error: `"${body.skill}" is already a default skill` }, 409);
+      }
+      const config = readGlobalConfig();
+      const updated = [...current, body.skill];
+      const removed = (config.removedDefaultSkills ?? []).filter((s) => s !== body.skill);
+      writeGlobalConfig({ ...config, defaultSkills: updated, removedDefaultSkills: removed });
+      return c.json({ skills: updated });
+    },
+  )
   .delete("/defaults/list/:skill", requireAdmin, async (c) => {
     const skill = c.req.param("skill");
     const current = getStandardSkillsWithExtensions();
@@ -79,15 +85,17 @@ const app = new Hono<AuthEnv>()
   .get("/auto-update", (c) => {
     return c.json({ enabled: isAutoUpdateSkillsEnabled() });
   })
-  .put("/auto-update", requireAdmin, async (c) => {
-    const body = await c.req.json<{ enabled: boolean }>();
-    if (typeof body.enabled !== "boolean") {
-      return c.json({ error: "body.enabled must be a boolean" }, 400);
-    }
-    const config = readGlobalConfig();
-    writeGlobalConfig({ ...config, autoUpdateSkills: body.enabled });
-    return c.json({ enabled: body.enabled });
-  })
+  .put(
+    "/auto-update",
+    requireAdmin,
+    zValidator("json", z.object({ enabled: z.boolean() })),
+    async (c) => {
+      const { enabled } = c.req.valid("json");
+      const config = readGlobalConfig();
+      writeGlobalConfig({ ...config, autoUpdateSkills: enabled });
+      return c.json({ enabled });
+    },
+  )
   .post("/upload", requireAdmin, async (c) => {
     const body = await c.req.parseBody();
     const file = body.file;
