@@ -56,7 +56,7 @@ function profileForSender(name: string): HoverProfile | null {
       name: mind.name,
       displayName: mind.displayName,
       description: mind.description,
-      avatarUrl: mind.avatar ? `/api/minds/${encodeURIComponent(mind.name)}/avatar` : null,
+      avatarUrl: mind.avatar ? `/api/v1/minds/${encodeURIComponent(mind.name)}/avatar` : null,
       userType: "mind",
       created: mind.created,
     };
@@ -67,7 +67,7 @@ function profileForSender(name: string): HoverProfile | null {
       name: p.username,
       displayName: p.displayName,
       description: p.description,
-      avatarUrl: p.avatar ? `/api/auth/avatars/${encodeURIComponent(p.avatar)}` : null,
+      avatarUrl: p.avatar ? `/api/v1/auth/avatars/${encodeURIComponent(p.avatar)}` : null,
       userType: p.userType,
     };
   }

@@ -22,7 +22,7 @@ const cmd = command({
       }
     }
 
-    const res = await daemonFetch("/api/system/register", {
+    const res = await daemonFetch("/api/v1/system/register", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name }),

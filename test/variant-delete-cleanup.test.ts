@@ -18,7 +18,7 @@ import mindsApp from "../packages/daemon/src/web/api/minds.js";
 import { type AuthEnv, authMiddleware } from "../packages/daemon/src/web/middleware/auth.js";
 import { cleanGitEnv } from "./helpers/test-git-env.js";
 
-// Regression test for #650: `DELETE /api/minds/:name` on a variant name used to
+// Regression test for #650: `DELETE /api/v1/minds/:name` on a variant name used to
 // stop the process and drop the DB row without ever calling cleanupVariant,
 // stranding the git worktree and branch. This exercises the real route (not
 // just cleanupVariant directly) so it catches a regression in the routing

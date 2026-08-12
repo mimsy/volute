@@ -26,7 +26,7 @@ const cmd = command({
 
     const client = getClient();
     const res = await daemonFetch(
-      urlOf(client.api.minds[":name"].variants.$url({ param: { name: mindName } })),
+      urlOf(client.api.v1.minds[":name"].variants.$url({ param: { name: mindName } })),
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },

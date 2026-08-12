@@ -280,7 +280,7 @@ async function runDiagnostics(): Promise<Diagnostics> {
   }
 
   // --- Per-mind process status ---
-  const daemonMinds = await fetchDaemonJson<DaemonMind[]>("/api/minds");
+  const daemonMinds = await fetchDaemonJson<DaemonMind[]>("/api/v1/minds");
   if (daemonMinds) {
     if (daemonMinds.length === 0) {
       checks.push({ label: "Minds", state: "pass", detail: "none configured" });

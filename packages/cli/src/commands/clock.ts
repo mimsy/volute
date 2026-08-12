@@ -52,7 +52,7 @@ const clockStatusCmd = command({
     const client = getClient();
 
     const res = await daemonFetch(
-      urlOf(client.api.minds[":name"].clock.status.$url({ param: { name: mind } })),
+      urlOf(client.api.v1.minds[":name"].clock.status.$url({ param: { name: mind } })),
     );
     if (!res.ok) {
       const data = (await res.json()) as { error?: string };
@@ -209,7 +209,7 @@ const listSchedulesCmd = command({
 
     // clock/status carries both stores (schedules[] and sleep.schedule) in one call.
     const res = await daemonFetch(
-      urlOf(client.api.minds[":name"].clock.status.$url({ param: { name: mind } })),
+      urlOf(client.api.v1.minds[":name"].clock.status.$url({ param: { name: mind } })),
     );
     if (!res.ok) {
       const data = (await res.json()) as { error?: string };
@@ -333,7 +333,7 @@ const addScheduleCmd = command({
 
     const client = getClient();
     const res = await daemonFetch(
-      urlOf(client.api.minds[":name"].schedules.$url({ param: { name: mind } })),
+      urlOf(client.api.v1.minds[":name"].schedules.$url({ param: { name: mind } })),
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -374,7 +374,7 @@ const removeScheduleCmd = command({
     const client = getClient();
     const res = await daemonFetch(
       urlOf(
-        client.api.minds[":name"].schedules[":id"].$url({
+        client.api.v1.minds[":name"].schedules[":id"].$url({
           param: { name: mind, id: flags.id },
         }),
       ),

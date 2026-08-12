@@ -15,7 +15,7 @@ const TEST_USERNAMES = ["admin", "dupe", "loginuser", "meuser", "logoutuser"];
 
 function createApp() {
   const app = new Hono();
-  app.route("/api/auth", auth);
+  app.route("/api/v1/auth", auth);
   return app;
 }
 
@@ -37,9 +37,9 @@ describe("web auth routes", () => {
   beforeEach(cleanup);
   afterEach(cleanup);
 
-  it("POST /api/auth/register — first user becomes admin with session", async () => {
+  it("POST /api/v1/auth/register — first user becomes admin with session", async () => {
     const app = createApp();
-    const res = await app.request("/api/auth/register", {
+    const res = await app.request("/api/v1/auth/register", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username: "admin", password: "pass123" }),
@@ -54,14 +54,14 @@ describe("web auth routes", () => {
     if (cookie) await deleteSession(cookie);
   });
 
-  it("POST /api/auth/register — duplicate username returns 409", async () => {
+  it("POST /api/v1/auth/register — duplicate username returns 409", async () => {
     const app = createApp();
-    await app.request("/api/auth/register", {
+    await app.request("/api/v1/auth/register", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username: "dupe", password: "pass" }),
     });
-    const res = await app.request("/api/auth/register", {
+    const res = await app.request("/api/v1/auth/register", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username: "dupe", password: "pass2" }),
@@ -69,16 +69,16 @@ describe("web auth routes", () => {
     assert.equal(res.status, 409);
   });
 
-  it("POST /api/auth/login — valid credentials returns session cookie", async () => {
+  it("POST /api/v1/auth/login — valid credentials returns session cookie", async () => {
     const app = createApp();
     // Register first
-    await app.request("/api/auth/register", {
+    await app.request("/api/v1/auth/register", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username: "loginuser", password: "pass123" }),
     });
     // Login
-    const res = await app.request("/api/auth/login", {
+    const res = await app.request("/api/v1/auth/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username: "loginuser", password: "pass123" }),
@@ -91,14 +91,14 @@ describe("web auth routes", () => {
     if (cookie) await deleteSession(cookie);
   });
 
-  it("POST /api/auth/login — invalid credentials returns 401", async () => {
+  it("POST /api/v1/auth/login — invalid credentials returns 401", async () => {
     const app = createApp();
-    await app.request("/api/auth/register", {
+    await app.request("/api/v1/auth/register", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username: "loginuser", password: "pass123" }),
     });
-    const res = await app.request("/api/auth/login", {
+    const res = await app.request("/api/v1/auth/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username: "loginuser", password: "wrong" }),
@@ -106,15 +106,15 @@ describe("web auth routes", () => {
     assert.equal(res.status, 401);
   });
 
-  it("GET /api/auth/me — with valid session cookie", async () => {
+  it("GET /api/v1/auth/me — with valid session cookie", async () => {
     const app = createApp();
-    await app.request("/api/auth/register", {
+    await app.request("/api/v1/auth/register", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username: "meuser", password: "pass" }),
     });
     // Login to get session cookie
-    const loginRes = await app.request("/api/auth/login", {
+    const loginRes = await app.request("/api/v1/auth/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username: "meuser", password: "pass" }),
@@ -122,7 +122,7 @@ describe("web auth routes", () => {
     const cookie = extractCookie(loginRes, "volute_session");
     assert.ok(cookie);
 
-    const res = await app.request("/api/auth/me", {
+    const res = await app.request("/api/v1/auth/me", {
       headers: { Cookie: `volute_session=${cookie}` },
     });
     assert.equal(res.status, 200);
@@ -131,20 +131,20 @@ describe("web auth routes", () => {
     if (cookie) await deleteSession(cookie);
   });
 
-  it("GET /api/auth/me — without session returns 401", async () => {
+  it("GET /api/v1/auth/me — without session returns 401", async () => {
     const app = createApp();
-    const res = await app.request("/api/auth/me");
+    const res = await app.request("/api/v1/auth/me");
     assert.equal(res.status, 401);
   });
 
-  it("POST /api/auth/logout — clears session", async () => {
+  it("POST /api/v1/auth/logout — clears session", async () => {
     const app = createApp();
-    await app.request("/api/auth/register", {
+    await app.request("/api/v1/auth/register", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username: "logoutuser", password: "pass" }),
     });
-    const loginRes = await app.request("/api/auth/login", {
+    const loginRes = await app.request("/api/v1/auth/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username: "logoutuser", password: "pass" }),
@@ -152,14 +152,14 @@ describe("web auth routes", () => {
     const cookie = extractCookie(loginRes, "volute_session");
     assert.ok(cookie);
 
-    const logoutRes = await app.request("/api/auth/logout", {
+    const logoutRes = await app.request("/api/v1/auth/logout", {
       method: "POST",
       headers: { Cookie: `volute_session=${cookie}` },
     });
     assert.equal(logoutRes.status, 200);
 
     // Session should be invalid now
-    const meRes = await app.request("/api/auth/me", {
+    const meRes = await app.request("/api/v1/auth/me", {
       headers: { Cookie: `volute_session=${cookie}` },
     });
     assert.equal(meRes.status, 401);

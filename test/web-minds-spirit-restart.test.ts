@@ -60,7 +60,7 @@ describe("spirit start/restart directory gate (#620)", () => {
       await addSpirit(SPIRIT_OK, 4999, "claude", spiritDir);
       const { default: app } = await import("../packages/daemon/src/web/app.js");
 
-      const res = await app.request(`http://localhost/api/minds/${SPIRIT_OK}/${route}`, {
+      const res = await app.request(`http://localhost/api/v1/minds/${SPIRIT_OK}/${route}`, {
         method: "POST",
         headers: postHeaders(cookie),
       });
@@ -85,7 +85,7 @@ describe("spirit start/restart directory gate (#620)", () => {
     await addSpirit(SPIRIT_MISSING, 4998, "claude", join(spiritDir, "does-not-exist"));
     const { default: app } = await import("../packages/daemon/src/web/app.js");
 
-    const res = await app.request(`http://localhost/api/minds/${SPIRIT_MISSING}/restart`, {
+    const res = await app.request(`http://localhost/api/v1/minds/${SPIRIT_MISSING}/restart`, {
       method: "POST",
       headers: postHeaders(cookie),
     });

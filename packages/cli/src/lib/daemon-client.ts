@@ -173,9 +173,13 @@ export async function daemonFetch(path: string, options?: RequestInit): Promise<
       headers,
       dispatcher: daemonDispatcher,
     } as RequestInit & { dispatcher: Agent });
-    // /api/auth/ and /api/setup/ are public endpoints — a 401 from them is not
-    // a session problem, and "run `volute login`" would be nonsense mid-login.
-    if (res.status === 401 && !path.startsWith("/api/auth/") && !path.startsWith("/api/setup/")) {
+    // /api/v1/auth/ and /api/v1/setup/ are public endpoints — a 401 from them is
+    // not a session problem, and "run `volute login`" would be nonsense mid-login.
+    if (
+      res.status === 401 &&
+      !path.startsWith("/api/v1/auth/") &&
+      !path.startsWith("/api/v1/setup/")
+    ) {
       if (cliSession) {
         console.error("Session expired. Run `volute login` again.");
       } else {

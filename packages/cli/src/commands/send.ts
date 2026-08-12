@@ -15,7 +15,7 @@ import { readStdin } from "../lib/read-stdin.js";
 /** Check if a name is a registered mind via the daemon API (avoids direct DB access). */
 async function isMind(name: string): Promise<boolean> {
   try {
-    const res = await daemonFetch(`/api/minds/${encodeURIComponent(name)}`);
+    const res = await daemonFetch(`/api/v1/minds/${encodeURIComponent(name)}`);
     return res.ok;
   } catch {
     return false;
@@ -53,7 +53,7 @@ async function waitForResponse(
 ): Promise<void> {
   const client = getClient();
   const eventPath = urlOf(
-    client.api.minds[":name"].conversations[":id"].events.$url({
+    client.api.v1.minds[":name"].conversations[":id"].events.$url({
       param: { name: mindName, id: conversationId },
     }),
   );
@@ -341,10 +341,13 @@ const cmd = command({
       // For mind senders, use the daemon file-send API (reads from mind's home/)
       const mindSelf = process.env.VOLUTE_MIND;
       if (mindSelf) {
-        const staged = await postStaging(`/api/minds/${encodeURIComponent(mindSelf)}/files/send`, {
-          targetMind: targetName,
-          filePath,
-        });
+        const staged = await postStaging(
+          `/api/v1/minds/${encodeURIComponent(mindSelf)}/files/send`,
+          {
+            targetMind: targetName,
+            filePath,
+          },
+        );
         printStaged(targetName, staged);
       } else {
         // For CLI (human) senders, read file locally and stage via daemon API
@@ -361,7 +364,7 @@ const cmd = command({
 
         const content = readFileSync(filePath);
         const staged = await postStaging(
-          `/api/minds/${encodeURIComponent(targetName)}/files/stage`,
+          `/api/v1/minds/${encodeURIComponent(targetName)}/files/stage`,
           {
             sender: flags.sender || userInfo().username,
             filename: basename(filePath),
@@ -412,7 +415,7 @@ const cmd = command({
 
       // Create/find conversation via daemon
       const createRes = await daemonFetch(
-        urlOf(client.api.minds[":name"].channels.create.$url({ param: { name: contextMind } })),
+        urlOf(client.api.v1.minds[":name"].channels.create.$url({ param: { name: contextMind } })),
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },

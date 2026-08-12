@@ -177,7 +177,7 @@ System:
       const token = getAuthToken();
       const headers: Record<string, string> = {};
       if (token) headers.Authorization = `Bearer ${token}`;
-      const res = await fetch(`${resolveDaemonUrl()}/api/extensions/commands`, {
+      const res = await fetch(`${resolveDaemonUrl()}/api/v1/extensions/commands`, {
         headers,
         signal: AbortSignal.timeout(1500),
       });
@@ -221,7 +221,7 @@ use --mind <name> or VOLUTE_MIND env var to identify the mind.`);
     let isExtensionCommand = false;
     try {
       const { daemonFetch } = await import("@volute/cli/lib/daemon-client.js");
-      const res = await daemonFetch("/api/extensions/commands");
+      const res = await daemonFetch("/api/v1/extensions/commands");
       if (res.ok) {
         const extCommands = (await res.json()) as Record<
           string,

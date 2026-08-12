@@ -17,7 +17,7 @@ const cmd = command({
       process.exit(1);
     }
 
-    const mindRes = await daemonFetch(`/api/minds/${encodeURIComponent(mindName)}`);
+    const mindRes = await daemonFetch(`/api/v1/minds/${encodeURIComponent(mindName)}`);
     if (!mindRes.ok) {
       console.error(`Mind "${mindName}" not found`);
       process.exit(1);
@@ -70,7 +70,7 @@ const cmd = command({
       const skillDir = resolve(mindSkillsDir(dir), skillId);
       if (!existsSync(skillDir)) {
         const installRes = await daemonFetch(
-          urlOf(client.api.minds[":name"].skills.install.$url({ param: { name: mindName } })),
+          urlOf(client.api.v1.minds[":name"].skills.install.$url({ param: { name: mindName } })),
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -94,7 +94,7 @@ const cmd = command({
     if (existsSync(orientationDir)) {
       const delRes = await daemonFetch(
         urlOf(
-          client.api.minds[":name"].skills[":skill"].$url({
+          client.api.v1.minds[":name"].skills[":skill"].$url({
             param: { name: mindName, skill: "orientation" },
           }),
         ),
@@ -113,7 +113,7 @@ const cmd = command({
     }
 
     const sproutRes = await daemonFetch(
-      urlOf(client.api.minds[":name"].sprout.$url({ param: { name: mindName } })),
+      urlOf(client.api.v1.minds[":name"].sprout.$url({ param: { name: mindName } })),
       { method: "POST" },
     );
     if (!sproutRes.ok) {
@@ -124,7 +124,7 @@ const cmd = command({
 
     // Restart with sprouted context
     const res = await daemonFetch(
-      urlOf(client.api.minds[":name"].restart.$url({ param: { name: mindName } })),
+      urlOf(client.api.v1.minds[":name"].restart.$url({ param: { name: mindName } })),
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },

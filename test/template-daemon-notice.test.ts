@@ -48,7 +48,7 @@ describe("template daemonNotice", () => {
     assert.equal(received.length, 1);
     const req = received[0];
     assert.equal(req.method, "POST");
-    assert.equal(req.url, "/api/minds/tpl-mind/notices");
+    assert.equal(req.url, "/api/v1/minds/tpl-mind/notices");
     assert.equal(req.auth, "Bearer tpl-token");
     assert.deepEqual(req.body, { kind: "context_lost", message: "session gone", thread: "main" });
   });

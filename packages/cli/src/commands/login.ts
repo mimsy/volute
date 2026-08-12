@@ -13,7 +13,7 @@ const cmd = command({
     // The first account is created in the browser setup wizard. If no account
     // exists yet, there is nothing to log in as — steer the user there instead
     // of prompting for credentials that can't work.
-    const statusRes = await daemonFetch("/api/setup/status");
+    const statusRes = await daemonFetch("/api/v1/setup/status");
     if (statusRes.ok) {
       const status = (await statusRes.json().catch(() => ({}))) as {
         complete?: boolean;
@@ -28,7 +28,7 @@ const cmd = command({
     const username = await promptLine("Username: ");
     const password = await promptPassword("Password: ");
 
-    const res = await daemonFetch("/api/auth/login", {
+    const res = await daemonFetch("/api/v1/auth/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username, password }),

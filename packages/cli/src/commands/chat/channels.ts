@@ -13,7 +13,7 @@ const channelsListCmd = command({
   run: async ({ flags }) => {
     const mind = resolveMindName(flags);
 
-    const res = await daemonFetch(`/api/minds/${encodeURIComponent(mind)}/delivery/pending`);
+    const res = await daemonFetch(`/api/v1/minds/${encodeURIComponent(mind)}/delivery/pending`);
     if (!res.ok) {
       const data = (await res.json().catch(() => ({}))) as { error?: string };
       console.error(data.error ?? `Failed to list gated channels: ${res.status}`);
@@ -59,7 +59,7 @@ const channelsDeclineCmd = command({
     const mind = resolveMindName(flags);
     const channel = args.channel!;
 
-    const res = await daemonFetch(`/api/minds/${encodeURIComponent(mind)}/gates/decline`, {
+    const res = await daemonFetch(`/api/v1/minds/${encodeURIComponent(mind)}/gates/decline`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ channel }),
@@ -88,7 +88,7 @@ const channelsAcceptCmd = command({
     const mind = resolveMindName(flags);
     const channel = args.channel!;
 
-    const res = await daemonFetch(`/api/minds/${encodeURIComponent(mind)}/gates/accept`, {
+    const res = await daemonFetch(`/api/v1/minds/${encodeURIComponent(mind)}/gates/accept`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ channel, thread: flags.thread }),
@@ -142,7 +142,7 @@ const channelsPeekCmd = command({
     const channel = args.channel!;
 
     const res = await daemonFetch(
-      `/api/minds/${encodeURIComponent(mind)}/gates/peek?channel=${encodeURIComponent(channel)}`,
+      `/api/v1/minds/${encodeURIComponent(mind)}/gates/peek?channel=${encodeURIComponent(channel)}`,
     );
 
     if (!res.ok) {

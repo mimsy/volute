@@ -31,7 +31,7 @@ const cmd = command({
     if (description) body.description = description;
     if (avatar) body.avatar = avatar;
 
-    const res = await daemonFetch(`/api/minds/${encodeURIComponent(name)}/profile`, {
+    const res = await daemonFetch(`/api/v1/minds/${encodeURIComponent(name)}/profile`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),

@@ -42,7 +42,7 @@ async function loadDir() {
   fileContent = null;
   try {
     const dirPath = path.length > 0 ? `${path.join("/")}/` : "";
-    const res = await fetch(`/api/minds/${encodeURIComponent(name)}/files/${dirPath}`);
+    const res = await fetch(`/api/v1/minds/${encodeURIComponent(name)}/files/${dirPath}`);
     if (!res.ok) throw new Error("Failed to load directory");
     entries = await res.json();
   } catch (e) {
@@ -76,7 +76,7 @@ async function selectFile(entry: Entry) {
 
   try {
     const filePath = currentDir + entry.name;
-    const res = await fetch(`/api/minds/${encodeURIComponent(name)}/files/${filePath}`);
+    const res = await fetch(`/api/v1/minds/${encodeURIComponent(name)}/files/${filePath}`);
     if (!res.ok) throw new Error("Failed to load file");
 
     fileMime = res.headers.get("content-type") ?? "";
@@ -168,7 +168,7 @@ let sortedEntries = $derived(
             <span class="preview-filename">{currentDir}{selectedFile}</span>
             <a
               class="preview-link"
-              href="/api/minds/{encodeURIComponent(name)}/files/{currentDir}{selectedFile}"
+              href="/api/v1/minds/{encodeURIComponent(name)}/files/{currentDir}{selectedFile}"
               target="_blank"
               rel="noopener"
             >open</a>
@@ -190,7 +190,7 @@ let sortedEntries = $derived(
               <span class="preview-mime">{fileMime || "unknown type"}</span>
               <a
                 class="download-link"
-                href="/api/minds/{encodeURIComponent(name)}/files/{currentDir}{selectedFile}"
+                href="/api/v1/minds/{encodeURIComponent(name)}/files/{currentDir}{selectedFile}"
                 target="_blank"
                 rel="noopener"
               >Download</a>

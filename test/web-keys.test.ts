@@ -29,7 +29,7 @@ describe("web keys routes", () => {
   it("GET /:fingerprint — returns public key for matching fingerprint", async () => {
     const { default: app } = await import("../packages/daemon/src/web/app.js");
 
-    const res = await app.request(`/api/keys/${fingerprint}`);
+    const res = await app.request(`/api/v1/keys/${fingerprint}`);
     assert.equal(res.status, 200);
     const body = await res.json();
     assert.equal(body.publicKey, publicKeyPem);
@@ -40,7 +40,7 @@ describe("web keys routes", () => {
     const { default: app } = await import("../packages/daemon/src/web/app.js");
 
     const res = await app.request(
-      "/api/keys/0000000000000000000000000000000000000000000000000000000000000000",
+      "/api/v1/keys/0000000000000000000000000000000000000000000000000000000000000000",
     );
     assert.equal(res.status, 404);
     const body = await res.json();
@@ -51,7 +51,7 @@ describe("web keys routes", () => {
     const { default: app } = await import("../packages/daemon/src/web/app.js");
 
     // No Cookie header — should still work
-    const res = await app.request(`/api/keys/${fingerprint}`);
+    const res = await app.request(`/api/v1/keys/${fingerprint}`);
     assert.equal(res.status, 200);
   });
 });

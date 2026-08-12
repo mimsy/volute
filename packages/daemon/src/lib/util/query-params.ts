@@ -1,3 +1,6 @@
+import type { CursorResponse } from "@volute/api/pagination";
+import { z } from "zod";
+
 /**
  * Parse an optional non-negative integer query param.
  *
@@ -25,4 +28,34 @@ export function parseIntParam(raw: string | undefined): number | undefined | nul
   const n = Number(raw);
   // A digit run longer than 2^53 parses fine but no longer round-trips as an id.
   return Number.isSafeInteger(n) ? n : null;
+}
+
+/**
+ * A single cursor param: absent (`undefined`) or an exact run of safe-integer digits.
+ * Deliberately built on `parseIntParam` rather than `z.coerce.number()` — coercion
+ * salvages a leading numeric prefix and would serve the wrong page for an ISO
+ * timestamp (see the `parseIntParam` note, #868).
+ */
+const cursorInt = z
+  .string()
+  .optional()
+  .transform((raw, ctx) => {
+    const n = parseIntParam(raw);
+    if (n === null) {
+      ctx.addIssue({ code: "custom", message: "must be a non-negative integer" });
+      return z.NEVER;
+    }
+    return n;
+  });
+
+/**
+ * Shared validator for cursor-paginated endpoints (`?before=&limit=`). Mount with
+ * `zValidator("query", cursorParamsSchema)`; a malformed value yields a structured
+ * 400, and `c.req.valid("query")` is a `CursorParams` with numeric/undefined fields.
+ */
+export const cursorParamsSchema = z.object({ before: cursorInt, limit: cursorInt });
+
+/** Build the canonical cursor-paginated response envelope. */
+export function cursorResponse<T>(items: T[], hasMore: boolean): CursorResponse<T> {
+  return { items, hasMore };
 }

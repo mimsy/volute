@@ -25,7 +25,7 @@ export function loadEnv(): ConnectorEnv {
   const daemonToken = process.env.VOLUTE_DAEMON_TOKEN;
 
   const baseUrl = daemonUrl
-    ? `${daemonUrl}/api/minds/${encodeURIComponent(mindName)}`
+    ? `${daemonUrl}/api/v1/minds/${encodeURIComponent(mindName)}`
     : `http://127.0.0.1:${mindPort}`;
 
   return { mindPort, mindName, mindDir, baseUrl, daemonUrl, daemonToken };

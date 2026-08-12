@@ -64,7 +64,7 @@ let memoryBadge = $derived.by(() => {
     <div class="profile-section">
       {#if mind.avatar}
         <img
-          src={`/api/minds/${encodeURIComponent(mind.name)}/avatar`}
+          src={`/api/v1/minds/${encodeURIComponent(mind.name)}/avatar`}
           alt=""
           class="profile-avatar"
           loading="lazy"

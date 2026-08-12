@@ -159,7 +159,7 @@ describe("file-sharing responses carry `notified` (#723)", () => {
     invalidateMindUserCache(RECIPIENT);
     const recipientToken = generateMindToken(RECIPIENT);
     const stage = (filename: string) =>
-      app.request(`http://localhost/api/minds/${RECIPIENT}/files/stage`, {
+      app.request(`http://localhost/api/v1/minds/${RECIPIENT}/files/stage`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${recipientToken}`,
@@ -195,7 +195,7 @@ describe("file-sharing responses carry `notified` (#723)", () => {
     );
 
     // Accepting notifies the sender — a human with no mind entry, so notified must be false.
-    const acceptRes = await app.request(`http://localhost/api/minds/${RECIPIENT}/files/accept`, {
+    const acceptRes = await app.request(`http://localhost/api/v1/minds/${RECIPIENT}/files/accept`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${recipientToken}`,

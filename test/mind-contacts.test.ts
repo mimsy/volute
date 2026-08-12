@@ -39,13 +39,13 @@ async function mindSession(mindName: string): Promise<string> {
 
 async function fetchContacts(mind: string, cookie: string, query = "") {
   const { default: app } = await import("../packages/daemon/src/web/app.js");
-  const res = await app.request(`/api/minds/${mind}/history/contacts${query}`, {
+  const res = await app.request(`/api/v1/minds/${mind}/history/contacts${query}`, {
     headers: { Cookie: `volute_session=${cookie}` },
   });
   return res;
 }
 
-describe("GET /api/minds/:name/history/contacts", () => {
+describe("GET /api/v1/minds/:name/history/contacts", () => {
   beforeEach(async () => {
     await cleanup();
     const admin = await createUser(ADMIN_USERNAME, "pass");
@@ -147,7 +147,7 @@ describe("GET /api/minds/:name/history/contacts", () => {
 
   it("requires authentication", async () => {
     const { default: app } = await import("../packages/daemon/src/web/app.js");
-    const res = await app.request("/api/minds/test-contacts-x/history/contacts");
+    const res = await app.request("/api/v1/minds/test-contacts-x/history/contacts");
     assert.equal(res.status, 401);
   });
 });

@@ -22,7 +22,7 @@ const cmd = command({
     const query = flags.nurture ? "" : "?force=1";
 
     const { daemonFetch } = await import("../lib/daemon-client.js");
-    const res = await daemonFetch(`/api/minds/${encodeURIComponent(name)}/seed-check${query}`);
+    const res = await daemonFetch(`/api/v1/minds/${encodeURIComponent(name)}/seed-check${query}`);
 
     if (!res.ok) {
       // Non-zero exit so the scheduler surfaces failures instead of logging

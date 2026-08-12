@@ -55,7 +55,7 @@ const AUTHZ_EXEMPT: Record<string, string> = {
     "in-handler authz: isParticipantOrOwner(id, user.id) or 404",
   "volute/conversations.ts DELETE /:name/conversations/:id":
     "in-handler authz: deleteConversationForUser scopes to the caller's participation",
-  "volute/chat.ts GET /:name/conversations/:id/events":
+  "chat.ts GET /:name/conversations/:id/events":
     "in-handler authz: isParticipantOrOwner(conversationId, user.id) or 404 before SSE",
 
   // --- Channel routes (:name = channel, not a mind). Reads are membership metadata. ---

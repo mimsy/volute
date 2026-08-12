@@ -26,7 +26,7 @@ const cmd = command({
     const { getClient, urlOf } = await import("../lib/api-client.js");
     const client = getClient();
 
-    const res = await daemonFetch(urlOf(client.api.minds.$url()), {
+    const res = await daemonFetch(urlOf(client.api.v1.minds.$url()), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name, template, skills }),

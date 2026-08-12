@@ -60,7 +60,7 @@ export async function read(
   if (token) headers.Authorization = `Bearer ${token}`;
 
   const res = await fetch(
-    `${url}/api/minds/${encodeURIComponent(mindName)}/conversations/${encodeURIComponent(conversationId)}/messages`,
+    `${url}/api/v1/minds/${encodeURIComponent(mindName)}/conversations/${encodeURIComponent(conversationId)}/messages`,
     { headers },
   );
   if (!res.ok) {
@@ -141,7 +141,7 @@ export async function listConversations(
   const headers: Record<string, string> = { Origin: url };
   if (token) headers.Authorization = `Bearer ${token}`;
 
-  const res = await fetch(`${url}/api/minds/${encodeURIComponent(mindName)}/conversations`, {
+  const res = await fetch(`${url}/api/v1/minds/${encodeURIComponent(mindName)}/conversations`, {
     headers,
   });
   if (!res.ok) {
@@ -188,7 +188,7 @@ export async function listUsers(_env: Record<string, string>): Promise<PlatformU
   const headers: Record<string, string> = { Origin: url };
   if (token) headers.Authorization = `Bearer ${token}`;
 
-  const res = await fetch(`${url}/api/auth/users`, { headers });
+  const res = await fetch(`${url}/api/v1/auth/users`, { headers });
   if (!res.ok) {
     throw new Error(`Failed to list users: ${res.status} ${res.statusText}`);
   }
@@ -219,7 +219,7 @@ export async function createConversation(
   };
   if (token) headers.Authorization = `Bearer ${token}`;
 
-  const res = await fetch(`${url}/api/minds/${encodeURIComponent(mindName)}/conversations`, {
+  const res = await fetch(`${url}/api/v1/minds/${encodeURIComponent(mindName)}/conversations`, {
     method: "POST",
     headers,
     body: JSON.stringify({ participantNames: participants }),

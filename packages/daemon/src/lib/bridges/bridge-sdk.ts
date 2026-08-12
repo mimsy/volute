@@ -58,7 +58,7 @@ export async function sendToBridge(
   env: BridgeEnv,
   message: BridgeMessage,
 ): Promise<{ ok: boolean; error?: string; conversationId?: string }> {
-  const url = `${env.daemonUrl}/api/bridges/${env.platform}/inbound`;
+  const url = `${env.daemonUrl}/api/v1/bridges/${env.platform}/inbound`;
 
   try {
     const res = await fetch(url, {

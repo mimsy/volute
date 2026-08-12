@@ -2,7 +2,7 @@ import { subcommands } from "../lib/command.js";
 
 async function listModels() {
   const { daemonFetch } = await import("../lib/daemon-client.js");
-  const res = await daemonFetch("/api/config/models");
+  const res = await daemonFetch("/api/v1/config/models");
   if (!res.ok) {
     console.error(`Failed to fetch models (HTTP ${res.status})`);
     process.exit(1);
@@ -25,7 +25,7 @@ async function listModels() {
 
 async function listProviders() {
   const { daemonFetch } = await import("../lib/daemon-client.js");
-  const res = await daemonFetch("/api/config/providers");
+  const res = await daemonFetch("/api/v1/config/providers");
   if (!res.ok) {
     console.error(`Failed to fetch providers (HTTP ${res.status})`);
     process.exit(1);
@@ -46,7 +46,7 @@ async function listProviders() {
 
 async function showStatus() {
   const { daemonFetch } = await import("../lib/daemon-client.js");
-  const res = await daemonFetch("/api/config/status");
+  const res = await daemonFetch("/api/v1/config/status");
   if (!res.ok) {
     console.error(`Failed to fetch config (HTTP ${res.status})`);
     process.exit(1);

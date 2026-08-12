@@ -28,7 +28,7 @@ const cmd = command({
     // The API endpoint still uses the parent mind name + variant name
     // So we need to resolve the variant's parent first
     const statusRes = await daemonFetch(
-      urlOf(client.api.minds[":name"].$url({ param: { name: variantName } })),
+      urlOf(client.api.v1.minds[":name"].$url({ param: { name: variantName } })),
     );
 
     if (!statusRes.ok) {
@@ -47,7 +47,7 @@ const cmd = command({
 
     const res = await daemonFetch(
       urlOf(
-        client.api.minds[":name"].variants[":variant"].merge.$url({
+        client.api.v1.minds[":name"].variants[":variant"].merge.$url({
           param: { name: parentName, variant: variantName },
         }),
       ),

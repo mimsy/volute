@@ -161,7 +161,7 @@ async function waitForMindRunning(timeoutMs = 60000): Promise<void> {
   let last = "unknown";
   while (Date.now() < deadline) {
     try {
-      const res = await req(`/api/minds/${MIND}`);
+      const res = await req(`/api/v1/minds/${MIND}`);
       last = ((await res.json()) as { status?: string }).status ?? "unknown";
       if (last === "running") return;
     } catch {
@@ -356,7 +356,7 @@ describe("cross-version upgrade e2e", { timeout: 600000 }, () => {
     assert.equal(version.version, PRIOR_VERSION, "prior daemon should report the prior version");
 
     // Create a mind from the prior release's template.
-    const createRes = await req("/api/minds", {
+    const createRes = await req("/api/v1/minds", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: MIND }),
@@ -383,7 +383,7 @@ describe("cross-version upgrade e2e", { timeout: 600000 }, () => {
     await waitForHealth(); // the long sync install may have dropped keep-alives
 
     // A schedule (persisted to the mind's volute.json).
-    const schedRes = await req(`/api/minds/${MIND}/schedules`, {
+    const schedRes = await req(`/api/v1/minds/${MIND}/schedules`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id: "e2e-morning", cron: "0 8 * * *", message: "good morning" }),
@@ -406,7 +406,7 @@ describe("cross-version upgrade e2e", { timeout: 600000 }, () => {
 
     // Start the mind and let it come up, so the registry records running:true —
     // that's what the working-tree daemon auto-restores after the upgrade.
-    const startRes = await req(`/api/minds/${MIND}/start`, { method: "POST" });
+    const startRes = await req(`/api/v1/minds/${MIND}/start`, { method: "POST" });
     assert.equal(startRes.status, 200, `start mind: ${await startRes.clone().text()}`);
     await waitForMindRunning();
 
@@ -512,7 +512,7 @@ describe("cross-version upgrade e2e", { timeout: 600000 }, () => {
     await waitForMindRunning();
 
     // History survived: the message stored by the prior daemon reads back.
-    const msgsRes = await req(`/api/minds/${MIND}/conversations/${conversationId}/messages`);
+    const msgsRes = await req(`/api/v1/minds/${MIND}/conversations/${conversationId}/messages`);
     assert.equal(msgsRes.status, 200, `read messages: ${await msgsRes.clone().text()}`);
     const { items } = (await msgsRes.json()) as {
       items: { content: { type: string; text?: string }[] }[];
@@ -526,7 +526,7 @@ describe("cross-version upgrade e2e", { timeout: 600000 }, () => {
 
     // Config + schedules survived: the mind's volute.json still carries the
     // schedule the prior release added.
-    const schedRes = await req(`/api/minds/${MIND}/schedules`);
+    const schedRes = await req(`/api/v1/minds/${MIND}/schedules`);
     assert.equal(schedRes.status, 200, `read schedules: ${await schedRes.clone().text()}`);
     const schedules = (await schedRes.json()) as { id: string }[];
     assert.ok(
@@ -542,7 +542,7 @@ describe("cross-version upgrade e2e", { timeout: 600000 }, () => {
     // working tree's. The merge is the assertion; a failed `npm install` step
     // afterwards (e.g. an unpublished dep in an offline environment) surfaces as
     // a non-fatal warning and doesn't mean the upgrade merge failed.
-    const res = await req(`/api/minds/${MIND}/upgrade`, {
+    const res = await req(`/api/v1/minds/${MIND}/upgrade`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({}),
@@ -725,7 +725,7 @@ describe("cross-version upgrade e2e", { timeout: 600000 }, () => {
     const channelSlug = `#${defaultChannel[0].name}`; // delivery slug follows the channel's name
 
     // Trigger "X has joined" by creating a fresh sprouted mind through the API.
-    const createRes = await req("/api/minds", {
+    const createRes = await req("/api/v1/minds", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: NEW_MIND }),

@@ -422,11 +422,12 @@ export async function createMind(
     ({ composedDir, manifest } = composeTemplate(templatesRoot, template));
   } catch (err) {
     // A missing/broken template throws (rather than exiting — #330); surface it as
-    // a 500 instead of taking down the daemon.
+    // a 500 instead of taking down the daemon. The detail is logged, not returned.
+    llog.error(`failed to compose template ${template}`, log.errorData(err));
     return {
       ok: false,
       status: 500,
-      error: err instanceof Error ? err.message : "Failed to compose template",
+      error: "Failed to compose template",
     };
   }
 
@@ -675,10 +676,11 @@ export async function createMind(
     } catch (cleanupErr) {
       llog.warn(`failed to clean up registry for ${name}`, log.errorData(cleanupErr));
     }
+    llog.error(`failed to create mind ${name}`, log.errorData(err));
     return {
       ok: false,
       status: 500,
-      error: err instanceof Error ? err.message : "Failed to create mind",
+      error: "Failed to create mind",
     };
   } finally {
     rmSync(composedDir, { recursive: true, force: true });
@@ -801,10 +803,11 @@ async function importFromFullArchive(
       llog.error(`Failed to clean up registry for ${name}`, log.errorData(cleanupErr));
     }
     rmSync(tempDir, { recursive: true, force: true });
+    llog.error(`failed to import mind ${name}`, log.errorData(err));
     return {
       ok: false,
       status: 500,
-      error: err instanceof Error ? err.message : "Failed to import mind",
+      error: "Failed to import mind",
     };
   }
 }
@@ -948,10 +951,11 @@ async function importFromHomeOnlyArchive(
       llog.error(`Failed to clean up registry for ${name}`, log.errorData(cleanupErr));
     }
     rmSync(tempDir, { recursive: true, force: true });
+    llog.error(`failed to import mind ${name}`, log.errorData(err));
     return {
       ok: false,
       status: 500,
-      error: err instanceof Error ? err.message : "Failed to import mind",
+      error: "Failed to import mind",
     };
   } finally {
     rmSync(composedDir, { recursive: true, force: true });
@@ -1163,10 +1167,11 @@ export async function importOpenClawWorkspace(body: ImportOpenClawInput): Promis
     } catch (cleanupErr) {
       llog.warn(`failed to clean up registry for ${name}`, log.errorData(cleanupErr));
     }
+    llog.error(`failed to import mind ${name}`, log.errorData(err));
     return {
       ok: false,
       status: 500,
-      error: err instanceof Error ? err.message : "Failed to import mind",
+      error: "Failed to import mind",
     };
   } finally {
     rmSync(composedDir, { recursive: true, force: true });

@@ -17,7 +17,7 @@ type ExtensionListItem = {
 
 async function listExtensions(args: string[]) {
   const detail = args.includes("--detail");
-  const url = detail ? "/api/extensions/all?detail=true" : "/api/extensions/all";
+  const url = detail ? "/api/v1/extensions/all?detail=true" : "/api/v1/extensions/all";
   const res = await daemonFetch(url);
   if (!res.ok) {
     const body = (await res.json().catch(() => ({ error: "Unknown error" }))) as {
@@ -72,7 +72,7 @@ async function installExtension(args: string[]) {
       `with full API access. Only install extensions you trust.`,
   );
   console.log(`Installing "${pkg}"...`);
-  const res = await daemonFetch("/api/extensions/install", {
+  const res = await daemonFetch("/api/v1/extensions/install", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ package: pkg }),
@@ -97,7 +97,7 @@ async function uninstallExtension(args: string[]) {
     process.exit(1);
   }
 
-  const res = await daemonFetch(`/api/extensions/uninstall/${encodeURIComponent(pkg)}`, {
+  const res = await daemonFetch(`/api/v1/extensions/uninstall/${encodeURIComponent(pkg)}`, {
     method: "DELETE",
   });
 

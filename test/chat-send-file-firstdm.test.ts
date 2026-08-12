@@ -100,7 +100,7 @@ async function setup(fail?: FailMode) {
   const senderHome = resolve(mindDir(SENDER), "home");
   mkdirSync(senderHome, { recursive: true });
   writeFileSync(resolve(senderHome, "isobar-notes.txt"), "the crowded parts");
-  // The receiver needs a home dir so GET /api/minds/<receiver> (the --file target
+  // The receiver needs a home dir so GET /api/v1/minds/<receiver> (the --file target
   // check) resolves it as a real mind, exactly as a provisioned mind would.
   mkdirSync(resolve(mindDir(RECEIVER), "home"), { recursive: true });
 

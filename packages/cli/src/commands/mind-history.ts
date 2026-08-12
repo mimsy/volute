@@ -326,7 +326,7 @@ const cmd = command({
       }
 
       const client = getClient();
-      const url = client.api.minds[":name"]["turn-summaries"].$url({ param: { name } });
+      const url = client.api.v1.minds[":name"]["turn-summaries"].$url({ param: { name } });
       const res = await daemonFetch(urlOf(url), {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
@@ -440,7 +440,7 @@ const cmd = command({
     const name = resolveMindName(flags);
     const client = getClient();
 
-    const url = client.api.minds[":name"].history.$url({ param: { name } });
+    const url = client.api.v1.minds[":name"].history.$url({ param: { name } });
     if (flags.channel) url.searchParams.set("channel", flags.channel);
     if (flags.thread) url.searchParams.set("session", flags.thread);
     if (flags.preset) url.searchParams.set("preset", flags.preset);

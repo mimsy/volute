@@ -106,7 +106,7 @@ describe("sprout swaps nurture for the first-week arc", () => {
 
   async function sprout() {
     const { default: app } = await import("../packages/daemon/src/web/app.js");
-    return app.request(`http://localhost/api/minds/${seedName}/sprout`, {
+    return app.request(`http://localhost/api/v1/minds/${seedName}/sprout`, {
       method: "POST",
       headers: { Cookie: `volute_session=${cookie}`, Origin: "http://localhost" },
     });

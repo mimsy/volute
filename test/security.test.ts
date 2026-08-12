@@ -14,7 +14,7 @@ import {
 
 function createApp() {
   const app = new Hono();
-  app.route("/api/auth", auth);
+  app.route("/api/v1/auth", auth);
   return app;
 }
 
@@ -48,15 +48,15 @@ describe("security", () => {
     assert.equal(await getSessionUserId(sessionId), undefined);
   });
 
-  it("expired session returns 401 on /api/auth/me", async () => {
+  it("expired session returns 401 on /api/v1/auth/me", async () => {
     const app = createApp();
     // Register and login
-    await app.request("/api/auth/register", {
+    await app.request("/api/v1/auth/register", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username: "expuser", password: "pass" }),
     });
-    const loginRes = await app.request("/api/auth/login", {
+    const loginRes = await app.request("/api/v1/auth/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username: "expuser", password: "pass" }),
@@ -69,7 +69,7 @@ describe("security", () => {
     // Delete the session to simulate expiry
     await deleteSession(sessionId);
 
-    const meRes = await app.request("/api/auth/me", {
+    const meRes = await app.request("/api/v1/auth/me", {
       headers: { Cookie: `volute_session=${sessionId}` },
     });
     assert.equal(meRes.status, 401);
@@ -83,7 +83,7 @@ describe("security", () => {
     const { default: appModule } = await import("../packages/daemon/src/web/app.js");
 
     // POST without Origin header triggers CSRF rejection
-    const res = await appModule.request("/api/minds/test/start", {
+    const res = await appModule.request("/api/v1/minds/test/start", {
       method: "POST",
     });
     assert.equal(res.status, 403);

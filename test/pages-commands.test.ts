@@ -770,7 +770,7 @@ describe("system API routes", () => {
   // register
   // -----------------------------------------------------------------------
   describe("register", () => {
-    it("POST /api/system/register registers and saves config", async () => {
+    it("POST /api/v1/system/register registers and saves config", async () => {
       handler = async (req, res) => {
         assert.equal(req.method, "POST");
         assert.equal(req.url, "/api/register");
@@ -782,7 +782,7 @@ describe("system API routes", () => {
 
       const cookie = await setupAuth();
       const { default: app } = await import("../packages/daemon/src/web/app.js");
-      const res = await app.request("http://localhost/api/system/register", {
+      const res = await app.request("http://localhost/api/v1/system/register", {
         method: "POST",
         headers: adminHeaders(cookie),
         body: JSON.stringify({ name: "my-system" }),
@@ -797,11 +797,11 @@ describe("system API routes", () => {
       assert.equal(config?.system, "my-system");
     });
 
-    it("POST /api/system/register returns 400 if already registered", async () => {
+    it("POST /api/v1/system/register returns 400 if already registered", async () => {
       writeSystemsConfig({ apiKey: "vp_existing", system: "existing", apiUrl: baseUrl });
       const cookie = await setupAuth();
       const { default: app } = await import("../packages/daemon/src/web/app.js");
-      const res = await app.request("http://localhost/api/system/register", {
+      const res = await app.request("http://localhost/api/v1/system/register", {
         method: "POST",
         headers: adminHeaders(cookie),
         body: JSON.stringify({ name: "new-name" }),
@@ -814,7 +814,7 @@ describe("system API routes", () => {
   // login
   // -----------------------------------------------------------------------
   describe("login", () => {
-    it("POST /api/system/login validates key and saves config", async () => {
+    it("POST /api/v1/system/login validates key and saves config", async () => {
       handler = (req, res) => {
         assert.equal(req.method, "GET");
         assert.equal(req.url, "/api/whoami");
@@ -825,7 +825,7 @@ describe("system API routes", () => {
 
       const cookie = await setupAuth();
       const { default: app } = await import("../packages/daemon/src/web/app.js");
-      const res = await app.request("http://localhost/api/system/login", {
+      const res = await app.request("http://localhost/api/v1/system/login", {
         method: "POST",
         headers: adminHeaders(cookie),
         body: JSON.stringify({ key: "vp_mykey" }),
@@ -837,11 +837,11 @@ describe("system API routes", () => {
       assert.equal(config?.system, "test-system");
     });
 
-    it("POST /api/system/login returns 400 if already logged in", async () => {
+    it("POST /api/v1/system/login returns 400 if already logged in", async () => {
       writeSystemsConfig({ apiKey: "vp_existing", system: "existing", apiUrl: baseUrl });
       const cookie = await setupAuth();
       const { default: app } = await import("../packages/daemon/src/web/app.js");
-      const res = await app.request("http://localhost/api/system/login", {
+      const res = await app.request("http://localhost/api/v1/system/login", {
         method: "POST",
         headers: adminHeaders(cookie),
         body: JSON.stringify({ key: "vp_newkey" }),
@@ -854,13 +854,13 @@ describe("system API routes", () => {
   // logout
   // -----------------------------------------------------------------------
   describe("logout", () => {
-    it("POST /api/system/logout removes credentials", async () => {
+    it("POST /api/v1/system/logout removes credentials", async () => {
       writeSystemsConfig({ apiKey: "vp_key", system: "test", apiUrl: baseUrl });
       assert.ok(existsSync(configPath()));
 
       const cookie = await setupAuth();
       const { default: app } = await import("../packages/daemon/src/web/app.js");
-      const res = await app.request("http://localhost/api/system/logout", {
+      const res = await app.request("http://localhost/api/v1/system/logout", {
         method: "POST",
         headers: { Cookie: `volute_session=${cookie}`, Origin: "http://localhost" },
       });
@@ -874,11 +874,11 @@ describe("system API routes", () => {
   // info
   // -----------------------------------------------------------------------
   describe("info", () => {
-    it("GET /api/system/info returns system name when configured", async () => {
+    it("GET /api/v1/system/info returns system name when configured", async () => {
       writeSystemsConfig({ apiKey: "vp_key", system: "my-system", apiUrl: baseUrl });
       const cookie = await setupAuth();
       const { default: app } = await import("../packages/daemon/src/web/app.js");
-      const res = await app.request("/api/system/info", {
+      const res = await app.request("/api/v1/system/info", {
         headers: { Cookie: `volute_session=${cookie}` },
       });
 
@@ -887,10 +887,10 @@ describe("system API routes", () => {
       assert.equal(data.system, "my-system");
     });
 
-    it("GET /api/system/info returns null when not configured", async () => {
+    it("GET /api/v1/system/info returns null when not configured", async () => {
       const cookie = await setupAuth();
       const { default: app } = await import("../packages/daemon/src/web/app.js");
-      const res = await app.request("/api/system/info", {
+      const res = await app.request("/api/v1/system/info", {
         headers: { Cookie: `volute_session=${cookie}` },
       });
 

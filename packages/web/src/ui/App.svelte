@@ -408,7 +408,7 @@ $effect(() => {
   if (!auth.user) return;
   fetchMe()
     .then((me) => {
-      userAvatar = me?.avatar ? `/api/auth/avatars/${me.avatar}` : null;
+      userAvatar = me?.avatar ? `/api/v1/auth/avatars/${me.avatar}` : null;
     })
     .catch((err) => {
       console.warn("Failed to fetch user profile:", err);

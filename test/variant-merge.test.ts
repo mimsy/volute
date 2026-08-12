@@ -332,7 +332,7 @@ describe("findUnresolvedHomeFiles / formatUnresolvedHomeFilesMessage (#656)", ()
       "the new file must be detected before anything destructive runs",
     );
 
-    // The production join flow (web/api/variants.ts, web/api/minds.ts) checks this
+    // The production join flow (web/api/v1/variants.ts, web/api/v1/minds.ts) checks this
     // and — finding something — returns/notices instead of calling cleanupVariant.
     // Simulate that decision directly: skip cleanup entirely.
     if (unresolved.totalCount === 0) {

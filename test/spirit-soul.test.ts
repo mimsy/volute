@@ -286,7 +286,7 @@ describe("startup-context hook reads system.json", () => {
   });
 });
 
-describe("PUT /api/system/info notifies the spirit only on a real change", () => {
+describe("PUT /api/v1/system/info notifies the spirit only on a real change", () => {
   afterEach(async () => {
     await removeMind("volute");
     rmSync(spiritDir(), { recursive: true, force: true });
@@ -294,7 +294,7 @@ describe("PUT /api/system/info notifies the spirit only on a real change", () =>
 
   async function putName(cookie: string, name: string): Promise<number> {
     const { default: app } = await import("../packages/daemon/src/web/app.js");
-    const res = await app.request("/api/system/info", {
+    const res = await app.request("/api/v1/system/info", {
       method: "PUT",
       headers: {
         Cookie: `volute_session=${cookie}`,

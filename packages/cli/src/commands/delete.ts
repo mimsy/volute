@@ -16,7 +16,7 @@ const cmd = command({
     const client = getClient();
 
     const url =
-      urlOf(client.api.minds[":name"].$url({ param: { name } })) +
+      urlOf(client.api.v1.minds[":name"].$url({ param: { name } })) +
       (flags.force ? "?force=true" : "");
 
     const res = await daemonFetch(url, { method: "DELETE" });

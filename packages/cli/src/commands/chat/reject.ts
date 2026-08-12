@@ -12,7 +12,7 @@ const cmd = command({
   async run({ args, flags }) {
     const mind = resolveMindName(flags);
 
-    const res = await daemonFetch(`/api/minds/${encodeURIComponent(mind)}/files/reject`, {
+    const res = await daemonFetch(`/api/v1/minds/${encodeURIComponent(mind)}/files/reject`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id: args.id }),

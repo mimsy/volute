@@ -109,8 +109,9 @@ describe("GET /api/v1/conversations/:id/messages — cursor validation (#868)", 
   it("400s on an ISO timestamp cursor instead of coercing it to a message id", async () => {
     const res = await get("?before=2026-07-18T00:00:00Z&limit=2");
     assert.equal(res.status, 400);
-    const body = await res.json();
-    assert.match(body.error, /integers/);
+    // The shared cursor validator (zValidator) rejects it with a structured zod error
+    // rather than salvaging the leading "2026" as a message id (#868).
+    assert.match(JSON.stringify(await res.json()), /non-negative integer/);
   });
 
   it("400s on a non-integer limit", async () => {
@@ -174,9 +175,9 @@ describe("message cursor validation is uniform across all three routes (#868)", 
       name: "volute/conversations.ts",
       request: async (query: string) => {
         const app = new Hono();
-        app.use("/api/minds/*", authMiddleware);
-        app.route("/api/minds", voluteConversationsRoute);
-        return app.request(`/api/minds/${MIND_NAME}/conversations/${convId}/messages${query}`, {
+        app.use("/api/v1/minds/*", authMiddleware);
+        app.route("/api/v1/minds", voluteConversationsRoute);
+        return app.request(`/api/v1/minds/${MIND_NAME}/conversations/${convId}/messages${query}`, {
           headers: { Cookie: `volute_session=${cookie}` },
         });
       },
@@ -185,7 +186,7 @@ describe("message cursor validation is uniform across all three routes (#868)", 
       name: "minds.ts",
       request: async (query: string) => {
         const { default: app } = await import("../packages/daemon/src/web/app.js");
-        return app.request(`/api/minds/${MIND_NAME}/conversations/${convId}/messages${query}`, {
+        return app.request(`/api/v1/minds/${MIND_NAME}/conversations/${convId}/messages${query}`, {
           headers: { Cookie: `volute_session=${cookie}` },
         });
       },

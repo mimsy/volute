@@ -63,7 +63,7 @@ const cmd = command({
       body.wakeAt = wakeAt;
     }
 
-    const res = await daemonFetch(`/api/minds/${encodeURIComponent(name)}/sleep`, {
+    const res = await daemonFetch(`/api/v1/minds/${encodeURIComponent(name)}/sleep`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),

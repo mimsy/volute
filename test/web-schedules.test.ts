@@ -43,7 +43,7 @@ async function getApp() {
 
 async function fetchSchedules(): Promise<Schedule[]> {
   const app = await getApp();
-  const res = await app.request(`/api/minds/${mindName}/schedules`, {
+  const res = await app.request(`/api/v1/minds/${mindName}/schedules`, {
     headers: { Cookie: `volute_session=${cookie}` },
   });
   assert.equal(res.status, 200);
@@ -52,7 +52,7 @@ async function fetchSchedules(): Promise<Schedule[]> {
 
 async function postSchedule(body: Record<string, unknown>) {
   const app = await getApp();
-  return app.request(`/api/minds/${mindName}/schedules`, {
+  return app.request(`/api/v1/minds/${mindName}/schedules`, {
     method: "POST",
     headers: jsonHeaders(),
     body: JSON.stringify(body),
@@ -61,7 +61,7 @@ async function postSchedule(body: Record<string, unknown>) {
 
 async function putSchedule(id: string, body: Record<string, unknown>) {
   const app = await getApp();
-  return app.request(`/api/minds/${mindName}/schedules/${id}`, {
+  return app.request(`/api/v1/minds/${mindName}/schedules/${id}`, {
     method: "PUT",
     headers: jsonHeaders(),
     body: JSON.stringify(body),
@@ -198,7 +198,7 @@ describe("schedules API rotating messages", () => {
     const app = await getApp();
     assert.equal(
       (
-        await app.request(`/api/minds/${mindName}/schedules/dream`, {
+        await app.request(`/api/v1/minds/${mindName}/schedules/dream`, {
           method: "DELETE",
           headers: jsonHeaders(),
         })

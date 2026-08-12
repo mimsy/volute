@@ -172,7 +172,7 @@ describe("mind-authored turn summaries", () => {
     );
   });
 
-  // ── API: PUT /api/minds/:name/turn-summaries ──
+  // ── API: PUT /api/v1/minds/:name/turn-summaries ──
 
   it("PUT supersedes via the API and returns counts", async () => {
     const { default: app } = await import("../packages/daemon/src/web/app.js");
@@ -182,7 +182,7 @@ describe("mind-authored turn summaries", () => {
     const turnId = randomUUID();
     await db.insert(turns).values({ id: turnId, mind, status: "complete" });
 
-    const res = await app.request(`/api/minds/${mind}/turn-summaries`, {
+    const res = await app.request(`/api/v1/minds/${mind}/turn-summaries`, {
       method: "PUT",
       headers: { Cookie: `volute_session=${cookie}`, "Content-Type": "application/json" },
       body: JSON.stringify({ summaries: [{ turnId, content: "My words." }] }),
@@ -202,7 +202,7 @@ describe("mind-authored turn summaries", () => {
     const bobTurn = randomUUID();
     await db.insert(turns).values({ id: bobTurn, mind: "test-turnsum-bob", status: "complete" });
 
-    const res = await app.request(`/api/minds/${mind}/turn-summaries`, {
+    const res = await app.request(`/api/v1/minds/${mind}/turn-summaries`, {
       method: "PUT",
       headers: { Cookie: `volute_session=${cookie}`, "Content-Type": "application/json" },
       body: JSON.stringify({ summaries: [{ turnId: bobTurn, content: "sneaky" }] }),
@@ -213,7 +213,7 @@ describe("mind-authored turn summaries", () => {
   it("PUT rejects a non-self mind token (another mind's route) with 403", async () => {
     const { default: app } = await import("../packages/daemon/src/web/app.js");
     const cookie = await mindCookie("test-turnsum-alice");
-    const res = await app.request("/api/minds/test-turnsum-bob/turn-summaries", {
+    const res = await app.request("/api/v1/minds/test-turnsum-bob/turn-summaries", {
       method: "PUT",
       headers: { Cookie: `volute_session=${cookie}`, "Content-Type": "application/json" },
       body: JSON.stringify({ summaries: [{ turnId: randomUUID(), content: "x" }] }),
@@ -230,7 +230,7 @@ describe("mind-authored turn summaries", () => {
     await db.insert(turns).values({ id: turnId, mind, status: "complete" });
 
     const put = (body: unknown) =>
-      app.request(`/api/minds/${mind}/turn-summaries`, {
+      app.request(`/api/v1/minds/${mind}/turn-summaries`, {
         method: "PUT",
         headers: { Cookie: `volute_session=${cookie}`, "Content-Type": "application/json" },
         body: JSON.stringify(body),
@@ -245,7 +245,7 @@ describe("mind-authored turn summaries", () => {
 
   it("PUT requires auth", async () => {
     const { default: app } = await import("../packages/daemon/src/web/app.js");
-    const res = await app.request("/api/minds/test-turnsum-any/turn-summaries", {
+    const res = await app.request("/api/v1/minds/test-turnsum-any/turn-summaries", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ summaries: [{ turnId: randomUUID(), content: "x" }] }),
@@ -253,7 +253,7 @@ describe("mind-authored turn summaries", () => {
     assert.equal(res.status, 401);
   });
 
-  // ── GET /api/minds/:name/history?provisional=true (summary preset) ──
+  // ── GET /api/v1/minds/:name/history?provisional=true (summary preset) ──
 
   it("history?provisional=true keeps only turns not yet mind-authored, with turn_id", async () => {
     const { default: app } = await import("../packages/daemon/src/web/app.js");
@@ -282,7 +282,7 @@ describe("mind-authored turn summaries", () => {
       },
     ]);
 
-    const res = await app.request(`/api/minds/${mind}/history?provisional=true`, {
+    const res = await app.request(`/api/v1/minds/${mind}/history?provisional=true`, {
       headers: { Cookie: `volute_session=${cookie}` },
     });
     assert.equal(res.status, 200);
@@ -313,7 +313,7 @@ describe("mind-authored turn summaries", () => {
       },
     ]);
 
-    const res = await app.request(`/api/minds/${mind}/history`, {
+    const res = await app.request(`/api/v1/minds/${mind}/history`, {
       headers: { Cookie: `volute_session=${cookie}` },
     });
     assert.equal(res.status, 200);
@@ -344,7 +344,7 @@ describe("mind-authored turn summaries", () => {
     });
 
     const res = await app.request(
-      `/api/minds/${mind}/history?preset=conversation&provisional=true`,
+      `/api/v1/minds/${mind}/history?preset=conversation&provisional=true`,
       {
         headers: { Cookie: `volute_session=${cookie}` },
       },
@@ -376,7 +376,7 @@ describe("mind-authored turn summaries", () => {
       },
     ]);
 
-    const res = await app.request(`/api/minds/${mind}/history?provisional=true`, {
+    const res = await app.request(`/api/v1/minds/${mind}/history?provisional=true`, {
       headers: { Cookie: `volute_session=${cookie}` },
     });
     assert.equal(res.status, 200);

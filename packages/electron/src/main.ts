@@ -130,7 +130,7 @@ function daemonFetch(path: string, init?: RequestInit): Promise<Response> {
 
 async function fetchMinds(): Promise<MindInfo[]> {
   try {
-    const res = await daemonFetch("/api/minds");
+    const res = await daemonFetch("/api/v1/minds");
     if (!res.ok) {
       console.warn(`Failed to fetch minds: ${res.status} ${res.statusText}`);
       return [];
@@ -146,7 +146,7 @@ async function fetchMinds(): Promise<MindInfo[]> {
 async function toggleMind(name: string, currentStatus: string) {
   const action = currentStatus === "running" || currentStatus === "starting" ? "stop" : "start";
   try {
-    const res = await daemonFetch(`/api/minds/${name}/${action}`, { method: "POST" });
+    const res = await daemonFetch(`/api/v1/minds/${name}/${action}`, { method: "POST" });
     if (!res.ok) {
       console.error(`Failed to ${action} mind "${name}": ${res.status} ${res.statusText}`);
     }

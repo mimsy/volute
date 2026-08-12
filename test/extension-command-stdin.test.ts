@@ -11,7 +11,7 @@ import { createCommands as pageCommands } from "../packages/extensions/pages/src
  * Commands now opt in with `stdin: true`, and the CLI reads stdin only for those.
  */
 describe("extension command stdin opt-in", () => {
-  it("carries `stdin` through to the CLI over /api/extensions/commands", () => {
+  it("carries `stdin` through to the CLI over /api/v1/extensions/commands", () => {
     const cmd: ExtensionCommand = {
       description: "takes piped input",
       stdin: true,

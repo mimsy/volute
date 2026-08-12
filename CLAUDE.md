@@ -108,7 +108,7 @@ Unified `users` table with `user_type` discrimination (`"human"` or `"mind"`) st
 - Fields: `display_name`, `description`, `avatar`
 - Mind profiles configured in `volute.json` under `profile: { displayName, description, avatar }`
 - `syncMindProfile()` syncs mind config to users table on mind start
-- Mind avatars served at `GET /api/minds/:name/avatar`, human avatars at `GET /api/auth/avatars/:filename`
+- Mind avatars served at `GET /api/v1/minds/:name/avatar`, human avatars at `GET /api/v1/auth/avatars/:filename`
 - `enrichWithProfiles()` in delivery-manager loads participant profiles + avatar images on first message per channel per session
 - `profile_updated` broadcast event triggers frontend refresh on profile changes
 
@@ -313,7 +313,7 @@ Rules with a canonical helper or enforcing test hold up; prose-only rules drift.
 - `volute setup` is the required first-run command; CLI commands are gated on `isSetupComplete()` with auto-migration for existing users via `migrateSetupConfig()`
 - Built-in skills live in `skills/` at repo root and are synced to the shared pool (`~/.volute/skills/`) on daemon startup via `syncBuiltinSkills()`. Extensions contribute skills via `skillsDir` in their manifest; skills with `standardSkill: true` are added to the configurable default skill set. The default skill set is stored in `~/.volute/system/config.json` (`defaultSkills` array) and initialized on first daemon start from `STANDARD_SKILLS` + extension standard skills. Admins can manage defaults via the web UI (Settings → Skills) or `volute skill defaults` CLI. `SEED_SKILLS` (orientation, memory) are installed for seed minds. Skills are installed from the shared pool with upstream tracking (`.upstream.json`) for independent updates.
 - Seed nurture: when a seed is created, a `nurture-<name>` schedule is added to the spirit's `volute.json`. The schedule runs `volute seed check <name>` which queries the daemon API for seed readiness (SOUL.md, MEMORY.md, display name, avatar). The spirit receives the output and can DM the seed encouragement. Thresholds are configurable via `VOLUTE_NURTURE_CRON`, `VOLUTE_NURTURE_CREATOR_MINUTES`, `VOLUTE_NURTURE_SPIRIT_MINUTES`, `VOLUTE_NURTURE_NUDGE_MINUTES` (nudge backoff, default 30). The check stays quiet while the seed sleeps. On sprout, the nurture schedule is cleaned up.
-- Image generation toggle: `isImagegenEnabled()` in `setup.ts` reads `imagegen.enabled` from global config. Controls whether seeds are asked to generate avatars and whether sprouting requires one. Configurable via Settings UI or `PUT /api/system/imagegen`.
+- Image generation toggle: `isImagegenEnabled()` in `setup.ts` reads `imagegen.enabled` from global config. Controls whether seeds are asked to generate avatars and whether sprouting requires one. Configurable via Settings UI or `PUT /api/v1/system/imagegen`.
 
 ## Security conventions
 

@@ -71,7 +71,7 @@ function isBrainIridescent(username: string): boolean {
           name: mind.name,
           displayName: mind.displayName,
           description: mind.description,
-          avatarUrl: mind.avatar ? `/api/minds/${encodeURIComponent(mind.name)}/avatar` : null,
+          avatarUrl: mind.avatar ? `/api/v1/minds/${encodeURIComponent(mind.name)}/avatar` : null,
           userType: "mind",
           created: mind.created,
         }}>
@@ -100,7 +100,7 @@ function isBrainIridescent(username: string): boolean {
         name: participant.username,
         displayName: participant.displayName,
         description: participant.description,
-        avatarUrl: participant.avatar ? `/api/auth/avatars/${encodeURIComponent(participant.avatar)}` : null,
+        avatarUrl: participant.avatar ? `/api/v1/auth/avatars/${encodeURIComponent(participant.avatar)}` : null,
         userType: participant.userType,
       }}>
         {#snippet children()}

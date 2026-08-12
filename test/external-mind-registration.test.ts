@@ -87,7 +87,7 @@ function postHeaders(cookie: string) {
 
 async function register(cookie: string, body: Record<string, unknown>) {
   const { default: app } = await import("../packages/daemon/src/web/app.js");
-  return app.request("http://localhost/api/auth/minds", {
+  return app.request("http://localhost/api/v1/auth/minds", {
     method: "POST",
     headers: postHeaders(cookie),
     body: JSON.stringify(body),
@@ -226,7 +226,7 @@ describe("external mind registration", () => {
 });
 
 /**
- * `GET /api/auth/users` tags mind users with `external`. This has to be computed
+ * `GET /api/v1/auth/users` tags mind users with `external`. This has to be computed
  * daemon-side: the flag means "no `minds` row", and the mind list a client can
  * see (`GET /api/v1/minds` → readRegistry) omits variants, so a client comparing
  * against it would read every live variant as external.
@@ -240,7 +240,7 @@ describe("users list — external flag", () => {
 
   async function listUsers(cookie: string) {
     const { default: app } = await import("../packages/daemon/src/web/app.js");
-    const res = await app.request("http://localhost/api/auth/users", {
+    const res = await app.request("http://localhost/api/v1/auth/users", {
       headers: { Cookie: `volute_session=${cookie}` },
     });
     assert.equal(res.status, 200, await res.clone().text());
@@ -296,7 +296,7 @@ describe("users list — external flag", () => {
     await addMind(LOCAL_MIND, 4977);
 
     const { default: app } = await import("../packages/daemon/src/web/app.js");
-    const res = await app.request("http://localhost/api/auth/users?type=mind", {
+    const res = await app.request("http://localhost/api/v1/auth/users?type=mind", {
       headers: { Cookie: `volute_session=${sessionId}` },
     });
     assert.equal(res.status, 200);
@@ -327,7 +327,7 @@ describe("external mind deletion", () => {
 
   async function del(cookie: string, id: number) {
     const { default: app } = await import("../packages/daemon/src/web/app.js");
-    return app.request(`http://localhost/api/auth/users/${id}`, {
+    return app.request(`http://localhost/api/v1/auth/users/${id}`, {
       method: "DELETE",
       headers: { Cookie: `volute_session=${cookie}`, Origin: "http://localhost" },
     });

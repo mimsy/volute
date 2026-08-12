@@ -22,13 +22,13 @@ function postHeaders(token: string) {
   };
 }
 
-describe("POST /api/minds/:name/notices", () => {
+describe("POST /api/v1/minds/:name/notices", () => {
   it("records a mind-level notice a mind can post about itself", async () => {
     const name = `notice-api-${Date.now()}-a`;
     const token = await makeMind(name);
     const { default: app } = await import("../packages/daemon/src/web/app.js");
     try {
-      const res = await app.request(`http://localhost/api/minds/${name}/notices`, {
+      const res = await app.request(`http://localhost/api/v1/minds/${name}/notices`, {
         method: "POST",
         headers: postHeaders(token),
         body: JSON.stringify({
@@ -53,7 +53,7 @@ describe("POST /api/minds/:name/notices", () => {
     const token = await makeMind(name);
     const { default: app } = await import("../packages/daemon/src/web/app.js");
     try {
-      const res = await app.request(`http://localhost/api/minds/${name}/notices`, {
+      const res = await app.request(`http://localhost/api/v1/minds/${name}/notices`, {
         method: "POST",
         headers: postHeaders(token),
         body: JSON.stringify({ kind: "context_lost", message: "compaction failed", thread: "dev" }),
@@ -76,7 +76,7 @@ describe("POST /api/minds/:name/notices", () => {
     const otherToken = await makeMind(other);
     const { default: app } = await import("../packages/daemon/src/web/app.js");
     try {
-      const res = await app.request(`http://localhost/api/minds/${target}/notices`, {
+      const res = await app.request(`http://localhost/api/v1/minds/${target}/notices`, {
         method: "POST",
         headers: postHeaders(otherToken),
         body: JSON.stringify({ kind: "context_lost", message: "forged" }),
@@ -106,7 +106,7 @@ describe("POST /api/minds/:name/notices", () => {
         { kind: "context_lost", message: "   " },
         { kind: "context_lost", message: "x", thread: 42 },
       ]) {
-        const res = await app.request(`http://localhost/api/minds/${name}/notices`, {
+        const res = await app.request(`http://localhost/api/v1/minds/${name}/notices`, {
           method: "POST",
           headers: postHeaders(token),
           body: JSON.stringify(body),
@@ -124,7 +124,7 @@ describe("POST /api/minds/:name/notices", () => {
     const token = await makeMind(name);
     const { default: app } = await import("../packages/daemon/src/web/app.js");
     try {
-      const res = await app.request(`http://localhost/api/minds/${name}/notices`, {
+      const res = await app.request(`http://localhost/api/v1/minds/${name}/notices`, {
         method: "POST",
         headers: postHeaders(token),
         body: JSON.stringify({ kind: "context_lost", message: "y".repeat(5000) }),

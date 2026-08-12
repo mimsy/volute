@@ -92,7 +92,7 @@ export function enrichActivityMetadata(
 }
 
 /**
- * The command definition as the CLI sees it over `/api/extensions/commands`:
+ * The command definition as the CLI sees it over `/api/v1/extensions/commands`:
  * everything except the handler, which cannot cross the wire. Metadata the CLI
  * acts on before dispatch — notably `stdin` (#872) — reaches it only through here.
  */
@@ -708,7 +708,7 @@ export async function loadAllExtensions(app: Hono, authMw: MiddlewareHandler): P
   await pruneOrphanedExtensionSkills();
 
   // Discovery endpoint for CLI dynamic dispatch
-  app.get("/api/extensions/commands", (c) => {
+  app.get("/api/v1/extensions/commands", (c) => {
     const result: Record<string, { commands: Record<string, ExtensionCommandInfo> }> = {};
     for (const { manifest } of loaded) {
       if (!manifest.commands) continue;
@@ -724,7 +724,7 @@ export async function loadAllExtensions(app: Hono, authMw: MiddlewareHandler): P
   // Mind-facing digest for session-start orientation: what extensions exist and how a
   // mind reaches them. Reflects only what's actually loaded, so third-party and disabled
   // extensions are handled automatically.
-  app.get("/api/extensions/mind-docs", (c) => {
+  app.get("/api/v1/extensions/mind-docs", (c) => {
     const result = loaded
       .filter(({ manifest }) => manifest.mindDoc || manifest.commands)
       .map(({ manifest }) => ({

@@ -60,7 +60,7 @@ const cmd = command({
         const { getClient, urlOf } = await import("../lib/api-client.js");
         const client = getClient();
         const res = await daemonFetch(
-          urlOf(client.api.minds[":name"].history.export.$url({ param: { name } })),
+          urlOf(client.api.v1.minds[":name"].history.export.$url({ param: { name } })),
         );
         if (!res.ok) {
           const text = await res.text().catch(() => "");

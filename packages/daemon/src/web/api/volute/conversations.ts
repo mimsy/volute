@@ -19,7 +19,7 @@ import {
   listConversationsForUser,
 } from "../../../lib/events/conversations.js";
 import { findMind } from "../../../lib/mind/registry.js";
-import { parseIntParam } from "../../../lib/util/query-params.js";
+import { cursorParamsSchema, cursorResponse } from "../../../lib/util/query-params.js";
 import type { AuthEnv } from "../../middleware/auth.js";
 
 const createConvSchema = z.object({
@@ -126,28 +126,19 @@ const app = new Hono<AuthEnv>()
 
     return c.json(conv, 201);
   })
-  .get("/:name/conversations/:id/messages", async (c) => {
+  .get("/:name/conversations/:id/messages", zValidator("query", cursorParamsSchema), async (c) => {
     const id = c.req.param("id");
     const user = c.get("user");
     if (user.id !== 0 && !(await isParticipantOrOwner(id, user.id))) {
       return c.json({ error: "Conversation not found" }, 404);
     }
-    const limitStr = c.req.query("limit");
-    const beforeStr = c.req.query("before");
-    if (!limitStr && !beforeStr) {
+    const { before, limit } = c.req.valid("query");
+    if (before === undefined && limit === undefined) {
       const msgs = await getMessages(id);
-      return c.json({ items: await withSenderDisplayNames(msgs), hasMore: false });
-    }
-    const limit = parseIntParam(limitStr);
-    const before = parseIntParam(beforeStr);
-    if (limit === null || before === null) {
-      return c.json({ error: "Invalid pagination parameters" }, 400);
+      return c.json(cursorResponse(await withSenderDisplayNames(msgs), false));
     }
     const result = await getMessagesPaginated(id, { before, limit });
-    return c.json({
-      items: await withSenderDisplayNames(result.messages),
-      hasMore: result.hasMore,
-    });
+    return c.json(cursorResponse(await withSenderDisplayNames(result.messages), result.hasMore));
   })
   .get("/:name/conversations/:id/participants", async (c) => {
     const id = c.req.param("id");

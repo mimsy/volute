@@ -57,12 +57,12 @@ export function createLogStream(
   onLine: (line: string) => void,
   onError?: (msg: string) => void,
 ) {
-  return createSSEStream(`/api/minds/${name}/logs`, onLine, onError);
+  return createSSEStream(`/api/v1/minds/${name}/logs`, onLine, onError);
 }
 
 export function createSystemLogStream(
   onLine: (line: string) => void,
   onError?: (msg: string) => void,
 ) {
-  return createSSEStream("/api/system/logs", onLine, onError);
+  return createSSEStream("/api/v1/system/logs", onLine, onError);
 }

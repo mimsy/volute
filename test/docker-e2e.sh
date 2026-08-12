@@ -185,12 +185,12 @@ curl -sf -X POST \
   -H "Content-Type: application/json" \
   -H "Origin: http://localhost:$HOST_PORT" \
   -d '{"username":"root","password":"root"}' \
-  "http://localhost:$HOST_PORT/api/auth/register" >/dev/null
+  "http://localhost:$HOST_PORT/api/v1/auth/register" >/dev/null
 LOGIN_RESP=$(curl -sf -X POST \
   -H "Content-Type: application/json" \
   -H "Origin: http://localhost:$HOST_PORT" \
   -d '{"username":"root","password":"root"}' \
-  "http://localhost:$HOST_PORT/api/auth/login")
+  "http://localhost:$HOST_PORT/api/v1/auth/login")
 SESSION_ID=$(echo "$LOGIN_RESP" | node -e "
   process.stdout.write(JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')).sessionId || '');
 ")

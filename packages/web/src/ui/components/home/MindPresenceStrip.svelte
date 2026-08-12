@@ -22,7 +22,7 @@ const STATE_LABEL: Record<PresenceState, string> = {
 };
 
 function avatarUrl(mind: Mind): string | null {
-  return mind.avatar ? `/api/minds/${encodeURIComponent(mind.name)}/avatar` : null;
+  return mind.avatar ? `/api/v1/minds/${encodeURIComponent(mind.name)}/avatar` : null;
 }
 
 function initial(mind: Mind): string {

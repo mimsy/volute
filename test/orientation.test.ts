@@ -111,7 +111,7 @@ describe("seed mind creation API", () => {
     await cleanup();
   });
 
-  it("POST /api/minds with stage=seed creates mind with correct stage", async () => {
+  it("POST /api/v1/minds with stage=seed creates mind with correct stage", async () => {
     const mindName = `seed-test-${Date.now()}`;
     // Create the mind directory so the route doesn't fail on disk operations
     const mindsDir = resolve(voluteHome(), "minds");
@@ -119,7 +119,7 @@ describe("seed mind creation API", () => {
 
     const { default: app } = await import("../packages/daemon/src/web/app.js");
 
-    const res = await app.request("http://localhost/api/minds", {
+    const res = await app.request("http://localhost/api/v1/minds", {
       method: "POST",
       headers: {
         ...postHeaders(cookie),
@@ -167,7 +167,7 @@ describe("seed gating", () => {
   it("POST schedules returns 403 for seed minds", async () => {
     const { default: app } = await import("../packages/daemon/src/web/app.js");
 
-    const res = await app.request(`http://localhost/api/minds/${mindName}/schedules`, {
+    const res = await app.request(`http://localhost/api/v1/minds/${mindName}/schedules`, {
       method: "POST",
       headers: {
         ...postHeaders(cookie),
@@ -183,7 +183,7 @@ describe("seed gating", () => {
   it("POST variants returns 403 for seed minds", async () => {
     const { default: app } = await import("../packages/daemon/src/web/app.js");
 
-    const res = await app.request(`http://localhost/api/minds/${mindName}/variants`, {
+    const res = await app.request(`http://localhost/api/v1/minds/${mindName}/variants`, {
       method: "POST",
       headers: {
         ...postHeaders(cookie),
@@ -252,7 +252,7 @@ describe("system commons sprout gate", () => {
     assert.ok(!members.includes(mindName), "seed should not be in the commons before sprout");
 
     const { default: app } = await import("../packages/daemon/src/web/app.js");
-    const res = await app.request(`http://localhost/api/minds/${mindName}/sprout`, {
+    const res = await app.request(`http://localhost/api/v1/minds/${mindName}/sprout`, {
       method: "POST",
       headers: postHeaders(cookie),
     });
