@@ -56,12 +56,48 @@ export type VoluteRequest = {
   session?: string;
 } & ChannelMeta;
 
+/**
+ * One model's slice of a turn's usage. A turn can span models — a main call plus a
+ * cheaper side-call or a subagent — and their rates differ by up to 5x, so the slices
+ * are carried separately and priced separately rather than attributed to one model.
+ */
+export type UsageByModel = {
+  model: string;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_input_tokens: number;
+  cache_creation_input_tokens: number;
+};
+
 export type VoluteEvent = { messageId?: string } & (
   | { type: "text"; content: string }
   | { type: "image"; media_type: string; data: string }
   | { type: "tool_use"; name: string; input: unknown }
   | { type: "tool_result"; output: string; is_error?: boolean }
-  | { type: "usage"; input_tokens: number; output_tokens: number }
+  | {
+      type: "usage";
+      /**
+       * Uncached input tokens only — cache reads/writes are reported separately so the
+       * daemon can price each at its own rate. Templates that receive a cache-inclusive
+       * input count (codex) subtract the cached portion before emitting.
+       */
+      input_tokens: number;
+      output_tokens: number;
+      /** Absent (not zero) from templates that predate cache accounting — see `partial` in usage-pricing.ts. */
+      cache_read_input_tokens?: number;
+      cache_creation_input_tokens?: number;
+      /**
+       * The model that did most of the turn's work; `provider:id` when the template knows
+       * the provider (pi), else a bare id. A label — `models` is what gets priced.
+       */
+      model?: string;
+      /**
+       * Per-model breakdown, when the agent reports one. The daemon prices each slice at
+       * its own model's rates and sums, so a turn spanning two models costs what it
+       * actually cost. Absent means the whole turn is priced against `model`.
+       */
+      models?: UsageByModel[];
+    }
   | { type: "done" }
 );
 

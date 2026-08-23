@@ -207,6 +207,96 @@ describe("turn-lifecycle: handleMindEvent", () => {
     await cleanup(mind);
   });
 
+  /** The metadata JSON persisted for a mind's single usage row. */
+  async function readUsageMetadata(mind: string): Promise<Record<string, unknown>> {
+    const db = await getDb();
+    const row = await db
+      .select({ metadata: mindHistory.metadata })
+      .from(mindHistory)
+      .where(and(eq(mindHistory.mind, mind), eq(mindHistory.type, "usage")))
+      .get();
+    assert.ok(row?.metadata, "usage row should have been persisted with metadata");
+    return JSON.parse(row.metadata);
+  }
+
+  it("prices a usage event into the persisted metadata", async () => {
+    const mind = "tl-usage-priced";
+    await handleMindEvent(mind, {
+      type: "usage",
+      session: "s1",
+      metadata: {
+        input_tokens: 2_000,
+        output_tokens: 500,
+        cache_read_input_tokens: 30_000,
+        cache_creation_input_tokens: 4_000,
+        model: "anthropic:claude-haiku-4-5",
+      },
+    });
+
+    const meta = await readUsageMetadata(mind);
+    assert.equal(meta.model, "anthropic:claude-haiku-4-5");
+    assert.equal(meta.partial, undefined);
+    assert.equal(meta.cost_usd, (2000 * 1 + 500 * 5 + 30000 * 0.1 + 4000 * 1.25) / 1e6);
+    // The token counts survive untouched alongside the cost.
+    assert.equal(meta.input_tokens, 2_000);
+    assert.equal(meta.cache_read_input_tokens, 30_000);
+    await cleanup(mind);
+  });
+
+  it("marks an un-upgraded mind's two-field usage partial and unpriced", async () => {
+    // Minds run their own copy of src/ until `volute mind upgrade`, so the old shape
+    // keeps arriving. It must never be persisted as a fabricated cost.
+    const mind = "tl-usage-partial";
+    await handleMindEvent(mind, {
+      type: "usage",
+      session: "s1",
+      metadata: { input_tokens: 913, output_tokens: 112_916, model: "anthropic:claude-haiku-4-5" },
+    });
+
+    const meta = await readUsageMetadata(mind);
+    assert.equal(meta.partial, true);
+    assert.equal(meta.cost_usd, null);
+    await cleanup(mind);
+  });
+
+  it("records cost_usd null when no model can be resolved", async () => {
+    // No model on the event, no registry row, no config.json — nothing to price against.
+    const mind = "tl-usage-unpriced";
+    await handleMindEvent(mind, {
+      type: "usage",
+      session: "s1",
+      metadata: {
+        input_tokens: 10,
+        output_tokens: 2,
+        cache_read_input_tokens: 0,
+        cache_creation_input_tokens: 0,
+      },
+    });
+
+    const meta = await readUsageMetadata(mind);
+    assert.equal(meta.cost_usd, null);
+    assert.equal(meta.model, undefined);
+    await cleanup(mind);
+  });
+
+  it("leaves non-usage events' metadata alone", async () => {
+    const mind = "tl-usage-untouched";
+    await handleMindEvent(mind, {
+      type: "tool_use",
+      session: "s1",
+      content: "{}",
+      metadata: { name: "Bash", id: "tu1" },
+    });
+    const db = await getDb();
+    const row = await db
+      .select({ metadata: mindHistory.metadata })
+      .from(mindHistory)
+      .where(and(eq(mindHistory.mind, mind), eq(mindHistory.type, "tool_use")))
+      .get();
+    assert.deepEqual(JSON.parse(row?.metadata ?? "{}"), { name: "Bash", id: "tu1" });
+    await cleanup(mind);
+  });
+
   it("typing persists through mid-turn text/outbound and clears on done", async () => {
     const mind = "tl-typing-persist";
     const convId = "11111111-2222-3333-4444-555555555555";

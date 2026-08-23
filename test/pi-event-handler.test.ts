@@ -227,3 +227,70 @@ describe("pi template event-handler agent_end errors", () => {
     assert.equal(usage?.metadata?.output_tokens, 20);
   });
 });
+
+describe("pi template event-handler usage", () => {
+  it("sums cache reads/writes across assistant messages and names the model", async () => {
+    captured = [];
+    const session = makeSession("main");
+    const handler = createEventHandler(session as never, {
+      cwd: resolvePath(composedDir, "home"),
+      broadcast: () => {},
+    });
+
+    handler({ type: "agent_start" } as never);
+    handler({
+      type: "agent_end",
+      messages: [
+        {
+          role: "assistant",
+          provider: "anthropic",
+          model: "claude-haiku-4-5",
+          usage: { input: 500, output: 40, cacheRead: 20_000, cacheWrite: 1_500 },
+        },
+        {
+          role: "assistant",
+          provider: "anthropic",
+          model: "claude-haiku-4-5",
+          usage: { input: 300, output: 60, cacheRead: 21_500, cacheWrite: 0 },
+        },
+      ],
+    } as never);
+
+    await waitFor(() => captured.some((e) => e.type === "usage"));
+    const usage = captured.find((e) => e.type === "usage")?.metadata;
+    assert.deepEqual(usage, {
+      input_tokens: 800,
+      output_tokens: 100,
+      cache_read_input_tokens: 41_500,
+      cache_creation_input_tokens: 1_500,
+      model: "anthropic:claude-haiku-4-5",
+    });
+  });
+
+  it("emits usage for a turn that was served entirely from cache", async () => {
+    captured = [];
+    const session = makeSession("main");
+    const handler = createEventHandler(session as never, {
+      cwd: resolvePath(composedDir, "home"),
+      broadcast: () => {},
+    });
+
+    handler({ type: "agent_start" } as never);
+    handler({
+      type: "agent_end",
+      messages: [
+        {
+          role: "assistant",
+          provider: "openrouter",
+          model: "moonshotai/kimi-k2.5",
+          usage: { input: 0, output: 0, cacheRead: 30_000, cacheWrite: 0 },
+        },
+      ],
+    } as never);
+
+    await waitFor(() => captured.some((e) => e.type === "usage"));
+    const usage = captured.find((e) => e.type === "usage")?.metadata;
+    assert.equal(usage?.cache_read_input_tokens, 30_000);
+    assert.equal(usage?.model, "openrouter:moonshotai/kimi-k2.5");
+  });
+});

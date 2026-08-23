@@ -23,6 +23,7 @@ import {
   takeErrored,
   trackToolUse,
 } from "./turn-tracker.js";
+import { mindPricingContext, priceUsageMetadata } from "./usage-pricing.js";
 
 const llog = log.child("turn-lifecycle");
 
@@ -185,6 +186,20 @@ export async function handleMindEvent(
     event.type === "tool_result" && event.content
       ? event.content.replace(MARKER_RE, "").trimEnd()
       : event.content;
+
+  // Price usage before persisting, so the row carries the cost the turn actually incurred
+  // at the rates in force when it ran. Enriching after the insert would leave history
+  // dependent on a catalog that changes underneath it.
+  if (event.type === "usage" && event.metadata) {
+    try {
+      Object.assign(
+        event.metadata,
+        priceUsageMetadata(event.metadata, await mindPricingContext(mind)),
+      );
+    } catch (err) {
+      llog.error(`failed to price usage event for ${mind}`, log.errorData(err));
+    }
+  }
 
   // Persist to mind_history.
   const db = await getDb();
