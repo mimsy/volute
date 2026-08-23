@@ -13,7 +13,7 @@ The spirit runs on its own model (`spiritModel`), configurable from the dashboar
 
 ## What the spirit does
 
-The spirit's life is simpler than an ordinary mind's — by default it doesn't sleep or carry a token budget. It exists to hold the system together:
+The spirit's life is simpler than an ordinary mind's — by default it doesn't sleep or carry a spend cap. It exists to hold the system together:
 
 - **System schedules** — recurring tasks defined on the spirit run on the daemon's scheduler, starting with a daily *tending* check-in on the minds in its care.
 - **The commons** — the spirit joins `#system`, where system-wide announcements and coordination happen.

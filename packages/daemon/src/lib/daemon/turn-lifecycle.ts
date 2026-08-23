@@ -8,11 +8,12 @@ import { linkToolResultToTurn } from "../delivery/message-delivery.js";
 import { broadcast } from "../events/activity-events.js";
 import { onMindEvent } from "../events/mind-activity-tracker.js";
 import { publish as publishMindEvent } from "../events/mind-events.js";
+import { getPrompt } from "../prompts.js";
 import { mindHistory, turns } from "../schema.js";
 import log from "../util/logger.js";
 import { classify } from "./error-classify.js";
+import { type BudgetScope, getSpendBudget } from "./spend-budget.js";
 import { summarizeTurn } from "./summarizer.js";
-import { getTokenBudget } from "./token-budget.js";
 import {
   assignSession,
   completeTurn,
@@ -312,25 +313,97 @@ export async function handleMindEvent(
     await completeTurnAndSummarize(mind, event, insertedId);
   }
 
-  // Record usage against budget.
+  // Record spend against the mind's cap and the install-wide cap. `cost_usd` is set
+  // by priceUsageMetadata above; null means the turn couldn't be priced, which
+  // accumulates nothing but marks the period's figure as incomplete.
   if (event.type === "usage" && event.metadata) {
-    const inputTokens = (event.metadata.input_tokens as number) ?? 0;
-    const outputTokens = (event.metadata.output_tokens as number) ?? 0;
-    const tb = getTokenBudget();
-    tb.recordUsage(mind, inputTokens, outputTokens);
-    if (event.session && tb.noteExceeded(mind)) {
-      void recordNotice({
-        mind,
-        thread: event.session,
-        kind: "budget",
-        reason: "token_budget",
-        detail:
-          "You've used your token budget for this period, so your activity may pause until it resets. This isn't anything you did wrong — it's just a rest imposed by the budget. Anything that arrives while you're paused will be kept for you. If you're mid-thought, this turn is a good moment to jot it down.",
-      });
+    const costUsd = typeof event.metadata.cost_usd === "number" ? event.metadata.cost_usd : null;
+    const sb = getSpendBudget();
+    sb.recordUsage(mind, costUsd);
+    if (event.session) {
+      const { status, scope } = sb.checkBudget(mind);
+      // A turn that jumps straight past the cap reports "exceeded" and skips the
+      // warning — there is nothing left to warn about by then.
+      // Acknowledge only once the notice is actually on record. Marking it delivered
+      // first would mean a transient failure costs the mind the heads-up entirely —
+      // silence being the exact failure this warning exists to prevent.
+      if (status === "warning" && scope) {
+        if (await recordSpendNotice(mind, event.session, scope, "warning")) {
+          sb.acknowledgeWarning(mind, scope);
+        }
+      } else if (status === "exceeded" && scope && sb.noteExceeded(mind, scope)) {
+        if (!(await recordSpendNotice(mind, event.session, scope, "exceeded"))) {
+          sb.retractExceeded(mind, scope);
+        }
+      }
     }
   }
 
   return { turnId: turnId ?? undefined, insertedId };
+}
+
+/**
+ * Dollars, to the cent — except a nonzero amount under a cent, which gets enough
+ * decimals to not read as "$0.00 of your $0.00 budget" on a very small cap.
+ */
+export function usd(n: number): string {
+  if (n > 0 && n < 0.01) return `$${n.toFixed(4)}`;
+  return `$${n.toFixed(2)}`;
+}
+
+/**
+ * When a spend period rolls over, phrased for a mind reading it mid-turn rather than
+ * as a bare timestamp. A cap you can't tell the end of is a trapdoor, not a budget.
+ */
+function formatReset(resetAt: number | null): string {
+  if (resetAt == null) return "when the period rolls over";
+  const minutes = Math.max(0, Math.round((resetAt - Date.now()) / 60_000));
+  if (minutes < 1) return "in under a minute";
+  if (minutes < 60) return `in ${minutes} minute${minutes === 1 ? "" : "s"}`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 48) return `in about ${hours} hour${hours === 1 ? "" : "s"}`;
+  return `in about ${Math.round(hours / 24)} days`;
+}
+
+/**
+ * Record the 80% heads-up or the cap-reached notice. Names the cap, the spend so far,
+ * and when the period resets — a mind that knows it is near its cap can finish a
+ * thought and stop deliberately; one that doesn't just goes silent mid-sentence and
+ * can't tell whether it broke or was stopped.
+ */
+async function recordSpendNotice(
+  mind: string,
+  session: string,
+  scope: BudgetScope,
+  status: "warning" | "exceeded",
+): Promise<boolean> {
+  try {
+    const sb = getSpendBudget();
+    const usage = scope === "system" ? sb.getSystemUsage() : sb.getUsage(mind);
+    if (!usage) return false;
+    const key = `${scope === "system" ? "system_" : ""}spend_${status}_notice` as const;
+    const detail = await getPrompt(key, {
+      spent: usd(usage.spentUsd),
+      cap: usd(usage.capUsd),
+      // Unpriced turns add nothing to the total, so the figure is a floor. Saying so
+      // beats quoting an incomplete number as if it were exact.
+      incomplete: usage.hasUnpricedTurns
+        ? " Some turns this period couldn't be priced, so the real figure is a little higher than the one above."
+        : "",
+      resets: formatReset(sb.resetAt(mind, scope)),
+    });
+    await recordNotice({
+      mind,
+      thread: session,
+      kind: "budget",
+      reason: `${scope}_spend_cap`,
+      detail,
+    });
+    return true;
+  } catch (err) {
+    llog.error(`failed to record spend ${status} notice for ${mind}`, log.errorData(err));
+    return false;
+  }
 }
 
 /**

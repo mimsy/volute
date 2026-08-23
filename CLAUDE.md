@@ -89,7 +89,7 @@ Each mind project (created from the template) has:
 │   ├── VOLUTE.md              # Channel routing documentation
 │   ├── .config/               # Mind configuration
 │   │   ├── config.json        # SDK config (model, compaction settings)
-│   │   ├── volute.json        # Volute config (identity, schedules, profile, sleep, token budget)
+│   │   ├── volute.json        # Volute config (identity, schedules, profile, sleep, spend cap)
 │   │   └── routes.json        # Message routing config (optional)
 │   ├── .local/hooks/           # Custom hooks: .local/hooks/<event>/<script>.sh|.ts|.js
 │   ├── .local/bin/             # Skill command shims and volute wrapper
@@ -232,7 +232,7 @@ Find files with search — this is a map, not an inventory.
 - `bridges/` — system-wide bridge config (`bridges.ts`) + the built-in bridge processes (`discord-bridge.ts`, `slack-bridge.ts`, `telegram-bridge.ts`), outbound delivery
 - `chat/` — file-sharing, puppets, typing, system-chat, system-events
 - `config/` — global config + secrets (`setup.ts`), env vars, service-mode, systems-config
-- `daemon/` — mind-manager, bridge-manager, scheduler, sleep-manager, mail-poller, backup-manager, token-budget, summarizer, turn lifecycle, mind-service
+- `daemon/` — mind-manager, bridge-manager, scheduler, sleep-manager, mail-poller, backup-manager, spend-budget, summarizer, turn lifecycle, mind-service
 - `delivery/` — delivery-manager/router, message-delivery, fan-out, send-gate
 - `events/` — in-process pub-sub (activity, conversation, mind), conversations CRUD, feed, activity tracking
 - `services/` — imagegen backends + job queue

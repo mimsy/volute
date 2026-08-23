@@ -154,9 +154,9 @@ export type UsagePricing = {
    * token counts are missing cache reads/writes. Such a turn is left unpriced rather than
    * given a number that is wrong by an order of magnitude, and surfaces label it as such.
    *
-   * Note this flag does *not* yet gate the token budget: `turn-lifecycle.ts` still records
-   * a partial turn's input/output against it. The budget becomes dollar-denominated in the
-   * spend-cap PR, which is where `partial` starts being consulted.
+   * The spend budget consults this via `cost_usd`, which is null for exactly these
+   * turns: `SpendBudget.recordUsage` accumulates nothing for them and flags the period
+   * `hasUnpricedTurns`, so a figure that is a floor is never presented as a total.
    */
   partial?: boolean;
 };
@@ -243,10 +243,21 @@ export function priceUsageMetadata(
   const partial = !slices && cacheRead === undefined && cacheCreation === undefined;
 
   const declared = typeof metadata.model === "string" ? metadata.model : undefined;
-  const ref =
-    parseModelRef(declared, ctx.template) ??
-    parseModelRef(ctx.configuredModel, ctx.template) ??
-    parseModelRef(ctx.template ? TEMPLATE_DEFAULT_MODEL[ctx.template] : undefined, ctx.template);
+  // `parseModelRef` returns a *non-null* ref with no provider for a bare id it can't
+  // attribute, so a plain `??` chain short-circuits on it and never consults the
+  // candidates that would have resolved one. Rather than fall through to a different
+  // model — the declared id is the ground truth of what actually ran — keep it and
+  // borrow the provider from whatever else we know about this mind.
+  const candidates = [
+    parseModelRef(declared, ctx.template),
+    parseModelRef(ctx.configuredModel, ctx.template),
+    parseModelRef(ctx.template ? TEMPLATE_DEFAULT_MODEL[ctx.template] : undefined, ctx.template),
+  ].filter((r): r is ModelRef => r !== null);
+  let ref = candidates[0] ?? null;
+  if (ref && !ref.provider) {
+    const provider = candidates.find((c) => c.provider)?.provider;
+    if (provider) ref = { provider, id: ref.id };
+  }
 
   const result: UsagePricing = { cost_usd: null };
   if (partial) result.partial = true;
@@ -293,7 +304,12 @@ export async function mindPricingContext(
   mind: string,
 ): Promise<{ mind: string; template?: string; configuredModel?: string }> {
   const entry = await findMind(mind);
-  const template = entry?.template;
+  // A variant's registry row carries no template (`addVariant` doesn't write one), so
+  // fall back to its parent's. Without this a variant's bare model id resolves to no
+  // provider, the turn prices to null, and its spend counts zero against the
+  // install-wide cap — a mind could split itself to spend past the host's budget.
+  const template =
+    entry?.template ?? (entry?.parent ? (await findMind(entry.parent))?.template : undefined);
   let configuredModel: string | undefined;
   try {
     // Honour the registry's `dir` — variants live in git worktrees and spirits can sit in a

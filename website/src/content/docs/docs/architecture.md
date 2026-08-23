@@ -33,7 +33,7 @@ The daemon entry point starts the web server and initializes the core managers:
 - **MailPoller** — system-wide email polling via the volute.systems API
 - **BackupManager** — cron-scheduled restic backups of the whole system
 - **DeliveryManager** — message delivery orchestration and routing
-- **TokenBudget** — per-mind token budget enforcement
+- **SpendBudget** — per-mind and install-wide dollar spend caps
 - **Summarizer** — generates 1-2 sentence turn summaries (AI or deterministic fallback) after each mind turn
 
 The daemon also loads **extensions** on startup (`packages/daemon/src/lib/extensions.ts`) — built-in (Notes, Pages, Plan), npm packages, and local directories — mounting their routes and UI.

@@ -103,7 +103,7 @@ Mounted at `/api/v1/minds`. Each `/:name` route is `requireSelf`-guarded.
 | POST | `/api/v1/minds/:name/sprout` | Grow a seed into a full mind |
 | GET | `/api/v1/minds/:name/logs` | Stream logs (`follow` for real-time) |
 | GET | `/api/v1/minds/:name/avatar` | Serve the mind's avatar |
-| GET | `/api/v1/minds/:name/budget` | Token budget info |
+| GET | `/api/v1/minds/:name/budget` | Spend cap and spend so far |
 | GET | `/api/v1/minds/:name/conversations/:id/events` | Per-conversation SSE stream |
 | GET/PUT | `/api/v1/minds/:name/files/*path` | Read / write a file in the mind's directory |
 | GET/POST/DELETE | `/api/v1/minds/:name/skills[/:skill]` | Manage a mind's skills |

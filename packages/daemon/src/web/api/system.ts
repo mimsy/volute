@@ -37,6 +37,7 @@ import {
   writeSystemsConfig,
 } from "../../lib/config/systems-config.js";
 import { getMindManager } from "../../lib/daemon/mind-manager.js";
+import { getSpendBudget } from "../../lib/daemon/spend-budget.js";
 import { countCappedMinds, findMind } from "../../lib/mind/registry.js";
 import {
   generateImage,
@@ -653,8 +654,11 @@ const app = new Hono<AuthEnv>()
           .object({
             model: z.string().optional(),
             thinkingLevel: z.enum(["off", "minimal", "low", "medium", "high", "xhigh"]).optional(),
-            tokenBudget: z.number().nonnegative().optional(),
-            tokenBudgetPeriodMinutes: z.number().positive().optional(),
+            // positive, not nonnegative: a 0 here is copied into every new mind's
+            // volute.json and reads as "no cap", so an admin who typed 0 meaning
+            // "no spending" would get the opposite of what they asked for.
+            spendCap: z.number().positive().optional(),
+            spendCapPeriodMinutes: z.number().positive().optional(),
             compaction: z.object({ maxContextTokens: z.number().positive().optional() }).optional(),
           })
           .optional(),
@@ -694,6 +698,40 @@ const app = new Hono<AuthEnv>()
       config.mindDefaults = mindDefaults;
       writeGlobalConfig(config);
       return c.json({ ok: true });
+    },
+  )
+  .get("/limits", requireAdmin, (c) => {
+    const config = readGlobalConfig();
+    return c.json({ systemSpendCapPerDay: config.limits?.systemSpendCapPerDay ?? null });
+  })
+  .put(
+    "/limits",
+    requireAdmin,
+    zValidator(
+      "json",
+      z.object({ systemSpendCapPerDay: z.number().positive().nullable().optional() }),
+    ),
+    (c) => {
+      const body = c.req.valid("json");
+      const config = readGlobalConfig();
+      // Limits are operational state, not credentials — readGlobalConfig/writeGlobalConfig
+      // keep them in the host-readable config.json rather than secrets.json.
+      const limits = { ...config.limits };
+      if (body.systemSpendCapPerDay !== undefined) {
+        if (body.systemSpendCapPerDay === null) delete limits.systemSpendCapPerDay;
+        else limits.systemSpendCapPerDay = body.systemSpendCapPerDay;
+      }
+      config.limits = limits;
+      writeGlobalConfig(config);
+      try {
+        // Apply to the live bucket so the cap means something before the next restart.
+        // The budget is initialized after the web server starts listening, so a request
+        // that lands in that window still saves the config and takes effect at boot.
+        getSpendBudget().setSystemCap(limits.systemSpendCapPerDay);
+      } catch (err) {
+        log.warn("system spend cap saved but not applied live", log.errorData(err));
+      }
+      return c.json({ ok: true, systemSpendCapPerDay: limits.systemSpendCapPerDay ?? null });
     },
   );
 

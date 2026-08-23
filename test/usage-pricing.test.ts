@@ -290,3 +290,53 @@ describe("priceUsageMetadata", () => {
     assert.equal(priced.cost_usd, 1000 / 1e6);
   });
 });
+
+describe("a bare model id borrows a provider instead of blocking the fallback", () => {
+  it("prices a bare declared id using the configured model's provider", () => {
+    // parseModelRef returns a non-null ref with no provider for a bare id, which a
+    // plain `??` chain treats as resolved — so the candidates that would have
+    // supplied a provider were never consulted and the turn priced to null.
+    const priced = priceUsageMetadata(
+      {
+        input_tokens: 1_000,
+        output_tokens: 1_000,
+        cache_read_input_tokens: 0,
+        cache_creation_input_tokens: 0,
+        model: "claude-haiku-4-5", // bare — no provider, no template to infer one
+      },
+      { mind: "m", configuredModel: "anthropic:claude-sonnet-4-5" },
+    );
+    assert.equal(priced.cost_usd, (1000 * 1 + 1000 * 5) / 1e6);
+  });
+
+  it("keeps the model that actually ran rather than the configured one", () => {
+    // The declared id is ground truth for the turn. Falling through to the configured
+    // model would price a model that never ran and mislabel the row.
+    const priced = priceUsageMetadata(
+      {
+        input_tokens: 1_000,
+        output_tokens: 1_000,
+        cache_read_input_tokens: 0,
+        cache_creation_input_tokens: 0,
+        model: "claude-haiku-4-5",
+      },
+      { mind: "m", configuredModel: "anthropic:claude-sonnet-4-5" },
+    );
+    assert.equal(priced.model, "anthropic:claude-haiku-4-5", "haiku's id, anthropic's provider");
+  });
+
+  it("still records no cost when nothing can supply a provider", () => {
+    const priced = priceUsageMetadata(
+      {
+        input_tokens: 10,
+        output_tokens: 10,
+        cache_read_input_tokens: 0,
+        cache_creation_input_tokens: 0,
+        model: "some-unknown-model",
+      },
+      { mind: "m" },
+    );
+    assert.equal(priced.cost_usd, null);
+    assert.equal(priced.model, "some-unknown-model", "still labelled, just unpriced");
+  });
+});

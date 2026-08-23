@@ -384,8 +384,8 @@ export function updateMindConfig(
   updates: {
     model?: string;
     thinkingLevel?: string;
-    tokenBudget?: number | null;
-    tokenBudgetPeriodMinutes?: number | null;
+    spendCap?: number | null;
+    spendCapPeriodMinutes?: number | null;
     compaction?: { maxContextTokens?: number | null } | null;
     unescapeNewlines?: boolean;
   },
@@ -688,8 +688,8 @@ export function saveAiDefaults(defaults: AiDefaults): Promise<void> {
 export type MindDefaultsCognition = {
   model?: string;
   thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
-  tokenBudget?: number;
-  tokenBudgetPeriodMinutes?: number;
+  spendCap?: number;
+  spendCapPeriodMinutes?: number;
   compaction?: { maxContextTokens?: number };
 };
 

@@ -2975,8 +2975,8 @@ describe("daemon e2e", { timeout: 420000 }, () => {
       cognition: {
         model: "claude-sonnet-4-20250514",
         thinkingLevel: "medium" as const,
-        tokenBudget: 50000,
-        tokenBudgetPeriodMinutes: 60,
+        spendCap: 5,
+        spendCapPeriodMinutes: 1440,
       },
       sleep: {
         enabled: true,
@@ -3005,7 +3005,8 @@ describe("daemon e2e", { timeout: 420000 }, () => {
     const saved = await getRes.json();
     assert.equal(saved.cognition.model, "claude-sonnet-4-20250514");
     assert.equal(saved.cognition.thinkingLevel, "medium");
-    assert.equal(saved.cognition.tokenBudget, 50000);
+    assert.equal(saved.cognition.spendCap, 5);
+    assert.equal(saved.cognition.spendCapPeriodMinutes, 1440);
     assert.equal(saved.sleep.enabled, true);
     assert.equal(saved.sleep.schedule.sleep, "0 23 * * *");
     assert.equal(saved.sleep.wakeTriggers.mentions, true);
