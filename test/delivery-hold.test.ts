@@ -565,9 +565,18 @@ describe("DeliveryManager: holding deliveries", () => {
 
     const rows = await queueRows(name, "held");
     assert.equal(rows.length, 1);
-    const arrivedAt = (JSON.parse(rows[0].payload) as DeliveryPayload).held!.at;
     let history = await db.select().from(mindHistory).where(eq(mindHistory.mind, name));
     assert.equal(history.length, 0, "nothing in history while the mind hasn't seen it");
+
+    // Age the hold so arrival and release are unmistakably different instants — a test
+    // where they are milliseconds apart cannot tell which one the row carries.
+    const payload = JSON.parse(rows[0].payload) as DeliveryPayload;
+    const arrivedAt = Date.now() - 2 * 60 * 60 * 1000;
+    payload.held = { ...payload.held!, at: arrivedAt };
+    await db
+      .update(deliveryQueue)
+      .set({ payload: JSON.stringify(payload) })
+      .where(eq(deliveryQueue.id, rows[0].id));
 
     held = null;
     await manager.releaseHeld(name);
@@ -580,9 +589,10 @@ describe("DeliveryManager: holding deliveries", () => {
     // Stamped with the send, not the release. Parsed via parseDbTimestamp because the
     // column is zone-less UTC text — `new Date(row.created_at)` would read it as local.
     const recorded = parseDbTimestamp(inbound[0].created_at)!.getTime();
+    const ageMinutes = (Date.now() - recorded) / 60_000;
     assert.ok(
-      Math.abs(recorded - arrivedAt) < 5000,
-      `history should carry the arrival time, not the release time (off by ${recorded - arrivedAt}ms)`,
+      ageMinutes > 60,
+      `history should carry the two-hour-old send, not the release (got ${ageMinutes.toFixed(1)}m)`,
     );
 
     // And the marker never reaches the mind as a field.
