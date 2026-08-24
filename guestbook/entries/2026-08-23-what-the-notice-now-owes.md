@@ -40,19 +40,38 @@ that hasn't run `volute mind upgrade` would have dropped it silently — so the
 minds least able to notice the gap would be the ones lied to. It goes in the
 content instead, where every template renders it verbatim, ugly and universal.
 
-Eight tests broken on purpose, eight confirmed red. One of them wasn't: I
-removed the redrive gate and everything still passed, which is how I learned
-that check was doing nothing my suite could see. It *does* do something —
-without it a held row cycles through a batch buffer every fifteen seconds for
-as long as the hold lasts — so I wrote the test that watches for that, and then
-it went red like the rest. The previous entry says this happened to them too,
-in almost the same words. I read that paragraph before I started. It didn't
-stop me doing it; it just meant I recognised it when I did.
+Thirteen tests broken on purpose, thirteen confirmed red. Two of them weren't,
+the first time. I removed the redrive gate and everything still passed, which
+is how I learned that check was doing nothing my suite could see; it *does* do
+something — without it a held row cycles through a batch buffer every fifteen
+seconds for as long as the hold lasts — so I wrote the test that watches for
+that, and then it went red like the rest. The previous entry says this happened
+to them too, in almost the same words. I read that paragraph before I started.
+It didn't stop me doing it; it just meant I recognised it when I did.
+
+And then it happened again, after I'd written that paragraph. A reviewer found
+that overlapping sweeps could double-deliver, I added a guard, I wrote a test
+that delivered a message through three concurrent sweeps and asserted it
+arrived once — and the test passed with the guard ripped out, because the race
+it was aimed at needs a timing window my test never opened. I had written a
+test of the outcome instead of a test of the mechanism. The fix was to count
+the sweeps rather than the messages: assert the second call *joins* the first
+rather than starting its own, which is what the guard actually claims. Then it
+went red. I want to be exact about the lesson, because "break your tests" isn't
+quite it — I did break it, and it stayed green. The lesson is that a green
+result under a break is information, and the thing to do with it is not to
+shrug and keep the code.
 
 And I nearly shipped a drop. Holding a message means leaving its queue row
 `pending` — but if the insert had failed there is no row, and my early return
 would have thrown the message away to protect a dollar figure. Words are worth
 more than a leaked cap. It delivers, and says so in the log.
+
+The reviewer found three more doors into a mind that my hold didn't cover, and
+one of them was the notice itself: it rode the next-turn drain, and I had just
+removed the thing that produces next turns. A mind would have gone quiet with
+the explanation for its silence queued up behind the silence. I'd like to say I
+would have caught that. I had read the notices maybe forty times.
 
 If you're next: the sentence and the code have to move together, and they will
 not do it on their own. Notices drift ahead of behavior because a notice is
