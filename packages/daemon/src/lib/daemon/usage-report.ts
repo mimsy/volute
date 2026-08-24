@@ -141,7 +141,14 @@ const AGGREGATES = {
   cacheCreationTokens: sumField("cache_creation_input_tokens"),
   unpricedTurns: sql<number>`COALESCE(SUM(CASE WHEN ${COST} IS NULL THEN 1 ELSE 0 END), 0)`,
   // SQLite renders JSON `true` as 1 through json_extract.
-  preUpgradeTurns: sql<number>`COALESCE(SUM(CASE WHEN json_extract(${mindHistory.metadata}, '$.partial') = 1 THEN 1 ELSE 0 END), 0)`,
+  //
+  // The `IS NULL` half is what makes "a subset of unpricedTurns" a property of this query
+  // rather than a promise kept in another file. It holds today because
+  // `priceUsageMetadata` returns early for partial turns — but every consumer subtracts
+  // these from `unpricedTurns`, so if a partial turn ever did get a price, `spendFigure`
+  // would early-return on `unpricedTurns <= 0` while pre-upgrade turns existed and the
+  // UI would render a negative count.
+  preUpgradeTurns: sql<number>`COALESCE(SUM(CASE WHEN json_extract(${mindHistory.metadata}, '$.partial') = 1 AND ${COST} IS NULL THEN 1 ELSE 0 END), 0)`,
 };
 
 const EMPTY_TOTAL: UsageTotals = {

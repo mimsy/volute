@@ -193,6 +193,25 @@ describe("usageReport", () => {
     assert.equal(row.preUpgradeTurns, 1, "only the template-partial row is a pre-upgrade turn");
   });
 
+  // preUpgradeTurns must be a subset of unpricedTurns, and structurally so — every
+  // consumer computes `unpricedTurns - preUpgradeTurns` and would go negative otherwise.
+  it("never counts a priced turn as pre-upgrade, even if one were flagged partial", async () => {
+    const mind = `usage-subset-${Date.now()}`;
+    await seed([
+      { mind, at: NOW - 60_000, metadata: { ...preUpgrade(), cost_usd: 0.5 } },
+      { mind, at: NOW - 120_000, metadata: preUpgrade() },
+    ]);
+
+    const row = (await usageReport({ window: "24h", mind, now: NOW })).minds[0];
+    assert.equal(row.turns, 2);
+    assert.equal(row.unpricedTurns, 1, "only the genuinely unpriced turn");
+    assert.equal(row.preUpgradeTurns, 1, "the priced-but-partial turn is not pre-upgrade");
+    assert.ok(
+      row.preUpgradeTurns <= row.unpricedTurns,
+      "pre-upgrade turns are a subset of unpriced turns",
+    );
+  });
+
   it("scopes to one mind when asked", async () => {
     const mine = `usage-scope-mine-${Date.now()}`;
     const other = `usage-scope-other-${Date.now()}`;

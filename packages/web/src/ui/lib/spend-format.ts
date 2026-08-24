@@ -151,6 +151,54 @@ export function parsePositiveInt(value: unknown): number | null {
   return Number.isInteger(n) && n > 0 ? n : null;
 }
 
+/**
+ * What a spend-cap edit resolves to: a value to save, or the reason it can't be.
+ *
+ * `amount: null` means "no cap" and is only ever reached by *clearing* the field.
+ * A 0 or a negative never resolves to it — see below.
+ */
+export type CapEdit =
+  | { ok: true; amount: number | null; periodMinutes: number | null }
+  | { ok: false; error: string };
+
+/**
+ * Resolve the two halves of a spend-cap control into what should be saved.
+ *
+ * The trap this exists to close: `null` is the wire value for "no cap", and
+ * `parsePositiveNumber` maps 0 to null. So a host who types **0 meaning "this mind
+ * spends nothing"** would have silently deleted the cap and got a mind with no limit —
+ * the exact opposite of the intent, with no error, and the bill as the first evidence.
+ * The same inversion was already fixed server-side (mind-defaults takes `positive()`,
+ * not `nonnegative()`) and guarded in Settings.svelte for the install-wide cap; this is
+ * the third door into it.
+ *
+ * A blank *amount* still means "no cap" — that is a deliberate clearing gesture, not a
+ * number that happens to be zero.
+ */
+export function resolveCapEdit(input: {
+  amount: unknown;
+  custom: boolean;
+  period: number;
+  customPeriod: unknown;
+}): CapEdit {
+  const text = input.amount == null ? "" : String(input.amount).trim();
+  if (!text) return { ok: true, amount: null, periodMinutes: null };
+
+  const amount = parsePositiveNumber(text);
+  if (amount == null) {
+    return { ok: false, error: "Enter an amount above 0, or leave blank for no cap." };
+  }
+  if (!input.custom) return { ok: true, amount, periodMinutes: input.period };
+
+  // A blank custom period used to fall back to a day silently, persisting a window the
+  // host never chose while the field still read empty.
+  const periodMinutes = parsePositiveInt(input.customPeriod);
+  if (periodMinutes == null) {
+    return { ok: false, error: "Enter a period of 1 minute or more." };
+  }
+  return { ok: true, amount, periodMinutes };
+}
+
 /** Where a percentage sits against a cap — drives colour and wording alike. */
 export type CapLevel = "ok" | "warning" | "over";
 

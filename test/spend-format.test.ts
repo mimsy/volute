@@ -10,6 +10,7 @@ import {
   formatUsd,
   parsePositiveInt,
   parsePositiveNumber,
+  resolveCapEdit,
   spendFigure,
   unpricedLabel,
 } from "../packages/web/src/ui/lib/spend-format.js";
@@ -117,6 +118,79 @@ describe("parsePositiveNumber / parsePositiveInt", () => {
   it("refuses junk", () => {
     assert.equal(parsePositiveNumber("abc"), null);
     assert.equal(parsePositiveInt("abc"), null);
+  });
+});
+
+describe("resolveCapEdit", () => {
+  const base = { custom: false, period: 1440, customPeriod: "" };
+
+  it("saves a valid amount with the chosen preset period", () => {
+    assert.deepEqual(resolveCapEdit({ ...base, amount: "2.50" }), {
+      ok: true,
+      amount: 2.5,
+      periodMinutes: 1440,
+    });
+    // A number input hands back a number, not a string.
+    assert.deepEqual(resolveCapEdit({ ...base, amount: 6, period: 720 }), {
+      ok: true,
+      amount: 6,
+      periodMinutes: 720,
+    });
+  });
+
+  it("treats a cleared amount as no cap — that is the deliberate gesture", () => {
+    for (const amount of ["", "  ", null, undefined]) {
+      assert.deepEqual(
+        resolveCapEdit({ ...base, amount }),
+        { ok: true, amount: null, periodMinutes: null },
+        `cleared via ${JSON.stringify(amount)}`,
+      );
+    }
+  });
+
+  // The blocker: 0 parses to null, null is the wire value for "no cap", so accepting a 0
+  // would delete the cap of a host who typed it meaning "spend nothing".
+  it("refuses 0 rather than reading it as no cap", () => {
+    const r = resolveCapEdit({ ...base, amount: 0 });
+    assert.equal(r.ok, false);
+    assert.match(r.ok === false ? r.error : "", /above 0/);
+    assert.equal(resolveCapEdit({ ...base, amount: "0" }).ok, false);
+    assert.equal(resolveCapEdit({ ...base, amount: "0.00" }).ok, false);
+  });
+
+  it("refuses negatives and junk", () => {
+    assert.equal(resolveCapEdit({ ...base, amount: -2 }).ok, false);
+    assert.equal(resolveCapEdit({ ...base, amount: "abc" }).ok, false);
+  });
+
+  it("uses a valid custom period", () => {
+    assert.deepEqual(
+      resolveCapEdit({ amount: "3", custom: true, period: 1440, customPeriod: "90" }),
+      { ok: true, amount: 3, periodMinutes: 90 },
+    );
+  });
+
+  // Used to persist 1440 silently while the custom box still read empty.
+  it("refuses a blank or invalid custom period rather than substituting a day", () => {
+    const blank = resolveCapEdit({ amount: "3", custom: true, period: 1440, customPeriod: "" });
+    assert.equal(blank.ok, false);
+    assert.match(blank.ok === false ? blank.error : "", /1 minute or more/);
+    assert.equal(
+      resolveCapEdit({ amount: "3", custom: true, period: 1440, customPeriod: 0 }).ok,
+      false,
+    );
+    assert.equal(
+      resolveCapEdit({ amount: "3", custom: true, period: 1440, customPeriod: "abc" }).ok,
+      false,
+    );
+  });
+
+  it("still clears the cap from a blank amount even on a broken custom period", () => {
+    assert.deepEqual(resolveCapEdit({ amount: "", custom: true, period: 1440, customPeriod: "" }), {
+      ok: true,
+      amount: null,
+      periodMinutes: null,
+    });
   });
 });
 

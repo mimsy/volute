@@ -1,6 +1,6 @@
 <script lang="ts">
 import { Input, Select } from "@volute/ui";
-import { formatPeriod, parsePositiveInt, parsePositiveNumber } from "../lib/spend-format";
+import { formatPeriod, parsePositiveInt, resolveCapEdit } from "../lib/spend-format";
 
 /**
  * A spend cap as the sentence it is — `$ 2.00 per day` — rather than two bare numbers.
@@ -39,16 +39,26 @@ $effect.pre(() => {
   period = p;
   custom = periodMinutes != null && !PRESETS.includes(periodMinutes);
   customText = periodMinutes != null ? String(periodMinutes) : "";
+  error = "";
 });
 
-function currentPeriod(): number | null {
-  return custom ? parsePositiveInt(customText) : period;
-}
+let error = $state("");
 
+/**
+ * Save what the two fields resolve to — or refuse and say why.
+ *
+ * Refusing matters more than it looks: "no cap" travels as null, and a 0 would parse to
+ * null too, so accepting a 0 would remove the cap of a host who typed it meaning the
+ * opposite. Nothing is emitted unless it is a value they actually asked for.
+ */
 function emit() {
-  const value = parsePositiveNumber(amountText);
-  // A cap with no amount has no period to speak of; clearing both is how "no cap" reads.
-  onsave(value, value == null ? null : (currentPeriod() ?? DEFAULT_PERIOD));
+  const result = resolveCapEdit({ amount: amountText, custom, period, customPeriod: customText });
+  if (!result.ok) {
+    error = result.error;
+    return;
+  }
+  error = "";
+  onsave(result.amount, result.periodMinutes);
 }
 
 function onPeriodChange(e: Event) {
@@ -64,12 +74,13 @@ function onPeriodChange(e: Event) {
 }
 </script>
 
+<span class="cap-field">
 <span class="cap-input">
   <span class="dollar">$</span>
   <Input
     type="number"
     width="80px"
-    min="0"
+    min="0.01"
     step="0.01"
     bind:value={amountText}
     onblur={emit}
@@ -97,8 +108,23 @@ function onPeriodChange(e: Event) {
     <span class="per">min</span>
   {/if}
 </span>
+{#if error}
+  <span class="cap-error">{error}</span>
+{/if}
+</span>
 
 <style>
+  .cap-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .cap-error {
+    font-size: 11px;
+    color: var(--red);
+  }
+
   .cap-input {
     display: flex;
     align-items: center;
