@@ -1742,6 +1742,19 @@ describe("daemon e2e", { timeout: 420000 }, () => {
       await new Promise((r) => setTimeout(r, 500));
     }
     assert.equal(left, 0, "clearing the cap releases the held message");
+
+    // Leave the mind as this test found it. Starting it — and delivering to it — produces
+    // turn/summary rows that a later test reads as cross-session activity while asserting
+    // there is none; the mind was stopped for that stretch before this test existed.
+    await daemonRequest(`/api/v1/minds/${TEST_MIND}/stop`, { method: "POST" });
+    const { mindHistory, summaries, systemEvents, turns } = await import(
+      "../packages/daemon/src/lib/schema.js"
+    );
+    await db.delete(turns).where(eq(turns.mind, TEST_MIND));
+    await db.delete(summaries).where(eq(summaries.mind, TEST_MIND));
+    await db.delete(mindHistory).where(eq(mindHistory.mind, TEST_MIND));
+    await db.delete(systemEvents).where(eq(systemEvents.mind, TEST_MIND));
+    await db.delete(deliveryQueue).where(eq(deliveryQueue.mind, TEST_MIND));
   });
 
   it("spirit availability: DM to a stopped spirit starts it on demand (#434)", {
