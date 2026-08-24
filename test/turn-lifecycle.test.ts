@@ -759,6 +759,8 @@ describe("turn-lifecycle: spend cap notices", () => {
       assert.match(body, /\$0\.85/, "names the spend so far");
       assert.match(body, /\$1\.00/, "names the cap");
       assert.match(body, /resets in about 1 hour/, "says when the period resets");
+      // A heads-up that doesn't say what it is warning about isn't one.
+      assert.match(body, /At 100%.*held/is, "names the consequence of reaching the cap");
       assert.doesNotMatch(body, /couldn't be priced/, "nothing was unpriced");
     } finally {
       await sb.removeBudget(mind);
@@ -797,9 +799,16 @@ describe("turn-lifecycle: spend cap notices", () => {
       assert.equal(notices.length, 1);
       assert.match(notices[0].body, /spent your full/, "exceeded wording");
       assert.match(notices[0].body, /resets in about 1 hour/, "exceeded notice names the reset");
-      // Nothing actually pauses a mind at its cap — `enqueue` has no caller and
-      // `delivery/` never consults the budget — so the notice must not claim it does.
-      assert.doesNotMatch(notices[0].body, /pause|kept for you|queued/i, "promises no pause");
+      // The notice may now promise a hold, because the delivery manager actually performs
+      // one — `holdFor` gates every POST. Whatever the wording claims has to be true of
+      // the code: messages are held, they are not lost, and they arrive when it resets.
+      assert.match(notices[0].body, /being held/i, "states that messages are held");
+      assert.match(notices[0].body, /aren't lost/i, "and that nothing is dropped");
+      assert.match(
+        notices[0].body,
+        /schedules still fire|own tools still work/i,
+        "and that the hold is on receiving, not on the mind acting",
+      );
     } finally {
       await sb.removeBudget(mind);
       await cleanup(mind);
@@ -840,7 +849,7 @@ describe("turn-lifecycle: spend cap notices", () => {
       assert.match(notices[0].body, /This install/, "attributes the spend to the install");
       assert.match(notices[0].body, /not yours in particular/);
       assert.doesNotMatch(notices[0].body, /You've spent your full/, "does not blame the mind");
-      assert.doesNotMatch(notices[0].body, /pause|kept for you|queued/i, "promises no pause");
+      assert.match(notices[0].body, /being held/i, "states that messages are held");
       assert.match(notices[0].meta ?? "", /system_spend_cap/);
     } finally {
       sb.setSystemCap(null);

@@ -347,6 +347,14 @@ export async function startDaemon(opts: {
     );
   }
   spendBudget.start();
+  // Make the cap a limit rather than a meter: a mind over either bucket has its inbound
+  // deliveries held (rows stay `pending`) until the period resets. Wired before any mind
+  // boots — the first redrive sweep happens after mind startup has restored each mind's
+  // bucket, so an over-cap mind is never handed a burst of held messages at boot.
+  delivery.setHoldCheck((baseName) => {
+    const hold = spendBudget.holdFor(baseName);
+    return hold ? { reason: "spend_cap", scope: hold.scope } : null;
+  });
   const sleepManager = initSleepManager();
   sleepManager.start();
   const summarizer = initSummarizer();

@@ -151,6 +151,58 @@ type QueuedMessage = {
   queueId?: number;
 };
 
+/**
+ * A reason to hold a delivery instead of POSTing it. A hold is a *scheduling* decision,
+ * not a delivery failure: the row stays `pending` with its attempt count untouched and no
+ * backoff, so the redrive sweep re-offers it every pass and it goes out the moment the
+ * reason clears. Nothing is dropped and nothing is dead-lettered.
+ *
+ * `reason` is an open string so a second, independent reason to hold can be added without
+ * touching this file — the concurrency gate proposed in #823 wants the same choke point,
+ * and one gate with two reasons is better than two gates racing each other.
+ */
+export type DeliveryHold = { reason: string; scope: "mind" | "system" };
+
+/** Local `YYYY-MM-DD HH:MM`, for a held message telling a mind when it actually arrived. */
+function compactLocal(at: number): string {
+  const d = new Date(at);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return (
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ` +
+    `${pad(d.getHours())}:${pad(d.getMinutes())}`
+  );
+}
+
+/**
+ * Render a held message's wait into its content, and strip the marker so it never reaches
+ * the mind as a raw field.
+ *
+ * The preface goes into `content` — not into a new payload field — because every template
+ * already renders content verbatim, while a new field would be silently dropped by every
+ * mind that hasn't run `volute mind upgrade`. A message that waited hours and arrives
+ * looking brand new is a small lie told to exactly the minds least equipped to catch it.
+ *
+ * It claims only what is true in every release path. A hold ends when the period resets,
+ * but also when a host raises or clears the cap, so the line says the message waited and
+ * is arriving now, and does not assert why it stopped waiting.
+ */
+export function withHeldPreface(payload: DeliveryPayload): DeliveryPayload {
+  const held = payload.held;
+  if (!held) return payload;
+  const { held: _marker, ...rest } = payload;
+  const whose = held.scope === "system" ? "this install's spend cap" : "your spend cap";
+  const line =
+    `[held — this arrived at ${compactLocal(held.at)}, when ${whose} was reached, ` +
+    `and waited rather than reaching you then. It is reaching you now.]`;
+  if (typeof rest.content === "string") {
+    return { ...rest, content: `${line}\n${rest.content}` };
+  }
+  if (Array.isArray(rest.content)) {
+    return { ...rest, content: [{ type: "text", text: line }, ...rest.content] };
+  }
+  return rest;
+}
+
 /** The delivery_queue fields a dead-lettered row carries into its failure notice. */
 type DeadLetterRow = {
   id: number;
@@ -197,6 +249,13 @@ export class DeliveryManager {
   private redriveTimer: ReturnType<typeof setInterval> | null = null;
 
   /** Predicate for whether a mind is up; overridable in tests. */
+  /**
+   * Whether a delivery to this (mind, session) must wait. Injected rather than imported so
+   * `delivery/` stays free of a dependency on the spend budget (and, later, on whatever
+   * else wants to hold — #823's concurrency gate is the next one).
+   */
+  private holdCheck: (baseName: string, session: string) => DeliveryHold | null = () => null;
+
   private isMindRunning: (baseName: string) => boolean = (name) =>
     tryGetMindManager()?.isRunning(name) ?? false;
 
@@ -232,6 +291,15 @@ export class DeliveryManager {
   }
 
   /** Test seam: override the mind-running predicate. */
+  /**
+   * Install the hold check. A single resolver, not a list: a caller that wants to hold for
+   * a second reason ORs it into the same function, which keeps the "why is this message
+   * waiting" answer in one place instead of spread across independently-registered gates.
+   */
+  setHoldCheck(fn: (baseName: string, session: string) => DeliveryHold | null): void {
+    this.holdCheck = fn;
+  }
+
   setRunningCheck(fn: (baseName: string) => boolean): void {
     this.isMindRunning = fn;
   }
@@ -442,6 +510,15 @@ export class DeliveryManager {
           log.errorData(parseErr),
         );
         await this.deleteQueueRows([row.id]);
+        continue;
+      }
+
+      // Check the hold BEFORE the batch buffer: a held row added to a buffer would flush,
+      // be held at the POST, be re-added on the next sweep, and churn a timer every pass
+      // for as long as the hold lasts.
+      const hold = this.holdCheck(row.mind, row.thread);
+      if (hold) {
+        await this.markHeld(row.id, payload, hold);
         continue;
       }
 
@@ -1263,6 +1340,37 @@ export class DeliveryManager {
     return run;
   }
 
+  /**
+   * Stamp a row as held, once, so the wait can be shown to the mind when it finally
+   * arrives. Persisted into the row's own payload JSON rather than a new column: the
+   * payload is already ours, and the marker has to survive a daemon restart because a
+   * hold can outlive one (a daily cap holds for up to a day).
+   *
+   * Mutates `payload` as well as the row so the in-memory copy a batch buffer is holding
+   * matches what is on disk. A row already marked is left alone — the *first* time it was
+   * held is the honest answer to "how long did this wait", and the redrive sweep re-offers
+   * a held row every pass.
+   */
+  private async markHeld(
+    queueId: number,
+    payload: DeliveryPayload,
+    hold: DeliveryHold,
+  ): Promise<void> {
+    if (payload.held) return;
+    payload.held = { at: Date.now(), scope: hold.scope };
+    try {
+      const db = await getDb();
+      await db
+        .update(deliveryQueue)
+        .set({ payload: JSON.stringify(payload) })
+        .where(eq(deliveryQueue.id, queueId));
+    } catch (err) {
+      // Non-fatal: the row is still held and still pending. Only the "this waited"
+      // preface is lost, and only if the daemon restarts before the next attempt.
+      dlog.warn(`failed to mark delivery ${queueId} held`, log.errorData(err));
+    }
+  }
+
   /** Delete delivered queue rows by their specific ids. */
   private async deleteQueueRows(ids: (number | undefined)[]): Promise<void> {
     const valid = [...new Set(ids.filter((id): id is number => typeof id === "number"))];
@@ -1461,6 +1569,28 @@ export class DeliveryManager {
       }
       const { baseName, port } = resolved;
 
+      // Held? Leave the row `pending` and touch nothing else — before the active count,
+      // before the stale-send baseline, before typing indicators. A mind that never saw
+      // this message must not be recorded as having seen it, must not appear to be
+      // typing about it, and must not have a reply of its own gated against it.
+      //
+      // Only a message the queue is actually holding can be held: with no row (the insert
+      // failed), there is nothing to redeliver from, so holding it would silently destroy
+      // what someone said. A cap is worth leaking before a message is worth losing.
+      const hold = this.holdCheck(baseName, session);
+      if (hold && queueId != null) {
+        dlog.debug(`holding delivery to ${baseName}/${session} (${hold.reason})`);
+        await this.markHeld(queueId, payload, hold);
+        this.inFlight.delete(queueId);
+        return;
+      }
+      if (hold) {
+        dlog.warn(
+          `delivering to ${baseName}/${session} despite a ${hold.reason} hold: the message ` +
+            `has no delivery_queue row, so holding it would drop it`,
+        );
+      }
+
       // Increment active count before delivery with sender/channel metadata
       const senders = new Set<string>();
       if (payload.sender) senders.add(payload.sender);
@@ -1497,7 +1627,9 @@ export class DeliveryManager {
       onMindEvent(baseName, "delivery", payload.channel);
 
       // Enrich with participant profiles on first encounter per channel
-      const enrichedPayload = await this.enrichWithProfiles(baseName, session, payload);
+      const enrichedPayload = withHeldPreface(
+        await this.enrichWithProfiles(baseName, session, payload),
+      );
 
       const body = JSON.stringify({
         ...enrichedPayload,
@@ -1551,6 +1683,27 @@ export class DeliveryManager {
       }
       const { baseName, port } = resolved;
 
+      // Held? Same as the immediate path: the whole batch stays `pending` and untouched.
+      // A batch is delivered as one envelope, so it is held only when every message in it
+      // has a row to be held in — otherwise the unpersisted ones would have nothing to come
+      // back from, and a hold would quietly become a deletion.
+      const hold = this.holdCheck(baseName, session);
+      if (hold && queueIds.length === messages.length) {
+        dlog.debug(
+          `holding batch of ${messages.length} to ${baseName}/${session} (${hold.reason})`,
+        );
+        for (const msg of messages) await this.markHeld(msg.queueId!, msg.payload, hold);
+        for (const id of queueIds) this.inFlight.delete(id);
+        return;
+      }
+      if (hold) {
+        dlog.warn(
+          `delivering a batch to ${baseName}/${session} despite a ${hold.reason} hold: ` +
+            `${messages.length - queueIds.length} message(s) have no delivery_queue row, ` +
+            `so holding the batch would drop them`,
+        );
+      }
+
       // Enrich first message per new channel with participant profiles
       const firstPerChannel = new Set<string>();
       const isFirstForChannel: boolean[] = [];
@@ -1565,7 +1718,7 @@ export class DeliveryManager {
           const enrichedPayload = await this.enrichWithProfiles(baseName, session, msg.payload);
           return { ...msg, payload: enrichedPayload };
         }),
-      );
+      ).then((msgs) => msgs.map((m) => ({ ...m, payload: withHeldPreface(m.payload) })));
 
       // Group messages by channel
       const channels: Record<string, DeliveryPayload[]> = {};

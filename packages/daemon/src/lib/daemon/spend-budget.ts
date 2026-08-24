@@ -1,7 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { deliverEvent } from "../chat/system-events.js";
 import { stateDir, voluteSystemDir } from "../mind/registry.js";
 import log from "../util/logger.js";
 
@@ -11,13 +10,6 @@ const tlog = log.child("spend-budget");
 export const DEFAULT_SPEND_PERIOD_MINUTES = 1440;
 /** The system bucket is always a day — `systemSpendCapPerDay` says so in its name. */
 const SYSTEM_PERIOD_MINUTES = 1440;
-const MAX_QUEUE_SIZE = 100;
-
-type QueuedMessage = {
-  channel: string;
-  sender: string | null;
-  textContent: string;
-};
 
 type BudgetState = {
   /** USD spent in the current period. */
@@ -33,7 +25,6 @@ type BudgetState = {
    * an incomplete figure as exact.
    */
   hasUnpricedTurns: boolean;
-  queue: QueuedMessage[];
   warningInjected: boolean;
   exceededNotified: boolean;
 };
@@ -56,7 +47,6 @@ function newState(capUsd: number, periodMinutes: number): BudgetState {
     periodMinutes,
     capUsd,
     hasUnpricedTurns: false,
-    queue: [],
     warningInjected: false,
     exceededNotified: false,
   };
@@ -308,31 +298,30 @@ export class SpendBudget {
   }
 
   /**
-   * Hold a message for a mind that is over budget, replaying it when the period
-   * resets (see `tick`/`replay`).
+   * Whether this mind's inbound deliveries should be held, and which bucket says so.
+   * Null means deliver normally.
    *
-   * Nothing calls this yet: `delivery/` has never consulted the budget, so no mind
-   * has ever actually been paused — exceeding a cap records a notice and nothing
-   * more. Kept deliberately rather than pruned as dead code. It is one call site
-   * away from being real, and it encodes a decision about how a limit should feel
-   * (hold the words, don't drop them) that would be lost if it were deleted and
-   * re-derived later.
+   * This is what makes a cap a limit rather than a meter: {@link DeliveryManager}
+   * consults it before every POST and leaves held rows `pending` in `delivery_queue`,
+   * where its own redrive sweep picks them up once this returns null again.
+   *
+   * Deliberately reads the level, not the once-per-period notification flags
+   * `checkBudget` consults: a mind whose exceeded notice failed to record is still
+   * over its cap, and a hold that depended on a notice landing would be a cap that
+   * unbinds itself on a transient DB error.
+   *
+   * The system bucket wins a tie for the same reason it does in `checkBudget` —
+   * naming the mind's own cap when the install's is what tripped would be false.
    */
-  enqueue(mind: string, message: QueuedMessage): void {
-    const state = this.budgets.get(mind);
-    if (!state) return;
-    if (state.queue.length >= MAX_QUEUE_SIZE) {
-      state.queue.shift();
+  holdFor(mind: string): { scope: BudgetScope; resetAt: number } | null {
+    if (this.system && this.system.spentUsd >= this.system.capUsd) {
+      return { scope: "system", resetAt: periodEnd(this.system) };
     }
-    state.queue.push(message);
-  }
-
-  drain(mind: string): QueuedMessage[] {
     const state = this.budgets.get(mind);
-    if (!state) return [];
-    const messages = state.queue;
-    state.queue = [];
-    return messages;
+    if (state && state.spentUsd >= state.capUsd) {
+      return { scope: "mind", resetAt: periodEnd(state) };
+    }
+    return null;
   }
 
   getUsage(mind: string): {
@@ -342,7 +331,6 @@ export class SpendBudget {
     periodStart: number;
     resetAt: number;
     hasUnpricedTurns: boolean;
-    queueLength: number;
     percentUsed: number;
   } | null {
     const state = this.budgets.get(mind);
@@ -354,7 +342,6 @@ export class SpendBudget {
       periodStart: state.periodStart,
       resetAt: periodEnd(state),
       hasUnpricedTurns: state.hasUnpricedTurns,
-      queueLength: state.queue.length,
       percentUsed: Math.round((state.spentUsd / state.capUsd) * 100),
     };
   }
@@ -388,11 +375,14 @@ export class SpendBudget {
 
   async tick(): Promise<void> {
     const now = Date.now();
+    /** A bucket rolled over, so some mind's hold may have just ended. */
+    let released = false;
     if (this.system && now - this.system.periodStart >= this.system.periodMinutes * 60_000) {
       this.resetPeriod(this.system, now);
       // A new install-wide period: every mind can be told about it again.
       this.systemAcks.clear();
       this.systemDirty = true;
+      released = true;
     }
     for (const [mind, state] of this.budgets) {
       const elapsed = now - state.periodStart;
@@ -401,15 +391,10 @@ export class SpendBudget {
         // the install's day and must survive, or the same system notice repeats.
         this.resetPeriod(state, now);
         this.dirty.add(mind);
-
-        const queued = this.drain(mind);
-        if (queued.length > 0) {
-          this.replay(mind, queued).catch((err) => {
-            tlog.warn(`replay error for ${mind}`, log.errorData(err));
-          });
-        }
+        released = true;
       }
     }
+    if (released) releaseHeldDeliveries();
     await this.flush();
   }
 
@@ -461,7 +446,6 @@ export class SpendBudget {
         hasUnpricedTurns: state.hasUnpricedTurns,
         warningInjected: state.warningInjected,
         exceededNotified: state.exceededNotified,
-        queue: state.queue,
       };
       await writeFile(path, `${JSON.stringify(data)}\n`);
     } catch (err) {
@@ -487,7 +471,6 @@ export class SpendBudget {
         hasUnpricedTurns: data.hasUnpricedTurns ?? false,
         warningInjected: data.warningInjected ?? false,
         exceededNotified: data.exceededNotified ?? false,
-        queue: Array.isArray(data.queue) ? data.queue : [],
         periodMinutes: 0, // will be overwritten by caller
         capUsd: 0, // will be overwritten by caller
       };
@@ -496,30 +479,19 @@ export class SpendBudget {
       return null;
     }
   }
+}
 
-  private async replay(mindName: string, messages: QueuedMessage[]): Promise<void> {
-    const summary = messages
-      .map((m) => {
-        const from = m.sender ? `[${m.sender}]` : "";
-        const ch = m.channel ? `(${m.channel})` : "";
-        return `${from}${ch} ${m.textContent}`;
-      })
-      .join("\n");
-
-    try {
-      await deliverEvent(mindName, {
-        type: "budget",
-        meta: { subtype: "replay" },
-        body: `${messages.length} queued message(s) from the previous budget period:\n\n${summary}`,
-      });
-      tlog.info(`replayed ${messages.length} queued message(s) for ${mindName}`);
-    } catch (err) {
-      tlog.warn(`failed to replay for ${mindName}`, log.errorData(err));
-      // Re-enqueue so messages aren't lost
-      const state = this.budgets.get(mindName);
-      if (state) state.queue.push(...messages);
-    }
-  }
+/**
+ * Nudge the delivery manager to sweep now that a spend period has rolled over, rather
+ * than making held messages wait out the periodic redrive interval on top of the wait
+ * they already served. The rows are `pending` either way — this only changes when they
+ * are noticed. Imported lazily: the delivery manager is a peer of this module, and a
+ * static import in this direction would close a cycle.
+ */
+function releaseHeldDeliveries(): void {
+  import("../delivery/delivery-manager.js")
+    .then(({ tryGetDeliveryManager }) => tryGetDeliveryManager()?.redrive())
+    .catch((err) => tlog.warn("failed to release held deliveries", log.errorData(err)));
 }
 
 let instance: SpendBudget | null = null;

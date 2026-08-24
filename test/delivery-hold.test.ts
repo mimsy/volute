@@ -1,0 +1,390 @@
+import assert from "node:assert/strict";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { createServer, type Server } from "node:http";
+import { resolve } from "node:path";
+import { afterEach, describe, it } from "node:test";
+import { and, eq } from "drizzle-orm";
+import { getDb } from "../packages/daemon/src/lib/db.js";
+import {
+  type DeliveryHold,
+  DeliveryManager,
+  withHeldPreface,
+} from "../packages/daemon/src/lib/delivery/delivery-manager.js";
+import {
+  clearConfigCache,
+  type DeliveryPayload,
+  type RoutingConfig,
+} from "../packages/daemon/src/lib/delivery/delivery-router.js";
+import { addMind, removeMind } from "../packages/daemon/src/lib/mind/registry.js";
+import { deliveryQueue } from "../packages/daemon/src/lib/schema.js";
+
+// --- Helpers (mirrors test/delivery-durability.test.ts) ---
+
+async function startMindServer(delayMs = 0): Promise<{
+  server: Server;
+  port: number;
+  received: MindEnvelope[];
+}> {
+  const received: MindEnvelope[] = [];
+  const server = createServer((req, res) => {
+    let raw = "";
+    req.on("data", (c) => {
+      raw += c;
+    });
+    req.on("end", () => {
+      const respond = () => {
+        try {
+          received.push(JSON.parse(raw));
+        } catch {
+          received.push({ content: raw });
+        }
+        res.writeHead(200, { "Content-Type": "application/json" }).end("{}");
+      };
+      if (delayMs > 0) setTimeout(respond, delayMs);
+      else respond();
+    });
+  });
+  const port: number = await new Promise((r) => {
+    server.listen(0, "127.0.0.1", () => r((server.address() as { port: number }).port));
+  });
+  return { server, port, received };
+}
+
+async function registerMind(port: number, config: RoutingConfig | object): Promise<string> {
+  const name = `hold-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  await addMind(name, port);
+  const configDir = resolve(process.env.VOLUTE_HOME!, "minds", name, "home/.config");
+  mkdirSync(configDir, { recursive: true });
+  writeFileSync(resolve(configDir, "routes.json"), JSON.stringify(config));
+  return name;
+}
+
+async function queueRows(mind: string, status = "pending") {
+  const db = await getDb();
+  return db
+    .select()
+    .from(deliveryQueue)
+    .where(and(eq(deliveryQueue.mind, mind), eq(deliveryQueue.status, status)));
+}
+
+async function waitFor(cond: () => Promise<boolean> | boolean, timeoutMs = 3000): Promise<void> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (await cond()) return;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  throw new Error("waitFor timed out");
+}
+
+type MindEnvelope = {
+  content?: unknown;
+  batch?: { channels?: Record<string, { content?: unknown }[]> };
+};
+
+/** Text the mind actually received, across both the immediate and batch envelope shapes. */
+function receivedText(body: MindEnvelope): string {
+  const parts: unknown[] = [];
+  if (body.content !== undefined) parts.push(body.content);
+  for (const msgs of Object.values(body.batch?.channels ?? {})) {
+    for (const m of msgs) parts.push(m.content);
+  }
+  return parts
+    .flatMap((c) =>
+      typeof c === "string"
+        ? [c]
+        : Array.isArray(c)
+          ? c.map((b) => (b as { text?: string }).text ?? "")
+          : [JSON.stringify(c)],
+    )
+    .join("\n");
+}
+
+const IMMEDIATE: RoutingConfig = {
+  rules: [{ channel: "*", thread: "main" }],
+  gateUnmatched: false,
+};
+
+const BATCH = {
+  rules: [{ channel: "test:*", thread: "group" }],
+  threads: { group: { delivery: { mode: "batch", debounce: 0, maxWait: 0 } } },
+  gateUnmatched: false,
+};
+
+const SPEND_HOLD: DeliveryHold = { reason: "spend_cap", scope: "mind" };
+
+describe("DeliveryManager: holding deliveries", () => {
+  let manager: DeliveryManager;
+  const servers: Server[] = [];
+
+  afterEach(() => {
+    manager?.dispose();
+    clearConfigCache();
+    for (const s of servers.splice(0)) s.close();
+  });
+
+  it("holds the POST and leaves the row pending, untouched", async () => {
+    const srv = await startMindServer();
+    servers.push(srv.server);
+    const name = await registerMind(srv.port, IMMEDIATE);
+
+    manager = new DeliveryManager();
+    manager.setRunningCheck(() => true);
+    manager.setHoldCheck(() => SPEND_HOLD);
+
+    await manager.routeAndDeliver(name, { channel: "test:ch", sender: "alice", content: "hi" });
+
+    assert.equal(srv.received.length, 0, "a held mind is not POSTed to");
+    const rows = await queueRows(name);
+    assert.equal(rows.length, 1, "the message is kept, not dropped");
+    // A hold is a scheduling decision, not a delivery failure: nothing here may look like
+    // one, or a long hold would walk the row into the dead-letter ceiling.
+    assert.equal(rows[0].attempts, 0, "a hold does not count as an attempt");
+    assert.equal(rows[0].next_attempt_at, null, "a hold sets no backoff window");
+    assert.equal(rows[0].status, "pending", "the redrive sweep still owns it");
+
+    await removeMind(name);
+  });
+
+  it("delivers normally when nothing is holding, with no preface", async () => {
+    const srv = await startMindServer();
+    servers.push(srv.server);
+    const name = await registerMind(srv.port, IMMEDIATE);
+
+    manager = new DeliveryManager();
+    manager.setRunningCheck(() => true);
+    manager.setHoldCheck(() => null);
+
+    await manager.routeAndDeliver(name, { channel: "test:ch", sender: "alice", content: "hi" });
+
+    assert.equal(srv.received.length, 1);
+    assert.equal(receivedText(srv.received[0]), "hi", "an unheld message is not annotated");
+    assert.equal((await queueRows(name)).length, 0);
+
+    await removeMind(name);
+  });
+
+  it("releases held messages on redrive, framed as having waited", async () => {
+    const srv = await startMindServer();
+    servers.push(srv.server);
+    const name = await registerMind(srv.port, IMMEDIATE);
+
+    manager = new DeliveryManager();
+    manager.setRunningCheck(() => true);
+    let held: DeliveryHold | null = SPEND_HOLD;
+    manager.setHoldCheck(() => held);
+
+    await manager.routeAndDeliver(name, { channel: "test:ch", sender: "alice", content: "hi" });
+    assert.equal(srv.received.length, 0);
+
+    // The period rolls over.
+    held = null;
+    await manager.redrive();
+    await waitFor(async () => (await queueRows(name)).length === 0);
+
+    assert.equal(srv.received.length, 1, "the held message is delivered, not lost");
+    const text = receivedText(srv.received[0]);
+    assert.match(text, /^\[held —/, "arrives prefaced rather than as new traffic");
+    assert.match(text, /your spend cap/, "names why it waited");
+    assert.match(text, /hi$/, "and still carries what was said");
+
+    await removeMind(name);
+  });
+
+  it("names the install's cap, not the mind's, when the system bucket holds", async () => {
+    const srv = await startMindServer();
+    servers.push(srv.server);
+    const name = await registerMind(srv.port, IMMEDIATE);
+
+    manager = new DeliveryManager();
+    manager.setRunningCheck(() => true);
+    let held: DeliveryHold | null = { reason: "spend_cap", scope: "system" };
+    manager.setHoldCheck(() => held);
+
+    await manager.routeAndDeliver(name, { channel: "test:ch", sender: "alice", content: "hi" });
+    held = null;
+    await manager.redrive();
+    await waitFor(async () => (await queueRows(name)).length === 0);
+
+    const text = receivedText(srv.received[0]);
+    assert.match(text, /this install's spend cap/, "a mind is not blamed for the install's cap");
+    assert.doesNotMatch(text, /your spend cap/);
+
+    await removeMind(name);
+  });
+
+  it("repeated sweeps while held neither re-POST nor advance the attempt count", async () => {
+    const srv = await startMindServer();
+    servers.push(srv.server);
+    const name = await registerMind(srv.port, IMMEDIATE);
+
+    manager = new DeliveryManager();
+    manager.setRunningCheck(() => true);
+    manager.setHoldCheck(() => SPEND_HOLD);
+
+    await manager.routeAndDeliver(name, { channel: "test:ch", sender: "alice", content: "hi" });
+    const first = (await queueRows(name))[0];
+    const markedAt = (JSON.parse(first.payload) as DeliveryPayload).held?.at;
+    assert.ok(markedAt, "the row is stamped when it is first held");
+
+    for (let i = 0; i < 3; i++) await manager.redrive();
+
+    const rows = await queueRows(name);
+    assert.equal(srv.received.length, 0);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].attempts, 0);
+    // "How long did this wait" is answered by the FIRST hold, so re-stamping on every
+    // sweep would make a day-long wait read as a few seconds.
+    assert.equal((JSON.parse(rows[0].payload) as DeliveryPayload).held?.at, markedAt);
+
+    await removeMind(name);
+  });
+
+  it("holds a batch too, and releases it prefaced", async () => {
+    const srv = await startMindServer();
+    servers.push(srv.server);
+    const name = await registerMind(srv.port, BATCH);
+
+    manager = new DeliveryManager();
+    manager.setRunningCheck(() => true);
+    let held: DeliveryHold | null = SPEND_HOLD;
+    manager.setHoldCheck(() => held);
+
+    const one = await manager.routeAndDeliver(name, {
+      channel: "test:ch",
+      sender: "alice",
+      content: "one",
+    });
+    assert.equal(one.routed && one.mode, "batch", "this test must exercise the batch path");
+    await manager.routeAndDeliver(name, { channel: "test:ch", sender: "alice", content: "two" });
+
+    await waitFor(async () => (await queueRows(name)).length === 2);
+    await new Promise((r) => setTimeout(r, 300)); // let the batch timers fire
+    assert.equal(srv.received.length, 0, "a held batch is not POSTed");
+    assert.equal((await queueRows(name)).length, 2, "both messages are kept");
+
+    held = null;
+    await manager.redrive();
+    await waitFor(async () => (await queueRows(name)).length === 0, 5000);
+
+    const text = srv.received.map(receivedText).join("\n");
+    assert.match(text, /\[held —/, "the batch arrives framed as having waited");
+    assert.match(text, /one/);
+    assert.match(text, /two/);
+
+    await removeMind(name);
+  });
+
+  it("a held row is not cycled through the batch buffer on every sweep", async () => {
+    // The redrive check exists so a held row is skipped BEFORE it is buffered. Without it
+    // the row is re-buffered, re-timed and re-flushed on every sweep for as long as the
+    // hold lasts — a timer churning every 15s per held message, for up to a day.
+    const srv = await startMindServer();
+    servers.push(srv.server);
+    const name = await registerMind(srv.port, {
+      rules: [{ channel: "test:*", thread: "group" }],
+      threads: { group: { delivery: { mode: "batch", debounce: 5, maxWait: 5 } } },
+      gateUnmatched: false,
+    });
+
+    manager = new DeliveryManager();
+    manager.setRunningCheck(() => true);
+    manager.setHoldCheck(() => SPEND_HOLD);
+
+    await manager.routeAndDeliver(name, { channel: "test:ch", sender: "alice", content: "hi" });
+    // The buffer from the initial enqueue flushes on its own timers; drop it so the sweep
+    // is the only thing that could create one.
+    (manager as unknown as { batchBuffers: Map<string, unknown> }).batchBuffers.clear();
+    (manager as unknown as { inFlight: Set<number> }).inFlight.clear();
+
+    await manager.redrive();
+
+    const buffers = (manager as unknown as { batchBuffers: Map<string, unknown> }).batchBuffers;
+    const inFlight = (manager as unknown as { inFlight: Set<number> }).inFlight;
+    assert.equal(buffers.size, 0, "a held row is not re-buffered by the sweep");
+    assert.equal(inFlight.size, 0, "and is not re-owned, so the sweep can still see it");
+    assert.equal(srv.received.length, 0);
+    assert.equal((await queueRows(name)).length, 1, "and is still there to be released");
+
+    await removeMind(name);
+  });
+
+  it("does not interrupt a delivery already in flight", async () => {
+    // A mind finishes what it is on. The gate is checked before the POST, never during —
+    // so a hold that begins mid-turn cannot cut a thought off in the middle.
+    const srv = await startMindServer(200);
+    servers.push(srv.server);
+    const name = await registerMind(srv.port, IMMEDIATE);
+
+    manager = new DeliveryManager();
+    manager.setRunningCheck(() => true);
+    let held: DeliveryHold | null = null;
+    manager.setHoldCheck(() => held);
+
+    const inFlight = manager.routeAndDeliver(name, {
+      channel: "test:ch",
+      sender: "alice",
+      content: "mid-thought",
+    });
+    // The cap trips while the POST is outstanding.
+    await new Promise((r) => setTimeout(r, 50));
+    held = SPEND_HOLD;
+    await inFlight;
+
+    assert.equal(srv.received.length, 1, "the in-flight delivery completed");
+    assert.equal(receivedText(srv.received[0]), "mid-thought");
+    assert.equal((await queueRows(name)).length, 0, "and was acked, not held");
+
+    await removeMind(name);
+  });
+});
+
+describe("withHeldPreface", () => {
+  it("leaves an unheld payload exactly as it was", () => {
+    const payload: DeliveryPayload = { channel: "c", sender: "a", content: "hi" };
+    assert.equal(withHeldPreface(payload), payload);
+  });
+
+  it("strips the marker so it never reaches the mind as a field", () => {
+    const out = withHeldPreface({
+      channel: "c",
+      sender: "a",
+      content: "hi",
+      held: { at: Date.now(), scope: "mind" },
+    });
+    assert.equal(out.held, undefined);
+  });
+
+  it("prefaces block-array content without disturbing the blocks", () => {
+    const at = Date.now();
+    const out = withHeldPreface({
+      channel: "c",
+      sender: "a",
+      content: [
+        { type: "image", source: {} },
+        { type: "text", text: "hi" },
+      ],
+      held: { at, scope: "mind" },
+    });
+    const blocks = out.content as { type: string; text?: string }[];
+    assert.equal(blocks.length, 3);
+    assert.equal(blocks[0].type, "text");
+    assert.match(blocks[0].text!, /^\[held —/);
+    assert.equal(blocks[1].type, "image", "the original blocks are preserved in order");
+    assert.equal(blocks[2].text, "hi");
+  });
+
+  it("claims only what is true of every release path", () => {
+    const line = (
+      withHeldPreface({
+        channel: "c",
+        sender: "a",
+        content: "hi",
+        held: { at: Date.now(), scope: "mind" },
+      }).content as string
+    ).split("\n")[0];
+    // A hold also ends when a host raises or clears the cap, so the preface must not
+    // assert that the period reset.
+    assert.doesNotMatch(line, /reset/i);
+    assert.match(line, /reaching you now/);
+  });
+});

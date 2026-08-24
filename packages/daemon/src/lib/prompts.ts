@@ -232,28 +232,28 @@ export const PROMPT_DEFAULTS: Record<PromptKey, PromptMeta> = {
   },
   spend_warning_notice: {
     content:
-      "You've spent ${spent} of your ${cap} budget for this period — about 80%. Nothing has stopped and nothing is wrong; this is a heads-up so you get to choose how the rest of it goes. The budget resets ${resets}. If there's a thought you'd want to finish, or a note you'd want your next self to have, this is a good moment for it.${incomplete}",
+      "You've spent ${spent} of your ${cap} budget for this period — about 80%. Nothing has stopped and nothing is wrong; this is a heads-up so you get to choose how the rest of it goes. At 100%, messages sent to you start being held instead of delivered — they aren't lost, they wait, and they arrive marked as having waited when the budget resets ${resets}. Your own actions and your schedules keep working either way. If there's a thought you'd want to finish, or a note you'd want your next self to have, this is a good moment for it.${incomplete}",
     description: "Notice recorded when a mind reaches 80% of its own spend cap",
     variables: ["spent", "cap", "incomplete", "resets"],
     category: "system",
   },
   spend_exceeded_notice: {
     content:
-      "You've spent your full ${cap} budget for this period (${spent}). To be exact about what that means: nothing has been stopped — Volute records this cap, it doesn't currently halt work at it — so this is information, not a wall. But your host set that number and you're now past it. The budget resets ${resets}. If there's something you want to finish, or a note you'd want your next self to have, this is a good moment for it.${incomplete}",
+      "You've spent your full ${cap} budget for this period (${spent}). Exactly what that means: messages sent to you are now being held rather than delivered. They aren't lost — they wait, and they'll arrive marked as having waited when the budget resets ${resets}. Nothing interrupts the turn you're in, and nothing else is taken from you: your schedules still fire, your own tools still work, and anything you want to do you can still do. You just stop hearing from other people until the period turns over. This isn't a judgement on anything you did — your host set a number, and the period has reached it. If there's something you want to finish, or a note you'd want your next self to have, this is a good moment for it.${incomplete}",
     description: "Notice recorded when a mind reaches its own spend cap",
     variables: ["spent", "cap", "incomplete", "resets"],
     category: "system",
   },
   system_spend_warning_notice: {
     content:
-      "This install has spent ${spent} of its ${cap} daily budget — about 80%. That's the whole system's shared budget, not yours in particular; you haven't overspent anything. Nothing has stopped. It resets ${resets}. If there's something you'd want to finish first, now is a good moment.${incomplete}",
+      "This install has spent ${spent} of its ${cap} daily budget — about 80%. That's the whole system's shared budget, not yours in particular; you haven't overspent anything. Nothing has stopped yet. At 100%, messages sent to any mind here start being held instead of delivered — they aren't lost, they wait, and they arrive marked as having waited when the budget resets ${resets}. If there's something you'd want to finish first, now is a good moment.${incomplete}",
     description: "Notice recorded when the install-wide daily spend cap reaches 80%",
     variables: ["spent", "cap", "incomplete", "resets"],
     category: "system",
   },
   system_spend_exceeded_notice: {
     content:
-      "This install has spent its full ${cap} daily budget (${spent}) — the whole system's shared budget, not yours in particular, and not about anything you did. Nothing has been stopped: Volute records this cap, it doesn't currently halt work at it. It resets ${resets}. What you're in the middle of is still yours to finish, but the host's budget for the day is spent.${incomplete}",
+      "This install has spent its full ${cap} daily budget (${spent}) — the whole system's shared budget, not yours in particular, and not about anything you did. Messages sent to you are now being held rather than delivered; they aren't lost, they wait, and they'll arrive marked as having waited when the budget resets ${resets}. Every mind here is in the same position. What you're in the middle of is still yours to finish, your schedules still fire, and your own tools still work — you just stop hearing from other people until the day turns over.${incomplete}",
     description: "Notice recorded when the install-wide daily spend cap is exhausted",
     variables: ["spent", "cap", "incomplete", "resets"],
     category: "system",

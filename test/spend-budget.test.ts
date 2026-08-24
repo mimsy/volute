@@ -410,51 +410,79 @@ describe("SpendBudget", () => {
     assert.equal(sb.getSystemUsage()!.spentUsd, 10, "a day has not passed");
   });
 
-  // --- queue (kept intact as the seam for a future delivery gate) ---
+  // --- holdFor: the check that turns the cap into a limit ---
 
-  it("enqueue and drain work correctly", () => {
+  it("holdFor is null under the cap and non-null at or over it", () => {
     const sb = new SpendBudget();
     sb.setBudget("mind1", 10, 1440);
 
-    sb.enqueue("mind1", { channel: "ch1", sender: "user1", textContent: "hello" });
-    sb.enqueue("mind1", { channel: "ch2", sender: "user2", textContent: "world" });
+    sb.recordUsage("mind1", 9.99);
+    assert.equal(sb.holdFor("mind1"), null, "under the cap, nothing is held");
 
-    assert.equal(sb.getUsage("mind1")!.queueLength, 2);
-
-    const drained = sb.drain("mind1");
-    assert.equal(drained.length, 2);
-    assert.equal(drained[0].textContent, "hello");
-    assert.equal(drained[1].textContent, "world");
-
-    assert.equal(sb.getUsage("mind1")!.queueLength, 0);
+    sb.recordUsage("mind1", 0.01);
+    const hold = sb.holdFor("mind1");
+    assert.equal(hold?.scope, "mind", "exactly at the cap holds");
+    assert.ok(hold!.resetAt > Date.now(), "carries when the hold ends");
   });
 
-  it("enqueue drops oldest when queue is full", () => {
+  it("holdFor is null for a mind with no cap and no system cap", () => {
     const sb = new SpendBudget();
+    assert.equal(sb.holdFor("uncapped"), null);
+  });
+
+  it("the system cap holds every mind, including ones under their own cap", () => {
+    const sb = new SpendBudget();
+    sb.setSystemCap(5);
+    sb.setBudget("mind1", 1000, 1440);
+    sb.setBudget("mind2", 1000, 1440);
+
+    sb.recordUsage("mind1", 5);
+    assert.equal(sb.holdFor("mind1")?.scope, "system");
+    assert.equal(sb.holdFor("mind2")?.scope, "system", "a mind that spent nothing is held too");
+    // Even a mind with no bucket at all — the install's cap is not about any one mind.
+    assert.equal(sb.holdFor("never-seen")?.scope, "system");
+  });
+
+  it("holdFor does not depend on the notice having been delivered", () => {
+    const sb = new SpendBudget();
+    sb.setBudget("mind1", 1, 1440);
+    sb.recordUsage("mind1", 2);
+    // noteExceeded is the once-per-period notification latch. Consuming it (or never
+    // calling it, as a failed insert would) must not unbind the cap.
+    assert.equal(sb.noteExceeded("mind1", "mind"), true);
+    assert.equal(sb.noteExceeded("mind1", "mind"), false, "the latch is spent");
+    assert.equal(sb.holdFor("mind1")?.scope, "mind", "the hold is unaffected");
+  });
+
+  it("the hold lifts when the period resets", async () => {
+    const sb = new SpendBudget();
+    sb.setBudget("mind1", 1, 0); // 0-minute period: a tick rolls it over
+    sb.recordUsage("mind1", 2);
+    assert.ok(sb.holdFor("mind1"), "held while over the cap");
+
+    await sb.tick();
+
+    assert.equal(sb.holdFor("mind1"), null, "released on rollover");
+  });
+
+  it("the hold lifts when a host raises the cap", () => {
+    const sb = new SpendBudget();
+    sb.setBudget("mind1", 1, 1440);
+    sb.recordUsage("mind1", 2);
+    assert.ok(sb.holdFor("mind1"));
+
     sb.setBudget("mind1", 10, 1440);
-
-    for (let i = 0; i < 100; i++) {
-      sb.enqueue("mind1", { channel: "ch", sender: null, textContent: `msg-${i}` });
-    }
-    assert.equal(sb.getUsage("mind1")!.queueLength, 100);
-
-    sb.enqueue("mind1", { channel: "ch", sender: null, textContent: "msg-100" });
-    assert.equal(sb.getUsage("mind1")!.queueLength, 100);
-
-    const drained = sb.drain("mind1");
-    assert.equal(drained[0].textContent, "msg-1"); // msg-0 was dropped
-    assert.equal(drained[99].textContent, "msg-100");
+    assert.equal(sb.holdFor("mind1"), null, "raising the cap releases immediately");
   });
 
-  it("drain returns empty array for unknown mind", () => {
+  it("clearing the system cap releases the minds it was holding", () => {
     const sb = new SpendBudget();
-    assert.deepEqual(sb.drain("unknown"), []);
-  });
+    sb.setSystemCap(1);
+    sb.recordUsage("mind1", 2);
+    assert.equal(sb.holdFor("mind1")?.scope, "system");
 
-  it("enqueue is a no-op for minds without a budget", () => {
-    const sb = new SpendBudget();
-    sb.enqueue("unknown", { channel: "ch", sender: null, textContent: "hi" });
-    assert.deepEqual(sb.drain("unknown"), []);
+    sb.setSystemCap(null);
+    assert.equal(sb.holdFor("mind1"), null);
   });
 
   // --- period rollover ---
@@ -469,18 +497,6 @@ describe("SpendBudget", () => {
     await sb.tick();
 
     assert.equal(sb.getUsage("mind1")!.spentUsd, 0);
-  });
-
-  it("tick drains queue on period reset", async () => {
-    const sb = new SpendBudget();
-    sb.setBudget("mind1", 10, 0);
-
-    sb.enqueue("mind1", { channel: "ch", sender: null, textContent: "queued" });
-    assert.equal(sb.getUsage("mind1")!.queueLength, 1);
-
-    await sb.tick();
-
-    assert.equal(sb.getUsage("mind1")!.queueLength, 0);
   });
 
   it("tick does not reset unexpired periods", async () => {
@@ -613,21 +629,20 @@ describe("SpendBudget", () => {
     assert.equal(sb2.checkBudget("mind1").status, "ok", "warning was already delivered");
   });
 
-  it("persists queued messages via flush", async () => {
+  it("a restart resumes the hold rather than releasing the period's spend", async () => {
+    // Held messages live in delivery_queue, not in this module — so what has to survive
+    // a restart is the *spend*, or the daemon comes back up under the cap and delivers
+    // the whole held backlog at once.
     const sb1 = new SpendBudget();
     sb1.setBudget("mind1", 10, 60);
     sb1.recordUsage("mind1", 10);
-    sb1.enqueue("mind1", { channel: "ch1", sender: "user1", textContent: "hello" });
-    sb1.enqueue("mind1", { channel: "ch2", sender: null, textContent: "world" });
+    assert.ok(sb1.holdFor("mind1"));
     await sb1.flush();
 
     const sb2 = new SpendBudget();
     sb2.setBudget("mind1", 10, 60);
-    assert.equal(sb2.getUsage("mind1")!.queueLength, 2);
-
-    const drained = sb2.drain("mind1");
-    assert.equal(drained[0].textContent, "hello");
-    assert.equal(drained[1].textContent, "world");
+    assert.equal(sb2.getUsage("mind1")!.spentUsd, 10);
+    assert.equal(sb2.holdFor("mind1")?.scope, "mind", "still held after a restart");
   });
 
   it("discards a budget.json left behind by the token-denominated budget", () => {
@@ -651,8 +666,8 @@ describe("SpendBudget", () => {
     sb.setBudget("legacy-mind", 10, 1440);
     const usage = sb.getUsage("legacy-mind")!;
     assert.equal(usage.spentUsd, 0, "token count is not carried over as dollars");
-    assert.equal(usage.queueLength, 0, "the whole stale file is dropped");
     assert.equal(sb.checkBudget("legacy-mind").status, "ok");
+    assert.equal(sb.holdFor("legacy-mind"), null, "and nothing is held on a dropped file");
   });
 
   it("handles a missing budget state file gracefully", () => {

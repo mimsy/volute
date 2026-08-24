@@ -94,6 +94,13 @@ export interface DeliveryPayload {
   participantProfiles?: ParticipantProfile[];
   /** The channel's description, rules, and limits — sent once per channel per session. */
   channelInfo?: ChannelContext;
+  /**
+   * Stamped on a delivery the moment it is first held (see `DeliveryManager`'s hold
+   * check), and persisted with the queue row so the wait survives a daemon restart.
+   * Rendered into `content` and stripped at delivery time — it never reaches the mind
+   * as a field.
+   */
+  held?: { at: number; scope: "mind" | "system" };
   whileSleeping?: "skip" | "queue" | "trigger-wake";
 }
 
