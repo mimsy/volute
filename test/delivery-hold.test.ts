@@ -16,7 +16,8 @@ import {
   type RoutingConfig,
 } from "../packages/daemon/src/lib/delivery/delivery-router.js";
 import { addMind, removeMind } from "../packages/daemon/src/lib/mind/registry.js";
-import { deliveryQueue } from "../packages/daemon/src/lib/schema.js";
+import { deliveryQueue, mindHistory } from "../packages/daemon/src/lib/schema.js";
+import { parseDbTimestamp } from "../packages/daemon/src/lib/util/time.js";
 
 // --- Helpers (mirrors test/delivery-durability.test.ts) ---
 
@@ -536,6 +537,58 @@ describe("DeliveryManager: holding deliveries", () => {
     await waitFor(async () => (await queueRows(name)).length === 0);
     assert.equal(srv.received.length, 1);
 
+    await removeMind(name);
+  });
+
+  it("records history when the message arrives, stamped with when it was sent", async () => {
+    // A held message must not appear in history as received while the mind hasn't seen it
+    // (#420) — and the oldest of a big backlog are archived at release and never arrive at
+    // all, so recording on arrival would leave history claiming what will never happen.
+    // But the row that IS written says when someone spoke, not when the mind was free.
+    const srv = await startMindServer();
+    servers.push(srv.server);
+    const name = await registerMind(srv.port, IMMEDIATE);
+    const db = await getDb();
+
+    manager = new DeliveryManager();
+    manager.setRunningCheck(() => true);
+    let held: DeliveryHold | null = SPEND_HOLD;
+    manager.setHoldCheck(() => held);
+
+    // What deliverMessage does at arrival for a mind it can see is held.
+    await manager.routeAndDeliver(name, {
+      channel: "test:ch",
+      sender: "alice",
+      content: "spoken while you were capped",
+      inboundDeferred: true,
+    });
+
+    const rows = await queueRows(name, "held");
+    assert.equal(rows.length, 1);
+    const arrivedAt = (JSON.parse(rows[0].payload) as DeliveryPayload).held!.at;
+    let history = await db.select().from(mindHistory).where(eq(mindHistory.mind, name));
+    assert.equal(history.length, 0, "nothing in history while the mind hasn't seen it");
+
+    held = null;
+    await manager.releaseHeld(name);
+    await waitFor(async () => (await queueRows(name)).length === 0);
+
+    history = await db.select().from(mindHistory).where(eq(mindHistory.mind, name));
+    const inbound = history.filter((h) => h.type === "inbound");
+    assert.equal(inbound.length, 1, "recorded once, when it actually arrived");
+    assert.equal(inbound[0].content, "spoken while you were capped");
+    // Stamped with the send, not the release. Parsed via parseDbTimestamp because the
+    // column is zone-less UTC text — `new Date(row.created_at)` would read it as local.
+    const recorded = parseDbTimestamp(inbound[0].created_at)!.getTime();
+    assert.ok(
+      Math.abs(recorded - arrivedAt) < 5000,
+      `history should carry the arrival time, not the release time (off by ${recorded - arrivedAt}ms)`,
+    );
+
+    // And the marker never reaches the mind as a field.
+    assert.equal((srv.received[0] as { inboundDeferred?: boolean }).inboundDeferred, undefined);
+
+    await db.delete(mindHistory).where(eq(mindHistory.mind, name));
     await removeMind(name);
   });
 

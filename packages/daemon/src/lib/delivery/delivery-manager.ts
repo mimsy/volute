@@ -229,11 +229,24 @@ export function withHeldPreface(payload: DeliveryPayload): DeliveryPayload {
   return { ...rest, content: [{ type: "text", text: line }, rest.content] };
 }
 
+/** A DB timestamp: zone-less UTC `YYYY-MM-DD HH:MM:SS`, the shape `datetime('now')` writes. */
+function toDbTimestamp(at: number): string {
+  return new Date(at).toISOString().slice(0, 19).replace("T", " ");
+}
+
 /**
  * Write the `mind_history` inbound row for a message whose arrival-time recording was
- * skipped because the mind was over its spend cap. Never throws into the delivery path:
- * the message has already been received, and a missing history row is a smaller wrong
- * than a delivery that reports failure and gets re-sent.
+ * skipped because the mind was over its spend cap.
+ *
+ * Stamped with when the message ARRIVED, not when the mind was finally free to hear it:
+ * history should say when someone spoke. (The same call as `held.at` — and the reason the
+ * row waits until delivery is that a held message may never arrive at all. The oldest of a
+ * large backlog are archived at release, and a row recorded on arrival would leave history
+ * claiming the mind heard something it never will — #420 by a different road.)
+ *
+ * Never throws into the delivery path: the message has already been received, and a
+ * missing history row is a smaller wrong than a delivery that reports failure and is
+ * re-sent.
  */
 async function recordDeferredInbound(baseName: string, payload: DeliveryPayload): Promise<void> {
   try {
@@ -244,6 +257,7 @@ async function recordDeferredInbound(baseName: string, payload: DeliveryPayload)
       channel: payload.channel,
       sender: payload.sender ?? null,
       content: extractTextContent(payload.content),
+      ...(payload.held ? { created_at: toDbTimestamp(payload.held.at) } : {}),
     });
   } catch (err) {
     dlog.warn(`failed to record deferred inbound for ${baseName}`, log.errorData(err));
