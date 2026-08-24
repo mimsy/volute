@@ -16,6 +16,7 @@ import {
   spendFigure,
   unpricedLabel,
 } from "../../lib/spend-format";
+import { usageScope } from "../../lib/spend-status";
 import Sparkline from "./Sparkline.svelte";
 
 let { focusMind = null }: { focusMind?: string | null } = $props();
@@ -52,24 +53,12 @@ $effect(() => {
   };
 });
 
-let focused = $derived(
-  focusMind ? (report?.minds.find((m) => m.mind === focusMind) ?? null) : null,
-);
-
-/**
- * The headline covers whatever the page is scoped to: one mind when focused, the whole
- * install otherwise. A focused view that quietly showed install-wide totals would be the
- * same misattribution the per-model pricing exists to avoid.
- */
-let headline = $derived(focused ?? report?.total ?? null);
-let headlineSeries = $derived(focused?.series ?? report?.series ?? []);
-let headlineFigure = $derived(
-  headline
-    ? spendFigure(headline)
-    : { text: formatUsd(0), floor: false as boolean, note: "" as string },
-);
-
-let rows = $derived(focused ? [focused] : (report?.minds ?? []));
+/** Headline, series and rows for whatever the page is scoped to — see usageScope. */
+let scope = $derived(usageScope(report, focusMind));
+let headline = $derived(scope.totals);
+let headlineSeries = $derived(scope.series);
+let headlineFigure = $derived(spendFigure(headline));
+let rows = $derived(scope.rows);
 let maxCost = $derived(rows.reduce((m, r) => Math.max(m, r.costUsd), 0));
 
 let system = $derived(report?.system ?? null);
@@ -109,7 +98,7 @@ function windowLabel(w: UsageWindow): string {
     <ErrorMessage message={error} />
   {:else if !report && loading}
     <p class="muted">Loading…</p>
-  {:else if report && headline}
+  {:else if report}
     <div class="summary">
       <div class="figure-row">
         <span class="figure" class:floor={headlineFigure.floor}>
@@ -174,7 +163,11 @@ function windowLabel(w: UsageWindow): string {
     {/if}
 
     {#if rows.length === 0}
-      <EmptyState message="No usage recorded in this window." />
+      <EmptyState
+        message={focusMind
+          ? `${focusMind} recorded no turns in this window.`
+          : "No usage recorded in this window."}
+      />
     {:else}
       <div class="rows">
         {#each rows as row (row.mind)}

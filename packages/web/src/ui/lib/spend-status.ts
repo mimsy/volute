@@ -14,7 +14,7 @@
  * an uncapped mind is exactly the one whose spend nobody is watching.
  */
 
-import type { MindBudget, UsageReport } from "./client";
+import type { MindBudget, MindUsage, UsageBucket, UsageReport, UsageTotals } from "./client";
 import {
   type CapLevel,
   capLevel,
@@ -146,4 +146,45 @@ function sameSpan(budget: MindBudget, usage: UsageReport | null): boolean {
   if (!usage) return true;
   const windowMinutes = usage.window === "24h" ? 1440 : usage.window === "7d" ? 10080 : 43200;
   return (budget.periodMinutes ?? 1440) === windowMinutes;
+}
+
+/** A scope that saw nothing. Spelled out so a zero is a real zero, not a missing value. */
+export const EMPTY_TOTALS: UsageTotals = {
+  costUsd: 0,
+  turns: 0,
+  inputTokens: 0,
+  outputTokens: 0,
+  cacheReadTokens: 0,
+  cacheCreationTokens: 0,
+  cacheHitRatio: 0,
+  unpricedTurns: 0,
+  preUpgradeTurns: 0,
+};
+
+export type UsageScope = {
+  /** The figures the page's headline covers. */
+  totals: UsageTotals;
+  /** The series behind the headline. */
+  series: UsageBucket[];
+  /** The rows to list beneath it. */
+  rows: MindUsage[];
+};
+
+/**
+ * What the Usage page should show, given an optional mind to focus on.
+ *
+ * The case worth naming: a focused mind that recorded nothing in the window is *not*
+ * the same as no focus. Falling back to the install-wide totals there would print
+ * everyone's spend under one mind's name — the same misattribution the per-model
+ * pricing exists to avoid. It reads as a real zero instead.
+ */
+export function usageScope(
+  report: (UsageReport & { minds: MindUsage[] }) | null,
+  focusMind: string | null,
+): UsageScope {
+  if (!report) return { totals: EMPTY_TOTALS, series: [], rows: [] };
+  if (!focusMind) return { totals: report.total, series: report.series, rows: report.minds };
+  const found = report.minds.find((m) => m.mind === focusMind);
+  if (!found) return { totals: EMPTY_TOTALS, series: [], rows: [] };
+  return { totals: found, series: found.series, rows: [found] };
 }

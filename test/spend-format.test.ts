@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import type { MindBudget, UsageReport } from "../packages/web/src/ui/lib/client.js";
+import type { MindBudget, MindUsage, UsageReport } from "../packages/web/src/ui/lib/client.js";
 import {
   capLevel,
   formatPercent,
@@ -13,7 +13,7 @@ import {
   spendFigure,
   unpricedLabel,
 } from "../packages/web/src/ui/lib/spend-format.js";
-import { spendStrip } from "../packages/web/src/ui/lib/spend-status.js";
+import { spendStrip, usageScope } from "../packages/web/src/ui/lib/spend-status.js";
 
 const NOW = Date.parse("2026-08-24T13:30:00Z");
 
@@ -200,6 +200,70 @@ function budget(over: Partial<MindBudget> = {}): MindBudget {
     ...over,
   };
 }
+
+function mindRow(name: string, over: Partial<MindUsage> = {}): MindUsage {
+  return {
+    mind: name,
+    costUsd: 0,
+    turns: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+    cacheCreationTokens: 0,
+    cacheHitRatio: 0,
+    unpricedTurns: 0,
+    preUpgradeTurns: 0,
+    series: [{ start: "2026-08-24T13:00:00.000Z", costUsd: 0, turns: 0, unpricedTurns: 0 }],
+    ...over,
+  };
+}
+
+describe("usageScope", () => {
+  const atlas = mindRow("atlas", { costUsd: 8, turns: 60 });
+  const bardo = mindRow("bardo", { costUsd: 2, turns: 40 });
+  const report = {
+    ...usage({ costUsd: 10, turns: 100 }),
+    minds: [atlas, bardo],
+    series: [{ start: "2026-08-24T13:00:00.000Z", costUsd: 10, turns: 100, unpricedTurns: 0 }],
+  };
+
+  it("shows install-wide totals and every mind when nothing is focused", () => {
+    const s = usageScope(report, null);
+    assert.equal(s.totals.costUsd, 10);
+    assert.deepEqual(
+      s.rows.map((r) => r.mind),
+      ["atlas", "bardo"],
+    );
+    assert.equal(s.series[0].costUsd, 10);
+  });
+
+  it("narrows to one mind's own totals and series when focused", () => {
+    const s = usageScope(report, "bardo");
+    assert.equal(s.totals.costUsd, 2);
+    assert.deepEqual(
+      s.rows.map((r) => r.mind),
+      ["bardo"],
+    );
+    assert.equal(s.series, bardo.series);
+  });
+
+  // The bug this pins: falling back to report.total here would print the whole
+  // install's spend under one mind's name.
+  it("reads as a real zero when the focused mind recorded nothing", () => {
+    const s = usageScope(report, "cinder");
+    assert.equal(s.totals.costUsd, 0);
+    assert.equal(s.totals.turns, 0);
+    assert.deepEqual(s.rows, []);
+    assert.deepEqual(s.series, []);
+    assert.notEqual(s.totals.costUsd, report.total.costUsd);
+  });
+
+  it("is empty before the report loads", () => {
+    const s = usageScope(null, "atlas");
+    assert.equal(s.totals.turns, 0);
+    assert.deepEqual(s.rows, []);
+  });
+});
 
 describe("spendStrip", () => {
   it("is null when there is no cap, nothing held, and no turns", () => {
