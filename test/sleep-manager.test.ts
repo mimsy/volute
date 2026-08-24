@@ -10,6 +10,10 @@ import {
   type SleepState,
 } from "../packages/daemon/src/lib/daemon/sleep-manager.js";
 import { getDb } from "../packages/daemon/src/lib/db.js";
+import {
+  initDeliveryManager,
+  tryGetDeliveryManager,
+} from "../packages/daemon/src/lib/delivery/delivery-manager.js";
 import { mindDir } from "../packages/daemon/src/lib/mind/registry.js";
 import { activity, deliveryQueue, systemEvents } from "../packages/daemon/src/lib/schema.js";
 
@@ -1073,6 +1077,57 @@ describe("SleepManager.flushQueuedMessages", () => {
       .where(and(eq(deliveryQueue.mind, mind), eq(deliveryQueue.status, "sleep-queued")))
       .all();
   }
+
+  it("a mind woken over its spend cap has its backlog held rather than flushed", async () => {
+    // This path POSTs straight to the mind, so it needs its own hold check — without one
+    // a night's backlog lands un-held and un-prefaced, which would make the cap notice
+    // ("messages sent to you are now being held") false for exactly the minds that slept.
+    const mind = uniqueMind();
+    await queue(mind, "overnight one");
+    await queue(mind, "overnight two");
+
+    const sm = new TestSleepManager();
+    sm.setStateForTest(mind, sleepingState({ queuedMessageCount: 2 }));
+
+    const dm = tryGetDeliveryManager() ?? initDeliveryManager();
+    dm.setHoldCheck(() => ({ reason: "spend_cap", scope: "mind" }));
+    try {
+      const flushed = await sm.flushQueuedMessages(mind);
+
+      assert.equal(flushed, 0, "nothing is POSTed to a mind over its cap");
+      assert.equal(sm.deliveredBatches.length, 0);
+      assert.equal((await queuedRows(mind)).length, 0, "the rows leave the sleep queue");
+
+      const db = await getDb();
+      const promoted = await db
+        .select()
+        .from(deliveryQueue)
+        .where(and(eq(deliveryQueue.mind, mind), eq(deliveryQueue.status, "held")))
+        .all();
+      assert.equal(promoted.length, 2, "and become held rows the release path owns");
+      for (const row of promoted) {
+        const payload = JSON.parse(row.payload) as { held?: { at: number; scope: string } };
+        assert.equal(payload.held?.scope, "mind", "stamped with which cap held them");
+        assert.ok((payload.held?.at ?? 0) > 0, "and with when they arrived");
+      }
+      assert.equal(sm.getState(mind).queuedMessageCount, 0);
+    } finally {
+      dm.setHoldCheck(() => null);
+    }
+  });
+
+  it("flushes normally when nothing is holding the mind", async () => {
+    const mind = uniqueMind();
+    await queue(mind, "a");
+
+    const sm = new TestSleepManager();
+    sm.setStateForTest(mind, sleepingState({ queuedMessageCount: 1 }));
+    const dm = tryGetDeliveryManager() ?? initDeliveryManager();
+    dm.setHoldCheck(() => null);
+
+    assert.equal(await sm.flushQueuedMessages(mind), 1);
+    assert.equal(sm.deliveredBatches.length, 1);
+  });
 
   it("delivers one batch per channel and deletes delivered rows (#382)", async () => {
     const mind = uniqueMind();

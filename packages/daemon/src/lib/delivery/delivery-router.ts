@@ -94,6 +94,20 @@ export interface DeliveryPayload {
   participantProfiles?: ParticipantProfile[];
   /** The channel's description, rules, and limits — sent once per channel per session. */
   channelInfo?: ChannelContext;
+  /**
+   * Stamped on a delivery the moment it is first held (see `DeliveryManager`'s hold
+   * check), and persisted with the queue row so the wait survives a daemon restart.
+   * Rendered into `content` and stripped at delivery time — it never reaches the mind
+   * as a field.
+   */
+  held?: { at: number; scope: "mind" | "system"; until?: number };
+  /**
+   * Set when this message's `mind_history` inbound row was deliberately NOT written on
+   * arrival, because the mind was over its spend cap and would not see it. The row is
+   * written when the message actually reaches the mind — history must not claim a mind
+   * heard something it never received (#420). Stripped before the payload is POSTed.
+   */
+  inboundDeferred?: boolean;
   whileSleeping?: "skip" | "queue" | "trigger-wake";
 }
 

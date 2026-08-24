@@ -736,14 +736,23 @@ describe("turn-lifecycle: spend cap notices", () => {
   }
 
   /** Every budget notice recorded for a mind, oldest first. */
-  async function budgetNotices(mind: string): Promise<{ body: string; meta: string | null }[]> {
+  async function budgetNotices(
+    mind: string,
+  ): Promise<{ body: string; meta: string | null; delivery: string }[]> {
     const db = await getDb();
     const rows = await db
-      .select({ body: systemEvents.body, meta: systemEvents.meta, id: systemEvents.id })
+      .select({
+        body: systemEvents.body,
+        meta: systemEvents.meta,
+        delivery: systemEvents.delivery,
+        id: systemEvents.id,
+      })
       .from(systemEvents)
       .where(and(eq(systemEvents.mind, mind), eq(systemEvents.type, "budget")))
       .all();
-    return rows.sort((a, b) => a.id - b.id).map(({ body, meta }) => ({ body, meta }));
+    return rows
+      .sort((a, b) => a.id - b.id)
+      .map(({ body, meta, delivery }) => ({ body, meta, delivery }));
   }
 
   it("the 80% warning is delivered, names the cap, spend, and reset time", async () => {
@@ -759,6 +768,9 @@ describe("turn-lifecycle: spend cap notices", () => {
       assert.match(body, /\$0\.85/, "names the spend so far");
       assert.match(body, /\$1\.00/, "names the cap");
       assert.match(body, /resets in about 1 hour/, "says when the period resets");
+      // A heads-up that doesn't say what it is warning about isn't one.
+      assert.match(body, /At 100%.*held/is, "names the consequence of reaching the cap");
+      assert.match(body, /schedules/i, "including that schedules are held too");
       assert.doesNotMatch(body, /couldn't be priced/, "nothing was unpriced");
     } finally {
       await sb.removeBudget(mind);
@@ -797,9 +809,30 @@ describe("turn-lifecycle: spend cap notices", () => {
       assert.equal(notices.length, 1);
       assert.match(notices[0].body, /spent your full/, "exceeded wording");
       assert.match(notices[0].body, /resets in about 1 hour/, "exceeded notice names the reset");
-      // Nothing actually pauses a mind at its cap — `enqueue` has no caller and
-      // `delivery/` never consults the budget — so the notice must not claim it does.
-      assert.doesNotMatch(notices[0].body, /pause|kept for you|queued/i, "promises no pause");
+      // The notice may now promise a hold, because the delivery manager actually performs
+      // one — `holdFor` gates every POST. Whatever the wording claims has to be true of
+      // the code: messages are held, they are not lost, and they arrive when it resets.
+      assert.match(notices[0].body, /being held/i, "states that messages are held");
+      assert.match(notices[0].body, /nothing is deleted/i, "and that nothing is dropped");
+      // Schedules are held too now, so the notice must say so — the earlier wording
+      // promised they still fired, which stopped being true the moment the event gate
+      // landed. The claim that survives is about the mind's own agency.
+      assert.match(notices[0].body, /scheduled wakeups/i, "names that schedules are held too");
+      assert.doesNotMatch(
+        notices[0].body,
+        /schedules still fire/i,
+        "and no longer claims they keep firing",
+      );
+      assert.match(
+        notices[0].body,
+        /own tools still work/i,
+        "the hold is on the world reaching in, not on the mind acting",
+      );
+      assert.match(
+        notices[0].body,
+        /not being replayed/i,
+        "and warns that the release is bounded rather than a flood",
+      );
     } finally {
       await sb.removeBudget(mind);
       await cleanup(mind);
@@ -818,6 +851,12 @@ describe("turn-lifecycle: spend cap notices", () => {
       assert.equal(notices.length, 2);
       assert.match(notices[0].body, /about 80%/);
       assert.match(notices[1].body, /spent your full/);
+      // The warning can wait for the next turn — the mind is still receiving, so one is
+      // coming. The exceeded notice cannot: from that moment inbound messages are held,
+      // and an inbound message is what would have produced the next turn. It would sit
+      // undrained behind the very silence it explains.
+      assert.equal(notices[0].delivery, "next-turn", "the warning rides the next turn");
+      assert.equal(notices[1].delivery, "immediate", "the exceeded notice does not wait");
       // Exceeded fires only once, however many more turns land.
       await spend(mind, 0.1);
       assert.equal((await budgetNotices(mind)).length, 2);
@@ -840,7 +879,7 @@ describe("turn-lifecycle: spend cap notices", () => {
       assert.match(notices[0].body, /This install/, "attributes the spend to the install");
       assert.match(notices[0].body, /not yours in particular/);
       assert.doesNotMatch(notices[0].body, /You've spent your full/, "does not blame the mind");
-      assert.doesNotMatch(notices[0].body, /pause|kept for you|queued/i, "promises no pause");
+      assert.match(notices[0].body, /being held/i, "states that messages are held");
       assert.match(notices[0].meta ?? "", /system_spend_cap/);
     } finally {
       sb.setSystemCap(null);

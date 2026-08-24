@@ -5,7 +5,7 @@ import { publish as publishMindEvent } from "../events/mind-events.js";
 import { findMind, getBaseName } from "../mind/registry.js";
 import { activity, messages, mindHistory } from "../schema.js";
 import log from "../util/logger.js";
-import { getDeliveryManager } from "./delivery-manager.js";
+import { getDeliveryManager, tryGetDeliveryManager } from "./delivery-manager.js";
 import {
   type DeliveryPayload,
   extractTextContent,
@@ -277,6 +277,15 @@ export async function willGateMessage(mindName: string, payload: GateMeta): Prom
  * than re-recorded and re-queued. The returned boolean lets the flush loop delete only
  * genuinely-delivered rows.
  */
+/**
+ * Whether a delivery to this mind would be held by a spend cap right now. The predictive
+ * twin of {@link willGateMessage}, and used for the same purpose: deciding at arrival
+ * whether `mind_history` should claim the mind received something.
+ */
+export function willHoldMessage(baseName: string): boolean {
+  return tryGetDeliveryManager()?.holdReason(baseName, "main") != null;
+}
+
 export async function deliverMessage(
   mindName: string,
   payload: DeliveryPayload,
@@ -327,8 +336,17 @@ export async function deliverMessage(
       // something it didn't, inflating message counts and cluttering history (#420). Skip
       // the history row for gated messages; releaseGated writes the real inbound row when
       // (and if) the held backlog is later delivered.
+      //
+      // A message held by a spend cap is skipped here for the same reason: the mind is over
+      // its cap and will not see this until the period turns over, so recording it now
+      // would show a host (and the mind's own history) a message as received that nobody
+      // has read. The row is written when it actually arrives — see `inboundDeferred`.
+      // The flag rather than a re-check at delivery is what makes it exactly-once: the cap
+      // can trip or lift between this line and the POST, and either way the flag says
+      // whether history still owes this message a row.
       if (!willGate(baseName, payload)) {
-        await recordInbound(baseName, payload.channel, payload.sender ?? null, textContent);
+        if (willHoldMessage(baseName)) payload.inboundDeferred = true;
+        else await recordInbound(baseName, payload.channel, payload.sender ?? null, textContent);
       }
     }
 

@@ -1,5 +1,10 @@
 import { and, eq, gte, inArray, sql } from "drizzle-orm";
-import { captureReflection, clearDeliveredEvents, recordNotice } from "../chat/system-events.js";
+import {
+  captureReflection,
+  clearDeliveredEvents,
+  deliverEvent,
+  recordNotice,
+} from "../chat/system-events.js";
 import { getTypingMap, publishTypingForChannels } from "../chat/typing.js";
 import { getDb } from "../db.js";
 import { getDeliveryManager } from "../delivery/delivery-manager.js";
@@ -392,14 +397,34 @@ async function recordSpendNotice(
         : "",
       resets: formatReset(sb.resetAt(mind, scope)),
     });
-    await recordNotice({
-      mind,
+    if (status === "warning") {
+      // The mind is still receiving, so a next turn is coming to drain this.
+      await recordNotice({
+        mind,
+        thread: session,
+        kind: "budget",
+        reason: `${scope}_spend_cap`,
+        detail,
+      });
+      return true;
+    }
+    // The exceeded notice cannot ride the next-turn drain: from this moment inbound
+    // messages are held, and an inbound message is what would have produced the next
+    // turn. A mind whose only traffic is chat would go quiet with the explanation for
+    // its silence queued behind the silence. So it is delivered immediately — one turn,
+    // once per period, which is the whole point of a limit that is a heads-up rather
+    // than a trapdoor. A sleeping mind's copy stays pending and flushes on wake, as any
+    // immediate event does.
+    const { id } = await deliverEvent(mind, {
+      type: "budget",
+      body: detail,
       thread: session,
-      kind: "budget",
-      reason: `${scope}_spend_cap`,
-      detail,
+      delivery: "immediate",
+      meta: { subtype: "budget", reason: `${scope}_spend_cap` },
     });
-    return true;
+    // Recorded, even if the POST failed — the row is pending and is redelivered on the
+    // next wake or mind start, so the mind's one notification has not been spent.
+    return id != null;
   } catch (err) {
     llog.error(`failed to record spend ${status} notice for ${mind}`, log.errorData(err));
     return false;

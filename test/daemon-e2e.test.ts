@@ -1664,6 +1664,99 @@ describe("daemon e2e", { timeout: 420000 }, () => {
     assert.ok(messages.length >= 1);
   });
 
+  it("spend cap: an over-cap install holds deliveries, and releasing the cap delivers them", {
+    timeout: 120000,
+  }, async () => {
+    // The one thing the unit tests structurally cannot cover: that the daemon actually
+    // wires `SpendBudget.holdFor` into `DeliveryManager`. Every unit test here stays green
+    // if that one call in daemon.ts is deleted, and no mind is ever held — which is exactly
+    // the "the code exists but nothing calls it" failure this PR was written to end.
+    await ensureTestMind();
+    await daemonRequest(`/api/v1/minds/${TEST_MIND}/start`, { method: "POST" });
+    await waitForMindRunning();
+    const db = await getDb();
+    await db.delete(deliveryQueue).where(eq(deliveryQueue.mind, TEST_MIND));
+
+    const setCap = (systemSpendCapPerDay: number | null) =>
+      daemonRequest("/api/v1/system/limits", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ systemSpendCapPerDay }),
+      });
+
+    // A cap so small that any priced turn blows straight past it.
+    assert.equal((await setCap(0.000001)).status, 200);
+    try {
+      // One priced turn: haiku output is $5/M, so 1000 output tokens is $0.005.
+      const usageRes = await daemonRequest(`/api/v1/minds/${TEST_MIND}/events`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          // Deliberately session-less: `handleMindEvent` only records the exceeded notice
+          // for a session, and that notice is an immediate event, which runs a turn — whose
+          // session activity then leaks into a later test asserting this mind has none. The
+          // cap still trips; the notice itself is covered thoroughly in unit tests.
+          type: "usage",
+          metadata: {
+            input_tokens: 0,
+            output_tokens: 1000,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 0,
+            model: "anthropic:claude-haiku-4-5",
+          },
+        }),
+      });
+      assert.equal(usageRes.status, 200, `usage: ${await usageRes.clone().text()}`);
+
+      const brain = await ensureBrainParticipant("spend-hold");
+      const chatRes = await daemonRequest("/api/v1/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ targetMind: TEST_MIND, sender: brain, message: "are you there" }),
+      });
+      assert.equal(chatRes.status, 200, `chat: ${await chatRes.clone().text()}`);
+
+      // Give a delivery that was going to happen time to happen.
+      await new Promise((r) => setTimeout(r, 3000));
+      const rows = await db
+        .select()
+        .from(deliveryQueue)
+        .where(and(eq(deliveryQueue.mind, TEST_MIND), eq(deliveryQueue.status, "held")));
+      assert.equal(rows.length, 1, "the message is kept while the install is over its cap");
+      assert.equal(rows[0].status, "held", "held rows leave the sweep for the release path");
+      assert.equal(rows[0].attempts, 0, "a hold is not a delivery failure");
+      assert.equal(rows[0].next_attempt_at, null, "and sets no backoff");
+      const payload = JSON.parse(rows[0].payload) as { held?: { scope: string } };
+      assert.equal(payload.held?.scope, "system", "stamped with which cap held it");
+    } finally {
+      assert.equal((await setCap(null)).status, 200);
+    }
+
+    // Clearing the cap releases it: the row is delivered and dropped.
+    const deadline = Date.now() + 45000;
+    let left = 1;
+    while (Date.now() < deadline) {
+      left = (await db.select().from(deliveryQueue).where(eq(deliveryQueue.mind, TEST_MIND)))
+        .length;
+      if (left === 0) break;
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    assert.equal(left, 0, "clearing the cap releases the held message");
+
+    // Leave the mind as this test found it. Starting it — and delivering to it — produces
+    // turn/summary rows that a later test reads as cross-session activity while asserting
+    // there is none; the mind was stopped for that stretch before this test existed.
+    await daemonRequest(`/api/v1/minds/${TEST_MIND}/stop`, { method: "POST" });
+    const { mindHistory, summaries, systemEvents, turns } = await import(
+      "../packages/daemon/src/lib/schema.js"
+    );
+    await db.delete(turns).where(eq(turns.mind, TEST_MIND));
+    await db.delete(summaries).where(eq(summaries.mind, TEST_MIND));
+    await db.delete(mindHistory).where(eq(mindHistory.mind, TEST_MIND));
+    await db.delete(systemEvents).where(eq(systemEvents.mind, TEST_MIND));
+    await db.delete(deliveryQueue).where(eq(deliveryQueue.mind, TEST_MIND));
+  });
+
   it("spirit availability: DM to a stopped spirit starts it on demand (#434)", {
     timeout: 240000,
   }, async () => {

@@ -300,6 +300,30 @@ async function postEventEnvelope(mind: string, event: SystemEvent): Promise<bool
 }
 
 /**
+ * Merge extra meta into an event WITHOUT stamping it delivered — for marking a row that is
+ * still pending, e.g. one a spend cap is holding. Never throws: the mark is bookkeeping,
+ * and losing it costs the row its place in `flushHeldEvents`'s sweep, not its delivery
+ * (the ordinary wake/start flush still finds it).
+ */
+async function markMeta(id: number, extraMeta: Record<string, unknown>): Promise<void> {
+  try {
+    const db = await getDb();
+    const row = await db
+      .select({ meta: systemEvents.meta })
+      .from(systemEvents)
+      .where(eq(systemEvents.id, id))
+      .get();
+    const merged = { ...parseMeta(row?.meta, `event ${id}`), ...extraMeta };
+    await db
+      .update(systemEvents)
+      .set({ meta: JSON.stringify(merged) })
+      .where(eq(systemEvents.id, id));
+  } catch (err) {
+    elog.warn(`failed to mark event ${id} meta`, log.errorData(err));
+  }
+}
+
+/**
  * Stamp an event's delivered_at (and optionally merge extra meta). Never throws — a
  * failure here after a successful POST means the event will be redelivered on the next
  * wake/start, so it's surfaced at error level rather than silently causing a replay.
@@ -461,6 +485,22 @@ export async function deliverEvent(
       return { id: eventId, delivered: false };
     }
 
+    // A spend cap holds the world reaching in — see HELD_EVENT_TYPES. The row is left
+    // pending exactly as a sleeping mind's queued event is, and `flushHeldEvents` replays
+    // it when the cap lifts. `force` bypasses this the same way it bypasses sleep.
+    if (!input.force) {
+      const hold = await spendHoldFor(mind, input.type);
+      if (hold) {
+        await markMeta(eventId, { spendHeld: 1, holdReason: hold.reason });
+        await supersedeHeldRepeats(mind, eventId, input.meta ?? {});
+        elog.info(
+          `holding ${input.type} event ${eventId} for ${mind} (${hold.reason}); ` +
+            "it will be delivered when the spend period resets",
+        );
+        return { id: eventId, delivered: false };
+      }
+    }
+
     if (!sleeping) {
       const event = await db.select().from(systemEvents).where(eq(systemEvents.id, eventId)).get();
       if (event && (await postEventEnvelope(mind, event))) {
@@ -499,6 +539,102 @@ export async function deliverEvent(
 const NO_REPLAY_TYPES = new Set(["sleep"]);
 
 /**
+ * Event types a spend cap holds: the world reaching in. A scheduled heartbeat is the whole
+ * spend of an idle mind, so a cap that let schedules through would visibly fail to bind in
+ * the most ordinary configuration.
+ *
+ * An allowlist, not a denylist, and the direction matters. Everything not named here —
+ * `wake`, `sleep`, `lifecycle` (variant created, farewell, merge context), `orientation`,
+ * `notice`, `budget` — tells a mind something about its own situation, and holding one of
+ * those means a process that came up and was never told why it exists, or a mind informed
+ * it is being held at the moment the hold ends. A new event type therefore defaults to
+ * reaching the mind: the cap leaks money rather than leaking meaning, which is the right
+ * way round for a place minds live.
+ *
+ * `next-turn` events (every {@link recordNotice}) are unaffected by construction — they
+ * return before the delivery branch and are drained as context on whatever turn runs next.
+ */
+const HELD_EVENT_TYPES = new Set(["schedule", "webhook", "file-share", "channel", "version"]);
+
+/** Whether a spend cap is currently holding this mind's inbound traffic, and why. */
+async function spendHoldFor(
+  mind: string,
+  type: string,
+): Promise<{ reason: string; until?: number } | null> {
+  if (!HELD_EVENT_TYPES.has(type)) return null;
+  try {
+    const { tryGetDeliveryManager } = await import("../delivery/delivery-manager.js");
+    const baseName = await getBaseName(mind);
+    return tryGetDeliveryManager()?.holdReason(baseName, "main") ?? null;
+  } catch (err) {
+    // Fail open: an event that cannot be checked is delivered. A cap that silently ate a
+    // mind's schedules because a lookup threw would be worse than a cap that overspends.
+    elog.warn(`failed to check spend hold for ${mind}`, log.errorData(err));
+    return null;
+  }
+}
+
+/**
+ * Supersede any older still-pending held event from the same schedule, so a day-long hold
+ * releases one heartbeat rather than twenty-four.
+ *
+ * Keyed on the schedule id, not the event type: a heartbeat and a daily journal prompt are
+ * both `type: "schedule"`, and collapsing by type would eat a different schedule's only
+ * firing. A missed heartbeat is meant to be missed; a missed journal prompt is not the
+ * same thing. Events with no schedule id (a webhook, a shared file) are each their own
+ * occurrence and are never collapsed.
+ *
+ * Superseded rows are stamped delivered with `meta.superseded`, staying visible in the
+ * events UI, exactly as the next-turn overflow trim does.
+ */
+async function supersedeHeldRepeats(
+  mind: string,
+  eventId: number,
+  meta: Record<string, unknown>,
+): Promise<void> {
+  const scheduleId = typeof meta.scheduleId === "string" ? meta.scheduleId : null;
+  if (!scheduleId) return;
+  try {
+    const db = await getDb();
+    await db.run(
+      sql`UPDATE system_events SET delivered_at = datetime('now'), meta = json_set(COALESCE(meta, '{}'), '$.superseded', 1) WHERE mind = ${mind} AND delivery = 'immediate' AND delivered_at IS NULL AND id < ${eventId} AND json_extract(meta, '$.scheduleId') = ${scheduleId}`,
+    );
+  } catch (err) {
+    elog.warn(`failed to collapse held repeats for ${mind}`, log.errorData(err));
+  }
+}
+
+/**
+ * Deliver events held by a spend cap that has since lifted. Driven off the pending rows
+ * rather than a mind list, because the install-wide cap holds minds that have no spend
+ * bucket of their own — the rows are the only complete answer to who is waiting.
+ */
+export async function flushHeldEvents(): Promise<void> {
+  let minds: { mind: string }[];
+  try {
+    const db = await getDb();
+    minds = await db
+      .selectDistinct({ mind: systemEvents.mind })
+      .from(systemEvents)
+      .where(
+        and(
+          eq(systemEvents.delivery, "immediate"),
+          isNull(systemEvents.delivered_at),
+          sql`json_extract(${systemEvents.meta}, '$.spendHeld') = 1`,
+        ),
+      );
+  } catch (err) {
+    elog.warn("failed to list minds with spend-held events", log.errorData(err));
+    return;
+  }
+  for (const { mind } of minds) {
+    await flushQueuedEvents(mind).catch((err) =>
+      elog.warn(`failed to flush held events for ${mind}`, log.errorData(err)),
+    );
+  }
+}
+
+/**
  * Deliver pending immediate events (oldest-first) to a now-awake mind. Called by the
  * sleep manager after the wake event, and on mind start (failed earlier POSTs).
  * Stale rows — `sleep` events (only meaningful at bedtime) and anything older than
@@ -521,6 +657,14 @@ export async function flushQueuedEvents(mind: string): Promise<number> {
       .all();
     let delivered = 0;
     for (const event of rows) {
+      // This flush runs on wake AND on mind start, so without this a mind that restarts
+      // while over its cap would be handed every held heartbeat at once — the same fourth
+      // door the sleep-queue flush had. Re-checked per event because the cap can lift
+      // partway through a long flush.
+      if (await spendHoldFor(mind, event.type)) {
+        elog.debug(`leaving ${event.type} event ${event.id} held for ${mind}`);
+        continue;
+      }
       if (NO_REPLAY_TYPES.has(event.type) || eventAgeMs(event.created_at) > FLUSH_MAX_AGE_MS) {
         elog.info(`expiring stale pending event ${event.id} (${event.type}) for ${mind}`);
         await markDelivered(event.id, { expired: true });

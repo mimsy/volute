@@ -78,7 +78,7 @@ import { cleanupVariant } from "../../lib/mind/variant-cleanup.js";
 import { validateBranchName } from "../../lib/mind/variants.js";
 import { readVoluteConfig, writeVoluteConfig } from "../../lib/mind/volute-config.js";
 import { PLATFORMS } from "../../lib/platforms.js";
-import { mindHistory, summaries, turns } from "../../lib/schema.js";
+import { deliveryQueue, mindHistory, summaries, turns } from "../../lib/schema.js";
 import {
   createImagegenJob,
   getImagegenJob,
@@ -112,6 +112,22 @@ const _LAST_ACTIVE_TTL = 60_000;
  * on this endpoint is mind-authored by definition and is rendered as such.
  */
 const DAEMON_AUTHORED_TYPES = new Set(["inbound", "event"]);
+
+/** How many of a mind's messages are currently waiting on a spend cap. */
+async function countHeldDeliveries(baseName: string): Promise<number> {
+  try {
+    const db = await getDb();
+    const row = await db
+      .select({ n: sql<number>`count(*)` })
+      .from(deliveryQueue)
+      .where(and(eq(deliveryQueue.mind, baseName), eq(deliveryQueue.status, "held")))
+      .get();
+    return row?.n ?? 0;
+  } catch (err) {
+    log.warn(`failed to count held deliveries for ${baseName}`, log.errorData(err));
+    return 0;
+  }
+}
 
 type ChannelStatus = {
   name: string;
@@ -1303,9 +1319,20 @@ const app = new Hono<AuthEnv>()
   .get("/:name/budget", requireSelf(), async (c) => {
     const name = c.req.param("name");
     const baseName = await getBaseName(name);
-    const usage = getSpendBudget().getUsage(baseName);
-    if (!usage) return c.json({ error: "No budget configured" }, 404);
-    return c.json(usage);
+    const sb = getSpendBudget();
+    const usage = sb.getUsage(baseName);
+    // The install-wide cap holds minds that have no bucket of their own, so a mind with no
+    // per-mind cap can still be held — report that rather than 404ing, or a host watching a
+    // mind go quiet has nowhere at all to learn why.
+    const hold = sb.holdFor(baseName);
+    const held = await countHeldDeliveries(baseName);
+    if (!usage && !hold && held === 0) return c.json({ error: "No budget configured" }, 404);
+    return c.json({
+      ...(usage ?? {}),
+      system: sb.getSystemUsage(),
+      // What a host needs to tell "this mind is broken" apart from "this mind is capped".
+      held: { count: held, scope: hold?.scope ?? null, releasesAt: hold?.resetAt ?? null },
+    });
   })
   // Get mind config (registry + volute.json + env)
   .get("/:name/config", requireSelf(), async (c) => {

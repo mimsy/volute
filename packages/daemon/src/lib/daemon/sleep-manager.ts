@@ -21,7 +21,12 @@ import {
   recordNotice,
 } from "../chat/system-events.js";
 import { getDb } from "../db.js";
-import type { DeliveryPayload } from "../delivery/delivery-router.js";
+import { tryGetDeliveryManager } from "../delivery/delivery-manager.js";
+import {
+  type DeliveryPayload,
+  getRoutingConfig,
+  resolveRoute,
+} from "../delivery/delivery-router.js";
 import {
   type ActivityEvent,
   publish as publishActivity,
@@ -33,6 +38,7 @@ import { getPrompt } from "../prompts.js";
 import { deliveryQueue } from "../schema.js";
 import { collectTurnContext } from "../turn-context.js";
 import log from "../util/logger.js";
+import { parseDbTimestamp } from "../util/time.js";
 import { getMindManager } from "./mind-manager.js";
 import { runMindScript } from "./mind-script.js";
 import { sleepMind, wakeMind } from "./mind-service.js";
@@ -528,6 +534,56 @@ export class SleepManager {
   }
 
   /**
+   * Move a woken mind's sleep-queued rows onto the ordinary delivery queue, stamped as
+   * held, so the redrive sweep releases and frames them when the spend period turns over.
+   *
+   * The stamp carries each row's own `created_at`, so a message that waited through the
+   * night and then through a cap still tells the mind when it was actually sent. The
+   * thread is resolved the same way {@link deliverQueuedBatch} resolves it, so the
+   * released message lands in the session it would have landed in had it not waited.
+   * Returns how many rows were promoted.
+   */
+  private async holdQueuedMessages(
+    name: string,
+    rows: (typeof deliveryQueue.$inferSelect)[],
+    hold: { scope: "mind" | "system"; until?: number },
+  ): Promise<number> {
+    const db = await getDb();
+    let promoted = 0;
+    for (const row of rows) {
+      let payload: DeliveryPayload;
+      try {
+        payload = JSON.parse(row.payload);
+      } catch {
+        continue; // the flush path's own drop handling deals with these on the next wake
+      }
+      const route = resolveRoute(getRoutingConfig(name), {
+        channel: payload.channel,
+        sender: payload.sender ?? undefined,
+        isDM: payload.isDM,
+        participantCount: payload.participantCount,
+      });
+      const thread = payload.session ?? (route.destination === "mind" ? route.session : "main");
+      payload.held = {
+        at: parseDbTimestamp(row.created_at)?.getTime() ?? Date.now(),
+        scope: hold.scope,
+        until: hold.until,
+      };
+      try {
+        await db
+          .update(deliveryQueue)
+          .set({ status: "held", thread, payload: JSON.stringify(payload) })
+          .where(eq(deliveryQueue.id, row.id));
+        promoted++;
+      } catch (err) {
+        // Left sleep-queued: it retries on the next wake rather than being lost.
+        slog.warn(`failed to hold queued message ${row.id} for ${name}`, log.errorData(err));
+      }
+    }
+    return promoted;
+  }
+
+  /**
    * Flush all queued sleep messages for a mind on wake. Rows are grouped by channel
    * and each channel group is delivered as ONE pre-batched turn (#382) — a night's
    * backlog becomes one stack per channel, not N cold-start doorbells. Delivery is
@@ -544,6 +600,27 @@ export class SleepManager {
         .all();
 
       if (rows.length === 0) return 0;
+
+      // A mind over its spend cap is not delivered to — and this path POSTs straight to
+      // the mind, so without this check a night's backlog would land un-held and
+      // un-prefaced, falsifying the notice that told the mind its messages were being
+      // kept. Hand the rows to the delivery queue's own hold instead of leaving them
+      // sleep-queued: nothing re-runs this flush until the *next* wake, which could be a
+      // day after the cap resets. One hold store, one release path.
+      const hold = tryGetDeliveryManager()?.holdReason(name, "main");
+      if (hold) {
+        const held = await this.holdQueuedMessages(name, rows, hold);
+        slog.info(
+          `${name} woke over its spend cap (${hold.reason}); handed ${held} queued ` +
+            "message(s) to the delivery hold, to arrive when the period resets",
+        );
+        const heldState = this.states.get(name);
+        if (heldState) {
+          heldState.queuedMessageCount = Math.max(0, heldState.queuedMessageCount - held);
+          this.saveState();
+        }
+        return 0;
+      }
 
       // Parse payloads, dropping any that can never be delivered so they don't wedge
       // the flush (or replay forever on every wake). Group survivors by channel,
