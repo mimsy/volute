@@ -29,6 +29,7 @@ import { DEFAULT_SPEND_PERIOD_MINUTES, getSpendBudget } from "../../lib/daemon/s
 import { supersedeTurnSummary } from "../../lib/daemon/summarizer.js";
 import { handleMindEvent, setNoticeDrainWatermark } from "../../lib/daemon/turn-lifecycle.js";
 import { getActiveTurnId } from "../../lib/daemon/turn-tracker.js";
+import { readWindow, usageReport } from "../../lib/daemon/usage-report.js";
 import { getDb } from "../../lib/db.js";
 import { getDeliveryManager, UnknownChannelError } from "../../lib/delivery/delivery-manager.js";
 import { broadcast } from "../../lib/events/activity-events.js";
@@ -1333,6 +1334,14 @@ const app = new Hono<AuthEnv>()
       // What a host needs to tell "this mind is broken" apart from "this mind is capped".
       held: { count: held, scope: hold?.scope ?? null, releasesAt: hold?.resetAt ?? null },
     });
+  })
+  // Token/cost usage over a wall-clock window. Distinct from /budget, which reports the
+  // cap period — the two windows rarely line up and must not be read as one number.
+  // The name is used as logged: a variant's turns are its own, not its parent's.
+  .get("/:name/usage", requireSelf(), async (c) => {
+    const window = readWindow(c.req.query("window"));
+    if (!window) return c.json({ error: "Invalid window" }, 400);
+    return c.json(await usageReport({ window, mind: c.req.param("name") }));
   })
   // Get mind config (registry + volute.json + env)
   .get("/:name/config", requireSelf(), async (c) => {

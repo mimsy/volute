@@ -5,6 +5,7 @@ import type { Selection } from "../../lib/navigate";
 import Home from "../../pages/Home.svelte";
 import MindPage from "../../pages/MindPage.svelte";
 import Chat from "../chat/Chat.svelte";
+import SystemUsage from "../system/SystemUsage.svelte";
 import TurnTimeline from "../TurnTimeline.svelte";
 
 let {
@@ -123,6 +124,10 @@ let contextLabel = $derived.by(() => {
   {:else if selection.kind === "system-history"}
     <div class="frame-content mind-frame">
       <TurnTimeline />
+    </div>
+  {:else if selection.kind === "system-usage"}
+    <div class="frame-content padded">
+      <SystemUsage focusMind={selection.mind ?? null} />
     </div>
   {:else}
     <div class="frame-content padded">

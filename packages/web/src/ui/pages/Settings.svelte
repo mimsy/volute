@@ -6,14 +6,58 @@ import ImagegenProviders from "../components/system/ImagegenProviders.svelte";
 import {
   fetchAiDefaults,
   fetchMaxMinds,
+  fetchSystemLimits,
   saveAiDefaults,
   saveMaxMinds,
+  saveSystemLimits,
   systemLogin,
   systemLogout,
   systemRegister,
   updateSystemName,
 } from "../lib/client";
+import { parsePositiveInt, parsePositiveNumber } from "../lib/spend-format";
 import { auth } from "../lib/stores.svelte";
+
+// Install-wide spend cap. Empty = no cap.
+// `bind:value` on a number input yields a number once anything is typed, so this holds
+// whatever the field currently is and is read through parsePositiveNumber.
+let spendCapInput: string | number = $state("");
+let spendCapError = $state("");
+// Same guard as maxMinds below: without it a failed load renders the field blank and
+// the onblur autosave clears an existing cap.
+let spendCapLoaded = $state(false);
+
+onMount(async () => {
+  try {
+    const limits = await fetchSystemLimits();
+    spendCapInput = limits.systemSpendCapPerDay == null ? "" : String(limits.systemSpendCapPerDay);
+    spendCapLoaded = true;
+  } catch (err) {
+    spendCapError = err instanceof Error ? err.message : "Failed to load spend cap";
+  }
+});
+
+async function saveSpendCap() {
+  if (!spendCapLoaded) return;
+  spendCapError = "";
+  const trimmed = String(spendCapInput ?? "").trim();
+  let value: number | null = null;
+  if (trimmed !== "") {
+    // parsePositiveNumber refuses 0 and negatives: the server reads a 0 as "no cap", the
+    // opposite of what a host typing 0 means.
+    value = parsePositiveNumber(trimmed);
+    if (value == null) {
+      spendCapError = "Enter an amount above 0, or leave blank for no cap.";
+      return;
+    }
+  }
+  try {
+    const result = await saveSystemLimits({ systemSpendCapPerDay: value });
+    spendCapInput = result.systemSpendCapPerDay == null ? "" : String(result.systemSpendCapPerDay);
+  } catch (err) {
+    spendCapError = err instanceof Error ? err.message : "Failed to save spend cap";
+  }
+}
 
 // System name
 let localName = $state(auth.localName ?? "");
@@ -42,7 +86,9 @@ let defaultsLoaded = $state(false);
 let aiProvidersRef: AiProviders;
 
 // Mind limit (maxMinds). Empty input = unlimited.
-let maxMindsInput = $state("");
+// Holds whatever the number input currently is (a number once typed); read through
+// parsePositiveInt, never as a string.
+let maxMindsInput: string | number = $state("");
 let mindCount = $state(0);
 let maxMindsError = $state("");
 // Only true once the current cap loaded. Guards the onblur autosave from
@@ -76,15 +122,14 @@ async function saveMindLimit() {
   // Never overwrite the cap from a field that never loaded (see maxMindsLoaded).
   if (!maxMindsLoaded) return;
   maxMindsError = "";
-  const trimmed = maxMindsInput.trim();
+  const trimmed = String(maxMindsInput ?? "").trim();
   let value: number | null = null;
   if (trimmed !== "") {
-    const n = Number(trimmed);
-    if (!Number.isInteger(n) || n < 1) {
+    value = parsePositiveInt(trimmed);
+    if (value == null) {
       maxMindsError = "Enter a whole number of 1 or more, or leave blank for unlimited.";
       return;
     }
-    value = n;
   }
   try {
     const result = await saveMaxMinds(value);
@@ -172,6 +217,36 @@ async function handleSystemLogout() {
     />
     {#if maxMindsError}
       <div class="error">{maxMindsError}</div>
+    {/if}
+  </div>
+
+  <!-- Spend Limit -->
+  <div class="section">
+    <div class="section-header">
+      <span class="section-title">Spend Limit</span>
+      <span class="section-subtitle">
+        Install-wide cap in USD per day. Blank = no cap.
+      </span>
+    </div>
+    <Input
+      type="number"
+      min="0"
+      step="0.01"
+      style="width:100%"
+      bind:value={spendCapInput}
+      placeholder="No cap"
+      disabled={!spendCapLoaded}
+      onblur={saveSpendCap}
+      onkeydown={(e: KeyboardEvent) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+    />
+    <div class="hint">
+      When the whole install reaches this, every mind's deliveries are held until the day
+      rolls over. Turns that can't be priced — a mind on a pre-upgrade template, or a model
+      with no published rates — count nothing against it, so a cap binds only what it can
+      see. System → Usage shows what isn't metered.
+    </div>
+    {#if spendCapError}
+      <div class="error">{spendCapError}</div>
     {/if}
   </div>
 
@@ -272,6 +347,14 @@ async function handleSystemLogout() {
     font-size: 13px;
     margin-top: 8px;
   }
+
+  .hint {
+    font-size: 11px;
+    color: var(--text-2);
+    line-height: 1.6;
+    margin-top: 8px;
+  }
+
 
   .section {
     margin-bottom: 32px;

@@ -10,6 +10,8 @@ export type Selection =
   | { kind: "extension"; extensionId: string; path: string }
   | { kind: "home" }
   | { kind: "system-history" }
+  /** The install-wide usage page; `mind` scopes it to one mind without changing the page. */
+  | { kind: "system-usage"; mind?: string }
   | { kind: "channel"; slug: string };
 
 /**
@@ -84,6 +86,8 @@ export function parseSelection(extensions: ExtensionInfo[] = []): Selection {
   const search = new URLSearchParams(window.location.search);
 
   if (path === "/history") return { kind: "system-history" };
+  // Before matchExtensionUrl below, so an extension pattern can't shadow it.
+  if (path === "/usage") return { kind: "system-usage", mind: search.get("mind") ?? undefined };
   // Legacy settings URLs — these are now modals, redirect to home
   if (path === "/system/settings" || path === "/settings" || path.startsWith("/settings/"))
     return { kind: "home" };
@@ -149,6 +153,8 @@ export function selectionToPath(selection: Selection, extensions: ExtensionInfo[
       return "/";
     case "system-history":
       return "/history";
+    case "system-usage":
+      return selection.mind ? `/usage?mind=${encodeURIComponent(selection.mind)}` : "/usage";
     case "mind": {
       let section = selection.section;
       // Convert ext:pages:pages → pages for clean URLs

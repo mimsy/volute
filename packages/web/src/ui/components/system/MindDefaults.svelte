@@ -30,6 +30,8 @@ import {
   textToMessages,
   timeToCron,
 } from "../../lib/clock-format";
+import { parsePositiveInt } from "../../lib/spend-format";
+import SpendCapInput from "../SpendCapInput.svelte";
 
 const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"] as const;
 
@@ -37,9 +39,11 @@ const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"] as 
 let models: AiModel[] = $state([]);
 let editModel = $state("");
 let thinkingIndex = $state(0);
-let editBudget = $state("");
-let editPeriod = $state("");
-let editCompaction = $state("");
+let editBudget: number | null = $state(null);
+let editPeriod: number | null = $state(null);
+// A number input's bind:value is a number once typed, so this is read through
+// parsePositiveInt rather than as a string.
+let editCompaction: string | number = $state("");
 
 // Sleep
 let sleepEnabled = $state(true);
@@ -91,19 +95,6 @@ let enabledModels = $derived(models.filter((m) => m.enabled));
 let isOtherModel = $derived(editModel !== "" && !enabledModels.some((m) => m.id === editModel));
 let thinkingLabel = $derived(THINKING_LEVELS[thinkingIndex]);
 
-function parseBudgetInt(val: string): number | null {
-  if (!val.trim()) return null;
-  const n = parseInt(val, 10);
-  return Number.isNaN(n) ? null : n;
-}
-
-/** The spend cap is dollars, so cents have to survive the round trip. */
-function parseBudgetFloat(val: string): number | null {
-  if (!val.trim()) return null;
-  const n = parseFloat(val);
-  return Number.isNaN(n) ? null : n;
-}
-
 function splitList(val: string): string[] | undefined {
   const items = val
     .split(",")
@@ -121,11 +112,11 @@ async function save() {
         model: editModel || undefined,
         thinkingLevel:
           THINKING_LEVELS[thinkingIndex] !== "off" ? THINKING_LEVELS[thinkingIndex] : undefined,
-        spendCap: parseBudgetFloat(editBudget) ?? undefined,
-        spendCapPeriodMinutes: parseBudgetInt(editPeriod) ?? undefined,
+        spendCap: editBudget ?? undefined,
+        spendCapPeriodMinutes: editBudget != null ? (editPeriod ?? undefined) : undefined,
         compaction:
-          parseBudgetInt(editCompaction) != null
-            ? { maxContextTokens: parseBudgetInt(editCompaction)! }
+          parsePositiveInt(editCompaction) != null
+            ? { maxContextTokens: parsePositiveInt(editCompaction)! }
             : undefined,
       },
       sleep: {
@@ -259,11 +250,8 @@ onMount(async () => {
       editModel = defaults.cognition.model ?? "";
       const level = defaults.cognition.thinkingLevel ?? "off";
       thinkingIndex = Math.max(0, THINKING_LEVELS.indexOf(level));
-      editBudget = defaults.cognition.spendCap != null ? String(defaults.cognition.spendCap) : "";
-      editPeriod =
-        defaults.cognition.spendCapPeriodMinutes != null
-          ? String(defaults.cognition.spendCapPeriodMinutes)
-          : "";
+      editBudget = defaults.cognition.spendCap ?? null;
+      editPeriod = defaults.cognition.spendCapPeriodMinutes ?? null;
       editCompaction =
         defaults.cognition.compaction?.maxContextTokens != null
           ? String(defaults.cognition.compaction.maxContextTokens)
@@ -350,24 +338,16 @@ onMount(async () => {
         </div>
       </SettingRow>
 
-      <SettingRow label="Budget">
-        <Input
-          type="number"
-          width="80px"
-          bind:value={editBudget}
-          step="0.01"
-          onblur={() => save()}
-          placeholder="USD"
+      <SettingRow label="Spend cap">
+        <SpendCapInput
+          amount={editBudget}
+          periodMinutes={editPeriod}
+          onsave={(amount, periodMinutes) => {
+            editBudget = amount;
+            editPeriod = periodMinutes;
+            save();
+          }}
         />
-        <span class="setting-hint">per</span>
-        <Input
-          type="number"
-          width="80px"
-          bind:value={editPeriod}
-          onblur={() => save()}
-          placeholder="min"
-        />
-        <span class="setting-hint">min</span>
       </SettingRow>
 
       <SettingRow label="Context">

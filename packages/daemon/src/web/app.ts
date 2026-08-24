@@ -33,6 +33,7 @@ import update from "./api/update.js";
 import v1Conversations from "./api/v1/conversations.js";
 import v1Events from "./api/v1/events.js";
 import v1Feed from "./api/v1/feed.js";
+import v1Usage from "./api/v1/usage.js";
 import variants from "./api/variants.js";
 import voluteChannels from "./api/volute/channels.js";
 import conversations from "./api/volute/conversations.js";
@@ -171,6 +172,7 @@ const v1 = new Hono<AuthEnv>()
   .route("/conversations", v1Conversations)
   .route("/events", v1Events)
   .route("/feed", v1Feed)
+  .route("/usage", v1Usage)
   .route("/chat", chatApp)
   .route("/channels", voluteChannels)
   .route("/history", historyRoutes)
