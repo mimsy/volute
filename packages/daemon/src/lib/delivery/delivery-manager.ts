@@ -17,6 +17,7 @@ import { type AvatarBlock, renderAvatarBlock } from "../util/avatar-image.js";
 import log from "../util/logger.js";
 import { newEphemeralSession } from "../util/session-name.js";
 import { slugify } from "../util/slugify.js";
+import { parseDbTimestamp } from "../util/time.js";
 import {
   type ChannelContext,
   clearConfigCache,
@@ -200,7 +201,10 @@ export function withHeldPreface(payload: DeliveryPayload): DeliveryPayload {
   if (Array.isArray(rest.content)) {
     return { ...rest, content: [{ type: "text", text: line }, ...rest.content] };
   }
-  return rest;
+  // Some other shape entirely. Wrapping it in blocks still delivers it and still says it
+  // waited; returning it bare would strip the marker and hand the mind a message that
+  // looks brand new, which is the one outcome this function exists to prevent.
+  return { ...rest, content: [{ type: "text", text: line }, rest.content] };
 }
 
 /** The delivery_queue fields a dead-lettered row carries into its failure notice. */
@@ -247,8 +251,9 @@ export class DeliveryManager {
   private acceptChains = new Map<string, Promise<void>>();
 
   private redriveTimer: ReturnType<typeof setInterval> | null = null;
+  /** In-flight sweep, so overlapping `redrive()` calls join it instead of racing it. */
+  private redriving: Promise<void> | null = null;
 
-  /** Predicate for whether a mind is up; overridable in tests. */
   /**
    * Whether a delivery to this (mind, session) must wait. Injected rather than imported so
    * `delivery/` stays free of a dependency on the spend budget (and, later, on whatever
@@ -256,6 +261,7 @@ export class DeliveryManager {
    */
   private holdCheck: (baseName: string, session: string) => DeliveryHold | null = () => null;
 
+  /** Predicate for whether a mind is up; overridable in tests. */
   private isMindRunning: (baseName: string) => boolean = (name) =>
     tryGetMindManager()?.isRunning(name) ?? false;
 
@@ -290,7 +296,6 @@ export class DeliveryManager {
     });
   }
 
-  /** Test seam: override the mind-running predicate. */
   /**
    * Install the hold check. A single resolver, not a list: a caller that wants to hold for
    * a second reason ORs it into the same function, which keeps the "why is this message
@@ -300,6 +305,16 @@ export class DeliveryManager {
     this.holdCheck = fn;
   }
 
+  /**
+   * Whether this (mind, session) is currently held, for a delivery path that does not run
+   * through this class — see `SleepManager.flushQueuedMessages`, which POSTs a woken mind's
+   * backlog directly. One hold answer, however many doors lead to the mind.
+   */
+  holdReason(baseName: string, session: string): DeliveryHold | null {
+    return this.holdCheck(baseName, session);
+  }
+
+  /** Test seam: override the mind-running predicate. */
   setRunningCheck(fn: (baseName: string) => boolean): void {
     this.isMindRunning = fn;
   }
@@ -477,6 +492,18 @@ export class DeliveryManager {
    * (`inFlight`) and minds that are down are skipped so we never hot-loop or double-send.
    */
   async redrive(): Promise<void> {
+    // Coalesce concurrent sweeps. A sweep works from a snapshot and yields inside its
+    // loop, so two overlapping passes can both act on a row the other already delivered
+    // and deleted. Spend releases now trigger sweeps from three places on top of the
+    // periodic timer, which makes the overlap routine rather than theoretical.
+    if (this.redriving) return this.redriving;
+    this.redriving = this.redriveInner().finally(() => {
+      this.redriving = null;
+    });
+    return this.redriving;
+  }
+
+  private async redriveInner(): Promise<void> {
     let rows: (typeof deliveryQueue.$inferSelect)[];
     try {
       const db = await getDb();
@@ -1357,9 +1384,20 @@ export class DeliveryManager {
     hold: DeliveryHold,
   ): Promise<void> {
     if (payload.held) return;
-    payload.held = { at: Date.now(), scope: hold.scope };
     try {
       const db = await getDb();
+      // Stamp when the message ARRIVED, not when we first noticed it was held. Those are
+      // the same instant only when the hold was already in force; a message that sat
+      // pending through a mind restart, or waited out a batch window, would otherwise be
+      // introduced to the mind as having turned up just now — the same lie about waiting
+      // that the preface exists to prevent, told with a different number.
+      const row = await db
+        .select({ created_at: deliveryQueue.created_at })
+        .from(deliveryQueue)
+        .where(eq(deliveryQueue.id, queueId))
+        .get();
+      const arrived = row ? parseDbTimestamp(row.created_at)?.getTime() : undefined;
+      payload.held = { at: arrived ?? Date.now(), scope: hold.scope };
       await db
         .update(deliveryQueue)
         .set({ payload: JSON.stringify(payload) })
@@ -1367,6 +1405,7 @@ export class DeliveryManager {
     } catch (err) {
       // Non-fatal: the row is still held and still pending. Only the "this waited"
       // preface is lost, and only if the daemon restarts before the next attempt.
+      if (!payload.held) payload.held = { at: Date.now(), scope: hold.scope };
       dlog.warn(`failed to mark delivery ${queueId} held`, log.errorData(err));
     }
   }

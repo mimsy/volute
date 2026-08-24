@@ -1664,7 +1664,7 @@ describe("daemon e2e", { timeout: 420000 }, () => {
     assert.ok(messages.length >= 1);
   });
 
-  it("spend cap: an over-cap install holds deliveries, and releasing the cap frames them as held", {
+  it("spend cap: an over-cap install holds deliveries, and releasing the cap delivers them", {
     timeout: 120000,
   }, async () => {
     // The one thing the unit tests structurally cannot cover: that the daemon actually

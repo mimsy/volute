@@ -736,14 +736,23 @@ describe("turn-lifecycle: spend cap notices", () => {
   }
 
   /** Every budget notice recorded for a mind, oldest first. */
-  async function budgetNotices(mind: string): Promise<{ body: string; meta: string | null }[]> {
+  async function budgetNotices(
+    mind: string,
+  ): Promise<{ body: string; meta: string | null; delivery: string }[]> {
     const db = await getDb();
     const rows = await db
-      .select({ body: systemEvents.body, meta: systemEvents.meta, id: systemEvents.id })
+      .select({
+        body: systemEvents.body,
+        meta: systemEvents.meta,
+        delivery: systemEvents.delivery,
+        id: systemEvents.id,
+      })
       .from(systemEvents)
       .where(and(eq(systemEvents.mind, mind), eq(systemEvents.type, "budget")))
       .all();
-    return rows.sort((a, b) => a.id - b.id).map(({ body, meta }) => ({ body, meta }));
+    return rows
+      .sort((a, b) => a.id - b.id)
+      .map(({ body, meta, delivery }) => ({ body, meta, delivery }));
   }
 
   it("the 80% warning is delivered, names the cap, spend, and reset time", async () => {
@@ -827,6 +836,12 @@ describe("turn-lifecycle: spend cap notices", () => {
       assert.equal(notices.length, 2);
       assert.match(notices[0].body, /about 80%/);
       assert.match(notices[1].body, /spent your full/);
+      // The warning can wait for the next turn — the mind is still receiving, so one is
+      // coming. The exceeded notice cannot: from that moment inbound messages are held,
+      // and an inbound message is what would have produced the next turn. It would sit
+      // undrained behind the very silence it explains.
+      assert.equal(notices[0].delivery, "next-turn", "the warning rides the next turn");
+      assert.equal(notices[1].delivery, "immediate", "the exceeded notice does not wait");
       // Exceeded fires only once, however many more turns land.
       await spend(mind, 0.1);
       assert.equal((await budgetNotices(mind)).length, 2);

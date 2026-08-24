@@ -327,6 +327,12 @@ export async function deliverMessage(
       // something it didn't, inflating message counts and cluttering history (#420). Skip
       // the history row for gated messages; releaseGated writes the real inbound row when
       // (and if) the held backlog is later delivered.
+      //
+      // A message held by a spend cap is deliberately NOT treated the same way. Gating is
+      // indefinite and conditional on the mind acting; a spend hold is a wait with a known
+      // end, and the message arrives whole, prefaced with when it came. So history records
+      // the true receipt time here — the same choice the sleep path makes — rather than
+      // back-dating the record to the moment the mind happened to be free.
       if (!willGate(baseName, payload)) {
         await recordInbound(baseName, payload.channel, payload.sender ?? null, textContent);
       }

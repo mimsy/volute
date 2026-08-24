@@ -139,6 +139,7 @@ export class SpendBudget {
    * recorded spend — which a crash-looping mind would shed on every restart.
    */
   async removeBudget(mind: string): Promise<void> {
+    const wasHeld = this.holdFor(mind) != null;
     const state = this.budgets.get(mind);
     if (state && this.dirty.has(mind)) {
       this.dirty.delete(mind);
@@ -146,6 +147,9 @@ export class SpendBudget {
     }
     this.budgets.delete(mind);
     this.systemAcks.delete(mind);
+    // Clearing a cap (`PUT /minds/:name/config` with no `spendCap`) ends the hold, so the
+    // mind should hear again now rather than at the next sweep.
+    if (wasHeld && this.holdFor(mind) == null) releaseHeldDeliveries();
   }
 
   /**

@@ -27,6 +27,12 @@ export async function startMindFull(name: string): Promise<void> {
   const entry = await findMind(name);
   const baseName = entry?.parent ?? name;
 
+  // Load the spend cap BEFORE the process is registered as running. `startMind` marks
+  // the mind up and then polls /health for up to 30s; a redrive sweep landing in that
+  // window would find no bucket for this mind, conclude nothing is holding it, and hand
+  // an over-cap mind its entire held backlog at its coldest moment.
+  await restoreSpendBudget(baseName);
+
   await getMindManager().startMind(name);
 
   publishActivity({
@@ -136,6 +142,18 @@ export async function restoreMindRuntimeState(baseName: string): Promise<void> {
   } catch (err) {
     log.error(`failed to load schedules for ${baseName}`, log.errorData(err));
   }
+  await restoreSpendBudget(baseName);
+}
+
+/**
+ * Load a mind's spend cap into the live budget. Idempotent — re-setting the same cap
+ * changes nothing — so it is safe to call both before the process starts (so the cap
+ * binds from the first instant the mind is visible as running) and again from
+ * {@link restoreMindRuntimeState}.
+ */
+export async function restoreSpendBudget(baseName: string): Promise<void> {
+  const entry = await findMind(baseName);
+  if (!entry || entry.parent || entry.stage === "seed") return;
   try {
     const config = readVoluteConfig(mindDir(baseName));
     if (config?.spendCap) {

@@ -3,7 +3,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { resolve } from "node:path";
 import { afterEach, describe, it } from "node:test";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { getDb } from "../packages/daemon/src/lib/db.js";
 import {
   type DeliveryHold,
@@ -24,14 +24,21 @@ async function startMindServer(delayMs = 0): Promise<{
   server: Server;
   port: number;
   received: MindEnvelope[];
+  /** Resolves as soon as a POST arrives, before the (optionally delayed) response. */
+  firstRequest: Promise<void>;
 }> {
   const received: MindEnvelope[] = [];
+  let signalFirst: () => void = () => {};
+  const firstRequest = new Promise<void>((r) => {
+    signalFirst = r;
+  });
   const server = createServer((req, res) => {
     let raw = "";
     req.on("data", (c) => {
       raw += c;
     });
     req.on("end", () => {
+      signalFirst();
       const respond = () => {
         try {
           received.push(JSON.parse(raw));
@@ -47,7 +54,7 @@ async function startMindServer(delayMs = 0): Promise<{
   const port: number = await new Promise((r) => {
     server.listen(0, "127.0.0.1", () => r((server.address() as { port: number }).port));
   });
-  return { server, port, received };
+  return { server, port, received, firstRequest };
 }
 
 async function registerMind(port: number, config: RoutingConfig | object): Promise<string> {
@@ -308,6 +315,87 @@ describe("DeliveryManager: holding deliveries", () => {
     await removeMind(name);
   });
 
+  it("stamps when the message arrived, not when the hold noticed it", async () => {
+    // A row that sat pending through a mind restart is first held long after it arrived.
+    // Telling the mind it "arrived" at the moment we got around to holding it is the same
+    // lie about waiting that the preface exists to prevent.
+    const srv = await startMindServer();
+    servers.push(srv.server);
+    const name = await registerMind(srv.port, IMMEDIATE);
+
+    manager = new DeliveryManager();
+    manager.setRunningCheck(() => true);
+    manager.setHoldCheck(() => SPEND_HOLD);
+
+    // A message that arrived two hours ago and never went out — the mind was down.
+    const db = await getDb();
+    const [inserted] = await db
+      .insert(deliveryQueue)
+      .values({
+        mind: name,
+        target_mind: name,
+        thread: "main",
+        channel: "test:ch",
+        sender: "alice",
+        status: "pending",
+        payload: JSON.stringify({ channel: "test:ch", sender: "alice", content: "old" }),
+      })
+      .returning({ id: deliveryQueue.id });
+    await db
+      .update(deliveryQueue)
+      .set({ created_at: sql`datetime('now', '-2 hours')` })
+      .where(eq(deliveryQueue.id, inserted.id));
+
+    // Now the cap trips and the sweep meets it for the first time.
+    await manager.redrive();
+
+    const held = (await queueRows(name)).find((r) => r.id === inserted.id);
+    assert.ok(held, "the aged row is still there, held");
+    const heldAt = (JSON.parse(held.payload) as DeliveryPayload).held?.at ?? 0;
+    const ageMinutes = (Date.now() - heldAt) / 60_000;
+    assert.ok(
+      ageMinutes > 60,
+      `held.at should be the two-hour-old arrival, not now (got ${ageMinutes.toFixed(1)}m)`,
+    );
+
+    await db.delete(deliveryQueue).where(eq(deliveryQueue.mind, name));
+    await removeMind(name);
+  });
+
+  it("overlapping sweeps run once, not once each", async () => {
+    // Spend releases now trigger a sweep from three places on top of the periodic timer,
+    // so overlap is routine rather than theoretical. A sweep works from a snapshot and
+    // yields inside its loop, so two passes can both act on a row the other has already
+    // delivered and deleted.
+    const srv = await startMindServer();
+    servers.push(srv.server);
+    const name = await registerMind(srv.port, IMMEDIATE);
+
+    manager = new DeliveryManager();
+    manager.setRunningCheck(() => true);
+    manager.setHoldCheck(() => SPEND_HOLD);
+    await manager.routeAndDeliver(name, { channel: "test:ch", sender: "alice", content: "hi" });
+    manager.setHoldCheck(() => null);
+
+    const internals = manager as unknown as { redriveInner: () => Promise<void> };
+    const real = internals.redriveInner.bind(manager);
+    let sweeps = 0;
+    internals.redriveInner = async () => {
+      sweeps++;
+      // Hold the sweep open so the later calls are unambiguously concurrent with it.
+      await new Promise((r) => setTimeout(r, 50));
+      await real();
+    };
+
+    await Promise.all([manager.redrive(), manager.redrive(), manager.redrive()]);
+
+    assert.equal(sweeps, 1, "the later calls joined the sweep already running");
+    await waitFor(async () => (await queueRows(name)).length === 0);
+    assert.equal(srv.received.length, 1, "and the message went out exactly once");
+
+    await removeMind(name);
+  });
+
   it("does not interrupt a delivery already in flight", async () => {
     // A mind finishes what it is on. The gate is checked before the POST, never during —
     // so a hold that begins mid-turn cannot cut a thought off in the middle.
@@ -325,8 +413,10 @@ describe("DeliveryManager: holding deliveries", () => {
       sender: "alice",
       content: "mid-thought",
     });
-    // The cap trips while the POST is outstanding.
-    await new Promise((r) => setTimeout(r, 50));
+    // The cap trips while the POST is genuinely outstanding — gated on the mind having
+    // received the request, not on a wall-clock guess about how long two DB round-trips
+    // take, which is exactly the kind of timing this repo's suite flakes on under load.
+    await srv.firstRequest;
     held = SPEND_HOLD;
     await inFlight;
 
