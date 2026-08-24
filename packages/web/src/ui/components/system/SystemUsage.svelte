@@ -26,13 +26,14 @@ const WINDOWS: { value: UsageWindow; label: string }[] = [
   { value: "30d", label: "30d" },
 ];
 
-let window = $state<UsageWindow>("24h");
+// Not `window`: that would shadow the global in a component that may later need it.
+let usageWindow = $state<UsageWindow>("24h");
 let report = $state<SystemUsageReport | null>(null);
 let error = $state("");
 let loading = $state(true);
 
 $effect(() => {
-  const w = window;
+  const w = usageWindow;
   let live = true;
   loading = true;
   error = "";
@@ -97,7 +98,7 @@ function windowLabel(w: UsageWindow): string {
     </div>
     <div class="windows">
       {#each WINDOWS as w (w.value)}
-        <button class="window" class:active={window === w.value} onclick={() => (window = w.value)}>
+        <button class="window" class:active={usageWindow === w.value} onclick={() => (usageWindow = w.value)}>
           {w.label}
         </button>
       {/each}
@@ -117,7 +118,7 @@ function windowLabel(w: UsageWindow): string {
             >{/if}
           {headlineFigure.text}
         </span>
-        <span class="scope">{windowLabel(window)}</span>
+        <span class="scope">{windowLabel(usageWindow)}</span>
       </div>
       <div class="stats">
         <span>{headline.turns} {headline.turns === 1 ? "turn" : "turns"}</span>

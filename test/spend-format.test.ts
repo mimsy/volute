@@ -26,8 +26,13 @@ describe("formatUsd", () => {
 
   it("keeps sub-cent amounts visible rather than rounding a real cost to nothing", () => {
     assert.equal(formatUsd(0.0042), "$0.0042");
-    assert.equal(formatUsd(0.00001), "$0.0000");
     assert.notEqual(formatUsd(0.004), "$0.00");
+  });
+
+  it("says less-than rather than showing a real cost as zero", () => {
+    assert.equal(formatUsd(0.00001), "<$0.0001");
+    assert.notEqual(formatUsd(0.00001), "$0.0000");
+    assert.equal(formatUsd(0), "$0.00", "an actual zero is still a zero");
   });
 });
 

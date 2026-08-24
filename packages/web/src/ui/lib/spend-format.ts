@@ -27,6 +27,9 @@ export type SpendFigure = {
 export function formatUsd(n: number): string {
   if (!Number.isFinite(n)) return "$0.00";
   const abs = Math.abs(n);
+  // Below four decimals there is no digit left to show, so say "less than" rather than
+  // rounding a real cost down to a zero that reads as free.
+  if (abs > 0 && abs < 0.0001) return n > 0 ? "<$0.0001" : ">-$0.0001";
   if (abs > 0 && abs < 0.01) return `$${n.toFixed(4)}`;
   return `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
