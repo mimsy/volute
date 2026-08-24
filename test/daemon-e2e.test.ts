@@ -18,6 +18,7 @@ import {
   getOrCreateMindUser,
   getUserByUsername,
 } from "../packages/daemon/src/lib/auth.js";
+import { readEnv, sharedEnvPath, writeEnv } from "../packages/daemon/src/lib/config/env.js";
 import { getDb } from "../packages/daemon/src/lib/db.js";
 import {
   findMind,
@@ -89,6 +90,19 @@ describe("daemon e2e", { timeout: 420000 }, () => {
   before(async () => {
     // Clean up any leftover test mind
     await cleanupMind();
+
+    // Doomed turns must fail fast. These tests run minds on a fake key (see
+    // ANTHROPIC_API_KEY above) and assume the resulting turn errors out in
+    // seconds — sleep/wake in particular only completes once the wake-summary
+    // turn goes idle. The Agent SDK now retries `401 authentication_failed`
+    // like a transient error (10 attempts, exponential backoff), which turns an
+    // instantly-fatal bad key into minutes of stalling and blows every
+    // turn-timing window in this file. That behavior arrived without any
+    // dependency change: 0.3.217 — published 2026-07-21, weeks before this file
+    // last passed CI, and the version our lockfile pins — retries today. Same
+    // bytes, new behavior, so pinning can't restore it; cap the retries instead.
+    // Shared env, so every mind the suite spawns (incl. the spirit) inherits it.
+    writeEnv(sharedEnvPath(), { ...readEnv(sharedEnvPath()), CLAUDE_CODE_MAX_RETRIES: "0" });
 
     // Ensure setup config exists so CLI commands don't fail with "not set up"
     writeFileSync(
