@@ -54,8 +54,15 @@ export type MindProfile = {
 export type CognitionConfig = {
   model?: string;
   thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+  /** Spend cap in USD per `spendCapPeriodMinutes`. Replaces the old `tokenBudget`. */
+  spendCap?: number;
+  /** Length of the spend period in minutes. Default 1440 (a day). */
+  spendCapPeriodMinutes?: number;
+  /**
+   * Pre-0.59 token budget. Read only to warn the host that it no longer does
+   * anything (`restoreMindRuntimeState`) — never enforced.
+   */
   tokenBudget?: number;
-  tokenBudgetPeriodMinutes?: number;
 };
 
 export type VoluteConfig = CognitionConfig & {

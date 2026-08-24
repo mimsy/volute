@@ -3,7 +3,10 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { after, describe, it } from "node:test";
-import { mindPricingContext } from "../packages/daemon/src/lib/daemon/usage-pricing.js";
+import {
+  mindPricingContext,
+  priceUsageMetadata,
+} from "../packages/daemon/src/lib/daemon/usage-pricing.js";
 import { addMind, addVariant, mindDir } from "../packages/daemon/src/lib/mind/registry.js";
 
 const scratch = mkdtempSync(resolve(tmpdir(), "volute-pricing-ctx-"));
@@ -55,5 +58,37 @@ describe("mindPricingContext", () => {
     const ctx = await mindPricingContext("pc-does-not-exist");
     assert.equal(ctx.template, undefined);
     assert.equal(ctx.configuredModel, undefined);
+  });
+});
+
+describe("mindPricingContext: a variant inherits its parent's template", () => {
+  it("prices a variant's turn instead of dropping it to null", async () => {
+    // `addVariant` writes no `template`, so without the parent fallback a variant's
+    // bare model id resolves to no provider, the turn prices to null, and its spend
+    // counts $0 against the install-wide cap — a mind could split itself to spend
+    // past its host's budget.
+    await addMind("pc-tmpl-parent", 4811, undefined, "claude");
+    const dir = resolve(scratch, "pc-tmpl-variant");
+    mkdirSync(dir, { recursive: true });
+    await addVariant("pc-tmpl-variant", "pc-tmpl-parent", 4812, dir, "variant-branch");
+
+    const ctx = await mindPricingContext("pc-tmpl-variant");
+    assert.equal(ctx.template, "claude", "falls back to the parent's template");
+
+    const priced = priceUsageMetadata(
+      {
+        input_tokens: 1_000,
+        output_tokens: 1_000,
+        cache_read_input_tokens: 0,
+        cache_creation_input_tokens: 0,
+        model: "claude-haiku-4-5", // bare id, as the claude template emits
+      },
+      ctx,
+    );
+    assert.equal(
+      priced.cost_usd,
+      (1000 * 1 + 1000 * 5) / 1e6,
+      "the variant's turn has a real cost",
+    );
   });
 });

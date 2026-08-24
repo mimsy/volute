@@ -70,7 +70,7 @@ Each mind lives in `~/.volute/minds/<name>/`:
 
 **`.config/config.json`** holds SDK configuration — model and compaction settings.
 
-**`.config/volute.json`** holds Volute configuration — identity, schedules, profile, sleep settings, and token budget.
+**`.config/volute.json`** holds Volute configuration — identity, schedules, profile, sleep settings, and spend cap.
 
 ## Sending messages
 
