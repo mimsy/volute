@@ -770,6 +770,7 @@ describe("turn-lifecycle: spend cap notices", () => {
       assert.match(body, /resets in about 1 hour/, "says when the period resets");
       // A heads-up that doesn't say what it is warning about isn't one.
       assert.match(body, /At 100%.*held/is, "names the consequence of reaching the cap");
+      assert.match(body, /schedules/i, "including that schedules are held too");
       assert.doesNotMatch(body, /couldn't be priced/, "nothing was unpriced");
     } finally {
       await sb.removeBudget(mind);
@@ -812,11 +813,25 @@ describe("turn-lifecycle: spend cap notices", () => {
       // one — `holdFor` gates every POST. Whatever the wording claims has to be true of
       // the code: messages are held, they are not lost, and they arrive when it resets.
       assert.match(notices[0].body, /being held/i, "states that messages are held");
-      assert.match(notices[0].body, /aren't lost/i, "and that nothing is dropped");
+      assert.match(notices[0].body, /nothing is deleted/i, "and that nothing is dropped");
+      // Schedules are held too now, so the notice must say so — the earlier wording
+      // promised they still fired, which stopped being true the moment the event gate
+      // landed. The claim that survives is about the mind's own agency.
+      assert.match(notices[0].body, /scheduled wakeups/i, "names that schedules are held too");
+      assert.doesNotMatch(
+        notices[0].body,
+        /schedules still fire/i,
+        "and no longer claims they keep firing",
+      );
       assert.match(
         notices[0].body,
-        /schedules still fire|own tools still work/i,
-        "and that the hold is on receiving, not on the mind acting",
+        /own tools still work/i,
+        "the hold is on the world reaching in, not on the mind acting",
+      );
+      assert.match(
+        notices[0].body,
+        /not being replayed/i,
+        "and warns that the release is bounded rather than a flood",
       );
     } finally {
       await sb.removeBudget(mind);

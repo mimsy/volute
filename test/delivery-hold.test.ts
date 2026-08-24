@@ -141,13 +141,13 @@ describe("DeliveryManager: holding deliveries", () => {
     await manager.routeAndDeliver(name, { channel: "test:ch", sender: "alice", content: "hi" });
 
     assert.equal(srv.received.length, 0, "a held mind is not POSTed to");
-    const rows = await queueRows(name);
+    assert.equal((await queueRows(name, "pending")).length, 0, "and it leaves the sweep");
+    const rows = await queueRows(name, "held");
     assert.equal(rows.length, 1, "the message is kept, not dropped");
     // A hold is a scheduling decision, not a delivery failure: nothing here may look like
     // one, or a long hold would walk the row into the dead-letter ceiling.
     assert.equal(rows[0].attempts, 0, "a hold does not count as an attempt");
-    assert.equal(rows[0].next_attempt_at, null, "a hold sets no backoff window");
-    assert.equal(rows[0].status, "pending", "the redrive sweep still owns it");
+    assert.equal(rows[0].next_attempt_at, null, "and schedules no retry");
 
     await removeMind(name);
   });
@@ -185,7 +185,7 @@ describe("DeliveryManager: holding deliveries", () => {
 
     // The period rolls over.
     held = null;
-    await manager.redrive();
+    await manager.releaseHeld(name);
     await waitFor(async () => (await queueRows(name)).length === 0);
 
     assert.equal(srv.received.length, 1, "the held message is delivered, not lost");
@@ -209,7 +209,7 @@ describe("DeliveryManager: holding deliveries", () => {
 
     await manager.routeAndDeliver(name, { channel: "test:ch", sender: "alice", content: "hi" });
     held = null;
-    await manager.redrive();
+    await manager.releaseHeld(name);
     await waitFor(async () => (await queueRows(name)).length === 0);
 
     const text = receivedText(srv.received[0]);
@@ -229,18 +229,18 @@ describe("DeliveryManager: holding deliveries", () => {
     manager.setHoldCheck(() => SPEND_HOLD);
 
     await manager.routeAndDeliver(name, { channel: "test:ch", sender: "alice", content: "hi" });
-    const first = (await queueRows(name))[0];
+    const first = (await queueRows(name, "held"))[0];
     const markedAt = (JSON.parse(first.payload) as DeliveryPayload).held?.at;
     assert.ok(markedAt, "the row is stamped when it is first held");
 
     for (let i = 0; i < 3; i++) await manager.redrive();
 
-    const rows = await queueRows(name);
+    const rows = await queueRows(name, "held");
     assert.equal(srv.received.length, 0);
     assert.equal(rows.length, 1);
     assert.equal(rows[0].attempts, 0);
-    // "How long did this wait" is answered by the FIRST hold, so re-stamping on every
-    // sweep would make a day-long wait read as a few seconds.
+    // "How long did this wait" is answered by the FIRST hold, so re-stamping would make a
+    // day-long wait read as a few seconds.
     assert.equal((JSON.parse(rows[0].payload) as DeliveryPayload).held?.at, markedAt);
 
     await removeMind(name);
@@ -264,13 +264,13 @@ describe("DeliveryManager: holding deliveries", () => {
     assert.equal(one.routed && one.mode, "batch", "this test must exercise the batch path");
     await manager.routeAndDeliver(name, { channel: "test:ch", sender: "alice", content: "two" });
 
-    await waitFor(async () => (await queueRows(name)).length === 2);
+    await waitFor(async () => (await queueRows(name, "held")).length === 2);
     await new Promise((r) => setTimeout(r, 300)); // let the batch timers fire
     assert.equal(srv.received.length, 0, "a held batch is not POSTed");
-    assert.equal((await queueRows(name)).length, 2, "both messages are kept");
+    assert.equal((await queueRows(name, "held")).length, 2, "both messages are kept");
 
     held = null;
-    await manager.redrive();
+    await manager.releaseHeld(name);
     await waitFor(async () => (await queueRows(name)).length === 0, 5000);
 
     const text = srv.received.map(receivedText).join("\n");
@@ -308,9 +308,9 @@ describe("DeliveryManager: holding deliveries", () => {
     const buffers = (manager as unknown as { batchBuffers: Map<string, unknown> }).batchBuffers;
     const inFlight = (manager as unknown as { inFlight: Set<number> }).inFlight;
     assert.equal(buffers.size, 0, "a held row is not re-buffered by the sweep");
-    assert.equal(inFlight.size, 0, "and is not re-owned, so the sweep can still see it");
+    assert.equal(inFlight.size, 0, "and is not re-owned");
     assert.equal(srv.received.length, 0);
-    assert.equal((await queueRows(name)).length, 1, "and is still there to be released");
+    assert.equal((await queueRows(name, "held")).length, 1, "and is still there to be released");
 
     await removeMind(name);
   });
@@ -349,7 +349,7 @@ describe("DeliveryManager: holding deliveries", () => {
     // Now the cap trips and the sweep meets it for the first time.
     await manager.redrive();
 
-    const held = (await queueRows(name)).find((r) => r.id === inserted.id);
+    const held = (await queueRows(name, "held")).find((r) => r.id === inserted.id);
     assert.ok(held, "the aged row is still there, held");
     const heldAt = (JSON.parse(held.payload) as DeliveryPayload).held?.at ?? 0;
     const ageMinutes = (Date.now() - heldAt) / 60_000;
@@ -376,6 +376,7 @@ describe("DeliveryManager: holding deliveries", () => {
     manager.setHoldCheck(() => SPEND_HOLD);
     await manager.routeAndDeliver(name, { channel: "test:ch", sender: "alice", content: "hi" });
     manager.setHoldCheck(() => null);
+    await manager.releaseHeld(name);
 
     const internals = manager as unknown as { redriveInner: () => Promise<void> };
     const real = internals.redriveInner.bind(manager);
@@ -392,6 +393,148 @@ describe("DeliveryManager: holding deliveries", () => {
     assert.equal(sweeps, 1, "the later calls joined the sweep already running");
     await waitFor(async () => (await queueRows(name)).length === 0);
     assert.equal(srv.received.length, 1, "and the message went out exactly once");
+
+    await removeMind(name);
+  });
+
+  it("a held row is invisible to the sweep, so one capped mind can't starve another", async () => {
+    // The sweep reads `pending` id-ordered under a batch limit. A held row that stayed
+    // eligible would fill that window on every pass for as long as the hold lasts — and
+    // after a daemon restart the sweep is the ONLY delivery path, so another mind's whole
+    // backlog would be unreachable because this one hit its cap.
+    const capped = await startMindServer();
+    const other = await startMindServer();
+    servers.push(capped.server, other.server);
+    const cappedName = await registerMind(capped.port, IMMEDIATE);
+    const otherName = await registerMind(other.port, IMMEDIATE);
+
+    manager = new DeliveryManager();
+    manager.setRunningCheck(() => true);
+    manager.setHoldCheck((mind) => (mind === cappedName ? SPEND_HOLD : null));
+
+    // The capped mind's rows land first, so they hold the low ids.
+    for (let i = 0; i < 5; i++) {
+      await manager.routeAndDeliver(cappedName, {
+        channel: "test:ch",
+        sender: "alice",
+        content: `held ${i}`,
+      });
+    }
+    assert.equal((await queueRows(cappedName, "held")).length, 5);
+
+    // A message to a mind that is NOT capped, queued behind them.
+    const db = await getDb();
+    const [row] = await db
+      .insert(deliveryQueue)
+      .values({
+        mind: otherName,
+        target_mind: otherName,
+        thread: "main",
+        channel: "test:ch",
+        sender: "bob",
+        status: "pending",
+        payload: JSON.stringify({ channel: "test:ch", sender: "bob", content: "unrelated" }),
+      })
+      .returning({ id: deliveryQueue.id });
+
+    await manager.redrive();
+    await waitFor(async () => other.received.length === 1);
+
+    assert.equal(other.received.length, 1, "the uncapped mind still hears");
+    assert.equal(capped.received.length, 0, "and the capped one still doesn't");
+    assert.equal((await queueRows(otherName)).length, 0);
+    void row;
+
+    await db.delete(deliveryQueue).where(eq(deliveryQueue.mind, cappedName));
+    await removeMind(cappedName);
+    await removeMind(otherName);
+  });
+
+  it("bounds the release: newest per channel delivered, the rest archived with a summary", async () => {
+    // A day of held traffic delivered in full is one turn per message against a budget
+    // that just reset — it would spend the new period in minutes and re-trip the cap,
+    // leaving the mind alternating between deaf and drowning.
+    const srv = await startMindServer();
+    servers.push(srv.server);
+    const name = await registerMind(srv.port, IMMEDIATE);
+
+    manager = new DeliveryManager();
+    manager.setRunningCheck(() => true);
+    let held: DeliveryHold | null = SPEND_HOLD;
+    manager.setHoldCheck(() => held);
+    const notices: { detail: string }[] = [];
+    manager.setFailureNotifier(async (input) => {
+      notices.push({ detail: input.detail });
+    });
+
+    for (let i = 0; i < 14; i++) {
+      await manager.routeAndDeliver(name, {
+        channel: "test:ch",
+        sender: "alice",
+        content: `message ${i}`,
+      });
+    }
+    assert.equal((await queueRows(name, "held")).length, 14);
+
+    held = null;
+    const { released, archived } = await manager.releaseHeld(name);
+
+    assert.equal(released, 10, "only the newest ten per channel are delivered");
+    assert.equal(archived, 4, "the rest are archived, not deleted");
+    assert.equal((await queueRows(name, "archived")).length, 4);
+    await waitFor(async () => (await queueRows(name)).length === 0);
+
+    const text = srv.received.map(receivedText).join("\n");
+    assert.match(text, /message 13/, "the newest arrived");
+    assert.doesNotMatch(text, /message 0\b/, "the oldest did not");
+
+    assert.equal(notices.length, 1, "and the mind gets one account of what waited");
+    assert.match(notices[0].detail, /4/, "naming how many are not being replayed");
+    assert.match(notices[0].detail, /volute chat read/, "and where to read them");
+
+    const db = await getDb();
+    await db.delete(deliveryQueue).where(eq(deliveryQueue.mind, name));
+    await removeMind(name);
+  });
+
+  it("releaseHeld is a no-op while the mind is still held", async () => {
+    const srv = await startMindServer();
+    servers.push(srv.server);
+    const name = await registerMind(srv.port, IMMEDIATE);
+
+    manager = new DeliveryManager();
+    manager.setRunningCheck(() => true);
+    manager.setHoldCheck(() => SPEND_HOLD);
+    await manager.routeAndDeliver(name, { channel: "test:ch", sender: "alice", content: "hi" });
+
+    const { released } = await manager.releaseHeld(name);
+    assert.equal(released, 0, "releasing on a cap that hasn't lifted would hand it straight back");
+    assert.equal(srv.received.length, 0);
+    assert.equal((await queueRows(name, "held")).length, 1);
+
+    const db = await getDb();
+    await db.delete(deliveryQueue).where(eq(deliveryQueue.mind, name));
+    await removeMind(name);
+  });
+
+  it("releaseAllHeld finds minds by their rows, including ones with no bucket", async () => {
+    // The install-wide cap holds minds that have no spend bucket of their own, so a mind
+    // list would miss them — the rows are the only complete answer to who is waiting.
+    const srv = await startMindServer();
+    servers.push(srv.server);
+    const name = await registerMind(srv.port, IMMEDIATE);
+
+    manager = new DeliveryManager();
+    manager.setRunningCheck(() => true);
+    let held: DeliveryHold | null = { reason: "spend_cap", scope: "system" };
+    manager.setHoldCheck(() => held);
+    await manager.routeAndDeliver(name, { channel: "test:ch", sender: "alice", content: "hi" });
+    assert.equal((await queueRows(name, "held")).length, 1);
+
+    held = null;
+    await manager.releaseAllHeld();
+    await waitFor(async () => (await queueRows(name)).length === 0);
+    assert.equal(srv.received.length, 1);
 
     await removeMind(name);
   });

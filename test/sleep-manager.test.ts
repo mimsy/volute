@@ -1102,9 +1102,9 @@ describe("SleepManager.flushQueuedMessages", () => {
       const promoted = await db
         .select()
         .from(deliveryQueue)
-        .where(and(eq(deliveryQueue.mind, mind), eq(deliveryQueue.status, "pending")))
+        .where(and(eq(deliveryQueue.mind, mind), eq(deliveryQueue.status, "held")))
         .all();
-      assert.equal(promoted.length, 2, "and become held rows the redrive sweep owns");
+      assert.equal(promoted.length, 2, "and become held rows the release path owns");
       for (const row of promoted) {
         const payload = JSON.parse(row.payload) as { held?: { at: number; scope: string } };
         assert.equal(payload.held?.scope, "mind", "stamped with which cap held them");

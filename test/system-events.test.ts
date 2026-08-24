@@ -11,6 +11,7 @@ import {
   drainEvents,
   eventChannel,
   eventLabel,
+  flushHeldEvents,
   flushQueuedEvents,
   formatEvents,
   hasUndeliveredEvent,
@@ -29,6 +30,10 @@ import { initSpendBudget } from "../packages/daemon/src/lib/daemon/spend-budget.
 import { handleMindEvent } from "../packages/daemon/src/lib/daemon/turn-lifecycle.js";
 import { clearMind } from "../packages/daemon/src/lib/daemon/turn-tracker.js";
 import { getDb } from "../packages/daemon/src/lib/db.js";
+import {
+  initDeliveryManager,
+  tryGetDeliveryManager,
+} from "../packages/daemon/src/lib/delivery/delivery-manager.js";
 import { addMind, removeMind } from "../packages/daemon/src/lib/mind/registry.js";
 import { mindHistory, minds, systemEvents, turns } from "../packages/daemon/src/lib/schema.js";
 
@@ -291,6 +296,135 @@ describe("system-events deliverEvent", () => {
     } finally {
       (sm as unknown as { isSleeping: (n: string) => boolean }).isSleeping = realIsSleeping;
       (sm as unknown as { initiateWake: typeof realInitiateWake }).initiateWake = realInitiateWake;
+      stub.close();
+      await cleanupMind(mind);
+    }
+  });
+});
+
+describe("system-events: spend hold", () => {
+  function withHold(hold: { reason: string; scope: "mind" | "system" } | null) {
+    const dm = tryGetDeliveryManager() ?? initDeliveryManager();
+    dm.setHoldCheck(() => hold);
+    return () => dm.setHoldCheck(() => null);
+  }
+
+  it("holds a scheduled event: not POSTed, row stays pending, marked spendHeld", async () => {
+    // A heartbeat is the whole spend of an idle mind. A cap that let schedules through
+    // would visibly fail to bind in the most ordinary configuration there is.
+    const mind = uniqueMind();
+    const stub = await stubMind(mind);
+    const release = withHold({ reason: "spend_cap", scope: "mind" });
+    try {
+      const { id, delivered } = await deliverEvent(mind, {
+        type: "schedule",
+        body: "heartbeat",
+        meta: { scheduleId: "hb" },
+      });
+      assert.equal(delivered, false);
+      assert.equal(stub.posted.length, 0, "a mind over its cap is not woken by its clock");
+
+      const row = await eventRow(id!);
+      assert.equal(row?.delivered_at, null, "the row stays pending for the release");
+      assert.equal(parseMeta(row?.meta).spendHeld, 1);
+      assert.equal((await inboundRows(mind)).length, 0, "and history claims nothing");
+    } finally {
+      release();
+      stub.close();
+      await cleanupMind(mind);
+    }
+  });
+
+  it("never holds an event about the mind's own situation", async () => {
+    // Holding one of these means a process that came up and was never told why it exists.
+    const mind = uniqueMind();
+    const stub = await stubMind(mind);
+    const release = withHold({ reason: "spend_cap", scope: "mind" });
+    try {
+      for (const type of ["wake", "lifecycle", "orientation", "notice", "budget"]) {
+        const { delivered } = await deliverEvent(mind, { type, body: `a ${type} event` });
+        assert.equal(delivered, true, `${type} must reach a held mind`);
+      }
+      assert.equal(stub.posted.length, 5);
+    } finally {
+      release();
+      stub.close();
+      await cleanupMind(mind);
+    }
+  });
+
+  it("collapses repeats of the same schedule, but not different schedules", async () => {
+    // A day-long hold releasing twenty-four heartbeats would spend the new period in
+    // minutes. But a heartbeat and a daily journal prompt are both type "schedule", so
+    // collapsing by type would eat a different schedule's only firing.
+    const mind = uniqueMind();
+    const stub = await stubMind(mind);
+    const release = withHold({ reason: "spend_cap", scope: "mind" });
+    try {
+      const a = await deliverEvent(mind, {
+        type: "schedule",
+        body: "hb 1",
+        meta: { scheduleId: "hb" },
+      });
+      const b = await deliverEvent(mind, {
+        type: "schedule",
+        body: "journal",
+        meta: { scheduleId: "journal" },
+      });
+      const c = await deliverEvent(mind, {
+        type: "schedule",
+        body: "hb 2",
+        meta: { scheduleId: "hb" },
+      });
+
+      assert.equal(parseMeta((await eventRow(a.id!))?.meta).superseded, 1, "the older heartbeat");
+      assert.equal(
+        parseMeta((await eventRow(b.id!))?.meta).superseded,
+        undefined,
+        "a different schedule's only firing survives",
+      );
+      assert.equal(parseMeta((await eventRow(c.id!))?.meta).superseded, undefined, "the newest");
+    } finally {
+      release();
+      stub.close();
+      await cleanupMind(mind);
+    }
+  });
+
+  it("the wake/start flush leaves held events held", async () => {
+    // flushQueuedEvents runs on wake AND on mind start, so without this a capped mind that
+    // restarts is handed every held heartbeat at once.
+    const mind = uniqueMind();
+    const stub = await stubMind(mind);
+    const release = withHold({ reason: "spend_cap", scope: "mind" });
+    try {
+      await deliverEvent(mind, { type: "schedule", body: "hb", meta: { scheduleId: "hb" } });
+      assert.equal(await flushQueuedEvents(mind), 0, "the flush does not walk around the hold");
+      assert.equal(stub.posted.length, 0);
+
+      release();
+      assert.equal(await flushQueuedEvents(mind), 1, "and delivers once the cap lifts");
+      assert.equal(stub.posted.length, 1);
+    } finally {
+      release();
+      stub.close();
+      await cleanupMind(mind);
+    }
+  });
+
+  it("flushHeldEvents releases held events when the cap lifts", async () => {
+    const mind = uniqueMind();
+    const stub = await stubMind(mind);
+    const release = withHold({ reason: "spend_cap", scope: "system" });
+    try {
+      await deliverEvent(mind, { type: "webhook", body: "ping" });
+      assert.equal(stub.posted.length, 0);
+
+      release();
+      await flushHeldEvents();
+      assert.equal(stub.posted.length, 1, "the held event arrives");
+    } finally {
+      release();
       stub.close();
       await cleanupMind(mind);
     }
