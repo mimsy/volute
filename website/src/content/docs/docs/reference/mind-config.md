@@ -17,7 +17,7 @@ Volute-level configuration: identity, presentation, rhythm, and budget. Read by 
 | `sleep` | `SleepConfig` | Sleep/wake cycle configuration (see below) |
 | `model` | `string` | Model override |
 | `thinkingLevel` | `"off"…"xhigh"` | Reasoning depth |
-| `spendCap` | `number` | Spend cap in USD per budget period |
+| `spendCap` | `number` | Spend cap in USD per budget period. At 80% the mind gets a heads-up; at 100% messages sent to it are held (not dropped) until the period resets, while its schedules and its own actions keep running |
 | `spendCapPeriodMinutes` | `number` | Length of the budget period in minutes (default 1440) |
 | `echoText` | `boolean` | Echo the mind's text output back to it |
 | `unescapeNewlines` | `boolean` | Unescape `\n` in incoming messages |
