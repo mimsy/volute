@@ -106,6 +106,13 @@ const GATED_RELEASE_LIMIT_PER_CHANNEL = 10;
 // mind should be able to tell "nobody is talking to me" from "I've been deaf for
 // months". #537
 const GATED_NOTIFY_EVERY = 10;
+// When a spend hold lifts, deliver at most this many of the newest held messages per
+// channel; the rest are archived (inert) and named in one summary. Same number and same
+// reason as the gated limit above: a day of held traffic released as one message per turn
+// would spend the new period's budget in minutes and re-trip the cap, leaving the mind
+// alternating between deaf and drowning without ever getting through the backlog.
+const HELD_RELEASE_LIMIT_PER_CHANNEL = 10;
+
 // Most-recent messages returned by a peek. Peeking is how a mind decides whether to accept
 // a channel; dumping an unbounded backlog into its context to answer that would defeat the
 // point of gating in the first place. The true total is reported alongside.
@@ -162,7 +169,16 @@ type QueuedMessage = {
  * touching this file — the concurrency gate proposed in #823 wants the same choke point,
  * and one gate with two reasons is better than two gates racing each other.
  */
-export type DeliveryHold = { reason: string; scope: "mind" | "system" };
+export type DeliveryHold = {
+  reason: string;
+  scope: "mind" | "system";
+  /**
+   * Epoch millis when this hold is expected to lift, when the reason knows. Recorded on
+   * the row so a host (and later the mind) can be told when the wait ends rather than
+   * being left to guess.
+   */
+  until?: number;
+};
 
 /** Local `YYYY-MM-DD HH:MM`, for a held message telling a mind when it actually arrived. */
 function compactLocal(at: number): string {
@@ -189,8 +205,14 @@ function compactLocal(at: number): string {
  */
 export function withHeldPreface(payload: DeliveryPayload): DeliveryPayload {
   const held = payload.held;
-  if (!held) return payload;
-  const { held: _marker, ...rest } = payload;
+  if (!held) {
+    // Never POST the bookkeeping flag even when nothing was held — `inboundDeferred` is a
+    // note to ourselves about `mind_history`, and means nothing to a mind.
+    if (payload.inboundDeferred === undefined) return payload;
+    const { inboundDeferred: _skip, ...bare } = payload;
+    return bare;
+  }
+  const { held: _marker, inboundDeferred: _deferred, ...rest } = payload;
   const whose = held.scope === "system" ? "this install's spend cap" : "your spend cap";
   const line =
     `[held — this arrived at ${compactLocal(held.at)}, when ${whose} was reached, ` +
@@ -205,6 +227,27 @@ export function withHeldPreface(payload: DeliveryPayload): DeliveryPayload {
   // waited; returning it bare would strip the marker and hand the mind a message that
   // looks brand new, which is the one outcome this function exists to prevent.
   return { ...rest, content: [{ type: "text", text: line }, rest.content] };
+}
+
+/**
+ * Write the `mind_history` inbound row for a message whose arrival-time recording was
+ * skipped because the mind was over its spend cap. Never throws into the delivery path:
+ * the message has already been received, and a missing history row is a smaller wrong
+ * than a delivery that reports failure and gets re-sent.
+ */
+async function recordDeferredInbound(baseName: string, payload: DeliveryPayload): Promise<void> {
+  try {
+    const db = await getDb();
+    await db.insert(mindHistory).values({
+      mind: baseName,
+      type: "inbound",
+      channel: payload.channel,
+      sender: payload.sender ?? null,
+      content: extractTextContent(payload.content),
+    });
+  } catch (err) {
+    dlog.warn(`failed to record deferred inbound for ${baseName}`, log.errorData(err));
+  }
 }
 
 /** The delivery_queue fields a dead-lettered row carries into its failure notice. */
@@ -545,7 +588,7 @@ export class DeliveryManager {
       // for as long as the hold lasts.
       const hold = this.holdCheck(row.mind, row.thread);
       if (hold) {
-        await this.markHeld(row.id, payload, hold);
+        await this.holdRow(row.id, payload, hold);
         continue;
       }
 
@@ -608,6 +651,159 @@ export class DeliveryManager {
       // Drop the entry only if nothing queued behind this run, so the map doesn't keep
       // one permanent entry per mind ever released.
       if (this.releaseChains.get(baseName) === chain) this.releaseChains.delete(baseName);
+    }
+  }
+
+  /**
+   * Release a mind's spend-held messages, now that its cap no longer holds it.
+   *
+   * Bounded the same way a gated release is (#537 bug 2), and for a sharper reason: a day
+   * of held traffic delivered in full would be one turn per message against a budget that
+   * just reset, spending the new period in minutes and re-tripping the cap — the mind would
+   * alternate between deaf and drowning and never reach the end of the backlog. So the
+   * newest {@link HELD_RELEASE_LIMIT_PER_CHANNEL} per channel are promoted, the rest are
+   * archived (inert, still readable in channel history), and the mind gets one summary
+   * saying how many waited. Coming back to "here are ten things, and sixty more arrived"
+   * is a description of a day; sixty turns is a denial of service.
+   *
+   * A no-op while the mind is still held — releasing on a cap that has not lifted would
+   * hand it straight back. Serialized per mind on the same chain as gated releases: both
+   * read rows and then write, and two overlapping runs would double-promote.
+   */
+  async releaseHeld(mindName: string): Promise<{ released: number; archived: number }> {
+    const baseName = await getBaseName(mindName);
+    const prev = this.releaseChains.get(baseName) ?? Promise.resolve();
+    const run = prev.then(() => this.releaseHeldInner(baseName));
+    const chain = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.releaseChains.set(baseName, chain);
+    try {
+      return await run;
+    } finally {
+      if (this.releaseChains.get(baseName) === chain) this.releaseChains.delete(baseName);
+    }
+  }
+
+  private async releaseHeldInner(
+    baseName: string,
+  ): Promise<{ released: number; archived: number }> {
+    // The spend hold is per-mind, so one check answers for every held row. (A future
+    // per-session hold — #823's concurrency gate — is momentary and never sets this
+    // status, so it has nothing to release here.)
+    if (this.holdCheck(baseName, "main")) return { released: 0, archived: 0 };
+
+    let rows: (typeof deliveryQueue.$inferSelect)[];
+    try {
+      const db = await getDb();
+      rows = await db
+        .select()
+        .from(deliveryQueue)
+        .where(and(eq(deliveryQueue.mind, baseName), eq(deliveryQueue.status, "held")));
+    } catch (err) {
+      dlog.warn(`failed to read held rows for ${baseName}`, log.errorData(err));
+      return { released: 0, archived: 0 };
+    }
+    if (rows.length === 0) return { released: 0, archived: 0 };
+
+    const byChannel = new Map<string, (typeof rows)[number][]>();
+    for (const row of rows) {
+      const channel = row.channel ?? "unknown";
+      const list = byChannel.get(channel) ?? [];
+      list.push(row);
+      byChannel.set(channel, list);
+    }
+
+    const promoteIds: number[] = [];
+    const archiveIds: number[] = [];
+    const notes: string[] = [];
+    for (const [channel, items] of byChannel) {
+      items.sort((a, b) => b.id - a.id); // newest first
+      const keep = items.slice(0, HELD_RELEASE_LIMIT_PER_CHANNEL);
+      const drop = items.slice(HELD_RELEASE_LIMIT_PER_CHANNEL);
+      for (const k of keep) promoteIds.push(k.id);
+      for (const d of drop) archiveIds.push(d.id);
+      if (drop.length > 0) {
+        notes.push(
+          `${channel}: ${items.length} message(s) arrived while your spend cap was reached. ` +
+            `The ${keep.length} most recent are on their way; the other ${drop.length} are not ` +
+            `being replayed into your context, and remain readable with ` +
+            `\`volute chat read ${channel}\`.`,
+        );
+      }
+    }
+
+    if (archiveIds.length > 0) {
+      try {
+        const db = await getDb();
+        // Chunked against SQLite's ~999 bound-variable limit — this IS the flood-prevention
+        // path, so it must not throw on a large backlog.
+        for (let i = 0; i < archiveIds.length; i += 500) {
+          await db
+            .update(deliveryQueue)
+            .set({ status: "archived" })
+            .where(inArray(deliveryQueue.id, archiveIds.slice(i, i + 500)));
+        }
+      } catch (err) {
+        dlog.warn(`failed to archive held rows for ${baseName}`, log.errorData(err));
+      }
+    }
+
+    let released = 0;
+    if (promoteIds.length > 0) {
+      try {
+        const db = await getDb();
+        for (let i = 0; i < promoteIds.length; i += 500) {
+          const chunk = promoteIds.slice(i, i + 500);
+          await db
+            .update(deliveryQueue)
+            .set({ status: "pending", attempts: 0, next_attempt_at: null })
+            .where(inArray(deliveryQueue.id, chunk));
+          released += chunk.length;
+        }
+      } catch (err) {
+        dlog.error(`failed to promote held rows for ${baseName}`, log.errorData(err));
+        return { released: 0, archived: archiveIds.length };
+      }
+    }
+
+    if (notes.length > 0) await this.sendHeldReleaseSummary(baseName, notes);
+    if (released > 0) {
+      dlog.info(
+        `released ${released} held message(s) for ${baseName} (archived ${archiveIds.length})`,
+      );
+      await this.redrive();
+    }
+    return { released, archived: archiveIds.length };
+  }
+
+  /**
+   * Release every mind whose spend hold has lifted. Driven off the rows themselves rather
+   * than a mind list, because the install-wide cap holds minds that have no bucket of their
+   * own — the rows are the only complete answer to "who is waiting".
+   *
+   * Also the boot sweep: a hold can lift while the daemon is down (a period rolls over, or a
+   * host edits the cap), and nothing else would notice.
+   */
+  async releaseAllHeld(): Promise<void> {
+    let minds: { mind: string }[];
+    try {
+      const db = await getDb();
+      minds = await db
+        .selectDistinct({ mind: deliveryQueue.mind })
+        .from(deliveryQueue)
+        .where(eq(deliveryQueue.status, "held"));
+    } catch (err) {
+      dlog.warn("failed to list minds with held messages", log.errorData(err));
+      return;
+    }
+    for (const { mind } of minds) {
+      try {
+        await this.releaseHeld(mind);
+      } catch (err) {
+        dlog.warn(`failed to release held messages for ${mind}`, log.errorData(err));
+      }
     }
   }
 
@@ -1168,6 +1364,36 @@ export class DeliveryManager {
    * Send the mind a single summary when a routing change released a truncated backlog,
    * rather than a flood of individual messages. #537
    */
+  /**
+   * Tell a mind what waited and what is not being replayed, as a `next-turn` notice rather
+   * than the channel event the gated release uses.
+   *
+   * Two reasons. It must arrive as context on the turn the released messages trigger — an
+   * account of something that happened, not breaking news announced in its own turn. And a
+   * `channel` event is one of the types a spend cap holds, so announcing the end of a hold
+   * through one would be the announcement racing the thing it announces.
+   */
+  private async sendHeldReleaseSummary(baseName: string, notes: string[]): Promise<void> {
+    const body = [
+      "While your spend cap was reached, messages sent to you waited instead of being " +
+        "delivered. The most recent are arriving now, each marked with when it came. " +
+        "Nothing was deleted — what isn't being replayed is still in the channel:",
+      "",
+      ...notes.map((n) => `- ${n}`),
+    ].join("\n");
+    try {
+      await this.notifyFailure({
+        mind: baseName,
+        thread: MIND_LEVEL_THREAD,
+        kind: "budget",
+        reason: "spend_hold_released",
+        detail: body,
+      });
+    } catch (err) {
+      dlog.warn(`failed to send held-release summary for ${baseName}`, log.errorData(err));
+    }
+  }
+
   private async sendReleaseSummary(mindName: string, notes: string[]): Promise<void> {
     const body = [
       `[Channel backlog released]`,
@@ -1368,17 +1594,23 @@ export class DeliveryManager {
   }
 
   /**
-   * Stamp a row as held, once, so the wait can be shown to the mind when it finally
-   * arrives. Persisted into the row's own payload JSON rather than a new column: the
-   * payload is already ours, and the marker has to survive a daemon restart because a
-   * hold can outlive one (a daily cap holds for up to a day).
+   * Move a row into the `held` state: out of the redrive sweep entirely, and stamped with
+   * when it arrived and which cap is holding it.
    *
-   * Mutates `payload` as well as the row so the in-memory copy a batch buffer is holding
-   * matches what is on disk. A row already marked is left alone — the *first* time it was
-   * held is the honest answer to "how long did this wait", and the redrive sweep re-offers
-   * a held row every pass.
+   * `held` is a status rather than a flag on a `pending` row, for the same reason `gated`
+   * is. The sweep reads `pending` rows id-ordered under a batch limit, so rows that cannot
+   * move but stay eligible fill the window on every pass — one capped mind with a busy
+   * channel would make every other mind's backlog unreachable, and after a daemon restart
+   * the sweep is the *only* delivery path. Before this, squatting rows drained or
+   * dead-lettered within half an hour; a daily cap would have made it the steady state.
+   * Leaving the sweep also means release is deliberate: it goes through
+   * {@link releaseHeld}, which bounds and records it, instead of a raw flood.
+   *
+   * The marker lives in the row's own payload JSON — the payload is already ours, and the
+   * wait must survive a daemon restart, because a daily cap outlives one. Mutates
+   * `payload` too, so the in-memory copy a batch buffer holds matches what is on disk.
    */
-  private async markHeld(
+  private async holdRow(
     queueId: number,
     payload: DeliveryPayload,
     hold: DeliveryHold,
@@ -1397,16 +1629,16 @@ export class DeliveryManager {
         .where(eq(deliveryQueue.id, queueId))
         .get();
       const arrived = row ? parseDbTimestamp(row.created_at)?.getTime() : undefined;
-      payload.held = { at: arrived ?? Date.now(), scope: hold.scope };
+      payload.held = { at: arrived ?? Date.now(), scope: hold.scope, until: hold.until };
       await db
         .update(deliveryQueue)
-        .set({ payload: JSON.stringify(payload) })
+        .set({ status: "held", payload: JSON.stringify(payload) })
         .where(eq(deliveryQueue.id, queueId));
     } catch (err) {
-      // Non-fatal: the row is still held and still pending. Only the "this waited"
-      // preface is lost, and only if the daemon restarts before the next attempt.
-      if (!payload.held) payload.held = { at: Date.now(), scope: hold.scope };
-      dlog.warn(`failed to mark delivery ${queueId} held`, log.errorData(err));
+      // The row stays `pending` and is re-offered on the next sweep, where this is
+      // retried. It is not delivered in the meantime — the sweep's own hold check still
+      // holds it — so the failure costs a retry, not the cap.
+      dlog.warn(`failed to hold delivery ${queueId}`, log.errorData(err));
     }
   }
 
@@ -1619,7 +1851,7 @@ export class DeliveryManager {
       const hold = this.holdCheck(baseName, session);
       if (hold && queueId != null) {
         dlog.debug(`holding delivery to ${baseName}/${session} (${hold.reason})`);
-        await this.markHeld(queueId, payload, hold);
+        await this.holdRow(queueId, payload, hold);
         this.inFlight.delete(queueId);
         return;
       }
@@ -1687,6 +1919,13 @@ export class DeliveryManager {
         } else {
           // Mark delivered ONLY on ack, by specific row id — never a broad DELETE.
           await this.deleteQueueRows([queueId]);
+          // A message whose inbound row was deferred because the mind was over its cap is
+          // recorded now, when it has actually been received. Recording on ack rather than
+          // at release means a promoted row that then fails to deliver still doesn't claim
+          // the mind heard it (#420).
+          if (payload.inboundDeferred) {
+            await recordDeferredInbound(baseName, payload);
+          }
         }
       } catch (err) {
         // Threw → transport failure (mind/variant down or timed out), NOT a live rejection.
@@ -1731,7 +1970,7 @@ export class DeliveryManager {
         dlog.debug(
           `holding batch of ${messages.length} to ${baseName}/${session} (${hold.reason})`,
         );
-        for (const msg of messages) await this.markHeld(msg.queueId!, msg.payload, hold);
+        for (const msg of messages) await this.holdRow(msg.queueId!, msg.payload, hold);
         for (const id of queueIds) this.inFlight.delete(id);
         return;
       }
@@ -1831,6 +2070,9 @@ export class DeliveryManager {
           // a broad (mind, session, pending) DELETE would race with rows enqueued
           // concurrently during the flush.
           await this.deleteQueueRows(queueIds);
+          for (const msg of messages) {
+            if (msg.payload.inboundDeferred) await recordDeferredInbound(baseName, msg.payload);
+          }
         }
       } catch (err) {
         // Threw → transport failure (mind/variant down or timed out), NOT a live rejection.

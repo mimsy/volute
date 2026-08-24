@@ -493,16 +493,21 @@ export class SpendBudget {
 }
 
 /**
- * Nudge the delivery manager to sweep now that a spend period has rolled over, rather
- * than making held messages wait out the periodic redrive interval on top of the wait
- * they already served. The rows are `pending` either way — this only changes when they
- * are noticed. Imported lazily: the delivery manager is a peer of this module, and a
- * static import in this direction would close a cycle.
+ * Release everything this cap was holding, now that it has lifted. Held rows sit out of
+ * the redrive sweep entirely (see `DeliveryManager.holdRow`), so nothing else would ever
+ * pick them up — this is the release, not a nudge. Imported lazily: both modules are peers
+ * of this one, and static imports in this direction would close cycles.
  */
 function releaseHeldDeliveries(): void {
   import("../delivery/delivery-manager.js")
-    .then(({ tryGetDeliveryManager }) => tryGetDeliveryManager()?.redrive())
+    .then(({ tryGetDeliveryManager }) => tryGetDeliveryManager()?.releaseAllHeld())
     .catch((err) => tlog.warn("failed to release held deliveries", log.errorData(err)));
+  // Scheduled traffic is held as pending `system_events` rows rather than delivery-queue
+  // rows, so it has its own release. Driven off the rows for the same reason: the
+  // install-wide cap holds minds that have no bucket here.
+  import("../chat/system-events.js")
+    .then(({ flushHeldEvents }) => flushHeldEvents())
+    .catch((err) => tlog.warn("failed to release held events", log.errorData(err)));
 }
 
 let instance: SpendBudget | null = null;

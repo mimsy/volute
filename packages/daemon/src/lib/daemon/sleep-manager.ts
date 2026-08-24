@@ -546,7 +546,7 @@ export class SleepManager {
   private async holdQueuedMessages(
     name: string,
     rows: (typeof deliveryQueue.$inferSelect)[],
-    hold: { scope: "mind" | "system" },
+    hold: { scope: "mind" | "system"; until?: number },
   ): Promise<number> {
     const db = await getDb();
     let promoted = 0;
@@ -567,11 +567,12 @@ export class SleepManager {
       payload.held = {
         at: parseDbTimestamp(row.created_at)?.getTime() ?? Date.now(),
         scope: hold.scope,
+        until: hold.until,
       };
       try {
         await db
           .update(deliveryQueue)
-          .set({ status: "pending", thread, payload: JSON.stringify(payload) })
+          .set({ status: "held", thread, payload: JSON.stringify(payload) })
           .where(eq(deliveryQueue.id, row.id));
         promoted++;
       } catch (err) {

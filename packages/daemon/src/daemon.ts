@@ -353,7 +353,7 @@ export async function startDaemon(opts: {
   // bucket, so an over-cap mind is never handed a burst of held messages at boot.
   delivery.setHoldCheck((baseName) => {
     const hold = spendBudget.holdFor(baseName);
-    return hold ? { reason: "spend_cap", scope: hold.scope } : null;
+    return hold ? { reason: "spend_cap", scope: hold.scope, until: hold.resetAt } : null;
   });
   const sleepManager = initSleepManager();
   sleepManager.start();
@@ -502,6 +502,11 @@ export async function startDaemon(opts: {
   // edits made while the daemon was down are otherwise only noticed on the next inbound
   // message for that channel — which on a quiet channel may never come. Touches only
   // `gated` rows, so it's independent of the `pending` restore above.
+  // A spend hold can lift while the daemon is down — a period rolls over, or a host edits
+  // a cap — and held rows are out of the sweep, so nothing else would ever notice them.
+  delivery.releaseAllHeld().catch((err) => {
+    log.warn("startup held-release sweep failed", log.errorData(err));
+  });
   delivery.releaseGatedSweep().catch((err) => {
     log.warn("failed to sweep gated messages", log.errorData(err));
   });
