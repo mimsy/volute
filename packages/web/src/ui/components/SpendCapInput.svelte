@@ -30,6 +30,9 @@ let amountText: string | number = $state("");
 let period = $state(DEFAULT_PERIOD);
 let custom = $state(false);
 let customText: string | number = $state("");
+// Declared above the effect that clears it: `$effect.pre` runs during init, so a `let`
+// below would still be in its temporal dead zone and throw.
+let error = $state("");
 
 // Seeded from the props and re-synced when the caller reloads its config (autosave
 // refetches after each save). `pre` so the first paint already shows the saved cap.
@@ -41,8 +44,6 @@ $effect.pre(() => {
   customText = periodMinutes != null ? String(periodMinutes) : "";
   error = "";
 });
-
-let error = $state("");
 
 /**
  * Save what the two fields resolve to — or refuse and say why.
