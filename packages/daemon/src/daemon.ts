@@ -14,8 +14,8 @@ import { getMindManager, initMindManager } from "./lib/daemon/mind-manager.js";
 import { restoreMindRuntimeState, startMindFull } from "./lib/daemon/mind-service.js";
 import { initScheduler } from "./lib/daemon/scheduler.js";
 import { initSleepManager } from "./lib/daemon/sleep-manager.js";
+import { initSpendBudget } from "./lib/daemon/spend-budget.js";
 import { initSummarizer } from "./lib/daemon/summarizer.js";
-import { initTokenBudget } from "./lib/daemon/token-budget.js";
 import { completeOrphanedTurns, summarizeOrphanedTurns } from "./lib/daemon/turn-tracker.js";
 import { initDeliveryManager } from "./lib/delivery/delivery-manager.js";
 import { stopAll as stopAllActivityTrackers } from "./lib/events/mind-activity-tracker.js";
@@ -333,8 +333,20 @@ export async function startDaemon(opts: {
   scheduler.start();
   const mailPoller = initMailPoller();
   mailPoller.start();
-  const tokenBudget = initTokenBudget();
-  tokenBudget.start();
+  const spendBudget = initSpendBudget();
+  const gcfg = readGlobalConfig();
+  spendBudget.setSystemCap(gcfg.limits?.systemSpendCapPerDay);
+  // The per-mind warning in restoreMindRuntimeState only sees a mind's own
+  // volute.json; a stale default sitting in config.json would otherwise be dropped
+  // in silence, and every mind created from it would come out uncapped.
+  if (gcfg.mindDefaults?.cognition?.tokenBudget != null) {
+    log.warn(
+      "config.json still sets `mindDefaults.cognition.tokenBudget`, which no longer " +
+        "does anything. Budgets are dollars now — replace it with `spendCap` (USD) and " +
+        "`spendCapPeriodMinutes`. Until then new minds are created with no spend cap.",
+    );
+  }
+  spendBudget.start();
   const sleepManager = initSleepManager();
   sleepManager.start();
   const summarizer = initSummarizer();
@@ -560,7 +572,7 @@ export async function startDaemon(opts: {
       safe("scheduler.stop", () => scheduler.stop());
       safe("scheduler.saveState", () => scheduler.saveState());
       safe("mailPoller.stop", () => mailPoller.stop());
-      safe("tokenBudget.stop", () => tokenBudget.stop());
+      safe("spendBudget.stop", () => spendBudget.stop());
       safe("summarizer.stop", () => summarizer.stop());
       safe("backupManager.stop", () => backupManager.stop());
       safe("stopApiKeyRefresh", stopApiKeyRefresh);

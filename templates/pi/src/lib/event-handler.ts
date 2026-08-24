@@ -9,6 +9,9 @@ import type { VoluteEvent } from "./types.js";
 type AgentEndMessage = {
   role?: string;
   errorMessage?: string;
+  /** pi-ai's provider id (`anthropic`, `openrouter`, …) — pairs with `model` for pricing. */
+  provider?: string;
+  model?: string;
   usage?: {
     input?: number;
     output?: number;
@@ -178,19 +181,34 @@ export function createEventHandler(session: EventSession, options: EventHandlerO
         if (event.messages) {
           let inputTokens = 0;
           let outputTokens = 0;
+          let cacheReadTokens = 0;
+          let cacheCreationTokens = 0;
           let lastInputTokens = 0;
+          // The last assistant message names the model that finished the turn. A turn can
+          // in principle span models (a subagent on another one); we price the whole turn
+          // at this one's rate, as the event shape carries a single model id.
+          let model: string | undefined;
           for (const msg of event.messages as AgentEndMessage[]) {
             if (msg.role === "assistant" && msg.usage) {
               inputTokens += msg.usage.input ?? 0;
               outputTokens += msg.usage.output ?? 0;
               const cacheWrite = msg.usage.cacheWrite ?? msg.usage.cache_creation ?? 0;
               const cacheRead = msg.usage.cacheRead ?? msg.usage.cache_read ?? 0;
+              cacheCreationTokens += cacheWrite;
+              cacheReadTokens += cacheRead;
               const contextTokens = (msg.usage.input ?? 0) + cacheWrite + cacheRead;
               if (contextTokens) lastInputTokens = contextTokens;
+              if (msg.model) model = msg.provider ? `${msg.provider}:${msg.model}` : msg.model;
             }
           }
-          if (inputTokens > 0 || outputTokens > 0) {
-            const usage = { input_tokens: inputTokens, output_tokens: outputTokens };
+          if (inputTokens > 0 || outputTokens > 0 || cacheReadTokens > 0) {
+            const usage = {
+              input_tokens: inputTokens,
+              output_tokens: outputTokens,
+              cache_read_input_tokens: cacheReadTokens,
+              cache_creation_input_tokens: cacheCreationTokens,
+              model,
+            };
             options.broadcast({ type: "usage", ...usage });
             emit(session, { type: "usage", metadata: usage });
           }

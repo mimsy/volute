@@ -25,8 +25,8 @@ import {
   startMindFull as startMindFullService,
   stopMindFull as stopMindFullService,
 } from "../../lib/daemon/mind-service.js";
+import { DEFAULT_SPEND_PERIOD_MINUTES, getSpendBudget } from "../../lib/daemon/spend-budget.js";
 import { supersedeTurnSummary } from "../../lib/daemon/summarizer.js";
-import { getTokenBudget } from "../../lib/daemon/token-budget.js";
 import { handleMindEvent, setNoticeDrainWatermark } from "../../lib/daemon/turn-lifecycle.js";
 import { getActiveTurnId } from "../../lib/daemon/turn-tracker.js";
 import { getDb } from "../../lib/db.js";
@@ -1303,7 +1303,7 @@ const app = new Hono<AuthEnv>()
   .get("/:name/budget", requireSelf(), async (c) => {
     const name = c.req.param("name");
     const baseName = await getBaseName(name);
-    const usage = getTokenBudget().getUsage(baseName);
+    const usage = getSpendBudget().getUsage(baseName);
     if (!usage) return c.json({ error: "No budget configured" }, 404);
     return c.json(usage);
   })
@@ -1354,8 +1354,8 @@ const app = new Hono<AuthEnv>()
         model: config?.model ?? templateConfig.model ?? null,
         thinkingLevel:
           config?.thinkingLevel ?? deriveThinkingLevel(templateConfig as Record<string, unknown>),
-        tokenBudget: config?.tokenBudget ?? null,
-        tokenBudgetPeriodMinutes: config?.tokenBudgetPeriodMinutes ?? null,
+        spendCap: config?.spendCap ?? null,
+        spendCapPeriodMinutes: config?.spendCapPeriodMinutes ?? null,
         compaction: templateConfig.compaction ?? null,
         unescapeNewlines: config?.unescapeNewlines === true,
       },
@@ -1370,8 +1370,8 @@ const app = new Hono<AuthEnv>()
       z.object({
         model: z.string().optional(),
         thinkingLevel: z.enum(["off", "minimal", "low", "medium", "high", "xhigh"]).optional(),
-        tokenBudget: z.number().int().positive().nullable().optional(),
-        tokenBudgetPeriodMinutes: z.number().int().positive().nullable().optional(),
+        spendCap: z.number().positive().nullable().optional(),
+        spendCapPeriodMinutes: z.number().int().positive().nullable().optional(),
         compaction: z
           .object({ maxContextTokens: z.number().int().positive().nullable().optional() })
           .nullable()
@@ -1395,18 +1395,18 @@ const app = new Hono<AuthEnv>()
       if (body.thinkingLevel !== undefined) {
         existing.thinkingLevel = body.thinkingLevel;
       }
-      if (body.tokenBudget !== undefined) {
-        if (body.tokenBudget === null) {
-          delete existing.tokenBudget;
+      if (body.spendCap !== undefined) {
+        if (body.spendCap === null) {
+          delete existing.spendCap;
         } else {
-          existing.tokenBudget = body.tokenBudget;
+          existing.spendCap = body.spendCap;
         }
       }
-      if (body.tokenBudgetPeriodMinutes !== undefined) {
-        if (body.tokenBudgetPeriodMinutes === null) {
-          delete existing.tokenBudgetPeriodMinutes;
+      if (body.spendCapPeriodMinutes !== undefined) {
+        if (body.spendCapPeriodMinutes === null) {
+          delete existing.spendCapPeriodMinutes;
         } else {
-          existing.tokenBudgetPeriodMinutes = body.tokenBudgetPeriodMinutes;
+          existing.spendCapPeriodMinutes = body.spendCapPeriodMinutes;
         }
       }
       if (body.unescapeNewlines !== undefined) {
@@ -1414,6 +1414,29 @@ const app = new Hono<AuthEnv>()
       }
 
       writeVoluteConfig(dir, existing);
+
+      // Apply the cap to the live budget, so a host who sets one doesn't have to
+      // restart the mind before it means anything.
+      // Budgets are tracked per base mind. A variant writes its own volute.json but
+      // has no bucket of its own, so live-applying its cap would bound the parent
+      // instead — leave variants to their config file alone.
+      const isBaseMind = !entry.parent;
+      if (isBaseMind && (body.spendCap !== undefined || body.spendCapPeriodMinutes !== undefined)) {
+        try {
+          const baseName = await getBaseName(name);
+          const sb = getSpendBudget();
+          if (existing.spendCap)
+            sb.setBudget(
+              baseName,
+              existing.spendCap,
+              existing.spendCapPeriodMinutes ?? DEFAULT_SPEND_PERIOD_MINUTES,
+            );
+          else await sb.removeBudget(baseName);
+        } catch (err) {
+          // The config is already written; the cap takes effect at the next restart.
+          log.warn(`spend cap for ${name} saved but not applied live`, log.errorData(err));
+        }
+      }
 
       if (body.unescapeNewlines !== undefined) {
         const { clearEchoTextCache } = await import("../../lib/delivery/echo-text.js");

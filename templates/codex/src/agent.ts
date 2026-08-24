@@ -34,6 +34,7 @@ import type {
   VoluteContentPart,
   VoluteEvent,
 } from "./lib/types.js";
+import { type UsageSnapshot, usageDelta, ZERO_USAGE } from "./lib/usage.js";
 import type { ContextInfo, ContextMessages, SessionContextInfo } from "./lib/volute-server.js";
 
 /** Minimal interface for a Codex SDK thread — typed to the methods we actually use */
@@ -59,6 +60,8 @@ type CodexSession = {
   /** The event note is a standing fact about events, so it fires once per session. */
   eventNoteFired: boolean;
   cumulativeInputTokens: number;
+  /** Last cumulative usage snapshot from `turn.completed`, for per-turn deltas (see lib/usage.ts). */
+  lastUsage: UsageSnapshot;
   /**
    * True when this session was seeded from a previous session's rollout (a restart
    * restore) or a rotation. Consumed once, on the first turn, to inject the note.
@@ -191,6 +194,7 @@ export function createMind(options: {
       firstMessagePerChannel: new Set(),
       eventNoteFired: false,
       cumulativeInputTokens: 0,
+      lastUsage: ZERO_USAGE,
       seeded: false,
       seededArchivedAt: null,
       currentThreadId: null,
@@ -570,18 +574,17 @@ export function createMind(options: {
             case "turn.completed": {
               const usage = event.usage;
               if (usage) {
-                const inputTokens = usage.input_tokens ?? usage.inputTokens ?? 0;
-                const outputTokens = usage.output_tokens ?? usage.outputTokens ?? 0;
-                session.cumulativeInputTokens = inputTokens;
-                broadcast(session, {
-                  type: "usage",
-                  input_tokens: inputTokens,
-                  output_tokens: outputTokens,
-                });
-                emit(session, {
-                  type: "usage",
-                  metadata: { input_tokens: inputTokens, output_tokens: outputTokens },
-                });
+                // codex's usage is cumulative over the whole thread — the per-turn cost is
+                // the difference from the last snapshot (see lib/usage.ts).
+                const delta = usageDelta(session.lastUsage, usage);
+                if (delta) {
+                  session.lastUsage = delta.next;
+                  // Kept cumulative: this feeds the rotation threshold, not the bill.
+                  session.cumulativeInputTokens = delta.next.input;
+                  const payload = { ...delta.payload, model: options.model };
+                  broadcast(session, { type: "usage", ...payload });
+                  emit(session, { type: "usage", metadata: payload });
+                }
               }
               break;
             }
@@ -653,6 +656,7 @@ export function createMind(options: {
     // Fresh thread — reset token tracking (the next turn.completed sets the real value)
     // and arm the rotation-cause boundary note for the mind's next turn.
     session.cumulativeInputTokens = 0;
+    session.lastUsage = ZERO_USAGE;
     session.seeded = true;
     session.seededCause = "rotation";
     session.seededArchivedAt = null;

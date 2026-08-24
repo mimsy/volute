@@ -129,6 +129,16 @@ export type GlobalConfig = {
   maxMinds?: number;
   /** Restic-based system backup configuration */
   backup?: BackupConfig;
+  /** Install-wide spend limits. Not secrets — they stay in the host-readable config.json. */
+  limits?: SystemLimits;
+};
+
+export type SystemLimits = {
+  /**
+   * Total USD every mind on this install may spend per day, combined. When it is
+   * exhausted every mind is over budget regardless of its own cap. Unset = unlimited.
+   */
+  systemSpendCapPerDay?: number;
 };
 
 export type MindDefaultsCognition = CognitionConfig & {

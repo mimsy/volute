@@ -3,7 +3,7 @@ import { afterEach, before, describe, it } from "node:test";
 import { and, eq } from "drizzle-orm";
 import { drainEvents } from "../packages/daemon/src/lib/chat/system-events.js";
 import { getTypingMap } from "../packages/daemon/src/lib/chat/typing.js";
-import { initTokenBudget } from "../packages/daemon/src/lib/daemon/token-budget.js";
+import { getSpendBudget, initSpendBudget } from "../packages/daemon/src/lib/daemon/spend-budget.js";
 import { handleMindEvent } from "../packages/daemon/src/lib/daemon/turn-lifecycle.js";
 import {
   clearMind,
@@ -32,9 +32,9 @@ async function cleanup(mind: string): Promise<void> {
 
 describe("turn-lifecycle: handleMindEvent", () => {
   before(() => {
-    // usage events accrue against the token budget singleton.
+    // usage events accrue against the spend budget singleton.
     try {
-      initTokenBudget();
+      initSpendBudget();
     } catch {
       // already initialized by another test in this process
     }
@@ -196,7 +196,7 @@ describe("turn-lifecycle: handleMindEvent", () => {
     await cleanup(mind);
   });
 
-  it("usage accrues against the token budget", async () => {
+  it("usage accrues against the spend budget", async () => {
     const mind = "tl-usage";
     await handleMindEvent(mind, {
       type: "usage",
@@ -204,6 +204,96 @@ describe("turn-lifecycle: handleMindEvent", () => {
       metadata: { input_tokens: 100, output_tokens: 50 },
     });
     // No throw is the primary assertion; the budget singleton recorded the usage.
+    await cleanup(mind);
+  });
+
+  /** The metadata JSON persisted for a mind's single usage row. */
+  async function readUsageMetadata(mind: string): Promise<Record<string, unknown>> {
+    const db = await getDb();
+    const row = await db
+      .select({ metadata: mindHistory.metadata })
+      .from(mindHistory)
+      .where(and(eq(mindHistory.mind, mind), eq(mindHistory.type, "usage")))
+      .get();
+    assert.ok(row?.metadata, "usage row should have been persisted with metadata");
+    return JSON.parse(row.metadata);
+  }
+
+  it("prices a usage event into the persisted metadata", async () => {
+    const mind = "tl-usage-priced";
+    await handleMindEvent(mind, {
+      type: "usage",
+      session: "s1",
+      metadata: {
+        input_tokens: 2_000,
+        output_tokens: 500,
+        cache_read_input_tokens: 30_000,
+        cache_creation_input_tokens: 4_000,
+        model: "anthropic:claude-haiku-4-5",
+      },
+    });
+
+    const meta = await readUsageMetadata(mind);
+    assert.equal(meta.model, "anthropic:claude-haiku-4-5");
+    assert.equal(meta.partial, undefined);
+    assert.equal(meta.cost_usd, (2000 * 1 + 500 * 5 + 30000 * 0.1 + 4000 * 1.25) / 1e6);
+    // The token counts survive untouched alongside the cost.
+    assert.equal(meta.input_tokens, 2_000);
+    assert.equal(meta.cache_read_input_tokens, 30_000);
+    await cleanup(mind);
+  });
+
+  it("marks an un-upgraded mind's two-field usage partial and unpriced", async () => {
+    // Minds run their own copy of src/ until `volute mind upgrade`, so the old shape
+    // keeps arriving. It must never be persisted as a fabricated cost.
+    const mind = "tl-usage-partial";
+    await handleMindEvent(mind, {
+      type: "usage",
+      session: "s1",
+      metadata: { input_tokens: 913, output_tokens: 112_916, model: "anthropic:claude-haiku-4-5" },
+    });
+
+    const meta = await readUsageMetadata(mind);
+    assert.equal(meta.partial, true);
+    assert.equal(meta.cost_usd, null);
+    await cleanup(mind);
+  });
+
+  it("records cost_usd null when no model can be resolved", async () => {
+    // No model on the event, no registry row, no config.json — nothing to price against.
+    const mind = "tl-usage-unpriced";
+    await handleMindEvent(mind, {
+      type: "usage",
+      session: "s1",
+      metadata: {
+        input_tokens: 10,
+        output_tokens: 2,
+        cache_read_input_tokens: 0,
+        cache_creation_input_tokens: 0,
+      },
+    });
+
+    const meta = await readUsageMetadata(mind);
+    assert.equal(meta.cost_usd, null);
+    assert.equal(meta.model, undefined);
+    await cleanup(mind);
+  });
+
+  it("leaves non-usage events' metadata alone", async () => {
+    const mind = "tl-usage-untouched";
+    await handleMindEvent(mind, {
+      type: "tool_use",
+      session: "s1",
+      content: "{}",
+      metadata: { name: "Bash", id: "tu1" },
+    });
+    const db = await getDb();
+    const row = await db
+      .select({ metadata: mindHistory.metadata })
+      .from(mindHistory)
+      .where(and(eq(mindHistory.mind, mind), eq(mindHistory.type, "tool_use")))
+      .get();
+    assert.deepEqual(JSON.parse(row?.metadata ?? "{}"), { name: "Bash", id: "tu1" });
     await cleanup(mind);
   });
 
@@ -618,5 +708,182 @@ describe("turn-lifecycle: concurrent sessions", () => {
       .where(and(eq(turns.id, turnB!), eq(turns.status, "active")))
       .get();
     assert.ok(stillActive, "turn B should still be active in the DB");
+  });
+});
+
+describe("turn-lifecycle: spend cap notices", () => {
+  before(() => {
+    try {
+      initSpendBudget();
+    } catch {
+      // already initialized by another test in this process
+    }
+  });
+
+  /** One priced usage turn costing roughly `usd`, using haiku's known output price. */
+  async function spend(mind: string, usd: number): Promise<void> {
+    await handleMindEvent(mind, {
+      type: "usage",
+      session: "s1",
+      metadata: {
+        input_tokens: 0,
+        output_tokens: Math.round((usd * 1e6) / 5), // haiku output: $5/M
+        cache_read_input_tokens: 0,
+        cache_creation_input_tokens: 0,
+        model: "anthropic:claude-haiku-4-5",
+      },
+    });
+  }
+
+  /** Every budget notice recorded for a mind, oldest first. */
+  async function budgetNotices(mind: string): Promise<{ body: string; meta: string | null }[]> {
+    const db = await getDb();
+    const rows = await db
+      .select({ body: systemEvents.body, meta: systemEvents.meta, id: systemEvents.id })
+      .from(systemEvents)
+      .where(and(eq(systemEvents.mind, mind), eq(systemEvents.type, "budget")))
+      .all();
+    return rows.sort((a, b) => a.id - b.id).map(({ body, meta }) => ({ body, meta }));
+  }
+
+  it("the 80% warning is delivered, names the cap, spend, and reset time", async () => {
+    const mind = "tl-spend-warn";
+    const sb = getSpendBudget();
+    sb.setBudget(mind, 1, 60);
+    try {
+      await spend(mind, 0.85);
+
+      const notices = await budgetNotices(mind);
+      assert.equal(notices.length, 1, "the warning fires");
+      const { body } = notices[0];
+      assert.match(body, /\$0\.85/, "names the spend so far");
+      assert.match(body, /\$1\.00/, "names the cap");
+      assert.match(body, /resets in about 1 hour/, "says when the period resets");
+      assert.doesNotMatch(body, /couldn't be priced/, "nothing was unpriced");
+    } finally {
+      await sb.removeBudget(mind);
+      await cleanup(mind);
+    }
+  });
+
+  it("the warning fires once per period and re-arms after a reset", async () => {
+    const mind = "tl-spend-warn-once";
+    const sb = getSpendBudget();
+    sb.setBudget(mind, 1, 0); // 0-minute period: a tick rolls it over
+    try {
+      await spend(mind, 0.85);
+      assert.equal((await budgetNotices(mind)).length, 1, "warned once");
+
+      await spend(mind, 0.02);
+      assert.equal((await budgetNotices(mind)).length, 1, "not warned again this period");
+
+      await sb.tick(); // period rolls over, spend resets to 0
+      await spend(mind, 0.85);
+      assert.equal((await budgetNotices(mind)).length, 2, "re-armed for the new period");
+    } finally {
+      await sb.removeBudget(mind);
+      await cleanup(mind);
+    }
+  });
+
+  it("a turn that jumps straight past the cap gets the exceeded notice, not the warning", async () => {
+    const mind = "tl-spend-jump";
+    const sb = getSpendBudget();
+    sb.setBudget(mind, 1, 60);
+    try {
+      await spend(mind, 1.5);
+
+      const notices = await budgetNotices(mind);
+      assert.equal(notices.length, 1);
+      assert.match(notices[0].body, /spent your full/, "exceeded wording");
+      assert.match(notices[0].body, /resets in about 1 hour/, "exceeded notice names the reset");
+      // Nothing actually pauses a mind at its cap — `enqueue` has no caller and
+      // `delivery/` never consults the budget — so the notice must not claim it does.
+      assert.doesNotMatch(notices[0].body, /pause|kept for you|queued/i, "promises no pause");
+    } finally {
+      await sb.removeBudget(mind);
+      await cleanup(mind);
+    }
+  });
+
+  it("warning then exceeded are two distinct notices in the same period", async () => {
+    const mind = "tl-spend-both";
+    const sb = getSpendBudget();
+    sb.setBudget(mind, 1, 60);
+    try {
+      await spend(mind, 0.85);
+      await spend(mind, 0.3);
+
+      const notices = await budgetNotices(mind);
+      assert.equal(notices.length, 2);
+      assert.match(notices[0].body, /about 80%/);
+      assert.match(notices[1].body, /spent your full/);
+      // Exceeded fires only once, however many more turns land.
+      await spend(mind, 0.1);
+      assert.equal((await budgetNotices(mind)).length, 2);
+    } finally {
+      await sb.removeBudget(mind);
+      await cleanup(mind);
+    }
+  });
+
+  it("the system cap's notice says it is the install's budget, not the mind's", async () => {
+    const mind = "tl-spend-system";
+    const sb = getSpendBudget();
+    sb.setSystemCap(1);
+    sb.setBudget(mind, 100, 60); // nowhere near its own cap
+    try {
+      await spend(mind, 1.2);
+
+      const notices = await budgetNotices(mind);
+      assert.equal(notices.length, 1);
+      assert.match(notices[0].body, /This install/, "attributes the spend to the install");
+      assert.match(notices[0].body, /not yours in particular/);
+      assert.doesNotMatch(notices[0].body, /You've spent your full/, "does not blame the mind");
+      assert.doesNotMatch(notices[0].body, /pause|kept for you|queued/i, "promises no pause");
+      assert.match(notices[0].meta ?? "", /system_spend_cap/);
+    } finally {
+      sb.setSystemCap(null);
+      await sb.removeBudget(mind);
+      await cleanup(mind);
+    }
+  });
+
+  it("an unpriced turn says the figure is incomplete rather than quoting it as exact", async () => {
+    const mind = "tl-spend-unpriced";
+    const sb = getSpendBudget();
+    sb.setBudget(mind, 1, 60);
+    try {
+      // An un-upgraded mind's two-field usage: priced as null, accumulating nothing.
+      await handleMindEvent(mind, {
+        type: "usage",
+        session: "s1",
+        metadata: {
+          input_tokens: 900,
+          output_tokens: 900_000,
+          model: "anthropic:claude-haiku-4-5",
+        },
+      });
+      assert.equal((await budgetNotices(mind)).length, 0, "an unpriced turn trips nothing");
+      assert.equal(sb.getUsage(mind)!.spentUsd, 0);
+
+      await spend(mind, 0.85);
+      const notices = await budgetNotices(mind);
+      assert.equal(notices.length, 1);
+      assert.match(notices[0].body, /couldn't be priced/, "says the figure is a floor");
+    } finally {
+      await sb.removeBudget(mind);
+      await cleanup(mind);
+    }
+  });
+
+  it("a mind with no cap and no system cap gets no notices at all", async () => {
+    const mind = "tl-spend-uncapped";
+    try {
+      await spend(mind, 500);
+      assert.equal((await budgetNotices(mind)).length, 0);
+    } finally {
+      await cleanup(mind);
+    }
   });
 });

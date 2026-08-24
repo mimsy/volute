@@ -63,9 +63,8 @@ function loadEditFields(c: MindConfig) {
   editModel = c.config.model ?? "";
   const level = c.config.thinkingLevel ?? "off";
   thinkingIndex = Math.max(0, THINKING_LEVELS.indexOf(level as (typeof THINKING_LEVELS)[number]));
-  editBudget = c.config.tokenBudget != null ? String(c.config.tokenBudget) : "";
-  editPeriod =
-    c.config.tokenBudgetPeriodMinutes != null ? String(c.config.tokenBudgetPeriodMinutes) : "";
+  editBudget = c.config.spendCap != null ? String(c.config.spendCap) : "";
+  editPeriod = c.config.spendCapPeriodMinutes != null ? String(c.config.spendCapPeriodMinutes) : "";
   editCompaction =
     c.config.compaction?.maxContextTokens != null
       ? String(c.config.compaction.maxContextTokens)
@@ -76,6 +75,13 @@ function loadEditFields(c: MindConfig) {
 function parseBudgetInt(val: string): number | null {
   if (!val.trim()) return null;
   const n = parseInt(val, 10);
+  return Number.isNaN(n) ? null : n;
+}
+
+/** The spend cap is dollars, so cents have to survive the round trip. */
+function parseBudgetFloat(val: string): number | null {
+  if (!val.trim()) return null;
+  const n = parseFloat(val);
   return Number.isNaN(n) ? null : n;
 }
 
@@ -106,13 +112,13 @@ function saveThinking() {
 }
 
 function saveBudget() {
-  saveField("budget", () => updateMindConfig(name, { tokenBudget: parseBudgetInt(editBudget) }));
+  saveField("budget", () => updateMindConfig(name, { spendCap: parseBudgetFloat(editBudget) }));
 }
 
 function savePeriod() {
   saveField("period", () =>
     updateMindConfig(name, {
-      tokenBudgetPeriodMinutes: parseBudgetInt(editPeriod),
+      spendCapPeriodMinutes: parseBudgetInt(editPeriod),
     }),
   );
 }
@@ -211,7 +217,8 @@ onMount(async () => {
         width="80px"
         bind:value={editBudget}
         onblur={saveBudget}
-        placeholder="tokens"
+        step="0.01"
+        placeholder="USD"
       />
       <span class="setting-hint">per</span>
       <Input

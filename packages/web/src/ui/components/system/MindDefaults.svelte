@@ -97,6 +97,13 @@ function parseBudgetInt(val: string): number | null {
   return Number.isNaN(n) ? null : n;
 }
 
+/** The spend cap is dollars, so cents have to survive the round trip. */
+function parseBudgetFloat(val: string): number | null {
+  if (!val.trim()) return null;
+  const n = parseFloat(val);
+  return Number.isNaN(n) ? null : n;
+}
+
 function splitList(val: string): string[] | undefined {
   const items = val
     .split(",")
@@ -114,8 +121,8 @@ async function save() {
         model: editModel || undefined,
         thinkingLevel:
           THINKING_LEVELS[thinkingIndex] !== "off" ? THINKING_LEVELS[thinkingIndex] : undefined,
-        tokenBudget: parseBudgetInt(editBudget) ?? undefined,
-        tokenBudgetPeriodMinutes: parseBudgetInt(editPeriod) ?? undefined,
+        spendCap: parseBudgetFloat(editBudget) ?? undefined,
+        spendCapPeriodMinutes: parseBudgetInt(editPeriod) ?? undefined,
         compaction:
           parseBudgetInt(editCompaction) != null
             ? { maxContextTokens: parseBudgetInt(editCompaction)! }
@@ -252,11 +259,10 @@ onMount(async () => {
       editModel = defaults.cognition.model ?? "";
       const level = defaults.cognition.thinkingLevel ?? "off";
       thinkingIndex = Math.max(0, THINKING_LEVELS.indexOf(level));
-      editBudget =
-        defaults.cognition.tokenBudget != null ? String(defaults.cognition.tokenBudget) : "";
+      editBudget = defaults.cognition.spendCap != null ? String(defaults.cognition.spendCap) : "";
       editPeriod =
-        defaults.cognition.tokenBudgetPeriodMinutes != null
-          ? String(defaults.cognition.tokenBudgetPeriodMinutes)
+        defaults.cognition.spendCapPeriodMinutes != null
+          ? String(defaults.cognition.spendCapPeriodMinutes)
           : "";
       editCompaction =
         defaults.cognition.compaction?.maxContextTokens != null
@@ -349,8 +355,9 @@ onMount(async () => {
           type="number"
           width="80px"
           bind:value={editBudget}
+          step="0.01"
           onblur={() => save()}
-          placeholder="tokens"
+          placeholder="USD"
         />
         <span class="setting-hint">per</span>
         <Input

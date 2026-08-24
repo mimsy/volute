@@ -25,7 +25,7 @@ import {
   getSleepManagerIfReady,
   initSleepManager,
 } from "../packages/daemon/src/lib/daemon/sleep-manager.js";
-import { initTokenBudget } from "../packages/daemon/src/lib/daemon/token-budget.js";
+import { initSpendBudget } from "../packages/daemon/src/lib/daemon/spend-budget.js";
 import { handleMindEvent } from "../packages/daemon/src/lib/daemon/turn-lifecycle.js";
 import { clearMind } from "../packages/daemon/src/lib/daemon/turn-tracker.js";
 import { getDb } from "../packages/daemon/src/lib/db.js";
@@ -466,7 +466,7 @@ describe("system-events flushQueuedEvents", () => {
 describe("system-events reflection attribution", () => {
   before(() => {
     try {
-      initTokenBudget();
+      initSpendBudget();
     } catch {
       // already initialized
     }

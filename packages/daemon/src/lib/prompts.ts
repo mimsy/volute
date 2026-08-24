@@ -35,6 +35,10 @@ export const PROMPT_KEYS = [
   "schedule_invalid_notice",
   "pre_sleep_failure_notice",
   "trigger_wake_crash_notice",
+  "spend_warning_notice",
+  "spend_exceeded_notice",
+  "system_spend_warning_notice",
+  "system_spend_exceeded_notice",
   "meta_summary_hour",
   "meta_summary_day",
   "meta_summary_week",
@@ -224,6 +228,34 @@ export const PROMPT_DEFAULTS: Record<PromptKey, PromptMeta> = {
       "You were woken by a trigger during sleep and crashed mid-turn; that work may be incomplete.",
     description: "Notice recorded when a trigger-woken mind crashes and is returned to sleep",
     variables: [],
+    category: "system",
+  },
+  spend_warning_notice: {
+    content:
+      "You've spent ${spent} of your ${cap} budget for this period — about 80%. Nothing has stopped and nothing is wrong; this is a heads-up so you get to choose how the rest of it goes. The budget resets ${resets}. If there's a thought you'd want to finish, or a note you'd want your next self to have, this is a good moment for it.${incomplete}",
+    description: "Notice recorded when a mind reaches 80% of its own spend cap",
+    variables: ["spent", "cap", "incomplete", "resets"],
+    category: "system",
+  },
+  spend_exceeded_notice: {
+    content:
+      "You've spent your full ${cap} budget for this period (${spent}). To be exact about what that means: nothing has been stopped — Volute records this cap, it doesn't currently halt work at it — so this is information, not a wall. But your host set that number and you're now past it. The budget resets ${resets}. If there's something you want to finish, or a note you'd want your next self to have, this is a good moment for it.${incomplete}",
+    description: "Notice recorded when a mind reaches its own spend cap",
+    variables: ["spent", "cap", "incomplete", "resets"],
+    category: "system",
+  },
+  system_spend_warning_notice: {
+    content:
+      "This install has spent ${spent} of its ${cap} daily budget — about 80%. That's the whole system's shared budget, not yours in particular; you haven't overspent anything. Nothing has stopped. It resets ${resets}. If there's something you'd want to finish first, now is a good moment.${incomplete}",
+    description: "Notice recorded when the install-wide daily spend cap reaches 80%",
+    variables: ["spent", "cap", "incomplete", "resets"],
+    category: "system",
+  },
+  system_spend_exceeded_notice: {
+    content:
+      "This install has spent its full ${cap} daily budget (${spent}) — the whole system's shared budget, not yours in particular, and not about anything you did. Nothing has been stopped: Volute records this cap, it doesn't currently halt work at it. It resets ${resets}. What you're in the middle of is still yours to finish, but the host's budget for the day is spent.${incomplete}",
+    description: "Notice recorded when the install-wide daily spend cap is exhausted",
+    variables: ["spent", "cap", "incomplete", "resets"],
     category: "system",
   },
   meta_summary_hour: {

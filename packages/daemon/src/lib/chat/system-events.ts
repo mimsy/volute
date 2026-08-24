@@ -106,7 +106,7 @@ export function eventLabel(type: string, meta: Record<string, unknown> | null | 
     case "orientation":
       return "Orientation";
     case "budget":
-      return "Token budget";
+      return "Spend budget";
     case "version":
       return "New version available";
     case "channel":

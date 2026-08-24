@@ -7,10 +7,10 @@ import {
   tryGetMindManager,
 } from "../packages/daemon/src/lib/daemon/mind-manager.js";
 import { startMindFull } from "../packages/daemon/src/lib/daemon/mind-service.js";
-import { getTokenBudget, initTokenBudget } from "../packages/daemon/src/lib/daemon/token-budget.js";
+import { getSpendBudget, initSpendBudget } from "../packages/daemon/src/lib/daemon/spend-budget.js";
 import { addMind, mindDir, removeMind } from "../packages/daemon/src/lib/mind/registry.js";
 
-// #689: startMindFull's post-start tail (schedule/sleep-config load, token budget,
+// #689: startMindFull's post-start tail (schedule/sleep-config load, spend budget,
 // extension notification) ran some steps bare, so a throw there turned a fully
 // successful mind start into a rejected promise — which the restart route caught
 // and turned into a 500, even though the mind process itself started fine. These
@@ -21,24 +21,24 @@ describe("startMindFull post-start tail is best-effort (#689)", () => {
 
   beforeEach(async () => {
     try {
-      initTokenBudget();
+      initSpendBudget();
     } catch {
       // already initialized by another test in this process
     }
     await removeMind(mindName);
     const dir = mindDir(mindName);
     mkdirSync(resolve(dir, "home/.config"), { recursive: true });
-    // A configured token budget routes startMindFull through the (previously bare)
-    // getTokenBudget().setBudget(...) call.
-    writeFileSync(resolve(dir, "home/.config/volute.json"), JSON.stringify({ tokenBudget: 1000 }));
+    // A configured spend cap routes startMindFull through the (previously bare)
+    // getSpendBudget().setBudget(...) call.
+    writeFileSync(resolve(dir, "home/.config/volute.json"), JSON.stringify({ spendCap: 5 }));
   });
 
   afterEach(async () => {
     await removeMind(mindName);
-    getTokenBudget().removeBudget(mindName);
+    await getSpendBudget().removeBudget(mindName);
   });
 
-  it("does not throw when a post-start step (token budget) throws", async () => {
+  it("does not throw when a post-start step (spend budget) throws", async () => {
     // Stub the mind manager so startMind is a no-op — we exercise startMindFull's
     // post-start tail, not a real process spawn (same pattern as orientation.test.ts).
     const mgr = tryGetMindManager() ?? initMindManager();
@@ -47,10 +47,10 @@ describe("startMindFull post-start tail is best-effort (#689)", () => {
     mgr.startMind = async () => {};
     mgr.isRunning = () => false;
 
-    const tb = getTokenBudget();
+    const tb = getSpendBudget();
     const origSetBudget = tb.setBudget;
     tb.setBudget = () => {
-      throw new Error("boom: simulated token-budget failure");
+      throw new Error("boom: simulated spend-budget failure");
     };
 
     try {

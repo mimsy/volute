@@ -17,10 +17,10 @@ import { ensureMailAddress } from "./mail-poller.js";
 import { getMindManager } from "./mind-manager.js";
 import { getScheduler } from "./scheduler.js";
 import { getSleepManagerIfReady } from "./sleep-manager.js";
-import { DEFAULT_BUDGET_PERIOD_MINUTES, getTokenBudget } from "./token-budget.js";
+import { DEFAULT_SPEND_PERIOD_MINUTES, getSpendBudget } from "./spend-budget.js";
 
 /**
- * Start a mind server and (for non-seed base minds) schedules, mail, and token budget.
+ * Start a mind server and (for non-seed base minds) schedules, mail, and spend budget.
  * Variants only get the server — no schedules/budget.
  */
 export async function startMindFull(name: string): Promise<void> {
@@ -112,7 +112,7 @@ export async function startMindFull(name: string): Promise<void> {
 
 /**
  * Restore the mind-owned runtime state that outlives the mind's *process*:
- * schedules and token budget.
+ * schedules and spend budget.
  *
  * `sleepMind` stops the process but deliberately keeps these — "stop process
  * only, leave schedules/budget running" — so a sleeping mind is a mind with no
@@ -138,15 +138,25 @@ export async function restoreMindRuntimeState(baseName: string): Promise<void> {
   }
   try {
     const config = readVoluteConfig(mindDir(baseName));
-    if (config?.tokenBudget) {
-      getTokenBudget().setBudget(
+    if (config?.spendCap) {
+      getSpendBudget().setBudget(
         baseName,
-        config.tokenBudget,
-        config.tokenBudgetPeriodMinutes ?? DEFAULT_BUDGET_PERIOD_MINUTES,
+        config.spendCap,
+        config.spendCapPeriodMinutes ?? DEFAULT_SPEND_PERIOD_MINUTES,
+      );
+    } else if (config?.tokenBudget) {
+      // Budgets are denominated in dollars now, and there is no honest conversion
+      // from a token count. Rather than silently enforce a number that means
+      // something else, the mind runs uncapped and the host is told exactly which
+      // key to replace. Repeats per boot/wake on purpose — it's a live misconfig.
+      log.warn(
+        `${baseName}: volute.json still sets \`tokenBudget\`, which no longer does anything. ` +
+          "Budgets are dollars now — replace it with `spendCap` (USD) and " +
+          "`spendCapPeriodMinutes`. Until then this mind has no spend cap.",
       );
     }
   } catch (err) {
-    log.error(`failed to set token budget for ${baseName}`, log.errorData(err));
+    log.error(`failed to set spend budget for ${baseName}`, log.errorData(err));
   }
 }
 
@@ -345,7 +355,7 @@ export async function stopMindFull(name: string): Promise<void> {
     notifyExtensionsMindStop(baseName);
     markIdle(baseName);
     getScheduler().unloadSchedules(baseName);
-    getTokenBudget().removeBudget(baseName);
+    await getSpendBudget().removeBudget(baseName);
   }
   await getMindManager().stopMind(name);
 

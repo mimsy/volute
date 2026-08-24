@@ -3,6 +3,7 @@ import { daemonEmit, type EventType } from "./daemon-client.js";
 import { log, warn } from "./logger.js";
 import { filterEvent, loadTransparencyPreset } from "./transparency.js";
 import type { VoluteEvent } from "./types.js";
+import { buildUsagePayload, type ResultUsage } from "./usage.js";
 
 /** A pending message's daemon-facing id (routing/channel key) paired with its channel `seq`. */
 export type MessageIdEntry = { id: string | undefined; seq: number };
@@ -159,12 +160,8 @@ export async function consumeStream(
           }
         }
       }
-      const result = msg as { usage?: { input_tokens?: number; output_tokens?: number } };
-      if (result.usage) {
-        const usage = {
-          input_tokens: result.usage.input_tokens ?? 0,
-          output_tokens: result.usage.output_tokens ?? 0,
-        };
+      const usage = buildUsagePayload(msg as ResultUsage);
+      if (usage) {
         callbacks.broadcast({ type: "usage", ...usage });
         emit(session, { type: "usage", metadata: usage });
       }

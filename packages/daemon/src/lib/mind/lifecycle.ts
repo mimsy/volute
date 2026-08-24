@@ -465,10 +465,9 @@ export async function createMind(
       if (cog) {
         if (cog.thinkingLevel != null && !config.thinkingLevel)
           config.thinkingLevel = cog.thinkingLevel;
-        if (cog.tokenBudget != null && config.tokenBudget == null)
-          config.tokenBudget = cog.tokenBudget;
-        if (cog.tokenBudgetPeriodMinutes != null && config.tokenBudgetPeriodMinutes == null)
-          config.tokenBudgetPeriodMinutes = cog.tokenBudgetPeriodMinutes;
+        if (cog.spendCap != null && config.spendCap == null) config.spendCap = cog.spendCap;
+        if (cog.spendCapPeriodMinutes != null && config.spendCapPeriodMinutes == null)
+          config.spendCapPeriodMinutes = cog.spendCapPeriodMinutes;
       }
       writeVoluteConfig(dest, config);
 
