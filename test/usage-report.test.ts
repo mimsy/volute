@@ -252,6 +252,32 @@ describe("usageReport", () => {
     assert.equal(report.series[3].costUsd, 0.7);
   });
 
+  it("gives each mind its own series, and the global series is their sum", async () => {
+    const a = `usage-permind-a-${Date.now()}`;
+    const b = `usage-permind-b-${Date.now()}`;
+    const { startMs } = windowBounds("24h", NOW);
+    await seed([
+      { mind: a, at: startMs + 60_000, metadata: priced(0.1) }, // bucket 0
+      { mind: b, at: startMs + 2 * 3_600_000, metadata: priced(0.3) }, // bucket 2
+      { mind: b, at: startMs + 60_000, metadata: priced(0.2) }, // bucket 0
+    ]);
+
+    const report = await usageReport({ window: "24h", now: NOW });
+    const rowA = report.minds.find((m) => m.mind === a)!;
+    const rowB = report.minds.find((m) => m.mind === b)!;
+    assert.equal(rowA.series.length, 24);
+    assert.equal(rowA.series[0].costUsd, 0.1);
+    assert.equal(rowA.series[2].costUsd, 0, "a's series holds only a's spend");
+    assert.equal(rowB.series[0].costUsd, 0.2);
+    assert.equal(rowB.series[2].costUsd, 0.3);
+    // Other tests share this DB, so the global bucket contains these two and possibly more.
+    assert.ok(
+      report.series[0].costUsd >= rowA.series[0].costUsd + rowB.series[0].costUsd - 1e-9,
+      "the global bucket contains both minds' spend for that bucket",
+    );
+    assert.equal(report.series[0].turns >= rowA.series[0].turns + rowB.series[0].turns, true);
+  });
+
   it("reports an empty window as zeros, not as absent fields", async () => {
     const mind = `usage-empty-${Date.now()}`;
     const report = await usageReport({ window: "24h", mind, now: NOW });

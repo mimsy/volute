@@ -65,7 +65,12 @@ export type MindUsage = {
    * mind is fixed by `volute mind upgrade`, an unknown model by pricing the model.
    */
   preUpgradeTurns: number;
+  /** This mind's own spend per bucket, zero-filled, oldest first. */
+  series: UsageBucket[];
 };
+
+/** A mind's numbers without its identity or its series — the shape of a total. */
+export type UsageTotals = Omit<MindUsage, "mind" | "series">;
 
 export type UsageBucket = {
   /** ISO 8601 UTC instant the bucket starts at; it covers [start, start + bucketMs). */
@@ -82,7 +87,7 @@ export type UsageReport = {
   until: string;
   bucketMinutes: number;
   /** Every mind's totals summed — including minds no longer in the registry. */
-  total: Omit<MindUsage, "mind">;
+  total: UsageTotals;
   /** Ranked by spend, descending; ties broken by name so the order is stable. */
   minds: MindUsage[];
   /** One entry per bucket, zero-filled, oldest first. */
@@ -139,7 +144,7 @@ const AGGREGATES = {
   preUpgradeTurns: sql<number>`COALESCE(SUM(CASE WHEN json_extract(${mindHistory.metadata}, '$.partial') = 1 THEN 1 ELSE 0 END), 0)`,
 };
 
-const EMPTY_TOTAL: Omit<MindUsage, "mind"> = {
+const EMPTY_TOTAL: UsageTotals = {
   costUsd: 0,
   turns: 0,
   inputTokens: 0,
@@ -150,6 +155,41 @@ const EMPTY_TOTAL: Omit<MindUsage, "mind"> = {
   unpricedTurns: 0,
   preUpgradeTurns: 0,
 };
+
+/** Accumulate one grouped row into a running total. `cacheHitRatio` is derived at the end. */
+function addInto(acc: UsageTotals, row: Omit<UsageTotals, "cacheHitRatio">): void {
+  acc.costUsd += row.costUsd;
+  acc.turns += row.turns;
+  acc.inputTokens += row.inputTokens;
+  acc.outputTokens += row.outputTokens;
+  acc.cacheReadTokens += row.cacheReadTokens;
+  acc.cacheCreationTokens += row.cacheCreationTokens;
+  acc.unpricedTurns += row.unpricedTurns;
+  acc.preUpgradeTurns += row.preUpgradeTurns;
+}
+
+/**
+ * Every bucket in the window, in order, missing ones as zeros.
+ *
+ * A quiet hour that simply vanished from the series would draw as a shorter, busier
+ * window rather than as the quiet it was.
+ */
+function fill(
+  keys: string[],
+  startMs: number,
+  bucketMs: number,
+  found: Map<string, UsageBucket>,
+): UsageBucket[] {
+  return keys.map((key, i) => {
+    const hit = found.get(key);
+    return {
+      start: isoStamp(startMs + i * bucketMs),
+      costUsd: hit?.costUsd ?? 0,
+      turns: hit?.turns ?? 0,
+      unpricedTurns: hit?.unpricedTurns ?? 0,
+    };
+  });
+}
 
 /**
  * Aggregate usage over a window, optionally for one mind.
@@ -164,42 +204,14 @@ export async function usageReport(opts: {
 }): Promise<UsageReport> {
   const { window, mind } = opts;
   const { startMs, endMs, bucketMs, buckets } = windowBounds(window, opts.now);
-  const since = dbStamp(startMs);
-  const until = dbStamp(endMs);
   const db = await getDb();
 
   const scope = and(
     eq(mindHistory.type, "usage"),
-    sql`${mindHistory.created_at} >= ${since}`,
-    sql`${mindHistory.created_at} < ${until}`,
+    sql`${mindHistory.created_at} >= ${dbStamp(startMs)}`,
+    sql`${mindHistory.created_at} < ${dbStamp(endMs)}`,
     mind ? eq(mindHistory.mind, mind) : undefined,
   );
-
-  const rows = await db
-    .select({ mind: mindHistory.mind, ...AGGREGATES })
-    .from(mindHistory)
-    .where(scope)
-    .groupBy(mindHistory.mind);
-
-  const minds: MindUsage[] = rows
-    .map((r) => ({ ...r, cacheHitRatio: cacheHitRatio(r) }))
-    .sort((a, b) => b.costUsd - a.costUsd || a.mind.localeCompare(b.mind));
-
-  const total = minds.reduce<Omit<MindUsage, "mind">>(
-    (acc, m) => ({
-      costUsd: acc.costUsd + m.costUsd,
-      turns: acc.turns + m.turns,
-      inputTokens: acc.inputTokens + m.inputTokens,
-      outputTokens: acc.outputTokens + m.outputTokens,
-      cacheReadTokens: acc.cacheReadTokens + m.cacheReadTokens,
-      cacheCreationTokens: acc.cacheCreationTokens + m.cacheCreationTokens,
-      cacheHitRatio: 0,
-      unpricedTurns: acc.unpricedTurns + m.unpricedTurns,
-      preUpgradeTurns: acc.preUpgradeTurns + m.preUpgradeTurns,
-    }),
-    { ...EMPTY_TOTAL },
-  );
-  total.cacheHitRatio = cacheHitRatio(total);
 
   // strftime works in UTC, which is what created_at already is.
   const bucketExpr =
@@ -207,31 +219,60 @@ export async function usageReport(opts: {
       ? sql<string>`strftime('%Y-%m-%d %H:00:00', ${mindHistory.created_at})`
       : sql<string>`strftime('%Y-%m-%d 00:00:00', ${mindHistory.created_at})`;
 
-  const bucketRows = await db
-    .select({
-      bucket: bucketExpr,
-      costUsd: AGGREGATES.costUsd,
-      turns: AGGREGATES.turns,
-      unpricedTurns: AGGREGATES.unpricedTurns,
-    })
+  // One grouping by (mind, bucket) answers everything: the buckets tile the window
+  // exactly and every in-scope row lands in one, so per-mind totals and the install-wide
+  // total are sums over these rows rather than separate queries that could disagree.
+  const rows = await db
+    .select({ mind: mindHistory.mind, bucket: bucketExpr, ...AGGREGATES })
     .from(mindHistory)
     .where(scope)
-    .groupBy(bucketExpr);
+    .groupBy(mindHistory.mind, bucketExpr);
 
-  const byBucket = new Map(bucketRows.map((r) => [r.bucket, r]));
-  // Zero-fill: a quiet hour that simply vanished from the series would draw as a
-  // shorter, busier window rather than as the quiet it was.
-  const series: UsageBucket[] = [];
-  for (let i = 0; i < buckets; i++) {
-    const ms = startMs + i * bucketMs;
-    const hit = byBucket.get(dbStamp(ms));
-    series.push({
-      start: isoStamp(ms),
-      costUsd: hit?.costUsd ?? 0,
-      turns: hit?.turns ?? 0,
-      unpricedTurns: hit?.unpricedTurns ?? 0,
+  const bucketKeys: string[] = [];
+  for (let i = 0; i < buckets; i++) bucketKeys.push(dbStamp(startMs + i * bucketMs));
+
+  const perMind = new Map<string, { totals: UsageTotals; buckets: Map<string, UsageBucket> }>();
+  for (const row of rows) {
+    let entry = perMind.get(row.mind);
+    if (!entry) {
+      entry = { totals: { ...EMPTY_TOTAL }, buckets: new Map() };
+      perMind.set(row.mind, entry);
+    }
+    addInto(entry.totals, row);
+    entry.buckets.set(row.bucket, {
+      start: row.bucket,
+      costUsd: row.costUsd,
+      turns: row.turns,
+      unpricedTurns: row.unpricedTurns,
     });
   }
+
+  const minds: MindUsage[] = [...perMind.entries()]
+    .map(([name, entry]) => ({
+      mind: name,
+      ...entry.totals,
+      cacheHitRatio: cacheHitRatio(entry.totals),
+      series: fill(bucketKeys, startMs, bucketMs, entry.buckets),
+    }))
+    .sort((a, b) => b.costUsd - a.costUsd || a.mind.localeCompare(b.mind));
+
+  const total: UsageTotals = { ...EMPTY_TOTAL };
+  const combined = new Map<string, UsageBucket>();
+  for (const row of rows) {
+    addInto(total, row);
+    const at = combined.get(row.bucket) ?? {
+      start: row.bucket,
+      costUsd: 0,
+      turns: 0,
+      unpricedTurns: 0,
+    };
+    at.costUsd += row.costUsd;
+    at.turns += row.turns;
+    at.unpricedTurns += row.unpricedTurns;
+    combined.set(row.bucket, at);
+  }
+  total.cacheHitRatio = cacheHitRatio(total);
+  const series = fill(bucketKeys, startMs, bucketMs, combined);
 
   return {
     window,

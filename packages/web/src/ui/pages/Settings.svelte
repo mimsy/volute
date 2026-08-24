@@ -6,14 +6,56 @@ import ImagegenProviders from "../components/system/ImagegenProviders.svelte";
 import {
   fetchAiDefaults,
   fetchMaxMinds,
+  fetchSystemLimits,
   saveAiDefaults,
   saveMaxMinds,
+  saveSystemLimits,
   systemLogin,
   systemLogout,
   systemRegister,
   updateSystemName,
 } from "../lib/client";
 import { auth } from "../lib/stores.svelte";
+
+// Install-wide spend cap. Empty = no cap.
+let spendCapInput = $state("");
+let spendCapError = $state("");
+// Same guard as maxMinds below: without it a failed load renders the field blank and
+// the onblur autosave clears an existing cap.
+let spendCapLoaded = $state(false);
+
+onMount(async () => {
+  try {
+    const limits = await fetchSystemLimits();
+    spendCapInput = limits.systemSpendCapPerDay == null ? "" : String(limits.systemSpendCapPerDay);
+    spendCapLoaded = true;
+  } catch (err) {
+    spendCapError = err instanceof Error ? err.message : "Failed to load spend cap";
+  }
+});
+
+async function saveSpendCap() {
+  if (!spendCapLoaded) return;
+  spendCapError = "";
+  const trimmed = spendCapInput.trim();
+  let value: number | null = null;
+  if (trimmed !== "") {
+    const n = Number(trimmed);
+    // Positive, not non-negative: a 0 would read as "no cap" server-side, the opposite
+    // of what a host typing 0 means.
+    if (!Number.isFinite(n) || n <= 0) {
+      spendCapError = "Enter an amount above 0, or leave blank for no cap.";
+      return;
+    }
+    value = n;
+  }
+  try {
+    const result = await saveSystemLimits({ systemSpendCapPerDay: value });
+    spendCapInput = result.systemSpendCapPerDay == null ? "" : String(result.systemSpendCapPerDay);
+  } catch (err) {
+    spendCapError = err instanceof Error ? err.message : "Failed to save spend cap";
+  }
+}
 
 // System name
 let localName = $state(auth.localName ?? "");
@@ -175,6 +217,36 @@ async function handleSystemLogout() {
     {/if}
   </div>
 
+  <!-- Spend Limit -->
+  <div class="section">
+    <div class="section-header">
+      <span class="section-title">Spend Limit</span>
+      <span class="section-subtitle">
+        Install-wide cap in USD per day. Blank = no cap.
+      </span>
+    </div>
+    <Input
+      type="number"
+      min="0"
+      step="0.01"
+      style="width:100%"
+      bind:value={spendCapInput}
+      placeholder="No cap"
+      disabled={!spendCapLoaded}
+      onblur={saveSpendCap}
+      onkeydown={(e: KeyboardEvent) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+    />
+    <div class="hint">
+      When the whole install reaches this, every mind's deliveries are held until the day
+      rolls over. Turns that can't be priced — a mind on a pre-upgrade template, or a model
+      with no published rates — count nothing against it, so a cap binds only what it can
+      see. System → Usage shows what isn't metered.
+    </div>
+    {#if spendCapError}
+      <div class="error">{spendCapError}</div>
+    {/if}
+  </div>
+
   <!-- System Registration -->
   <div class="section">
     <div class="section-header">
@@ -272,6 +344,14 @@ async function handleSystemLogout() {
     font-size: 13px;
     margin-top: 8px;
   }
+
+  .hint {
+    font-size: 11px;
+    color: var(--text-2);
+    line-height: 1.6;
+    margin-top: 8px;
+  }
+
 
   .section {
     margin-bottom: 32px;

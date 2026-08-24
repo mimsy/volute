@@ -202,6 +202,7 @@ let activeChannelId = $derived.by(() => {
 let isSystemActive = $derived(
   selection.kind === "home" ||
     selection.kind === "system-history" ||
+    selection.kind === "system-usage" ||
     selection.kind === "extension",
 );
 </script>
@@ -364,6 +365,10 @@ let isSystemActive = $derived(
     <button class="mind-menu-item" onclick={() => handleMenuAction("__system__", "settings")}>
       <Icon kind="gear" class="menu-icon" />
       Settings
+    </button>
+    <button class="mind-menu-item" onclick={() => handleMenuAction("__system__", "usage")}>
+      <Icon kind="heartbeat" class="menu-icon" />
+      Usage
     </button>
     <button class="mind-menu-item" onclick={() => handleMenuAction("__system__", "logs")}>
       <Icon kind="document-lines" class="menu-icon" />

@@ -3,6 +3,7 @@ import type { MindConfig } from "@volute/api";
 import { ErrorMessage, Input, Select, SettingRow, Toggle } from "@volute/ui";
 import { onMount } from "svelte";
 import { type AiModel, fetchAiModels, fetchMindConfig, updateMindConfig } from "../../lib/client";
+import SpendCapInput from "../SpendCapInput.svelte";
 
 let {
   name,
@@ -14,8 +15,8 @@ let config: MindConfig | null = $state(null);
 let models: AiModel[] = $state([]);
 let editModel = $state("");
 let thinkingIndex = $state(0);
-let editBudget = $state("");
-let editPeriod = $state("");
+let editBudget: number | null = $state(null);
+let editPeriod: number | null = $state(null);
 let editCompaction = $state("");
 let unescapeNewlines = $state(false);
 let error = $state("");
@@ -63,8 +64,8 @@ function loadEditFields(c: MindConfig) {
   editModel = c.config.model ?? "";
   const level = c.config.thinkingLevel ?? "off";
   thinkingIndex = Math.max(0, THINKING_LEVELS.indexOf(level as (typeof THINKING_LEVELS)[number]));
-  editBudget = c.config.spendCap != null ? String(c.config.spendCap) : "";
-  editPeriod = c.config.spendCapPeriodMinutes != null ? String(c.config.spendCapPeriodMinutes) : "";
+  editBudget = c.config.spendCap ?? null;
+  editPeriod = c.config.spendCapPeriodMinutes ?? null;
   editCompaction =
     c.config.compaction?.maxContextTokens != null
       ? String(c.config.compaction.maxContextTokens)
@@ -75,13 +76,6 @@ function loadEditFields(c: MindConfig) {
 function parseBudgetInt(val: string): number | null {
   if (!val.trim()) return null;
   const n = parseInt(val, 10);
-  return Number.isNaN(n) ? null : n;
-}
-
-/** The spend cap is dollars, so cents have to survive the round trip. */
-function parseBudgetFloat(val: string): number | null {
-  if (!val.trim()) return null;
-  const n = parseFloat(val);
   return Number.isNaN(n) ? null : n;
 }
 
@@ -111,16 +105,8 @@ function saveThinking() {
   );
 }
 
-function saveBudget() {
-  saveField("budget", () => updateMindConfig(name, { spendCap: parseBudgetFloat(editBudget) }));
-}
-
-function savePeriod() {
-  saveField("period", () =>
-    updateMindConfig(name, {
-      spendCapPeriodMinutes: parseBudgetInt(editPeriod),
-    }),
-  );
+function saveBudget(spendCap: number | null, spendCapPeriodMinutes: number | null) {
+  saveField("budget", () => updateMindConfig(name, { spendCap, spendCapPeriodMinutes }));
 }
 
 function saveCompaction() {
@@ -211,25 +197,13 @@ onMount(async () => {
   </SettingRow>
 
   {#if !hideBudget}
-    <SettingRow label="Budget">
-      <Input
-        type="number"
-        width="80px"
-        bind:value={editBudget}
-        onblur={saveBudget}
-        step="0.01"
-        placeholder="USD"
-      />
-      <span class="setting-hint">per</span>
-      <Input
-        type="number"
-        width="80px"
-        bind:value={editPeriod}
-        onblur={savePeriod}
-        placeholder="min"
-      />
-      <span class="setting-hint">min</span>
+    <SettingRow label="Spend cap">
+      <SpendCapInput amount={editBudget} periodMinutes={editPeriod} onsave={saveBudget} />
     </SettingRow>
+    <div class="cap-hint">
+      Deliveries are held once the cap is reached, and released when the period resets.
+      Turns that can't be priced count nothing against it.
+    </div>
 
     <SettingRow label="Context">
       <Input
@@ -251,6 +225,13 @@ onMount(async () => {
 {/if}
 
 <style>
+  .cap-hint {
+    font-size: 11px;
+    color: var(--text-2);
+    line-height: 1.5;
+    padding: 2px 0 6px 100px;
+  }
+
   .setting-hint {
     font-size: 13px;
     color: var(--text-2);

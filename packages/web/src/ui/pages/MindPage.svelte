@@ -1,6 +1,7 @@
 <script lang="ts">
 import type { ConversationWithParticipants, Mind } from "@volute/api";
 import Chat from "../components/chat/Chat.svelte";
+import MindSpendStrip from "../components/mind/MindSpendStrip.svelte";
 import { data } from "../lib/stores.svelte";
 
 let {
@@ -37,6 +38,7 @@ let currentConv = $derived(conversations?.find((c) => c.id === conversationId));
   <div class="not-found">Mind "{name}" not found.</div>
 {:else}
   <div class="mind-page">
+    <MindSpendStrip {name} />
     {#if section?.startsWith("ext:")}
       {@const extParts = section.split(":")}
       <div class="section-content">

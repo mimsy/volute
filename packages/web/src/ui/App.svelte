@@ -106,6 +106,7 @@ let onSystemPage = $derived(selection.kind !== "mind" && selection.kind !== "cha
 let activeSystemSection = $derived.by((): string | null => {
   if (!onSystemPage) return null;
   if (selection.kind === "system-history") return "system-history";
+  if (selection.kind === "system-usage") return "system-usage";
   if (selection.kind === "extension") return `ext:${selection.extensionId}`;
   return null;
 });
@@ -284,6 +285,10 @@ let breadcrumbs = $derived.by((): Breadcrumb[] => {
   } else if (sel.kind === "system-history") {
     crumbs.push({ label: "system", action: handleSystemHome });
     crumbs.push({ label: "timeline" });
+  } else if (sel.kind === "system-usage") {
+    crumbs.push({ label: "system", action: handleSystemHome });
+    crumbs.push({ label: "usage" });
+    if (sel.mind) crumbs.push({ label: sel.mind });
   } else {
     crumbs.push({ label: "system" });
   }
@@ -794,6 +799,7 @@ function handleGlobalClick(e: MouseEvent) {
           onSelectSystemSection={(section) => {
             if (section === "settings") activeModal = "systemSettings";
             else if (section === "logs") activeModal = "systemLogs";
+            else if (section === "usage") selection = { kind: "system-usage" };
           }}
           onSelectConversation={handleSelectConversation}
           onBrowseChannels={() => (activeModal = "channelBrowser")}
@@ -860,6 +866,15 @@ function handleGlobalClick(e: MouseEvent) {
                   aria-label="History"
                 >
                   <span class="tab-icon">{@html icons.history}</span>
+                </button>
+                <button
+                  class="mind-section-tab"
+                  class:active={activeSystemSection === "system-usage"}
+                  onclick={() => { selection = { kind: "system-usage" }; }}
+                  use:tooltip={{ text: "Usage", position: "bottom" }}
+                  aria-label="Usage"
+                >
+                  <span class="tab-icon"><Icon kind="heartbeat" /></span>
                 </button>
                 {#each data.extensions as ext}
                   {#if ext.systemSection}

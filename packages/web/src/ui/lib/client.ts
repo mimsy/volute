@@ -609,7 +609,12 @@ export type MindUsage = {
   unpricedTurns: number;
   /** The subset of unpricedTurns from a template that predates cache accounting. */
   preUpgradeTurns: number;
+  /** This mind's own spend per bucket, zero-filled, oldest first. */
+  series: UsageBucket[];
 };
+
+/** A mind's numbers without its identity or its series — the shape of a total. */
+export type UsageTotals = Omit<MindUsage, "mind" | "series">;
 
 export type UsageBucket = {
   /** ISO 8601 UTC instant the bucket starts at. */
@@ -624,7 +629,7 @@ export type UsageReport = {
   since: string;
   until: string;
   bucketMinutes: number;
-  total: Omit<MindUsage, "mind">;
+  total: UsageTotals;
   minds: MindUsage[];
   series: UsageBucket[];
 };
