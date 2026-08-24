@@ -588,6 +588,114 @@ export async function saveMaxMinds(maxMinds: number | null): Promise<MaxMinds> {
   return fetchMaxMinds();
 }
 
+// --- Usage & spend ---
+// Two different clocks live here and must not be shown as one number:
+//   - UsageReport is a wall-clock window (last 24h / 7d / 30d) aggregated from history.
+//   - MindBudget is the spend cap's own period, which starts whenever it last reset.
+
+export type UsageWindow = "24h" | "7d" | "30d";
+
+export type MindUsage = {
+  mind: string;
+  costUsd: number;
+  turns: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  /** 0..1 — cache reads over every token that came in. */
+  cacheHitRatio: number;
+  /** Turns carrying no price. Where this is > 0, costUsd is a floor, not a total. */
+  unpricedTurns: number;
+  /** The subset of unpricedTurns from a template that predates cache accounting. */
+  preUpgradeTurns: number;
+};
+
+export type UsageBucket = {
+  /** ISO 8601 UTC instant the bucket starts at. */
+  start: string;
+  costUsd: number;
+  turns: number;
+  unpricedTurns: number;
+};
+
+export type UsageReport = {
+  window: UsageWindow;
+  since: string;
+  until: string;
+  bucketMinutes: number;
+  total: Omit<MindUsage, "mind">;
+  minds: MindUsage[];
+  series: UsageBucket[];
+};
+
+/** The install-wide spend bucket, when a system cap is configured. */
+export type SystemSpend = {
+  spentUsd: number;
+  capUsd: number;
+  periodStart: number;
+  resetAt: number;
+  hasUnpricedTurns: boolean;
+  percentUsed: number;
+};
+
+export type SystemUsageReport = UsageReport & { system: SystemSpend | null };
+
+export function fetchUsage(window: UsageWindow = "24h"): Promise<SystemUsageReport> {
+  return get(`${V1}/usage?window=${window}`);
+}
+
+export function fetchMindUsage(name: string, window: UsageWindow = "24h"): Promise<UsageReport> {
+  return get(`${V1}/minds/${enc(name)}/usage?window=${window}`);
+}
+
+/**
+ * A mind's cap period. The per-mind fields are absent when the mind has no cap of its
+ * own — it can still be `held` by the install-wide cap, which is why the route answers
+ * at all in that case.
+ */
+export type MindBudget = {
+  spentUsd?: number;
+  capUsd?: number;
+  periodMinutes?: number;
+  periodStart?: number;
+  /** Epoch ms the period resets at — a cap whose end can't be seen is a trapdoor. */
+  resetAt?: number;
+  hasUnpricedTurns?: boolean;
+  percentUsed?: number;
+  system: SystemSpend | null;
+  held: { count: number; scope: "mind" | "system" | null; releasesAt: number | null };
+};
+
+/**
+ * A mind's budget, or null when it has no cap and nothing is held — the route 404s in
+ * that case, which is an answer ("no cap"), not a failure.
+ *
+ * The 404 arrives as a thrown Error like every other status (the API client doesn't
+ * carry one through), so this can't tell it apart from a real outage and reads both as
+ * "no cap". That is safe only because callers pair it with `fetchMindUsage`, which is
+ * not swallowed: if the daemon is unreachable, the spend figure surfaces the error
+ * rather than the cap silently disappearing on its own.
+ */
+export async function fetchMindBudget(name: string): Promise<MindBudget | null> {
+  try {
+    return await get<MindBudget>(`${V1}/minds/${enc(name)}/budget`);
+  } catch {
+    return null;
+  }
+}
+
+export type SystemLimits = { systemSpendCapPerDay: number | null };
+
+export function fetchSystemLimits(): Promise<SystemLimits> {
+  return get(`${V1}/system/limits`);
+}
+
+export async function saveSystemLimits(limits: SystemLimits): Promise<SystemLimits> {
+  await put(`${V1}/system/limits`, limits);
+  return fetchSystemLimits();
+}
+
 export function systemRegister(name: string): Promise<{ system: string }> {
   return post(`${V1}/system/register`, { name });
 }
