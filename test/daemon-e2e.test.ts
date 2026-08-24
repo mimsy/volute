@@ -1692,8 +1692,11 @@ describe("daemon e2e", { timeout: 420000 }, () => {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          // Deliberately session-less: `handleMindEvent` only records the exceeded notice
+          // for a session, and that notice is an immediate event, which runs a turn — whose
+          // session activity then leaks into a later test asserting this mind has none. The
+          // cap still trips; the notice itself is covered thoroughly in unit tests.
           type: "usage",
-          session: "main",
           metadata: {
             input_tokens: 0,
             output_tokens: 1000,
@@ -1715,9 +1718,12 @@ describe("daemon e2e", { timeout: 420000 }, () => {
 
       // Give a delivery that was going to happen time to happen.
       await new Promise((r) => setTimeout(r, 3000));
-      const rows = await db.select().from(deliveryQueue).where(eq(deliveryQueue.mind, TEST_MIND));
+      const rows = await db
+        .select()
+        .from(deliveryQueue)
+        .where(and(eq(deliveryQueue.mind, TEST_MIND), eq(deliveryQueue.status, "held")));
       assert.equal(rows.length, 1, "the message is kept while the install is over its cap");
-      assert.equal(rows[0].status, "pending", "held rows stay pending for the redrive sweep");
+      assert.equal(rows[0].status, "held", "held rows leave the sweep for the release path");
       assert.equal(rows[0].attempts, 0, "a hold is not a delivery failure");
       assert.equal(rows[0].next_attempt_at, null, "and sets no backoff");
       const payload = JSON.parse(rows[0].payload) as { held?: { scope: string } };
