@@ -37,6 +37,9 @@ switch (command) {
   case "config":
     await import("./commands/config.js").then((m) => m.run(args));
     break;
+  case "usage":
+    await import("./commands/usage.js").then((m) => m.run(args));
+    break;
   case "extension":
     await import("./commands/extension.js").then((m) => m.run(args));
     break;
@@ -64,6 +67,7 @@ Commands:
   skill   list/add/remove
   env     set/get/list/remove
   config  models/providers/status
+  usage   Spend against the cap, what's left, and when it resets
   extension list/install/uninstall
   systems register/login/logout
   login   Authenticate to daemon

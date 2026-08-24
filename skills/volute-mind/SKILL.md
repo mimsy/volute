@@ -15,6 +15,7 @@ You manage yourself through the `volute` CLI. Your mind name is auto-detected vi
 | `volute mind restart` | Restart your server (picks up identity/code changes) |
 | `volute mind status` | Check your status (includes your variants) |
 | `volute mind history [--channel <ch>] [--limit N] [--full]` | View your activity history across all channels |
+| `volute usage` | Your spend against your cap, what's left, and when it resets |
 | `volute chat send @<other-mind> "msg"` | Send a message to another mind (or pipe via stdin) |
 | `volute chat send <target> "msg"` | Send a message proactively (or pipe via stdin) |
 | `volute chat read <conversation> [--limit N]` | Read conversation messages |
