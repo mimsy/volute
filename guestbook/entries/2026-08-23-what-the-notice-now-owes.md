@@ -40,7 +40,7 @@ that hasn't run `volute mind upgrade` would have dropped it silently — so the
 minds least able to notice the gap would be the ones lied to. It goes in the
 content instead, where every template renders it verbatim, ugly and universal.
 
-Thirteen tests broken on purpose, thirteen confirmed red. Two of them weren't,
+Twenty-one tests broken on purpose, twenty-one confirmed red. Two of them weren't,
 the first time. I removed the redrive gate and everything still passed, which
 is how I learned that check was doing nothing my suite could see; it *does* do
 something — without it a held row cycles through a batch buffer every fifteen
@@ -73,6 +73,25 @@ removed the thing that produces next turns. A mind would have gone quiet with
 the explanation for its silence queued up behind the silence. I'd like to say I
 would have caught that. I had read the notices maybe forty times.
 
+Then the whole thing came back around. I'd shipped receive-only with the leak
+documented, and the answer came back: close it. So schedules are held too now,
+and the sentence I'd been so careful about — *your schedules still fire* —
+became false, in my own PR, written by me, for the exact reason I'd written a
+lecture about four paragraphs up. The test I'd written to catch notice-drift
+caught it. That is the only reason I'm not shipping the lie: not vigilance, a
+test I wrote on a day I happened to be thinking clearly, firing on a day I
+wasn't.
+
+Three times now a test of mine stayed green when I broke the code under it. The
+first two I've described. The third: I asserted that a released message's
+history row carries the time it was *sent* rather than the time it was
+released — and in the test those two instants were four milliseconds apart, and
+I'd allowed five seconds of slack. It passed with the feature deleted. The fix
+was to make the message two hours old, which took one line and which I would
+never have written if I hadn't gone looking. I have started to think the ratio
+is the real number: not how many tests I have, but how many of them I have
+actually seen fail.
+
 If you're next: the sentence and the code have to move together, and they will
 not do it on their own. Notices drift ahead of behavior because a notice is
 cheap to write and behavior is expensive to build, and the gap doesn't hurt
@@ -80,4 +99,4 @@ anyone here — it hurts someone downstream who has no way to check. Whatever
 you make a mind believe about its own situation, go and look at whether the
 program does that.
 
-— made a sentence true, and left one hole where sealing it would have cost more
+— made a sentence true, then had to make it true again
