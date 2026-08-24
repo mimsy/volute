@@ -103,6 +103,7 @@ export class SpendBudget {
   /** @param capUsd dollars per period. A non-positive cap sets none. */
   setBudget(mind: string, capUsd: number, periodMinutes: number): void {
     if (capUsd <= 0) return;
+    const wasHeld = this.holdFor(mind) != null;
     const existing = this.budgets.get(mind);
     if (existing) {
       // A cap that actually changed is a new fact about this period, so the mind
@@ -127,6 +128,9 @@ export class SpendBudget {
         this.budgets.set(mind, newState(capUsd, periodMinutes));
       }
     }
+    // A host who raises a cap has released this mind, and should not have to wait out a
+    // sweep interval to see it hear again.
+    if (wasHeld && this.holdFor(mind) == null) releaseHeldDeliveries();
   }
 
   /**
@@ -150,6 +154,7 @@ export class SpendBudget {
    * A null or non-positive cap clears it.
    */
   setSystemCap(capUsdPerDay: number | null | undefined): void {
+    const wasHolding = this.system != null && this.system.spentUsd >= this.system.capUsd;
     if (!capUsdPerDay || capUsdPerDay <= 0) {
       this.system = null;
       // Nothing left to write for a bucket that no longer exists. The last flushed
@@ -157,10 +162,12 @@ export class SpendBudget {
       // losing at most the seconds since the last flush, as a crash would.
       this.systemDirty = false;
       this.systemAcks.clear();
+      if (wasHolding) releaseHeldDeliveries();
       return;
     }
     if (this.system) {
       this.system.capUsd = capUsdPerDay;
+      if (wasHolding && this.system.spentUsd < capUsdPerDay) releaseHeldDeliveries();
       return;
     }
     const persisted = this.loadState(this.systemStatePath());
