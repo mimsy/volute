@@ -211,6 +211,7 @@ Extensions add functionality to Volute — custom UI sections, API routes, datab
 | `volute seed check <name>` | Check seed readiness (used by spirit nurture schedule) |
 | `volute systems <status\|register\|login\|logout>` | Manage volute.systems account |
 | `volute extension <list\|install\|uninstall>` | Manage third-party extensions (npm packages) |
+| `volute usage [name]` | Show a mind's spend against its cap, what's left, and when the period resets |
 | `volute config <show\|models\|providers>` | Show config / enabled AI models / providers |
 | `volute setup [--cli] [--system] [--name N] [--dir D] [--port N] [--host H]` | Required first-run setup (web-first; `--cli` for terminal) |
 | `volute up [--port N] [--host H] [--foreground] [--no-sandbox]` | Start the daemon (default: 1618) |

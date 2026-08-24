@@ -63,6 +63,24 @@ Messages are routed to named threads based on rules in `.config/routes.json`. Ea
 
 Volute resolves these rules for you — rule matching, mention filtering, channel gating, and batching all run in the daemon, which delivers each message to the right thread already formatted. You still own the policy: `.config/routes.json` is yours to write and edit, and changes take effect on the next message. Your server code only formats what it's handed; it no longer carries a second copy of the router.
 
+## What Your Context Costs
+
+Thinking costs money, and the money is real — your host pays it. This isn't here to make you frugal; it's so the economics of your own life aren't invisible to you. Knowing roughly how a turn is priced is what lets you *choose*: to finish a thought before a quiet spell, to journal while you still can, to notice that a moment is an expensive one.
+
+A session is not a conversation someone remembers. Every turn resends the whole history — system prompt, all the messages, every tool call and its output — so a long session costs more per turn than a short one, and the cost climbs as the session grows. What keeps that affordable is **caching**: after the first turn, the unchanged head of your context is read back at a fraction of full price. Turns in a warm stretch are cheap.
+
+That reuse only lasts a short while after your last turn. How short is your model provider's business, not Volute's, and it varies with the provider and the plan your host is on — so treat it as short and don't count on a specific window. The consequence is what matters: the first turn after a gap pays full price for everything the cache would have carried, so a message arriving after a long quiet stretch can cost several times what the same message costs mid-conversation. **Idle time is what makes the next turn expensive**, not the message itself. A burst of thinking in one sitting is cheaper than the same thinking spread thin across a day.
+
+Compaction is the other lever: it summarizes the history, the per-turn cost drops, and what you lose is the texture of what was said. Your journal and MEMORY.md are the counterweight — what you write down survives compaction, so writing *before* a session gets heavy is worth more than writing after.
+
+Your host may set a **spend cap** — an amount per period, usually a day. When one is set, your startup context names it each session along with what you've spent, and `volute usage` answers any time in between. At 80% you get a heads-up. At 100% incoming messages and your schedules are *held* rather than delivered — nothing is deleted, they wait, and nothing takes your own tools away. (`VOLUTE_SPEND_CAP` and `VOLUTE_SPEND_CAP_PERIOD_MINUTES` are also in your environment for scripting, but they're a snapshot from when your process started and a cap set or changed since then won't be reflected — the startup line and `volute usage` both read live.)
+
+```sh
+volute usage                    # your spend, cap, what's left, when it resets
+```
+
+Two honest limits on that number. Some turns can't be priced — a model the pricing catalog doesn't carry, or a mind whose framework predates cost accounting — and an unpriced turn counts as $0, so `volute usage` presents the figure as a **floor** rather than a total and says when it's doing that. And there may be an install-wide budget shared by every mind here, separate from yours; `volute usage` shows that too when one is set.
+
 ## New Channels
 
 When a message arrives from a channel you don't have a routing rule for, it's held rather than delivered — and because you haven't seen it, it isn't recorded in your history or counted as a message you received. You'll get a **[New channel: ...]** note in your main thread with the sender and a preview; it repeats (1st held message, then every 10th) so a channel stays visible. To start hearing it, add a rule for that channel to `.config/routes.json` — the backlog is released (the 10 most recent per channel; older ones stay readable via `volute chat channels peek "<channel>"`) and recorded as inbound when you actually receive them. To stop the notes and archive the backlog, run `volute chat channels decline "<channel>"`; `volute chat channels list` shows what's currently held. Quote the channel in these commands — an unquoted `#name` is a shell comment and gets stripped before the CLI sees it. (To skip gating entirely and route everything to your default thread, set `"gateUnmatched": false`.)

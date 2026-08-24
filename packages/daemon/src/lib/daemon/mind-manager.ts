@@ -30,6 +30,7 @@ import {
   readPendingContext,
 } from "./pending-context.js";
 import { RestartTracker } from "./restart-tracker.js";
+import { DEFAULT_SPEND_PERIOD_MINUTES, getSpendBudget } from "./spend-budget.js";
 import { clearMind as clearTurnState, summarizeOrphanedTurns } from "./turn-tracker.js";
 
 const mlog = log.child("minds");
@@ -92,6 +93,102 @@ export function buildMindBaseEnv(
     if (key.startsWith("VOLUTE_")) base[key] = value;
   }
   return base;
+}
+
+/**
+ * The mind's own spend cap, as environment variables it can read.
+ *
+ * A mind currently meets its economics only as constraint — a notice at 80%, a
+ * hold at 100%. These let it see the shape of the thing before it hits it, which
+ * is the difference between a budget and a trapdoor: a mind that knows what it
+ * has left can finish a thought, journal, or compact on purpose.
+ *
+ * With no cap set, both keys are explicitly `undefined` rather than omitted. The
+ * spread lands after `loadMergedEnv()`, so omitting them would let a stale
+ * `VOLUTE_SPEND_CAP` in the mind's or the shared `env.json` survive into the child
+ * — and a mind must not be handed a limit that isn't there. An env var naming a
+ * number nothing enforces is worse than silence.
+ *
+ * The period is always written alongside the amount, defaulted explicitly, so the
+ * value is readable without knowing Volute's defaults.
+ *
+ * This is a snapshot taken at spawn: a cap changed mid-run leaves it stale, which
+ * is why the startup line points at `volute usage` for the live figure.
+ */
+export function spendCapEnv(
+  usage: { capUsd: number; periodMinutes: number } | null,
+): Record<string, string | undefined> {
+  if (!usage || usage.capUsd <= 0) {
+    return { VOLUTE_SPEND_CAP: undefined, VOLUTE_SPEND_CAP_PERIOD_MINUTES: undefined };
+  }
+  return {
+    VOLUTE_SPEND_CAP: String(usage.capUsd),
+    VOLUTE_SPEND_CAP_PERIOD_MINUTES: String(usage.periodMinutes || DEFAULT_SPEND_PERIOD_MINUTES),
+  };
+}
+
+/**
+ * The live enforced cap for a mind, or null. Reads the running budget rather than
+ * `volute.json` so a variant reports the cap that actually binds it (its parent's
+ * bucket) instead of the copy of its parent's config sitting in its worktree.
+ *
+ * Tolerates an uninitialized budget — `getSpendBudget()` throws before
+ * `initSpendBudget()`, and a mind starting without one simply has no cap to report.
+ */
+function readLiveSpendCap(baseName: string): { capUsd: number; periodMinutes: number } | null {
+  try {
+    return getSpendBudget().getUsage(baseName);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The full environment a mind process is spawned with.
+ *
+ * Extracted from `_startMind` so the *wiring* is testable, not just the pieces.
+ * The pieces each had coverage while the assembly had none — deleting the
+ * spend-cap spread from an inline object literal broke no test, which is the
+ * shape of #808: the daemon-side half of a capability goes missing and
+ * everything still looks healthy.
+ *
+ * Order is load-bearing. `loadMergedEnv()` comes early so a mind's own env.json
+ * cannot override the identity and cap the daemon assigns below it — a mind can
+ * write its own env (`volute env set --mind`), and a `VOLUTE_SPEND_CAP` planted
+ * there must not outrank the real one (or survive when there is none).
+ */
+export function composeMindEnv(opts: {
+  name: string;
+  baseName: string;
+  dir: string;
+  port: number;
+  mindToken: string;
+}): Record<string, string | undefined> {
+  const { name, baseName, dir, port, mindToken } = opts;
+  // Prepend mind's .local/bin to PATH for skill commands and volute wrapper
+  const mindLocalBin = resolve(dir, "home", ".local", "bin");
+  const currentPath = process.env.PATH ?? "";
+  return {
+    ...buildMindBaseEnv(),
+    ...loadMergedEnv(name),
+    VOLUTE_MIND: name,
+    VOLUTE_STATE_DIR: stateDir(name),
+    VOLUTE_MIND_DIR: dir,
+    VOLUTE_MIND_PORT: String(port),
+    VOLUTE_MIND_TOKEN: mindToken,
+    // Left unset when the system has no configured name — the startup-context
+    // hook then skips its "This system is named X" line rather than asserting
+    // a fabricated one.
+    VOLUTE_SYSTEM_NAME: readGlobalConfig().name,
+    // The mind's own cap, keyed by baseName because that is the bucket a variant's
+    // spend is recorded against (`handleMindEvent(baseName, …)`) and the one that
+    // holds it. Both keys are cleared when no cap is configured.
+    ...spendCapEnv(readLiveSpendCap(baseName)),
+    ...mindTmpEnv(dir),
+    PATH: `${mindLocalBin}:${currentPath}`,
+    // Strip CLAUDECODE so the Agent SDK can spawn Claude Code subprocesses
+    CLAUDECODE: undefined,
+  };
 }
 
 type TrackedMind = {
@@ -302,27 +399,7 @@ export class MindManager {
 
     const logStream = new RotatingLog(resolve(logsDir, "mind.log"));
     const mindToken = generateMindToken(name);
-    const mindEnv = loadMergedEnv(name);
-    // Prepend mind's .local/bin to PATH for skill commands and volute wrapper
-    const mindLocalBin = resolve(dir, "home", ".local", "bin");
-    const currentPath = process.env.PATH ?? "";
-    const env: Record<string, string | undefined> = {
-      ...buildMindBaseEnv(),
-      ...mindEnv,
-      VOLUTE_MIND: name,
-      VOLUTE_STATE_DIR: stateDir(name),
-      VOLUTE_MIND_DIR: dir,
-      VOLUTE_MIND_PORT: String(port),
-      VOLUTE_MIND_TOKEN: mindToken,
-      // Left unset when the system has no configured name — the startup-context
-      // hook then skips its "This system is named X" line rather than asserting
-      // a fabricated one.
-      VOLUTE_SYSTEM_NAME: readGlobalConfig().name,
-      ...mindTmpEnv(dir),
-      PATH: `${mindLocalBin}:${currentPath}`,
-      // Strip CLAUDECODE so the Agent SDK can spawn Claude Code subprocesses
-      CLAUDECODE: undefined,
-    };
+    const env = composeMindEnv({ name, baseName, dir, port, mindToken });
 
     // For pi minds, inject the system AI provider's API key
     if (target.template === "pi") {

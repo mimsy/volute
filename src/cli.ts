@@ -91,6 +91,9 @@ switch (command) {
   case "config":
     await import("@volute/cli/commands/config.js").then((m) => m.run(args));
     break;
+  case "usage":
+    await import("@volute/cli/commands/usage.js").then((m) => m.run(args));
+    break;
   case "up":
     await import("./commands/up.js").then((m) => m.run(args));
     break;
@@ -144,6 +147,7 @@ Mind:
   mind status [name]               Check a mind's status
   mind history [name] [--full]     View mind activity history
   mind profile [--mind] [...]      Set display name, description, avatar
+  usage [name]                     Spend against the cap, and when it resets
   mind split/join                  Split off and rejoin variants
   mind upgrade/import/export       Lifecycle operations
 

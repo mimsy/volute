@@ -1318,6 +1318,10 @@ const app = new Hono<AuthEnv>()
   // Budget status
   .get("/:name/budget", requireSelf(), async (c) => {
     const name = c.req.param("name");
+    // A name nobody holds must not answer as if it were an uncapped mind: every
+    // lookup below returns empty for an unknown name, so without this a typo'd
+    // `volute usage dizy` reports "nothing is limiting you" about no one.
+    if (!(await findMind(name))) return c.json({ error: "Mind not found" }, 404);
     const baseName = await getBaseName(name);
     const sb = getSpendBudget();
     const usage = sb.getUsage(baseName);
@@ -1326,10 +1330,15 @@ const app = new Hono<AuthEnv>()
     // mind go quiet has nowhere at all to learn why.
     const hold = sb.holdFor(baseName);
     const held = await countHeldDeliveries(baseName);
-    if (!usage && !hold && held === 0) return c.json({ error: "No budget configured" }, 404);
+    // An install-wide cap counts even before it trips: a mind under one is told about
+    // it at 80% by `system_spend_warning_notice`, so answering "no budget configured"
+    // here would have `volute usage` contradict a notice the mind has already read.
+    const system = sb.getSystemUsage();
+    if (!usage && !hold && !system && held === 0)
+      return c.json({ error: "No budget configured" }, 404);
     return c.json({
       ...(usage ?? {}),
-      system: sb.getSystemUsage(),
+      system,
       // What a host needs to tell "this mind is broken" apart from "this mind is capped".
       held: { count: held, scope: hold?.scope ?? null, releasesAt: hold?.resetAt ?? null },
     });
