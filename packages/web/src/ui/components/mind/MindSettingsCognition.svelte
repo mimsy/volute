@@ -3,6 +3,7 @@ import type { MindConfig } from "@volute/api";
 import { ErrorMessage, Input, Select, SettingRow, Toggle } from "@volute/ui";
 import { onMount } from "svelte";
 import { type AiModel, fetchAiModels, fetchMindConfig, updateMindConfig } from "../../lib/client";
+import { parsePositiveInt } from "../../lib/spend-format";
 import SpendCapInput from "../SpendCapInput.svelte";
 
 let {
@@ -17,7 +18,9 @@ let editModel = $state("");
 let thinkingIndex = $state(0);
 let editBudget: number | null = $state(null);
 let editPeriod: number | null = $state(null);
-let editCompaction = $state("");
+// A number input's bind:value is a number once typed, so this is read through
+// parsePositiveInt rather than as a string.
+let editCompaction: string | number = $state("");
 let unescapeNewlines = $state(false);
 let error = $state("");
 let saving: string | null = $state(null);
@@ -73,12 +76,6 @@ function loadEditFields(c: MindConfig) {
   unescapeNewlines = c.config.unescapeNewlines ?? false;
 }
 
-function parseBudgetInt(val: string): number | null {
-  if (!val.trim()) return null;
-  const n = parseInt(val, 10);
-  return Number.isNaN(n) ? null : n;
-}
-
 async function saveField(field: string, fn: () => Promise<void>) {
   saving = field;
   error = "";
@@ -112,7 +109,7 @@ function saveBudget(spendCap: number | null, spendCapPeriodMinutes: number | nul
 function saveCompaction() {
   saveField("compaction", () =>
     updateMindConfig(name, {
-      compaction: { maxContextTokens: parseBudgetInt(editCompaction) },
+      compaction: { maxContextTokens: parsePositiveInt(editCompaction) },
     }),
   );
 }

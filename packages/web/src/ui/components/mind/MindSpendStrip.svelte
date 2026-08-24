@@ -77,7 +77,11 @@ let strip = $derived(spendStrip(budget, usage, now));
     {/if}
 
     {#if strip.window}
-      <span class="window">{strip.window.figure.text} {strip.window.label}</span>
+      <!-- The wall-clock figure is a floor on the same terms as the headline one. -->
+      <span class="window" use:tooltip={strip.window.figure.note}>
+        {#if strip.window.figure.floor}≥{/if}{strip.window.figure.text}
+        {strip.window.label}
+      </span>
     {/if}
 
     {#if strip.held}

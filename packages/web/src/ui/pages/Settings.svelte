@@ -15,10 +15,13 @@ import {
   systemRegister,
   updateSystemName,
 } from "../lib/client";
+import { parsePositiveInt, parsePositiveNumber } from "../lib/spend-format";
 import { auth } from "../lib/stores.svelte";
 
 // Install-wide spend cap. Empty = no cap.
-let spendCapInput = $state("");
+// `bind:value` on a number input yields a number once anything is typed, so this holds
+// whatever the field currently is and is read through parsePositiveNumber.
+let spendCapInput: string | number = $state("");
 let spendCapError = $state("");
 // Same guard as maxMinds below: without it a failed load renders the field blank and
 // the onblur autosave clears an existing cap.
@@ -37,17 +40,16 @@ onMount(async () => {
 async function saveSpendCap() {
   if (!spendCapLoaded) return;
   spendCapError = "";
-  const trimmed = spendCapInput.trim();
+  const trimmed = String(spendCapInput ?? "").trim();
   let value: number | null = null;
   if (trimmed !== "") {
-    const n = Number(trimmed);
-    // Positive, not non-negative: a 0 would read as "no cap" server-side, the opposite
-    // of what a host typing 0 means.
-    if (!Number.isFinite(n) || n <= 0) {
+    // parsePositiveNumber refuses 0 and negatives: the server reads a 0 as "no cap", the
+    // opposite of what a host typing 0 means.
+    value = parsePositiveNumber(trimmed);
+    if (value == null) {
       spendCapError = "Enter an amount above 0, or leave blank for no cap.";
       return;
     }
-    value = n;
   }
   try {
     const result = await saveSystemLimits({ systemSpendCapPerDay: value });
@@ -84,7 +86,9 @@ let defaultsLoaded = $state(false);
 let aiProvidersRef: AiProviders;
 
 // Mind limit (maxMinds). Empty input = unlimited.
-let maxMindsInput = $state("");
+// Holds whatever the number input currently is (a number once typed); read through
+// parsePositiveInt, never as a string.
+let maxMindsInput: string | number = $state("");
 let mindCount = $state(0);
 let maxMindsError = $state("");
 // Only true once the current cap loaded. Guards the onblur autosave from
@@ -118,15 +122,14 @@ async function saveMindLimit() {
   // Never overwrite the cap from a field that never loaded (see maxMindsLoaded).
   if (!maxMindsLoaded) return;
   maxMindsError = "";
-  const trimmed = maxMindsInput.trim();
+  const trimmed = String(maxMindsInput ?? "").trim();
   let value: number | null = null;
   if (trimmed !== "") {
-    const n = Number(trimmed);
-    if (!Number.isInteger(n) || n < 1) {
+    value = parsePositiveInt(trimmed);
+    if (value == null) {
       maxMindsError = "Enter a whole number of 1 or more, or leave blank for unlimited.";
       return;
     }
-    value = n;
   }
   try {
     const result = await saveMaxMinds(value);

@@ -181,7 +181,7 @@ function windowLabel(w: UsageWindow): string {
           {@const badge = unpricedLabel(row)}
           <div class="row">
             <div class="row-main">
-              <button class="mind-name" onclick={() => navigate(`/${row.mind}`)}>{row.mind}</button>
+              <button class="mind-name" onclick={() => navigate(`/minds/${encodeURIComponent(row.mind)}`)}>{row.mind}</button>
               {#if badge}
                 <span
                   class="badge"

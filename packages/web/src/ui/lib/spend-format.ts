@@ -122,6 +122,32 @@ export function formatPeriod(minutes: number): string {
   return `${minutes} min`;
 }
 
+/**
+ * Read a limit out of a number input's value, or null for "no limit".
+ *
+ * The value is deliberately typed `unknown`: Svelte's `bind:value` on an
+ * `<input type="number">` hands back a **number**, not the string the field looked like,
+ * and only an empty field stays a string. Code that assumed a string here (`.trim()`)
+ * threw on the first keystroke and silently dropped the save.
+ *
+ * Zero and negatives are refused rather than passed through: every limit in this app
+ * reads a 0 as "no limit", the opposite of what someone typing 0 means.
+ */
+export function parsePositiveNumber(value: unknown): number | null {
+  const text = value == null ? "" : String(value).trim();
+  if (!text) return null;
+  const n = Number.parseFloat(text);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+/** The same, for a whole number (minutes, token counts, mind counts). */
+export function parsePositiveInt(value: unknown): number | null {
+  const text = value == null ? "" : String(value).trim();
+  if (!text) return null;
+  const n = Number.parseInt(text, 10);
+  return Number.isInteger(n) && n > 0 ? n : null;
+}
+
 /** Where a percentage sits against a cap — drives colour and wording alike. */
 export type CapLevel = "ok" | "warning" | "over";
 

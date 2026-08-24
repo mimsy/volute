@@ -30,6 +30,7 @@ import {
   textToMessages,
   timeToCron,
 } from "../../lib/clock-format";
+import { parsePositiveInt } from "../../lib/spend-format";
 import SpendCapInput from "../SpendCapInput.svelte";
 
 const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"] as const;
@@ -40,7 +41,9 @@ let editModel = $state("");
 let thinkingIndex = $state(0);
 let editBudget: number | null = $state(null);
 let editPeriod: number | null = $state(null);
-let editCompaction = $state("");
+// A number input's bind:value is a number once typed, so this is read through
+// parsePositiveInt rather than as a string.
+let editCompaction: string | number = $state("");
 
 // Sleep
 let sleepEnabled = $state(true);
@@ -92,12 +95,6 @@ let enabledModels = $derived(models.filter((m) => m.enabled));
 let isOtherModel = $derived(editModel !== "" && !enabledModels.some((m) => m.id === editModel));
 let thinkingLabel = $derived(THINKING_LEVELS[thinkingIndex]);
 
-function parseBudgetInt(val: string): number | null {
-  if (!val.trim()) return null;
-  const n = parseInt(val, 10);
-  return Number.isNaN(n) ? null : n;
-}
-
 function splitList(val: string): string[] | undefined {
   const items = val
     .split(",")
@@ -118,8 +115,8 @@ async function save() {
         spendCap: editBudget ?? undefined,
         spendCapPeriodMinutes: editBudget != null ? (editPeriod ?? undefined) : undefined,
         compaction:
-          parseBudgetInt(editCompaction) != null
-            ? { maxContextTokens: parseBudgetInt(editCompaction)! }
+          parsePositiveInt(editCompaction) != null
+            ? { maxContextTokens: parsePositiveInt(editCompaction)! }
             : undefined,
       },
       sleep: {

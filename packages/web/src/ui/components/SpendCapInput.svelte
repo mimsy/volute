@@ -1,6 +1,6 @@
 <script lang="ts">
 import { Input, Select } from "@volute/ui";
-import { formatPeriod } from "../lib/spend-format";
+import { formatPeriod, parsePositiveInt, parsePositiveNumber } from "../lib/spend-format";
 
 /**
  * A spend cap as the sentence it is — `$ 2.00 per day` — rather than two bare numbers.
@@ -24,10 +24,12 @@ let {
 const PRESETS = [60, 360, 720, 1440, 10080];
 const DEFAULT_PERIOD = 1440;
 
-let amountText = $state("");
+// `bind:value` on a number input yields a number once anything is typed, so these hold
+// whatever the field currently is and are read through parseCap*.
+let amountText: string | number = $state("");
 let period = $state(DEFAULT_PERIOD);
 let custom = $state(false);
-let customText = $state("");
+let customText: string | number = $state("");
 
 // Seeded from the props and re-synced when the caller reloads its config (autosave
 // refetches after each save). `pre` so the first paint already shows the saved cap.
@@ -39,21 +41,12 @@ $effect.pre(() => {
   customText = periodMinutes != null ? String(periodMinutes) : "";
 });
 
-function parseAmount(): number | null {
-  const t = amountText.trim();
-  if (!t) return null;
-  const n = Number.parseFloat(t);
-  return Number.isFinite(n) && n > 0 ? n : null;
-}
-
 function currentPeriod(): number | null {
-  if (!custom) return period;
-  const n = Number.parseInt(customText.trim(), 10);
-  return Number.isInteger(n) && n > 0 ? n : null;
+  return custom ? parsePositiveInt(customText) : period;
 }
 
 function emit() {
-  const value = parseAmount();
+  const value = parsePositiveNumber(amountText);
   // A cap with no amount has no period to speak of; clearing both is how "no cap" reads.
   onsave(value, value == null ? null : (currentPeriod() ?? DEFAULT_PERIOD));
 }
@@ -62,7 +55,7 @@ function onPeriodChange(e: Event) {
   const raw = (e.currentTarget as HTMLSelectElement).value;
   if (raw === "custom") {
     custom = true;
-    if (!customText) customText = String(period);
+    if (parsePositiveInt(customText) == null) customText = String(period);
     return;
   }
   custom = false;

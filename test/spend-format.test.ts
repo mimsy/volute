@@ -8,6 +8,8 @@ import {
   formatTokens,
   formatUntil,
   formatUsd,
+  parsePositiveInt,
+  parsePositiveNumber,
   spendFigure,
   unpricedLabel,
 } from "../packages/web/src/ui/lib/spend-format.js";
@@ -79,6 +81,37 @@ describe("formatPeriod", () => {
     assert.equal(formatPeriod(2880), "2 days");
     assert.equal(formatPeriod(360), "6 hours");
     assert.equal(formatPeriod(90), "90 min");
+  });
+});
+
+describe("parsePositiveNumber / parsePositiveInt", () => {
+  // Svelte's bind:value on <input type="number"> hands back a number, not a string —
+  // assuming a string here threw at runtime and silently dropped the save.
+  it("reads a number as readily as a string", () => {
+    assert.equal(parsePositiveNumber(3.5), 3.5);
+    assert.equal(parsePositiveNumber("3.50"), 3.5);
+    assert.equal(parsePositiveInt(720), 720);
+    assert.equal(parsePositiveInt("720"), 720);
+  });
+
+  it("treats an empty field as no cap", () => {
+    assert.equal(parsePositiveNumber(""), null);
+    assert.equal(parsePositiveNumber("   "), null);
+    assert.equal(parsePositiveNumber(null), null);
+    assert.equal(parsePositiveNumber(undefined), null);
+    assert.equal(parsePositiveInt(""), null);
+  });
+
+  it("refuses zero and negatives rather than inverting what they mean", () => {
+    assert.equal(parsePositiveNumber(0), null);
+    assert.equal(parsePositiveNumber(-2), null);
+    assert.equal(parsePositiveInt(0), null);
+    assert.equal(parsePositiveInt(-5), null);
+  });
+
+  it("refuses junk", () => {
+    assert.equal(parsePositiveNumber("abc"), null);
+    assert.equal(parsePositiveInt("abc"), null);
   });
 });
 
