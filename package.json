@@ -65,7 +65,7 @@
     "db:migrate": "drizzle-kit migrate"
   },
   "dependencies": {
-    "@anthropic-ai/sandbox-runtime": "^0.0.66",
+    "@anthropic-ai/sandbox-runtime": "^0.0.74",
     "@earendil-works/pi-ai": "0.80.6",
     "@hono/node-server": "^2.0.8",
     "@hono/zod-validator": "^0.9.0",
