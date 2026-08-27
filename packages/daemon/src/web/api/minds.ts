@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { relative, resolve } from "node:path";
 import { zValidator } from "@hono/zod-validator";
-import { and, desc, eq, type SQL, sql } from "drizzle-orm";
+import { and, desc, eq, gte, lte, type SQL, sql } from "drizzle-orm";
 import { type Context, Hono } from "hono";
 import { z } from "zod";
 import { deleteMindUser, getDisplayNames, withSenderDisplayNames } from "../../lib/auth.js";
@@ -95,7 +95,7 @@ import { checkHealth } from "../../lib/util/health.js";
 import log from "../../lib/util/logger.js";
 import { safeResolveWithinBase } from "../../lib/util/paths.js";
 import { cursorParamsSchema, cursorResponse } from "../../lib/util/query-params.js";
-import { parseDbTimestamp } from "../../lib/util/time.js";
+import { normalizeDbBound, parseDbTimestamp } from "../../lib/util/time.js";
 import { fireWebhook } from "../../lib/webhook.js";
 import {
   type AuthEnv,
@@ -2153,6 +2153,17 @@ const app = new Hono<AuthEnv>()
     const name = c.req.param("name");
     const channel = c.req.query("channel");
     const session = c.req.query("session");
+    // `from`/`to` used to be accepted by the CLI and forwarded nowhere, so a mind that
+    // asked for one day got its whole history back and had no way to tell (#907 class).
+    // A malformed bound is refused rather than dropped, for the same reason.
+    let fromBound: string;
+    let toBound: string;
+    try {
+      fromBound = normalizeDbBound(c.req.query("from"), "start");
+      toBound = normalizeDbBound(c.req.query("to"), "end");
+    } catch (err) {
+      return c.json({ error: (err as Error).message }, 400);
+    }
     const full = c.req.query("full") === "true";
     const preset = c.req.query("preset") as
       | "summary"
@@ -2167,6 +2178,8 @@ const app = new Hono<AuthEnv>()
 
     const db = await getDb();
     const conditions = [eq(mindHistory.mind, name)];
+    if (fromBound) conditions.push(gte(mindHistory.created_at, fromBound));
+    if (toBound) conditions.push(lte(mindHistory.created_at, toBound));
     if (channel) {
       conditions.push(eq(mindHistory.channel, channel));
     }
@@ -2180,6 +2193,8 @@ const app = new Hono<AuthEnv>()
     // Default "summary" preset reads from the unified summaries table
     if (!effectivePreset || effectivePreset === "summary") {
       const sumConditions: SQL[] = [eq(summaries.mind, name), eq(summaries.period, "turn")];
+      if (fromBound) sumConditions.push(gte(summaries.created_at, fromBound));
+      if (toBound) sumConditions.push(lte(summaries.created_at, toBound));
       if (provisional) {
         // Turn summaries the mind hasn't rewritten: metadata.author absent or not "mind".
         // `IS NOT` is null-safe, so rows with no author (the summarizer's) match; the path

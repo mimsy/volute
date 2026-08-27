@@ -3,6 +3,7 @@ process.noDeprecation = true;
 
 import { homedir } from "node:os";
 import { resolve } from "node:path";
+import type { FlagDef } from "@volute/cli/lib/parse-args.js";
 import type { ExtensionCommandInfo } from "@volute/daemon/lib/extensions.js";
 
 if (!process.env.VOLUTE_HOME) {
@@ -247,7 +248,9 @@ use --mind <name> or VOLUTE_MIND env var to identify the mind.`);
             for (const [name, meta] of entries) {
               console.log(`  ${name.padEnd(nameWidth + 2)}  ${meta.description}`);
             }
-            console.log(`\nUse --mind <name> or VOLUTE_MIND to specify the mind.\n`);
+            console.log(
+              `\nUse --mind <name> or VOLUTE_MIND to specify the mind. Naming a mind you are not\npermitted to act as is refused, not silently run as yourself.\n`,
+            );
             process.exit(subcommand ? 0 : 1);
           }
 
@@ -308,14 +311,25 @@ use --mind <name> or VOLUTE_MIND env var to identify the mind.`);
             process.exit(1);
           }
 
-          // Extract --mind flag from args (same convention as other mind-scoped commands)
-          const cmdArgs = args.slice(1);
-          let mind = process.env.VOLUTE_MIND;
-          const mindIdx = cmdArgs.indexOf("--mind");
-          if (mindIdx !== -1 && cmdArgs[mindIdx + 1]) {
-            mind = cmdArgs[mindIdx + 1];
-            cmdArgs.splice(mindIdx, 2);
+          // Lift out the extension layer's global --mind before the subcommand's own
+          // strict validation runs; the daemon reads it from the request body.
+          const meta = ext.commands[subcommand];
+          const flagDefs = (meta.flags ?? {}) as Record<string, FlagDef>;
+          const { extractMindFlag } = await import("@volute/cli/lib/extension-mind-flag.js");
+          const extracted = extractMindFlag(args.slice(1), flagDefs);
+          if ("error" in extracted) {
+            console.error(extracted.error);
+            process.exit(1);
           }
+          const { mind, rest: cmdArgs } = extracted;
+
+          // Validate against the metadata the daemon serves for this subcommand, using the
+          // same strict parser every built-in command goes through. Extension args used to
+          // reach the handler unchecked: an unknown flag was dropped with a daemon-side
+          // log line the caller never saw, and an extra positional vanished (#907).
+          const { enforceArity, parseArgs } = await import("@volute/cli/lib/parse-args.js");
+          const { positional } = parseArgs(cmdArgs, flagDefs);
+          enforceArity(positional, meta.args ?? []);
           // Only commands that declare `stdin` have their input read. Reading it for
           // every command hung the CLI forever whenever the caller's stdin was a pipe
           // nobody closes — an agent's shell tool, cron, `ssh host cmd` (#872).
@@ -331,7 +345,14 @@ use --mind <name> or VOLUTE_MIND env var to identify the mind.`);
           });
           if (!cmdRes.ok) {
             const text = await cmdRes.text().catch(() => "");
-            console.error(`Extension command failed (HTTP ${cmdRes.status}): ${text}`);
+            // A refusal is the point of the response, not noise around it — print the
+            // daemon's reason rather than wrapping raw JSON in a status code (#907).
+            let reason = "";
+            try {
+              const parsed = JSON.parse(text) as { error?: string };
+              if (typeof parsed.error === "string") reason = parsed.error;
+            } catch {}
+            console.error(reason || `Extension command failed (HTTP ${cmdRes.status}): ${text}`);
             process.exit(1);
           }
           const result = (await cmdRes.json()) as { output?: string; error?: string };

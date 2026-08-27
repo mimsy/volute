@@ -20,6 +20,7 @@ import {
   isoWeekKeyForDateStr,
   type TimerPeriod,
 } from "../../lib/util/period-keys.js";
+import { normalizeDbBound } from "../../lib/util/time.js";
 import type { AuthEnv } from "../middleware/auth.js";
 
 /**
@@ -786,8 +787,19 @@ const history = new Hono<HistoryEnv>()
     const normalizeBound = (bound: string) =>
       period === "week" ? isoWeekKeyForDateStr(bound) : bound;
 
+    // `--to <date>` must mean "through the end of that day" in every tier, the way it
+    // does on the default history route. These keys are not timestamps, so the shared
+    // normalizer (which yields "… 23:59:59") is the wrong tool: hour keys are
+    // "YYYY-MM-DDTHH", and "T" sorts *after* a space, so a bare date bound silently
+    // dropped the whole day being asked for. Extend it to that day's last hour key
+    // instead. Day/month keys are already prefix-compatible and need nothing.
+    const normalizeEndBound = (bound: string) =>
+      period === "hour" && /^\d{4}-\d{2}-\d{2}$/.test(bound)
+        ? `${bound}T23`
+        : normalizeBound(bound);
+
     if (from) conditions.push(gte(summaries.period_key, normalizeBound(from)));
-    if (to) conditions.push(sql`${summaries.period_key} <= ${normalizeBound(to)}`);
+    if (to) conditions.push(sql`${summaries.period_key} <= ${normalizeEndBound(to)}`);
 
     const rows = await db
       .select({
@@ -827,8 +839,17 @@ const history = new Hono<HistoryEnv>()
   })
   .get("/activity", async (c) => {
     const mind = c.get("mindFilter");
-    const from = c.req.query("from");
-    const to = c.req.query("to");
+    // A bare `to` date compared raw against `created_at` excluded the whole day the
+    // caller asked for, so `--period day --to <today>` printed a header with nothing
+    // under it. Same normalization as the default history route.
+    let from: string;
+    let to: string;
+    try {
+      from = normalizeDbBound(c.req.query("from"), "start");
+      to = normalizeDbBound(c.req.query("to"), "end");
+    } catch (err) {
+      return c.json({ error: (err as Error).message }, 400);
+    }
     const limit = Math.min(Math.max(parseInt(c.req.query("limit") ?? "100", 10) || 100, 1), 500);
 
     const db = await getDb();

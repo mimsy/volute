@@ -122,20 +122,37 @@ describe("command", () => {
     assert.equal(exitMock.mock.calls[0]?.arguments[0], 1, "should exit with 1");
   });
 
-  it("passes extra positionals as rest", async () => {
-    let receivedRest: string[] = [];
+  // Was: "passes extra positionals as rest". No command ever read `rest`, so an extra
+  // positional was simply dropped — `volute pages list gardener` printed the caller's own
+  // list (#907). Extra positionals now refuse, and `rest` is gone.
+  it("refuses extra positionals rather than collecting them into a rest nobody reads", async () => {
+    let ran = false;
+    const exitMock = mock.method(process, "exit", () => {
+      throw new Error("exit");
+    });
     const cmd = command({
       name: "volute test",
       description: "Test",
       args: [{ name: "first", required: true, description: "First arg" }],
       flags: {},
-      run: async ({ rest }) => {
-        receivedRest = rest;
+      run: async () => {
+        ran = true;
       },
     });
 
-    await cmd.execute(["one", "two", "three"]);
-    assert.deepStrictEqual(receivedRest, ["two", "three"]);
+    const origError = console.error;
+    const errors: string[] = [];
+    console.error = (...a: unknown[]) => errors.push(a.join(" "));
+    try {
+      await cmd.execute(["one", "two", "three"]);
+    } catch {
+      // exit mock throws
+    } finally {
+      console.error = origError;
+    }
+    assert.equal(ran, false);
+    assert.ok(errors.some((e) => e.includes("unknown argument: two")));
+    assert.equal(exitMock.mock.calls[0]?.arguments[0], 1);
   });
 
   it("includes examples in help output", async () => {

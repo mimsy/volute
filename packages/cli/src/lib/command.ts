@@ -1,4 +1,4 @@
-import { type FlagDef as BaseFlagDef, parseArgs } from "./parse-args.js";
+import { type FlagDef as BaseFlagDef, enforceArity, parseArgs } from "./parse-args.js";
 
 type FlagDef = BaseFlagDef & { description: string };
 
@@ -27,7 +27,6 @@ type CommandDef<F extends Record<string, FlagDef>> = {
   run: (parsed: {
     args: Record<string, string | undefined>;
     flags: FlagValues<F>;
-    rest: string[];
   }) => Promise<void>;
 };
 
@@ -110,9 +109,11 @@ export function command<F extends Record<string, FlagDef>>(def: CommandDef<F>): 
       }
     }
 
-    const rest = positional.slice(argDefs.length);
+    // Positionals past the declared slots are a mistake, not spare input: `volute pages
+    // list gardener` used to drop `gardener` and print the caller's own list (#907).
+    enforceArity(positional, argDefs);
 
-    await def.run({ args: namedArgs, flags: flags as FlagValues<F>, rest });
+    await def.run({ args: namedArgs, flags: flags as FlagValues<F> });
   }
 
   return { execute, printHelp };

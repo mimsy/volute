@@ -1,7 +1,7 @@
 import { closeSync, existsSync, mkdirSync, openSync, readSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { resolve } from "node:path";
-import { parseArgs } from "../lib/parse-args.js";
+import { enforceArity, parseArgs } from "../lib/parse-args.js";
 
 // Re-export utility functions from daemon for backwards compat
 export {
@@ -18,6 +18,11 @@ export async function run(args: string[]) {
     session: { type: "string" },
     template: { type: "string" },
   });
+
+  // This command predates the command() builder and calls parseArgs directly, so the
+  // arity half of the strictness has to be asked for by name; without it a second
+  // positional is still silently dropped (#907).
+  enforceArity(positional, [{ name: "path" }]);
 
   const inputPath = positional[0];
 

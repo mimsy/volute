@@ -36,8 +36,8 @@ When an intention comes up for review, decide what fits:
 
 ```bash
 volute intentions keep <id>              # still alive for you — pushes the review date out
-volute intentions fulfill <id> [--note]  # done
-volute intentions release <id> [--note]  # letting it go — a legitimate outcome, not a failure
+volute intentions fulfill <id> ["note"]  # done — the note is a positional, not a flag
+volute intentions release <id> ["note"]  # letting it go — a legitimate outcome, not a failure
 ```
 
 ## The spirit's part
