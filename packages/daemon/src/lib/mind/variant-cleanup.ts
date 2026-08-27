@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, rmSync, statSync } from "node:fs";
 import { resolve } from "node:path";
+import { forgetCredentialDegraded } from "../daemon/credential-recovery.js";
 import { getMindManager } from "../daemon/mind-manager.js";
 import { gitExec } from "../util/exec.js";
 import log from "../util/logger.js";
@@ -69,6 +70,10 @@ export async function cleanupVariant(
       log.warn(`failed to delete branch ${branchName} for ${variantName}`, log.errorData(err));
     }
   }
+
+  // Stop tracking it as credential-degraded before the row goes: otherwise the
+  // retry loop stays armed for a mind that no longer exists.
+  forgetCredentialDegraded(variantName);
 
   try {
     await removeMind(variantName);

@@ -7,6 +7,7 @@ import { setProviderRefreshHook } from "./lib/ai-service.js";
 import { backfillCommonsChannelMembers, ensureCommonsChannel } from "./lib/chat/commons-channel.js";
 import { initBackupManager } from "./lib/daemon/backup-manager.js";
 import { initBridgeManager } from "./lib/daemon/bridge-manager.js";
+import { getCredentialRecovery } from "./lib/daemon/credential-recovery.js";
 import { syncProviderToMinds } from "./lib/daemon/credential-sync.js";
 import { initMailPoller } from "./lib/daemon/mail-poller.js";
 import { startMaintenanceInterval } from "./lib/daemon/maintenance.js";
@@ -580,6 +581,7 @@ export async function startDaemon(opts: {
       safe("notifyExtensionsDaemonStop", notifyExtensionsDaemonStop);
       safe("stopAllActivityTrackers", stopAllActivityTrackers);
       safe("unsubscribeWebhook", unsubscribeWebhook);
+      safe("credentialRecovery.stop", () => getCredentialRecovery().stop());
       safe("sleepManager.stop", () => sleepManager.stop());
       safe("sleepManager.saveState", () => sleepManager.saveState());
       safe("scheduler.stop", () => scheduler.stop());

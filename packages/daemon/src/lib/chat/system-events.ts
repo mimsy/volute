@@ -982,19 +982,35 @@ export async function latestEvent(
 }
 
 /** True if the mind has an undelivered next-turn event with this meta.reason (any thread). */
-export async function hasUndeliveredEvent(mind: string, reason: string): Promise<boolean> {
+export async function hasUndeliveredEvent(
+  mind: string,
+  reason: string,
+  /**
+   * Extra `meta` fields the pending event must also match, so a caller can ask
+   * "is there already an unread notice about *this subject*" rather than only
+   * "about this reason". Needed where one mind receives notices on behalf of
+   * several others (the spirit's credential alerts name an `affectedMind`), and
+   * a reason-only match would let an alert about one mind suppress the first
+   * alert about another.
+   */
+  metaMatch?: Record<string, string>,
+): Promise<boolean> {
   const db = await getDb();
+  const conditions = [
+    eq(systemEvents.mind, mind),
+    eq(systemEvents.delivery, "next-turn"),
+    isNull(systemEvents.delivered_at),
+    sql`json_extract(${systemEvents.meta}, '$.reason') = ${reason}`,
+  ];
+  for (const [key, value] of Object.entries(metaMatch ?? {})) {
+    // json_extract's path is built from a caller-supplied key, so bind it as a
+    // parameter rather than interpolating it into the SQL text.
+    conditions.push(sql`json_extract(${systemEvents.meta}, ${`$.${key}`}) = ${value}`);
+  }
   const row = await db
     .select({ id: systemEvents.id })
     .from(systemEvents)
-    .where(
-      and(
-        eq(systemEvents.mind, mind),
-        eq(systemEvents.delivery, "next-turn"),
-        isNull(systemEvents.delivered_at),
-        sql`json_extract(${systemEvents.meta}, '$.reason') = ${reason}`,
-      ),
-    )
+    .where(and(...conditions))
     .limit(1)
     .get();
   return row != null;

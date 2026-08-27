@@ -10,6 +10,7 @@ import {
 import { chownMindDir, isIsolationEnabled } from "../mind/isolation.js";
 import { findMind, mindDir } from "../mind/registry.js";
 import log from "../util/logger.js";
+import { markCredentialDegraded, noteCredentialHealthy } from "./credential-recovery.js";
 
 const slog = log.child("cred-sync");
 
@@ -166,6 +167,7 @@ export async function injectPiProviderCredentials(opts: {
   if (oauthCreds && !DAEMON_ONLY_OAUTH.has(provider)) {
     await writePiProviderOAuth(piAgentDir, baseName, provider, oauthCreds);
     env.PI_CODING_AGENT_DIR = piAgentDir;
+    await noteCredentialHealthy(mindName);
     return;
   }
 
@@ -186,11 +188,13 @@ export async function injectPiProviderCredentials(opts: {
     env.PI_CODING_AGENT_DIR = piAgentDir;
     const providerEnv = PI_PROVIDER_ENV_VAR[provider];
     if (providerEnv) env[providerEnv] = apiKey;
+    await noteCredentialHealthy(mindName);
   } else if (oauthError) {
-    slog.warn(
-      `OAuth token refresh is temporarily failing for provider "${provider}" and no static key ` +
-        `is available — mind ${mindName} may start but stay silent until it recovers`,
-    );
+    // Same failure class as the claude branch in mind-manager: the mind spawns with
+    // no auth.json entry for the provider, which the refresh fan-out skips (it only
+    // rewrites providers already present), so only a restart recovers it. Hand it to
+    // the recovery loop rather than leaving a warn line in the journal.
+    await markCredentialDegraded(mindName, provider);
   } else {
     slog.warn(`no API key found for provider "${provider}" — mind ${mindName} may fail to start`);
   }
