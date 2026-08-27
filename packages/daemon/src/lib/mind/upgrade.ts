@@ -504,7 +504,8 @@ const defaultInstallAndRestartDeps: InstallAndRestartDeps = {
 
 /**
  * Install the merged dependencies and restart the mind onto the new source.
- * Returns a warning when either step went wrong; never throws.
+ * A failure in either step becomes the returned warning rather than a throw — the
+ * merge already landed, so there is nothing left to unwind.
  *
  * A failed install does **not** cancel the restart. The new `src/` is already on
  * disk and the template hash in the DB is already advanced, so the mind is no
@@ -538,8 +539,17 @@ export async function installDepsAndRestart(
         `The mind ${restart ? "was still restarted onto" : "will start on"} the new code, which may ` +
         `not run until \`npm install\` succeeds in ${dir}. Nothing retries this automatically.`;
       // Tell the mind and the dashboard before the restart: the restart may fail,
-      // and this is the explanation for why if it does.
-      await deps.alert(mindName, upgradeDepsFailureText(mindName, dir, detail, restart));
+      // and this is the explanation for why if it does. Guarded here as well as
+      // inside the default alert — a failure to *report* the problem must never
+      // become a second, larger problem by aborting the upgrade tail.
+      try {
+        await deps.alert(mindName, upgradeDepsFailureText(mindName, dir, detail, restart));
+      } catch (alertErr) {
+        log.error(
+          `failed to surface the dependency-install failure for ${mindName}`,
+          log.errorData(alertErr),
+        );
+      }
     }
   } else {
     log.info(`skipping npm install for ${mindName} — dependencies unchanged by upgrade`);

@@ -170,3 +170,24 @@ describe("installDepsAndRestart", () => {
     assert.doesNotMatch(String(warning), /npm install failed/);
   });
 });
+
+describe("installDepsAndRestart alert failures", () => {
+  it("restarts anyway when the alert itself fails", async () => {
+    const manager = fakeManager();
+    const warning = await installDepsAndRestart(MIND, DIR, REF, true, {
+      installNeeded: async () => true,
+      install: async () => {
+        throw installFailure;
+      },
+      alert: async () => {
+        throw new Error("the event table is on fire");
+      },
+      getManager: () => manager,
+    });
+    assert.ok(
+      manager.calls.includes("start"),
+      "failing to report the problem must not become a second problem",
+    );
+    assert.match(String(warning), /npm install failed/);
+  });
+});
