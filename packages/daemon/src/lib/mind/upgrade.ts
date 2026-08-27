@@ -1,6 +1,5 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
-import { deliverEvent } from "../chat/system-events.js";
 import { readSystemsConfig } from "../config/systems-config.js";
 import { buildMindBaseEnv, getMindManager } from "../daemon/mind-manager.js";
 import { publish as publishActivity } from "../events/activity-events.js";
@@ -491,14 +490,15 @@ type RestartTarget = {
 export type InstallAndRestartDeps = {
   installNeeded: (dir: string, preMergeRef: string) => Promise<boolean>;
   install: (dir: string, mindName: string) => Promise<void>;
-  alert: (mindName: string, text: string) => Promise<void>;
+  /** Host-facing alert: a dashboard row, published the moment the failure happens. */
+  publishHostError: (mindName: string, summary: string, kind: string) => Promise<void>;
   getManager: () => RestartTarget;
 };
 
 const defaultInstallAndRestartDeps: InstallAndRestartDeps = {
   installNeeded: npmInstallNeeded,
   install: npmInstallAsMind,
-  alert: alertUpgradeDepsFailure,
+  publishHostError: publishMindError,
   getManager: getMindManager,
 };
 
@@ -507,15 +507,20 @@ const defaultInstallAndRestartDeps: InstallAndRestartDeps = {
  * A failure in either step becomes the returned warning rather than a throw — the
  * merge already landed, so there is nothing left to unwind.
  *
- * A failed install does **not** cancel the restart. The new `src/` is already on
- * disk and the template hash in the DB is already advanced, so the mind is no
- * longer stale: nothing — not the hourly auto-upgrade pass, not the staleness
+ * A failed install does **not** cancel the restart. The template hash in the DB is
+ * advanced above, *before* this runs, so by the time an install can fail the mind is
+ * already not stale: nothing — not the hourly auto-upgrade pass, not the staleness
  * badge — will ever come back and finish the job. Leaving the old process running
  * against new source on disk is therefore not "safe", it is permanent, and it is
- * what shipped mimsy fifteen days of 404s against an API path its running code
- * still called (#973). Most upgrades don't need the new deps at all, so the
- * restart usually just works; when it doesn't, the mind fails loudly and crash
- * recovery and the alert below both fire, which is the outcome a host can act on.
+ * what shipped mimsy fifteen days of 404s against an API path only its running code
+ * still called (#973). Most upgrades don't need the new packages at all, so the
+ * restart usually just works.
+ *
+ * When it doesn't, nothing else catches it: `setupCrashRecovery` is registered only
+ * *after* the health probe passes, so a start that never becomes healthy is deleted
+ * and thrown, not recovered; and `autoUpgradeOne` ignores `warning` on an
+ * `upgraded` outcome. That is why both failure branches below publish a host-facing
+ * error of their own rather than relying on the returned warning being read.
  */
 export async function installDepsAndRestart(
   mindName: string,
@@ -525,6 +530,8 @@ export async function installDepsAndRestart(
   deps: InstallAndRestartDeps = defaultInstallAndRestartDeps,
 ): Promise<string | undefined> {
   let depsWarning: string | undefined;
+  /** Rides the "you were upgraded" lifecycle message; see {@link upgradeDepsFailureText}. */
+  let depsFailure: string | undefined;
 
   // Skip npm install when the merge didn't touch dependencies — even a no-op
   // install writes enough to freeze slow storage for a minute or more.
@@ -534,30 +541,34 @@ export async function installDepsAndRestart(
     } catch (err) {
       log.warn(`npm install failed after upgrade merge for ${mindName}`, log.errorData(err));
       const detail = installFailureDetail(err);
+      depsFailure = upgradeDepsFailureText(mindName, dir, detail);
       depsWarning =
         `Upgrade merged but npm install failed (including a retry against the registry): ${firstLine(detail)} ` +
-        `The mind ${restart ? "was still restarted onto" : "will start on"} the new code, which may ` +
-        `not run until \`npm install\` succeeds in ${dir}. Nothing retries this automatically.`;
-      // Tell the mind and the dashboard before the restart: the restart may fail,
-      // and this is the explanation for why if it does. Guarded here as well as
-      // inside the default alert — a failure to *report* the problem must never
-      // become a second, larger problem by aborting the upgrade tail.
-      try {
-        await deps.alert(mindName, upgradeDepsFailureText(mindName, dir, detail, restart));
-      } catch (alertErr) {
-        log.error(
-          `failed to surface the dependency-install failure for ${mindName}`,
-          log.errorData(alertErr),
-        );
-      }
+        `The mind runs the new code either way, which may not work until \`npm install\` ` +
+        `succeeds in ${dir}. Nothing retries this automatically.`;
+      // The host learns now — a dashboard row, not a log line. The mind learns on
+      // its next start, via the pending context below.
+      await deps.publishHostError(
+        mindName,
+        `Upgrade merged but npm install failed for ${mindName} — dependencies are stale`,
+        "upgrade_deps_failed",
+      );
     }
   } else {
     log.info(`skipping npm install for ${mindName} — dependencies unchanged by upgrade`);
   }
 
+  // The mind's copy goes in the pending context, not out as its own event. A
+  // separate event would be POSTed to the process stopMind kills microseconds
+  // later, and `deliverEvent` marks a successful POST delivered — which takes it
+  // out of the pending set `flushQueuedEvents` replays on start. Pending context
+  // is delivered by `deliverPendingContext` only once the new process is healthy,
+  // and survives on disk if the start fails (#973).
+  const context = { type: "upgraded", ...(depsFailure ? { depsFailure } : {}) };
+
   const manager = deps.getManager();
   if (!restart) {
-    manager.setPendingContext(mindName, { type: "upgraded" });
+    manager.setPendingContext(mindName, context);
     return depsWarning;
   }
 
@@ -566,14 +577,25 @@ export async function installDepsAndRestart(
     if (manager.isRunning(mindName)) {
       await manager.stopMind(mindName);
     }
-    manager.setPendingContext(mindName, { type: "upgraded" });
+    manager.setPendingContext(mindName, context);
     // Generous health budget: right after an npm install the disk cache is
     // cold and I/O may still be saturated, so a tsx cold start can exceed the
     // default 30s — timing out here kills the child and leaves the mind down.
     await manager.startMind(mindName, { healthTimeoutMs: 120_000 });
   } catch (e) {
-    const restartWarning = `Upgrade merged but mind restart failed: ${e instanceof Error ? e.message : String(e)}`;
-    return [depsWarning, restartWarning].filter(Boolean).join(" ");
+    const detail = e instanceof Error ? e.message : String(e);
+    // Nothing downstream reads the returned warning on an `upgraded` outcome, and a
+    // start that never got healthy registered no crash recovery — so this row is the
+    // only thing that tells anyone the mind is down. The pending context stays on
+    // disk, so the mind still hears about it whenever it next starts.
+    await deps.publishHostError(
+      mindName,
+      `Upgrade merged but ${mindName} failed to restart — the mind is down: ${firstLine(detail)}`,
+      "upgrade_restart_failed",
+    );
+    return [depsWarning, `Upgrade merged but mind restart failed: ${detail}`]
+      .filter(Boolean)
+      .join(" ");
   }
 
   return depsWarning;
@@ -599,58 +621,40 @@ function installFailureDetail(err: unknown): string {
   return stderr || (err instanceof Error ? err.message : String(err));
 }
 
-/** What the mind is told when its upgrade landed but its dependencies didn't. */
-function upgradeDepsFailureText(
-  mindName: string,
-  dir: string,
-  detail: string,
-  restarted: boolean,
-): string {
+/**
+ * What the mind is told when its upgrade landed but its dependencies didn't.
+ *
+ * Written tense-neutrally on purpose: it is delivered with the "you were upgraded"
+ * message, which arrives either right after the forced restart or at the mind's next
+ * start (when no restart was requested). Either way the process reading it is
+ * already running the new code, so "this start" is true in both.
+ */
+function upgradeDepsFailureText(mindName: string, dir: string, detail: string): string {
   return (
     `Your framework upgrade merged, but installing its dependencies failed — twice, the second ` +
     `time against the registry rather than your local npm cache.\n\n${detail}\n\n` +
-    `Your new code is on disk and you ${restarted ? "have been restarted onto it" : "will start on it"}, ` +
-    `so anything the upgrade added that needs a new package will not work until this is fixed. ` +
-    `Nothing retries it for you: as far as Volute is concerned you are already upgraded. ` +
-    `Run \`npm install\` in ${dir} (or ask your host to), then \`volute mind restart ${mindName}\`.`
+    `This start is running the newly upgraded code with the old packages, so anything the ` +
+    `upgrade added that needs a new one will not work until this is fixed. Nothing retries it ` +
+    `for you: as far as Volute is concerned you are already upgraded. Run \`npm install\` in ` +
+    `${dir} (or ask your host to), then \`volute mind restart ${mindName}\`.`
   );
 }
 
 /**
- * Fan a dependency-install failure out to the two audiences that can act on it: the
- * mind, as an immediate system event carrying the npm output verbatim, and the host,
- * as a `mind_error` row on the dashboard. A log line reaches neither (#808, #935).
+ * Put an upgrade failure in front of the host, as a `mind_error` row on the
+ * dashboard. A `warn` in journald reaches nobody who can act (#808, #935), and on
+ * the auto-upgrade path the returned warning is dropped, so this row is the signal.
  *
- * Never throws — an alert that fails must not break the upgrade it is reporting on.
+ * `publishActivity` swallows its own failures and returns id 0 rather than throwing,
+ * so there is nothing here to guard against.
  */
-async function alertUpgradeDepsFailure(mindName: string, text: string): Promise<void> {
-  try {
-    await deliverEvent(mindName, {
-      type: "notice",
-      body: text,
-      meta: { subtype: "upgrade_deps_failed" },
-      delivery: "immediate",
-      whileSleeping: "queue",
-    });
-  } catch (err) {
-    log.error(
-      `failed to alert ${mindName} about its failed dependency install`,
-      log.errorData(err),
-    );
-  }
-  try {
-    await publishActivity({
-      type: "mind_error",
-      mind: mindName,
-      summary: `Upgrade merged but npm install failed for ${mindName} — dependencies are stale`,
-      metadata: { kind: "upgrade_deps_failed" },
-    });
-  } catch (err) {
-    log.error(
-      `failed to publish the dependency-install failure for ${mindName}`,
-      log.errorData(err),
-    );
-  }
+async function publishMindError(mindName: string, summary: string, kind: string): Promise<void> {
+  await publishActivity({
+    type: "mind_error",
+    mind: mindName,
+    summary,
+    metadata: { kind },
+  });
 }
 
 function upgradeVariantName(mindName: string): string {

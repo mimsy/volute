@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import {
   depsChangedSince,
+  isStaleCacheFailure,
   lowPriorityArgv,
   npmInstallAsMind,
   npmInstallNeeded,
@@ -148,5 +149,26 @@ describe("npmInstallAsMind retry", () => {
     };
     await assert.rejects(() => npmInstallAsMind(cwd, "test-mind", run), /second failure/);
     assert.equal(attempts.length, 2);
+  });
+
+  it("does not retry a failure that has nothing to do with the cache", async () => {
+    // Attempt two must reach the registry, so retrying an unreachable-network or
+    // permissions failure only doubles a stall the caller is awaiting.
+    const eacces = Object.assign(new Error("Command failed"), {
+      stderr: "npm error code EACCES\nnpm error syscall mkdir",
+    });
+    const { attempts, run } = recorder([1], eacces);
+    await assert.rejects(() => npmInstallAsMind(cwd, "test-mind", run), /Command failed/);
+    assert.equal(attempts.length, 1, "one attempt only");
+  });
+
+  it("recognises the stale-cache signature wherever npm puts it", () => {
+    assert.equal(isStaleCacheFailure({ stderr: "npm error code ETARGET" }), true);
+    assert.equal(isStaleCacheFailure({ stderr: "npm error code ENOTCACHED" }), true);
+    assert.equal(isStaleCacheFailure(new Error("No matching version found for x@1.0.0")), true);
+    assert.equal(isStaleCacheFailure({ stderr: "npm error code EACCES" }), false);
+    // A failure raised before npm ran at all has no stderr and must not qualify.
+    assert.equal(isStaleCacheFailure(new Error("runuser: user mind-x does not exist")), false);
+    assert.equal(isStaleCacheFailure(undefined), false);
   });
 });

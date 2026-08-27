@@ -87,13 +87,17 @@ async function runNpmInstall(
  * Run npm install in a directory, using the mind user's identity when isolation is enabled.
  * This avoids creating root-owned node_modules that the mind can't modify later.
  *
- * Two attempts: the first prefers the mind's local npm cache, and any failure is
- * retried once against the registry without {@link PREFER_OFFLINE}. The retry is
- * unconditional rather than keyed on `ETARGET`/`ENOTCACHED` because a stale cache
- * surfaces under more than one code, and the cost of being wrong is one extra
- * install on a mind that was already failing. The nice/ionice wrapping is what
- * protects slow storage here, not the cache preference — so dropping the flag on
- * the retry costs nothing that matters.
+ * Two attempts: the first prefers the mind's local npm cache; a failure that looks
+ * like the cache resolving a version it has never seen is retried once against the
+ * registry without {@link PREFER_OFFLINE}. The nice/ionice wrapping is what protects
+ * slow storage here, not the cache preference, so dropping the flag costs nothing
+ * that matters.
+ *
+ * The retry is gated rather than unconditional because attempt two *must* reach the
+ * registry. When attempt one failed for an unrelated reason — network down, proxy
+ * misconfigured, EACCES out of the isolation wrapper — retrying turns a fast local
+ * failure into minutes of npm's own fetch-retry backoff, and this path is awaited by
+ * the daemon's HTTP handler on `mind create` and `mind split`, not just by upgrades.
  */
 export async function npmInstallAsMind(
   cwd: string,
@@ -104,6 +108,7 @@ export async function npmInstallAsMind(
     await runNpmInstall(cwd, mindName, [...NPM_INSTALL_ARGS, PREFER_OFFLINE], run);
     return;
   } catch (err) {
+    if (!isStaleCacheFailure(err)) throw err;
     // Keep the first failure's evidence even when the retry succeeds — otherwise a
     // cache that is rotting silently looks like nothing ever happened.
     log.warn(
@@ -112,6 +117,20 @@ export async function npmInstallAsMind(
     );
   }
   await runNpmInstall(cwd, mindName, NPM_INSTALL_ARGS, run);
+}
+
+/**
+ * Whether a failed install looks like {@link PREFER_OFFLINE} resolving against a cache
+ * that has never seen the requested version — the #973 signature. `ETARGET` is what npm
+ * reports for it, `ENOTCACHED` for the stricter offline modes; the plain-English form is
+ * matched too because npm has moved which of them it prints. Both stderr and the error
+ * message are searched: a failure raised before npm even ran (the isolation wrapper
+ * throwing, say) has no stderr at all, and must not qualify.
+ */
+export function isStaleCacheFailure(err: unknown): boolean {
+  const e = err as { stderr?: string; message?: string } | null;
+  const text = `${e?.stderr ?? ""}\n${e?.message ?? ""}`;
+  return /ETARGET|ENOTCACHED|No matching version/i.test(text);
 }
 
 /**
