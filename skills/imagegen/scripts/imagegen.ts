@@ -117,7 +117,7 @@ export async function startImagegenJob(
 
   let res: Response;
   try {
-    res = await fetch(`${base}/api/minds/${encodeURIComponent(mind)}/imagegen/jobs`, {
+    res = await fetch(`${base}/api/v1/minds/${encodeURIComponent(mind)}/imagegen/jobs`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -164,7 +164,7 @@ export async function pollImagegenJob(
   if (!base || !token || !mind) return { ok: false, reason: "no-env" };
 
   const url =
-    `${base}/api/minds/${encodeURIComponent(mind)}/imagegen/jobs/${encodeURIComponent(jobId)}` +
+    `${base}/api/v1/minds/${encodeURIComponent(mind)}/imagegen/jobs/${encodeURIComponent(jobId)}` +
     (waitSec > 0 ? `?wait=${waitSec}` : "");
   let res: Response;
   try {

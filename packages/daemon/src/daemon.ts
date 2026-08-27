@@ -39,6 +39,7 @@ import {
   isAutoUpdateSkillsEnabled,
   syncBuiltinSkills,
 } from "./lib/skills.js";
+import { reportStaleApiPaths } from "./lib/template/stale-api-paths.js";
 import { cleanExpiredLogs } from "./lib/util/history-cleanup.js";
 import log from "./lib/util/logger.js";
 import { RotatingLog } from "./lib/util/rotating-log.js";
@@ -517,6 +518,15 @@ export async function startDaemon(opts: {
   });
   cleanExpiredLogs().catch((err) => {
     log.warn("failed to clean expired logs", log.errorData(err));
+  });
+
+  // Check right away whether any mind is running infrastructure that calls the
+  // API paths #900 removed — a mind in that state is silently not receiving its
+  // system notices, and waiting an hour to say so wastes an hour of a turn budget
+  // it doesn't know is being spent on 404s. startMaintenanceInterval only fires
+  // after the first interval elapses, so this startup pass is not redundant.
+  reportStaleApiPaths().catch((err) => {
+    log.warn("failed to check for stale API paths", log.errorData(err));
   });
 
   // ...and re-run that cleanup hourly so retention is actually enforced on a
