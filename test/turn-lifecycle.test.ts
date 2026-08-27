@@ -721,10 +721,10 @@ describe("turn-lifecycle: spend cap notices", () => {
   });
 
   /** One priced usage turn costing roughly `usd`, using haiku's known output price. */
-  async function spend(mind: string, usd: number): Promise<void> {
+  async function spend(mind: string, usd: number, session = "s1"): Promise<void> {
     await handleMindEvent(mind, {
       type: "usage",
-      session: "s1",
+      session,
       metadata: {
         input_tokens: 0,
         output_tokens: Math.round((usd * 1e6) / 5), // haiku output: $5/M
@@ -772,6 +772,26 @@ describe("turn-lifecycle: spend cap notices", () => {
       assert.match(body, /At 100%.*held/is, "names the consequence of reaching the cap");
       assert.match(body, /schedules/i, "including that schedules are held too");
       assert.doesNotMatch(body, /couldn't be priced/, "nothing was unpriced");
+    } finally {
+      await sb.removeBudget(mind);
+      await cleanup(mind);
+    }
+  });
+
+  it("the 80% warning reaches a turn in a different thread from the one that crossed it", async () => {
+    const mind = "tl-spend-warn-thread";
+    const sb = getSpendBudget();
+    sb.setBudget(mind, 1, 60);
+    try {
+      // The spend crosses 80% mid-conversation with @tester; the mind's next turn is in
+      // its @lyra thread. Pinned to @tester, the warning waits there for a turn that may
+      // never come while the rest of the cap is spent elsewhere.
+      await spend(mind, 0.85, "@tester");
+      const drained = await drainEvents(mind, "@lyra");
+      assert.ok(
+        drained.some((e) => e.type === "budget" && /about 80%/.test(e.body)),
+        "the warning should drain into whichever thread turns next",
+      );
     } finally {
       await sb.removeBudget(mind);
       await cleanup(mind);
