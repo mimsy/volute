@@ -5,6 +5,7 @@ import { getSpiritName, readGlobalConfig } from "../config/setup.js";
 import { getSharedSkill, installSkill, mindSkillsDir } from "../skills.js";
 import {
   applyInitFiles,
+  backfillInitInfrastructure,
   composeTemplate,
   copyTemplateToDir,
   findTemplatesRoot,
@@ -586,6 +587,31 @@ export async function syncSpiritTemplate(): Promise<void> {
     } catch (err) {
       slog.warn(`failed to install spirit skill ${skillId}`, log.errorData(err));
     }
+  }
+
+  // Add `.init/` infrastructure the spirit never had, and refresh any it still
+  // carries verbatim from an older release. `volute mind upgrade` — the path
+  // that does this for every other mind — cannot be run on the spirit at all:
+  // it 404s on `existsSync(mindDir(name))`, because the spirit lives under
+  // voluteSystemDir() rather than the minds dir. Without this call the spirit's
+  // hooks would be the one set on the host that nothing can ever repair, which
+  // is how it sat 505× 404ing on /history/notices for a fortnight. This runs on
+  // every daemon start, so the spirit is repaired the moment this ships.
+  try {
+    const { added, refreshed } = backfillInitInfrastructure(
+      resolve(dir, "home"),
+      template,
+      spiritName,
+    );
+    if (added.length > 0 || refreshed.length > 0) {
+      slog.info(
+        `backfilled ${added.length} missing and refreshed ${refreshed.length} stale ` +
+          `infrastructure files for the spirit`,
+        { added, refreshed },
+      );
+    }
+  } catch (err) {
+    slog.warn("failed to backfill spirit infrastructure files", log.errorData(err));
   }
 
   // Ensure tending schedule exists (handles upgrades)

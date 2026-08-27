@@ -371,19 +371,28 @@ async function mergeUpgradeAndRestart(
     }
   }
 
-  // Add `.init/` infrastructure (hooks, shims) this mind never had. The template
-  // merge can't do this: `.init/` is stripped from the template branch so the
-  // merge never overwrites identity files, which also meant a mind created
-  // before a hook existed could never acquire it (#808). Runs after any template
-  // switch so it picks up the *new* template's composition. Untracked paths, so no
-  // commit is needed; backfillInitInfrastructure throws rather than exiting, so a
-  // broken template install is a warning here, not a failed upgrade.
+  // Add `.init/` infrastructure (hooks, shims) this mind never had, and refresh
+  // any it still has verbatim from an older release. The template merge can't do
+  // either: `.init/` is stripped from the template branch so the merge never
+  // overwrites identity files, which also meant a mind created before a hook
+  // existed could never acquire it (#808), and a mind carrying last release's
+  // copy of a hook could never be handed this release's. Files the mind has
+  // edited are never touched. Runs after any template switch so it picks up the
+  // *new* template's composition. Untracked paths, so no commit is needed;
+  // backfillInitInfrastructure throws rather than exiting, so a broken template
+  // install is a warning here, not a failed upgrade.
   try {
-    const added = backfillInitInfrastructure(resolve(dir, "home"), template, mindName);
-    if (added.length > 0) {
-      log.info(`backfilled ${added.length} missing infrastructure files for ${mindName}`, {
-        files: added,
-      });
+    const { added, refreshed } = backfillInitInfrastructure(
+      resolve(dir, "home"),
+      template,
+      mindName,
+    );
+    if (added.length > 0 || refreshed.length > 0) {
+      log.info(
+        `backfilled ${added.length} missing and refreshed ${refreshed.length} stale ` +
+          `infrastructure files for ${mindName}`,
+        { added, refreshed },
+      );
       await chownMindDir(dir, mindName);
     }
   } catch (err) {

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   chmodSync,
   cpSync,
@@ -147,6 +148,15 @@ export function composeTemplate(
   // Remove manifest from composed output (the template's overlaid copy).
   rmSync(resolve(composedDir, "volute-template.json"), { force: true });
 
+  // Same for the shipped-hash ledger. It lives *inside* `.init/.local/` so that
+  // the classification test sees it and a future `.local/` file can't be added
+  // without someone deciding about it — but it is Volute's bookkeeping, not a
+  // mind's file, and must never land in anyone's home/. Stripping it here is the
+  // single exclusion point: copyTemplateToDir, applyInitFiles, and
+  // backfillInitInfrastructure all read the composed tree, so none of them can
+  // see it. The backfill reads the ledger from the source tree instead.
+  rmSync(resolve(composedDir, SHIPPED_HASHES_REL), { force: true });
+
   return { composedDir, manifest };
 }
 
@@ -267,10 +277,69 @@ export function applyInitFiles(destDir: string) {
  */
 export const INIT_INFRASTRUCTURE_PREFIXES = [".local/"] as const;
 
+/**
+ * Where the shipped-hash ledger lives, relative to a composed template (and, in
+ * the source tree, relative to `templates/_base/`).
+ */
+export const SHIPPED_HASHES_REL = ".init/.local/SHIPPED.json";
+
+/** `.init/`-relative path -> sha256 of every version of that file Volute has ever shipped. */
+export type ShippedHashes = Record<string, string[]>;
+
+export function sha256(content: Buffer | string): string {
+  return createHash("sha256").update(content).digest("hex");
+}
+
+/**
+ * Read the shipped-hash ledger: for each `.init/.local/` file, the sha256 of
+ * every version of it Volute has ever shipped.
+ *
+ * This is what lets {@link backfillInitInfrastructure} tell "the mind is still
+ * running an old copy of *our* file" from "the mind rewrote this hook". A hash
+ * in the ledger means Volute wrote those exact bytes at some point, so replacing
+ * them takes nothing the mind authored. A hash that isn't in the ledger is, as
+ * far as we can tell, the mind's — and is never touched.
+ *
+ * Missing or unparseable ledger degrades to `{}`: every file becomes unknown,
+ * and the backfill falls back to its old add-only behaviour rather than
+ * refusing to run.
+ */
+export function readShippedHashes(templatesRoot: string): ShippedHashes {
+  const path = resolve(templatesRoot, "_base", SHIPPED_HASHES_REL);
+  if (!existsSync(path)) return {};
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf-8")) as ShippedHashes;
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
 /** Whether a `.init/`-relative path is framework infrastructure (see {@link INIT_INFRASTRUCTURE_PREFIXES}). */
 export function isInitInfrastructure(relPath: string): boolean {
   const normalized = relPath.split(sep).join("/");
   return INIT_INFRASTRUCTURE_PREFIXES.some((prefix) => normalized.startsWith(prefix));
+}
+
+/**
+ * Whether an infrastructure file already on disk may be replaced by the
+ * template's current copy.
+ *
+ * The whole authorship judgement lives here: `true` only when the bytes on disk
+ * are ones Volute itself wrote (some hash in the ledger) and are not already the
+ * current ones. Everything else — a hash we don't recognise, an emptied file, a
+ * path with no ledger entry, an unreadable ledger — is `false`, i.e. the mind's,
+ * i.e. untouched.
+ */
+export function mayRefreshInfrastructure(
+  onDisk: Buffer | string,
+  fromTemplate: Buffer | string,
+  shippedHashes: string[] | undefined,
+): boolean {
+  if (!shippedHashes?.length) return false;
+  const current = sha256(onDisk);
+  if (!shippedHashes.includes(current)) return false;
+  return current !== sha256(fromTemplate);
 }
 
 /**
@@ -282,8 +351,31 @@ export function isInitInfrastructure(relPath: string): boolean {
  * which is how every mind on the production host but the newest ended up unable
  * to read its own next-turn system events (#808).
  *
- * Never overwrites: a file already present is the mind's, whether it authored
- * the content or merely kept it. Returns the `home/`-relative paths added.
+ * Two outcomes, and the difference is authorship:
+ *
+ * - **added** — the file is missing. Copy it in.
+ * - **refreshed** — the file is present and byte-identical to some version
+ *   Volute has shipped (per `.init/.local/SHIPPED.json`), so the mind never
+ *   edited it; it is just an old copy of our own file. Overwrite it.
+ *
+ * Anything else is left exactly alone. A file whose hash we don't recognise is
+ * the mind's work, and stays the mind's work — the same guarantee as before,
+ * one step stronger, because "present" no longer has to stand in for "authored".
+ *
+ * This is the second specimen of the #808 class and the reason it matters: #900
+ * collapsed the daemon API to `/api/v1`, the template's hooks were updated, and
+ * every mind that already existed kept calling the removed paths. Their
+ * next-turn notices — page comments, auth failures, skipped schedules — piled up
+ * undelivered for weeks while `volute mind upgrade`, the fix the daemon itself
+ * recommended, could not touch a `.local/` file that was already there.
+ *
+ * One honest limit: a `.local/` file listed in the manifest's `substitute` is
+ * rendered per-mind, so its on-disk bytes never match a raw shipped hash and it
+ * would silently never refresh. No `.local/` file is substituted today, and
+ * `test/template-init-classification.test.ts` pins that so it can't start
+ * quietly.
+ *
+ * Returns the `home/`-relative paths in each bucket.
  *
  * These paths live under `home/.local/`, which the template `.gitignore` does
  * not allowlist, so this writes untracked files and cannot interact with the
@@ -299,7 +391,7 @@ export function backfillInitInfrastructure(
   homeDir: string,
   template: string,
   mindName: string,
-): string[] {
+): { added: string[]; refreshed: string[] } {
   const root = locateTemplatesRoot();
   if (!root) throw new Error("templates root not found on disk");
   if (!existsSync(resolve(root, template))) {
@@ -315,7 +407,7 @@ export function backfillInitInfrastructure(
   const { composedDir, manifest } = composeTemplate(root, template);
   try {
     const initDir = resolve(composedDir, ".init");
-    if (!existsSync(initDir)) return [];
+    if (!existsSync(initDir)) return { added: [], refreshed: [] };
 
     // manifest.substitute paths are relative to the composed layout (".init/..."),
     // while listFiles() below yields paths relative to .init/ itself.
@@ -325,16 +417,12 @@ export function backfillInitInfrastructure(
         .filter((p) => p.startsWith(".init/"))
         .map((p) => p.slice(".init/".length)),
     );
+    const shipped = readShippedHashes(root);
     const added: string[] = [];
+    const refreshed: string[] = [];
 
-    for (const file of listFiles(initDir)) {
-      const rel = file.split(sep).join("/");
-      if (!isInitInfrastructure(rel)) continue;
-
-      const dest = resolve(homeDir, file);
-      if (existsSync(dest)) continue;
-
-      const src = resolve(initDir, file);
+    /** Write the template's copy of `rel` to `dest`, rendering {{name}} if declared. */
+    const install = (src: string, dest: string, rel: string) => {
       mkdirSync(dirname(dest), { recursive: true });
       if (substitute.has(rel)) {
         writeFileSync(dest, readFileSync(src, "utf-8").replaceAll("{{name}}", mindName));
@@ -344,10 +432,38 @@ export function backfillInitInfrastructure(
       } else {
         cpSync(src, dest);
       }
-      added.push(rel);
+    };
+
+    for (const file of listFiles(initDir)) {
+      const rel = file.split(sep).join("/");
+      if (!isInitInfrastructure(rel)) continue;
+
+      const src = resolve(initDir, file);
+      const dest = resolve(homeDir, file);
+
+      if (!existsSync(dest)) {
+        install(src, dest, rel);
+        added.push(rel);
+        continue;
+      }
+
+      // Present. Only replace it if the bytes on disk are ones Volute wrote.
+      // An unreadable path (a directory where a file belongs, a permission the
+      // daemon lost) is one mind's one file — it must not throw out of the loop
+      // and take the *adds* for every remaining file down with it.
+      let refreshable: boolean;
+      try {
+        refreshable = mayRefreshInfrastructure(readFileSync(dest), readFileSync(src), shipped[rel]);
+      } catch {
+        continue;
+      }
+      if (!refreshable) continue;
+
+      install(src, dest, rel);
+      refreshed.push(rel);
     }
 
-    return added;
+    return { added, refreshed };
   } finally {
     rmSync(composedDir, { recursive: true, force: true });
   }

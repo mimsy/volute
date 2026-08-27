@@ -1,5 +1,6 @@
 import { cleanExpiredSessions } from "../../web/middleware/auth.js";
 import { cleanExpiredEvents, findStrandedEventMinds } from "../chat/system-events.js";
+import { reportStaleApiPaths } from "../template/stale-api-paths.js";
 import { cleanExpiredLogs } from "../util/history-cleanup.js";
 import log from "../util/logger.js";
 
@@ -31,6 +32,11 @@ export async function runMaintenance(): Promise<void> {
   } catch (err) {
     log.warn("maintenance: failed to check for stranded events", log.errorData(err));
   }
+  try {
+    await reportStaleApiPaths();
+  } catch (err) {
+    log.warn("maintenance: failed to check for stale API paths", log.errorData(err));
+  }
 }
 
 /**
@@ -47,7 +53,10 @@ async function warnStrandedEvents(): Promise<void> {
       `${s.mind} has ${s.pending} undelivered next-turn system event${s.pending === 1 ? "" : "s"} ` +
         `and has completed ${s.turnsSince} turns without draining them (oldest is ${s.ageHours}h old). ` +
         `Its pre-prompt drain hook is missing or failing — check ` +
-        `home/.local/hooks/pre-prompt/notices.ts and run \`volute mind upgrade ${s.mind}\`.`,
+        `home/.local/hooks/pre-prompt/notices.ts. If that file is Volute's (unedited), ` +
+        `\`volute mind upgrade ${s.mind}\` will restore or refresh it; if the mind has edited ` +
+        `it, upgrade leaves it alone on purpose and it has to be repaired by hand. ` +
+        `The "stale-api-paths" log category names the specific files when the cause is a removed API path.`,
       { mind: s.mind, pending: s.pending, turnsSince: s.turnsSince, ageHours: s.ageHours },
     );
   }
