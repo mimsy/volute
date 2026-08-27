@@ -535,7 +535,7 @@ export async function installDepsAndRestart(
       log.warn(`npm install failed after upgrade merge for ${mindName}`, log.errorData(err));
       const detail = installFailureDetail(err);
       depsWarning =
-        `Upgrade merged but npm install failed (including a retry against the registry): ${detail} ` +
+        `Upgrade merged but npm install failed (including a retry against the registry): ${firstLine(detail)} ` +
         `The mind ${restart ? "was still restarted onto" : "will start on"} the new code, which may ` +
         `not run until \`npm install\` succeeds in ${dir}. Nothing retries this automatically.`;
       // Tell the mind and the dashboard before the restart: the restart may fail,
@@ -577,6 +577,20 @@ export async function installDepsAndRestart(
   }
 
   return depsWarning;
+}
+
+/**
+ * The first non-empty line of `detail`, clipped. The CLI/API warning is a pointer;
+ * npm's full output can run to dozens of lines and belongs in the mind's alert and
+ * the log, not inline in a one-line command result.
+ */
+function firstLine(detail: string): string {
+  const line =
+    detail
+      .split("\n")
+      .find((l) => l.trim().length > 0)
+      ?.trim() ?? detail.trim();
+  return line.length > 200 ? `${line.slice(0, 199)}…` : line;
 }
 
 /** The failing install's stderr where there is any, else the error message. */

@@ -191,3 +191,25 @@ describe("installDepsAndRestart alert failures", () => {
     assert.match(String(warning), /npm install failed/);
   });
 });
+
+describe("installDepsAndRestart warning text", () => {
+  it("clips npm's output to one line in the warning but sends it whole to the mind", async () => {
+    const noisy = Object.assign(new Error("Command failed"), {
+      stderr:
+        "npm error code ETARGET\nnpm error notarget No matching version found.\nnpm error A complete log of this run can be found in: /home/mind/.npm/_logs/x.log",
+    });
+    const h = harness({
+      install: async () => {
+        throw noisy;
+      },
+    });
+    const warning = String(await installDepsAndRestart(MIND, DIR, REF, true, h.deps));
+    assert.match(warning, /ETARGET/);
+    assert.doesNotMatch(warning, /_logs/, "the warning is a pointer, not the whole npm log");
+    assert.match(
+      h.alerts[0],
+      /_logs/,
+      "the mind gets the full output — it's what makes it fixable",
+    );
+  });
+});
