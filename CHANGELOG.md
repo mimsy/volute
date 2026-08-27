@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.59.0](https://github.com/mimsy/volute/compare/volute-v0.58.0...volute-v0.59.0) (2026-08-27)
+
+
+### ⚠ BREAKING CHANGES
+
+* tokenBudget is no longer enforced — replaced by spendCap in dollars ([#928](https://github.com/mimsy/volute/issues/928))
+
+### Features
+
+* hold deliveries and schedules for a mind over its spend cap ([#929](https://github.com/mimsy/volute/issues/929)) ([b7587bf](https://github.com/mimsy/volute/commit/b7587bf26b4626adc64fc25cdaf59011aa37b717))
+* host-facing usage and cost dashboard ([#930](https://github.com/mimsy/volute/issues/930)) ([ea923bd](https://github.com/mimsy/volute/commit/ea923bdc3f9187854f6ce8bfbe41f5ac672e16dc))
+* let a mind see its own economics ([#932](https://github.com/mimsy/volute/issues/932)) ([fbf0962](https://github.com/mimsy/volute/commit/fbf0962602fc6ca9346900e0abbec17695b1e936))
+* tokenBudget is no longer enforced — replaced by spendCap in dollars ([#928](https://github.com/mimsy/volute/issues/928)) ([f5663c4](https://github.com/mimsy/volute/commit/f5663c4c0893a18dbdb963bbd45b83dafccba521))
+* true token accounting and daemon-side pricing ([#912](https://github.com/mimsy/volute/issues/912)) ([7377729](https://github.com/mimsy/volute/commit/7377729279f07b68210ee18d26f69cb9657818d4))
+
+
+### Bug Fixes
+
+* deliver the 80% spend warning to whichever thread turns next ([#933](https://github.com/mimsy/volute/issues/933)) ([cb088c7](https://github.com/mimsy/volute/commit/cb088c74771806c2547e80d1491a1c1e2b063164))
+* **deps:** update anthropic ([#925](https://github.com/mimsy/volute/issues/925)) ([2fe5de6](https://github.com/mimsy/volute/commit/2fe5de6f07c8ff32940c48362d490586fac633b2))
+* **deps:** update dependency dompurify to v3.4.14 ([#926](https://github.com/mimsy/volute/issues/926)) ([61587ec](https://github.com/mimsy/volute/commit/61587ec814fbff76ba0bba43963030d7cd2e6357))
+* **test:** cap SDK retries so doomed e2e turns fail fast again ([#922](https://github.com/mimsy/volute/issues/922)) ([8dbb061](https://github.com/mimsy/volute/commit/8dbb061918e0fe8e65b10bd6afee1c26d91f5ac2))
+
 ## [0.58.0](https://github.com/mimsy/volute/compare/volute-v0.57.1...volute-v0.58.0) (2026-08-12)
 
 
