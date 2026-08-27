@@ -101,6 +101,34 @@ export function toCommandInfo(cmd: ExtensionCommand): ExtensionCommandInfo {
   return info;
 }
 
+/**
+ * Resolve the mind an extension command runs as, from the authenticated caller and the
+ * requested `--mind` / `VOLUTE_MIND` identity.
+ *
+ * Minds are untrusted principals, so only privileged callers (admin/spirit) may act as
+ * someone else. An unprivileged caller that asks to act as another mind is **refused**,
+ * never quietly handed itself: `volute pages list --mind gardener` used to return the
+ * caller's own pages with exit 0, and three minds on separate seats each read that as a
+ * fact about the interface rather than a refused permission (#907). A right answer to a
+ * question about yourself, when you asked about someone else, has no artifact — the
+ * refusal is the information.
+ */
+export function resolveActingMind(
+  user: { username: string; role?: string } | undefined,
+  requested: string | undefined,
+): { mind: string | undefined } | { error: string } {
+  const privileged = user?.role === "admin" || user?.role === "spirit";
+  if (privileged) return { mind: requested || user?.username };
+  if (requested && requested !== user?.username) {
+    return {
+      error: user?.username
+        ? `cannot act as '${requested}': not permitted. You are '${user.username}'; omit --mind/VOLUTE_MIND to run as yourself.`
+        : `cannot act as '${requested}': not permitted.`,
+    };
+  }
+  return { mind: user?.username };
+}
+
 export function parseCommandArgs(
   rawArgs: string[],
   argDefs: ArgDef[],
@@ -121,7 +149,12 @@ export function parseCommandArgs(
   for (let i = 0; i < rawArgs.length; i++) {
     const arg = rawArgs[i];
     if (arg.startsWith("--")) {
-      const name = arg.slice(2);
+      // `--flag=value` must be understood here too: the CLI accepts that spelling and
+      // forwards the raw argv, so parsing only `--flag value` would drop the value into
+      // a daemon log line the caller never sees — the exact silence of #907.
+      const eq = arg.indexOf("=");
+      const name = eq === -1 ? arg.slice(2) : arg.slice(2, eq);
+      const inlineValue = eq === -1 ? undefined : arg.slice(eq + 1);
       const def = flagDefs[name];
       if (!def) {
         log.warn(`unknown flag --${name}`);
@@ -129,8 +162,8 @@ export function parseCommandArgs(
       }
       if (def.type === "boolean") {
         flags[name] = true;
-      } else if (i + 1 < rawArgs.length) {
-        const val = rawArgs[++i];
+      } else if (inlineValue !== undefined || i + 1 < rawArgs.length) {
+        const val = inlineValue ?? rawArgs[++i];
         if (def.type === "number") {
           const n = parseInt(val, 10);
           flags[name] = Number.isNaN(n) ? undefined : n;
@@ -375,11 +408,9 @@ async function loadExtension(
           return c.json({ error: "Invalid JSON in request body" }, 400);
         }
         const user = c.get("user") as { username: string; role?: string } | undefined;
-        // Minds are untrusted principals — only privileged callers (admin/system)
-        // may target another mind via body.mind. Otherwise the acting mind is the
-        // authenticated identity, so a mind cannot impersonate another.
-        const privileged = user?.role === "admin" || user?.role === "spirit";
-        const mindName = privileged ? body.mind || user?.username : user?.username;
+        const acting = resolveActingMind(user, body.mind);
+        if ("error" in acting) return c.json({ error: acting.error }, 403);
+        const mindName = acting.mind;
         const session = c.get("mindSession") as string | undefined;
         try {
           // Collect activity publish promises so we can append correlation markers

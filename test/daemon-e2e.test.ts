@@ -3407,16 +3407,23 @@ describe("daemon e2e", { timeout: 420000 }, () => {
       },
       body: JSON.stringify({ mind: TEST_MIND, args: [attackTitle, "body"] }),
     });
-    assert.equal(attackRes.status, 200, `write: ${await attackRes.clone().text()}`);
+    // body.mind is refused, not ignored (#907). Silently substituting the caller made a
+    // denied identity request indistinguishable from an honoured one: three minds read
+    // `pages list --mind <other>` returning their own list as a fact about the interface.
+    assert.equal(attackRes.status, 403, `write: ${await attackRes.clone().text()}`);
     const attackBody = (await attackRes.json()) as { output?: string; error?: string };
 
-    // body.mind must be ignored: the command acts as the caller. The caller is a
-    // brain user with no mind directory, so the command fails — and the failure
-    // names the attacker, proving whose identity the daemon resolved.
+    // The refusal names both halves: what was refused, and whose identity the daemon
+    // actually resolved — so the caller can tell a denial from a result.
     assert.match(
-      attackBody.error ?? attackBody.output ?? "",
+      attackBody.error ?? "",
+      new RegExp(`cannot act as '${TEST_MIND}'`),
+      `refusal should name the requested mind, got ${JSON.stringify(attackBody)}`,
+    );
+    assert.match(
+      attackBody.error ?? "",
       /e2e-cmd-attacker/,
-      `command should have acted as the caller, got ${JSON.stringify(attackBody)}`,
+      `refusal should name the caller, got ${JSON.stringify(attackBody)}`,
     );
     assert.doesNotMatch(
       attackBody.error ?? attackBody.output ?? "",

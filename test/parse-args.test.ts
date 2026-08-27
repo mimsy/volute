@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { describe, it } from "node:test";
+import { describe, it, mock } from "node:test";
 import { parseArgs } from "../packages/cli/src/lib/parse-args.js";
 import { parseCommandArgs } from "../packages/daemon/src/lib/extensions.js";
 
@@ -57,28 +57,49 @@ describe("parseArgs", () => {
     assert.equal(result.flags.json, true);
   });
 
-  it("warns on unknown flags and skips them", () => {
+  // Was: "warns on unknown flags and skips them". Skipping is what made an invented flag
+  // return a real receipt — the command ran, exited 0, and printed the default answer
+  // (#907). An unknown flag now refuses.
+  it("refuses unknown flags instead of skipping them", () => {
     const origError = console.error;
     const errors: string[] = [];
+    let exitCode: number | undefined;
+    const exitMock = mock.method(process, "exit", (code?: number) => {
+      exitCode = code;
+      throw new Error("__exit__");
+    });
     console.error = (...a: unknown[]) => errors.push(a.join(" "));
     try {
-      const result = parseArgs(["--unknown", "value", "pos"], {
-        known: { type: "string" },
-      });
-      // --unknown is skipped; "value" and "pos" become positional
-      assert.deepStrictEqual(result.positional, ["value", "pos"]);
-      assert.equal(result.flags.known, undefined);
-      assert.ok(errors.some((e) => e.includes("unknown flag --unknown")));
+      parseArgs(["--unknown", "value", "pos"], { known: { type: "string" } });
+      assert.fail("should have refused");
+    } catch (err) {
+      assert.equal((err as Error).message, "__exit__");
     } finally {
       console.error = origError;
+      exitMock.mock.restore();
     }
+    assert.equal(exitCode, 1);
+    assert.ok(errors.some((e) => e.includes("unknown option: --unknown")));
   });
 
-  it("handles flag at end without value", () => {
-    const result = parseArgs(["--name"], {
-      name: { type: "string" },
+  it("refuses a value-taking flag at the end with nothing to consume", () => {
+    const origError = console.error;
+    let exitCode: number | undefined;
+    const exitMock = mock.method(process, "exit", (code?: number) => {
+      exitCode = code;
+      throw new Error("__exit__");
     });
-    assert.equal(result.flags.name, undefined);
+    console.error = () => {};
+    try {
+      parseArgs(["--name"], { name: { type: "string" } });
+      assert.fail("should have refused");
+    } catch (err) {
+      assert.equal((err as Error).message, "__exit__");
+    } finally {
+      console.error = origError;
+      exitMock.mock.restore();
+    }
+    assert.equal(exitCode, 1);
   });
 
   it("handles multiple positional args with flags interspersed", () => {

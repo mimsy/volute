@@ -2,7 +2,7 @@ import type { SummaryRow } from "@volute/api";
 import { getClient, urlOf } from "../lib/api-client.js";
 import { command } from "../lib/command.js";
 import { daemonFetch } from "../lib/daemon-client.js";
-import { compactTime, formatSender, isCompact } from "../lib/format-cli.js";
+import { compactDateTime, formatSender, isCompact } from "../lib/format-cli.js";
 import { readStdin } from "../lib/read-stdin.js";
 import { resolveMindName } from "../lib/resolve-mind-name.js";
 
@@ -15,7 +15,7 @@ type ActivityRow = {
   created_at: string;
 };
 
-type HistoryRow = {
+export type HistoryRow = {
   type: string;
   channel: string | null;
   thread: string | null;
@@ -122,8 +122,12 @@ function formatRow(row: HistoryRow, showTurn = false): string {
   }
 }
 
-function formatRowCompact(row: HistoryRow, showTurn = false): string {
-  const time = compactTime(row.created_at);
+export function formatRowCompact(row: HistoryRow, showTurn = false): string {
+  // Compact output is terse, but never date-less. Compact mode is always on for a mind,
+  // so a multi-day window read as one afternoon and minds reasoned from it (#876, the
+  // remaining call site after #869). A line quoted out of here into memory or a page
+  // has to carry its own day.
+  const time = compactDateTime(row.created_at);
   const channel = row.channel ?? "";
 
   switch (row.type) {
@@ -169,7 +173,7 @@ function formatRowCompact(row: HistoryRow, showTurn = false): string {
         try {
           const meta = JSON.parse(row.metadata);
           if (meta.from_time && meta.to_time) {
-            range = ` (${compactTime(meta.from_time)}\u2013${compactTime(meta.to_time)})`;
+            range = ` (${compactDateTime(meta.from_time)}\u2013${compactDateTime(meta.to_time)})`;
           }
         } catch {}
       }
@@ -260,6 +264,41 @@ function getDefaultRange(period: string): string {
   }
 }
 
+/**
+ * Build the query for the default (non-`--period`) history request.
+ *
+ * `from`/`to` are forwarded, not dropped: they were accepted by the flag parser and sent
+ * nowhere outside `--period` mode, so a request for one day came back as the mind's whole
+ * history and looked like an answered question (bardo triage, the #907 class).
+ *
+ * The bounds are matched against the DB's UTC timestamps, while rows print in local time
+ * — so a one-day UTC window can span two printed dates. Stated in the flag descriptions
+ * rather than quietly reconciled, because guessing which the caller meant is how the
+ * wrong window gets served with a straight face.
+ */
+export function applyHistoryQuery(
+  params: URLSearchParams,
+  flags: {
+    channel?: string;
+    thread?: string;
+    preset?: string;
+    limit?: string;
+    from?: string;
+    to?: string;
+    full?: boolean;
+    provisional?: boolean;
+  },
+): void {
+  if (flags.channel) params.set("channel", flags.channel);
+  if (flags.thread) params.set("session", flags.thread);
+  if (flags.preset) params.set("preset", flags.preset);
+  if (flags.limit) params.set("limit", flags.limit);
+  if (flags.from) params.set("from", flags.from);
+  if (flags.to) params.set("to", flags.to);
+  if (flags.full) params.set("full", "true");
+  if (flags.provisional) params.set("provisional", "true");
+}
+
 const cmd = command({
   name: "volute mind history",
   description: "View mind activity history",
@@ -275,8 +314,14 @@ const cmd = command({
       description: "Only turn summaries you haven't rewritten yet (shows turn ids)",
     },
     period: { type: "string", description: "Time period (hour, day, week, month)" },
-    from: { type: "string", description: "Start date" },
-    to: { type: "string", description: "End date" },
+    from: {
+      type: "string",
+      description: "Start of the window, YYYY-MM-DD or 'YYYY-MM-DD HH:MM:SS' (matched in UTC)",
+    },
+    to: {
+      type: "string",
+      description: "End of the window, inclusive of the whole day for a bare date (matched in UTC)",
+    },
     write: {
       type: "boolean",
       description: "Replace a turn's provisional summary with your own account (needs --turn)",
@@ -288,6 +333,7 @@ const cmd = command({
     "volute mind history --mind myname",
     "volute mind history --mind myname --full",
     "volute mind history --mind myname --period day",
+    "volute mind history --mind myname --from 2026-08-20 --to 2026-08-21",
     "volute mind history --mind myname --provisional",
     'volute mind history --mind myname --write --turn <id> --text "I traced the bug and fixed it."',
   ],
@@ -441,12 +487,7 @@ const cmd = command({
     const client = getClient();
 
     const url = client.api.v1.minds[":name"].history.$url({ param: { name } });
-    if (flags.channel) url.searchParams.set("channel", flags.channel);
-    if (flags.thread) url.searchParams.set("session", flags.thread);
-    if (flags.preset) url.searchParams.set("preset", flags.preset);
-    if (flags.limit) url.searchParams.set("limit", flags.limit);
-    if (flags.full) url.searchParams.set("full", "true");
-    if (flags.provisional) url.searchParams.set("provisional", "true");
+    applyHistoryQuery(url.searchParams, flags);
 
     const res = await daemonFetch(urlOf(url));
 

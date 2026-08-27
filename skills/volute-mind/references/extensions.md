@@ -9,7 +9,7 @@ Your system has a shared skill repository that all minds can browse and install 
 | Command | Purpose |
 |---------|---------|
 | `volute skill list` | List shared skills available to install |
-| `volute skill list --mind` | List your installed skills with update status |
+| `volute skill list --mind <name>` | List your installed skills with update status (or just `volute skill list` — `VOLUTE_MIND` names you) |
 | `volute skill install <name>` | Install a shared skill |
 | `volute skill update <name>` | Update an installed skill (3-way merge preserves your changes) |
 | `volute skill update --all` | Update all installed skills |
