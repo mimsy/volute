@@ -3,6 +3,7 @@ import {
   captureReflection,
   clearDeliveredEvents,
   deliverEvent,
+  MIND_LEVEL_THREAD,
   recordNotice,
 } from "../chat/system-events.js";
 import { getTypingMap, publishTypingForChannels } from "../chat/typing.js";
@@ -398,10 +399,16 @@ async function recordSpendNotice(
       resets: formatReset(sb.resetAt(mind, scope)),
     });
     if (status === "warning") {
-      // The mind is still receiving, so a next turn is coming to drain this.
+      // The mind is still receiving at 80%, so a next turn is coming to drain this — but
+      // not necessarily in the thread that crossed the threshold. Minds run per-session
+      // threads (one per channel, the pi template's default), so a warning pinned to
+      // `session` waits for a turn in *that* thread while the mind spends the rest of its
+      // cap talking in others, and the heads-up arrives after the cap already bound — if
+      // ever. Mind-level is the sentinel for exactly this: drained by whichever thread
+      // turns next, the same reason the held-release summary uses it.
       await recordNotice({
         mind,
-        thread: session,
+        thread: MIND_LEVEL_THREAD,
         kind: "budget",
         reason: `${scope}_spend_cap`,
         detail,
