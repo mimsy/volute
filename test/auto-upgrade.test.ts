@@ -1,13 +1,18 @@
 import assert from "node:assert/strict";
-import { describe, it } from "node:test";
+import { beforeEach, describe, it } from "node:test";
 import {
   type AutoUpgradeBlocked,
   type AutoUpgradeOneDeps,
   autoUpgradeOne,
+  failureDetail,
   getUpgradeBlocked,
+  pruneAutoUpgradeState,
   pruneBlocked,
+  resetAutoUpgradeState,
   type SelectEligibleDeps,
   selectEligible,
+  UPGRADE_ALERT_KIND,
+  upgradeFailureText,
 } from "../packages/daemon/src/lib/daemon/auto-upgrade.js";
 import type { MindEntry } from "../packages/daemon/src/lib/mind/registry.js";
 import { formatNotification } from "../packages/daemon/src/lib/version-notify.js";
@@ -149,12 +154,35 @@ describe("pruneBlocked", () => {
   });
 });
 
+type Alert = { name: string; kind: string; text: string };
+
+/** Deps that record every alert, with per-test overrides. */
+function makeUpgradeDeps(
+  alerts: Alert[],
+  overrides: Partial<AutoUpgradeOneDeps> = {},
+): AutoUpgradeOneDeps {
+  return {
+    isRunning: () => false,
+    runUpgrade: async () => ({ status: "upgraded" }),
+    abortUpgrade: async () => {},
+    alertHost: async (name, kind, text) => {
+      alerts.push({ name, kind, text });
+    },
+    delay: async () => {},
+    ...overrides,
+  };
+}
+
 describe("autoUpgradeOne", () => {
-  it("conflicts: aborts the upgrade, notifies the mind with the conflicting files, and records a blocked reason", async () => {
+  beforeEach(() => {
+    resetAutoUpgradeState();
+  });
+
+  it("conflicts: aborts the upgrade, alerts with the conflicting files, and records a blocked reason", async () => {
     const entry = makeEntry({ name: "conflict-mind" });
+    const alerts: Alert[] = [];
     let abortedName: string | undefined;
-    let deliveredBody: string | undefined;
-    const deps: AutoUpgradeOneDeps = {
+    const deps = makeUpgradeDeps(alerts, {
       isRunning: () => true,
       runUpgrade: async () => ({
         status: "conflicts",
@@ -164,71 +192,177 @@ describe("autoUpgradeOne", () => {
       abortUpgrade: async (name) => {
         abortedName = name;
       },
-      deliverEvent: async (_name, input) => {
-        deliveredBody = input.body;
-        return { delivered: true };
-      },
-      delay: async () => {},
-    };
+    });
 
     await autoUpgradeOne(entry, false, deps);
 
     assert.equal(abortedName, "conflict-mind");
-    assert.match(deliveredBody ?? "", /SOUL\.md/);
-    assert.match(deliveredBody ?? "", /package\.json/);
+    assert.equal(alerts.length, 1);
+    assert.equal(alerts[0].name, "conflict-mind");
+    assert.equal(alerts[0].kind, UPGRADE_ALERT_KIND);
+    assert.match(alerts[0].text, /SOUL\.md/);
+    assert.match(alerts[0].text, /package\.json/);
     const blocked = getUpgradeBlocked("conflict-mind");
     assert.ok(blocked, "should record a blocked entry");
     assert.match(blocked!.reason, /merge conflicts/);
   });
 
-  it("thrown error: retries exactly once, then records blocked and sends no event", async () => {
+  it("thrown error: retries exactly once, then alerts the mind with the failing command's stderr", async () => {
     const entry = makeEntry({ name: "retry-mind" });
+    const alerts: Alert[] = [];
     let attempts = 0;
-    let eventSent = false;
     let delayMs: number | undefined;
-    const deps: AutoUpgradeOneDeps = {
-      isRunning: () => false,
+    const deps = makeUpgradeDeps(alerts, {
       runUpgrade: async () => {
         attempts++;
-        throw new Error("transient git failure");
-      },
-      abortUpgrade: async () => {},
-      deliverEvent: async () => {
-        eventSent = true;
-        return { delivered: true };
+        const err = new Error("Command failed: git commit") as Error & { stderr?: string };
+        err.stderr = "wall: MEMORY.md is 41k over the load line — refusing this commit";
+        throw err;
       },
       delay: async (ms) => {
         delayMs = ms;
       },
-    };
+    });
 
     await autoUpgradeOne(entry, false, deps);
 
     assert.equal(attempts, 2, "should retry exactly once (two total attempts)");
-    assert.equal(eventSent, false, "transient errors should not notify the mind");
     assert.ok(delayMs && delayMs > 0, "should delay before the retry");
+    assert.equal(alerts.length, 1, "the mind must be told its framework stopped upgrading");
+    assert.equal(alerts[0].kind, UPGRADE_ALERT_KIND);
+    assert.match(
+      alerts[0].text,
+      /refusing this commit/,
+      "the alert must carry the failing command's own stderr",
+    );
     const blocked = getUpgradeBlocked("retry-mind");
     assert.ok(blocked, "should record a blocked entry");
-    assert.match(blocked!.reason, /transient git failure/);
+    assert.match(blocked!.reason, /Command failed: git commit/);
+  });
+
+  it("does not attempt again after a failure, and does not re-alert", async () => {
+    const entry = makeEntry({ name: "quiet-mind" });
+    const alerts: Alert[] = [];
+    let attempts = 0;
+    const deps = makeUpgradeDeps(alerts, {
+      runUpgrade: async () => {
+        attempts++;
+        throw new Error("hook refused");
+      },
+    });
+
+    await autoUpgradeOne(entry, false, deps);
+    await autoUpgradeOne(entry, false, deps);
+    await autoUpgradeOne(entry, false, deps);
+
+    assert.equal(attempts, 2, "only the first pass attempts (once, plus its single retry)");
+    assert.equal(alerts.length, 1, "a repeated hourly pass must not re-alert");
+  });
+
+  it("re-alerts when the failure reason changes", async () => {
+    const entry = makeEntry({ name: "changing-mind" });
+    const alerts: Alert[] = [];
+    let reason = "hook refused";
+    const deps = makeUpgradeDeps(alerts, {
+      runUpgrade: async () => {
+        throw new Error(reason);
+      },
+    });
+
+    await autoUpgradeOne(entry, false, deps);
+    // A host resolved the mind out of the eligible set (a manual upgrade), clearing
+    // the attempt gate; it goes stale again and fails differently.
+    pruneAutoUpgradeState(new Set<string>());
+    reason = "npm install failed";
+    await autoUpgradeOne(entry, false, deps);
+
+    assert.equal(alerts.length, 2, "a different failure is news, and must be alerted");
+    assert.match(alerts[0].text, /hook refused/);
+    assert.match(alerts[1].text, /npm install failed/);
+  });
+
+  it("re-alerts after the mind leaves the eligible set, even for the same reason", async () => {
+    // Leaving the eligible set means it was upgraded by hand (or opted out) — the
+    // old failure is over. Staying silent about the next one because the reason
+    // string matches would leave a mind quietly broken again after someone fixed it.
+    const entry = makeEntry({ name: "recovering-mind" });
+    const alerts: Alert[] = [];
+    const deps = makeUpgradeDeps(alerts, {
+      runUpgrade: async () => {
+        throw new Error("hook refused");
+      },
+    });
+
+    await autoUpgradeOne(entry, false, deps);
+    assert.equal(alerts.length, 1);
+
+    pruneAutoUpgradeState(new Set<string>());
+    await autoUpgradeOne(entry, false, deps);
+    assert.equal(alerts.length, 2, "a fix that didn't hold must be said out loud again");
+  });
+
+  it("a clean upgrade resets the alert record, so a later failure alerts again", async () => {
+    const entry = makeEntry({ name: "clean-then-broken" });
+    const alerts: Alert[] = [];
+    let mode: "fail" | "ok" = "ok";
+    const deps = makeUpgradeDeps(alerts, {
+      runUpgrade: async () => {
+        if (mode === "fail") throw new Error("hook refused");
+        return { status: "upgraded" };
+      },
+    });
+
+    mode = "fail";
+    await autoUpgradeOne(entry, false, deps);
+    assert.equal(alerts.length, 1);
+
+    // Upgrades cleanly (clearing the gate and the alert record), then breaks the
+    // same way later.
+    pruneAutoUpgradeState(new Set<string>());
+    mode = "ok";
+    await autoUpgradeOne(entry, false, deps);
+    mode = "fail";
+    await autoUpgradeOne(entry, false, deps);
+    assert.equal(alerts.length, 2, "a failure after a clean upgrade is a new failure");
   });
 
   it("sleeping mind: never restarts it, even if it was running", async () => {
     const entry = makeEntry({ name: "sleeping-mind" });
+    const alerts: Alert[] = [];
     let restartArg: boolean | undefined;
-    const deps: AutoUpgradeOneDeps = {
+    const deps = makeUpgradeDeps(alerts, {
       isRunning: () => true, // wasRunning
       runUpgrade: async (_name, opts) => {
         restartArg = opts.restart;
         return { status: "upgraded" };
       },
-      abortUpgrade: async () => {},
-      deliverEvent: async () => ({ delivered: true }),
-      delay: async () => {},
-    };
+    });
 
     await autoUpgradeOne(entry, /* sleeping */ true, deps);
 
     assert.equal(restartArg, false, "a sleeping mind must never be restarted");
+  });
+});
+
+describe("failureDetail", () => {
+  it("prefers the failing command's stderr", () => {
+    const err = new Error("Command failed") as Error & { stderr?: string };
+    err.stderr = "  pre-commit refused\n";
+    assert.equal(failureDetail(err), "pre-commit refused");
+  });
+
+  it("falls back to the error message when there is no stderr", () => {
+    assert.equal(failureDetail(new Error("boom")), "boom");
+  });
+});
+
+describe("upgradeFailureText", () => {
+  it("includes the detail and a command the mind can run itself", () => {
+    const text = upgradeFailureText("mimsy", "wall: refusing this commit");
+    assert.match(text, /wall: refusing this commit/);
+    assert.match(text, /volute mind upgrade mimsy/);
+    assert.match(text, /paused until this upgrade succeeds or the daemon restarts/);
+    assert.match(text, /runs immediately/, "must not claim the mind has to wait for a restart");
   });
 });
 
