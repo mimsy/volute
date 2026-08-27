@@ -598,7 +598,14 @@ const app = new Hono<AuthEnv>()
       const flowId = c.req.param("flowId");
       const flow = oauthFlows.get(flowId);
       if (!flow) return c.json({ error: "Flow not found" }, 404);
-      if (!flow.resolveCode) return c.json({ error: "Flow does not accept manual code" }, 400);
+      // Gate on the prompt actually having asked, not on the resolver existing: since
+      // pi-ai 0.84 dropped `usesCallbackServer` the resolver is armed for every flow,
+      // so `!flow.resolveCode` is never true and this guard silently passed. A code
+      // pasted into a device-code flow (xAI, Copilot) then resolved a promise nobody
+      // awaits and returned ok — telling the admin it worked when nothing happened.
+      if (!flow.needsManualCode) {
+        return c.json({ error: "Flow does not accept manual code" }, 400);
+      }
       const { code } = c.req.valid("json");
       const input = code.trim();
 
@@ -613,12 +620,12 @@ const app = new Hono<AuthEnv>()
           await fetch(forwardUrl);
         } catch {
           // Callback server may have already shut down — fall back to manual code
-          flow.resolveCode(input);
+          flow.resolveCode?.(input);
         }
         return c.json({ ok: true });
       }
 
-      flow.resolveCode(input);
+      flow.resolveCode?.(input);
       return c.json({ ok: true });
     },
   )

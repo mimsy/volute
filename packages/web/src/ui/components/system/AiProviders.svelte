@@ -480,8 +480,15 @@ async function removeModel(model: AiModel) {
       {:else if oauthUrl && ((oauthNeedsCode && isRemote) || oauthWaitingForCode)}
         <div class="oauth-steps">
           <div class="oauth-step"><span class="step-num">1</span> Authorize in the opened window</div>
+          <!-- The window is opened with window.open(), which a popup blocker can stop
+               silently. Without this link the admin is left with a paste box and no way
+               to reach the page they are meant to paste from. -->
+          <a href={oauthUrl} target="_blank" rel="noopener" class="oauth-link">{oauthUrl}</a>
           <div class="oauth-step"><span class="step-num">2</span> Copy the redirect URL and paste below</div>
         </div>
+        {#if oauthInstructions}
+          <p class="oauth-device-code">{oauthInstructions}</p>
+        {/if}
         <form class="api-key-form" onsubmit={(e) => { e.preventDefault(); handleOAuthCodeSubmit(); }}>
           <input type="text" bind:value={oauthCodeInput} oninput={handleOAuthCodeInputChange} placeholder="Paste the redirect URL here" class="text-input" />
           <button type="submit" class="save-btn" disabled={!oauthCodeInput.trim()}>Submit</button>
