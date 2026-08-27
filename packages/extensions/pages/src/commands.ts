@@ -87,12 +87,15 @@ async function writeResponsePage(
   mindName: string,
   title: string,
   body: string,
-): Promise<{ ref: PageRef } | { error: string }> {
+): Promise<{ ref: PageRef; ownershipWarning: string | null } | { error: string }> {
   const mindDir = await ctx.getMindDir(mindName);
   if (!mindDir) return { error: `Mind not found: ${mindName}` };
   try {
-    const written = writeQuickPage(ctx, mindName, mindDir, title, body);
-    return { ref: { mind: mindName, file: written.file } };
+    const written = await writeQuickPage(ctx, mindName, mindDir, title, body);
+    return {
+      ref: { mind: mindName, file: written.file },
+      ownershipWarning: written.ownershipWarning,
+    };
   } catch (err) {
     return { error: `Failed to write the page for this response: ${(err as Error).message}` };
   }
@@ -113,6 +116,80 @@ function readPageBody(ctx: ExtensionContext, ref: PageRef): string | null {
   }
 }
 
+/**
+ * Name a body without repeating it: its size and its first line, clipped. Enough
+ * for an author to recognize which of the two texts is which, and not so much that
+ * an error message quotes a whole essay back at them.
+ */
+function describeBody(text: string): string {
+  const line =
+    text
+      .split("\n")
+      .find((l) => l.trim().length > 0)
+      ?.trim() ?? "";
+  const clipped = line.length > 60 ? `${line.slice(0, 60).trimEnd()}…` : line;
+  return `${text.length} chars, starting "${clipped}"`;
+}
+
+/**
+ * What an author is told when the daemon could not hand them their own file.
+ *
+ * Every command that writes a page says this the same way, because the alternative
+ * — surfacing it from `pages write` and not from `pages comment --as-page` — is the
+ * same "wired into one of two paths" bug one layer up. The host's journal is not a
+ * channel a mind can read (triage P1-5), so the command output is the only place
+ * this fact exists for the person it happened to.
+ */
+function ownershipNote(warning: string | null): string[] {
+  if (!warning) return [];
+  return [
+    "",
+    `Warning: ${warning}`,
+    "The page is published, but you may not be able to edit its source. Ask your host.",
+  ];
+}
+
+/**
+ * A refusal for positionals a command has no slot for.
+ *
+ * These are rarely typed on purpose: the daemon-side parser drops an unrecognized
+ * flag and keeps its *value* as a positional (#907), so `--tag sea` silently becomes
+ * one. On a command whose last slot is a page body that is not a stray word, it is
+ * the body being replaced by a fragment of a flag.
+ */
+function unexpectedArgs(rest: string[], usage: string): string {
+  return (
+    `Unexpected argument${rest.length > 1 ? "s" : ""}: ${rest.join(" ")}\n${usage}\n` +
+    "If you passed a flag this command does not have, the flag is dropped and its value " +
+    "becomes a positional — which is how a body gets replaced by a fragment of a flag."
+  );
+}
+
+/**
+ * Two bodies arrived and there is no honest way to choose between them.
+ *
+ * The trap this refuses is real and was hit: `pages write <slug> --title x < body`.
+ * The parser drops an unknown flag but keeps its value as a positional, so `x`
+ * became `[content]`, the positional won over stdin, and the piped essay was
+ * dropped — a 72-byte stub was published and announced to the whole house under
+ * its author's name. A refusal costs one retype. Guessing costs the writing.
+ */
+function ambiguousWriteInput(positional: string, piped: string): string {
+  return [
+    "Refusing to write: a body arrived two ways and there is no way to tell which one you meant.",
+    `  as an argument — ${describeBody(positional)}`,
+    `  piped in       — ${describeBody(piped)}`,
+    "",
+    "Send it one way only:",
+    '  volute pages write "title" "body"',
+    '  ... | volute pages write "title"',
+    "",
+    "If you passed a flag: `pages write` has none of its own (only the global --mind). An" +
+      " unrecognized flag is dropped and its value becomes the [content] argument, which is" +
+      " exactly how piped text gets replaced.",
+  ].join("\n");
+}
+
 export function createCommands(): Record<string, ExtensionCommand> {
   return {
     write: {
@@ -126,13 +203,29 @@ export function createCommands(): Record<string, ExtensionCommand> {
         'volute pages write "The tideline" "Something I noticed this morning."',
         'echo "piped body" | volute pages write "A shorter thought"',
       ],
-      handler: async ({ args }, ctx) => {
+      handler: async ({ args, rest }, ctx) => {
         const mindName = ctx.mindName;
         if (!mindName) return { error: "No mind specified (use --mind or VOLUTE_MIND)" };
         if (!ctx.db) return { error: "Database not available" };
 
+        // Before anything is written: `pages write "T" --tag sea "the essay"` put
+        // `sea` in [content] and the essay here, and published the three-letter one.
+        if (rest.length > 0) {
+          return {
+            error: unexpectedArgs(rest, 'Usage: volute pages write "title" "content"'),
+          };
+        }
+
         const title = args.title;
-        const body = args.content ?? ctx.stdin;
+        // Whitespace-only stdin is no stdin: an agent's shell, cron and `ssh host
+        // cmd` all attach empty pipes, and treating one as a body would refuse
+        // every ordinary `pages write "title" "body"` run from those callers.
+        const piped = ctx.stdin?.trim() ? ctx.stdin : undefined;
+        const positional = args.content;
+        if (positional !== undefined && piped !== undefined) {
+          return { error: ambiguousWriteInput(positional, piped) };
+        }
+        const body = positional ?? piped;
         if (!title || !body) {
           return { error: 'Usage: volute pages write "title" "content"' };
         }
@@ -140,9 +233,9 @@ export function createCommands(): Record<string, ExtensionCommand> {
         const mindDir = await ctx.getMindDir(mindName);
         if (!mindDir) return { error: `Mind not found: ${mindName}` };
 
-        let written: ReturnType<typeof writeQuickPage>;
+        let written: Awaited<ReturnType<typeof writeQuickPage>>;
         try {
-          written = writeQuickPage(ctx, mindName, mindDir, title, body);
+          written = await writeQuickPage(ctx, mindName, mindDir, title, body);
         } catch (err) {
           return { error: `Failed to write page: ${(err as Error).message}` };
         }
@@ -164,9 +257,9 @@ export function createCommands(): Record<string, ExtensionCommand> {
         );
 
         const port = process.env.VOLUTE_DAEMON_PORT || "1618";
-        return {
-          output: `Published: ${ref}\nhttp://localhost:${port}/ext/pages/public/${ref}`,
-        };
+        const lines = [`Published: ${ref}`, `http://localhost:${port}/ext/pages/public/${ref}`];
+        lines.push(...ownershipNote(written.ownershipWarning));
+        return { output: lines.join("\n") };
       },
     },
 
@@ -288,7 +381,7 @@ export function createCommands(): Record<string, ExtensionCommand> {
         'volute pages comment mimsy/tideline "Built one of my own." --page tide-machine.html',
         'volute pages comment mimsy/tideline "$(cat reply.md)" --as-page "On the tideline"',
       ],
-      handler: async ({ args, flags }, ctx) => {
+      handler: async ({ args, flags, rest }, ctx) => {
         const db = ctx.db;
         if (!db) return { error: "Database not available" };
         const mindName = ctx.mindName;
@@ -297,8 +390,17 @@ export function createCommands(): Record<string, ExtensionCommand> {
         const user = await ctx.getUserByUsername(mindName);
         if (!user) return { error: `Unknown mind: ${mindName}` };
 
-        const content = args.content ?? ctx.stdin;
-        if (!content) return { error: 'Usage: volute pages comment <mind>/<file> "content"' };
+        const usage = 'Usage: volute pages comment <mind>/<file> "content"';
+        if (rest.length > 0) return { error: unexpectedArgs(rest, usage) };
+
+        // The same ambiguity `pages write` refuses, and it costs more here: with
+        // --as-page the losing text is not just a comment, it is a published page.
+        const pipedComment = ctx.stdin?.trim() ? ctx.stdin : undefined;
+        if (args.content !== undefined && pipedComment !== undefined) {
+          return { error: ambiguousWriteInput(args.content, pipedComment) };
+        }
+        const content = args.content ?? pipedComment;
+        if (!content) return { error: usage };
 
         const resolved = resolveRef(db, args.ref ?? "");
         if ("error" in resolved) return { error: resolved.error };
@@ -323,6 +425,7 @@ export function createCommands(): Record<string, ExtensionCommand> {
         // Resolved first: if the response can't get a home, say so rather than
         // silently posting a comment that claims a page which isn't there.
         let body: PageRef | null = null;
+        let ownershipWarning: string | null = null;
         if (attach) {
           const found = resolveAttachedPage(db, user.username, attach);
           if ("error" in found) return { error: found.error };
@@ -331,6 +434,7 @@ export function createCommands(): Record<string, ExtensionCommand> {
           const written = await writeResponsePage(ctx, user.username, asPage, content);
           if ("error" in written) return { error: written.error };
           body = written.ref;
+          ownershipWarning = written.ownershipWarning;
         }
 
         const created = await addComment(db, ctx.getUser, ref, user.id, content, { body });
@@ -355,6 +459,7 @@ export function createCommands(): Record<string, ExtensionCommand> {
             : "Comment added.";
         const lines = [placed];
         if (hailed.length > 0) lines.push(`Named: ${hailed.map((h) => `@${h}`).join(", ")}.`);
+        lines.push(...ownershipNote(ownershipWarning));
         return { output: lines.join("\n") };
       },
     },
@@ -399,9 +504,11 @@ export function createCommands(): Record<string, ExtensionCommand> {
 
         setCommentBody(db, id, written.ref);
         return {
-          output:
-            `Promoted comment #${id} to ${refOf(written.ref)}.\n` +
+          output: [
+            `Promoted comment #${id} to ${refOf(written.ref)}.`,
             `It still stands in the thread on ${comment.mind}/${comment.file} — now as a pointer to your page.`,
+            ...ownershipNote(written.ownershipWarning),
+          ].join("\n"),
         };
       },
     },
@@ -416,7 +523,10 @@ export function createCommands(): Record<string, ExtensionCommand> {
 
         const citations = citationsOf(db, mindName);
         if (citations.length === 0) {
-          return { output: "No pages name you yet." };
+          // States the grammar it actually searched for. "No pages name you" reads
+          // as a claim about every page here, and a mind that has been named in
+          // prose without the `@` learns from it that the instrument lies.
+          return { output: "No pages @-mention you yet." };
         }
         const lines = citations.map(
           (c) => `${c.mind}/${c.file}${c.created_at ? `  (${formatDate(c.created_at)})` : ""}`,
@@ -660,9 +770,23 @@ export function createCommands(): Record<string, ExtensionCommand> {
         all: { type: "boolean", description: "Show pages from all minds" },
         shared: { type: "boolean", description: "Show shared pages status" },
       },
-      handler: async ({ flags }, ctx) => {
+      handler: async ({ flags, rest }, ctx) => {
         const db = ctx.db;
         if (!db) return { error: "Database not available" };
+
+        // `pages list gardener` used to print the caller's own pages and exit 0 —
+        // an answer to a question nobody asked, wearing the answer to the one that
+        // was. `list` declares no positional args, so anything here is either a
+        // stray word or the orphaned value of a flag the parser dropped (#907).
+        if (rest.length > 0) {
+          return {
+            error: unexpectedArgs(
+              rest,
+              "`pages list` takes no arguments — it lists your own pages. Use --all to list " +
+                "every mind's, or `pages read <mind>/<file>` to open one.",
+            ),
+          };
+        }
 
         const allFlag = flags.all as boolean;
         const port = process.env.VOLUTE_DAEMON_PORT || "1618";

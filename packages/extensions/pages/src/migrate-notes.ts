@@ -22,14 +22,14 @@
  * Applying is a separate, explicit step.
  */
 
-import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { resolve, sep } from "node:path";
+import { dirname, resolve, sep } from "node:path";
 
 import type { Database, ExtensionContext } from "@volute/extensions";
 
 import { getPage, upsertPageWithTimestamps } from "./db.js";
+import { chownToMind, resolvePagesWrite } from "./ownership.js";
 import { QUICK_DIR, quickPageContent } from "./publish.js";
 
 export type NoteRow = {
@@ -91,13 +91,6 @@ export type MigrationPlan = {
   /** Notes per resolved author — reconciles against the table in issue #807. */
   byAuthor: { author: string; notes: number; comments: number; reactions: number }[];
 };
-
-/** Change a migrated file's owner to the mind's OS user (user-isolation installs). */
-function chownToMind(path: string, user: string): Promise<void> {
-  return new Promise((res, rej) => {
-    execFile("chown", [`${user}:volute`, path], (err) => (err ? rej(err) : res()));
-  });
-}
 
 /** Default location of the Notes extension database, given the Pages data dir. */
 export function defaultNotesDbPath(pagesDataDir: string): string {
@@ -448,14 +441,20 @@ export async function applyMigration(
 
     // Write the mind's working copy and the served snapshot, then record the page
     // with the note's own timestamps.
-    mkdirSync(resolve(pagesDir, QUICK_DIR), { recursive: true });
-    writeFileSync(target, content, "utf-8");
+    const quickDir = resolve(pagesDir, QUICK_DIR);
+    mkdirSync(quickDir, { recursive: true });
+    // Real-path containment, not the string prefix checked above: the mind owns
+    // every directory on this path and can swap one for a symlink, which would
+    // otherwise make the daemon write through it as root. See `resolvePagesWrite`.
+    const realTarget = resolvePagesWrite(mindDir, target);
+    const realQuickDir = dirname(realTarget);
+    writeFileSync(realTarget, content, "utf-8");
 
     const snapshotFile = resolve(ctx.dataDir, "sites", mind, file);
     mkdirSync(resolve(ctx.dataDir, "sites", mind, QUICK_DIR), { recursive: true });
     writeFileSync(snapshotFile, content, "utf-8");
 
-    const hash = createHash("sha256").update(readFileSync(target)).digest("hex");
+    const hash = createHash("sha256").update(readFileSync(realTarget)).digest("hex");
 
     pagesDb.exec("BEGIN");
     try {
@@ -509,14 +508,10 @@ export async function applyMigration(
 
     // Under user isolation the daemon runs as root, so a file it writes into the
     // mind's home lands root-owned and the mind cannot edit its own page. Chown
-    // is best-effort: failing it leaves a readable page, not a lost one.
-    if (ctx.isIsolationEnabled()) {
-      try {
-        await chownToMind(target, ctx.getMindUser(mind));
-      } catch (err) {
-        console.warn(`[pages] failed to chown ${target} for ${mind}: ${(err as Error).message}`);
-      }
-    }
+    // is best-effort: failing it leaves a readable page, not a lost one. The
+    // directory goes with the file — the mind that cannot write `notes/` cannot
+    // add a page beside the migrated ones.
+    await chownToMind(ctx, mind, [realQuickDir, realTarget]);
 
     migrated++;
   }
