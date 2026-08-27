@@ -1,12 +1,12 @@
-import { readFileSync, watchFile } from "node:fs";
+import { readFileSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
 import {
-  AuthStorage,
   createAgentSession,
   DefaultResourceLoader,
   type ExtensionFactory,
   getAgentDir,
   ModelRegistry,
+  ModelRuntime,
   SessionManager,
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
@@ -81,7 +81,7 @@ type PiSession = {
 /** Stop self-rotating after this many back-to-back rotations that didn't reduce context. */
 const MAX_CONSECUTIVE_ROTATIONS = 3;
 
-export function createMind(options: {
+export async function createMind(options: {
   systemPrompt: string;
   cwd: string;
   mindDir: string;
@@ -93,11 +93,11 @@ export function createMind(options: {
   /** Estimated-token budget for seeding a fresh persistent session. 0 disables. Default 30000. */
   seedTokens?: number;
   subagents?: Record<string, SubagentConfig>;
-}): {
+}): Promise<{
   resolve: HandlerResolver;
   getContextInfo: () => Promise<ContextInfo>;
   getContextMessages: () => Promise<ContextMessages>;
-} {
+}> {
   const sessions = new Map<string, PiSession>();
   const prompts = loadPrompts();
   const compactionInstructions = prompts.compaction_instructions;
@@ -110,8 +110,11 @@ export function createMind(options: {
 
   // Shared setup (created once)
   const modelStr = options.model || process.env.PI_MODEL || "anthropic:claude-sonnet-4-20250514";
-  const authStorage = AuthStorage.create();
-  const modelRegistry = ModelRegistry.create(authStorage);
+  // ModelRuntime is the canonical model/auth object since pi-coding-agent 0.84;
+  // it owns the credential store that AuthStorage used to be. ModelRegistry is now
+  // a thin synchronous facade over it, kept here for the find() lookup below.
+  const modelRuntime = await ModelRuntime.create();
+  const modelRegistry = new ModelRegistry(modelRuntime);
   // Prefer the registry's model: for OAuth providers with a per-credential baseUrl
   // (e.g. GitHub Copilot, whose token is pinned to an individual/business/enterprise
   // proxy host) it has already run the provider's modifyModels() patch. The static
@@ -122,28 +125,11 @@ export function createMind(options: {
   const [modelProvider, ...modelRest] = modelStr.split(":");
   const model = modelRegistry.find(modelProvider, modelRest.join(":")) ?? resolveModel(modelStr);
 
-  // The daemon centrally refreshes the system OAuth token and rewrites auth.json
-  // with the fresh token. Watch the file and reload so a running mind adopts the
-  // new token without a restart (mirrors the Claude Agent SDK credential reload).
-  // This is why the mind itself does not refresh the rotating grant.
-  const piAuthPath = process.env.PI_CODING_AGENT_DIR
-    ? resolvePath(process.env.PI_CODING_AGENT_DIR, "auth.json")
-    : null;
-  if (piAuthPath) {
-    try {
-      watchFile(piAuthPath, { interval: 2000 }, (curr, prev) => {
-        if (curr.mtimeMs === prev.mtimeMs) return;
-        try {
-          authStorage.reload();
-          log("mind", "reloaded auth.json after credential refresh");
-        } catch (err) {
-          log("mind", "failed to reload auth.json:", err);
-        }
-      });
-    } catch (err) {
-      log("mind", "failed to watch auth.json for credential refresh:", err);
-    }
-  }
+  // The daemon centrally refreshes the system OAuth token and rewrites auth.json,
+  // and a running mind adopts it without a restart. Up to pi-coding-agent 0.80
+  // that needed a watchFile + authStorage.reload() here; since 0.84 the credential
+  // store compares auth.json's file revision on every read and reloads itself when
+  // it moves, so a watcher would only duplicate work the next read already does.
 
   // --- Subagents (config-driven) ---
 
@@ -184,7 +170,7 @@ export function createMind(options: {
 
   const subagentExtension =
     Object.keys(subagents).length > 0
-      ? createSubagentExtension(subagents, { cwd: options.cwd, model, authStorage, modelRegistry })
+      ? createSubagentExtension(subagents, { cwd: options.cwd, model, modelRuntime })
       : undefined;
 
   // --- Startup context (loaded once, injected on first turn per session) ---
@@ -516,8 +502,7 @@ export function createMind(options: {
       cwd: options.cwd,
       model,
       thinkingLevel: options.thinkingLevel,
-      authStorage,
-      modelRegistry,
+      modelRuntime,
       sessionManager,
       settingsManager,
       resourceLoader,

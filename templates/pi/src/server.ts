@@ -23,7 +23,7 @@ const systemPrompt = withMechanicsDoc(loadSystemPrompt(config), resolve("home"))
 const pkg = loadPackageInfo();
 
 const mindDir = resolve(".");
-const mind = createMind({
+const mind = await createMind({
   systemPrompt,
   cwd: resolve("home"),
   mindDir,

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { needsRefresh } from "../packages/daemon/src/web/api/system.js";
+import { needsRefresh } from "../packages/daemon/src/lib/ai-service.js";
 
 // Freeze the clock so boundary cases are deterministic — otherwise the
 // milliseconds elapsed between building the fixture and reading Date.now()

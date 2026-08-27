@@ -1,11 +1,10 @@
 import type { Model } from "@earendil-works/pi-ai";
 import {
-  type AuthStorage,
   createAgentSession,
   DefaultResourceLoader,
   type ExtensionFactory,
   getAgentDir,
-  type ModelRegistry,
+  type ModelRuntime,
   SessionManager,
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
@@ -24,8 +23,7 @@ export function createSubagentExtension(
   context: {
     cwd: string;
     model: Model<any>;
-    authStorage: AuthStorage;
-    modelRegistry: ModelRegistry;
+    modelRuntime: ModelRuntime;
   },
 ): ExtensionFactory {
   return (pi) => {
@@ -56,8 +54,7 @@ export function createSubagentExtension(
               resourceLoader: loader,
               sessionManager: SessionManager.inMemory(),
               settingsManager: SettingsManager.inMemory({}),
-              authStorage: context.authStorage,
-              modelRegistry: context.modelRegistry,
+              modelRuntime: context.modelRuntime,
             });
 
             const textParts: string[] = [];
