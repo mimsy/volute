@@ -19,6 +19,10 @@ import {
 } from "../../lib/chat/system-events.js";
 import { getSpiritName } from "../../lib/config/setup.js";
 import { getUpgradeBlocked } from "../../lib/daemon/auto-upgrade.js";
+import {
+  forgetCredentialDegraded,
+  getCredentialDegraded,
+} from "../../lib/daemon/credential-recovery.js";
 import { getMindManager, MindStartupError } from "../../lib/daemon/mind-manager.js";
 // Lifecycle functions from mind-service.ts
 import {
@@ -311,6 +315,17 @@ async function proxyToMind(c: Context<AuthEnv>, path: string) {
   }
 }
 
+/**
+ * Host-visible degraded-credentials state: the mind is up but running without model
+ * credentials because its provider's OAuth refresh is failing. Undefined (and so
+ * absent from the JSON) when the mind is healthy. Privileged callers only — it names
+ * a provider and a fault window.
+ */
+function credentialDegradedField(name: string): { provider: string; since: string } | undefined {
+  const state = getCredentialDegraded(name);
+  return state ? { provider: state.provider, since: state.since.toISOString() } : undefined;
+}
+
 const app = new Hono<AuthEnv>()
   .post("/", requireAdminOrSystem, zValidator("json", createMindSchema), async (c) => {
     const result = await createMind(c.req.valid("json"), { username: c.get("user")?.username });
@@ -385,6 +400,7 @@ const app = new Hono<AuthEnv>()
           hasPages,
           templateStale: isTemplateStale(entry),
           upgradeBlocked: getUpgradeBlocked(entry.name)?.reason,
+          credentialDegraded: credentialDegradedField(entry.name),
           lastActiveAt,
         };
       }),
@@ -437,6 +453,7 @@ const app = new Hono<AuthEnv>()
       hasPages,
       templateStale: isTemplateStale(entry),
       upgradeBlocked: getUpgradeBlocked(name)?.reason,
+      credentialDegraded: credentialDegradedField(name),
       ...(notice && {
         lastNotice: {
           kind: notice.kind,
@@ -1132,6 +1149,7 @@ const app = new Hono<AuthEnv>()
       }
     }
 
+    forgetCredentialDegraded(name);
     await removeMind(name);
     await deleteMindUser(name);
     invalidateMindUserCache(name);

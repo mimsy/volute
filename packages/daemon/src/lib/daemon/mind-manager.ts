@@ -22,6 +22,7 @@ import { checkHealth } from "../util/health.js";
 import { clearJsonMap, loadJsonMap, saveJsonMap } from "../util/json-state.js";
 import log from "../util/logger.js";
 import { RotatingLog } from "../util/rotating-log.js";
+import { markCredentialDegraded, noteCredentialHealthy } from "./credential-recovery.js";
 import { injectPiProviderCredentials, writeClaudeCredentials } from "./credential-sync.js";
 import { generateMindToken, revokeMindToken } from "./mind-tokens.js";
 import {
@@ -506,34 +507,31 @@ export class MindManager {
           if (key && oauth) {
             const claudeDir = await writeClaudeCredentials(resolve(dir, "home"), baseName, oauth);
             env.CLAUDE_CONFIG_DIR = claudeDir;
+            await noteCredentialHealthy(name);
           } else {
             // OAuth is configured but resolveApiKey couldn't derive a token and
             // there's no static-key/env fallback — a transient refresh/auth-server
-            // failure. The mind would otherwise spawn credential-less with no
-            // CLAUDE_CONFIG_DIR, which credential-sync can't repair, leaving it
-            // silent until manually restarted. Surface it, don't fail quietly (#701).
-            mlog.error(
-              `Anthropic OAuth token refresh is failing for ${name}; it will spawn without ` +
-                `credentials and stay silent until the provider recovers and it is restarted`,
-            );
-            void recordNotice({
-              mind: name,
-              thread: "main",
-              kind: "startup",
-              reason: "oauth_refresh_failed",
-              detail:
-                "Anthropic authentication is temporarily unavailable (OAuth token refresh is " +
-                "failing), so you started without model credentials and may be unable to respond " +
-                "until it recovers. This is usually transient; if it persists, ask your host to " +
-                "re-check the anthropic provider.",
-            });
+            // failure. The mind spawns credential-less and with no CLAUDE_CONFIG_DIR
+            // in its env, so a later fan-out write to that file isn't reliably picked
+            // up — a restart, which rebuilds the env, is the repair that works.
+            // Hand it to the recovery loop: it records the one-per-outage notice
+            // (#701), alerts the host, and restarts the mind itself once a token
+            // comes back — previously it just stayed silent until someone noticed.
+            await markCredentialDegraded(name, "anthropic");
           }
         } else {
           // resolveApiKey covers both the configured key and an ambient
           // ANTHROPIC_API_KEY (via pi-ai). We inject it explicitly because the
           // mind env is built from an allowlist and no longer inherits it.
           const apiKey = await resolveApiKey("anthropic");
-          if (apiKey) env.ANTHROPIC_API_KEY = apiKey;
+          if (apiKey) {
+            env.ANTHROPIC_API_KEY = apiKey;
+            // A host who answers an OAuth outage by switching the provider to a
+            // static key gets a mind that spawns healthy down THIS branch. Without
+            // clearing here it would stay in the degraded set: wrong badge, and the
+            // next probe would "recover" it by restarting a mind that is already fine.
+            await noteCredentialHealthy(name);
+          }
         }
       } catch (err) {
         mlog.error(`failed to inject Anthropic credentials for ${name}`, log.errorData(err));

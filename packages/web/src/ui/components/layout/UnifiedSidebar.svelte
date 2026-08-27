@@ -300,6 +300,12 @@ let isSystemActive = $derived(
                         use:tooltipAction={{ text: mind.upgradeBlocked, position: "right" }}
                       >upgrade blocked</span>
                     {/if}
+                    {#if mind.credentialDegraded}
+                      <span
+                        class="credential-badge"
+                        use:tooltipAction={{ text: `Running without model credentials since ${new Date(mind.credentialDegraded.since).toLocaleString()} — ${mind.credentialDegraded.provider} OAuth token refresh is failing. The daemon is retrying and will restart this mind automatically when it recovers.`, position: "right" }}
+                      >no credentials</span>
+                    {/if}
                     {#if mindUnread > 0}
                       <span class="unread-dot"></span>
                     {/if}
@@ -667,6 +673,16 @@ let isSystemActive = $derived(
   }
 
   .upgrade-blocked-badge {
+    padding: 1px 6px;
+    border-radius: var(--radius);
+    background: var(--red-bg);
+    color: var(--red);
+    font-size: 10px;
+    font-weight: 500;
+    flex-shrink: 0;
+  }
+
+  .credential-badge {
     padding: 1px 6px;
     border-radius: var(--radius);
     background: var(--red-bg);
