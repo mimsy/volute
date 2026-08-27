@@ -1,7 +1,9 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
+import { deliverEvent } from "../chat/system-events.js";
 import { readSystemsConfig } from "../config/systems-config.js";
 import { buildMindBaseEnv, getMindManager } from "../daemon/mind-manager.js";
+import { publish as publishActivity } from "../events/activity-events.js";
 import { migrateSkillsToTemplate } from "../skills.js";
 import {
   applyTemplateHomeFiles,
@@ -468,28 +470,85 @@ async function mergeUpgradeAndRestart(
     log.warn(`failed to update template for ${mindName}`, log.errorData(err));
   }
 
+  const depsWarning = await installDepsAndRestart(mindName, dir, preMergeHead, restart);
+  return {
+    ok: true,
+    warning: withRestoreWarning(
+      [depsWarning, switchWarning].filter(Boolean).join(" ") || undefined,
+    ),
+  };
+}
+
+/** The MindManager surface {@link installDepsAndRestart} uses — narrowed so tests can stub it. */
+type RestartTarget = {
+  isRunning(name: string): boolean;
+  stopMind(name: string): Promise<void>;
+  startMind(name: string, opts?: { healthTimeoutMs?: number }): Promise<void>;
+  setPendingContext(name: string, context: Record<string, unknown>): void;
+};
+
+/** Collaborators of {@link installDepsAndRestart}, defaulting to the real daemon singletons. */
+export type InstallAndRestartDeps = {
+  installNeeded: (dir: string, preMergeRef: string) => Promise<boolean>;
+  install: (dir: string, mindName: string) => Promise<void>;
+  alert: (mindName: string, text: string) => Promise<void>;
+  getManager: () => RestartTarget;
+};
+
+const defaultInstallAndRestartDeps: InstallAndRestartDeps = {
+  installNeeded: npmInstallNeeded,
+  install: npmInstallAsMind,
+  alert: alertUpgradeDepsFailure,
+  getManager: getMindManager,
+};
+
+/**
+ * Install the merged dependencies and restart the mind onto the new source.
+ * Returns a warning when either step went wrong; never throws.
+ *
+ * A failed install does **not** cancel the restart. The new `src/` is already on
+ * disk and the template hash in the DB is already advanced, so the mind is no
+ * longer stale: nothing — not the hourly auto-upgrade pass, not the staleness
+ * badge — will ever come back and finish the job. Leaving the old process running
+ * against new source on disk is therefore not "safe", it is permanent, and it is
+ * what shipped mimsy fifteen days of 404s against an API path its running code
+ * still called (#973). Most upgrades don't need the new deps at all, so the
+ * restart usually just works; when it doesn't, the mind fails loudly and crash
+ * recovery and the alert below both fire, which is the outcome a host can act on.
+ */
+export async function installDepsAndRestart(
+  mindName: string,
+  dir: string,
+  preMergeHead: string,
+  restart: boolean,
+  deps: InstallAndRestartDeps = defaultInstallAndRestartDeps,
+): Promise<string | undefined> {
+  let depsWarning: string | undefined;
+
   // Skip npm install when the merge didn't touch dependencies — even a no-op
   // install writes enough to freeze slow storage for a minute or more.
-  if (await npmInstallNeeded(dir, preMergeHead)) {
+  if (await deps.installNeeded(dir, preMergeHead)) {
     try {
-      await npmInstallAsMind(dir, mindName);
+      await deps.install(dir, mindName);
     } catch (err) {
       log.warn(`npm install failed after upgrade merge for ${mindName}`, log.errorData(err));
-      return {
-        ok: true,
-        warning: withRestoreWarning(
-          `Upgrade merged but npm install failed: ${err instanceof Error ? err.message : String(err)}. You may need to run npm install manually.`,
-        ),
-      };
+      const detail = installFailureDetail(err);
+      depsWarning =
+        `Upgrade merged but npm install failed (including a retry against the registry): ${detail} ` +
+        `The mind ${restart ? "was still restarted onto" : "will start on"} the new code, which may ` +
+        `not run until \`npm install\` succeeds in ${dir}. Nothing retries this automatically.`;
+      // Tell the mind and the dashboard before the restart: the restart may fail,
+      // and this is the explanation for why if it does.
+      await deps.alert(mindName, upgradeDepsFailureText(mindName, dir, detail, restart));
     }
   } else {
     log.info(`skipping npm install for ${mindName} — dependencies unchanged by upgrade`);
   }
 
-  const manager = getMindManager();
+  const manager = deps.getManager();
   if (!restart) {
     manager.setPendingContext(mindName, { type: "upgraded" });
-    return { ok: true, warning: withRestoreWarning(switchWarning) };
+    return depsWarning;
   }
 
   // Restart mind with upgrade context
@@ -503,15 +562,71 @@ async function mergeUpgradeAndRestart(
     // default 30s — timing out here kills the child and leaves the mind down.
     await manager.startMind(mindName, { healthTimeoutMs: 120_000 });
   } catch (e) {
-    return {
-      ok: true,
-      warning: withRestoreWarning(
-        `Upgrade merged but mind restart failed: ${e instanceof Error ? e.message : String(e)}`,
-      ),
-    };
+    const restartWarning = `Upgrade merged but mind restart failed: ${e instanceof Error ? e.message : String(e)}`;
+    return [depsWarning, restartWarning].filter(Boolean).join(" ");
   }
 
-  return { ok: true, warning: withRestoreWarning(switchWarning) };
+  return depsWarning;
+}
+
+/** The failing install's stderr where there is any, else the error message. */
+function installFailureDetail(err: unknown): string {
+  const stderr = String((err as { stderr?: string })?.stderr ?? "").trim();
+  return stderr || (err instanceof Error ? err.message : String(err));
+}
+
+/** What the mind is told when its upgrade landed but its dependencies didn't. */
+function upgradeDepsFailureText(
+  mindName: string,
+  dir: string,
+  detail: string,
+  restarted: boolean,
+): string {
+  return (
+    `Your framework upgrade merged, but installing its dependencies failed — twice, the second ` +
+    `time against the registry rather than your local npm cache.\n\n${detail}\n\n` +
+    `Your new code is on disk and you ${restarted ? "have been restarted onto it" : "will start on it"}, ` +
+    `so anything the upgrade added that needs a new package will not work until this is fixed. ` +
+    `Nothing retries it for you: as far as Volute is concerned you are already upgraded. ` +
+    `Run \`npm install\` in ${dir} (or ask your host to), then \`volute mind restart ${mindName}\`.`
+  );
+}
+
+/**
+ * Fan a dependency-install failure out to the two audiences that can act on it: the
+ * mind, as an immediate system event carrying the npm output verbatim, and the host,
+ * as a `mind_error` row on the dashboard. A log line reaches neither (#808, #935).
+ *
+ * Never throws — an alert that fails must not break the upgrade it is reporting on.
+ */
+async function alertUpgradeDepsFailure(mindName: string, text: string): Promise<void> {
+  try {
+    await deliverEvent(mindName, {
+      type: "notice",
+      body: text,
+      meta: { subtype: "upgrade_deps_failed" },
+      delivery: "immediate",
+      whileSleeping: "queue",
+    });
+  } catch (err) {
+    log.error(
+      `failed to alert ${mindName} about its failed dependency install`,
+      log.errorData(err),
+    );
+  }
+  try {
+    await publishActivity({
+      type: "mind_error",
+      mind: mindName,
+      summary: `Upgrade merged but npm install failed for ${mindName} — dependencies are stale`,
+      metadata: { kind: "upgrade_deps_failed" },
+    });
+  } catch (err) {
+    log.error(
+      `failed to publish the dependency-install failure for ${mindName}`,
+      log.errorData(err),
+    );
+  }
 }
 
 function upgradeVariantName(mindName: string): string {
