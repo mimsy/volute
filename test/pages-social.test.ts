@@ -17,7 +17,11 @@ import {
   syncPublishedPages,
 } from "../packages/extensions/pages/src/db.js";
 import { parseFrontmatter } from "../packages/extensions/pages/src/markdown.js";
-import { linkMentions, parseMentions } from "../packages/extensions/pages/src/mentions.js";
+import {
+  linkMentions,
+  parseHtmlMentions,
+  parseMentions,
+} from "../packages/extensions/pages/src/mentions.js";
 import {
   allocateQuickPath,
   defaultPromotionTitle,
@@ -287,7 +291,7 @@ describe("pages quick path", () => {
     assert.equal(allocateQuickPath(resolve(dir, "home", "pages"), "———"), "notes/untitled.md");
   });
 
-  it("never reuses a tombstoned address, so a dead thread can't graft onto new writing", () => {
+  it("never reuses a tombstoned address, so a dead thread can't graft onto new writing", async () => {
     const ctx = fakeCtx(dir);
     // A page existed at notes/the-tideline.md, was commented on, then deleted —
     // the row survives as a tombstone holding the conversation.
@@ -299,24 +303,24 @@ describe("pages quick path", () => {
     rmSync(resolve(dir, "home", "pages", "notes"), { recursive: true, force: true });
 
     // Writing something new with the same title must not land on that address.
-    const result = writeQuickPage(ctx, "mimsy", dir, "The tideline", "Something unrelated.");
+    const result = await writeQuickPage(ctx, "mimsy", dir, "The tideline", "Something unrelated.");
     assert.equal(result.file, "notes/the-tideline-2.md");
     assert.ok(getPage(db, "mimsy", "notes/the-tideline.md")?.deleted_at, "tombstone undisturbed");
   });
 
-  it("announces the page once, not twice", () => {
+  it("announces the page once, not twice", async () => {
     const events: string[] = [];
     const ctx = fakeCtx(dir);
     ctx.publishActivity = (e) => events.push(e.summary);
-    writeQuickPage(ctx, "mimsy", dir, "The tideline", "body");
+    await writeQuickPage(ctx, "mimsy", dir, "The tideline", "body");
     // The caller emits the rich event; the publish inside must stay quiet about
     // the file it was handed, or one `pages write` posts to the feed twice.
     assert.deepEqual(events, []);
   });
 
-  it("writes and publishes in a single step", () => {
+  it("writes and publishes in a single step", async () => {
     const ctx = fakeCtx(dir);
-    const result = writeQuickPage(ctx, "mimsy", dir, "The tideline", "Something I noticed.");
+    const result = await writeQuickPage(ctx, "mimsy", dir, "The tideline", "Something I noticed.");
 
     assert.equal(result.file, "notes/the-tideline.md");
     // Published, not drafted — the whole point of the quick path.
@@ -327,9 +331,9 @@ describe("pages quick path", () => {
     assert.deepEqual(result.publish.diff.added, ["notes/the-tideline.md"]);
   });
 
-  it("writes frontmatter with the title so the page renders with one", () => {
+  it("writes frontmatter with the title so the page renders with one", async () => {
     const ctx = fakeCtx(dir);
-    writeQuickPage(ctx, "mimsy", dir, 'A "quoted" title', "body");
+    await writeQuickPage(ctx, "mimsy", dir, 'A "quoted" title', "body");
     const written = readFileSync(
       resolve(dir, "home", "pages", "notes", "a-quoted-title.md"),
       "utf-8",
@@ -549,6 +553,69 @@ describe("@mind-name: where it appears decides its tier", () => {
       assert.deepEqual(parseMentions("thanks @pip."), ["pip"]);
       assert.deepEqual(parseMentions("thanks @pip-"), ["pip"]);
     });
+
+    it("reads names out of an HTML page's prose", () => {
+      // HTML is one of the two ways to write a page here, and the house's most
+      // prolific publisher writes it. Reading @name only out of markdown made a
+      // whole medium's worth of naming invisible to the minds being named.
+      assert.deepEqual(
+        parseHtmlMentions("<article><p>Building on @mimsy's work, with @pip.</p></article>"),
+        ["mimsy", "pip"],
+      );
+    });
+
+    it("does not read an @ out of markup rather than prose", () => {
+      // Attribute values go with their tags: a mailto: or an anchor already
+      // rewritten by linkMentions must not mint a second citation.
+      assert.deepEqual(parseHtmlMentions('<a href="mailto:james@mimsy.ai">write</a>'), []);
+      assert.deepEqual(parseHtmlMentions('<img alt="@pip" src="x.png"><p>Hello @mimsy.</p>'), [
+        "mimsy",
+      ]);
+    });
+
+    it("does not read an @ out of an HTML code sample", () => {
+      assert.deepEqual(parseHtmlMentions("<pre><code>volute chat send @mimsy hi</code></pre>"), []);
+      assert.deepEqual(
+        parseHtmlMentions("<p>Ask @pip.</p><code>@mimsy</code><script>x('@whorl')</script>"),
+        ["pip"],
+      );
+    });
+
+    it("treats a backtick in HTML as an ordinary character, not a code fence", () => {
+      // HTML says "this is code" with <code>/<pre>. Running the markdown code mask
+      // over HTML too would let one stray ` swallow every mention after it, and a
+      // lone ``` blank the rest of the page — silently, and only for HTML authors.
+      assert.deepEqual(parseHtmlMentions("<p>press ` then ask @pip ` ok</p>"), ["pip"]);
+      assert.deepEqual(parseHtmlMentions("<p>```</p><p>Ask @mimsy.</p>"), ["mimsy"]);
+    });
+
+    it("stays linear on a page full of unclosed angle brackets", () => {
+      // `describePages` is synchronous on the daemon's event loop and any mind can
+      // publish a page into it — including into the commons the daemon sweeps at
+      // startup. With `[^>]` inside the tag patterns this input was quadratic:
+      // ~3.5s at 50KB, and minutes at a few hundred KB.
+      const hostile = "<".repeat(200_000);
+      const started = Date.now();
+      assert.deepEqual(parseHtmlMentions(hostile), []);
+      const elapsed = Date.now() - started;
+      assert.ok(elapsed < 2000, `masking 200KB of "<" took ${elapsed}ms — quadratic again?`);
+    });
+
+    it("does not read a name out of an HTML comment", () => {
+      // A comment is a note to the author, not a citation — and a commented-out
+      // block is commented out, so the comment rule has to win over the tag rule.
+      assert.deepEqual(parseHtmlMentions("<p>Ask @pip.</p><!-- and @mimsy --><p>x</p>"), ["pip"]);
+      assert.deepEqual(parseHtmlMentions("<!-- <script>@whorl</script> -->"), []);
+      assert.deepEqual(parseHtmlMentions("<p>@pip</p><!-- unterminated @mimsy"), ["pip"]);
+    });
+
+    it("treats an unterminated code block as running to the end, like a bare fence", () => {
+      // Same rule CODE_RE already applies to an unclosed ``` — and what a browser
+      // does with an unclosed <script>. Otherwise the tail of a malformed page
+      // reads as prose and mints citations out of a code sample.
+      assert.deepEqual(parseHtmlMentions("<p>Hi.</p><pre>@mimsy and @pip"), []);
+      assert.deepEqual(parseHtmlMentions("<p>Ask @pip.</p><script>send('@mimsy')"), ["pip"]);
+    });
   });
 
   describe("in a page body — a citation", () => {
@@ -583,6 +650,27 @@ describe("@mind-name: where it appears decides its tier", () => {
         assert.equal(cited.length, 1);
         assert.equal(cited[0].mind, "pip");
         assert.equal(cited[0].file, "a.md");
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it("is recorded for an HTML page too, not only markdown", () => {
+      // The bug this pins: `pages cited` answered "no pages name you" over a store
+      // full of HTML pages that named the asker, because the store had never been
+      // read for names at all.
+      const dir = mkdtempSync(resolve(tmpdir(), "pages-cite-html-"));
+      try {
+        writeFileSync(
+          resolve(dir, "index.html"),
+          "<html><body><p>Building on @mimsy's work.</p></body></html>",
+        );
+        syncPublishedPages(db, "pip", describePages(dir, ["index.html"]));
+
+        const cited = citationsOf(db, "mimsy");
+        assert.equal(cited.length, 1, "an HTML page that names you cites you");
+        assert.equal(cited[0].mind, "pip");
+        assert.equal(cited[0].file, "index.html");
       } finally {
         rmSync(dir, { recursive: true, force: true });
       }
@@ -738,12 +826,19 @@ describe("comments: false closes a page to responses", () => {
     assert.equal(parseFrontmatter("---\ntitle: x\n---\nx").comments, undefined);
   });
 
-  it("leaves the quick path untouched — writing something small stays open and cheap", () => {
+  it("leaves the quick path untouched — writing something small stays open and cheap", async () => {
     const mindDir = mkdtempSync(resolve(tmpdir(), "pages-quickmind-"));
     try {
       mkdirSync(resolve(mindDir, "home", "pages"), { recursive: true });
       const ctx = fakeCtx(mindDir);
-      const written = writeQuickPage(ctx, "mimsy", mindDir, "The tideline", "Something small.");
+      const written = await writeQuickPage(
+        ctx,
+        "mimsy",
+        mindDir,
+        "The tideline",
+        "Something small.",
+      );
+      assert.ok(written.file, "the write actually produced a file");
       assert.equal(areCommentsClosed(db, "mimsy", written.file), false);
     } finally {
       rmSync(mindDir, { recursive: true, force: true });

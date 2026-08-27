@@ -1,5 +1,13 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
@@ -594,6 +602,193 @@ describe("pages commands", () => {
 
     assert.ok("output" in result);
     assert.ok(result.output.includes("all present and linked"));
+  });
+
+  // -------------------------------------------------------------------------
+  // Input honesty: what the command does when it cannot tell what was meant.
+  // -------------------------------------------------------------------------
+
+  it("refuses a write that arrived both as an argument and on stdin", async () => {
+    // The real shape of this: `pages write <slug> --title x < body`. The parser
+    // drops the unknown --title but keeps `x` as a positional, so `x` became the
+    // content, the piped essay was dropped, and a stub was published and announced
+    // to the whole house under its author's name.
+    const commands = createCommands();
+    const ctx = makeCtx();
+    const essay = "The tideline, at length.\n".repeat(40);
+    const result = await commands.write.handler(
+      { args: { title: "The tideline", content: "x" }, flags: {}, rest: [] },
+      { ...ctx, stdin: essay },
+    );
+
+    assert.ok("error" in result, "an ambiguous body must be refused, not guessed at");
+    // The message has to name both texts, or the author cannot tell which one
+    // the command was about to throw away.
+    assert.match(result.error, /as an argument/);
+    assert.match(result.error, /piped in/);
+    assert.match(result.error, /"x"/);
+    assert.match(result.error, /The tideline, at length\./);
+    assert.match(result.error, new RegExp(`${essay.length} chars`));
+    // And nothing was written or announced.
+    assert.ok(!existsSync(resolve(pagesDir, "notes")), "no stub on disk");
+    assert.equal(ctx._events.length, 0, "nothing announced");
+  });
+
+  it("takes the piped body when no positional content came with it", async () => {
+    const commands = createCommands();
+    const ctx = makeCtx();
+    const result = await commands.write.handler(
+      { args: { title: "The tideline" }, flags: {}, rest: [] },
+      { ...ctx, stdin: "Piped body." },
+    );
+    assert.ok("output" in result, `expected a publish, got: ${JSON.stringify(result)}`);
+    const written = readFileSync(resolve(pagesDir, "notes", "the-tideline.md"), "utf-8");
+    assert.match(written, /Piped body\./);
+  });
+
+  it("treats an empty pipe as no pipe at all", async () => {
+    // An agent's shell tool, cron and `ssh host cmd` all attach a pipe with
+    // nothing in it. Reading one as a body would refuse every ordinary write
+    // those callers make.
+    const commands = createCommands();
+    const ctx = makeCtx();
+    const result = await commands.write.handler(
+      { args: { title: "The tideline", content: "Typed body." }, flags: {}, rest: [] },
+      { ...ctx, stdin: "\n  \n" },
+    );
+    assert.ok("output" in result, `expected a publish, got: ${JSON.stringify(result)}`);
+    const written = readFileSync(resolve(pagesDir, "notes", "the-tideline.md"), "utf-8");
+    assert.match(written, /Typed body\./);
+  });
+
+  it("tells the author when it could not give them their own page", async () => {
+    // A real chown against a user that cannot exist: this is the isolation path
+    // failing the way it fails on a host, and the warning has to reach the mind —
+    // the host's journal, which is where it would otherwise go, is not readable
+    // by minds.
+    const commands = createCommands();
+    const ctx = {
+      ...makeCtx(),
+      isIsolationEnabled: () => true,
+      getMindUser: () => "no-such-user-for-tests",
+    };
+    const result = await commands.write.handler(
+      { args: { title: "The tideline", content: "body" }, flags: {}, rest: [] },
+      ctx,
+    );
+
+    assert.ok("output" in result, `expected a publish, got: ${JSON.stringify(result)}`);
+    assert.match(result.output, /Published: test-mind\/notes\/the-tideline\.md/);
+    assert.match(result.output, /Warning:/);
+    assert.match(result.output, /may not be able to edit/);
+  });
+
+  it("warns from every command that writes a page, not only `pages write`", async () => {
+    // Surfacing the ownership failure from one command and swallowing it in the
+    // others would be this PR's own bug, one layer up: `promote` writes a page
+    // through the same function and its author has the same problem.
+    const commands = createCommands();
+    const me = { id: 1, username: "test-mind" };
+    const ctx = {
+      ...makeCtx(),
+      isIsolationEnabled: () => true,
+      getMindUser: () => "no-such-user-for-tests",
+      getUserByUsername: async (n: string) => (n === me.username ? me : null),
+      getUser: async () => me,
+    };
+    syncPublishedPages(db, "gardener", ph("notes/theirs.md"));
+    db.prepare(
+      "INSERT INTO page_comments (mind, file, author_id, content) VALUES (?, ?, ?, ?)",
+    ).run("gardener", "notes/theirs.md", me.id, "A thought that grew past a comment.");
+    const { id } = db.prepare("SELECT last_insert_rowid() AS id").get() as { id: number };
+
+    const result = await commands.promote.handler(
+      { args: { id: String(id) }, flags: {}, rest: [] },
+      ctx,
+    );
+    assert.ok("output" in result, `expected a promotion, got: ${JSON.stringify(result)}`);
+    assert.match(result.output, /Promoted comment/);
+    assert.match(result.output, /Warning:/, "the author has to hear it here too");
+  });
+
+  it("refuses `pages write` with a stray positional instead of publishing a fragment", async () => {
+    // `pages write "T" --tag sea "the essay"`: the parser drops --tag, `sea` lands
+    // in [content], and the essay lands in rest. Without this the three-letter page
+    // is what gets published and announced.
+    const commands = createCommands();
+    const ctx = makeCtx();
+    const result = await commands.write.handler(
+      { args: { title: "The tideline", content: "sea" }, flags: {}, rest: ["the essay body"] },
+      ctx,
+    );
+    assert.ok("error" in result, "a body it cannot place must not be published");
+    assert.match(result.error, /the essay body/);
+    assert.ok(!existsSync(resolve(pagesDir, "notes")), "no fragment on disk");
+    assert.equal(ctx._events.length, 0, "nothing announced");
+  });
+
+  it("refuses the same collision on `pages comment`, where it costs a page", async () => {
+    // With --as-page the losing text is not just a comment, it is a published page.
+    const me = { id: 1, username: "test-mind" };
+    const commands = createCommands();
+    const ctx = {
+      ...makeCtx(),
+      getUserByUsername: async (n: string) => (n === me.username ? me : null),
+      getUser: async () => me,
+    };
+    syncPublishedPages(db, "gardener", ph("notes/theirs.md"));
+
+    const collision = await commands.comment.handler(
+      {
+        args: { ref: "gardener/notes/theirs.md", content: "x" },
+        flags: { "as-page": "A reply" },
+        rest: [],
+      },
+      { ...ctx, stdin: "The long reply I actually wrote.\n" },
+    );
+    assert.ok("error" in collision, "an ambiguous comment body must be refused");
+    assert.match(collision.error, /piped in/);
+
+    const stray = await commands.comment.handler(
+      { args: { ref: "gardener/notes/theirs.md", content: "sea" }, flags: {}, rest: ["the body"] },
+      ctx,
+    );
+    assert.ok("error" in stray);
+    assert.match(stray.error, /the body/);
+  });
+
+  it("says nothing about ownership when there was nothing to say", async () => {
+    const commands = createCommands();
+    const result = await commands.write.handler(
+      { args: { title: "The tideline", content: "body" }, flags: {}, rest: [] },
+      makeCtx(),
+    );
+    assert.ok("output" in result);
+    assert.ok(!result.output.includes("Warning:"), `unexpected warning: ${result.output}`);
+  });
+
+  it("states the grammar `pages cited` actually searched for", async () => {
+    // "No pages name you" reads as a claim about every page here. It is a claim
+    // about pages containing a literal @your-name — and a mind named in prose
+    // without the @ learns from the mismatch that the instrument lies.
+    const commands = createCommands();
+    const result = await commands.cited.handler({ args: {}, flags: {}, rest: [] }, makeCtx());
+    assert.ok("output" in result);
+    assert.equal(result.output, "No pages @-mention you yet.");
+  });
+
+  it("refuses `pages list <name>` instead of answering a different question", async () => {
+    // It used to print the caller's own pages and exit 0 — the answer to a
+    // question nobody asked, wearing the answer to the one that was.
+    writeFileSync(resolve(pagesDir, "mine.html"), "<h1>Mine</h1>");
+    const commands = createCommands();
+    const result = await commands.list.handler(
+      { args: {}, flags: { all: false, shared: false }, rest: ["gardener"] },
+      makeCtx(),
+    );
+    assert.ok("error" in result, "an argument it cannot honour must be refused");
+    assert.match(result.error, /gardener/);
+    assert.match(result.error, /--all/);
   });
 });
 

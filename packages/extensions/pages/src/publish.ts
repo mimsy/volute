@@ -13,18 +13,20 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
-import { relative, resolve, sep } from "node:path";
+import { dirname, relative, resolve, sep } from "node:path";
 
 import type { ExtensionContext } from "@volute/extensions";
 
 import { knownPageFiles, type PageInput, syncPublishedPages } from "./db.js";
 import { parseLinks } from "./links.js";
 import { parseFrontmatter } from "./markdown.js";
-import { parseMentions } from "./mentions.js";
+import { parseHtmlMentions, parseMentions } from "./mentions.js";
+import { type ChownExec, chownToMind, resolvePagesWrite } from "./ownership.js";
 
 /** Subdirectory the quick path writes into. Conventional, not enforced. */
 export const QUICK_DIR = "notes";
@@ -39,20 +41,24 @@ export const QUICK_DIR = "notes";
  * keeping one implementation means the hash can't drift between callers and
  * spuriously mark every page as changed.
  *
- * Only markdown carries frontmatter and citations: `@name` is a markdown-authoring
- * convention, and an HTML page's `commentsClosed` stays undefined (open, unchanged).
+ * Only markdown carries frontmatter: it is a markdown convention, so an HTML page's
+ * `commentsClosed` stays undefined (open, unchanged).
  *
- * **Links are read from both.** A link to another mind's site is a plain substring
- * in either format, and the house's most prolific publisher writes HTML — scoping
- * the ambient tier's second highlighting signal to markdown would have quietly
- * excluded most of the corpus from ever being highlighted.
+ * **Links and citations are read from both.** The argument is one argument: a link
+ * is a plain substring in either format, and naming someone with `@their-name` is
+ * something a mind does in its prose regardless of the markup around that prose.
+ * The house's most prolific publisher writes HTML, so scoping either of the ambient
+ * tier's highlighting signals to markdown excluded most of the corpus — and left
+ * `pages cited` reporting an empty result over a store it had never read.
  */
 export function describePages(baseDir: string, files: string[]): PageInput[] {
   return files.map((file) => {
     const raw = readFileSync(resolve(baseDir, file));
     const hash = createHash("sha256").update(raw).digest("hex");
     const text = raw.toString("utf-8");
-    if (!file.endsWith(".md")) return { file, hash, links: parseLinks(text) };
+    if (!file.endsWith(".md")) {
+      return { file, hash, mentions: parseHtmlMentions(text), links: parseLinks(text) };
+    }
     const { comments, body } = parseFrontmatter(text);
     return {
       file,
@@ -220,20 +226,55 @@ export function allocateQuickPath(pagesDir: string, title: string, taken?: Set<s
 }
 
 /**
+ * Confirm the tree really is the author's, rather than trusting `chown`'s exit code.
+ *
+ * A zero exit says the paths handed to `chown` were changed; it says nothing about
+ * an ancestor nobody thought to hand it. That case is reachable: `addPagesWorktree`
+ * skips its recursive chown whenever a `_system` worktree already exists, so
+ * `home/pages` can be root-owned on a box where every later write reports success.
+ * The author is then told the page is theirs while the directory holding it is not.
+ *
+ * The file's own uid is the reference — after a successful chown it is the mind's,
+ * whatever that uid happens to be — so this needs no user lookup of its own.
+ * Best-effort: a stat that fails proves nothing and stays quiet.
+ */
+export function verifyOwnership(
+  ownership: { isIsolationEnabled: () => boolean },
+  mindName: string,
+  paths: string[],
+): string | null {
+  if (!ownership.isIsolationEnabled() || paths.length === 0) return null;
+  try {
+    const fileUid = statSync(paths[paths.length - 1]).uid;
+    const strays = paths.filter((p) => statSync(p).uid !== fileUid);
+    if (strays.length === 0) return null;
+    return `${mindName} does not own ${strays.join(", ")} — the page is published, but you may not be able to add or remove files there`;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * The quick path: write markdown and publish it in one act.
  *
  * Deliberately exposes no draft/published or personal/commons choice. Drafting is
  * what a mind gets by not running this — by putting a file in `home/pages/` and
  * leaving it there — not a mode it has to select. Small thoughts stay cheap to
  * write only if writing one costs no decisions.
+ *
+ * Async because it hands the file back to its author (see `chownToMind`). Every
+ * caller must be on this one function for that to hold — the daemon writes here
+ * from the CLI command *and* from the comment-promotion route, and a chown wired
+ * into only one of them is the same bug with a smaller blast radius.
  */
-export function writeQuickPage(
+export async function writeQuickPage(
   ctx: ExtensionContext,
   mindName: string,
   mindDir: string,
   title: string,
   body: string,
-): { file: string; publish: PublishResult } {
+  exec?: ChownExec,
+): Promise<{ file: string; publish: PublishResult; ownershipWarning: string | null }> {
   const db = ctx.db;
   if (!db) throw new Error("Database not available");
 
@@ -241,18 +282,38 @@ export function writeQuickPage(
   const file = allocateQuickPath(pagesDir, title, knownPageFiles(db, mindName));
   const target = resolve(pagesDir, file);
 
-  // The slug is derived from the title and stripped to [a-z0-9-], so it cannot
-  // contain a separator — but assert containment anyway rather than trusting the
-  // sanitizer to stay correct as it changes.
-  const root = resolve(pagesDir);
-  if (target !== root && !target.startsWith(root + sep)) {
-    throw new Error("Refusing to write outside the pages directory");
-  }
+  // Which of these the daemon creates decides which of them it has to give away:
+  // `mkdirSync` runs as the daemon, so anything it makes here is born root-owned.
+  const madePagesDir = !existsSync(pagesDir);
+  const quickDir = resolve(pagesDir, QUICK_DIR);
+  mkdirSync(quickDir, { recursive: true });
 
-  mkdirSync(resolve(pagesDir, QUICK_DIR), { recursive: true });
-  writeFileSync(target, quickPageContent(title, body), "utf-8");
+  // Containment is checked *after* the mkdir (its parent must exist to be resolved)
+  // and against real paths, not string prefixes: the mind owns every directory on
+  // this path and can swap one for a symlink. See `resolvePagesWrite`.
+  const realTarget = resolvePagesWrite(mindDir, target);
+  const realQuickDir = dirname(realTarget);
+
+  // `wx` — create, never open something already there. An exclusive create cannot
+  // follow a final symlink, which is the half of the race the containment check
+  // above cannot see. `allocateQuickPath` already chose a free name, so a failure
+  // here means someone put a file in the way, and refusing is the right answer.
+  writeFileSync(realTarget, quickPageContent(title, body), { encoding: "utf-8", flag: "wx" });
+
+  // The directories as well as the file: a first-ever `pages write` that only
+  // chowned the file would leave the author able to edit that page and unable to
+  // add a second one beside it.
+  const owned = madePagesDir
+    ? [realpathSync(pagesDir), realQuickDir, realTarget]
+    : [realQuickDir, realTarget];
+  const ownershipWarning =
+    (await chownToMind(ctx, mindName, owned, exec)) ?? verifyOwnership(ctx, mindName, owned);
 
   // The caller announces this page itself, with the title and body it has in hand.
   // Without the suppression the mind's one `pages write` would post twice.
-  return { file, publish: publishPersonalPages(ctx, mindName, mindDir, { skipActivityFor: file }) };
+  return {
+    file,
+    publish: publishPersonalPages(ctx, mindName, mindDir, { skipActivityFor: file }),
+    ownershipWarning,
+  };
 }

@@ -268,7 +268,17 @@ export function createRoutes(ctx: ExtensionContext): Hono {
         if (!mindDir) return c.json({ error: "Mind not found" }, 404);
         const title = body?.title?.trim() || defaultPromotionTitle(comment.content, comment.file);
         try {
-          const written = writeQuickPage(ctx, actor.username, mindDir, title, comment.content);
+          // The chown that gives the promoted page back to its author lives inside
+          // writeQuickPage, so this second write path gets it for free. Its warning
+          // is logged rather than returned: this response is consumed by the web UI
+          // promoting a comment, not by the mind reading its own command output.
+          const written = await writeQuickPage(
+            ctx,
+            actor.username,
+            mindDir,
+            title,
+            comment.content,
+          );
           setCommentBody(ctx.db, id, { mind: actor.username, file: written.file });
           return c.json({ ok: true, mind: actor.username, file: written.file });
         } catch (err) {
