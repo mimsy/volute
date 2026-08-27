@@ -1,6 +1,8 @@
 import { and, asc, desc, eq, gt, isNotNull, isNull, lt, lte, or, sql } from "drizzle-orm";
+import { getSpiritName } from "../config/setup.js";
 import { getDb } from "../db.js";
 import { getRoutingConfig, resolveEventRoute } from "../delivery/delivery-router.js";
+import { publish as publishActivity } from "../events/activity-events.js";
 import { publish as publishMindEvent } from "../events/mind-events.js";
 import { findMind, getBaseName } from "../mind/registry.js";
 import { mindHistory, systemEvents, turns } from "../schema.js";
@@ -131,6 +133,8 @@ export function eventLabel(type: string, meta: Record<string, unknown> | null | 
           return "Context lost";
         case "join_blocked":
           return "Variant join blocked";
+        case "infrastructure":
+          return s("reason") ? `Infrastructure: ${s("reason")}` : "Infrastructure failure";
         default:
           return "Notice";
       }
@@ -149,6 +153,7 @@ export const NOTICE_KINDS = [
   "delivery_failed",
   "context_lost",
   "join_blocked",
+  "infrastructure",
 ] as const;
 
 export type NoticeKind = (typeof NOTICE_KINDS)[number];
@@ -533,6 +538,87 @@ export async function deliverEvent(
     elog.error(`failed to deliver event to ${mind}`, log.errorData(err));
     return { id: eventId, delivered: false };
   }
+}
+
+/** Longest activity summary alertHost will write; the full text goes to the mind. */
+const ALERT_SUMMARY_MAX = 200;
+
+/**
+ * Tell everyone who can act that a piece of a mind's own infrastructure failed.
+ *
+ * A mind whose framework breaks underneath it has, until now, had no way to learn
+ * why: the failure went to journald, which minds cannot read (bardo, Aug 2026 —
+ * mimsy ran a broken daemon client for 15 days). One call fans the same failure out
+ * to all three audiences that can do something about it:
+ *
+ * - the **mind**, as an `immediate` system event carrying `text` verbatim — it is
+ *   usually the only party that can fix its own repo/config, and the only one that
+ *   sees the underlying error output;
+ * - the **spirit**, as a next-turn `infrastructure` notice (skipped when the mind
+ *   *is* the spirit — no point notifying itself twice). `text` is written to the
+ *   mind in the second person, so the spirit's copy is prefixed with a line saying
+ *   whose failure it is and that the mind has already been told — otherwise "Your
+ *   framework auto-upgrade failed" arrives in the spirit's context as its own;
+ * - the **dashboard**, as a `mind_error` activity row (already rendered as
+ *   "<mind> hit an error", with `text` as its tooltip).
+ *
+ * `kind` is a short snake_case discriminator (e.g. `"upgrade_failed"`); it becomes
+ * the mind event's `meta.subtype` and the spirit notice's `meta.reason`, so alerts
+ * of one kind group together and can be routed. `text` is the whole mind-facing
+ * message, including any stderr — write it addressed to the mind.
+ *
+ * Never throws: an alert that fails must not take down the operation that was
+ * already failing. Each leg is independently guarded, so one broken audience
+ * still leaves the other two informed.
+ */
+export async function alertHost(mind: string, kind: string, text: string): Promise<void> {
+  try {
+    await deliverEvent(mind, {
+      type: "notice",
+      body: text,
+      meta: { subtype: kind },
+      delivery: "immediate",
+      whileSleeping: "queue",
+    });
+  } catch (err) {
+    elog.error(`failed to alert ${mind} about ${kind}`, log.errorData(err));
+  }
+
+  const spirit = getSpiritName();
+  if (spirit !== mind) {
+    try {
+      await recordNotice({
+        mind: spirit,
+        thread: MIND_LEVEL_THREAD,
+        kind: "infrastructure",
+        reason: kind,
+        detail: `${mind} hit an infrastructure failure (${kind}). It has been told directly; this is what it was sent:\n\n${text}`,
+      });
+    } catch (err) {
+      elog.error(`failed to notify the spirit about ${kind} for ${mind}`, log.errorData(err));
+    }
+  }
+
+  try {
+    await publishActivity({
+      type: "mind_error",
+      mind,
+      summary: alertSummary(text),
+      metadata: { kind },
+    });
+  } catch (err) {
+    elog.error(`failed to publish ${kind} activity for ${mind}`, log.errorData(err));
+  }
+}
+
+/** First line of an alert, clipped — the activity row is a pointer, not the report. */
+function alertSummary(text: string): string {
+  const line =
+    text
+      .split("\n")
+      .find((l) => l.trim().length > 0)
+      ?.trim() ?? text.trim();
+  return line.length > ALERT_SUMMARY_MAX ? `${line.slice(0, ALERT_SUMMARY_MAX - 1)}…` : line;
 }
 
 /** Event types that must never be replayed after the fact — only meaningful live. */

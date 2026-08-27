@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
+import { buildMindBaseEnv } from "../daemon/mind-manager.js";
 import { exec, gitExec } from "../util/exec.js";
 import { isIsolationEnabled, wrapForIsolation } from "./isolation.js";
 
@@ -31,19 +32,38 @@ function hasIonice(): boolean {
 }
 
 /**
+ * The environment `npm install` runs with: the mind-server allowlist, never the
+ * daemon's raw `process.env`.
+ *
+ * `npm install` executes lifecycle scripts (preinstall/install/postinstall) declared
+ * in the mind's own package.json — mind-authored code, by definition. The daemon's
+ * environment carries `VOLUTE_DAEMON_TOKEN`, the admin token; `runuser` passes the
+ * environment it is given straight through, so a lifecycle script would have read it
+ * on every dependency-touching upgrade. Scrubbed in both modes: without isolation the
+ * script runs as the daemon's own user, which is the worse case, not the safer one.
+ *
+ * HOME is redirected to the mind's home/ only under isolation (matching the uid
+ * switch, and keeping npm's cache inside the mind's own directory); without
+ * isolation the daemon's HOME carries through from the allowlist, so npm resolves
+ * its usual cache and .npmrc.
+ */
+export function npmInstallEnv(cwd: string): NodeJS.ProcessEnv {
+  const env = { ...buildMindBaseEnv() };
+  return isIsolationEnabled() ? { ...env, HOME: resolve(cwd, "home") } : env;
+}
+
+/**
  * Run npm install in a directory, using the mind user's identity when isolation is enabled.
  * This avoids creating root-owned node_modules that the mind can't modify later.
  */
 export async function npmInstallAsMind(cwd: string, mindName: string): Promise<void> {
   const [cmd, args] = lowPriorityArgv("npm", NPM_INSTALL_ARGS, hasIonice());
+  const env = npmInstallEnv(cwd);
   if (isIsolationEnabled()) {
     const [wrappedCmd, wrappedArgs] = await wrapForIsolation(cmd, args, mindName);
-    await exec(wrappedCmd, wrappedArgs, {
-      cwd,
-      env: { ...process.env, HOME: resolve(cwd, "home") },
-    });
+    await exec(wrappedCmd, wrappedArgs, { cwd, env });
   } else {
-    await exec(cmd, args, { cwd });
+    await exec(cmd, args, { cwd, env });
   }
 }
 
