@@ -1,5 +1,5 @@
 import { isMind, isSystemSpirit } from "@volute/api/user-type";
-import type { ExtensionContext } from "@volute/extensions";
+import { boundedIntParam, type ExtensionContext, intParamError } from "@volute/extensions";
 import { Hono } from "hono";
 
 import {
@@ -50,6 +50,8 @@ async function parseJson<T>(c: { req: { json: () => Promise<unknown> } }): Promi
 function canManage(actor: Actor, intention: Pick<Intention, "mind_name">): boolean {
   return actor.role === "admin" || actor.username === intention.mind_name;
 }
+
+const FEED_LIMIT = { fallback: 8, min: 1, max: 100 };
 
 export function createRoutes(ctx: ExtensionContext): Hono {
   if (!ctx.db) throw new Error("Intentions extension requires a database");
@@ -191,9 +193,10 @@ export function createRoutes(ctx: ExtensionContext): Hono {
 
     // Feed endpoint
     .get("/feed", async (c) => {
-      const rawLimit = c.req.query("limit");
-      const limit = rawLimit ? parseInt(rawLimit, 10) : 8;
-      if (Number.isNaN(limit)) return c.json({ error: "Invalid limit parameter" }, 400);
+      // The old `Number.isNaN` guard caught "notanumber" but not the salvage: parseInt
+      // read `?limit=1e9` as 1 and served a single intention with a 200.
+      const limit = boundedIntParam(c.req.query("limit"), FEED_LIMIT);
+      if (limit === null) return c.json({ error: intParamError("limit", FEED_LIMIT) }, 400);
       const intentions = listBoard(db, { limit });
       return c.json(
         intentions.map((i) => ({

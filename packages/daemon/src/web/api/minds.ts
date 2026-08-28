@@ -94,7 +94,13 @@ import { collectTurnContext } from "../../lib/turn-context.js";
 import { checkHealth } from "../../lib/util/health.js";
 import log from "../../lib/util/logger.js";
 import { safeResolveWithinBase } from "../../lib/util/paths.js";
-import { cursorParamsSchema, cursorResponse } from "../../lib/util/query-params.js";
+import {
+  boundedIntParam,
+  cursorParamsSchema,
+  cursorResponse,
+  intParamError,
+  parseIntParam,
+} from "../../lib/util/query-params.js";
 import { normalizeDbBound, parseDbTimestamp } from "../../lib/util/time.js";
 import { fireWebhook } from "../../lib/webhook.js";
 import {
@@ -325,6 +331,12 @@ function credentialDegradedField(name: string): { provider: string; since: strin
   const state = getCredentialDegraded(name);
   return state ? { provider: state.provider, since: state.since.toISOString() } : undefined;
 }
+
+// Page bounds, hoisted so each refusal message names the same numbers the parse used.
+const CONTACTS_HOURS = { fallback: 48, min: 1, max: 168 };
+const EVENTS_LIMIT = { fallback: 100, min: 1, max: 200 };
+const HISTORY_LIMIT = { fallback: 50, min: 1, max: 200 };
+const OFFSET = { fallback: 0, min: 0, max: Number.MAX_SAFE_INTEGER };
 
 const app = new Hono<AuthEnv>()
   .post("/", requireAdminOrSystem, zValidator("json", createMindSchema), async (c) => {
@@ -858,8 +870,12 @@ const app = new Hono<AuthEnv>()
   .get("/:name/imagegen/jobs/:jobId", requireSelf(), async (c) => {
     const name = c.req.param("name");
     const jobId = c.req.param("jobId");
-    const waitParam = Number(c.req.query("wait"));
-    const waitMs = Number.isFinite(waitParam) ? Math.min(Math.max(waitParam, 0), 60) * 1000 : 0;
+    // Absent means "don't long-poll"; malformed is a different thing and must not read as
+    // the same. `?wait=30s` used to return instantly reporting "running", with nothing to
+    // say the wait had been dropped.
+    const waitSec = parseIntParam(c.req.query("wait"));
+    if (waitSec === null) return c.json({ error: "wait must be a non-negative integer" }, 400);
+    const waitMs = Math.min(waitSec ?? 0, 60) * 1000;
     const job =
       waitMs > 0 ? await waitForImagegenJob(name, jobId, waitMs) : getImagegenJob(name, jobId);
     if (!job) return c.json({ error: "Job not found" }, 404);
@@ -1852,8 +1868,10 @@ const app = new Hono<AuthEnv>()
   // Aggregates inbound/outbound rows per channel over a recent window.
   .get("/:name/history/contacts", requireSelf(), async (c) => {
     const name = c.req.param("name");
-    const rawHours = parseInt(c.req.query("hours") ?? "48", 10);
-    const hours = Math.min(Math.max(Number.isNaN(rawHours) ? 48 : rawHours, 1), 168);
+    // A malformed `hours` used to fall back to 48 and report "last 48h" for a window
+    // nobody asked for; `?hours=1e9` used to parse as 1. Refuse both (#970 class).
+    const hours = boundedIntParam(c.req.query("hours"), CONTACTS_HOURS);
+    if (hours === null) return c.json({ error: intParamError("hours", CONTACTS_HOURS) }, 400);
     const cutoff = new Date(Date.now() - hours * 3600_000)
       .toISOString()
       .replace("T", " ")
@@ -2089,8 +2107,12 @@ const app = new Hono<AuthEnv>()
   .get("/:name/system-events", requireSelf(), async (c) => {
     const name = c.req.param("name");
     const baseName = await getBaseName(name);
-    const limit = Math.min(Number(c.req.query("limit") ?? 100) || 100, 200);
-    const before = c.req.query("before") ? Number(c.req.query("before")) : undefined;
+    const limit = boundedIntParam(c.req.query("limit"), EVENTS_LIMIT);
+    if (limit === null) return c.json({ error: intParamError("limit", EVENTS_LIMIT) }, 400);
+    // `Number("notanumber")` is NaN, and `id < NaN` matches nothing — a malformed cursor
+    // used to return an empty page that reads exactly like "no more events".
+    const before = parseIntParam(c.req.query("before"));
+    if (before === null) return c.json({ error: "before must be a non-negative integer" }, 400);
     const events = await listEvents(baseName, limit, before);
     return c.json({
       events: events.map((e) => {
@@ -2171,8 +2193,10 @@ const app = new Hono<AuthEnv>()
       | "detailed"
       | "all"
       | undefined;
-    const limit = Math.min(Math.max(parseInt(c.req.query("limit") ?? "50", 10) || 50, 1), 200);
-    const offset = Math.max(parseInt(c.req.query("offset") ?? "0", 10) || 0, 0);
+    const limit = boundedIntParam(c.req.query("limit"), HISTORY_LIMIT);
+    if (limit === null) return c.json({ error: intParamError("limit", HISTORY_LIMIT) }, 400);
+    const offset = boundedIntParam(c.req.query("offset"), OFFSET);
+    if (offset === null) return c.json({ error: intParamError("offset", OFFSET) }, 400);
     // Summary preset only: keep just turn summaries the mind hasn't rewritten yet.
     const provisional = c.req.query("provisional") === "true";
 

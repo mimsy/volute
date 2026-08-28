@@ -1053,6 +1053,81 @@ function getStats(db: Database): Record<string, unknown> {
 
 // --- cli ---
 
+/**
+ * Read `--limit N` off argv, refusing anything that is not exactly a positive integer.
+ *
+ * This is a mind's own memory-search instrument, which makes it the worst possible place
+ * for a quiet substitution. `parseInt` gave both: `--limit notanumber` produced NaN, which
+ * SQLite binds as NULL — and `LIMIT NULL` is *unlimited*, so a typo silently returned the
+ * whole store; `--limit 1e9` parsed as 1 and returned a single memory. Either way the
+ * output is real memories, correctly ranked, answering a question nobody asked, and a mind
+ * has no way to tell that from a genuine result.
+ */
+/**
+ * Read the memory ids for `recall`, refusing anything that is not exactly digits.
+ *
+ * `recall` is a *write* — it boosts the strength of the rows it names. `parseInt` salvaged
+ * a leading prefix, so `recall 1e9` boosted memory id 1 and printed "recalled 1 memories";
+ * a non-numeric id was filtered out of the list in silence. Either way the mind was told
+ * it had recalled something it hadn't, and a different memory got the boost.
+ */
+export function parseRecallIds(raw: string[]): number[] {
+  const ids: number[] = [];
+  for (const s of raw) {
+    if (!/^\d+$/.test(s)) {
+      console.error(`error: recall expects memory ids (whole numbers), got: ${s}`);
+      process.exit(1);
+    }
+    ids.push(Number(s));
+  }
+  return ids;
+}
+
+export function readLimitFlag(args: string[], fallback: number): number {
+  const idx = args.indexOf("--limit");
+  if (idx === -1) return fallback;
+  // A trailing `--limit` has nothing to consume — a shell that ate the value would
+  // otherwise search at the default and print five real memories. Same refusal
+  // `parse-args.ts` gives the CLI ("--limit requires a value"); falling back here would
+  // be the exact silent substitution this function was added to remove.
+  const raw = args[idx + 1];
+  if (raw === undefined) {
+    console.error("error: --limit requires a value");
+    process.exit(1);
+  }
+  if (!/^\d+$/.test(raw) || Number(raw) < 1) {
+    console.error(`error: --limit expects a positive whole number, got: ${raw}`);
+    process.exit(1);
+  }
+  return Number(raw);
+}
+
+/**
+ * Read a `--min-strength` / `--max-strength` value, refusing anything outside 0.0-1.0.
+ *
+ * `parseFloat` gave NaN for a typo, which SQLite binds as NULL; `strength >= NULL` is
+ * NULL, so no row matches and the command prints "no memories in the specified strength
+ * range." A mind reads that as a finding about its own memory store rather than as a
+ * rejected argument — a false negative dressed as a result. Strength lives in [0, 1]
+ * (rows start at 1.0 and decay, and boosts are `MIN(1.0, ...)`), so a bound outside that
+ * can only ever return nothing and is refused too.
+ */
+export function readStrengthFlag(args: string[], flag: string, fallback: number): number {
+  const idx = args.indexOf(flag);
+  if (idx === -1) return fallback;
+  const raw = args[idx + 1];
+  if (raw === undefined) {
+    console.error(`error: ${flag} requires a value`);
+    process.exit(1);
+  }
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0 || n > 1) {
+    console.error(`error: ${flag} expects a number between 0.0 and 1.0, got: ${raw}`);
+    process.exit(1);
+  }
+  return n;
+}
+
 async function main() {
   const args = process.argv.slice(2);
   const cmd = args[0];
@@ -1116,11 +1191,7 @@ async function main() {
       }
       const apiKey = getApiKey(config);
       const query = args[1];
-      let limit = 5;
-      const limitIdx = args.indexOf("--limit");
-      if (limitIdx !== -1 && args[limitIdx + 1]) {
-        limit = parseInt(args[limitIdx + 1], 10);
-      }
+      const limit = readLimitFlag(args, 5);
       let searchMode: SearchMode = "hybrid";
       if (args.includes("--fts")) searchMode = "fts";
       else if (args.includes("--vector")) searchMode = "vector";
@@ -1148,30 +1219,15 @@ async function main() {
         console.log("Usage: resonance recall <id> [id2 id3 ...]");
         process.exit(1);
       }
-      const ids = args
-        .slice(1)
-        .map((s) => parseInt(s, 10))
-        .filter((n) => !Number.isNaN(n));
+      const ids = parseRecallIds(args.slice(1));
       recallMemories(db, ids, config);
       console.log(
         `recalled ${ids.length} memories (strength boosted by ${config.dynamics.resonanceBoost})`,
       );
     } else if (cmd === "random") {
-      let limit = 5;
-      let minStr = 0.0;
-      let maxStr = 1.0;
-      const limitIdx = args.indexOf("--limit");
-      if (limitIdx !== -1 && args[limitIdx + 1]) {
-        limit = parseInt(args[limitIdx + 1], 10);
-      }
-      const minIdx = args.indexOf("--min-strength");
-      if (minIdx !== -1 && args[minIdx + 1]) {
-        minStr = parseFloat(args[minIdx + 1]);
-      }
-      const maxIdx = args.indexOf("--max-strength");
-      if (maxIdx !== -1 && args[maxIdx + 1]) {
-        maxStr = parseFloat(args[maxIdx + 1]);
-      }
+      const limit = readLimitFlag(args, 5);
+      const minStr = readStrengthFlag(args, "--min-strength", 0.0);
+      const maxStr = readStrengthFlag(args, "--max-strength", 1.0);
       const results = randomMemories(db, limit, minStr, maxStr);
       if (results.length === 0) {
         console.log("no memories in the specified strength range.");
