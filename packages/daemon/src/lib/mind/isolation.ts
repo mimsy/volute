@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { resolve } from "node:path";
+import { alertHost } from "../chat/system-events.js";
 import { exec } from "../util/exec.js";
 import log from "../util/logger.js";
 import { getBaseName, isSpiritName, resolveMindDir, validateMindName } from "./registry.js";
@@ -432,13 +433,11 @@ const alertedUsers = new Set<string>();
  *
  * A log line alone is the wrong channel for this: it is a total outage for one
  * mind, and the host may never read journald. `alertHost` reaches all three, and
- * still does something useful in the degraded cases — the immediate delivery to
- * the mind fails when the mind is the one that cannot start, but the spirit
- * notice and the `mind_error` activity row still land. Imported dynamically:
- * `util/exec.ts` imports this module, and the chat layer must not be dragged
- * into that graph for a branch that only runs when something is already broken.
+ * still does something useful in the degraded case this always hits — the
+ * immediate delivery fails when the mind is the one that cannot start, but the
+ * spirit notice and the `mind_error` activity row still land.
  */
-async function reportUnrepairable(
+export async function reportUnrepairable(
   baseName: string,
   user: string,
   dir: string,
@@ -451,7 +450,6 @@ async function reportUnrepairable(
   ilog.error(`mind ${baseName} cannot start: ${reason}.${remedy}`, { mind: baseName, user, dir });
 
   try {
-    const { alertHost } = await import("../chat/system-events.js");
     await alertHost(
       baseName,
       MIND_USER_ALERT_KIND,
