@@ -1,14 +1,22 @@
 import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
+import { eq } from "drizzle-orm";
+import { parseMeta } from "../packages/daemon/src/lib/chat/system-events.js";
+import { getSpiritName } from "../packages/daemon/src/lib/config/setup.js";
+import { getDb } from "../packages/daemon/src/lib/db.js";
 import {
   ensureMindUser,
   linuxUseraddArgs,
+  MIND_USER_ALERT_KIND,
   macIdToCreate,
   parseDsclIds,
   planMindGroup,
   planUserRepair,
   repairRemedy,
+  reportUnrepairable,
 } from "../packages/daemon/src/lib/mind/isolation.js";
+import { addMind, removeMind } from "../packages/daemon/src/lib/mind/registry.js";
+import { activity, systemEvents } from "../packages/daemon/src/lib/schema.js";
 
 // Repair of a mind's missing OS user. The end-to-end case (a Docker container
 // recreated onto its old volumes, so /minds keeps files owned by uids that
@@ -190,6 +198,68 @@ describe("repairRemedy", () => {
   it("tells a Linux host to recreate the user in the volute group", () => {
     const remedy = repairRemedy("mind-lyra", "/minds/lyra", "linux");
     assert.match(remedy, /useradd .*-G volute/);
+  });
+});
+
+describe("reportUnrepairable", () => {
+  // A refused repair is a total outage for one mind, so it must reach a human,
+  // not only journald. The mind itself is by definition unreachable here — it
+  // cannot start — which is exactly why the spirit notice and the dashboard
+  // activity row are the legs that matter.
+  const spirit = getSpiritName();
+
+  async function eventsFor(mind: string) {
+    const db = await getDb();
+    return (await db.select().from(systemEvents).where(eq(systemEvents.mind, mind))).filter(
+      (r) => parseMeta(r.meta).reason === MIND_USER_ALERT_KIND,
+    );
+  }
+
+  async function cleanup(mind: string) {
+    const db = await getDb();
+    await db.delete(systemEvents).where(eq(systemEvents.mind, mind));
+    await db.delete(systemEvents).where(eq(systemEvents.mind, spirit));
+    await db.delete(activity).where(eq(activity.mind, mind));
+    await removeMind(mind);
+  }
+
+  it("tells the spirit and the dashboard, carrying the remedy", async () => {
+    const mind = `isorepair-${process.pid}-a`;
+    await addMind(mind, 45001);
+    try {
+      await reportUnrepairable(mind, `mind-${mind}`, "/minds/x", "uid 996 already belongs to bob");
+
+      const spiritRows = await eventsFor(spirit);
+      assert.equal(spiritRows.length, 1, "the spirit must hear that a mind cannot start");
+      assert.match(spiritRows[0].body, new RegExp(mind));
+
+      const db = await getDb();
+      const rows = await db.select().from(activity).where(eq(activity.mind, mind));
+      const errors = rows.filter((r) => r.type === "mind_error");
+      assert.equal(errors.length, 1, "the dashboard must show it");
+
+      // The remedy is the point: a host who reads only this must know what to run.
+      assert.match(spiritRows[0].body, /chown -R/);
+      assert.match(spiritRows[0].body, /already belongs to bob/);
+    } finally {
+      await cleanup(mind);
+    }
+  });
+
+  it("alerts once per daemon run, so a broken mind can't spam every exec", async () => {
+    // Refusals are deliberately not memoised — every later call re-probes so a
+    // host's manual fix is noticed — which is precisely why the alert is gated.
+    const mind = `isorepair-${process.pid}-b`;
+    await addMind(mind, 45002);
+    try {
+      await reportUnrepairable(mind, `mind-${mind}`, "/minds/y", "root-owned");
+      await reportUnrepairable(mind, `mind-${mind}`, "/minds/y", "root-owned");
+      await reportUnrepairable(mind, `mind-${mind}`, "/minds/y", "root-owned");
+
+      assert.equal((await eventsFor(spirit)).length, 1, "one notice, not three");
+    } finally {
+      await cleanup(mind);
+    }
   });
 });
 
