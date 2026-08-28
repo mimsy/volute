@@ -1,16 +1,11 @@
 import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
-import { OAuthRefreshError } from "../packages/daemon/src/lib/ai-service.js";
+import { OAuthRefreshError, providerOAuth } from "../packages/daemon/src/lib/ai-service.js";
 import {
   isImagegenEnabled,
   readGlobalConfig,
   writeGlobalConfig,
 } from "../packages/daemon/src/lib/config/setup.js";
-import {
-  registerXaiOAuthProvider,
-  validateXaiUrl,
-  xaiOAuthProvider,
-} from "../packages/daemon/src/lib/oauth/xai.js";
 import {
   generateImage,
   getConfiguredProviders,
@@ -732,45 +727,53 @@ describe("imagegen xai provider", () => {
     return { ok: false, status: 403, text: async () => "forbidden" } as Response;
   }
 
-  it("registers into pi-ai's OAuth registry", async () => {
-    registerXaiOAuthProvider();
-    const { getOAuthProvider } = await import("@earendil-works/pi-ai/oauth");
-    const p = getOAuthProvider("xai");
-    assert.ok(p, "xai OAuth provider registered");
-    assert.equal(p.id, "xai");
-    assert.equal(p.usesCallbackServer, false);
-    assert.equal(p.getApiKey({ access: "tok", refresh: "r", expires: 0 }), "tok");
+  // Volute used to ship its own xAI OAuth provider and register it into pi-ai.
+  // Since pi-ai 0.84.3 the catalog carries xAI itself, with the same client id,
+  // scope and endpoints, so that module was deleted. These pin the properties we
+  // depended on, so upstream dropping or renaming xAI OAuth fails here rather
+  // than at a host's login.
+  it("xAI OAuth is provided by the pi-ai catalog", () => {
+    const oauth = providerOAuth("xai");
+    assert.ok(oauth, "xai OAuth should come from the builtin catalog");
+    assert.equal(oauth.isSubscription, true, "xai OAuth is subscription-backed");
+    assert.equal(typeof oauth.refresh, "function");
+    assert.equal(typeof oauth.toAuth, "function");
   });
 
-  it("validateXaiUrl accepts auth.x.ai over https and rejects anything else", () => {
-    assert.equal(
-      validateXaiUrl("https://auth.x.ai/oauth2/token"),
-      "https://auth.x.ai/oauth2/token",
-    );
-    assert.throws(() => validateXaiUrl("https://evil.example/oauth2/token"), /non-xAI/);
-    assert.throws(() => validateXaiUrl("http://auth.x.ai/oauth2/token"), /non-xAI/);
+  it("xAI OAuth derives the request key from the access token", async () => {
+    const oauth = providerOAuth("xai");
+    assert.ok(oauth);
+    const auth = await oauth.toAuth({ type: "oauth", access: "tok", refresh: "r", expires: 0 });
+    assert.equal(auth.apiKey, "tok");
   });
 
-  it("refreshToken keeps the old refresh token when xAI omits a new one", async () => {
+  it("xAI refresh keeps the old refresh token when xAI omits a new one", async () => {
+    // Upstream owns this now, but the invariant is ours to care about: a rotation
+    // response without refresh_token must not blank the grant and log the host out.
     globalThis.fetch = (async () =>
-      // Rotation response omits refresh_token — must fall back to the existing one.
       new Response(JSON.stringify({ access_token: "new-access", expires_in: 3600 }), {
         status: 200,
       })) as typeof fetch;
-    const next = await xaiOAuthProvider.refreshToken({
-      access: "old-access",
-      refresh: "keep-me",
-      expires: 0,
-    });
+    const oauth = providerOAuth("xai");
+    assert.ok(oauth);
+    const next = await oauth.refresh(
+      { type: "oauth", access: "old-access", refresh: "keep-me", expires: 0 },
+      new AbortController().signal,
+    );
     assert.equal(next.access, "new-access");
     assert.equal(next.refresh, "keep-me", "a missing refresh_token must not blank the grant");
   });
 
-  it("refreshToken throws when the token response lacks an access_token", async () => {
+  it("xAI refresh throws when the token response lacks an access_token", async () => {
     globalThis.fetch = (async () =>
       new Response(JSON.stringify({ expires_in: 3600 }), { status: 200 })) as typeof fetch;
+    const oauth = providerOAuth("xai");
+    assert.ok(oauth);
     await assert.rejects(
-      xaiOAuthProvider.refreshToken({ access: "a", refresh: "r", expires: 0 }),
+      oauth.refresh(
+        { type: "oauth", access: "a", refresh: "r", expires: 0 },
+        new AbortController().signal,
+      ),
       /access_token|token/i,
     );
   });
@@ -989,7 +992,6 @@ describe("imagegen transient OAuth failure", () => {
     // xai has both paths: subscription OAuth + a metered key. A transient OAuth
     // failure must fall through to the env key — pinning that oauthError is only
     // rethrown AFTER the env check, so xai keeps working during a blip.
-    registerXaiOAuthProvider();
     const savedKey = process.env.XAI_API_KEY;
     process.env.XAI_API_KEY = "metered-key";
     globalThis.fetch = (async () => {

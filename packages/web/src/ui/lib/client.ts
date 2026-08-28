@@ -719,7 +719,6 @@ export type AiProvider = {
   id: string;
   oauth: boolean;
   oauthName?: string;
-  usesCallbackServer: boolean;
   configured: boolean;
   authMethod: "api_key" | "oauth" | "env_var" | null;
   oauthHealthy?: boolean;

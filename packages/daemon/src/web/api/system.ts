@@ -1,12 +1,5 @@
-import type {
-  OAuthAuthInfo,
-  OAuthCredentials,
-  OAuthDeviceCodeInfo,
-  OAuthPrompt,
-  OAuthSelectPrompt,
-} from "@earendil-works/pi-ai";
-import { getOAuthProvider, getOAuthProviders } from "@earendil-works/pi-ai/oauth";
-import { getBuiltinProviders } from "@earendil-works/pi-ai/providers/all";
+import type { AuthEvent, AuthPrompt } from "@earendil-works/pi-ai";
+import { builtinProviders, getBuiltinProviders } from "@earendil-works/pi-ai/providers/all";
 import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
@@ -22,6 +15,8 @@ import {
   getEnabledModels,
   getUtilityModel,
   isAiConfigured,
+  needsRefresh,
+  providerOAuth,
   removeAiConfig,
   removeCustomModel,
   removeProviderConfig,
@@ -373,8 +368,11 @@ const app = new Hono<AuthEnv>()
   })
   .get("/ai/providers", requireAdmin, (c) => {
     const allProviders = getBuiltinProviders();
-    const oauthProviders = getOAuthProviders();
-    const oauthMap = new Map(oauthProviders.map((p) => [p.id, p]));
+    const oauthMap = new Map(
+      builtinProviders()
+        .filter((p) => p.auth?.oauth)
+        .map((p) => [p.id, p.auth.oauth!] as const),
+    );
     const ai = getAiConfig();
 
     const result = allProviders.map((id) => {
@@ -390,7 +388,6 @@ const app = new Hono<AuthEnv>()
         id,
         oauth: !!oauth,
         oauthName: oauth?.name,
-        usesCallbackServer: !!oauth?.usesCallbackServer,
         configured,
         authMethod,
         ...(health && { oauthHealthy: health.healthy, oauthError: health.error }),
@@ -512,60 +509,62 @@ const app = new Hono<AuthEnv>()
     zValidator("json", z.object({ provider: z.string().min(1) })),
     async (c) => {
       const { provider } = c.req.valid("json");
-      const oauthProvider = getOAuthProvider(provider);
-      if (!oauthProvider) {
+      const oauth = providerOAuth(provider);
+      if (!oauth) {
         return c.json({ error: `OAuth not supported for provider: ${provider}` }, 400);
       }
 
       cleanupOAuthFlows();
 
       const flowId = crypto.randomUUID();
-      const needsManualCode = !!oauthProvider.usesCallbackServer;
       const abortController = new AbortController();
       const flow: OAuthFlow = {
         status: "pending",
-        needsManualCode,
         abortController,
         createdAt: Date.now(),
       };
       oauthFlows.set(flowId, flow);
 
-      // For callback-based providers, onPrompt resolves with the code the user pastes.
-      // We store a resolver so the POST /ai/oauth/code endpoint can fulfill it.
-      const promptPromise = needsManualCode
-        ? new Promise<string>((resolve) => {
-            flow.resolveCode = resolve;
-          })
-        : undefined;
+      // The code the admin pastes back. pi-ai no longer advertises up front whether a
+      // flow will ask for one (`usesCallbackServer` is gone), so the resolver is always
+      // armed and `needsManualCode`/`waitingForCode` are set when a prompt actually
+      // arrives. The UI shows its paste box on either flag, so a flow that only asks
+      // after our 2s window still gets one — a beat later, via the status poll.
+      const codePromise = new Promise<string>((resolve) => {
+        flow.resolveCode = resolve;
+      });
 
-      oauthProvider
+      oauth
         .login({
-          onAuth: (info: OAuthAuthInfo) => {
-            const existing = oauthFlows.get(flowId);
-            if (existing)
-              Object.assign(existing, { url: info.url, instructions: info.instructions });
-          },
-          onDeviceCode: (info: OAuthDeviceCodeInfo) => {
-            const existing = oauthFlows.get(flowId);
-            if (existing)
-              Object.assign(existing, {
-                url: info.verificationUri,
-                instructions: `Enter code: ${info.userCode}`,
-              });
-          },
-          onSelect: selectLoginMethod,
-          onPrompt: async (_prompt: OAuthPrompt) => {
-            if (promptPromise) {
-              const existing = oauthFlows.get(flowId);
-              if (existing) existing.waitingForCode = true;
-              return promptPromise;
-            }
-            return "";
-          },
-          onManualCodeInput: needsManualCode ? () => promptPromise! : undefined,
           signal: abortController.signal,
+          notify: (event: AuthEvent) => {
+            const existing = oauthFlows.get(flowId);
+            if (!existing) return;
+            if (event.type === "auth_url") {
+              Object.assign(existing, { url: event.url, instructions: event.instructions });
+            } else if (event.type === "device_code") {
+              Object.assign(existing, {
+                url: event.verificationUri,
+                instructions: `Enter code: ${event.userCode}`,
+              });
+            } else if (event.type === "info" || event.type === "progress") {
+              existing.instructions = event.message;
+            }
+          },
+          prompt: (prompt: AuthPrompt) =>
+            answerAuthPrompt(prompt, () => {
+              const existing = oauthFlows.get(flowId);
+              if (existing) {
+                existing.needsManualCode = true;
+                existing.waitingForCode = true;
+              }
+              return codePromise;
+            }),
         })
-        .then(async (credentials: OAuthCredentials) => {
+        .then(async (credential) => {
+          // Volute's stored shape predates pi-ai's type tag; drop it on the way out
+          // so secrets.json keeps the shape every other reader expects.
+          const { type: _type, ...credentials } = credential;
           saveProviderConfig(provider, { oauth: credentials });
           const existing = oauthFlows.get(flowId);
           if (existing) existing.status = "complete";
@@ -580,14 +579,14 @@ const app = new Hono<AuthEnv>()
           }
         });
 
-      // Wait briefly for onAuth to fire with URL
+      // Wait briefly for the flow to announce an auth URL or device code.
       await new Promise((resolve) => setTimeout(resolve, 2000));
       const state = oauthFlows.get(flowId)!;
       return c.json({
         flowId,
         url: state.url,
         instructions: state.instructions,
-        needsManualCode,
+        needsManualCode: !!state.needsManualCode,
       });
     },
   )
@@ -599,7 +598,14 @@ const app = new Hono<AuthEnv>()
       const flowId = c.req.param("flowId");
       const flow = oauthFlows.get(flowId);
       if (!flow) return c.json({ error: "Flow not found" }, 404);
-      if (!flow.resolveCode) return c.json({ error: "Flow does not accept manual code" }, 400);
+      // Gate on the prompt actually having asked, not on the resolver existing: since
+      // pi-ai 0.84 dropped `usesCallbackServer` the resolver is armed for every flow,
+      // so `!flow.resolveCode` is never true and this guard silently passed. A code
+      // pasted into a device-code flow (xAI, Copilot) then resolved a promise nobody
+      // awaits and returned ok — telling the admin it worked when nothing happened.
+      if (!flow.needsManualCode) {
+        return c.json({ error: "Flow does not accept manual code" }, 400);
+      }
       const { code } = c.req.valid("json");
       const input = code.trim();
 
@@ -607,19 +613,19 @@ const app = new Hono<AuthEnv>()
       // callback server running inside this process. This makes pi-ai use the
       // correct redirect_uri for the token exchange (the localhost one that
       // matched the authorization request), instead of the manual fallback URI.
-      const localhostMatch = input.match(/^https?:\/\/localhost(:\d+)?(\/.*)/);
+      const localhostMatch = input.match(/^https?:\/\/(?:localhost|127\.0\.0\.1)(:\d+)?(\/.*)/);
       if (localhostMatch) {
         const forwardUrl = `http://127.0.0.1${localhostMatch[1] ?? ""}${localhostMatch[2]}`;
         try {
           await fetch(forwardUrl);
         } catch {
           // Callback server may have already shut down — fall back to manual code
-          flow.resolveCode(input);
+          flow.resolveCode?.(input);
         }
         return c.json({ ok: true });
       }
 
-      flow.resolveCode(input);
+      flow.resolveCode?.(input);
       return c.json({ ok: true });
     },
   )
@@ -737,10 +743,54 @@ const app = new Hono<AuthEnv>()
 
 // Some providers (Codex) open their login with a method selector. The web UI has
 // no picker for it, so take the first option — the browser/callback flow, whose
-// manual-code paste path already covers remote daemons. Answering `undefined`
-// cancels the login before it ever produces an auth URL.
-export async function selectLoginMethod(prompt: OAuthSelectPrompt): Promise<string | undefined> {
-  return prompt.options[0]?.id;
+// manual-code paste path already covers remote daemons. pi-ai's `prompt()` must
+// resolve with a string or reject, so an empty option list throws rather than
+// resolving to "" and letting the provider fail somewhere less legible.
+export async function selectLoginMethod(prompt: {
+  options: readonly { id: string }[];
+}): Promise<string> {
+  const first = prompt.options[0]?.id;
+  if (first === undefined) throw new Error("OAuth login offered no method to select");
+  return first;
+}
+
+/**
+ * How the web UI answers a provider's login prompt.
+ *
+ * pi-ai 0.84 collapsed the old five login callbacks into `prompt()` + `notify()` —
+ * onAuth/onDeviceCode became notify events — so the discrimination that used to
+ * live in the provider's shape now lives here:
+ *
+ * - `select` — no picker in the UI; take the first option (see selectLoginMethod).
+ * - `text` — a setting with a default, not a code. GitHub Copilot opens its login
+ *   by asking for an Enterprise domain, "blank for github.com", *before* it
+ *   announces anything. Parking that on the paste box strands the login: the box
+ *   only renders once a URL exists, and the answer we want is empty, which
+ *   `POST /ai/oauth/code` rejects. Answering it empty is what the pre-0.84
+ *   callback shape did, and it lets the flow reach its device code.
+ * - `manual_code` — the admin pastes the value back. Verified across every catalog
+ *   flow that issues one (anthropic, openai-codex, openrouter): each announces an
+ *   auth URL via notify() first, so the UI always has something to render beside
+ *   the box.
+ * - `secret` — no catalog provider issues one today, so there is no ordering fact
+ *   to rely on. Rejecting rather than parking is deliberate: an unannounced secret
+ *   prompt would reproduce exactly the Copilot strand above (spinner, no box), and
+ *   the paste box is a cleartext field labelled "paste the redirect URL" — the
+ *   wrong affordance for a secret. A throw surfaces something an admin can read.
+ */
+export async function answerAuthPrompt(
+  prompt: AuthPrompt,
+  requestCode: () => Promise<string>,
+): Promise<string> {
+  if (prompt.type === "select") return selectLoginMethod(prompt);
+  if (prompt.type === "text") return "";
+  if (prompt.type === "secret") {
+    throw new Error(
+      "OAuth login asked for a secret, which this UI cannot collect safely. " +
+        "Use the CLI for this provider, or file an issue so the flow can be supported.",
+    );
+  }
+  return requestCode();
 }
 
 // In-memory OAuth flow tracking
@@ -814,13 +864,6 @@ const slog = log.child("ai-keys");
 
 // --- OAuth health tracking ---
 const oauthHealth = new Map<string, { healthy: boolean; error?: string; since?: number }>();
-
-/** Check whether an OAuth token needs refresh (expired or <15 min remaining). */
-export function needsRefresh(oauth: OAuthCredentials, now: number = Date.now()): boolean {
-  const expires = oauth.expires;
-  if (!expires || now >= expires) return true;
-  return expires - now < 15 * 60 * 1000;
-}
 
 export async function refreshApiKeyCache(): Promise<void> {
   const ai = getAiConfig();

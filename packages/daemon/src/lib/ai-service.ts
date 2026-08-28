@@ -1,7 +1,13 @@
-import { type Api, defaultProviderAuthContext, type Model } from "@earendil-works/pi-ai";
-import { getOAuthApiKey } from "@earendil-works/pi-ai/oauth";
+import {
+  type Api,
+  defaultProviderAuthContext,
+  type Model,
+  type OAuthAuth,
+  type OAuthCredential,
+} from "@earendil-works/pi-ai";
 import {
   builtinModels,
+  builtinProviders,
   getBuiltinModel,
   getBuiltinModels,
   getBuiltinProviders,
@@ -37,18 +43,41 @@ export async function resolveProviderKey(
   configKey?: string,
 ): Promise<string | undefined> {
   const provider = models.getProvider(providerId);
-  // Any model of the provider works — auth resolution only needs provider/baseUrl.
-  const model = getBuiltinModels(providerId as never)[0] as Model<Api> | undefined;
-  if (provider?.auth.apiKey && model) {
+  if (provider?.auth.apiKey) {
     try {
       const credential = configKey ? { type: "api_key" as const, key: configKey } : undefined;
-      const res = await provider.auth.apiKey.resolve({ model, ctx: authContext, credential });
+      // Resolution is provider-scoped in pi-ai's auth API — it needs no model, only
+      // the provider's own auth and the ambient context. `signal` is required by the
+      // interface; we never cancel, so hand it one that is never aborted.
+      const res = await provider.auth.apiKey.resolve({
+        ctx: authContext,
+        credential,
+        signal: new AbortController().signal,
+      });
       if (res?.auth.apiKey) return res.auth.apiKey;
     } catch (err) {
       aiLog.debug(`api key resolution failed for ${providerId}`, log.errorData(err));
     }
   }
   return configKey;
+}
+
+/** The catalog's OAuth implementation for a provider, or undefined if it has none. */
+export function providerOAuth(providerId: string): OAuthAuth | undefined {
+  return builtinProviders().find((p) => p.id === providerId)?.auth?.oauth;
+}
+
+/**
+ * Whether an OAuth token needs refreshing (expired, or under 15 minutes left).
+ *
+ * Lives here rather than beside its web-route callers so `resolveOAuthCredentials`
+ * can use it without importing the web layer: pi-ai used to make this decision
+ * inside `getOAuthApiKey`, and since 0.80.8 the refresh call is ours to schedule.
+ */
+export function needsRefresh(oauth: { expires?: number }, now: number = Date.now()): boolean {
+  const expires = oauth.expires;
+  if (!expires || now >= expires) return true;
+  return expires - now < 15 * 60 * 1000;
 }
 
 /**
@@ -464,15 +493,29 @@ export async function resolveOAuthCredentials(
   if (!providerConfig?.oauth) return undefined;
 
   try {
-    const result = await getOAuthApiKey(providerId, { [providerId]: providerConfig.oauth });
-    if (!result) throw new Error(`OAuth resolution returned no credential for ${providerId}`);
+    const oauth = providerOAuth(providerId);
+    if (!oauth) throw new Error(`OAuth resolution returned no credential for ${providerId}`);
+
+    // pi-ai's stored credential is type-tagged; Volute's config predates the tag,
+    // so add it on the way in. We keep persisting the untagged shape so an existing
+    // secrets.json stays readable by an older build.
+    const stored = providerConfig.oauth;
+    const credential: OAuthCredential = { ...stored, type: "oauth" };
+    // Since 0.80.8 pi-ai no longer decides when to refresh — it exposes `refresh`
+    // and leaves the schedule to the app. Refresh only when the token is spent or
+    // close to it, so a healthy credential costs no network call.
+    const fresh = needsRefresh(credential)
+      ? await oauth.refresh(credential, new AbortController().signal)
+      : credential;
+
+    const { type: _type, ...next } = fresh;
     // Persist refreshed credentials
-    if (result.newCredentials.access !== providerConfig.oauth.access) {
-      saveProviderConfig(providerId, { ...providerConfig, oauth: result.newCredentials });
+    if (next.access !== stored.access) {
+      saveProviderConfig(providerId, { ...providerConfig, oauth: next });
       // Fan the rotated token out to running minds (single refresh authority).
       fireProviderRefreshHook(providerId);
     }
-    return result.newCredentials;
+    return next;
   } catch (err) {
     // A subscription mind losing its only credential path is a defect, not
     // benign noise — log at error, and throw so callers can tell this apart

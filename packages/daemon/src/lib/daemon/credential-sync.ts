@@ -15,10 +15,13 @@ import { markCredentialDegraded, noteCredentialHealthy } from "./credential-reco
 const slog = log.child("cred-sync");
 
 /**
- * Providers whose OAuth provider is registered only in the daemon's pi-ai, not
- * the mind's — so the mind can't resolve their OAuth blob and must consume the
- * already-derived access token as a flat api_key (the daemon stays the refresh
- * authority).
+ * Providers handed to minds as a flat api_key rather than an OAuth blob, so the
+ * daemon stays the single refresh authority for them.
+ *
+ * xai landed here because its OAuth flow used to be registered only in the
+ * daemon's pi-ai — Volute shipped it. Since pi-ai 0.84.3 the catalog carries xAI
+ * itself, so a mind could resolve the blob now; keeping it flat is a deliberate
+ * choice about who refreshes, not a capability gap.
  */
 const DAEMON_ONLY_OAUTH = new Set(["xai"]);
 
@@ -79,7 +82,9 @@ export async function writeClaudeCredentials(
 /**
  * Set a provider's api_key entry in a pi mind's auth.json, preserving any other
  * providers already present. Used both at mind startup and by the refresh
- * fan-out. The pi template watches this file and reloads on change.
+ * fan-out. A running pi mind picks the change up on its next read: since
+ * pi-coding-agent 0.84 the credential store compares auth.json's file revision on
+ * every read and reloads itself when it moves (no watcher on the template side).
  */
 export async function writePiProviderKey(
   piAgentDir: string,
