@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.59.1](https://github.com/mimsy/volute/compare/volute-v0.59.0...volute-v0.59.1) (2026-08-28)
+
+
+### Bug Fixes
+
+* alert on an unrepairable mind user through a static import, and test it ([#980](https://github.com/mimsy/volute/issues/980)) ([9caeffd](https://github.com/mimsy/volute/commit/9caeffd307bcf435d899a1809c484b3c65cb0d74))
+* **cli:** mind history --limit and mind contacts --hours refuse what they cannot honour ([#979](https://github.com/mimsy/volute/issues/979)) ([bdcb49e](https://github.com/mimsy/volute/commit/bdcb49ed3ea55a1a2ffd3fc9f52a9aba06c56b17))
+* **cli:** unknown flags and positionals error out, identity fallback refuses, history and chat read honor ranges and paging ([#970](https://github.com/mimsy/volute/issues/970)) ([9355c21](https://github.com/mimsy/volute/commit/9355c21e0d8f312a760f66707989e816d88f5681))
+* **daemon:** recover from Anthropic OAuth refresh failures instead of leaving minds silent ([#969](https://github.com/mimsy/volute/issues/969)) ([1245ffa](https://github.com/mimsy/volute/commit/1245ffab4b71a46a980471c08889baecb1a2455b))
+* migrate to pi-ai 0.84 so claude-opus-5 turns are priced ([#977](https://github.com/mimsy/volute/issues/977)) ([8d0757c](https://github.com/mimsy/volute/commit/8d0757c3227be72fe2e9892e4cd97c35fde74a4a))
+* **pages:** write sources as the publishing mind, refuse ambiguous write input, honest cited ([#968](https://github.com/mimsy/volute/issues/968)) ([bf59379](https://github.com/mimsy/volute/commit/bf59379a614559a818779b44275d939f3d5dfd5b))
+* recreate a mind's OS user when it vanishes from the passwd db ([#978](https://github.com/mimsy/volute/issues/978)) ([b5fd3a3](https://github.com/mimsy/volute/commit/b5fd3a3deb4a4ca3d0f4bced4de08f5f79fac3bc))
+* retry the upgrade's npm install without --prefer-offline, and never skip the restart ([#976](https://github.com/mimsy/volute/issues/976)) ([6017854](https://github.com/mimsy/volute/commit/60178549a16e97574578030483f20998f50e5954))
+* **template:** refresh unmodified .local infrastructure on upgrade and alert on stale API paths ([#963](https://github.com/mimsy/volute/issues/963)) ([0331b99](https://github.com/mimsy/volute/commit/0331b99f4a44b3332257a1a2128dd12b18896779))
+* **upgrade:** surface auto-upgrade failures to the mind and host; never leave root-owned worktrees ([#967](https://github.com/mimsy/volute/issues/967)) ([85d5b56](https://github.com/mimsy/volute/commit/85d5b562afa0ade6cc4489ff045cceae45e96d80))
+
 ## [0.59.0](https://github.com/mimsy/volute/compare/volute-v0.58.0...volute-v0.59.0) (2026-08-27)
 
 
