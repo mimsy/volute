@@ -1,5 +1,6 @@
 import type { SummaryRow } from "@volute/api";
 import { getClient, urlOf } from "../lib/api-client.js";
+import { assertRange } from "../lib/assert-range.js";
 import { command } from "../lib/command.js";
 import { daemonFetch } from "../lib/daemon-client.js";
 import { compactDateTime, formatSender, isCompact } from "../lib/format-cli.js";
@@ -282,7 +283,7 @@ export function applyHistoryQuery(
     channel?: string;
     thread?: string;
     preset?: string;
-    limit?: string;
+    limit?: number;
     from?: string;
     to?: string;
     full?: boolean;
@@ -292,11 +293,60 @@ export function applyHistoryQuery(
   if (flags.channel) params.set("channel", flags.channel);
   if (flags.thread) params.set("session", flags.thread);
   if (flags.preset) params.set("preset", flags.preset);
-  if (flags.limit) params.set("limit", flags.limit);
+  if (flags.limit !== undefined) params.set("limit", String(flags.limit));
   if (flags.from) params.set("from", flags.from);
   if (flags.to) params.set("to", flags.to);
   if (flags.full) params.set("full", "true");
   if (flags.provisional) params.set("provisional", "true");
+}
+
+/**
+ * Build the two queries `--period` mode sends: summaries and activity.
+ *
+ * They are interleaved into one listing under shared period headers, so both must carry
+ * the same window *and* the same `--limit`. `--limit` used to reach only the summaries
+ * request, leaving activity at that route's own default of 100 — so `--period day --limit
+ * 200` printed up to 200 summaries with activity silently truncated, exit 0, nothing
+ * naming the cut, while the flag advertised a max of 200.
+ */
+export function buildPeriodQueries(
+  name: string,
+  flags: { period?: string; from?: string; to?: string; limit?: number },
+): { summary: URLSearchParams; activity: URLSearchParams } {
+  const from = flags.from || getDefaultRange(flags.period ?? "");
+  const summary = new URLSearchParams();
+  const activity = new URLSearchParams();
+  for (const p of [summary, activity]) {
+    p.set("mind", name);
+    if (from) p.set("from", from);
+    if (flags.to) p.set("to", flags.to);
+    if (flags.limit !== undefined) p.set("limit", String(flags.limit));
+  }
+  // Only the summaries route buckets by period; activity is filtered by window alone.
+  if (flags.period) summary.set("period", flags.period);
+  return { summary, activity };
+}
+
+/**
+ * Refuse a `--limit` the server would silently reduce.
+ *
+ * Both routes this command reaches cap a page at 200: the default read
+ * (`GET /api/v1/minds/:name/history`) and the `--period` read
+ * (`GET /api/v1/history/summaries`). `--limit` used to be a *string* flag, so the number
+ * validation in `parse-args.ts` never applied and the raw text went to the server as a
+ * query param, where `parseInt` finished the job in silence: `--limit 1e9` served one row,
+ * `--limit notanumber` served the default fifty, `--limit -5` served one — every one of
+ * them exiting 0 with real history on screen.
+ *
+ * That is worse than a papercut because it leaves no artifact. Every guard a careful mind
+ * builds fires on a reading being *wrong*, and these readings are correct — just answers
+ * to a question nobody asked. Three minds on bardo cross-checked each other into the same
+ * false picture inside an hour precisely *because* they checked each other, and the
+ * command lied identically to each of them. Verification is a vector. A mind that cannot
+ * trust its instruments cannot trust its own memory.
+ */
+export function assertHistoryLimit(limit: number | undefined): void {
+  assertRange("--limit", limit, 1, 200);
 }
 
 const cmd = command({
@@ -307,7 +357,7 @@ const cmd = command({
     channel: { type: "string", description: "Filter by channel" },
     thread: { type: "string", description: "Filter by thread" },
     preset: { type: "string", description: "Use a preset view" },
-    limit: { type: "string", description: "Number of entries to show" },
+    limit: { type: "number", description: "Number of entries to show (default 50, max 200)" },
     full: { type: "boolean", description: "Show full details" },
     provisional: {
       type: "boolean",
@@ -351,7 +401,7 @@ const cmd = command({
         ["--period", flags.period],
         ["--full", flags.full],
         ["--provisional", flags.provisional],
-      ].filter(([, v]) => v);
+      ].filter(([, v]) => v !== undefined && v !== false);
       if (readFlags.length > 0) {
         console.error(
           `--write can't be combined with read flags (${readFlags.map(([n]) => n).join(", ")}); it takes only --turn and --text.`,
@@ -397,6 +447,10 @@ const cmd = command({
       process.exit(1);
     }
 
+    // Applies to both read modes below: the default history route and the `--period`
+    // summaries route both cap a page at 200.
+    assertHistoryLimit(flags.limit);
+
     // Meta-summary mode: --period hour|day|week|month
     if (flags.period) {
       const validPeriods = ["hour", "day", "week", "month"];
@@ -408,21 +462,9 @@ const cmd = command({
       }
 
       const name = resolveMindName(flags);
-      const params = new URLSearchParams();
-      params.set("mind", name);
-      params.set("period", flags.period);
-      if (flags.from) params.set("from", flags.from);
-      else params.set("from", getDefaultRange(flags.period));
-      if (flags.to) params.set("to", flags.to);
-      if (flags.limit) params.set("limit", flags.limit);
+      const { summary: params, activity: activityParams } = buildPeriodQueries(name, flags);
 
       // Fetch summaries and activity in parallel
-      const activityParams = new URLSearchParams();
-      activityParams.set("mind", name);
-      if (flags.from) activityParams.set("from", flags.from);
-      else activityParams.set("from", getDefaultRange(flags.period));
-      if (flags.to) activityParams.set("to", flags.to);
-
       const [summaryRes, activityRes] = await Promise.all([
         daemonFetch(`/api/v1/history/summaries?${params}`),
         daemonFetch(`/api/v1/history/activity?${activityParams}`),

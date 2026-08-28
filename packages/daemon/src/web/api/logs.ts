@@ -4,7 +4,10 @@ import { resolve } from "node:path";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { findMind, stateDir } from "../../lib/mind/registry.js";
+import { boundedIntParam, intParamError } from "../../lib/util/query-params.js";
 import { type AuthEnv, requireSelf } from "../middleware/auth.js";
+
+const TAIL_LINES = { fallback: 50, min: 1, max: 10000 };
 
 const app = new Hono<AuthEnv>()
   .get("/:name/logs", requireSelf(), async (c) => {
@@ -54,8 +57,8 @@ const app = new Hono<AuthEnv>()
       return c.json({ error: "No log file found" }, 404);
     }
 
-    const nParam = parseInt(c.req.query("n") ?? "50", 10);
-    const n = Number.isFinite(nParam) && nParam > 0 ? Math.min(nParam, 10000) : 50;
+    const n = boundedIntParam(c.req.query("n"), TAIL_LINES);
+    if (n === null) return c.json({ error: intParamError("n", TAIL_LINES) }, 400);
     const tail = spawn("tail", ["-n", String(n), logFile]);
 
     let output = "";

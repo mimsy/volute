@@ -1,3 +1,4 @@
+import { assertRange } from "../../lib/assert-range.js";
 import { command } from "../../lib/command.js";
 import { daemonFetch } from "../../lib/daemon-client.js";
 import { formatMessageLine, isCompact } from "../../lib/format-cli.js";
@@ -83,11 +84,7 @@ export function pagingFooter(
  * real page and no way to know it is not the page they asked for.
  */
 export function assertReadLimit(limit: number | undefined): void {
-  if (limit === undefined) return;
-  if (limit < 1 || limit > 100) {
-    console.error(`error: --limit must be between 1 and 100 (got ${limit})`);
-    process.exit(1);
-  }
+  assertRange("--limit", limit, 1, 100);
 }
 
 const cmd = command({

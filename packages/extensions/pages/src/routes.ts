@@ -1,6 +1,6 @@
 import { readFile, stat } from "node:fs/promises";
 import { extname, resolve } from "node:path";
-import type { ExtensionContext } from "@volute/extensions";
+import { boundedIntParam, type ExtensionContext, intParamError } from "@volute/extensions";
 import { Hono } from "hono";
 
 import { getRecentPagesList, getSites } from "./cache.js";
@@ -76,6 +76,8 @@ function serializeThread(thread: PageThread) {
   };
 }
 
+const FEED_LIMIT = { fallback: 8, min: 1, max: 100 };
+
 export function createRoutes(ctx: ExtensionContext): Hono {
   return (
     new Hono()
@@ -88,8 +90,8 @@ export function createRoutes(ctx: ExtensionContext): Hono {
       .get("/feed", async (c) => {
         if (!ctx.db) return c.json({ error: "Pages database not available" }, 503);
         const mind = c.req.query("mind");
-        const rawLimit = c.req.query("limit");
-        const limit = rawLimit ? parseInt(rawLimit, 10) || 8 : 8;
+        const limit = boundedIntParam(c.req.query("limit"), FEED_LIMIT);
+        if (limit === null) return c.json({ error: intParamError("limit", FEED_LIMIT) }, 400);
         const recentPages = getRecentPagesList(ctx.db, { mind: mind || undefined, limit });
         return c.json(
           recentPages.map((p) => {

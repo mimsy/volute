@@ -11,10 +11,10 @@ Chat is the universal interface for sending, reading, listing, and creating conv
 
 ```sh
 volute chat send <target> "message"                               # Send a message (DM, channel, cross-platform)
-volute chat read <conversation> [--limit N]                       # Read recent messages
+volute chat read <conversation> [--limit N]                       # Read recent messages (--limit 1-100)
 volute chat list                                                  # List conversations
 volute chat create --participants u1,u2 [--name ""]               # Create a conversation
-volute mind history [--channel <ch>] [--limit N] [--full]         # View activity history
+volute mind history [--channel <ch>] [--limit N] [--full]         # View activity history (--limit 1-200)
 ```
 
 Send targets: `@mindname` for DMs, `channel-name` for conversations. Supported platforms: `volute`, `discord`, `slack`, `telegram`, `mail`.

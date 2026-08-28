@@ -20,6 +20,7 @@ import {
   isoWeekKeyForDateStr,
   type TimerPeriod,
 } from "../../lib/util/period-keys.js";
+import { boundedIntParam, intParamError } from "../../lib/util/query-params.js";
 import { normalizeDbBound } from "../../lib/util/time.js";
 import type { AuthEnv } from "../middleware/auth.js";
 
@@ -364,6 +365,13 @@ async function attachSummaryIcons(
   }
 }
 
+// Page bounds, hoisted so the refusal message is derived from the same numbers the parse
+// used and the two can't drift apart.
+const TURNS_LIMIT = { fallback: 50, min: 1, max: 200 };
+const SUMMARIES_LIMIT = { fallback: 50, min: 1, max: 200 };
+const ACTIVITY_LIMIT = { fallback: 100, min: 1, max: 500 };
+const OFFSET = { fallback: 0, min: 0, max: Number.MAX_SAFE_INTEGER };
+
 const history = new Hono<HistoryEnv>()
   // Backstop: compute the caller's allowed mind scope once, up front. Handlers
   // read c.get("mindFilter") rather than each remembering to call the helper, so
@@ -376,8 +384,10 @@ const history = new Hono<HistoryEnv>()
     const mindFilter = c.get("mindFilter");
     const turnIdFilter = c.req.query("turnId");
     const turnIdsFilter = c.req.query("turnIds");
-    const limit = Math.min(Math.max(parseInt(c.req.query("limit") ?? "50", 10) || 50, 1), 200);
-    const offset = Math.max(parseInt(c.req.query("offset") ?? "0", 10) || 0, 0);
+    const limit = boundedIntParam(c.req.query("limit"), TURNS_LIMIT);
+    if (limit === null) return c.json({ error: intParamError("limit", TURNS_LIMIT) }, 400);
+    const offset = boundedIntParam(c.req.query("offset"), OFFSET);
+    if (offset === null) return c.json({ error: intParamError("offset", OFFSET) }, 400);
 
     const db = await getDb();
 
@@ -740,7 +750,8 @@ const history = new Hono<HistoryEnv>()
     const ids = c.req.query("ids"); // comma-separated summary IDs
     const from = c.req.query("from");
     const to = c.req.query("to");
-    const limit = Math.min(Math.max(parseInt(c.req.query("limit") ?? "50", 10) || 50, 1), 200);
+    const limit = boundedIntParam(c.req.query("limit"), SUMMARIES_LIMIT);
+    if (limit === null) return c.json({ error: intParamError("limit", SUMMARIES_LIMIT) }, 400);
 
     // If fetching by IDs, skip other filters
     if (ids) {
@@ -850,7 +861,8 @@ const history = new Hono<HistoryEnv>()
     } catch (err) {
       return c.json({ error: (err as Error).message }, 400);
     }
-    const limit = Math.min(Math.max(parseInt(c.req.query("limit") ?? "100", 10) || 100, 1), 500);
+    const limit = boundedIntParam(c.req.query("limit"), ACTIVITY_LIMIT);
+    if (limit === null) return c.json({ error: intParamError("limit", ACTIVITY_LIMIT) }, 400);
 
     const db = await getDb();
     const conditions = [];

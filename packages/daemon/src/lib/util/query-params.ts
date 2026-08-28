@@ -31,6 +31,54 @@ export function parseIntParam(raw: string | undefined): number | undefined | nul
 }
 
 /**
+ * Parse a bounded integer query param: `fallback` when absent, `null` when malformed *or
+ * below `min`* (the caller should 400), clamped down to `max` otherwise.
+ *
+ * The shape this replaces was `parseInt(raw ?? "50", 10) || 50`, which is silent twice
+ * over. `parseInt("1e9")` is `1`, so a request for a large page served exactly one row;
+ * `parseInt("notanumber")` is `NaN`, so `|| 50` served the default page and called it an
+ * answer. Both exit 0 with real rows on screen and nothing anywhere to say the bound was
+ * never honoured — the failure leaves no artifact, which is what makes it worse than a
+ * crash. The refusal is the only signal the caller ever gets.
+ *
+ * `max` and `min` are treated differently on purpose. `max` is the route's *documented
+ * cap*: clamping to it is the published behaviour, and the CLI refuses anything past it
+ * before a request is sent, so no caller reaches the clamp by accident. `min` is a floor
+ * with no such story — raising `?limit=0` to `1` answers a request for nothing with one
+ * plausible row, which is the very substitution this function exists to stop. So a value
+ * under `min` is refused rather than lifted.
+ */
+export function boundedIntParam(
+  raw: string | undefined,
+  { fallback, min, max }: { fallback: number; min: number; max: number },
+): number | null {
+  const n = parseIntParam(raw);
+  if (n === null) return null;
+  if (n === undefined) return fallback;
+  if (n < min) return null;
+  return Math.min(n, max);
+}
+
+/**
+ * The refusal text for a `boundedIntParam` that returned null, naming the range.
+ *
+ * "must be a non-negative integer" is false for the case that most often triggers it:
+ * `?limit=0` *is* a non-negative integer and is refused anyway, and `?hours=200` is
+ * refused by a message that never mentions 168. A caller who reads that literally retries
+ * with another non-negative integer and gets the same 400 — a refusal that doesn't say
+ * what would be accepted is only half a signal. Derived from the same bounds object the
+ * parse used, so the two cannot drift apart.
+ */
+export function intParamError(name: string, { min, max }: { min: number; max: number }): string {
+  if (max === Number.MAX_SAFE_INTEGER) {
+    return min === 0
+      ? `${name} must be a non-negative integer`
+      : `${name} must be an integer of at least ${min}`;
+  }
+  return `${name} must be an integer between ${min} and ${max}`;
+}
+
+/**
  * A single cursor param: absent (`undefined`) or an exact run of safe-integer digits.
  * Deliberately built on `parseIntParam` rather than `z.coerce.number()` — coercion
  * salvages a leading numeric prefix and would serve the wrong page for an ISO
