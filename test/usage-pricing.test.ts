@@ -243,6 +243,68 @@ describe("priceUsageMetadata", () => {
     assert.equal(priced.partial, undefined);
   });
 
+  it("distrusts a breakdown whose primary slice claims more than the turn used", () => {
+    // A mind running a pre-#981 template forwards the SDK's session-cumulative
+    // `modelUsage` as this turn's slices. Pricing them bills the whole stream over
+    // again, every turn. The turn's own aggregate is the ground truth we still have.
+    const priced = priceUsageMetadata(
+      {
+        input_tokens: 58,
+        output_tokens: 1_133,
+        cache_read_input_tokens: 274_273,
+        cache_creation_input_tokens: 1_998,
+        model: "claude-haiku-4-5",
+        models: [
+          {
+            model: "claude-haiku-4-5",
+            input_tokens: 620,
+            output_tokens: 18_802,
+            cache_read_input_tokens: 1_542_289,
+            cache_creation_input_tokens: 138_603,
+          },
+        ],
+      },
+      { template: "claude" },
+    );
+    const fromAggregate = (58 * 1 + 1_133 * 5 + 274_273 * 0.1 + 1_998 * 1.25) / 1e6;
+    assert.equal(priced.cost_usd, fromAggregate);
+  });
+
+  it("keeps a breakdown whose side-call sits outside the turn aggregate", () => {
+    // The guard above must not fire here. On a genuine multi-model turn the top-level
+    // `usage` covers the primary model only, so the side-call's tokens legitimately push
+    // the slice *sum* past the aggregate — while the primary slice still matches it.
+    const priced = priceUsageMetadata(
+      {
+        input_tokens: 104,
+        output_tokens: 24_250,
+        cache_read_input_tokens: 300_000,
+        cache_creation_input_tokens: 0,
+        model: "claude-opus-4-6",
+        models: [
+          {
+            model: "claude-opus-4-6",
+            input_tokens: 104,
+            output_tokens: 24_250,
+            cache_read_input_tokens: 300_000,
+            cache_creation_input_tokens: 0,
+          },
+          {
+            model: "claude-haiku-4-5",
+            input_tokens: 79_675,
+            output_tokens: 2_839,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 0,
+          },
+        ],
+      },
+      { template: "claude" },
+    );
+    const opus = (104 * 5 + 24_250 * 25 + 300_000 * 0.5) / 1e6;
+    const haiku = (79_675 * 1 + 2_839 * 5) / 1e6;
+    assert.equal(priced.cost_usd, opus + haiku);
+  });
+
   it("falls back to the aggregate when there is no breakdown", () => {
     const priced = priceUsageMetadata({ ...full, models: [] }, { template: "claude" });
     assert.equal(priced.cost_usd, (2000 * 1 + 500 * 5 + 30000 * 0.1 + 4000 * 1.25) / 1e6);

@@ -3,7 +3,7 @@ import { daemonEmit, type EventType } from "./daemon-client.js";
 import { log, warn } from "./logger.js";
 import { filterEvent, loadTransparencyPreset } from "./transparency.js";
 import type { VoluteEvent } from "./types.js";
-import { buildUsagePayload, type ResultUsage } from "./usage.js";
+import { buildUsagePayload, type ModelUsageMap, type ResultUsage } from "./usage.js";
 
 /** A pending message's daemon-facing id (routing/channel key) paired with its channel `seq`. */
 export type MessageIdEntry = { id: string | undefined; seq: number };
@@ -56,6 +56,13 @@ export async function consumeStream(
   // How many queued message ids predate the current turn — see the pruning in
   // the result handler (#700).
   let preTurnPending = 0;
+  /**
+   * The previous result's per-model counters. They accumulate across the stream rather
+   * than resetting per turn, so each turn's own share is the difference from this (#981).
+   * A local, because its lifetime is exactly this stream's: a new stream — a restart, a
+   * resume, a rotation — opens the SDK's accumulator at zero too.
+   */
+  let prevModelUsage: ModelUsageMap;
   for await (const msg of stream) {
     if (session.currentMessageId === undefined) {
       const entry = session.messageIds.shift();
@@ -160,7 +167,10 @@ export async function consumeStream(
           }
         }
       }
-      const usage = buildUsagePayload(msg as ResultUsage);
+      const usage = buildUsagePayload(msg as ResultUsage, prevModelUsage);
+      // Carried forward even when there was no usage to emit: the counters moved
+      // regardless, and a skipped baseline would bill the next turn for both.
+      prevModelUsage = (msg as ResultUsage).modelUsage;
       if (usage) {
         callbacks.broadcast({ type: "usage", ...usage });
         emit(session, { type: "usage", metadata: usage });
