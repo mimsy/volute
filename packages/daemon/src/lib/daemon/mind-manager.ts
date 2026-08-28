@@ -259,6 +259,12 @@ export async function buildPendingContextMessage(
   } else {
     parts.push(await getPrompt("restart_message"));
   }
+  // An upgrade whose dependency install failed says so here, in the same message
+  // that tells the mind it was upgraded — and only once the mind is actually up to
+  // read it. Delivering it as its own event before the restart lost it: the POST
+  // landed on the process about to be SIGTERMed, and marking it delivered took it
+  // out of the pending set that start-up replay draws from (#973).
+  if (context.depsFailure) parts.push(`\n${String(context.depsFailure)}`);
   if (context.summary) parts.push(`Changes: ${context.summary}`);
   if (context.justification) parts.push(`Why: ${context.justification}`);
   if (context.memory) parts.push(`Context: ${context.memory}`);
