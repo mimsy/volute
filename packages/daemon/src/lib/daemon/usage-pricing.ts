@@ -220,6 +220,36 @@ function priceSlices(
   return total;
 }
 
+/**
+ * Whether a per-model breakdown describes *this turn*, or something larger.
+ *
+ * A mind runs its own copy of the template, so a breakdown can arrive from one that
+ * predates the #981 fix and forwards the SDK's session-cumulative `modelUsage` as though
+ * it were the turn's. Priced, that bills the whole stream over again on every turn — spend
+ * grows as the sum of partial sums. On bardo it billed a $0.36 turn at $4.22 and held a
+ * mind that had not reached its cap.
+ *
+ * The test is on the *primary* model's slice, never the slice sum: on a genuine
+ * multi-model turn the top-level `usage` covers the primary model only, so a side-call's
+ * tokens legitimately push the sum past the aggregate while the primary slice still
+ * matches it. A primary slice claiming *more* than the turn's own usage, on the other
+ * hand, cannot be describing this turn.
+ *
+ * Only fires on evidence: when no slice can be identified as the primary one, the
+ * breakdown is trusted as before.
+ */
+function slicesDescribeThisTurn(slices: ModelSlice[], ref: ModelRef, aggregate: UsageTokens) {
+  const primary =
+    slices.find((s) => s.model === ref.id) ?? (slices.length === 1 ? slices[0] : undefined);
+  if (!primary) return true;
+  return (
+    primary.input_tokens <= aggregate.input &&
+    primary.output_tokens <= aggregate.output &&
+    primary.cache_read_input_tokens <= (aggregate.cacheRead ?? 0) &&
+    primary.cache_creation_input_tokens <= (aggregate.cacheCreation ?? 0)
+  );
+}
+
 /** Read a metadata field as a finite number, or undefined when absent/unusable. */
 function num(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
@@ -274,11 +304,28 @@ export function priceUsageMetadata(
   // would understate the bill by orders of magnitude.
   if (partial) return result;
 
+  const tokens: UsageTokens = {
+    input: num(metadata.input_tokens) ?? 0,
+    output: num(metadata.output_tokens) ?? 0,
+    cacheRead,
+    cacheCreation,
+  };
+
   // Prefer the per-model breakdown: a turn spanning a main model and a cheaper side-call
-  // has a true cost that no single-model attribution can express.
+  // has a true cost that no single-model attribution can express. Unless the breakdown
+  // isn't this turn's, in which case the aggregate below is the ground truth we still
+  // have — an undercount by whatever the side-calls used, rather than an overcount by the
+  // whole stream.
   if (slices) {
-    result.cost_usd = priceSlices(slices, ctx);
-    return result;
+    if (slicesDescribeThisTurn(slices, ref, tokens)) {
+      result.cost_usd = priceSlices(slices, ctx);
+      return result;
+    }
+    plog.warn(
+      `${ctx.mind ? `${ctx.mind}: ` : ""}per-model usage exceeds the turn's own totals — ` +
+        "pricing the aggregate instead. The mind's template forwards a session-cumulative " +
+        "counter as this turn's breakdown (#981); `volute mind upgrade` fixes it.",
+    );
   }
 
   const rates = lookupRates(ref);
@@ -286,12 +333,7 @@ export function priceUsageMetadata(
     plog.warn(`no pricing for ${result.model} — recording tokens without cost`);
     return result;
   }
-  result.cost_usd = costOf(rates, {
-    input: num(metadata.input_tokens) ?? 0,
-    output: num(metadata.output_tokens) ?? 0,
-    cacheRead,
-    cacheCreation,
-  });
+  result.cost_usd = costOf(rates, tokens);
   return result;
 }
 
