@@ -181,9 +181,10 @@ const app = new Hono<AuthEnv>()
     },
   )
 
-  // Stage a file from an external sender (CLI user, not a mind).
-  // requireSelf restricts staging into a mind's queue to that mind or an admin
-  // (the CLI human-sender path uses the daemon admin token, which is allowed).
+  // Stage a file from a non-mind sender (a host at the CLI, or the web UI).
+  // requireSelf restricts staging into a mind's queue to that mind or an admin — a
+  // host reaches it as an admin on their own CLI session, never with the daemon token,
+  // which the CLI never holds (daemon-client.ts: VOLUTE_MIND_TOKEN ?? cli session).
   .post(
     "/:name/files/stage",
     requireSelf(),
