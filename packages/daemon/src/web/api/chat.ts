@@ -122,6 +122,21 @@ async function persistSpiritNotice(
   }
 }
 
+/**
+ * The refusal handed to a caller who asked to send as someone else. It has to settle
+ * two things the old silent fallback left ambiguous: that nothing was sent, and that
+ * the parameter is not a general impersonation feature. The only remedy it suggests —
+ * dropping the flag — actually works from the shell the caller is already in.
+ */
+export function refusedSenderMessage(requested: string, actual: string): string {
+  return (
+    `Refused to send as "${requested}": you are authenticated as "${actual}", and a message ` +
+    `is always recorded as whoever actually sent it. The "sender" field (--sender on the ` +
+    `CLI) is reserved for the daemon's own internal use. Nothing was sent — re-send without ` +
+    `it to post as "${actual}".`
+  );
+}
+
 // Mounted at /api/v1/chat, so the route path is bare "/". See app.ts.
 export const chatApp = new Hono<AuthEnv>().post("/", zValidator("json", chatSchema), async (c) => {
   const user = c.get("user");
@@ -139,6 +154,18 @@ export const chatApp = new Hono<AuthEnv>().post("/", zValidator("json", chatSche
   // Must have conversationId or targetMind
   if (!body.conversationId && !body.targetMind) {
     return c.json({ error: "conversationId or targetMind required" }, 400);
+  }
+
+  // A caller may only speak as itself. `sender` is an override for the daemon's own
+  // token, whose one legitimate use is bridge-outbound writing inbound platform
+  // traffic into a volute channel under the platform user's name. Anyone else asking
+  // to speak as someone else is refused outright: silently recording the message under
+  // the caller's own name is a confident success that answers a different question than
+  // the one asked, and the sender never learns their words went out as theirs (#500).
+  // Passing your own name is not impersonation — a mind's CLI sends its own name on
+  // every message — so an exact match passes.
+  if (body.sender && user.id !== 0 && body.sender !== user.username) {
+    return c.json({ error: refusedSenderMessage(body.sender, user.username) }, 403);
   }
 
   // Resolve sender: daemon token + body.sender → override, else user.username

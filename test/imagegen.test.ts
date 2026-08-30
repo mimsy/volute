@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
+import { resolve } from "node:path";
 import { afterEach, describe, it } from "node:test";
+import { promisify } from "node:util";
 import { OAuthRefreshError, providerOAuth } from "../packages/daemon/src/lib/ai-service.js";
 import {
   isImagegenEnabled,
@@ -40,11 +43,14 @@ import {
   xaiGenerate,
 } from "../packages/daemon/src/lib/services/imagegen-xai.js";
 import {
+  formatCliError,
   handleDaemonFailure,
   pollImagegenJob,
   searchViaDaemon,
   startImagegenJob,
 } from "../skills/imagegen/scripts/imagegen.js";
+
+const execFileAsync = promisify(execFile);
 
 /** Build a synthetic Codex OAuth access token (JWT) carrying an account id. */
 function fakeCodexToken(accountId: string): string {
@@ -1262,6 +1268,105 @@ describe("imagegen skill daemon error reporting", () => {
         () => handleDaemonFailure({ ok: false, reason: "auth", status: 401, detail: "bad token" }),
         /authentication problem/,
       );
+    });
+  });
+
+  // #499: a mind reads this output on its terminal. The messages are diagnoses
+  // written to stand alone; the stack under them is leaked internals.
+  describe("formatCliError", () => {
+    const debugBefore = process.env.VOLUTE_DEBUG;
+    afterEach(() => {
+      if (debugBefore === undefined) delete process.env.VOLUTE_DEBUG;
+      else process.env.VOLUTE_DEBUG = debugBefore;
+    });
+
+    it("reduces an Error to its message", () => {
+      delete process.env.VOLUTE_DEBUG;
+      const err = new Error("No image generation configured. Ask an admin.");
+      assert.equal(formatCliError(err), "No image generation configured. Ask an admin.");
+    });
+
+    it("stringifies a non-Error throw", () => {
+      delete process.env.VOLUTE_DEBUG;
+      assert.equal(formatCliError("plain string"), "plain string");
+    });
+
+    // `replicate.run` fetches on its own; a network failure arrives as a bare
+    // "fetch failed" whose real reason lives only in `cause`. Reducing to
+    // `message` alone would hand a mind a diagnosis with the diagnosis removed.
+    it("keeps the cause, which carries the real reason", () => {
+      delete process.env.VOLUTE_DEBUG;
+      const err = new Error("fetch failed", { cause: new Error("ECONNREFUSED 127.0.0.1:443") });
+      assert.equal(formatCliError(err), "fetch failed: ECONNREFUSED 127.0.0.1:443");
+    });
+
+    it("does not repeat a cause the message already contains", () => {
+      delete process.env.VOLUTE_DEBUG;
+      const err = new Error("boom: already said", { cause: new Error("already said") });
+      assert.equal(formatCliError(err), "boom: already said");
+    });
+
+    it("never prints a blank line for an empty message", () => {
+      delete process.env.VOLUTE_DEBUG;
+      const out = formatCliError(new Error(""));
+      assert.ok(typeof out === "string" && out.trim().length > 0, `got ${JSON.stringify(out)}`);
+    });
+
+    it("returns the whole error under VOLUTE_DEBUG=1", () => {
+      process.env.VOLUTE_DEBUG = "1";
+      const err = new Error("boom");
+      assert.equal(formatCliError(err), err, "debug mode should hand back the Error itself");
+    });
+  });
+
+  // End-to-end over the real CLI entry: with no daemon env and no provider token,
+  // `generate` throws the "not configured" diagnosis before any network call.
+  describe("imagegen CLI entry output", () => {
+    const script = resolve(process.cwd(), "skills/imagegen/scripts/imagegen.ts");
+
+    async function runScript(extraEnv: Record<string, string> = {}) {
+      const env: Record<string, string> = { ...process.env } as Record<string, string>;
+      for (const key of [
+        "VOLUTE_DAEMON_PORT",
+        "VOLUTE_MIND_TOKEN",
+        "VOLUTE_MIND",
+        "VOLUTE_DEBUG",
+        "REPLICATE_API_TOKEN",
+      ]) {
+        delete env[key];
+      }
+      try {
+        const r = await execFileAsync("npx", ["tsx", script, "generate", "a cat"], {
+          timeout: 60000,
+          env: { ...env, ...extraEnv },
+        });
+        return { stdout: r.stdout, stderr: r.stderr, code: 0 };
+      } catch (err) {
+        const e = err as { stdout?: string; stderr?: string; code?: number };
+        return { stdout: e.stdout ?? "", stderr: e.stderr ?? "", code: e.code ?? 1 };
+      }
+    }
+
+    it("prints only the message, with no stack trace, and exits 1", async () => {
+      const r = await runScript();
+      assert.equal(r.code, 1, "an unconfigured generate should exit 1");
+      assert.match(r.stderr, /No image generation configured/);
+      assert.doesNotMatch(
+        r.stderr,
+        /^\s*at .+:\d+:\d+/m,
+        `stack frames leaked into user-facing output:\n${r.stderr}`,
+      );
+      assert.ok(
+        !r.stderr.includes("Error: No image generation configured"),
+        "the raw Error object should not be dumped",
+      );
+    });
+
+    it("restores the full error under VOLUTE_DEBUG=1", async () => {
+      const r = await runScript({ VOLUTE_DEBUG: "1" });
+      assert.equal(r.code, 1);
+      assert.match(r.stderr, /No image generation configured/);
+      assert.match(r.stderr, /^\s*at .+:\d+:\d+/m, "debug mode should keep the stack");
     });
   });
 });

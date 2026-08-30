@@ -43,8 +43,11 @@ async function cleanup() {
   }
 }
 
+let currentUsername = "";
+
 async function setupAuth(): Promise<string> {
   const user = await createUser(`fs-admin-${Date.now()}`, "pass");
+  currentUsername = user.username;
   sessionId = await createSession(user.id);
   return sessionId;
 }
@@ -279,7 +282,7 @@ describe("web file-sharing routes", () => {
     assert.equal(res.status, 404);
   });
 
-  it("POST /:name/files/stage — stages file from external sender", async () => {
+  it("POST /:name/files/stage — stages file under the authenticated user", async () => {
     const cookie = await setupAuth();
     setupMinds();
     const app = createApp();
@@ -288,8 +291,9 @@ describe("web file-sharing routes", () => {
     const res = await app.request("/api/v1/minds/fs-receiver/files/stage", {
       method: "POST",
       headers: reqHeaders(cookie),
+      // No `sender`: the caller cannot name its own volute identity, and the daemon
+      // already knows it. Attribution comes from the session, not from the body.
       body: JSON.stringify({
-        sender: "human-user",
         filename: "test.txt",
         data: fileData,
       }),
@@ -300,11 +304,33 @@ describe("web file-sharing routes", () => {
     assert.equal(body.status, "pending");
     assert.ok(body.id);
 
-    // Verify it's in pending
+    // Verify it's in pending, attributed to whoever actually staged it
     const pending = listPending("fs-receiver");
     assert.equal(pending.length, 1);
-    assert.equal(pending[0].sender, "human-user");
+    assert.equal(pending[0].sender, currentUsername);
     assert.equal(pending[0].filename, "test.txt");
+  });
+
+  // The offer is announced to the recipient as "[file] <sender> sent ...", so an
+  // unguarded `sender` here misattributes a file exactly the way an unguarded
+  // `sender` misattributed a message (#500).
+  it("POST /:name/files/stage — refuses staging under someone else's name", async () => {
+    const cookie = await setupAuth();
+    setupMinds();
+    const app = createApp();
+
+    const res = await app.request("/api/v1/minds/fs-receiver/files/stage", {
+      method: "POST",
+      headers: reqHeaders(cookie),
+      body: JSON.stringify({
+        sender: "someone-else",
+        filename: "test.txt",
+        data: Buffer.from("x").toString("base64"),
+      }),
+    });
+
+    assert.equal(res.status, 403);
+    assert.equal(listPending("fs-receiver").length, 0, "a refused stage leaves nothing behind");
   });
 
   it("POST /:name/files/stage — 400 for missing fields", async () => {

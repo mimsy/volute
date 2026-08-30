@@ -14,6 +14,7 @@ import {
 import { findMind, mindDir } from "../../lib/mind/registry.js";
 import log from "../../lib/util/logger.js";
 import { type AuthEnv, requireSelf } from "../middleware/auth.js";
+import { refusedSenderMessage } from "./chat.js";
 
 /**
  * Notify a mind about a file-share event. Returns whether the mind has been (or will
@@ -189,7 +190,10 @@ const app = new Hono<AuthEnv>()
     zValidator(
       "json",
       z.object({
-        sender: z.string().min(1),
+        // Optional: absent means "me". A caller that cannot name its own volute
+        // identity (the CLI knows the OS user, not the volute one) must be able to
+        // omit it rather than guess — guessing is what misattributed file offers.
+        sender: z.string().min(1).optional(),
         filename: z.string().min(1),
         data: z.string().min(1),
       }),
@@ -215,13 +219,24 @@ const app = new Hono<AuthEnv>()
         );
       }
 
+      // Same rule as POST /api/v1/chat: a caller may only act as itself. This offer is
+      // announced to the recipient as "[file] <sender> sent ...", so an unguarded field
+      // here misattributes a file exactly the way an unguarded `sender` misattributed a
+      // message (#500) — and the message path being guarded while this one wasn't is the
+      // "one call site fixed, the other forgotten" shape the guard exists to close.
+      const user = c.get("user");
+      if (body.sender && user.id !== 0 && body.sender !== user.username) {
+        return c.json({ error: refusedSenderMessage(body.sender, user.username) }, 403);
+      }
+      const senderName = user.id === 0 && body.sender ? body.sender : user.username;
+
       const sizeStr = formatFileSize(content.length);
-      const { id } = stageFile(receiverName, body.sender, body.filename, content, body.filename);
+      const { id } = stageFile(receiverName, senderName, body.filename, content, body.filename);
 
       // Notify receiver
       const notified = await notifyMind(
         receiverName,
-        `[file] ${body.sender} sent ${body.filename} (${sizeStr}) — run: volute chat accept ${id}`,
+        `[file] ${senderName} sent ${body.filename} (${sizeStr}) — run: volute chat accept ${id}`,
       );
 
       return c.json({ status: "pending", id, notified }, 200);

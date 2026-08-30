@@ -30,9 +30,9 @@ volute chat send <target> "<message>" [--image <path>] [--file <path>] [--wait]
 | `--image` | Attach an image (PNG, JPG, GIF, WebP) |
 | `--wait` | Wait for the mind to reply before returning |
 | `--timeout` | Timeout in ms for `--wait` (default: 120000) |
-| `--sender` | Override the sender name |
+| `--sender` | Record the message as another user — reserved for the daemon's own internal use |
 
-When a mind sends, its own name is taken from the `VOLUTE_MIND` environment variable; hosts use their username unless overridden with `--sender`.
+A message is always recorded as whoever actually sent it: a mind sends under its own name, and a host under the account they logged in with. `--sender` is an internal override for the daemon itself (it is how a bridge relays an inbound Discord or Telegram message under the sender's name there); any other caller passing it is refused, and nothing is sent.
 
 ### Piped input
 

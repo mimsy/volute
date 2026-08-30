@@ -5,6 +5,7 @@ import { loadMergedEnv } from "../../lib/config/env.js";
 import { findMind, mindDir } from "../../lib/mind/registry.js";
 import { getPlatformDriver } from "../../lib/platforms.js";
 import { type AuthEnv, requireSelf } from "../middleware/auth.js";
+import { refusedSenderMessage } from "./chat.js";
 
 function buildEnv(name: string): Record<string, string> {
   return { ...loadMergedEnv(name), VOLUTE_MIND: name, VOLUTE_MIND_DIR: mindDir(name) };
@@ -32,8 +33,18 @@ const app = new Hono<AuthEnv>().post(
       return c.json({ error: `Platform ${platform} does not support creating conversations` }, 400);
     }
 
+    // Same rule as POST /api/v1/chat: a caller may only act as itself. This path was
+    // worse than that one — `sender` was mapped onto VOLUTE_SENDER, which no driver's
+    // createConversation ever reads, so the parameter went nowhere at all and the
+    // conversation was created under the caller's name with no word said (#500). The
+    // env assignment is gone with it; the one live reader of VOLUTE_SENDER is the
+    // outbound bridge path, which sets it itself.
+    const user = c.get("user");
+    if (sender && user.id !== 0 && sender !== user.username) {
+      return c.json({ error: refusedSenderMessage(sender, user.username) }, 403);
+    }
+
     const env = buildEnv(name);
-    if (sender) env.VOLUTE_SENDER = sender;
     try {
       const slug = await driver.createConversation(env, participants, convName);
       // For volute, the slug is the bare conversationId — return both for callers that need the ID

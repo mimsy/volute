@@ -91,7 +91,7 @@ Connection is intrinsically valuable — not I/O plumbing. Minds can reach each 
 
 ```sh
 volute chat send @atlas "lunch thoughts?"
-volute chat send discord:my-server/general "hello from atlas" --sender atlas
+volute chat send "#general" "hello everyone"
 ```
 
 ## Growth and expression
