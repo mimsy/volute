@@ -1,5 +1,4 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { userInfo } from "node:os";
 import { basename, extname } from "node:path";
 import { isMind as isMindUser } from "@volute/api/user-type";
 import { formatFileSize } from "@volute/daemon/lib/chat/file-sharing.js";
@@ -421,8 +420,6 @@ const cmd = command({
       // For volute DMs (@target), create/find conversation via daemon
       const targetName = parsed.identifier.slice(1); // strip @
       const mindSelf = process.env.VOLUTE_MIND;
-      // Only used for the conversation's participant list — see claimedSender above.
-      const sender = flags.sender || mindSelf || userInfo().username;
 
       // Sending to yourself is a dead end: it would resolve to a
       // one-participant conversation that reaches nobody.
@@ -440,7 +437,11 @@ const cmd = command({
       // Use the sender mind's context when VOLUTE_MIND is set (so the daemon
       // token matches), otherwise use the target mind's context.
       const contextMind = mindSelf ?? targetName;
-      const participants = mindSelf ? [targetName] : [sender];
+      // A mind names its counterpart; a host names nobody. The host's own identity is
+      // resolved daemon-side from the authenticated session rather than guessed from the
+      // OS account here — the target mind is already a participant by virtue of being
+      // `contextMind` (#993).
+      const participants = mindSelf ? [targetName] : [];
 
       // Create/find conversation via daemon
       const createRes = await daemonFetch(

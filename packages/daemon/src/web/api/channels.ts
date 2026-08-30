@@ -44,9 +44,17 @@ const app = new Hono<AuthEnv>().post(
       return c.json({ error: refusedSenderMessage(sender, user.username) }, 403);
     }
 
+    // The driver re-enters the daemon on the daemon's own token, which drops the
+    // caller's identity — so name the authenticated user here, while it is still known.
+    // The CLI used to supply this by guessing the OS account name, which is a different
+    // string entirely for many hosts and came back as `400 User not found`, leaving them
+    // unable to DM a mind at all (#993). The daemon knows who authenticated; nobody
+    // needs to guess.
+    const resolved = user.id === 0 ? participants : [...new Set([...participants, user.username])];
+
     const env = buildEnv(name);
     try {
-      const slug = await driver.createConversation(env, participants, convName);
+      const slug = await driver.createConversation(env, resolved, convName);
       // For volute, the slug is the bare conversationId — return both for callers that need the ID
       return c.json({ slug, conversationId: slug });
     } catch (err) {

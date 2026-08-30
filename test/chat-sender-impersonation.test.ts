@@ -11,6 +11,7 @@ import {
   createUser,
   getOrCreateMindUser,
   getOrCreateSystemUser,
+  getUserByUsername,
 } from "../packages/daemon/src/lib/auth.js";
 import { listPending } from "../packages/daemon/src/lib/chat/file-sharing.js";
 import { getSpiritName } from "../packages/daemon/src/lib/config/setup.js";
@@ -29,6 +30,7 @@ import {
   createChannel,
   createConversation,
   getMessages,
+  getParticipants,
 } from "../packages/daemon/src/lib/events/conversations.js";
 import {
   addMind,
@@ -78,6 +80,7 @@ async function cleanup() {
   }
   rmSync(resolve(voluteSystemDir(), "daemon.json"), { force: true });
   rmSync(resolve(voluteSystemDir(), "cli-session.json"), { force: true });
+  rmSync(resolve(voluteSystemDir(), "daemon-token"), { force: true });
   for (const k of Object.keys(process.env)) {
     if (!(k in SAVED_ENV)) delete process.env[k];
   }
@@ -158,6 +161,9 @@ async function runSendCli(
     resolve(voluteSystemDir(), "daemon.json"),
     JSON.stringify({ hostname: "127.0.0.1", port }),
   );
+  // The volute driver (invoked by channels/create) calls back over HTTP on the
+  // daemon's own token, which it reads from disk.
+  writeFileSync(resolve(voluteSystemDir(), "daemon-token"), DAEMON_TOKEN);
   process.env.VOLUTE_DAEMON_PORT = String(port);
   process.env.VOLUTE_DAEMON_HOSTNAME = "127.0.0.1";
   if (who.asMind) {
@@ -400,6 +406,31 @@ describe("sending as someone else", { concurrency: 1 }, () => {
     const msgs = await getMessages(f.channelId);
     assert.equal(msgs.length, 1, "the host's message should have been posted");
     assert.equal(msgs[0].sender_name, HOST, "attributed to the host, not the exported mind");
+  });
+
+  // #993: the CLI built the DM participant list from the OS account name, and the
+  // driver re-enters the daemon on the daemon's token, so the host's real identity was
+  // never available downstream — `400 User not found`, and the host could not DM a mind
+  // at all. The last of the OS guesses this PR removes.
+  it("lets a host DM a mind when their OS username is not a volute user", async () => {
+    const f = await setup();
+    assert.notEqual(userInfo().username, HOST, "fixture assumes the OS user isn't the volute user");
+    const osUser = await getUserByUsername(userInfo().username);
+    assert.ok(!osUser, "fixture assumes the OS username is not a volute user");
+
+    const r = await runSendCli(f, { asMind: false }, [`@${MIND}`, "a first hello"]);
+
+    assert.equal(r.exitCode, undefined, `should not exit; errors: ${r.errors.join(" | ")}`);
+
+    // The DM exists, carries the message, and is between the host and the mind.
+    const db = await getDb();
+    const rows = await db.select().from(messages).all();
+    const sent = rows.find((m) => m.content.includes("a first hello"));
+    assert.ok(sent, "the DM should have been delivered");
+    assert.equal(sent!.sender_name, HOST, "attributed to the volute user, not the OS user");
+
+    const names = (await getParticipants(sent!.conversation_id)).map((p) => p.username).sort();
+    assert.deepEqual(names, [HOST, MIND].sort(), "the DM is between the host and the mind");
   });
 
   it("still lets channels/create through under the caller's own name", async () => {
