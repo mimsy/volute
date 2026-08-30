@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, isNotNull, isNull, lt, lte, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, isNotNull, isNull, lt, lte, ne, or, sql } from "drizzle-orm";
 import { getSpiritName } from "../config/setup.js";
 import { getDb } from "../db.js";
 import { getRoutingConfig, resolveEventRoute } from "../delivery/delivery-router.js";
@@ -805,6 +805,12 @@ export async function pendingEventCount(mind: string): Promise<number> {
  * Pending rows are never touched here — they're bounded separately by the per-(mind,thread)
  * cap on insert and by flush-time expiry, and must survive until actually drained/delivered.
  * Called from the daemon's hourly maintenance sweep (`daemon/maintenance.ts`).
+ *
+ * `orientation` rows are exempt. There is exactly one per mind, so they can't accumulate,
+ * and that row is the record that this mind has already been born — the witness
+ * {@link hasEverReceivedEvent} reads to keep a seed from being re-oriented (#697). Purging
+ * it would hand a seed still unsprouted after the retention window its birth message a
+ * second time.
  */
 export async function cleanExpiredEvents(): Promise<void> {
   const db = await getDb();
@@ -814,7 +820,13 @@ export async function cleanExpiredEvents(): Promise<void> {
     .slice(0, 19);
   await db
     .delete(systemEvents)
-    .where(and(isNotNull(systemEvents.delivered_at), lt(systemEvents.created_at, cutoff)));
+    .where(
+      and(
+        isNotNull(systemEvents.delivered_at),
+        lt(systemEvents.created_at, cutoff),
+        ne(systemEvents.type, "orientation"),
+      ),
+    );
 }
 
 /** The wake-summary line describing queued events, or "" when none are pending. */
@@ -1065,6 +1077,48 @@ export async function latestEvent(
     detail: row.body,
     created_at: row.created_at,
   };
+}
+
+/**
+ * True if the mind has ever been sent an event of this type — already delivered, or
+ * still pending and therefore on its way.
+ *
+ * The "ever" is the point, and the difference from {@link hasUndeliveredEvent}: that one
+ * answers "is there an unread notice about this right now", which goes false the moment
+ * the mind reads it. For a once-in-a-lifetime event that is the wrong predicate — a seed
+ * that had read its birth message was told it had just been born again on the next
+ * restart (#697).
+ *
+ * Rows stamped `delivered_at` *without* reaching the mind do not count. `delivered_at`
+ * is set on four paths that discard an event rather than deliver it — expired at flush,
+ * skipped while sleeping, dropped by the next-turn cap, and superseded as a held repeat —
+ * so "delivered_at is set" is not "the mind heard it". Treating one as proof of receipt
+ * would permanently silence the thing it was meant to dedupe: a seed whose orientation
+ * POST failed and whose row later expired would never be oriented at all.
+ *
+ * All four are excluded rather than only the ones a caller happens to hit today, because
+ * this is a general predicate: `superseded` cannot reach an orientation row (it only
+ * matches rows carrying `meta.scheduleId`), but the next caller to ask this about a
+ * schedule-typed event would otherwise count a superseded row as receipt.
+ */
+export async function hasEverReceivedEvent(mind: string, type: string): Promise<boolean> {
+  const db = await getDb();
+  const row = await db
+    .select({ id: systemEvents.id })
+    .from(systemEvents)
+    .where(
+      and(
+        eq(systemEvents.mind, mind),
+        eq(systemEvents.type, type),
+        sql`json_extract(${systemEvents.meta}, '$.expired') IS NULL`,
+        sql`json_extract(${systemEvents.meta}, '$.skipped') IS NULL`,
+        sql`json_extract(${systemEvents.meta}, '$.dropped') IS NULL`,
+        sql`json_extract(${systemEvents.meta}, '$.superseded') IS NULL`,
+      ),
+    )
+    .limit(1)
+    .get();
+  return row != null;
 }
 
 /** True if the mind has an undelivered next-turn event with this meta.reason (any thread). */

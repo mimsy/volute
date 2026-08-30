@@ -30,7 +30,7 @@ import {
   reapSessionsForShutdown,
 } from "./lib/session-reaper.js";
 import { DEFAULT_SEED_TOKENS, rotateSession, seedSession } from "./lib/session-seed.js";
-import { createSessionStore } from "./lib/session-store.js";
+import { createSessionStore, lostRealContext } from "./lib/session-store.js";
 import type { EffortLevel, SubagentConfig, ThinkingConfig } from "./lib/startup.js";
 import { consumeStream, type MessageIdEntry } from "./lib/stream-consumer.js";
 import type {
@@ -88,6 +88,18 @@ type Session = {
 
 /** Stop self-rotating after this many back-to-back rotations that didn't reduce context. */
 const MAX_CONSECUTIVE_ROTATIONS = 3;
+
+/**
+ * How a notice that can be read from any thread should name the thread it is about.
+ *
+ * Amnesia notices are recorded mind-level so they can't strand (#768), which means the
+ * reader may be somewhere else entirely and "this thread" points at nothing. Ephemeral
+ * `new-*` sessions are named after nothing the mind has ever seen, so naming one would
+ * be worse than not naming it.
+ */
+function threadRef(name: string): string {
+  return name.startsWith("new-") ? "a one-off session" : `the \`${name}\` thread`;
+}
 
 export function createMind(options: {
   systemPrompt: string;
@@ -367,10 +379,14 @@ export function createMind(options: {
   /** Sentinel error used to signal that the stream was aborted for compaction */
   class CompactionAbort extends Error {}
 
-  function startSession(session: Session, savedSessionId?: string) {
+  function startSession(session: Session, savedSessionId?: string, savedCommitted = false) {
     (async () => {
       log("mind", `session "${session.name}": stream consumer started`);
       let currentSessionId = savedSessionId;
+      // Whether the live pointer is known to reference a transcript holding real
+      // conversation — see SessionRecord.committed. Sticky within the session's life;
+      // cleared only where we drop the pointer and genuinely start over.
+      let committed = savedCommitted;
       let streamAbort = new AbortController();
 
       /** Mark the session to rotate in place when the current turn ends. */
@@ -392,7 +408,12 @@ export function createMind(options: {
       const callbacks = {
         onSessionId: (id: string) => {
           currentSessionId = id;
-          if (!session.name.startsWith("new-")) sessionStore.save(session.name, id);
+          // Carry `committed` across the stamp rather than resetting it: if the SDK ever
+          // hands a resumed session a new id, that transcript continues the old one and
+          // its content is still real (#769). Resetting here would be the worse error —
+          // it would silence a genuine loss, where carrying it forward could at worst
+          // repeat the false notice once for a session that had already earned the flag.
+          if (!session.name.startsWith("new-")) sessionStore.save(session.name, id, committed);
         },
         broadcast: (event: VoluteEvent) => broadcastToSession(session, event),
         // Identity-based ack — stream-consumer.ts calls this once per message the
@@ -401,6 +422,13 @@ export function createMind(options: {
         ack: (seq: number) => session.channel.ack(seq),
         onTurnEnd: async () => {
           session.lastActivityAt = Date.now();
+          // A turn has landed in the transcript, so this pointer now references real
+          // conversation: if it later goes missing, the loss is genuine and the mind
+          // should be told (#769). One write per session — the flag is sticky.
+          if (!committed && currentSessionId && !session.name.startsWith("new-")) {
+            committed = true;
+            sessionStore.save(session.name, currentSessionId, true);
+          }
           // A turn resolved — the seeded note's injection had its chance to land
           // (the pre-prompt hook ran and wasn't cancelled by an interrupt), so stop
           // re-offering it. This is the honest place to clear: a completed turn is
@@ -495,12 +523,15 @@ export function createMind(options: {
                 // Unlike a successful rotation (boundary note, verbatim tail, archived
                 // transcript), this genuinely loses the live context — say so (#367).
                 log("mind", `session "${session.name}": rotation failed, starting fresh`);
+                // Mind-level (no `thread`): a thread-scoped notice waits for a turn on
+                // that exact thread, which under the stock routes.json may be hours away
+                // or never — the mind stays silently amnesiac meanwhile (#768). So the
+                // text names the thread it is about, since it can be read anywhere.
                 daemonNotice({
                   kind: "context_lost",
-                  thread: session.name,
                   message:
-                    "Session rotation failed at the context limit and this thread was " +
-                    "reset — conversation context before this point was lost. Your turn " +
+                    `Session rotation failed at the context limit and ${threadRef(session.name)} ` +
+                    "was reset — the conversation before the reset was lost. Your turn " +
                     "summaries survive in `volute mind history`; check your journal for " +
                     "where you left off.",
                 }).catch((err) =>
@@ -508,6 +539,7 @@ export function createMind(options: {
                 );
                 sessionStore.delete(session.name);
                 currentSessionId = undefined;
+                committed = false;
                 session.seeded = false;
                 streamAbort = new AbortController();
                 session.channel = createMessageChannel();
@@ -515,7 +547,11 @@ export function createMind(options: {
               }
               // Point the live pointer at the rotated session and arm the boundary
               // note (rotation cause — no gap). Ephemeral `new-*` keep no pointer.
-              if (!session.name.startsWith("new-")) sessionStore.save(session.name, rotatedId);
+              // The rotated transcript is written with the verbatim recent tail, so the
+              // new pointer references real content from the moment it is stamped.
+              committed = true;
+              if (!session.name.startsWith("new-"))
+                sessionStore.save(session.name, rotatedId, true);
               currentSessionId = rotatedId;
               session.seeded = true;
               session.seededCause = "rotation";
@@ -557,15 +593,17 @@ export function createMind(options: {
         session.messageChannels.clear();
         if (currentSessionId) {
           log("mind", `session "${session.name}": resume failed, starting fresh:`, err);
+          // Mind-level (no `thread`) so it reaches the next turn on any thread (#768).
           daemonNotice({
             kind: "context_lost",
-            thread: session.name,
             message:
-              "Your session couldn't be resumed after an error, so you're starting fresh. " +
-              "Recent context may be in memory/journal/.",
+              `${threadRef(session.name)} couldn't be resumed after an error, so it started ` +
+              "fresh — the conversation before the reset was lost. Recent context may be " +
+              "in memory/journal/.",
           }).catch((e) => log("mind", `session "${session.name}": failed to record notice:`, e));
           sessionStore.delete(session.name);
           currentSessionId = undefined;
+          committed = false;
           // We fell back to a truly empty session — don't tell the mind its
           // conversation continued when the seeded transcript failed to resume,
           // and don't let a half-entered rotation leak into the fresh session.
@@ -620,22 +658,34 @@ export function createMind(options: {
     sessions.set(name, session);
 
     const isEphemeral = name.startsWith("new-");
-    let savedSessionId = isEphemeral ? undefined : sessionStore.load(name);
+    const stored = isEphemeral ? undefined : sessionStore.load(name);
+    let savedSessionId = stored?.sessionId;
+    let committed = stored?.committed ?? false;
     // Validate that the SDK session file still exists — orphaned references
     // cause the SDK to throw and can crash the process with EPIPE.
     if (savedSessionId && !findClaudeSessionFile(options.cwd, savedSessionId)) {
       log("mind", `session "${name}": stored session ${savedSessionId} not found, starting fresh`);
       sessionStore.delete(name);
       savedSessionId = undefined;
-      // Worded so it stays true whether or not transcript seeding (below) partially
-      // restores context: the live session is gone either way.
-      daemonNotice({
-        kind: "context_lost",
-        thread: name,
-        message:
-          "Your previous session couldn't be restored (session file missing), so this " +
-          "thread was reset. Recent context may be in memory/journal/.",
-      }).catch((err) => log("mind", `session "${name}": failed to record notice:`, err));
+      if (lostRealContext(stored)) {
+        // Mind-level (no `thread`) so whichever thread next runs a turn drains it,
+        // rather than waiting on a turn in this one that may never come (#768); the
+        // text names the thread because it can be read anywhere. Worded so it stays
+        // true whether or not transcript seeding (below) partially restores context:
+        // the live session is gone either way.
+        daemonNotice({
+          kind: "context_lost",
+          message:
+            `The previous session for ${threadRef(name)} couldn't be restored (session ` +
+            "file missing), so it was reset. Recent context may be in memory/journal/.",
+        }).catch((err) => log("mind", `session "${name}": failed to record notice:`, err));
+      } else {
+        // The pointer was stamped when the SDK handed out a session id but no turn ever
+        // landed in it, so there is nothing behind it to have lost. Saying "you lost
+        // context" here would be a lie on an ordinary restart (#769).
+        log("mind", `session "${name}": pointer never carried a turn — nothing was lost`);
+      }
+      committed = false;
     }
     if (savedSessionId) {
       log("mind", `session "${name}": resuming ${savedSessionId}`);
@@ -650,7 +700,10 @@ export function createMind(options: {
         seedTokens: options.seedTokens ?? DEFAULT_SEED_TOKENS,
       });
       if (seeded) {
-        sessionStore.save(name, seeded.sessionId);
+        // The seeded transcript carries the previous session's tail — real content
+        // from the first stamp, so losing it later is a genuine loss (#769).
+        sessionStore.save(name, seeded.sessionId, true);
+        committed = true;
         savedSessionId = seeded.sessionId;
         session.seeded = true;
         session.seededArchivedAt = seeded.archivedAt;
@@ -666,7 +719,7 @@ export function createMind(options: {
       log("mind", `session "${name}": starting fresh`);
     }
 
-    startSession(session, savedSessionId);
+    startSession(session, savedSessionId, committed);
     return session;
   }
 
@@ -826,7 +879,7 @@ export function createMind(options: {
   const skillDescTokens = countSkillDescriptionTokens([resolvePath(options.cwd, ".claude/skills")]);
 
   function jsonlPathFor(sessionName: string): string | null {
-    const sessionId = sessionStore.load(sessionName);
+    const sessionId = sessionStore.load(sessionName)?.sessionId;
     return sessionId ? findClaudeSessionFile(options.cwd, sessionId) : null;
   }
 

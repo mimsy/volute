@@ -14,6 +14,7 @@ import {
   flushHeldEvents,
   flushQueuedEvents,
   formatEvents,
+  hasEverReceivedEvent,
   hasUndeliveredEvent,
   latestEvent,
   latestFailureEvent,
@@ -1000,6 +1001,64 @@ describe("system-events status surfaces", () => {
     assert.equal(await hasUndeliveredEvent(mind, "process_crash"), false);
     await cleanupMind(mind);
   });
+
+  it("hasEverReceivedEvent stays true after the event is delivered (#697)", async () => {
+    const mind = uniqueMind();
+    const db = await getDb();
+    assert.equal(await hasEverReceivedEvent(mind, "orientation"), false);
+
+    await db.insert(systemEvents).values({
+      mind,
+      type: "orientation",
+      body: "You've just been created as a seed",
+      delivery: "immediate",
+      thread: "main",
+    });
+    assert.equal(await hasEverReceivedEvent(mind, "orientation"), true);
+
+    // The whole point: an event the mind has already read is still a thing that
+    // happened to it. `hasUndeliveredEvent`'s answer flips here; this one must not.
+    await db
+      .update(systemEvents)
+      .set({ delivered_at: "2026-07-14 02:06:48" })
+      .where(eq(systemEvents.mind, mind));
+    assert.equal(await hasEverReceivedEvent(mind, "orientation"), true);
+    assert.equal(await hasUndeliveredEvent(mind, "orientation"), false);
+
+    assert.equal(await hasEverReceivedEvent(mind, "lifecycle"), false);
+    assert.equal(await hasEverReceivedEvent(uniqueMind(), "orientation"), false);
+    await cleanupMind(mind);
+  });
+
+  it("hasEverReceivedEvent does not count an event the mind never got", async () => {
+    const db = await getDb();
+    // `delivered_at` is stamped on four paths that discard an event instead of
+    // delivering it: expired at flush, skipped while sleeping, dropped by the next-turn
+    // cap, and superseded as a held repeat. Counting one as receipt would permanently
+    // silence the thing it dedupes — a seed whose orientation POST failed and whose row
+    // later expired would never be oriented at all, where the old unconditional code
+    // retried every start. All four are pinned because the predicate is generic: a
+    // caller asking about a schedule-typed event can reach `superseded`, which an
+    // orientation row cannot.
+    for (const marker of ["expired", "skipped", "dropped", "superseded"]) {
+      const mind = uniqueMind();
+      await db.insert(systemEvents).values({
+        mind,
+        type: "orientation",
+        body: "never arrived",
+        delivery: "immediate",
+        thread: "main",
+        delivered_at: "2026-07-14 02:06:48",
+        meta: JSON.stringify({ [marker]: true }),
+      });
+      assert.equal(
+        await hasEverReceivedEvent(mind, "orientation"),
+        false,
+        `a ${marker} event was never received`,
+      );
+      await cleanupMind(mind);
+    }
+  });
 });
 
 describe("system-events cleanExpiredEvents", () => {
@@ -1042,13 +1101,26 @@ describe("system-events cleanExpiredEvents", () => {
         created_at: ago(40 * day),
         delivered_at: null,
       },
+      // Delivered and old, but an orientation — must survive: it is the record that
+      // this mind has already been born, and purging it would let a seed still
+      // unsprouted after the retention window be re-oriented (#697).
+      {
+        mind,
+        type: "orientation",
+        body: "old delivered orientation",
+        delivery: "immediate",
+        thread: "main",
+        created_at: ago(40 * day),
+        delivered_at: ago(40 * day),
+      },
     ]);
 
     await cleanExpiredEvents();
 
     const rows = await db.select().from(systemEvents).where(eq(systemEvents.mind, mind));
     const bodies = rows.map((r) => r.body).sort();
-    assert.deepEqual(bodies, ["old pending", "recent delivered"]);
+    assert.deepEqual(bodies, ["old delivered orientation", "old pending", "recent delivered"]);
+    assert.equal(await hasEverReceivedEvent(mind, "orientation"), true);
 
     await cleanupMind(mind);
   });

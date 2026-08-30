@@ -4,7 +4,7 @@ import { missingCredentialWarning } from "../ai-service.js";
 import { syncMindProfile } from "../auth.js";
 import { joinCommonsChannelForMind, joinCommonsChannelForSpirit } from "../chat/commons-channel.js";
 import { ensureSystemDM } from "../chat/system-chat.js";
-import { deliverEvent } from "../chat/system-events.js";
+import { deliverEvent, hasEverReceivedEvent } from "../chat/system-events.js";
 import { getSystemName } from "../config/setup.js";
 import { publish as publishActivity } from "../events/activity-events.js";
 import { markIdle } from "../events/mind-activity-tracker.js";
@@ -333,8 +333,25 @@ export function buildSeedOrientation(
   return `${intro} Your creator is ${who}. Send them a message to introduce yourself.`;
 }
 
-/** Look up the creator's user_type, build the orientation message, and send it. */
-async function sendSeedOrientation(mindName: string, createdBy?: string | null): Promise<void> {
+/**
+ * Look up the creator's user_type, build the orientation message, and send it — once
+ * in a mind's life.
+ *
+ * Orientation is a birth message ("You've just been created as a seed…"), and this runs
+ * on every server start while the mind is still a seed. Without the guard a seed that
+ * had been awake for hours, and had already introduced itself to its creator, was told
+ * it had just been born again on the next restart (#697). The `hasUndeliveredEvent`
+ * dedup used for startup notices nearby is the wrong predicate here: it goes false the
+ * moment the seed reads the first orientation, which is exactly when re-sending is worst.
+ */
+export async function sendSeedOrientation(
+  mindName: string,
+  createdBy?: string | null,
+): Promise<void> {
+  if (await hasEverReceivedEvent(mindName, "orientation")) {
+    log.info(`seed ${mindName} has already been oriented — not re-sending`);
+    return;
+  }
   let creatorType: "human" | "mind" | "spirit" | undefined;
   if (createdBy) {
     const { getUserByUsername } = await import("../auth.js");
