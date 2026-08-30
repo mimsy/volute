@@ -7,6 +7,12 @@ import { getMindManager, tryGetMindManager } from "../../lib/daemon/mind-manager
 import { createConversation, findDMConversation } from "../../lib/events/conversations.js";
 import { runFarewellTurn } from "../../lib/mind/farewell.js";
 import { chownMindDir } from "../../lib/mind/isolation.js";
+import {
+  acquireJoinLock,
+  describeJoinAge,
+  JoinInProgressError,
+  joinInProgress,
+} from "../../lib/mind/join-lock.js";
 import { createVariant, mergeVariant } from "../../lib/mind/lifecycle.js";
 import { findMind, findVariants, mindDir, setMindRunning } from "../../lib/mind/registry.js";
 import { cleanupVariant } from "../../lib/mind/variant-cleanup.js";
@@ -101,6 +107,23 @@ const app = new Hono<AuthEnv>()
           { error: "Cannot split from a variant — split from the base mind instead" },
           403,
         );
+
+      // A join is mid-flight in this parent's worktree: auto-committing it, merging
+      // into it, and about to restart it. Branching a new worktree off that moving
+      // target is not something to do concurrently (#655).
+      const joining = joinInProgress(mindName);
+      if (joining) {
+        return c.json(
+          {
+            error:
+              `Cannot split ${mindName} while a join of ${joining.variant} into it is running ` +
+              `(${describeJoinAge(joining)}) — its worktree is mid-merge. Wait for the join to ` +
+              `finish, then split. If that age keeps growing and nothing lands, the join is ` +
+              `wedged and only a daemon restart clears it.`,
+          },
+          409,
+        );
+      }
 
       const body = c.req.valid("json");
       const variantName = body.name;
@@ -204,32 +227,46 @@ const app = new Hono<AuthEnv>()
       return c.json({ error: message, ...extra }, status);
     };
 
-    // Give the variant one final turn to wind down before it's merged and
-    // destroyed. Runs before the first git write below (the variant auto-commit)
-    // so any home/ files it edits as it says goodbye are captured in the merge.
-    // Bounded internally — a hung variant can't block the join. Wrapped so the
-    // farewell can never fail the join: winding down is a courtesy, losing the
-    // merge is not. The parting note (if any) is folded into the merge context
-    // the parent receives below.
-    let farewell: string | undefined;
+    // One join per parent at a time (#655). Several principals converging on the same
+    // join is the expected condition — the variant, the parent and the spirit are all
+    // taught the command — so the second one gets a 409 it can act on rather than a
+    // second farewell turn interrupting the first and a second merge racing the same
+    // worktrees. Taken immediately before the try below so the release in its `finally`
+    // covers everything the join does, farewell turn included.
+    let releaseJoin: () => void;
     try {
-      farewell = await runFarewellTurn({
-        variantName,
-        parentName: mindName,
-        variantDir: variantEntry.dir,
-        running: tryGetMindManager()?.isRunning(variantName) ?? false,
-      });
+      releaseJoin = acquireJoinLock(mindName, variantName);
     } catch (err) {
-      log.warn(`farewell turn failed for ${variantName}`, log.errorData(err));
+      if (err instanceof JoinInProgressError) return c.json({ error: err.message }, 409);
+      throw err;
     }
 
-    // From the first git write below through the restart, wrap everything in one
-    // try/catch. The named early returns already route through failAfterGitWrite,
-    // but an *uncaught* throw past the first write — spawnServer's isolation wrap,
-    // an unguarded status read, verify — would otherwise 500 without restoring
-    // ownership, leaving the parent (and the nested variant tree) root-owned under
-    // isolation. The catch funnels those through the same restore path.
+    // From the farewell turn through the restart, wrap everything in one try/catch.
+    // The named early returns already route through failAfterGitWrite, but an
+    // *uncaught* throw past the first git write — spawnServer's isolation wrap, an
+    // unguarded status read, verify — would otherwise 500 without restoring ownership,
+    // leaving the parent (and the nested variant tree) root-owned under isolation.
+    // The catch funnels those through the same restore path.
     try {
+      // Give the variant one final turn to wind down before it's merged and
+      // destroyed. Runs before the first git write below (the variant auto-commit)
+      // so any home/ files it edits as it says goodbye are captured in the merge.
+      // Bounded internally — a hung variant can't block the join. Wrapped so the
+      // farewell can never fail the join: winding down is a courtesy, losing the
+      // merge is not. The parting note (if any) is folded into the merge context
+      // the parent receives below.
+      let farewell: string | undefined;
+      try {
+        farewell = await runFarewellTurn({
+          variantName,
+          parentName: mindName,
+          variantDir: variantEntry.dir,
+          running: tryGetMindManager()?.isRunning(variantName) ?? false,
+        });
+      } catch (err) {
+        log.warn(`farewell turn failed for ${variantName}`, log.errorData(err));
+      }
+
       // Fall back to the purpose captured at split so the parent's merge message can
       // recall why the variant existed even when no justification is passed at join.
       // Normalize like the split path so an explicit "" (or whitespace) still falls back.
@@ -292,6 +329,8 @@ const app = new Hono<AuthEnv>()
       return await failAfterGitWrite(
         `Variant join failed: ${err instanceof Error ? err.message : String(err)}`,
       );
+    } finally {
+      releaseJoin();
     }
   })
   // Delete variant — admin only
@@ -308,6 +347,23 @@ const app = new Hono<AuthEnv>()
     }
 
     if (!variantEntry.dir) return c.json({ error: `Variant ${variantName} has no directory` }, 500);
+
+    // Deleting a variant out from under a running join is the worst outcome the lock
+    // exists to prevent: cleanupVariant removes the worktree and branch the join is
+    // still merging from (#655).
+    const joining = joinInProgress(mindName);
+    if (joining) {
+      return c.json(
+        {
+          error:
+            `Cannot delete ${variantName} while a join of ${joining.variant} into ${mindName} is ` +
+            `running (${describeJoinAge(joining)}) — deleting now would pull the worktree out ` +
+            `from under the merge. Wait for the join to finish. If that age keeps growing and ` +
+            `nothing lands, the join is wedged and only a daemon restart clears it.`,
+        },
+        409,
+      );
+    }
 
     const projectRoot = parentEntry.dir ?? mindDir(mindName);
 
