@@ -1,12 +1,15 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { getDb } from "../packages/daemon/src/lib/db.js";
 import { addMind, mindDir, removeMind } from "../packages/daemon/src/lib/mind/registry.js";
-import { readVoluteConfig } from "../packages/daemon/src/lib/mind/volute-config.js";
+import {
+  readVoluteConfig,
+  writeVoluteConfig,
+} from "../packages/daemon/src/lib/mind/volute-config.js";
 import { sessions, users } from "../packages/daemon/src/lib/schema.js";
 import filesApp from "../packages/daemon/src/web/api/files.js";
 import mindsApp from "../packages/daemon/src/web/api/minds.js";
@@ -111,5 +114,28 @@ describe("mind profile avatar", () => {
     const app = createApp();
     const res = await patchProfile(app, { avatar: "images/missing.png" });
     assert.equal(res.status, 400);
+  });
+
+  // Containment permits target === base, so a *.png symlink to home/ itself stays
+  // inside the tree and passes the path check. Without an isFile() guard the route
+  // 500s on EISDIR; it must give the same 400 the old strict-prefix check gave.
+  // Written straight to volute.json because a mind owns that file and can set a
+  // value the PATCH validator would refuse.
+  it("rejects an avatar that resolves to a directory rather than a file", async () => {
+    const app = createApp();
+    const home = join(mindDir(testMindName), "home");
+    const link = join(home, "selfie.png");
+    rmSync(link, { force: true });
+    symlinkSync(home, link);
+
+    const config = readVoluteConfig(mindDir(testMindName)) ?? {};
+    config.profile = { ...(config.profile ?? {}), avatar: "selfie.png" };
+    writeVoluteConfig(mindDir(testMindName), config);
+
+    const serve = await app.request(`/minds/${testMindName}/avatar`, {
+      headers: { Cookie: adminCookie },
+    });
+    assert.equal(serve.status, 400, await serve.clone().text());
+    assert.equal((await serve.json()).error, "Invalid avatar path");
   });
 });

@@ -1,6 +1,6 @@
 import type { Dirent } from "node:fs";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { readdir, readFile, realpath, stat } from "node:fs/promises";
+import { readdir, readFile, stat } from "node:fs/promises";
 import { extname, resolve } from "node:path";
 import { Hono } from "hono";
 import { syncMindProfile } from "../../lib/auth.js";
@@ -9,7 +9,11 @@ import { findMind, mindDir } from "../../lib/mind/registry.js";
 import { readVoluteConfig, writeVoluteConfig } from "../../lib/mind/volute-config.js";
 import { normalizeAvatar } from "../../lib/util/avatar-image.js";
 import { fileEtag, isNotModified } from "../../lib/util/http-cache.js";
-import { safeResolveWithinBase } from "../../lib/util/paths.js";
+import {
+  PathTraversalError,
+  resolveRealWithinBase,
+  safeResolveWithinBase,
+} from "../../lib/util/paths.js";
 import { type AuthEnv, requireAdmin, requireSelf } from "../middleware/auth.js";
 
 const AVATAR_MIME: Record<string, string> = {
@@ -114,18 +118,13 @@ const app = new Hono<AuthEnv>()
     const mime = AVATAR_MIME[ext];
     if (!mime) return c.json({ error: "Invalid avatar extension" }, 400);
 
+    // The stored avatar value is mind-controllable, so contain it — symlinks included.
     const homeDir = resolve(dir, "home");
-    const avatarPath = resolve(homeDir, config.profile.avatar);
-    if (!avatarPath.startsWith(`${homeDir}/`)) return c.json({ error: "Invalid avatar path" }, 400);
-
-    // Resolve symlinks and re-check containment
     let realAvatarPath: string;
     try {
-      const realHome = await realpath(homeDir);
-      realAvatarPath = await realpath(avatarPath);
-      if (!realAvatarPath.startsWith(`${realHome}/`))
-        return c.json({ error: "Invalid avatar path" }, 400);
+      realAvatarPath = await resolveRealWithinBase(homeDir, config.profile.avatar);
     } catch (err: unknown) {
+      if (err instanceof PathTraversalError) return c.json({ error: "Invalid avatar path" }, 400);
       if ((err as NodeJS.ErrnoException).code === "ENOENT")
         return c.json({ error: "Avatar file not found" }, 404);
       return c.json({ error: "Failed to resolve avatar path" }, 500);
@@ -133,6 +132,13 @@ const app = new Hono<AuthEnv>()
 
     try {
       const fileStat = await stat(realAvatarPath);
+      // An avatar must be a regular file. The containment helper permits
+      // target === base, so a mind could point `avatar` at a *.png symlink to its
+      // own home/ and turn this into a 500 on EISDIR; this keeps the 400 the old
+      // strict-prefix check gave, and also covers fifos and sockets. Checked here
+      // rather than in the route's own realpath pair — that pair is what this
+      // change exists to delete.
+      if (!fileStat.isFile()) return c.json({ error: "Invalid avatar path" }, 400);
       if (fileStat.size > MAX_AVATAR_SIZE) return c.json({ error: "Avatar file too large" }, 400);
       const etag = fileEtag(fileStat);
       const headers = {
@@ -175,21 +181,17 @@ const app = new Hono<AuthEnv>()
     const homeDir = resolve(entry.dir ?? mindDir(name), "home");
     const wildcard = c.req.path.replace(new RegExp(`^.*/minds/${name}/files`), "") || "/";
     const relativePath = wildcard.slice(1);
-    const requestedPath = resolve(homeDir, relativePath);
 
-    // Path traversal protection
-    if (requestedPath !== homeDir && !requestedPath.startsWith(`${homeDir}/`))
-      return c.text("Forbidden", 403);
+    // Hidden-file policy, not containment: dotfiles are filtered out of the
+    // directory listings, so they aren't individually fetchable either.
     if (relativePath.split("/").some((seg) => seg.startsWith("."))) return c.text("Forbidden", 403);
 
-    // Resolve symlinks and verify containment
+    // Containment, symlinks included: a symlink under home/ cannot point out of it.
     let resolvedPath: string;
     try {
-      const realHome = await realpath(homeDir);
-      resolvedPath = await realpath(requestedPath);
-      if (resolvedPath !== realHome && !resolvedPath.startsWith(`${realHome}/`))
-        return c.text("Forbidden", 403);
+      resolvedPath = await resolveRealWithinBase(homeDir, relativePath);
     } catch (err: unknown) {
+      if (err instanceof PathTraversalError) return c.text("Forbidden", 403);
       if ((err as NodeJS.ErrnoException).code === "ENOENT") return c.text("Not found", 404);
       return c.text("Internal server error", 500);
     }
