@@ -65,9 +65,9 @@ import {
   authMiddleware,
   createSession,
   deleteSession,
-  getSessionUserId,
   invalidateSessionCache,
   requireAdmin,
+  resolvePrincipal,
   SESSION_MAX_AGE,
 } from "../middleware/auth.js";
 
@@ -467,22 +467,31 @@ const app = new Hono()
     }
     return c.json({ ok: true });
   })
+  // "Who am I?" — answers for every credential the daemon accepts, resolved by the
+  // same code path authMiddleware uses. This route used to hand-roll session-token
+  // resolution, so it 401'd validly-authenticated `vmt_` API-token callers (#753).
+  //
+  // Deliberately no pending-account gate: a pending user reloading the page still
+  // needs to learn who they are, or the UI can't tell them they await approval.
   .get("/me", async (c) => {
-    // Accept Bearer token (remote UI) or cookie (same-origin)
-    let sessionId = getCookie(c, "volute_session");
-    if (!sessionId) {
-      const authHeader = c.req.header("Authorization");
-      if (authHeader?.startsWith("Bearer ")) {
-        sessionId = authHeader.slice(7);
-      }
+    const principal = await resolvePrincipal(c);
+    if (!principal) return c.json({ error: "Not logged in" }, 401);
+
+    // Authenticate through the shared resolver, but report from a fresh row.
+    // resolvePrincipal can answer from a cache holding a snapshot User (the
+    // 5-minute session cache, the mind-user cache), and /me is what the UI asks
+    // to learn its own role: an admin approving a pending account has to land on
+    // the next refresh, not a TTL later, or the user sits on the awaiting-approval
+    // screen (LoginPage gates on role === "pending") for up to five minutes.
+    //
+    // The daemon principal is synthetic — id 0, no users row — so it stands as
+    // resolved; everyone else must still exist to be told who they are.
+    let user = principal.user;
+    if (user.id !== 0) {
+      const fresh = await getUser(user.id);
+      if (!fresh) return c.json({ error: "Not logged in" }, 401);
+      user = fresh;
     }
-    if (!sessionId) return c.json({ error: "Not logged in" }, 401);
-
-    const userId = await getSessionUserId(sessionId);
-    if (userId == null) return c.json({ error: "Not logged in" }, 401);
-
-    const user = await getUser(userId);
-    if (!user) return c.json({ error: "Not logged in" }, 401);
 
     return c.json({
       id: user.id,

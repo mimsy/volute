@@ -1,5 +1,6 @@
 import { timingSafeEqual } from "node:crypto";
 import { eq, lt } from "drizzle-orm";
+import type { Context } from "hono";
 import { getCookie } from "hono/cookie";
 import { createMiddleware } from "hono/factory";
 import { API_TOKEN_PREFIX, resolveApiToken } from "../../lib/api-tokens.js";
@@ -120,27 +121,42 @@ async function resolveSession(sessionId: string): Promise<User | null> {
   return user;
 }
 
-export const authMiddleware = createMiddleware<AuthEnv>(async (c, next) => {
+/** A caller's identity, resolved from whichever credential they presented. */
+export type Principal = { user: User; mindSession?: string };
+
+/**
+ * Resolve the caller's identity from the credentials on the request, or null if
+ * none of them check out. This is the single place that knows how a Volute
+ * credential is presented: every route needing "who is this?" goes through here
+ * rather than re-parsing the header, because duplicated resolution is how the two
+ * drifted apart — `GET /api/auth/me` understood only session tokens and 401'd
+ * validly-authenticated `vmt_` callers (#753).
+ *
+ * Authentication only. Authorization — the pending-account gate, admin checks,
+ * `requireSelf` — stays with the callers, so a route can deliberately answer a
+ * principal that `authMiddleware` would turn away.
+ */
+export async function resolvePrincipal(c: Context): Promise<Principal | null> {
   const authHeader = c.req.header("Authorization");
   if (authHeader?.startsWith("Bearer ")) {
     const token = authHeader.slice(7);
+    // Mind session, captured for turn resolution.
+    const mindSession = c.req.header("X-Volute-Thread") || undefined;
 
     // 1. Daemon token — internal, always admin
     if (token && isValidDaemonToken(token)) {
-      c.set("user", {
-        id: 0,
-        username: "daemon",
-        role: "admin",
-        user_type: "human",
-        display_name: null,
-        description: null,
-        avatar: null,
-      } as User);
-      // Capture mind session for turn resolution
-      const mindSessionHeader = c.req.header("X-Volute-Thread");
-      if (mindSessionHeader) c.set("mindSession", mindSessionHeader);
-      await next();
-      return;
+      return {
+        user: {
+          id: 0,
+          username: "daemon",
+          role: "admin",
+          user_type: "human",
+          display_name: null,
+          description: null,
+          avatar: null,
+        } as User,
+        mindSession,
+      };
     }
 
     // 2. Mind token — per-mind, resolves to mind's user record
@@ -154,12 +170,7 @@ export const authMiddleware = createMiddleware<AuthEnv>(async (c, next) => {
         mindUser = await getOrCreateMindUser(mindName);
         mindUserCache.set(mindName, { user: mindUser, ts: Date.now() });
       }
-      c.set("user", mindUser);
-      // Capture mind session for turn resolution
-      const mindSessionHeader = c.req.header("X-Volute-Thread");
-      if (mindSessionHeader) c.set("mindSession", mindSessionHeader);
-      await next();
-      return;
+      return { user: mindUser, mindSession };
     }
 
     // 3. Durable per-user API token (vmt_-prefixed) — resolves to any users row.
@@ -170,36 +181,34 @@ export const authMiddleware = createMiddleware<AuthEnv>(async (c, next) => {
       const userId = await resolveApiToken(token);
       if (userId != null) {
         const user = await getUser(userId);
-        if (user) {
-          if (user.role === "pending") return c.json({ error: "Account pending approval" }, 403);
-          c.set("user", user);
-          await next();
-          return;
-        }
+        if (user) return { user };
       }
     }
 
     // 4. Session token via Bearer (CLI login)
     if (token) {
       const user = await resolveSession(token);
-      if (user) {
-        if (user.role === "pending") return c.json({ error: "Account pending approval" }, 403);
-        c.set("user", user);
-        await next();
-        return;
-      }
+      if (user) return { user };
     }
   }
 
   // 5. Cookie-based session (web UI)
   const sessionId = getCookie(c, "volute_session");
-  if (!sessionId) return c.json({ error: "Unauthorized" }, 401);
+  if (!sessionId) return null;
 
   const user = await resolveSession(sessionId);
-  if (!user) return c.json({ error: "Unauthorized" }, 401);
-  if (user.role === "pending") return c.json({ error: "Account pending approval" }, 403);
+  return user ? { user } : null;
+}
 
-  c.set("user", user);
+export const authMiddleware = createMiddleware<AuthEnv>(async (c, next) => {
+  const principal = await resolvePrincipal(c);
+  if (!principal) return c.json({ error: "Unauthorized" }, 401);
+  if (principal.user.role === "pending") {
+    return c.json({ error: "Account pending approval" }, 403);
+  }
+
+  c.set("user", principal.user);
+  if (principal.mindSession) c.set("mindSession", principal.mindSession);
   await next();
 });
 
