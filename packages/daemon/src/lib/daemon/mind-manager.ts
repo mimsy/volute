@@ -17,6 +17,7 @@ import {
   voluteSystemDir,
 } from "../mind/registry.js";
 import { isSandboxEnabled, wrapForSandbox } from "../mind/sandbox.js";
+import { reapMindTmp } from "../mind/tmp-reaper.js";
 import { getPrompt } from "../prompts.js";
 import { checkHealth } from "../util/health.js";
 import { clearJsonMap, loadJsonMap, saveJsonMap } from "../util/json-state.js";
@@ -388,6 +389,12 @@ export class MindManager {
     // Per-mind tmp dir so minds never share a writable /tmp (a cross-mind channel).
     const mindTmp = mindTmpDir(dir);
     mkdirSync(mindTmp, { recursive: true });
+    // A private /tmp needs a janitor, and nothing else clears this one: scratch a
+    // killed process leaves here stays forever (#805). Spawn is the one moment we
+    // know nothing of this mind's is running, so it is where the reap belongs.
+    // Awaited, so the child never races the removal — and async, so clearing
+    // gigabytes delays this one mind's start instead of stalling the daemon.
+    await reapMindTmp(mindTmp);
 
     // State dir is created by root — chown so the mind user can write to it.
     // Chown .mind itself, not just .mind/tmp: in a variant worktree .mind is

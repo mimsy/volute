@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { stripInheritedVoluteEnv } from "./helpers/test-env.js";
-import { sweepStaleTestHomes } from "./helpers/test-home.js";
+import { STALE_TEST_HOME_MS, sweepStaleTestHomes } from "./helpers/test-home.js";
 
 // Strip GIT_* env vars that are inherited when tests run inside git hooks
 // (e.g. pre-push). These vars cause git commands in test temp dirs to target
@@ -27,7 +27,7 @@ const tmpRoot = process.platform === "darwin" ? "/tmp" : tmpdir();
 // cleanup ran. Without this they piled up until they filled the disk (#502). The
 // 2h threshold is well past any real run, so a sibling test process running
 // concurrently right now keeps its fresh dir.
-sweepStaleTestHomes(tmpRoot, 2 * 60 * 60 * 1000);
+sweepStaleTestHomes(tmpRoot, STALE_TEST_HOME_MS);
 
 const testHome = resolve(tmpRoot, `volute-test-${process.pid}`);
 // Remove stale test dir from a prior run with the same PID to ensure
@@ -43,7 +43,19 @@ process.on("exit", () => {
   try {
     rmSync(testHome, { recursive: true, force: true });
   } catch {
-    // Best-effort — the sweep above catches anything left behind next run.
+    // Best-effort — the sweeps below/above catch anything left behind.
+  }
+  // Sweep again on the way out, not only on the way in: a run that is killed
+  // leaves its home for whoever finishes next, instead of for whoever *starts*
+  // next — which may be nobody. Same helper and same threshold, so this decides
+  // nothing the startup sweep wouldn't; it only asks later. Asking later is what
+  // makes the pid check in sweepStaleTestHomes load-bearing rather than
+  // decorative — by the time a long run exits, a sibling that started with it may
+  // be past the age threshold while still very much alive.
+  try {
+    sweepStaleTestHomes(tmpRoot, STALE_TEST_HOME_MS);
+  } catch {
+    // Best-effort — never turn cleanup into a non-zero exit.
   }
 });
 mkdirSync(resolve(testHome, "system"), { recursive: true });
