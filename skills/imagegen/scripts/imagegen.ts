@@ -386,6 +386,30 @@ async function models(args: string[]): Promise<void> {
   }
 }
 
+/**
+ * Render a thrown value as the one line a mind should read. Errors reaching the
+ * CLI entry are diagnoses, not crashes — their messages are the whole point, and
+ * the stack is internals. `VOLUTE_DEBUG=1` restores the full error for a host
+ * debugging the skill itself.
+ */
+export function formatCliError(err: unknown): unknown {
+  if (process.env.VOLUTE_DEBUG === "1") return err;
+  if (!(err instanceof Error)) return String(err);
+  // An empty message would print a blank line and exit 1 — worse than the stack.
+  const base = err.message || String(err);
+  // `replicate.run` does its own fetching, and its network failures arrive as a
+  // bare "fetch failed" with the real reason (ECONNREFUSED, DNS, TLS) only in
+  // `cause`. Dropping the cause would hand a mind a diagnosis with the diagnosis
+  // taken out of it.
+  const detail = err.cause instanceof Error ? err.cause.message : stringOrEmpty(err.cause);
+  return detail && !base.includes(detail) ? `${base}: ${detail}` : base;
+}
+
+/** A non-Error cause rendered for display, or "" when there is nothing to show. */
+function stringOrEmpty(value: unknown): string {
+  return value == null ? "" : String(value);
+}
+
 async function main() {
   const args = process.argv.slice(2);
   const cmd = args[0];
@@ -414,7 +438,11 @@ const isDirectRun =
 
 if (isDirectRun) {
   main().catch((err) => {
-    console.error(err);
+    // A mind reads this on its terminal. Every throw on the way here carries a
+    // message written to stand on its own ("No image generation configured. Ask
+    // an admin..."), so the stack under it adds nothing but leaked internals
+    // (#499). Keep it behind VOLUTE_DEBUG=1, the flag the templates already use.
+    console.error(formatCliError(err));
     process.exit(1);
   });
 }

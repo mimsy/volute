@@ -1,5 +1,4 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { userInfo } from "node:os";
 import { basename, extname } from "node:path";
 import { isMind as isMindUser } from "@volute/api/user-type";
 import { formatFileSize } from "@volute/daemon/lib/chat/file-sharing.js";
@@ -20,6 +19,19 @@ async function isMind(name: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/**
+ * The mind this process *is*, as opposed to one it merely operates on.
+ *
+ * `VOLUTE_MIND` alone is a documented host-side convenience for mind-scoped commands
+ * (`volute clock`, `volute skill`), so a host who exported it is still speaking as
+ * themselves. Only a mind process is handed `VOLUTE_MIND_TOKEN` alongside it — the same
+ * condition `readDaemonConfig()` uses to switch to the mind's token. Treating the bare
+ * env var as an identity claim would 403 that host on every message they send (#500).
+ */
+function selfMindIdentity(): string | undefined {
+  return process.env.VOLUTE_MIND_TOKEN ? process.env.VOLUTE_MIND : undefined;
 }
 
 const IMAGE_MEDIA_TYPES: Record<string, string> = {
@@ -202,7 +214,10 @@ const cmd = command({
     file: { type: "string", description: "Path to file to send" },
     wait: { type: "boolean", description: "Wait for mind response" },
     timeout: { type: "number", description: "Response timeout in ms (default 120000)" },
-    sender: { type: "string", description: "Send as a specific user" },
+    sender: {
+      type: "string",
+      description: "Record the message as another user (daemon-internal; refused otherwise)",
+    },
   },
   examples: [
     'volute chat send @alice "hello"',
@@ -212,6 +227,12 @@ const cmd = command({
   async run({ args, flags }) {
     const target = args.target!;
     const message = args.message ?? (await readStdin());
+
+    // Who this caller claims to be speaking as, or undefined when it is simply itself.
+    // Distinct from the OS username below, which answers "who is in the conversation",
+    // not "whose words are these" — the daemon knows the authenticated identity and
+    // attributes it when no claim is made.
+    const claimedSender = flags.sender || selfMindIdentity();
 
     const images = flags.image ? [loadImage(flags.image)] : undefined;
 
@@ -366,7 +387,10 @@ const cmd = command({
         const staged = await postStaging(
           `/api/v1/minds/${encodeURIComponent(targetName)}/files/stage`,
           {
-            sender: flags.sender || userInfo().username,
+            // A file offer is announced to the recipient under this name, so it gets
+            // the same rule as a message: claim only what is actually a claim, and let the
+            // daemon attribute the authenticated user otherwise.
+            sender: claimedSender,
             filename: basename(filePath),
             data: content.toString("base64"),
           },
@@ -386,6 +410,9 @@ const cmd = command({
     // Resolve the target mind name for --wait
     let waitMindName: string | undefined;
     let waitConversationId: string | undefined;
+    // The mind whose context carried a channel post — used to make the `chat read`
+    // hint runnable for a host, who has no VOLUTE_MIND to default to.
+    let channelContextMind: string | undefined;
     let heldResponse = false;
     let spiritUnavailable = false;
 
@@ -393,7 +420,6 @@ const cmd = command({
       // For volute DMs (@target), create/find conversation via daemon
       const targetName = parsed.identifier.slice(1); // strip @
       const mindSelf = process.env.VOLUTE_MIND;
-      const sender = flags.sender || mindSelf || userInfo().username;
 
       // Sending to yourself is a dead end: it would resolve to a
       // one-participant conversation that reaches nobody.
@@ -411,7 +437,11 @@ const cmd = command({
       // Use the sender mind's context when VOLUTE_MIND is set (so the daemon
       // token matches), otherwise use the target mind's context.
       const contextMind = mindSelf ?? targetName;
-      const participants = mindSelf ? [targetName] : [sender];
+      // A mind names its counterpart; a host names nobody. The host's own identity is
+      // resolved daemon-side from the authenticated session rather than guessed from the
+      // OS account here — the target mind is already a participant by virtue of being
+      // `contextMind` (#993).
+      const participants = mindSelf ? [targetName] : [];
 
       // Create/find conversation via daemon
       const createRes = await daemonFetch(
@@ -419,7 +449,7 @@ const cmd = command({
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ platform: "volute", participants, sender }),
+          body: JSON.stringify({ platform: "volute", participants, sender: claimedSender }),
         },
       );
       if (!createRes.ok) {
@@ -440,7 +470,7 @@ const cmd = command({
           message: message ?? "",
           conversationId: convId,
           images,
-          sender,
+          sender: claimedSender,
           targetMind: contextMind,
         }),
       });
@@ -457,10 +487,11 @@ const cmd = command({
       }
       if (data.held) heldResponse = true;
       // Under --wait the sent-confirmation is normally skipped (the reply follows),
-      // but with --file the staging result prints next regardless — so surface the
-      // confirmation now, otherwise a staging failure would hide that the message
-      // actually went out (#691).
-      if (data.held || !flags.wait || flags.file) {
+      // but it must still print when nothing will follow it: with --file the staging
+      // result prints next regardless, and a recipient that isn't a mind will never
+      // reply — in both cases the confirmation is the only word the sender gets that
+      // the message went out (#691, #500).
+      if (data.held || !flags.wait || flags.file || !waitMindName) {
         printSendResult(data);
       } else {
         printSendAdvisories(data);
@@ -482,7 +513,6 @@ const cmd = command({
       // For volute group channels (#general), look up by name and send
       const channelName = parsed.identifier.slice(1);
       const mindSelf = process.env.VOLUTE_MIND;
-      const sender = flags.sender || mindSelf || userInfo().username;
 
       // Look up channel conversation ID
       const channelRes = await daemonFetch(`/api/v1/channels/${encodeURIComponent(channelName)}`);
@@ -503,6 +533,8 @@ const cmd = command({
         process.exit(1);
       }
 
+      channelContextMind = contextMind;
+
       const sendRes = await daemonFetch("/api/v1/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -510,7 +542,7 @@ const cmd = command({
           message: message ?? "",
           conversationId: channelData.id,
           images,
-          sender,
+          sender: claimedSender,
           targetMind: contextMind,
         }),
       });
@@ -561,9 +593,22 @@ const cmd = command({
         process.exit(1);
       }
       await waitForResponse(waitMindName, waitConversationId, flags.timeout ?? 120_000);
-    } else if (flags.wait && !waitMindName) {
-      console.error("--wait is only supported when sending to a mind");
-      process.exit(1);
+    } else if (flags.wait) {
+      // The send already succeeded — there is simply no reply to follow. Exiting
+      // non-zero here told a mind reading the exit code that its message had failed
+      // (#500). Say what happened, on stdout, and finish cleanly.
+      // `chat read` resolves its mind from --mind or VOLUTE_MIND, so a host running
+      // this from their own shell needs the flag spelled out or the suggested
+      // command exits 1 on them.
+      const mindFlag =
+        process.env.VOLUTE_MIND || !channelContextMind ? "" : ` --mind ${channelContextMind}`;
+      console.log(
+        parsed.isDM
+          ? `Nothing to wait for — ${parsed.identifier} isn't a mind, so no reply will arrive ` +
+              "here. Your message went out."
+          : "Nothing to wait for — a channel post has no single reply to follow. Your message " +
+              `went out; read the channel with: volute chat read "${parsed.identifier}"${mindFlag}`,
+      );
     }
   },
 });

@@ -5,6 +5,7 @@ import { loadMergedEnv } from "../../lib/config/env.js";
 import { findMind, mindDir } from "../../lib/mind/registry.js";
 import { getPlatformDriver } from "../../lib/platforms.js";
 import { type AuthEnv, requireSelf } from "../middleware/auth.js";
+import { refusedSenderMessage } from "./chat.js";
 
 function buildEnv(name: string): Record<string, string> {
   return { ...loadMergedEnv(name), VOLUTE_MIND: name, VOLUTE_MIND_DIR: mindDir(name) };
@@ -32,10 +33,28 @@ const app = new Hono<AuthEnv>().post(
       return c.json({ error: `Platform ${platform} does not support creating conversations` }, 400);
     }
 
+    // Same rule as POST /api/v1/chat: a caller may only act as itself. This path was
+    // worse than that one — `sender` was mapped onto VOLUTE_SENDER, which no driver's
+    // createConversation ever reads, so the parameter went nowhere at all and the
+    // conversation was created under the caller's name with no word said (#500). The
+    // env assignment is gone with it; the one live reader of VOLUTE_SENDER is the
+    // outbound bridge path, which sets it itself.
+    const user = c.get("user");
+    if (sender && user.id !== 0 && sender !== user.username) {
+      return c.json({ error: refusedSenderMessage(sender, user.username) }, 403);
+    }
+
+    // The driver re-enters the daemon on the daemon's own token, which drops the
+    // caller's identity — so name the authenticated user here, while it is still known.
+    // The CLI used to supply this by guessing the OS account name, which is a different
+    // string entirely for many hosts and came back as `400 User not found`, leaving them
+    // unable to DM a mind at all (#993). The daemon knows who authenticated; nobody
+    // needs to guess.
+    const resolved = user.id === 0 ? participants : [...new Set([...participants, user.username])];
+
     const env = buildEnv(name);
-    if (sender) env.VOLUTE_SENDER = sender;
     try {
-      const slug = await driver.createConversation(env, participants, convName);
+      const slug = await driver.createConversation(env, resolved, convName);
       // For volute, the slug is the bare conversationId — return both for callers that need the ID
       return c.json({ slug, conversationId: slug });
     } catch (err) {

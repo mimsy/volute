@@ -31,7 +31,8 @@ import { invalidateMindUserCache } from "../packages/daemon/src/web/middleware/a
 
 const SENDER = "gated-notice-sender";
 const RECIPIENT = "gated-notice-recipient";
-const TEST_USERNAMES = [SENDER, RECIPIENT];
+const HUMAN_SENDER = "gated-notice-human";
+const TEST_USERNAMES = [SENDER, RECIPIENT, HUMAN_SENDER];
 
 let convId: string | undefined;
 
@@ -158,16 +159,25 @@ describe("file-sharing responses carry `notified` (#723)", () => {
 
     invalidateMindUserCache(RECIPIENT);
     const recipientToken = generateMindToken(RECIPIENT);
+
+    // The staged file has to come from a *human* for the accept assertion below (a
+    // non-mind sender can't be notified). Since a caller may only stage under its own
+    // name, that human does the staging themselves and omits `sender` — the daemon
+    // attributes the authenticated user.
+    const { createUser } = await import("../packages/daemon/src/lib/auth.js");
+    const { createSession } = await import("../packages/daemon/src/web/middleware/auth.js");
+    const human = await createUser(HUMAN_SENDER, "pw");
+    const humanSession = await createSession(human.id);
+
     const stage = (filename: string) =>
       app.request(`http://localhost/api/v1/minds/${RECIPIENT}/files/stage`, {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${recipientToken}`,
+          Authorization: `Bearer ${humanSession}`,
           Origin: "http://localhost",
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          sender: "some-human",
           filename,
           data: Buffer.from("hello").toString("base64"),
         }),
