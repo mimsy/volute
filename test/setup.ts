@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
+import { stripInheritedVoluteEnv } from "./helpers/test-env.js";
 import { sweepStaleTestHomes } from "./helpers/test-home.js";
 
 // Strip GIT_* env vars that are inherited when tests run inside git hooks
@@ -9,6 +10,11 @@ import { sweepStaleTestHomes } from "./helpers/test-home.js";
 for (const key of Object.keys(process.env)) {
   if (key.startsWith("GIT_")) delete process.env[key];
 }
+
+// Strip inherited VOLUTE_* vars for the same reason. Redirecting VOLUTE_HOME
+// below is not enough: modules read other VOLUTE_* vars directly, and an
+// inherited one silently points a test at the host's live installation (#805).
+stripInheritedVoluteEnv();
 
 // Redirect all volute state to a temp directory so tests never touch
 // the live ~/.volute (registry, variants, database, env, etc.)
