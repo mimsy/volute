@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.59.2](https://github.com/mimsy/volute/compare/volute-v0.59.1...volute-v0.59.2) (2026-08-30)
+
+
+### Bug Fixes
+
+* honest CLI errors for --sender and --wait, and imagegen output ([#999](https://github.com/mimsy/volute/issues/999)) ([18b6206](https://github.com/mimsy/volute/commit/18b620641059ed49edb50f02973e8c6e18c33da1))
+* lock concurrent joins of the same variant ([#995](https://github.com/mimsy/volute/issues/995)) ([bbc519b](https://github.com/mimsy/volute/commit/bbc519b2ea910c252aba29cf29d51f5697dd1870))
+* one greppable path-containment primitive, and /api/auth/me for API tokens ([#997](https://github.com/mimsy/volute/issues/997)) ([9e2ab51](https://github.com/mimsy/volute/commit/9e2ab51c8212bdf6c87b4c517cfdb956a4ff309b))
+* system-event notices that are honest and actually delivered ([#996](https://github.com/mimsy/volute/issues/996)) ([c97d470](https://github.com/mimsy/volute/commit/c97d470b888e2810ae2b0de53de19b17f1d6bdab))
+* test scratch dirs no longer accumulate in a mind's TMPDIR ([#994](https://github.com/mimsy/volute/issues/994)) ([553c4f9](https://github.com/mimsy/volute/commit/553c4f9d984e03e64233c1410edc22ac86fe3aa1))
+* **usage:** difference the SDK's session-cumulative per-model counter ([#982](https://github.com/mimsy/volute/issues/982)) ([405a9ae](https://github.com/mimsy/volute/commit/405a9ae953a4fe4f89f82451d6f1b80f8993bdbd))
+
 ## [0.59.1](https://github.com/mimsy/volute/compare/volute-v0.59.0...volute-v0.59.1) (2026-08-28)
 
 
