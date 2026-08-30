@@ -49,6 +49,12 @@ import { subscribe as subscribeMindEvent } from "../../lib/events/mind-events.js
 import type { ExportManifest } from "../../lib/mind/archive.js";
 import { setupDefaultDreaming } from "../../lib/mind/default-autonomy.js";
 import { deleteMindUser as deleteIsolationUser } from "../../lib/mind/isolation.js";
+import {
+  acquireJoinLock,
+  describeJoinAge,
+  JoinInProgressError,
+  joinInProgress,
+} from "../../lib/mind/join-lock.js";
 import { commitSrcChanges, rollbackSrcChanges } from "../../lib/mind/last-known-good.js";
 import {
   createMind,
@@ -542,6 +548,23 @@ const app = new Hono<AuthEnv>()
 
     const manager = getMindManager();
 
+    // The other entry point into a variant merge (#655): a mind calling daemonRestart()
+    // with a merge context. Same lock, same key — `baseName` is exactly what this path
+    // passes to mergeVariant as `parentName` — so a mind-initiated join and a merge-route
+    // join exclude each other. Taken *before* the stop below: a refused join must leave
+    // the mind running, not stopped by a restart it never got to finish.
+    const joinVariant =
+      context?.type === "merge" && context.name && !entry.parent ? String(context.name) : undefined;
+    let releaseJoin: (() => void) | undefined;
+    if (joinVariant) {
+      try {
+        releaseJoin = acquireJoinLock(baseName, joinVariant);
+      } catch (err) {
+        if (err instanceof JoinInProgressError) return c.json({ error: err.message }, 409);
+        throw err;
+      }
+    }
+
     try {
       // During sleep (including trigger-wakes), skip identity reloads.
       // The mind process restarts on wake, picking up changes then.
@@ -690,6 +713,8 @@ const app = new Hono<AuthEnv>()
     } catch (err) {
       log.error(`failed to restart mind ${name}`, log.errorData(err));
       return c.json({ error: "Failed to restart mind" }, 500);
+    } finally {
+      releaseJoin?.();
     }
   })
   // Stop mind (supports variants) — admin only
@@ -1125,6 +1150,26 @@ const app = new Hono<AuthEnv>()
     if (!entry) return c.json({ error: "Mind not found" }, 404);
 
     const manager = getMindManager();
+
+    // The other way to destroy a variant: `volute mind delete <variant>` lands here,
+    // not on the variant-specific endpoint. Both branches below reach cleanupVariant,
+    // which removes the worktree and branch a running join is still merging from — so
+    // both take the same join-in-progress guard (#655). Keyed on the parent either way:
+    // deleting a variant, or deleting a parent (which cleans up all of its variants).
+    const joinParent = entry.parent ?? name;
+    const joining = joinInProgress(joinParent);
+    if (joining) {
+      return c.json(
+        {
+          error:
+            `Cannot delete ${name} while a join of ${joining.variant} into ${joinParent} is ` +
+            `running (${describeJoinAge(joining)}) — deleting now would pull the worktree out ` +
+            `from under the merge. Wait for the join to finish. If that age keeps growing and ` +
+            `nothing lands, the join is wedged and only a daemon restart clears it.`,
+        },
+        409,
+      );
+    }
 
     // Variants live in a git worktree under the parent's `.variants/`, not
     // mindDir(name) — route to the same cleanup the variant-specific endpoint
