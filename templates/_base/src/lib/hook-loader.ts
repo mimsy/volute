@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import { extname, join, resolve } from "node:path";
 import { log } from "./logger.js";
 
@@ -33,6 +33,12 @@ export function defaultHookTimeout(): number {
 
 /**
  * Discover hook scripts in `.local/hooks/<event>/`, sorted alphabetically.
+ *
+ * An empty file is skipped rather than run. Emptying a hook is the mind's way of
+ * saying "not this one" — an empty script always was a no-op (it exits 0 with no
+ * stdout, which {@link executeHook} reads as `{}`), but running it still paid a
+ * process spawn, and for a `.ts` hook a whole `tsx` cold start, on every turn.
+ * Declining a hook should cost nothing.
  */
 export function discoverHooks(hooksDir: string, event: string): string[] {
   const dir = resolve(hooksDir, event);
@@ -42,7 +48,16 @@ export function discoverHooks(hooksDir: string, event: string): string[] {
     return readdirSync(dir)
       .filter((f) => /\.(sh|ts|js)$/.test(f))
       .sort()
-      .map((f) => join(dir, f));
+      .map((f) => join(dir, f))
+      .filter((path) => {
+        // A file we cannot stat is left in the list: executeHook reports its own
+        // failure clearly, and silently dropping a hook is the worse error.
+        try {
+          return statSync(path).size > 0;
+        } catch {
+          return true;
+        }
+      });
   } catch (err) {
     log(
       "hooks",

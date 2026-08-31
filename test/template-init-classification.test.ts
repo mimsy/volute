@@ -9,8 +9,14 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { resolve } from "node:path";
+import { resolve, sep } from "node:path";
 import { describe, it } from "node:test";
+import {
+  initLedgerPath,
+  readInitLedger,
+  seedInitLedger,
+} from "../packages/daemon/src/lib/mind/init-ledger.js";
+import { stateDir } from "../packages/daemon/src/lib/mind/registry.js";
 import {
   applyInitFiles,
   backfillInitInfrastructure,
@@ -19,6 +25,7 @@ import {
   findTemplatesRoot,
   isInitInfrastructure,
   listFiles,
+  listInfrastructureOnDisk,
   mayRefreshInfrastructure,
   mergeManifests,
   readShippedHashes,
@@ -131,9 +138,14 @@ describe("`.init/` identity vs infrastructure classification", () => {
 describe("backfillInitInfrastructure", () => {
   const templatesRoot = findTemplatesRoot();
 
-  /** A mind directory as `volute mind create` leaves it. */
+  /**
+   * A mind directory as `volute mind create` left it *before* the ledger existed
+   * — the state every mind on a running host is in the moment this ships. No
+   * ledger, so absence is still ambiguous on the first run.
+   */
   function createdMind(name: string): string {
     const dir = resolve(scratch(), name);
+    rmSync(stateDir(name), { recursive: true, force: true });
     const { composedDir, manifest } = composeTemplate(templatesRoot, "claude");
     copyTemplateToDir(composedDir, dir, name, manifest);
     applyInitFiles(dir);
@@ -184,11 +196,11 @@ describe("backfillInitInfrastructure", () => {
     assert.equal(readFileSync(hook, "utf-8"), "// I rewrote this myself\n");
   });
 
-  it("respects an emptied hook — the documented way to decline one", () => {
-    // The backfill cannot tell "predates this hook" from "deleted it on purpose",
-    // so a deleted hook does come back. Emptying it is the escape hatch the doc
-    // comment points minds at, and hook-loader treats an empty script as a no-op
-    // (exit 0, empty stdout -> {}). That advice is only honest if this holds.
+  it("respects an emptied hook — the other way to decline one", () => {
+    // Emptying a hook was the only way to decline one before the ledger, and
+    // minds were told to do it, so it must keep working forever. hook-loader
+    // skips an empty script outright; before that it ran it as a no-op (exit 0,
+    // empty stdout -> {}). Either way the mind's "not this one" is respected.
     const home = createdMind("decliner");
     const hook = resolve(home, ".local/hooks/pre-prompt/notices.ts");
     writeFileSync(hook, "");
@@ -281,7 +293,10 @@ describe("backfillInitInfrastructure", () => {
     it(`delivers the drain hook for the ${template} template`, () => {
       const home = resolve(scratch(), `home-${template}`);
       mkdirSync(home, { recursive: true });
-      const { added } = backfillInitInfrastructure(home, template, "any");
+      // A distinct name per template: the ledger is per-mind and durable, so
+      // three templates sharing one name would have the second run reading the
+      // first's record and withholding the hook as a deliberate removal.
+      const { added } = backfillInitInfrastructure(home, template, `any-${template}`);
       assert.ok(
         added.includes(".local/hooks/pre-prompt/notices.ts"),
         `${template} must ship the drain hook`,
@@ -384,11 +399,250 @@ describe("the shipped-hash ledger", () => {
   });
 });
 
+describe("backfillInitInfrastructure: a deletion the mind meant", () => {
+  const templatesRoot = findTemplatesRoot();
+  const NOTICES = ".local/hooks/pre-prompt/notices.ts";
+
+  function createdMind(name: string, seed: boolean): string {
+    const dir = resolve(scratch(), name);
+    rmSync(stateDir(name), { recursive: true, force: true });
+    const { composedDir, manifest } = composeTemplate(templatesRoot, "claude");
+    copyTemplateToDir(composedDir, dir, name, manifest);
+    const applied = applyInitFiles(dir);
+    if (seed) seedInitLedger(name, applied);
+    return resolve(dir, "home");
+  }
+
+  it("seeds the ledger at creation with infrastructure only", () => {
+    createdMind("seeded", true);
+    const ledger = readInitLedger("seeded");
+
+    assert.ok(ledger.has(NOTICES), "the drain hook must be recorded as given");
+    for (const rel of ledger) {
+      assert.ok(isInitInfrastructure(rel), `${rel} is identity and must not be in the ledger`);
+    }
+    for (const rel of ["SOUL.md", "MEMORY.md", ".config/routes.json"]) {
+      assert.ok(!ledger.has(rel), `${rel} must never be recorded as framework-given`);
+    }
+  });
+
+  it("leaves a hook the mind deleted deleted", () => {
+    // The whole point of #811. A mind that removes a piece of machinery has
+    // authored that removal, and the daemon's confidence that the machinery is
+    // good for it does not outrank the removal.
+    const home = createdMind("refuser", true);
+    rmSync(resolve(home, NOTICES));
+
+    const { added, refreshed, withheld } = backfillInitInfrastructure(home, "claude", "refuser");
+
+    assert.ok(withheld.includes(NOTICES), "a deliberate removal must be reported as withheld");
+    assert.ok(!added.includes(NOTICES));
+    assert.ok(!refreshed.includes(NOTICES));
+    assert.equal(existsSync(resolve(home, NOTICES)), false, "the hook must stay gone");
+  });
+
+  it("keeps honouring the removal on every later run", () => {
+    // Property 1 of the issue: the removal is durable. It must not need re-doing
+    // after each restart — for the spirit, the backfill runs every daemon start.
+    const home = createdMind("persistent", true);
+    rmSync(resolve(home, NOTICES));
+
+    for (let run = 0; run < 3; run++) {
+      const { withheld } = backfillInitInfrastructure(home, "claude", "persistent");
+      assert.ok(withheld.includes(NOTICES), `run ${run} put the hook back`);
+      assert.equal(existsSync(resolve(home, NOTICES)), false);
+    }
+  });
+
+  it("still adds a hook the mind was never given", () => {
+    // The #808 regression guard, and the reason the ledger is seeded from what is
+    // on disk rather than from the full shipped set: a mind that legitimately
+    // never had the drain hook must still get it, or it stays deaf to every
+    // next-turn notice recorded for it.
+    const home = createdMind("newcomer", true);
+    rmSync(resolve(home, NOTICES));
+    // A mind predating the hook has no ledger entry for it either.
+    seedInitLedger(
+      "newcomer",
+      [...readInitLedger("newcomer")].filter((p) => p !== NOTICES),
+    );
+
+    const { added, withheld } = backfillInitInfrastructure(home, "claude", "newcomer");
+
+    assert.ok(added.includes(NOTICES), "a hook never given must still be delivered");
+    assert.deepEqual(withheld, []);
+    assert.ok(existsSync(resolve(home, NOTICES)));
+  });
+
+  it("undoes a removal made before the ledger existed exactly once", () => {
+    // The one-time cost of seeding from disk, stated plainly: every mind alive
+    // when this ships has no ledger, so its first run cannot tell a pre-existing
+    // removal from "never had it" and re-adds the file. The second removal is
+    // durable, which is the property the mind actually needs.
+    const home = createdMind("legacy", false);
+    rmSync(resolve(home, NOTICES));
+
+    const first = backfillInitInfrastructure(home, "claude", "legacy");
+    assert.ok(first.added.includes(NOTICES), "the pre-ledger removal comes back once");
+    assert.ok(readInitLedger("legacy").has(NOTICES), "and is recorded when it does");
+
+    rmSync(resolve(home, NOTICES));
+    const second = backfillInitInfrastructure(home, "claude", "legacy");
+    assert.ok(second.withheld.includes(NOTICES), "the second removal must stick");
+    assert.equal(existsSync(resolve(home, NOTICES)), false);
+  });
+
+  it("never records a path whose file is not on disk", () => {
+    // The safety invariant. An entry for a file that never landed reads as
+    // "given, then removed" and would withhold that file from the mind forever.
+    const home = createdMind("invariant", false);
+    rmSync(resolve(home, ".local"), { recursive: true, force: true });
+
+    backfillInitInfrastructure(home, "claude", "invariant");
+
+    const ledger = readInitLedger("invariant");
+    assert.ok(ledger.size > 0);
+    for (const rel of ledger) {
+      assert.ok(existsSync(resolve(home, rel)), `${rel} was recorded but never landed`);
+    }
+  });
+
+  it("re-adds a withheld file when the caller says the absence is its own fault", () => {
+    // An upgrade whose restore of merge-deleted home/ files threw partway leaves
+    // .local/ files missing for a reason that has nothing to do with the mind.
+    // Reading that as authorship would withhold them permanently and silently —
+    // #808 all over again. One extra deletion for the mind is the cheaper error.
+    const home = createdMind("damaged", true);
+    rmSync(resolve(home, NOTICES));
+
+    const honoured = backfillInitInfrastructure(home, "claude", "damaged");
+    assert.ok(honoured.withheld.includes(NOTICES), "the default must honour the removal");
+
+    const repaired = backfillInitInfrastructure(home, "claude", "damaged", {
+      honorRemovals: false,
+    });
+    assert.ok(repaired.added.includes(NOTICES));
+    assert.deepEqual(repaired.withheld, []);
+    assert.ok(existsSync(resolve(home, NOTICES)));
+  });
+
+  it("reads a mind's infrastructure off disk for creation paths that compose no template", () => {
+    // importFromFullArchive copies an extracted archive wholesale. The archive
+    // carries the absence of a hook the mind deleted before export, and this is
+    // what lets that absence be recorded rather than undone on the new host.
+    const home = createdMind("archived", false);
+    rmSync(resolve(home, NOTICES));
+
+    const onDisk = listInfrastructureOnDisk(home);
+
+    assert.ok(onDisk.length > 0);
+    assert.ok(!onDisk.includes(NOTICES), "a deleted hook must not be reported as present");
+    assert.ok(onDisk.includes(".local/hooks/startup-context.ts"));
+    for (const rel of onDisk) {
+      assert.ok(isInitInfrastructure(rel), `${rel} is not infrastructure`);
+      assert.ok(existsSync(resolve(home, rel)));
+    }
+  });
+
+  it("degrades to adding, and rewrites itself, when the ledger is corrupt", () => {
+    // Same posture as readShippedHashes: an unreadable ledger costs one re-add,
+    // not a mind permanently withheld from its own infrastructure.
+    const home = createdMind("corrupt", true);
+    rmSync(resolve(home, NOTICES));
+    writeFileSync(initLedgerPath("corrupt"), "{ not json");
+
+    const { added } = backfillInitInfrastructure(home, "claude", "corrupt");
+
+    assert.ok(added.includes(NOTICES));
+    assert.ok(readInitLedger("corrupt").has(NOTICES), "the ledger must repair itself");
+  });
+
+  it("does not inherit a previous mind's ledger when the name is reused", () => {
+    // A mind deleted and recreated under the same name is a new mind, and must
+    // not arrive already refusing things the old one refused. Creation replaces
+    // the ledger rather than merging into it.
+    const retired = ".local/hooks/pre-prompt/gone.ts";
+    rmSync(stateDir("recycled"), { recursive: true, force: true });
+    seedInitLedger("recycled", [NOTICES, retired]);
+
+    // `volute mind create` again, without clearing the state dir first.
+    const dir = resolve(scratch(), "recycled");
+    const { composedDir, manifest } = composeTemplate(templatesRoot, "claude");
+    copyTemplateToDir(composedDir, dir, "recycled", manifest);
+    seedInitLedger("recycled", applyInitFiles(dir));
+
+    const ledger = readInitLedger("recycled");
+    assert.ok(ledger.has(NOTICES), "the new mind's own files are recorded");
+    assert.ok(!ledger.has(retired), "the old mind's ledger must not survive");
+  });
+});
+
+describe("every creation path seeds the ledger", () => {
+  /**
+   * The forcing function for the wiring, and the reason it needs one: a creation
+   * path that copies `.init/` without recording what it gave has a mind whose
+   * removals are read as "never had it" until its first backfill — silently, and
+   * only for minds made that way. That is the #808 failure shape exactly (a
+   * daemon-side half that ships and looks healthy), so the fifth creation path
+   * someone adds must fail here rather than in a mind's home directory.
+   */
+  it("seeds the ledger in every function that creates a mind directory", () => {
+    // The applyInitFiles check below cannot see importFromFullArchive: it copies
+    // an extracted archive wholesale and composes no template, so it has no
+    // applyInitFiles call to wrap and the check passes over it vacuously — which
+    // is exactly how it shipped unseeded in review. Every creation path in
+    // lifecycle.ts is marked by the same 409 guard, so split on that instead and
+    // require a seed in each.
+    const src = readFileSync(
+      resolve(import.meta.dirname, "../packages/daemon/src/lib/mind/lifecycle.ts"),
+      "utf-8",
+    );
+    const guard = 'error: "Mind directory already exists"';
+    const paths = src.split(guard).slice(1);
+
+    assert.equal(paths.length, 4, "the known creation paths in lifecycle.ts");
+    for (const [i, body] of paths.entries()) {
+      assert.ok(
+        body.includes("seedInitLedger("),
+        `creation path ${i + 1} of ${paths.length} never records what it gave the mind`,
+      );
+    }
+  });
+
+  it("calls applyInitFiles only as an argument to seedInitLedger", () => {
+    const root = resolve(import.meta.dirname, "../packages/daemon/src");
+    const callers: string[] = [];
+
+    for (const rel of listFiles(root)) {
+      if (!rel.endsWith(".ts")) continue;
+      const path = resolve(root, rel);
+      // template.ts declares applyInitFiles; every other reference is a call.
+      if (rel.endsWith(`template${sep}template.ts`)) continue;
+      for (const line of readFileSync(path, "utf-8").split("\n")) {
+        if (!line.includes("applyInitFiles(")) continue;
+        if (line.trimStart().startsWith("*") || line.trimStart().startsWith("//")) continue;
+        if (line.includes("import")) continue;
+        callers.push(`${rel}: ${line.trim()}`);
+      }
+    }
+
+    assert.ok(callers.length >= 4, `expected the known creation paths, found ${callers.length}`);
+    for (const caller of callers) {
+      assert.match(
+        caller,
+        /seedInitLedger\([^,]+,\s*applyInitFiles\(/,
+        `${caller}\n  — a creation path that applies .init/ must record what it gave`,
+      );
+    }
+  });
+});
+
 describe("backfillInitInfrastructure: refreshing stale infrastructure", () => {
   const templatesRoot = findTemplatesRoot();
 
   function createdMind(name: string): string {
     const dir = resolve(scratch(), name);
+    rmSync(stateDir(name), { recursive: true, force: true });
     const { composedDir, manifest } = composeTemplate(templatesRoot, "claude");
     copyTemplateToDir(composedDir, dir, name, manifest);
     applyInitFiles(dir);

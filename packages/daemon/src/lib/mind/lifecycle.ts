@@ -37,6 +37,7 @@ import {
   copyTemplateToDir,
   findTemplatesRoot,
   listFiles,
+  listInfrastructureOnDisk,
   type TemplateManifest,
 } from "../template/template.js";
 import { computeTemplateHash } from "../template/template-hash.js";
@@ -46,6 +47,7 @@ import { fireWebhook } from "../webhook.js";
 import { consolidateMemory } from "./consolidate.js";
 import { defaultHeartbeatSchedule, setupDefaultDreaming } from "./default-autonomy.js";
 import { generateIdentity, publishPublicKey } from "./identity.js";
+import { seedInitLedger } from "./init-ledger.js";
 import {
   chownMindDir,
   createMindUser,
@@ -433,7 +435,9 @@ export async function createMind(
 
   try {
     copyTemplateToDir(composedDir, dest, name, manifest);
-    applyInitFiles(dest);
+    // Record the infrastructure this mind starts with, so a hook it removes on
+    // day one is honoured rather than read as "never had it" (#811).
+    seedInitLedger(name, applyInitFiles(dest));
 
     // Generate Ed25519 keypair for mind identity
     const { publicKeyPem } = generateIdentity(dest);
@@ -732,6 +736,12 @@ async function importFromFullArchive(
     // Copy extracted mind directory to final location
     cpSync(extractedMindDir, dest, { recursive: true });
 
+    // This path composes no template, so there is no applyInitFiles return to
+    // seed from — read the archive's own `.local/` instead. An archive carries
+    // an absence faithfully, and a mind that deleted a hook before it was
+    // exported should still have deleted it on the new host (#811).
+    seedInitLedger(name, listInfrastructureOnDisk(resolve(dest, "home")));
+
     // Generate new identity if not included in archive
     if (!manifest.includes.identity) {
       generateIdentity(dest);
@@ -839,7 +849,7 @@ async function importFromHomeOnlyArchive(
   try {
     // 1. Compose fresh template
     copyTemplateToDir(composedDir, dest, name, templateManifest);
-    applyInitFiles(dest);
+    seedInitLedger(name, applyInitFiles(dest));
 
     // 2. Overlay home/ from archive (archive files win over template defaults)
     const extractedHome = resolve(extractedMindDir, "home");
@@ -1068,7 +1078,7 @@ export async function importOpenClawWorkspace(body: ImportOpenClawInput): Promis
   try {
     copyTemplateToDir(composedDir, dest, name, manifest);
 
-    applyInitFiles(dest);
+    seedInitLedger(name, applyInitFiles(dest));
 
     // Generate Ed25519 keypair for mind identity
     const { publicKeyPem: importPublicKey } = generateIdentity(dest);

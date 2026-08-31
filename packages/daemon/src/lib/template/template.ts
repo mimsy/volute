@@ -14,6 +14,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
+import { readInitLedger, writeInitLedger } from "../mind/init-ledger.js";
 
 export type TemplateManifest = {
   rename: Record<string, string>;
@@ -219,12 +220,19 @@ export function renderComposedPackageJson(composedDir: string, mindName: string)
 /**
  * Copy .init/ files into home/ and remove .init/.
  * Called during mind creation (not during upgrades).
+ *
+ * Returns the `.init/`-relative paths of the *infrastructure* files it applied
+ * (see {@link INIT_INFRASTRUCTURE_PREFIXES}), for `seedInitLedger` to record as
+ * this mind's starting set. Filtering here rather than at each creation call
+ * site means a caller cannot forget it and record identity files as
+ * framework-given.
  */
-export function applyInitFiles(destDir: string) {
+export function applyInitFiles(destDir: string): string[] {
   const initDir = resolve(destDir, ".init");
-  if (!existsSync(initDir)) return;
+  if (!existsSync(initDir)) return [];
 
   const homeDir = resolve(destDir, "home");
+  const infrastructure: string[] = [];
   for (const file of listFiles(initDir)) {
     const src = resolve(initDir, file);
     const dest = resolve(homeDir, file);
@@ -233,9 +241,12 @@ export function applyInitFiles(destDir: string) {
       mkdirSync(parent, { recursive: true });
     }
     cpSync(src, dest);
+    const rel = file.split(sep).join("/");
+    if (isInitInfrastructure(rel)) infrastructure.push(rel);
   }
 
   rmSync(initDir, { recursive: true, force: true });
+  return infrastructure;
 }
 
 /**
@@ -260,14 +271,13 @@ export function applyInitFiles(destDir: string) {
  * its own hook (the shipped ones invite exactly that in their header comments),
  * and that edit is authorship too.
  *
- * One honest limit: absence is ambiguous. The backfill cannot tell "this mind
- * predates the hook" from "this mind deleted the hook on purpose", so a
- * deliberately removed hook comes back on the next upgrade. Deleting is a form
- * of authorship and this does override it. Distinguishing the two needs
- * per-mind tombstone state that does not exist today; until it does, a mind
- * that wants a hook gone should empty the file rather than remove it — a
- * present-but-empty hook is respected forever, and hook-loader treats it as a
- * no-op.
+ * Deleting is authorship too, and absence on its own cannot say whose: "this
+ * mind predates the hook" and "this mind removed it on purpose" look identical
+ * on disk. The per-mind ledger in `lib/mind/init-ledger.ts` is what tells them
+ * apart — it records every infrastructure path a mind has ever been given, so
+ * *given and now absent* reads as a deliberate removal and is left alone,
+ * while *never given and absent* is the #808 case and is added (#811). A mind
+ * that removes a hook does not have to do it twice.
  *
  * This is a subtree rule, not a filename list, so a hook added under
  * `.local/hooks/` in future is covered the day it ships with no second edit
@@ -322,6 +332,28 @@ export function isInitInfrastructure(relPath: string): boolean {
 }
 
 /**
+ * The infrastructure paths (`.init/`-relative) actually present under a `home/`.
+ *
+ * For creation paths that copy a whole mind tree rather than composing one from
+ * the template — importing a full archive — this is what `applyInitFiles`'s
+ * return value is for the composed paths: the set to seed the ledger with. It
+ * matters because an archive faithfully carries an *absence*: a mind that
+ * deleted a hook before it was exported should arrive on the new host still
+ * having deleted it, rather than being handed it back on its first upgrade.
+ */
+export function listInfrastructureOnDisk(homeDir: string): string[] {
+  const found: string[] = [];
+  for (const prefix of INIT_INFRASTRUCTURE_PREFIXES) {
+    const dir = resolve(homeDir, prefix);
+    if (!existsSync(dir)) continue;
+    for (const file of listFiles(dir)) {
+      found.push(prefix + file.split(sep).join("/"));
+    }
+  }
+  return found;
+}
+
+/**
  * Whether an infrastructure file already on disk may be replaced by the
  * template's current copy.
  *
@@ -351,16 +383,37 @@ export function mayRefreshInfrastructure(
  * which is how every mind on the production host but the newest ended up unable
  * to read its own next-turn system events (#808).
  *
- * Two outcomes, and the difference is authorship:
+ * Three outcomes, and the difference is authorship:
  *
- * - **added** — the file is missing. Copy it in.
+ * - **added** — the file is missing and this mind's ledger has never recorded
+ *   it. It predates the hook. Copy it in.
  * - **refreshed** — the file is present and byte-identical to some version
  *   Volute has shipped (per `.init/.local/SHIPPED.json`), so the mind never
  *   edited it; it is just an old copy of our own file. Overwrite it.
+ * - **withheld** — the file is missing but the ledger says we gave it to this
+ *   mind. It was removed on purpose. Leave it gone (#811).
  *
  * Anything else is left exactly alone. A file whose hash we don't recognise is
  * the mind's work, and stays the mind's work — the same guarantee as before,
  * one step stronger, because "present" no longer has to stand in for "authored".
+ *
+ * `honorRemovals: false` turns the withholding off for one call, for the one
+ * caller that knows an absence is *its own* fault rather than the mind's: an
+ * upgrade whose restore of merge-deleted `home/` files threw partway. Reading
+ * that damage as authorship would withhold the files permanently and silently,
+ * which is the #808 failure shape again; re-adding a hook the mind meant to
+ * delete costs it one more deletion, on a path the host is already being warned
+ * about. The silent permanent loss is the worse of the two.
+ *
+ * The ledger is maintained here, uniformly, with no first-run migration branch:
+ * every path observed present, and every path successfully installed, is
+ * recorded. For a mind that predates the ledger that means its first run
+ * derives one from disk — so a removal made *before* this shipped is undone
+ * exactly once and then recorded, and the mind's second removal of the same
+ * file is durable. That is the deliberate trade: seeding from the full shipped
+ * set instead would honour those old removals, but would also permanently
+ * withhold hooks from every mind that legitimately never had them, which is the
+ * #808 bug it took a release to find. See `lib/mind/init-ledger.ts`.
  *
  * This is the second specimen of the #808 class and the reason it matters: #900
  * collapsed the daemon API to `/api/v1`, the template's hooks were updated, and
@@ -391,7 +444,9 @@ export function backfillInitInfrastructure(
   homeDir: string,
   template: string,
   mindName: string,
-): { added: string[]; refreshed: string[] } {
+  opts: { honorRemovals?: boolean } = {},
+): { added: string[]; refreshed: string[]; withheld: string[] } {
+  const honorRemovals = opts.honorRemovals ?? true;
   const root = locateTemplatesRoot();
   if (!root) throw new Error("templates root not found on disk");
   if (!existsSync(resolve(root, template))) {
@@ -407,7 +462,7 @@ export function backfillInitInfrastructure(
   const { composedDir, manifest } = composeTemplate(root, template);
   try {
     const initDir = resolve(composedDir, ".init");
-    if (!existsSync(initDir)) return { added: [], refreshed: [] };
+    if (!existsSync(initDir)) return { added: [], refreshed: [], withheld: [] };
 
     // manifest.substitute paths are relative to the composed layout (".init/..."),
     // while listFiles() below yields paths relative to .init/ itself.
@@ -418,8 +473,15 @@ export function backfillInitInfrastructure(
         .map((p) => p.slice(".init/".length)),
     );
     const shipped = readShippedHashes(root);
+    // What this mind has ever been given, and what it will have been given by the
+    // end of this run. `given` only ever grows: a path the template has since
+    // retired stays recorded, so if it is ever reintroduced the mind's removal of
+    // it still counts.
+    const ledger = readInitLedger(mindName);
+    const given = new Set(ledger);
     const added: string[] = [];
     const refreshed: string[] = [];
+    const withheld: string[] = [];
 
     /** Write the template's copy of `rel` to `dest`, rendering {{name}} if declared. */
     const install = (src: string, dest: string, rel: string) => {
@@ -442,12 +504,24 @@ export function backfillInitInfrastructure(
       const dest = resolve(homeDir, file);
 
       if (!existsSync(dest)) {
+        // Absent, and we have given it to this mind before: the mind removed it.
+        // That is authorship, and it outranks our confidence that the machinery
+        // is good for it — including when the template ships newer bytes (#811).
+        if (honorRemovals && ledger.has(rel)) {
+          withheld.push(rel);
+          continue;
+        }
         install(src, dest, rel);
         added.push(rel);
+        given.add(rel);
         continue;
       }
 
-      // Present. Only replace it if the bytes on disk are ones Volute wrote.
+      // Present, so the mind has it — record that before anything else, since
+      // that is the fact a future removal will be read against.
+      given.add(rel);
+
+      // Only replace it if the bytes on disk are ones Volute wrote.
       // An unreadable path (a directory where a file belongs, a permission the
       // daemon lost) is one mind's one file — it must not throw out of the loop
       // and take the *adds* for every remaining file down with it.
@@ -463,7 +537,14 @@ export function backfillInitInfrastructure(
       refreshed.push(rel);
     }
 
-    return { added, refreshed };
+    // Written once, at the end, and only with paths whose file was on disk during
+    // this run — observed present, or installed a few lines above. An entry for a
+    // file that never landed would read as "given, then removed" and withhold it
+    // forever, so an install that throws must take the whole save down with it:
+    // unrecorded installs are simply observed as present on the next run.
+    if (given.size !== ledger.size) writeInitLedger(mindName, given);
+
+    return { added, refreshed, withheld };
   } finally {
     rmSync(composedDir, { recursive: true, force: true });
   }

@@ -192,11 +192,18 @@ Edit `.local/hooks/startup-context.ts` to customize what you see when a new sess
 
 ### Turning a hook off
 
-Everything under `.local/` is framework machinery — hooks the daemon runs, shims it generates. Your edits to those files are yours and are never overwritten. But the daemon does *add back* any file that is missing, on every start, so that a capability shipped after you were created still reaches you.
+Everything under `.local/` is framework machinery — hooks the daemon runs, shims it generates. Your edits to those files are yours and are never overwritten. The daemon does *add* a file that is missing, so that a capability shipped after you were created still reaches you — but only if it has never given you that file before.
 
-That means **deleting a hook doesn't stick** — it comes back, because absence can't be told apart from "this mind predates the hook."
+So **deleting a hook sticks.** Volute keeps a per-mind record of every `.local/` file it has ever handed you; a file in that record and no longer on disk is read as "this mind removed it on purpose", and it is not put back. You don't have to delete it again after an upgrade or a restart.
 
-To turn a hook off for good, **empty the file instead of removing it**. An empty hook is respected forever and runs as a no-op. This is a real limitation, not a preference about how you should work; the durable version of "I removed this on purpose" is tracked in [#811](https://github.com/mimsy/volute/issues/811).
+Emptying the file works too, and always did: an empty hook is skipped entirely. Either way says the same thing. Delete it if you want it gone; empty it if you'd rather keep a placeholder to write into later.
+
+Two things worth knowing:
+
+- **The record is why deletion sticks, so a file lost by accident is usually not restored either.** The one exception is an upgrade that knows it dropped files itself — it re-adds them rather than mistake its own damage for your choice, so you may have to delete the file once more after a failed upgrade. Otherwise, if a hook disappears without your meaning it to, nothing will put it back on its own: ask your host for the shipped copy, and once the file exists again the daemon resumes keeping it current for you.
+- **One deletion made before this behaviour shipped comes back once.** The record is built the first time it runs, from whatever is on disk then. Delete it again and it stays gone.
+
+The behaviour is described from the daemon's side in [#811](https://github.com/mimsy/volute/issues/811).
 
 ## Reference Files
 
