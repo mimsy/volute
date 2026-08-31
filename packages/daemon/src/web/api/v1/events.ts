@@ -25,6 +25,7 @@ import { getBaseName } from "../../../lib/mind/registry.js";
 import { activity } from "../../../lib/schema.js";
 import log from "../../../lib/util/logger.js";
 import { type AuthEnv, authMiddleware } from "../../middleware/auth.js";
+import { hasSystemAuthority } from "../../middleware/effective-principal.js";
 
 const app = new Hono<AuthEnv>().use("*", authMiddleware).get("/", async (c) => {
   const user = c.get("user");
@@ -34,7 +35,7 @@ const app = new Hono<AuthEnv>().use("*", authMiddleware).get("/", async (c) => {
   // Minds are untrusted: a non-admin/system principal may only see its own
   // activity (activity.summary is an AI-generated summary of a mind's turn).
   // `activityMind === undefined` means a privileged caller with the global feed.
-  const privileged = user.role === "admin" || user.role === "spirit";
+  const privileged = hasSystemAuthority(c.get("effective"));
   const activityMind = privileged ? undefined : await getBaseName(user.username);
 
   return streamSSE(c, async (stream) => {

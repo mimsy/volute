@@ -6,7 +6,9 @@ import { afterEach, describe, it } from "node:test";
 import { _resetConfigCache } from "../packages/daemon/src/lib/config/setup.js";
 import {
   resolveMindToken,
+  resolveScriptToken,
   revokeMindToken,
+  revokeScriptToken,
 } from "../packages/daemon/src/lib/daemon/mind-tokens.js";
 import { SleepManager, type SleepState } from "../packages/daemon/src/lib/daemon/sleep-manager.js";
 import { mindDir, voluteSystemDir } from "../packages/daemon/src/lib/mind/registry.js";
@@ -108,8 +110,12 @@ describe("wake-context hook", () => {
       assert.equal(fields.get("mind"), name);
       const token = fields.get("token");
       assert.ok(token && token.length > 0, "hook should receive a mind token");
-      // The token is non-admin and scoped to this mind.
-      assert.equal(resolveMindToken(token), name);
+      // It is a per-run script credential scoped to this mind, distinct from the
+      // mind's own long-lived token — that distinction is what lets the daemon tell a
+      // process it spawned from one merely claiming to be self-initiated (#433).
+      assert.equal(resolveScriptToken(token), name);
+      assert.equal(resolveMindToken(token), null);
+      revokeScriptToken(token);
       // The daemon admin token is never handed to the hook (expands to empty).
       assert.equal(fields.get("admin"), "");
       // Nor is the daemon's ambient host environment.

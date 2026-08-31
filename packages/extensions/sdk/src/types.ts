@@ -83,6 +83,16 @@ export type ExtensionContext = {
    * a turn on their own. Never throws.
    */
   recordNotice: (mindName: string, text: string) => Promise<void>;
+  /**
+   * Whether this request carries admin-equivalent authority.
+   *
+   * Read this instead of the caller's stored `role` for any admin-or-spirit gate.
+   * The spirit's account role reads "spirit" on every call, but its authority is
+   * resolved per-request from the turn its call arrived in: on its own self-initiated
+   * work or on behalf of a verified admin it is privileged; on a turn a mind's DM
+   * triggered it is not (#433). A role check would grant the second case too.
+   */
+  isPrivileged: (c: { get: (key: string) => unknown }) => boolean;
   /** Whether per-mind user isolation is enabled (user isolation mode). */
   isIsolationEnabled: () => boolean;
   /** Get the OS username for a mind under user isolation (e.g. "mind-lyra"). */
@@ -194,7 +204,18 @@ export type CommandHandler = (
     flags: Record<string, string | number | boolean | undefined>;
     rest: string[];
   },
-  ctx: ExtensionContext & { mindName?: string; session?: string; stdin?: string },
+  ctx: ExtensionContext & {
+    mindName?: string;
+    session?: string;
+    stdin?: string;
+    /**
+     * Authority this invocation actually runs at, as the daemon resolved it. Read
+     * this rather than the caller's stored `role` for any privileged command: the
+     * spirit's account role says "spirit" on every call, but its authority depends
+     * on who triggered the turn the call arrived in (#433).
+     */
+    privileged?: boolean;
+  },
 ) => Promise<{ output: string } | { error: string }>;
 
 export type ExtensionCommand = {

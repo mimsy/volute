@@ -113,9 +113,9 @@ import {
   type AuthEnv,
   invalidateMindUserCache,
   requireAdmin,
-  requireAdminOrSystem,
   requireSelf,
 } from "../middleware/auth.js";
+import { hasSystemAuthority } from "../middleware/effective-principal.js";
 
 const _lastActiveCache: { map: Map<string, string>; ts: number } = { map: new Map(), ts: 0 };
 const _LAST_ACTIVE_TTL = 60_000;
@@ -228,10 +228,13 @@ async function getMindStatus(
 
 type MindStatus = Awaited<ReturnType<typeof getMindStatus>>;
 
-/** True for the daemon's own privileged principals: admin users and the system spirit. */
+/**
+ * True for the daemon's own privileged principals: admins, and the spirit when its
+ * request carries admin authority — either its own self-initiated work or a turn a
+ * verified admin triggered. A spirit turn triggered by a mind is not privileged (#433).
+ */
 function isPrivileged(c: Context<AuthEnv>): boolean {
-  const role = c.get("user").role;
-  return role === "admin" || role === "spirit";
+  return hasSystemAuthority(c.get("effective"));
 }
 
 /**
@@ -345,7 +348,7 @@ const HISTORY_LIMIT = { fallback: 50, min: 1, max: 200 };
 const OFFSET = { fallback: 0, min: 0, max: Number.MAX_SAFE_INTEGER };
 
 const app = new Hono<AuthEnv>()
-  .post("/", requireAdminOrSystem, zValidator("json", createMindSchema), async (c) => {
+  .post("/", requireAdmin, zValidator("json", createMindSchema), async (c) => {
     const result = await createMind(c.req.valid("json"), { username: c.get("user")?.username });
     if (!result.ok) return c.json({ error: result.error }, result.status);
     return c.json(result.body);

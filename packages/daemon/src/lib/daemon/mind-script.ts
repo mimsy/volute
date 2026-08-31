@@ -4,7 +4,7 @@ import { findMind, mindDir, mindTmpDir, mindTmpEnv, stateDir } from "../mind/reg
 import { isSandboxEnabled, wrapForSandbox } from "../mind/sandbox.js";
 import { exec } from "../util/exec.js";
 import { buildMindBaseEnv } from "./mind-manager.js";
-import { generateMindToken, getMindToken } from "./mind-tokens.js";
+import { issueScriptToken } from "./mind-tokens.js";
 
 /**
  * Cap on a mind script's stdout, set deliberately rather than inherited.
@@ -28,9 +28,11 @@ export const MIND_SCRIPT_MAX_BUFFER = 32 * 1024 * 1024;
 /**
  * Build the environment for a mind-authored script — mirrors the mind process env
  * (allowlisted base + merged mind env + VOLUTE_* runtime vars), authenticated
- * with the mind's own per-mind, non-admin token. Reuses the running mind's
- * token when present; otherwise mints one (stable across runs, regenerated on
- * next mind start). The daemon admin token is never included.
+ * with a per-run, non-admin token minted for this script alone (see
+ * `issueScriptToken`) — not the running mind's own token, so the mind's agent
+ * process never holds the credential and the daemon can tell a process it spawned
+ * from one merely claiming to be self-initiated. Callers must revoke it when the
+ * run ends; {@link runMindScript} does. The daemon admin token is never included.
  */
 export async function buildMindScriptEnv(
   mindName: string,
@@ -38,7 +40,7 @@ export async function buildMindScriptEnv(
 ): Promise<Record<string, string | undefined>> {
   const mindHome = dir ?? mindDir(mindName);
   const entry = await findMind(mindName);
-  const token = getMindToken(mindName) ?? generateMindToken(mindName);
+  const token = issueScriptToken(mindName);
   const mindLocalBin = resolve(mindHome, "home", ".local", "bin");
   const currentPath = process.env.PATH ?? "";
   return {
@@ -102,6 +104,9 @@ export async function runMindScript(
   const { cwd, stdin, timeout } = opts;
   const maxBuffer = opts.maxBuffer ?? MIND_SCRIPT_MAX_BUFFER;
 
+  // The script token is deliberately NOT revoked when exec returns — see
+  // `issueScriptToken`: work the script backgrounded outlives its immediate child, and
+  // the TTL is the bound.
   if (isSandboxEnabled()) {
     const [wrappedCmd, wrappedArgs] = await wrapForSandbox(cmd, args, dir, opts.mindName, [
       dir,

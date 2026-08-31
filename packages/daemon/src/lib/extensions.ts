@@ -13,6 +13,7 @@ import type {
 } from "@volute/extensions";
 import type { Context, Hono, MiddlewareHandler } from "hono";
 import { type AuthEnv, requireSelf } from "../web/middleware/auth.js";
+import { type Effective, hasSystemAuthority } from "../web/middleware/effective-principal.js";
 import { getUser, getUserByUsername } from "./auth.js";
 import { announceToCommons } from "./chat/commons-channel.js";
 import { MIND_LEVEL_THREAD, recordNotice as recordMindNotice } from "./chat/system-events.js";
@@ -105,8 +106,10 @@ export function toCommandInfo(cmd: ExtensionCommand): ExtensionCommandInfo {
  * Resolve the mind an extension command runs as, from the authenticated caller and the
  * requested `--mind` / `VOLUTE_MIND` identity.
  *
- * Minds are untrusted principals, so only privileged callers (admin/spirit) may act as
- * someone else. An unprivileged caller that asks to act as another mind is **refused**,
+ * Minds are untrusted principals, so only privileged callers may act as
+ * someone else. `privileged` is the request's *effective* authority, not the caller's
+ * stored role — the spirit gets it only on its own self-initiated work or on behalf of
+ * a verified admin (#433). An unprivileged caller that asks to act as another mind is **refused**,
  * never quietly handed itself: `volute pages list --mind gardener` used to return the
  * caller's own pages with exit 0, and three minds on separate seats each read that as a
  * fact about the interface rather than a refused permission (#907). A right answer to a
@@ -114,10 +117,10 @@ export function toCommandInfo(cmd: ExtensionCommand): ExtensionCommandInfo {
  * refusal is the information.
  */
 export function resolveActingMind(
-  user: { username: string; role?: string } | undefined,
+  user: { username: string } | undefined,
   requested: string | undefined,
+  privileged: boolean,
 ): { mind: string | undefined } | { error: string } {
-  const privileged = user?.role === "admin" || user?.role === "spirit";
   if (privileged) return { mind: requested || user?.username };
   if (requested && requested !== user?.username) {
     return {
@@ -296,6 +299,7 @@ export async function buildExtensionContext(
       if (!user || typeof user !== "object") return null;
       return user as ReturnType<ExtensionContext["resolveUser"]>;
     },
+    isPrivileged: (c) => hasSystemAuthority(c.get("effective") as Effective | undefined),
     getUser: async (id: number) => getUser(id),
     getUserByUsername: async (username: string) => getUserByUsername(username),
     publishActivity: (event) => {
@@ -407,8 +411,9 @@ async function loadExtension(
         } catch {
           return c.json({ error: "Invalid JSON in request body" }, 400);
         }
-        const user = c.get("user") as { username: string; role?: string } | undefined;
-        const acting = resolveActingMind(user, body.mind);
+        const user = c.get("user") as { username: string } | undefined;
+        const privileged = hasSystemAuthority(c.get("effective"));
+        const acting = resolveActingMind(user, body.mind, privileged);
         if ("error" in acting) return c.json({ error: acting.error }, 403);
         const mindName = acting.mind;
         const session = c.get("mindSession") as string | undefined;
@@ -420,6 +425,7 @@ async function loadExtension(
           const parsed = parseCommandArgs(body.args ?? [], cmd.args ?? [], cmd.flags ?? {});
           const result = await cmd.handler(parsed, {
             ...context,
+            privileged,
             publishActivity: (rawEvent) => {
               const metadata = enrichActivityMetadata(manifest, rawEvent.metadata);
               const event = { ...rawEvent, metadata };

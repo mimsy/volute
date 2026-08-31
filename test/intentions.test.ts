@@ -10,7 +10,10 @@ import { generateMindToken } from "../packages/daemon/src/lib/daemon/mind-tokens
 import { getDb } from "../packages/daemon/src/lib/db.js";
 import { users } from "../packages/daemon/src/lib/schema.js";
 import { authMiddleware, createSession } from "../packages/daemon/src/web/middleware/auth.js";
-
+import {
+  type Effective,
+  hasSystemAuthority,
+} from "../packages/daemon/src/web/middleware/effective-principal.js";
 import { createCommands } from "../packages/extensions/intentions/src/commands.js";
 import { initDb } from "../packages/extensions/intentions/src/db.js";
 import { formatHeldDays } from "../packages/extensions/intentions/src/format.js";
@@ -250,7 +253,14 @@ describe("intentions routes authorization", () => {
   beforeEach(() => {
     db = new Database(":memory:") as unknown as ExtDb;
     initDb(db);
-    const ctx = { db, publishActivity: () => {} } as unknown as ExtensionContext;
+    const ctx = {
+      db,
+      publishActivity: () => {},
+      // The real helper, so the route is exercised against real authority resolution
+      // rather than a stub that would hide a wiring break.
+      isPrivileged: (c: { get: (key: string) => unknown }) =>
+        hasSystemAuthority(c.get("effective") as Effective | undefined),
+    } as unknown as ExtensionContext;
     app = new Hono();
     app.use("/api/ext/intentions/*", authMiddleware);
     app.route("/api/ext/intentions", createRoutes(ctx));
@@ -288,10 +298,13 @@ describe("intentions routes authorization", () => {
     assert.equal(res.status, 403);
   });
 
-  it("GET /review-due allows the spirit (role: system)", async () => {
+  // The spirit reaches this only with admin authority behind the request. With no
+  // daemon-tracked turn to resolve a principal from, its authority is `basic` and the
+  // route refuses it exactly like any other unprivileged caller (#433).
+  it("GET /review-due refuses a spirit request with no verifiable requester", async () => {
     const headers = await mindAuth(spiritName);
     const res = await app.request("http://localhost/api/ext/intentions/review-due", { headers });
-    assert.equal(res.status, 200);
+    assert.equal(res.status, 403);
   });
 
   it("GET /review-due allows an admin", async () => {
@@ -474,10 +487,15 @@ describe("intentions commands", () => {
   });
   afterEach(() => db.close());
 
-  function makeCtx(mindName: string, user: Partial<User> | null): Parameters<CommandHandler>[1] {
+  function makeCtx(
+    mindName: string,
+    user: Partial<User> | null,
+    privileged = false,
+  ): Parameters<CommandHandler>[1] {
     return {
       mindName,
       db,
+      privileged,
       getUser: async () => null,
       getUserByUsername: async () => user as User | null,
       publishActivity: () => {},
@@ -492,19 +510,25 @@ describe("intentions commands", () => {
     assert.match(result.error, /Forbidden/);
   });
 
-  it("review-due command allows the spirit (role: spirit)", async () => {
+  it("review-due command allows a spirit request carrying admin authority", async () => {
     createIntention(db, "aria", "overdue thing", undefined, undefined);
     db.prepare("UPDATE intentions SET review_at = datetime('now', '-1 day')").run();
 
     const commands = createCommands();
-    const ctx = makeCtx("volute", {
-      username: "volute",
-      role: "spirit",
-      user_type: "spirit",
-    } as User);
+    const ctx = makeCtx("volute", { username: "volute", user_type: "spirit" } as User, true);
     const result = await commands["review-due"].handler({ args: {}, flags: {}, rest: [] }, ctx);
     assert.ok("output" in result);
     assert.match(result.output, /overdue thing/);
+  });
+
+  // The spirit's account role reads "spirit" on every call. Its authority does not:
+  // a turn a mind's DM triggered carries that mind's, and review-due is not it (#433).
+  it("review-due command refuses the spirit when the request is not privileged", async () => {
+    const commands = createCommands();
+    const ctx = makeCtx("volute", { username: "volute", user_type: "spirit" } as User, false);
+    const result = await commands["review-due"].handler({ args: {}, flags: {}, rest: [] }, ctx);
+    assert.ok("error" in result);
+    assert.match(result.error, /Forbidden/);
   });
 
   it("add command enforces the active cap", async () => {
