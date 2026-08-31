@@ -129,6 +129,7 @@ describe("fan-out with an external (registry-row-less) mind participant", () => 
         conversationId: CONVERSATION_ID,
         contentBlocks: [{ type: "text", text: "hello minds" }],
         senderName: HUMAN,
+        senderId: null,
         participants,
       });
     });
@@ -166,6 +167,7 @@ describe("fan-out with an external (registry-row-less) mind participant", () => 
         conversationId: CONVERSATION_ID,
         contentBlocks: [{ type: "text", text: "quiet" }],
         senderName: HUMAN,
+        senderId: null,
         participants,
       });
     });

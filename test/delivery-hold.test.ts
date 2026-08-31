@@ -651,7 +651,7 @@ describe("DeliveryManager: holding deliveries", () => {
 
 describe("withHeldPreface", () => {
   it("leaves an unheld payload exactly as it was", () => {
-    const payload: DeliveryPayload = { channel: "c", sender: "a", content: "hi" };
+    const payload: DeliveryPayload = { channel: "c", sender: "a", senderId: null, content: "hi" };
     assert.equal(withHeldPreface(payload), payload);
   });
 
@@ -659,6 +659,7 @@ describe("withHeldPreface", () => {
     const out = withHeldPreface({
       channel: "c",
       sender: "a",
+      senderId: null,
       content: "hi",
       held: { at: Date.now(), scope: "mind" },
     });
@@ -670,6 +671,7 @@ describe("withHeldPreface", () => {
     const out = withHeldPreface({
       channel: "c",
       sender: "a",
+      senderId: null,
       content: [
         { type: "image", source: {} },
         { type: "text", text: "hi" },
@@ -689,6 +691,7 @@ describe("withHeldPreface", () => {
       withHeldPreface({
         channel: "c",
         sender: "a",
+        senderId: null,
         content: "hi",
         held: { at: Date.now(), scope: "mind" },
       }).content as string

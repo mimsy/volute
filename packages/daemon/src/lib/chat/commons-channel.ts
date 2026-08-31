@@ -147,6 +147,7 @@ export async function announceToCommons(text: string): Promise<void> {
       channel,
       conversationId: channelId,
       sender: null,
+      senderId: null,
       participants: participants.map((p) => p.username),
       participantCount: participants.length,
       isDM: false,

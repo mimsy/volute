@@ -1,0 +1,1 @@
+ALTER TABLE `mind_history` ADD `sender_id` integer;

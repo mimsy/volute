@@ -107,6 +107,12 @@ export const mindHistory = sqliteTable(
     channel: text("channel"),
     thread: text("thread"),
     sender: text("sender"),
+    // The authenticated principal behind an inbound row (users.id), written ONLY by
+    // paths that actually authenticated the sender on the request. Null everywhere
+    // else — bridge/mail/cloud inbound carry external identities Volute never
+    // authenticated, so they are structurally unable to confer authority (#1017).
+    // Never backfill or derive this from `sender` (display text, many writers).
+    sender_id: integer("sender_id"),
     message_id: text("message_id"),
     type: text("type").notNull(),
     content: text("content"),

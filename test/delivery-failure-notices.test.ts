@@ -115,6 +115,7 @@ describe("fan-out surfaces lost deliveries to a mind sender (#723)", () => {
       conversationId: CONVERSATION_ID,
       contentBlocks: [{ type: "text", text: "hello" }],
       senderName: SENDER,
+      senderId: null,
       participants,
     });
 
@@ -142,6 +143,7 @@ describe("fan-out surfaces lost deliveries to a mind sender (#723)", () => {
       conversationId: CONVERSATION_ID,
       contentBlocks: [{ type: "text", text: "anyone home?" }],
       senderName: SENDER,
+      senderId: null,
       participants,
     });
 
@@ -166,6 +168,7 @@ describe("fan-out surfaces lost deliveries to a mind sender (#723)", () => {
       conversationId: CONVERSATION_ID,
       contentBlocks: [{ type: "text", text: "hello" }],
       senderName: HUMAN,
+      senderId: null,
       participants,
     });
 
@@ -189,6 +192,7 @@ describe("fan-out surfaces lost deliveries to a mind sender (#723)", () => {
         conversationId: CONVERSATION_ID,
         contentBlocks: [{ type: "text", text: "quiet" }],
         senderName: HUMAN,
+        senderId: null,
         participants,
       });
     } finally {
@@ -216,6 +220,7 @@ describe("fan-out surfaces lost deliveries to a mind sender (#723)", () => {
       conversationId: CONVERSATION_ID,
       contentBlocks: [{ type: "text", text: "held?" }],
       senderName: SENDER,
+      senderId: null,
       participants,
     });
     assert.deepEqual(gatedRecipients, [RECIPIENT]);
@@ -241,6 +246,7 @@ describe("fan-out surfaces lost deliveries to a mind sender (#723)", () => {
       conversationId: CONVERSATION_ID,
       contentBlocks: [{ type: "text", text: "good night" }],
       senderName: SENDER,
+      senderId: null,
       participants,
     });
     assert.deepEqual(gatedRecipients, []);
@@ -262,6 +268,7 @@ describe("fan-out surfaces lost deliveries to a mind sender (#723)", () => {
       conversationId: CONVERSATION_ID,
       contentBlocks: [{ type: "text", text: "from the variant" }],
       senderName: VARIANT,
+      senderId: null,
       participants,
     });
 

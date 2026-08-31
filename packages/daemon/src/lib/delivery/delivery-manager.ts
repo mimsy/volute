@@ -269,6 +269,7 @@ async function recordDeferredInbound(baseName: string, payload: DeliveryPayload)
       type: "inbound",
       channel: payload.channel,
       sender: payload.sender ?? null,
+      sender_id: payload.senderId ?? null,
       content: extractTextContent(payload.content),
       ...(payload.held ? { created_at: toDbTimestamp(payload.held.at) } : {}),
     });
@@ -898,6 +899,7 @@ export class DeliveryManager {
       session: string;
       channel: string;
       sender: string | null;
+      senderId: number | null;
       content: string | null;
     };
     const byChannel = new Map<string, Promotable[]>();
@@ -933,6 +935,9 @@ export class DeliveryManager {
         session,
         channel,
         sender: payload.sender ?? row.sender ?? null,
+        // From the persisted payload only — a legacy queue row predating the column
+        // has no senderId and stays null (#1017).
+        senderId: payload.senderId ?? null,
         content: extractTextContent(payload.content),
       });
       byChannel.set(channel, list);
@@ -1001,6 +1006,7 @@ export class DeliveryManager {
             type: "inbound",
             channel: p.channel,
             sender: p.sender,
+            sender_id: p.senderId,
             content: p.content,
           });
           await tx

@@ -269,6 +269,9 @@ async function fanOutToBridgedMinds(opts: {
     conversationId: opts.conversationId,
     contentBlocks: opts.contentBlocks,
     senderName: opts.senderName,
+    // Null: a bridge sender is an external platform identity Volute never
+    // authenticated (#1017).
+    senderId: null,
     isDM: opts.isDM,
   });
 }

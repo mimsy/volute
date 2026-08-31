@@ -83,6 +83,15 @@ export type { ChannelContext, ParticipantProfile };
 export interface DeliveryPayload {
   channel: string;
   sender: string | null;
+  /**
+   * The authenticated principal behind this message (users.id), or null. Set ONLY by
+   * callers whose request actually authenticated the sender (the chat API's session or
+   * token principal). Bridge, mail, and cloud inbound pass null on purpose: they carry
+   * external identities Volute never authenticated, and a null id is what keeps an
+   * unvouched sender structurally unable to confer authority (#1017). Never derive it
+   * from `sender`, which is display text.
+   */
+  senderId: number | null;
   content: unknown; // string or content block array
   conversationId?: string;
   session?: string; // explicit target session — skips route matching

@@ -92,7 +92,7 @@ function routeEverything(): void {
 }
 
 /** The inbound row is written by fan-out's fire-and-forget delivery, just after the 200. */
-async function inboundRows(): Promise<{ sender: string | null }[]> {
+async function inboundRows(): Promise<{ sender: string | null; sender_id: number | null }[]> {
   const db = await getDb();
   for (let i = 0; i < 50; i++) {
     const rows = await db
@@ -169,6 +169,11 @@ describe("bridge inbound records the namespaced puppet handle, not the display n
       "discord:alice",
       "mind_history.sender must carry provenance, not the display name",
     );
+    assert.equal(
+      rows[0].sender_id,
+      null,
+      "bridge inbound is an external identity Volute never authenticated — sender_id stays null (#1017)",
+    );
   });
 
   it("records platform:handle for a mapped channel too", async () => {
@@ -196,6 +201,11 @@ describe("bridge inbound records the namespaced puppet handle, not the display n
     const rows = await inboundRows();
     assert.equal(rows.length, 1);
     assert.equal(rows[0].sender, "slack:bob");
+    assert.equal(
+      rows[0].sender_id,
+      null,
+      "channel bridge inbound writes no authenticated id either",
+    );
   });
 });
 
@@ -230,6 +240,11 @@ describe("mail inbound records mail:<address>, not the From name", () => {
       .where(and(eq(mindHistory.mind, MIND), eq(mindHistory.type, "inbound")));
     assert.equal(rows.length, 1);
     assert.equal(rows[0].sender, "mail:alice@example.test");
+    assert.equal(
+      rows[0].sender_id,
+      null,
+      "a From: address is asserted by the sending server, never authenticated — null (#1017)",
+    );
     assert.match(
       rows[0].content ?? "",
       /^From: admin <alice@example\.test>/,
