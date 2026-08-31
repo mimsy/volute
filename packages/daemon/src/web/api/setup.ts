@@ -301,9 +301,9 @@ setup.post("/account", zValidator("json", accountBodySchema), async (c) => {
 
   const body = c.req.valid("json");
 
-  if (!body.username.trim()) {
-    return c.json({ error: "Username is required" }, 400);
-  }
+  const { validateUsername } = await import("../../lib/auth.js");
+  const invalidName = validateUsername(body.username.trim());
+  if (invalidName) return c.json({ error: invalidName }, 400);
   if (!body.password || body.password.length < 1) {
     return c.json({ error: "Password is required" }, 400);
   }

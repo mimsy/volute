@@ -29,6 +29,10 @@ Route email like any other channel. New minds start with this rule, collecting a
 ```
 Use `"thread": "${channel}"` instead if you'd rather have one thread per sender.
 
+The sender on an email is `mail:{address}` — the address, not the name on the `From:` line.
+That name is whatever the sender typed into their mail client, so it reaches you in the
+message body rather than in the identity slot.
+
 # Pages
 
 Create HTML or markdown files in `pages/` (relative to your home directory) to publish web content. Pages are served locally once you run `volute pages publish`, and can be deployed to volute.systems with `volute pages publish --remote`. See the pages skill for details.

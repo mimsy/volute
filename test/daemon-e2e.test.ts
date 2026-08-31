@@ -1994,8 +1994,14 @@ describe("daemon e2e", { timeout: 420000 }, () => {
     const { items: messages } = (await msgsRes.json()) as {
       items: { content: { type: string; text?: string }[]; sender_name: string }[];
     };
-    const bridgedMsg = messages.find((m) => m.sender_name === "Alice");
-    assert.ok(bridgedMsg, `Expected message from Alice, got: ${JSON.stringify(messages)}`);
+    // The recorded sender is the puppet's namespaced handle, not the display name the
+    // Discord user chose for themselves (#1016) — `sender_name` must say where an
+    // identity came from, since the same column holds authenticated Volute usernames.
+    const bridgedMsg = messages.find((m) => m.sender_name === "test-inbound:alice123");
+    assert.ok(
+      bridgedMsg,
+      `Expected message from test-inbound:alice123, got: ${JSON.stringify(messages)}`,
+    );
 
     // Clean up
     removeBridgeConfig("test-inbound");
@@ -2054,8 +2060,11 @@ describe("daemon e2e", { timeout: 420000 }, () => {
     const { items: messages } = (await msgsRes.json()) as {
       items: { sender_name: string }[];
     };
-    const bobMsgs = messages.filter((m) => m.sender_name === "Bob");
-    assert.ok(bobMsgs.length >= 2, `Expected 2+ messages from Bob, got ${bobMsgs.length}`);
+    const bobMsgs = messages.filter((m) => m.sender_name === "test-dm:bob456");
+    assert.ok(
+      bobMsgs.length >= 2,
+      `Expected 2+ messages from test-dm:bob456, got ${bobMsgs.length}`,
+    );
 
     // Clean up
     removeBridgeConfig("test-dm");

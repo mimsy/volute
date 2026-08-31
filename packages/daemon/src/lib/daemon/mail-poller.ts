@@ -23,16 +23,38 @@ type EmailNotification = {
   };
 };
 
-export function formatEmailContent(email: Pick<Email, "subject" | "body" | "html">): string {
-  if (email.body) {
-    return email.subject ? `Subject: ${email.subject}\n\n${email.body}` : email.body;
-  }
-  if (email.html) {
-    return email.subject
-      ? `Subject: ${email.subject}\n\n[HTML email — plain text not available]`
-      : "[HTML email — plain text not available]";
-  }
-  return email.subject ? `Subject: ${email.subject}` : "[Empty email]";
+/** Collapse newlines so sender-controlled text cannot forge extra header lines. */
+function flatten(value: string): string {
+  return value.replace(/[\r\n]+/g, " ").trim();
+}
+
+/**
+ * Render an email for a mind: a `From:`/`Subject:` header block, then the body.
+ *
+ * The `From:` line is where the sender's self-chosen display name lives. It is
+ * deliberately NOT the delivered message's `sender` — that slot records the
+ * namespaced `mail:<address>` identity (#1016), because a display name in an email
+ * header is chosen by whoever sent the mail and must not sit in the same column as
+ * an authenticated Volute username. Rendering it here keeps the human name in front
+ * of the mind (it reads "From: Alice Smith <alice@example.com>") while the identity
+ * the system records stays unforgeable.
+ */
+export function formatEmailContent(
+  email: Pick<Email, "from" | "subject" | "body" | "html">,
+): string {
+  // Both fields are chosen by whoever sent the mail, and they now sit in a header block
+  // whose shape a mind is taught to trust. An embedded newline would let a sender forge a
+  // second header line — or the bracketed participants/prefix framing the daemon itself
+  // emits — so flatten them: this block must carry only lines the daemon wrote.
+  const headers = [
+    `From: ${flatten(email.from.name ? `${email.from.name} <${email.from.address}>` : email.from.address)}`,
+  ];
+  if (email.subject) headers.push(`Subject: ${flatten(email.subject)}`);
+  const header = headers.join("\n");
+
+  if (email.body) return `${header}\n\n${email.body}`;
+  if (email.html) return `${header}\n\n[HTML email — plain text not available]`;
+  return `${header}\n\n[Empty email]`;
 }
 
 const PING_INTERVAL_MS = 30_000;
@@ -288,7 +310,11 @@ export class MailPoller {
     const delivered = await deliverMessage(mind, {
       content: [{ type: "text", text }],
       channel: `mail:${email.from.address}`,
-      sender: email.from.name || email.from.address,
+      // The address, namespaced — never `from.name`, which the sender chooses for
+      // themselves and which would otherwise be recorded in the same `sender` column
+      // that holds authenticated Volute usernames (#1016). The display name still
+      // reaches the mind, on the `From:` line of the message itself.
+      sender: `mail:${email.from.address}`,
       platform: "Email",
       isDM: true,
     });

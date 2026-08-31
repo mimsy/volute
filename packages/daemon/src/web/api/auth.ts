@@ -21,6 +21,7 @@ import {
   listUsersByType,
   setUserRole,
   updateUserProfile,
+  validateUsername,
   verifyUser,
 } from "../../lib/auth.js";
 import { joinCommonsChannel } from "../../lib/chat/commons-channel.js";
@@ -414,6 +415,10 @@ const admin = new Hono<AuthEnv>()
 const app = new Hono()
   .post("/register", zValidator("json", credentialsSchema), async (c) => {
     const { username, password } = c.req.valid("json");
+
+    // A Volute username must not be able to look like an external identity (#1016).
+    const invalidName = validateUsername(username);
+    if (invalidName) return c.json({ error: invalidName }, 400);
 
     const existing = await getUserByUsername(username);
     if (existing) {

@@ -157,8 +157,11 @@ export const chatApp = new Hono<AuthEnv>().post("/", zValidator("json", chatSche
   }
 
   // A caller may only speak as itself. `sender` is an override for the daemon's own
-  // token, whose one legitimate use is bridge-outbound writing inbound platform
-  // traffic into a volute channel under the platform user's name. Anyone else asking
+  // token, and its live use is a mind's own send relayed through the volute platform
+  // driver (`VOLUTE_SENDER`), which carries a mind name. It is NOT a way to record
+  // external, caller-chosen text as a sender: platform traffic gets a namespaced
+  // `platform:handle` at its own inbound route (#1016), because this column also holds
+  // authenticated Volute usernames and nothing else marks the difference. Anyone else asking
   // to speak as someone else is refused outright: silently recording the message under
   // the caller's own name is a confident success that answers a different question than
   // the one asked, and the sender never learns their words went out as theirs (#500).

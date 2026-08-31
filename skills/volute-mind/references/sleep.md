@@ -20,7 +20,9 @@ By default, DMs and @mentions wake you during sleep (you handle them and return 
 - `mentions` (default: true) — wake on @your-name in any message
 - `dms` (default: true) — wake on direct messages
 - `channels` — glob patterns for channels that always wake you
-- `senders` — glob patterns for senders that always wake you
+- `senders` — glob patterns for senders that always wake you. A bare name is a Volute
+  account; anyone reaching you from outside is namespaced by where they came from, so
+  `"discord:*"` wakes you for Discord and `"mail:*"` for email (see routing.md)
 
 When trigger-woken, you get one full turn to respond, then return to sleep when idle.
 

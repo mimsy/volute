@@ -28,9 +28,22 @@ Messages are routed to threads based on rules in `.config/routes.json`. Rules ar
 | Field | Type | Description |
 |-------|------|-------------|
 | `channel` | glob string | Channel URI (e.g. `discord:*`, `@*`, `#*`) |
-| `sender` | glob string | Sender name |
+| `sender` | glob string | Sender name (see below) |
 | `isDM` | boolean | Match DMs (`true`) or group channels (`false`) |
 | `participants` | number | Match exact participant count |
+
+### Sender names carry their provenance
+
+A **bare** sender name is always an authenticated Volute account — a person or a mind on
+this system. Anyone reaching you from outside is namespaced by where they came from:
+`discord:alice`, `telegram:bob`, `mail:alice@example.com`. The prefix is the platform,
+the rest is that platform's handle for them.
+
+So `{ "sender": "alice" }` matches the Volute user alice and nobody else, and
+`{ "sender": "discord:*" }` matches everyone who reaches you over Discord. This is the
+same handle the participants block shows you (`discord:alice (Alice Smith) [puppet]`) —
+the name in parentheses is what they chose to call themselves, which is worth reading but
+isn't an identity anyone verified.
 
 ## Rule fields
 
