@@ -18,6 +18,8 @@ import {
   summarizePeriod,
   summarizeSystem,
   summarizeTurn,
+  TRANSCRIPT_INBOUND_MAX_CHARS,
+  TRANSCRIPT_MAX_CHARS,
 } from "../packages/daemon/src/lib/daemon/summarizer.js";
 import {
   assignSession,
@@ -567,6 +569,137 @@ describe("summarizer", () => {
       assert.ok(!transcript.includes(longResult), "tool result should be truncated");
       assert.match(transcript, /\[result\] z{200}/);
     });
+
+    it("caps inbound content once over budget, since its size is set by whoever is talking", () => {
+      // Inbound is somebody else's words — a pasted document would otherwise carry the whole
+      // transcript (and its cost) with it, crowding out the mind's own. Capping inbound first
+      // is what keeps the mind's reply in frame. The cut is marked, never silent.
+      const events: HistoryRow[] = [
+        row(1, "inbound", "a".repeat(TRANSCRIPT_MAX_CHARS * 2), { sender: "james" }),
+        row(2, "text", "MY-OWN-REPLY"),
+      ];
+      const transcript = buildTranscript(events, new Map(), "whorl");
+      assert.ok(
+        transcript.includes(`[inbound from james] ${"a".repeat(TRANSCRIPT_INBOUND_MAX_CHARS)} `),
+        "inbound should be capped at TRANSCRIPT_INBOUND_MAX_CHARS",
+      );
+      assert.ok(!transcript.includes("a".repeat(TRANSCRIPT_INBOUND_MAX_CHARS + 1)));
+      assert.ok(transcript.includes("MY-OWN-REPLY"), "the mind's own words must survive it");
+      assert.match(transcript, /truncated/);
+    });
+
+    it("bounds a long transcript to head + tail with a marked gap", () => {
+      // A tool-heavy turn can run far past the budget. Keep both ends — the trigger at the top
+      // and the outcome at the bottom — and mark the gap so the model summarizes around it
+      // rather than reading across an invisible cut.
+      const events: HistoryRow[] = [row(1, "event", "FIRST-LINE-MARKER")];
+      const meta = new Map<number, Record<string, unknown>>();
+      for (let i = 0; i < 400; i++) {
+        events.push(row(100 + i, "tool_result", `filler-${i} ${"q".repeat(60)}`));
+        meta.set(100 + i, { is_error: false });
+      }
+      events.push(row(9999, "text", "LAST-LINE-MARKER"));
+
+      const transcript = buildTranscript(events, meta, "whorl");
+      assert.ok(
+        transcript.length <= TRANSCRIPT_MAX_CHARS,
+        `transcript should be bounded, got ${transcript.length}`,
+      );
+      assert.ok(transcript.includes("FIRST-LINE-MARKER"), "head must survive");
+      assert.ok(transcript.includes("LAST-LINE-MARKER"), "tail must survive");
+      assert.match(transcript, /\[… \d+ lines omitted …\]/);
+    });
+
+    it("leaves a transcript under the bound completely untouched", () => {
+      const events: HistoryRow[] = [row(1, "text", "short and whole")];
+      const transcript = buildTranscript(events, new Map(), "whorl");
+      assert.equal(transcript, "[whorl replied] short and whole");
+    });
+
+    it("keeps a marked slice of a single over-long line rather than emitting nothing", () => {
+      // One reply longer than the whole budget: no line fits a boundary whole. An empty
+      // transcript would make the summarizer write a summary about nothing.
+      const events: HistoryRow[] = [row(1, "text", "w".repeat(TRANSCRIPT_MAX_CHARS * 2))];
+      const transcript = buildTranscript(events, new Map(), "whorl");
+      assert.ok(transcript.length <= TRANSCRIPT_MAX_CHARS);
+      assert.ok(transcript.includes("w".repeat(100)), "some of the line must survive");
+      assert.match(transcript, /truncated/);
+    });
+
+    it("keeps a marked slice of a boundary line instead of dropping it whole", () => {
+      // The regression this guards: a long reply followed by many short tool results used to be
+      // dropped *entirely* — it fit in neither the head nor the tail budget, so the summarizer
+      // wrote the turn up from tool-result noise while the mind's own words vanished and half
+      // the budget went unspent. Total loss is a worse failure than the marked cut.
+      const reply = "R".repeat(5000);
+      const events: HistoryRow[] = [row(1, "text", reply)];
+      const meta = new Map<number, Record<string, unknown>>();
+      for (let i = 0; i < 200; i++) {
+        events.push(row(100 + i, "tool_result", `filler-${i} ${"q".repeat(40)}`));
+        meta.set(100 + i, { is_error: false });
+      }
+
+      const transcript = buildTranscript(events, meta, "whorl");
+      assert.ok(transcript.length <= TRANSCRIPT_MAX_CHARS);
+      assert.ok(
+        transcript.includes(`[whorl replied] ${"R".repeat(1000)}`),
+        "the mind's own reply must survive as a marked slice, not be dropped whole",
+      );
+      assert.match(transcript, /truncated/);
+      // And the budget is actually used, rather than half of it going to the dropped line.
+      assert.ok(
+        transcript.length > TRANSCRIPT_MAX_CHARS / 2,
+        `expected the budget to be used, got ${transcript.length}`,
+      );
+    });
+
+    it("never exceeds the cap, even when both halves fill exactly", () => {
+      // The omitted-lines marker is reserved out of the budget rather than added on top of it;
+      // uniform line lengths are what expose the difference.
+      const events: HistoryRow[] = [];
+      for (let i = 0; i < 80; i++) events.push(row(i, "text", "x".repeat(183)));
+      const transcript = buildTranscript(events, new Map(), "whorl");
+      assert.ok(
+        transcript.length <= TRANSCRIPT_MAX_CHARS,
+        `transcript should be bounded, got ${transcript.length}`,
+      );
+    });
+
+    it("uses both halves of the budget for a reply longer than the whole thing", () => {
+      // A single line over budget used to spend only the head half and drop the reply's end —
+      // usually its conclusion, the part a summary most needs. Both ends now survive, marked.
+      const reply = "S".repeat(400) + "M".repeat(TRANSCRIPT_MAX_CHARS * 3) + "E".repeat(400);
+      const events: HistoryRow[] = [row(1, "text", reply)];
+      const transcript = buildTranscript(events, new Map(), "whorl");
+      assert.ok(transcript.length <= TRANSCRIPT_MAX_CHARS);
+      assert.ok(transcript.includes("S".repeat(400)), "the start of the reply must survive");
+      assert.ok(transcript.includes("E".repeat(400)), "the end of the reply must survive too");
+      assert.ok(
+        transcript.length > TRANSCRIPT_MAX_CHARS / 2,
+        `both halves should be used, got ${transcript.length}`,
+      );
+    });
+
+    it("leaves inbound uncapped when the transcript is nowhere near the budget", () => {
+      // The per-message cap exists to stop one pasted document crowding out a long turn. On a
+      // turn that is nowhere near the bound it costs nothing and loses the question the mind
+      // was answering, so it must not fire.
+      const ask = "Q".repeat(2000);
+      const events: HistoryRow[] = [
+        row(1, "inbound", ask, { sender: "james" }),
+        row(2, "text", "Short answer."),
+      ];
+      const transcript = buildTranscript(events, new Map(), "whorl");
+      assert.ok(transcript.includes(ask), "the whole question must reach the summarizer");
+      assert.doesNotMatch(transcript, /truncated/);
+    });
+
+    it("marks a truncated tool result so it doesn't read as a complete one", () => {
+      const events: HistoryRow[] = [row(1, "tool_result", "z".repeat(900))];
+      const meta = new Map<number, Record<string, unknown>>([[1, { is_error: false }]]);
+      const transcript = buildTranscript(events, meta, "whorl");
+      assert.match(transcript, /\[result\] z{200} \[… truncated …\]/);
+    });
   });
 
   // ── Periodic summarization ──
@@ -1061,7 +1194,7 @@ describe("summarizer", () => {
         .where(eq(summaries.id, row!.id));
     }
 
-    const failAi = async () => null;
+    const failAi = async () => ({ status: "failed" }) as const;
 
     it("bounds the month deterministic fallback to an index instead of concatenating", async () => {
       const mind = "bounded-fallback-mind";
@@ -1099,7 +1232,12 @@ describe("summarizer", () => {
       // A later tick (past the retry-spacing backoff) finds the AI healthy and heals the row.
       await agePastBackoff(mind, "month", "2026-04");
       const healed = "# April\n\nA steady, productive month.";
-      const second = await summarizePeriod(mind, "month", "2026-04", async () => healed);
+      const second = await summarizePeriod(
+        mind,
+        "month",
+        "2026-04",
+        async () => ({ status: "ok", text: healed }) as const,
+      );
       assert.equal(second, true);
 
       const row = await getSummary(mind, "month", "2026-04");
@@ -1129,7 +1267,12 @@ describe("summarizer", () => {
         attempts: 5,
       });
 
-      const generated = await summarizePeriod(mind, "month", "2026-04", async () => "healed");
+      const generated = await summarizePeriod(
+        mind,
+        "month",
+        "2026-04",
+        async () => ({ status: "ok", text: "healed" }) as const,
+      );
       assert.equal(generated, false, "budget-exhausted row should not be retried");
 
       const row = await getSummary(mind, "month", "2026-04");
@@ -1146,7 +1289,12 @@ describe("summarizer", () => {
         first_attempt_at: eightDaysAgo,
       });
 
-      const generated = await summarizePeriod(mind, "month", "2026-04", async () => "healed");
+      const generated = await summarizePeriod(
+        mind,
+        "month",
+        "2026-04",
+        async () => ({ status: "ok", text: "healed" }) as const,
+      );
       assert.equal(generated, false, "aged-out row should not be retried");
       const row = await getSummary(mind, "month", "2026-04");
       assert.equal(row!.content, "old blob");
@@ -1164,7 +1312,12 @@ describe("summarizer", () => {
 
       // A retry on the very next tick (well within the backoff) must be skipped — otherwise the
       // 5-minute tick cadence would burn the whole attempt budget in minutes.
-      const second = await summarizePeriod(mind, "month", "2026-04", async () => "healed");
+      const second = await summarizePeriod(
+        mind,
+        "month",
+        "2026-04",
+        async () => ({ status: "ok", text: "healed" }) as const,
+      );
       assert.equal(second, false, "should not retry within the backoff interval");
       const row = await getSummary(mind, "month", "2026-04");
       assert.equal(JSON.parse(row!.metadata!).deterministic, true, "must stay provisional");
@@ -1195,7 +1348,12 @@ describe("summarizer", () => {
 
       // Budget exhausted: even with the AI back and the backoff elapsed, no further retries.
       await agePastBackoff(mind, "month", "2026-04");
-      const done = await summarizePeriod(mind, "month", "2026-04", async () => "healed");
+      const done = await summarizePeriod(
+        mind,
+        "month",
+        "2026-04",
+        async () => ({ status: "ok", text: "healed" }) as const,
+      );
       assert.equal(done, false, "should stop after the attempt budget is exhausted");
       assert.equal(
         JSON.parse((await getSummary(mind, "month", "2026-04"))!.metadata!).deterministic,
@@ -1226,6 +1384,38 @@ describe("summarizer", () => {
       assert.match(row!.content, /2026-03-09:/);
       assert.match(row!.content, /AI summary pending/);
       assert.equal(JSON.parse(row!.metadata!).attempts, 1);
+    });
+
+    it("an unconfigured utility model spends no retry attempt, so the row can still heal", async () => {
+      // The retry budget is sized for *outages* — 5 attempts spaced across 7 days. An
+      // unconfigured utility model is a steady state, not a transient failure: counting it
+      // would burn all 5 inside the window and scar the row permanently, so an admin who
+      // configures a model later could never heal it (#381).
+      const mind = "unconfigured-no-attempt";
+      for (let d = 9; d <= 11; d++) {
+        await insertSummary(mind, "day", `2026-03-${d}`, `Day ${d} happened.`);
+      }
+      const unconfigured = async () => ({ status: "unconfigured" }) as const;
+
+      const generated = await summarizePeriod(mind, "week", "2026-W11", unconfigured);
+      assert.equal(generated, true);
+
+      const row = await getSummary(mind, "week", "2026-W11");
+      const meta = JSON.parse(row!.metadata!);
+      assert.equal(meta.deterministic, true, "still writes the deterministic summary");
+      assert.equal(meta.attempts, undefined, "must not spend an attempt it never made");
+      assert.equal(meta.first_attempt_at, undefined, "and must not start the 7-day window");
+
+      // With no attempt recorded the row stays eligible, so configuring a model heals it —
+      // no backoff aging needed, because no attempt was ever spent.
+      const healed = await summarizePeriod(
+        mind,
+        "week",
+        "2026-W11",
+        async () => ({ status: "ok", text: "A good week." }) as const,
+      );
+      assert.equal(healed, true);
+      assert.equal((await getSummary(mind, "week", "2026-W11"))!.content, "A good week.");
     });
 
     it("truncates an oversized child before building the _system rollup", async () => {
@@ -1334,7 +1524,7 @@ describe("summarizer", () => {
       await insertSummary(mind, "month", "2026-06", "per-mind blob", { deterministic: true });
       await insertSummary("_system", "month", "2026-06", "system blob", { deterministic: true });
 
-      await repairProvisionalSummaries(async () => "HEALED");
+      await repairProvisionalSummaries(async () => ({ status: "ok", text: "HEALED" }) as const);
 
       const mindRow = await getSummary(mind, "month", "2026-06");
       assert.equal(mindRow!.content, "HEALED");

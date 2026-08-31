@@ -733,6 +733,9 @@ export type AiModel = {
   provider: string;
   contextWindow: number;
   maxTokens: number;
+  /** Token rates. 0 means unknown (custom models carry no catalog pricing), not free. */
+  inputCost: number;
+  outputCost: number;
   enabled: boolean;
   custom?: boolean;
 };

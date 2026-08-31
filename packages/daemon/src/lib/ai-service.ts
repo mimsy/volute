@@ -160,6 +160,9 @@ export function isAiConfigured(): boolean {
   return getEnabledModels().length > 0;
 }
 
+/** Warn once per daemon run that background work is running without a utility model. */
+let warnedNoUtilityModel = false;
+
 /** Get the utility model ID (for turn summaries, consolidation, etc.). */
 export function getUtilityModel(): string | undefined {
   const ai = getAiConfig();
@@ -172,15 +175,93 @@ export function setUtilityModel(modelId: string | undefined): void {
   ai.utilityModel = modelId;
   const config = readGlobalConfig();
   writeGlobalConfig({ ...config, ai });
+  // Re-arm the basic-mode warning so clearing the model later says so again.
+  warnedNoUtilityModel = false;
 }
 
-/** Complete using the utility model (falls back to default auto-selection). */
+/**
+ * Why a utility completion produced no text.
+ *
+ * The distinction matters to any caller holding a *retry budget*: a `failed` call is a transient
+ * condition (outage, 401, rate limit) worth retrying, while `unconfigured` is a steady state.
+ * Spending an outage-sized budget on a steady state exhausts it and scars the record permanently
+ * — see the provisional week/month retries in summarizer.ts.
+ */
+export type UtilityOutcome =
+  | { status: "ok"; text: string }
+  | { status: "unconfigured" }
+  | { status: "failed" };
+
+/**
+ * Complete using the utility model — the funnel for every background LLM call (turn
+ * summaries, period rollups, feed digest, memory consolidation) — reporting *why* on no text.
+ *
+ * Yields `unconfigured` when no utility model is set. It deliberately does NOT fall back to
+ * auto-selection: auto-select picks the first *enabled* model, which is usually a flagship, so
+ * an unconfigured install would bill flagship prices for a summary on every mind turn — a cost
+ * nobody chose and nothing surfaced (#381). Callers degrade to deterministic output, so the
+ * unconfigured default is quiet and free rather than expensive.
+ */
+export async function aiCompleteUtilityOutcome(
+  systemPrompt: string,
+  userMessage: string,
+): Promise<UtilityOutcome> {
+  const utilityModel = getUtilityModel();
+  if (!utilityModel) {
+    // Only worth saying on an install that *has* models to choose from. With no AI configured at
+    // all, "pick a utility model" isn't an action the host can take, and the larger gap is
+    // already being reported elsewhere.
+    if (!warnedNoUtilityModel && isAiConfigured()) {
+      warnedNoUtilityModel = true;
+      aiLog.warn(
+        "no utility model configured — background summaries are running in basic (non-AI) mode. " +
+          "Pick a utility model in Settings → AI Providers for richer summaries.",
+      );
+    }
+    return { status: "unconfigured" };
+  }
+  const text = await aiComplete(systemPrompt, userMessage, utilityModel);
+  return text === null ? { status: "failed" } : { status: "ok", text };
+}
+
+/** Text-or-nothing utility completion, for callers that don't distinguish why it came back empty. */
 export async function aiCompleteUtility(
   systemPrompt: string,
   userMessage: string,
 ): Promise<string | null> {
+  const outcome = await aiCompleteUtilityOutcome(systemPrompt, userMessage);
+  return outcome.status === "ok" ? outcome.text : null;
+}
+
+/**
+ * Utility completion for a **one-shot operation the host explicitly invoked**, which falls back
+ * to auto-selection when no utility model is configured.
+ *
+ * This is the single exemption from the no-silent-flagship-fallback rule above, and it is
+ * deliberately narrow. That rule is about spend *nobody chose* — the per-turn summarization that
+ * fires whether or not anyone asked for it. A host who typed `volute mind import` chose to spend,
+ * and what refusing cost them was not a thinner summary but a mind arriving with no MEMORY.md at
+ * all. The line is "the system spent your money" versus "you spent your money".
+ *
+ * Do not reach for this from a background, scheduled, or per-turn path: one more caller and the
+ * guarantee is gone. If you are adding a caller and cannot point at the host command that starts
+ * it, you want `aiCompleteUtility`.
+ */
+export async function aiCompleteUserInvoked(
+  systemPrompt: string,
+  userMessage: string,
+): Promise<string | null> {
   const utilityModel = getUtilityModel();
-  return aiComplete(systemPrompt, userMessage, utilityModel);
+  if (utilityModel) return aiComplete(systemPrompt, userMessage, utilityModel);
+  // Name the model rather than falling back mutely: the host is about to be billed for it, and
+  // being told which model after the fact is the whole difference from the bug this file fixes.
+  const auto = autoSelectModel();
+  if (auto) {
+    aiLog.info(
+      `no utility model configured; this host-invoked operation will use ${auto.provider}:${auto.id}`,
+    );
+  }
+  return aiComplete(systemPrompt, userMessage);
 }
 
 /** Map a provider ID to its native template. */

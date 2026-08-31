@@ -1,6 +1,6 @@
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { aiCompleteUtility } from "../ai-service.js";
+import { aiCompleteUserInvoked } from "../ai-service.js";
 import log from "../util/logger.js";
 
 const cLog = log.child("consolidate");
@@ -55,14 +55,20 @@ export function boundLogText(logs: string[], maxChars = MAX_CONSOLIDATION_INPUT_
 
 /**
  * One-shot memory consolidation. Reads daily logs from a mind directory and
- * produces consolidated MEMORY.md content via the system AI service (the same
- * utility model used for turn summaries), so it works for any template and
- * isn't pinned to a retired model. No-ops if no logs exist or no model is
- * configured. The `complete` param is injectable for testing.
+ * produces consolidated MEMORY.md content via the system AI service (preferring the
+ * utility model used for turn summaries), so it works for any template and isn't
+ * pinned to a retired model. No-ops if no logs exist or no model is configured.
+ * The `complete` param is injectable for testing.
+ *
+ * This runs on `volute mind import` — a host command, not a background task — so it uses
+ * `aiCompleteUserInvoked` and will auto-select a model when no utility model is configured.
+ * Refusing here wouldn't save a host from unchosen spend (they typed the command); it would
+ * just land the imported mind with no MEMORY.md. See the note on that function for why this
+ * exemption stops here.
  */
 export async function consolidateMemory(
   mindDir: string,
-  complete: (system: string, user: string) => Promise<string | null> = aiCompleteUtility,
+  complete: (system: string, user: string) => Promise<string | null> = aiCompleteUserInvoked,
 ): Promise<void> {
   const soulPath = resolve(mindDir, "home/SOUL.md");
   const memoryPath = resolve(mindDir, "home/MEMORY.md");
