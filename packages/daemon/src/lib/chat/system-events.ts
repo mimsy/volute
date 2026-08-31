@@ -202,6 +202,18 @@ export function eventChannel(type: string, id: number): string {
 }
 
 /**
+ * Inverse of {@link eventChannel}: `event:<kind>:<id>` -> `<kind>`, or undefined for
+ * any other channel shape. Lives beside the builder so the format is owned in one
+ * place — the effective-principal resolver reads event kinds off mind_history rows to
+ * decide whether a spirit turn was self-initiated, and a parser that drifted from the
+ * builder would silently drop schedule turns out of that tier.
+ */
+export function eventChannelKind(channel: string | null): string | undefined {
+  if (!channel?.startsWith("event:")) return undefined;
+  return channel.slice("event:".length).split(":")[0] || undefined;
+}
+
+/**
  * Record an event's actual delivery in mind_history so `mind history` and the activity
  * feed keep working. Called only after a successful POST — an event the mind never
  * received must not claim it was heard (#420). Recorded under the base name, matching

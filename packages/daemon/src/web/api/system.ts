@@ -50,6 +50,7 @@ import {
 import { logBuffer } from "../../lib/util/log-buffer.js";
 import log from "../../lib/util/logger.js";
 import { type AuthEnv, requireAdmin } from "../middleware/auth.js";
+import { hasAdminAuthority } from "../middleware/effective-principal.js";
 
 const DEFAULT_API_URL = "https://volute.systems";
 const igLog = log.child("imagegen");
@@ -66,8 +67,15 @@ const app = new Hono<AuthEnv>()
     return c.json({ ok: true });
   })
   .get("/logs", async (c) => {
-    const user = c.get("user");
-    if (user.role !== "admin") return c.json({ error: "Forbidden" }, 403);
+    // Admin authority, but never *borrowed* admin authority: this is a stream, and
+    // authority is captured once at connect, so a spirit that opened it during a
+    // verified admin's turn would keep the daemon log tail after the turn ended.
+    // Delegation covers discrete requests; streams take an authority of your own
+    // (mirrors /api/v1/events).
+    const effective = c.get("effective");
+    if (!hasAdminAuthority(effective) || effective?.actingFor) {
+      return c.json({ error: "Forbidden" }, 403);
+    }
 
     return streamSSE(c, async (stream) => {
       // Send existing entries

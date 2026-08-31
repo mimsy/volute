@@ -23,6 +23,7 @@ import {
 import { boundedIntParam, intParamError } from "../../lib/util/query-params.js";
 import { normalizeDbBound } from "../../lib/util/time.js";
 import type { AuthEnv } from "../middleware/auth.js";
+import { hasAdminAuthority } from "../middleware/effective-principal.js";
 
 /**
  * Env for the history router. `mindFilter` is resolved once by router-level
@@ -40,17 +41,18 @@ type HistoryEnv = {
  * Admin/system callers keep the requested filter.
  */
 async function resolveMindFilter(c: Context<HistoryEnv>): Promise<string | undefined> {
-  const user = c.get("user");
-  // Admins only. This endpoint selects `mind_history.content` — verbatim inbound and
-  // outbound message text — and an unscoped privileged read returns it for *every mind
-  // on the system*. Granting that to the spirit would make every mind's private
-  // conversations readable by anything a sibling could talk it into asking, which is the
-  // same thing this diff refuses at conversations.ts and events.ts (#433).
+  // Admin authority only — the request's *effective* authority, so the spirit passes
+  // solely on a turn a verified admin triggered, never on its own work (#433). This
+  // endpoint selects `mind_history.content` — verbatim inbound and outbound message
+  // text — and an unscoped privileged read returns it for *every mind on the system*.
+  // Granting that to the spirit's own tiers would make every mind's private
+  // conversations readable by anything a sibling could talk it into asking, which is
+  // the same thing this diff refuses at conversations.ts and events.ts.
   //
   // Tending is unaffected: `volute mind history --mind X` goes to the per-mind route
   // `/:name/history`, which is on the spirit's allowlist. Named reads, never a firehose.
-  const privileged = user.role === "admin";
-  return privileged ? (c.req.query("mind") ?? undefined) : getBaseName(user.username);
+  const privileged = hasAdminAuthority(c.get("effective"));
+  return privileged ? (c.req.query("mind") ?? undefined) : getBaseName(c.get("user").username);
 }
 
 type Db = Awaited<ReturnType<typeof getDb>>;
@@ -746,10 +748,10 @@ const history = new Hono<HistoryEnv>()
     });
   })
   .get("/summaries", async (c) => {
-    const user = c.get("user");
-    // Admins only, matching `resolveMindFilter` above — summaries are the rolled-up form
-    // of the same content, so granting them separately would reopen what that closes.
-    const privileged = user.role === "admin";
+    // Admin authority only, matching `resolveMindFilter` above — summaries are the
+    // rolled-up form of the same content, so granting them separately would reopen
+    // what that closes.
+    const privileged = hasAdminAuthority(c.get("effective"));
     // mindFilter is the caller's allowed scope: the requested mind for
     // privileged callers (undefined if none), or the caller's own base name for
     // minds. Summaries default an unscoped privileged read to the system

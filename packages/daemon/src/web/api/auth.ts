@@ -71,6 +71,7 @@ import {
   resolvePrincipal,
   SESSION_MAX_AGE,
 } from "../middleware/auth.js";
+import { hasAdminAuthority } from "../middleware/effective-principal.js";
 
 const SESSION_COOKIE_OPTIONS = {
   path: "/",
@@ -123,9 +124,12 @@ const authenticated = new Hono<AuthEnv>()
   // apply: countCappedMinds counts `minds` rows, of which this has none.)
   //
   // requireAdmin, like the R1 token routes below: this mints a durable credential,
-  // so it stays human-gated. That excludes the injectable `system` principal by
-  // construction. Public self-signup needs rate-limiting, abuse controls, and a
-  // resource cap before it can ship — deferred, not merely disabled.
+  // so it stays admin-gated. `requireAdmin` reads the request's *effective* authority
+  // (#433): the spirit's own tiers never qualify — but the spirit acting on behalf of
+  // a verified admin does, which is the confirmed design, since an admin who asks the
+  // spirit to do this could have done it directly. Public self-signup needs
+  // rate-limiting, abuse controls, and a resource cap before it can ship — deferred,
+  // not merely disabled.
   .post("/minds", requireAdmin, zValidator("json", registerMindSchema), async (c) => {
     const { name, displayName, description, tokenLabel } = c.req.valid("json");
     // Not a collision check (that's the getUserByUsername lookup below): this
@@ -265,9 +269,13 @@ const authenticated = new Hono<AuthEnv>()
 
 const admin = new Hono<AuthEnv>()
   .use(authMiddleware)
+  // User-management gates read admin *authority* (hasAdminAuthority), like requireAdmin:
+  // a real admin, or the spirit on a turn a verified admin triggered — never the
+  // spirit's own tiers (#433). Held to the same line as the token routes above so that
+  // delegated authority reaches exactly as far as the requester's own, on reads and
+  // writes alike.
   .get("/users", async (c) => {
-    const user = c.get("user");
-    if (user.role !== "admin") return c.json({ error: "Forbidden" }, 403);
+    if (!hasAdminAuthority(c.get("effective"))) return c.json({ error: "Forbidden" }, 403);
 
     // Ensure all registered minds have user records
     const minds = await readRegistry();
@@ -282,13 +290,11 @@ const admin = new Hono<AuthEnv>()
     return c.json(await withExternalFlag(await listUsers()));
   })
   .get("/users/pending", async (c) => {
-    const user = c.get("user");
-    if (user.role !== "admin") return c.json({ error: "Forbidden" }, 403);
+    if (!hasAdminAuthority(c.get("effective"))) return c.json({ error: "Forbidden" }, 403);
     return c.json(await listPendingUsers());
   })
   .post("/users/:id/approve", async (c) => {
-    const user = c.get("user");
-    if (user.role !== "admin") return c.json({ error: "Forbidden" }, 403);
+    if (!hasAdminAuthority(c.get("effective"))) return c.json({ error: "Forbidden" }, 403);
     const id = parseInt(c.req.param("id"), 10);
     if (Number.isNaN(id)) return c.json({ error: "Invalid user ID" }, 400);
     await approveUser(id);
@@ -298,8 +304,7 @@ const admin = new Hono<AuthEnv>()
     "/users/:id/role",
     zValidator("json", z.object({ role: z.enum(["admin", "user"]) })),
     async (c) => {
-      const user = c.get("user");
-      if (user.role !== "admin") return c.json({ error: "Forbidden" }, 403);
+      if (!hasAdminAuthority(c.get("effective"))) return c.json({ error: "Forbidden" }, 403);
       const id = parseInt(c.req.param("id"), 10);
       if (Number.isNaN(id)) return c.json({ error: "Invalid user ID" }, 400);
       const { role } = c.req.valid("json");
@@ -317,12 +322,14 @@ const admin = new Hono<AuthEnv>()
     },
   )
   // --- Durable per-user API tokens ---
-  // requireAdmin throughout: durable credential issuance is human-gated. Only a
-  // role:"admin" principal may mint or rotate tokens — a mind gets this power
-  // only by being deliberately made an admin. Neither a role:"user" principal
-  // (what every mind token resolves to) nor the system principal (the spirit)
-  // qualifies, which closes the prompt-injection path where untrusted text
-  // could talk the spirit into issuing a durable credential to an attacker.
+  // requireAdmin throughout: durable credential issuance is admin-gated. Only admin
+  // *authority* may mint or rotate tokens — a mind gets this power only by being
+  // deliberately made an admin, and a role:"user" principal (what every mind token
+  // resolves to) never does. The spirit qualifies only while acting on behalf of a
+  // verified admin, never on its own tiers (#433), which is what closes the
+  // prompt-injection path: untrusted text reaching the spirit cannot talk it into
+  // issuing a durable credential, because a mind's DM turn carries that mind's
+  // authority and no more.
   .post(
     "/users/:id/tokens",
     requireAdmin,
@@ -365,8 +372,7 @@ const admin = new Hono<AuthEnv>()
     return c.json({ ok: true });
   })
   .put("/users/:id/profile", zValidator("json", profileSchema), async (c) => {
-    const user = c.get("user");
-    if (user.role !== "admin") return c.json({ error: "Forbidden" }, 403);
+    if (!hasAdminAuthority(c.get("effective"))) return c.json({ error: "Forbidden" }, 403);
     const id = parseInt(c.req.param("id"), 10);
     if (Number.isNaN(id)) return c.json({ error: "Invalid user ID" }, 400);
     const body = c.req.valid("json");
@@ -382,13 +388,18 @@ const admin = new Hono<AuthEnv>()
     return c.json({ ok: true });
   })
   .delete("/users/:id", async (c) => {
+    if (!hasAdminAuthority(c.get("effective"))) return c.json({ error: "Forbidden" }, 403);
     const user = c.get("user");
-    if (user.role !== "admin") return c.json({ error: "Forbidden" }, 403);
     const id = parseInt(c.req.param("id"), 10);
     if (Number.isNaN(id)) return c.json({ error: "Invalid user ID" }, 400);
     if (id === user.id) return c.json({ error: "Cannot delete yourself" }, 400);
     const target = await getUser(id);
     if (!target) return c.json({ error: "User not found" }, 404);
+    // The self-delete guard must also hold through delegation, or asking the spirit
+    // becomes a way around a check the requester's own session enforces.
+    if (target.username === c.get("effective")?.actingFor) {
+      return c.json({ error: "Cannot delete yourself" }, 400);
+    }
     if (target.role === "admin") {
       const adminCount = await countAdmins();
       if (adminCount <= 1) return c.json({ error: "Cannot delete the last admin" }, 400);

@@ -19,6 +19,7 @@ import {
 } from "../../../lib/events/conversations.js";
 import { findMind } from "../../../lib/mind/registry.js";
 import type { AuthEnv } from "../../middleware/auth.js";
+import { hasAdminAuthority } from "../../middleware/effective-principal.js";
 
 const channelSettingsFields = z.object({
   description: z.string().nullable().optional(),
@@ -157,10 +158,14 @@ const app = new Hono<AuthEnv>()
     // admin/spirit may change settings. Plain members deliberately cannot — otherwise a mind
     // could lift a limit that was set to restrain it. Channels with no owner (the commons, or
     // one whose creator left) are admin-only.
-    // Admins or the channel's owner. Not the spirit: changing a channel's rules and
-    // limits is authority over a shared room, and the spirit holds none it wasn't given
-    // for a specific purpose (#433).
-    if (user.role !== "admin" && (await getParticipantRole(ch.id, user.id)) !== "owner") {
+    // Admin authority or the channel's owner. Not the spirit's own tiers: changing a
+    // channel's rules and limits is authority over a shared room, and the spirit holds
+    // none it wasn't given for a specific purpose (#433). On a verified admin's turn it
+    // carries that admin's authority, like everywhere else.
+    if (
+      !hasAdminAuthority(c.get("effective")) &&
+      (await getParticipantRole(ch.id, user.id)) !== "owner"
+    ) {
       return c.json({ error: "Forbidden" }, 403);
     }
 
@@ -216,10 +221,10 @@ const app = new Hono<AuthEnv>()
     const ch = await getChannelByName(name);
     if (!ch) return c.json({ error: "Channel not found" }, 404);
 
-    // In-handler authz: only a channel member (or admin/spirit) may add members.
-    // Admins or a member. The spirit joins a channel like anyone else before it can
-    // bring someone into it (#433).
-    if (inviter.role !== "admin" && !(await isParticipant(ch.id, inviter.id))) {
+    // In-handler authz: only a channel member (or admin authority) may add members.
+    // The spirit joins a channel like anyone else before it can bring someone into
+    // it (#433); a verified admin's turn carries that admin's authority.
+    if (!hasAdminAuthority(c.get("effective")) && !(await isParticipant(ch.id, inviter.id))) {
       return c.json({ error: "Forbidden" }, 403);
     }
 

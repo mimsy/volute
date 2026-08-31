@@ -432,6 +432,12 @@ const SPIRIT_AUTHZ_EXEMPT: Record<string, string> = {
   "daemon/src/web/middleware/auth.ts":
     "defines requireSelfOrSpirit — the one sanctioned exception, whose membership is " +
     "pinned separately by the cross-mind allowlist net below",
+  "daemon/src/web/middleware/effective-principal.ts":
+    "defines the resolution that replaces spirit-identity grants: isSystemSpirit here " +
+    "dispatches the spirit into per-request authority resolution (everyone else keeps " +
+    "their own role), and its second use is a denial — refusing the spirit as its own " +
+    "acting principal. Neither names the spirit to grant it standing power; the tiers " +
+    "it hands back are pinned by test/spirit-principal.test.ts",
   "daemon/src/web/api/chat.ts":
     "sender classification and DM recipient detection — decides how a message is " +
     "rendered and routed, not what anyone may do",
