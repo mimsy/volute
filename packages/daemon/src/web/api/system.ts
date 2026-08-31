@@ -409,6 +409,11 @@ const app = new Hono<AuthEnv>()
           provider: m.provider,
           contextWindow: m.contextWindow,
           maxTokens: m.maxTokens,
+          // Token rates, so the UI can suggest the cheapest enabled model as the utility model
+          // instead of guessing from the name (#381). Custom models carry zeroed cost
+          // (buildCustomModel has no catalog rates), so 0 here means "unknown", not "free".
+          inputCost: m.cost?.input ?? 0,
+          outputCost: m.cost?.output ?? 0,
           enabled: enabled.has(qualifiedId),
           custom: customIds.has(qualifiedId),
         };

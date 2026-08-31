@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { and, desc, eq, gte, inArray, like, lt, sql } from "drizzle-orm";
-import { aiCompleteUtility } from "../ai-service.js";
+import { aiCompleteUtility, aiCompleteUtilityOutcome, getUtilityModel } from "../ai-service.js";
 import { getUserByUsername } from "../auth.js";
 import { getDb } from "../db.js";
 import { publish as publishMindEvent } from "../events/mind-events.js";
@@ -198,11 +198,110 @@ function buildTurnDeterministicSummary(
   return parts.length > 0 ? `${parts.join(". ")}.` : "Turn completed.";
 }
 
-export function buildTranscript(
+/**
+ * Per-message cap on inbound content. Inbound is somebody else's words arriving from a channel
+ * — its length is set by whoever is talking, not by anything Volute controls, so a single pasted
+ * document could otherwise carry the whole transcript (and its cost) with it.
+ */
+export const TRANSCRIPT_INBOUND_MAX_CHARS = 500;
+
+/** Cap on the whole transcript. Tool-heavy turns run long; head + tail keeps both ends. */
+export const TRANSCRIPT_MAX_CHARS = 8000;
+
+/** Marker left at every cut, so the model sees a gap instead of interpolating across it. */
+const CUT_MARKER = "[… truncated …]";
+
+function capInboundContent(content: string): string {
+  return content.length > TRANSCRIPT_INBOUND_MAX_CHARS
+    ? `${content.slice(0, TRANSCRIPT_INBOUND_MAX_CHARS)} ${CUT_MARKER}`
+    : content;
+}
+
+/**
+ * Below this much remaining room, a partial line isn't worth keeping — a 20-char sliver of a
+ * reply says less than the omitted-lines marker already does.
+ */
+const MIN_PARTIAL_CHARS = 80;
+
+/**
+ * Bound a long transcript to head + tail, cutting on line boundaries.
+ *
+ * The cut is always marked. A silent truncation is the failure mode the never-truncate rule on
+ * the mind's own lines is guarding against: the model reads across an invisible cut and invents
+ * a continuity that never existed, which then lands in the mind's memory as a false one. A
+ * visible `[… N lines omitted …]` is something the model can summarize *around*.
+ *
+ * The line straddling each boundary is kept as a *marked slice* rather than dropped whole. Whole-
+ * line dropping is how a mind's own long reply — the one line the summarizer most needs — vanishes
+ * from its own turn summary while the budget goes to tool-result noise, which is a worse loss than
+ * the marked cut we were avoiding.
+ */
+function boundTranscript(lines: string[]): string {
+  const full = lines.join("\n");
+  if (full.length <= TRANSCRIPT_MAX_CHARS) return full;
+
+  // Reserve the omitted-lines marker out of the budget, so TRANSCRIPT_MAX_CHARS is a real
+  // ceiling rather than a ceiling plus however long the marker turned out to be.
+  const markerBudget = `[… ${lines.length} lines omitted …]`.length + 1;
+  const half = Math.floor((TRANSCRIPT_MAX_CHARS - markerBudget) / 2);
+  // Longest slice of a line that still leaves room for " " + CUT_MARKER and the newline.
+  const sliceRoom = (room: number) => room - CUT_MARKER.length - 2;
+
+  const head: string[] = [];
+  let headRoom = half;
+  let i = 0;
+  while (i < lines.length && lines[i].length + 1 <= headRoom) {
+    head.push(lines[i]);
+    headRoom -= lines[i].length + 1;
+    i++;
+  }
+  // How much of the head's boundary line was shown, so the tail below can pick up after it
+  // rather than repeating it.
+  let headPartial: { line: number; shown: number } | undefined;
+  if (i < lines.length && headRoom >= MIN_PARTIAL_CHARS) {
+    const shown = Math.min(sliceRoom(headRoom), lines[i].length);
+    head.push(`${lines[i].slice(0, shown)} ${CUT_MARKER}`);
+    headPartial = { line: i, shown };
+    i++;
+  }
+
+  const tail: string[] = [];
+  let tailRoom = half;
+  let j = lines.length - 1;
+  while (j >= i && lines[j].length + 1 <= tailRoom) {
+    tail.unshift(lines[j]);
+    tailRoom -= lines[j].length + 1;
+    j--;
+  }
+  if (tailRoom >= MIN_PARTIAL_CHARS) {
+    if (j >= i) {
+      tail.unshift(`${CUT_MARKER} ${lines[j].slice(-sliceRoom(tailRoom))}`);
+      j--;
+    } else if (headPartial && j === headPartial.line) {
+      // Everything left is the one line the head already sliced — a reply longer than the whole
+      // budget. Spend the tail half on its *end* rather than leaving it unused: the end of a
+      // reply is usually the conclusion, which is the part a summary most needs.
+      const line = lines[headPartial.line];
+      const unshown = line.length - headPartial.shown;
+      if (unshown >= MIN_PARTIAL_CHARS) {
+        tail.unshift(`${CUT_MARKER} ${line.slice(-Math.min(sliceRoom(tailRoom), unshown))}`);
+      }
+    }
+  }
+
+  // Only fully-dropped lines are counted; the two boundary lines are present in part, and carry
+  // their own marker. With none left over, the slice markers alone already show the cut.
+  const omitted = j - i + 1;
+  if (omitted <= 0) return [...head, ...tail].join("\n");
+  return [...head, `[… ${omitted} line${omitted === 1 ? "" : "s"} omitted …]`, ...tail].join("\n");
+}
+
+function transcriptLines(
   events: HistoryRow[],
   parsedMeta: Map<number, Record<string, unknown>>,
   mind: string,
-): string {
+  capInbound: boolean,
+): string[] {
   const lines: string[] = [];
   for (const ev of events) {
     switch (ev.type) {
@@ -212,7 +311,8 @@ export function buildTranscript(
       case "inbound": {
         const on = ev.channel ? ` on ${ev.channel}` : "";
         const from = ev.sender ? ` from ${ev.sender}` : "";
-        lines.push(`[inbound${on}${from}] ${ev.content ?? ""}`);
+        const body = ev.content ?? "";
+        lines.push(`[inbound${on}${from}] ${capInbound ? capInboundContent(body) : body}`);
         break;
       }
       // A system event is what triggered the turn — the summarizer needs to see it, or a
@@ -226,8 +326,9 @@ export function buildTranscript(
         break;
       }
       // The mind's own output/thoughts, labeled with its name so the "I" is unambiguous. Never
-      // truncated — a mid-sentence fragment is worse than a long line, because the model
-      // interpolates over the cut and invents a false memory.
+      // truncated per-line — a mid-sentence fragment is worse than a long line, because the model
+      // interpolates over the cut and invents a false memory. (The whole-transcript bound below
+      // can still drop lines from the middle, but it marks the gap so nothing is interpolated.)
       case "outbound":
       case "text":
         lines.push(`[${mind} replied] ${ev.content ?? ""}`);
@@ -244,12 +345,13 @@ export function buildTranscript(
         break;
       }
       case "tool_result": {
-        const content = ev.content ?? "";
+        const raw = ev.content ?? "";
+        // Marked like every other cut: an unmarked 200-char slice reads as a complete result,
+        // so a truncated one looks like a tool that returned exactly that and stopped.
+        const content = raw.length > 200 ? `${raw.slice(0, 200)} ${CUT_MARKER}` : raw;
         const meta = parsedMeta.get(ev.id);
         const isError = !!meta?.is_error;
-        lines.push(
-          isError ? `[result error] ${content.slice(0, 200)}` : `[result] ${content.slice(0, 200)}`,
-        );
+        lines.push(isError ? `[result error] ${content}` : `[result] ${content}`);
         break;
       }
       case "thinking":
@@ -257,7 +359,26 @@ export function buildTranscript(
         break;
     }
   }
-  return lines.join("\n");
+  return lines;
+}
+
+/**
+ * The turn transcript handed to the summarizer.
+ *
+ * The per-message inbound cap only applies once the whole transcript is over budget. Applying it
+ * unconditionally would clip a 2000-char question down to 500 on a turn that was never near the
+ * bound — costing nothing and losing the very thing the mind was answering. Over budget, capping
+ * inbound first is what stops one pasted document from crowding out everything else.
+ */
+export function buildTranscript(
+  events: HistoryRow[],
+  parsedMeta: Map<number, Record<string, unknown>>,
+  mind: string,
+): string {
+  const uncapped = transcriptLines(events, parsedMeta, mind, false);
+  const full = uncapped.join("\n");
+  if (full.length <= TRANSCRIPT_MAX_CHARS) return full;
+  return boundTranscript(transcriptLines(events, parsedMeta, mind, true));
 }
 
 /**
@@ -870,7 +991,7 @@ export async function summarizePeriod(
   mind: string,
   period: TimerPeriod,
   periodKey: string,
-  complete: typeof aiCompleteUtility = aiCompleteUtility,
+  complete: typeof aiCompleteUtilityOutcome = aiCompleteUtilityOutcome,
 ): Promise<boolean> {
   const db = await getDb();
   const existing = await db
@@ -951,14 +1072,20 @@ export async function summarizePeriod(
     source_ids: sources.sourceIds,
   };
 
-  const aiResult = await complete(systemPrompt, userMessage);
-  if (aiResult) {
-    content = aiResult;
+  const outcome = await complete(systemPrompt, userMessage);
+  if (outcome.status === "ok") {
+    content = outcome.text;
     deterministic = false;
   } else {
     content = buildPeriodicDeterministicSummary(entries, period, periodKey);
     deterministic = true;
-    if (period === "week" || period === "month") trackProvisionalAttempt(metadata, existingMeta);
+    // Only a *failed* call spends the retry budget. With no utility model configured there was
+    // nothing to fail, and the budget is sized for outages (5 attempts across 7 days): counting a
+    // steady state against it would exhaust it inside the window and scar the row permanently, so
+    // configuring a model later could never heal it (#381). An untracked row stays retry-eligible.
+    if ((period === "week" || period === "month") && outcome.status === "failed") {
+      trackProvisionalAttempt(metadata, existingMeta);
+    }
   }
   metadata.deterministic = deterministic;
 
@@ -999,7 +1126,7 @@ export async function summarizePeriod(
 export async function summarizeSystem(
   period: TimerPeriod,
   periodKey: string,
-  complete: typeof aiCompleteUtility = aiCompleteUtility,
+  complete: typeof aiCompleteUtilityOutcome = aiCompleteUtilityOutcome,
 ): Promise<void> {
   const db = await getDb();
   const existing = await db
@@ -1049,14 +1176,20 @@ export async function summarizeSystem(
 
   const metadata: Record<string, unknown> = { minds, source_count: rows.length };
 
-  const aiResult = await complete(systemPrompt, userMessage);
-  if (aiResult) {
-    content = aiResult;
+  const outcome = await complete(systemPrompt, userMessage);
+  if (outcome.status === "ok") {
+    content = outcome.text;
     deterministic = false;
   } else {
     content = buildSystemDeterministicSummary(entries, period, periodKey);
     deterministic = true;
-    if (period === "week" || period === "month") trackProvisionalAttempt(metadata, existingMeta);
+    // Only a *failed* call spends the retry budget. With no utility model configured there was
+    // nothing to fail, and the budget is sized for outages (5 attempts across 7 days): counting a
+    // steady state against it would exhaust it inside the window and scar the row permanently, so
+    // configuring a model later could never heal it (#381). An untracked row stays retry-eligible.
+    if ((period === "week" || period === "month") && outcome.status === "failed") {
+      trackProvisionalAttempt(metadata, existingMeta);
+    }
   }
   metadata.deterministic = deterministic;
 
@@ -1088,8 +1221,12 @@ export async function summarizeSystem(
  * skip. Per-mind summaries are healed before `_system` so the rollup sees the improved children.
  */
 export async function repairProvisionalSummaries(
-  complete: typeof aiCompleteUtility = aiCompleteUtility,
+  complete: typeof aiCompleteUtilityOutcome = aiCompleteUtilityOutcome,
 ): Promise<void> {
+  // Nothing to heal with, and this sweep runs every tick: scanning and re-prompting every
+  // provisional row only to be told "unconfigured" is pure waste. Rows stay retry-eligible
+  // (no attempt is spent), so the first sweep after a model is configured picks them all up.
+  if (complete === aiCompleteUtilityOutcome && !getUtilityModel()) return;
   const db = await getDb();
   const rows = await db
     .select({

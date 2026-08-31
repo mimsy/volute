@@ -3,12 +3,16 @@ import { describe, it } from "node:test";
 import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
 import {
   addCustomModel,
+  aiCompleteUserInvoked,
+  aiCompleteUtility,
   buildCustomModel,
   findModel,
   getAiConfig,
   getAvailableModels,
   getCustomModels,
   getEnabledModels,
+  getUtilityModel,
+  isAiConfigured,
   missingCredentialWarning,
   OAuthRefreshError,
   qualifyModelId,
@@ -19,6 +23,7 @@ import {
   resolveOAuthCredentials,
   saveProviderConfig,
   setEnabledModels,
+  setUtilityModel,
   unqualifyModelId,
 } from "../packages/daemon/src/lib/ai-service.js";
 
@@ -358,5 +363,110 @@ describe("spirit config.model derivation from a qualified spiritModel", () => {
     const qualified = "openai-codex:gpt-5.5";
     assert.equal(qualifyModelId(qualified), "openai-codex:gpt-5.5");
     assert.equal(unqualifyModelId(qualified), "gpt-5.5");
+  });
+});
+
+describe("aiCompleteUtility without a configured utility model (#381)", () => {
+  // The funnel for every background LLM call: a summary on every substantive mind turn, plus
+  // period rollups, the feed digest and memory consolidation. It used to fall through to
+  // aiComplete's auto-selection, which picks the *first enabled* model — usually a flagship.
+  // On any install where the admin never chose a utility model, that billed flagship prices
+  // for background work nobody asked for and nothing surfaced.
+  //
+  // Returning null is only half the guarantee — a failed flagship request also returns null.
+  // What has to hold is that *no request is made at all*, so these assert on fetch never being
+  // reached, not just on the return value.
+  async function countFetches(fn: () => Promise<unknown>): Promise<number> {
+    const original = globalThis.fetch;
+    let calls = 0;
+    // Never actually reaches the network: what is under test is whether we *reached* for a
+    // model at all, and aiComplete turns the throw into its usual null.
+    globalThis.fetch = (async () => {
+      calls++;
+      throw new Error("network disabled in test");
+    }) as typeof fetch;
+    try {
+      await fn();
+    } finally {
+      globalThis.fetch = original;
+    }
+    return calls;
+  }
+
+  function enableOneModel(): string {
+    removeAiConfig();
+    saveProviderConfig("anthropic", { apiKey: "sk-test" });
+    const builtin = getBuiltinModels("anthropic")[0];
+    const qualified = `anthropic:${builtin.id}`;
+    setEnabledModels([qualified]);
+    return qualified;
+  }
+
+  it("returns null without contacting a provider, even when enabled models are present", async () => {
+    enableOneModel();
+    assert.ok(isAiConfigured(), "precondition: an enabled model exists to auto-select");
+    assert.equal(getUtilityModel(), undefined, "precondition: no utility model configured");
+
+    let result: string | null = "unset";
+    const calls = await countFetches(async () => {
+      result = await aiCompleteUtility("system", "user");
+    });
+    assert.equal(result, null);
+    assert.equal(calls, 0, "must not spend tokens on an auto-selected (flagship) model");
+  });
+
+  it("still refuses once a configured utility model is cleared again", async () => {
+    const qualified = enableOneModel();
+    setUtilityModel(qualified);
+    assert.equal(getUtilityModel(), qualified);
+    setUtilityModel(undefined);
+
+    let result: string | null = "unset";
+    const calls = await countFetches(async () => {
+      result = await aiCompleteUtility("system", "user");
+    });
+    assert.equal(result, null);
+    assert.equal(calls, 0);
+  });
+});
+
+describe("aiCompleteUserInvoked — the one narrow fallback exemption (#381)", () => {
+  // Background work must never auto-select a flagship (that is the whole of #381), but a host who
+  // typed `volute mind import` chose to spend, and refusing there costs them a mind arriving with
+  // no MEMORY.md rather than a thinner summary. These two tests pin the exemption AND its edge:
+  // same config, same missing utility model, deliberately opposite behavior.
+  async function callsMade(fn: () => Promise<unknown>): Promise<number> {
+    const original = globalThis.fetch;
+    let calls = 0;
+    globalThis.fetch = (async () => {
+      calls++;
+      throw new Error("network disabled in test");
+    }) as typeof fetch;
+    try {
+      await fn();
+    } finally {
+      globalThis.fetch = original;
+    }
+    return calls;
+  }
+
+  function enableOneModel(): void {
+    removeAiConfig();
+    saveProviderConfig("anthropic", { apiKey: "sk-test" });
+    setEnabledModels([`anthropic:${getBuiltinModels("anthropic")[0].id}`]);
+  }
+
+  it("auto-selects a model for a host-invoked operation when no utility model is set", async () => {
+    enableOneModel();
+    assert.equal(getUtilityModel(), undefined, "precondition: no utility model configured");
+    const calls = await callsMade(() => aiCompleteUserInvoked("system", "user"));
+    assert.ok(calls > 0, "a host-invoked operation should still reach a model");
+  });
+
+  it("but background utility work in the very same state still refuses", async () => {
+    enableOneModel();
+    assert.equal(getUtilityModel(), undefined);
+    const calls = await callsMade(() => aiCompleteUtility("system", "user"));
+    assert.equal(calls, 0, "the exemption must not leak into background work");
   });
 });
