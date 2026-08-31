@@ -1,30 +1,16 @@
-import { existsSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
-
 const port = process.env.VOLUTE_DAEMON_PORT;
 const mind = process.env.VOLUTE_MIND;
 const token = process.env.VOLUTE_MIND_TOKEN;
-
-/** Read session from file (fallback for sandbox where env vars don't propagate). */
-function readSessionFile(): string | undefined {
-  const mindDir = process.env.VOLUTE_MIND_DIR;
-  if (!mindDir) return undefined;
-  try {
-    const p = resolve(mindDir, ".mind", "current-session");
-    if (existsSync(p)) return readFileSync(p, "utf-8").trim() || undefined;
-  } catch (err) {
-    console.warn(`[volute] failed to read session file: ${err}`);
-  }
-  return undefined;
-}
 
 function headers(): Record<string, string> {
   const h: Record<string, string> = { "Content-Type": "application/json" };
   if (token) h.Authorization = `Bearer ${token}`;
   // Origin header required for CSRF checks on mutation requests
   if (port) h.Origin = `http://127.0.0.1:${port}`;
-  // Tag requests with the current session for turn resolution
-  const session = process.env.VOLUTE_SESSION ?? readSessionFile();
+  // Tag requests with the current session for turn resolution. Set per SDK
+  // subprocess at spawn (templates/claude/src/agent.ts createStream), so it is
+  // per-turn-truthful — not a process-global.
+  const session = process.env.VOLUTE_SESSION;
   if (session) h["X-Volute-Thread"] = session;
   return h;
 }

@@ -21,27 +21,6 @@ function voluteSystemDir(): string {
   return resolve(home, "system");
 }
 
-/** Read session from a mind's current-session file. */
-export function readSessionFile(mindDir: string): string | undefined {
-  try {
-    const p = resolve(mindDir, ".mind", "current-session");
-    if (existsSync(p)) return readFileSync(p, "utf-8").trim() || undefined;
-  } catch (err) {
-    const code = (err as NodeJS.ErrnoException).code;
-    if (code !== "ENOENT") {
-      console.error(`[volute] failed to read session file: ${code ?? err}`);
-    }
-  }
-  return undefined;
-}
-
-/** Read session from file (fallback for sandbox where env vars don't propagate). */
-function readMindSessionFile(): string | undefined {
-  const mindDir = process.env.VOLUTE_MIND_DIR;
-  if (!mindDir) return undefined;
-  return readSessionFile(mindDir);
-}
-
 type CliSession = { sessionId: string; username: string; daemonUrl?: string };
 
 function readCliSession(): CliSession | null {
@@ -179,8 +158,9 @@ export async function daemonFetch(path: string, options?: RequestInit): Promise<
   // Set origin to pass CSRF checks on mutation requests
   headers.set("Origin", url);
 
-  // Pass session context for turn resolution (env var or file fallback for sandbox)
-  const voluteSession = process.env.VOLUTE_SESSION ?? readMindSessionFile();
+  // Pass session context for turn resolution — set per SDK subprocess at spawn,
+  // inherited by the shell that runs this CLI, so it names the calling turn's session
+  const voluteSession = process.env.VOLUTE_SESSION;
   if (voluteSession) {
     headers.set("X-Volute-Thread", voluteSession);
   }

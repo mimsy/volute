@@ -1,25 +1,10 @@
 import { existsSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import {
   type ImageAttachment,
   type PlatformConversation,
   type PlatformUser,
   resolvePlatformId,
 } from "@volute/platforms";
-
-/** Read session from a mind's current-session file. */
-function readSessionFile(mindDir: string): string | undefined {
-  try {
-    const p = resolve(mindDir, ".mind", "current-session");
-    if (existsSync(p)) return readFileSync(p, "utf-8").trim() || undefined;
-  } catch (err) {
-    const code = (err as NodeJS.ErrnoException).code;
-    if (code !== "ENOENT") {
-      console.error(`[volute] failed to read session file: ${code ?? err}`);
-    }
-  }
-  return undefined;
-}
 
 import { daemonConfigPath, readDaemonToken } from "../config/service-mode.js";
 import { buildVoluteSlug } from "../util/slugify.js";
@@ -109,10 +94,9 @@ export async function send(
     Origin: url,
   };
   if (token) headers.Authorization = `Bearer ${token}`;
-  // Session from env or file fallback (sandbox strips env vars set after process start)
-  const voluteSession =
-    env.VOLUTE_SESSION || (env.VOLUTE_MIND_DIR ? readSessionFile(env.VOLUTE_MIND_DIR) : undefined);
-  if (voluteSession) headers["X-Volute-Thread"] = voluteSession;
+  // No X-Volute-Thread here: no caller of this driver supplies a session (the env
+  // comes from shared env + mind identity vars), so sends rely on the daemon's
+  // marker-based turn correlation.
 
   const res = await fetch(`${url}/api/v1/chat`, {
     method: "POST",

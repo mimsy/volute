@@ -2,7 +2,8 @@
   ".local/bin/volute": [
     "1d0a7eb3af09c6315bd66ecb3ba9e5e806f579a4c2735c9fbe72bef8860f76ad",
     "2bcba4daa2ec532239a8eadd109a45da185a00cff209f057d8675b242c7d3c62",
-    "9e915ddf27530c35d8491e4955ae385443720a3aa61b9442cd78eccaf090e636"
+    "9e915ddf27530c35d8491e4955ae385443720a3aa61b9442cd78eccaf090e636",
+    "402cff7219f9ce4fe0dfaf18a76e259951ee11274c288c855f5f53efcf188622"
   ],
   ".local/hooks/pre-prompt/notices.ts": [
     "1b2fffd2f3fd9f00638d561c99f90b8b73a9aeb2beec923cbafbd7c83b9037f6",
