@@ -17,6 +17,7 @@ import { initScheduler } from "./lib/daemon/scheduler.js";
 import { initSleepManager } from "./lib/daemon/sleep-manager.js";
 import { initSpendBudget } from "./lib/daemon/spend-budget.js";
 import { initSummarizer } from "./lib/daemon/summarizer.js";
+import { concurrencyHold, setTurnLimits } from "./lib/daemon/turn-slots.js";
 import { completeOrphanedTurns, summarizeOrphanedTurns } from "./lib/daemon/turn-tracker.js";
 import { initDeliveryManager } from "./lib/delivery/delivery-manager.js";
 import { stopAll as stopAllActivityTrackers } from "./lib/events/mind-activity-tracker.js";
@@ -347,9 +348,15 @@ export async function startDaemon(opts: {
   // deliveries held (rows stay `pending`) until the period resets. Wired before any mind
   // boots — the first redrive sweep happens after mind startup has restored each mind's
   // bucket, so an over-cap mind is never handed a burst of held messages at boot.
-  delivery.setHoldCheck((baseName) => {
+  // The concurrency gate (#823) ORs into the same resolver rather than adding a second
+  // one, so "why is this message waiting" has a single answer. Spend is asked first: it
+  // is a durable park with a known reset, and a momentary hold must not mask it.
+  setTurnLimits(gcfg.limits ?? {});
+  delivery.setHoldCheck((baseName, session) => {
     const hold = spendBudget.holdFor(baseName);
-    return hold ? { reason: "spend_cap", scope: hold.scope, until: hold.resetAt } : null;
+    if (hold) return { reason: "spend_cap", scope: hold.scope, until: hold.resetAt };
+    const busy = concurrencyHold(baseName, session);
+    return busy ? { ...busy, momentary: true } : null;
   });
   const sleepManager = initSleepManager();
   sleepManager.start();

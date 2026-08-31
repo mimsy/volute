@@ -1,5 +1,6 @@
 import { and, eq, inArray } from "drizzle-orm";
 import { getSleepManagerIfReady } from "../daemon/sleep-manager.js";
+import { releaseTurnSlot, takeTurnSlot } from "../daemon/turn-slots.js";
 import { getDb } from "../db.js";
 import { publish as publishMindEvent } from "../events/mind-events.js";
 import { findMind, getBaseName } from "../mind/registry.js";
@@ -281,9 +282,14 @@ export async function willGateMessage(mindName: string, payload: GateMeta): Prom
  * Whether a delivery to this mind would be held by a spend cap right now. The predictive
  * twin of {@link willGateMessage}, and used for the same purpose: deciding at arrival
  * whether `mind_history` should claim the mind received something.
+ *
+ * Momentary holds (#823's concurrency gate) don't count. A mind that is merely mid-turn
+ * receives what arrives seconds later, so deferring its history row would move every
+ * message's recorded arrival time for no reason a reader could ever see.
  */
 export function willHoldMessage(baseName: string): boolean {
-  return tryGetDeliveryManager()?.holdReason(baseName, "main") != null;
+  const hold = tryGetDeliveryManager()?.holdReason(baseName, "main");
+  return hold != null && !hold.momentary;
 }
 
 export async function deliverMessage(
@@ -402,12 +408,33 @@ export async function deliverBatch(
     });
     const session = first.session ?? (route.destination === "mind" ? route.session : "main");
 
-    const res = await fetch(`http://127.0.0.1:${entry.port}/message`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ session, batch: { channels }, interrupt: false }),
-    });
-    return res.ok;
+    // This POSTs straight at the mind rather than going through the delivery queue, so
+    // there is no pending row for a redrive sweep to re-offer: the concurrency gate waits
+    // here instead of holding. A woken mind's night of backlog is several of these in a
+    // row, which is exactly the pile-up #823 exists to stagger.
+    const slot = await takeTurnSlot(baseName, session);
+    if (slot.timedOut) {
+      dlog.warn(
+        `delivering a batch to ${baseName}/${session} after waiting ` +
+          `${Math.round(slot.waitedMs / 1000)}s for a turn slot — its previous turn is ` +
+          `still running, but holding the batch any longer would be worse than the overlap`,
+      );
+    }
+    let ok = false;
+    try {
+      const res = await fetch(`http://127.0.0.1:${entry.port}/message`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ session, batch: { channels }, interrupt: false }),
+      });
+      ok = res.ok;
+      return ok;
+    } finally {
+      // No turn will run for a batch the mind never took, so the slot must go back — but
+      // only if this call took it. `owned: false` means the batch folded into a turn that
+      // was already running, whose slot is not ours to give back.
+      if (!ok && slot.owned) releaseTurnSlot(baseName, session);
+    }
   } catch (err) {
     dlog.warn(`unexpected error delivering batch to ${mindName}`, log.errorData(err));
     return false;

@@ -80,6 +80,24 @@ const cmd = command({
     headers.Origin = baseUrl;
 
     try {
+      const res = await fetch(`${baseUrl}/api/v1/system/turns`, { headers });
+      if (res.ok) {
+        const turns = (await res.json()) as {
+          active: number;
+          mindConcurrentTurns: number;
+          globalConcurrentTurns: number | null;
+        };
+        const cap = turns.globalConcurrentTurns;
+        console.log(
+          `Active turns: ${turns.active}${cap != null ? ` / ${cap}` : ""}` +
+            ` (${turns.mindConcurrentTurns} per mind)`,
+        );
+      }
+    } catch {
+      // Not admin, or an older daemon — the turn gate is not worth failing status over.
+    }
+
+    try {
       const res = await fetch(`${baseUrl}/api/v1/minds`, { headers });
       if (res.ok) {
         const minds = (await res.json()) as Array<{

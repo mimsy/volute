@@ -1,5 +1,6 @@
 import { and, asc, desc, eq, gt, isNotNull, isNull, lt, lte, ne, or, sql } from "drizzle-orm";
 import { getSpiritName } from "../config/setup.js";
+import { releaseTurnSlot, takeTurnSlot } from "../daemon/turn-slots.js";
 import { getDb } from "../db.js";
 import { getRoutingConfig, resolveEventRoute } from "../delivery/delivery-router.js";
 import { publish as publishActivity } from "../events/activity-events.js";
@@ -245,14 +246,48 @@ const staleTemplateWarned = new Set<string>();
  * POST an event envelope to a running mind's /message endpoint. Resolves the target's
  * OWN registry row — a variant has its own port, and misresolving to the parent would
  * deliver its farewell/split context to the wrong process. Returns whether it acked.
+ *
+ * This is the path the incident behind #823 ran down: three schedules firing in the same
+ * second became three concurrent SDK sessions, because an event POSTs directly and never
+ * touches the delivery queue or its accounting. There is no pending row here for a sweep
+ * to re-offer, so the concurrency gate *waits* for a turn slot rather than holding — and
+ * the wait is bounded, because a schedule that never fires is worse than one that overlaps.
+ *
+ * Only {@link HELD_EVENT_TYPES} waits: the world reaching in, the same line the spend cap
+ * draws, and for a sharper reason here. An event about the mind's *own* situation can be
+ * emitted from inside the handler for the mind's own event stream — a budget notice fires
+ * on a `usage` event, mid-turn — and if such an event were routed to a different session
+ * and made to wait, it would stall the very stream whose `done` releases the slot it is
+ * waiting for. Those events (and any `force`d one: a farewell, merge context) go straight
+ * out. They still take a slot, so the turn they start is accounted for.
  */
-async function postEventEnvelope(mind: string, event: SystemEvent): Promise<boolean> {
+async function postEventEnvelope(
+  mind: string,
+  event: SystemEvent,
+  opts: { force?: boolean } = {},
+): Promise<boolean> {
   const entry = await findMind(mind);
   if (!entry) {
     elog.warn(`cannot deliver event ${event.id} to ${mind}: mind not found`);
     return false;
   }
   const meta = parseMeta(event.meta, `event ${event.id}`);
+  const slotMind = await getBaseName(mind);
+  const wait = !opts.force && HELD_EVENT_TYPES.has(event.type);
+  const slot = await takeTurnSlot(slotMind, event.thread, { wait });
+  if (slot.timedOut) {
+    elog.warn(
+      `delivering event ${event.id} to ${mind} after waiting ` +
+        `${Math.round(slot.waitedMs / 1000)}s for a turn slot — its previous turn is still ` +
+        `running, but a schedule held indefinitely is worse than one that overlaps`,
+    );
+  } else if (slot.waitedMs > 0) {
+    elog.debug(
+      `event ${event.id} for ${mind} waited ${Math.round(slot.waitedMs / 1000)}s ` +
+        "for a turn slot",
+    );
+  }
+  let acked = false;
   try {
     const res = await fetch(`http://127.0.0.1:${entry.port}/message`, {
       method: "POST",
@@ -274,6 +309,7 @@ async function postEventEnvelope(mind: string, event: SystemEvent): Promise<bool
       elog.warn(`mind ${mind} rejected event ${event.id}: HTTP ${res.status}`);
       return false;
     }
+    acked = true;
     // A template that understands events acks with { event: true }. A pre-events
     // template 200-acks after mangling the envelope into a garbage message — still
     // counted delivered (hard cut, no compat path), but surfaced loudly once so the
@@ -301,6 +337,13 @@ async function postEventEnvelope(mind: string, event: SystemEvent): Promise<bool
   } catch (err) {
     elog.warn(`failed to POST event ${event.id} to ${mind}`, log.errorData(err));
     return false;
+  } finally {
+    // An event the mind never took starts no turn, so its slot goes straight back — but
+    // only if this call is what took it. `owned: false` means the event folded into a turn
+    // already running in that session, and freeing that turn's slot would open the gate
+    // while the mind is still working. POSTs fail most under load, which is precisely when
+    // the gate must hold.
+    if (!acked && slot.owned) releaseTurnSlot(slotMind, event.thread);
   }
 }
 
@@ -508,7 +551,7 @@ export async function deliverEvent(
 
     if (!sleeping) {
       const event = await db.select().from(systemEvents).where(eq(systemEvents.id, eventId)).get();
-      if (event && (await postEventEnvelope(mind, event))) {
+      if (event && (await postEventEnvelope(mind, event, { force: input.force }))) {
         await markDelivered(eventId);
         // Record the row only on actual delivery — history must not claim the mind
         // heard something it never received (#420).
@@ -642,7 +685,13 @@ const NO_REPLAY_TYPES = new Set(["sleep"]);
  */
 const HELD_EVENT_TYPES = new Set(["schedule", "webhook", "file-share", "channel", "version"]);
 
-/** Whether a spend cap is currently holding this mind's inbound traffic, and why. */
+/**
+ * Whether a spend cap is currently holding this mind's inbound traffic, and why.
+ *
+ * Momentary holds are explicitly not a spend hold. Stamping a merely-busy mind's schedule
+ * `spendHeld` would park it for `flushHeldEvents`, which runs only when a spend period
+ * resets — on an uncapped install, never. A mind mid-turn is waited for, not shelved.
+ */
 async function spendHoldFor(
   mind: string,
   type: string,
@@ -651,7 +700,8 @@ async function spendHoldFor(
   try {
     const { tryGetDeliveryManager } = await import("../delivery/delivery-manager.js");
     const baseName = await getBaseName(mind);
-    return tryGetDeliveryManager()?.holdReason(baseName, "main") ?? null;
+    const hold = tryGetDeliveryManager()?.holdReason(baseName, "main");
+    return hold && !hold.momentary ? hold : null;
   } catch (err) {
     // Fail open: an event that cannot be checked is delivered. A cap that silently ate a
     // mind's schedules because a lookup threw would be worse than a cap that overspends.

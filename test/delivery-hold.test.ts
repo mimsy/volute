@@ -363,11 +363,16 @@ describe("DeliveryManager: holding deliveries", () => {
     await removeMind(name);
   });
 
-  it("overlapping sweeps run once, not once each", async () => {
+  it("overlapping sweeps never run concurrently, and deliver exactly once", async () => {
     // Spend releases now trigger a sweep from three places on top of the periodic timer,
     // so overlap is routine rather than theoretical. A sweep works from a snapshot and
-    // yields inside its loop, so two passes can both act on a row the other has already
-    // delivered and deleted.
+    // yields inside its loop, so two CONCURRENT passes can both act on a row the other has
+    // already delivered and deleted — that overlap is the hazard, and it is what this pins.
+    //
+    // Overlapping callers do queue one trailing pass behind the running sweep (#823):
+    // joining a sweep that has already snapshotted its rows is not the same as being
+    // swept, and `sessionDone` kicks a redrive precisely to get a row moving the instant a
+    // turn ends. That pass is sequential, so it costs one extra read and no overlap.
     const srv = await startMindServer();
     servers.push(srv.server);
     const name = await registerMind(srv.port, IMMEDIATE);
@@ -382,16 +387,26 @@ describe("DeliveryManager: holding deliveries", () => {
     const internals = manager as unknown as { redriveInner: () => Promise<void> };
     const real = internals.redriveInner.bind(manager);
     let sweeps = 0;
+    let inFlight = 0;
+    let maxConcurrent = 0;
     internals.redriveInner = async () => {
       sweeps++;
+      inFlight++;
+      maxConcurrent = Math.max(maxConcurrent, inFlight);
       // Hold the sweep open so the later calls are unambiguously concurrent with it.
       await new Promise((r) => setTimeout(r, 50));
       await real();
+      inFlight--;
     };
 
-    await Promise.all([manager.redrive(), manager.redrive(), manager.redrive()]);
+    // Ten rather than three, so the bound is pinned as "one trailing pass regardless of N"
+    // rather than "a small number at N=3". A regression that coalesced only PARTIALLY —
+    // batching callers in pairs, say — still yields 2 here at N=3 and passes; at N=10 it
+    // yields ~5 and fails. (Fully per-caller fan-out gives N and is caught at either size.)
+    await Promise.all(Array.from({ length: 10 }, () => manager.redrive()));
 
-    assert.equal(sweeps, 1, "the later calls joined the sweep already running");
+    assert.equal(maxConcurrent, 1, "no two sweeps are ever in flight at once");
+    assert.equal(sweeps, 2, "N overlapping calls collapse into the running sweep + one trailing");
     await waitFor(async () => (await queueRows(name)).length === 0);
     assert.equal(srv.received.length, 1, "and the message went out exactly once");
 

@@ -12,6 +12,7 @@ import {
   MIND_LEVEL_THREAD,
   recordNotice,
 } from "../packages/daemon/src/lib/chat/system-events.js";
+import { releaseTurnSlot } from "../packages/daemon/src/lib/daemon/turn-slots.js";
 import { getDb } from "../packages/daemon/src/lib/db.js";
 import { clearConfigCache } from "../packages/daemon/src/lib/delivery/delivery-router.js";
 import { addMind, removeMind } from "../packages/daemon/src/lib/mind/registry.js";
@@ -98,6 +99,9 @@ describe("event routing (daemon-side, via routes.json)", () => {
     });
     try {
       await deliverEvent(m.name, { type: "schedule", body: "d", meta: { scheduleId: "dream" } });
+      // Two schedules landing in two different threads is exactly what the concurrency
+      // gate (#823) serializes; stand in for the `done` a stub mind never emits.
+      releaseTurnSlot(m.name);
       await deliverEvent(m.name, {
         type: "schedule",
         body: "h",
@@ -128,7 +132,9 @@ describe("event routing (daemon-side, via routes.json)", () => {
       // Unmatched schedule → the "main" default, not the rule.
       await deliverEvent(m.name, { type: "schedule", body: "x", meta: { scheduleId: "other" } });
       assert.equal(m.posted[0]?.session, "main");
-      // Matched schedule → the rule's thread.
+      // Matched schedule → the rule's thread. A different thread means the concurrency gate
+      // (#823) serializes the two; stand in for the `done` a stub mind never emits.
+      releaseTurnSlot(m.name);
       await deliverEvent(m.name, { type: "schedule", body: "y", meta: { scheduleId: "reports" } });
       assert.equal(m.posted[1]?.session, "work");
     } finally {

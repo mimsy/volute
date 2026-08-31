@@ -607,8 +607,10 @@ export class SleepManager {
       // kept. Hand the rows to the delivery queue's own hold instead of leaving them
       // sleep-queued: nothing re-runs this flush until the *next* wake, which could be a
       // day after the cap resets. One hold store, one release path.
+      // Momentary holds (#823's concurrency gate) are not a reason to park a night's
+      // backlog for the next wake — `deliverBatch` waits out a running turn itself.
       const hold = tryGetDeliveryManager()?.holdReason(name, "main");
-      if (hold) {
+      if (hold && !hold.momentary) {
         const held = await this.holdQueuedMessages(name, rows, hold);
         slog.info(
           `${name} woke over its spend cap (${hold.reason}); handed ${held} queued ` +
