@@ -3,7 +3,8 @@ import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } fr
 import { resolve } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { resolveTemplate } from "../packages/daemon/src/lib/ai-service.js";
-import { addSpirit, removeMind } from "../packages/daemon/src/lib/mind/registry.js";
+import { readInitLedger } from "../packages/daemon/src/lib/mind/init-ledger.js";
+import { addSpirit, removeMind, stateDir } from "../packages/daemon/src/lib/mind/registry.js";
 import {
   getSpiritModel,
   spiritDir,
@@ -57,6 +58,10 @@ async function seedSpiritProject(): Promise<string> {
 describe("the spirit's .local infrastructure", () => {
   afterEach(async () => {
     rmSync(spiritDir(), { recursive: true, force: true });
+    // The infrastructure ledger lives in the spirit's state dir, not its project
+    // dir, and outlives it — so each test here has to start without one, exactly
+    // as a spirit that predates the ledger does.
+    rmSync(stateDir("volute"), { recursive: true, force: true });
     await removeMind("volute").catch(() => {});
   });
 
@@ -98,5 +103,25 @@ describe("the spirit's .local infrastructure", () => {
     await syncSpiritTemplate();
 
     assert.equal(readFileSync(hook, "utf-8"), "// I keep my own counsel\n");
+  });
+
+  it("does not put back a hook the spirit deleted", async () => {
+    // The spirit is the mind for which this matters most. `volute mind upgrade`
+    // 404s on it, so its only repair path is syncSpiritTemplate — which runs on
+    // every daemon start. Without the ledger, a hook the spirit removed at night
+    // would be back before morning, every morning, with nothing to tell it why
+    // (#811).
+    const dir = await seedSpiritProject();
+    const hook = resolve(dir, NOTICES_REL);
+    await syncSpiritTemplate();
+    assert.ok(existsSync(hook), "the spirit must have the hook before it can remove it");
+    assert.ok(readInitLedger("volute").has(".local/hooks/pre-prompt/notices.ts"));
+
+    rmSync(hook);
+    await syncSpiritTemplate();
+    assert.equal(existsSync(hook), false, "one daemon start put it back");
+
+    await syncSpiritTemplate();
+    assert.equal(existsSync(hook), false, "the removal must survive every restart");
   });
 });

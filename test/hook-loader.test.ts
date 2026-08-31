@@ -43,6 +43,22 @@ describe("discoverHooks", () => {
     assert.ok(result[2].endsWith("90-late.sh"));
   });
 
+  it("skips an emptied hook — how a mind declines one", () => {
+    // Emptying a hook is one of the two ways a mind says "not this one" (the
+    // other is deleting it, which the daemon's infrastructure ledger honours).
+    // An empty script was always a no-op, but running it still cost a spawn —
+    // and a `tsx` cold start for a .ts hook — on every single turn. Declining
+    // should cost nothing.
+    const eventDir = join(testDir, "hooks-empty", "pre-prompt");
+    mkdirSync(eventDir, { recursive: true });
+    writeFileSync(join(eventDir, "10-declined.ts"), "");
+    writeFileSync(join(eventDir, "20-kept.sh"), "#!/bin/bash\necho '{}'");
+
+    const result = discoverHooks(join(testDir, "hooks-empty"), "pre-prompt");
+    assert.equal(result.length, 1);
+    assert.ok(result[0].endsWith("20-kept.sh"));
+  });
+
   it("discovers .ts and .js scripts", () => {
     const eventDir = join(testDir, "hooks-ext", "post-tool-use");
     mkdirSync(eventDir, { recursive: true });

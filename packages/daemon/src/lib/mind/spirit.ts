@@ -13,6 +13,7 @@ import {
 } from "../template/template.js";
 import { exec } from "../util/exec.js";
 import log from "../util/logger.js";
+import { seedInitLedger } from "./init-ledger.js";
 import { addSpirit, findMind, nextPort, voluteSystemDir } from "./registry.js";
 import { readVoluteConfig, type Schedule, writeVoluteConfig } from "./volute-config.js";
 
@@ -296,7 +297,9 @@ export async function ensureSpiritProject(): Promise<void> {
   try {
     mkdirSync(dir, { recursive: true });
     copyTemplateToDir(composedDir, dir, spiritName, manifest);
-    applyInitFiles(dir);
+    // Record the infrastructure this spirit starts with, so a hook it removes on
+    // day one is honoured rather than read as "never had it" (#811).
+    seedInitLedger(spiritName, applyInitFiles(dir));
 
     // Ensure .mind/ directory exists (codex template writes system-prompt.md there on startup)
     mkdirSync(resolve(dir, ".mind"), { recursive: true });
@@ -596,9 +599,12 @@ export async function syncSpiritTemplate(): Promise<void> {
   // voluteSystemDir() rather than the minds dir. Without this call the spirit's
   // hooks would be the one set on the host that nothing can ever repair, which
   // is how it sat 505× 404ing on /history/notices for a fortnight. This runs on
-  // every daemon start, so the spirit is repaired the moment this ships.
+  // every daemon start, so the spirit is repaired the moment this ships — and,
+  // for the same reason, the spirit is the mind for which a hook it deleted
+  // would come straight back the next morning if the ledger weren't consulted
+  // (#811).
   try {
-    const { added, refreshed } = backfillInitInfrastructure(
+    const { added, refreshed, withheld } = backfillInitInfrastructure(
       resolve(dir, "home"),
       template,
       spiritName,
@@ -607,8 +613,14 @@ export async function syncSpiritTemplate(): Promise<void> {
       slog.info(
         `backfilled ${added.length} missing and refreshed ${refreshed.length} stale ` +
           `infrastructure files for the spirit`,
-        { added, refreshed },
+        { added, refreshed, withheld },
       );
+    } else if (withheld.length > 0) {
+      // This runs on every daemon start, so a spirit that has permanently
+      // declined a hook would otherwise log the same line forever.
+      slog.debug(`withheld ${withheld.length} infrastructure files the spirit removed`, {
+        withheld,
+      });
     }
   } catch (err) {
     slog.warn("failed to backfill spirit infrastructure files", log.errorData(err));

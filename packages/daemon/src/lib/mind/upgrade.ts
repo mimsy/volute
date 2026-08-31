@@ -438,23 +438,35 @@ async function mergeUpgradeAndRestart(
   // overwrites identity files, which also meant a mind created before a hook
   // existed could never acquire it (#808), and a mind carrying last release's
   // copy of a hook could never be handed this release's. Files the mind has
-  // edited are never touched. Runs after any template switch so it picks up the
+  // edited are never touched, and neither are files it deleted after we gave
+  // them to it (#811) — unless the restore above failed, in which case the
+  // absences may be ours. Runs after any template switch so it picks up the
   // *new* template's composition. Untracked paths, so no commit is needed;
   // backfillInitInfrastructure throws rather than exiting, so a broken template
   // install is a warning here, not a failed upgrade.
   try {
-    const { added, refreshed } = backfillInitInfrastructure(
+    const { added, refreshed, withheld } = backfillInitInfrastructure(
       resolve(dir, "home"),
       template,
       mindName,
+      // A failed restore above means files are missing from home/ because *this
+      // upgrade* dropped them, not because the mind removed them. Don't read our
+      // own damage as the mind's authorship and withhold them forever.
+      { honorRemovals: !restoreWarning },
     );
     if (added.length > 0 || refreshed.length > 0) {
       log.info(
         `backfilled ${added.length} missing and refreshed ${refreshed.length} stale ` +
           `infrastructure files for ${mindName}`,
-        { added, refreshed },
+        { added, refreshed, withheld },
       );
       await chownMindDir(dir, mindName);
+    } else if (withheld.length > 0) {
+      // Steady state for a mind that has declined something: the same set every
+      // upgrade, forever. Visible on demand, not noise in the info log.
+      log.debug(`withheld ${withheld.length} infrastructure files ${mindName} removed`, {
+        withheld,
+      });
     }
   } catch (err) {
     log.warn(`failed to backfill infrastructure files for ${mindName}`, log.errorData(err));
