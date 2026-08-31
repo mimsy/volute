@@ -262,33 +262,66 @@ describe("MailPoller.deliver — delivery-failure propagation", () => {
 });
 
 describe("email formatting", () => {
+  // The `From:` line is the only place a mind meets the sender's self-chosen name: the
+  // delivered `sender` is the namespaced `mail:<address>` (#1016), never `from.name`.
+  const FROM = { address: "alice@example.test", name: "Alice Smith" };
+  const ANON = { address: "alice@example.test", name: null };
+
   it("formats email with subject and body", () => {
-    const text = formatEmailContent({ subject: "Hello", body: "How are you?", html: null });
-    assert.equal(text, "Subject: Hello\n\nHow are you?");
+    const text = formatEmailContent({
+      from: FROM,
+      subject: "Hello",
+      body: "How are you?",
+      html: null,
+    });
+    assert.equal(text, "From: Alice Smith <alice@example.test>\nSubject: Hello\n\nHow are you?");
   });
 
   it("formats body-only email", () => {
-    const text = formatEmailContent({ subject: null, body: "Just a body", html: null });
-    assert.equal(text, "Just a body");
+    const text = formatEmailContent({ from: FROM, subject: null, body: "Just a body", html: null });
+    assert.equal(text, "From: Alice Smith <alice@example.test>\n\nJust a body");
+  });
+
+  it("falls back to the bare address when the sender set no name", () => {
+    const text = formatEmailContent({ from: ANON, subject: null, body: "Just a body", html: null });
+    assert.equal(text, "From: alice@example.test\n\nJust a body");
   });
 
   it("formats HTML-only email with subject", () => {
-    const text = formatEmailContent({ subject: "Newsletter", body: null, html: "<p>content</p>" });
-    assert.equal(text, "Subject: Newsletter\n\n[HTML email — plain text not available]");
+    const text = formatEmailContent({
+      from: ANON,
+      subject: "Newsletter",
+      body: null,
+      html: "<p>content</p>",
+    });
+    assert.equal(
+      text,
+      "From: alice@example.test\nSubject: Newsletter\n\n[HTML email — plain text not available]",
+    );
   });
 
   it("formats HTML-only email without subject", () => {
-    const text = formatEmailContent({ subject: null, body: null, html: "<p>content</p>" });
-    assert.equal(text, "[HTML email — plain text not available]");
+    const text = formatEmailContent({
+      from: ANON,
+      subject: null,
+      body: null,
+      html: "<p>content</p>",
+    });
+    assert.equal(text, "From: alice@example.test\n\n[HTML email — plain text not available]");
   });
 
   it("formats empty email", () => {
-    const text = formatEmailContent({ subject: null, body: null, html: null });
-    assert.equal(text, "[Empty email]");
+    const text = formatEmailContent({ from: ANON, subject: null, body: null, html: null });
+    assert.equal(text, "From: alice@example.test\n\n[Empty email]");
   });
 
   it("formats subject-only email", () => {
-    const text = formatEmailContent({ subject: "Subject only", body: null, html: null });
-    assert.equal(text, "Subject: Subject only");
+    const text = formatEmailContent({
+      from: ANON,
+      subject: "Subject only",
+      body: null,
+      html: null,
+    });
+    assert.equal(text, "From: alice@example.test\nSubject: Subject only\n\n[Empty email]");
   });
 });

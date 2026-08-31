@@ -66,7 +66,14 @@ const app = new Hono<AuthEnv>()
       return c.json({ error: `Bridge not enabled for ${platform}` }, 400);
     }
 
-    // Find or create puppet user for the external sender
+    // Find or create puppet user for the external sender. `puppet.username` is the
+    // namespaced `platform:id` handle, and it — not the caller-chosen `displayName` —
+    // is what every sender slot below records: `mind_history.sender` and
+    // `messages.sender_name` otherwise mix an authenticated Volute username with a
+    // string a stranger on Discord picked for themselves, with nothing marking which
+    // is which (#1016). Using the puppet's own username rather than re-deriving
+    // `platform:id` here keeps the recorded sender byte-identical to the participant
+    // row, so display-name lookups and the participant-profile block agree.
     const puppet = await findOrCreatePuppet(platform, body.platformUserId, body.displayName);
 
     if (body.isDM) {
@@ -96,13 +103,13 @@ const app = new Hono<AuthEnv>()
 
       // Add message to conversation (inbound — no turn_id yet, turn created per-session)
       const contentBlocks = body.content as ContentBlock[];
-      await addMessage(conversationId, "user", body.displayName, contentBlocks);
+      await addMessage(conversationId, "user", puppet.username, contentBlocks);
 
       // Fan out to the mind via existing delivery pipeline
       await fanOutToBridgedMinds({
         conversationId,
         contentBlocks,
-        senderName: body.displayName,
+        senderName: puppet.username,
         platform,
         isDM: true,
       });
@@ -133,13 +140,13 @@ const app = new Hono<AuthEnv>()
 
     // Add message (inbound — no turn_id yet, turn created per-session)
     const contentBlocks = body.content as ContentBlock[];
-    await addMessage(channel.id, "user", body.displayName, contentBlocks);
+    await addMessage(channel.id, "user", puppet.username, contentBlocks);
 
     // Fan out to mind participants
     await fanOutToBridgedMinds({
       conversationId: channel.id,
       contentBlocks,
-      senderName: body.displayName,
+      senderName: puppet.username,
       platform,
       isDM: false,
     });

@@ -30,6 +30,26 @@ const userSelectFields = {
   created_at: users.created_at,
 };
 
+/**
+ * Reject a human username that could be mistaken for an external identity.
+ *
+ * External senders — bridge puppets, mail — are recorded under a namespaced
+ * `platform:identifier` handle, so that a *bare* name in a sender column means an
+ * authenticated Volute user and nothing else (#1016). That guarantee only holds while
+ * no Volute username can carry the `:` separator. Mind names already can't
+ * (`validateMindName`'s slug charset); human registration accepted any non-empty
+ * string, which left the namespace forgeable from the other side.
+ *
+ * Returns an error message, or null when the name is acceptable.
+ */
+export function validateUsername(username: string): string | null {
+  if (!username) return "Username is required";
+  if (username.includes(":")) {
+    return 'Username may not contain ":" — that separator is reserved for external identities (e.g. "discord:alice")';
+  }
+  return null;
+}
+
 export async function createUser(username: string, password: string): Promise<User> {
   const db = await getDb();
   const hash = hashSync(password, 10);
