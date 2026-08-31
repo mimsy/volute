@@ -194,7 +194,8 @@ describe("mind_history.sender_id integrity contract (#1017)", () => {
 
     const rows = await inboundRows(MIND);
     assert.equal(rows.length, 1);
-    assert.equal(rows[0].sender, "cloud-alice");
+    // #1027 namespaces the relayed name: it is an outside identity, not a Volute account.
+    assert.equal(rows[0].sender, "cloud:cloud-alice");
     assert.equal(rows[0].sender_id, null, "relayed cloud identity confers no authenticated id");
   });
 
