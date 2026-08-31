@@ -156,6 +156,7 @@ function plainPreview(text: string): string {
                   channel: "",
                   thread: null,
                   sender: null,
+                  sender_id: null,
                   message_id: null,
                   type: "summary",
                   content: childTurn.summary ?? "(no summary)",

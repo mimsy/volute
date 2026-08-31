@@ -236,6 +236,7 @@ function buildHistoryMessage(
     // Live mind-event envelopes still carry the routed thread as `session`.
     thread: (d.session as string) ?? null,
     sender: (d.sender as string) ?? null,
+    sender_id: null,
     message_id: (d.messageId as string) ?? null,
     type: (d.type as string) ?? "",
     content: (d.content as string) ?? "",
@@ -1083,6 +1084,7 @@ function jumpToLatest() {
                       channel: "",
                       thread: null,
                       sender: null,
+                      sender_id: null,
                       message_id: null,
                       type: "summary",
                       content: turn.summary,
@@ -1107,6 +1109,7 @@ function jumpToLatest() {
                       channel: turn.trigger?.event ? "" : (turn.trigger?.channel ?? ""),
                       thread: null,
                       sender: turn.trigger?.event ? null : (turn.trigger?.sender ?? null),
+                      sender_id: null,
                       message_id: null,
                       type: "summary",
                       content: turn.trigger?.event
