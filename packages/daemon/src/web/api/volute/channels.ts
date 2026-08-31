@@ -157,11 +157,10 @@ const app = new Hono<AuthEnv>()
     // admin/spirit may change settings. Plain members deliberately cannot — otherwise a mind
     // could lift a limit that was set to restrain it. Channels with no owner (the commons, or
     // one whose creator left) are admin-only.
-    if (
-      user.role !== "admin" &&
-      user.role !== "spirit" &&
-      (await getParticipantRole(ch.id, user.id)) !== "owner"
-    ) {
+    // Admins or the channel's owner. Not the spirit: changing a channel's rules and
+    // limits is authority over a shared room, and the spirit holds none it wasn't given
+    // for a specific purpose (#433).
+    if (user.role !== "admin" && (await getParticipantRole(ch.id, user.id)) !== "owner") {
       return c.json({ error: "Forbidden" }, 403);
     }
 
@@ -218,11 +217,9 @@ const app = new Hono<AuthEnv>()
     if (!ch) return c.json({ error: "Channel not found" }, 404);
 
     // In-handler authz: only a channel member (or admin/spirit) may add members.
-    if (
-      inviter.role !== "admin" &&
-      inviter.role !== "spirit" &&
-      !(await isParticipant(ch.id, inviter.id))
-    ) {
+    // Admins or a member. The spirit joins a channel like anyone else before it can
+    // bring someone into it (#433).
+    if (inviter.role !== "admin" && !(await isParticipant(ch.id, inviter.id))) {
       return c.json({ error: "Forbidden" }, 403);
     }
 

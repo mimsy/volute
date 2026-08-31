@@ -41,7 +41,15 @@ type HistoryEnv = {
  */
 async function resolveMindFilter(c: Context<HistoryEnv>): Promise<string | undefined> {
   const user = c.get("user");
-  const privileged = user.role === "admin" || user.role === "spirit";
+  // Admins only. This endpoint selects `mind_history.content` — verbatim inbound and
+  // outbound message text — and an unscoped privileged read returns it for *every mind
+  // on the system*. Granting that to the spirit would make every mind's private
+  // conversations readable by anything a sibling could talk it into asking, which is the
+  // same thing this diff refuses at conversations.ts and events.ts (#433).
+  //
+  // Tending is unaffected: `volute mind history --mind X` goes to the per-mind route
+  // `/:name/history`, which is on the spirit's allowlist. Named reads, never a firehose.
+  const privileged = user.role === "admin";
   return privileged ? (c.req.query("mind") ?? undefined) : getBaseName(user.username);
 }
 
@@ -739,7 +747,9 @@ const history = new Hono<HistoryEnv>()
   })
   .get("/summaries", async (c) => {
     const user = c.get("user");
-    const privileged = user.role === "admin" || user.role === "spirit";
+    // Admins only, matching `resolveMindFilter` above — summaries are the rolled-up form
+    // of the same content, so granting them separately would reopen what that closes.
+    const privileged = user.role === "admin";
     // mindFilter is the caller's allowed scope: the requested mind for
     // privileged callers (undefined if none), or the caller's own base name for
     // minds. Summaries default an unscoped privileged read to the system

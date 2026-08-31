@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
  *
  * This test enumerates every `/:name` and `/:mind` route handler in the daemon's
  * web API and requires each to EITHER:
- *   - declare an inline authz guard (requireSelf / requireAdmin / requireAdminOrSystem), OR
+ *   - declare an inline authz guard (requireSelf / requireAdmin), OR
  *   - appear in AUTHZ_EXEMPT below with a documented reason.
  *
  * A NEW unguarded mind-scoped route fails this test until someone consciously
@@ -23,6 +23,7 @@ import { fileURLToPath } from "node:url";
 
 const API_DIR = fileURLToPath(new URL("../packages/daemon/src/web/api", import.meta.url));
 const EXT_DIR = fileURLToPath(new URL("../packages/extensions", import.meta.url));
+const DAEMON_SRC_DIR = fileURLToPath(new URL("../packages/daemon/src", import.meta.url));
 
 // Routes intentionally without an inline middleware guard. Each MUST be either
 // non-sensitive ("public") or enforce authorization inside the handler.
@@ -77,8 +78,11 @@ const MIND_PARAM_RE = /:(name|mind|author)\b/;
 // route's actual mind param — `requireSelf("author")` on a `/:name` route must
 // NOT count. This is what makes presence-of-a-token load-bearing.
 function guardMatches(path: string, middlewareWindow: string): boolean {
-  if (middlewareWindow.includes("requireAdmin")) return true; // covers requireAdminOrSystem too
-  const self = middlewareWindow.match(/requireSelf\(\s*(?:"([^"]*)")?\s*\)/);
+  if (middlewareWindow.includes("requireAdmin")) return true;
+  // `requireSelfOrSpirit` is `requireSelf` plus the spirit, so it guards the same way
+  // and is param-checked the same way. *Which* routes may carry it is a separate
+  // question with its own net below — this one only asks whether a guard is present.
+  const self = middlewareWindow.match(/requireSelf(?:OrSpirit)?\(\s*(?:"([^"]*)")?\s*\)/);
   if (!self) return false;
   const guardParam = self[1] ?? "name"; // requireSelf() defaults to the "name" param
   const pathParam = path.match(MIND_PARAM_RE)?.[1];
@@ -304,7 +308,7 @@ describe("query-param mind-scoped handler authorization coverage", () => {
 // is per-handler (and, per #322, was sometimes wrong). This net enumerates
 // extension routes whose path contains a mind identifier (`:name`, `:mind`,
 // `:author`) anywhere and requires each to carry the canonical `requireSelf`
-// (or `requireAdmin`/`requireAdminOrSystem`) middleware, or be documented here.
+// (or `requireAdmin`) middleware, or be documented here.
 // ---------------------------------------------------------------------------
 
 const EXT_ROUTE_RE =
@@ -379,6 +383,125 @@ describe("extension mind-scoped route authorization coverage", () => {
       stale,
       [],
       `Stale EXT_AUTHZ_EXEMPT entries — remove them:\n${stale.join("\n")}`,
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Net 4: nothing authorizes on "is this the spirit".
+//
+// The spirit is reachable by everyone — every mind has a system DM, humans DM it,
+// it reads #system — so any check that grants authority for *being* the spirit
+// grants it to whatever any of them talks the spirit into (#433). That made the
+// spirit an escalation path from "any mind can send text" to admin-equivalent API
+// access, which is the vulnerability this net exists to keep closed.
+//
+// It scans the daemon as well as extensions. The first version scanned only
+// `packages/extensions`, which left `lib/extensions.ts` — where `resolveActingMind`
+// decided who may pass `--mind` — outside every net, and it still carried the grant.
+// An unpoliced region is how this class keeps coming back.
+//
+// This is a net rather than a doc line on purpose. The SDK hands `resolveUser(c)`
+// to third-party extensions, whose `role` reads "spirit" on every call the spirit
+// makes; the prose warning on that type is exactly the kind of rule CLAUDE.md says
+// drifts. It drifted here before anyone wrote it down — `intentions/routes.ts`
+// gated a coordinator power on `isSystemSpirit(actor)` — and a third-party
+// extension reproducing it would land in someone else's repo on their cadence,
+// where nobody here would ever see it.
+//
+// Scoped to authorization shapes, not every mention: naming the spirit is fine
+// (routing, display, sender classification in chat.ts, `isSpiritName` lookups).
+// What is banned is deciding *what a caller may do* from the fact that it is the
+// spirit.
+// ---------------------------------------------------------------------------
+
+/** `role === "spirit"` / `role !== "spirit"`, and `isSystemSpirit(...)` used as a guard. */
+const SPIRIT_AUTHZ_RE =
+  /(?:\brole\s*[!=]==\s*"spirit"|"spirit"\s*[!=]==\s*\S*\brole\b|\bisSystemSpirit\s*\()/;
+
+/**
+ * Every place the daemon or an extension may name the spirit in one of those shapes,
+ * with the reason it is not a grant.
+ *
+ * Read this list as the answer to "where does being the spirit still mean something?".
+ * Naming the spirit is legitimate for routing, display, classification and *denial* —
+ * what is banned is deciding that a caller may do something because it is the spirit,
+ * since the spirit is reachable by everyone and such a grant is really a grant to them.
+ */
+const SPIRIT_AUTHZ_EXEMPT: Record<string, string> = {
+  "daemon/src/web/middleware/auth.ts":
+    "defines requireSelfOrSpirit — the one sanctioned exception, whose membership is " +
+    "pinned separately by the cross-mind allowlist net below",
+  "daemon/src/web/api/chat.ts":
+    "sender classification and DM recipient detection — decides how a message is " +
+    "rendered and routed, not what anyone may do",
+  "daemon/src/lib/auth.ts":
+    "refuses password login to minds and the spirit — a denial, not a grant",
+  "daemon/src/lib/chat/commons-channel.ts": "recipient filtering for commons announcements",
+  "daemon/src/lib/delivery/fan-out.ts": "delivery routing to the spirit as a participant",
+};
+
+describe("authz coverage: no authorization on spirit identity", () => {
+  it("nothing outside the sanctioned exception authorizes on being the spirit", () => {
+    const violations: string[] = [];
+    for (const root of [DAEMON_SRC_DIR, EXT_DIR]) {
+      for (const { rel, text } of scanFiles(root)) {
+        // `rel` is root-relative, so prefix it to make exemption keys unambiguous
+        // across the two trees — a bare "auth.ts" exists in both.
+        const key = `${root === EXT_DIR ? "extensions" : "daemon/src"}/${rel}`;
+        if (SPIRIT_AUTHZ_EXEMPT[key]) continue;
+        for (const [i, line] of text.split("\n").entries()) {
+          const code = line.trim();
+          if (code.startsWith("//") || code.startsWith("*") || code.startsWith("/*")) continue;
+          if (SPIRIT_AUTHZ_RE.test(line)) violations.push(`${key}:${i + 1}  ${code}`);
+        }
+      }
+    }
+    assert.deepEqual(
+      violations,
+      [],
+      "Code authorizes on spirit identity:\n" +
+        violations.map((v) => `  - ${v}`).join("\n") +
+        "\n\nAnyone can talk to the spirit, so granting it is granting them (#433). " +
+        'Gate on `role === "admin"`, or on requireSelf()/requireSelfOrSpirit() for ' +
+        "per-mind routes. If the hit is not an authorization decision — routing, " +
+        "display, classification, denial — add the file to SPIRIT_AUTHZ_EXEMPT with a " +
+        "reason.",
+    );
+  });
+});
+
+const SPIRIT_CROSS_MIND_ROUTES = [
+  "minds.ts GET /:name/history",
+  "minds.ts GET /:name/history/contacts",
+  "minds.ts GET /:name/seed-check",
+  "minds.ts POST /:name/restart",
+  "minds.ts POST /:name/sleep",
+  "minds.ts POST /:name/start",
+  "minds.ts POST /:name/wake",
+  "schedules.ts GET /:name/clock/status",
+];
+
+describe("authz coverage: the spirit's cross-mind allowlist", () => {
+  it("is exactly the pinned set of routes", () => {
+    const found: string[] = [];
+    for (const { rel, text } of scanFiles(API_DIR)) {
+      const re = /\.(get|post|put|patch|delete)\(\s*"(\/[^"]*)"([\s\S]*?)=>/g;
+      let m: RegExpExecArray | null;
+      // biome-ignore lint/suspicious/noAssignInExpressions: standard exec-loop form
+      while ((m = re.exec(text)) !== null) {
+        if (m[3].includes("requireSelfOrSpirit")) {
+          found.push(`${rel.split("/").pop()} ${m[1].toUpperCase()} ${m[2]}`);
+        }
+      }
+    }
+    assert.deepEqual(
+      found.sort(),
+      SPIRIT_CROSS_MIND_ROUTES,
+      "The set of routes the spirit may reach on another mind has changed.\n" +
+        "This is the whole of its cross-mind authority, so a change here is a security " +
+        "decision, not a refactor. Membership rule: the spirit can keep the system " +
+        "running, but cannot grant capability, read secrets, create, or destroy.",
     );
   });
 });

@@ -13,7 +13,7 @@ import {
 } from "../../lib/mind/volute-config.js";
 import log from "../../lib/util/logger.js";
 import { fireWebhook } from "../../lib/webhook.js";
-import { type AuthEnv, requireSelf } from "../middleware/auth.js";
+import { type AuthEnv, requireSelf, requireSelfOrSpirit } from "../middleware/auth.js";
 
 const slog = log.child("schedules");
 
@@ -196,7 +196,7 @@ function writeSchedules(name: string, dir: string, schedules: Schedule[]): void 
 
 const app = new Hono<AuthEnv>()
   // Clock status — combined sleep state + upcoming schedules
-  .get("/:name/clock/status", requireSelf(), async (c) => {
+  .get("/:name/clock/status", requireSelfOrSpirit(), async (c) => {
     const name = c.req.param("name");
     const entry = await findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);

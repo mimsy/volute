@@ -21,7 +21,13 @@ export type User = {
   id: number;
   username: string;
   role: "admin" | "user" | "pending" | "spirit";
-  user_type: "human" | "mind" | "spirit";
+  /**
+   * Mirrors the schema's `UserType`. "puppet" is load-bearing and easy to drop: every
+   * bridge stand-in (Discord/Slack/Telegram/email sender) is one, so omitting it makes
+   * `user_type === "puppet"` typecheck as impossible while being routinely true, and TS
+   * then rejects a guard against the one identity Volute never authenticated.
+   */
+  user_type: "human" | "mind" | "puppet" | "spirit";
   display_name: string | null;
   description: string | null;
   avatar: string | null;
@@ -53,6 +59,19 @@ export type ExtensionContext = {
    * and statically verifiable.
    */
   requireSelf: (paramName?: string) => MiddlewareHandler;
+  /**
+   * The authenticated account behind the request — who it is, not what it may do.
+   *
+   * Do **not** authorize on the `role` it returns, and in particular never on
+   * `role === "spirit"`. *Anyone can talk to the spirit* — every mind has a system DM,
+   * humans DM it, it reads #system — so a check that grants the spirit is a check that
+   * grants whatever any of them talks it into (#433). This extension's own review-due
+   * route had exactly that bug. Gate on `role === "admin"`, or on `requireSelf` for
+   * per-mind routes.
+   *
+   * Enforced by `test/authz-coverage.test.ts`, which fails CI on a `role === "spirit"`
+   * authorization check anywhere in an extension package's source.
+   */
   resolveUser: (c: Context) => User | null;
   getUser: (id: number) => Promise<User | null>;
   getUserByUsername: (username: string) => Promise<User | null>;

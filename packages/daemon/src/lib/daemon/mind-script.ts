@@ -4,7 +4,7 @@ import { findMind, mindDir, mindTmpDir, mindTmpEnv, stateDir } from "../mind/reg
 import { isSandboxEnabled, wrapForSandbox } from "../mind/sandbox.js";
 import { exec } from "../util/exec.js";
 import { buildMindBaseEnv } from "./mind-manager.js";
-import { generateMindToken, getMindToken } from "./mind-tokens.js";
+import { issueScriptToken, revokeScriptToken } from "./mind-tokens.js";
 
 /**
  * Cap on a mind script's stdout, set deliberately rather than inherited.
@@ -28,9 +28,10 @@ export const MIND_SCRIPT_MAX_BUFFER = 32 * 1024 * 1024;
 /**
  * Build the environment for a mind-authored script — mirrors the mind process env
  * (allowlisted base + merged mind env + VOLUTE_* runtime vars), authenticated
- * with the mind's own per-mind, non-admin token. Reuses the running mind's
- * token when present; otherwise mints one (stable across runs, regenerated on
- * next mind start). The daemon admin token is never included.
+ * with a per-run, non-admin token minted for this script alone (see
+ * `issueScriptToken`) — not the running mind's own long-lived token, so the credential
+ * dies with the run instead of outliving it. Callers must revoke it when the run ends;
+ * {@link runMindScript} does. The daemon admin token is never included.
  */
 export async function buildMindScriptEnv(
   mindName: string,
@@ -38,7 +39,7 @@ export async function buildMindScriptEnv(
 ): Promise<Record<string, string | undefined>> {
   const mindHome = dir ?? mindDir(mindName);
   const entry = await findMind(mindName);
-  const token = getMindToken(mindName) ?? generateMindToken(mindName);
+  const token = issueScriptToken(mindName);
   const mindLocalBin = resolve(mindHome, "home", ".local", "bin");
   const currentPath = process.env.PATH ?? "";
   return {
@@ -102,12 +103,19 @@ export async function runMindScript(
   const { cwd, stdin, timeout } = opts;
   const maxBuffer = opts.maxBuffer ?? MIND_SCRIPT_MAX_BUFFER;
 
-  if (isSandboxEnabled()) {
-    const [wrappedCmd, wrappedArgs] = await wrapForSandbox(cmd, args, dir, opts.mindName, [
-      dir,
-      mindTmpDir(dir),
-    ]);
-    return exec(wrappedCmd, wrappedArgs, { cwd, env, stdin, timeout, maxBuffer });
+  try {
+    if (isSandboxEnabled()) {
+      const [wrappedCmd, wrappedArgs] = await wrapForSandbox(cmd, args, dir, opts.mindName, [
+        dir,
+        mindTmpDir(dir),
+      ]);
+      return await exec(wrappedCmd, wrappedArgs, { cwd, env, stdin, timeout, maxBuffer });
+    }
+    return await exec(cmd, args, { cwd, mindName: opts.mindName, env, stdin, timeout, maxBuffer });
+  } finally {
+    // Bounds the credential to the run rather than to the mind's uptime — see
+    // `issueScriptToken` for why that bound is the one worth having, and for the
+    // backgrounded-work cost it accepts.
+    if (env.VOLUTE_MIND_TOKEN) revokeScriptToken(env.VOLUTE_MIND_TOKEN);
   }
-  return exec(cmd, args, { cwd, mindName: opts.mindName, env, stdin, timeout, maxBuffer });
 }
