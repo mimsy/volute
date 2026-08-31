@@ -25,6 +25,7 @@ import { tryGetDeliveryManager } from "../delivery/delivery-manager.js";
 import {
   type DeliveryPayload,
   getRoutingConfig,
+  parseDeliveryPayload,
   resolveRoute,
 } from "../delivery/delivery-router.js";
 import {
@@ -553,7 +554,7 @@ export class SleepManager {
     for (const row of rows) {
       let payload: DeliveryPayload;
       try {
-        payload = JSON.parse(row.payload);
+        payload = parseDeliveryPayload(row.payload);
       } catch {
         continue; // the flush path's own drop handling deals with these on the next wake
       }
@@ -631,7 +632,7 @@ export class SleepManager {
       for (const row of rows) {
         let payload: DeliveryPayload;
         try {
-          payload = JSON.parse(row.payload);
+          payload = parseDeliveryPayload(row.payload);
         } catch (err) {
           slog.warn(
             `dropping unparseable queued message ${row.id} for ${name}`,

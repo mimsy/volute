@@ -237,7 +237,7 @@ export const chatApp = new Hono<AuthEnv>().post("/", zValidator("json", chatSche
 
       if (!conversationId) {
         const conv = await createConversation({
-          userId: user.id !== 0 ? user.id : undefined,
+          userId: senderId ?? undefined,
           participantIds,
         });
         conversationId = conv.id;

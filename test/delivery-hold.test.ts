@@ -650,9 +650,9 @@ describe("DeliveryManager: holding deliveries", () => {
 });
 
 describe("withHeldPreface", () => {
-  it("leaves an unheld payload exactly as it was", () => {
-    const payload: DeliveryPayload = { channel: "c", sender: "a", senderId: null, content: "hi" };
-    assert.equal(withHeldPreface(payload), payload);
+  it("leaves an unheld payload as it was, minus the daemon-only senderId (#1017)", () => {
+    const payload: DeliveryPayload = { channel: "c", sender: "a", senderId: 7, content: "hi" };
+    assert.deepEqual(withHeldPreface(payload), { channel: "c", sender: "a", content: "hi" });
   });
 
   it("strips the marker so it never reaches the mind as a field", () => {

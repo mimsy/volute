@@ -120,6 +120,33 @@ export interface DeliveryPayload {
   whileSleeping?: "skip" | "queue" | "trigger-wake";
 }
 
+/**
+ * The payload as POSTed to a mind process: `senderId` is stripped. It is the daemon's
+ * record of the authenticated principal (#1017), and the mind's side of the wire is an
+ * untrusted process — a field it could echo back must never exist in a shape that looks
+ * authoritative. `held`/`inboundDeferred` are likewise daemon bookkeeping, stripped by
+ * `withHeldPreface` on the same boundary.
+ */
+export type WirePayload = Omit<DeliveryPayload, "senderId">;
+
+export function toWirePayload(payload: DeliveryPayload): WirePayload {
+  const { senderId: _senderId, ...wire } = payload;
+  return wire;
+}
+
+/**
+ * Parse a persisted queue-row payload. Normalizes fields added after old rows were
+ * written: a legacy row has no `senderId` key, and `undefined` must not survive past
+ * the parse boundary — every reader treats null as "nobody vouched" (#1017), and a
+ * missing key must mean exactly that, not fall through comparisons as undefined.
+ * Throws like JSON.parse on malformed input; callers keep their own catch.
+ */
+export function parseDeliveryPayload(json: string): DeliveryPayload {
+  const payload = JSON.parse(json) as DeliveryPayload;
+  payload.senderId ??= null;
+  return payload;
+}
+
 export function extractTextContent(content: unknown): string {
   if (typeof content === "string") return content;
   if (Array.isArray(content)) {

@@ -13,6 +13,8 @@ import {
   getRoutingConfig,
   resolveRoute,
   shouldGate,
+  toWirePayload,
+  type WirePayload,
 } from "./delivery-router.js";
 
 const dlog = log.child("delivery");
@@ -319,7 +321,7 @@ export async function deliverMessage(
           baseName,
           payload.channel,
           payload.sender ?? null,
-          payload.senderId ?? null,
+          payload.senderId,
           textContent,
         );
         const sleepState = sleepManager.getState(baseName);
@@ -403,12 +405,13 @@ export async function deliverBatch(
       return false;
     }
 
-    // Build the batch payload shape the mind-side router expects.
-    const channels: Record<string, DeliveryPayload[]> = {};
+    // Build the batch payload shape the mind-side router expects. senderId never
+    // crosses to the mind process — see WirePayload (#1017).
+    const channels: Record<string, WirePayload[]> = {};
     for (const p of payloads) {
       const ch = p.channel ?? "unknown";
       if (!channels[ch]) channels[ch] = [];
-      channels[ch].push(p);
+      channels[ch].push(toWirePayload(p));
     }
 
     // Resolve the target session from routing (payloads share a channel, so one
