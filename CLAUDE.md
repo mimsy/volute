@@ -391,8 +391,12 @@ We use [Conventional Commits](https://www.conventionalcommits.org/) and squash-m
 
 - **PR titles must be conventional commits** — e.g. `feat: add message routing`, `fix: handle empty batch`. A CI check enforces this.
 - **Branch commits** don't need to follow the convention (they get squashed), but it's good practice.
-- `feat:` → minor version bump, `fix:` → patch. `feat!:` or `fix!:` (with `!`) → major.
-- Other prefixes (`docs:`, `chore:`, `refactor:`, `test:`, `ci:`, `perf:`) don't trigger a release.
+- `feat:` → minor version bump, `fix:` and `perf:` → patch. `perf:` gets its own
+  "Performance Improvements" changelog section.
+- `feat!:` or `fix!:` (with `!`) → **minor** while we're pre-1.0 — `release-please-config.json`
+  sets `bump-minor-pre-major`, so the `!` earns a `⚠ BREAKING CHANGES` changelog section rather
+  than a major bump.
+- Other prefixes (`docs:`, `chore:`, `refactor:`, `test:`, `ci:`) don't trigger a release.
 
 ## Guestbook
 

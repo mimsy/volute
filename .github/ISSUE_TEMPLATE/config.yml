@@ -1,0 +1,7 @@
+# Blank issues stay enabled on purpose: plenty of good issues here are neither a bug nor a
+# feature request (docs, chores, design notes), and the two forms below shouldn't be a gate.
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/mimsy/volute/security/advisories/new
+    about: Report privately, not as a public issue. See SECURITY.md for details.

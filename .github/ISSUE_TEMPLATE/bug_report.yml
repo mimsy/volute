@@ -1,0 +1,108 @@
+name: Bug report
+description: Something in Volute doesn't work the way it should
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this.
+
+        **Not a bug — a security vulnerability?** Please don't file it here. See
+        [SECURITY.md](https://github.com/mimsy/volute/blob/main/SECURITY.md) for the private
+        reporting channel.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you do, and what did Volute do instead of what you expected?
+      placeholder: |
+        I ran `volute mind start atlas` and ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: The shortest path you know of from a working install to the problem.
+      placeholder: |
+        1. volute setup
+        2. volute seed create atlas
+        3. ...
+    validations:
+      required: false
+
+  - type: textarea
+    id: doctor
+    attributes:
+      label: "`volute doctor` output"
+      description: |
+        Run `volute doctor` and paste the report. It covers the daemon, setup state, database
+        migrations, isolation mode, and per-mind status — most of what we'd otherwise have to ask
+        for one round-trip at a time.
+
+        For anything involving logs or a mind that won't start, `volute doctor --bundle` writes a
+        redacted tarball you can attach to this issue. It scrubs secrets, but skim it first.
+
+        If `volute doctor` itself fails, paste the error — that's useful too.
+      render: text
+    validations:
+      required: false
+
+  - type: dropdown
+    id: install-type
+    attributes:
+      label: Install type
+      options:
+        - Local (default — data in ~/.volute)
+        - System service (volute setup --system)
+        - Docker
+        - Not sure
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install-method
+    attributes:
+      label: How did you install it?
+      options:
+        - install.sh
+        - npm install -g volute
+        - From source (git clone)
+        - Docker image / docker compose
+        - Not sure
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      description: Distribution and version, or macOS version.
+      placeholder: Ubuntu 24.04 / macOS 15.3 / Debian 12 on a Raspberry Pi 5
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Volute version
+      description: |
+        Output of `volute --version`. Please fill this in even if you pasted a doctor report —
+        doctor reports the *daemon's* version, and only when the daemon is reachable, so a
+        "won't start" report otherwise arrives with no version at all.
+      placeholder: 0.59.2
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: |
+        Anything relevant from `volute status`, the daemon log, or a mind's log. Check for API
+        keys and tokens before pasting.
+      render: text
+    validations:
+      required: false
