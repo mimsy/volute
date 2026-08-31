@@ -33,6 +33,7 @@ import {
 } from "../../lib/config/systems-config.js";
 import { getMindManager } from "../../lib/daemon/mind-manager.js";
 import { getSpendBudget } from "../../lib/daemon/spend-budget.js";
+import { activeTurnCount, activeTurnSlots, getTurnLimits } from "../../lib/daemon/turn-slots.js";
 import { countCappedMinds, findMind } from "../../lib/mind/registry.js";
 import {
   generateImage,
@@ -117,6 +118,20 @@ const app = new Hono<AuthEnv>()
       await notifySpiritSystemChange();
     }
     return c.json({ name: config.name ?? null });
+  })
+  // Turns running right now, against the concurrency gate's limits (#823).
+  .get("/turns", requireAdmin, (c) => {
+    const limits = getTurnLimits();
+    return c.json({
+      active: activeTurnCount(),
+      mindConcurrentTurns: limits.mindConcurrentTurns,
+      globalConcurrentTurns: limits.globalConcurrentTurns ?? null,
+      slots: activeTurnSlots().map((s) => ({
+        mind: s.mind,
+        session: s.session,
+        runningMs: Date.now() - s.since,
+      })),
+    });
   })
   // Current cap on total minds and how many currently count toward it.
   .get("/max-minds", requireAdmin, async (c) => {

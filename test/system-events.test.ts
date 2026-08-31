@@ -29,6 +29,13 @@ import {
 } from "../packages/daemon/src/lib/daemon/sleep-manager.js";
 import { initSpendBudget } from "../packages/daemon/src/lib/daemon/spend-budget.js";
 import { handleMindEvent } from "../packages/daemon/src/lib/daemon/turn-lifecycle.js";
+import {
+  acquireTurnSlot,
+  activeTurnCount,
+  concurrencyHold,
+  releaseTurnSlot,
+  resetTurnSlots,
+} from "../packages/daemon/src/lib/daemon/turn-slots.js";
 import { clearMind } from "../packages/daemon/src/lib/daemon/turn-tracker.js";
 import { getDb } from "../packages/daemon/src/lib/db.js";
 import {
@@ -304,7 +311,9 @@ describe("system-events deliverEvent", () => {
 });
 
 describe("system-events: spend hold", () => {
-  function withHold(hold: { reason: string; scope: "mind" | "system" } | null) {
+  function withHold(
+    hold: { reason: string; scope: "mind" | "system"; momentary?: boolean } | null,
+  ) {
     const dm = tryGetDeliveryManager() ?? initDeliveryManager();
     dm.setHoldCheck(() => hold);
     return () => dm.setHoldCheck(() => null);
@@ -329,6 +338,115 @@ describe("system-events: spend hold", () => {
       assert.equal(row?.delivered_at, null, "the row stays pending for the release");
       assert.equal(parseMeta(row?.meta).spendHeld, 1);
       assert.equal((await inboundRows(mind)).length, 0, "and history claims nothing");
+    } finally {
+      release();
+      stub.close();
+      await cleanupMind(mind);
+    }
+  });
+
+  it("waits out a running turn instead of starting a second one", async () => {
+    // The incident behind #823: three schedules fired in the same second and this path —
+    // which POSTs straight at the mind, bypassing the delivery queue and its accounting —
+    // started three concurrent SDK sessions.
+    const mind = uniqueMind();
+    const stub = await stubMind(mind);
+    // A turn running in another session. (Had it been this event's own session the event
+    // would fold into it, which is the gate's other correct answer.)
+    acquireTurnSlot(mind, "discord");
+    try {
+      const posted = deliverEvent(mind, { type: "schedule", body: "heartbeat" });
+      await new Promise((r) => setTimeout(r, 60));
+      assert.equal(stub.posted.length, 0, "the mind is mid-turn; the schedule waits");
+      releaseTurnSlot(mind, "discord");
+      assert.equal((await posted).delivered, true, "and goes out the moment the turn ends");
+      assert.equal(stub.posted.length, 1);
+    } finally {
+      resetTurnSlots();
+      stub.close();
+      await cleanupMind(mind);
+    }
+  });
+
+  it("a rejected event does not free the slot of the turn it folded into", async () => {
+    // The gate's sharpest failure mode: the event POST carries a 10s timeout, so POSTs
+    // fail most on an overloaded host — exactly when the gate matters. Releasing the slot
+    // on every failure would make each failure widen the gate, disabling it under load.
+    const mind = uniqueMind();
+    const stub = await stubMind(mind, { status: 500 });
+    acquireTurnSlot(mind, "main");
+    try {
+      const { delivered } = await deliverEvent(mind, { type: "schedule", body: "heartbeat" });
+      assert.equal(delivered, false, "the mind rejected it");
+      assert.equal(activeTurnCount(), 1, "the turn it folded into keeps its slot");
+      assert.ok(concurrencyHold(mind, "discord"), "so the gate still holds");
+    } finally {
+      resetTurnSlots();
+      stub.close();
+      await cleanupMind(mind);
+    }
+  });
+
+  it("a rejected event DOES free a slot it took itself", async () => {
+    // The other half: an unreachable mind must not gate itself out of the install.
+    const mind = uniqueMind();
+    const stub = await stubMind(mind, { status: 500 });
+    try {
+      const { delivered } = await deliverEvent(mind, { type: "schedule", body: "heartbeat" });
+      assert.equal(delivered, false);
+      assert.equal(activeTurnCount(), 0, "no turn ran, so the slot goes back");
+    } finally {
+      resetTurnSlots();
+      stub.close();
+      await cleanupMind(mind);
+    }
+  });
+
+  it("never makes an event about the mind's own situation wait for a slot", async () => {
+    // A budget notice is emitted from inside the handler for the mind's OWN event stream
+    // (it fires on a `usage` event, mid-turn). If routing sent it to another session and
+    // the gate made it wait, it would block the stream whose `done` frees the slot it is
+    // waiting for. Same line the spend cap draws, for a sharper reason.
+    const mind = uniqueMind();
+    const stub = await stubMind(mind);
+    acquireTurnSlot(mind, "discord");
+    try {
+      for (const type of ["budget", "wake", "lifecycle", "notice", "orientation"]) {
+        const started = Date.now();
+        const { delivered } = await deliverEvent(mind, { type, body: `${type} body` });
+        assert.equal(delivered, true, `${type} must reach the mind`);
+        // Timing is the assertion, not delivery: the gate fails open, so a waited-out
+        // event is delivered too — just a minute late, having blocked its caller.
+        assert.ok(
+          Date.now() - started < 5_000,
+          `${type} must not wait behind another session's turn`,
+        );
+      }
+      assert.equal(stub.posted.length, 5);
+    } finally {
+      resetTurnSlots();
+      stub.close();
+      await cleanupMind(mind);
+    }
+  });
+
+  it("does not park a merely-busy mind's schedule as spend-held", async () => {
+    // #823's concurrency gate is momentary. Stamping it `spendHeld` would hand the event
+    // to `flushHeldEvents`, which runs only when a spend period resets — on an uncapped
+    // install, never. A mind mid-turn is waited for, not shelved.
+    const mind = uniqueMind();
+    const stub = await stubMind(mind);
+    const release = withHold({ reason: "mind_concurrency", scope: "mind", momentary: true });
+    try {
+      const { id, delivered } = await deliverEvent(mind, {
+        type: "schedule",
+        body: "heartbeat",
+        meta: { scheduleId: "hb" },
+      });
+      assert.equal(delivered, true, "a momentary hold is not a spend hold");
+      assert.equal(stub.posted.length, 1);
+      const row = await eventRow(id!);
+      assert.equal(parseMeta(row?.meta).spendHeld, undefined, "and is never parked as one");
     } finally {
       release();
       stub.close();
@@ -454,6 +572,9 @@ describe("system-events $new thread expansion", () => {
       assert.equal(stub.posted[0].session, row1!.thread, "POSTed session matches the row thread");
 
       // A second fire gets a DIFFERENT isolated session — dreams don't share context.
+      // Each $new fire is its own turn, so the concurrency gate (#823) makes the second
+      // wait on the first; release the first as the mind's `done` would.
+      releaseTurnSlot(mind);
       const { id: id2 } = await deliverEvent(mind, {
         type: "schedule",
         body: "dream two",

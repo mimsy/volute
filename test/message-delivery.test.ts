@@ -4,6 +4,7 @@ import { createServer, type Server } from "node:http";
 import { resolve } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { and, eq } from "drizzle-orm";
+import { releaseTurnSlot } from "../packages/daemon/src/lib/daemon/turn-slots.js";
 import { getDb } from "../packages/daemon/src/lib/db.js";
 import {
   clearConfigCache,
@@ -265,6 +266,10 @@ describe("deliverBatch (#382)", () => {
   }
 
   afterEach(async () => {
+    // deliverBatch takes a turn slot around its POST and only gives it back on failure;
+    // in production the mind's `done` frees it. Release it here so the next batch in this
+    // file isn't gated behind a turn that never ran.
+    releaseTurnSlot(BATCH_MIND);
     await removeMind(BATCH_MIND);
   });
 

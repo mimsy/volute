@@ -5,6 +5,7 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 import { MIND_LEVEL_THREAD, type RecordNoticeInput } from "../chat/system-events.js";
 import { getTypingMap, publishTypingForChannels } from "../chat/typing.js";
 import { tryGetMindManager } from "../daemon/mind-manager.js";
+import { acquireTurnSlot, releaseTurnSlot } from "../daemon/turn-slots.js";
 import { linkInboundToActiveTurn } from "../daemon/turn-tracker.js";
 import { getDb } from "../db.js";
 import { getChannelName, getChannelSettings, getParticipants } from "../events/conversations.js";
@@ -178,6 +179,18 @@ export type DeliveryHold = {
    * being left to guess.
    */
   until?: number;
+  /**
+   * This hold lifts on its own within seconds — #823's concurrency gate, which waits out
+   * a turn already running rather than a spend period. Momentary holds leave the row
+   * `pending` for the next sweep instead of moving it to `held`, and every consumer that
+   * treats a hold as a durable park must skip them: `releaseHeld` (a concurrency hold is
+   * gone before a release could run, and its rows were never given the `held` status a
+   * release looks for), `willHoldMessage` (a mind mid-turn still receives what arrives, so
+   * its history row is written at arrival as usual), the wake flush's hand-off to the
+   * delivery hold, and the spend branch of `deliverEvent` — a busy mind's schedule stamped
+   * `spendHeld` would wait for a spend reset that may never come.
+   */
+  momentary?: boolean;
 };
 
 /** Local `YYYY-MM-DD HH:MM`, for a held message telling a mind when it actually arrived. */
@@ -310,6 +323,8 @@ export class DeliveryManager {
   private redriveTimer: ReturnType<typeof setInterval> | null = null;
   /** In-flight sweep, so overlapping `redrive()` calls join it instead of racing it. */
   private redriving: Promise<void> | null = null;
+  /** One queued trailing sweep for callers that arrived during an in-flight one. */
+  private redriveAgain: Promise<void> | null = null;
 
   /**
    * Whether a delivery to this (mind, session) must wait. Injected rather than imported so
@@ -513,6 +528,11 @@ export class DeliveryManager {
     // A completed turn closes the mind's stale-send baselines so the next delivery re-snapshots.
     resetTurn(baseName);
     if (session) {
+      // The turn is over: free the slot regardless of who took it, and regardless of
+      // `activeCount`. A count counts deliveries while a slot counts turns, so two
+      // messages folded into one turn leave the count at 1 after the single `done`;
+      // waiting for zero would gate the mind until the slot's TTL.
+      releaseTurnSlot(baseName, session);
       this.decrementActive(baseName, session);
     } else {
       // No session specified — decrement all sessions for this mind
@@ -522,7 +542,17 @@ export class DeliveryManager {
           this.decrementActive(baseName, sessionName);
         }
       }
+      // Every session, including ones the mind ran without a delivery of ours (a system
+      // event, a wake flush), which have a slot but no `sessionStates` entry.
+      releaseTurnSlot(baseName);
     }
+    // A concurrency hold lifts the moment a turn ends, and the rows it held are still
+    // `pending`. Without this the next sweep is up to REDRIVE_INTERVAL_MS away, which
+    // would put 15s of dead air into every handoff. Fire-and-forget: `sessionDone` is
+    // synchronous by design (see above) and redrive() coalesces overlapping sweeps.
+    void this.redrive().catch((err) =>
+      dlog.warn(`redrive after ${baseName} finished a turn failed`, log.errorData(err)),
+    );
   }
 
   /**
@@ -553,9 +583,24 @@ export class DeliveryManager {
     // loop, so two overlapping passes can both act on a row the other already delivered
     // and deleted. Spend releases now trigger sweeps from three places on top of the
     // periodic timer, which makes the overlap routine rather than theoretical.
-    if (this.redriving) return this.redriving;
+    //
+    // Coalescing alone would drop the request, though, and joining an in-flight sweep is
+    // not the same as being swept: that sweep already read its rows, so a caller whose
+    // reason to sweep arose after the snapshot (a turn ending, which is what frees the
+    // concurrency gate) would see nothing re-read and wait out the full interval anyway.
+    // So an overlapping request queues exactly one trailing pass — enough to guarantee
+    // every row is looked at after the event that prompted the call, and bounded, since
+    // any number of requests during a sweep collapse into that single re-run.
+    if (this.redriving) {
+      this.redriveAgain ??= this.redriving.then(
+        () => this.redrive(),
+        () => this.redrive(),
+      );
+      return this.redriveAgain;
+    }
     this.redriving = this.redriveInner().finally(() => {
       this.redriving = null;
+      this.redriveAgain = null;
     });
     return this.redriving;
   }
@@ -602,7 +647,10 @@ export class DeliveryManager {
       // for as long as the hold lasts.
       const hold = this.holdCheck(row.mind, row.thread);
       if (hold) {
-        await this.holdRow(row.id, payload, hold);
+        // A momentary hold (the concurrency gate) leaves the row `pending` — it is re-offered
+        // on the next sweep, and the sweep that matters is the one `sessionDone` kicks off the
+        // instant the turn ends. Moving it to `held` would strand it until a spend release ran.
+        if (!hold.momentary) await this.holdRow(row.id, payload, hold);
         continue;
       }
 
@@ -703,10 +751,12 @@ export class DeliveryManager {
   private async releaseHeldInner(
     baseName: string,
   ): Promise<{ released: number; archived: number }> {
-    // The spend hold is per-mind, so one check answers for every held row. (A future
-    // per-session hold — #823's concurrency gate — is momentary and never sets this
-    // status, so it has nothing to release here.)
-    if (this.holdCheck(baseName, "main")) return { released: 0, archived: 0 };
+    // The spend hold is per-mind, so one check answers for every held row. #823's
+    // concurrency gate is momentary and never sets this status, so it has nothing to
+    // release here — and must not stand in for a spend hold that has actually lifted,
+    // or a mind that happens to be mid-turn would never get its backlog back.
+    const stillHeld = this.holdCheck(baseName, "main");
+    if (stillHeld && !stillHeld.momentary) return { released: 0, archived: 0 };
 
     let rows: (typeof deliveryQueue.$inferSelect)[];
     try {
@@ -1491,6 +1541,8 @@ export class DeliveryManager {
    */
   clearMindSessions(mindName: string): void {
     this.sessionStates.delete(mindName);
+    // A stopped or crashed mind never reports `done`, so its slots are freed here.
+    releaseTurnSlot(mindName);
     // Free the mind's stale-send gate state so it doesn't linger after stop.
     clearMind(mindName);
     // Clear typing indicators for this mind: entries are persistent (no TTL) and after a
@@ -1535,6 +1587,10 @@ export class DeliveryManager {
     if (!state) return false;
     if (Date.now() - state.lastDeliveredAt < minIdleMs) return false;
     state.activeCount = 0;
+    // A wedged session held a concurrency slot too; the sweep has just established the
+    // session is idle, so releasing here is what stops the repair from leaving the mind
+    // gated until the slot ages out.
+    releaseTurnSlot(mindName, session);
     return true;
   }
 
@@ -1865,7 +1921,7 @@ export class DeliveryManager {
       const hold = this.holdCheck(baseName, session);
       if (hold && queueId != null) {
         dlog.debug(`holding delivery to ${baseName}/${session} (${hold.reason})`);
-        await this.holdRow(queueId, payload, hold);
+        if (!hold.momentary) await this.holdRow(queueId, payload, hold);
         this.inFlight.delete(queueId);
         return;
       }
@@ -1881,7 +1937,7 @@ export class DeliveryManager {
       if (payload.sender) senders.add(payload.sender);
       const channels = new Set<string>();
       if (payload.channel) channels.add(payload.channel);
-      this.incrementActive(baseName, session, senders, channels);
+      const ownsSlot = this.incrementActive(baseName, session, senders, channels);
 
       // Snapshot the stale-send baseline: the latest message this mind has now seen in
       // the conversation, so a reply it composes can be held if a peer posts after this.
@@ -1928,6 +1984,10 @@ export class DeliveryManager {
         if (!ok) {
           // Reachable but rejected (non-OK HTTP) → a live rejection that counts toward the ceiling.
           this.decrementActive(baseName, session);
+          // No turn ran, so give the slot back — but only if this delivery took it. A
+          // message that folded into a turn already running does not own that turn's slot,
+          // and freeing it would open the gate while the mind is still working.
+          if (ownsSlot) releaseTurnSlot(baseName, session);
           publishTypingForChannels(typingMap.deleteSender(baseName), typingMap);
           await this.scheduleRetry([queueId], { liveRejection: true });
         } else {
@@ -1945,6 +2005,7 @@ export class DeliveryManager {
         // Threw → transport failure (mind/variant down or timed out), NOT a live rejection.
         dlog.warn(`failed to deliver to ${mindName}`, log.errorData(err));
         this.decrementActive(baseName, session);
+        if (ownsSlot) releaseTurnSlot(baseName, session);
         publishTypingForChannels(typingMap.deleteSender(baseName), typingMap);
         await this.scheduleRetry([queueId], { liveRejection: false });
       } finally {
@@ -1984,10 +2045,20 @@ export class DeliveryManager {
         dlog.debug(
           `holding batch of ${messages.length} to ${baseName}/${session} (${hold.reason})`,
         );
-        for (const msg of messages) await this.holdRow(msg.queueId!, msg.payload, hold);
+        if (!hold.momentary) {
+          for (const msg of messages) await this.holdRow(msg.queueId!, msg.payload, hold);
+        }
+        // The buffer is dropped either way: the rows stay in the queue, and redrive
+        // rebuilds the batch when the hold lifts.
         for (const id of queueIds) this.inFlight.delete(id);
         return;
       }
+      // Claim the slot HERE, in the same tick as the gate check — not at `incrementActive`
+      // below, which sits behind an `await` on profile enrichment. `runSequential` keys on
+      // (mind, session), so two sessions of one mind are not serialized against each other,
+      // and two batch buffers flushing in the same tick would otherwise both pass a gate
+      // neither had claimed. Idempotent, so the later `incrementActive` is a no-op.
+      const ownsSlot = acquireTurnSlot(baseName, session);
       if (hold) {
         dlog.warn(
           `delivering a batch to ${baseName}/${session} despite a ${hold.reason} hold: ` +
@@ -2028,7 +2099,7 @@ export class DeliveryManager {
         if (msg.channel) channelSet.add(msg.channel);
       }
 
-      // Increment active count with metadata
+      // Increment active count with metadata (the slot was claimed above).
       this.incrementActive(baseName, session, senders, channelSet);
 
       // Snapshot the stale-send baseline per conversation in this batch (see deliverToMind).
@@ -2077,6 +2148,8 @@ export class DeliveryManager {
         if (!ok) {
           // Reachable but rejected (non-OK HTTP) → a live rejection that counts toward the ceiling.
           this.decrementActive(baseName, session);
+          // Only if this batch took the slot — see the immediate path.
+          if (ownsSlot) releaseTurnSlot(baseName, session);
           publishTypingForChannels(typingMap.deleteSender(baseName), typingMap);
           await this.scheduleRetry(queueIds, { liveRejection: true });
         } else {
@@ -2092,6 +2165,7 @@ export class DeliveryManager {
         // Threw → transport failure (mind/variant down or timed out), NOT a live rejection.
         dlog.warn(`failed to deliver batch to ${mindName}`, log.errorData(err));
         this.decrementActive(baseName, session);
+        if (ownsSlot) releaseTurnSlot(baseName, session);
         publishTypingForChannels(typingMap.deleteSender(baseName), typingMap);
         await this.scheduleRetry(queueIds, { liveRejection: false });
       } finally {
@@ -2491,12 +2565,13 @@ export class DeliveryManager {
     return blocks;
   }
 
+  /** Returns whether this delivery is the one that started the turn — see acquireTurnSlot. */
   private incrementActive(
     mind: string,
     session: string,
     senders?: Set<string>,
     channels?: Set<string>,
-  ): void {
+  ): boolean {
     let mindSessions = this.sessionStates.get(mind);
     if (!mindSessions) {
       mindSessions = new Map();
@@ -2511,13 +2586,21 @@ export class DeliveryManager {
       announcedChannelInfo: new Map<string, string>(),
     };
     state.activeCount++;
+    // Take the concurrency slot in the same tick as the gate check above it, so two
+    // deliveries can't both pass a gate neither has yet claimed against.
+    const owned = acquireTurnSlot(mind, session);
     state.lastDeliveredAt = Date.now();
     if (senders) state.lastDeliverySenders = senders;
     if (channels) state.lastDeliveryChannels = channels;
     mindSessions.set(session, state);
+    return owned;
   }
 
   private decrementActive(mind: string, session: string): void {
+    // Deliberately does NOT free the concurrency slot. This runs on the failed-POST paths
+    // as well as on `done`, and a failed delivery that folded into a running turn does not
+    // end that turn — releasing here would open the gate mid-turn. `sessionDone` frees the
+    // slot instead, which is the one signal that actually means the turn is over.
     const mindSessions = this.sessionStates.get(mind);
     if (!mindSessions) return;
     const state = mindSessions.get(session);

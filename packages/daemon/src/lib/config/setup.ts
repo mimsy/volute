@@ -139,6 +139,20 @@ export type SystemLimits = {
    * exhausted every mind is over budget regardless of its own cap. Unset = unlimited.
    */
   systemSpendCapPerDay?: number;
+  /**
+   * How many turns one mind may run at once. Turns are serialized within a session by
+   * the mind's streaming input channel, but a mind whose routes send channels to
+   * different sessions can run several at once, each its own SDK subprocess. Default 1;
+   * raise it only on a host whose storage can take the concurrent writes.
+   */
+  mindConcurrentTurns?: number;
+  /**
+   * How many turns may run across the whole install at once. Unset = unlimited. A host
+   * on slow storage wants a small number here: #823's incident was three schedules
+   * firing in the same second, and an SD card that stalled under the concurrent writes
+   * took the machine down for 25 hours. Deliveries over the cap wait; nothing is dropped.
+   */
+  globalConcurrentTurns?: number;
 };
 
 export type MindDefaultsCognition = CognitionConfig & {

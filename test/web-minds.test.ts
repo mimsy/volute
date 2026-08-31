@@ -259,6 +259,50 @@ describe("web minds routes", () => {
     }
   });
 
+  it("GET /api/v1/system/turns — reports the live turn count and the gate's limits", async () => {
+    // The `volute status` line that reads this sits inside a silent try/catch, so a wrong
+    // path or a missing guard would show up as the line simply never appearing. Pin both.
+    const cookie = await setupAuth();
+    const { acquireTurnSlot, resetTurnSlots } = await import(
+      "../packages/daemon/src/lib/daemon/turn-slots.js"
+    );
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
+    try {
+      acquireTurnSlot("turns-api-mind", "main");
+      const res = await app.request("http://localhost/api/v1/system/turns", {
+        headers: { Cookie: `volute_session=${cookie}` },
+      });
+      assert.equal(res.status, 200);
+      const body = (await res.json()) as {
+        active: number;
+        mindConcurrentTurns: number;
+        globalConcurrentTurns: number | null;
+        slots: { mind: string; session: string; runningMs: number }[];
+      };
+      assert.equal(body.active, 1);
+      assert.equal(body.mindConcurrentTurns, 1, "one turn per mind unless a host raises it");
+      assert.equal(body.globalConcurrentTurns, null, "unset = unlimited");
+      assert.deepEqual(
+        body.slots.map((s) => `${s.mind}/${s.session}`),
+        ["turns-api-mind/main"],
+      );
+
+      // Anonymous is refused by the /api/v1 middleware; the route's own guard is what
+      // separates an ordinary authenticated user (a mind is one) from an admin.
+      const anon = await app.request("http://localhost/api/v1/system/turns");
+      assert.equal(anon.status, 401);
+      const user2 = await createUser("regular-user", "pass");
+      await approveUser(user2.id);
+      const cookie2 = await createSession(user2.id);
+      const nonAdmin = await app.request("http://localhost/api/v1/system/turns", {
+        headers: { Cookie: `volute_session=${cookie2}` },
+      });
+      assert.equal(nonAdmin.status, 403, "which minds are busy is not a mind's business");
+    } finally {
+      resetTurnSlots();
+    }
+  });
+
   it("GET/PUT /api/v1/system/max-minds — roundtrips the cap and reports the count", async () => {
     const cookie = await setupAuth();
     const { readGlobalConfig, writeGlobalConfig } = await import(
