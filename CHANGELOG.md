@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.60.0](https://github.com/mimsy/volute/compare/volute-v0.59.2...volute-v0.60.0) (2026-08-31)
+
+
+### ⚠ BREAKING CHANGES
+
+* reject usernames that can forge a sender, and tell minds whose rules broke ([#1027](https://github.com/mimsy/volute/issues/1027))
+* the spirit is no longer a superuser — a named capability allowlist ([#1020](https://github.com/mimsy/volute/issues/1020))
+* namespace external senders at the point of record ([#1019](https://github.com/mimsy/volute/issues/1019))
+
+### Features
+
+* authenticated sender_id on inbound history rows ([#1028](https://github.com/mimsy/volute/issues/1028)) ([33882c8](https://github.com/mimsy/volute/commit/33882c8238acf2470b114454fe607a4c60dcd76b))
+* concurrency gate for mind turns — per-mind serialization, global cap ([#1007](https://github.com/mimsy/volute/issues/1007)) ([10e6c5a](https://github.com/mimsy/volute/commit/10e6c5a0ca416f0fd5019f42302496a8c1c1f6a0))
+* **spirit:** on-behalf-of delegation — authority resolved from the daemon's own turn evidence ([#1030](https://github.com/mimsy/volute/issues/1030)) ([851879c](https://github.com/mimsy/volute/commit/851879c6623c4ed051de3a6c82b946d161aa107d))
+* the spirit is no longer a superuser — a named capability allowlist ([#1020](https://github.com/mimsy/volute/issues/1020)) ([c77e9d7](https://github.com/mimsy/volute/commit/c77e9d7f978995f2770e0a2f4b2bf2e71401846e))
+
+
+### Bug Fixes
+
+* a hook a mind deletes stays deleted ([#1008](https://github.com/mimsy/volute/issues/1008)) ([f82ca06](https://github.com/mimsy/volute/commit/f82ca06029da6d7fb60ef88795ded97b46510290))
+* bind the session slug per SDK subprocess instead of the racy process-global ([#1029](https://github.com/mimsy/volute/issues/1029)) ([383c7a0](https://github.com/mimsy/volute/commit/383c7a0f4df4dd5b0d44b8ca573d026061ad472f))
+* namespace external senders at the point of record ([#1019](https://github.com/mimsy/volute/issues/1019)) ([f7e3c57](https://github.com/mimsy/volute/commit/f7e3c57593b27e7befb7ebc484d493475e74df26))
+* never spend flagship tokens on background summaries by accident ([#1015](https://github.com/mimsy/volute/issues/1015)) ([7861b86](https://github.com/mimsy/volute/commit/7861b862fc388338fb9769fdce53528004c0196d))
+* reject usernames that can forge a sender, and tell minds whose rules broke ([#1027](https://github.com/mimsy/volute/issues/1027)) ([03fe175](https://github.com/mimsy/volute/commit/03fe1751e4faaa26bb025655afc129d1d84e84b5))
+
 ## [0.59.2](https://github.com/mimsy/volute/compare/volute-v0.59.1...volute-v0.59.2) (2026-08-30)
 
 
