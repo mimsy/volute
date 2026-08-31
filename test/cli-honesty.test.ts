@@ -274,7 +274,7 @@ describe("extractMindFlag — the extension layer's global --mind (#907)", () =>
 
 describe("resolveActingMind (#907)", () => {
   it("refuses when an unprivileged caller asks to act as another mind", () => {
-    const result = resolveActingMind({ username: "mimsy", role: "user" }, "gardener");
+    const result = resolveActingMind({ username: "mimsy" }, "gardener", false);
     assert.ok("error" in result, "must refuse, not substitute the caller");
     assert.match(result.error, /cannot act as 'gardener'/);
     // Both halves of the fact: what was refused, and who you actually are.
@@ -282,28 +282,33 @@ describe("resolveActingMind (#907)", () => {
   });
 
   it("never silently hands the caller its own identity in place of the requested one", () => {
-    const result = resolveActingMind({ username: "mimsy", role: "user" }, "pip");
+    const result = resolveActingMind({ username: "mimsy" }, "pip", false);
     assert.equal("mind" in result, false);
   });
 
   it("allows a mind to name itself", () => {
-    const result = resolveActingMind({ username: "mimsy", role: "user" }, "mimsy");
+    const result = resolveActingMind({ username: "mimsy" }, "mimsy", false);
     assert.deepEqual(result, { mind: "mimsy" });
   });
 
   it("defaults to the caller when no identity is requested", () => {
-    assert.deepEqual(resolveActingMind({ username: "mimsy", role: "user" }, undefined), {
+    assert.deepEqual(resolveActingMind({ username: "mimsy" }, undefined, false), {
       mind: "mimsy",
     });
   });
 
-  it("lets admins and the spirit act as another mind", () => {
-    assert.deepEqual(resolveActingMind({ username: "james", role: "admin" }, "gardener"), {
+  it("lets a privileged caller act as another mind", () => {
+    assert.deepEqual(resolveActingMind({ username: "james" }, "gardener", true), {
       mind: "gardener",
     });
-    assert.deepEqual(resolveActingMind({ username: "volute", role: "spirit" }, "gardener"), {
-      mind: "gardener",
-    });
+  });
+
+  // The spirit's account role is "spirit" on every call; its *authority* is
+  // per-request (#433). Passing privileged=false is what a spirit turn triggered by
+  // a mind's DM looks like, and it must be refused like any other unprivileged caller.
+  it("refuses the spirit when its request carries no privileged authority", () => {
+    const result = resolveActingMind({ username: "volute" }, "gardener", false);
+    assert.ok("error" in result);
   });
 });
 

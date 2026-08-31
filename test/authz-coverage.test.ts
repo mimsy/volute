@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
  *
  * This test enumerates every `/:name` and `/:mind` route handler in the daemon's
  * web API and requires each to EITHER:
- *   - declare an inline authz guard (requireSelf / requireAdmin / requireAdminOrSystem), OR
+ *   - declare an inline authz guard (requireSelf / requireAdmin), OR
  *   - appear in AUTHZ_EXEMPT below with a documented reason.
  *
  * A NEW unguarded mind-scoped route fails this test until someone consciously
@@ -77,7 +77,7 @@ const MIND_PARAM_RE = /:(name|mind|author)\b/;
 // route's actual mind param — `requireSelf("author")` on a `/:name` route must
 // NOT count. This is what makes presence-of-a-token load-bearing.
 function guardMatches(path: string, middlewareWindow: string): boolean {
-  if (middlewareWindow.includes("requireAdmin")) return true; // covers requireAdminOrSystem too
+  if (middlewareWindow.includes("requireAdmin")) return true;
   const self = middlewareWindow.match(/requireSelf\(\s*(?:"([^"]*)")?\s*\)/);
   if (!self) return false;
   const guardParam = self[1] ?? "name"; // requireSelf() defaults to the "name" param
@@ -304,7 +304,7 @@ describe("query-param mind-scoped handler authorization coverage", () => {
 // is per-handler (and, per #322, was sometimes wrong). This net enumerates
 // extension routes whose path contains a mind identifier (`:name`, `:mind`,
 // `:author`) anywhere and requires each to carry the canonical `requireSelf`
-// (or `requireAdmin`/`requireAdminOrSystem`) middleware, or be documented here.
+// (or `requireAdmin`) middleware, or be documented here.
 // ---------------------------------------------------------------------------
 
 const EXT_ROUTE_RE =

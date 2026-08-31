@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import type { UserType } from "@volute/api/user-type";
 import { missingCredentialWarning } from "../ai-service.js";
 import { syncMindProfile } from "../auth.js";
 import { joinCommonsChannelForMind, joinCommonsChannelForSpirit } from "../chat/commons-channel.js";
@@ -317,10 +318,7 @@ export async function stopSpiritFull(name: string): Promise<void> {
  * mind, or the spirit itself, so word the relationship from the creator's
  * user_type rather than assuming a human planted the seed.
  */
-export function buildSeedOrientation(
-  createdBy?: string | null,
-  creatorType?: "human" | "mind" | "spirit",
-): string {
+export function buildSeedOrientation(createdBy?: string | null, creatorType?: UserType): string {
   const intro = `You've just been created as a seed on ${getSystemName()}. Start a conversation — introduce yourself, ask questions, and begin exploring who you want to be.`;
   if (!createdBy) return intro;
 
@@ -352,7 +350,7 @@ export async function sendSeedOrientation(
     log.info(`seed ${mindName} has already been oriented — not re-sending`);
     return;
   }
-  let creatorType: "human" | "mind" | "spirit" | undefined;
+  let creatorType: UserType | undefined;
   if (createdBy) {
     const { getUserByUsername } = await import("../auth.js");
     creatorType = (await getUserByUsername(createdBy))?.user_type;

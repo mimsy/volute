@@ -7,6 +7,7 @@ import {
 } from "../../../lib/events/feed.js";
 import { parseUtcDateTime } from "../../../lib/util/period-keys.js";
 import { type AuthEnv, authMiddleware } from "../../middleware/auth.js";
+import { hasSystemAuthority } from "../../middleware/effective-principal.js";
 
 function eventTime(e: FeedEvent): string {
   return e.kind === "chat" ? e.endedAt : e.createdAt;
@@ -22,8 +23,7 @@ const app = new Hono<AuthEnv>()
   // Private conversations never appear; mind_error detail is redacted for
   // non-admin/system callers (#503).
   .get("/", async (c) => {
-    const user = c.get("user");
-    const privileged = user.role === "admin" || user.role === "spirit";
+    const privileged = hasSystemAuthority(c.get("effective"));
     const [chat, lifecycle] = await Promise.all([
       getChatFeedEvents(),
       getLifecycleFeedEvents({ privileged }),

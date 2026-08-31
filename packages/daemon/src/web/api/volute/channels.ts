@@ -19,6 +19,7 @@ import {
 } from "../../../lib/events/conversations.js";
 import { findMind } from "../../../lib/mind/registry.js";
 import type { AuthEnv } from "../../middleware/auth.js";
+import { hasSystemAuthority } from "../../middleware/effective-principal.js";
 
 const channelSettingsFields = z.object({
   description: z.string().nullable().optional(),
@@ -158,8 +159,7 @@ const app = new Hono<AuthEnv>()
     // could lift a limit that was set to restrain it. Channels with no owner (the commons, or
     // one whose creator left) are admin-only.
     if (
-      user.role !== "admin" &&
-      user.role !== "spirit" &&
+      !hasSystemAuthority(c.get("effective")) &&
       (await getParticipantRole(ch.id, user.id)) !== "owner"
     ) {
       return c.json({ error: "Forbidden" }, 403);
@@ -218,11 +218,7 @@ const app = new Hono<AuthEnv>()
     if (!ch) return c.json({ error: "Channel not found" }, 404);
 
     // In-handler authz: only a channel member (or admin/spirit) may add members.
-    if (
-      inviter.role !== "admin" &&
-      inviter.role !== "spirit" &&
-      !(await isParticipant(ch.id, inviter.id))
-    ) {
+    if (!hasSystemAuthority(c.get("effective")) && !(await isParticipant(ch.id, inviter.id))) {
       return c.json({ error: "Forbidden" }, 403);
     }
 

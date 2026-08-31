@@ -1,4 +1,4 @@
-import { isMind, isSystemSpirit } from "@volute/api/user-type";
+import { isMind } from "@volute/api/user-type";
 import { boundedIntParam, type ExtensionContext, intParamError } from "@volute/extensions";
 import { Hono } from "hono";
 
@@ -176,13 +176,14 @@ export function createRoutes(ctx: ExtensionContext): Hono {
       return c.json(intention);
     })
 
-    // Review-due — the spirit (a coordinator power) or an admin only. `isSystemSpirit`
-    // states that intent directly, so a plain mind can no longer slip through a
-    // `user_type === "mind"` proxy the way the old plan extension's bug did.
+    // Review-due — a coordinator power: an admin, or the spirit acting with admin
+    // authority. Gated on the request's *effective* authority rather than the caller's
+    // role, so a spirit turn that a mind's DM triggered is refused here like any other
+    // unprivileged caller (#433) — a role check would have granted it.
     .get("/review-due", async (c) => {
       const actor = resolveActor(c);
       if (!actor) return c.json({ error: "Unauthorized" }, 401);
-      if (!isSystemSpirit(actor) && actor.role !== "admin") {
+      if (!ctx.isPrivileged(c)) {
         return c.json({ error: "Forbidden" }, 403);
       }
 

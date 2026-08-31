@@ -23,6 +23,7 @@ import {
 import { boundedIntParam, intParamError } from "../../lib/util/query-params.js";
 import { normalizeDbBound } from "../../lib/util/time.js";
 import type { AuthEnv } from "../middleware/auth.js";
+import { hasSystemAuthority } from "../middleware/effective-principal.js";
 
 /**
  * Env for the history router. `mindFilter` is resolved once by router-level
@@ -37,12 +38,13 @@ type HistoryEnv = {
  * Resolve the mind whose history the caller may read. Minds are untrusted:
  * a non-admin principal may only see its own history, so the client-supplied
  * `?mind=` param is ignored and forced to the caller's own (base) name.
- * Admin/system callers keep the requested filter.
+ * Admin/system callers keep the requested filter. "Privileged" is the request's
+ * effective authority, not the account's role: the spirit is privileged here only
+ * while its turn was triggered by an admin, or is its own self-initiated work (#433).
  */
 async function resolveMindFilter(c: Context<HistoryEnv>): Promise<string | undefined> {
-  const user = c.get("user");
-  const privileged = user.role === "admin" || user.role === "spirit";
-  return privileged ? (c.req.query("mind") ?? undefined) : getBaseName(user.username);
+  const privileged = hasSystemAuthority(c.get("effective"));
+  return privileged ? (c.req.query("mind") ?? undefined) : getBaseName(c.get("user").username);
 }
 
 type Db = Awaited<ReturnType<typeof getDb>>;
@@ -738,8 +740,7 @@ const history = new Hono<HistoryEnv>()
     });
   })
   .get("/summaries", async (c) => {
-    const user = c.get("user");
-    const privileged = user.role === "admin" || user.role === "spirit";
+    const privileged = hasSystemAuthority(c.get("effective"));
     // mindFilter is the caller's allowed scope: the requested mind for
     // privileged callers (undefined if none), or the caller's own base name for
     // minds. Summaries default an unscoped privileged read to the system

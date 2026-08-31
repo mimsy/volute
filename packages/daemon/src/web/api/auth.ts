@@ -122,9 +122,12 @@ const authenticated = new Hono<AuthEnv>()
   // apply: countCappedMinds counts `minds` rows, of which this has none.)
   //
   // requireAdmin, like the R1 token routes below: this mints a durable credential,
-  // so it stays human-gated. That excludes the injectable `system` principal by
-  // construction. Public self-signup needs rate-limiting, abuse controls, and a
-  // resource cap before it can ship — deferred, not merely disabled.
+  // so it stays admin-gated. `requireAdmin` reads the request's *effective* authority
+  // (#433), which excludes the spirit's own self-initiated work — but not the spirit
+  // acting on behalf of a verified admin, which is the confirmed design: an admin who
+  // asks the spirit to do this could have done it directly. Public self-signup needs
+  // rate-limiting, abuse controls, and a resource cap before it can ship — deferred,
+  // not merely disabled.
   .post("/minds", requireAdmin, zValidator("json", registerMindSchema), async (c) => {
     const { name, displayName, description, tokenLabel } = c.req.valid("json");
     // Not a collision check (that's the getUserByUsername lookup below): this
@@ -316,12 +319,14 @@ const admin = new Hono<AuthEnv>()
     },
   )
   // --- Durable per-user API tokens ---
-  // requireAdmin throughout: durable credential issuance is human-gated. Only a
-  // role:"admin" principal may mint or rotate tokens — a mind gets this power
-  // only by being deliberately made an admin. Neither a role:"user" principal
-  // (what every mind token resolves to) nor the system principal (the spirit)
-  // qualifies, which closes the prompt-injection path where untrusted text
-  // could talk the spirit into issuing a durable credential to an attacker.
+  // requireAdmin throughout: durable credential issuance is admin-gated. Only admin
+  // *authority* may mint or rotate tokens — a mind gets this power only by being
+  // deliberately made an admin, and a role:"user" principal (what every mind token
+  // resolves to) never does. The spirit qualifies only while acting on behalf of a
+  // verified admin, never on its own self-initiated work (#433), which is what closes
+  // the prompt-injection path: untrusted text reaching the spirit cannot talk it into
+  // issuing a durable credential, because a mind's DM turn carries that mind's
+  // authority and no more.
   .post(
     "/users/:id/tokens",
     requireAdmin,

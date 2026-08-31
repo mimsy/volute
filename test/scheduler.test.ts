@@ -6,6 +6,7 @@ import { afterEach, describe, it } from "node:test";
 import { _resetConfigCache } from "../packages/daemon/src/lib/config/setup.js";
 import {
   resolveMindToken,
+  resolveScriptToken,
   revokeMindToken,
 } from "../packages/daemon/src/lib/daemon/mind-tokens.js";
 import { Scheduler } from "../packages/daemon/src/lib/daemon/scheduler.js";
@@ -760,8 +761,11 @@ describe("scheduler runScript sandboxing", () => {
       const [mind, token, admin] = out.split("\n");
       assert.equal(mind, "alice");
       assert.ok(token && token.length > 0, "script should receive a mind token");
-      // The token is non-admin and scoped to this mind.
-      assert.equal(resolveMindToken(token), "alice");
+      // It is a per-run script credential, not the mind's own long-lived token: that
+      // distinction is what lets the daemon tell a process it spawned from one merely
+      // claiming to be self-initiated, and it is revoked with the run (#433).
+      assert.equal(resolveScriptToken(token), null);
+      assert.equal(resolveMindToken(token), null);
       // The daemon admin token is never handed to the script (expands to empty).
       assert.equal(admin, "");
     } finally {

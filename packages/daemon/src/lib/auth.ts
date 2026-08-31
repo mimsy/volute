@@ -1,4 +1,4 @@
-import { isMind, isSystemSpirit } from "@volute/api/user-type";
+import { isMind, isSystemSpirit, type UserType } from "@volute/api/user-type";
 import { compareSync, hashSync } from "bcryptjs";
 import { and, count, eq, inArray, or } from "drizzle-orm";
 import { getSpiritName } from "./config/setup.js";
@@ -12,7 +12,11 @@ export type User = {
   id: number;
   username: string;
   role: "admin" | "user" | "pending" | "spirit";
-  user_type: "human" | "mind" | "spirit";
+  // The canonical union from the schema, not a hand-copied subset. It used to omit
+  // "puppet" — which every bridge stand-in actually is — so `user.user_type === "puppet"`
+  // typechecked as impossible while being routinely true at runtime, and TS would reject
+  // a guard against exactly the case that needs guarding (#433).
+  user_type: UserType;
   display_name: string | null;
   description: string | null;
   avatar: string | null;

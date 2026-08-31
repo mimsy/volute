@@ -1,6 +1,6 @@
 import { zValidator } from "@hono/zod-validator";
 import { isMind } from "@volute/api/user-type";
-import { Hono } from "hono";
+import { type Context, Hono } from "hono";
 import { z } from "zod";
 import { getOrCreateMindUser, getUserByUsername } from "../../../lib/auth.js";
 import {
@@ -20,6 +20,7 @@ import {
 import { findMind } from "../../../lib/mind/registry.js";
 import { cursorParamsSchema, cursorResponse } from "../../../lib/util/query-params.js";
 import { type AuthEnv, authMiddleware } from "../../middleware/auth.js";
+import { hasSystemAuthority } from "../../middleware/effective-principal.js";
 
 const createSchema = z.object({
   participantNames: z.array(z.string()).min(1),
@@ -31,14 +32,12 @@ const createSchema = z.object({
  * feed). Private → participant/owner, admin, system, or the internal system caller
  * (user.id === 0) only.
  */
-async function canReadConversation(
-  id: string,
-  user: { id: number; role: string },
-): Promise<boolean> {
+async function canReadConversation(c: Context<AuthEnv>, id: string): Promise<boolean> {
   const conv = await getConversation(id);
   if (!conv) return false;
   if (conv.private !== 1) return true;
-  if (user.id === 0 || user.role === "admin" || user.role === "spirit") return true;
+  const user = c.get("user");
+  if (user.id === 0 || hasSystemAuthority(c.get("effective"))) return true;
   return isParticipantOrOwner(id, user.id);
 }
 
@@ -51,12 +50,11 @@ const app = new Hono<AuthEnv>()
   })
   .get("/:id/messages", zValidator("query", cursorParamsSchema), async (c) => {
     const id = c.req.param("id");
-    const user = c.get("user");
     // Non-private conversations are readable by any authenticated user — deliberate;
     // powers the home feed transcript modal (mirrors GET /api/v1/minds/:name/
     // conversations/:convId/messages, AUTHZ_EXEMPT). Private conversations stay
     // scoped to participants (or admin/system).
-    if (!(await canReadConversation(id, user))) {
+    if (!(await canReadConversation(c, id))) {
       return c.json({ error: "Conversation not found" }, 404);
     }
 
@@ -66,10 +64,9 @@ const app = new Hono<AuthEnv>()
   })
   .get("/:id/participants", async (c) => {
     const id = c.req.param("id");
-    const user = c.get("user");
     // Same read semantics as /:id/messages: non-private conversations are readable
     // by any authenticated user (powers the home feed); private ones stay scoped.
-    if (!(await canReadConversation(id, user))) {
+    if (!(await canReadConversation(c, id))) {
       return c.json({ error: "Conversation not found" }, 404);
     }
     const participants = await getParticipants(id);
@@ -155,7 +152,7 @@ const app = new Hono<AuthEnv>()
     // delete the channel and re-create it as its own owner with no limits at all.
     const conv = await getConversation(id);
     if (conv?.type === "channel") {
-      const isAdmin = user.role === "admin" || user.role === "spirit";
+      const isAdmin = hasSystemAuthority(c.get("effective"));
       if (!isAdmin && (await getParticipantRole(id, user.id)) !== "owner") {
         return c.json({ error: "Forbidden" }, 403);
       }

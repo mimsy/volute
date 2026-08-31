@@ -21,7 +21,13 @@ export type User = {
   id: number;
   username: string;
   role: "admin" | "user" | "pending" | "spirit";
-  user_type: "human" | "mind" | "spirit";
+  /**
+   * Mirrors the schema's `UserType`. "puppet" is load-bearing and easy to forget: every
+   * bridge stand-in (Discord/Slack/Telegram/email sender) is one, so omitting it here
+   * makes `user_type === "puppet"` typecheck as impossible while being routinely true,
+   * and TS then rejects a guard against the one identity Volute never authenticated.
+   */
+  user_type: "human" | "mind" | "puppet" | "spirit";
   display_name: string | null;
   description: string | null;
   avatar: string | null;
@@ -53,6 +59,17 @@ export type ExtensionContext = {
    * and statically verifiable.
    */
   requireSelf: (paramName?: string) => MiddlewareHandler;
+  /**
+   * The authenticated account behind the request — who it is, not what it may do.
+   *
+   * Do **not** authorize on the `role` it returns. For the spirit that field reads
+   * `"spirit"` on every call, including a turn some ordinary mind's DM triggered, so
+   * `resolveUser(c)?.role === "spirit"` is a standing grant of admin-equivalent access
+   * to anything that can talk to the spirit — the exact bug #433 removed, and one this
+   * extension's own review-due route had. Use {@link ExtensionContext.isPrivileged}
+   * for admin-or-spirit gates and {@link ExtensionContext.requireSelf} for per-mind
+   * ones; both read the request's resolved authority.
+   */
   resolveUser: (c: Context) => User | null;
   getUser: (id: number) => Promise<User | null>;
   getUserByUsername: (username: string) => Promise<User | null>;
@@ -83,6 +100,16 @@ export type ExtensionContext = {
    * a turn on their own. Never throws.
    */
   recordNotice: (mindName: string, text: string) => Promise<void>;
+  /**
+   * Whether this request carries admin-equivalent authority.
+   *
+   * Read this instead of the caller's stored `role` for any admin-or-spirit gate.
+   * The spirit's account role reads "spirit" on every call, but its authority is
+   * resolved per-request from the turn its call arrived in: on its own self-initiated
+   * work or on behalf of a verified admin it is privileged; on a turn a mind's DM
+   * triggered it is not (#433). A role check would grant the second case too.
+   */
+  isPrivileged: (c: { get: (key: string) => unknown }) => boolean;
   /** Whether per-mind user isolation is enabled (user isolation mode). */
   isIsolationEnabled: () => boolean;
   /** Get the OS username for a mind under user isolation (e.g. "mind-lyra"). */
@@ -194,7 +221,18 @@ export type CommandHandler = (
     flags: Record<string, string | number | boolean | undefined>;
     rest: string[];
   },
-  ctx: ExtensionContext & { mindName?: string; session?: string; stdin?: string },
+  ctx: ExtensionContext & {
+    mindName?: string;
+    session?: string;
+    stdin?: string;
+    /**
+     * Authority this invocation actually runs at, as the daemon resolved it. Read
+     * this rather than the caller's stored `role` for any privileged command: the
+     * spirit's account role says "spirit" on every call, but its authority depends
+     * on who triggered the turn the call arrived in (#433).
+     */
+    privileged?: boolean;
+  },
 ) => Promise<{ output: string } | { error: string }>;
 
 export type ExtensionCommand = {

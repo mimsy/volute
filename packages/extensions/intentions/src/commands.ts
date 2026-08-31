@@ -187,11 +187,11 @@ export function createCommands(): Record<string, ExtensionCommand> {
         if (!ctx.db) return { error: "Intentions extension requires a database" };
         if (!ctx.mindName) return { error: "No mind specified (use --mind or VOLUTE_MIND)" };
 
-        // ctx.mindName is the caller's own identity for a non-privileged mind (the
-        // generic command dispatcher does not let an ordinary mind spoof --mind), so
-        // this role lookup always reflects the real caller, not an attacker-chosen name.
-        const actor = await ctx.getUserByUsername(ctx.mindName);
-        if (!actor || (actor.role !== "admin" && actor.role !== "spirit")) {
+        // `ctx.privileged` is the daemon's resolved authority for this request, not
+        // the caller's stored role. The spirit's account reads "spirit" on every call,
+        // so a role lookup here would hand review-due to a spirit turn that a mind's
+        // DM triggered — exactly the confused deputy #433 closes.
+        if (!ctx.privileged) {
           return { error: "Forbidden: review-due is spirit/admin only" };
         }
 
