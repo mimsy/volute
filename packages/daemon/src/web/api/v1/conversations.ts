@@ -38,7 +38,10 @@ async function canReadConversation(
   const conv = await getConversation(id);
   if (!conv) return false;
   if (conv.private !== 1) return true;
-  if (user.id === 0 || user.role === "admin" || user.role === "spirit") return true;
+  // Admins and the daemon only. A private conversation is private *from* the spirit
+  // too: it is reachable by everyone, so granting it here would make every private
+  // thread readable by whatever any mind talks it into (#433).
+  if (user.id === 0 || user.role === "admin") return true;
   return isParticipantOrOwner(id, user.id);
 }
 
@@ -155,7 +158,7 @@ const app = new Hono<AuthEnv>()
     // delete the channel and re-create it as its own owner with no limits at all.
     const conv = await getConversation(id);
     if (conv?.type === "channel") {
-      const isAdmin = user.role === "admin" || user.role === "spirit";
+      const isAdmin = user.role === "admin";
       if (!isAdmin && (await getParticipantRole(id, user.id)) !== "owner") {
         return c.json({ error: "Forbidden" }, 403);
       }

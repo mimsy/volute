@@ -105,8 +105,11 @@ export function toCommandInfo(cmd: ExtensionCommand): ExtensionCommandInfo {
  * Resolve the mind an extension command runs as, from the authenticated caller and the
  * requested `--mind` / `VOLUTE_MIND` identity.
  *
- * Minds are untrusted principals, so only privileged callers (admin/spirit) may act as
- * someone else. An unprivileged caller that asks to act as another mind is **refused**,
+ * Minds are untrusted principals, so only admins may act as someone else. The spirit is
+ * deliberately not privileged here (#433): it is reachable by everyone, and `--mind` is
+ * an impersonation flag — a spirit that could pass it would let any mind that talked it
+ * into running `--mind <admin>` reach that admin's extension data, and would sail
+ * through a downstream `actor.role === "admin"` check on the *impersonated* identity. An unprivileged caller that asks to act as another mind is **refused**,
  * never quietly handed itself: `volute pages list --mind gardener` used to return the
  * caller's own pages with exit 0, and three minds on separate seats each read that as a
  * fact about the interface rather than a refused permission (#907). A right answer to a
@@ -117,8 +120,7 @@ export function resolveActingMind(
   user: { username: string; role?: string } | undefined,
   requested: string | undefined,
 ): { mind: string | undefined } | { error: string } {
-  const privileged = user?.role === "admin" || user?.role === "spirit";
-  if (privileged) return { mind: requested || user?.username };
+  if (user?.role === "admin") return { mind: requested || user?.username };
   if (requested && requested !== user?.username) {
     return {
       error: user?.username

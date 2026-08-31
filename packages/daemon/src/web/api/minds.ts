@@ -112,9 +112,10 @@ import { fireWebhook } from "../../lib/webhook.js";
 import {
   type AuthEnv,
   invalidateMindUserCache,
+  isSpiritActingOnAnother,
   requireAdmin,
-  requireAdminOrSystem,
   requireSelf,
+  requireSelfOrSpirit,
 } from "../middleware/auth.js";
 
 const _lastActiveCache: { map: Map<string, string>; ts: number } = { map: new Map(), ts: 0 };
@@ -129,6 +130,16 @@ const _LAST_ACTIVE_TTL = 60_000;
  * on this endpoint is mind-authored by definition and is rendered as such.
  */
 const DAEMON_AUTHORED_TYPES = new Set(["inbound", "event"]);
+
+/**
+ * How far out the spirit may set another mind's wake time.
+ *
+ * A day is a tending cycle: long enough for the rest to mean something, short enough
+ * that a mind rested by mistake — or by a spirit talked into it — comes back on its own
+ * rather than waiting for a host to notice. See the sleep route for why the bound exists.
+ */
+const SPIRIT_MAX_SLEEP_HOURS = 24;
+const SPIRIT_MAX_SLEEP_MS = SPIRIT_MAX_SLEEP_HOURS * 60 * 60 * 1000;
 
 /** How many of a mind's messages are currently waiting on a spend cap. */
 async function countHeldDeliveries(baseName: string): Promise<number> {
@@ -228,10 +239,18 @@ async function getMindStatus(
 
 type MindStatus = Awaited<ReturnType<typeof getMindStatus>>;
 
-/** True for the daemon's own privileged principals: admin users and the system spirit. */
+/**
+ * True for admins only. The spirit is deliberately excluded (#433).
+ *
+ * Verified rather than assumed: what this gates is the *extra* registry fields — port,
+ * dir, branch, template, hash, parent, createdBy, running. `toPublicMind` already
+ * returns name, `created` (age), stage, status, displayName, description, avatar and
+ * seedChecklist, which is everything the tending skill reads out of `volute mind list`
+ * (who is around, who is new, who is a seed and how ready). So denying this costs
+ * tending nothing and withholds only host-operational internals.
+ */
 function isPrivileged(c: Context<AuthEnv>): boolean {
-  const role = c.get("user").role;
-  return role === "admin" || role === "spirit";
+  return c.get("user").role === "admin";
 }
 
 /**
@@ -345,7 +364,7 @@ const HISTORY_LIMIT = { fallback: 50, min: 1, max: 200 };
 const OFFSET = { fallback: 0, min: 0, max: Number.MAX_SAFE_INTEGER };
 
 const app = new Hono<AuthEnv>()
-  .post("/", requireAdminOrSystem, zValidator("json", createMindSchema), async (c) => {
+  .post("/", requireAdmin, zValidator("json", createMindSchema), async (c) => {
     const result = await createMind(c.req.valid("json"), { username: c.get("user")?.username });
     if (!result.ok) return c.json({ error: result.error }, result.status);
     return c.json(result.body);
@@ -487,7 +506,7 @@ const app = new Hono<AuthEnv>()
   // Context messages — proxy to mind's /context/messages endpoint
   .get("/:name/context/messages", requireSelf(), async (c) => proxyToMind(c, "context/messages"))
   // Start mind (supports variants) — admin only
-  .post("/:name/start", requireSelf(), async (c) => {
+  .post("/:name/start", requireSelfOrSpirit(), async (c) => {
     const name = c.req.param("name");
 
     const entry = await findMind(name);
@@ -517,7 +536,7 @@ const app = new Hono<AuthEnv>()
   })
   // Restart mind (supports variants) — admin or self
   // Accepts optional JSON body: { context?: { type: string, name?: string, summary?: string, ... } }
-  .post("/:name/restart", requireSelf(), async (c) => {
+  .post("/:name/restart", requireSelfOrSpirit(), async (c) => {
     const name = c.req.param("name");
 
     const entry = await findMind(name);
@@ -749,8 +768,18 @@ const app = new Hono<AuthEnv>()
 
     return c.json(sm.getState(name));
   })
-  // Initiate sleep — mind-or-admin (requireSelf: the mind itself or an admin/system user)
-  .post("/:name/sleep", requireSelf(), async (c) => {
+  /**
+   * Initiate sleep — the mind itself, an admin, or the spirit.
+   *
+   * The spirit's form is bounded: it must name a `wakeAt`, and no further out than
+   * {@link SPIRIT_MAX_SLEEP_MS}. `sleep` is on the spirit's allowlist *because* it is the
+   * humane pause — the mind rests and comes back continuous — while `stop` is not. An
+   * open-ended or year-long sleep collapses that distinction: it is `stop` by another
+   * name, and it would hand back through this route exactly the power the allowlist
+   * withholds. A mind sleeping itself, or an admin, is unbounded as before; the bound is
+   * on the party that has the capability only conditionally (#433).
+   */
+  .post("/:name/sleep", requireSelfOrSpirit(), async (c) => {
     const name = c.req.param("name");
     const entry = await findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
@@ -771,6 +800,24 @@ const app = new Hono<AuthEnv>()
       }
     }
 
+    // The spirit resting another mind must say when it wakes, and not far off.
+    if (await isSpiritActingOnAnother(c.get("user"), name)) {
+      if (!wakeAt) {
+        return c.json(
+          { error: "wakeAt is required when the spirit puts another mind to sleep" },
+          400,
+        );
+      }
+      if (new Date(wakeAt).getTime() - Date.now() > SPIRIT_MAX_SLEEP_MS) {
+        return c.json(
+          {
+            error: `wakeAt may be at most ${SPIRIT_MAX_SLEEP_HOURS}h out when the spirit puts another mind to sleep`,
+          },
+          400,
+        );
+      }
+    }
+
     sm.initiateSleep(name, wakeAt ? { voluntaryWakeAt: wakeAt } : undefined).catch((err) =>
       log.error(`failed to initiate sleep for ${name}`, log.errorData(err)),
     );
@@ -778,7 +825,7 @@ const app = new Hono<AuthEnv>()
     return c.json({ ok: true });
   })
   // Wake a sleeping mind — mind-or-admin (requireSelf: the mind itself or an admin/system user)
-  .post("/:name/wake", requireSelf(), async (c) => {
+  .post("/:name/wake", requireSelfOrSpirit(), async (c) => {
     const name = c.req.param("name");
     const entry = await findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
@@ -907,7 +954,7 @@ const app = new Hono<AuthEnv>()
     return c.json(job);
   })
   // Seed readiness check — used by spirit nurture schedule
-  .get("/:name/seed-check", requireSelf(), async (c) => {
+  .get("/:name/seed-check", requireSelfOrSpirit(), async (c) => {
     const name = c.req.param("name");
     // Without ?force=1 this check is gated on recency — output is empty when the
     // seed was recently attended to, which is what the spirit's `--nurture`
@@ -1911,7 +1958,7 @@ const app = new Hono<AuthEnv>()
   // summarizer — the spirit uses it while tending so a first-week cue doesn't
   // suggest a mind greet a neighbor it has been DMing for the last 20 minutes.
   // Aggregates inbound/outbound rows per channel over a recent window.
-  .get("/:name/history/contacts", requireSelf(), async (c) => {
+  .get("/:name/history/contacts", requireSelfOrSpirit(), async (c) => {
     const name = c.req.param("name");
     // A malformed `hours` used to fall back to 48 and report "last 48h" for a window
     // nobody asked for; `?hours=1e9` used to parse as 1. Refuse both (#970 class).
@@ -2216,7 +2263,7 @@ const app = new Hono<AuthEnv>()
       return c.json({ ok: true, updated, created });
     },
   )
-  .get("/:name/history", requireSelf(), async (c) => {
+  .get("/:name/history", requireSelfOrSpirit(), async (c) => {
     const name = c.req.param("name");
     const channel = c.req.query("channel");
     const session = c.req.query("session");

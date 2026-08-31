@@ -23,7 +23,9 @@ const app = new Hono<AuthEnv>()
   // non-admin/system callers (#503).
   .get("/", async (c) => {
     const user = c.get("user");
-    const privileged = user.role === "admin" || user.role === "spirit";
+    // Admins only. What this grants is *unredacted* mind_error detail, which can embed
+    // raw error strings — mind-private, and squarely in "read secrets" (#433).
+    const privileged = user.role === "admin";
     const [chat, lifecycle] = await Promise.all([
       getChatFeedEvents(),
       getLifecycleFeedEvents({ privileged }),

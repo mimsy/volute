@@ -5,7 +5,7 @@ import { getCookie } from "hono/cookie";
 import { createMiddleware } from "hono/factory";
 import { API_TOKEN_PREFIX, resolveApiToken } from "../../lib/api-tokens.js";
 import { getOrCreateMindUser, getUser, type User } from "../../lib/auth.js";
-import { resolveMindToken } from "../../lib/daemon/mind-tokens.js";
+import { resolveMindToken, resolveScriptToken } from "../../lib/daemon/mind-tokens.js";
 import { getDb } from "../../lib/db.js";
 import { getBaseName } from "../../lib/mind/registry.js";
 import { sessions } from "../../lib/schema.js";
@@ -89,15 +89,6 @@ export const requireAdmin = createMiddleware<AuthEnv>(async (c, next) => {
   await next();
 });
 
-/** Allow admin users and the spirit user (role: "spirit"). */
-export const requireAdminOrSystem = createMiddleware<AuthEnv>(async (c, next) => {
-  const user = c.get("user");
-  if (user.role !== "admin" && user.role !== "spirit") {
-    return c.json({ error: "Forbidden" }, 403);
-  }
-  await next();
-});
-
 async function resolveSession(sessionId: string): Promise<User | null> {
   // Check session cache first
   const cached = sessionCache.get(sessionId);
@@ -159,8 +150,9 @@ export async function resolvePrincipal(c: Context): Promise<Principal | null> {
       };
     }
 
-    // 2. Mind token — per-mind, resolves to mind's user record
-    const mindName = resolveMindToken(token);
+    // 2. Mind token — per-mind, resolves to mind's user record. A script token
+    // resolves the same way: same authority, but scoped to one daemon-spawned run.
+    const mindName = resolveScriptToken(token) ?? resolveMindToken(token);
     if (mindName) {
       const cached = mindUserCache.get(mindName);
       let mindUser: User;
@@ -212,10 +204,60 @@ export const authMiddleware = createMiddleware<AuthEnv>(async (c, next) => {
   await next();
 });
 
+/**
+ * Routes the spirit may reach on *another* mind, in addition to its own.
+ *
+ * The spirit is not a superuser and has no standing authority: it passes `requireSelf`
+ * only on itself. This middleware is the entire exception, and the exception is the
+ * list of places it is named — six routes, countable by a person and pinned by
+ * `test/authz-coverage.test.ts`.
+ *
+ * It is a separate middleware rather than a clause inside `requireSelf` on purpose. The
+ * blanket grant this replaces lived as a `role === "spirit"` short-circuit *inside*
+ * `requireSelf`, which meant no mind-scoped route looked like it granted the spirit
+ * anything — the guard read as "self only" at all ~40 call sites while meaning "self,
+ * or the spirit, on all of them." That invisibility is how it survived review for
+ * months. A middleware you have to name at each site can be counted; a bypass cannot.
+ *
+ * What belongs here is bounded by one rule: *the spirit can keep the system running,
+ * but cannot grant capability, read secrets, create, or destroy.* Every member is a
+ * read the spirit needs for tending, or an availability action whose worst outcome is
+ * disruption that heals — `start` and `restart` end with the mind running, `sleep` and
+ * `wake` are the mind's own rhythm. `stop` is deliberately absent: `clock sleep` is the
+ * humane form of the same intent (pre-sleep ritual, session archived, messages queued,
+ * the mind comes back continuous), so the spirit can rest a mind but not silence one.
+ */
+export const requireSelfOrSpirit = (paramName = "name") =>
+  createMiddleware<AuthEnv>(async (c, next) => {
+    if (c.get("user").role === "spirit") return next();
+    return requireSelf(paramName)(c, next);
+  });
+
+/**
+ * True when the spirit is acting on a mind that is not itself.
+ *
+ * Lives here, beside `requireSelfOrSpirit`, because it is the same question: this file
+ * is where "what does being the spirit mean" is decided, and keeping the role check in
+ * one place is what lets `test/authz-coverage.test.ts` treat a role check anywhere else
+ * as a finding. Callers use it to *narrow* what the allowlist grants — see the bounded
+ * `wakeAt` on `POST /:name/sleep` — never to widen it.
+ */
+export async function isSpiritActingOnAnother(
+  user: { role: string; username: string },
+  targetName: string,
+): Promise<boolean> {
+  if (user.role !== "spirit") return false;
+  return (await getBaseName(targetName)) !== user.username;
+}
+
 export const requireSelf = (paramName = "name") =>
   createMiddleware<AuthEnv>(async (c, next) => {
     const user = c.get("user");
-    if (user.role !== "admin" && user.role !== "spirit") {
+    // No spirit clause. Anyone can talk to the spirit — every mind has a system DM,
+    // humans DM it, it reads #system — so "the spirit may reach any mind's data" meant
+    // "anything any mind talks the spirit into may reach any mind's data" (#433). The
+    // six places it genuinely needs cross-mind access name `requireSelfOrSpirit`.
+    if (user.role !== "admin") {
       const target = c.req.param(paramName) ?? "";
       const baseName = await getBaseName(target);
       // Base-map the caller too: a variant's token resolves to its own name,

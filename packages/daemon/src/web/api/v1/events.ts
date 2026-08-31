@@ -34,7 +34,10 @@ const app = new Hono<AuthEnv>().use("*", authMiddleware).get("/", async (c) => {
   // Minds are untrusted: a non-admin/system principal may only see its own
   // activity (activity.summary is an AI-generated summary of a mind's turn).
   // `activityMind === undefined` means a privileged caller with the global feed.
-  const privileged = user.role === "admin" || user.role === "spirit";
+  // Admins only. This is the global activity stream for every mind on the system, and
+  // nothing in the spirit's tending reads it — it works from `mind list`, `mind history`
+  // and `mind contacts`. A firehose is not a tending tool (#433).
+  const privileged = user.role === "admin";
   const activityMind = privileged ? undefined : await getBaseName(user.username);
 
   return streamSSE(c, async (stream) => {

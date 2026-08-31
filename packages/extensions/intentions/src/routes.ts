@@ -1,4 +1,4 @@
-import { isMind, isSystemSpirit } from "@volute/api/user-type";
+import { isMind } from "@volute/api/user-type";
 import { boundedIntParam, type ExtensionContext, intParamError } from "@volute/extensions";
 import { Hono } from "hono";
 
@@ -176,13 +176,17 @@ export function createRoutes(ctx: ExtensionContext): Hono {
       return c.json(intention);
     })
 
-    // Review-due — the spirit (a coordinator power) or an admin only. `isSystemSpirit`
-    // states that intent directly, so a plain mind can no longer slip through a
-    // `user_type === "mind"` proxy the way the old plan extension's bug did.
+    // Review-due — admins only.
+    //
+    // This used to admit the spirit on the strength of `isSystemSpirit(actor)`. But
+    // *anyone can talk to the spirit* — every mind has a system DM, humans DM it, it
+    // reads #system — so a standing grant to the spirit is a standing grant to whatever
+    // any of them talks it into (#433). A coordinator power gated on "is the spirit" is
+    // gated on nothing.
     .get("/review-due", async (c) => {
       const actor = resolveActor(c);
       if (!actor) return c.json({ error: "Unauthorized" }, 401);
-      if (!isSystemSpirit(actor) && actor.role !== "admin") {
+      if (actor.role !== "admin") {
         return c.json({ error: "Forbidden" }, 403);
       }
 

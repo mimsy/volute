@@ -297,13 +297,19 @@ describe("resolveActingMind (#907)", () => {
     });
   });
 
-  it("lets admins and the spirit act as another mind", () => {
+  it("lets admins act as another mind", () => {
     assert.deepEqual(resolveActingMind({ username: "james", role: "admin" }, "gardener"), {
       mind: "gardener",
     });
-    assert.deepEqual(resolveActingMind({ username: "volute", role: "spirit" }, "gardener"), {
-      mind: "gardener",
-    });
+  });
+
+  // Was "…and the spirit". `--mind` is an impersonation flag, and the spirit is reachable
+  // by everyone — so a spirit that could pass it would let any mind that talked it into
+  // `--mind <admin>` reach that admin's extension data, and sail through a downstream
+  // `role === "admin"` check on the impersonated identity (#433).
+  it("refuses the spirit, which is reachable by everyone", () => {
+    const result = resolveActingMind({ username: "volute", role: "spirit" }, "gardener");
+    assert.ok("error" in result);
   });
 });
 

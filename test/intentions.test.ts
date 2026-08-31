@@ -288,10 +288,14 @@ describe("intentions routes authorization", () => {
     assert.equal(res.status, 403);
   });
 
-  it("GET /review-due allows the spirit (role: system)", async () => {
+  // Was "allows the spirit". Anyone can talk to the spirit — every mind has a system
+  // DM, humans DM it, it reads #system — so admitting it here admitted whatever any of
+  // them talked it into. A coordinator power gated on "is the spirit" is gated on
+  // nothing (#433).
+  it("GET /review-due refuses the spirit", async () => {
     const headers = await mindAuth(spiritName);
     const res = await app.request("http://localhost/api/ext/intentions/review-due", { headers });
-    assert.equal(res.status, 200);
+    assert.equal(res.status, 403);
   });
 
   it("GET /review-due allows an admin", async () => {
@@ -492,16 +496,26 @@ describe("intentions commands", () => {
     assert.match(result.error, /Forbidden/);
   });
 
-  it("review-due command allows the spirit (role: spirit)", async () => {
-    createIntention(db, "aria", "overdue thing", undefined, undefined);
-    db.prepare("UPDATE intentions SET review_at = datetime('now', '-1 day')").run();
-
+  // The CLI twin of the route above, and the copy the fix originally missed — the
+  // authz-coverage net found it, not a human re-reading the diff.
+  it("review-due command refuses the spirit", async () => {
     const commands = createCommands();
     const ctx = makeCtx("volute", {
       username: "volute",
       role: "spirit",
       user_type: "spirit",
     } as User);
+    const result = await commands["review-due"].handler({ args: {}, flags: {}, rest: [] }, ctx);
+    assert.ok("error" in result);
+    assert.match(result.error, /Forbidden/);
+  });
+
+  it("review-due command allows an admin", async () => {
+    createIntention(db, "aria", "overdue thing", undefined, undefined);
+    db.prepare("UPDATE intentions SET review_at = datetime('now', '-1 day')").run();
+
+    const commands = createCommands();
+    const ctx = makeCtx("james", { username: "james", role: "admin", user_type: "human" } as User);
     const result = await commands["review-due"].handler({ args: {}, flags: {}, rest: [] }, ctx);
     assert.ok("output" in result);
     assert.match(result.output, /overdue thing/);

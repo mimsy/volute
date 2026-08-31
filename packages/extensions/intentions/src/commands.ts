@@ -190,9 +190,15 @@ export function createCommands(): Record<string, ExtensionCommand> {
         // ctx.mindName is the caller's own identity for a non-privileged mind (the
         // generic command dispatcher does not let an ordinary mind spoof --mind), so
         // this role lookup always reflects the real caller, not an attacker-chosen name.
+        //
+        // Admins only. This admitted the spirit until #433: *anyone can talk to the
+        // spirit*, so a grant to it is a grant to whatever any mind talks it into. The
+        // route twin in routes.ts had the same check, and this one is why the net in
+        // test/authz-coverage.test.ts scans for the shape rather than trusting a fix to
+        // have found every copy of it — it found this copy on its first run.
         const actor = await ctx.getUserByUsername(ctx.mindName);
-        if (!actor || (actor.role !== "admin" && actor.role !== "spirit")) {
-          return { error: "Forbidden: review-due is spirit/admin only" };
+        if (!actor || actor.role !== "admin") {
+          return { error: "Forbidden: review-due is admin only" };
         }
 
         const rawNudge = Number(process.env.VOLUTE_INTENTION_NUDGE_DAYS);
