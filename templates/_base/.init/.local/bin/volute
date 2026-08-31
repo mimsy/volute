@@ -1,14 +1,9 @@
 #!/bin/sh
-# Wrapper that sets VOLUTE_SESSION from the session file before calling the real volute CLI.
-# In sandbox mode, env vars set after process start don't propagate to child processes.
-if [ -z "$VOLUTE_SESSION" ] && [ -n "$VOLUTE_MIND_DIR" ]; then
-  SESSION_FILE="$VOLUTE_MIND_DIR/.mind/current-session"
-  if [ -f "$SESSION_FILE" ]; then
-    VOLUTE_SESSION=$(cat "$SESSION_FILE")
-    export VOLUTE_SESSION
-  fi
-fi
-# Find the real volute binary (skip this wrapper)
+# Wrapper that finds the real volute CLI on PATH (skipping this shim's dir).
+# VOLUTE_SESSION arrives in the environment. How it got there is per-template:
+# claude binds it in each session's SDK subprocess env at spawn (per-turn-truthful);
+# codex syncs it to .zshenv and pi sets a process-global at dispatch (both
+# last-writer-wins across concurrent sessions).
 REAL_VOLUTE=""
 OLDIFS="$IFS"
 IFS=:

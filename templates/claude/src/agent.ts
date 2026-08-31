@@ -342,7 +342,10 @@ export function createMind(options: {
         allowDangerouslySkipPermissions: true,
         settingSources: ["project", "user"],
         skills: installedSkills(),
-        env: sdkEnv,
+        // Per-stream env binds the session slug to this SDK subprocess and every
+        // Bash child it spawns — the per-turn X-Volute-Thread source. A process-
+        // global (env or file) is last-writer-wins across concurrent sessions.
+        env: { ...sdkEnv, VOLUTE_SESSION: session.name },
         cwd: options.cwd,
         abortController: streamAbort,
         model: options.model,

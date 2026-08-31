@@ -360,7 +360,8 @@ export function createMind(options: {
     session.abortController = new AbortController();
 
     // Sync VOLUTE_SESSION to .zshenv so codex shell commands know which session they're in.
-    // process.env.VOLUTE_SESSION is set by the router, but the codex sandbox doesn't inherit it.
+    // The codex sandbox doesn't pass env through, so this file is the only carrier — and it
+    // is still last-writer-wins across sessions, unlike the claude template's per-stream env.
     try {
       const zshenvPath = resolvePath(options.cwd, ".zshenv");
       let existing: string;

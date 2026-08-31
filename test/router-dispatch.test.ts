@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
@@ -225,5 +225,35 @@ describe("dispatchBatch formatting", () => {
     router.dispatchBatch({ channels: {} }, "main", {});
 
     assert.equal(calls.length, 0);
+  });
+});
+
+describe("dispatch session binding", () => {
+  // The session slug is bound per SDK subprocess at spawn (templates/claude/src/agent.ts
+  // createStream passes `env: { ...sdkEnv, VOLUTE_SESSION: session.name }`), so each turn's
+  // Bash children see their own session. Dispatch must not reintroduce a process-global
+  // carrier: a `process.env.VOLUTE_SESSION` write or a `.mind/current-session` file is
+  // last-writer-wins for the whole mind process — with two turns open, a CLI call inside
+  // one snapshots whichever slug was written last (#1017).
+  it("does not write a process-global VOLUTE_SESSION or a current-session file", () => {
+    const mindDir = mkdtempSync(join(tmpdir(), "router-session-"));
+    const prevSession = process.env.VOLUTE_SESSION;
+    const prevMindDir = process.env.VOLUTE_MIND_DIR;
+    delete process.env.VOLUTE_SESSION;
+    process.env.VOLUTE_MIND_DIR = mindDir;
+    try {
+      const { mindHandler } = createTestHandler();
+      const router = createRouter({ mindHandler });
+
+      router.dispatch([{ type: "text", text: "hi" }], "@alice", { channel: "@alice" });
+
+      assert.equal(process.env.VOLUTE_SESSION, undefined);
+      assert.equal(existsSync(join(mindDir, ".mind", "current-session")), false);
+    } finally {
+      if (prevSession === undefined) delete process.env.VOLUTE_SESSION;
+      else process.env.VOLUTE_SESSION = prevSession;
+      if (prevMindDir === undefined) delete process.env.VOLUTE_MIND_DIR;
+      else process.env.VOLUTE_MIND_DIR = prevMindDir;
+    }
   });
 });

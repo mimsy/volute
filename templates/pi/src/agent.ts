@@ -642,6 +642,14 @@ export async function createMind(options: {
             broadcast(session, { type: "done" });
             return;
           }
+          // pi's tools run in-process and spawn their children from this very
+          // process, so there is no per-session subprocess to bind VOLUTE_SESSION
+          // to (the claude template binds it in the SDK subprocess env at spawn).
+          // A process-global is the only carrier pi has: each tool child snapshots
+          // env at its own spawn, so this is correct for a single active turn and
+          // last-writer-wins across genuinely concurrent pi turns — which is why a
+          // spirit on this template fails closed to `basic` for #1017 delegation.
+          process.env.VOLUTE_SESSION = sessionName;
           // This await is load-bearing: without it a prompt rejection (burst race,
           // auth failure, ...) floats as an unhandled rejection and crashes the
           // mind server instead of landing in the .catch below (issue #565).
