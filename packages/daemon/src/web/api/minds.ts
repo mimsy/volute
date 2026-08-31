@@ -117,6 +117,7 @@ import {
   requireSelf,
   requireSelfOrSpirit,
 } from "../middleware/auth.js";
+import { hasAdminAuthority } from "../middleware/effective-principal.js";
 
 const _lastActiveCache: { map: Map<string, string>; ts: number } = { map: new Map(), ts: 0 };
 const _LAST_ACTIVE_TTL = 60_000;
@@ -240,7 +241,8 @@ async function getMindStatus(
 type MindStatus = Awaited<ReturnType<typeof getMindStatus>>;
 
 /**
- * True for admins only. The spirit is deliberately excluded (#433).
+ * True for admin *authority* only: a real admin, or the spirit on a turn a verified
+ * admin triggered. The spirit's own tiers are deliberately excluded (#433).
  *
  * Verified rather than assumed: what this gates is the *extra* registry fields — port,
  * dir, branch, template, hash, parent, createdBy, running. `toPublicMind` already
@@ -250,7 +252,7 @@ type MindStatus = Awaited<ReturnType<typeof getMindStatus>>;
  * tending nothing and withholds only host-operational internals.
  */
 function isPrivileged(c: Context<AuthEnv>): boolean {
-  return c.get("user").role === "admin";
+  return hasAdminAuthority(c.get("effective"));
 }
 
 /**
@@ -1394,10 +1396,13 @@ const app = new Hono<AuthEnv>()
     if (!entry) return c.json({ error: "Mind not found" }, 404);
     const user = c.get("user");
     const convs = await listConversationsForMind(name);
-    // Strip lastMessage from private conversations for non-participants/non-admins
+    // Strip lastMessage from private conversations for non-participants/non-admins.
+    // Admin *authority*, like every privileged read here: the spirit qualifies only
+    // on a verified admin's turn, never on its own (#433).
+    const privileged = hasAdminAuthority(c.get("effective"));
     const filtered = convs.map((conv) => {
       if (conv.private !== 1) return conv;
-      if (user.role === "admin") return conv;
+      if (privileged) return conv;
       const userIsParticipant = conv.participants.some((p) => p.userId === user.id);
       if (userIsParticipant) return conv;
       const { lastMessage: _, ...rest } = conv;
@@ -1426,7 +1431,9 @@ const app = new Hono<AuthEnv>()
       }
       if (conv.private === 1) {
         const user = c.get("user");
-        if (user.role !== "admin") {
+        // Admin authority, like the private-conversation reads above: the spirit
+        // qualifies only on a verified admin's turn, never on its own (#433).
+        if (!hasAdminAuthority(c.get("effective"))) {
           const participant = await isParticipant(convId, user.id);
           if (!participant) {
             return c.json({ error: "This is a private conversation" }, 403);

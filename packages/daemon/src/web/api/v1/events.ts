@@ -25,19 +25,23 @@ import { getBaseName } from "../../../lib/mind/registry.js";
 import { activity } from "../../../lib/schema.js";
 import log from "../../../lib/util/logger.js";
 import { type AuthEnv, authMiddleware } from "../../middleware/auth.js";
+import { hasAdminAuthority } from "../../middleware/effective-principal.js";
 
 const app = new Hono<AuthEnv>().use("*", authMiddleware).get("/", async (c) => {
   const user = c.get("user");
   const since = c.req.query("since");
   const sinceId = since ? Number(since) : 0;
 
-  // Minds are untrusted: a non-admin/system principal may only see its own
+  // Minds are untrusted: a non-admin principal may only see its own
   // activity (activity.summary is an AI-generated summary of a mind's turn).
   // `activityMind === undefined` means a privileged caller with the global feed.
-  // Admins only. This is the global activity stream for every mind on the system, and
-  // nothing in the spirit's tending reads it — it works from `mind list`, `mind history`
-  // and `mind contacts`. A firehose is not a tending tool (#433).
-  const privileged = user.role === "admin";
+  // Admin authority only, and never *borrowed* admin authority: this is a stream, and
+  // authority is captured once at connect — a spirit that opened it during a verified
+  // admin's turn would keep the global firehose long after that turn ended, converting
+  // one in-turn moment of delegated authority into a standing subscription. Delegation
+  // covers discrete requests; streams take an authority of your own (#433).
+  const effective = c.get("effective");
+  const privileged = hasAdminAuthority(effective) && !effective?.actingFor;
   const activityMind = privileged ? undefined : await getBaseName(user.username);
 
   return streamSSE(c, async (stream) => {

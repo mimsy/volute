@@ -70,9 +70,23 @@ export type ExtensionContext = {
    * per-mind routes.
    *
    * Enforced by `test/authz-coverage.test.ts`, which fails CI on a `role === "spirit"`
-   * authorization check anywhere in an extension package's source.
+   * authorization check anywhere in an extension package's source. For a coordinator
+   * gate that should admit the spirit's daemon-evidenced work, use
+   * {@link ExtensionContext.isPrivileged}, which reads the request's resolved
+   * authority instead of the account's role.
    */
   resolveUser: (c: Context) => User | null;
+  /**
+   * Whether this request carries privileged (admin-equivalent) authority.
+   *
+   * Read this instead of the caller's stored `role` for any admin-or-spirit gate.
+   * The spirit's account role reads "spirit" on every call, but its authority is
+   * resolved per-request by the daemon: on its own daemon-evidenced work (a schedule
+   * turn, a daemon-spawned script) or on behalf of a verified admin it is privileged;
+   * on a turn a mind's DM triggered it is not (#433). A role check would grant the
+   * second case too.
+   */
+  isPrivileged: (c: { get: (key: string) => unknown }) => boolean;
   getUser: (id: number) => Promise<User | null>;
   getUserByUsername: (username: string) => Promise<User | null>;
   publishActivity: (event: ActivityEvent) => void;
@@ -213,7 +227,18 @@ export type CommandHandler = (
     flags: Record<string, string | number | boolean | undefined>;
     rest: string[];
   },
-  ctx: ExtensionContext & { mindName?: string; session?: string; stdin?: string },
+  ctx: ExtensionContext & {
+    mindName?: string;
+    session?: string;
+    stdin?: string;
+    /**
+     * Authority this invocation actually runs at, as the daemon resolved it. Read
+     * this rather than the caller's stored `role` for any privileged command: the
+     * spirit's account role says "spirit" on every call, but its authority depends
+     * on who triggered the turn the call arrived in (#433).
+     */
+    privileged?: boolean;
+  },
 ) => Promise<{ output: string } | { error: string }>;
 
 export type ExtensionCommand = {

@@ -176,17 +176,20 @@ export function createRoutes(ctx: ExtensionContext): Hono {
       return c.json(intention);
     })
 
-    // Review-due — admins only.
+    // Review-due — a coordinator power: privileged authority only.
     //
     // This used to admit the spirit on the strength of `isSystemSpirit(actor)`. But
     // *anyone can talk to the spirit* — every mind has a system DM, humans DM it, it
     // reads #system — so a standing grant to the spirit is a standing grant to whatever
     // any of them talks it into (#433). A coordinator power gated on "is the spirit" is
-    // gated on nothing.
+    // gated on nothing. `ctx.isPrivileged` reads the request's *resolved* authority
+    // instead: an admin, the spirit's own daemon-evidenced work (the scheduled
+    // intention-review skill), or a turn a verified admin triggered — and refuses a
+    // spirit turn that a mind's DM triggered like any other unprivileged caller.
     .get("/review-due", async (c) => {
       const actor = resolveActor(c);
       if (!actor) return c.json({ error: "Unauthorized" }, 401);
-      if (actor.role !== "admin") {
+      if (!ctx.isPrivileged(c)) {
         return c.json({ error: "Forbidden" }, 403);
       }
 

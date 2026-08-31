@@ -187,18 +187,17 @@ export function createCommands(): Record<string, ExtensionCommand> {
         if (!ctx.db) return { error: "Intentions extension requires a database" };
         if (!ctx.mindName) return { error: "No mind specified (use --mind or VOLUTE_MIND)" };
 
-        // ctx.mindName is the caller's own identity for a non-privileged mind (the
-        // generic command dispatcher does not let an ordinary mind spoof --mind), so
-        // this role lookup always reflects the real caller, not an attacker-chosen name.
-        //
-        // Admins only. This admitted the spirit until #433: *anyone can talk to the
-        // spirit*, so a grant to it is a grant to whatever any mind talks it into. The
-        // route twin in routes.ts had the same check, and this one is why the net in
+        // `ctx.privileged` is the daemon's resolved authority for this request, not
+        // the caller's stored role. This admitted the spirit on identity until #433:
+        // *anyone can talk to the spirit*, so a grant to it is a grant to whatever any
+        // mind talks it into. Now a spirit turn a mind's DM triggered is refused here
+        // like any other unprivileged caller, while the spirit's own scheduled
+        // intention-review (daemon-evidenced) and admins still pass. The route twin in
+        // routes.ts has the same gate, and this copy is why the net in
         // test/authz-coverage.test.ts scans for the shape rather than trusting a fix to
         // have found every copy of it — it found this copy on its first run.
-        const actor = await ctx.getUserByUsername(ctx.mindName);
-        if (!actor || actor.role !== "admin") {
-          return { error: "Forbidden: review-due is admin only" };
+        if (!ctx.privileged) {
+          return { error: "Forbidden: review-due is spirit/admin only" };
         }
 
         const rawNudge = Number(process.env.VOLUTE_INTENTION_NUDGE_DAYS);

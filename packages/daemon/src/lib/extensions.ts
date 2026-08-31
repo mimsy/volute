@@ -13,6 +13,11 @@ import type {
 } from "@volute/extensions";
 import type { Context, Hono, MiddlewareHandler } from "hono";
 import { type AuthEnv, requireSelf } from "../web/middleware/auth.js";
+import {
+  type Effective,
+  hasAdminAuthority,
+  hasSystemAuthority,
+} from "../web/middleware/effective-principal.js";
 import { getUser, getUserByUsername } from "./auth.js";
 import { announceToCommons } from "./chat/commons-channel.js";
 import { MIND_LEVEL_THREAD, recordNotice as recordMindNotice } from "./chat/system-events.js";
@@ -105,11 +110,17 @@ export function toCommandInfo(cmd: ExtensionCommand): ExtensionCommandInfo {
  * Resolve the mind an extension command runs as, from the authenticated caller and the
  * requested `--mind` / `VOLUTE_MIND` identity.
  *
- * Minds are untrusted principals, so only admins may act as someone else. The spirit is
- * deliberately not privileged here (#433): it is reachable by everyone, and `--mind` is
- * an impersonation flag — a spirit that could pass it would let any mind that talked it
- * into running `--mind <admin>` reach that admin's extension data, and would sail
- * through a downstream `actor.role === "admin"` check on the *impersonated* identity. An unprivileged caller that asks to act as another mind is **refused**,
+ * Minds are untrusted principals, so only privileged callers may act as someone else.
+ * `privileged` is the request's *admin-tier effective* authority (`hasAdminAuthority`),
+ * never the caller's stored role: the spirit's account reads "spirit" on every call, and
+ * `--mind` is an impersonation flag — a spirit privileged on identity would let any mind
+ * that talked it into running `--mind <admin>` reach that admin's extension data, and
+ * sail through a downstream `actor.role === "admin"` check on the *impersonated*
+ * identity (#433). Deliberately NOT `hasSystemAuthority`: the `system` tier is
+ * self-reachable (the spirit configures its own schedules), and its one legitimate
+ * privileged command — review-due — never names a foreign `--mind`, so system-tier
+ * impersonation would be a pure over-grant of exactly the escalation this gate closes.
+ * An unprivileged caller that asks to act as another mind is **refused**,
  * never quietly handed itself: `volute pages list --mind gardener` used to return the
  * caller's own pages with exit 0, and three minds on separate seats each read that as a
  * fact about the interface rather than a refused permission (#907). A right answer to a
@@ -117,10 +128,11 @@ export function toCommandInfo(cmd: ExtensionCommand): ExtensionCommandInfo {
  * refusal is the information.
  */
 export function resolveActingMind(
-  user: { username: string; role?: string } | undefined,
+  user: { username: string } | undefined,
   requested: string | undefined,
+  privileged: boolean,
 ): { mind: string | undefined } | { error: string } {
-  if (user?.role === "admin") return { mind: requested || user?.username };
+  if (privileged) return { mind: requested || user?.username };
   if (requested && requested !== user?.username) {
     return {
       error: user?.username
@@ -298,6 +310,7 @@ export async function buildExtensionContext(
       if (!user || typeof user !== "object") return null;
       return user as ReturnType<ExtensionContext["resolveUser"]>;
     },
+    isPrivileged: (c) => hasSystemAuthority(c.get("effective") as Effective | undefined),
     getUser: async (id: number) => getUser(id),
     getUserByUsername: async (username: string) => getUserByUsername(username),
     publishActivity: (event) => {
@@ -409,8 +422,14 @@ async function loadExtension(
         } catch {
           return c.json({ error: "Invalid JSON in request body" }, 400);
         }
-        const user = c.get("user") as { username: string; role?: string } | undefined;
-        const acting = resolveActingMind(user, body.mind);
+        const user = c.get("user") as { username: string } | undefined;
+        // Two different questions, deliberately: `--mind` impersonation takes admin
+        // authority (a verified admin's turn), while ctx.privileged — the coordinator
+        // gate commands like review-due read — also admits the spirit's own
+        // daemon-evidenced schedule/script work. Folding them would let a self-added
+        // schedule impersonate any mind (see resolveActingMind's docblock).
+        const privileged = hasSystemAuthority(c.get("effective"));
+        const acting = resolveActingMind(user, body.mind, hasAdminAuthority(c.get("effective")));
         if ("error" in acting) return c.json({ error: acting.error }, 403);
         const mindName = acting.mind;
         const session = c.get("mindSession") as string | undefined;
@@ -422,6 +441,7 @@ async function loadExtension(
           const parsed = parseCommandArgs(body.args ?? [], cmd.args ?? [], cmd.flags ?? {});
           const result = await cmd.handler(parsed, {
             ...context,
+            privileged,
             publishActivity: (rawEvent) => {
               const metadata = enrichActivityMetadata(manifest, rawEvent.metadata);
               const event = { ...rawEvent, metadata };

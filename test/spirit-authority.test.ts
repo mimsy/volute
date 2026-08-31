@@ -266,23 +266,24 @@ describe("the spirit's cross-mind allowlist (#433)", () => {
 });
 
 describe("the spirit cannot impersonate through extension commands (#433)", () => {
-  it("refuses --mind for a non-admin caller, the spirit included", () => {
+  it("refuses --mind for an unprivileged request, the spirit's included", () => {
     // resolveActingMind gates `--mind`, which is an impersonation flag. It used to treat
-    // the spirit as privileged, so `intention review-due --mind <admin>` made ctx.mindName
-    // the admin's name — and a downstream `actor.role === "admin"` check then passed on
-    // the *impersonated* identity. The route was fixed; this is the same escalation via
-    // the dispatcher.
-    const asSpirit = resolveActingMind({ username: SPIRIT, role: "spirit" }, ADMIN);
+    // the spirit as privileged on identity, so `intention review-due --mind <admin>` made
+    // ctx.mindName the admin's name — and a downstream `actor.role === "admin"` check
+    // then passed on the *impersonated* identity. `privileged` is now the request's
+    // resolved authority, and false is what a spirit turn a mind's DM triggered
+    // resolves to — the same escalation via the dispatcher stays closed.
+    const asSpirit = resolveActingMind({ username: SPIRIT }, ADMIN, false);
     assert.ok("error" in asSpirit);
-    const asMind = resolveActingMind({ username: OTHER_MIND, role: "user" }, ADMIN);
+    const asMind = resolveActingMind({ username: OTHER_MIND }, ADMIN, false);
     assert.ok("error" in asMind);
   });
 
-  it("still lets an admin act as another mind, and everyone act as themselves", () => {
-    assert.deepEqual(resolveActingMind({ username: ADMIN, role: "admin" }, OTHER_MIND), {
+  it("still lets a privileged request act as another mind, and everyone act as themselves", () => {
+    assert.deepEqual(resolveActingMind({ username: ADMIN }, OTHER_MIND, true), {
       mind: OTHER_MIND,
     });
-    assert.deepEqual(resolveActingMind({ username: SPIRIT, role: "spirit" }, undefined), {
+    assert.deepEqual(resolveActingMind({ username: SPIRIT }, undefined, false), {
       mind: SPIRIT,
     });
   });

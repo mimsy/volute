@@ -9,6 +9,10 @@ import { resolveMindToken, resolveScriptToken } from "../../lib/daemon/mind-toke
 import { getDb } from "../../lib/db.js";
 import { getBaseName } from "../../lib/mind/registry.js";
 import { sessions } from "../../lib/schema.js";
+import log from "../../lib/util/logger.js";
+import { type Effective, hasAdminAuthority, resolveEffective } from "./effective-principal.js";
+
+const alog = log.child("authz");
 
 const MIND_USER_CACHE_TTL = 5 * 60 * 1000;
 const mindUserCache = new Map<string, { user: User; ts: number }>();
@@ -27,6 +31,12 @@ export type AuthEnv = {
   Variables: {
     user: User;
     mindSession?: string;
+    /**
+     * The authority this request actually runs at. `user` stays the authenticated
+     * account so the audit trail keeps saying who made the call; `effective` is what
+     * the guards read. For everyone but the spirit the two agree.
+     */
+    effective: Effective;
   };
 };
 
@@ -81,13 +91,40 @@ export async function cleanExpiredSessions(): Promise<void> {
   await db.delete(sessions).where(lt(sessions.createdAt, cutoff));
 }
 
+/**
+ * Strict admin. The spirit passes only while acting on behalf of a verified admin —
+ * the confirmed #433 design: an admin who asks the spirit to do something could have
+ * done it directly. Its own self-initiated work (`system`) is deliberately excluded:
+ * the `system` tier is *structurally* self-reachable — the spirit configures its own
+ * schedules, and a schedule fire is self-initiated by definition — so anything gated
+ * only on `system` is gated on nothing where the spirit is concerned. Mind creation
+ * is the crash-the-host vector and stays behind this guard.
+ */
 export const requireAdmin = createMiddleware<AuthEnv>(async (c, next) => {
-  const user = c.get("user");
-  if (user.role !== "admin") {
+  const effective = c.get("effective");
+  if (!hasAdminAuthority(effective)) {
     return c.json({ error: "Forbidden" }, 403);
   }
+  logDelegation(c, effective);
   await next();
 });
+
+/**
+ * Record whose authority a privileged action ran on, when it ran on someone's.
+ *
+ * `c.get("user")` stays the spirit on these calls — the audit trail should keep saying
+ * which account made the request — so without this line borrowed authority leaves no
+ * trace anywhere. Only `actingFor` is logged: the `system` tier is the spirit posting
+ * its own events all through a schedule turn, and a line per request would be noise
+ * over something the `turns` and `mind_history` rows already reconstruct.
+ */
+function logDelegation(c: Context, effective: Effective | undefined): void {
+  if (!effective?.actingFor) return;
+  alog.info(`privileged ${c.req.method} ${c.req.path} on behalf of ${effective.actingFor}`, {
+    actingFor: effective.actingFor,
+    role: effective.role,
+  });
+}
 
 async function resolveSession(sessionId: string): Promise<User | null> {
   // Check session cache first
@@ -113,7 +150,12 @@ async function resolveSession(sessionId: string): Promise<User | null> {
 }
 
 /** A caller's identity, resolved from whichever credential they presented. */
-export type Principal = { user: User; mindSession?: string };
+export type Principal = {
+  user: User;
+  mindSession?: string;
+  /** Set when the credential was one the daemon minted for a script it spawned. */
+  viaScript?: boolean;
+};
 
 /**
  * Resolve the caller's identity from the credentials on the request, or null if
@@ -151,8 +193,12 @@ export async function resolvePrincipal(c: Context): Promise<Principal | null> {
     }
 
     // 2. Mind token — per-mind, resolves to mind's user record. A script token
-    // resolves the same way: same authority, but scoped to one daemon-spawned run.
-    const mindName = resolveScriptToken(token) ?? resolveMindToken(token);
+    // resolves the same way — same authority, scoped to one daemon-spawned run — but
+    // is flagged: it is the daemon's own evidence that this call came from a process
+    // the daemon spawned, which is what lets `resolveEffective` treat the spirit's
+    // scheduled scripts as self-initiated without trusting anything the process claims.
+    const scriptMind = resolveScriptToken(token);
+    const mindName = scriptMind ?? resolveMindToken(token);
     if (mindName) {
       const cached = mindUserCache.get(mindName);
       let mindUser: User;
@@ -162,7 +208,7 @@ export async function resolvePrincipal(c: Context): Promise<Principal | null> {
         mindUser = await getOrCreateMindUser(mindName);
         mindUserCache.set(mindName, { user: mindUser, ts: Date.now() });
       }
-      return { user: mindUser, mindSession };
+      return { user: mindUser, mindSession, viaScript: scriptMind != null };
     }
 
     // 3. Durable per-user API token (vmt_-prefixed) — resolves to any users row.
@@ -201,6 +247,7 @@ export const authMiddleware = createMiddleware<AuthEnv>(async (c, next) => {
 
   c.set("user", principal.user);
   if (principal.mindSession) c.set("mindSession", principal.mindSession);
+  c.set("effective", await resolveEffective(principal));
   await next();
 });
 
@@ -208,9 +255,12 @@ export const authMiddleware = createMiddleware<AuthEnv>(async (c, next) => {
  * Routes the spirit may reach on *another* mind, in addition to its own.
  *
  * The spirit is not a superuser and has no standing authority: it passes `requireSelf`
- * only on itself. This middleware is the entire exception, and the exception is the
- * list of places it is named — six routes, countable by a person and pinned by
- * `test/authz-coverage.test.ts`.
+ * only on itself. This middleware is the entire *standing* exception, and the exception
+ * is the list of places it is named — a handful of routes, countable by a person and
+ * pinned by `test/authz-coverage.test.ts`. (Per-request delegation is the other, and it
+ * is not standing: on a turn the daemon can attribute to a verified requester, the
+ * spirit additionally carries that requester's own authority — see
+ * `effective-principal.ts`. Neither widens this list.)
  *
  * It is a separate middleware rather than a clause inside `requireSelf` on purpose. The
  * blanket grant this replaces lived as a `role === "spirit"` short-circuit *inside*
@@ -252,21 +302,38 @@ export async function isSpiritActingOnAnother(
 
 export const requireSelf = (paramName = "name") =>
   createMiddleware<AuthEnv>(async (c, next) => {
-    const user = c.get("user");
-    // No spirit clause. Anyone can talk to the spirit — every mind has a system DM,
-    // humans DM it, it reads #system — so "the spirit may reach any mind's data" meant
-    // "anything any mind talks the spirit into may reach any mind's data" (#433). The
-    // six places it genuinely needs cross-mind access name `requireSelfOrSpirit`.
-    if (user.role !== "admin") {
+    const effective = c.get("effective");
+    // No spirit clause, still. Anyone can talk to the spirit — every mind has a system
+    // DM, humans DM it, it reads #system — so "the spirit may reach any mind's data"
+    // meant "anything any mind talks the spirit into may reach any mind's data" (#433).
+    // The places it genuinely needs standing cross-mind access name
+    // `requireSelfOrSpirit`; even its `system`-tier work reaches no further than that
+    // allowlist plus its own scope. What delegation adds here is exact: a verified
+    // admin behind the turn is admin authority, and a verified ordinary requester adds
+    // their own scope — the spirit reaches what they could reach, and no more.
+    if (!hasAdminAuthority(effective)) {
       const target = c.req.param(paramName) ?? "";
       const baseName = await getBaseName(target);
       // Base-map the caller too: a variant's token resolves to its own name,
       // but the variant shares its parent's trust domain (same OS user, history
       // recorded under the parent) — without this, a variant 403s on its own
       // routes and can't even report its events (#652).
-      if (user.username !== baseName && (await getBaseName(user.username)) !== baseName) {
+      //
+      // More than one scope only ever happens for the spirit mid-delegation: its
+      // own name plus the name of whoever it is acting for.
+      const scopes = effective?.scopes ?? [];
+      const matches = await Promise.all(
+        scopes.map(async (s) => s === baseName || (await getBaseName(s)) === baseName),
+      );
+      if (!matches.some(Boolean)) {
         return c.json({ error: "Forbidden" }, 403);
       }
+    }
+    // Reaching *another* principal's data on borrowed authority is the case worth a
+    // line: it is the affordance #433 kept, and the one that needs a trail. The
+    // spirit's own routes during that same turn are not (`scopes[0]` is the caller).
+    if (effective?.actingFor && c.req.param(paramName) !== effective.scopes[0]) {
+      logDelegation(c, effective);
     }
     await next();
   });

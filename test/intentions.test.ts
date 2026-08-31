@@ -10,6 +10,10 @@ import { generateMindToken } from "../packages/daemon/src/lib/daemon/mind-tokens
 import { getDb } from "../packages/daemon/src/lib/db.js";
 import { users } from "../packages/daemon/src/lib/schema.js";
 import { authMiddleware, createSession } from "../packages/daemon/src/web/middleware/auth.js";
+import {
+  type Effective,
+  hasSystemAuthority,
+} from "../packages/daemon/src/web/middleware/effective-principal.js";
 
 import { createCommands } from "../packages/extensions/intentions/src/commands.js";
 import { initDb } from "../packages/extensions/intentions/src/db.js";
@@ -250,7 +254,14 @@ describe("intentions routes authorization", () => {
   beforeEach(() => {
     db = new Database(":memory:") as unknown as ExtDb;
     initDb(db);
-    const ctx = { db, publishActivity: () => {} } as unknown as ExtensionContext;
+    const ctx = {
+      db,
+      publishActivity: () => {},
+      // The real helper, so the route is exercised against real authority resolution
+      // rather than a stub that would hide a wiring break.
+      isPrivileged: (c: { get: (key: string) => unknown }) =>
+        hasSystemAuthority(c.get("effective") as Effective | undefined),
+    } as unknown as ExtensionContext;
     app = new Hono();
     app.use("/api/ext/intentions/*", authMiddleware);
     app.route("/api/ext/intentions", createRoutes(ctx));
@@ -288,11 +299,12 @@ describe("intentions routes authorization", () => {
     assert.equal(res.status, 403);
   });
 
-  // Was "allows the spirit". Anyone can talk to the spirit — every mind has a system
-  // DM, humans DM it, it reads #system — so admitting it here admitted whatever any of
-  // them talked it into. A coordinator power gated on "is the spirit" is gated on
-  // nothing (#433).
-  it("GET /review-due refuses the spirit", async () => {
+  // Anyone can talk to the spirit — every mind has a system DM, humans DM it, it reads
+  // #system — so admitting it on identity admitted whatever any of them talked it into
+  // (#433). It passes only with resolved authority behind the request; with no
+  // daemon-tracked turn to resolve a principal from, its authority is `basic` and the
+  // route refuses it exactly like any other unprivileged caller.
+  it("GET /review-due refuses a spirit request with no verifiable requester", async () => {
     const headers = await mindAuth(spiritName);
     const res = await app.request("http://localhost/api/ext/intentions/review-due", { headers });
     assert.equal(res.status, 403);
@@ -478,10 +490,15 @@ describe("intentions commands", () => {
   });
   afterEach(() => db.close());
 
-  function makeCtx(mindName: string, user: Partial<User> | null): Parameters<CommandHandler>[1] {
+  function makeCtx(
+    mindName: string,
+    user: Partial<User> | null,
+    privileged = false,
+  ): Parameters<CommandHandler>[1] {
     return {
       mindName,
       db,
+      privileged,
       getUser: async () => null,
       getUserByUsername: async () => user as User | null,
       publishActivity: () => {},
@@ -497,17 +514,29 @@ describe("intentions commands", () => {
   });
 
   // The CLI twin of the route above, and the copy the fix originally missed — the
-  // authz-coverage net found it, not a human re-reading the diff.
-  it("review-due command refuses the spirit", async () => {
+  // authz-coverage net found it, not a human re-reading the diff. The spirit's account
+  // role reads "spirit" on every call; its *authority* does not — privileged=false is
+  // what a spirit turn a mind's DM triggered resolves to, and it must be refused (#433).
+  it("review-due command refuses the spirit when the request is not privileged", async () => {
     const commands = createCommands();
-    const ctx = makeCtx("volute", {
-      username: "volute",
-      role: "spirit",
-      user_type: "spirit",
-    } as User);
+    const ctx = makeCtx("volute", { username: "volute", user_type: "spirit" } as User, false);
     const result = await commands["review-due"].handler({ args: {}, flags: {}, rest: [] }, ctx);
     assert.ok("error" in result);
     assert.match(result.error, /Forbidden/);
+  });
+
+  // The daemon resolves privileged=true for the spirit's own daemon-evidenced work —
+  // its scheduled intention-review — and for a verified admin's turn. That is what
+  // keeps the coordinator skill working now that identity grants are gone.
+  it("review-due command allows a spirit request carrying resolved authority", async () => {
+    createIntention(db, "aria", "overdue thing", undefined, undefined);
+    db.prepare("UPDATE intentions SET review_at = datetime('now', '-1 day')").run();
+
+    const commands = createCommands();
+    const ctx = makeCtx("volute", { username: "volute", user_type: "spirit" } as User, true);
+    const result = await commands["review-due"].handler({ args: {}, flags: {}, rest: [] }, ctx);
+    assert.ok("output" in result);
+    assert.match(result.output, /overdue thing/);
   });
 
   it("review-due command allows an admin", async () => {
@@ -515,7 +544,11 @@ describe("intentions commands", () => {
     db.prepare("UPDATE intentions SET review_at = datetime('now', '-1 day')").run();
 
     const commands = createCommands();
-    const ctx = makeCtx("james", { username: "james", role: "admin", user_type: "human" } as User);
+    const ctx = makeCtx(
+      "james",
+      { username: "james", role: "admin", user_type: "human" } as User,
+      true,
+    );
     const result = await commands["review-due"].handler({ args: {}, flags: {}, rest: [] }, ctx);
     assert.ok("output" in result);
     assert.match(result.output, /overdue thing/);

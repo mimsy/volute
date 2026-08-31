@@ -7,6 +7,7 @@ import {
 } from "../../../lib/events/feed.js";
 import { parseUtcDateTime } from "../../../lib/util/period-keys.js";
 import { type AuthEnv, authMiddleware } from "../../middleware/auth.js";
+import { hasAdminAuthority } from "../../middleware/effective-principal.js";
 
 function eventTime(e: FeedEvent): string {
   return e.kind === "chat" ? e.endedAt : e.createdAt;
@@ -22,10 +23,10 @@ const app = new Hono<AuthEnv>()
   // Private conversations never appear; mind_error detail is redacted for
   // non-admin/system callers (#503).
   .get("/", async (c) => {
-    const user = c.get("user");
-    // Admins only. What this grants is *unredacted* mind_error detail, which can embed
-    // raw error strings — mind-private, and squarely in "read secrets" (#433).
-    const privileged = user.role === "admin";
+    // Admin authority only — the spirit qualifies solely on a verified admin's turn.
+    // What this grants is *unredacted* mind_error detail, which can embed raw error
+    // strings — mind-private, and squarely in "read secrets" (#433).
+    const privileged = hasAdminAuthority(c.get("effective"));
     const [chat, lifecycle] = await Promise.all([
       getChatFeedEvents(),
       getLifecycleFeedEvents({ privileged }),
