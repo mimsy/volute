@@ -13,6 +13,8 @@ import {
   getRoutingConfig,
   resolveRoute,
   shouldGate,
+  toWirePayload,
+  type WirePayload,
 } from "./delivery-router.js";
 
 const dlog = log.child("delivery");
@@ -26,6 +28,7 @@ export async function recordInbound(
   mind: string,
   channel: string,
   sender: string | null,
+  senderId: number | null,
   content: string | null,
 ): Promise<number | undefined> {
   // Record without turn_id initially. The inbound is linked to its turn when the turn is
@@ -41,6 +44,7 @@ export async function recordInbound(
         type: "inbound",
         channel,
         sender,
+        sender_id: senderId,
         content,
       })
       .returning({ id: mindHistory.id });
@@ -313,7 +317,13 @@ export async function deliverMessage(
       if (sleepManager?.isSleeping(baseName)) {
         // Sleeping minds queue the message and flush it on wake — it is not gated here.
         // Record at arrival so history keeps the true receipt time.
-        await recordInbound(baseName, payload.channel, payload.sender ?? null, textContent);
+        await recordInbound(
+          baseName,
+          payload.channel,
+          payload.sender ?? null,
+          payload.senderId,
+          textContent,
+        );
         const sleepState = sleepManager.getState(baseName);
         const action = resolveSleepAction(
           payload.whileSleeping,
@@ -352,7 +362,14 @@ export async function deliverMessage(
       // whether history still owes this message a row.
       if (!willGate(baseName, payload)) {
         if (willHoldMessage(baseName)) payload.inboundDeferred = true;
-        else await recordInbound(baseName, payload.channel, payload.sender ?? null, textContent);
+        else
+          await recordInbound(
+            baseName,
+            payload.channel,
+            payload.sender ?? null,
+            payload.senderId ?? null,
+            textContent,
+          );
       }
     }
 
@@ -388,12 +405,13 @@ export async function deliverBatch(
       return false;
     }
 
-    // Build the batch payload shape the mind-side router expects.
-    const channels: Record<string, DeliveryPayload[]> = {};
+    // Build the batch payload shape the mind-side router expects. senderId never
+    // crosses to the mind process — see WirePayload (#1017).
+    const channels: Record<string, WirePayload[]> = {};
     for (const p of payloads) {
       const ch = p.channel ?? "unknown";
       if (!channels[ch]) channels[ch] = [];
-      channels[ch].push(p);
+      channels[ch].push(toWirePayload(p));
     }
 
     // Resolve the target session from routing (payloads share a channel, so one

@@ -22,6 +22,11 @@ export interface FanOutOpts {
   conversationId: string;
   contentBlocks: ContentBlock[];
   senderName: string;
+  /**
+   * The authenticated principal behind the send (users.id), or null when the calling
+   * path did not authenticate the sender — see DeliveryPayload.senderId (#1017).
+   */
+  senderId: number | null;
   /** Participants; fetched from the conversation if not provided. */
   participants?: Participant[];
   /** Override isDM (defaults to participants.length === 2). */
@@ -173,6 +178,7 @@ export async function fanOutToMinds(opts: FanOutOpts): Promise<FanOutResult> {
       channel,
       conversationId: opts.conversationId,
       sender: opts.senderName,
+      senderId: opts.senderId,
       participants: participantNames,
       participantCount: participants.length,
       isDM,

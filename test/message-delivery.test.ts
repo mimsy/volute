@@ -144,6 +144,7 @@ describe("deliverMessage flush recording", () => {
     const ok = await deliverMessage(FLUSH_MIND, {
       channel: "@volute",
       sender: "volute",
+      senderId: null,
       content: "hi",
     });
     assert.equal(ok, false, "delivery fails without a delivery manager");
@@ -168,6 +169,7 @@ describe("deliverMessage flush recording", () => {
       await deliverMessage(FLUSH_MIND, {
         channel: "#unrouted",
         sender: "alice",
+        senderId: null,
         content: "hi",
       });
     } finally {
@@ -195,6 +197,7 @@ describe("deliverMessage flush recording", () => {
     await deliverMessage(FLUSH_MIND, {
       channel: "#unrouted",
       sender: "alice",
+      senderId: null,
       content: "hi",
       session: "main",
     });
@@ -214,7 +217,7 @@ describe("deliverMessage flush recording", () => {
     try {
       const ok = await deliverMessage(
         FLUSH_MIND,
-        { channel: "@volute", sender: "volute", content: "hi" },
+        { channel: "@volute", sender: "volute", senderId: null, content: "hi" },
         { isFlush: true },
       );
       // Delivery fails (no manager) → returns false so the flush loop won't delete the row.
@@ -237,7 +240,7 @@ describe("deliverMessage flush recording", () => {
   it("returns false when the mind is not registered", async () => {
     const ok = await deliverMessage(
       "no-such-mind",
-      { channel: "@volute", sender: "volute", content: "hi" },
+      { channel: "@volute", sender: "volute", senderId: null, content: "hi" },
       { isFlush: true },
     );
     assert.equal(ok, false);
@@ -391,20 +394,29 @@ describe("recordInbound", () => {
   });
 
   it("persists an inbound event and returns its id", async () => {
-    const id = await recordInbound("test-in", "dm:bob", "bob", "hi there");
+    const id = await recordInbound("test-in", "dm:bob", "bob", null, "hi there");
     assert.ok(typeof id === "number");
     const db = await getDb();
     const rows = await db.select().from(mindHistory).where(eq(mindHistory.mind, "test-in"));
     assert.equal(rows.length, 1);
     assert.equal(rows[0].type, "inbound");
     assert.equal(rows[0].sender, "bob");
+    assert.equal(rows[0].sender_id, null, "a null senderId is stored as null, never invented");
+  });
+
+  it("persists the authenticated sender id when the caller vouches one", async () => {
+    await recordInbound("test-in", "dm:bob", "bob", 42, "hi there");
+    const db = await getDb();
+    const rows = await db.select().from(mindHistory).where(eq(mindHistory.mind, "test-in"));
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].sender_id, 42);
   });
 
   it("publishes a mind event", async () => {
     const events: MindEvent[] = [];
     const unsub = subscribe("test-in", (e) => events.push(e));
     try {
-      await recordInbound("test-in", "dm:bob", "bob", "hello");
+      await recordInbound("test-in", "dm:bob", "bob", null, "hello");
       assert.equal(events.length, 1);
       assert.equal(events[0].type, "inbound");
       assert.equal(events[0].sender, "bob");

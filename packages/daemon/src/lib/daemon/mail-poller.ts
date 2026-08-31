@@ -319,6 +319,9 @@ export class MailPoller {
       // that holds authenticated Volute usernames (#1016). The display name still
       // reaches the mind, on the `From:` line of the message itself.
       sender: externalSenderName("mail", email.from.address),
+      // Null: an email From: address is asserted by the sending server, not
+      // authenticated by Volute (#1017).
+      senderId: null,
       platform: "Email",
       isDM: true,
     });

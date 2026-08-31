@@ -571,6 +571,9 @@ setup.post("/complete", async (c) => {
             channel: `@${admin.username}`,
             conversationId: spiritConversationId,
             sender: admin.username,
+            // Null: the admin here was looked up by role, not authenticated on
+            // this request (#1017).
+            senderId: null,
             isDM: true,
             participants: [spiritName, admin.username],
             participantCount: 2,

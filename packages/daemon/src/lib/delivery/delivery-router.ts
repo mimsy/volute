@@ -83,6 +83,15 @@ export type { ChannelContext, ParticipantProfile };
 export interface DeliveryPayload {
   channel: string;
   sender: string | null;
+  /**
+   * The authenticated principal behind this message (users.id), or null. Set ONLY by
+   * callers whose request actually authenticated the sender (the chat API's session or
+   * token principal). Bridge, mail, and cloud inbound pass null on purpose: they carry
+   * external identities Volute never authenticated, and a null id is what keeps an
+   * unvouched sender structurally unable to confer authority (#1017). Never derive it
+   * from `sender`, which is display text.
+   */
+  senderId: number | null;
   content: unknown; // string or content block array
   conversationId?: string;
   session?: string; // explicit target session — skips route matching
@@ -109,6 +118,33 @@ export interface DeliveryPayload {
    */
   inboundDeferred?: boolean;
   whileSleeping?: "skip" | "queue" | "trigger-wake";
+}
+
+/**
+ * The payload as POSTed to a mind process: `senderId` is stripped. It is the daemon's
+ * record of the authenticated principal (#1017), and the mind's side of the wire is an
+ * untrusted process — a field it could echo back must never exist in a shape that looks
+ * authoritative. `held`/`inboundDeferred` are likewise daemon bookkeeping, stripped by
+ * `withHeldPreface` on the same boundary.
+ */
+export type WirePayload = Omit<DeliveryPayload, "senderId">;
+
+export function toWirePayload(payload: DeliveryPayload): WirePayload {
+  const { senderId: _senderId, ...wire } = payload;
+  return wire;
+}
+
+/**
+ * Parse a persisted queue-row payload. Normalizes fields added after old rows were
+ * written: a legacy row has no `senderId` key, and `undefined` must not survive past
+ * the parse boundary — every reader treats null as "nobody vouched" (#1017), and a
+ * missing key must mean exactly that, not fall through comparisons as undefined.
+ * Throws like JSON.parse on malformed input; callers keep their own catch.
+ */
+export function parseDeliveryPayload(json: string): DeliveryPayload {
+  const payload = JSON.parse(json) as DeliveryPayload;
+  payload.senderId ??= null;
+  return payload;
 }
 
 export function extractTextContent(content: unknown): string {

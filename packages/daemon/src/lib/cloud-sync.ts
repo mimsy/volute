@@ -69,6 +69,9 @@ export async function consumeQueuedMessages(): Promise<void> {
       await deliverMessage(msg.mind, {
         channel: msg.channel,
         sender: relaySenderName(msg.sender),
+        // Null: the cloud queue relays sender text volute.systems recorded — this
+        // daemon never authenticated that principal (#1017).
+        senderId: null,
         content: msg.content,
         conversationId: msg.conversationId as string | undefined,
       });

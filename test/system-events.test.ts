@@ -774,7 +774,7 @@ describe("system-events reflection attribution", () => {
       const { recordInbound } = await import(
         "../packages/daemon/src/lib/delivery/message-delivery.js"
       );
-      await recordInbound(mind, "@alice", "alice", "hey, private question");
+      await recordInbound(mind, "@alice", "alice", null, "hey, private question");
       await handleMindEvent(mind, {
         type: "text",
         session: "main",

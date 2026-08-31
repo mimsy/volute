@@ -27,6 +27,7 @@ import {
   getRoutingConfig,
   type MatchMeta,
   type ParticipantProfile,
+  parseDeliveryPayload,
   type ResolvedDeliveryMode,
   type ResolvedSessionConfig,
   type RoutingConfig,
@@ -35,6 +36,8 @@ import {
   routesConfigPath,
   setRoutesChangeListener,
   shouldGate,
+  toWirePayload,
+  type WirePayload,
 } from "./delivery-router.js";
 import { clearMind, onDeliveredToMind, resetTurn } from "./send-gate.js";
 
@@ -216,16 +219,18 @@ function compactLocal(at: number): string {
  * but also when a host raises or clears the cap, so the line says the message waited and
  * is arriving now, and does not assert why it stopped waiting.
  */
-export function withHeldPreface(payload: DeliveryPayload): DeliveryPayload {
-  const held = payload.held;
+export function withHeldPreface(payload: DeliveryPayload): WirePayload {
+  // senderId never crosses to the mind process — see WirePayload (#1017).
+  const wire = toWirePayload(payload);
+  const held = wire.held;
   if (!held) {
     // Never POST the bookkeeping flag even when nothing was held — `inboundDeferred` is a
     // note to ourselves about `mind_history`, and means nothing to a mind.
-    if (payload.inboundDeferred === undefined) return payload;
-    const { inboundDeferred: _skip, ...bare } = payload;
+    if (wire.inboundDeferred === undefined) return wire;
+    const { inboundDeferred: _skip, ...bare } = wire;
     return bare;
   }
-  const { held: _marker, inboundDeferred: _deferred, ...rest } = payload;
+  const { held: _marker, inboundDeferred: _deferred, ...rest } = wire;
   const whose = held.scope === "system" ? "this install's spend cap" : "your spend cap";
   const line =
     `[held — this arrived at ${compactLocal(held.at)}, when ${whose} was reached, ` +
@@ -269,6 +274,7 @@ async function recordDeferredInbound(baseName: string, payload: DeliveryPayload)
       type: "inbound",
       channel: payload.channel,
       sender: payload.sender ?? null,
+      sender_id: payload.senderId,
       content: extractTextContent(payload.content),
       ...(payload.held ? { created_at: toDbTimestamp(payload.held.at) } : {}),
     });
@@ -632,7 +638,7 @@ export class DeliveryManager {
 
       let payload: DeliveryPayload;
       try {
-        payload = JSON.parse(row.payload) as DeliveryPayload;
+        payload = parseDeliveryPayload(row.payload);
       } catch (parseErr) {
         dlog.warn(
           `corrupt payload in delivery queue row ${row.id}, dropping`,
@@ -898,6 +904,7 @@ export class DeliveryManager {
       session: string;
       channel: string;
       sender: string | null;
+      senderId: number | null;
       content: string | null;
     };
     const byChannel = new Map<string, Promotable[]>();
@@ -906,7 +913,7 @@ export class DeliveryManager {
     for (const row of rows) {
       let payload: DeliveryPayload;
       try {
-        payload = JSON.parse(row.payload) as DeliveryPayload;
+        payload = parseDeliveryPayload(row.payload);
       } catch {
         continue;
       }
@@ -933,6 +940,9 @@ export class DeliveryManager {
         session,
         channel,
         sender: payload.sender ?? row.sender ?? null,
+        // From the persisted payload only — parseDeliveryPayload normalized a legacy
+        // row's missing senderId to null (#1017).
+        senderId: payload.senderId,
         content: extractTextContent(payload.content),
       });
       byChannel.set(channel, list);
@@ -1001,6 +1011,7 @@ export class DeliveryManager {
             type: "inbound",
             channel: p.channel,
             sender: p.sender,
+            sender_id: p.senderId,
             content: p.content,
           });
           await tx
@@ -1367,7 +1378,7 @@ export class DeliveryManager {
       .map((row) => {
         let content = "";
         try {
-          content = extractTextContent((JSON.parse(row.payload) as DeliveryPayload).content);
+          content = extractTextContent(parseDeliveryPayload(row.payload).content);
         } catch {
           content = "(unreadable payload)";
         }
@@ -1502,7 +1513,7 @@ export class DeliveryManager {
 
     return [...byChannel.entries()].map(([channel, channelRows]) => {
       const firstRow = channelRows[0];
-      const payload = JSON.parse(firstRow.payload) as DeliveryPayload;
+      const payload = parseDeliveryPayload(firstRow.payload);
       const text = extractTextContent(payload.content);
       return {
         channel,
@@ -2084,7 +2095,7 @@ export class DeliveryManager {
       ).then((msgs) => msgs.map((m) => ({ ...m, payload: withHeldPreface(m.payload) })));
 
       // Group messages by channel
-      const channels: Record<string, DeliveryPayload[]> = {};
+      const channels: Record<string, WirePayload[]> = {};
       for (const msg of enrichedMessages) {
         const ch = msg.channel ?? "unknown";
         if (!channels[ch]) channels[ch] = [];

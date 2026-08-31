@@ -173,6 +173,11 @@ export const chatApp = new Hono<AuthEnv>().post("/", zValidator("json", chatSche
 
   // Resolve sender: daemon token + body.sender → override, else user.username
   const senderName = user.id === 0 && body.sender ? body.sender : user.username;
+  // The authenticated principal behind this send (#1017). Only a real users-row
+  // principal counts: the daemon token (id 0) asserting a sender name did not
+  // authenticate that principal on this request, so it confers no id. The refusal
+  // guard above guarantees that when user.id !== 0, senderName IS user.username.
+  const senderId = user.id !== 0 ? user.id : null;
 
   // Detect if sender is a mind. The spirit authenticates with its
   // mind token but resolves to the shared system user (user_type "spirit"), so
@@ -232,7 +237,7 @@ export const chatApp = new Hono<AuthEnv>().post("/", zValidator("json", chatSche
 
       if (!conversationId) {
         const conv = await createConversation({
-          userId: user.id !== 0 ? user.id : undefined,
+          userId: senderId ?? undefined,
           participantIds,
         });
         conversationId = conv.id;
@@ -409,6 +414,7 @@ export const chatApp = new Hono<AuthEnv>().post("/", zValidator("json", chatSche
     conversationId: conversationId!,
     contentBlocks,
     senderName,
+    senderId,
     participants,
     isDM,
     slugExtra: { convType: conv.type as "dm" | "channel", convName },

@@ -77,7 +77,7 @@ describe("turn-lifecycle: handleMindEvent", () => {
   it("text creates a turn and links the pending inbound as the trigger", async () => {
     const mind = "tl-text-trigger";
     // Inbound arrives first (no turn yet), then the mind starts a turn on the same channel.
-    const inboundId = await recordInbound(mind, "@alice", "alice", "hello");
+    const inboundId = await recordInbound(mind, "@alice", "alice", null, "hello");
     const { turnId } = await handleMindEvent(mind, {
       type: "text",
       session: "s1",
@@ -363,7 +363,7 @@ describe("turn-lifecycle: mid-turn inbound tagging", () => {
   it("tags an inbound arriving mid-turn to the in-progress turn, without touching the trigger", async () => {
     const mind = "tl-midturn";
     // A turn is already active for (mind, s1, @alice), triggered by an earlier inbound.
-    const triggerId = await recordInbound(mind, "@alice", "alice", "first");
+    const triggerId = await recordInbound(mind, "@alice", "alice", null, "first");
     const { turnId } = await handleMindEvent(mind, {
       type: "text",
       session: "s1",
@@ -374,7 +374,7 @@ describe("turn-lifecycle: mid-turn inbound tagging", () => {
     assert.equal(getActiveTurnId(mind, "s1"), turnId, "turn should be active");
 
     // A new inbound arrives on the same channel WHILE the turn is still active.
-    const interruptId = await recordInbound(mind, "@alice", "alice", "actually, wait");
+    const interruptId = await recordInbound(mind, "@alice", "alice", null, "actually, wait");
     const db = await getDb();
     const before = await db
       .select()
@@ -403,7 +403,7 @@ describe("turn-lifecycle: mid-turn inbound tagging", () => {
     // summarizer's transcript. Nothing throws; the event simply never happened, as far as
     // history is concerned.
     const mind = "tl-midturn-event";
-    const triggerId = await recordInbound(mind, "@alice", "alice", "first");
+    const triggerId = await recordInbound(mind, "@alice", "alice", null, "first");
     const { turnId } = await handleMindEvent(mind, {
       type: "text",
       session: "s1",
@@ -451,7 +451,7 @@ describe("turn-lifecycle: mid-turn inbound tagging", () => {
     // 7 inbounds pile up mid-turn — more than linkPendingInbound's bounded sweep of 5.
     const ids: number[] = [];
     for (let i = 0; i < 7; i++) {
-      const id = await recordInbound(mind, "@alice", "alice", `msg ${i}`);
+      const id = await recordInbound(mind, "@alice", "alice", null, `msg ${i}`);
       ids.push(id!);
     }
 
@@ -468,7 +468,7 @@ describe("turn-lifecycle: mid-turn inbound tagging", () => {
   it("is a no-op when no turn is active — the turn-creation path tags it instead", async () => {
     const mind = "tl-midturn-noturn";
     // No active turn for this session yet.
-    const inboundId = await recordInbound(mind, "@alice", "alice", "hello");
+    const inboundId = await recordInbound(mind, "@alice", "alice", null, "hello");
     await linkInboundToActiveTurn(mind, "s1", "@alice");
 
     const db = await getDb();
@@ -501,7 +501,7 @@ describe("turn-lifecycle: mid-turn inbound tagging", () => {
     });
     assert.ok(turnId);
     // Inbound on a different channel must not be swept into this turn.
-    const otherId = await recordInbound(mind, "@bob", "bob", "unrelated");
+    const otherId = await recordInbound(mind, "@bob", "bob", null, "unrelated");
     await linkInboundToActiveTurn(mind, "s1", "@alice");
 
     const db = await getDb();
@@ -515,7 +515,7 @@ describe("turn-lifecycle: trigger linking (#403)", () => {
   it("links the trigger when the turn-creating event carries no channel (session fallback)", async () => {
     const mind = "tl-channelless-trigger";
     // Inbound arrives on the @alice DM (session is channel-shaped: session === channel).
-    const inboundId = await recordInbound(mind, "@alice", "alice", "hello~");
+    const inboundId = await recordInbound(mind, "@alice", "alice", null, "hello~");
     // The turn is created by a channel-less `thinking` event — the template's
     // message→channel mapping hasn't been established yet (the race in #403).
     const { turnId } = await handleMindEvent(mind, {
@@ -606,7 +606,7 @@ describe("turn-lifecycle: trigger linking (#403)", () => {
     // inbound sits on an unrelated channel. The session→channel fallback scopes the sweep
     // to channel === "main", which matches no inbound — the safety property the removed
     // `if (!channel) return` guard used to provide now rests on channel-equality.
-    const orphan = await recordInbound(mind, "@bob", "bob", "unrelated ping");
+    const orphan = await recordInbound(mind, "@bob", "bob", null, "unrelated ping");
     const { turnId } = await handleMindEvent(mind, {
       type: "thinking",
       session: "main",
@@ -625,9 +625,9 @@ describe("turn-lifecycle: trigger linking (#403)", () => {
   it("each turn owns exactly its own inbounds across two turns (pip scenario)", async () => {
     const mind = "tl-pip-scenario";
     // Turn A: three inbounds arrive, then a channel-less first event opens the turn.
-    const a1 = await recordInbound(mind, "@pip", "pip", "hello~ seeing skills?");
-    const a2 = await recordInbound(mind, "@pip", "pip", "hello again");
-    const a3 = await recordInbound(mind, "@pip", "pip", "ping");
+    const a1 = await recordInbound(mind, "@pip", "pip", null, "hello~ seeing skills?");
+    const a2 = await recordInbound(mind, "@pip", "pip", null, "hello again");
+    const a3 = await recordInbound(mind, "@pip", "pip", null, "ping");
     const { turnId: turnA } = await handleMindEvent(mind, {
       type: "thinking",
       session: "@pip",
@@ -643,7 +643,7 @@ describe("turn-lifecycle: trigger linking (#403)", () => {
     await handleMindEvent(mind, { type: "done", session: "@pip" });
 
     // Turn B: a later inbound + turn. It must not re-claim turn A's inbounds.
-    const b1 = await recordInbound(mind, "@pip", "pip", "thanks!");
+    const b1 = await recordInbound(mind, "@pip", "pip", null, "thanks!");
     const { turnId: turnB } = await handleMindEvent(mind, {
       type: "thinking",
       session: "@pip",
