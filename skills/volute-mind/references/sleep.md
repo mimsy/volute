@@ -22,7 +22,9 @@ By default, DMs and @mentions wake you during sleep (you handle them and return 
 - `channels` — glob patterns for channels that always wake you
 - `senders` — glob patterns for senders that always wake you. A bare name is a Volute
   account; anyone reaching you from outside is namespaced by where they came from, so
-  `"discord:*"` wakes you for Discord and `"mail:*"` for email (see routing.md)
+  `"discord:*"` wakes you for Discord and `"mail:boss@example.com"` for one person's email
+  (see routing.md). A trigger written before namespacing existed — a bare `"boss@example.com"` —
+  no longer matches and will not wake you; prefix it
 
 When trigger-woken, you get one full turn to respond, then return to sleep when idle.
 

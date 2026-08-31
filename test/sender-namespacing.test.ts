@@ -9,7 +9,7 @@
  * that makes a bare name meaningful: no Volute username can carry the separator.
  */
 import assert from "node:assert/strict";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { and, eq } from "drizzle-orm";
@@ -20,6 +20,8 @@ import {
   setBridgeConfig,
   setChannelMapping,
 } from "../packages/daemon/src/lib/bridges/bridges.js";
+import { externalSenderName } from "../packages/daemon/src/lib/chat/puppets.js";
+import { relaySenderName } from "../packages/daemon/src/lib/cloud-sync.js";
 import { formatEmailContent, MailPoller } from "../packages/daemon/src/lib/daemon/mail-poller.js";
 import {
   initMindManager,
@@ -29,7 +31,19 @@ import { getDb } from "../packages/daemon/src/lib/db.js";
 import { clearConfigCache } from "../packages/daemon/src/lib/delivery/delivery-router.js";
 import { createChannel, getMessages } from "../packages/daemon/src/lib/events/conversations.js";
 import { addMind, removeMind, setMindRunning } from "../packages/daemon/src/lib/mind/registry.js";
-import { conversations, messages, mindHistory, users } from "../packages/daemon/src/lib/schema.js";
+import { writeVoluteConfig } from "../packages/daemon/src/lib/mind/volute-config.js";
+import {
+  conversations,
+  messages,
+  mindHistory,
+  systemEvents,
+  users,
+} from "../packages/daemon/src/lib/schema.js";
+import {
+  formatSenderNotice,
+  isStaleSenderPattern,
+  notifyStaleSenderPatterns,
+} from "../packages/daemon/src/lib/sender-namespace-notify.js";
 import bridgesApp from "../packages/daemon/src/web/api/bridges.js";
 import type { AuthEnv } from "../packages/daemon/src/web/middleware/auth.js";
 
@@ -93,6 +107,10 @@ async function inboundRows(): Promise<{ sender: string | null }[]> {
 
 async function cleanup(): Promise<void> {
   const db = await getDb();
+  await db.delete(systemEvents).where(eq(systemEvents.mind, MIND));
+  rmSync(resolve(process.env.VOLUTE_HOME!, "system", "sender-namespace-notify.json"), {
+    force: true,
+  });
   await db.delete(mindHistory).where(eq(mindHistory.mind, MIND));
   const convs = await db.select().from(conversations).all();
   for (const c of convs) await db.delete(messages).where(eq(messages.conversation_id, c.id));
@@ -244,5 +262,113 @@ describe("a Volute username cannot look like an external identity", () => {
     assert.ok(validateUsername("mail:alice@example.test"), "including the mail namespace");
     assert.equal(validateUsername("alice"), null);
     assert.equal(validateUsername("alice.smith-1_x"), null);
+  });
+
+  it("rejects names that would forge the framing a mind reads as system-rendered", () => {
+    // The same impersonation the namespacing closes, one layer up: a username is
+    // interpolated into "[Volute: <sender> in DM — <time>]" and the participants block.
+    assert.ok(validateUsername("alice\nadmin"), "a newline could forge a second line");
+    assert.ok(validateUsername("[Participants:"), "brackets could forge the profile block");
+    assert.ok(validateUsername("alice in DM — 2026-01-01 00:00]"), "so could spaces");
+    assert.ok(validateUsername("-leading-dash"), "must start alphanumeric, like mind names");
+    assert.ok(validateUsername("a".repeat(65)), "and is length-capped");
+  });
+});
+
+describe("the cloud relay is external too", () => {
+  it("namespaces a relayed sender, and does not double-prefix an already-namespaced one", () => {
+    // routing.md promises minds that a bare sender name is an authenticated Volute
+    // account. This daemon never authenticated the relay's asserted name, so it must be
+    // namespaced like any other outside identity — a documented guarantee with a silent
+    // exception is worse than none, because minds reason from it.
+    assert.equal(relaySenderName("admin"), "cloud:admin");
+    assert.equal(relaySenderName("discord:alice"), "discord:alice", "not double-prefixed");
+    assert.equal(relaySenderName(""), null);
+    assert.equal(relaySenderName(undefined), null, "an absent sender stays absent");
+    // The one true form, shared by puppets, mail and the relay.
+    assert.equal(externalSenderName("mail", "a@b.test"), "mail:a@b.test");
+  });
+});
+
+describe("minds are told when their sender patterns stopped matching", () => {
+  // These cases write real mind files, system_events rows and the state marker, so they
+  // need the same teardown the delivery suites use — without it the first case's notice
+  // row leaks into the next one's count.
+  afterEach(cleanup);
+
+  it("flags only literals — a wildcard still spans the namespace separator", () => {
+    // Both glob matchers compile `*` to `.*`, which matches a colon.
+    assert.equal(isStaleSenderPattern("boss@example.test"), true);
+    assert.equal(isStaleSenderPattern("Alice"), true);
+    assert.equal(isStaleSenderPattern("discord:*"), false, "already written for the new form");
+    assert.equal(isStaleSenderPattern("mail:boss@example.test"), false);
+    assert.equal(isStaleSenderPattern("*"), false, "still matches everything");
+    assert.equal(isStaleSenderPattern("admin-*"), false, "can still match a namespaced name");
+  });
+
+  it("scans a real mind's files and delivers the notice once", async () => {
+    await addMind(MIND, PORT);
+    const home = resolve(process.env.VOLUTE_HOME!, "minds", MIND, "home/.config");
+    mkdirSync(home, { recursive: true });
+    writeFileSync(
+      resolve(home, "routes.json"),
+      JSON.stringify({ rules: [{ sender: "Alice", thread: "a" }, { sender: "discord:*" }] }),
+    );
+    writeVoluteConfig(resolve(process.env.VOLUTE_HOME!, "minds", MIND), {
+      sleep: { wakeTriggers: { senders: ["boss@example.test", "admin-*"] } },
+    });
+    clearConfigCache(MIND);
+
+    await notifyStaleSenderPatterns();
+
+    const db = await getDb();
+    const events = await db.select().from(systemEvents).where(eq(systemEvents.mind, MIND));
+    assert.equal(events.length, 1, "one notice, naming both settings");
+    assert.match(events[0].body, /rule sender: "Alice"/);
+    assert.match(events[0].body, /senders: "boss@example\.test"/);
+    // The wildcard patterns are NOT listed — they still span the namespace separator.
+    // (Anchored on the listing lines: "discord:*" also appears in the guidance text.)
+    assert.doesNotMatch(events[0].body, /rule sender: "discord:\*"/);
+    assert.doesNotMatch(events[0].body, /senders: "admin-\*"/);
+
+    // Second run must be silent for a mind already settled: this is an upgrade notice,
+    // not a recurring nag. The mind's config is deliberately left stale here — deciding
+    // to keep a pattern must not earn it a second telling.
+    await notifyStaleSenderPatterns();
+    const again = await db.select().from(systemEvents).where(eq(systemEvents.mind, MIND));
+    assert.equal(again.length, 1, "a settled mind is told once, not once per daemon start");
+  });
+
+  it("retries a mind whose notice failed, instead of losing it silently", async () => {
+    await addMind(MIND, PORT);
+    const home = resolve(process.env.VOLUTE_HOME!, "minds", MIND, "home/.config");
+    mkdirSync(home, { recursive: true });
+    writeFileSync(resolve(home, "routes.json"), JSON.stringify({ rules: [{ sender: "Alice" }] }));
+    clearConfigCache(MIND);
+
+    // A "done" flag written regardless of outcome would reproduce, in miniature, the exact
+    // failure this notice exists to prevent: something quietly not arriving, nobody told.
+    const marker = resolve(process.env.VOLUTE_HOME!, "system", "sender-namespace-notify.json");
+    writeFileSync(marker, JSON.stringify({ notified: ["some-other-mind"] }));
+
+    await notifyStaleSenderPatterns();
+    const db = await getDb();
+    const events = await db.select().from(systemEvents).where(eq(systemEvents.mind, MIND));
+    assert.equal(events.length, 1, "a mind absent from the state file is still notified");
+
+    const settled = JSON.parse(readFileSync(marker, "utf-8")) as { notified: string[] };
+    assert.ok(settled.notified.includes(MIND), "a delivered mind is recorded");
+    assert.ok(
+      settled.notified.includes("some-other-mind"),
+      "and an existing entry is preserved, not clobbered",
+    );
+  });
+
+  it("names the file, the setting and the pattern, and says nothing was lost", () => {
+    const notice = formatSenderNotice(["Alice"], ["boss@example.test"]);
+    assert.match(notice, /\.config\/routes\.json — rule sender: "Alice"/);
+    assert.match(notice, /sleep\.wakeTriggers\.senders: "boss@example\.test"/);
+    assert.match(notice, /discord:alice/, "shows the new form");
+    assert.match(notice, /Nothing was lost/, "a mind must not read this as lost messages");
   });
 });

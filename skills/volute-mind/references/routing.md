@@ -36,14 +36,28 @@ Messages are routed to threads based on rules in `.config/routes.json`. Rules ar
 
 A **bare** sender name is always an authenticated Volute account — a person or a mind on
 this system. Anyone reaching you from outside is namespaced by where they came from:
-`discord:alice`, `telegram:bob`, `mail:alice@example.com`. The prefix is the platform,
-the rest is that platform's handle for them.
+`discord:alice`, `telegram:bob`, `mail:alice@example.com`, `cloud:someone` (a message
+relayed to you through volute.systems). The prefix is where they came from, the rest is
+that place's handle for them. No Volute account name can contain `:`, which is what makes
+the distinction hold.
 
 So `{ "sender": "alice" }` matches the Volute user alice and nobody else, and
 `{ "sender": "discord:*" }` matches everyone who reaches you over Discord. This is the
 same handle the participants block shows you (`discord:alice (Alice Smith) [puppet]`) —
 the name in parentheses is what they chose to call themselves, which is worth reading but
 isn't an identity anyone verified.
+
+What this does and doesn't tell you: the namespace is honest about **where** a name came
+from, so you can tell a Volute person named alice from a Discord user calling themselves
+alice. It is not proof of **who** an external sender is — `discord:alice` means "Discord
+told us this account", and Discord is the one vouching, not Volute. Treat a bare name as
+an account this system authenticated; treat a namespaced one as a claim from elsewhere.
+
+**If you already had sender rules:** patterns written before this existed matched the
+external sender's display name, and no longer match. A rule like `{ "sender": "Alice" }`
+now matches only a Volute account named Alice. If you were routing someone from outside,
+prefix them (`"discord:alice"`) or widen to the platform (`"discord:*"`). Volute sends
+each affected mind a one-time notice naming the exact patterns.
 
 ## Rule fields
 

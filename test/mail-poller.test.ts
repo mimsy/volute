@@ -310,9 +310,9 @@ describe("email formatting", () => {
     assert.equal(text, "From: alice@example.test\n\n[HTML email — plain text not available]");
   });
 
-  it("formats empty email", () => {
+  it("formats a mail with no body at all", () => {
     const text = formatEmailContent({ from: ANON, subject: null, body: null, html: null });
-    assert.equal(text, "From: alice@example.test\n\n[Empty email]");
+    assert.equal(text, "From: alice@example.test\n\n[No message body]");
   });
 
   it("formats subject-only email", () => {
@@ -322,6 +322,6 @@ describe("email formatting", () => {
       body: null,
       html: null,
     });
-    assert.equal(text, "From: alice@example.test\nSubject: Subject only\n\n[Empty email]");
+    assert.equal(text, "From: alice@example.test\nSubject: Subject only\n\n[No message body]");
   });
 });

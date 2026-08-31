@@ -34,22 +34,39 @@ const userSelectFields = {
   created_at: users.created_at,
 };
 
+// The same charset `validateMindName` enforces for minds (registry.ts). Humans, minds and
+// puppets share one `users.username` column, and a mind reads all three the same way.
+const USERNAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
+const USERNAME_MAX = 64;
+
 /**
- * Reject a human username that could be mistaken for an external identity.
+ * Validate a human username. An allowlist, deliberately, not a `:` blocklist.
  *
- * External senders — bridge puppets, mail — are recorded under a namespaced
- * `platform:identifier` handle, so that a *bare* name in a sender column means an
- * authenticated Volute user and nothing else (#1016). That guarantee only holds while
- * no Volute username can carry the `:` separator. Mind names already can't
- * (`validateMindName`'s slug charset); human registration accepted any non-empty
- * string, which left the namespace forgeable from the other side.
+ * Two things rest on this. External senders — bridge puppets, mail, the cloud relay —
+ * are recorded under a namespaced `platform:identifier` handle, so that a *bare* name in
+ * a sender column means an authenticated Volute user and nothing else (#1016); that holds
+ * only while no Volute username can carry the `:` separator. And a username is
+ * interpolated into the framing a mind reads as system-rendered — the `[Volute: <sender>
+ * in DM — <time>]` prefix and the `[Participants: …]` block (`format-prefix.ts`) — so a
+ * name containing a newline or brackets forges that frame. That is the same impersonation
+ * the namespacing closes, one layer up: a sender who can forge the frame around their own
+ * message doesn't need to forge the name inside it.
+ *
+ * Mind names were already validated this way; human registration accepted any non-empty
+ * string, leaving both holes open from the human side.
  *
  * Returns an error message, or null when the name is acceptable.
  */
 export function validateUsername(username: string): string | null {
   if (!username) return "Username is required";
+  if (username.length > USERNAME_MAX) {
+    return `Username must be at most ${USERNAME_MAX} characters`;
+  }
   if (username.includes(":")) {
     return 'Username may not contain ":" — that separator is reserved for external identities (e.g. "discord:alice")';
+  }
+  if (!USERNAME_RE.test(username)) {
+    return "Username must start with a letter or number and contain only letters, numbers, dots, dashes, or underscores";
   }
   return null;
 }

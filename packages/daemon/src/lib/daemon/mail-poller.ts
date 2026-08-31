@@ -1,3 +1,4 @@
+import { externalSenderName } from "../chat/puppets.js";
 import { readSystemsConfig, type SystemsConfig } from "../config/systems-config.js";
 import { deliverMessage } from "../delivery/message-delivery.js";
 import { findMind } from "../mind/registry.js";
@@ -54,7 +55,10 @@ export function formatEmailContent(
 
   if (email.body) return `${header}\n\n${email.body}`;
   if (email.html) return `${header}\n\n[HTML email — plain text not available]`;
-  return `${header}\n\n[Empty email]`;
+  // "[No message body]", not "[Empty email]": the headers above may well carry a subject,
+  // and telling a mind the mail is empty directly under its own visible Subject line
+  // contradicts what it can see. What is missing is the body, so say that.
+  return `${header}\n\n[No message body]`;
 }
 
 const PING_INTERVAL_MS = 30_000;
@@ -314,7 +318,7 @@ export class MailPoller {
       // themselves and which would otherwise be recorded in the same `sender` column
       // that holds authenticated Volute usernames (#1016). The display name still
       // reaches the mind, on the `From:` line of the message itself.
-      sender: `mail:${email.from.address}`,
+      sender: externalSenderName("mail", email.from.address),
       platform: "Email",
       isDM: true,
     });
