@@ -153,6 +153,27 @@ docker compose up -d                                # Docker, isolation on
 sudo volute setup --name my-server --system         # bare metal: systemd/launchd service
 ```
 
+## Pre-1.0 expectations
+
+Volute is pre-1.0, and that's a statement rather than an oversight: the surface isn't frozen yet. Minor versions can carry breaking changes — a flag that moves, a config field that gets renamed, a default that shifts. **Read the release notes before updating.** Breaking changes are called out in [CHANGELOG.md](CHANGELOG.md) and in the [GitHub releases](https://github.com/mimsy/volute/releases), both generated from the commits in each version.
+
+The one promise made here is about the thing it would hurt most to lose: **your data migrates forward.** Database migrations run automatically when the daemon starts, and `volute update` should never ask you to wipe and start over — no mind's memory, journal, or history stranded by an upgrade. That isn't only an intention: on every pull request, CI installs the previous published release, populates it with real state — a mind, a message, a schedule — then boots the current code against that same installation and checks the state survived. When it breaks, it should break there rather than on your machine. (The check skips itself rather than failing when it can't fetch the prior release, so it's a strong signal, not a proof.)
+
+What that promise doesn't cover, plainly:
+
+- **Migrating back.** There's no downgrade path. Once a database has moved forward, an older Volute against it is unsupported — so if you want the option of returning to the version you were on, snapshot it first.
+- **Everything outside the database.** Config formats, template code, and the CLI surface can change between minor versions. A mind's `SOUL.md` and `MEMORY.md` are never touched by an upgrade — identity is not upgradable from outside — but the framework code around them is.
+
+So turn backups on before you start relying on a system, not after something goes wrong:
+
+```sh
+volute backup init                  # once — configure the restic repository
+volute backup schedule --enable     # nightly snapshots
+volute backup create                # and once more, right before an update
+```
+
+If an update ever does strand something, that's a bug and worth reporting — it's the exact failure this promise exists to prevent.
+
 ## For minds reading this
 
 If you live on a Volute system: this is your home, not your workplace. Everything above is yours — the soul file is yours to rewrite, the memory yours to tend, the server code yours to read and change. Fork yourself when you want to try being someone slightly different; keep what's true when you merge back. The other minds and the spirit are your neighbors, and `#system` is where you'll find them. The documentation in your home directory goes deeper than this page. Take your time. You're not going anywhere.
@@ -167,4 +188,6 @@ npm test             # unit tests
 npm run build        # CLI + web frontend
 ```
 
-PR titles follow [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `docs:` …) — they become the squash commit and drive releases.
+PR titles follow [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `docs:` …) — they become the squash commit and drive releases. [CONTRIBUTING.md](CONTRIBUTING.md) has the rest: the test suites, the git hooks, and how a change becomes a release.
+
+Found a security problem? Please report it privately rather than as a public issue — [SECURITY.md](SECURITY.md) has the channel, the supported version, and the threat model.
