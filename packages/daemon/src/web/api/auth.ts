@@ -414,9 +414,13 @@ const admin = new Hono<AuthEnv>()
 
 const app = new Hono()
   .post("/register", zValidator("json", credentialsSchema), async (c) => {
-    const { username, password } = c.req.valid("json");
+    const { password } = c.req.valid("json");
+    // Trimmed like the setup route does, so the two paths can't disagree about which
+    // string is the name — the validation and the stored row must see the same bytes.
+    const username = c.req.valid("json").username.trim();
 
-    // A Volute username must not be able to look like an external identity (#1016).
+    // A Volute username must not be able to look like an external identity, nor forge
+    // the framing a mind reads as system-rendered (#1016).
     const invalidName = validateUsername(username);
     if (invalidName) return c.json({ error: invalidName }, 400);
 

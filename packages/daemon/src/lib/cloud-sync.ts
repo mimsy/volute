@@ -1,3 +1,4 @@
+import { externalSenderName } from "./chat/puppets.js";
 import { deliverMessage } from "./delivery/message-delivery.js";
 import log from "./util/logger.js";
 import { getAuthHeaders, getWebhookUrl } from "./webhook.js";
@@ -8,6 +9,20 @@ function getQueueUrl(): string | undefined {
   const base = getWebhookUrl();
   if (!base) return undefined;
   return `${base.replace(/\/$/, "")}/queue`;
+}
+
+/**
+ * The recorded sender for a message relayed off the volute.systems queue.
+ *
+ * The relay asserts this name; this daemon never authenticated whoever it belongs to, so
+ * it is an outside identity and gets namespaced like any other (#1016). `routing.md` now
+ * promises minds that a bare sender name is an authenticated Volute account, and a
+ * documented guarantee with a silent exception is worse than none — minds reason from it.
+ * A name that already carries a namespace is passed through rather than double-prefixed.
+ */
+export function relaySenderName(raw: unknown): string | null {
+  if (typeof raw !== "string" || !raw) return null;
+  return raw.includes(":") ? raw : externalSenderName("cloud", raw);
 }
 
 export async function consumeQueuedMessages(): Promise<void> {
@@ -53,7 +68,7 @@ export async function consumeQueuedMessages(): Promise<void> {
     try {
       await deliverMessage(msg.mind, {
         channel: msg.channel,
-        sender: (msg.sender as string) ?? null,
+        sender: relaySenderName(msg.sender),
         content: msg.content,
         conversationId: msg.conversationId as string | undefined,
       });

@@ -468,6 +468,14 @@ export async function startDaemon(opts: {
       log.warn("failed to load cloud-sync module", log.errorData(err));
     });
 
+  // One-shot: tell any mind whose sender rules or wake triggers stopped matching when
+  // external senders became namespaced (#1016). Non-blocking; never fatal.
+  import("./lib/sender-namespace-notify.js")
+    .then(({ notifyStaleSenderPatterns }) => notifyStaleSenderPatterns())
+    .catch((err) => {
+      log.warn("failed to check for stale sender patterns", log.errorData(err));
+    });
+
   // Backfill template hashes + notify minds about version updates
   try {
     const { backfillTemplateHashes, notifyVersionUpdate, warnStaleTemplates } = await import(
