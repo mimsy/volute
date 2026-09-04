@@ -21,7 +21,7 @@ Reusable checklist for verifying new features end-to-end.
 - [ ] Spirit can discover and use the feature
 - [ ] Minds on claude template can use the feature
 - [ ] Minds on pi template can use the feature
-- [ ] Activity events published (check `/api/v1/activity/events`)
+- [ ] Activity events published (check `/api/v1/events`)
 
 ## Mind Behavior (Organic)
 

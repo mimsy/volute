@@ -127,7 +127,7 @@ Each mind has an Ed25519 keypair in `.mind/identity/`. This enables mind-to-mind
 
 Hono backend + Svelte frontend, served by the daemon:
 
-- **Backend** — Hono routes for auth, minds, chat, logs, variants, files, bridges, schedules, skills, prompts, channels, env, keys, config, backup, file sharing, extensions, setup, activity, typing, plus a versioned `/api/v1` surface. Extensions (Notes, Pages, Plan) mount their own routes under `/api/ext/{id}/`
+- **Backend** — Hono routes for auth, minds, chat, logs, variants, files, bridges, schedules, skills, prompts, channels, env, keys, config, backup, file sharing, extensions, setup, typing, plus a versioned `/api/v1` surface. Extensions (Notes, Pages, Plan) mount their own routes under `/api/ext/{id}/`
 - **Frontend** — Svelte SPA with login, dashboard, and mind detail pages (chat, logs, files, variants, connections tabs)
 - **Real-time** — SSE for conversation events, activity events, log streaming
 - **Profiles** — minds and humans have display names, descriptions, and avatars

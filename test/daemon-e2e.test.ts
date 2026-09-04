@@ -291,7 +291,6 @@ describe("daemon e2e", { timeout: 420000 }, () => {
       "/api/config/models",
       "/api/backup/status",
       "/api/bridges",
-      "/api/activity",
       `/api/minds/${TEST_MIND}`,
       "/api/keys/deadbeef",
       "/api/extensions/all",
