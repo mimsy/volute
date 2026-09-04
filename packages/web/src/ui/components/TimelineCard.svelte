@@ -11,6 +11,7 @@ let {
   icon,
   iconKind,
   meta,
+  metaHandle,
   time,
   body = { kind: "none" },
   onclick,
@@ -26,6 +27,12 @@ let {
   iconKind?: ComponentProps<typeof Icon>["kind"];
   /** Secondary header text: sender, author, "system event". */
   meta?: string;
+  /**
+   * The raw sender handle, shown muted beside `meta` when `meta` is a display name.
+   * Both are shown: the display name is what the person calls themselves, the handle
+   * is where they came from (#1024).
+   */
+  metaHandle?: string;
   /** Pre-formatted time string (caller picks relative vs absolute). */
   time?: string;
   body?: CardBody;
@@ -77,7 +84,10 @@ function handleKeydown(e: KeyboardEvent) {
     {/if}
     <span class="card-title">{title}</span>
     {#if meta}
-      <span class="card-meta">{meta}</span>
+      <span class="card-meta" title={meta}>{meta}</span>
+    {/if}
+    {#if metaHandle}
+      <span class="card-handle" title={metaHandle}>({metaHandle})</span>
     {/if}
     {#if time}
       <span class="card-time">{time}</span>
@@ -168,10 +178,18 @@ function handleKeydown(e: KeyboardEvent) {
     flex: 1;
   }
 
+  /*
+   * A sender renders as two spans — display name then handle (#1024) — and both may be
+   * long. They shrink together (rather than the handle alone being crushed to "(") so a
+   * cramped header still shows a legible piece of each; `title` carries the full handle.
+   */
   .card-meta {
     font-size: 11px;
     color: var(--accent);
-    flex-shrink: 0;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .card-time {
@@ -182,7 +200,17 @@ function handleKeydown(e: KeyboardEvent) {
     margin-left: auto;
   }
 
-  .card-meta + .card-time {
+  .card-handle {
+    font-size: 11px;
+    color: var(--text-2);
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .card-meta + .card-time,
+  .card-handle + .card-time {
     margin-left: 0;
   }
 

@@ -7,7 +7,7 @@ import { tick } from "svelte";
 import { fetchTurnEvents } from "../lib/client";
 import { normalizeTimestamp } from "../lib/format";
 import { navigate } from "../lib/navigate";
-import { historyEventCardModel, systemEventLabel } from "../lib/timeline-card";
+import { historyEventCardModel, senderLabel, systemEventLabel } from "../lib/timeline-card";
 import { groupToolEvents } from "../lib/tool-groups";
 import {
   getCategoryColor,
@@ -78,6 +78,17 @@ let eventLabel = $derived(systemEventLabel(meta, event.channel));
 
 /** Non-null exactly for the card tier (inbound/outbound/event/activity). */
 let cardModel = $derived(historyEventCardModel(event, meta, mindName));
+
+/**
+ * Who the collapsed one-liner attributes the message to. An inbound sender shows the
+ * display name it resolved to with its handle beside it — the handle is the provenance
+ * and is never dropped (#1024). Outbound is the mind, which has no handle to add.
+ */
+let inlineSender = $derived(
+  event.type === "inbound"
+    ? senderLabel(event.sender, event.sender_display_name)
+    : { label: mindName, handle: undefined },
+);
 
 let collapsible = $derived(
   event.type === "inbound" ||
@@ -322,6 +333,7 @@ async function handleClick() {
           icon={m.icon}
           iconKind={m.iconKind}
           meta={m.meta}
+          metaHandle={m.metaHandle}
           time={formatTime(event.created_at)}
           body={m.body}
           onclick={m.url ? () => navigate(m.url) : undefined}
@@ -333,7 +345,7 @@ async function handleClick() {
     {:else if event.type === "event"}
       <span class="inline-text inline-text-event inline-preview"><span class="inline-event-label">{eventLabel}</span>{" "}{event.content}</span>
     {:else}
-      <span class="inline-text inline-text-chat inline-preview">{#if event.channel}<span class="inline-channel">[{event.channel}]</span>{" "}{/if}<span class="inline-sender" class:inline-sender-user={event.type === "inbound"} class:inline-sender-mind={event.type === "outbound"}>{event.type === "inbound" ? (event.sender ?? "user") : mindName}:</span>{" "}{event.content}</span>
+      <span class="inline-text inline-text-chat inline-preview">{#if event.channel}<span class="inline-channel">[{event.channel}]</span>{" "}{/if}<span class="inline-sender" class:inline-sender-user={event.type === "inbound"} class:inline-sender-mind={event.type === "outbound"}>{inlineSender.label}{#if inlineSender.handle}<span class="inline-sender-handle">&nbsp;({inlineSender.handle})</span>{/if}:</span>{" "}{event.content}</span>
     {/if}
   {:else}
     <div class="event-body">
@@ -495,6 +507,10 @@ async function handleClick() {
   }
   .inline-sender-mind {
     color: var(--red);
+  }
+  .inline-sender-handle {
+    color: var(--text-2);
+    font-weight: 400;
   }
   .inline-text-chat {
     color: var(--text-0);

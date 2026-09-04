@@ -4,10 +4,17 @@ import {
   CARD_TIER,
   feedItemBody,
   historyEventCardModel,
+  senderLabel,
   systemEventLabel,
 } from "../packages/web/src/ui/lib/timeline-card";
 
-const base = { type: "inbound", content: "hello", channel: "#general", sender: "james" };
+const base = {
+  type: "inbound",
+  content: "hello",
+  channel: "#general",
+  sender: "james",
+  sender_display_name: null,
+};
 
 describe("historyEventCardModel", () => {
   it("maps inbound messages to a blue chat card with the sender", () => {
@@ -16,14 +23,31 @@ describe("historyEventCardModel", () => {
       iconKind: "chat",
       title: "#general",
       meta: "james",
+      metaHandle: undefined,
       body: { kind: "text", text: "hello" },
       url: "",
     });
   });
 
+  it("leads with the sender's display name and keeps the handle beside it (#1024)", () => {
+    const model = historyEventCardModel(
+      { ...base, sender: "discord:alice", sender_display_name: "Alice Smith" },
+      null,
+      "echo",
+    );
+    assert.equal(model?.meta, "Alice Smith");
+    assert.equal(model?.metaHandle, "discord:alice");
+  });
+
+  it("shows the bare handle when the sender has no display name", () => {
+    const model = historyEventCardModel({ ...base, sender: "discord:alice" }, null, "echo");
+    assert.equal(model?.meta, "discord:alice");
+    assert.equal(model?.metaHandle, undefined);
+  });
+
   it("defaults inbound sender and missing channel", () => {
     const model = historyEventCardModel(
-      { type: "inbound", content: "hi", channel: "", sender: null },
+      { type: "inbound", content: "hi", channel: "", sender: null, sender_display_name: null },
       null,
       "echo",
     );
@@ -40,7 +64,13 @@ describe("historyEventCardModel", () => {
 
   it("maps system events to a purple gear card with no sender or channel", () => {
     const model = historyEventCardModel(
-      { type: "event", content: "the sun rose", channel: "event:schedule:3", sender: null },
+      {
+        type: "event",
+        content: "the sun rose",
+        channel: "event:schedule:3",
+        sender: null,
+        sender_display_name: null,
+      },
       { label: "Schedule: sunrise" },
       "echo",
     );
@@ -64,7 +94,13 @@ describe("historyEventCardModel", () => {
       bodyHtml: "note text",
     };
     const model = historyEventCardModel(
-      { type: "activity", content: 'iris wrote "My Note"', channel: "", sender: null },
+      {
+        type: "activity",
+        content: 'iris wrote "My Note"',
+        channel: "",
+        sender: null,
+        sender_display_name: null,
+      },
       meta,
       "echo",
     );
@@ -81,7 +117,13 @@ describe("historyEventCardModel", () => {
 
   it("falls back to the document icon and yellow for bare activities", () => {
     const model = historyEventCardModel(
-      { type: "activity", content: "did a thing", channel: "", sender: null },
+      {
+        type: "activity",
+        content: "did a thing",
+        channel: "",
+        sender: null,
+        sender_display_name: null,
+      },
       null,
       "echo",
     );
@@ -97,6 +139,29 @@ describe("historyEventCardModel", () => {
       assert.equal(historyEventCardModel({ ...base, type }, null, "echo"), null);
       assert.equal(CARD_TIER.has(type), false);
     }
+  });
+});
+
+describe("senderLabel", () => {
+  it("leads with the display name and keeps the handle", () => {
+    assert.deepEqual(senderLabel("discord:alice", "Alice Smith"), {
+      label: "Alice Smith",
+      handle: "discord:alice",
+    });
+  });
+
+  it("shows the handle alone when there is no display name to add", () => {
+    assert.deepEqual(senderLabel("discord:alice", null), { label: "discord:alice" });
+    assert.deepEqual(senderLabel("discord:alice", undefined), { label: "discord:alice" });
+  });
+
+  it("does not repeat a display name identical to the handle", () => {
+    assert.deepEqual(senderLabel("cricket", "cricket"), { label: "cricket" });
+  });
+
+  it("falls back for a sender-less row, and never invents a handle for the fallback", () => {
+    assert.deepEqual(senderLabel(null, null), { label: "user" });
+    assert.deepEqual(senderLabel(null, null, "echo"), { label: "echo" });
   });
 });
 

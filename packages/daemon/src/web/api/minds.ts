@@ -2043,7 +2043,16 @@ const app = new Hono<AuthEnv>()
       .where(and(eq(mindHistory.mind, name), eq(mindHistory.turn_id, turnId), typeFilter))
       .orderBy(mindHistory.id);
 
-    return c.json(rows);
+    // These rows render through the same timeline components as GET /:name/history, so they
+    // need the same sender annotation — without it an expanded turn drops back to the bare
+    // handle while the row above it shows the display name (#1024).
+    const displayNames = await getDisplayNames(rows.map((r) => r.sender));
+    return c.json(
+      rows.map((r) => ({
+        ...r,
+        sender_display_name: r.sender ? (displayNames.get(r.sender) ?? null) : null,
+      })),
+    );
   })
   .get("/:name/history/cross-session", requireSelf(), async (c) => {
     const name = c.req.param("name");
@@ -2352,6 +2361,9 @@ const app = new Hono<AuthEnv>()
             channel: null,
             thread: r.thread,
             sender: null,
+            // A summary has no sender, so no display name either — but the key is present
+            // on every row shape this endpoint returns, so clients can read it uniformly.
+            sender_display_name: null,
             message_id: null,
             content: r.content,
             metadata: r.metadata,
@@ -2376,6 +2388,7 @@ const app = new Hono<AuthEnv>()
           channel: null,
           thread: null,
           sender: null,
+          sender_display_name: null,
           message_id: null,
           content: r.content,
           metadata: r.metadata,

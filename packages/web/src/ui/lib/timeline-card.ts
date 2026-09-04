@@ -21,9 +21,29 @@ export type CardModel = {
   iconKind?: CardIconKind;
   title: string;
   meta?: string;
+  /** Raw sender handle, rendered beside `meta` when `meta` is a display name. */
+  metaHandle?: string;
   body: CardBody;
   url: string;
 };
+
+/**
+ * Split a sender into what a reader sees first and what stands beside it. The display
+ * name is what the person calls themselves; the handle ("discord:alice") is where they
+ * came from and is the only half anyone vouched for (#1019). Both are rendered — the
+ * display name leading, the handle secondary — and neither ever stands in for the other.
+ * `handle` is left undefined when there is nothing extra to say (no display name, or one
+ * identical to the handle), so callers render exactly what they render today.
+ */
+export function senderLabel(
+  sender: string | null | undefined,
+  displayName: string | null | undefined,
+  fallback = "user",
+): { label: string; handle?: string } {
+  const handle = sender ?? fallback;
+  if (displayName && displayName !== handle) return { label: displayName, handle };
+  return { label: handle };
+}
 
 /** History event types that expand into a card (vs. inline text). */
 export const CARD_TIER = new Set(["inbound", "outbound", "event", "activity"]);
@@ -46,20 +66,23 @@ export function systemEventLabel(
  * Returns null for types that render inline rather than as a card.
  */
 export function historyEventCardModel(
-  event: Pick<HistoryMessage, "type" | "content" | "channel" | "sender">,
+  event: Pick<HistoryMessage, "type" | "content" | "channel" | "sender" | "sender_display_name">,
   meta: Record<string, unknown> | null,
   mindName: string,
 ): CardModel | null {
   switch (event.type) {
-    case "inbound":
+    case "inbound": {
+      const { label, handle } = senderLabel(event.sender, event.sender_display_name);
       return {
         color: "blue",
         iconKind: "chat",
         title: event.channel || "message",
-        meta: event.sender ?? "user",
+        meta: label,
+        metaHandle: handle,
         body: { kind: "text", text: event.content ?? "" },
         url: "",
       };
+    }
     case "outbound":
       return {
         color: "red",
