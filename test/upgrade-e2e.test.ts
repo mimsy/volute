@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { createClient } from "@libsql/client";
+import { killPidTree, killTree, sweepScratch } from "./helpers/process-tree.js";
 
 /**
  * Cross-version upgrade e2e (#830).
@@ -185,26 +186,33 @@ function listeningPids(port: number): number[] {
   }
 }
 
-/** SIGTERM a daemon child and wait for it to exit (SIGKILL fallback). */
+/**
+ * SIGTERM a daemon's whole process *group* and wait for it to exit.
+ *
+ * Both daemons are spawned `detached: true` precisely so this works: signalling
+ * only the pid we spawned reaches `npx`, not the node process that holds the
+ * port and runs the graceful-shutdown handler — so the daemon never stops its
+ * minds, and the orphans keep writing under SCRATCH while `after()` removes it
+ * (#1047). The grace period is generous on purpose: the daemon's own shutdown
+ * budgets 5s per mind before force-killing it, and a SIGKILL landing mid-way
+ * would orphan exactly what the SIGTERM was sent to clean up.
+ */
 async function stopDaemon(proc: ChildProcess): Promise<void> {
-  if (proc.killed) return;
-  proc.kill("SIGTERM");
-  await new Promise<void>((resolveExit) => {
-    proc.on("exit", () => resolveExit());
-    setTimeout(() => {
-      try {
-        proc.kill("SIGKILL");
-      } catch {}
-      resolveExit();
-    }, 8000);
-  });
+  await killTree(proc, 20000);
 }
 
 /**
- * Reap anything still listening on a port. `node ... daemon.js` and `npx tsx`
- * both hand off to a grandchild whose listening socket can outlive the SIGTERM
- * we send to the process we spawned; left unreaped it fails the next bind. Same
- * hazard applies to the mind server's own port.
+ * Reap anything still listening on a port, along with its process tree.
+ *
+ * `node ... daemon.js` and `npx tsx` both hand off to a grandchild whose
+ * listening socket can outlive the SIGTERM we send to the process we spawned;
+ * left unreaped it fails the next bind. Same hazard applies to the mind server's
+ * own port — and there the survivor is not hypothetical: the prior *released*
+ * daemon installs its SIGTERM handler only once startDaemon finishes, which on
+ * this scratch home is still creating the spirit, so it dies on the default
+ * disposition without ever stopping the mind it started. That mind is left
+ * behind, and killing only the pid holding the socket leaves its `tsx`/agent
+ * children alive and writing under SCRATCH while `after()` removes it (#1047).
  */
 async function reapPort(port: number): Promise<void> {
   const deadline = Date.now() + 5000;
@@ -212,11 +220,7 @@ async function reapPort(port: number): Promise<void> {
     if (listeningPids(port).length === 0) return;
     await new Promise((r) => setTimeout(r, 250));
   }
-  for (const pid of listeningPids(port)) {
-    try {
-      process.kill(pid, "SIGKILL");
-    } catch {}
-  }
+  for (const pid of listeningPids(port)) killPidTree(pid);
 }
 
 /** Migrations recorded in the scratch DB (a direct read, independent of the daemon). */
@@ -336,9 +340,14 @@ describe("cross-version upgrade e2e", { timeout: 600000 }, () => {
     };
 
     // 2. Boot the prior release and populate real state through its API.
+    // `detached: true` puts the daemon in its own process group so teardown can
+    // signal the whole tree (see stopDaemon). stdio stays explicitly piped —
+    // detaching changes nothing about the pipes, and the log-consuming handlers
+    // below are load-bearing (an unread pipe deadlocks a chatty daemon).
     priorDaemon = spawn("node", [priorDaemonEntry, "--port", String(DAEMON_PORT), "--foreground"], {
       cwd: INSTALL_PREFIX,
       stdio: ["ignore", "pipe", "pipe"],
+      detached: true,
       env: daemonEnv,
     });
     priorDaemon.on("error", (e) => process.stderr.write(`[prior-daemon] spawn error: ${e}\n`));
@@ -476,7 +485,7 @@ describe("cross-version upgrade e2e", { timeout: 600000 }, () => {
     headDaemon = spawn(
       "npx",
       ["tsx", "packages/daemon/src/daemon.ts", "--port", String(DAEMON_PORT), "--foreground"],
-      { cwd: REPO_ROOT, stdio: ["ignore", "pipe", "pipe"], env: daemonEnv },
+      { cwd: REPO_ROOT, stdio: ["ignore", "pipe", "pipe"], detached: true, env: daemonEnv },
     );
     headDaemon.on("error", (e) => process.stderr.write(`[head-daemon] spawn error: ${e}\n`));
     headDaemon.on("exit", (code, sig) =>
@@ -492,7 +501,7 @@ describe("cross-version upgrade e2e", { timeout: 600000 }, () => {
     if (headDaemon) await stopDaemon(headDaemon);
     await reapPort(DAEMON_PORT);
     await reapPort(MIND_BASE_PORT);
-    rmSync(SCRATCH, { recursive: true, force: true });
+    sweepScratch(SCRATCH);
   });
 
   it("migrations apply forward and the mind's state survives the upgrade", async (t) => {
