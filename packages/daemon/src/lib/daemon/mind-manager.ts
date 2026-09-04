@@ -680,7 +680,6 @@ export class MindManager {
     }
 
     // Set up crash recovery after successful start
-    if (this.restartTracker.reset(name)) this.saveCrashAttempts();
     this.setupCrashRecovery(name, child);
     await setMindRunning(name, true);
 
@@ -737,10 +736,18 @@ export class MindManager {
   }
 
   private setupCrashRecovery(name: string, child: ChildProcess): void {
+    // Clear the crash budget only once this spawn has proved it can stay up.
+    // Resetting it here at start time let a mind that crashes right after passing
+    // its health check refresh its own budget on every attempt, so the backoff and
+    // the give-up cap (and with them hasExhaustedRestarts) never engaged (#1033).
+    this.restartTracker.armHealthyReset(name, () => this.saveCrashAttempts());
+
     child.on("exit", async (code) => {
       // Only react if this is still the tracked child. After a restart replaced
       // it, an old child's delayed exit must not delete the new child's entry.
       if (this.minds.get(name)?.child !== child) return;
+      // This spawn died before it earned a reset — keep its accumulated count.
+      this.restartTracker.cancelHealthyReset(name);
       this.minds.delete(name);
       if (this.shuttingDown || this.stopping.has(name)) return;
 
@@ -913,8 +920,8 @@ export class MindManager {
 
   /**
    * True when crash recovery for this mind has used up all restart attempts (the
-   * "giving up on restart" state). Cleared by the tracker reset on the next
-   * successful start or explicit stop.
+   * "giving up on restart" state). Cleared by an explicit stop, or once a restarted
+   * mind has stayed up long enough to earn a reset.
    */
   hasExhaustedRestarts(name: string): boolean {
     return this.restartTracker.getAttempts(name) >= this.restartTracker.maxRestartAttempts;
