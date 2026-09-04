@@ -37,13 +37,18 @@ async function cleanupConversationColumns(db: DbInstance): Promise<void> {
   }
 }
 
+/** Where the system database lives — also what a host has to point sqlite3 at. */
+export function dbPath(): string {
+  return process.env.VOLUTE_DB_PATH || resolve(voluteSystemDir(), "volute.db");
+}
+
 export async function getDb(): Promise<DbInstance> {
   if (db) return db;
   if (dbPromise) return dbPromise;
   dbPromise = (async () => {
     try {
-      const dbPath = process.env.VOLUTE_DB_PATH || resolve(voluteSystemDir(), "volute.db");
-      const instance = drizzle({ connection: { url: `file:${dbPath}` }, schema });
+      const path = dbPath();
+      const instance = drizzle({ connection: { url: `file:${path}` }, schema });
       // WAL mode allows concurrent reads during writes; busy_timeout prevents
       // immediate SQLITE_BUSY failures when the DB is briefly locked.
       await instance.run(sql.raw("PRAGMA journal_mode=WAL"));
@@ -53,10 +58,10 @@ export async function getDb(): Promise<DbInstance> {
       await cleanupConversationColumns(instance);
       // Restrict database file permissions to owner only
       try {
-        chmodSync(dbPath, 0o600);
+        chmodSync(path, 0o600);
       } catch (err) {
         console.error(
-          `[volute] WARNING: Failed to restrict database file permissions on ${dbPath}:`,
+          `[volute] WARNING: Failed to restrict database file permissions on ${path}:`,
           err,
         );
       }
