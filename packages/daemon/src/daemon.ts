@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import { format } from "node:util";
 import { setProviderRefreshHook } from "./lib/ai-service.js";
 import { backfillCommonsChannelMembers, ensureCommonsChannel } from "./lib/chat/commons-channel.js";
+import { reportExternalNameCollisions } from "./lib/chat/name-collisions.js";
 import { initBackupManager } from "./lib/daemon/backup-manager.js";
 import { initBridgeManager } from "./lib/daemon/bridge-manager.js";
 import { getCredentialRecovery } from "./lib/daemon/credential-recovery.js";
@@ -537,6 +538,14 @@ export async function startDaemon(opts: {
   // after the first interval elapses, so this startup pass is not redundant.
   reportStaleApiPaths().catch((err) => {
     log.warn("failed to check for stale API paths", log.errorData(err));
+  });
+
+  // Likewise for an account squatting the `platform:handle` namespace, which makes
+  // bridge inbound from that handle fail permanently and opaquely (#1023). Boot is
+  // the only sensible cadence — the condition can neither arise nor clear on its own
+  // — and this stays non-blocking: a warning must not be able to delay a start.
+  reportExternalNameCollisions().catch((err) => {
+    log.warn("failed to check for external-sender name collisions", log.errorData(err));
   });
 
   // ...and re-run that cleanup hourly so retention is actually enforced on a
