@@ -9,6 +9,7 @@ import { resolveMindToken, resolveScriptToken } from "../../lib/daemon/mind-toke
 import { getDb } from "../../lib/db.js";
 import { getBaseName } from "../../lib/mind/registry.js";
 import { sessions } from "../../lib/schema.js";
+import { sessionCache } from "../../lib/session-cache.js";
 import log from "../../lib/util/logger.js";
 import { type Effective, hasAdminAuthority, resolveEffective } from "./effective-principal.js";
 
@@ -42,9 +43,6 @@ export type AuthEnv = {
 
 export const SESSION_MAX_AGE = 365 * 24 * 60 * 60 * 1000; // 1 year
 const SESSION_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
-
-type CachedSession = { userId: number; user: User; expires: number };
-const sessionCache = new Map<string, CachedSession>();
 
 /** Test seam: direct access to the in-memory session cache. */
 export const _sessionCacheForTest = sessionCache;
