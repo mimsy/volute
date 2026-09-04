@@ -67,6 +67,10 @@ export class BridgeManager {
     // Stop existing bridge if running
     const existing = this.bridges.get(platform);
     if (existing) {
+      // Mark it stopping, exactly as stopBridge does: this kill is deliberate, so the
+      // old child's exit must not be recorded as a crash. Without this it spends a
+      // restart attempt and schedules a restart that then kills the replacement.
+      this.stopping.add(platform);
       await new Promise<void>((res) => {
         existing.child.on("exit", () => res());
         try {
@@ -94,6 +98,7 @@ export class BridgeManager {
           res();
         }, 3000);
       });
+      this.stopping.delete(platform);
       this.bridges.delete(platform);
     }
 
@@ -150,12 +155,19 @@ export class BridgeManager {
     }
 
     this.bridges.set(platform, { child, platform });
-    this.restartTracker.reset(platform);
+    // Clear the crash budget only once this spawn has proved it can stay up —
+    // resetting here at spawn time let a bridge that dies immediately refresh its
+    // own budget forever, so it never backed off and never gave up (#1033).
+    this.restartTracker.armHealthyReset(platform);
 
     // Crash recovery
     child.on("exit", (code) => {
       const tracked = this.bridges.get(platform);
       if (tracked?.child === child) {
+        // This spawn died before it earned a reset — keep its accumulated count.
+        // Scoped to the tracked child so a stale child's late exit can't cancel
+        // the reset armed by the spawn that replaced it.
+        this.restartTracker.cancelHealthyReset(platform);
         this.bridges.delete(platform);
       }
 
