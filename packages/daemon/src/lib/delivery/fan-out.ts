@@ -33,6 +33,11 @@ export interface FanOutOpts {
   isDM?: boolean;
   /** Extra fields passed to buildVoluteSlug (e.g. convType, convName). */
   slugExtra?: Partial<SlugOpts>;
+  /**
+   * Where the message came from, as the mind should see it named — "Discord", "Email".
+   * Left unset for Volute-native traffic, where `formatPrefix` names it "Volute" (#1021).
+   */
+  platform?: string;
   /** Maps a mind username to its delivery target name (variant-aware targeting). */
   targetName?: (username: string) => string;
 }
@@ -182,6 +187,7 @@ export async function fanOutToMinds(opts: FanOutOpts): Promise<FanOutResult> {
       participants: participantNames,
       participantCount: participants.length,
       isDM,
+      ...(opts.platform ? { platform: opts.platform } : {}),
       ...(currentlyTyping.length > 0 ? { typing: currentlyTyping } : {}),
     }).then(
       (ok) => {

@@ -20,7 +20,7 @@ import {
   setBridgeConfig,
   setChannelMapping,
 } from "../packages/daemon/src/lib/bridges/bridges.js";
-import { externalSenderName } from "../packages/daemon/src/lib/chat/puppets.js";
+import { externalSenderName, findOrCreatePuppet } from "../packages/daemon/src/lib/chat/puppets.js";
 import { relaySenderName } from "../packages/daemon/src/lib/cloud-sync.js";
 import { formatEmailContent, MailPoller } from "../packages/daemon/src/lib/daemon/mail-poller.js";
 import {
@@ -28,12 +28,24 @@ import {
   tryGetMindManager,
 } from "../packages/daemon/src/lib/daemon/mind-manager.js";
 import { getDb } from "../packages/daemon/src/lib/db.js";
-import { clearConfigCache } from "../packages/daemon/src/lib/delivery/delivery-router.js";
-import { createChannel, getMessages } from "../packages/daemon/src/lib/events/conversations.js";
+import {
+  initDeliveryManager,
+  tryGetDeliveryManager,
+} from "../packages/daemon/src/lib/delivery/delivery-manager.js";
+import {
+  clearConfigCache,
+  type DeliveryPayload,
+} from "../packages/daemon/src/lib/delivery/delivery-router.js";
+import {
+  addParticipant,
+  createChannel,
+  getMessages,
+} from "../packages/daemon/src/lib/events/conversations.js";
 import { addMind, removeMind, setMindRunning } from "../packages/daemon/src/lib/mind/registry.js";
 import { writeVoluteConfig } from "../packages/daemon/src/lib/mind/volute-config.js";
 import {
   conversations,
+  deliveryQueue,
   messages,
   mindHistory,
   systemEvents,
@@ -50,6 +62,13 @@ import type { AuthEnv } from "../packages/daemon/src/web/middleware/auth.js";
 const MIND = "ns-atlas";
 const PORT = 41988;
 const CHANNEL = "ns-commons";
+
+// The DeliveryManager is a process-global with no reset, and the delivery-payload suite
+// below needs one (deliverMessage routes through it, and without one the send fails
+// before the delivery_queue row that carries the payload is written). Initialize it here,
+// for the whole file, rather than in that suite's hook: a per-suite init would make every
+// test's environment depend on declaration order.
+if (!tryGetDeliveryManager()) initDeliveryManager();
 
 // The bridges app is mounted behind authMiddleware in app.ts, so tests supply the
 // principal directly. id 0 is the daemon token — the only principal inbound accepts.
@@ -112,6 +131,7 @@ async function cleanup(): Promise<void> {
     force: true,
   });
   await db.delete(mindHistory).where(eq(mindHistory.mind, MIND));
+  await db.delete(deliveryQueue).where(eq(deliveryQueue.mind, MIND));
   const convs = await db.select().from(conversations).all();
   for (const c of convs) await db.delete(messages).where(eq(messages.conversation_id, c.id));
   await db.delete(conversations);
@@ -122,6 +142,7 @@ async function cleanup(): Promise<void> {
   );
   removeBridgeConfig("discord");
   removeBridgeConfig("slack");
+  removeBridgeConfig("telegram");
   rmSync(resolve(process.env.VOLUTE_HOME!, "minds", MIND), { recursive: true, force: true });
   clearConfigCache();
 }
@@ -225,13 +246,14 @@ describe("mail inbound records mail:<address>, not the From name", () => {
   it("namespaces the sender and keeps the human name on the From line", async () => {
     await addMind(MIND, PORT);
     routeEverything();
-    // deliverMessage returns false with no delivery manager running, which deliver()
-    // converts to a throw — the inbound row is written before that point.
-    await assert.rejects(
-      (
-        new MailPoller() as unknown as { deliver(m: string, e: typeof email): Promise<void> }
-      ).deliver(MIND, email),
-    );
+    // The inbound row is written before delivery is attempted, so what the send does
+    // afterwards is not this test's subject: it throws when no delivery manager is
+    // running and doesn't when one is, and either outcome leaves the row asserted below.
+    // Swallowing it keeps this test independent of what else in this file has
+    // initialized the process-global DeliveryManager.
+    await (new MailPoller() as unknown as { deliver(m: string, e: typeof email): Promise<void> })
+      .deliver(MIND, email)
+      .catch(() => {});
 
     const db = await getDb();
     const rows = await db
@@ -385,5 +407,98 @@ describe("minds are told when their sender patterns stopped matching", () => {
     assert.match(notice, /sleep\.wakeTriggers\.senders: "boss@example\.test"/);
     assert.match(notice, /discord:alice/, "shows the new form");
     assert.match(notice, /Nothing was lost/, "a mind must not read this as lost messages");
+  });
+});
+
+/**
+ * The same bridged message also has to tell the mind *where it came from* (#1021) and
+ * *what shape of conversation it arrived in* (#1022). Both are read off the delivered
+ * payload rather than mind_history: `formatPrefix` names `platform` on every single
+ * message, and `channel` is the slug routing rules and threads key on.
+ *
+ * The delivery_queue row is the observation point — `persistToQueue` writes the whole
+ * payload just before the POST at the mind, which has no process to answer it here.
+ */
+describe("bridge inbound delivers the platform and the channel's real shape", () => {
+  /** Poll for the queued delivery: fan-out sends fire-and-forget, after the 200. */
+  async function deliveredPayload(): Promise<DeliveryPayload> {
+    const db = await getDb();
+    for (let i = 0; i < 100; i++) {
+      const rows = await db.select().from(deliveryQueue).where(eq(deliveryQueue.mind, MIND)).all();
+      if (rows.length > 0) {
+        assert.equal(rows.length, 1, "one message, one delivery");
+        return JSON.parse(rows[0].payload) as DeliveryPayload;
+      }
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    assert.fail(`no delivery was queued for ${MIND}`);
+  }
+
+  afterEach(cleanup);
+
+  it("delivers a mapped channel as #<name> on its platform, not as a DM with a bystander", async () => {
+    await addMind(MIND, PORT);
+    await setMindRunning(MIND, true);
+    markRunning();
+    routeEverything();
+    const mindUser = await getOrCreateMindUser(MIND);
+    const channel = await createChannel(CHANNEL, mindUser.id);
+    setBridgeConfig("discord", { enabled: true, defaultMind: MIND, channelMappings: {} });
+    setChannelMapping("discord", "my-server/general", CHANNEL);
+
+    // A second human in the room, present before the sender. Reverted, this is the
+    // participant `buildVoluteSlug`'s DM branch finds first — a room named after
+    // someone who merely happens to be in it, in an order nobody controls.
+    const bystander = await findOrCreatePuppet("discord", "alice", "Alice");
+    await addParticipant(channel.id, bystander.id);
+
+    const res = await inbound("discord", {
+      content: [{ type: "text", text: "hi all" }],
+      platformUserId: "bob",
+      displayName: "Bob",
+      externalChannel: "my-server/general",
+      isDM: false,
+    });
+    assert.equal(res.status, 200);
+
+    const payload = await deliveredPayload();
+    assert.equal(
+      payload.channel,
+      `#${CHANNEL}`,
+      "a mapped channel is a room, and slugs like one (#1022)",
+    );
+    assert.equal(
+      payload.platform,
+      "Discord",
+      "the bridge's display name, so formatPrefix reads [Discord: …] not [Volute: …] (#1021)",
+    );
+    assert.equal(payload.isDM, false);
+    assert.equal(payload.sender, "discord:bob");
+  });
+
+  it("delivers a bridged DM with its platform, keeping the @sender slug", async () => {
+    await addMind(MIND, PORT);
+    await setMindRunning(MIND, true);
+    markRunning();
+    routeEverything();
+    setBridgeConfig("telegram", { enabled: true, defaultMind: MIND, channelMappings: {} });
+
+    const res = await inbound("telegram", {
+      content: [{ type: "text", text: "hello" }],
+      platformUserId: "carol",
+      displayName: "Carol",
+      externalChannel: "dm-1",
+      isDM: true,
+    });
+    assert.equal(res.status, 200);
+
+    const payload = await deliveredPayload();
+    assert.equal(payload.platform, "Telegram", "a DM carries its origin too (#1021)");
+    assert.equal(
+      payload.channel,
+      "@telegram-carol",
+      "the DM branch was already right and must stay that way",
+    );
+    assert.equal(payload.isDM, true);
   });
 });
