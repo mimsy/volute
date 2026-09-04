@@ -149,6 +149,7 @@ const app = new Hono<AuthEnv>()
       senderName: puppet.username,
       platform,
       isDM: false,
+      channelName: voluteChannelName,
     });
 
     return c.json({ ok: true, conversationId: channel.id });
@@ -264,6 +265,8 @@ async function fanOutToBridgedMinds(opts: {
   senderName: string;
   platform: string;
   isDM: boolean;
+  /** The mapped Volute channel's name — set for a channel message, absent for a DM. */
+  channelName?: string;
 }): Promise<void> {
   await fanOutToMinds({
     conversationId: opts.conversationId,
@@ -273,6 +276,16 @@ async function fanOutToBridgedMinds(opts: {
     // authenticated (#1017).
     senderId: null,
     isDM: opts.isDM,
+    // Name the platform the way a person would, not by its config id: the mind reads
+    // this on every message, and without it every bridged message claims to be local
+    // Volute traffic (#1021).
+    platform: getBridgeDef(opts.platform)?.displayName ?? opts.platform,
+    // A mapped channel is a room, and must slug as `#name` like the native path does.
+    // Without this buildVoluteSlug falls through to its DM branch and names the room
+    // after whichever participant happens to sort first (#1022).
+    ...(opts.channelName
+      ? { slugExtra: { convType: "channel" as const, convName: opts.channelName } }
+      : {}),
   });
 }
 
