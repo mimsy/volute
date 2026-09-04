@@ -136,7 +136,7 @@ The rule is the `.local/` subtree, not a filename list, so a hook added under `.
 
 The daemon serves a Hono web server (default port 1618) with a Svelte frontend.
 
-- **Backend** (`packages/daemon/src/web/`): Hono API routes for auth, minds, chat, conversations, logs, variants, files, bridges, schedules, channels, env, keys, prompts, skills, file-sharing, extensions, setup, activity, backup, config, history
+- **Backend** (`packages/daemon/src/web/`): Hono API routes for auth, minds, chat, conversations, logs, variants, files, bridges, schedules, channels, env, keys, prompts, skills, file-sharing, extensions, setup, backup, config, history
 - **Frontend** (`packages/web/`): Svelte 5 SPA with login, dashboard, and mind detail pages (chat, logs, files, variants, connections tabs). Shared UI components imported from `@volute/ui`
 - **Auth**: Cookie-based (`volute_session`), in-memory session map, first user auto-admin; durable `vmt_` API tokens in the `api_tokens` table
 - **Database**: libSQL at `~/.volute/system/volute.db`. The Drizzle schema (`packages/daemon/src/lib/schema.ts`) is the source of truth for the table list — don't enumerate tables in docs

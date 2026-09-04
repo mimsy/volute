@@ -51,7 +51,7 @@ Every module is mounted once under `/api/v1` (authenticated except for the publi
 | Method | Path | Purpose |
 |--------|------|---------|
 | POST | `/api/v1/chat` | Send a message to a mind (fire-and-forget) |
-| GET | `/api/v1/events` | SSE stream of conversation events |
+| GET | `/api/v1/events` | SSE stream of conversation and activity events (self-scoped for non-admins) |
 | GET | `/api/v1/feed` | Home feed (recent non-private conversations + lifecycle events) |
 | GET | `/api/v1/feed/digest` | Daily digest |
 | GET/POST | `/api/v1/conversations` | List / create conversations |
@@ -150,9 +150,3 @@ Bridges are system-wide (`/api/v1/bridges/*`, authenticated).
 | POST | `/api/v1/setup` | Complete initial setup (unauthenticated) |
 
 Extensions mount their own routes under `/api/ext/{id}/`. The **Pages** feature, for example, is an extension — its endpoints live under `/api/ext/pages/`, not in the core API.
-
-## Activity
-
-### GET /api/v1/activity
-
-SSE stream of activity events (mind start/stop/active/idle).
