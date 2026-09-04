@@ -7,6 +7,7 @@ import { broadcast } from "./events/activity-events.js";
 import { findMind, isSpiritName } from "./mind/registry.js";
 import type { MindProfile } from "./mind/volute-config.js";
 import { users } from "./schema.js";
+import { invalidateSessionCacheForUser } from "./session-cache.js";
 
 export type User = {
   id: number;
@@ -295,6 +296,7 @@ export async function approveUser(id: number): Promise<void> {
     .update(users)
     .set({ role: "user" })
     .where(and(eq(users.id, id), eq(users.role, "pending")));
+  invalidateSessionCacheForUser(id);
 }
 
 export async function countAdmins(): Promise<number> {
@@ -311,6 +313,7 @@ export async function setUserRole(id: number, role: "admin" | "user"): Promise<v
   const target = await db.select({ id: users.id }).from(users).where(eq(users.id, id)).get();
   if (!target) throw new Error("User not found");
   await db.update(users).set({ role }).where(eq(users.id, id));
+  invalidateSessionCacheForUser(id);
 }
 
 export async function deleteUser(id: number): Promise<void> {

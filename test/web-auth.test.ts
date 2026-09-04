@@ -224,6 +224,50 @@ describe("web auth routes", () => {
     assert.equal(after.status, 200, await after.clone().text());
     assert.equal((await after.json()).role, "user", "approval must land on the next refresh");
 
+    const protectedAfter = await app.request("/api/v1/auth/change-password", {
+      method: "POST",
+      headers: {
+        Cookie: `volute_session=${sessionId}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ currentPassword: "pass", newPassword: "new-pass" }),
+    });
+    assert.equal(
+      protectedAfter.status,
+      200,
+      "authMiddleware must discard the cached pending role after approval",
+    );
+
+    await deleteSession(sessionId);
+  });
+
+  it("invalidates cached sessions after a direct role change", async () => {
+    const user = await createUser("meuser", "pass");
+    await setUserRole(user.id, "user");
+    const sessionId = await createSession(user.id);
+    const app = createApp();
+
+    const before = await app.request("/api/v1/auth/me", {
+      headers: { Cookie: `volute_session=${sessionId}` },
+    });
+    assert.equal((await before.json()).role, "user");
+
+    await setUserRole(user.id, "pending" as "user");
+
+    const protectedAfter = await app.request("/api/v1/auth/change-password", {
+      method: "POST",
+      headers: {
+        Cookie: `volute_session=${sessionId}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ currentPassword: "pass", newPassword: "new-pass" }),
+    });
+    assert.equal(
+      protectedAfter.status,
+      403,
+      "authMiddleware must observe the role change immediately",
+    );
+
     await deleteSession(sessionId);
   });
 
