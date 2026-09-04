@@ -284,6 +284,62 @@ describe("web history routes", () => {
     assert.equal(body[0].trigger?.event, undefined);
   });
 
+  it("GET /api/v1/history/turns — annotates senders with display names (#1024)", async () => {
+    // Since #1019 a bridged sender is recorded as "<bridge>:<handle>", which is exactly the
+    // puppet account's username — so the lookup succeeds and the timeline can lead with the
+    // name the person chose while still showing the handle it came from.
+    const cookie = await setupAuth();
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
+    const db = await getDb();
+
+    const sender = await createUser("test-history-dc:alice", "pass");
+    await db.update(users).set({ display_name: "Alice Smith" }).where(eq(users.id, sender.id));
+
+    const turnId = randomUUID();
+    await db.insert(turns).values({ id: turnId, mind: "test-history-mind1", status: "complete" });
+    const [inbound] = await db
+      .insert(mindHistory)
+      .values({
+        mind: "test-history-mind1",
+        type: "inbound",
+        channel: "#room",
+        sender: "test-history-dc:alice",
+        content: "hello",
+        turn_id: turnId,
+      })
+      .returning({ id: mindHistory.id });
+    // A sender with no matching user record — the handle is all there is.
+    await db.insert(mindHistory).values({
+      mind: "test-history-mind1",
+      type: "inbound",
+      channel: "#room",
+      sender: "test-history-ghost",
+      content: "boo",
+      turn_id: turnId,
+    });
+    await db.update(turns).set({ trigger_event_id: inbound.id }).where(eq(turns.id, turnId));
+
+    const res = await app.request(`/api/v1/history/turns?turnId=${turnId}`, {
+      headers: { Cookie: `volute_session=${cookie}` },
+    });
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as Array<{
+      conversations: {
+        messages: { sender_name: string | null; sender_display_name: string | null }[];
+      }[];
+      trigger: { sender: string | null; sender_display_name: string | null } | null;
+    }>;
+    const messages = body[0].conversations[0].messages;
+    const alice = messages.find((m) => m.sender_name === "test-history-dc:alice");
+    const ghost = messages.find((m) => m.sender_name === "test-history-ghost");
+    assert.equal(alice?.sender_display_name, "Alice Smith");
+    assert.equal(ghost?.sender_display_name, null);
+
+    // The trigger renders the same way (rail chip), so it needs the same pair.
+    assert.equal(body[0].trigger?.sender, "test-history-dc:alice");
+    assert.equal(body[0].trigger?.sender_display_name, "Alice Smith");
+  });
+
   it("GET /api/v1/history/turns — requires auth", async () => {
     const { default: app } = await import("../packages/daemon/src/web/app.js");
     const res = await app.request("/api/v1/history/turns");
@@ -327,6 +383,40 @@ describe("web history routes", () => {
     const ghost = rows.find((r) => r.sender === "test-history-ghost");
     assert.equal(alice?.sender_display_name, "Alice Example");
     assert.equal(ghost?.sender_display_name, null);
+  });
+
+  it("GET /api/v1/minds/:name/history/turn — annotates senders with display names", async () => {
+    // The expanded-turn view renders these rows through the same timeline components as
+    // GET /:name/history, so it needs the same annotation or the two disagree (#1024).
+    const cookie = await setupAuth();
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
+    const db = await getDb();
+
+    const sender = await createUser("test-history-dc:carol", "pass");
+    await db.update(users).set({ display_name: "Carol Reed" }).where(eq(users.id, sender.id));
+
+    const turnId = randomUUID();
+    await db.insert(turns).values({ id: turnId, mind: "test-history-mind1", status: "complete" });
+    await db.insert(mindHistory).values({
+      mind: "test-history-mind1",
+      type: "inbound",
+      channel: "#room",
+      sender: "test-history-dc:carol",
+      content: "hello",
+      turn_id: turnId,
+    });
+
+    const res = await app.request(
+      `/api/v1/minds/test-history-mind1/history/turn?turn_id=${turnId}`,
+      { headers: { Cookie: `volute_session=${cookie}` } },
+    );
+    assert.equal(res.status, 200);
+    const rows = (await res.json()) as Array<{
+      sender: string | null;
+      sender_display_name: string | null;
+    }>;
+    assert.equal(rows[0].sender, "test-history-dc:carol");
+    assert.equal(rows[0].sender_display_name, "Carol Reed");
   });
 
   // ── Summaries endpoint tests ──

@@ -298,7 +298,10 @@ export type TurnConversation = {
   messages: {
     id: number;
     role: "user" | "assistant";
+    /** The recorded sender — provenance, e.g. "discord:alice" (#1019). */
     sender_name: string | null;
+    /** The sender's own name for themselves, when the handle resolves to a user (#1024). */
+    sender_display_name: string | null;
     content: ContentBlock[];
     source_event_id: number | null;
     created_at: string;
@@ -331,6 +334,8 @@ export type TurnTrigger = {
   eventId: number;
   channel: string | null;
   sender: string | null;
+  /** The sender's own name for themselves, when the handle resolves to a user (#1024). */
+  sender_display_name: string | null;
   content: string | null;
   /** Set when the turn was triggered by a system event rather than by a message. */
   event?: { type: string; label: string };

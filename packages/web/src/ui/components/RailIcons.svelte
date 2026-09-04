@@ -15,6 +15,7 @@ import {
   activityTypeStyle,
   isUuid,
 } from "../lib/peek";
+import { senderLabel } from "../lib/timeline-card";
 import { turnRailParts } from "../lib/turn-rail";
 import TimelineCard from "./TimelineCard.svelte";
 
@@ -62,8 +63,13 @@ function reveal(key: string) {
   <TimelineCard title={conv.label} color="blue" iconKind="chat" meta={`${conv.messages.length} msg${conv.messages.length === 1 ? '' : 's'}`}>
     <div class="peek-msgs">
       {#each conv.messages.slice(-5) as msg (msg.id)}
+        <!-- Only an inbound sender gets the display-name/handle pair: the mind's own lines are
+             its name, rendered bare here as they are everywhere else in the timeline. -->
+        {@const who = msg.role === "user"
+          ? senderLabel(msg.sender_name, msg.sender_display_name)
+          : { label: msg.sender_name ?? mind, handle: undefined }}
         <div class="peek-msg">
-          <span class="peek-msg-sender" class:peek-msg-sender-user={msg.role === "user"}>{msg.sender_name ?? (msg.role === "user" ? "user" : mind)}</span>
+          <span class="peek-msg-sender" class:peek-msg-sender-user={msg.role === "user"}>{who.label}{#if who.handle}<span class="peek-msg-handle">&nbsp;({who.handle})</span>{/if}</span>
           {#if msg.role === "assistant"}
             <span class="peek-msg-md markdown-body">{@html renderMarkdown(extractTextContent(msg.content))}</span>
           {:else}
@@ -103,9 +109,10 @@ function reveal(key: string) {
           {/if}
         </div>
       {:else}
+        {@const who = trigger.sender ? senderLabel(trigger.sender, trigger.sender_display_name) : null}
         <div class="peek-popover">
           {#if revealed.has("trigger")}
-            <TimelineCard title={trigger.channel || "message"} color="blue" iconKind="chat" meta={trigger.sender ?? undefined} body={{ kind: "text", text: trigger.content ?? "" }} />
+            <TimelineCard title={trigger.channel || "message"} color="blue" iconKind="chat" meta={who?.label} metaHandle={who?.handle} body={{ kind: "text", text: trigger.content ?? "" }} />
           {/if}
         </div>
       {/if}
@@ -401,6 +408,12 @@ function reveal(key: string) {
 
   .peek-msg-sender-user {
     color: var(--blue);
+  }
+
+  /* The handle beside a display name — provenance, kept visible but secondary (#1024). */
+  .peek-msg-handle {
+    color: var(--text-2);
+    font-weight: 400;
   }
 
   .peek-msg-md :global(p) {
