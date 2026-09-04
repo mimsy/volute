@@ -367,6 +367,22 @@ export async function startDaemon(opts: {
   backupManager.start();
   const unsubscribeWebhook = initWebhook();
 
+  // Every manager `shutdown()` touches now exists, so listen for the signal here
+  // rather than at the end of startDaemon. The rest of this function can run for
+  // minutes — `ensureSpiritProject()` alone does a full mind create with an npm
+  // install — and until the listeners are installed, SIGTERM kills the daemon on
+  // the default disposition: no `manager.stopAll()`, so every mind it has already
+  // started is orphaned and keeps running (#1047). `shutdown`/`cleanup` are
+  // hoisted function declarations; the one binding they close over that isn't
+  // assigned yet is `maintenanceInterval`, declared `let` just below for that
+  // reason and tolerant of `undefined`, and `shuttingDown`, moved up with it.
+  let maintenanceInterval: NodeJS.Timeout | undefined;
+  let shuttingDown = false;
+
+  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", shutdown);
+  process.on("exit", cleanup);
+
   // Clean up any turns left active from a previous daemon session and generate their summaries
   const orphanedTurns = await completeOrphanedTurns();
   summarizeOrphanedTurns(orphanedTurns);
@@ -550,7 +566,7 @@ export async function startDaemon(opts: {
 
   // ...and re-run that cleanup hourly so retention is actually enforced on a
   // long-lived daemon, not just once at startup.
-  const maintenanceInterval = startMaintenanceInterval();
+  maintenanceInterval = startMaintenanceInterval();
 
   // When the daemon rotates a provider's OAuth token, push the fresh token into
   // running minds so they don't refresh the rotating grant independently (which
@@ -591,7 +607,6 @@ export async function startDaemon(opts: {
     }
   }
 
-  let shuttingDown = false;
   async function shutdown() {
     if (shuttingDown) return;
     shuttingDown = true;
@@ -632,10 +647,6 @@ export async function startDaemon(opts: {
       process.exit(0);
     }
   }
-
-  process.on("SIGINT", shutdown);
-  process.on("SIGTERM", shutdown);
-  process.on("exit", cleanup);
 }
 
 // CLI entry point
