@@ -107,9 +107,12 @@ setup.get("/status", async (c) => {
       const brains = await listUsersByType("human");
       hasAccount = brains.length > 0;
     } catch (err) {
-      // Falling through with hasAccount:false sends a resumed browser back into
-      // the wizard (the #690 dead-end) — make the real failure visible.
+      // Answering hasAccount:false here is a guess, and top-level screen routing
+      // hinges on it — a fabricated "no account" sends a resumed browser back
+      // into the wizard (the #690 dead-end). Fail the request instead; the
+      // client routes an error to a retry screen rather than believing it (#724).
       log.error("could not check for existing accounts during setup status", log.errorData(err));
+      return c.json({ error: "Could not determine setup state" }, 500);
     }
   }
 

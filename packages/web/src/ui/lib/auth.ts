@@ -46,9 +46,20 @@ async function authPost<T>(path: string, body?: unknown): Promise<T> {
   return res.json();
 }
 
+/**
+ * The current session's user, or null when there is none.
+ *
+ * Only 401 means "not authenticated". Any other non-ok status is a server or
+ * proxy failure that says nothing about the session — returning null for it
+ * would silently convert an authenticated admin into "route to login" (#724).
+ */
 export async function fetchMe(): Promise<AuthUser | null> {
   const res = await fetch("/api/v1/auth/me");
-  if (!res.ok) return null;
+  if (res.status === 401) return null;
+  if (!res.ok) {
+    console.warn(`[auth] /auth/me failed: ${res.status}`);
+    throw new Error(`Auth check failed (${res.status})`);
+  }
   return res.json();
 }
 

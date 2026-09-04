@@ -456,24 +456,43 @@ async function waitForSpiritReply(conversationId: string): Promise<string> {
 $effect(() => {
   if (step === "system" && !systemsRegistered) {
     fetch("/api/v1/setup/system/systems-status")
-      .then((r) => r.json())
+      .then(async (r) => {
+        if (!r.ok) throw new Error(`Request failed: ${r.status}`);
+        return r.json();
+      })
       .then((data: any) => {
+        systemsError = "";
         if (data.registered) {
           systemsRegistered = true;
           systemsName = data.system;
         }
       })
-      .catch(() => {});
+      .catch((err) => {
+        // Swallowing this leaves an already-registered system looking
+        // unregistered, so the user re-registers a slug that is already theirs
+        // and gets a confusing rejection instead of an explanation (#724).
+        console.warn("[setup] could not check volute.systems registration:", err);
+        systemsError =
+          "Could not check volute.systems registration — this system may already be registered.";
+      });
   }
 });
 
 // Load provider + model data when entering the provider step
 let providerDataLoaded = false;
 $effect(() => {
-  if (step === "provider" && !providerDataLoaded) {
-    providerDataLoaded = true;
-    aiProvidersRef?.load();
-  }
+  if (step !== "provider" || providerDataLoaded) return;
+  // Read the ref reactively: if it isn't bound yet the effect re-runs when
+  // `bind:this` sets it. Latching before the call would make an unbound ref a
+  // permanent, silent no-op (#724).
+  const providers = aiProvidersRef;
+  if (!providers) return;
+  // Latch only on a load that actually landed data. `load()` swallows its own
+  // failure into an in-component error, so latching regardless would strand the
+  // wizard on an empty provider list with Continue disabled and no way back in.
+  providers.load().then((ok) => {
+    if (ok) providerDataLoaded = true;
+  });
 });
 </script>
 

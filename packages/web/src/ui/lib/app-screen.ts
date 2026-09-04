@@ -1,5 +1,5 @@
 /** Top-level screen the app shows, based on setup + auth + connection state. */
-export type AppScreen = "loading" | "setup" | "connection" | "login" | "app";
+export type AppScreen = "loading" | "error" | "setup" | "connection" | "login" | "app";
 
 export type AppScreenState = {
   /** True once the initial auth/setup check has resolved. */
@@ -8,6 +8,11 @@ export type AppScreenState = {
   setupComplete: boolean;
   /** True when an admin account already exists (mid-setup or after). */
   hasAccount: boolean;
+  /**
+   * True when the setup or auth check failed for a reason that says nothing
+   * about either state (502, DNS, parse error) — as opposed to answering.
+   */
+  loadError: boolean;
   /** True when no daemon connection is configured (remote flow). */
   needsConnection: boolean;
   /** True when this browser has an authenticated session. */
@@ -28,9 +33,15 @@ export type AppScreenState = {
  * fine here: the only account that can exist mid-setup is the first user, who is
  * auto-admin — additional (non-admin) users can only be created once setup is
  * complete — so a non-admin session at this point is effectively unreachable.
+ *
+ * `loadError` outranks every routing branch below it: `setupComplete`,
+ * `hasAccount` and `loggedIn` all carry a default that is only meaningful once
+ * the checks answered, and routing on a default the server never confirmed is
+ * how a transient 502 dead-ends a user at a login screen (#724).
  */
 export function resolveScreen(state: AppScreenState): AppScreen {
   if (!state.checked) return "loading";
+  if (state.loadError) return "error";
   const needsLoginBeforeSetup = state.hasAccount && !state.loggedIn;
   if (!state.setupComplete && !needsLoginBeforeSetup) return "setup";
   if (state.needsConnection) return "connection";
