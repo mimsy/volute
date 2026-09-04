@@ -679,8 +679,11 @@ export class MindManager {
       }
     }
 
-    // Set up crash recovery after successful start
+    // The health check above is the first reliable evidence of a healthy run.
+    // Startup failures must retain their crash budget for the recovery loop.
     if (this.restartTracker.reset(name)) this.saveCrashAttempts();
+
+    // Set up crash recovery after successful start
     this.setupCrashRecovery(name, child);
     await setMindRunning(name, true);
 
@@ -913,8 +916,7 @@ export class MindManager {
 
   /**
    * True when crash recovery for this mind has used up all restart attempts (the
-   * "giving up on restart" state). Cleared by the tracker reset on the next
-   * successful start or explicit stop.
+   * "giving up on restart" state). Cleared by a healthy start or explicit stop.
    */
   hasExhaustedRestarts(name: string): boolean {
     return this.restartTracker.getAttempts(name) >= this.restartTracker.maxRestartAttempts;

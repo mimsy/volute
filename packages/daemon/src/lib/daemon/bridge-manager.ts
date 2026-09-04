@@ -150,10 +150,18 @@ export class BridgeManager {
     }
 
     this.bridges.set(platform, { child, platform });
-    this.restartTracker.reset(platform);
+
+    // Only clear the crash budget after the bridge has stayed alive long enough
+    // to count as a healthy run. Immediate startup failures must consume it.
+    const healthyTimer = setTimeout(() => {
+      if (this.bridges.get(platform)?.child === child) {
+        this.restartTracker.reset(platform);
+      }
+    }, 3000);
 
     // Crash recovery
     child.on("exit", (code) => {
+      clearTimeout(healthyTimer);
       const tracked = this.bridges.get(platform);
       if (tracked?.child === child) {
         this.bridges.delete(platform);
