@@ -251,9 +251,7 @@ describe("mail inbound records mail:<address>, not the From name", () => {
     // running and doesn't when one is, and either outcome leaves the row asserted below.
     // Swallowing it keeps this test independent of what else in this file has
     // initialized the process-global DeliveryManager.
-    await (
-      new MailPoller() as unknown as { deliver(m: string, e: typeof email): Promise<void> }
-    )
+    await (new MailPoller() as unknown as { deliver(m: string, e: typeof email): Promise<void> })
       .deliver(MIND, email)
       .catch(() => {});
 
