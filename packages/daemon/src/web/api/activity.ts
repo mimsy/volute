@@ -1,4 +1,4 @@
-import { desc } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { getDb } from "../../lib/db.js";
@@ -6,12 +6,17 @@ import { subscribe as subscribeActivity } from "../../lib/events/activity-events
 import { subscribe as subscribeConversation } from "../../lib/events/conversation-events.js";
 import { listConversationsWithParticipants } from "../../lib/events/conversations.js";
 import { getActiveMinds } from "../../lib/events/mind-activity-tracker.js";
+import { getBaseName } from "../../lib/mind/registry.js";
 import { activity } from "../../lib/schema.js";
 import log from "../../lib/util/logger.js";
 import type { AuthEnv } from "../middleware/auth.js";
+import { hasAdminAuthority } from "../middleware/effective-principal.js";
 
 const app = new Hono<AuthEnv>().get("/events", async (c) => {
   const user = c.get("user");
+  const effective = c.get("effective");
+  const privileged = hasAdminAuthority(effective) && !effective?.actingFor;
+  const activityMind = privileged ? undefined : await getBaseName(user.username);
 
   return streamSSE(c, async (stream) => {
     const cleanups: (() => void)[] = [];
@@ -25,6 +30,7 @@ const app = new Hono<AuthEnv>().get("/events", async (c) => {
         recentActivity = await db
           .select()
           .from(activity)
+          .where(activityMind ? eq(activity.mind, activityMind) : undefined)
           .orderBy(desc(activity.created_at))
           .limit(50);
         // Parse metadata JSON
@@ -56,6 +62,7 @@ const app = new Hono<AuthEnv>().get("/events", async (c) => {
 
       // Subscribe to activity events
       const unsubActivity = subscribeActivity((event) => {
+        if (activityMind !== undefined && event.mind !== activityMind) return;
         stream
           .writeSSE({
             data: JSON.stringify({ event: "activity", ...event }),
