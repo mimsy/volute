@@ -1,6 +1,7 @@
 import { and, desc, eq, gte, inArray, lt, sql } from "drizzle-orm";
 import type { Context } from "hono";
 import { Hono } from "hono";
+import { getDisplayNames } from "../../lib/auth.js";
 import { getDb } from "../../lib/db.js";
 import { subscribeAll, subscribe as subscribeMindEvent } from "../../lib/events/mind-events.js";
 import { getBaseName } from "../../lib/mind/registry.js";
@@ -598,6 +599,17 @@ const history = new Hono<HistoryEnv>()
 
     const channelIdMap = await resolveConversationIds(db, allChannelSlugs, dmSlugMinds);
 
+    // 6b. Resolve sender display names in one batch. The recorded sender is provenance
+    // ("discord:alice", #1019); the display name is what that person calls themselves.
+    // Clients render both — neither half stands in for the other — so serve both (#1024).
+    const senders: (string | null)[] = [];
+    for (const byChannel of msgsByTurnChannel.values())
+      for (const evts of byChannel.values()) for (const m of evts) senders.push(m.sender);
+    for (const t of triggerMap.values()) senders.push(t.sender);
+    const displayNames = await getDisplayNames(senders);
+    const displayNameOf = (sender: string | null) =>
+      sender ? (displayNames.get(sender) ?? null) : null;
+
     // 7. Assemble response
     const result = turnRows.map((t) => {
       const summary = summaryByTurn.get(t.id);
@@ -612,6 +624,7 @@ const history = new Hono<HistoryEnv>()
             id: m.id,
             role: m.role as string,
             sender_name: m.sender,
+            sender_display_name: displayNameOf(m.sender),
             content: [{ type: "text", text: m.content ?? "" }],
             source_event_id: m.id,
             created_at: m.created_at,
@@ -668,6 +681,7 @@ const history = new Hono<HistoryEnv>()
               eventId: t.trigger_event_id,
               channel: trigger.channel,
               sender: trigger.sender,
+              sender_display_name: displayNameOf(trigger.sender),
               content: trigger.content,
               ...(isEventTrigger && trigger.channel
                 ? {

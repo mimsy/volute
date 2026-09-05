@@ -7,7 +7,6 @@ import { HTTPException } from "hono/http-exception";
 import { normalizeTrailingSlash } from "../lib/extensions.js";
 import { checkForUpdateCached, getCurrentVersion } from "../lib/update-check.js";
 import log from "../lib/util/logger.js";
-import activityRoutes from "./api/activity.js";
 import auth from "./api/auth.js";
 import backupRoutes from "./api/backup.js";
 import bridges from "./api/bridges.js";
@@ -176,7 +175,6 @@ const v1 = new Hono<AuthEnv>()
   .route("/chat", chatApp)
   .route("/channels", voluteChannels)
   .route("/history", historyRoutes)
-  .route("/activity", activityRoutes)
   .route("/keys", keys)
   .route("/auth", auth)
   .route("/backup", backupRoutes)

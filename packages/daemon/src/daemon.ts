@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import { format } from "node:util";
 import { setProviderRefreshHook } from "./lib/ai-service.js";
 import { backfillCommonsChannelMembers, ensureCommonsChannel } from "./lib/chat/commons-channel.js";
+import { reportExternalNameCollisions } from "./lib/chat/name-collisions.js";
 import { initBackupManager } from "./lib/daemon/backup-manager.js";
 import { initBridgeManager } from "./lib/daemon/bridge-manager.js";
 import { getCredentialRecovery } from "./lib/daemon/credential-recovery.js";
@@ -366,6 +367,22 @@ export async function startDaemon(opts: {
   backupManager.start();
   const unsubscribeWebhook = initWebhook();
 
+  // Every manager `shutdown()` touches now exists, so listen for the signal here
+  // rather than at the end of startDaemon. The rest of this function can run for
+  // minutes — `ensureSpiritProject()` alone does a full mind create with an npm
+  // install — and until the listeners are installed, SIGTERM kills the daemon on
+  // the default disposition: no `manager.stopAll()`, so every mind it has already
+  // started is orphaned and keeps running (#1047). `shutdown`/`cleanup` are
+  // hoisted function declarations; the one binding they close over that isn't
+  // assigned yet is `maintenanceInterval`, declared `let` just below for that
+  // reason and tolerant of `undefined`, and `shuttingDown`, moved up with it.
+  let maintenanceInterval: NodeJS.Timeout | undefined;
+  let shuttingDown = false;
+
+  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", shutdown);
+  process.on("exit", cleanup);
+
   // Clean up any turns left active from a previous daemon session and generate their summaries
   const orphanedTurns = await completeOrphanedTurns();
   summarizeOrphanedTurns(orphanedTurns);
@@ -539,9 +556,17 @@ export async function startDaemon(opts: {
     log.warn("failed to check for stale API paths", log.errorData(err));
   });
 
+  // Likewise for an account squatting the `platform:handle` namespace, which makes
+  // bridge inbound from that handle fail permanently and opaquely (#1023). Boot is
+  // the only sensible cadence — the condition can neither arise nor clear on its own
+  // — and this stays non-blocking: a warning must not be able to delay a start.
+  reportExternalNameCollisions().catch((err) => {
+    log.warn("failed to check for external-sender name collisions", log.errorData(err));
+  });
+
   // ...and re-run that cleanup hourly so retention is actually enforced on a
   // long-lived daemon, not just once at startup.
-  const maintenanceInterval = startMaintenanceInterval();
+  maintenanceInterval = startMaintenanceInterval();
 
   // When the daemon rotates a provider's OAuth token, push the fresh token into
   // running minds so they don't refresh the rotating grant independently (which
@@ -582,7 +607,6 @@ export async function startDaemon(opts: {
     }
   }
 
-  let shuttingDown = false;
   async function shutdown() {
     if (shuttingDown) return;
     shuttingDown = true;
@@ -623,10 +647,6 @@ export async function startDaemon(opts: {
       process.exit(0);
     }
   }
-
-  process.on("SIGINT", shutdown);
-  process.on("SIGTERM", shutdown);
-  process.on("exit", cleanup);
 }
 
 // CLI entry point

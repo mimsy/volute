@@ -52,7 +52,6 @@ describe("api prefix surface", () => {
       "/api/config/models", // config
       "/api/backup/status", // backup (admin tooling)
       "/api/bridges", // bridges
-      "/api/activity", // activity
       "/api/minds", // mind-scoped modules
       "/api/keys/deadbeef", // keys
       "/api/extensions/all", // extensions management
