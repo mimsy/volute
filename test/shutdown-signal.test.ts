@@ -20,8 +20,15 @@ const workDir = mkdtempSync(resolve(tmpdir(), "shutdown-signal-"));
 const fixturePath = resolve(workDir, "fixture.ts");
 
 // A minimal mind server: wire setupShutdown() with a teardown that records each
-// invocation to a marker file, then hold the event loop open (the signal
-// listeners keep it alive). TEARDOWN_DELAY lets a second signal land mid-run.
+// invocation to a marker file, then hold the event loop open with an explicit
+// timer. TEARDOWN_DELAY lets a second signal land mid-run.
+//
+// The keepalive timer is load-bearing, not decoration: signal listeners do NOT
+// ref the libuv loop, so without it the fixture exits 0 the moment module
+// loading drains (~0.4s) and the test becomes a race between the parent's
+// kill() and the child's own exit — which a loaded CI runner loses, failing as
+// "exit 0, empty marker". setupShutdown() ends in process.exit(0), so the timer
+// never delays a real shutdown.
 writeFileSync(
   fixturePath,
   `import { appendFileSync } from "node:fs";
@@ -35,6 +42,8 @@ setupShutdown(async () => {
   if (delayMs > 0) await new Promise((r) => setTimeout(r, delayMs));
   appendFileSync(marker, "teardown-done\\n");
 });
+
+setInterval(() => {}, 60_000);
 
 process.stdout.write("READY\\n");
 `,
