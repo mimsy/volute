@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import { createMind } from "./agent.js";
-import { daemonNotice, daemonRestart } from "./lib/daemon-client.js";
+import { daemonRestart } from "./lib/daemon-client.js";
 import { log, setLevel } from "./lib/logger.js";
 import { withMechanicsDoc } from "./lib/mechanics-doc.js";
 import { createRouter } from "./lib/router.js";
@@ -36,19 +36,10 @@ const mind = await createMind({
   subagents: config.subagents,
   onIdentityReload: async () => {
     log("server", "identity file changed — restarting to reload");
-    // Tell the mind before we go: the restart itself is invisible from the inside, so
-    // without this the edit looks like it simply did nothing. Recorded with the daemon
-    // first (this process is about to be killed) and drained into the next turn's
-    // context by the notices pre-prompt hook. Mind-level, not thread-scoped — the
-    // restart is process-wide, and the editing session may be an ephemeral one that
-    // never takes another turn.
-    await daemonNotice({
-      kind: "identity_reload",
-      message:
-        "You edited one of your identity files (SOUL.md, MEMORY.md or VOLUTE.md). Those are " +
-        "read once, when your process starts, so the change wasn't live in the turn you made " +
-        "it in — a restart was requested at the end of that turn to put it into effect.",
-    });
+    // No notice: the mind learns about identity-edit restarts from MINDS.md, matching the
+    // claude template — the daemon intentionally sends none for a `reload` restart. This
+    // turn's commits are already flushed before the event handler drains the watch (claude's
+    // server awaits `mind.waitForCommits()` here for the same reason).
     await daemonRestart({ type: "reload" });
   },
 });

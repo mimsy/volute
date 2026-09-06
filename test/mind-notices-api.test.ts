@@ -48,31 +48,6 @@ describe("POST /api/v1/minds/:name/notices", () => {
     }
   });
 
-  // #998: a pi mind's identity edit only takes effect after a restart, and the restart is
-  // invisible from the inside — the mind is told through this route before the process dies.
-  it("accepts the identity_reload kind a mind posts before its own reload restart", async () => {
-    const name = `notice-api-${Date.now()}-f`;
-    const token = await makeMind(name);
-    const { default: app } = await import("../packages/daemon/src/web/app.js");
-    try {
-      const res = await app.request(`http://localhost/api/v1/minds/${name}/notices`, {
-        method: "POST",
-        headers: postHeaders(token),
-        body: JSON.stringify({
-          kind: "identity_reload",
-          message: "You edited one of your identity files.",
-        }),
-      });
-      assert.equal(res.status, 200);
-
-      const drained = await drainEvents(name, "main");
-      assert.equal(drained.length, 1);
-      assert.equal(parseMeta(drained[0].meta).subtype, "identity_reload");
-    } finally {
-      await removeMind(name);
-    }
-  });
-
   it("scopes the notice to the given thread", async () => {
     const name = `notice-api-${Date.now()}-b`;
     const token = await makeMind(name);

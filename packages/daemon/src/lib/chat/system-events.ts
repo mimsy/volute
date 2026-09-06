@@ -132,8 +132,6 @@ export function eventLabel(type: string, meta: Record<string, unknown> | null | 
           return "Delivery failed";
         case "context_lost":
           return "Context lost";
-        case "identity_reload":
-          return "Identity reload";
         case "join_blocked":
           return "Variant join blocked";
         case "infrastructure":
@@ -155,7 +153,6 @@ export const NOTICE_KINDS = [
   "extension",
   "delivery_failed",
   "context_lost",
-  "identity_reload",
   "join_blocked",
   "infrastructure",
 ] as const;

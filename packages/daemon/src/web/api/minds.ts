@@ -2178,14 +2178,13 @@ const app = new Hono<AuthEnv>()
   .post(
     "/:name/notices",
     requireSelf(),
-    // Deliberately narrower than NOTICE_KINDS: only these three are mind-postable
+    // Deliberately narrower than NOTICE_KINDS: only these two are mind-postable
     // (see the route comment) — the enum enforces that a mind can't forge a
-    // daemon-authored kind about itself. All three are a mind reporting on its own
-    // process, so forging one gains it nothing.
+    // daemon-authored kind about itself.
     zValidator(
       "json",
       z.object({
-        kind: z.enum(["context_lost", "delivery_failed", "identity_reload"]),
+        kind: z.enum(["context_lost", "delivery_failed"]),
         message: z.string(),
         thread: z.string().optional(),
       }),
