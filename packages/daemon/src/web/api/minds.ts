@@ -23,7 +23,11 @@ import {
   forgetCredentialDegraded,
   getCredentialDegraded,
 } from "../../lib/daemon/credential-recovery.js";
-import { getMindManager, MindStartupError } from "../../lib/daemon/mind-manager.js";
+import {
+  DaemonShuttingDownError,
+  getMindManager,
+  MindStartupError,
+} from "../../lib/daemon/mind-manager.js";
 // Lifecycle functions from mind-service.ts
 import {
   startMindFull as startMindFullService,
@@ -71,6 +75,7 @@ import {
   mindDir,
   readRegistry,
   removeMind,
+  setMindRunning,
   setMindStage,
   stateDir,
 } from "../../lib/mind/registry.js";
@@ -680,6 +685,16 @@ const app = new Hono<AuthEnv>()
       try {
         await startMindFullService(name);
       } catch (startErr) {
+        // Shutdown began between the stop above and here. That is not a broken
+        // self-edit, and must not be answered by rolling src/ back — it would park
+        // and delete the mind's uncommitted work over an event that has nothing to
+        // do with it. Put back the `running` flag the stop cleared so the mind is in
+        // the next boot's set, and say plainly what happened.
+        if (startErr instanceof DaemonShuttingDownError) {
+          await setMindRunning(name, true);
+          return c.json({ error: "Daemon is shutting down" }, 503);
+        }
+
         // A mind can break its own startup by editing src/ (e.g. src/server.ts) then
         // calling daemonRestart(). The auto-commit hook only tracks home/, so the bad
         // src/ change is usually uncommitted. Park it on a broken/<ts> branch, revert
