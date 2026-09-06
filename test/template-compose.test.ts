@@ -28,6 +28,7 @@ describe("template composition", () => {
       assert.ok(existsSync(resolve(composedDir, "src/lib/logger.ts")));
       assert.ok(existsSync(resolve(composedDir, "src/lib/volute-server.ts")));
       assert.ok(existsSync(resolve(composedDir, "src/lib/auto-commit.ts")));
+      assert.ok(existsSync(resolve(composedDir, "src/lib/identity-watch.ts")));
       assert.ok(existsSync(resolve(composedDir, "src/lib/format-prefix.ts")));
       assert.ok(existsSync(resolve(composedDir, "src/lib/startup.ts")));
       // Base router + file handler
@@ -89,6 +90,7 @@ describe("template composition", () => {
       assert.ok(existsSync(resolve(composedDir, "src/lib/logger.ts")));
       assert.ok(existsSync(resolve(composedDir, "src/lib/volute-server.ts")));
       assert.ok(existsSync(resolve(composedDir, "src/lib/auto-commit.ts")));
+      assert.ok(existsSync(resolve(composedDir, "src/lib/identity-watch.ts")));
       assert.ok(existsSync(resolve(composedDir, "src/lib/format-prefix.ts")));
       assert.ok(existsSync(resolve(composedDir, "src/lib/startup.ts")));
       // Base router + file handler
@@ -137,6 +139,7 @@ describe("template composition", () => {
       assert.ok(existsSync(resolve(composedDir, "src/lib/logger.ts")));
       assert.ok(existsSync(resolve(composedDir, "src/lib/volute-server.ts")));
       assert.ok(existsSync(resolve(composedDir, "src/lib/auto-commit.ts")));
+      assert.ok(existsSync(resolve(composedDir, "src/lib/identity-watch.ts")));
       assert.ok(existsSync(resolve(composedDir, "src/lib/format-prefix.ts")));
       assert.ok(existsSync(resolve(composedDir, "src/lib/startup.ts")));
       // Base router + file handler

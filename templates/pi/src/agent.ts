@@ -25,6 +25,7 @@ import { daemonEmit } from "./lib/daemon-client.js";
 import { dispatchPrompt } from "./lib/dispatch.js";
 import { createEventHandler, emit } from "./lib/event-handler.js";
 import { runHooks } from "./lib/hook-loader.js";
+import { createIdentityWatch } from "./lib/identity-watch.js";
 import { log } from "./lib/logger.js";
 import { DEFAULT_SEED_TOKENS, rotatePiSession, seedPiSession } from "./lib/pi-session-seed.js";
 import { createReplyInstructionsExtension } from "./lib/reply-instructions-extension.js";
@@ -93,12 +94,21 @@ export async function createMind(options: {
   /** Estimated-token budget for seeding a fresh persistent session. 0 disables. Default 30000. */
   seedTokens?: number;
   subagents?: Record<string, SubagentConfig>;
+  /**
+   * Called at the end of a turn in which the mind edited its own SOUL.md, MEMORY.md or
+   * VOLUTE.md (#998). The system prompt is composed once, at startup, so the edit is
+   * inert until the process restarts — the server answers this by restarting.
+   */
+  onIdentityReload?: () => void | Promise<void>;
 }): Promise<{
   resolve: HandlerResolver;
   getContextInfo: () => Promise<ContextInfo>;
   getContextMessages: () => Promise<ContextMessages>;
 }> {
   const sessions = new Map<string, PiSession>();
+  // One watch per process, matching the claude template: the latch inside it means a
+  // failed restart doesn't re-fire on every later turn of every session.
+  const identityWatch = createIdentityWatch(options.cwd);
   const prompts = loadPrompts();
   const compactionInstructions = prompts.compaction_instructions;
   const maxContextTokens = options.maxContextTokens;
@@ -514,6 +524,8 @@ export async function createMind(options: {
       createEventHandler(session, {
         cwd: options.cwd,
         broadcast: (event) => broadcast(session, event),
+        identityWatch,
+        onIdentityReload: options.onIdentityReload,
         onContextTokens: (tokens: number) => {
           session.contextTokens = tokens;
           if (
@@ -537,6 +549,9 @@ export async function createMind(options: {
             rotatePending = true;
           }
         },
+        // Returns true when this turn ended in a rotation (or its compaction backstop),
+        // which tells the caller to hold back the identity-reload restart — it would
+        // land on top of the session we just rewrote in place.
         onTurnEnd: maxContextTokens
           ? () => {
               try {
@@ -553,11 +568,12 @@ export async function createMind(options: {
                     // compaction.
                     freshFallback();
                   }
-                  return;
+                  return true;
                 }
                 // A healthy turn (context under the threshold) — the rotation streak,
                 // if any, is over, so re-arm the self-rotation cap.
                 session.consecutiveRotations = 0;
+                return false;
               } catch (err) {
                 log(
                   "mind",
@@ -565,6 +581,8 @@ export async function createMind(options: {
                   err,
                 );
                 resetCompactionState();
+                // Compaction state is unknown after a throw — hold the restart back.
+                return true;
               }
             }
           : undefined,
