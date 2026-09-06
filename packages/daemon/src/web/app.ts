@@ -4,6 +4,7 @@ import { cors } from "hono/cors";
 import { csrf } from "hono/csrf";
 import { createMiddleware } from "hono/factory";
 import { HTTPException } from "hono/http-exception";
+import { MindManagerNotReadyError } from "../lib/daemon/mind-manager.js";
 import { isShuttingDown } from "../lib/daemon/shutdown-state.js";
 import { normalizeTrailingSlash } from "../lib/extensions.js";
 import { checkForUpdateCached, getCurrentVersion } from "../lib/update-check.js";
@@ -47,6 +48,18 @@ const app = new Hono();
 app.onError((err, c) => {
   if (err instanceof HTTPException) {
     return err.getResponse();
+  }
+  // The server binds before initMindManager() runs, so any route that needs the
+  // mind manager can be reached during startup. That is readiness, not failure:
+  // answer 503 "starting" once, here, rather than logging an unhandled error and
+  // returning a 500 the caller reads as a real fault (#1050). One conversion point
+  // covers every route that reaches getMindManager(), in any router.
+  if (err instanceof MindManagerNotReadyError) {
+    httpLog.info("request before mind manager init", {
+      path: c.req.path,
+      method: c.req.method,
+    });
+    return c.json({ error: "starting" }, 503, { "Retry-After": "1" });
   }
   log.error("unhandled error", {
     path: c.req.path,

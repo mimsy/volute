@@ -30,7 +30,12 @@ const DAEMON_SRC_DIR = fileURLToPath(new URL("../packages/daemon/src", import.me
 // Key format: "<relativeFile> <METHOD> <path>".
 const AUTHZ_EXEMPT: Record<string, string> = {
   // --- Public, non-sensitive presence/identity/capability metadata ---
-  "typing.ts POST /:name/typing": "presence: writes a transient typing indicator; :name unused",
+  "typing.ts POST /:name/typing":
+    "presence: writes a transient typing indicator; :name unused. The broadcast name is " +
+    "the authenticated principal's own — a `sender` naming anyone else is refused " +
+    "in-handler (#992). `channel` remains unscoped: a caller can announce *themselves* " +
+    "as typing in a conversation they are not in, which requireSelf(:name) would not " +
+    "close either — the route's :name is not the channel's owner",
   "typing.ts GET /:name/typing": "presence: returns who is typing in a channel; no private data",
   "files.ts GET /:name/avatar": "serves the mind's public profile avatar image",
   "mind-skills.ts GET /:name/skills": "lists installed skills (capability metadata, no secrets)",

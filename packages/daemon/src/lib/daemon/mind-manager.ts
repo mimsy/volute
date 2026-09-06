@@ -1023,8 +1023,24 @@ export function initMindManager(): MindManager {
   return instance;
 }
 
+/**
+ * Thrown when the manager is asked for before `initMindManager()` has run.
+ *
+ * The HTTP server binds early in `startDaemon()` — deliberately, so `/api/health`
+ * answers within seconds — while `initMindManager()` runs after the slow skill
+ * sync. A request landing in that window is *early*, not broken, and the web
+ * layer turns this into `503 {"error":"starting"}` instead of an unhandled 500
+ * (#1050).
+ */
+export class MindManagerNotReadyError extends Error {
+  constructor() {
+    super("MindManager not initialized — call initMindManager() first");
+    this.name = "MindManagerNotReadyError";
+  }
+}
+
 export function getMindManager(): MindManager {
-  if (!instance) throw new Error("MindManager not initialized — call initMindManager() first");
+  if (!instance) throw new MindManagerNotReadyError();
   return instance;
 }
 

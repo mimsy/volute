@@ -17,11 +17,11 @@ import { createSession } from "../packages/daemon/src/web/middleware/auth.js";
 // dir gate to the DB-recorded dir for both routes.
 //
 // The mind manager isn't initialized in this test context, so a request that
-// clears the gate throws when it reaches getMindManager() and Hono turns that into
-// a 500 — which is exactly what lets us assert "gate passed" without spawning a
-// real mind process. We pin that 500 so a 500-from-elsewhere can't masquerade as a
-// cleared gate.
-const GATE_CLEARED_STATUS = 500;
+// clears the gate throws when it reaches getMindManager(), and the app's error
+// handler answers 503 "starting" (#1050) — which is exactly what lets us assert
+// "gate passed" without spawning a real mind process. We pin that 503 so a
+// failure-from-elsewhere can't masquerade as a cleared gate.
+const GATE_CLEARED_STATUS = 503;
 
 const ADMIN = "spirit-restart-admin";
 const SPIRIT_OK = "test-spirit-ok";
@@ -65,8 +65,8 @@ describe("spirit start/restart directory gate (#620)", () => {
         headers: postHeaders(cookie),
       });
 
-      // Gate cleared: not the "Mind directory missing" 404. It then fails at
-      // getMindManager() (uninitialized here) → 500, rather than spawning a process.
+      // Gate cleared: not the "Mind directory missing" 404. It then stops at
+      // getMindManager() (uninitialized here) → 503, rather than spawning a process.
       assert.equal(
         res.status,
         GATE_CLEARED_STATUS,

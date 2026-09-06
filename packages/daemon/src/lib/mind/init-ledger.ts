@@ -51,7 +51,21 @@ function normalize(relPath: string): string {
  * permanently withholding files. Self-healing at the cost of one re-add.
  */
 export function readInitLedger(mindName: string): Set<string> {
-  const path = initLedgerPath(mindName);
+  return readInitLedgerFile(initLedgerPath(mindName), mindName);
+}
+
+/**
+ * Read a ledger from an arbitrary path, degrading to the empty set exactly as
+ * {@link readInitLedger} does.
+ *
+ * Split out for the one ledger that does not live in this host's `stateDir`: a
+ * home-only archive carries the exporting host's copy, and it is the only thing
+ * in such an archive that can say whether a missing `.local/` file is a mind's
+ * refusal or a hook that shipped after the export (#1013). The contents are
+ * therefore *untrusted* — every caller must still contain each path before
+ * touching the filesystem with it.
+ */
+export function readInitLedgerFile(path: string, label: string): Set<string> {
   if (!existsSync(path)) return new Set();
   try {
     const parsed = JSON.parse(readFileSync(path, "utf-8")) as LedgerFile;
@@ -59,7 +73,7 @@ export function readInitLedger(mindName: string): Set<string> {
     if (!Array.isArray(given)) return new Set();
     return new Set(given.filter((p): p is string => typeof p === "string").map(normalize));
   } catch (err) {
-    llog.warn(`failed to read the infrastructure ledger for ${mindName}`, log.errorData(err));
+    llog.warn(`failed to read the infrastructure ledger for ${label}`, log.errorData(err));
     return new Set();
   }
 }

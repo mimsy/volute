@@ -325,6 +325,10 @@ export async function deleteUser(id: number): Promise<void> {
     .get();
   if (!target) throw new Error("User not found");
   await db.delete(users).where(and(eq(users.id, id), eq(users.user_type, "human")));
+  // After the delete, never before: authMiddleware answers from the session cache
+  // without touching the DB, so a deleted account keeps authenticating until the
+  // TTL expires (#1044). Evicting first would log out a live user if the delete threw.
+  invalidateSessionCacheForUser(id);
 }
 
 /**

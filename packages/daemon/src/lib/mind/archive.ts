@@ -1,7 +1,20 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { join, relative, resolve } from "node:path";
+import {
+  chmodSync,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { join, relative, resolve, sep } from "node:path";
 import AdmZip from "adm-zip";
+import { isInitInfrastructure } from "../template/template.js";
+import { safeResolveWithinBase } from "../util/paths.js";
+import { initLedgerPath } from "./init-ledger.js";
 import { mindDir, stateDir } from "./registry.js";
 
 export type ExportManifest = {
@@ -80,6 +93,54 @@ function gitListFiles(dir: string): string[] | null {
   }
 }
 
+/**
+ * The mind's infrastructure namespace inside `home/`, relative to the mind dir.
+ *
+ * `templates/_base/gitignore` ignores `home/*` and allowlists only the mind's
+ * identity files, so `git ls-files` reports nothing at all under `.local/`.
+ * Un-ignoring it there would start committing every mind's hooks into its own
+ * repo, which is a different decision; the export instead names the subtree.
+ */
+const HOME_LOCAL_REL = join("home", ".local");
+
+/** `.gitignore` rules and zip entry names both speak forward slashes. */
+function toPosix(relPath: string): string {
+  return relPath.split(sep).join("/");
+}
+
+/**
+ * The files that make up a mind's `home/` for a home-only export.
+ *
+ * One definition for both branches. Git is asked first so a mind's `.gitignore`
+ * still keeps SDK session transcripts and other runtime droppings out of the
+ * archive; when the mind isn't a git repo we walk `home/` instead. Either way
+ * `home/.local/` — the mind's hooks and bin shims — is walked in explicitly,
+ * because git will never report it (see {@link HOME_LOCAL_REL}) and because
+ * whether a mind's edited hooks survive an export must not depend on whether
+ * its home happens to be a git repo (#1013).
+ */
+function listHomeFiles(dir: string): string[] {
+  const gitFiles = gitListFiles(dir);
+  const files = gitFiles
+    ? gitFiles.filter((f) => f.startsWith("home/") || f.startsWith("home\\"))
+    : walkDir(resolve(dir, "home"), dir);
+
+  const localDir = resolve(dir, HOME_LOCAL_REL);
+  if (existsSync(localDir)) files.push(...walkDir(localDir, dir));
+
+  return [...new Set(files.map(toPosix))];
+}
+
+/**
+ * Where a home-only archive carries the exporting mind's infrastructure ledger.
+ *
+ * Sits beside `state/env.json` because it is the same kind of thing: per-mind
+ * state Volute keeps outside the mind's own directory. Absent from every
+ * archive written before #1013, and from full archives (which are unaffected —
+ * they copy a whole mind tree and compose no template, so nothing re-adds).
+ */
+export const ARCHIVE_INIT_LEDGER = "state/init-infrastructure.json";
+
 /** Check if a manifest represents a home-only archive. */
 export function isHomeOnlyArchive(manifest: ExportManifest): boolean {
   return manifest.format === "home-only";
@@ -114,16 +175,14 @@ export function createExportArchive(options: ExportOptions): AdmZip {
       zip.addFile(`mind/${relPath}`, readFileSync(fullPath));
     }
   } else {
-    // Home-only export: use git ls-files for home/, walkDir for .mind/
-    const gitFiles = gitListFiles(dir);
-    const homeFiles = gitFiles
-      ? gitFiles.filter((f) => f.startsWith("home/") || f.startsWith("home\\"))
-      : walkDir(resolve(dir, "home"), dir);
-
-    for (const relPath of homeFiles) {
+    // Home-only export: listHomeFiles for home/, walkDir for .mind/
+    for (const relPath of listHomeFiles(dir)) {
       const fullPath = resolve(dir, relPath);
       if (existsSync(fullPath)) {
-        zip.addFile(`mind/${relPath}`, readFileSync(fullPath));
+        // Modes matter here as they do nowhere else in the archive: `.local/bin/`
+        // holds the mind's `volute` wrapper and its skill shims, which are only
+        // useful executable. adm-zip stamps 0644 on an entry added without one.
+        zip.addFile(`mind/${relPath}`, readFileSync(fullPath), "", statSync(fullPath).mode & 0o777);
       }
     }
 
@@ -137,6 +196,13 @@ export function createExportArchive(options: ExportOptions): AdmZip {
         const fullPath = resolve(dir, relPath);
         zip.addFile(`mind/${relPath}`, readFileSync(fullPath));
       }
+    }
+
+    // The mind's infrastructure ledger, so the import can tell a hook it refused
+    // from one that shipped after the export. See {@link overlayArchiveHome}.
+    const ledgerPath = initLedgerPath(name);
+    if (existsSync(ledgerPath)) {
+      zip.addFile(ARCHIVE_INIT_LEDGER, readFileSync(ledgerPath));
     }
   }
 
@@ -213,6 +279,51 @@ export function readManifest(archivePath: string): ExportManifest {
   return manifest;
 }
 
+/**
+ * Overlay a home-only archive's `home/` onto a freshly composed template's,
+ * honouring the mind's refusals.
+ *
+ * The mind's own files winning over the template's defaults has always been
+ * this step, and now that the archive carries `home/.local/` (#1013) that alone
+ * preserves a hook the mind *edited*. A hook the mind *deleted* needs one thing
+ * more, because absence in the archive is ambiguous in exactly the way #811
+ * exists to resolve: "this mind removed it" and "this hook shipped after the
+ * export" look identical, and guessing wrong either overrides the mind's own
+ * authorship or withholds machinery from a mind that never declined it (#808).
+ *
+ * `given` — the exporting host's ledger, travelling with the archive — is what
+ * separates them. A path that host recorded as given, and that the archive does
+ * not carry, is a deletion the mind meant; it is removed from the fresh
+ * template. A path absent from both is simply newer than the archive, and the
+ * template's copy stands. An archive with no ledger says nothing about either,
+ * so nothing is removed: that is every pre-#1013 archive.
+ *
+ * `given` is untrusted archive content, so each entry must be inside the
+ * infrastructure namespace and must resolve within `destHome` before it can
+ * delete anything.
+ */
+export function overlayArchiveHome(
+  archiveHome: string,
+  destHome: string,
+  given: Iterable<string>,
+): void {
+  if (!existsSync(archiveHome)) return;
+
+  for (const rel of given) {
+    // Contain first, then judge the *contained* path: `.local/../.config` is
+    // inside destHome and would pass a raw prefix test, which would let a
+    // crafted archive delete freshly composed files outside the namespace.
+    const target = safeResolveWithinBase(destHome, rel);
+    if (!target) continue;
+    const contained = relative(destHome, target);
+    if (!isInitInfrastructure(contained)) continue;
+    if (existsSync(resolve(archiveHome, contained))) continue;
+    rmSync(target, { recursive: true, force: true });
+  }
+
+  cpSync(archiveHome, destHome, { recursive: true });
+}
+
 /** Extract a .volute archive to a destination directory.
  *  Returns the manifest and paths to extracted state files. */
 export function extractArchive(
@@ -256,6 +367,12 @@ export function extractArchive(
     }
     mkdirSync(resolve(destPath, ".."), { recursive: true });
     writeFileSync(destPath, entry.getData());
+
+    // Restore the executable bit, and only that. An archive is untrusted input:
+    // taking its mode verbatim would let one plant a setuid file in a directory
+    // the daemon then chowns to a mind. Non-executable entries are left at
+    // whatever the write produced, so a strict umask is not widened either.
+    if ((entry.header.fileAttr & 0o111) !== 0) chmodSync(destPath, 0o755);
   }
 
   const envJson = resolve(extractedStateDir, "env.json");

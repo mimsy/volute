@@ -6,6 +6,7 @@ import { issueApiToken, revokeApiToken } from "../packages/daemon/src/lib/api-to
 import {
   approveUser,
   createUser,
+  deleteUser,
   getOrCreateMindUser,
   setUserRole,
 } from "../packages/daemon/src/lib/auth.js";
@@ -266,6 +267,36 @@ describe("web auth routes", () => {
       protectedAfter.status,
       403,
       "authMiddleware must observe the role change immediately",
+    );
+
+    await deleteSession(sessionId);
+  });
+
+  it("invalidates cached sessions after the user is deleted", async () => {
+    const user = await createUser("meuser", "pass");
+    const sessionId = await createSession(user.id);
+    const app = createApp();
+
+    // Warm the session cache, so the next request can be answered without a DB read.
+    const before = await app.request("/api/v1/auth/me", {
+      headers: { Cookie: `volute_session=${sessionId}` },
+    });
+    assert.equal(before.status, 200, await before.clone().text());
+
+    await deleteUser(user.id);
+
+    const protectedAfter = await app.request("/api/v1/auth/change-password", {
+      method: "POST",
+      headers: {
+        Cookie: `volute_session=${sessionId}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ currentPassword: "pass", newPassword: "new-pass" }),
+    });
+    assert.equal(
+      protectedAfter.status,
+      401,
+      "a deleted user's cached session must stop authenticating immediately",
     );
 
     await deleteSession(sessionId);
