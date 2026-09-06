@@ -163,8 +163,14 @@ async function waitForMindRunning(timeoutMs = 60000): Promise<void> {
   while (Date.now() < deadline) {
     try {
       const res = await req(`/api/v1/minds/${MIND}`);
-      last = ((await res.json()) as { status?: string }).status ?? "unknown";
-      if (last === "running") return;
+      if (res.status === 503) {
+        // The daemon binds its HTTP server before initMindManager() runs, so a poll
+        // that lands in that window gets "starting" (#1050) — keep waiting.
+        last = "starting";
+      } else {
+        last = ((await res.json()) as { status?: string }).status ?? "unknown";
+        if (last === "running") return;
+      }
     } catch {
       // daemon may briefly refuse a connection during a long sync block
     }
