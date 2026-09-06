@@ -118,6 +118,7 @@ import {
   requireSelfOrSpirit,
 } from "../middleware/auth.js";
 import { hasAdminAuthority } from "../middleware/effective-principal.js";
+import { refusedSenderMessage } from "./chat.js";
 
 const _lastActiveCache: { map: Map<string, string>; ts: number } = { map: new Map(), ts: 0 };
 const _LAST_ACTIVE_TTL = 60_000;
@@ -1909,6 +1910,26 @@ const app = new Hono<AuthEnv>()
         return c.json({ error: "channel and content required" }, 400);
       }
 
+      // Same rule as POST /api/v1/chat: a caller may only act as itself. This row is
+      // an *outbound* send by this mind — `volute mind history` renders its `sender`
+      // as who spoke — so the only name it can honestly carry is the mind's own, and
+      // that is what gets written. `sender` was free text on top of that default, so
+      // a mind could put any name in its own log; requireSelf() kept the blast radius
+      // to that one log, which makes it a diary a mind can forge rather than
+      // cross-mind impersonation, but it is the same #500 shape. Asking for a name
+      // other than the one that will be recorded is refused rather than silently
+      // rewritten.
+      //
+      // The accepted name is base-mapped, exactly as requireSelf() base-maps the
+      // caller: a variant's token resolves to its own name and its history is recorded
+      // under the parent (#652), so a variant naming itself is naming this row's mind
+      // and must pass. The refusal names `baseName` because that is the identity the
+      // row carries — for the caller this route exists for, it is also who they are.
+      const user = c.get("user");
+      if (body.sender && user.id !== 0 && (await getBaseName(body.sender)) !== baseName) {
+        return c.json({ error: refusedSenderMessage(body.sender, baseName) }, 403);
+      }
+
       // Best-effort turn lookup for external bridge sends (these don't go through
       // volute chat send, so they won't have tool_result correlation markers).
       const mindSession = c.get("mindSession");
@@ -1920,7 +1941,7 @@ const app = new Hono<AuthEnv>()
           mind: baseName,
           type: "outbound",
           channel: body.channel,
-          sender: body.sender ?? baseName,
+          sender: user.id === 0 && body.sender ? body.sender : baseName,
           content: body.content,
           turn_id: outboundTurnId ?? null,
         });
