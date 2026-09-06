@@ -19,7 +19,12 @@ import { announceToCommons } from "../chat/commons-channel.js";
 import { getSpiritName } from "../config/setup.js";
 import { getMindManager } from "../daemon/mind-manager.js";
 import { getDb } from "../db.js";
-import { type ExportManifest, isHomeOnlyArchive } from "../mind/archive.js";
+import {
+  ARCHIVE_INIT_LEDGER,
+  type ExportManifest,
+  isHomeOnlyArchive,
+  overlayArchiveHome,
+} from "../mind/archive.js";
 import { TEMPLATE_BRANCH } from "../mind/upgrade.js";
 import { getMindPromptDefaults, getPrompt, getPromptIfCustom, substitute } from "../prompts.js";
 import { mindHistory } from "../schema.js";
@@ -36,6 +41,7 @@ import {
   composeTemplate,
   copyTemplateToDir,
   findTemplatesRoot,
+  isInitInfrastructure,
   listFiles,
   listInfrastructureOnDisk,
   type TemplateManifest,
@@ -47,7 +53,7 @@ import { fireWebhook } from "../webhook.js";
 import { consolidateMemory } from "./consolidate.js";
 import { defaultHeartbeatSchedule, setupDefaultDreaming } from "./default-autonomy.js";
 import { generateIdentity, publishPublicKey } from "./identity.js";
-import { seedInitLedger } from "./init-ledger.js";
+import { readInitLedgerFile, seedInitLedger } from "./init-ledger.js";
 import {
   chownMindDir,
   createMindUser,
@@ -851,11 +857,25 @@ async function importFromHomeOnlyArchive(
     copyTemplateToDir(composedDir, dest, name, templateManifest);
     seedInitLedger(name, applyInitFiles(dest));
 
-    // 2. Overlay home/ from archive (archive files win over template defaults)
-    const extractedHome = resolve(extractedMindDir, "home");
-    if (existsSync(extractedHome)) {
-      cpSync(extractedHome, resolve(dest, "home"), { recursive: true });
-    }
+    // 2. Overlay home/ from archive (archive files win over template defaults,
+    //    and a hook the exporting host recorded as given but the archive does
+    //    not carry is a removal the mind meant — see overlayArchiveHome).
+    //    The carried ledger is archive content, so it is filtered to the
+    //    infrastructure namespace on the way in for the same reason
+    //    applyInitFiles filters its own return: nothing outside `.local/` may
+    //    ever be recorded as framework-given.
+    const given = [...readInitLedgerFile(resolve(tempDir, ARCHIVE_INIT_LEDGER), name)].filter(
+      isInitInfrastructure,
+    );
+    const homeDir = resolve(dest, "home");
+    overlayArchiveHome(resolve(extractedMindDir, "home"), homeDir, given);
+
+    // The archive's `.local/` has replaced the template's, so the ledger seeded
+    // from applyInitFiles above describes a tree that is no longer there. What
+    // Volute has ever given this mind is the union of the two hosts' records:
+    // dropping the carried half would read every refusal as "never had it" and
+    // undo it on the first upgrade, which is the move #811 exists to survive.
+    seedInitLedger(name, [...given, ...listInfrastructureOnDisk(homeDir)]);
 
     // 3. Overlay .mind/ from archive (preserves schedules, etc.)
     const extractedMindInternal = resolve(extractedMindDir, ".mind");
@@ -893,7 +913,6 @@ async function importFromHomeOnlyArchive(
     await addMind(name, port, manifest.stage, manifest.template);
 
     // 8. User isolation setup
-    const homeDir = resolve(dest, "home");
     ensureVoluteGroup();
     createMindUser(name, homeDir);
     await chownMindDir(dest, name);
