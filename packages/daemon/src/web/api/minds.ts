@@ -23,12 +23,17 @@ import {
   forgetCredentialDegraded,
   getCredentialDegraded,
 } from "../../lib/daemon/credential-recovery.js";
-import { getMindManager, MindStartupError } from "../../lib/daemon/mind-manager.js";
+import {
+  DaemonShuttingDownError,
+  getMindManager,
+  MindStartupError,
+} from "../../lib/daemon/mind-manager.js";
 // Lifecycle functions from mind-service.ts
 import {
   startMindFull as startMindFullService,
   stopMindFull as stopMindFullService,
 } from "../../lib/daemon/mind-service.js";
+import { isShuttingDown } from "../../lib/daemon/shutdown-state.js";
 import { DEFAULT_SPEND_PERIOD_MINUTES, getSpendBudget } from "../../lib/daemon/spend-budget.js";
 import { supersedeTurnSummary } from "../../lib/daemon/summarizer.js";
 import { handleMindEvent, setNoticeDrainWatermark } from "../../lib/daemon/turn-lifecycle.js";
@@ -71,6 +76,7 @@ import {
   mindDir,
   readRegistry,
   removeMind,
+  setMindRunning,
   setMindStage,
   stateDir,
 } from "../../lib/mind/registry.js";
@@ -512,6 +518,13 @@ const app = new Hono<AuthEnv>()
   .post("/:name/start", requireSelfOrSpirit(), async (c) => {
     const name = c.req.param("name");
 
+    // Everything that would supervise a mind — scheduler, sleep manager, delivery —
+    // is already stopped by the time shutdown answers requests, and stopAll() may
+    // have enumerated the running set, so a mind started now survives the daemon as
+    // an orphan (#893/#1048). Refuse up front rather than let the manager's own
+    // guard surface as an opaque 500.
+    if (isShuttingDown()) return c.json({ error: "Daemon is shutting down" }, 503);
+
     const entry = await findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
 
@@ -541,6 +554,13 @@ const app = new Hono<AuthEnv>()
   // Accepts optional JSON body: { context?: { type: string, name?: string, summary?: string, ... } }
   .post("/:name/restart", requireSelfOrSpirit(), async (c) => {
     const name = c.req.param("name");
+
+    // Same reasoning as /start, with teeth: this handler reads a failed start as a
+    // mind that broke its own src/, and answers by parking the mind's uncommitted
+    // work on a `broken/<ts>` branch and reverting the tree. A start refused
+    // because the daemon is going down must never be read that way — a mind that
+    // calls daemonRestart() as SIGTERM lands would lose real work.
+    if (isShuttingDown()) return c.json({ error: "Daemon is shutting down" }, 503);
 
     const entry = await findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
@@ -681,6 +701,16 @@ const app = new Hono<AuthEnv>()
       try {
         await startMindFullService(name);
       } catch (startErr) {
+        // Shutdown began between the stop above and here. That is not a broken
+        // self-edit, and must not be answered by rolling src/ back — it would park
+        // and delete the mind's uncommitted work over an event that has nothing to
+        // do with it. Put back the `running` flag the stop cleared so the mind is in
+        // the next boot's set, and say plainly what happened.
+        if (startErr instanceof DaemonShuttingDownError) {
+          await setMindRunning(name, true);
+          return c.json({ error: "Daemon is shutting down" }, 503);
+        }
+
         // A mind can break its own startup by editing src/ (e.g. src/server.ts) then
         // calling daemonRestart(). The auto-commit hook only tracks home/, so the bad
         // src/ change is usually uncommitted. Park it on a broken/<ts> branch, revert

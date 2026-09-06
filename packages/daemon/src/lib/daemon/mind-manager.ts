@@ -213,6 +213,18 @@ export class MindStartupError extends Error {
   }
 }
 
+/**
+ * Thrown when a start is asked for after `stopAll()` has begun. Distinct from
+ * MindStartupError: nothing is wrong with the mind, the daemon is simply on its
+ * way out and will not supervise anything new.
+ */
+export class DaemonShuttingDownError extends Error {
+  constructor(name: string) {
+    super(`Cannot start mind ${name}: the daemon is shutting down`);
+    this.name = "DaemonShuttingDownError";
+  }
+}
+
 function mindPidPath(name: string): string {
   return resolve(stateDir(name), "mind.pid");
 }
@@ -332,6 +344,12 @@ export class MindManager {
   }
 
   private async _startMind(name: string, opts?: { healthTimeoutMs?: number }): Promise<void> {
+    // Nothing started now would be supervised, and stopAll() may already have
+    // enumerated the set it is going to reap (#1048). Refuse before the spawn —
+    // the second check, right after the child is registered below, catches the
+    // narrower case where the flag goes up while this start is in flight.
+    if (this.shuttingDown) throw new DaemonShuttingDownError(name);
+
     if (this.minds.has(name)) {
       throw new Error(`Mind ${name} is already running`);
     }
@@ -603,6 +621,18 @@ export class MindManager {
       // Keep only last 20 lines
       while (recentStderr.length > 20) recentStderr.shift();
     });
+
+    // stopAll() may have begun during the long stretch above (resolveTarget, the
+    // orphan sweep, credential injection). It sets `shuttingDown` before it reads
+    // the running set, and this check shares a synchronous stretch with the
+    // `this.minds.set` above — so either stopAll saw this child in the map and
+    // will stop it, or we see its flag here and stop it ourselves. Without one of
+    // those the child outlives the daemon: it has its own process group and
+    // `detached: true`, so nothing reaps it (#1048).
+    if (this.shuttingDown) {
+      await this._stopMind(name);
+      throw new DaemonShuttingDownError(name);
+    }
 
     // Poll /health until the server is ready, or reject on a startup budget timeout
     // or an early child exit/error (e.g. a `tsx` syntax error from a self-edit). Polling
@@ -904,7 +934,16 @@ export class MindManager {
   async restartMind(name: string): Promise<void> {
     return this.withLock(name, async () => {
       await this._stopMind(name);
-      await this._startMind(name);
+      try {
+        await this._startMind(name);
+      } catch (err) {
+        // The stop above cleared `running` (shutdown hadn't begun yet). If the start
+        // is then refused because it has, nothing would put that flag back, and the
+        // mind drops out of the next boot's set — left down by a restart it never
+        // asked to be down for. `stopAll` skips the same write for this reason.
+        if (err instanceof DaemonShuttingDownError) await setMindRunning(name, true);
+        throw err;
+      }
     });
   }
 

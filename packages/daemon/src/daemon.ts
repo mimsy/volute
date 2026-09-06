@@ -15,6 +15,7 @@ import { startMaintenanceInterval } from "./lib/daemon/maintenance.js";
 import { getMindManager, initMindManager } from "./lib/daemon/mind-manager.js";
 import { restoreMindRuntimeState, startMindFull } from "./lib/daemon/mind-service.js";
 import { initScheduler } from "./lib/daemon/scheduler.js";
+import { beginShutdown } from "./lib/daemon/shutdown-state.js";
 import { initSleepManager } from "./lib/daemon/sleep-manager.js";
 import { initSpendBudget } from "./lib/daemon/spend-budget.js";
 import { initSummarizer } from "./lib/daemon/summarizer.js";
@@ -252,7 +253,7 @@ export async function startDaemon(opts: {
     }
     throw err;
   }
-  const { server, internalPort } = result;
+  const { stopListening, internalPort } = result;
 
   // Internal communication always uses HTTP on localhost
   // When TLS is enabled, minds/CLI talk to the secondary HTTP port
@@ -408,6 +409,12 @@ export async function startDaemon(opts: {
     const queue = [...bootEntries];
     const workers = Array.from({ length: Math.min(5, queue.length) }, async () => {
       while (queue.length > 0) {
+        // A SIGTERM during boot runs shutdown() concurrently with this loop, and
+        // stopAll() only reaps the minds it can see: anything started after it read
+        // the running set outlives the daemon (#1048). The manager refuses a start
+        // once its own flag is up; stopping here as well keeps the loop from
+        // grinding through the rest of the queue to be refused one by one.
+        if (shuttingDown) break;
         const entry = queue.shift()!;
         if (!entry.parent && sleepManager.isSleeping(entry.name)) {
           // Sleeping mind: restore the clock but not the process
@@ -423,6 +430,10 @@ export async function startDaemon(opts: {
         try {
           await startMindFull(entry.name);
         } catch (err) {
+          // A start refused because shutdown began is not a failure worth reporting,
+          // and must not clear `running`: stopAll leaves that flag set on purpose so
+          // the mind comes back on the next boot.
+          if (shuttingDown) break;
           log.error(`failed to start mind ${entry.name}`, log.errorData(err));
           // Never mark a mind stopped that is in fact running (see above).
           if (!manager.isRunning(entry.name)) await setMindRunning(entry.name, false);
@@ -436,7 +447,7 @@ export async function startDaemon(opts: {
   // Only create/start the spirit if setup is complete (provider + model configured)
   try {
     const { isSetupComplete, getSpiritName } = await import("./lib/config/setup.js");
-    if (isSetupComplete()) {
+    if (isSetupComplete() && !shuttingDown) {
       const { ensureSpiritProject, syncSpiritTemplate } = await import("./lib/mind/spirit.js");
       const { startSpiritFull } = await import("./lib/daemon/mind-service.js");
       await ensureSpiritProject();
@@ -459,7 +470,10 @@ export async function startDaemon(opts: {
       // rather than the next one.
       if (spiritEntry) await notifyExtensionsSpiritReady();
 
-      if (spiritEntry && !manager.isRunning(spiritName)) {
+      // ensureSpiritProject() above is a full mind create — npm install and all —
+      // so a shutdown can easily begin inside it. Don't hand stopAll() a spirit it
+      // has already gone past (#1048).
+      if (spiritEntry && !manager.isRunning(spiritName) && !shuttingDown) {
         await startSpiritFull(spiritName);
       }
     }
@@ -469,10 +483,14 @@ export async function startDaemon(opts: {
     log.warn("failed to start system spirit", log.errorData(err));
   }
 
-  // Start system-level bridges (non-blocking)
-  bridgeManager.startBridges(daemonPort).catch((err) => {
-    log.warn("failed to start bridges", log.errorData(err));
-  });
+  // Start system-level bridges (non-blocking). Same reason as the mind loop above:
+  // bridgeManager.stopAll() may already have run, and a bridge spawned after it is
+  // a detached process nothing reaps.
+  if (!shuttingDown) {
+    bridgeManager.startBridges(daemonPort).catch((err) => {
+      log.warn("failed to start bridges", log.errorData(err));
+    });
+  }
 
   // Consume messages queued in the cloud while the machine was off (non-blocking)
   import("./lib/cloud-sync.js")
@@ -610,6 +628,7 @@ export async function startDaemon(opts: {
   async function shutdown() {
     if (shuttingDown) return;
     shuttingDown = true;
+    beginShutdown();
     log.info("shutting down...");
     const safe = (label: string, fn: () => unknown) => {
       try {
@@ -639,7 +658,14 @@ export async function startDaemon(opts: {
       await safe("bridgeManager.stopAll", () => bridgeManager.stopAll());
       await safe("manager.stopAll", () => manager.stopAll());
       safe("clearCrashAttempts", () => manager.clearCrashAttempts());
-      safe("server.close", () => server.close());
+      // The listener goes last, after every mind has been reaped. It cannot go
+      // first: since Node 19 `close()` also destroys idle keep-alive connections,
+      // so an early close doesn't "stop listening and drain" — it drops the
+      // turn-lifecycle log/history events minds POST while they shut down, which
+      // is the very traffic this window exists for. What makes the outgoing daemon
+      // distinguishable meanwhile is `beginShutdown()` above: health answers 503
+      // and a start is refused for as long as this teardown runs (#893).
+      safe("stopListening", stopListening);
     } catch (err) {
       log.error("error during shutdown", log.errorData(err));
     } finally {
