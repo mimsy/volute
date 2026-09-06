@@ -4,6 +4,7 @@ import { cors } from "hono/cors";
 import { csrf } from "hono/csrf";
 import { createMiddleware } from "hono/factory";
 import { HTTPException } from "hono/http-exception";
+import { isShuttingDown } from "../lib/daemon/shutdown-state.js";
 import { normalizeTrailingSlash } from "../lib/extensions.js";
 import { checkForUpdateCached, getCurrentVersion } from "../lib/update-check.js";
 import log from "../lib/util/logger.js";
@@ -106,6 +107,14 @@ app.get("/api/health", (c) => {
     cached = checkForUpdateCached();
   } catch (err) {
     log.warn("health check error", { error: (err as Error).message });
+  }
+  // A shutting-down daemon still listens — minds' shutdown writes have to land —
+  // but its scheduler, sleep manager and delivery are already stopped, and
+  // reaping the minds can take tens of seconds more. Saying "ok" through all of
+  // that lets `volute restart`'s health poll be satisfied by the daemon that is
+  // on its way out, while the incoming one dies on EADDRINUSE (#893).
+  if (isShuttingDown()) {
+    return c.json({ ok: false, status: "shutting_down", version }, 503);
   }
   return c.json({
     ok: true,

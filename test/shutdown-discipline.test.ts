@@ -2,12 +2,19 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { existsSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import { after, before, describe, it } from "node:test";
+import { after, afterEach, before, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
+import { eq } from "drizzle-orm";
+import { createUser } from "../packages/daemon/src/lib/auth.js";
 import {
   DaemonShuttingDownError,
   MindManager,
 } from "../packages/daemon/src/lib/daemon/mind-manager.js";
+import {
+  beginShutdown,
+  resetShutdownState,
+} from "../packages/daemon/src/lib/daemon/shutdown-state.js";
+import { getDb } from "../packages/daemon/src/lib/db.js";
 import {
   addMind,
   findMind,
@@ -15,16 +22,21 @@ import {
   removeMind,
   setMindRunning,
 } from "../packages/daemon/src/lib/mind/registry.js";
+import { users } from "../packages/daemon/src/lib/schema.js";
+import { createSession } from "../packages/daemon/src/web/middleware/auth.js";
 
 /**
- * `startMind` had no idea a shutdown was underway, so a mind that registered after
- * `stopAll()` read the running set survived the daemon as an orphan — its own
- * process group, `detached: true`, still writing under VOLUTE_HOME (#1048).
+ * The two ends of one bug. Between SIGTERM and the end of `manager.stopAll()` the
+ * daemon used to be indistinguishable from a live one — it answered health as ok
+ * and would start a mind on request (#893) — while `startMind` had no idea a
+ * shutdown was underway, so a mind that registered after stopAll() read the
+ * running set survived the daemon as an orphan (#1048).
  */
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const MIND = "shutdown-guard-mind";
 const PORT = 4977;
+const ADMIN = "shutdown-guard-admin";
 
 // A mind server that only has to bind its port and stay up: the guard under test
 // fires long before anything real would happen. It kills itself after a minute so
@@ -195,6 +207,57 @@ describe("MindManager.restartMind interrupted by shutdown (#1048)", () => {
     } finally {
       (process as any).kill = realKill;
       await removeMind(RESTARTED);
+    }
+  });
+});
+
+describe("daemon HTTP surface during shutdown (#893)", () => {
+  afterEach(async () => {
+    resetShutdownState();
+    const db = await getDb();
+    await db.delete(users).where(eq(users.username, ADMIN));
+  });
+
+  it("answers /api/health as not-ok once shutdown begins", async () => {
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
+
+    const healthy = await app.request("http://localhost/api/health");
+    assert.equal(healthy.status, 200);
+    assert.equal(((await healthy.json()) as { ok?: boolean }).ok, true);
+
+    beginShutdown();
+
+    // `volute restart` polls this to decide the restart worked. A shutting-down
+    // daemon answering ok lets the outgoing process satisfy the poll while the
+    // incoming one has already died on EADDRINUSE.
+    const res = await app.request("http://localhost/api/health");
+    assert.equal(res.status, 503);
+    const body = (await res.json()) as { ok?: boolean; status?: string };
+    assert.equal(body.ok, false);
+    assert.equal(body.status, "shutting_down");
+  });
+
+  it("refuses the routes that would spawn a mind once shutdown begins", async () => {
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
+    const user = await createUser(ADMIN, "pass");
+    const cookie = await createSession(user.id);
+    const headers = {
+      Cookie: `volute_session=${cookie}`,
+      Origin: "http://localhost",
+    };
+
+    beginShutdown();
+
+    // /restart as well as /start: its catch reads a failed start as a mind that
+    // broke its own src/ and reverts the working tree, so a shutdown refusal
+    // reaching it would destroy the mind's uncommitted work.
+    for (const route of ["start", "restart"]) {
+      const res = await app.request(`http://localhost/api/v1/minds/${MIND}/${route}`, {
+        method: "POST",
+        headers,
+      });
+      assert.equal(res.status, 503, `${route} should refuse during shutdown`);
+      assert.match(((await res.json()) as { error?: string }).error ?? "", /shutting down/i);
     }
   });
 });

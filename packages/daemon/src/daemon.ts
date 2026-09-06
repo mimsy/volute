@@ -15,6 +15,7 @@ import { startMaintenanceInterval } from "./lib/daemon/maintenance.js";
 import { getMindManager, initMindManager } from "./lib/daemon/mind-manager.js";
 import { restoreMindRuntimeState, startMindFull } from "./lib/daemon/mind-service.js";
 import { initScheduler } from "./lib/daemon/scheduler.js";
+import { beginShutdown } from "./lib/daemon/shutdown-state.js";
 import { initSleepManager } from "./lib/daemon/sleep-manager.js";
 import { initSpendBudget } from "./lib/daemon/spend-budget.js";
 import { initSummarizer } from "./lib/daemon/summarizer.js";
@@ -252,7 +253,7 @@ export async function startDaemon(opts: {
     }
     throw err;
   }
-  const { server, internalPort } = result;
+  const { stopListening, internalPort } = result;
 
   // Internal communication always uses HTTP on localhost
   // When TLS is enabled, minds/CLI talk to the secondary HTTP port
@@ -627,6 +628,7 @@ export async function startDaemon(opts: {
   async function shutdown() {
     if (shuttingDown) return;
     shuttingDown = true;
+    beginShutdown();
     log.info("shutting down...");
     const safe = (label: string, fn: () => unknown) => {
       try {
@@ -656,7 +658,14 @@ export async function startDaemon(opts: {
       await safe("bridgeManager.stopAll", () => bridgeManager.stopAll());
       await safe("manager.stopAll", () => manager.stopAll());
       safe("clearCrashAttempts", () => manager.clearCrashAttempts());
-      safe("server.close", () => server.close());
+      // The listener goes last, after every mind has been reaped. It cannot go
+      // first: since Node 19 `close()` also destroys idle keep-alive connections,
+      // so an early close doesn't "stop listening and drain" — it drops the
+      // turn-lifecycle log/history events minds POST while they shut down, which
+      // is the very traffic this window exists for. What makes the outgoing daemon
+      // distinguishable meanwhile is `beginShutdown()` above: health answers 503
+      // and a start is refused for as long as this teardown runs (#893).
+      safe("stopListening", stopListening);
     } catch (err) {
       log.error("error during shutdown", log.errorData(err));
     } finally {

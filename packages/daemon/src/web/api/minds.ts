@@ -33,6 +33,7 @@ import {
   startMindFull as startMindFullService,
   stopMindFull as stopMindFullService,
 } from "../../lib/daemon/mind-service.js";
+import { isShuttingDown } from "../../lib/daemon/shutdown-state.js";
 import { DEFAULT_SPEND_PERIOD_MINUTES, getSpendBudget } from "../../lib/daemon/spend-budget.js";
 import { supersedeTurnSummary } from "../../lib/daemon/summarizer.js";
 import { handleMindEvent, setNoticeDrainWatermark } from "../../lib/daemon/turn-lifecycle.js";
@@ -516,6 +517,13 @@ const app = new Hono<AuthEnv>()
   .post("/:name/start", requireSelfOrSpirit(), async (c) => {
     const name = c.req.param("name");
 
+    // Everything that would supervise a mind — scheduler, sleep manager, delivery —
+    // is already stopped by the time shutdown answers requests, and stopAll() may
+    // have enumerated the running set, so a mind started now survives the daemon as
+    // an orphan (#893/#1048). Refuse up front rather than let the manager's own
+    // guard surface as an opaque 500.
+    if (isShuttingDown()) return c.json({ error: "Daemon is shutting down" }, 503);
+
     const entry = await findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);
 
@@ -545,6 +553,13 @@ const app = new Hono<AuthEnv>()
   // Accepts optional JSON body: { context?: { type: string, name?: string, summary?: string, ... } }
   .post("/:name/restart", requireSelfOrSpirit(), async (c) => {
     const name = c.req.param("name");
+
+    // Same reasoning as /start, with teeth: this handler reads a failed start as a
+    // mind that broke its own src/, and answers by parking the mind's uncommitted
+    // work on a `broken/<ts>` branch and reverting the tree. A start refused
+    // because the daemon is going down must never be read that way — a mind that
+    // calls daemonRestart() as SIGTERM lands would lose real work.
+    if (isShuttingDown()) return c.json({ error: "Daemon is shutting down" }, 503);
 
     const entry = await findMind(name);
     if (!entry) return c.json({ error: "Mind not found" }, 404);

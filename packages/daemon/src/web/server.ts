@@ -17,6 +17,31 @@ const MIME_TYPES: Record<string, string> = {
   ".ico": "image/x-icon",
 };
 
+/** Stops accepting new connections; established ones are left to finish. */
+export type StopListening = () => void;
+
+/**
+ * Build the `stopListening` handle for every listener this daemon opened. With
+ * TLS there are two — the public HTTPS one and the internal HTTP one that minds
+ * and the CLI talk to — and the daemon previously closed only the first, leaving
+ * the port minds actually use bound until the process exited.
+ *
+ * The daemon calls this at the *end* of `shutdown()`, deliberately: since Node 19
+ * `close()` destroys idle keep-alive connections as well as the listening socket,
+ * so calling it early would cut off the log/history events minds POST while they
+ * shut down rather than letting them drain. `isShuttingDown()` is what makes the
+ * outgoing daemon honest in the meantime.
+ */
+function stopListeningFor(listeners: ServerType[]): StopListening {
+  return () => {
+    for (const listener of listeners) {
+      // close() reports "not running" through its callback rather than throwing;
+      // an already-closed listener is not an error worth surfacing at shutdown.
+      listener.close(() => {});
+    }
+  };
+}
+
 export async function startServer({
   port,
   hostname = "127.0.0.1",
@@ -25,7 +50,7 @@ export async function startServer({
   port: number;
   hostname?: string;
   tls?: { key: Buffer; cert: Buffer };
-}): Promise<{ server: ServerType; internalPort?: number }> {
+}): Promise<{ stopListening: StopListening; internalPort?: number }> {
   // Find built frontend assets
   let assetsDir = "";
   let searchDir = dirname(new URL(import.meta.url).pathname);
@@ -104,7 +129,7 @@ export async function startServer({
       });
     });
 
-    return { server, internalPort };
+    return { stopListening: stopListeningFor([server, internalServer]), internalPort };
   }
 
   // No TLS: single HTTP listener
@@ -120,5 +145,5 @@ export async function startServer({
     });
   });
 
-  return { server };
+  return { stopListening: stopListeningFor([server]) };
 }
