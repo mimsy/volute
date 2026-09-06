@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.60.1](https://github.com/mimsy/volute/compare/volute-v0.60.0...volute-v0.60.1) (2026-09-06)
+
+
+### Bug Fixes
+
+* answer 503 "starting" on mind routes reached before initMindManager ([#1050](https://github.com/mimsy/volute/issues/1050)) ([#1052](https://github.com/mimsy/volute/issues/1052)) ([c533862](https://github.com/mimsy/volute/commit/c533862997d5e371eb4a5b8cf1fd3fb2e647656f))
+* carry home/.local/ through a home-only export ([#1013](https://github.com/mimsy/volute/issues/1013)) ([#1054](https://github.com/mimsy/volute/issues/1054)) ([6bfac3f](https://github.com/mimsy/volute/commit/6bfac3fbea12251acb318fb14bcd599521de3792))
+* delete the unscoped /api/v1/activity/events firehose ([#1032](https://github.com/mimsy/volute/issues/1032)) ([#1038](https://github.com/mimsy/volute/issues/1038)) ([b83b0bf](https://github.com/mimsy/volute/commit/b83b0bfb3a7973c1b91d211f2db34e8b4c9f73d2))
+* deliver bridged messages with their platform and the channel's real shape ([#1021](https://github.com/mimsy/volute/issues/1021), [#1022](https://github.com/mimsy/volute/issues/1022)) ([#1039](https://github.com/mimsy/volute/issues/1039)) ([098616d](https://github.com/mimsy/volute/commit/098616dc7fcff3c97f8f3bc49b4c1502a2d1dd11))
+* derive the sender on the history and typing routes from the caller ([#992](https://github.com/mimsy/volute/issues/992)) ([#1053](https://github.com/mimsy/volute/issues/1053)) ([b48bb3a](https://github.com/mimsy/volute/commit/b48bb3ae8d3b7a1faafe67d97bb8aaef9085aea1))
+* invalidate a deleted user's cached sessions ([#1044](https://github.com/mimsy/volute/issues/1044)) ([#1051](https://github.com/mimsy/volute/issues/1051)) ([d5db142](https://github.com/mimsy/volute/commit/d5db14290bdb3cc6f810b18170c7ccce80ea7d8d))
+* invalidate sessions after role changes  ([#991](https://github.com/mimsy/volute/issues/991)) ([#1037](https://github.com/mimsy/volute/issues/1037)) ([de044f8](https://github.com/mimsy/volute/commit/de044f8e013679b9b152de0346bdc16cfd8c8357))
+* name the account that holds a bridge sender's handle, at daemon start ([#1023](https://github.com/mimsy/volute/issues/1023)) ([#1040](https://github.com/mimsy/volute/issues/1040)) ([5680850](https://github.com/mimsy/volute/commit/56808504ab2d7a6cb4c84ddbd99c4faa947ada52))
+* reload a pi mind's identity after it edits SOUL.md/MEMORY.md/VOLUTE.md ([#998](https://github.com/mimsy/volute/issues/998)) ([#1057](https://github.com/mimsy/volute/issues/1057)) ([3a0265d](https://github.com/mimsy/volute/commit/3a0265d64da5dde7c62ad65caed23fc81046d34b))
+* reset the restart budget on a healthy run, not at spawn ([#1033](https://github.com/mimsy/volute/issues/1033)) ([#1043](https://github.com/mimsy/volute/issues/1043)) ([c1c0143](https://github.com/mimsy/volute/commit/c1c01434fe02d1e1cb9711d73f2d5f2897c39fd6))
+* show a sender's display name beside their handle in the dashboard timeline ([#1024](https://github.com/mimsy/volute/issues/1024)) ([#1041](https://github.com/mimsy/volute/issues/1041)) ([5e65e3e](https://github.com/mimsy/volute/commit/5e65e3ecc1a5ff84b56ecb4650e91b032a91bf8b))
+* shutdown discipline — refuse starts and answer health 503 while the daemon shuts down ([#1048](https://github.com/mimsy/volute/issues/1048), [#893](https://github.com/mimsy/volute/issues/893)) ([#1056](https://github.com/mimsy/volute/issues/1056)) ([5e51ec5](https://github.com/mimsy/volute/commit/5e51ec5a85760e0f542ec3586a6a7f741140a92c))
+* stop conflating server errors with authoritative setup/auth defaults ([#724](https://github.com/mimsy/volute/issues/724)) ([#1042](https://github.com/mimsy/volute/issues/1042)) ([daa102f](https://github.com/mimsy/volute/commit/daa102f7d1d5824dbcdeed61f6183197c6d28dbd))
+
 ## [0.60.0](https://github.com/mimsy/volute/compare/volute-v0.59.2...volute-v0.60.0) (2026-08-31)
 
 
