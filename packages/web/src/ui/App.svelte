@@ -6,7 +6,7 @@ import type {
   Mind,
 } from "@volute/api";
 import { isMind } from "@volute/api/user-type";
-import { Icon, Modal, tooltip } from "@volute/ui";
+import { Button, Icon, Modal, tooltip } from "@volute/ui";
 import { icons } from "@volute/ui/icons";
 import { sanitizeSvg } from "@volute/ui/sanitize";
 import { onMount } from "svelte";
@@ -54,6 +54,7 @@ import {
   hiddenConversationIds,
   hideConversation,
   layout,
+  retryAuth,
   rightPanel,
   saveRightPanelWidth,
   saveSidebarWidth,
@@ -319,6 +320,7 @@ let screen = $derived(
     checked: auth.checked,
     setupComplete: auth.setupComplete,
     hasAccount: !!auth.setupProgress?.hasAccount,
+    loadError: !!auth.loadError,
     needsConnection,
     loggedIn: !!auth.user,
   }),
@@ -741,6 +743,14 @@ function handleGlobalClick(e: MouseEvent) {
   <div class="app">
     <div class="loading">Loading...</div>
   </div>
+{:else if screen === "error"}
+  <div class="app">
+    <div class="load-error">
+      <p class="load-error-title">Could not reach the daemon</p>
+      <p class="load-error-detail">{auth.loadError}</p>
+      <Button variant="primary" onclick={() => retryAuth()}>Retry</Button>
+    </div>
+  </div>
 {:else if screen === "setup"}
   <div class="app full-height">
     <SetupPage onComplete={(spiritName) => {
@@ -1058,6 +1068,26 @@ function handleGlobalClick(e: MouseEvent) {
     color: var(--text-2);
     padding: 24px;
     text-align: center;
+  }
+
+  .load-error {
+    color: var(--text-2);
+    padding: 24px;
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .load-error-title {
+    color: var(--text-1);
+    margin: 0;
+  }
+
+  .load-error-detail {
+    margin: 0 0 8px;
+    font-size: 13px;
   }
 
   .full-height {

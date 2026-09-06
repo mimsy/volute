@@ -141,14 +141,17 @@ $effect(() => {
   }
 });
 
-export async function load() {
+/** Loads providers + models. Returns false when the load failed (see `loadError`). */
+export async function load(): Promise<boolean> {
   loadError = "";
   try {
     providers = await fetchAiProviders();
     aiModels = await fetchAiModels();
+    return true;
   } catch (err) {
     console.warn("[AiProviders] failed to load providers/models:", err);
     loadError = loadErrorMessage(err, "Failed to load providers. Please try again.");
+    return false;
   }
 }
 

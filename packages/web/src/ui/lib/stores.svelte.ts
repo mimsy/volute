@@ -13,6 +13,7 @@ import { connect, connectionState, disconnect, subscribe } from "./connection.sv
 import { type ExtensionInfo, fetchExtensions } from "./extensions";
 import { showNotification } from "./notifications";
 import { updateOauthErrors } from "./oauth-reauth.svelte";
+import { fetchSetupStatus, type SetupProgress } from "./setup-status";
 
 // --- Auth ---
 
@@ -24,55 +25,68 @@ export const auth = $state({
   spiritName: null as string | null,
   setupComplete: true,
   setupChecked: false,
-  setupProgress: null as {
-    hasSystem?: boolean;
-    hasAccount?: boolean;
-    setupType?: string | null;
-    spiritName?: string | null;
-  } | null,
+  /**
+   * Set when setup or auth state could not be determined. Routing must not
+   * guess past this — `resolveScreen` sends it to the error screen instead.
+   */
+  loadError: null as string | null,
+  setupProgress: null as SetupProgress | null,
 });
 
 export async function checkSetup() {
-  try {
-    const res = await fetch("/api/v1/setup/status");
-    if (res.ok) {
-      const data = await res.json();
-      auth.setupComplete = data.complete;
-      if (!data.complete) {
-        auth.setupProgress = {
-          hasSystem: data.hasSystem,
-          hasAccount: data.hasAccount,
-          setupType: data.setupType,
-          spiritName: data.spiritName,
-        };
-      }
-    }
-  } catch {
-    // If the endpoint doesn't exist, assume setup is complete (older daemon)
+  const status = await fetchSetupStatus();
+  if (status.kind === "ok") {
+    auth.setupComplete = status.complete;
+    auth.setupProgress = status.progress;
+    auth.loadError = null;
+  } else if (status.kind === "absent") {
+    // No setup endpoint — an older daemon that predates the wizard.
     auth.setupComplete = true;
+    auth.loadError = null;
+  } else {
+    auth.loadError = status.message;
   }
   auth.setupChecked = true;
 }
 
 export async function checkAuth() {
   await checkSetup();
+  if (auth.loadError) {
+    auth.checked = true;
+    return;
+  }
   if (!auth.setupComplete && !auth.setupProgress?.hasAccount) {
     auth.checked = true;
     return;
   }
   try {
-    const u = await fetchMe();
-    auth.user = u;
+    auth.user = await fetchMe();
+    auth.loadError = null;
+  } catch (err) {
+    console.warn("[stores] auth check failed:", err);
+    auth.loadError = err instanceof Error ? err.message : "Auth check failed";
     auth.checked = true;
-    if (u) {
+    return;
+  }
+  if (auth.user) {
+    try {
       const info = await fetchSystemInfo();
       auth.systemName = info.system;
       auth.localName = info.name;
       auth.spiritName = info.spiritName;
+    } catch (err) {
+      // Cosmetic — the names label the UI, they don't gate it.
+      console.warn("[stores] failed to fetch system info:", err);
     }
-  } catch {
-    auth.checked = true;
   }
+  auth.checked = true;
+}
+
+/** Re-run the setup + auth checks after a failure, from the error screen. */
+export async function retryAuth() {
+  auth.loadError = null;
+  auth.checked = false;
+  await checkAuth();
 }
 
 export async function handleLogout() {

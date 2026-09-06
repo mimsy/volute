@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { createUser } from "../packages/daemon/src/lib/auth.js";
 import { readGlobalConfig, writeGlobalConfig } from "../packages/daemon/src/lib/config/setup.js";
@@ -62,5 +62,29 @@ describe("GET /api/v1/setup/status", () => {
     const body = (await res.json()) as { complete: boolean; hasAccount: boolean };
     assert.equal(body.complete, false);
     assert.equal(body.hasAccount, true);
+  });
+
+  // #724: hasAccount decides the browser's top-level screen, so guessing "false"
+  // when the DB probe throws routes a set-up system back into the wizard. Fail
+  // the request instead and let the client show an error it can retry.
+  it("fails the request rather than fabricating hasAccount when the DB probe throws", async () => {
+    const config = readGlobalConfig();
+    config.name = "test-system";
+    config.setup = { type: "local", mindsDir: "/tmp/minds", isolation: "none", service: false };
+    config.setupCompleted = false;
+    writeGlobalConfig(config);
+
+    // Break the probe for real: with the table gone, listUsersByType throws.
+    const db = await getDb();
+    await db.run(sql.raw("ALTER TABLE users RENAME TO users_probe_failure"));
+    try {
+      const res = await createApp().request("/api/v1/setup/status");
+      assert.equal(res.status, 500);
+      const body = (await res.json()) as { error?: string; hasAccount?: unknown };
+      assert.ok(body.error, "error response should carry a message");
+      assert.equal(body.hasAccount, undefined, "must not report a guessed hasAccount");
+    } finally {
+      await db.run(sql.raw("ALTER TABLE users_probe_failure RENAME TO users"));
+    }
   });
 });
