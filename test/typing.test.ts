@@ -108,6 +108,8 @@ describe("TypingMap", () => {
   });
 });
 
+// The POSTs below report the authenticated user's own name: a `sender` naming
+// anyone else is refused, so "alice"/"bob" would now 403 (#992).
 describe("typing routes", () => {
   let sessionId: string;
 
@@ -150,7 +152,7 @@ describe("typing routes", () => {
         Origin: "http://localhost",
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ channel: "discord:123", sender: "alice", active: true }),
+      body: JSON.stringify({ channel: "discord:123", sender: "typing-admin", active: true }),
     });
     assert.equal(postRes.status, 200);
     const postBody = await postRes.json();
@@ -162,7 +164,7 @@ describe("typing routes", () => {
     });
     assert.equal(getRes.status, 200);
     const getBody = await getRes.json();
-    assert.deepEqual(getBody, { typing: ["alice"] });
+    assert.deepEqual(getBody, { typing: ["typing-admin"] });
   });
 
   it("POST active:false clears sender", async () => {
@@ -177,7 +179,7 @@ describe("typing routes", () => {
         Origin: "http://localhost",
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ channel: "discord:123", sender: "bob", active: true }),
+      body: JSON.stringify({ channel: "discord:123", sender: "typing-admin", active: true }),
     });
 
     // Clear typing
@@ -188,7 +190,7 @@ describe("typing routes", () => {
         Origin: "http://localhost",
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ channel: "discord:123", sender: "bob", active: false }),
+      body: JSON.stringify({ channel: "discord:123", sender: "typing-admin", active: false }),
     });
     assert.equal(clearRes.status, 200);
 
@@ -213,7 +215,7 @@ describe("typing routes", () => {
     assert.ok(body.error);
   });
 
-  it("POST requires channel and sender", async () => {
+  it("POST requires channel", async () => {
     const cookie = await setupAuth();
     const { default: app } = await import("../packages/daemon/src/web/app.js");
 
