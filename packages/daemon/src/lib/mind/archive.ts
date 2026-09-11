@@ -1,16 +1,22 @@
 import { execFileSync } from "node:child_process";
+import type { Stats } from "node:fs";
 import {
   chmodSync,
+  closeSync,
   cpSync,
   existsSync,
+  constants as fsConstants,
+  fstatSync,
+  lstatSync,
   mkdirSync,
+  openSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
-  statSync,
   writeFileSync,
 } from "node:fs";
-import { join, relative, resolve, sep } from "node:path";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import AdmZip from "adm-zip";
 import { isInitInfrastructure } from "../template/template.js";
 import { safeResolveWithinBase } from "../util/paths.js";
@@ -46,24 +52,258 @@ export type ExportOptions = {
   includeSessions?: boolean;
 };
 
-const EXCLUDED_DIRS = new Set(["node_modules", ".variants", ".git"]);
+/**
+ * Directory names excluded wherever they appear, as restic matches them
+ * (`lib/backup/restic.ts`): all of them are rebuilt from a lockfile or a
+ * checkout, none of them is anything a mind wrote.
+ *
+ * Matched by name at any depth and against files too, not only directories — a
+ * git *worktree*'s `.git` is a file holding a `gitdir:` pointer, and the pages
+ * extension gives every mind one at `home/pages/_system/`. Archiving that stub
+ * plants a path from the exporting host in the imported mind.
+ */
+const EXCLUDED_DIRS = new Set([
+  "node_modules",
+  ".variants",
+  ".worktrees",
+  ".git",
+  ".venv",
+  "venv",
+  "__pycache__",
+]);
 
-/** Walk a directory tree, returning relative paths. Skips excluded dirs and optionally sessions. */
-function walkDir(dir: string, base?: string, skipSessions?: boolean): string[] {
+/**
+ * Runtime droppings that never belong in an archive, as posix paths relative
+ * to the mind dir. Taken from restic's toolchain excludes
+ * (`lib/backup/restic.ts`) — not every one of them, since restic matches a bare
+ * name at any depth and these are exact subtrees — and, like restic, keeping
+ * `home/.local/` itself: only its XDG toolchain subdirs go, because
+ * `.local/hooks` and `.local/bin` are the mind's own (#1013).
+ *
+ * `.mind/tmp` is the mind's TMPDIR: the SDK leaves unix sockets there while the
+ * mind runs (#1058). The rest are toolchain caches a mind installs into its
+ * home — `home/.npm/_cacache` alone was 150 MB on a fresh mind (#1059).
+ *
+ * Applied to every path an export considers, both walked and git-listed. The
+ * template's `.gitignore` already covers most of them on the git branch, but
+ * that file lives in the mind's own writable tree, so leaning on it would make
+ * the guarantee revocable by the untrusted party it constrains.
+ */
+const EXCLUDED_PATHS = [
+  ".mind/tmp",
+  "home/.npm",
+  "home/.cache",
+  "home/.rustup",
+  "home/.cargo",
+  "home/.local/share",
+  "home/.local/state",
+  "home/.local/lib",
+  "home/.local/pipx",
+];
+
+/**
+ * SDK runtime state, carried only when the export was asked for sessions.
+ *
+ * These exist at all only under `isolation: user`, where the SDK's HOME is
+ * remapped into the mind dir; elsewhere they sit in the host's own `~/.claude`,
+ * outside every export. `projects/` holds the transcripts that the session ids
+ * in `.mind/sessions` resolve to, so dropping it unconditionally would bundle a
+ * mind's session pointers with nothing to resume from — while carrying it by
+ * default is most of the weight #1059 is about. Gated, the same way restic
+ * gates the same paths.
+ */
+const SESSION_PATHS = [
+  "home/.claude/projects",
+  "home/.claude/debug",
+  "home/.claude/telemetry",
+  "home/.claude/todos",
+  "home/.claude/session-env",
+];
+
+/** `.gitignore` rules and zip entry names both speak forward slashes. */
+function toPosix(relPath: string): string {
+  return relPath.split(sep).join("/");
+}
+
+/**
+ * Whether a path `git ls-files` reported may be resolved against the mind dir.
+ *
+ * These come out of `.git/index`, which is the mind's own file — and while
+ * `update-index` and `read-tree` both refuse a `..` component, nothing
+ * re-validates an index written directly, which any mind with a shell can do,
+ * so `ls-files` will print `home/../../etc/shadow` verbatim. Newly reachable,
+ * too: the `safe.directory` grant is what makes this branch run at all under
+ * `isolation: user`.
+ *
+ * Lexical only. It rejects `..` and absolute paths, which is all that can be
+ * decided from the string; a symlink partway along the path is caught at the
+ * read, by {@link readRegularFile}, which is where it has to be caught anyway
+ * because the walked branches race the same way.
+ */
+function isContained(dir: string, relPath: string): boolean {
+  return safeResolveWithinBase(dir, relPath) !== null;
+}
+
+/** Whether any segment of a mind-relative path names an {@link EXCLUDED_DIRS} dir. */
+function hasExcludedDir(relPath: string): boolean {
+  return toPosix(relPath)
+    .split("/")
+    .some((seg) => EXCLUDED_DIRS.has(seg));
+}
+
+/** Whether a mind-relative path is, or is inside, one of `subtrees`. */
+function isUnder(relPath: string, subtrees: string[]): boolean {
+  const rel = toPosix(relPath);
+  return subtrees.some((ex) => rel === ex || rel.startsWith(`${ex}/`));
+}
+
+/** Whether a mind-relative path is dropped from every archive. */
+function isExcludedPath(relPath: string): boolean {
+  return isUnder(relPath, EXCLUDED_PATHS);
+}
+
+/** Whether a mind-relative path is dropped unless the export asked for sessions. */
+function isSessionPath(relPath: string): boolean {
+  return isUnder(relPath, SESSION_PATHS);
+}
+
+/**
+ * Read a path into the archive, or decline to.
+ *
+ * The one gate on every read, because everything an export opens sits in a
+ * directory the mind owns and can reshape while the export runs — which is the
+ * whole premise of #1058. `base` must be an already realpath-resolved directory
+ * the file has to be inside, and it is rechecked *here*, not at listing time:
+ * `walkDir` refuses a symlinked directory when it walks, but the read happens
+ * afterwards, and a running mind can swap a walked directory for a symlink in
+ * between. Containing only at listing time left that race open on every branch,
+ * full export included.
+ *
+ * The open is `O_NOFOLLOW`, so a symlink that appeared at the final component
+ * since the listing is refused by the kernel (ELOOP) rather than followed, and
+ * `O_NONBLOCK`, so a FIFO returns a handle instead of blocking the export for
+ * good. `fstat` then judges the handle actually opened rather than a name that
+ * may since have been re-pointed: only a regular file is read, which also turns
+ * away a device node like `/dev/zero`.
+ *
+ * One window remains, and cannot be closed without `openat` on each path
+ * segment, which Node does not expose: a parent directory swapped between the
+ * `realpath` below and the `open`. Narrow, and it is a race against a process
+ * the host is deliberately archiving.
+ *
+ * ENOENT/ENOTDIR/ELOOP mean the path is gone or was never a file, and are
+ * skipped. Everything else is rethrown — see {@link isMissing}.
+ */
+function readRegularFile(fullPath: string, base: string): { data: Buffer; mode: number } | null {
+  let fd: number | undefined;
+  try {
+    const realParent = realpathSync(dirname(fullPath));
+    if (realParent !== base && !realParent.startsWith(base + sep)) return null;
+
+    fd = openSync(
+      join(realParent, basename(fullPath)),
+      fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK,
+    );
+    const stat = fstatSync(fd);
+    if (!stat.isFile()) return null;
+    return { data: readFileSync(fd), mode: stat.mode & 0o777 };
+  } catch (err) {
+    if (isMissing(err)) return null;
+    throw err;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+}
+
+/**
+ * Errors that mean the path simply is not there — the only ones an export may
+ * pass over in silence.
+ *
+ * Everything else (EACCES, EPERM, EIO) says the file exists and could not be
+ * read, and those are rethrown. An export that quietly omits what it could not
+ * open is worse than one that fails: the archive looks complete, the exit code
+ * says success, and the mind arrives on the new host with pieces missing that
+ * nobody knows to look for.
+ */
+function isMissing(err: unknown): boolean {
+  const code = (err as NodeJS.ErrnoException)?.code;
+  return code === "ENOENT" || code === "ENOTDIR" || code === "ELOOP";
+}
+
+/** A directory's real path, or `null` if it is not there. */
+function safeRealpath(path: string): string | null {
+  try {
+    return realpathSync(path);
+  } catch (err) {
+    if (isMissing(err)) return null;
+    throw err;
+  }
+}
+
+/**
+ * Entries of a real directory, or `null` if it is absent, vanished, or is not a
+ * directory at all — which includes a symlink to one, since `readdirSync`
+ * follows those and a mind can plant one at any root an export descends into.
+ */
+function listDir(path: string): string[] | null {
+  try {
+    if (!lstatSync(path).isDirectory()) return null;
+    return readdirSync(path);
+  } catch (err) {
+    if (isMissing(err)) return null;
+    throw err;
+  }
+}
+
+/**
+ * Walk a directory tree, returning relative paths of regular files only.
+ * Skips excluded dirs and optionally sessions.
+ *
+ * Every entry is judged by `lstat`, and only directories and regular files
+ * survive. Symlinks are not descended into: following one would let a mind
+ * point `home/projects` at `/minds` and have the export archive every other
+ * mind, and the export may be running as root. Nor are they listed — Volute
+ * creates none anywhere the export walks (the ones `npm install` leaves in
+ * `node_modules/.bin` are cut by {@link EXCLUDED_DIRS}).
+ *
+ * The regular-file test for non-directories is the outer of two layers over the
+ * same hazard: {@link readRegularFile} repeats it at the read, and has to,
+ * because it also covers paths that never come through here — the git listing,
+ * env.json, the ledger, the sessions bundle. Only that inner layer is load
+ * bearing for what ends up in the archive. This one keeps the contract in the
+ * signature honest: what comes back is a list of regular files.
+ *
+ * The same reasoning applies to the root: `readdirSync` follows a symlink, so a
+ * root that is one is refused before it is enumerated.
+ */
+function walkDir(dir: string, base?: string, includeSessions?: boolean): string[] {
   const results: string[] = [];
+  const entries = listDir(dir);
+  if (!entries) return results;
   const baseDir = base ?? dir;
 
-  for (const entry of readdirSync(dir)) {
+  for (const entry of entries) {
     const fullPath = resolve(dir, entry);
     const relPath = relative(baseDir, fullPath);
-    const stat = statSync(fullPath);
+    if (isExcludedPath(relPath) || hasExcludedDir(relPath)) continue;
+    if (!includeSessions && isSessionPath(relPath)) continue;
+
+    let stat: Stats;
+    try {
+      stat = lstatSync(fullPath);
+    } catch {
+      // Lost a race with the running mind being exported; nothing to archive.
+      continue;
+    }
 
     if (stat.isDirectory()) {
-      if (EXCLUDED_DIRS.has(entry)) continue;
-      // Skip .mind/sessions when sessions are bundled separately
-      if (skipSessions && relPath === join(".mind", "sessions")) continue;
-      results.push(...walkDir(fullPath, baseDir, skipSessions));
-    } else {
+      // Never walked in. Asked for, it is bundled under `sessions/` instead; not
+      // asked for, it must not travel at all — an archive whose manifest says
+      // `sessions: false` while carrying session pointers hands the new host a
+      // mind holding an id that resolves to nothing.
+      if (toPosix(relPath) === ".mind/sessions") continue;
+      results.push(...walkDir(fullPath, baseDir, includeSessions));
+    } else if (stat.isFile()) {
       results.push(relPath);
     }
   }
@@ -74,20 +314,76 @@ function walkDir(dir: string, base?: string, skipSessions?: boolean): string[] {
 /**
  * List files using git (tracked + untracked-but-not-ignored).
  * Falls back to walkDir if git fails (e.g. mind not a git repo).
+ *
+ * Four pinned settings, scoped to these read-only `ls-files` calls and nothing
+ * else, because the config being read belongs to the untrusted party.
+ *
+ * Under `isolation: user` the mind dir is owned by `mind-<name>` while the
+ * export runs as the host, and git refuses the repo as "dubious ownership" — so
+ * on every production install this returned null, the fallback walk ran, and no
+ * `.gitignore` rule ever applied (#1059). `safe.directory` names that one
+ * directory to lift the refusal for it alone. The refusal exists because a
+ * repo's own config can name a command for git to run — `core.fsmonitor`, which
+ * both calls below reach (it fires even with no index on disk) — and here that
+ * config is mind-authored, so it is pinned off. Lifting the refusal must stay
+ * scoped to `ls-files`: granting `safe.directory` in the shared `gitExec`
+ * wrapper would let a mind's `core.hooksPath` run as root on write paths (the
+ * #871/#961 class).
+ *
+ * `--work-tree` — not `-c core.worktree`, which repo config still wins over —
+ * stops a mind setting `core.worktree = /` and making the export enumerate the
+ * whole host filesystem as root, or `core.bare = true` and making it fail into
+ * the very fallback #1059 is about.
+ *
+ * `-z` is not security either, it is fidelity: without it git C-quotes any
+ * non-ASCII path and emits newlines raw, so a mind that named a memory file
+ * with an emoji, or with a newline in it, watched the file drop silently out of
+ * its own archive. NUL-separated output has neither problem.
  */
 function gitListFiles(dir: string): string[] | null {
+  const git = (args: string[]) =>
+    execFileSync(
+      "git",
+      [
+        "-c",
+        `safe.directory=${dir}`,
+        "-c",
+        "core.fsmonitor=false",
+        "--git-dir",
+        join(dir, ".git"),
+        "--work-tree",
+        dir,
+        ...args,
+        "-z",
+      ],
+      {
+        cwd: dir,
+        encoding: "utf-8",
+        // execFileSync defaults to 1 MB of stdout and throws ENOBUFS past it,
+        // which the catch below would turn into exactly the #1059 failure it is
+        // meant to end: warn, return null, walk, ship an oversize archive.
+        maxBuffer: 64 * 1024 * 1024,
+        // `mkfifo .gitignore` in the mind dir blocks `ls-files --others`
+        // forever, and this is the synchronous CLI path, so `volute mind
+        // export` would simply never return. Same for `.git/info/exclude`, a
+        // `core.excludesFile` aimed at a FIFO or /dev/zero, and `.git/config`
+        // itself, which is read before any `-c` can apply. ETIMEDOUT lands in
+        // the catch below like any other git failure: the walk runs instead,
+        // and the walk never opens a FIFO.
+        timeout: 30_000,
+      },
+    );
   try {
-    const tracked = execFileSync("git", ["ls-files"], { cwd: dir, encoding: "utf-8" });
-    const untracked = execFileSync("git", ["ls-files", "--others", "--exclude-standard"], {
-      cwd: dir,
-      encoding: "utf-8",
-    });
-    const files = [...tracked.trim().split("\n"), ...untracked.trim().split("\n")].filter(Boolean);
+    const tracked = git(["ls-files"]);
+    const untracked = git(["ls-files", "--others", "--exclude-standard"]);
+    const files = [...tracked.split("\0"), ...untracked.split("\0")].filter(Boolean);
     return [...new Set(files)];
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     if (!msg.includes("not a git repository")) {
-      console.error(`Warning: git ls-files failed, .gitignore rules will not apply: ${msg}`);
+      console.error(
+        `Warning: git ls-files failed, so the mind's .gitignore will not apply and the archive may be oversize: ${msg}`,
+      );
     }
     return null;
   }
@@ -103,11 +399,6 @@ function gitListFiles(dir: string): string[] | null {
  */
 const HOME_LOCAL_REL = join("home", ".local");
 
-/** `.gitignore` rules and zip entry names both speak forward slashes. */
-function toPosix(relPath: string): string {
-  return relPath.split(sep).join("/");
-}
-
 /**
  * The files that make up a mind's `home/` for a home-only export.
  *
@@ -119,16 +410,29 @@ function toPosix(relPath: string): string {
  * whether a mind's edited hooks survive an export must not depend on whether
  * its home happens to be a git repo (#1013).
  */
-function listHomeFiles(dir: string): string[] {
+function listHomeFiles(dir: string, includeSessions: boolean): string[] {
   const gitFiles = gitListFiles(dir);
   const files = gitFiles
-    ? gitFiles.filter((f) => f.startsWith("home/") || f.startsWith("home\\"))
-    : walkDir(resolve(dir, "home"), dir);
+    ? // `ls-files` always reports posix separators, so one prefix test is enough.
+      gitFiles.filter((f) => f.startsWith("home/") && isContained(dir, f))
+    : walkDir(resolve(dir, "home"), dir, includeSessions).map(toPosix);
 
   const localDir = resolve(dir, HOME_LOCAL_REL);
-  if (existsSync(localDir)) files.push(...walkDir(localDir, dir));
+  files.push(...walkDir(localDir, dir, includeSessions).map(toPosix));
 
-  return [...new Set(files.map(toPosix))];
+  // Walked in for the same reason `.local/` is: the template `.gitignore` hides
+  // `home/.claude/*` from git, so on a git-repo mind — which is every ordinary
+  // one — the gate below would never see these and `--include-sessions` would
+  // bundle the session pointers with nothing to resume from.
+  if (includeSessions) {
+    for (const rel of SESSION_PATHS) {
+      files.push(...walkDir(resolve(dir, rel), dir, true).map(toPosix));
+    }
+  }
+
+  return [...new Set(files)].filter(
+    (f) => !isExcludedPath(f) && !hasExcludedDir(f) && (includeSessions || !isSessionPath(f)),
+  );
 }
 
 /**
@@ -160,8 +464,14 @@ export function createExportArchive(options: ExportOptions): AdmZip {
     includeSessions = false,
   } = options;
 
-  const dir = mindDir(name);
-  const state = stateDir(name);
+  // Resolved once, so the walks below can refuse a symlinked root without
+  // refusing a host's own symlinked mind directory — and so `safe.directory`,
+  // which git realpath-normalizes on both sides, still matches.
+  const dir = realpathSync(mindDir(name));
+  // Realpath-resolved for the same reason `dir` is: `readRegularFile` contains
+  // every read against one of these, and the state dir is chowned to the mind
+  // too. `null` when it does not exist yet, which is not an error.
+  const state = safeRealpath(stateDir(name));
   const zip = new AdmZip();
   const format = includeSrc ? "full" : "home-only";
 
@@ -172,18 +482,24 @@ export function createExportArchive(options: ExportOptions): AdmZip {
       if (!includeIdentity && relPath.startsWith(join(".mind", "identity"))) continue;
       if (!includeConnectors && relPath.startsWith(join(".mind", "connectors"))) continue;
       const fullPath = resolve(dir, relPath);
-      zip.addFile(`mind/${relPath}`, readFileSync(fullPath));
+      const file = readRegularFile(fullPath, dir);
+      if (!file) continue;
+      zip.addFile(`mind/${relPath}`, file.data);
     }
   } else {
     // Home-only export: listHomeFiles for home/, walkDir for .mind/
-    for (const relPath of listHomeFiles(dir)) {
+    for (const relPath of listHomeFiles(dir, includeSessions)) {
       const fullPath = resolve(dir, relPath);
-      if (existsSync(fullPath)) {
-        // Modes matter here as they do nowhere else in the archive: `.local/bin/`
-        // holds the mind's `volute` wrapper and its skill shims, which are only
-        // useful executable. adm-zip stamps 0644 on an entry added without one.
-        zip.addFile(`mind/${relPath}`, readFileSync(fullPath), "", statSync(fullPath).mode & 0o777);
-      }
+      // `git ls-files` reports symlinks — including dangling ones and ones
+      // pointing at a directory — so this branch needs the same guard the walks
+      // apply, or a mind's `home/memory/x ->` anywhere turns into an EISDIR
+      // crash or an archived host file.
+      const file = readRegularFile(fullPath, dir);
+      if (!file) continue;
+      // Modes matter here as they do nowhere else in the archive: `.local/bin/`
+      // holds the mind's `volute` wrapper and its skill shims, which are only
+      // useful executable. adm-zip stamps 0644 on an entry added without one.
+      zip.addFile(`mind/${relPath}`, file.data, "", file.mode);
     }
 
     // .mind/ files via walkDir (it's gitignored so git ls-files won't find it)
@@ -194,35 +510,39 @@ export function createExportArchive(options: ExportOptions): AdmZip {
         if (!includeIdentity && relPath.startsWith(join(".mind", "identity"))) continue;
         if (!includeConnectors && relPath.startsWith(join(".mind", "connectors"))) continue;
         const fullPath = resolve(dir, relPath);
-        zip.addFile(`mind/${relPath}`, readFileSync(fullPath));
+        const file = readRegularFile(fullPath, dir);
+        if (!file) continue;
+        zip.addFile(`mind/${relPath}`, file.data);
       }
     }
 
     // The mind's infrastructure ledger, so the import can tell a hook it refused
     // from one that shipped after the export. See {@link overlayArchiveHome}.
-    const ledgerPath = initLedgerPath(name);
-    if (existsSync(ledgerPath)) {
-      zip.addFile(ARCHIVE_INIT_LEDGER, readFileSync(ledgerPath));
-    }
+    const ledger = state && readRegularFile(initLedgerPath(name), state);
+    if (ledger) zip.addFile(ARCHIVE_INIT_LEDGER, ledger.data);
   }
 
   // Optionally include env.json from state dir
-  if (includeEnv && existsSync(state)) {
-    const envPath = resolve(state, "env.json");
-    if (existsSync(envPath)) {
-      zip.addFile("state/env.json", readFileSync(envPath));
-    }
+  // The state dir is chowned to the mind under `isolation: user`, so these two
+  // are as mind-reshapable as anything inside the mind dir — see
+  // {@link readRegularFile}.
+  if (includeEnv && state) {
+    const env = state && readRegularFile(resolve(state, "env.json"), state);
+    if (env) zip.addFile("state/env.json", env.data);
   }
 
   // Optionally include session JSONL files from .mind/sessions/
   if (includeSessions) {
+    // `.mind/` is the mind's own, so the directory and every entry in it get the
+    // same treatment as the walks: `listDir` refuses a sessions dir the mind has
+    // re-pointed at somewhere else, and the reads below are contained against it
+    // — which also means a FIFO named `main.jsonl` cannot hang the export.
     const sessionsDir = resolve(dir, ".mind/sessions");
-    if (existsSync(sessionsDir)) {
-      for (const file of readdirSync(sessionsDir)) {
-        if (!file.endsWith(".json") && !file.endsWith(".jsonl")) continue;
-        const fullPath = resolve(sessionsDir, file);
-        zip.addFile(`sessions/${file}`, readFileSync(fullPath));
-      }
+    for (const file of listDir(sessionsDir) ?? []) {
+      if (!file.endsWith(".json") && !file.endsWith(".jsonl")) continue;
+      const session = readRegularFile(resolve(sessionsDir, file), sessionsDir);
+      if (!session) continue;
+      zip.addFile(`sessions/${file}`, session.data);
     }
   }
 
