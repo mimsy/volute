@@ -132,7 +132,7 @@ function toPosix(relPath: string): string {
  * `update-index` and `read-tree` both refuse a `..` component, nothing
  * re-validates an index written directly, which any mind with a shell can do,
  * so `ls-files` will print `home/../../etc/shadow` verbatim. Newly reachable,
- * too: the `safe.directory` grant is what makes this branch run at all under
+ * too: naming the git dir is what makes this branch run at all under
  * `isolation: user`.
  *
  * Lexical only. It rejects `..` and absolute paths, which is all that can be
@@ -315,38 +315,40 @@ function walkDir(dir: string, base?: string, includeSessions?: boolean): string[
  * List files using git (tracked + untracked-but-not-ignored).
  * Falls back to walkDir if git fails (e.g. mind not a git repo).
  *
- * Four pinned settings, scoped to these read-only `ls-files` calls and nothing
- * else, because the config being read belongs to the untrusted party.
+ * The repository is named, not discovered, and everything else is pinned,
+ * because the repo being read belongs to the untrusted party.
  *
  * Under `isolation: user` the mind dir is owned by `mind-<name>` while the
- * export runs as the host, and git refuses the repo as "dubious ownership" — so
+ * export runs as the host, so git refused the repo as "dubious ownership" — and
  * on every production install this returned null, the fallback walk ran, and no
- * `.gitignore` rule ever applied (#1059). `safe.directory` names that one
- * directory to lift the refusal for it alone. The refusal exists because a
- * repo's own config can name a command for git to run — `core.fsmonitor`, which
- * both calls below reach (it fires even with no index on disk) — and here that
- * config is mind-authored, so it is pinned off. Lifting the refusal must stay
- * scoped to `ls-files`: granting `safe.directory` in the shared `gitExec`
- * wrapper would let a mind's `core.hooksPath` run as root on write paths (the
- * #871/#961 class).
+ * `.gitignore` rule ever applied (#1059). `--git-dir` settles that: the check
+ * belongs to repository *discovery*, and naming the git dir skips discovery
+ * altogether. It also stops discovery ascending out of a mind that is not a
+ * repo into a host-owned parent that is, and it follows the pointer file a
+ * variant's worktree uses in place of a `.git` directory.
+ *
+ * Bypassing the ownership check is the deliberate part, so what the check was
+ * protecting against has to be pinned by hand. A repo's config can name a
+ * command for git to run — `core.fsmonitor`, which both calls below reach, and
+ * which fires even with no index on disk — and that config is mind-authored, so
+ * it is pinned off. This is the one that must never be relaxed: on a system
+ * install the export runs as root.
  *
  * `--work-tree` — not `-c core.worktree`, which repo config still wins over —
  * stops a mind setting `core.worktree = /` and making the export enumerate the
- * whole host filesystem as root, or `core.bare = true` and making it fail into
- * the very fallback #1059 is about.
+ * whole host filesystem, or `core.bare = true` and making it fail into the very
+ * fallback #1059 is about.
  *
- * `-z` is not security either, it is fidelity: without it git C-quotes any
- * non-ASCII path and emits newlines raw, so a mind that named a memory file
- * with an emoji, or with a newline in it, watched the file drop silently out of
- * its own archive. NUL-separated output has neither problem.
+ * `-z` is not security, it is fidelity: without it git C-quotes any non-ASCII
+ * path and emits newlines raw, so a mind that named a memory file with an emoji,
+ * or with a newline in it, watched the file drop silently out of its own
+ * archive. NUL-separated output has neither problem.
  */
 function gitListFiles(dir: string): string[] | null {
   const git = (args: string[]) =>
     execFileSync(
       "git",
       [
-        "-c",
-        `safe.directory=${dir}`,
         "-c",
         "core.fsmonitor=false",
         "--git-dir",
@@ -465,8 +467,8 @@ export function createExportArchive(options: ExportOptions): AdmZip {
   } = options;
 
   // Resolved once, so the walks below can refuse a symlinked root without
-  // refusing a host's own symlinked mind directory — and so `safe.directory`,
-  // which git realpath-normalizes on both sides, still matches.
+  // refusing a host's own symlinked mind directory, and so every read below has
+  // one real base to be contained against.
   const dir = realpathSync(mindDir(name));
   // Realpath-resolved for the same reason `dir` is: `readRegularFile` contains
   // every read against one of these, and the state dir is chowned to the mind

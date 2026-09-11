@@ -121,36 +121,55 @@ describe("exporting a running mind (#1058)", () => {
 });
 
 describe("keeping runtime caches out of the archive (#1059)", () => {
-  it("applies the mind's .gitignore even when git would refuse the repo as dubiously owned", () => {
-    const name = "dubious-owner";
+  it("applies the mind's .gitignore, which is the whole point of reaching git at all", () => {
+    const name = "gitignore-applies";
     const dir = composedMind(name);
     execFileSync("git", ["init", "-q"], { cwd: dir });
-    // Ignored by the template's `home/*` rule and by nothing else: only the git
-    // branch of the export can keep this out, so its absence proves that branch
-    // ran despite the ownership refusal.
+    // Ignored by the template's `home/*` rule and by nothing else, so its
+    // absence is proof the git branch ran rather than the fallback walk.
     writeFileSync(resolve(dir, "home/scratch.txt"), "not identity\n");
 
-    // Git's own test suite uses this to make every repo look owned by someone
-    // else — the same refusal `isolation: user` produces when the host exports
-    // a mind owned by `mind-<name>`.
+    const entries = entriesOf(name);
+
+    assert.ok(entries.includes("mind/home/SOUL.md"));
+    assert.ok(!entries.includes("mind/home/scratch.txt"), "the .gitignore must apply");
+  });
+
+  it("reaches git on a repo the exporting host does not own", (t) => {
+    // The #1059 case itself: under `isolation: user` the mind dir belongs to
+    // `mind-<name>` and the host exporting it does not, so git refused the repo
+    // as dubiously owned and every production export fell back to the walk.
+    // Naming the git dir skips discovery, and the check belongs to discovery.
     //
-    // The assertion below is the fixture's own tripwire, and it earns its keep
-    // twice: it goes red if git ever drops the knob, and it catches the machine
-    // where a global `safe.directory = *` would make this test pass with the fix
-    // reverted.
+    // Git's own test-suite knob is the only way to provoke that refusal as a
+    // user who really does own the directory, and it is not load-bearing API:
+    // it did nothing on the git 2.55 CI runner while working on 2.50.1. So the
+    // fixture checks itself and skips rather than either failing on a git
+    // version difference or passing while proving nothing.
+    const name = "unowned-repo";
+    const dir = composedMind(name);
+    execFileSync("git", ["init", "-q"], { cwd: dir });
+    writeFileSync(resolve(dir, "home/scratch.txt"), "not identity\n");
+
     process.env.GIT_TEST_ASSUME_DIFFERENT_OWNER = "1";
     try {
-      assert.throws(
-        () => execFileSync("git", ["ls-files"], { cwd: dir, stdio: "pipe" }),
-        /dubious ownership/,
-        "the fixture must reproduce the refusal it claims to",
-      );
+      let refused = false;
+      try {
+        execFileSync("git", ["ls-files"], { cwd: dir, stdio: "pipe" });
+      } catch (err) {
+        refused = /dubious ownership/.test(String((err as { message?: string }).message));
+      }
+      if (!refused) {
+        const version = execFileSync("git", ["--version"], { encoding: "utf-8" }).trim();
+        t.skip(`${version} does not refuse under GIT_TEST_ASSUME_DIFFERENT_OWNER`);
+        return;
+      }
 
       const entries = entriesOf(name);
       assert.ok(entries.includes("mind/home/SOUL.md"));
       assert.ok(
         !entries.includes("mind/home/scratch.txt"),
-        "the .gitignore must apply: git was refused the repo and the walk ran instead",
+        "the git branch must still run against a repo the host does not own",
       );
     } finally {
       delete process.env.GIT_TEST_ASSUME_DIFFERENT_OWNER;
