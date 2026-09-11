@@ -1,9 +1,11 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, readdirSync, statSync } from "node:fs";
+import { constants, existsSync, readdirSync, statSync } from "node:fs";
+import { open } from "node:fs/promises";
 import { resolve } from "node:path";
 import { alertHost } from "../chat/system-events.js";
 import { exec } from "../util/exec.js";
 import log from "../util/logger.js";
+import { resolveRealWithinBase } from "../util/paths.js";
 import { getBaseName, isSpiritName, resolveMindDir, validateMindName } from "./registry.js";
 
 const ilog = log.child("isolation");
@@ -684,12 +686,128 @@ export async function chownMindDir(dir: string, name: string): Promise<void> {
     const stderr = String((err as { stderr?: string })?.stderr ?? "").trim();
     throw new Error(`Failed to chown ${dir} to ${user}:${group}${stderr ? `: ${stderr}` : ""}`);
   }
+  await lockPrivateSubtrees(dir);
+}
+
+/**
+ * Directories under a mind's project root that hold only the mind's own record
+ * of itself: its session transcripts under `home/.claude/projects`, and its
+ * runtime state (identity keypair, session cursors, per-template session dirs)
+ * under `.mind`. Relative to `dir`, so a call that passes a subtree directly
+ * (credential-sync hands us `home/.claude`) finds none of them and locks that
+ * dir alone.
+ */
+const PRIVATE_SUBTREES = ["home/.claude", "home/.claude/projects", ".mind"];
+
+/**
+ * chmod 0700 the directory at `target`, refusing to follow a symlink.
+ *
+ * Opens with O_NOFOLLOW|O_DIRECTORY and sets the mode on the handle rather than
+ * shelling out to `chmod` on a path. The distinction is load-bearing, not
+ * stylistic: a mind owns these directories and runs concurrently with every
+ * caller, so any check-then-act on a path can be raced — swap the directory for
+ * a symlink in the window between the check and the chmod and the daemon, which
+ * is root, follows it. `ln -s /etc .mind` would then land `chmod 700 /etc` and
+ * take the host down. Opening refuses the symlink outright (ELOOP) and the mode
+ * lands on the inode that was opened, so there is no window to win.
+ *
+ * Throws the raw errno error: ELOOP (a symlink), ENOTDIR (a file), ENOENT (gone).
+ */
+async function chmodDirNoFollow(target: string): Promise<void> {
+  const handle = await open(
+    target,
+    constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW,
+  );
   try {
-    await exec("chmod", ["700", dir]);
-  } catch (err) {
-    const stderr = String((err as { stderr?: string })?.stderr ?? "").trim();
-    throw new Error(`Failed to chmod ${dir}${stderr ? `: ${stderr}` : ""}`);
+    await handle.chmod(0o700);
+  } finally {
+    await handle.close();
   }
+}
+
+/** True for the errnos that mean "there is no directory of ours here to lock". */
+function isRefusal(err: unknown): boolean {
+  const code = (err as NodeJS.ErrnoException).code;
+  return code === "ELOOP" || code === "ENOTDIR";
+}
+
+/**
+ * Lock a mind's directory and its private subtrees to 0700.
+ *
+ * The project root's own 700 is the load-bearing gate and still is. But the
+ * daemon only ever chmod'ed that one inode, so a directory created later inside
+ * the tree by the mind's own processes lands at whatever their umask gives —
+ * `home/.claude/projects`, which the Agent SDK creates on its first session,
+ * has been found at 755 on a real host. A mind's session transcripts are its own
+ * inner record; every other mind-owned directory is 700 and these should be too,
+ * rather than resting on a single ancestor's mode.
+ *
+ * Directory-level only: files inside keep the mode their writer gave them, since
+ * the gate being fixed is the directory one. Returns the paths it locked; absent
+ * ones are skipped, never created.
+ *
+ * Every target sits inside a tree the mind itself owns and can rearrange at any
+ * moment, so nothing here trusts a path: subtrees are contained with
+ * `resolveRealWithinBase` and every mode is set through an O_NOFOLLOW handle.
+ * Not gated on isolation; callers gate.
+ */
+export async function lockPrivateSubtrees(dir: string): Promise<string[]> {
+  try {
+    await chmodDirNoFollow(dir);
+  } catch (err) {
+    // A root that is a symlink or a file is a refusal, not a failure — and the
+    // subtrees below are never resolved through a root we would not lock.
+    if (isRefusal(err)) {
+      ilog.warn("refusing to lock a path that is not a real directory", {
+        dir,
+        ...log.errorData(err),
+      });
+      return [];
+    }
+    throw new Error(`Failed to chmod ${dir}: ${err instanceof Error ? err.message : err}`);
+  }
+  const locked = [dir];
+  for (const sub of PRIVATE_SUBTREES) {
+    let target: string;
+    try {
+      // Containment on every component, not just the last one: a mind that swaps
+      // `home/` for a link to another mind's home would otherwise steer this
+      // outside its own directory. O_NOFOLLOW covers the final component against
+      // a concurrent swap; an intermediate component re-pointed between this
+      // resolve and the open stays a (much narrower) window.
+      target = await resolveRealWithinBase(dir, sub);
+    } catch (err) {
+      // Absent is the ordinary case — there is no projects/ before the first
+      // session, and none of these exist when a mind is created.
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+        ilog.warn("refusing to lock a subtree that leaves the mind's directory", {
+          dir,
+          sub,
+          ...log.errorData(err),
+        });
+      }
+      continue;
+    }
+    try {
+      await chmodDirNoFollow(target);
+      locked.push(target);
+    } catch (err) {
+      // Gone between the resolve and the open is ordinary: the mind is running.
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") continue;
+      if (isRefusal(err)) {
+        ilog.warn("refusing to lock a path that is not a real directory", {
+          target,
+          ...log.errorData(err),
+        });
+        continue;
+      }
+      // A subtree lock is defense in depth behind a root gate that already held.
+      // Failing a mind's upgrade over one would hand it a way to break its own
+      // maintenance, so this warns where the root's failure throws.
+      ilog.warn("failed to lock a private subtree", { target, ...log.errorData(err) });
+    }
+  }
+  return locked;
 }
 
 /**

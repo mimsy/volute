@@ -6,7 +6,12 @@ import { getAiConfig, resolveApiKey } from "../ai-service.js";
 import { deliverEvent, recordNotice } from "../chat/system-events.js";
 import { loadMergedEnv } from "../config/env.js";
 import { getSystemName, readGlobalConfig } from "../config/setup.js";
-import { chownMindDir, isIsolationEnabled, wrapForIsolation } from "../mind/isolation.js";
+import {
+  chownMindDir,
+  isIsolationEnabled,
+  lockPrivateSubtrees,
+  wrapForIsolation,
+} from "../mind/isolation.js";
 import {
   findMind,
   mindDir,
@@ -426,6 +431,23 @@ export class MindManager {
         throw new Error(
           `Cannot start mind ${name}: failed to set ownership on state directory ${mindStateDir}: ${err instanceof Error ? err.message : err}`,
         );
+      }
+      // The dirs a mind's own agent creates inside its home — home/.claude/projects,
+      // where the SDK keeps session transcripts — land at the spawning umask, and
+      // none of them exist yet when the mind is created. Spawn is the one moment
+      // that recurs for every mind, so re-lock the private subtrees here rather
+      // than leaving them at whatever mode they were born with until the mind's
+      // next upgrade or skill install (#959). Hardening, not a precondition: the
+      // load-bearing 700 was set when the mind was created, so a failure here is
+      // logged rather than kept between a mind and its own start.
+      try {
+        await lockPrivateSubtrees(dir);
+      } catch (err) {
+        mlog.warn("could not lock private directories before start", {
+          mind: name,
+          dir,
+          ...log.errorData(err),
+        });
       }
     }
 
