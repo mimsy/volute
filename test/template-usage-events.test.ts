@@ -385,6 +385,83 @@ describe("codex template usage", () => {
 });
 
 /**
+ * #913: the rotation gate reads `contextTokens`, and a session-cumulative counter there
+ * rotates the session every turn for the rest of its life — a mind losing continuity it
+ * never needed to lose, roughly four turns into a window it has barely filled.
+ *
+ * The threshold is the one the codex template ships (`home/.config/config.json`).
+ */
+describe("codex template: context size for the rotation threshold", () => {
+  const MAX_CONTEXT_TOKENS = 150_000;
+
+  /** One turn's cumulative snapshot, shaped like codex's `total_token_usage`. */
+  function snapshot(input: number, cached: number, output: number) {
+    // codex folds cached reads into input_tokens; the context is the whole of it.
+    return {
+      input_tokens: input,
+      cached_input_tokens: cached,
+      cache_write_input_tokens: 0,
+      output_tokens: output,
+    };
+  }
+
+  it("stays under the threshold across turns whose running total is far over it", () => {
+    // The real series from a live mind, five consecutive turns of a long session. Each
+    // turn sends ~46k of context, most of it a cache hit on the turn before; the thread's
+    // lifetime total is already 3.5x the window and still climbing.
+    const cumulative = [538_002, 584_162, 630_756, 677_701, 724_993];
+    let prev = { input: cumulative[0], cacheRead: 484_202, cacheCreation: 0, output: 3_789 };
+
+    for (const [i, total] of cumulative.slice(1).entries()) {
+      const delta = usageDelta(
+        prev,
+        snapshot(total, Math.round(total * 0.9), 3_789 + (i + 1) * 200),
+      );
+      assert.ok(delta);
+      assert.ok(
+        delta.contextTokens < MAX_CONTEXT_TOKENS,
+        `turn ${i + 1}: ${delta.contextTokens} tokens of context should not rotate`,
+      );
+      // The field the gate used to read, on the same turn: rotation every time.
+      assert.ok(delta.next.input >= MAX_CONTEXT_TOKENS);
+      prev = delta.next;
+    }
+  });
+
+  it("crosses the threshold when a single turn's own context does", () => {
+    const prev = { input: 538_002, cacheRead: 484_202, cacheCreation: 0, output: 3_789 };
+    const total = 538_002 + 151_400;
+    const delta = usageDelta(prev, snapshot(total, Math.round(total * 0.9), 4_100));
+    assert.ok(delta);
+    // The exact figure, not just "over": the cumulative counter would say 689_402 here,
+    // so this pins that rotation fires on the turn's own size rather than the thread's.
+    assert.equal(delta.contextTokens, 151_400);
+    assert.ok(delta.contextTokens >= MAX_CONTEXT_TOKENS);
+  });
+
+  it("counts the cached portion, which is context the model still read", () => {
+    // Almost all of a long turn's input is a cache read. Narrowing it away for billing
+    // would report a near-empty context window on a nearly-full one.
+    const prev = { input: 100_000, cacheRead: 90_000, cacheCreation: 0, output: 500 };
+    const delta = usageDelta(prev, snapshot(240_000, 216_000, 700));
+    assert.ok(delta);
+    assert.equal(delta.contextTokens, 140_000);
+    // What the same turn bills, with the 126k cache read taken out at its own rate.
+    assert.equal(delta.payload.input_tokens, 14_000);
+  });
+
+  it("reports a fresh thread's own context after a counter reset", () => {
+    // Rotation and restart both restart the counter; the new total is the new context.
+    // Cumulative and per-turn coincide here, so this pins the reset branch rather than
+    // discriminating the fix — a naive `next.input - prev.input` would report 0.
+    const prev = { input: 700_000, cacheRead: 600_000, cacheCreation: 0, output: 5_000 };
+    const delta = usageDelta(prev, snapshot(46_000, 41_400, 120));
+    assert.ok(delta);
+    assert.equal(delta.contextTokens, 46_000);
+  });
+});
+
+/**
  * The wiring, not the arithmetic: `usageByModel` can difference correctly and the mind
  * still be billed cumulatively if the caller never carries the baseline forward. Drives
  * the real composed template — as `volute mind create` ships it — across two turns of one

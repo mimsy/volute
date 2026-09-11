@@ -59,7 +59,14 @@ type CodexSession = {
   firstMessagePerChannel: Set<string>;
   /** The event note is a standing fact about events, so it fires once per session. */
   eventNoteFired: boolean;
-  cumulativeInputTokens: number;
+  /**
+   * Context size as of the last turn that made a model request — the turn's own input
+   * delta, never codex's session-cumulative counter (see `UsageDelta.contextTokens`).
+   * This is what the rotation threshold reads, so a cumulative figure here rotates the
+   * session every turn once the thread's lifetime total passes the window (#913).
+   * Named to match the claude and pi templates, which carry the same value.
+   */
+  contextTokens: number;
   /** Last cumulative usage snapshot from `turn.completed`, for per-turn deltas (see lib/usage.ts). */
   lastUsage: UsageSnapshot;
   /**
@@ -193,7 +200,7 @@ export function createMind(options: {
       messageChannels: new Map(),
       firstMessagePerChannel: new Set(),
       eventNoteFired: false,
-      cumulativeInputTokens: 0,
+      contextTokens: 0,
       lastUsage: ZERO_USAGE,
       seeded: false,
       seededArchivedAt: null,
@@ -580,8 +587,9 @@ export function createMind(options: {
                 const delta = usageDelta(session.lastUsage, usage);
                 if (delta) {
                   session.lastUsage = delta.next;
-                  // Kept cumulative: this feeds the rotation threshold, not the bill.
-                  session.cumulativeInputTokens = delta.next.input;
+                  // The turn's own context size, not the thread's running total: the
+                  // rotation threshold is a context-window comparison.
+                  session.contextTokens = delta.contextTokens;
                   const payload = { ...delta.payload, model: options.model };
                   broadcast(session, { type: "usage", ...payload });
                   emit(session, { type: "usage", metadata: payload });
@@ -656,7 +664,7 @@ export function createMind(options: {
     if (!session.name.startsWith("new-")) sessionStore.save(session.name, newThreadId);
     // Fresh thread — reset token tracking (the next turn.completed sets the real value)
     // and arm the rotation-cause boundary note for the mind's next turn.
-    session.cumulativeInputTokens = 0;
+    session.contextTokens = 0;
     session.lastUsage = ZERO_USAGE;
     session.seeded = true;
     session.seededCause = "rotation";
@@ -682,14 +690,14 @@ export function createMind(options: {
    */
   function maybeRotate(session: CodexSession) {
     if (!maxContextTokens) return;
-    if (session.cumulativeInputTokens < maxContextTokens) {
+    if (session.contextTokens < maxContextTokens) {
       session.consecutiveRotations = 0; // healthy turn — streak over
       return;
     }
     if (session.consecutiveRotations >= MAX_CONSECUTIVE_ROTATIONS) return;
     log(
       "mind",
-      `session "${session.name}": ${session.cumulativeInputTokens} tokens >= ${maxContextTokens} — rotating`,
+      `session "${session.name}": ${session.contextTokens} tokens >= ${maxContextTokens} — rotating`,
     );
     performRotation(session);
   }
@@ -807,7 +815,7 @@ export function createMind(options: {
           : null;
         infos.push({
           name: s.name,
-          contextTokens: parsed?.contextTokens ?? s.cumulativeInputTokens,
+          contextTokens: parsed?.contextTokens ?? s.contextTokens,
           contextWindow: maxContextTokens,
           breakdown: parsed?.breakdown,
         });
@@ -815,7 +823,7 @@ export function createMind(options: {
         log("mind", `failed to get context breakdown for session "${s.name}":`, err);
         infos.push({
           name: s.name,
-          contextTokens: s.cumulativeInputTokens,
+          contextTokens: s.contextTokens,
           contextWindow: maxContextTokens,
         });
       }
