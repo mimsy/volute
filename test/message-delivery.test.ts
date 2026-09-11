@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import { resolve } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { and, eq } from "drizzle-orm";
@@ -249,7 +250,11 @@ describe("deliverMessage flush recording", () => {
 
 describe("deliverBatch (#382)", () => {
   const BATCH_MIND = "test-batch";
-  const BATCH_PORT = 41998;
+
+  // Bind an ephemeral port and register the mind at whatever the OS handed out (#1031):
+  // a hard-coded port in the ephemeral range collides with a stray connection on a busy
+  // CI runner and fails the run with EADDRINUSE.
+  const portOf = (server: Server): number => (server.address() as AddressInfo).port;
 
   function startMindServer(onBody: (body: any) => void, status = 200): Promise<Server> {
     const server = createServer((req, res) => {
@@ -265,7 +270,7 @@ describe("deliverBatch (#382)", () => {
         res.end(JSON.stringify({ ok: status === 200 }));
       });
     });
-    return new Promise((resolve) => server.listen(BATCH_PORT, () => resolve(server)));
+    return new Promise((resolve) => server.listen(0, "127.0.0.1", () => resolve(server)));
   }
 
   afterEach(async () => {
@@ -292,7 +297,7 @@ describe("deliverBatch (#382)", () => {
     const server = await startMindServer((b) => {
       received = b;
     });
-    await addMind(BATCH_MIND, BATCH_PORT);
+    await addMind(BATCH_MIND, portOf(server));
     try {
       const ok = await deliverBatch(BATCH_MIND, [
         { channel: "@volute", sender: "a", content: "one" },
@@ -314,7 +319,7 @@ describe("deliverBatch (#382)", () => {
 
   it("returns false when the mind server rejects the batch", async () => {
     const server = await startMindServer(() => {}, 500);
-    await addMind(BATCH_MIND, BATCH_PORT);
+    await addMind(BATCH_MIND, portOf(server));
     try {
       const ok = await deliverBatch(BATCH_MIND, [
         { channel: "@volute", sender: "a", content: "x" },
