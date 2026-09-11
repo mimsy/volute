@@ -199,6 +199,13 @@ export async function renderPreview(opts: {
   // Unique per invocation so concurrent previews never share a chromium
   // user-data-dir or temp-file name (process.pid alone is the constant daemon pid).
   const token = `${process.pid}-${previewSeq++}-${randomUUID()}`;
+  // A *separate* id for the origin's URL prefix, and the separation is the point.
+  // These scratch directories live in /tmp, which is world-listable and mode 1777,
+  // so anything that named them after the URL prefix would publish that prefix to
+  // every process on the host with an `ls`. The prefix is not a secret either way
+  // — it is in the browser's argv — but it should not be lying around in a second
+  // place that is easier to read. See `preview-server.ts`.
+  const originToken = randomUUID();
   const userDataDir = resolve("/tmp", `chromium-${token}`);
   const pngName = `${opts.file.replace(/[/\\]/g, "__").replace(/\.(html|md)$/, "")}.png`;
 
@@ -229,7 +236,7 @@ export async function renderPreview(opts: {
     // and written at the root of the pages tree — which is what `resolveStylesheet`
     // returns a path relative to, so the href in the rendered page resolves — then
     // cleaned up after.
-    server = await startPreviewServer(realPagesRoot, token);
+    server = await startPreviewServer(realPagesRoot, originToken);
     let url: string;
     if (isHtml) {
       url = previewUrl(server, relative(realPagesRoot, realTarget));

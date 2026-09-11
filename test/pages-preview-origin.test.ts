@@ -36,6 +36,7 @@ import {
   previewUrl,
   startPreviewServer,
 } from "../packages/extensions/pages/src/preview-server.js";
+import { PAGES_CSP } from "../packages/extensions/pages/src/serving.js";
 
 const SECRET = "host-only-credential-do-not-render";
 
@@ -149,6 +150,47 @@ describe("the preview origin server contains every request to the pages tree", (
     assert.match(await res.text(), /qa/);
   });
 
+  it("serves a page under the same rules publishing will", async () => {
+    // A preview that renders under looser rules than the published page is a
+    // preview that lies. The sandbox is the load-bearing part: it puts the page
+    // in an opaque origin, where a same-origin fetch of its own data file fails.
+    const res = await get("/tok-1234/index.html");
+    const csp = res.headers.get("content-security-policy") ?? "";
+    assert.match(csp, /sandbox allow-scripts/);
+    assert.ok(!csp.includes("allow-same-origin"), "an opaque origin is the point");
+    assert.match(csp, /base-uri 'none'/);
+    assert.equal(res.headers.get("x-content-type-options"), "nosniff");
+    assert.equal(PAGES_CSP, csp, "the preview's rules are the published page's rules");
+  });
+
+  it("does not leak a file descriptor per abandoned response", async () => {
+    // `pipe` leaves the read stream open when the other end goes away, and the
+    // other end going away is the normal case here: a render that timed out is
+    // killed, and closing the server drops its sockets mid-response. The symptom
+    // is not a hang — the server still closes — it is one descriptor per aborted
+    // response, held for the daemon's life.
+    writeFileSync(resolve(root, "big.txt"), "x".repeat(16 * 1024 * 1024));
+    const before = readdirSync("/dev/fd").length;
+
+    for (let i = 0; i < 12; i++) {
+      const ac = new AbortController();
+      // Abort after the response head has arrived but long before the body is
+      // drained, which is where a half-finished pipe gets stranded.
+      const res = await fetch(`http://127.0.0.1:${server.port}/tok-1234/big.txt`, {
+        signal: ac.signal,
+      });
+      void res.body?.cancel().catch(() => {});
+      ac.abort();
+    }
+    await new Promise((r) => setTimeout(r, 250));
+
+    const after = readdirSync("/dev/fd").length;
+    assert.ok(
+      after - before < 6,
+      `12 abandoned responses should not hold descriptors open: ${before} -> ${after}`,
+    );
+  });
+
   it("stops serving once closed", async () => {
     const port = server.port;
     await server.close();
@@ -173,7 +215,8 @@ function writeFetchingStub(
     const url = args[args.length - 1];
     const out = (args.find((a) => a.startsWith("--screenshot=")) || "").slice(13);
     (async () => {
-      const lines = ["url " + url, "screenshot " + out];
+      const udd = (args.find((a) => a.startsWith("--user-data-dir=")) || "").slice(16);
+      const lines = ["url " + url, "screenshot " + out, "userDataDir " + udd];
       const fetchOne = async (label, u) => {
         try {
           const res = await fetch(u);
@@ -313,6 +356,33 @@ describe("renderPreview drives the browser at the loopback origin", () => {
         `the server must close on the ${JSON.stringify(opts)} path too`,
       );
     }
+  });
+
+  it("keeps the origin prefix out of the scratch paths in /tmp", async () => {
+    // The prefix is in the browser's argv and cannot leave it, so it is not a
+    // secret. It should still not be sitting in a second, easier place: /tmp is
+    // mode 1777 and world-listable, and naming the browser's scratch directories
+    // after the prefix would hand it to any process that ran `ls`.
+    writeFileSync(resolve(pagesRoot, "index.html"), "<h1>draft</h1>");
+    process.env.VOLUTE_CHROMIUM = writeFetchingStub(stubDir, logPath);
+    await renderPreview({
+      mindDir,
+      mindName: "mimsy",
+      ownership: NO_ISOLATION,
+      file: "index.html",
+    });
+
+    const seen = log();
+    const prefix = new URL(seen.url).pathname.split("/")[1];
+    assert.ok(prefix.length > 0, "there is a prefix");
+    assert.ok(
+      !seen.userDataDir.includes(prefix),
+      `the user-data-dir must not carry the prefix: ${seen.userDataDir}`,
+    );
+    assert.ok(
+      !seen.screenshot.includes(prefix),
+      `the stage dir must not carry the prefix: ${seen.screenshot}`,
+    );
   });
 
   it("leaves no scratch html behind in the mind's pages directory", async () => {

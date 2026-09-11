@@ -32,11 +32,23 @@
  *   `gitdir:` pointer whose actual objects live outside the tree and are therefore
  *   refused by containment like anything else.
  *
- * Everything is mounted under a per-render token rather than at the root. The
- * listener is on loopback, but loopback is reachable by every process on the host,
- * minds included — they keep it to talk to the daemon. Drafts are precisely the
- * pages a mind has not decided to publish, and an unguessable prefix keeps the
- * render window from being a way to read them.
+ * Everything is mounted under a per-render prefix rather than at the root, and it
+ * is worth being exact about what that buys, because it is less than it looks.
+ * The listener is on loopback, which every process on the host can reach — minds
+ * included, since they keep loopback to talk to the daemon — and drafts are
+ * precisely the pages a mind has not decided to publish. The prefix raises the
+ * cost of *guessing* a live render's URL from nothing, and that is all. It is not
+ * a secret: it has to appear in the browser's command line as the URL, and
+ * `/proc/<pid>/cmdline` is world-readable on Linux and in Docker. Another local
+ * process that can list processes during the render can read this mind's drafts.
+ *
+ * The daemon controls the browser's argv and cannot remove the URL from it, so
+ * this does not close by tightening the prefix. It would need an authenticated
+ * origin, and node's TCP sockets expose no peer credentials to check against
+ * (`getpeereid` is a unix-socket facility, and chromium cannot fetch one). What
+ * *is* fixed is everything around it: the browser's scratch directory names no
+ * longer carry the prefix, so `ls /tmp` on a shared 1777 directory no longer
+ * hands it over, and the window is one render rather than the daemon's life.
  *
  * Residual, stated rather than engineered around: resolving a path and then
  * opening it is not atomic, so a directory swapped mid-request could still be
@@ -47,9 +59,10 @@ import { createReadStream, realpathSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import { extname, resolve } from "node:path";
+import { pipeline } from "node:stream/promises";
 
-import { MIME_TYPES } from "./mime.js";
 import { within } from "./ownership.js";
+import { MIME_TYPES, PAGES_CSP } from "./serving.js";
 
 export type PreviewServer = {
   /** The loopback port the render should fetch from. */
@@ -79,10 +92,23 @@ export async function startPreviewServer(root: string, token: string): Promise<P
     });
   });
 
+  // One listener, attached before `listen` and never removed. An `error` event
+  // with nothing listening is *thrown*, so a server that later runs out of file
+  // descriptors accepting a connection would take the whole daemon down in the
+  // middle of somebody's preview. Attaching for the bind and detaching after
+  // leaves exactly that gap, so the handler is permanent and the bind borrows it.
+  let reportBindFailure: ((err: Error) => void) | null = null;
+  server.on("error", (err) => {
+    const fail = reportBindFailure;
+    reportBindFailure = null;
+    if (fail) return fail(err);
+    console.warn(`[pages] preview server error: ${err.message}`);
+  });
+
   await new Promise<void>((done, fail) => {
-    server.once("error", fail);
+    reportBindFailure = fail;
     server.listen(0, "127.0.0.1", () => {
-      server.removeListener("error", fail);
+      reportBindFailure = null;
       done();
     });
   });
@@ -149,15 +175,21 @@ async function serve(
   res.writeHead(200, {
     "Content-Type": MIME_TYPES[extname(real)] ?? "application/octet-stream",
     "Content-Length": String(info.size),
+    // The same rules the published page will be served under. A preview exists to
+    // show what publishing will look like, and the sandbox is not cosmetic: it
+    // puts the page in an opaque origin, where a same-origin `fetch` of its own
+    // data file fails. Without this, a page previews green and publishes broken.
+    "Content-Security-Policy": PAGES_CSP,
+    "X-Content-Type-Options": "nosniff",
   });
-  await new Promise<void>((done) => {
-    const stream = createReadStream(real);
-    stream.on("error", () => {
-      res.destroy();
-      done();
-    });
-    stream.on("end", done);
-    stream.pipe(res);
+  // `pipeline`, not `pipe`: `pipe` leaves the read stream open when the other end
+  // goes away, and the other end going away is the normal case here — a render
+  // that timed out is killed, and `closeAllConnections()` drops its sockets
+  // mid-response. With `pipe` that leaks a descriptor per aborted response, and
+  // the await above it never settles.
+  await pipeline(createReadStream(real), res).catch(() => {
+    // A client that left is not an error worth reporting; the response is over
+    // either way.
   });
 }
 

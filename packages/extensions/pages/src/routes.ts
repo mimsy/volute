@@ -7,9 +7,9 @@ import { getRecentPagesList, getSites } from "./cache.js";
 import { areCommentsClosed, getPage } from "./db.js";
 import { parseFrontmatter, renderMarkdownPage, resolveStylesheet } from "./markdown.js";
 import { resolveMentions } from "./mentions.js";
-import { MIME_TYPES } from "./mime.js";
 import { within } from "./ownership.js";
 import { defaultPromotionTitle, writeQuickPage } from "./publish.js";
+import { MIME_TYPES, PAGES_CSP } from "./serving.js";
 import {
   addComment,
   deleteComment,
@@ -328,12 +328,6 @@ export function createRoutes(ctx: ExtensionContext): Hono {
 // origin means external calls carry nothing sensitive. Markdown pages are still
 // DOMPurify-sanitized (defense-in-depth). Omitting allow-forms/allow-popups keeps
 // the sandbox tight.
-const PAGES_CSP =
-  "sandbox allow-scripts; default-src 'self' https:; " +
-  "script-src 'self' 'unsafe-inline' https:; style-src 'self' 'unsafe-inline' https:; " +
-  "img-src 'self' data: https:; font-src 'self' data: https:; connect-src 'self' https:; " +
-  "base-uri 'none'";
-
 // Sandboxed pages run in an opaque origin, so the dashboard iframe can't read
 // their location to keep the breadcrumb in sync when a visitor follows an
 // in-page link. Instead every served HTML page reports its own path to the
