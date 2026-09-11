@@ -10,6 +10,7 @@ import { createHash } from "node:crypto";
 import {
   cpSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   readdirSync,
   readFileSync,
@@ -26,7 +27,7 @@ import { knownPageFiles, type PageInput, syncPublishedPages } from "./db.js";
 import { parseLinks } from "./links.js";
 import { parseFrontmatter } from "./markdown.js";
 import { parseHtmlMentions, parseMentions } from "./mentions.js";
-import { type ChownExec, chownToMind, resolvePagesWrite } from "./ownership.js";
+import { type ChownExec, chownToMind, resolvePagesDir, resolvePagesWrite } from "./ownership.js";
 
 /** Subdirectory the quick path writes into. Conventional, not enforced. */
 export const QUICK_DIR = "notes";
@@ -105,11 +106,47 @@ export type PublishResult = {
   fileCount: number;
   diff: { added: string[]; removed: string[]; updated: string[] };
   snapshotDir: string;
+  /** Entries left out of the snapshot because they are symlinks. See `publishPersonalPages`. */
+  skipped: string[];
 };
+
+/**
+ * What to tell the author about entries publish refused to copy.
+ *
+ * Skipping is never silent. A mind that put a link in its pages directory did so
+ * on purpose, and a page that quietly fails to appear is a page it will go on
+ * believing it published. Every command that publishes — `pages publish`, the
+ * quick write, and the two that write a page in passing — says the same sentence,
+ * because they all produce the same surprise. The dashboard's promote route is the
+ * one exception, and it logs instead: its reader is the web UI, not the author.
+ */
+export function describeSkipped(skipped: string[]): string {
+  if (skipped.length === 0) return "";
+  return (
+    `\nSkipped ${skipped.length} symlinked ${skipped.length === 1 ? "entry" : "entries"}: ` +
+    `${skipped.join(", ")}\n` +
+    "Published pages are served to anyone, so a page has to be a real file — " +
+    "a link would let a visitor read whatever it points at. Copy the content in instead."
+  );
+}
 
 /**
  * Snapshot a mind's `home/pages/` to the served directory and reconcile the DB.
  * Throws on failure; callers turn that into a command error.
+ *
+ * **Nothing symlinked is copied.** The mind owns `home/pages` and can put a link
+ * to anything in it; `cpSync`'s `dereference` defaults to false, so before this
+ * check such a link was reproduced verbatim inside `dataDir/sites/<mind>/` — and
+ * the public serve route is unauthenticated and reads as the daemon, which is root
+ * on a user-isolation install. Publishing a link was therefore a way to hand any
+ * visitor the contents of a file the mind itself could not open. The source is
+ * `resolvePagesDir`'s real path rather than the raw one, because `pages` itself
+ * could be the link.
+ *
+ * Skipped entries are returned, not swallowed — see `describeSkipped`. The filter
+ * is not a defence against a link swapped in between the `lstat` here and the copy
+ * that follows it; the serve route's own refusal and the start-up sweep are what
+ * close that window.
  */
 export function publishPersonalPages(
   ctx: ExtensionContext,
@@ -120,16 +157,34 @@ export function publishPersonalPages(
   const db = ctx.db;
   if (!db) throw new Error("Database not available");
 
-  const sourceDir = resolve(mindDir, "home", "pages");
-  if (!existsSync(sourceDir)) throw new Error("No pages directory found (home/pages/)");
+  if (!existsSync(resolve(mindDir, "home", "pages")))
+    throw new Error("No pages directory found (home/pages/)");
+  const sourceDir = resolvePagesDir(mindDir);
 
   // Copy entire directory to snapshot location (clean first for removals).
   // Exclude _system/ which is the shared pages git worktree.
   const snapshotDir = resolve(ctx.dataDir, "sites", mindName);
   if (existsSync(snapshotDir)) rmSync(snapshotDir, { recursive: true });
+  const skipped: string[] = [];
   cpSync(sourceDir, snapshotDir, {
     recursive: true,
-    filter: (src) => !src.endsWith(`${sep}_system`) && !src.includes(`${sep}_system${sep}`),
+    filter: (src) => {
+      if (src.endsWith(`${sep}_system`) || src.includes(`${sep}_system${sep}`)) return false;
+      try {
+        if (!lstatSync(src).isSymbolicLink()) return true;
+      } catch (err) {
+        // An entry that vanished between the walk and this stat is not copyable
+        // either. Refusing it keeps the publish going — aborting would let any
+        // churn in the mind's own directory fail the whole thing — but it is not a
+        // symlink, so it does not go in the list that says it was one.
+        console.warn(`[pages] skipping unreadable entry ${src}: ${(err as Error).message}`);
+        return false;
+      }
+      // Refusing a directory skips its whole subtree, so a symlinked directory is
+      // one skipped entry rather than one per file underneath it.
+      skipped.push(relative(sourceDir, src) || src);
+      return false;
+    },
   });
 
   const pageFiles = collectFiles(snapshotDir, snapshotDir, [".html", ".md"]);
@@ -157,7 +212,7 @@ export function publishPersonalPages(
     });
   }
 
-  return { fileCount: pageFiles.length, diff, snapshotDir };
+  return { fileCount: pageFiles.length, diff, snapshotDir, skipped };
 }
 
 /**

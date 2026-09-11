@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
 import { resolve, sep } from "node:path";
 
 import type { Database, ExtensionCommand, ExtensionContext } from "@volute/extensions";
@@ -19,11 +19,13 @@ import {
   parseReassignments,
   planMigration,
 } from "./migrate-notes.js";
+import { within } from "./ownership.js";
 import { renderPreview } from "./preview.js";
 import {
   collectFiles,
   defaultPromotionTitle,
   describePages,
+  describeSkipped,
   publishPersonalPages,
   writeQuickPage,
 } from "./publish.js";
@@ -87,7 +89,9 @@ async function writeResponsePage(
   mindName: string,
   title: string,
   body: string,
-): Promise<{ ref: PageRef; ownershipWarning: string | null } | { error: string }> {
+): Promise<
+  { ref: PageRef; ownershipWarning: string | null; skipped: string[] } | { error: string }
+> {
   const mindDir = await ctx.getMindDir(mindName);
   if (!mindDir) return { error: `Mind not found: ${mindName}` };
   try {
@@ -95,14 +99,25 @@ async function writeResponsePage(
     return {
       ref: { mind: mindName, file: written.file },
       ownershipWarning: written.ownershipWarning,
+      skipped: written.publish.skipped,
     };
   } catch (err) {
     return { error: `Failed to write the page for this response: ${(err as Error).message}` };
   }
 }
 
-/** Read a published page's body from the served snapshot. */
-function readPageBody(ctx: ExtensionContext, ref: PageRef): string | null {
+/**
+ * Read a published page's body from the served snapshot.
+ *
+ * The third reader of these trees, and it reads as the daemon like the other two,
+ * so it refuses a symlink for the same reason they do (#1077). The commons
+ * checkout is why it still matters after publish stopped copying links: a mind
+ * commits into `home/pages/_system` and git writes the link out on checkout, where
+ * `collectPageFiles`' `statSync` then indexes it as an ordinary page. Containment
+ * is measured on real paths — `startsWith` on a composed path proves nothing about
+ * where an open actually lands.
+ */
+export function readPageBody(ctx: ExtensionContext, ref: PageRef): string | null {
   const root =
     ref.mind === "_commons"
       ? resolve(ctx.dataDir, "repo")
@@ -110,7 +125,10 @@ function readPageBody(ctx: ExtensionContext, ref: PageRef): string | null {
   const target = resolve(root, ref.file);
   if (target !== root && !target.startsWith(root + sep)) return null;
   try {
-    return readFileSync(target, "utf-8");
+    if (lstatSync(target).isSymbolicLink()) return null;
+    const realTarget = realpathSync(target);
+    if (!within(realpathSync(root), realTarget)) return null;
+    return readFileSync(realTarget, "utf-8");
   } catch {
     return null;
   }
@@ -258,7 +276,7 @@ export function createCommands(): Record<string, ExtensionCommand> {
         const port = process.env.VOLUTE_DAEMON_PORT || "1618";
         const lines = [`Published: ${ref}`, `http://localhost:${port}/ext/pages/public/${ref}`];
         lines.push(...ownershipNote(written.ownershipWarning, PUBLISH_OWNERSHIP_CONSEQUENCE));
-        return { output: lines.join("\n") };
+        return { output: lines.join("\n") + describeSkipped(written.publish.skipped) };
       },
     },
 
@@ -434,6 +452,7 @@ export function createCommands(): Record<string, ExtensionCommand> {
         // silently posting a comment that claims a page which isn't there.
         let body: PageRef | null = null;
         let ownershipWarning: string | null = null;
+        let skipped: string[] = [];
         if (attach) {
           const found = resolveAttachedPage(db, user.username, attach);
           if ("error" in found) return { error: found.error };
@@ -443,6 +462,7 @@ export function createCommands(): Record<string, ExtensionCommand> {
           if ("error" in written) return { error: written.error };
           body = written.ref;
           ownershipWarning = written.ownershipWarning;
+          skipped = written.skipped;
         }
 
         const created = await addComment(db, ctx.getUser, ref, user.id, content, { body });
@@ -468,7 +488,7 @@ export function createCommands(): Record<string, ExtensionCommand> {
         const lines = [placed];
         if (hailed.length > 0) lines.push(`Named: ${hailed.map((h) => `@${h}`).join(", ")}.`);
         lines.push(...ownershipNote(ownershipWarning, PUBLISH_OWNERSHIP_CONSEQUENCE));
-        return { output: lines.join("\n") };
+        return { output: lines.join("\n") + describeSkipped(skipped) };
       },
     },
 
@@ -512,11 +532,12 @@ export function createCommands(): Record<string, ExtensionCommand> {
 
         setCommentBody(db, id, written.ref);
         return {
-          output: [
-            `Promoted comment #${id} to ${refOf(written.ref)}.`,
-            `It still stands in the thread on ${comment.mind}/${comment.file} — now as a pointer to your page.`,
-            ...ownershipNote(written.ownershipWarning, PUBLISH_OWNERSHIP_CONSEQUENCE),
-          ].join("\n"),
+          output:
+            [
+              `Promoted comment #${id} to ${refOf(written.ref)}.`,
+              `It still stands in the thread on ${comment.mind}/${comment.file} — now as a pointer to your page.`,
+              ...ownershipNote(written.ownershipWarning, PUBLISH_OWNERSHIP_CONSEQUENCE),
+            ].join("\n") + describeSkipped(written.skipped),
         };
       },
     },
@@ -768,7 +789,7 @@ export function createCommands(): Record<string, ExtensionCommand> {
           }
         }
 
-        return { output };
+        return { output: output + describeSkipped(published.skipped) };
       },
     },
 

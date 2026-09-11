@@ -37,7 +37,7 @@ const defaultExec: ChownExec = (cmd, args) =>
   });
 
 /** Path containment, on real paths only — `startsWith` on unresolved paths proves nothing. */
-function within(base: string, path: string): boolean {
+export function within(base: string, path: string): boolean {
   return path === base || path.startsWith(base + sep);
 }
 

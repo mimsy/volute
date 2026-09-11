@@ -1,5 +1,5 @@
-import { readFile, stat } from "node:fs/promises";
-import { extname, resolve } from "node:path";
+import { lstat, readFile, realpath, stat } from "node:fs/promises";
+import { extname, relative, resolve, sep } from "node:path";
 import { boundedIntParam, type ExtensionContext, intParamError } from "@volute/extensions";
 import { Hono } from "hono";
 
@@ -7,6 +7,7 @@ import { getRecentPagesList, getSites } from "./cache.js";
 import { areCommentsClosed, getPage } from "./db.js";
 import { parseFrontmatter, renderMarkdownPage, resolveStylesheet } from "./markdown.js";
 import { resolveMentions } from "./mentions.js";
+import { within } from "./ownership.js";
 import { defaultPromotionTitle, writeQuickPage } from "./publish.js";
 import {
   addComment,
@@ -281,6 +282,15 @@ export function createRoutes(ctx: ExtensionContext): Hono {
             title,
             comment.content,
           );
+          // Same reasoning as the ownership warning above: this response goes to
+          // the dashboard, not to a mind reading command output, so an entry the
+          // publish refused is logged rather than returned. It is said properly to
+          // the author on their next `pages publish` or `pages write`.
+          if (written.publish.skipped.length > 0) {
+            console.warn(
+              `[pages] ${actor.username}: skipped symlinked entries while publishing: ${written.publish.skipped.join(", ")}`,
+            );
+          }
           setCommentBody(ctx.db, id, { mind: actor.username, file: written.file });
           return c.json({ ok: true, mind: actor.username, file: written.file });
         } catch (err) {
@@ -425,6 +435,41 @@ export function createPublicRoutes(ctx: ExtensionContext): Hono {
       } else if (!fileStat?.isFile()) {
         return c.text("Not found", 404);
       }
+
+      // Nothing under this root may be a symlink, or lead through one to a file
+      // outside it. This route is unauthenticated and reads as the daemon — root
+      // on a user-isolation install — so following a link here would serve any
+      // file the daemon can open to anyone who can reach the port. Publish no
+      // longer copies links into a snapshot and the start-up sweep clears the ones
+      // it copied before, but an author also writes straight into the commons
+      // checkout, and git restores symlinks on every checkout. The refusal has to
+      // live here too.
+      //
+      // `pagesRoot` is resolved as well: on macOS `dataDir` commonly sits under
+      // `/var`, which is itself a link to `/private/var`, so comparing a real file
+      // path against an unresolved root would refuse every legitimate page.
+      //
+      // 404, not 403: a distinct status would confirm that the path exists and is
+      // interesting, which is the one thing a prober wants from a public route.
+      const realRoot = await realpath(pagesRoot).catch(() => null);
+      const realFile = await realpath(fileToServe).catch(() => null);
+      const linkStat = await lstat(fileToServe).catch(() => null);
+      if (!realRoot || !realFile || !within(realRoot, realFile) || linkStat?.isSymbolicLink())
+        return c.text("Not found", 404);
+
+      // And the dotfile guard again, this time on the *resolved* path. The check
+      // above runs on the URL, which a link inside the commons checkout walks
+      // straight past: `link/config`, where `link` points at `.git`, carries no dot
+      // segment of its own and lands on a regular file well inside the root. The
+      // repo has no remote, but `.git` is the whole history of the commons —
+      // including the bodies of pages their authors later took down.
+      if (
+        blockDotfiles &&
+        relative(realRoot, realFile)
+          .split(sep)
+          .some((s) => s.startsWith("."))
+      )
+        return c.text("Not found", 404);
 
       const ext = extname(fileToServe);
       try {
