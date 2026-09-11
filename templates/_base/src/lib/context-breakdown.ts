@@ -255,6 +255,47 @@ type CodexEntry = {
   };
 };
 
+/**
+ * The context the model was last sent, from the rollout's own `token_count` events —
+ * codex-rs's `last_token_usage.input_tokens`, the size of the most recent request.
+ *
+ * Deliberately separate from `processCodexSession`, which computes the same figure on
+ * its way to a full breakdown: that walk tokenizes every message in the transcript, and
+ * the rotation gate needs this number after *every* turn, on a file that changes every
+ * turn — so the cache that makes the dashboard's polls free would never hit here. This
+ * streams the same file, holds one number rather than the parsed transcript, and skips
+ * `JSON.parse` on any line that can't be a token_count event. Rollouts reach tens of MB.
+ *
+ * Returns null when the rollout can't be read or carries no usage event yet (a thread
+ * whose first turn is still in flight), leaving the caller to fall back.
+ */
+export async function readLastContextTokens(filePath: string): Promise<number | null> {
+  const stream = createReadStream(filePath, { encoding: "utf-8" });
+  const rl = createInterface({ input: stream, crlfDelay: Infinity });
+  let last: number | null = null;
+  try {
+    for await (const line of rl) {
+      if (!line.includes('"token_count"')) continue;
+      let entry: CodexEntry;
+      try {
+        entry = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      if (entry.type !== "event_msg" || entry.payload?.type !== "token_count") continue;
+      const input = entry.payload.info?.last_token_usage?.input_tokens;
+      if (input) last = input;
+    }
+  } catch (err: any) {
+    if (err?.code !== "ENOENT") console.warn(`context-breakdown: ${filePath}:`, err?.message);
+    return null;
+  } finally {
+    rl.close();
+    stream.destroy();
+  }
+  return last;
+}
+
 // --- Codex: combined parse + extract ---
 
 export async function processCodexSession(

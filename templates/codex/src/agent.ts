@@ -15,12 +15,21 @@ import {
   findCodexSessionFile,
   getCachedContextInfo,
   processCodexSession,
+  readLastContextTokens,
   readSdkInstructions,
   readSkillDescriptions,
 } from "./lib/context-breakdown.js";
 import { daemonEmit, daemonRestart, type EventType } from "./lib/daemon-client.js";
 import { runHooks } from "./lib/hook-loader.js";
 import { log, warn } from "./lib/logger.js";
+import {
+  budgetSpent,
+  createRotationGuard,
+  MAX_CONSECUTIVE_ROTATIONS,
+  type RotationGuard,
+  recordRotation,
+  shouldRotate,
+} from "./lib/rotation.js";
 import { buildSeededNote, type SeedCause } from "./lib/seed-note.js";
 import { createSessionStore } from "./lib/session-store.js";
 import { getStartupContext, loadPrompts, loadSystemPrompt } from "./lib/startup.js";
@@ -60,11 +69,15 @@ type CodexSession = {
   /** The event note is a standing fact about events, so it fires once per session. */
   eventNoteFired: boolean;
   /**
-   * Context size as of the last turn that made a model request — the turn's own input
-   * delta, never codex's session-cumulative counter (see `UsageDelta.contextTokens`).
-   * This is what the rotation threshold reads, so a cumulative figure here rotates the
-   * session every turn once the thread's lifetime total passes the window (#913).
-   * Named to match the claude and pi templates, which carry the same value.
+   * The last turn's own input delta, never codex's session-cumulative counter (see
+   * `UsageDelta.contextTokens`). A cumulative figure here reported a thread's lifetime
+   * total as its context size, which passes any window within a few turns (#913).
+   *
+   * Display only — the dashboard's estimate when the rollout carries no usage event
+   * yet. Rotation does *not* read this: the delta sums every model request in a turn, so
+   * a tool loop reads several times the real context. `measureContext` is the gate's
+   * source. The same-named field in the claude and pi templates is the last request's
+   * true context, so the three are not directly comparable.
    */
   contextTokens: number;
   /** Last cumulative usage snapshot from `turn.completed`, for per-turn deltas (see lib/usage.ts). */
@@ -83,17 +96,9 @@ type CodexSession = {
   currentThreadId: string | null;
   /** Why the tail is seeded — picks the boundary note's wording. Last cause wins. */
   seededCause: SeedCause;
-  /**
-   * Back-to-back rotations that did NOT bring context under the threshold (reset by any
-   * healthy turn). Guards against a runaway loop when the tail alone can't fit — e.g. a
-   * system prompt (large MEMORY.md) that already fills most of the window, which rotation
-   * can't trim. Past the cap we stop rotating and defer to the SDK's native backstop.
-   */
-  consecutiveRotations: number;
+  /** Consecutive rotations that relieved nothing; see lib/rotation.ts. */
+  rotationGuard: RotationGuard;
 };
-
-/** Stop self-rotating after this many back-to-back rotations that didn't reduce context. */
-const MAX_CONSECUTIVE_ROTATIONS = 3;
 
 // Loaded once at startup
 const preset = loadTransparencyPreset();
@@ -138,6 +143,21 @@ export function createMind(options: {
   }
 
   const sessionStore = createSessionStore(resolvePath(options.mindDir, ".mind/codex-sessions"));
+
+  /**
+   * Rollout path per thread id. `findCodexSessionFile` walks the whole `YYYY/MM/DD`
+   * sessions tree synchronously; a thread's file never moves once written, and the
+   * rotation gate asks after every turn, so resolve each id once. Misses aren't cached —
+   * the file appears shortly after the thread starts.
+   */
+  const rolloutPaths = new Map<string, string>();
+  function rolloutPathFor(threadId: string): string | null {
+    const cached = rolloutPaths.get(threadId);
+    if (cached) return cached;
+    const path = findCodexSessionFile(threadId, options.mindDir);
+    if (path) rolloutPaths.set(threadId, path);
+    return path;
+  }
   const hooksDir = resolvePath(options.cwd, ".local/hooks");
   const startupContextPromise = getStartupContext().catch(() => null);
 
@@ -206,7 +226,7 @@ export function createMind(options: {
       seededArchivedAt: null,
       currentThreadId: null,
       seededCause: "restored",
-      consecutiveRotations: 0,
+      rotationGuard: createRotationGuard(),
     };
     sessions.set(name, session);
 
@@ -669,35 +689,57 @@ export function createMind(options: {
     session.seeded = true;
     session.seededCause = "rotation";
     session.seededArchivedAt = null;
-    // Count this rotation; a healthy turn resets it. If back-to-back rotations don't
-    // reduce context (system prompt too large to fit the tail), the cap stops the loop.
-    session.consecutiveRotations++;
-    if (session.consecutiveRotations >= MAX_CONSECUTIVE_ROTATIONS) {
+    // Spend a slot. Recorded only here, after the rotation actually landed — a failed
+    // attempt must not count against the streak.
+    recordRotation(session.rotationGuard);
+    if (budgetSpent(session.rotationGuard)) {
       log(
         "mind",
-        `session "${session.name}": ${session.consecutiveRotations} rotations without relief — deferring further compaction to the SDK (system prompt likely too large)`,
+        `session "${session.name}": ${MAX_CONSECUTIVE_ROTATIONS} rotations without relief — deferring further compaction to the SDK (system prompt likely too large)`,
       );
     }
     log("mind", `session "${session.name}": rotated to ${newThreadId}`);
   }
 
   /**
-   * Decide, after a turn, whether to rotate in place: only when a threshold is
-   * configured, context is at/over it, and we're under the runaway cap (past the
-   * cap, the SDK's native backstop takes over). A turn that came back under the
-   * threshold ends any streak. Rotation is silent — the one-line rotation note
-   * arms via seededCause and lands on the next turn.
+   * The context the model was last sent, or null when it can't be measured.
+   *
+   * Reads the rollout's own `last_token_usage.input_tokens` — codex-rs records the exact
+   * size of the most recent request, which is precisely what the threshold is asking
+   * about. Null means the rollout isn't readable yet: no thread id, or a freshly seeded
+   * thread codex hasn't written a `token_count` into. `shouldRotate` declines to rotate
+   * on a null rather than falling back to the turn's input delta, which sums every
+   * request in the turn and so reads several times high on a tool loop.
    */
-  function maybeRotate(session: CodexSession) {
-    if (!maxContextTokens) return;
-    if (session.contextTokens < maxContextTokens) {
-      session.consecutiveRotations = 0; // healthy turn — streak over
-      return;
+  async function measureContext(session: CodexSession): Promise<number | null> {
+    const threadId = session.currentThreadId ?? sessionStore.load(session.name);
+    if (!threadId) return null;
+    try {
+      const path = rolloutPathFor(threadId);
+      return path ? await readLastContextTokens(path) : null;
+    } catch (err) {
+      log("mind", `session "${session.name}": could not measure context:`, err);
+      return null;
     }
-    if (session.consecutiveRotations >= MAX_CONSECUTIVE_ROTATIONS) return;
+  }
+
+  /**
+   * Decide, after a turn, whether to rotate in place: only when a threshold is
+   * configured, the measured context is at/over it, and the streak of rotations that
+   * relieved nothing is under the cap (past it, the SDK's native backstop takes over).
+   * Rotation is silent — the one-line rotation note arms via seededCause and lands
+   * on the next turn.
+   *
+   * Measures even when the streak is spent, deliberately: the streak only lifts on a
+   * turn that measures under the threshold, so skipping the read to save the work would
+   * make the cap permanent for the life of the session.
+   */
+  async function maybeRotate(session: CodexSession) {
+    const contextTokens = maxContextTokens ? await measureContext(session) : null;
+    if (!shouldRotate(session.rotationGuard, contextTokens, maxContextTokens)) return;
     log(
       "mind",
-      `session "${session.name}": ${session.contextTokens} tokens >= ${maxContextTokens} — rotating`,
+      `session "${session.name}": ${contextTokens} tokens >= ${maxContextTokens} — rotating`,
     );
     performRotation(session);
   }
@@ -713,7 +755,7 @@ export function createMind(options: {
       session.currentMessageId = next.meta.messageId;
       await runTurn(session, next.text, next.meta);
       // Post-turn is between-turns for the queue, so rotate here if we're over.
-      maybeRotate(session);
+      await maybeRotate(session);
     }
 
     session.processing = false;
@@ -790,7 +832,7 @@ export function createMind(options: {
 
   function jsonlPathFor(sessionName: string): string | null {
     const threadId = sessionStore.load(sessionName);
-    return threadId ? findCodexSessionFile(threadId, options.mindDir) : null;
+    return threadId ? rolloutPathFor(threadId) : null;
   }
 
   async function getContextInfo(): Promise<ContextInfo> {
@@ -815,6 +857,11 @@ export function createMind(options: {
           : null;
         infos.push({
           name: s.name,
+          // Display only, and deliberately not `measureContext`: a null `parsed` for a
+          // persistent session means the same rollout carried no usage event, so a
+          // second read of it could only return null too. The turn delta reads high on
+          // a tool loop and can render past 100% of the window — an honest "we couldn't
+          // measure, it's large" rather than a clamp that would look like a reading.
           contextTokens: parsed?.contextTokens ?? s.contextTokens,
           contextWindow: maxContextTokens,
           breakdown: parsed?.breakdown,
