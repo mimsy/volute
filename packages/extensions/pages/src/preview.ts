@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import {
   accessSync,
   constants,
+  copyFileSync,
   existsSync,
   mkdirSync,
   readFileSync,
@@ -12,6 +13,14 @@ import {
 import { basename, delimiter, join, resolve, sep } from "node:path";
 
 import { parseFrontmatter, renderMarkdownPage, resolveStylesheet } from "./markdown.js";
+import {
+  type ChownExec,
+  chownToMind,
+  type MindOwnership,
+  resolveHomeScratchDir,
+  resolvePagesDir,
+  resolvePagesRead,
+} from "./ownership.js";
 
 /**
  * Render a draft page to an image so a mind can see how it looks in a browser —
@@ -20,11 +29,25 @@ import { parseFrontmatter, renderMarkdownPage, resolveStylesheet } from "./markd
  * to the daemon), so chromium runs as the daemon; the PNG lands under the mind's
  * home directory and the mind opens it with its own read tool.
  *
- * File ownership under isolation: the PNG (and any transient markdown html) are
- * written by the daemon as root, but the mind reads the PNG as its own user. Root
- * writes files 0644 and dirs 0755 by default (umask 022), so the .preview dir is
- * traversable and the PNG world-readable — the mind can read it with no chown.
- * Nothing here is mind-writable, so no ownership handoff is needed.
+ * **Ownership.** Readable is not the same as the mind's. This used to reason that
+ * root's default 0644/0755 made the PNG world-readable and therefore left nothing
+ * to hand over — true about reading, and irrelevant. `home/` is the mind's own
+ * space, and a preview it cannot delete is litter it is stuck with: unlinking a
+ * file needs write permission on the *directory*, so a root-owned `.preview/`
+ * accumulates undeletable PNGs render after render. Both the directory and the PNG
+ * go back to the mind, on every render — including one that failed, which is
+ * exactly the run that creates `.preview` and leaves nothing in it.
+ *
+ * **Containment.** The daemon reads `home/pages/<file>` as the daemon and hands the
+ * result to root chromium, and the mind owns every component of that path. Both the
+ * page and the `.preview` directory are resolved through their symlinks and proven
+ * to be where they claim to be before anything is opened or written. See
+ * `resolvePagesRead` and `resolveWithinMindDir`.
+ *
+ * A page's *own content* is a wider question this does not answer: chromium renders
+ * mind-authored HTML from a `file://` origin, which can pull in other local files,
+ * and it runs as the daemon while doing it. Closing that needs a non-`file:` origin
+ * or a renderer that is not the daemon — see the PR for #964.
  */
 
 /**
@@ -118,8 +141,14 @@ function run(cmd: string, args: string[], timeoutMs: number): Promise<void> {
 
 export async function renderPreview(opts: {
   mindDir: string;
+  mindName: string;
+  ownership: MindOwnership;
   file: string;
-}): Promise<{ pngPath: string; rel: string } | { error: string }> {
+  exec?: ChownExec;
+}): Promise<
+  | { pngPath: string; rel: string; ownershipWarning: string | null }
+  | { error: string; ownershipWarning?: string | null }
+> {
   const pagesRoot = resolve(opts.mindDir, "home", "pages");
   const target = resolve(pagesRoot, opts.file);
   if (target !== pagesRoot && !target.startsWith(pagesRoot + sep)) {
@@ -137,6 +166,23 @@ export async function renderPreview(opts: {
     return { error: "Preview renders .html and .md pages." };
   }
 
+  // The check above is the friendly one: it catches a typo'd `../` and says so in
+  // the mind's own terms. It is not containment — `resolve()` never touches the
+  // filesystem, so it cannot tell a page from a symlink pointing out of `home/pages`
+  // at something only the daemon can read. This can, because it resolves the real
+  // path, the final hop included. Refusals are deliberately worded the same as a
+  // plain escape and log the detail host-side: telling the mind where its link
+  // landed would answer the question the link was asked to answer.
+  let realTarget: string;
+  let realPagesRoot: string;
+  try {
+    realTarget = resolvePagesRead(opts.mindDir, target);
+    realPagesRoot = resolvePagesDir(opts.mindDir);
+  } catch (err) {
+    console.warn(`[pages] refusing to preview ${target}: ${(err as Error).message}`);
+    return { error: "Page path must stay within pages/." };
+  }
+
   const browser = resolveBrowser();
   if (!browser) {
     return {
@@ -148,65 +194,130 @@ export async function renderPreview(opts: {
   // Unique per invocation so concurrent previews never share a chromium
   // user-data-dir or temp-file name (process.pid alone is the constant daemon pid).
   const token = `${process.pid}-${previewSeq++}-${randomUUID()}`;
-
-  // The URL chromium screenshots. HTML is loaded straight from disk so its own
-  // CSS and relative assets resolve. Markdown is first rendered through the same
-  // renderer the serve route uses, written beside the page so a relative
-  // stylesheet href still resolves, and cleaned up after.
-  let tempHtml: string | null = null;
-  let url: string;
-  if (isHtml) {
-    url = `file://${target}`;
-  } else {
-    const raw = readFileSync(target, "utf-8");
-    const fm = parseFrontmatter(raw);
-    const stylesheet = resolveStylesheet(target, pagesRoot, fm.style);
-    const html = await renderMarkdownPage(fm.body, {
-      title: fm.title,
-      stylesheetUrl: stylesheet ?? undefined,
-    });
-    tempHtml = resolve(pagesRoot, `.preview-src-${token}.html`);
-    writeFileSync(tempHtml, html, "utf-8");
-    url = `file://${tempHtml}`;
-  }
-
-  const previewDir = resolve(opts.mindDir, "home", ".preview");
-  mkdirSync(previewDir, { recursive: true });
-  const pngName = `${opts.file.replace(/[/\\]/g, "__").replace(/\.(html|md)$/, "")}.png`;
-  const pngPath = resolve(previewDir, pngName);
   const userDataDir = resolve("/tmp", `chromium-${token}`);
+  const pngName = `${opts.file.replace(/[/\\]/g, "__").replace(/\.(html|md)$/, "")}.png`;
 
+  // Chromium screenshots into a private directory of ours, not straight into the
+  // mind's `.preview`. `.preview` belongs to the mind, so it can create entries
+  // there; a render is seconds long and the final filename is predictable, which
+  // makes "unlink the planted symlink, then let root open the path" a window the
+  // mind can stand in. Root writes where nothing else can reach, and the finished
+  // image moves across with an exclusive create.
+  const stageDir = resolve("/tmp", `volute-preview-${token}`);
+  const stagedPng = resolve(stageDir, "out.png");
+
+  // Everything the daemon creates lives inside this block, so a throw anywhere in
+  // it still reaches the `finally` that removes the scratch files. The previous
+  // shape wrote the temp html *before* the try and leaked it whenever any later
+  // step threw.
+  let tempHtml: string | null = null;
+  let realPreviewDir: string | null = null;
+  let pngPath: string | null = null;
+  let wrotePng = false;
+  let failure: string | null = null;
   try {
-    await run(
-      browser,
-      [
-        "--headless=new",
-        "--no-sandbox",
-        "--disable-gpu",
-        "--disable-dev-shm-usage",
-        "--hide-scrollbars",
-        "--force-color-profile=srgb",
-        `--user-data-dir=${userDataDir}`,
-        // Fixed viewport: the chromium CLI has no reliable full-page --screenshot
-        // flag, so we capture a generous window rather than risk a fragile
-        // scripted full-height capture. Tall pages are cut off below 1600px.
-        "--window-size=1280,1600",
-        `--screenshot=${pngPath}`,
-        url,
-      ],
-      30_000,
-    );
+    // The URL chromium screenshots. HTML is loaded straight from disk so its own
+    // CSS and relative assets resolve. Markdown is first rendered through the same
+    // renderer the serve route uses, written beside the page so a relative
+    // stylesheet href still resolves, and cleaned up after.
+    let url: string;
+    if (isHtml) {
+      url = `file://${realTarget}`;
+    } else {
+      const raw = readFileSync(realTarget, "utf-8");
+      const fm = parseFrontmatter(raw);
+      const stylesheet = resolveStylesheet(realTarget, realPagesRoot, fm.style);
+      const html = await renderMarkdownPage(fm.body, {
+        title: fm.title,
+        stylesheetUrl: stylesheet ?? undefined,
+      });
+      const scratch = resolve(realPagesRoot, `.preview-src-${token}.html`);
+      // `wx` — create, never open something already there. The name carries a uuid
+      // so nothing should be, and if something is, refusing beats writing through it.
+      // Recorded for cleanup only once the create succeeded: a refusal means the
+      // file is somebody else's, and the `finally` must not delete it.
+      writeFileSync(scratch, html, { encoding: "utf-8", flag: "wx" });
+      tempHtml = scratch;
+      url = `file://${scratch}`;
+    }
+
+    mkdirSync(resolve(opts.mindDir, "home", ".preview"), { recursive: true });
+    // `home/` is the mind's, so `.preview` may be a link it put there; mkdir
+    // follows one without complaint and `resolve()` cannot see it.
+    realPreviewDir = resolveHomeScratchDir(opts.mindDir, ".preview");
+    pngPath = resolve(realPreviewDir, pngName);
+    // A failed render must not leave the previous image behind to be read as this
+    // one, so the old file goes before the browser starts either way. Unlinking a
+    // symlink removes the link, never what it points at.
+    rmSync(pngPath, { force: true });
+    mkdirSync(stageDir, { mode: 0o700 });
+
+    try {
+      await run(
+        browser,
+        [
+          "--headless=new",
+          "--no-sandbox",
+          "--disable-gpu",
+          "--disable-dev-shm-usage",
+          "--hide-scrollbars",
+          "--force-color-profile=srgb",
+          `--user-data-dir=${userDataDir}`,
+          // Fixed viewport: the chromium CLI has no reliable full-page --screenshot
+          // flag, so we capture a generous window rather than risk a fragile
+          // scripted full-height capture. Tall pages are cut off below 1600px.
+          "--window-size=1280,1600",
+          `--screenshot=${stagedPng}`,
+          url,
+        ],
+        30_000,
+      );
+    } catch (err) {
+      failure = `Could not render the page: ${(err as Error).message}. (Is a browser installed? Set VOLUTE_CHROMIUM.)`;
+    }
+
+    if (!failure) {
+      if (!existsSync(stagedPng)) {
+        failure = "The browser ran but produced no image.";
+      } else {
+        // Re-proven, not assumed: the first check was before a render seconds long,
+        // and `.preview` is the mind's to swap. Narrowing the window to these two
+        // lines is the same residual `resolvePagesWrite` documents, not a new one.
+        pngPath = resolve(resolveHomeScratchDir(opts.mindDir, ".preview"), pngName);
+        // Exclusive: whatever the mind may have put at this name during the render
+        // is not written through, it is refused.
+        copyFileSync(stagedPng, pngPath, constants.COPYFILE_EXCL);
+        wrotePng = true;
+      }
+    }
   } catch (err) {
-    return {
-      error: `Could not render the page: ${(err as Error).message}. (Is a browser installed? Set VOLUTE_CHROMIUM.)`,
-    };
+    // Deliberately generic, like the containment refusal above. These messages
+    // carry resolved daemon-side paths, and the mind is who reads them.
+    console.warn(`[pages] could not prepare a preview of ${opts.file}: ${(err as Error).message}`);
+    failure = "Could not prepare the preview. The daemon log has the reason; ask your host.";
   } finally {
     if (tempHtml) rmSync(tempHtml, { force: true });
+    rmSync(stageDir, { recursive: true, force: true });
     rmSync(userDataDir, { recursive: true, force: true });
   }
 
-  if (!existsSync(pngPath)) {
-    return { error: "The browser ran but produced no image." };
-  }
-  return { pngPath, rel: `home/.preview/${basename(pngPath)}` };
+  // Before the error return, not after it. A render that failed is the run that
+  // creates `.preview` and puts nothing in it, and a directory the mind cannot
+  // write is one it can never clear. Re-chowning the directory every time is also
+  // what heals an install that accumulated root-owned previews before this fix.
+  const owned: string[] = [];
+  if (realPreviewDir) owned.push(realPreviewDir);
+  // Only a file this render actually created. "It exists" is not the same question:
+  // a refused copy means something the mind put there exists at that name, and
+  // chowning it would hand over whatever it is — `-h` stops a symlink, not a
+  // hardlink to an inode the daemon can reach and the mind cannot.
+  if (wrotePng && pngPath) owned.push(pngPath);
+  const ownershipWarning = await chownToMind(opts.ownership, opts.mindName, owned, opts.exec);
+
+  // The warning rides the failure too. A failed render is the one that creates
+  // `.preview` and leaves it empty, so it is exactly when a mind most needs to hear
+  // that the directory may not be its own.
+  if (failure) return { error: failure, ownershipWarning };
+  if (!pngPath) return { error: "The browser ran but produced no image.", ownershipWarning };
+  return { pngPath, rel: `home/.preview/${basename(pngPath)}`, ownershipWarning };
 }
