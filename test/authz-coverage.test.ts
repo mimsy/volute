@@ -65,14 +65,24 @@ const AUTHZ_EXEMPT: Record<string, string> = {
     "in-handler authz: isParticipantOrOwner(conversationId, user.id) or 404 before SSE",
 
   // --- Channel routes (:name = channel, not a mind). Reads are membership metadata. ---
-  "volute/channels.ts GET /:name": "channel metadata + participant list (no message content)",
-  "volute/channels.ts GET /:name/members": "channel participant list (membership metadata)",
-  "volute/channels.ts POST /:name/join": "self-action: joins the caller (user.id) to the channel",
-  "volute/channels.ts POST /:name/leave": "self-action: removes the caller (user.id) from channel",
+  "volute/channels.ts GET /:name":
+    "in-handler authz: a private channel is 404 to non-participants without admin authority " +
+    "(canSeeChannel); a public channel's metadata + participant list are readable by anyone",
+  "volute/channels.ts GET /:name/members":
+    "in-handler authz: same canSeeChannel rule as GET /:name — private channels are 404 " +
+    "to outsiders, public membership is readable",
+  "volute/channels.ts POST /:name/join":
+    "self-action: joins the caller (user.id) to the channel, plus in-handler authz — the " +
+    "same canSeeChannel rule as GET /:name, so a private channel cannot be self-joined",
+  "volute/channels.ts POST /:name/leave":
+    "self-action: removes the caller (user.id) from channel, plus the canSeeChannel 404 so " +
+    "a no-op leave cannot distinguish a private channel from a nonexistent one",
   "volute/channels.ts PATCH /:name":
-    "in-handler authz: settings write requires the caller be a channel member (or admin/system)",
+    "in-handler authz: settings write requires the caller be the channel's owner (or admin), " +
+    "behind the canSeeChannel 404 so the 403 never confirms a private channel exists",
   "volute/channels.ts POST /:name/invite":
-    "in-handler authz: add-member requires the caller be a channel member (or admin/system)",
+    "in-handler authz: add-member requires the caller be a channel member (or admin), behind " +
+    "the canSeeChannel 404 so the 403 never confirms a private channel exists",
 };
 
 // The route's mind identifier is the first :name/:mind/:author param in the path.

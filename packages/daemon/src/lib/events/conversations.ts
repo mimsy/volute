@@ -499,10 +499,12 @@ export async function isConversationForMind(
 
 export async function setConversationPrivate(id: string, isPrivate: boolean): Promise<void> {
   const db = await getDb();
-  await db
-    .update(conversations)
-    .set({ private: isPrivate ? 1 : 0 })
-    .where(eq(conversations.id, id));
+  const value = isPrivate ? 1 : 0;
+  await db.update(conversations).set({ private: value }).where(eq(conversations.id, id));
+  // A channel carries the flag twice: conversations.private is what reads are enforced
+  // on, channels.private is what the settings modal shows. Keep them together, as
+  // updateChannelSettings does from the other side (#891). A non-channel matches no row.
+  await db.update(channels).set({ private: value }).where(eq(channels.conversation_id, id));
 }
 
 export async function deleteConversation(id: string): Promise<void> {

@@ -1,9 +1,10 @@
 import { zValidator } from "@hono/zod-validator";
-import { Hono } from "hono";
+import { type Context, Hono } from "hono";
 import { z } from "zod";
 import { getOrCreateMindUser, getUserByUsername } from "../../../lib/auth.js";
 import {
   addMessage,
+  type Conversation,
   createChannel,
   deleteConversation,
   formatChannelSettings,
@@ -62,18 +63,35 @@ const inviteSchema = z.object({
   username: z.string().min(1),
 });
 
+/**
+ * Whether the caller may see channel `ch` at all. A public channel is visible to any
+ * authenticated principal — the browser lists it and the CLI resolves it before sending.
+ * A private one is visible only to its participants and to admin authority, exactly as
+ * `canReadConversation` treats a private conversation (#890): the room's settings and
+ * member list are part of what "private" promises the people in it, and a mind is an
+ * untrusted principal. Not the spirit's own tiers: anyone can talk to the spirit (#433).
+ */
+async function canSeeChannel(c: Context<AuthEnv>, ch: Conversation): Promise<boolean> {
+  if (ch.private !== 1) return true;
+  if (hasAdminAuthority(c.get("effective"))) return true;
+  return isParticipant(ch.id, c.get("user").id);
+}
+
 const app = new Hono<AuthEnv>()
   .get("/", async (c) => {
     const user = c.get("user");
+    const admin = hasAdminAuthority(c.get("effective"));
     const channels = await listChannels();
     const results = await Promise.all(
       channels.map(async (ch) => {
         const participants = await getParticipants(ch.id);
         const isMember = participants.some((p) => p.userId === user.id);
+        // A private channel is not listed to outsiders — not its name, not its size (#890).
+        if (ch.private === 1 && !isMember && !admin) return null;
         return { ...ch, participantCount: participants.length, isMember };
       }),
     );
-    return c.json(results);
+    return c.json(results.filter((r) => r !== null));
   })
   .post("/", zValidator("json", createSchema), async (c) => {
     const user = c.get("user");
@@ -132,8 +150,12 @@ const app = new Hono<AuthEnv>()
   .get("/:name", async (c) => {
     const name = c.req.param("name");
 
+    // In-handler authz: a private channel answers 404 to outsiders, like a private
+    // conversation does, so its existence is not confirmed either.
     const ch = await getChannelByName(name);
-    if (!ch) return c.json({ error: "Channel not found" }, 404);
+    if (!ch || !(await canSeeChannel(c, ch))) {
+      return c.json({ error: "Channel not found" }, 404);
+    }
 
     const [participants, settings] = await Promise.all([
       getParticipants(ch.id),
@@ -151,8 +173,13 @@ const app = new Hono<AuthEnv>()
     const user = c.get("user");
     const body = c.req.valid("json");
 
+    // A private channel is 404 here too, before the 403 below: answering "Forbidden" to
+    // someone who cannot see the room confirms it exists, which is the same leak the
+    // read routes close (#890).
     const ch = await getChannelByName(name);
-    if (!ch) return c.json({ error: "Channel not found" }, 404);
+    if (!ch || !(await canSeeChannel(c, ch))) {
+      return c.json({ error: "Channel not found" }, 404);
+    }
 
     // In-handler authz: only the channel's creator (stamped "owner" at creation) or an
     // admin/spirit may change settings. Plain members deliberately cannot — otherwise a mind
@@ -188,8 +215,13 @@ const app = new Hono<AuthEnv>()
     const name = c.req.param("name");
     const user = c.get("user");
 
+    // In-handler authz: same visibility rule as GET /:name. Nobody lets themselves into a
+    // private channel — it is entered by invitation, which adds the invitee as a
+    // participant, after which this route sees a room they can already see (#890).
     const ch = await getChannelByName(name);
-    if (!ch) return c.json({ error: "Channel not found" }, 404);
+    if (!ch || !(await canSeeChannel(c, ch))) {
+      return c.json({ error: "Channel not found" }, 404);
+    }
 
     await joinChannel(ch.id, user.id);
     return c.json({ ok: true, conversationId: ch.id });
@@ -198,8 +230,17 @@ const app = new Hono<AuthEnv>()
     const name = c.req.param("name");
     const user = c.get("user");
 
+    // Leaving is a no-op for someone who was never in the room, so without this an
+    // outsider could tell a private channel from a nonexistent one by the 200 (#890).
+    // The cost is that leaving a private channel stops being idempotent: the first call
+    // removes the participant row, so a repeat (a double-click, a client retry after a
+    // timeout that had in fact committed) now answers 404 rather than another 200. That
+    // is the same answer an outsider gets, which is the point — a 200 here would have to
+    // mean "you are not in this room, and I am telling you it exists".
     const ch = await getChannelByName(name);
-    if (!ch) return c.json({ error: "Channel not found" }, 404);
+    if (!ch || !(await canSeeChannel(c, ch))) {
+      return c.json({ error: "Channel not found" }, 404);
+    }
 
     await leaveChannel(ch.id, user.id);
     return c.json({ ok: true });
@@ -207,8 +248,11 @@ const app = new Hono<AuthEnv>()
   .get("/:name/members", async (c) => {
     const name = c.req.param("name");
 
+    // In-handler authz: same visibility rule as GET /:name.
     const ch = await getChannelByName(name);
-    if (!ch) return c.json({ error: "Channel not found" }, 404);
+    if (!ch || !(await canSeeChannel(c, ch))) {
+      return c.json({ error: "Channel not found" }, 404);
+    }
 
     const participants = await getParticipants(ch.id);
     return c.json(participants);
@@ -218,8 +262,11 @@ const app = new Hono<AuthEnv>()
     const inviter = c.get("user");
     const { username } = c.req.valid("json");
 
+    // 404 before the 403, so a private channel is not revealed by the refusal (#890).
     const ch = await getChannelByName(name);
-    if (!ch) return c.json({ error: "Channel not found" }, 404);
+    if (!ch || !(await canSeeChannel(c, ch))) {
+      return c.json({ error: "Channel not found" }, 404);
+    }
 
     // In-handler authz: only a channel member (or admin authority) may add members.
     // The spirit joins a channel like anyone else before it can bring someone into

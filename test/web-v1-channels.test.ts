@@ -9,8 +9,10 @@ import {
   deleteConversation,
   getChannelByName,
   getChannelSettings,
+  getConversation,
   getMessages,
   getParticipants,
+  isParticipant,
   joinChannel,
 } from "../packages/daemon/src/lib/events/conversations.js";
 import { addMind, removeMind } from "../packages/daemon/src/lib/mind/registry.js";
@@ -209,7 +211,7 @@ describe("web v1 channels routes", () => {
     const cookie = await setupAuth();
     const app = createApp();
 
-    await createChannel("duped", userId);
+    const ch = await createChannel("duped", userId);
 
     const res = await app.request("/api/v1/channels", {
       method: "POST",
@@ -222,6 +224,8 @@ describe("web v1 channels routes", () => {
     assert.equal(res.status, 409);
     const body = await res.json();
     assert.ok(body.error);
+
+    await deleteConversation(ch.id);
   });
 
   it("POST /api/v1/channels — 400 for invalid name", async () => {
@@ -820,5 +824,328 @@ describe("web v1 channels routes", () => {
     const app = createApp();
     const res = await app.request("/api/v1/channels");
     assert.equal(res.status, 401);
+  });
+});
+
+// --- Channel privacy (#890, #891) ---
+
+describe("web v1 channel privacy", () => {
+  beforeEach(cleanup);
+  afterEach(cleanup);
+
+  const headers = (cookie: string) => ({ Cookie: `volute_session=${cookie}` });
+
+  /** A non-admin mind principal that is not a member of anything. */
+  async function outsiderMind() {
+    const mind = await getOrCreateMindUser("test-mind");
+    await setUserRole(mind.id, "user");
+    return createSession(mind.id);
+  }
+
+  it("GET /:name and /:name/members — 404 for a non-member mind on a private channel", async () => {
+    await setupAuth();
+    const app = createApp();
+    const mindCookie = await outsiderMind();
+
+    const ch = await createChannel("secret-404", userId, { private: true });
+
+    // Neither the settings nor the member list leak — and, matching private
+    // conversations, not even the channel's existence.
+    for (const path of ["/api/v1/channels/secret-404", "/api/v1/channels/secret-404/members"]) {
+      const res = await app.request(path, { headers: headers(mindCookie) });
+      assert.equal(res.status, 404, path);
+      assert.deepEqual(await res.json(), { error: "Channel not found" });
+    }
+
+    await deleteConversation(ch.id);
+  });
+
+  it("GET /:name and /:name/members — a member reads a private channel", async () => {
+    await setupAuth();
+    const app = createApp();
+    const mindCookie = await outsiderMind();
+
+    const ch = await createChannel("secret-member", userId, { private: true });
+    const mind = await getOrCreateMindUser("test-mind");
+    await joinChannel(ch.id, mind.id);
+
+    const res = await app.request("/api/v1/channels/secret-member", {
+      headers: headers(mindCookie),
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.settings.private, true);
+    assert.equal(body.participants.length, 2);
+
+    const members = await app.request("/api/v1/channels/secret-member/members", {
+      headers: headers(mindCookie),
+    });
+    assert.equal(members.status, 200);
+    assert.equal((await members.json()).length, 2);
+
+    await deleteConversation(ch.id);
+  });
+
+  it("GET /:name and /:name/members — an admin reads a private channel they are not in", async () => {
+    const adminCookie = await setupAuth();
+    const app = createApp();
+
+    // Created with no creator, so the admin is not a participant.
+    const ch = await createChannel("secret-admin", undefined, { private: true });
+
+    const res = await app.request("/api/v1/channels/secret-admin", {
+      headers: headers(adminCookie),
+    });
+    assert.equal(res.status, 200);
+    const members = await app.request("/api/v1/channels/secret-admin/members", {
+      headers: headers(adminCookie),
+    });
+    assert.equal(members.status, 200);
+
+    await deleteConversation(ch.id);
+  });
+
+  it("GET /:name — a public channel stays readable by a non-member, participants included", async () => {
+    await setupAuth();
+    const app = createApp();
+    const mindCookie = await outsiderMind();
+
+    const ch = await createChannel("open", userId);
+
+    // The CLI resolves a channel's id and a member mind from this response before
+    // sending, so a public channel's participant list is deliberately not trimmed.
+    const res = await app.request("/api/v1/channels/open", { headers: headers(mindCookie) });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.participants.length, 1);
+    assert.equal(body.participants[0].username, "ch-admin");
+
+    await deleteConversation(ch.id);
+  });
+
+  it("POST /:name/join — a non-member mind cannot let itself into a private channel", async () => {
+    await setupAuth();
+    const app = createApp();
+    const mindCookie = await outsiderMind();
+    const mind = await getOrCreateMindUser("test-mind");
+
+    const ch = await createChannel("secret-join", userId, { private: true });
+
+    const res = await app.request("/api/v1/channels/secret-join/join", {
+      method: "POST",
+      headers: headers(mindCookie),
+    });
+    assert.equal(res.status, 404);
+    assert.deepEqual(await res.json(), { error: "Channel not found" });
+    // The refusal has to be real, not just a status code.
+    assert.equal(await isParticipant(ch.id, mind.id), false);
+
+    await deleteConversation(ch.id);
+  });
+
+  it("POST /:name/join — an invitation is how a mind gets into a private channel", async () => {
+    const adminCookie = await setupAuth();
+    const app = createApp();
+    const mindCookie = await outsiderMind();
+    const mind = await getOrCreateMindUser("test-mind");
+
+    const ch = await createChannel("secret-invite", userId, { private: true });
+
+    // Invite adds the invitee outright — there is no pending state to accept — so the
+    // join guard never stands between an invitee and the room they were invited to.
+    const invite = await app.request("/api/v1/channels/secret-invite/invite", {
+      method: "POST",
+      headers: { ...headers(adminCookie), "Content-Type": "application/json" },
+      body: JSON.stringify({ username: "test-mind" }),
+    });
+    assert.equal(invite.status, 200);
+    assert.equal(await isParticipant(ch.id, mind.id), true);
+
+    // And from inside, the room is visible and re-joinable like any other.
+    const get = await app.request("/api/v1/channels/secret-invite", {
+      headers: headers(mindCookie),
+    });
+    assert.equal(get.status, 200);
+    const join = await app.request("/api/v1/channels/secret-invite/join", {
+      method: "POST",
+      headers: headers(mindCookie),
+    });
+    assert.equal(join.status, 200);
+
+    await deleteConversation(ch.id);
+  });
+
+  it("POST /:name/join — a public channel is still self-joinable, and an admin joins a private one", async () => {
+    const adminCookie = await setupAuth();
+    const app = createApp();
+    const mindCookie = await outsiderMind();
+
+    const open = await createChannel("open-join", userId);
+    // No creator, so the admin is not already a participant.
+    const hidden = await createChannel("hidden-join", undefined, { private: true });
+
+    const joinOpen = await app.request("/api/v1/channels/open-join/join", {
+      method: "POST",
+      headers: headers(mindCookie),
+    });
+    assert.equal(joinOpen.status, 200);
+
+    const joinHidden = await app.request("/api/v1/channels/hidden-join/join", {
+      method: "POST",
+      headers: headers(adminCookie),
+    });
+    assert.equal(joinHidden.status, 200);
+
+    for (const ch of [open, hidden]) await deleteConversation(ch.id);
+  });
+
+  it("the write routes answer 404, not 403, so none of them confirms a private channel exists", async () => {
+    await setupAuth();
+    const app = createApp();
+    const mindCookie = await outsiderMind();
+
+    const ch = await createChannel("secret-oracle", userId, { private: true });
+
+    // A 403 here would be an existence oracle: the same probe against a name nobody has
+    // taken also returns 404, so the two are indistinguishable.
+    const probes: [string, RequestInit][] = [
+      ["/leave", { method: "POST" }],
+      [
+        "",
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ description: "mine now" }),
+        },
+      ],
+      [
+        "/invite",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username: "ch-admin" }),
+        },
+      ],
+    ];
+    for (const [suffix, init] of probes) {
+      for (const channel of ["secret-oracle", "no-such-channel"]) {
+        const res = await app.request(`/api/v1/channels/${channel}${suffix}`, {
+          ...init,
+          headers: { ...(init.headers ?? {}), ...headers(mindCookie) },
+        });
+        assert.equal(res.status, 404, `${channel}${suffix}`);
+        assert.deepEqual(await res.json(), { error: "Channel not found" }, `${channel}${suffix}`);
+      }
+    }
+
+    // And nothing leaked through: the settings are untouched and the roster is still one.
+    assert.equal((await getChannelSettings("secret-oracle"))?.description, null);
+    assert.equal((await getParticipants(ch.id)).length, 1);
+
+    await deleteConversation(ch.id);
+  });
+
+  it("GET / — omits private channels the caller is not in, unless they hold admin authority", async () => {
+    const adminCookie = await setupAuth();
+    const app = createApp();
+    const mindCookie = await outsiderMind();
+    const mind = await getOrCreateMindUser("test-mind");
+
+    const open = await createChannel("open", userId);
+    const hidden = await createChannel("hidden", userId, { private: true });
+    const mine = await createChannel("mine", userId, { private: true });
+    await joinChannel(mine.id, mind.id);
+
+    const ours = new Set(["open", "hidden", "mine"]);
+    const names = async (cookie: string) => {
+      const res = await app.request("/api/v1/channels", { headers: headers(cookie) });
+      assert.equal(res.status, 200);
+      return ((await res.json()) as { channel_name: string }[])
+        .map((c) => c.channel_name)
+        .filter((n) => ours.has(n))
+        .sort();
+    };
+
+    // The mind sees the public room and the private one it belongs to — not the third.
+    assert.deepEqual(await names(mindCookie), ["mine", "open"]);
+    // An admin sees everything.
+    assert.deepEqual(await names(adminCookie), ["hidden", "mine", "open"]);
+
+    for (const ch of [open, hidden, mine]) await deleteConversation(ch.id);
+  });
+
+  it("PUT /conversations/:id/private — a plain channel member may not flip privacy", async () => {
+    await setupAuth();
+    const app = createDeleteApp();
+
+    const bob = await createUser("bob", "pass");
+    await setUserRole(bob.id, "user");
+    const bobCookie = await createSession(bob.id);
+
+    // The admin created it private; bob merely joined. Membership alone must not
+    // unlock the room — PATCH /channels/:name already refuses bob, and this route
+    // reaches the same column (#891).
+    const ch = await createChannel("locked", userId, { private: true });
+    await joinChannel(ch.id, bob.id);
+
+    const res = await app.request(`/api/v1/conversations/${ch.id}/private`, {
+      method: "PUT",
+      headers: { ...headers(bobCookie), "Content-Type": "application/json" },
+      body: JSON.stringify({ private: false }),
+    });
+    assert.equal(res.status, 403);
+    assert.equal((await getConversation(ch.id))?.private, 1);
+    assert.equal((await getChannelSettings("locked"))?.private, 1);
+
+    await deleteConversation(ch.id);
+  });
+
+  it("PUT /conversations/:id/private — the owner flips both privacy columns together", async () => {
+    await setupAuth();
+    const app = createDeleteApp();
+
+    const bob = await createUser("bob", "pass");
+    await setUserRole(bob.id, "user");
+    const bobCookie = await createSession(bob.id);
+
+    // bob created it, so he is stamped "owner" — same authority PATCH /channels/:name uses.
+    const ch = await createChannel("bobs-room", bob.id);
+
+    const put = (value: boolean) =>
+      app.request(`/api/v1/conversations/${ch.id}/private`, {
+        method: "PUT",
+        headers: { ...headers(bobCookie), "Content-Type": "application/json" },
+        body: JSON.stringify({ private: value }),
+      });
+
+    assert.equal((await put(true)).status, 200);
+    // Both the enforcement column (conversations.private) and the display column
+    // (channels.private) move, so the lock icon and the settings modal agree (#891).
+    assert.equal((await getConversation(ch.id))?.private, 1);
+    assert.equal((await getChannelSettings("bobs-room"))?.private, 1);
+
+    assert.equal((await put(false)).status, 200);
+    assert.equal((await getConversation(ch.id))?.private, 0);
+    assert.equal((await getChannelSettings("bobs-room"))?.private, 0);
+
+    await deleteConversation(ch.id);
+  });
+
+  it("PUT /conversations/:id/private — an admin may lock an ownerless channel", async () => {
+    const adminCookie = await setupAuth();
+    const app = createDeleteApp();
+
+    const ch = await createChannel("ownerless-lock");
+
+    const res = await app.request(`/api/v1/conversations/${ch.id}/private`, {
+      method: "PUT",
+      headers: { ...headers(adminCookie), "Content-Type": "application/json" },
+      body: JSON.stringify({ private: true }),
+    });
+    assert.equal(res.status, 200);
+    assert.equal((await getConversation(ch.id))?.private, 1);
+    assert.equal((await getChannelSettings("ownerless-lock"))?.private, 1);
+
+    await deleteConversation(ch.id);
   });
 });
