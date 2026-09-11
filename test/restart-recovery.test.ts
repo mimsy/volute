@@ -5,7 +5,11 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { BridgeManager } from "../packages/daemon/src/lib/daemon/bridge-manager.js";
-import { MindManager } from "../packages/daemon/src/lib/daemon/mind-manager.js";
+import {
+  DaemonShuttingDownError,
+  MindManager,
+  MindStartupError,
+} from "../packages/daemon/src/lib/daemon/mind-manager.js";
 import { RestartTracker } from "../packages/daemon/src/lib/daemon/restart-tracker.js";
 import { voluteSystemDir } from "../packages/daemon/src/lib/mind/registry.js";
 import log from "../packages/daemon/src/lib/util/logger.js";
@@ -232,5 +236,102 @@ describe("crash recovery wiring", () => {
 
       mgr.shuttingDown = true;
     });
+
+    // #1060: crash recovery is registered only once the health probe passes, so a
+    // restart that dies during its own startup is consumed by `_startMind` and
+    // rejects the recovery timer's `startMind` call. That rejection used to be the
+    // end of the chain — "attempt 2/5" in the log, then "failed to restart", then
+    // nothing, with the mind stopped and its DB `running` flag still set.
+    it("keeps the recovery chain going when the restart itself dies during startup", async () => {
+      const mgr = new MindManager() as AnyMgr;
+      const baseDelay = 100;
+      mgr.restartTracker = new RestartTracker({ maxAttempts: 3, baseDelay, maxDelay: 2000 });
+      const startTimes: number[] = [];
+      mgr.startMind = async (name: string) => {
+        startTimes.push(Date.now());
+        throw new MindStartupError(`Mind ${name} exited with code 1 during startup`, "");
+      };
+
+      const child = fakeChild();
+      mgr.minds.set("chain", { child, port: 4997 });
+      mgr.setupCrashRecovery("chain", child);
+
+      const from = capturedLogs.length;
+      child.emit("exit", 137);
+
+      const msgs = () => capturedLogs.slice(from).map((l) => JSON.parse(l).msg as string);
+      const gaveUp = await waitFor(
+        () => msgs().includes("chain crashed 3 times — giving up on restart"),
+        15000,
+      );
+      assert.ok(gaveUp, `the chain never reached give-up; got: ${msgs().join(" | ")}`);
+
+      assert.equal(startTimes.length, 3, "every budgeted attempt must be tried");
+      assert.deepEqual(
+        msgs()
+          .filter((m) => m.startsWith("crash recovery for chain"))
+          .map((m) => m.split(" — ")[1]),
+        [
+          "attempt 1/3, restarting in 100ms",
+          "attempt 2/3, restarting in 200ms",
+          "attempt 3/3, restarting in 400ms",
+        ],
+      );
+      const gaps = startTimes.slice(1).map((t, i) => t - startTimes[i]);
+      assert.ok(gaps[0] >= 190, `second backoff did not grow: ${gaps[0]}ms`);
+      assert.ok(gaps[1] >= 390, `third backoff did not grow: ${gaps[1]}ms`);
+
+      assert.equal(mgr.restartTracker.getAttempts("chain"), 3);
+      assert.ok(mgr.hasExhaustedRestarts("chain"), "give-up must be visible as exhausted");
+
+      // And it stays given up: no further attempts.
+      await delay(baseDelay * 8 + 100);
+      assert.equal(startTimes.length, 3);
+
+      mgr.shuttingDown = true;
+    });
+
+    for (const [label, makeError] of [
+      [
+        "the mind is already running",
+        (name: string) => new Error(`Mind ${name} is already running`),
+      ],
+      ["the daemon is shutting down", (name: string) => new DaemonShuttingDownError(name)],
+    ] as const) {
+      it(`does not spend an attempt when the restart finds ${label}`, async () => {
+        const mgr = new MindManager() as AnyMgr;
+        const baseDelay = 100;
+        mgr.restartTracker = new RestartTracker({ maxAttempts: 3, baseDelay, maxDelay: 2000 });
+        let starts = 0;
+        mgr.startMind = async (name: string) => {
+          starts++;
+          throw makeError(name);
+        };
+
+        const child = fakeChild();
+        mgr.minds.set("busy", { child, port: 4996 });
+        mgr.setupCrashRecovery("busy", child);
+
+        const from = capturedLogs.length;
+        child.emit("exit", 1);
+
+        const msgs = () => capturedLogs.slice(from).map((l) => JSON.parse(l).msg as string);
+        assert.ok(
+          await waitFor(() => msgs().includes("failed to restart busy"), 5000),
+          "the recovery timer never fired",
+        );
+        // Past the next backoff, so a spuriously scheduled attempt would have fired.
+        await delay(baseDelay * 2 + 200);
+
+        assert.equal(starts, 1, "a non-startup rejection must not schedule another attempt");
+        assert.equal(mgr.restartTracker.getAttempts("busy"), 1, "only the real crash counts");
+        assert.deepEqual(
+          msgs().filter((m) => m.startsWith("crash recovery for busy")),
+          ["crash recovery for busy — attempt 1/3, restarting in 100ms"],
+        );
+
+        mgr.shuttingDown = true;
+      });
+    }
   });
 });
