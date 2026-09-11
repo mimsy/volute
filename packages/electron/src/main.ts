@@ -114,6 +114,9 @@ type MindInfo = {
 const STATUS_LABELS: Record<string, string> = {
   running: "●",
   starting: "◐",
+  // Up, draining the backlog it slept through (#920) — not stopped, which the fallback
+  // glyph would have claimed.
+  waking: "◐",
   sleeping: "◌",
   stopped: "○",
 };

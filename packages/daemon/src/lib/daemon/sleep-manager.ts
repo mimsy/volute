@@ -53,6 +53,13 @@ const WAKE_BACKOFF_MS = [60_000, 5 * 60_000, 15 * 60_000, 60 * 60_000];
 
 export type SleepState = {
   sleeping: boolean;
+  /**
+   * The mind is up and has been given its wake event, but its backlog hasn't drained yet
+   * (#920). It is **awake** — `sleeping` is already false and every availability check
+   * reads it as present — while inbound still queues so the night's backlog arrives
+   * before anything that lands during the drain. Cleared once the flush completes.
+   */
+  waking: boolean;
   sleepingSince: string | null;
   scheduledWakeAt: string | null;
   wokenByTrigger: boolean;
@@ -77,6 +84,7 @@ type SleepStatePersisted = Record<string, SleepState>;
 function defaultState(): SleepState {
   return {
     sleeping: false,
+    waking: false,
     sleepingSince: null,
     scheduledWakeAt: null,
     wokenByTrigger: false,
@@ -141,7 +149,8 @@ export class SleepManager {
   private transitioning = new Set<string>();
   private sleepConfigs = new Map<string, SleepConfig | null>();
 
-  private get statePath(): string {
+  /** Protected so tests can point persistence at a scratch file. */
+  protected get statePath(): string {
     return resolve(voluteSystemDir(), "sleep-state.json");
   }
 
@@ -170,6 +179,19 @@ export class SleepManager {
           state.wakeFailures ??= 0;
           state.nextWakeAttemptAt ??= null;
           state.lastWakeAt ??= null;
+          state.waking ??= false;
+          // A daemon restart mid-wake: the process and its unfinished wake turn died with
+          // the daemon, and the backlog is still sleep-queued with nothing left to flush
+          // it. Put the mind back to sleep and pull its wake time to now, so the first
+          // tick redoes the wake whole — summary then flush — rather than stranding a
+          // night's messages until the next scheduled wake (which, after a manual
+          // `clock wake`, could be a day out).
+          if (state.waking) {
+            state.waking = false;
+            state.sleeping = true;
+            state.scheduledWakeAt = new Date().toISOString();
+            slog.info(`${name} was mid-wake when the daemon stopped — re-waking it`);
+          }
           this.states.set(name, state);
         }
       }
@@ -181,9 +203,10 @@ export class SleepManager {
   saveState(): void {
     const data: SleepStatePersisted = {};
     for (const [name, state] of this.states) {
-      // Persist sleeping states, plus awake minds that carry a lastWakeAt so the
-      // manual-wake exemption for level-triggered sleep onset survives a restart.
-      if (state.sleeping || state.lastWakeAt) data[name] = state;
+      // Persist sleeping states, minds mid-wake (so a daemon restart can finish the
+      // interrupted wake), plus awake minds that carry a lastWakeAt so the manual-wake
+      // exemption for level-triggered sleep onset survives a restart.
+      if (state.sleeping || state.waking || state.lastWakeAt) data[name] = state;
     }
     try {
       writeFileSync(this.statePath, `${JSON.stringify(data, null, 2)}\n`);
@@ -199,6 +222,28 @@ export class SleepManager {
     if (!state?.sleeping) return false;
     if (state.wokenByTrigger) return false;
     return true;
+  }
+
+  /**
+   * The mind is up, has its wake event, and is draining its backlog (#920). Awake for
+   * every purpose except inbound ordering — see {@link isQueueingInbound}.
+   */
+  isWaking(name: string): boolean {
+    return this.states.get(name)?.waking === true;
+  }
+
+  /**
+   * Whether inbound (messages, immediate events) should be left queued rather than
+   * delivered live: the mind is asleep, or awake but still draining the backlog its
+   * sleep accumulated. Callers gating *availability* want {@link isSleeping}; only
+   * callers deciding *delivery order* want this.
+   *
+   * A waking mind queues but is not asleep: `whileSleeping: skip` must not drop a
+   * message here, and a wake trigger has nothing left to wake. Both are decided on
+   * {@link isSleeping} at the call site.
+   */
+  isQueueingInbound(name: string): boolean {
+    return this.isSleeping(name) || this.isWaking(name);
   }
 
   getState(name: string): SleepState {
@@ -362,16 +407,7 @@ export class SleepManager {
     this.transitioning.add(name);
 
     try {
-      // Start the mind process (skip if already running — e.g. process wasn't stopped during sleep)
-      const manager = getMindManager();
-      if (!manager.isRunning(name)) {
-        try {
-          await wakeMind(name);
-        } catch (err) {
-          await this.handleWakeFailure(name, err);
-          return;
-        }
-      }
+      if (!(await this.ensureProcessRunning(name))) return;
 
       // Wait for health check
       const entry = await findMind(name);
@@ -431,13 +467,20 @@ export class SleepManager {
           sleepActivity,
         });
 
-        // Deliver the wake event directly (the mind is running but still flagged sleeping).
+        // The mind is up and about to be handed its wake event: it is awake from here,
+        // whatever its first turn does (#920). Marked before the deliverEvent so no
+        // window exists in which the mind has the event while the world is told it is
+        // asleep — a wake turn that stalls (retried 401s, a slow model) used to leave
+        // that lie standing for the full timeout below.
+        this.markWaking(name);
+
         await deliverEvent(name, { type: "wake", body: summaryText, force: true });
 
         // Let the wake-summary turn finish before flushing the backlog (#382), so the
         // summary and the per-channel batches arrive as separate, ordered turns rather
-        // than interleaving. Bounded so a stuck turn can't wedge the flush.
-        await this.waitForIdle(name, 120_000);
+        // than interleaving. Bounded so a stuck turn can't wedge the flush — the bound
+        // ends the *wait*, nothing more: the mind has been awake since markWaking.
+        await this.waitForIdle(name, this.wakeSummaryTimeoutMs);
       }
 
       // Flush queued messages (grouped into one pre-batched turn per channel)
@@ -452,14 +495,55 @@ export class SleepManager {
         slog.info(`flushed ${flushedEvents} queued event(s) for ${name}`);
       }
 
-      // Mark as awake
+      // The backlog is drained and in order — stop queuing inbound.
       if (!opts?.trigger) {
         this.markAwake(name);
+        // Sweep up what landed while the flush above was running; normally a no-op.
+        //
+        // This closes the window for events but only narrows it for messages, because the
+        // two write in opposite orders: `deliverEvent` inserts its row and *then* reads
+        // the sleep state, so any event that saw `waking` already exists for this SELECT
+        // to find. `deliverMessage` reads the state first and inserts after, so a message
+        // whose check ran before `markAwake` can still land after this SELECT and wait
+        // for the next wake. Closing that needs a lock across the check and the insert;
+        // the window is sub-millisecond and predates this change.
+        const late = await this.flushQueuedMessages(name);
+        const lateEvents = await flushQueuedEvents(name);
+        if (late > 0 || lateEvents > 0) {
+          slog.info(
+            `flushed ${late} message(s) and ${lateEvents} event(s) that arrived mid-wake for ${name}`,
+          );
+        }
       }
 
       slog.info(`${name} is now awake${opts?.trigger ? " (trigger wake)" : ""}`);
     } finally {
+      // A throw between markWaking and markAwake must not strand the mind mid-wake with
+      // its inbound queuing forever.
+      if (!opts?.trigger && this.states.get(name)?.waking) this.markAwake(name);
       this.transitioning.delete(name);
+    }
+  }
+
+  /**
+   * Bound on the wait for the wake-summary turn. It gates the backlog flush only —
+   * never the mind's advertised state (#920). Overridable so tests needn't wait it out.
+   */
+  protected wakeSummaryTimeoutMs = 120_000;
+
+  /**
+   * Bring the mind's process up for a wake, unless it is already running (e.g. the
+   * process was never stopped). Returns false when the wake failed and was recorded.
+   * A seam: tests drive the real wake sequence without spawning a process.
+   */
+  protected async ensureProcessRunning(name: string): Promise<boolean> {
+    if (getMindManager().isRunning(name)) return true;
+    try {
+      await wakeMind(name);
+      return true;
+    } catch (err) {
+      await this.handleWakeFailure(name, err);
+      return false;
     }
   }
 
@@ -594,10 +678,13 @@ export class SleepManager {
   async flushQueuedMessages(name: string): Promise<number> {
     try {
       const db = await getDb();
+      // Ordered explicitly: arrival order within a channel is the promise this flush
+      // makes to the mind, and a bare select makes no such guarantee.
       const rows = await db
         .select()
         .from(deliveryQueue)
         .where(and(eq(deliveryQueue.mind, name), eq(deliveryQueue.status, "sleep-queued")))
+        .orderBy(deliveryQueue.id)
         .all();
 
       if (rows.length === 0) return 0;
@@ -775,6 +862,7 @@ export class SleepManager {
     const sleepConfig = this.getSleepConfig(name);
     const state: SleepState = {
       sleeping: true,
+      waking: false,
       sleepingSince: new Date().toISOString(),
       // An explicit voluntary wake-at is authoritative for the night — null out
       // the cron wake so an earlier scheduled wake can't silently override it.
@@ -788,6 +876,24 @@ export class SleepManager {
       lastWakeAt: this.states.get(name)?.lastWakeAt ?? null,
     };
     this.states.set(name, state);
+    this.saveState();
+  }
+
+  /**
+   * The mind is up and has (or is about to have) its wake event: awake, with its backlog
+   * still draining. `sleepingSince` and the wake times are deliberately left in place —
+   * they are what {@link loadState} needs to redo an interrupted wake after a restart.
+   */
+  private markWaking(name: string): void {
+    const state = this.states.get(name);
+    if (!state) return;
+    state.sleeping = false;
+    state.waking = true;
+    state.wokenByTrigger = false;
+    // Stamp the wake now, not at markAwake: the level-triggered sleep-onset exemption
+    // (#453) is what keeps the tick from putting a mind waking inside its own sleep
+    // window straight back to bed.
+    state.lastWakeAt = new Date().toISOString();
     this.saveState();
   }
 
@@ -916,7 +1022,9 @@ export class SleepManager {
     }
   }
 
-  private async waitForIdle(name: string, timeoutMs: number): Promise<void> {
+  /** Resolve when the mind's current turn ends, or after `timeoutMs`. Protected as a
+   *  test seam for the wake sequence. */
+  protected async waitForIdle(name: string, timeoutMs: number): Promise<void> {
     return new Promise<void>((resolve) => {
       const timeout = setTimeout(() => {
         unsub();

@@ -34,7 +34,9 @@ export function chatStatus(mind: Mind | undefined, isAdmin: boolean): ChatStatus
   if (mind.status === "stopped") {
     return { kind: "stopped", text: `${name} isn't running`, showStart: isAdmin };
   }
-  if (mind.status === "starting") {
+  // "waking" is a mind that is up with its wake event, still draining the night's
+  // backlog (#920) — a message sent now arrives behind it, so say so.
+  if (mind.status === "starting" || mind.status === "waking") {
     return { kind: "starting", text: `${name} is waking up…`, showStart: false };
   }
   if (mind.status === "sleeping") {

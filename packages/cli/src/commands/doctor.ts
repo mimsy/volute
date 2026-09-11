@@ -289,7 +289,11 @@ async function runDiagnostics(): Promise<Diagnostics> {
         const status = m.status ?? (m.running ? "running" : "stopped");
         const failed = m.lastError ? " (last turn failed)" : "";
         const state: CheckState =
-          status === "running" || status === "sleeping" ? "pass" : m.lastError ? "fail" : "warn";
+          status === "running" || status === "sleeping" || status === "waking"
+            ? "pass"
+            : m.lastError
+              ? "fail"
+              : "warn";
         checks.push({ label: `Mind: ${m.name}`, state, detail: `${status}${failed}` });
       }
     }

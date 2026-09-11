@@ -12,7 +12,8 @@ const slog = log.child("spirit-availability");
  * The system spirit's availability for receiving a message:
  * - `running`  — up and reachable now.
  * - `sleeping` — asleep; the sleep queue delivers on wake (don't force-wake, per #418).
- * - `waking`   — was stopped and has just been started on demand; a reply is coming.
+ * - `waking`   — a reply is coming, but not instantly: either it was stopped and has just
+ *   been started on demand, or it is awake with its overnight backlog still draining.
  * - `unavailable` — the spirit cannot exist or cannot stay up (setup incomplete, project
  *   creation failed, crash-looping); nothing will answer, so the caller should surface an
  *   honest notice instead of silence.
@@ -23,7 +24,7 @@ export type SpiritStatus = "running" | "sleeping" | "waking" | "unavailable";
  * The spirit's current state, before any on-demand start. `stopped` is the one state that
  * warrants starting it; `cannot-exist` is terminal (no spirit can serve the message).
  */
-export type SpiritState = "running" | "sleeping" | "stopped" | "cannot-exist";
+export type SpiritState = "running" | "waking" | "sleeping" | "stopped" | "cannot-exist";
 
 export type SpiritStateInputs = {
   /** Setup finished (provider + model), so a spirit is allowed to exist. */
@@ -32,6 +33,12 @@ export type SpiritStateInputs = {
   spiritExists: boolean;
   /** The spirit is asleep. */
   sleeping: boolean;
+  /**
+   * The spirit is up and has its wake event, but its backlog is still draining (#920).
+   * Awake — so never force-started — but the sender's message is queued behind the
+   * backlog, and reporting `running` would promise a reply that isn't immediate.
+   */
+  waking?: boolean;
   /** The spirit process is running. */
   running: boolean;
   /**
@@ -61,6 +68,7 @@ const CREATION_FAILED_NOTICE = `${SPIRIT_NOTICE_PREFIX} (it failed to start). An
 export function classifySpiritState(i: SpiritStateInputs): SpiritState {
   if (!i.setupComplete || !i.spiritExists) return "cannot-exist";
   if (i.sleeping) return "sleeping";
+  if (i.waking) return "waking";
   if (i.running) return "running";
   if (i.recentlyFailed) return "cannot-exist";
   return "stopped";
@@ -136,6 +144,7 @@ export async function ensureSpiritAvailable(): Promise<SpiritAvailability | null
       setupComplete,
       spiritExists: !!entry,
       sleeping: sleepManager.isSleeping(spiritName),
+      waking: sleepManager.isWaking(spiritName),
       running: manager.isRunning(spiritName),
       recentlyFailed,
     });
@@ -145,6 +154,8 @@ export async function ensureSpiritAvailable(): Promise<SpiritAvailability | null
         return { status: "unavailable", notice: spiritUnavailableNotice(setupComplete) };
       case "sleeping":
         return { status: "sleeping" };
+      case "waking":
+        return { status: "waking" };
       case "running":
         return { status: "running" };
       case "stopped":

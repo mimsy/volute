@@ -137,6 +137,33 @@ describe("classifySpiritState (pure decision logic)", () => {
     );
   });
 
+  it("waking when its overnight backlog is still draining (#920)", () => {
+    // Awake — so never force-started — but the sender's message is queued behind the
+    // backlog, so "running" would promise a reply that isn't immediate.
+    assert.equal(
+      classifySpiritState({
+        setupComplete: true,
+        spiritExists: true,
+        sleeping: false,
+        waking: true,
+        running: true,
+      }),
+      "waking",
+    );
+    // A crash mid-wake leaves it not running; it is still draining, not stopped, so it
+    // must not be force-started underneath the sleep manager's own wake.
+    assert.equal(
+      classifySpiritState({
+        setupComplete: true,
+        spiritExists: true,
+        sleeping: false,
+        waking: true,
+        running: false,
+      }),
+      "waking",
+    );
+  });
+
   it("running when up and not sleeping", () => {
     assert.equal(
       classifySpiritState({

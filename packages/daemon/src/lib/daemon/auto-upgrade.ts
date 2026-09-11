@@ -63,6 +63,8 @@ export function resetAutoUpgradeState(): void {
 export type SelectEligibleDeps = {
   isStale: (entry: MindEntry) => boolean;
   isSleeping: (name: string) => boolean;
+  /** The mind is mid-wake (#920) — see {@link selectEligible} for why that excludes it. */
+  isWaking: (name: string) => boolean;
   readConfig: (name: string) => { upgrades?: "auto" | "manual" } | null;
 };
 
@@ -70,6 +72,12 @@ export type SelectEligibleDeps = {
  * Pure eligibility + ordering over registry entries: stale, non-seed/spirit/variant
  * minds that haven't opted out via `"upgrades": "manual"`, sorted sleeping-first
  * (stable — ties keep their original relative order).
+ *
+ * A mind mid-wake is excluded until the next pass. It reads as awake *and* running, and
+ * neither outcome is safe there: upgrading with a restart kills the in-flight wake turn
+ * and the backlog flush behind it (the same hazard the reload path defers on), while
+ * upgrading without one would rewrite `src/` under a live process — an invariant this
+ * pass otherwise keeps, since every other `restart: false` case has the mind stopped.
  */
 export function selectEligible(entries: MindEntry[], deps: SelectEligibleDeps): MindEntry[] {
   const eligible = entries.filter((entry) => {
@@ -77,6 +85,7 @@ export function selectEligible(entries: MindEntry[], deps: SelectEligibleDeps): 
     if (entry.stage === "seed") return false;
     if (entry.parent) return false;
     if (!deps.isStale(entry)) return false;
+    if (deps.isWaking(entry.name)) return false;
     if (deps.readConfig(entry.name)?.upgrades === "manual") return false;
     return true;
   });
@@ -272,14 +281,21 @@ export async function runAutoUpgrades(): Promise<void> {
 
   const sleepManager = getSleepManagerIfReady();
   const isSleeping = (name: string) => sleepManager?.isSleeping(name) ?? false;
+  const isWaking = (name: string) => sleepManager?.isWaking(name) ?? false;
 
   const eligible = selectEligible(entries, {
     isStale: (entry) => isTemplateStale(entry),
     isSleeping,
+    isWaking,
     readConfig: (name) => readVoluteConfig(mindDir(name)),
   });
 
-  pruneAutoUpgradeState(new Set(eligible.map((e) => e.name)));
+  // A mind held back only because it is mid-wake has not left the eligible set in the
+  // sense prune means (fixed by hand) — it is coming back on the next pass, so keep its
+  // blocked/alerted record rather than re-alerting it for a reason already reported.
+  const keep = new Set(eligible.map((e) => e.name));
+  for (const entry of entries) if (isWaking(entry.name)) keep.add(entry.name);
+  pruneAutoUpgradeState(keep);
 
   if (eligible.length === 0) return;
 

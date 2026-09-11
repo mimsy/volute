@@ -1,10 +1,22 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { describe, it } from "node:test";
 import { and, eq } from "drizzle-orm";
 import {
+  getSleepManagerIfReady,
+  initSleepManager,
   matchesGlob,
   SleepManager,
   type SleepState,
@@ -14,8 +26,14 @@ import {
   initDeliveryManager,
   tryGetDeliveryManager,
 } from "../packages/daemon/src/lib/delivery/delivery-manager.js";
-import { mindDir } from "../packages/daemon/src/lib/mind/registry.js";
-import { activity, deliveryQueue, systemEvents } from "../packages/daemon/src/lib/schema.js";
+import { deliverMessage } from "../packages/daemon/src/lib/delivery/message-delivery.js";
+import { addMind, mindDir, removeMind } from "../packages/daemon/src/lib/mind/registry.js";
+import {
+  activity,
+  deliveryQueue,
+  mindHistory,
+  systemEvents,
+} from "../packages/daemon/src/lib/schema.js";
 
 // We test the SleepManager's pure logic methods without starting the daemon.
 // The class methods like checkWakeTrigger, formatDuration, etc. are tested directly.
@@ -144,11 +162,73 @@ class TestSleepManager extends SleepManager {
   testArchiveSessions(name: string): Promise<void> {
     return (this as any).archiveSessions(name);
   }
+
+  // Point persistence at a scratch file so loadState can be driven directly.
+  private testStatePath: string | null = null;
+
+  setStatePathForTest(path: string): void {
+    this.testStatePath = path;
+  }
+
+  protected override get statePath(): string {
+    return this.testStatePath ?? super.statePath;
+  }
+
+  testLoadState(): void {
+    (this as any).loadState();
+  }
+}
+
+/**
+ * Drives the REAL {@link SleepManager.initiateWake}. Only the process start and the batch
+ * delivery are stubbed — the state transitions, wake event and flush are shipped code.
+ */
+class WakeSleepManager extends SleepManager {
+  setStateForTest(name: string, state: SleepState): void {
+    (this as any).states.set(name, state);
+  }
+
+  setWakeTimeoutForTest(ms: number): void {
+    (this as any).wakeSummaryTimeoutMs = ms;
+  }
+
+  /** These tests wake a stub HTTP mind, not a spawned process. */
+  protected override async ensureProcessRunning(): Promise<boolean> {
+    return true;
+  }
+
+  /** Runs in place of the wait for the wake-summary turn, when set. */
+  onWaitForIdle: (() => Promise<void>) | null = null;
+  midWake: {
+    isSleeping: boolean;
+    isWaking: boolean;
+    queuesInbound: boolean;
+    reported: SleepState;
+  } | null = null;
+
+  protected override async waitForIdle(name: string, timeoutMs: number): Promise<void> {
+    if (!this.onWaitForIdle) return super.waitForIdle(name, timeoutMs);
+    await this.onWaitForIdle();
+  }
+
+  deliveredBatches: { channel: string; payloads: any[] }[] = [];
+  /** Runs as each batch is delivered — a seam for racing a row in mid-flush. */
+  onDeliverBatch: (() => Promise<void>) | null = null;
+
+  protected override async deliverQueuedBatch(_name: string, payloads: any[]): Promise<boolean> {
+    this.deliveredBatches.push({
+      channel: (payloads[0]?.channel as string) ?? "unknown",
+      payloads,
+    });
+    await this.onDeliverBatch?.();
+    return true;
+  }
 }
 
 function sleepingState(overrides?: Partial<SleepState>): SleepState {
   return {
     sleeping: true,
+    waking: false,
     sleepingSince: new Date(Date.now() - 8 * 3600_000).toISOString(), // 8 hours ago
     scheduledWakeAt: null,
     wokenByTrigger: false,
@@ -165,6 +245,7 @@ function sleepingState(overrides?: Partial<SleepState>): SleepState {
 function awakeState(overrides?: Partial<SleepState>): SleepState {
   return {
     sleeping: false,
+    waking: false,
     sleepingSince: null,
     scheduledWakeAt: null,
     wokenByTrigger: false,
@@ -176,6 +257,16 @@ function awakeState(overrides?: Partial<SleepState>): SleepState {
     lastWakeAt: null,
     ...overrides,
   };
+}
+
+/** Up, handed its wake event, backlog not yet drained (#920). */
+function wakingState(overrides?: Partial<SleepState>): SleepState {
+  return awakeState({
+    waking: true,
+    sleepingSince: new Date(Date.now() - 8 * 3600_000).toISOString(),
+    lastWakeAt: new Date().toISOString(),
+    ...overrides,
+  });
 }
 
 describe("SleepManager", () => {
@@ -1373,5 +1464,334 @@ describe("SleepManager.archiveSessions — codex pointers", () => {
     await sm.testArchiveSessions(name);
     assert.equal(existsSync(codexSessionsDir(name)), false);
     rmSync(mindDir(name), { recursive: true, force: true });
+  });
+});
+
+/**
+ * The waking window (#920): from the moment the mind is handed its wake event until its
+ * backlog has drained, it is awake — and everything that asks whether it is there is told
+ * so — while inbound keeps queuing so the night's messages arrive first.
+ */
+describe("SleepManager waking state (#920)", () => {
+  it("reports a waking mind as awake", () => {
+    const sm = new TestSleepManager();
+    sm.setStateForTest("waker", wakingState());
+
+    assert.equal(sm.isSleeping("waker"), false, "a waking mind is not asleep");
+    assert.equal(sm.isWaking("waker"), true);
+    assert.equal(sm.getState("waker").sleeping, false, "and GET /sleep must not say it is");
+    assert.equal(sm.getState("waker").waking, true);
+  });
+
+  it("keeps queuing inbound while waking, so the backlog stays first", () => {
+    const sm = new TestSleepManager();
+    sm.setStateForTest("waker", wakingState());
+    assert.equal(sm.isQueueingInbound("waker"), true);
+  });
+
+  it("queues inbound while asleep, and stops once fully awake", () => {
+    const sm = new TestSleepManager();
+    sm.setStateForTest("sleeper", sleepingState());
+    sm.setStateForTest("up", awakeState());
+    assert.equal(sm.isQueueingInbound("sleeper"), true);
+    assert.equal(sm.isQueueingInbound("up"), false);
+    assert.equal(sm.isQueueingInbound("never-heard-of-it"), false);
+  });
+
+  it("does not queue inbound during a trigger wake (it is listening for that message)", () => {
+    const sm = new TestSleepManager();
+    sm.setStateForTest("trig", sleepingState({ wokenByTrigger: true }));
+    assert.equal(sm.isQueueingInbound("trig"), false);
+    assert.equal(sm.isWaking("trig"), false);
+  });
+
+  it("re-wakes a mind whose wake was cut short by a daemon restart", async () => {
+    const sm = new TestSleepManager();
+    const dir = mkdtempSync(resolve(tmpdir(), "sleep-waking-"));
+    const statePath = resolve(dir, "sleep-state.json");
+    // A mind that was mid-wake when the daemon stopped, with a scheduled wake a day out
+    // (as after a manual `clock wake` inside the sleep window).
+    const tomorrow = new Date(Date.now() + 24 * 3600_000).toISOString();
+    writeFileSync(
+      statePath,
+      JSON.stringify({ interrupted: wakingState({ scheduledWakeAt: tomorrow }) }),
+    );
+    sm.setStatePathForTest(statePath);
+    sm.testLoadState();
+
+    const state = sm.getStateForTest("interrupted");
+    assert.equal(state?.waking, false, "the interrupted wake is not still in flight");
+    assert.equal(state?.sleeping, true, "the mind is asleep again, so the wake is redone");
+    assert.ok(
+      state?.scheduledWakeAt && new Date(state.scheduledWakeAt) <= new Date(),
+      "and its wake is due now, not tomorrow — otherwise its backlog strands for a day",
+    );
+    rmSync(dir, { recursive: true, force: true });
+
+    // The restored state is only half the claim — prove the tick actually re-wakes it.
+    await sm.testEvaluateMind("interrupted", new Date());
+    assert.deepEqual(sm.wakeCalls, ["interrupted"], "the next tick redoes the wake");
+  });
+});
+
+/**
+ * The real `initiateWake`, driven end to end against a stub mind server. Only the process
+ * start and the batch delivery are stubbed; the state transitions, the wake event, the
+ * summary wait and the flush are the shipped code.
+ */
+describe("SleepManager.initiateWake (#920)", () => {
+  /** Stub mind server: answers /message like a mind that accepts its wake event. */
+  async function stubMind(name: string): Promise<{ posted: any[]; close: () => void }> {
+    const posted: any[] = [];
+    const server: Server = createServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on("data", (c: Buffer) => chunks.push(c));
+      req.on("end", () => {
+        try {
+          posted.push(JSON.parse(Buffer.concat(chunks).toString()));
+        } catch {}
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: true, event: true }));
+      });
+    });
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    await addMind(name, (server.address() as AddressInfo).port);
+    return { posted, close: () => server.close() };
+  }
+
+  let counter = 0;
+  function uniqueMind(): string {
+    return `wake-mind-${process.pid}-${counter++}`;
+  }
+
+  async function queueSleepRow(mind: string, content: string, channel = "@volute"): Promise<void> {
+    const db = await getDb();
+    await db.insert(deliveryQueue).values({
+      mind,
+      thread: "sleep",
+      channel,
+      sender: "volute",
+      status: "sleep-queued",
+      payload: JSON.stringify({ channel, sender: "volute", content }),
+    });
+  }
+
+  async function cleanup(mind: string): Promise<void> {
+    const db = await getDb();
+    await db.delete(deliveryQueue).where(eq(deliveryQueue.mind, mind));
+    await db.delete(systemEvents).where(eq(systemEvents.mind, mind));
+    await db.delete(activity).where(eq(activity.mind, mind));
+    await removeMind(mind);
+  }
+
+  it("is awake, and says so, while its wake turn is still running", async () => {
+    const mind = uniqueMind();
+    const stub = await stubMind(mind);
+    await queueSleepRow(mind, "overnight one");
+    await queueSleepRow(mind, "overnight two");
+
+    const sm = new WakeSleepManager();
+    sm.setStateForTest(mind, sleepingState({ queuedMessageCount: 2 }));
+    // Observed from inside the summary wait: the mind has its wake event and its turn
+    // has not finished — the exact window #920 reported as `sleeping: true`.
+    sm.onWaitForIdle = async () => {
+      sm.midWake = {
+        isSleeping: sm.isSleeping(mind),
+        isWaking: sm.isWaking(mind),
+        queuesInbound: sm.isQueueingInbound(mind),
+        reported: sm.getState(mind),
+      };
+      // A live message arriving in that window.
+      await queueSleepRow(mind, "live message");
+    };
+
+    try {
+      await sm.initiateWake(mind);
+
+      assert.ok(sm.midWake, "the summary wait ran");
+      assert.equal(sm.midWake?.isSleeping, false, "mid-wake, the mind is not sleeping");
+      assert.equal(sm.midWake?.isWaking, true);
+      assert.equal(sm.midWake?.reported.sleeping, false, "GET /sleep reports sleeping: false");
+      assert.equal(sm.midWake?.reported.waking, true, "and waking: true");
+      assert.equal(sm.midWake?.queuesInbound, true, "while inbound still queues");
+
+      assert.equal(
+        stub.posted[0]?.event?.type,
+        "wake",
+        "the mind was handed its wake event before any of that",
+      );
+
+      // The live message is delivered, and behind the night's backlog.
+      const delivered = sm.deliveredBatches.flatMap((b) => b.payloads.map((p: any) => p.content));
+      assert.deepEqual(delivered, ["overnight one", "overnight two", "live message"]);
+
+      const after = sm.getState(mind);
+      assert.equal(after.waking, false, "once the backlog is drained, waking clears");
+      assert.equal(after.sleeping, false);
+      assert.equal(sm.isQueueingInbound(mind), false, "and inbound goes live");
+    } finally {
+      stub.close();
+      await cleanup(mind);
+    }
+  });
+
+  it("flushes a message that lands while the first flush is running", async () => {
+    // The sweep after markAwake: a row inserted after the first flush read its rows would
+    // otherwise have nothing left to deliver it until the next wake.
+    const mind = uniqueMind();
+    const stub = await stubMind(mind);
+    await queueSleepRow(mind, "overnight");
+
+    const sm = new WakeSleepManager();
+    sm.setWakeTimeoutForTest(50);
+    sm.setStateForTest(mind, sleepingState({ queuedMessageCount: 1 }));
+    let raced = false;
+    sm.onDeliverBatch = async () => {
+      if (raced) return;
+      raced = true;
+      await queueSleepRow(mind, "landed during the flush");
+    };
+
+    try {
+      await sm.initiateWake(mind);
+
+      const delivered = sm.deliveredBatches.flatMap((b) => b.payloads.map((p: any) => p.content));
+      assert.deepEqual(delivered, ["overnight", "landed during the flush"]);
+      const db = await getDb();
+      const left = await db
+        .select()
+        .from(deliveryQueue)
+        .where(and(eq(deliveryQueue.mind, mind), eq(deliveryQueue.status, "sleep-queued")))
+        .all();
+      assert.equal(left.length, 0, "nothing is left stranded for the next wake");
+    } finally {
+      stub.close();
+      await cleanup(mind);
+    }
+  });
+
+  it("a wake turn that never finishes does not hold the mind in a false state", async () => {
+    // The production shape of #920: bad credentials make the SDK retry for minutes, so the
+    // summary turn never completes and the wait runs to its bound.
+    const mind = uniqueMind();
+    const stub = await stubMind(mind);
+    await queueSleepRow(mind, "overnight");
+
+    const sm = new WakeSleepManager();
+    sm.setWakeTimeoutForTest(50); // the real waitForIdle, just a shorter bound
+    sm.setStateForTest(mind, sleepingState({ queuedMessageCount: 1 }));
+
+    try {
+      await sm.initiateWake(mind);
+
+      const after = sm.getState(mind);
+      assert.equal(after.sleeping, false, "the mind is awake — its process is up and fed");
+      assert.equal(after.waking, false, "and the timeout released the drain rather than it");
+      assert.equal(sm.deliveredBatches.length, 1, "the backlog still flushed");
+      assert.ok(after.lastWakeAt, "the wake is stamped, so the tick won't re-sleep it");
+    } finally {
+      stub.close();
+      await cleanup(mind);
+    }
+  });
+});
+
+/**
+ * The inbound gate itself (#920), through the real `deliverMessage` and the singleton
+ * sleep manager it reads — the seam that decides whether a message waits for the backlog
+ * or lands on top of it.
+ */
+describe("inbound delivery while a mind is waking (#920)", () => {
+  async function stubMind(name: string): Promise<{ posted: any[]; close: () => void }> {
+    const posted: any[] = [];
+    const server: Server = createServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on("data", (c: Buffer) => chunks.push(c));
+      req.on("end", () => {
+        try {
+          posted.push(JSON.parse(Buffer.concat(chunks).toString()));
+        } catch {}
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: true }));
+      });
+    });
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    await addMind(name, (server.address() as AddressInfo).port);
+    return { posted, close: () => server.close() };
+  }
+
+  function singleton() {
+    return getSleepManagerIfReady() ?? initSleepManager();
+  }
+
+  function setSingletonState(name: string, state: SleepState): void {
+    (singleton() as unknown as { states: Map<string, SleepState> }).states.set(name, state);
+  }
+
+  async function cleanup(name: string): Promise<void> {
+    const db = await getDb();
+    await db.delete(deliveryQueue).where(eq(deliveryQueue.mind, name));
+    await db.delete(mindHistory).where(eq(mindHistory.mind, name));
+    (singleton() as unknown as { states: Map<string, SleepState> }).states.delete(name);
+    await removeMind(name);
+  }
+
+  it("queues a message that arrives while the mind is still draining its backlog", async () => {
+    const mind = `waking-inbound-${process.pid}`;
+    const stub = await stubMind(mind);
+    setSingletonState(mind, wakingState());
+
+    try {
+      const ok = await deliverMessage(mind, {
+        channel: "@volute",
+        sender: "someone",
+        senderId: null,
+        content: "sent mid-wake",
+        isDM: true,
+      });
+
+      assert.equal(ok, true, "the sender is told the message was accepted");
+      assert.equal(stub.posted.length, 0, "but it is not POSTed ahead of the backlog");
+
+      const db = await getDb();
+      const rows = await db
+        .select()
+        .from(deliveryQueue)
+        .where(and(eq(deliveryQueue.mind, mind), eq(deliveryQueue.status, "sleep-queued")))
+        .all();
+      assert.equal(rows.length, 1, "it waits in the sleep queue for the wake flush");
+      assert.equal(JSON.parse(rows[0].payload).content, "sent mid-wake");
+    } finally {
+      stub.close();
+      await cleanup(mind);
+    }
+  });
+
+  it("delivers live once the mind is fully awake", async () => {
+    const mind = `awake-inbound-${process.pid}`;
+    const stub = await stubMind(mind);
+    setSingletonState(mind, awakeState({ lastWakeAt: new Date().toISOString() }));
+
+    try {
+      await deliverMessage(mind, {
+        channel: "@volute",
+        sender: "someone",
+        senderId: null,
+        content: "after the drain",
+        isDM: true,
+      });
+
+      const db = await getDb();
+      const rows = await db
+        .select()
+        .from(deliveryQueue)
+        .where(and(eq(deliveryQueue.mind, mind), eq(deliveryQueue.status, "sleep-queued")))
+        .all();
+      assert.equal(rows.length, 0, "nothing is queued once waking has cleared");
+      assert.ok(stub.posted.length > 0, "the message goes straight to the mind");
+    } finally {
+      stub.close();
+      await cleanup(mind);
+    }
   });
 });

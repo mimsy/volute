@@ -178,7 +178,7 @@ async function getMindStatus(
   seed?: { stage?: string | null; dir?: string | null },
 ) {
   const manager = getMindManager();
-  let status: "running" | "stopped" | "starting" | "sleeping" = "stopped";
+  let status: "running" | "stopped" | "starting" | "sleeping" | "waking" = "stopped";
   let wakeAt: string | null = null;
 
   // Check sleep state first
@@ -191,6 +191,11 @@ async function getMindStatus(
       // A voluntary wake-at is authoritative for the night (initiateSleep nulls
       // the cron wake when one is set), so prefer it.
       wakeAt = sleepState.voluntaryWakeAt ?? sleepState.scheduledWakeAt;
+    } else if (sleepManager?.isWaking(name)) {
+      // Up, holding its wake event, draining the backlog — awake, but not yet reading
+      // live traffic (#920). Reported as its own state rather than as sleep, which it
+      // isn't, or as running, which would promise an immediate reply.
+      status = "waking";
     }
   } catch (err) {
     // A swallowed failure here misreports a sleeping mind as stopped (and chat
@@ -200,7 +205,14 @@ async function getMindStatus(
 
   if (status !== "sleeping" && registryRunning !== false && manager.isRunning(name)) {
     const health = await checkHealth(port);
-    status = health.ok ? "running" : "starting";
+    // A waking mind that answers is still waking — up, with its backlog draining. One
+    // that doesn't answer is starting, not waking.
+    if (!health.ok) status = "starting";
+    else if (status !== "waking") status = "running";
+  } else if (status === "waking") {
+    // Its process died or was stopped out from under the wake. That is `stopped`, and it
+    // must not hide behind the wake window for the length of the summary wait (#920).
+    status = "stopped";
   }
 
   const config = readVoluteConfig(mindDir(name));
@@ -613,7 +625,9 @@ const app = new Hono<AuthEnv>()
       if (context?.type === "reload") {
         const { getSleepManagerIfReady } = await import("../../lib/daemon/sleep-manager.js");
         const sleepState = getSleepManagerIfReady()?.getState(name);
-        if (sleepState?.sleeping) {
+        // Includes a mind mid-wake (#920): restarting it there would kill the wake turn
+        // and the flush that follows it.
+        if (sleepState?.sleeping || sleepState?.waking) {
           log.info(`skipping reload for ${name} during sleep — will apply on next wake`);
           return c.json({ ok: true, deferred: true, port: targetPort });
         }
@@ -822,6 +836,10 @@ const app = new Hono<AuthEnv>()
     if (!sm) return c.json({ error: "Sleep manager not initialized" }, 503);
 
     if (sm.isSleeping(name)) return c.json({ error: "Mind is already sleeping" }, 409);
+    // Mid-wake: initiateSleep would be refused by the transition lock and answer ok.
+    if (sm.isWaking(name)) {
+      return c.json({ error: "Mind is waking — try again once it is awake" }, 409);
+    }
 
     const body = await c.req.json().catch(() => ({}));
     const wakeAt = (body as { wakeAt?: string }).wakeAt;
@@ -868,6 +886,7 @@ const app = new Hono<AuthEnv>()
     if (!sm) return c.json({ error: "Sleep manager not initialized" }, 503);
 
     const sleepState = sm.getState(name);
+    if (sleepState.waking) return c.json({ error: "Mind is already waking" }, 409);
     if (!sleepState.sleeping) return c.json({ error: "Mind is not sleeping" }, 409);
 
     if (sleepState.wokenByTrigger) {
