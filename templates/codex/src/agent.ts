@@ -98,6 +98,8 @@ type CodexSession = {
   seededCause: SeedCause;
   /** Consecutive rotations that relieved nothing; see lib/rotation.ts. */
   rotationGuard: RotationGuard;
+  /** One unmeasurable-context notice per session, so a silent no-rotate is diagnosable. */
+  measureWarned: boolean;
 };
 
 // Loaded once at startup
@@ -227,6 +229,7 @@ export function createMind(options: {
       currentThreadId: null,
       seededCause: "restored",
       rotationGuard: createRotationGuard(),
+      measureWarned: false,
     };
     sessions.set(name, session);
 
@@ -607,8 +610,9 @@ export function createMind(options: {
                 const delta = usageDelta(session.lastUsage, usage);
                 if (delta) {
                   session.lastUsage = delta.next;
-                  // The turn's own context size, not the thread's running total: the
-                  // rotation threshold is a context-window comparison.
+                  // The turn's own context size, not the thread's running total. Feeds
+                  // the dashboard's fallback estimate only; rotation measures the
+                  // rollout itself (see measureContext).
                   session.contextTokens = delta.contextTokens;
                   const payload = { ...delta.payload, model: options.model };
                   broadcast(session, { type: "usage", ...payload });
@@ -713,14 +717,41 @@ export function createMind(options: {
    */
   async function measureContext(session: CodexSession): Promise<number | null> {
     const threadId = session.currentThreadId ?? sessionStore.load(session.name);
-    if (!threadId) return null;
+    if (!threadId) return unmeasurable(session, "no thread id yet");
+    let path: string | null;
     try {
-      const path = rolloutPathFor(threadId);
-      return path ? await readLastContextTokens(path) : null;
+      path = rolloutPathFor(threadId);
     } catch (err) {
-      log("mind", `session "${session.name}": could not measure context:`, err);
-      return null;
+      return unmeasurable(session, `rollout lookup failed for thread ${threadId}: ${err}`);
     }
+    if (!path) return unmeasurable(session, `no rollout file found for thread ${threadId}`);
+    try {
+      const measured = await readLastContextTokens(path);
+      return measured === null ? unmeasurable(session, `no token_count yet in ${path}`) : measured;
+    } catch (err) {
+      return unmeasurable(session, `could not read ${path}: ${err}`);
+    }
+  }
+
+  /**
+   * Note the first unmeasurable turn of a session, once, and return null.
+   *
+   * Without this the state is silent and indistinguishable from a healthy one: a null
+   * never rotates, so a mind whose rollout can never be located — a CODEX_HOME or HOME
+   * mismatch under per-user isolation would do it — climbs quietly to the SDK's backstop
+   * with nothing in the log to say why volute stopped rotating. The reason string
+   * separates that from the benign case, a freshly seeded thread codex hasn't written a
+   * `token_count` into yet, which resolves itself on the next turn.
+   */
+  function unmeasurable(session: CodexSession, reason: string): null {
+    if (!session.measureWarned) {
+      session.measureWarned = true;
+      log(
+        "mind",
+        `session "${session.name}": context not measurable (${reason}) — not rotating; the SDK backstop covers a runaway. Logged once per session.`,
+      );
+    }
+    return null;
   }
 
   /**

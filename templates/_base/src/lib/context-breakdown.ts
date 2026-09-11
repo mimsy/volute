@@ -268,6 +268,15 @@ type CodexEntry = {
  *
  * Returns null when the rollout can't be read or carries no usage event yet (a thread
  * whose first turn is still in flight), leaving the caller to fall back.
+ *
+ * Known cost: one pass over the whole rollout per turn, so the work across a session is
+ * quadratic in its turn count. Accepted for now — the pass is I/O plus a substring test
+ * per line, against a turn that just spent seconds in the model. Reading a fixed tail
+ * backwards is the obvious improvement and the obvious trap: a single multi-MB tool
+ * output can push the last `token_count` further back than any fixed window, and a tail
+ * read that silently misses it returns null, which reads to the caller as "not
+ * measurable" and quietly disables rotation. A backward reader has to grow its window
+ * until it finds an event or reaches the start of the file, not guess a size.
  */
 export async function readLastContextTokens(filePath: string): Promise<number | null> {
   const stream = createReadStream(filePath, { encoding: "utf-8" });

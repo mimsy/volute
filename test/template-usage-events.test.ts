@@ -385,13 +385,18 @@ describe("codex template usage", () => {
 });
 
 /**
- * #913: the rotation gate reads `contextTokens`, and a session-cumulative counter there
- * rotates the session every turn for the rest of its life — a mind losing continuity it
- * never needed to lose, roughly four turns into a window it has barely filled.
+ * `UsageDelta.contextTokens` — the turn's own context size, which the dashboard falls
+ * back to when the rollout carries no usage event yet.
  *
- * The threshold is the one the codex template ships (`home/.config/config.json`).
+ * It gated rotation in the first half of #913's fix, and a session-cumulative counter
+ * there rotated the session every turn for the rest of its life. Rotation now measures
+ * the rollout (see test/codex-rotation.test.ts); these cases pin the arithmetic that
+ * kept the displayed figure from being the thread's lifetime total.
+ *
+ * The threshold compared against is the one the codex template ships
+ * (`home/.config/config.json`), so the numbers stay recognisable.
  */
-describe("codex template: context size for the rotation threshold", () => {
+describe("codex template: the turn's own context size", () => {
   const MAX_CONTEXT_TOKENS = 150_000;
 
   /** One turn's cumulative snapshot, shaped like codex's `total_token_usage`. */
