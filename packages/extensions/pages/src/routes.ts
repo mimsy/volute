@@ -7,7 +7,7 @@ import { getRecentPagesList, getSites } from "./cache.js";
 import { areCommentsClosed, getPage } from "./db.js";
 import { parseFrontmatter, renderMarkdownPage, resolveStylesheet } from "./markdown.js";
 import { resolveMentions } from "./mentions.js";
-import { within } from "./ownership.js";
+import { isMultiplyLinkedFile, within } from "./ownership.js";
 import { defaultPromotionTitle, writeQuickPage } from "./publish.js";
 import { MIME_TYPES, PAGES_CSP } from "./serving.js";
 import {
@@ -272,7 +272,7 @@ export function createRoutes(ctx: ExtensionContext): Hono {
           // the author on their next `pages publish` or `pages write`.
           if (written.publish.skipped.length > 0) {
             console.warn(
-              `[pages] ${actor.username}: skipped symlinked entries while publishing: ${written.publish.skipped.join(", ")}`,
+              `[pages] ${actor.username}: skipped linked entries while publishing: ${written.publish.skipped.map((e) => `${e.file} (${e.reason})`).join(", ")}`,
             );
           }
           setCommentBody(ctx.db, id, { mind: actor.username, file: written.file });
@@ -432,7 +432,16 @@ export function createPublicRoutes(ctx: ExtensionContext): Hono {
       const realRoot = await realpath(pagesRoot).catch(() => null);
       const realFile = await realpath(fileToServe).catch(() => null);
       const linkStat = await lstat(fileToServe).catch(() => null);
-      if (!realRoot || !realFile || !within(realRoot, realFile) || linkStat?.isSymbolicLink())
+      if (
+        !realRoot ||
+        !realFile ||
+        !within(realRoot, realFile) ||
+        linkStat?.isSymbolicLink() ||
+        // A second *name* for an inode, not a pointer to a path. Every check above
+        // passes it: it is a regular file, and it resolves inside the root because
+        // that is genuinely where the name lives (#1089).
+        (linkStat && isMultiplyLinkedFile(linkStat))
+      )
         return c.text("Not found", 404);
 
       // And the dotfile guard again, this time on the *resolved* path. The check

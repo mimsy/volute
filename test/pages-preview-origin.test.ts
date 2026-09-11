@@ -15,8 +15,11 @@
 import assert from "node:assert/strict";
 import {
   chmodSync,
+  existsSync,
+  linkSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
   readdirSync,
   readFileSync,
   realpathSync,
@@ -39,6 +42,16 @@ import {
 import { PAGES_CSP } from "../packages/extensions/pages/src/serving.js";
 
 const SECRET = "host-only-credential-do-not-render";
+
+/** Make `to` a second name for `from`, or report that this filesystem will not. */
+function hardlink(from: string, to: string): boolean {
+  try {
+    linkSync(from, to);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 const NO_ISOLATION: MindOwnership = {
   isIsolationEnabled: () => false,
@@ -132,6 +145,19 @@ describe("the preview origin server contains every request to the pages tree", (
     }
   });
 
+  it("404s a hardlinked page, unlike an internal symlink", async (t) => {
+    // The pair below is the whole distinction. An internal symlink is provably a
+    // second route to a file inside the tree. A hard link proves nothing about the
+    // inode it names — on macOS a mind can link a file it cannot itself read — and
+    // it looks like an ordinary regular file to every other check here.
+    if (!hardlink(resolve(outside, "secret.html"), resolve(root, "evil.html"))) {
+      return t.skip("this filesystem refuses hard links");
+    }
+    const res = await get("/tok-1234/evil.html");
+    assert.equal(res.status, 404);
+    assert.ok(!(await res.text()).includes(SECRET));
+  });
+
   it("serves an internal symlink, which escalates nothing", async () => {
     // Deliberately unlike the published-page rule. This tree is one the mind can
     // already read in full; what is being contained is the daemon's reach.
@@ -189,6 +215,27 @@ describe("the preview origin server contains every request to the pages tree", (
       after - before < 6,
       `12 abandoned responses should not hold descriptors open: ${before} -> ${after}`,
     );
+  });
+
+  it("404s rather than sending an empty 200 when the open fails after the stat", async (t) => {
+    // A 200 written off the stat, before the file is actually opened, turns a
+    // failed open into a successful empty page — which is a worse answer than
+    // "not found", because it looks like the page rendered.
+    if (process.getuid?.() === 0) return t.skip("root can open anything");
+    const locked = resolve(root, "locked.html");
+    writeFileSync(locked, "<h1>secret-ish</h1>");
+    chmodSync(locked, 0o000);
+    try {
+      openSync(locked, "r");
+      return t.skip("this filesystem does not enforce the mode");
+    } catch {
+      // Good: unopenable, and the stat above it still succeeds.
+    }
+
+    const res = await get("/tok-1234/locked.html");
+    assert.equal(res.status, 404, "an unopenable file is not found, not an empty success");
+    assert.equal(await res.text(), "Not found");
+    chmodSync(locked, 0o644);
   });
 
   it("stops serving once closed", async () => {
@@ -394,6 +441,73 @@ describe("renderPreview drives the browser at the loopback origin", () => {
       [],
       "the rendered scratch is cleaned up",
     );
+  });
+});
+
+describe("a hardlinked markdown page is refused before it is read", () => {
+  // The markdown branch renders the `.md` itself with `readFileSync` and never
+  // fetches it over the preview origin, so the server's refusal cannot see it.
+  // The resolver is the only place that covers both reads.
+  let mindDir: string;
+  let pagesRoot: string;
+  let outside: string;
+  let stubDir: string;
+  let prevChromium: string | undefined;
+
+  beforeEach(() => {
+    mindDir = mkdtempSync(resolve(tmpdir(), "preview-hl-mind-"));
+    outside = realpathSync(mkdtempSync(resolve(tmpdir(), "preview-hl-host-")));
+    stubDir = mkdtempSync(resolve(tmpdir(), "preview-hl-stub-"));
+    pagesRoot = resolve(mindDir, "home", "pages");
+    mkdirSync(pagesRoot, { recursive: true });
+    writeFileSync(resolve(outside, "secret.md"), `# ${SECRET}\n`);
+    prevChromium = process.env.VOLUTE_CHROMIUM;
+  });
+
+  afterEach(() => {
+    if (prevChromium === undefined) delete process.env.VOLUTE_CHROMIUM;
+    else process.env.VOLUTE_CHROMIUM = prevChromium;
+    for (const d of [mindDir, outside, stubDir]) rmSync(d, { recursive: true, force: true });
+  });
+
+  it("refuses without launching a browser, and says why", async (t) => {
+    if (!hardlink(resolve(outside, "secret.md"), resolve(pagesRoot, "note.md"))) {
+      return t.skip("this filesystem refuses hard links");
+    }
+    const logPath = resolve(stubDir, "log.txt");
+    process.env.VOLUTE_CHROMIUM = writeFetchingStub(stubDir, logPath);
+
+    const result = await renderPreview({
+      mindDir,
+      mindName: "mimsy",
+      ownership: NO_ISOLATION,
+      file: "note.md",
+    });
+
+    assert.ok("error" in result, "a hardlinked page is not rendered");
+    // Named outright. Saying "more than one name on disk" reports what the mind
+    // did, not what it pointed at, so it gives nothing away — and "must stay
+    // within pages/" would be false about a file that is within pages/.
+    assert.match(result.error, /more than one name on disk/);
+    assert.doesNotMatch(result.error, /must stay within/);
+    assert.ok(!existsSync(logPath), "the browser is never launched");
+  });
+
+  it("refuses a hardlinked html page the same way", async (t) => {
+    if (!hardlink(resolve(outside, "secret.md"), resolve(pagesRoot, "index.html"))) {
+      return t.skip("this filesystem refuses hard links");
+    }
+    // Stubbed so that breaking the refusal fails fast instead of launching a real
+    // browser and waiting out the 30s render timeout.
+    process.env.VOLUTE_CHROMIUM = writeFetchingStub(stubDir, resolve(stubDir, "html-log.txt"));
+    const result = await renderPreview({
+      mindDir,
+      mindName: "mimsy",
+      ownership: NO_ISOLATION,
+      file: "index.html",
+    });
+    assert.ok("error" in result);
+    assert.match(result.error, /more than one name on disk/);
   });
 });
 

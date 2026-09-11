@@ -19,7 +19,7 @@ import {
   parseReassignments,
   planMigration,
 } from "./migrate-notes.js";
-import { within } from "./ownership.js";
+import { isMultiplyLinkedFile, within } from "./ownership.js";
 import { renderPreview } from "./preview.js";
 import {
   collectFiles,
@@ -27,6 +27,7 @@ import {
   describePages,
   describeSkipped,
   publishPersonalPages,
+  type SkippedEntry,
   writeQuickPage,
 } from "./publish.js";
 import {
@@ -90,7 +91,7 @@ async function writeResponsePage(
   title: string,
   body: string,
 ): Promise<
-  { ref: PageRef; ownershipWarning: string | null; skipped: string[] } | { error: string }
+  { ref: PageRef; ownershipWarning: string | null; skipped: SkippedEntry[] } | { error: string }
 > {
   const mindDir = await ctx.getMindDir(mindName);
   if (!mindDir) return { error: `Mind not found: ${mindName}` };
@@ -110,7 +111,8 @@ async function writeResponsePage(
  * Read a published page's body from the served snapshot.
  *
  * The third reader of these trees, and it reads as the daemon like the other two,
- * so it refuses a symlink for the same reason they do (#1077). The commons
+ * so it refuses a symlink, and a hard link, for the same reason they do
+ * (#1077, #1089). The commons
  * checkout is why it still matters after publish stopped copying links: a mind
  * commits into `home/pages/_system` and git writes the link out on checkout, where
  * `collectPageFiles`' `statSync` then indexes it as an ordinary page. Containment
@@ -125,7 +127,10 @@ export function readPageBody(ctx: ExtensionContext, ref: PageRef): string | null
   const target = resolve(root, ref.file);
   if (target !== root && !target.startsWith(root + sep)) return null;
   try {
-    if (lstatSync(target).isSymbolicLink()) return null;
+    const linkStat = lstatSync(target);
+    // A symlink points elsewhere; a hard link *is* elsewhere, under a second name.
+    // Both are ways to make the daemon read a file for someone who cannot (#1089).
+    if (linkStat.isSymbolicLink() || isMultiplyLinkedFile(linkStat)) return null;
     const realTarget = realpathSync(target);
     if (!within(realpathSync(root), realTarget)) return null;
     return readFileSync(realTarget, "utf-8");
@@ -452,7 +457,7 @@ export function createCommands(): Record<string, ExtensionCommand> {
         // silently posting a comment that claims a page which isn't there.
         let body: PageRef | null = null;
         let ownershipWarning: string | null = null;
-        let skipped: string[] = [];
+        let skipped: SkippedEntry[] = [];
         if (attach) {
           const found = resolveAttachedPage(db, user.username, attach);
           if ("error" in found) return { error: found.error };

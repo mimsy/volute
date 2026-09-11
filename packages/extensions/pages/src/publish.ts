@@ -27,7 +27,13 @@ import { knownPageFiles, type PageInput, syncPublishedPages } from "./db.js";
 import { parseLinks } from "./links.js";
 import { parseFrontmatter } from "./markdown.js";
 import { parseHtmlMentions, parseMentions } from "./mentions.js";
-import { type ChownExec, chownToMind, resolvePagesDir, resolvePagesWrite } from "./ownership.js";
+import {
+  type ChownExec,
+  chownToMind,
+  isMultiplyLinkedFile,
+  resolvePagesDir,
+  resolvePagesWrite,
+} from "./ownership.js";
 
 /** Subdirectory the quick path writes into. Conventional, not enforced. */
 export const QUICK_DIR = "notes";
@@ -106,9 +112,20 @@ export type PublishResult = {
   fileCount: number;
   diff: { added: string[]; removed: string[]; updated: string[] };
   snapshotDir: string;
-  /** Entries left out of the snapshot because they are symlinks. See `publishPersonalPages`. */
-  skipped: string[];
+  /** Entries left out of the snapshot, and why. See `publishPersonalPages`. */
+  skipped: SkippedEntry[];
 };
+
+/**
+ * A page publish refused to copy, with the reason it refused.
+ *
+ * Two shapes of the same problem: a name in `home/pages` that is not a page of the
+ * mind's own, but a second route to somebody else's file. The reason travels with
+ * the entry because the two are fixed differently — a symlink is visibly a pointer
+ * and an author knows they made one, while a hard link looks like an ordinary file
+ * in every listing, so being told which it is, is most of the help.
+ */
+export type SkippedEntry = { file: string; reason: "symlink" | "hardlink" };
 
 /**
  * What to tell the author about entries publish refused to copy.
@@ -120,13 +137,14 @@ export type PublishResult = {
  * because they all produce the same surprise. The dashboard's promote route is the
  * one exception, and it logs instead: its reader is the web UI, not the author.
  */
-export function describeSkipped(skipped: string[]): string {
+export function describeSkipped(skipped: SkippedEntry[]): string {
   if (skipped.length === 0) return "";
+  const named = skipped.map((s) => `${s.file} (${s.reason})`).join(", ");
   return (
-    `\nSkipped ${skipped.length} symlinked ${skipped.length === 1 ? "entry" : "entries"}: ` +
-    `${skipped.join(", ")}\n` +
-    "Published pages are served to anyone, so a page has to be a real file — " +
-    "a link would let a visitor read whatever it points at. Copy the content in instead."
+    `\nSkipped ${skipped.length} linked ${skipped.length === 1 ? "entry" : "entries"}: ${named}\n` +
+    "Published pages are served to anyone, so a page has to be a file of its own. " +
+    "A symlink or a hard link would let a visitor read whatever it points at — " +
+    "including files you cannot read yourself. Copy the content in instead."
   );
 }
 
@@ -134,14 +152,16 @@ export function describeSkipped(skipped: string[]): string {
  * Snapshot a mind's `home/pages/` to the served directory and reconcile the DB.
  * Throws on failure; callers turn that into a command error.
  *
- * **Nothing symlinked is copied.** The mind owns `home/pages` and can put a link
+ * **Nothing linked is copied** — neither a symlink nor a hard link. The mind owns `home/pages` and can put a link
  * to anything in it; `cpSync`'s `dereference` defaults to false, so before this
  * check such a link was reproduced verbatim inside `dataDir/sites/<mind>/` — and
  * the public serve route is unauthenticated and reads as the daemon, which is root
  * on a user-isolation install. Publishing a link was therefore a way to hand any
  * visitor the contents of a file the mind itself could not open. The source is
  * `resolvePagesDir`'s real path rather than the raw one, because `pages` itself
- * could be the link.
+ * could be the link. A hard link needs its own test (`isMultiplyLinkedFile`): it is
+ * a second *name* for an inode rather than a pointer to a path, so it is a plain
+ * regular file to every check written for symlinks.
  *
  * Skipped entries are returned, not swallowed — see `describeSkipped`. The filter
  * is not a defence against a link swapped in between the `lstat` here and the copy
@@ -165,24 +185,29 @@ export function publishPersonalPages(
   // Exclude _system/ which is the shared pages git worktree.
   const snapshotDir = resolve(ctx.dataDir, "sites", mindName);
   if (existsSync(snapshotDir)) rmSync(snapshotDir, { recursive: true });
-  const skipped: string[] = [];
+  const skipped: SkippedEntry[] = [];
   cpSync(sourceDir, snapshotDir, {
     recursive: true,
     filter: (src) => {
       if (src.endsWith(`${sep}_system`) || src.includes(`${sep}_system${sep}`)) return false;
+      let reason: SkippedEntry["reason"];
       try {
-        if (!lstatSync(src).isSymbolicLink()) return true;
+        const st = lstatSync(src);
+        if (st.isSymbolicLink()) reason = "symlink";
+        else if (isMultiplyLinkedFile(st)) reason = "hardlink";
+        else return true;
       } catch (err) {
         // An entry that vanished between the walk and this stat is not copyable
         // either. Refusing it keeps the publish going — aborting would let any
         // churn in the mind's own directory fail the whole thing — but it is not a
-        // symlink, so it does not go in the list that says it was one.
+        // link, so it does not go in the list that says it was one.
         console.warn(`[pages] skipping unreadable entry ${src}: ${(err as Error).message}`);
         return false;
       }
       // Refusing a directory skips its whole subtree, so a symlinked directory is
-      // one skipped entry rather than one per file underneath it.
-      skipped.push(relative(sourceDir, src) || src);
+      // one skipped entry rather than one per file underneath it. (A directory is
+      // never refused as a hard link: every directory has more than one link.)
+      skipped.push({ file: relative(sourceDir, src) || src, reason });
       return false;
     },
   });

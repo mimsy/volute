@@ -17,6 +17,7 @@ import {
   type ChownExec,
   chownToMind,
   type MindOwnership,
+  MultiplyLinkedPageError,
   resolveHomeScratchDir,
   resolvePagesDir,
   resolvePagesRead,
@@ -177,7 +178,8 @@ export async function renderPreview(opts: {
   // at something only the daemon can read. This can, because it resolves the real
   // path, the final hop included. Refusals are deliberately worded the same as a
   // plain escape and log the detail host-side: telling the mind where its link
-  // landed would answer the question the link was asked to answer.
+  // landed would answer the question the link was asked to answer. A hard link is
+  // the exception and is named outright — see the catch below.
   let realTarget: string;
   let realPagesRoot: string;
   try {
@@ -185,6 +187,18 @@ export async function renderPreview(opts: {
     realPagesRoot = resolvePagesDir(opts.mindDir);
   } catch (err) {
     console.warn(`[pages] refusing to preview ${target}: ${(err as Error).message}`);
+    // A hard link is the one refusal that can be explained without giving
+    // anything away: it reports what the mind did, not what it pointed at. And
+    // "must stay within pages/" would be a lie about a file that is within
+    // pages/ — the author would go looking for an escape that isn't there.
+    if (err instanceof MultiplyLinkedPageError) {
+      return {
+        error:
+          "That page has more than one name on disk. A preview renders the file itself, " +
+          "so it has to be a file of its own — write the content into pages/ instead of " +
+          "linking to it.",
+      };
+    }
     return { error: "Page path must stay within pages/." };
   }
 

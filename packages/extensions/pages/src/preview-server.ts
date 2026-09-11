@@ -21,6 +21,10 @@
  *
  * Two deliberate choices worth stating:
  *
+ * - **A hard link is refused**, unlike an internal symlink. The distinction is
+ *   what each one proves: an internal symlink is demonstrably a second route to a
+ *   file inside the tree, while a hard link proves nothing about the inode it
+ *   names — on macOS a mind can hardlink a file it cannot itself read.
  * - **An internal symlink is served.** This is not the published-page rule, where
  *   any link at all is refused (#1077). What is being contained here is the
  *   *daemon's* reach, and the tree being served is one the mind can already read
@@ -55,13 +59,13 @@
  * followed. That is the same window `resolvePagesWrite` documents, on a tree the
  * mind owns; closing it properly would need `O_NOFOLLOW` opens.
  */
-import { createReadStream, realpathSync } from "node:fs";
-import { stat } from "node:fs/promises";
+import { realpathSync } from "node:fs";
+import { open } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import { extname, resolve } from "node:path";
 import { pipeline } from "node:stream/promises";
 
-import { within } from "./ownership.js";
+import { isMultiplyLinkedFile, within } from "./ownership.js";
 import { MIME_TYPES, PAGES_CSP } from "./serving.js";
 
 export type PreviewServer = {
@@ -136,7 +140,14 @@ async function serve(
   url: string,
   res: import("node:http").ServerResponse,
 ): Promise<void> {
-  const notFound = () => {
+  const notFound = (): void => {
+    // Guarded because a 200 is written the moment the file opens; anything that
+    // fails after that point must drop the connection rather than try to send a
+    // second set of headers over the first.
+    if (res.headersSent) {
+      res.destroy();
+      return;
+    }
     res.writeHead(404, { "Content-Type": "text/plain" });
     res.end("Not found");
   };
@@ -167,30 +178,50 @@ async function serve(
   }
   if (!within(realRoot, real)) return notFound();
 
-  const info = await stat(real).catch(() => null);
-  // No directory listings, and no index fallback either: a preview renders one
-  // named page, and the browser is given that page's own URL.
-  if (!info?.isFile()) return notFound();
+  // Open *before* anything is written. Answering 200 off a `stat` and only then
+  // reaching for the file means an open that fails — the file deleted in between,
+  // a mode the daemon cannot read — is delivered as a successful empty page, and
+  // an empty page is a worse answer than "not found" because it looks like the
+  // page rendered. With the handle in hand, every failure below is still a clean
+  // 404.
+  const handle = await open(real, "r").catch(() => null);
+  if (!handle) return notFound();
+  try {
+    // `fstat`, not another `stat` on the path: this describes the inode actually
+    // opened, so the length is the length of what will be sent and the link count
+    // is the link count of what will be read.
+    const info = await handle.stat();
+    // No directory listings, and no index fallback either: a preview renders one
+    // named page, and the browser is given that page's own URL.
+    if (!info.isFile()) return notFound();
+    // Containment asks *where* a name lives, and a hard link's answer is honestly
+    // "here" — it is a second name for an inode, not a pointer out of the tree. So
+    // it passes every check above and has to be refused on its own terms (#1089).
+    if (isMultiplyLinkedFile(info)) return notFound();
 
-  res.writeHead(200, {
-    "Content-Type": MIME_TYPES[extname(real)] ?? "application/octet-stream",
-    "Content-Length": String(info.size),
-    // The same rules the published page will be served under. A preview exists to
-    // show what publishing will look like, and the sandbox is not cosmetic: it
-    // puts the page in an opaque origin, where a same-origin `fetch` of its own
-    // data file fails. Without this, a page previews green and publishes broken.
-    "Content-Security-Policy": PAGES_CSP,
-    "X-Content-Type-Options": "nosniff",
-  });
-  // `pipeline`, not `pipe`: `pipe` leaves the read stream open when the other end
-  // goes away, and the other end going away is the normal case here — a render
-  // that timed out is killed, and `closeAllConnections()` drops its sockets
-  // mid-response. With `pipe` that leaks a descriptor per aborted response, and
-  // the await above it never settles.
-  await pipeline(createReadStream(real), res).catch(() => {
-    // A client that left is not an error worth reporting; the response is over
-    // either way.
-  });
+    res.writeHead(200, {
+      "Content-Type": MIME_TYPES[extname(real)] ?? "application/octet-stream",
+      "Content-Length": String(info.size),
+      // The same rules the published page will be served under. A preview exists
+      // to show what publishing will look like, and the sandbox is not cosmetic:
+      // it puts the page in an opaque origin, where a same-origin `fetch` of its
+      // own data file fails. Without this, a page previews green and publishes
+      // broken.
+      "Content-Security-Policy": PAGES_CSP,
+      "X-Content-Type-Options": "nosniff",
+    });
+    // `pipeline`, not `pipe`: `pipe` leaves the read stream open when the other
+    // end goes away, and the other end going away is the normal case here — a
+    // render that timed out is killed, and `closeAllConnections()` drops its
+    // sockets mid-response. With `pipe` that leaks a descriptor per aborted
+    // response, and the await above it never settles.
+    await pipeline(handle.createReadStream({ autoClose: false }), res).catch(() => {
+      // A client that left is not an error worth reporting; the response is over
+      // either way.
+    });
+  } finally {
+    await handle.close().catch(() => {});
+  }
 }
 
 /**

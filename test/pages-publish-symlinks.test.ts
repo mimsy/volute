@@ -16,9 +16,11 @@
 import assert from "node:assert/strict";
 import {
   existsSync,
+  linkSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -28,12 +30,28 @@ import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { Hono } from "hono";
 import { initDb } from "../packages/extensions/pages/src/db.js";
-import { publishPersonalPages } from "../packages/extensions/pages/src/publish.js";
+import { collectFiles, publishPersonalPages } from "../packages/extensions/pages/src/publish.js";
 import { createPublicRoutes } from "../packages/extensions/pages/src/routes.js";
 import { sweepSnapshotSymlinks } from "../packages/extensions/pages/src/snapshot-sweep.js";
 import type { Database, ExtensionContext } from "../packages/extensions/sdk/src/types.js";
 
 const SECRET = "root-only-credential";
+
+/**
+ * Make `to` a second name for `from`, or report that this filesystem will not.
+ *
+ * The refusal these tests pin is about macOS, where an unprivileged user may
+ * hardlink a file it cannot read; a filesystem that declines the link at all has
+ * nothing to demonstrate, so the test says so rather than passing vacuously.
+ */
+function hardlink(from: string, to: string): boolean {
+  try {
+    linkSync(from, to);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 async function createTestDb(): Promise<Database> {
   const mod = await import("libsql");
@@ -110,7 +128,11 @@ describe("publish refuses to copy a symlink into the snapshot", () => {
       !existsSync(resolve(result.snapshotDir, "evil.md")),
       "the symlinked page must not reach the served snapshot",
     );
-    assert.deepEqual(result.skipped, ["evil.md"], "and the mind is told which entry was skipped");
+    assert.deepEqual(
+      result.skipped,
+      [{ file: "evil.md", reason: "symlink" }],
+      "and the mind is told which entry was skipped, and why",
+    );
   });
 
   it("skips a symlinked directory as one entry, without copying what is under it", () => {
@@ -121,7 +143,27 @@ describe("publish refuses to copy a symlink into the snapshot", () => {
     const result = publishPersonalPages(makeCtx(dataDir, db), "mimsy", mindDir);
 
     assert.ok(!existsSync(resolve(result.snapshotDir, "notes")), "no link, and no copy of it");
-    assert.deepEqual(result.skipped, ["notes"]);
+    assert.deepEqual(result.skipped, [{ file: "notes", reason: "symlink" }]);
+  });
+
+  it("leaves a hardlinked page out of the snapshot and says it was a hard link", (t) => {
+    // Not a pointer — a second name for the same inode. `lstat` calls it a plain
+    // regular file and containment agrees it lives inside the tree, because it
+    // does. Publishing it would copy the content out as the daemon.
+    writeFileSync(resolve(pagesDir, "index.html"), "<h1>real</h1>");
+    if (!hardlink(resolve(outside, "host-only.md"), resolve(pagesDir, "evil.md"))) {
+      return t.skip("this filesystem refuses hard links");
+    }
+
+    const result = publishPersonalPages(makeCtx(dataDir, db), "mimsy", mindDir);
+
+    assert.ok(existsSync(resolve(result.snapshotDir, "index.html")), "the real page publishes");
+    assert.ok(!existsSync(resolve(result.snapshotDir, "evil.md")), "the hard link does not");
+    assert.deepEqual(result.skipped, [{ file: "evil.md", reason: "hardlink" }]);
+    // And the content never reached the snapshot under any name.
+    for (const f of collectFiles(result.snapshotDir, result.snapshotDir)) {
+      assert.ok(!readFileSync(resolve(result.snapshotDir, f), "utf-8").includes(SECRET));
+    }
   });
 
   it("publishes an ordinary tree untouched and reports nothing skipped", () => {
@@ -188,6 +230,17 @@ describe("the public serve route refuses a symlinked snapshot entry", () => {
     }
   });
 
+  it("404s a hardlinked snapshot entry", async (t) => {
+    // Already-published snapshots are the reason this belongs here as well as in
+    // publish: one written before the refusal existed is live on an open route.
+    if (!hardlink(resolve(outside, "host-only.html"), resolve(snapshotDir, "evil.html"))) {
+      return t.skip("this filesystem refuses hard links");
+    }
+    const res = await app().request("/public/mimsy/evil.html");
+    assert.equal(res.status, 404);
+    assert.ok(!(await res.text()).includes(SECRET));
+  });
+
   it("404s a symlink pointing back inside the snapshot too", async () => {
     // Containment alone would allow this one. Publish never produces a link, so a
     // link in a snapshot is never something an author put there on purpose.
@@ -240,7 +293,7 @@ describe("the `pages publish` command says what it refused", () => {
       ),
     );
     assert.match(result, /Published 1 files/);
-    assert.match(result, /Skipped 1 symlinked entry: evil\.md/);
+    assert.match(result, /Skipped 1 linked entry: evil\.md \(symlink\)/);
   });
 });
 
@@ -298,6 +351,14 @@ describe("the commons checkout is covered at the point of reading", () => {
     const res = await app().request("/public/_commons/link/config");
     assert.equal(res.status, 404);
     assert.ok(!(await res.text()).includes(SECRET));
+  });
+
+  it("readPageBody refuses a hardlinked page too", async (t) => {
+    const { readPageBody } = await import("../packages/extensions/pages/src/commands.js");
+    if (!hardlink(resolve(outside, "host-only.md"), resolve(repoDir, "leak.md"))) {
+      return t.skip("this filesystem refuses hard links");
+    }
+    assert.equal(readPageBody(makeCtx(dataDir, null), { mind: "_commons", file: "leak.md" }), null);
   });
 
   it("readPageBody refuses a symlinked page instead of reading through it", async () => {
