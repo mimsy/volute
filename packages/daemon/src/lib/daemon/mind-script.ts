@@ -74,13 +74,21 @@ export async function buildMindScriptEnv(
  *    root. That is what `none` means rather than a gap here, but it is why this
  *    docblock does not say "never in the daemon's trust domain": on `none`, it is.
  *
- * On `timeout` under sandbox mode: the script is not the immediate child —
- * wrapForSandbox returns `["bash", ["-c", "env … sandbox-exec … '<script>'"]]` —
- * and exec's timeout signals only that immediate child. That wrapped string is a
- * single simple command, so bash exec-replaces itself down the chain and the
- * signal reaches the script itself (verified against the real sandbox runtime).
- * A wrapper that grew into a compound command would fork instead, and a timed-out
- * script would be orphaned rather than killed.
+ * On `timeout`: `exec` runs a timed child in its own process group and kills the
+ * *group* — SIGTERM, then SIGKILL — rather than only the process it spawned. That
+ * is what makes the bound reach the script under `sandbox` (the immediate child
+ * is `bash -c "env … sandbox-exec … '<script>'"`) and reach the forks a script of
+ * any complexity makes for its own pipeline.
+ *
+ * Two honest limits. Work the script deliberately puts in *another* group
+ * (`setsid`, `nohup … &`) is outside the group by construction and survives — see
+ * `issueScriptToken` for the credential half of the same caveat. And under `user`
+ * isolation the front process is `sudo`/`runuser`: sudo ≥ 1.9.14 defaults to
+ * `use_pty`, which runs the command in its own session rather than sudo's group,
+ * so containment there rests on sudo relaying the signal and terminating the
+ * command when its front-end dies rather than on our group kill. Unverified on a
+ * real `--system` install; if a timed-out script is ever seen surviving under
+ * `user` isolation, that is the thing to check first.
  */
 export async function runMindScript(
   cmd: string,

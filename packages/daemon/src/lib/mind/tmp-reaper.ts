@@ -10,9 +10,12 @@ const rlog = log.child("minds");
  * The reap runs at spawn, so the mind's *server* is not running and this is not
  * protecting the mind from itself. What it protects is a process that shares the
  * dir without being the server: a scheduled mind script gets the same TMPDIR
- * (`mind-script.ts`), is not held by the mind's start lock, and the scheduler
- * passes it no timeout — so a script genuinely can outlive a restart. Two hours
- * plus the freshness check below is what stands between the two.
+ * (`mind-script.ts`) and is not held by the mind's start lock, so it can still be
+ * running across a restart. That is no longer unbounded — the scheduler kills a
+ * script's process group at `SCHEDULED_SCRIPT_TIMEOUT_MS` (#989) — but ten
+ * minutes is far longer than a restart takes, and work a script backgrounds out
+ * of its own group escapes even that. Two hours plus the freshness check below is
+ * what stands between the two.
  */
 export const STALE_MIND_TMP_MS = 2 * 60 * 60 * 1000;
 

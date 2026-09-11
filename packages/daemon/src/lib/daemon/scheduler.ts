@@ -22,6 +22,24 @@ const slog = log.child("scheduler");
 const CATCHUP_STALE_MINUTES = 10;
 
 /**
+ * How long a mind-authored scheduled script may run before it is killed (#989).
+ *
+ * The number is a judgement call and it is not a small one. Too short and a
+ * legitimate long job — a nightly backup, an export, a slow API crawl — is
+ * amputated mid-run; too long and a hung script sits there consuming the mind's
+ * scratch space and, for a one-timer, re-spawning itself every minute. Ten
+ * minutes is chosen to be comfortably above anything a *fire* should need while
+ * still bounding the damage. Work that genuinely needs longer should not live
+ * inside a fire at all: a script can start it and let it re-enter through the
+ * CLI, which is also the only way it keeps a credential (see `issueScriptToken`).
+ *
+ * Deliberately one number for all schedules rather than a per-schedule field —
+ * the mind is told when a script is killed, which is the part that matters, and
+ * a configurable bound can follow if a mind ever actually needs one.
+ */
+export const SCHEDULED_SCRIPT_TIMEOUT_MS = 10 * 60 * 1000;
+
+/**
  * What the scheduler knows about one schedule, persisted per `"mind:scheduleId"`
  * key in `scheduler-state.json`.
  *
@@ -51,7 +69,11 @@ export type ScheduleState = {
   firedAt?: number;
   /** Epoch minute at which a fire was last skipped without delivering. */
   skippedAt?: number;
-  /** Why the last skip happened (currently only `"stale_catchup"`). */
+  /**
+   * Why the last skip happened: `"stale_catchup"` (a caught-up cron fire too old
+   * to deliver) or `"in_flight"` (the previous run of this script had not
+   * returned, so this fire was not stacked on top of it — #989).
+   */
   skipReason?: string;
   /**
    * Epoch minute the fire was actually *due*. Set for one-time (`fireAt`)
@@ -94,6 +116,13 @@ export class Scheduler {
   private state = new Map<string, ScheduleState>(); // "mind:scheduleId" → bookkeeping
   /** Set by every state mutation; `tick()` persists on it. */
   private stateDirty = false;
+  /**
+   * Script runs currently in flight, `"mind:scheduleId"` → how many fires have
+   * been skipped because of this one. In memory only: a daemon restart leaves no
+   * script of its own running, and a stale entry would silence a schedule
+   * permanently.
+   */
+  private runningScripts = new Map<string, { skipped: number }>();
   /** Serialises writes so two callers can't interleave on the same file. */
   private writeChain: Promise<void> = Promise.resolve();
   private writeSeq = 0;
@@ -371,10 +400,40 @@ export class Scheduler {
     // forever (#866). The only outcome that keeps a one-timer armed is a failure
     // to record the event at all, so the next tick retries the insert.
     let consumeOneTimer = true;
+    /** Non-null once THIS fire owns the script guard, so only it releases it. */
+    let heldScriptKey: string | null = null;
+    let heldTracker: { skipped: number } | null = null;
     try {
       let text: string;
       if (schedule.script) {
+        const key = `${mindName}:${schedule.id}`;
+        // Never stack runs of the same script (#989). A hung script's fire never
+        // reaches the `finally` below, so a past-due one-timer stays armed and
+        // `shouldFire` re-fires it every single minute — without this guard that
+        // spawns a fresh hung process (and a fresh script token) each time, a leak
+        // the mind can neither see nor stop. The in-flight run owns consumption,
+        // so leave the one-timer armed for it rather than removing the schedule
+        // out from under it.
+        const inFlight = this.runningScripts.get(key);
+        if (inFlight) {
+          consumeOneTimer = false;
+          inFlight.skipped++;
+          if (inFlight.skipped === 1) {
+            slog.warn(
+              `script "${schedule.id}" for ${mindName} is still running from its last fire — skipping this one`,
+            );
+          }
+          // Keep the state file honest about a fire that did not happen: it is
+          // read to answer "did this run?" and a silent skip reads as a quiet
+          // hour (#867).
+          this.mark(key, { skippedAt: Math.floor(Date.now() / 60000), skipReason: "in_flight" });
+          return;
+        }
+
         const homeDir = resolve(this.mindDirs.get(mindName) ?? mindDir(mindName), "home");
+        heldTracker = { skipped: 0 };
+        heldScriptKey = key;
+        this.runningScripts.set(key, heldTracker);
         try {
           const output = await this.runScript(schedule.script, homeDir, mindName);
           if (!output.trim()) {
@@ -388,7 +447,14 @@ export class Scheduler {
           text = output;
         } catch (err) {
           const stderr = (err as Error & { stderr?: string }).stderr ?? "";
-          text = `[script error] ${(err as Error).message}${stderr ? `\n${stderr}` : ""}`;
+          // A timed-out script reports as a timeout, not as a bare "Command
+          // failed" the mind would have to decode. It is the mind's own script:
+          // it should learn plainly that the thing it wrote hung and was killed.
+          const timedOut = (err as Error & { timedOut?: boolean }).timedOut === true;
+          const label = timedOut ? "timeout" : "error";
+          // exec's timeout message already names the bound that was hit, derived
+          // from the real value — so a shortened bound never reports as "10 minutes".
+          text = `[script ${label}] ${(err as Error).message}${stderr ? `\n${stderr}` : ""}`;
           slog.warn(`script "${schedule.id}" failed for ${mindName}`, log.errorData(err));
         }
       } else if (Array.isArray(schedule.messages) && schedule.messages.length > 0) {
@@ -456,6 +522,20 @@ export class Scheduler {
       });
     } finally {
       if (schedule.fireAt && consumeOneTimer) this.removeSchedule(mindName, schedule.id);
+      // Released only after the one-timer above has been consumed. Releasing it
+      // when the script alone finished left a window: a run ending just before a
+      // minute boundary frees the guard while `removeSchedule` is still behind an
+      // `await`, and the next tick sees a past-due `fireAt` with nothing in
+      // flight and starts the same one-timer a second time. A delivery is a DB
+      // insert, so holding the guard across it costs nothing worth having.
+      if (heldScriptKey) {
+        this.runningScripts.delete(heldScriptKey);
+        if (heldTracker && heldTracker.skipped > 0) {
+          slog.info(
+            `script "${schedule.id}" for ${mindName} finished; ${heldTracker.skipped} fire(s) were skipped while it ran`,
+          );
+        }
+      }
     }
   }
 
@@ -515,6 +595,14 @@ export class Scheduler {
     }
   }
 
+  /**
+   * How long a scheduled script may run before its process group is killed.
+   * Overridden in tests; see {@link SCHEDULED_SCRIPT_TIMEOUT_MS}.
+   */
+  protected get scriptTimeoutMs(): number {
+    return SCHEDULED_SCRIPT_TIMEOUT_MS;
+  }
+
   protected async runScript(script: string, cwd: string, mindName: string): Promise<string> {
     // Scheduled scripts run with the same environment a mind process gets —
     // scoped to the mind's own non-admin token — so that a script invoking the
@@ -524,6 +612,7 @@ export class Scheduler {
       mindName,
       dir: this.mindDirs.get(mindName),
       cwd,
+      timeout: this.scriptTimeoutMs,
     });
   }
 
