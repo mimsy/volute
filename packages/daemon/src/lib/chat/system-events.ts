@@ -174,10 +174,12 @@ export type RecordNoticeInput = {
  * Record a failure/informational notice as a `next-turn` event. A thin mapping over
  * {@link deliverEvent}: budget notices become `budget` events; everything else becomes a
  * `notice` event carrying the kind as `meta.subtype` and the reason in `meta.reason`.
+ * Returns the event id, or undefined when the row never landed — `deliverEvent` swallows
+ * the insert error, so this is the only way a caller can tell.
  */
-export async function recordNotice(input: RecordNoticeInput): Promise<void> {
+export async function recordNotice(input: RecordNoticeInput): Promise<number | undefined> {
   const type = input.kind === "budget" ? "budget" : "notice";
-  await deliverEvent(input.mind, {
+  const { id } = await deliverEvent(input.mind, {
     type,
     body: input.detail,
     thread: input.thread,
@@ -189,6 +191,7 @@ export async function recordNotice(input: RecordNoticeInput): Promise<void> {
       ...(input.raw ? { raw: input.raw } : {}),
     },
   });
+  return id;
 }
 
 /**
@@ -775,10 +778,23 @@ export async function flushHeldEvents(): Promise<void> {
     elog.warn("failed to list minds with spend-held events", log.errorData(err));
     return;
   }
+  const { getSleepManagerIfReady } = await import("../daemon/sleep-manager.js");
+  const sleepManager = getSleepManagerIfReady();
   for (const { mind } of minds) {
-    await flushQueuedEvents(mind).catch((err) =>
-      elog.warn(`failed to flush held events for ${mind}`, log.errorData(err)),
-    );
+    // Per mind, so one mind's failure is one mind's failure: `getBaseName` is a DB read,
+    // and letting it throw out of the loop would leave every mind after it in the list
+    // holding its events until some later rollover. `releaseAllHeld` is bounded the same
+    // way, for the same reason.
+    try {
+      // A sleeping mind's process is stopped; its held events flush on wake with the rest
+      // of its queue, as `deliverEvent` leaves them. POSTing now would fail on every
+      // rollover and say so in the log (#962).
+      const baseName = await getBaseName(mind);
+      if (sleepManager?.isSleeping(baseName)) continue;
+      await flushQueuedEvents(mind);
+    } catch (err) {
+      elog.warn(`failed to flush held events for ${mind}`, log.errorData(err));
+    }
   }
 }
 

@@ -1640,7 +1640,7 @@ const app = new Hono<AuthEnv>()
               existing.spendCap,
               existing.spendCapPeriodMinutes ?? DEFAULT_SPEND_PERIOD_MINUTES,
             );
-          else await sb.removeBudget(baseName);
+          else await sb.removeBudget(baseName, { releaseHeld: true });
         } catch (err) {
           // The config is already written; the cap takes effect at the next restart.
           log.warn(`spend cap for ${name} saved but not applied live`, log.errorData(err));

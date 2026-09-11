@@ -1690,26 +1690,33 @@ export class DeliveryManager {
    * The marker lives in the row's own payload JSON — the payload is already ours, and the
    * wait must survive a daemon restart, because a daily cap outlives one. Mutates
    * `payload` too, so the in-memory copy a batch buffer holds matches what is on disk.
+   *
+   * A row that already carries the marker was released once and is being held again —
+   * the cap re-armed before the sweep reached it. It keeps its arrival time and takes the
+   * new hold's scope, and its status moves to `held` like any other; leaving it `pending`
+   * because it was marked would park it in the sweep window until the period reset (#962).
    */
   private async holdRow(
     queueId: number,
     payload: DeliveryPayload,
     hold: DeliveryHold,
   ): Promise<void> {
-    if (payload.held) return;
     try {
       const db = await getDb();
-      // Stamp when the message ARRIVED, not when we first noticed it was held. Those are
-      // the same instant only when the hold was already in force; a message that sat
-      // pending through a mind restart, or waited out a batch window, would otherwise be
-      // introduced to the mind as having turned up just now — the same lie about waiting
-      // that the preface exists to prevent, told with a different number.
-      const row = await db
-        .select({ created_at: deliveryQueue.created_at })
-        .from(deliveryQueue)
-        .where(eq(deliveryQueue.id, queueId))
-        .get();
-      const arrived = row ? parseDbTimestamp(row.created_at)?.getTime() : undefined;
+      let arrived = payload.held?.at;
+      if (arrived == null) {
+        // Stamp when the message ARRIVED, not when we first noticed it was held. Those are
+        // the same instant only when the hold was already in force; a message that sat
+        // pending through a mind restart, or waited out a batch window, would otherwise be
+        // introduced to the mind as having turned up just now — the same lie about waiting
+        // that the preface exists to prevent, told with a different number.
+        const row = await db
+          .select({ created_at: deliveryQueue.created_at })
+          .from(deliveryQueue)
+          .where(eq(deliveryQueue.id, queueId))
+          .get();
+        arrived = row ? parseDbTimestamp(row.created_at)?.getTime() : undefined;
+      }
       payload.held = { at: arrived ?? Date.now(), scope: hold.scope, until: hold.until };
       await db
         .update(deliveryQueue)

@@ -531,6 +531,46 @@ describe("system-events: spend hold", () => {
     }
   });
 
+  it("flushHeldEvents leaves a sleeping mind's held events for its wake", async () => {
+    // The mind's process is stopped while it sleeps. Its held rows are pending exactly as
+    // its sleep-queued ones are, and the wake flush delivers both; a release that POSTed
+    // at the stopped process would fail on every rollover and log a warning for it.
+    const mind = uniqueMind();
+    const stub = await stubMind(mind);
+    const release = withHold({ reason: "spend_cap", scope: "system" });
+    const sm = getSleepManagerIfReady() ?? initSleepManager();
+    const realIsSleeping = sm.isSleeping.bind(sm);
+    let asleep = true;
+    (sm as unknown as { isSleeping: (n: string) => boolean }).isSleeping = (n) =>
+      n === mind ? asleep : realIsSleeping(n);
+    try {
+      const { id } = await deliverEvent(mind, { type: "webhook", body: "ping", force: true });
+      // `force` delivers past both sleep and the hold; hold it the way the cap does.
+      assert.equal(stub.posted.length, 1);
+      stub.posted.length = 0;
+      const db = await getDb();
+      await db
+        .update(systemEvents)
+        .set({ delivered_at: null, meta: JSON.stringify({ spendHeld: 1 }) })
+        .where(eq(systemEvents.id, id!));
+
+      release();
+      await flushHeldEvents();
+      assert.equal(stub.posted.length, 0, "not POSTed at a stopped process");
+      const row = await eventRow(id!);
+      assert.equal(row?.delivered_at, null, "still pending for the wake flush");
+
+      asleep = false;
+      await flushHeldEvents();
+      assert.equal(stub.posted.length, 1, "delivered once the mind is up");
+    } finally {
+      (sm as unknown as { isSleeping: (n: string) => boolean }).isSleeping = realIsSleeping;
+      release();
+      stub.close();
+      await cleanupMind(mind);
+    }
+  });
+
   it("flushHeldEvents releases held events when the cap lifts", async () => {
     const mind = uniqueMind();
     const stub = await stubMind(mind);

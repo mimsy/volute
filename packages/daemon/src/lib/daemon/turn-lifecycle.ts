@@ -406,14 +406,17 @@ async function recordSpendNotice(
       // cap talking in others, and the heads-up arrives after the cap already bound — if
       // ever. Mind-level is the sentinel for exactly this: drained by whichever thread
       // turns next, the same reason the held-release summary uses it.
-      await recordNotice({
+      // Only a notice that landed counts: the caller burns the once-per-period flag on
+      // `true`, and a failed insert reported as success would spend the mind's one
+      // heads-up on silence (#962).
+      const id = await recordNotice({
         mind,
         thread: MIND_LEVEL_THREAD,
         kind: "budget",
         reason: `${scope}_spend_cap`,
         detail,
       });
-      return true;
+      return id != null;
     }
     // The exceeded notice cannot ride the next-turn drain: from this moment inbound
     // messages are held, and an inbound message is what would have produced the next

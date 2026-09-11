@@ -3,9 +3,19 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { beforeEach, describe, it } from "node:test";
 import { SpendBudget } from "../packages/daemon/src/lib/daemon/spend-budget.js";
+import { stateDir } from "../packages/daemon/src/lib/mind/registry.js";
 
 const systemDir = () => resolve(process.env.VOLUTE_HOME!, "system");
 const stateBase = () => resolve(systemDir(), "state");
+
+/**
+ * Age the live system bucket past its day, so the next tick rolls it — the path a
+ * running daemon takes across a day boundary. (A persisted file can't stand in for
+ * this: an expired period is rolled at load, before any tick sees it.)
+ */
+function ageSystemDay(sb: SpendBudget): void {
+  (sb as unknown as { system: { periodStart: number } }).system.periodStart -= 2 * 86_400_000;
+}
 
 describe("SpendBudget", () => {
   // Clean up persisted budget state between tests to ensure isolation
@@ -240,16 +250,13 @@ describe("SpendBudget", () => {
   it("a mind's own cap is still announced after a system notice and a system rollover", async () => {
     // The two buckets roll on different clocks. A system-scope notice must not
     // leave the mind's own cap unannounceable for the rest of its period.
-    mkdirSync(systemDir(), { recursive: true });
-    writeFileSync(
-      resolve(systemDir(), "spend.json"),
-      JSON.stringify({ periodStart: Date.now() - 2 * 86_400_000, spentUsd: 10 }),
-    );
     const sb = new SpendBudget();
     sb.setSystemCap(10);
+    sb.recordUsage("m", 10);
     sb.setBudget("m", 5, 9999); // a long mind period that will not roll
     assert.equal(sb.noteExceeded("m", "system"), true);
 
+    ageSystemDay(sb);
     await sb.tick(); // the install's day rolls; the mind's period does not
 
     sb.recordUsage("m", 6); // now over its own $5 cap
@@ -336,26 +343,36 @@ describe("SpendBudget", () => {
   });
 
   it("a new install-wide period re-arms the notices for every mind", async () => {
-    // Age the system period by two days via the persisted file, so the next tick
-    // rolls it over — the same path a daemon takes across a day boundary.
-    mkdirSync(systemDir(), { recursive: true });
-    writeFileSync(
-      resolve(systemDir(), "spend.json"),
-      JSON.stringify({ periodStart: Date.now() - 2 * 86_400_000, spentUsd: 10 }),
-    );
-
     const sb = new SpendBudget();
     sb.setSystemCap(10);
-    assert.equal(sb.getSystemUsage()!.spentUsd, 10, "loaded the aged period");
+    sb.recordUsage("a", 10);
     assert.equal(sb.noteExceeded("a", "system"), true);
     assert.equal(sb.noteExceeded("b", "system"), true);
 
+    ageSystemDay(sb);
     await sb.tick(); // the day has passed — the bucket rolls over
     assert.equal(sb.getSystemUsage()!.spentUsd, 0);
 
     sb.recordUsage("a", 10);
     assert.equal(sb.noteExceeded("a", "system"), true, "a can be told again");
     assert.equal(sb.noteExceeded("b", "system"), true, "so can b");
+  });
+
+  it("a changed system cap lets every mind hear the warning again", () => {
+    // Mirrors setBudget: a standing notice named a number that no longer binds.
+    const sb = new SpendBudget();
+    sb.setSystemCap(10);
+    sb.recordUsage("a", 9);
+    assert.deepEqual(sb.checkBudget("a"), { status: "warning", scope: "system" });
+    sb.acknowledgeWarning("a", "system");
+    assert.deepEqual(sb.checkBudget("a"), { status: "ok", scope: null });
+
+    sb.setSystemCap(11); // still past 80% of the new cap
+    assert.deepEqual(sb.checkBudget("a"), { status: "warning", scope: "system" });
+
+    sb.acknowledgeWarning("a", "system");
+    sb.setSystemCap(11); // the same cap, re-set as every boot does
+    assert.deepEqual(sb.checkBudget("a"), { status: "ok", scope: null }, "not re-announced");
   });
 
   it("retractExceeded re-arms a notice that never made it onto the record", () => {
@@ -592,6 +609,64 @@ describe("SpendBudget", () => {
     const sb2 = new SpendBudget();
     sb2.setBudget("mind1", 10, 60);
     assert.equal(sb2.getUsage("mind1")!.spentUsd, 4, "the spend survived the stop");
+  });
+
+  it("a persisted period that ended while the daemon was down is over on load", async () => {
+    // start() schedules the first tick a minute out, so a bucket restored verbatim keeps
+    // an expired hold in force until then — and the boot release sweep, which runs
+    // before that tick, finds nothing to release (#962).
+    const mind = "mind-expired";
+    mkdirSync(stateDir(mind), { recursive: true });
+    writeFileSync(
+      resolve(stateDir(mind), "budget.json"),
+      JSON.stringify({
+        periodStart: Date.now() - 2 * 60 * 60_000,
+        spentUsd: 10,
+        warningInjected: true,
+        exceededNotified: true,
+      }),
+    );
+
+    const sb = new SpendBudget();
+    sb.setBudget(mind, 10, 60);
+    assert.equal(sb.holdFor(mind), null, "a period that ended has ended");
+    const usage = sb.getUsage(mind)!;
+    assert.equal(usage.spentUsd, 0);
+    assert.ok(usage.resetAt > Date.now(), "the new period runs from now");
+    assert.deepEqual(sb.checkBudget(mind), { status: "ok", scope: null });
+
+    await sb.flush();
+    const sb2 = new SpendBudget();
+    sb2.setBudget(mind, 10, 60);
+    assert.equal(sb2.getUsage(mind)!.spentUsd, 0, "the rollover was persisted");
+  });
+
+  it("a persisted period that has not ended is restored as it was", () => {
+    const mind = "mind-current";
+    mkdirSync(stateDir(mind), { recursive: true });
+    const periodStart = Date.now() - 30 * 60_000;
+    writeFileSync(
+      resolve(stateDir(mind), "budget.json"),
+      JSON.stringify({ periodStart, spentUsd: 10, exceededNotified: true }),
+    );
+
+    const sb = new SpendBudget();
+    sb.setBudget(mind, 10, 60);
+    assert.equal(sb.holdFor(mind)?.scope, "mind", "still over its cap");
+    assert.equal(sb.getUsage(mind)!.periodStart, periodStart);
+  });
+
+  it("a persisted system day that ended while the daemon was down is over on load", () => {
+    mkdirSync(systemDir(), { recursive: true });
+    writeFileSync(
+      resolve(systemDir(), "spend.json"),
+      JSON.stringify({ periodStart: Date.now() - 25 * 60 * 60_000, spentUsd: 100 }),
+    );
+
+    const sb = new SpendBudget();
+    sb.setSystemCap(100);
+    assert.equal(sb.holdFor("anyone"), null);
+    assert.equal(sb.getSystemUsage()!.spentUsd, 0);
   });
 
   it("persists hasUnpricedTurns across instances", async () => {
