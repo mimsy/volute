@@ -7,6 +7,7 @@ import { getRecentPagesList, getSites } from "./cache.js";
 import { areCommentsClosed, getPage } from "./db.js";
 import { parseFrontmatter, renderMarkdownPage, resolveStylesheet } from "./markdown.js";
 import { resolveMentions } from "./mentions.js";
+import { MIME_TYPES } from "./mime.js";
 import { within } from "./ownership.js";
 import { defaultPromotionTitle, writeQuickPage } from "./publish.js";
 import {
@@ -26,23 +27,6 @@ import {
   toggleReaction,
 } from "./social.js";
 import { toIso } from "./time.js";
-
-const MIME_TYPES: Record<string, string> = {
-  ".html": "text/html",
-  ".js": "application/javascript",
-  ".css": "text/css",
-  ".json": "application/json",
-  ".svg": "image/svg+xml",
-  ".png": "image/png",
-  ".jpg": "image/jpeg",
-  ".jpeg": "image/jpeg",
-  ".gif": "image/gif",
-  ".ico": "image/x-icon",
-  ".woff": "font/woff",
-  ".woff2": "font/woff2",
-  ".txt": "text/plain",
-  ".xml": "application/xml",
-};
 
 async function parseJson<T>(c: { req: { json: () => Promise<unknown> } }): Promise<T | null> {
   try {

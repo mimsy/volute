@@ -10,7 +10,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { basename, delimiter, join, resolve, sep } from "node:path";
+import { basename, delimiter, join, relative, resolve, sep } from "node:path";
 
 import { parseFrontmatter, renderMarkdownPage, resolveStylesheet } from "./markdown.js";
 import {
@@ -21,6 +21,7 @@ import {
   resolvePagesDir,
   resolvePagesRead,
 } from "./ownership.js";
+import { type PreviewServer, previewUrl, startPreviewServer } from "./preview-server.js";
 
 /**
  * Render a draft page to an image so a mind can see how it looks in a browser —
@@ -42,12 +43,16 @@ import {
  * result to root chromium, and the mind owns every component of that path. Both the
  * page and the `.preview` directory are resolved through their symlinks and proven
  * to be where they claim to be before anything is opened or written. See
- * `resolvePagesRead` and `resolveWithinMindDir`.
+ * `resolvePagesRead` and `resolveHomeScratchDir`.
  *
- * A page's *own content* is a wider question this does not answer: chromium renders
- * mind-authored HTML from a `file://` origin, which can pull in other local files,
- * and it runs as the daemon while doing it. Closing that needs a non-`file:` origin
- * or a renderer that is not the daemon — see the PR for #964.
+ * **The page's own content** is contained too, which checking the target is not
+ * enough to do: a page can pull another local file into its rendering with no
+ * script and no `file:` URL anywhere in its markup, and that file lands in the
+ * screenshot. So the render no longer happens from a file origin at all. For the
+ * length of one render the mind's pages directory is served over loopback, and
+ * every load the page performs — the page, its stylesheet, an iframe, an image
+ * whose name is a link — is proven to land inside that directory first. See
+ * `preview-server.ts` (#1080).
  */
 
 /**
@@ -211,18 +216,23 @@ export async function renderPreview(opts: {
   // shape wrote the temp html *before* the try and leaked it whenever any later
   // step threw.
   let tempHtml: string | null = null;
+  let server: PreviewServer | null = null;
   let realPreviewDir: string | null = null;
   let pngPath: string | null = null;
   let wrotePng = false;
   let failure: string | null = null;
   try {
-    // The URL chromium screenshots. HTML is loaded straight from disk so its own
-    // CSS and relative assets resolve. Markdown is first rendered through the same
-    // renderer the serve route uses, written beside the page so a relative
-    // stylesheet href still resolves, and cleaned up after.
+    // The URL chromium screenshots — a loopback origin rather than the file the
+    // page lives in, so the server is the boundary for every load the page makes.
+    // HTML is served as it sits, so its own CSS and relative assets resolve.
+    // Markdown is first rendered through the same renderer the serve route uses
+    // and written at the root of the pages tree — which is what `resolveStylesheet`
+    // returns a path relative to, so the href in the rendered page resolves — then
+    // cleaned up after.
+    server = await startPreviewServer(realPagesRoot, token);
     let url: string;
     if (isHtml) {
-      url = `file://${realTarget}`;
+      url = previewUrl(server, relative(realPagesRoot, realTarget));
     } else {
       const raw = readFileSync(realTarget, "utf-8");
       const fm = parseFrontmatter(raw);
@@ -238,7 +248,7 @@ export async function renderPreview(opts: {
       // file is somebody else's, and the `finally` must not delete it.
       writeFileSync(scratch, html, { encoding: "utf-8", flag: "wx" });
       tempHtml = scratch;
-      url = `file://${scratch}`;
+      url = previewUrl(server, relative(realPagesRoot, scratch));
     }
 
     mkdirSync(resolve(opts.mindDir, "home", ".preview"), { recursive: true });
@@ -258,6 +268,11 @@ export async function renderPreview(opts: {
         [
           "--headless=new",
           "--no-sandbox",
+          // The render fetches over loopback now, so a proxy configured on the
+          // host becomes something between the browser and the page. Chrome
+          // bypasses localhost by default, but a host that has overridden that
+          // would get blank previews and no clue why.
+          "--no-proxy-server",
           "--disable-gpu",
           "--disable-dev-shm-usage",
           "--hide-scrollbars",
@@ -296,6 +311,10 @@ export async function renderPreview(opts: {
     console.warn(`[pages] could not prepare a preview of ${opts.file}: ${(err as Error).message}`);
     failure = "Could not prepare the preview. The daemon log has the reason; ask your host.";
   } finally {
+    // Before the scratch files, and on every path out of the try — a listener the
+    // render left behind would go on serving this mind's drafts to anything on the
+    // host for as long as the daemon lives.
+    await server?.close();
     if (tempHtml) rmSync(tempHtml, { force: true });
     rmSync(stageDir, { recursive: true, force: true });
     rmSync(userDataDir, { recursive: true, force: true });
