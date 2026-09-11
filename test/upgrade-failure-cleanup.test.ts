@@ -113,34 +113,16 @@ describe("mindGitOpts", () => {
     assert.equal(opts.env?.HOME, "/minds/mimsy/home");
   });
 
-  it("never hands the daemon's admin token to the mind's hooks", () => {
-    process.env.VOLUTE_ISOLATION = "user";
+  it("passes only overrides — the token scrub itself lives in exec (#966)", () => {
+    // `exec` lays the caller's env over the mind allowlist, so an env of nothing but
+    // overrides cannot reintroduce the admin token; a `...process.env` spread could.
+    // test/exec-env.test.ts pins the wrapper end to end, hook and all.
     process.env.VOLUTE_DAEMON_TOKEN = "admin-secret";
     try {
-      const opts = mindGitOpts("/minds/mimsy", "mimsy");
-      assert.equal(
-        opts.env?.VOLUTE_DAEMON_TOKEN,
-        undefined,
-        "a pre-commit hook the mind wrote would otherwise read the admin token",
-      );
-      assert.ok(opts.env?.PATH, "but it still needs enough environment to find git");
-    } finally {
-      delete process.env.VOLUTE_DAEMON_TOKEN;
-    }
-  });
-
-  it("still scrubs the environment when there is no isolation", () => {
-    // sandbox/none is the DEFAULT local mode, and it is the worse case, not the
-    // safer one: the hook runs as the daemon's own user, outside the mind's sandbox.
-    // A bare { cwd } would inherit the whole daemon environment, token included.
-    delete process.env.VOLUTE_ISOLATION;
-    process.env.VOLUTE_DAEMON_TOKEN = "admin-secret";
-    try {
-      const opts = mindGitOpts("/minds/mimsy", "mimsy");
-      assert.equal(opts.cwd, "/minds/mimsy");
-      assert.equal(opts.mindName, undefined, "there is no other uid to switch to");
-      assert.equal(opts.env?.VOLUTE_DAEMON_TOKEN, undefined);
-      assert.ok(opts.env, "an env must be passed, or the child inherits everything");
+      process.env.VOLUTE_ISOLATION = "user";
+      assert.deepEqual(mindGitOpts("/minds/mimsy", "mimsy").env, { HOME: "/minds/mimsy/home" });
+      delete process.env.VOLUTE_ISOLATION;
+      assert.equal(mindGitOpts("/minds/mimsy", "mimsy").env, undefined);
     } finally {
       delete process.env.VOLUTE_DAEMON_TOKEN;
     }

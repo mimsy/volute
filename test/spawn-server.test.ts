@@ -1,5 +1,13 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, it } from "node:test";
@@ -87,6 +95,55 @@ describe("spawnServer verification wrapping", () => {
         }
       }
     } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not hand the daemon's admin token to the mind-authored server (#966)", async () => {
+    // src/server.ts is a file the mind edits, and the mind can make the daemon run it:
+    // POST /:name/variants/:variant/merge reaches this verify spawn, with verification
+    // on by default. A bare spawn inherits the daemon's environment, token included.
+    // This spawns a real server.ts that reports what it can see, exactly as a mind's
+    // own edited one could.
+    const dir = mkdtempSync(join(tmpdir(), "spawn-env-"));
+    const savedToken = process.env.VOLUTE_DAEMON_TOKEN;
+    const savedHost = process.env.HOST_ONLY_SECRET;
+    process.env.VOLUTE_DAEMON_TOKEN = "super-secret-admin";
+    process.env.HOST_ONLY_SECRET = "ambient-host-secret";
+    let result: Awaited<ReturnType<typeof spawnServer>> = null;
+    try {
+      mkdirSync(join(dir, "src"), { recursive: true });
+      const seen = join(dir, "seen.txt");
+      writeFileSync(
+        join(dir, "src", "server.ts"),
+        [
+          'import { writeFileSync } from "node:fs";',
+          'const token = process.env.VOLUTE_DAEMON_TOKEN ?? "";',
+          'const host = process.env.HOST_ONLY_SECRET ?? "";',
+          `writeFileSync(${JSON.stringify(seen)}, "token=[" + token + "]\\nhost=[" + host + "]");`,
+          'console.log("listening on :43221");',
+          "setTimeout(() => {}, 15000);",
+        ].join("\n"),
+      );
+      symlinkSync(resolve(process.cwd(), "node_modules"), join(dir, "node_modules"), "dir");
+
+      result = await spawnServer(dir, 0, { detached: true });
+      assert.ok(result, "spawn should succeed");
+      assert.equal(readFileSync(seen, "utf-8"), "token=[]\nhost=[]");
+    } finally {
+      if (result?.child.pid) {
+        try {
+          process.kill(-result.child.pid, "SIGKILL");
+        } catch {
+          try {
+            process.kill(result.child.pid, "SIGKILL");
+          } catch {}
+        }
+      }
+      if (savedToken === undefined) delete process.env.VOLUTE_DAEMON_TOKEN;
+      else process.env.VOLUTE_DAEMON_TOKEN = savedToken;
+      if (savedHost === undefined) delete process.env.HOST_ONLY_SECRET;
+      else process.env.HOST_ONLY_SECRET = savedHost;
       rmSync(dir, { recursive: true, force: true });
     }
   });

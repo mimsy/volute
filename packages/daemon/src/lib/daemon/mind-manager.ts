@@ -22,6 +22,7 @@ import { getPrompt } from "../prompts.js";
 import { checkHealth } from "../util/health.js";
 import { clearJsonMap, loadJsonMap, saveJsonMap } from "../util/json-state.js";
 import log from "../util/logger.js";
+import { buildMindBaseEnv } from "../util/mind-env.js";
 import { RotatingLog } from "../util/rotating-log.js";
 import { markCredentialDegraded, noteCredentialHealthy } from "./credential-recovery.js";
 import { injectPiProviderCredentials, writeClaudeCredentials } from "./credential-sync.js";
@@ -38,64 +39,6 @@ import { clearMind as clearTurnState, summarizeOrphanedTurns } from "./turn-trac
 const mlog = log.child("minds");
 
 const execFileAsync = promisify(execFile);
-
-// Benign system env vars a mind's node/tsx process needs to run. Everything else
-// from the daemon environment (ambient AWS_*/GITHUB_TOKEN/etc.) is withheld.
-const MIND_ENV_ALLOWLIST = [
-  "PATH",
-  "HOME",
-  "USER",
-  "LOGNAME",
-  "SHELL",
-  "LANG",
-  "LANGUAGE",
-  "LC_ALL",
-  "LC_CTYPE",
-  "LC_MESSAGES",
-  "TERM",
-  "TERMINFO",
-  "COLORTERM",
-  "TMPDIR",
-  "TMP",
-  "TEMP",
-  "TZ",
-  "NODE_ENV",
-  "__CF_USER_TEXT_ENCODING",
-  // Outbound proxy / custom-CA config — required for minds' HTTPS calls (incl.
-  // the Anthropic API) to succeed on hosts that reach the internet only via a
-  // corporate proxy or custom CA bundle. Previously inherited via ...process.env.
-  "HTTP_PROXY",
-  "HTTPS_PROXY",
-  "NO_PROXY",
-  "http_proxy",
-  "https_proxy",
-  "no_proxy",
-  "NODE_EXTRA_CA_CERTS",
-  "SSL_CERT_FILE",
-  "SSL_CERT_DIR",
-];
-
-/**
- * Build the base environment for a mind process from an allowlist instead of
- * spreading the full daemon `process.env`. Copies benign system vars plus all
- * `VOLUTE_*` vars the mind needs — but never the daemon admin token
- * (`VOLUTE_DAEMON_TOKEN`), which the caller replaces with a per-mind
- * `VOLUTE_MIND_TOKEN`.
- */
-export function buildMindBaseEnv(
-  source: NodeJS.ProcessEnv = process.env,
-): Record<string, string | undefined> {
-  const base: Record<string, string | undefined> = {};
-  for (const key of MIND_ENV_ALLOWLIST) {
-    if (source[key] !== undefined) base[key] = source[key];
-  }
-  for (const [key, value] of Object.entries(source)) {
-    // Withhold the daemon admin token — minds get their own VOLUTE_MIND_TOKEN.
-    if (key === "VOLUTE_DAEMON_TOKEN") continue;
-    if (key.startsWith("VOLUTE_")) base[key] = value;
-  }
-  return base;
-}
 
 /**
  * The mind's own spend cap, as environment variables it can read.

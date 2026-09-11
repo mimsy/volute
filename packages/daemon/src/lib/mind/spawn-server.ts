@@ -1,6 +1,7 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { closeSync, mkdirSync, openSync, readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
+import { buildMindBaseEnv } from "../util/mind-env.js";
 import { isIsolationEnabled, wrapForIsolation } from "./isolation.js";
 import { mindTmpDir } from "./registry.js";
 import { isSandboxEnabled, wrapForSandbox } from "./sandbox.js";
@@ -19,6 +20,14 @@ type SpawnResult = { child: ChildProcess; actualPort: number } | null;
  * When `mindName` is given, the mind-authored server is wrapped with the same
  * isolation/sandbox as `startMind` so it never runs in the daemon's trust domain
  * (`template: "codex"` is excluded from sandbox wrapping, matching startMind).
+ *
+ * The environment is built the same way `startMind` builds it — the mind allowlist,
+ * never the daemon's own `process.env`. `src/server.ts` is a file the mind edits, so
+ * inheriting here handed `VOLUTE_DAEMON_TOKEN` to mind-authored code that the mind can
+ * reach on demand: `POST /:name/variants/:variant/merge` runs this verify spawn, and
+ * verification is on by default (#966). The wrap is not the protection — `runuser`
+ * passes the environment through, and under sandbox/none there is no uid change at
+ * all — so the env has to be built correctly here rather than assumed away.
  */
 export async function spawnServer(
   cwd: string,
@@ -37,16 +46,28 @@ export async function spawnServer(
       [cmd, args] = await wrapForSandbox(cmd, args, cwd, options.mindName, [cwd, mindTmpDir(cwd)]);
     }
   }
+  const env = buildMindBaseEnv();
+  // Matches startMind: only under isolation, where the mind runs as its own user
+  // and its home/ is that user's home. Without isolation, redirecting HOME would
+  // strip the host's ~/.gitconfig and npm config from a process that legitimately
+  // runs as the daemon's user.
+  if (isIsolationEnabled()) env.HOME = resolve(cwd, "home");
   if (options?.detached) {
-    return spawnDetached(cmd, args, cwd, options.logDir);
+    return spawnDetached(cmd, args, cwd, env, options.logDir);
   }
-  return spawnAttached(cmd, args, cwd);
+  return spawnAttached(cmd, args, cwd, env);
 }
 
-function spawnAttached(cmd: string, args: string[], cwd: string): Promise<SpawnResult> {
+function spawnAttached(
+  cmd: string,
+  args: string[],
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+): Promise<SpawnResult> {
   const child = spawn(cmd, args, {
     cwd,
     stdio: ["ignore", "pipe", "pipe"],
+    env,
   });
 
   return new Promise((resolve) => {
@@ -83,6 +104,7 @@ function spawnDetached(
   cmd: string,
   args: string[],
   cwd: string,
+  env: NodeJS.ProcessEnv,
   logDir?: string,
 ): Promise<SpawnResult> {
   const logsDir = logDir ?? resolve(cwd, ".mind", "logs");
@@ -101,6 +123,7 @@ function spawnDetached(
     cwd,
     stdio: ["ignore", logFd, logFd],
     detached: true,
+    env,
   });
   child.unref();
   closeSync(logFd);

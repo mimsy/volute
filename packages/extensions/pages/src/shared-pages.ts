@@ -16,6 +16,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { relative, resolve } from "node:path";
+import { buildMindBaseEnv } from "@volute/daemon/lib/util/mind-env.js";
 
 /** Isolation info needed by shared pages operations. */
 export type IsolationInfo = {
@@ -52,6 +53,10 @@ const IDENTITY_ARGS = ["-c", "user.name=volute", "-c", "user.email=volute@localh
 /**
  * Run a git command. Adds safe.directory when isolation is enabled, and a
  * committer identity for `commit` so commits never depend on host git config.
+ *
+ * The env is the daemon's mind allowlist, not `process.env`: the commit, merge and
+ * rebase here run in worktrees minds write to, and a hook a mind plants there must
+ * not see `VOLUTE_DAEMON_TOKEN` (#966).
  */
 function gitExec(
   args: string[],
@@ -63,7 +68,8 @@ function gitExec(
   if (args[0] === "commit") prefix.push(...IDENTITY_ARGS);
   const fullArgs = prefix.length ? [...prefix, ...args] : args;
   return new Promise((resolve, reject) => {
-    execFileCb("git", fullArgs, { cwd: opts.cwd }, (err, stdout, stderr) => {
+    const env = buildMindBaseEnv();
+    execFileCb("git", fullArgs, { cwd: opts.cwd, env }, (err, stdout, stderr) => {
       if (err) {
         const e = err as Error & { stderr?: string; stdout?: string };
         e.stderr = stderr;
