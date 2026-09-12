@@ -139,7 +139,19 @@ const app = new Hono<AuthEnv>()
   .put("/:id/private", zValidator("json", z.object({ private: z.boolean() })), async (c) => {
     const id = c.req.param("id");
     const user = c.get("user");
-    if (!(await isParticipantOrOwner(id, user.id))) {
+    const conv = await getConversation(id);
+    if (conv?.type === "channel") {
+      // A channel's privacy is one of its settings, and this route reaches the same
+      // column PATCH /channels/:name does — so it takes the same owner-or-admin
+      // authority, or a plain member could unlock a room that was locked on purpose
+      // (#891). Membership alone is enough only for a DM or group conversation.
+      if (
+        !hasAdminAuthority(c.get("effective")) &&
+        (await getParticipantRole(id, user.id)) !== "owner"
+      ) {
+        return c.json({ error: "Forbidden" }, 403);
+      }
+    } else if (!(await isParticipantOrOwner(id, user.id))) {
       return c.json({ error: "Forbidden" }, 403);
     }
     const body = c.req.valid("json");

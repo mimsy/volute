@@ -91,9 +91,10 @@ async function toggleChannelPrivate(conv: ConversationWithParticipants) {
   if (!conv.channel_name) return;
   const nextPrivate = conv.private !== 1;
   try {
-    // Channels go through the settings PATCH, which keeps the channels and conversations
-    // rows in step. setConversationPrivate (used for DMs) writes only the latter, which
-    // would leave the sidebar's lock icon and the settings modal disagreeing.
+    // Channels go through the settings PATCH, which is the channel-shaped route: it
+    // validates against the rest of the settings and returns the row the modal shows.
+    // setConversationPrivate (used for DMs) keeps both privacy rows in step too (#891),
+    // so either would be correct here; this one stays for the richer response.
     await updateChannelSettings(conv.channel_name, { private: nextPrivate });
     conv.private = nextPrivate ? 1 : 0;
   } catch (err) {
