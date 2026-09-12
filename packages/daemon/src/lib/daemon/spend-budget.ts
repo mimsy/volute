@@ -118,12 +118,16 @@ export class SpendBudget {
       existing.capUsd = capUsd;
       existing.periodMinutes = periodMinutes;
     } else {
-      // Try to load persisted state first
       const persisted = this.loadState(this.mindStatePath(mind));
       if (persisted) {
-        persisted.capUsd = capUsd;
-        persisted.periodMinutes = periodMinutes;
         this.budgets.set(mind, persisted);
+        if (this.adoptPersisted(persisted, capUsd, periodMinutes)) {
+          this.dirty.add(mind);
+          // The rollover a tick would have performed, with the release a tick performs.
+          // Rows held under this bucket are out of every sweep, and a mind restarted
+          // after its period ended has no bucket left for a tick to roll.
+          releaseHeldDeliveries();
+        }
       } else {
         this.budgets.set(mind, newState(capUsd, periodMinutes));
       }
@@ -134,11 +138,38 @@ export class SpendBudget {
   }
 
   /**
-   * Drop a stopped mind's bucket. Flushes first: `flush()` skips a mind whose bucket
-   * is already gone, so deleting outright would discard up to a tick's worth of
-   * recorded spend — which a crash-looping mind would shed on every restart.
+   * Give a persisted bucket its cap and period, rolling it over first if the period it
+   * was saved in has since ended. Returns whether it rolled.
+   *
+   * Without this an expired hold outlives the daemon that saved it: `start()` schedules
+   * the first tick a minute out, so a mind restarted after its period ended stays held
+   * until then, and the boot release sweep finds a hold still in force. A period that
+   * ended while nobody was looking has ended (#962).
    */
-  async removeBudget(mind: string): Promise<void> {
+  private adoptPersisted(state: BudgetState, capUsd: number, periodMinutes: number): boolean {
+    state.capUsd = capUsd;
+    state.periodMinutes = periodMinutes;
+    const now = Date.now();
+    if (now - state.periodStart < periodMinutes * 60_000) return false;
+    this.resetPeriod(state, now);
+    return true;
+  }
+
+  /**
+   * Drop a mind's bucket. Flushes first: `flush()` skips a mind whose bucket is already
+   * gone, so deleting outright would discard up to a tick's worth of recorded spend —
+   * which a crash-looping mind would shed on every restart.
+   *
+   * Dropping the bucket silences `holdFor` by construction, so whether that ends the
+   * mind's hold is the caller's to say, not something to infer here. A host clearing the
+   * cap (`PUT /minds/:name/config` with no `spendCap`) passes `releaseHeld: true` — the
+   * cap is gone on purpose, and the mind should hear again now rather than at the next
+   * sweep. A stop passes nothing: `restoreSpendBudget` re-arms the same cap on the next
+   * start, and the persisted spend still binds. Releasing there would archive everything
+   * past the per-channel limit and tell the mind its hold had lifted, on an identity
+   * reload or merge restart that lifted nothing (#962).
+   */
+  async removeBudget(mind: string, opts: { releaseHeld?: boolean } = {}): Promise<void> {
     const wasHeld = this.holdFor(mind) != null;
     const state = this.budgets.get(mind);
     if (state && this.dirty.has(mind)) {
@@ -147,9 +178,7 @@ export class SpendBudget {
     }
     this.budgets.delete(mind);
     this.systemAcks.delete(mind);
-    // Clearing a cap (`PUT /minds/:name/config` with no `spendCap`) ends the hold, so the
-    // mind should hear again now rather than at the next sweep.
-    if (wasHeld && this.holdFor(mind) == null) releaseHeldDeliveries();
+    if (opts.releaseHeld && wasHeld && this.holdFor(mind) == null) releaseHeldDeliveries();
   }
 
   /**
@@ -170,15 +199,20 @@ export class SpendBudget {
       return;
     }
     if (this.system) {
+      // A changed cap is a new fact, and every mind gets to hear about it once more —
+      // the same rule `setBudget` applies to a mind's own bucket. Re-setting the same
+      // cap must not re-announce anything.
+      if (this.system.capUsd !== capUsdPerDay) this.systemAcks.clear();
       this.system.capUsd = capUsdPerDay;
       if (wasHolding && this.system.spentUsd < capUsdPerDay) releaseHeldDeliveries();
       return;
     }
     const persisted = this.loadState(this.systemStatePath());
     if (persisted) {
-      persisted.capUsd = capUsdPerDay;
-      persisted.periodMinutes = SYSTEM_PERIOD_MINUTES;
       this.system = persisted;
+      if (this.adoptPersisted(persisted, capUsdPerDay, SYSTEM_PERIOD_MINUTES)) {
+        this.systemDirty = true;
+      }
     } else {
       this.system = newState(capUsdPerDay, SYSTEM_PERIOD_MINUTES);
     }

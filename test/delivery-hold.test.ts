@@ -4,10 +4,19 @@ import { createServer, type Server } from "node:http";
 import { resolve } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { and, eq, sql } from "drizzle-orm";
+import type { RecordNoticeInput } from "../packages/daemon/src/lib/chat/system-events.js";
+import { restoreSpendBudget } from "../packages/daemon/src/lib/daemon/mind-service.js";
+import {
+  getSpendBudget,
+  initSpendBudget,
+  SpendBudget,
+} from "../packages/daemon/src/lib/daemon/spend-budget.js";
 import { getDb } from "../packages/daemon/src/lib/db.js";
 import {
   type DeliveryHold,
   DeliveryManager,
+  initDeliveryManager,
+  tryGetDeliveryManager,
   withHeldPreface,
 } from "../packages/daemon/src/lib/delivery/delivery-manager.js";
 import {
@@ -15,7 +24,7 @@ import {
   type DeliveryPayload,
   type RoutingConfig,
 } from "../packages/daemon/src/lib/delivery/delivery-router.js";
-import { addMind, removeMind } from "../packages/daemon/src/lib/mind/registry.js";
+import { addMind, removeMind, stateDir } from "../packages/daemon/src/lib/mind/registry.js";
 import { deliveryQueue, mindHistory } from "../packages/daemon/src/lib/schema.js";
 import { parseDbTimestamp } from "../packages/daemon/src/lib/util/time.js";
 
@@ -533,6 +542,50 @@ describe("DeliveryManager: holding deliveries", () => {
     await removeMind(name);
   });
 
+  it("a released row is held again when the cap re-arms before it is delivered", async () => {
+    // Release promotes a row to `pending` with its `held` marker still in the payload. If
+    // the cap re-arms before the sweep reaches it (a restart, a period the host shortened)
+    // the row must go back to `held` — a marked row left `pending` squats the sweep
+    // window until the period resets, and is never delivered in the meantime (#962).
+    const srv = await startMindServer();
+    servers.push(srv.server);
+    const name = await registerMind(srv.port, IMMEDIATE);
+
+    manager = new DeliveryManager();
+    let running = true;
+    manager.setRunningCheck(() => running);
+    let held: DeliveryHold | null = SPEND_HOLD;
+    manager.setHoldCheck(() => held);
+    await manager.routeAndDeliver(name, { channel: "test:ch", sender: "alice", content: "hi" });
+    assert.equal((await queueRows(name, "held")).length, 1);
+
+    // The cap lifts while the mind is down: the row is promoted but not delivered.
+    held = null;
+    running = false;
+    await manager.releaseHeld(name);
+    const pending = await queueRows(name, "pending");
+    assert.equal(pending.length, 1, "promoted, waiting for the mind");
+    const at = JSON.parse(pending[0].payload).held?.at;
+    assert.ok(at, "the promoted row still carries its arrival time");
+
+    // The mind comes back over its cap.
+    held = { reason: "spend_cap", scope: "system" };
+    running = true;
+    await manager.redrive();
+
+    assert.equal(srv.received.length, 0, "not delivered past the re-armed cap");
+    assert.equal((await queueRows(name, "pending")).length, 0, "and out of the sweep window");
+    const reheld = await queueRows(name, "held");
+    assert.equal(reheld.length, 1, "held again");
+    const marker = JSON.parse(reheld[0].payload).held;
+    assert.equal(marker.at, at, "the arrival time is the original one");
+    assert.equal(marker.scope, "system", "under the hold now in force");
+
+    const db = await getDb();
+    await db.delete(deliveryQueue).where(eq(deliveryQueue.mind, name));
+    await removeMind(name);
+  });
+
   it("releaseAllHeld finds minds by their rows, including ones with no bucket", async () => {
     // The install-wide cap holds minds that have no spend bucket of their own, so a mind
     // list would miss them — the rows are the only complete answer to who is waiting.
@@ -700,5 +753,149 @@ describe("withHeldPreface", () => {
     // assert that the period reset.
     assert.doesNotMatch(line, /reset/i);
     assert.match(line, /reaching you now/);
+  });
+});
+
+describe("removeBudget and the hold (#962)", () => {
+  // `SpendBudget.removeBudget` reaches the delivery manager through the singleton, so
+  // these tests wire the shared instance rather than a per-test one, and put it back.
+  const servers: Server[] = [];
+  const dm = tryGetDeliveryManager() ?? initDeliveryManager();
+  const notices: RecordNoticeInput[] = [];
+  const created: string[] = [];
+
+  afterEach(async () => {
+    dm.setHoldCheck(() => null);
+    dm.setRunningCheck(() => false);
+    dm.setFailureNotifier(async () => {});
+    clearConfigCache();
+    for (const s of servers.splice(0)) s.close();
+    notices.length = 0;
+    // Rows left behind by a failed assertion would be released — and counted — by the
+    // next test's release, so clean up here rather than at each test's tail.
+    const db = await getDb();
+    for (const name of created.splice(0)) {
+      await db.delete(deliveryQueue).where(eq(deliveryQueue.mind, name));
+      await removeMind(name);
+    }
+  });
+
+  /** A mind over its cap with eleven held messages in one channel — one past the release limit. */
+  async function heldMind(sb: SpendBudget) {
+    const srv = await startMindServer();
+    servers.push(srv.server);
+    const name = await registerMind(srv.port, IMMEDIATE);
+    created.push(name);
+    sb.setBudget(name, 1, 60);
+    sb.recordUsage(name, 1);
+    dm.setRunningCheck(() => true);
+    dm.setFailureNotifier(async (input) => {
+      notices.push(input);
+    });
+    dm.setHoldCheck((baseName) => {
+      const hold = sb.holdFor(baseName);
+      return hold ? { reason: "spend_cap", scope: hold.scope, until: hold.resetAt } : null;
+    });
+    for (let i = 0; i < 11; i++) {
+      await dm.routeAndDeliver(name, { channel: "test:ch", sender: "alice", content: `m${i}` });
+    }
+    assert.equal((await queueRows(name, "held")).length, 11);
+    return { srv, name };
+  }
+
+  it("a stop does not release: held rows stay held and no 'hold lifted' is sent", async () => {
+    // stopMindFull drops the bucket on every stop — an identity reload, an upgrade, a
+    // merge restart — and restoreSpendBudget re-arms the same cap on the next start.
+    // Releasing here would archive everything past the per-channel limit and tell the
+    // mind its hold had lifted, while the cap silently bound again on restart.
+    const sb = new SpendBudget();
+    const { srv, name } = await heldMind(sb);
+
+    await sb.removeBudget(name);
+    // The release runs through a dynamic import, so give it every chance to have fired.
+    await new Promise((r) => setTimeout(r, 200));
+
+    assert.equal((await queueRows(name, "held")).length, 11, "every held message is still held");
+    assert.equal((await queueRows(name, "archived")).length, 0, "nothing was archived");
+    assert.equal(srv.received.length, 0, "nothing was delivered");
+    assert.equal(notices.length, 0, "no 'hold lifted' summary was sent");
+  });
+
+  it("a period that ended while the mind was stopped releases on restart", async () => {
+    // A stop no longer releases, and a stopped mind has no bucket for a tick to roll —
+    // so the rollover performed when the persisted bucket is reloaded must carry the
+    // release a tick would have, or the backlog waits for some other bucket's rollover.
+    const sb = new SpendBudget();
+    const { srv, name } = await heldMind(sb);
+    await sb.removeBudget(name); // the stop
+    writeFileSync(
+      resolve(stateDir(name), "budget.json"),
+      JSON.stringify({ periodStart: Date.now() - 2 * 60 * 60_000, spentUsd: 1 }),
+    );
+
+    sb.setBudget(name, 1, 60); // the restart: restoreSpendBudget re-arms the same cap
+
+    await waitFor(async () => srv.received.length === 10);
+    assert.equal((await queueRows(name, "held")).length, 0);
+  });
+
+  /** The singleton budget, which is the one `restoreSpendBudget` reaches for. */
+  function singletonBudget(): SpendBudget {
+    try {
+      return initSpendBudget();
+    } catch {
+      return getSpendBudget();
+    }
+  }
+
+  function writeVoluteConfig(name: string, config: Record<string, unknown>): void {
+    const dir = resolve(process.env.VOLUTE_HOME!, "minds", name, "home/.config");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(resolve(dir, "volute.json"), JSON.stringify(config));
+  }
+
+  it("a cap raised while the mind was stopped releases the backlog on the next start", async () => {
+    // The stop dropped the bucket without releasing, so nothing in memory remembers the
+    // hold, and the persisted period has not ended, so no rollover notices either. The
+    // start re-reads volute.json, and must ask whether the cap it just loaded still holds
+    // — otherwise a host who raised a cap to let a mind hear again gets a mind whose
+    // backlog is out of every sweep until the daemon itself restarts (#962).
+    const sb = singletonBudget();
+    const { srv, name } = await heldMind(sb);
+    await sb.removeBudget(name); // the stop
+    writeVoluteConfig(name, { spendCap: 5 }); // the host raises the cap while it is down
+
+    await restoreSpendBudget(name); // the start
+
+    await waitFor(async () => srv.received.length === 10);
+    assert.equal((await queueRows(name, "held")).length, 0);
+    await sb.removeBudget(name);
+  });
+
+  it("a cap removed while the mind was stopped releases the backlog on the next start", async () => {
+    // With no cap in volute.json there is no bucket for the start to reload, so the
+    // release cannot hang off one — the start itself is the only place left to ask.
+    const sb = singletonBudget();
+    const { srv, name } = await heldMind(sb);
+    await sb.removeBudget(name);
+    writeVoluteConfig(name, {});
+
+    await restoreSpendBudget(name);
+
+    await waitFor(async () => srv.received.length === 10);
+    assert.equal((await queueRows(name, "held")).length, 0);
+  });
+
+  it("clearing the cap on purpose still releases", async () => {
+    const sb = new SpendBudget();
+    const { srv, name } = await heldMind(sb);
+
+    await sb.removeBudget(name, { releaseHeld: true });
+
+    await waitFor(async () => srv.received.length === 10);
+    assert.equal((await queueRows(name, "held")).length, 0);
+    assert.equal((await queueRows(name, "archived")).length, 1, "the oldest past the limit");
+    assert.equal(notices.length, 1, "the mind is told what waited");
+    assert.match(notices[0].detail, /spend cap was reached/);
   });
 });

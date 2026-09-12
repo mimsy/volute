@@ -7,6 +7,7 @@ import { joinCommonsChannelForMind, joinCommonsChannelForSpirit } from "../chat/
 import { ensureSystemDM } from "../chat/system-chat.js";
 import { deliverEvent, hasEverReceivedEvent } from "../chat/system-events.js";
 import { getSystemName } from "../config/setup.js";
+import { tryGetDeliveryManager } from "../delivery/delivery-manager.js";
 import { publish as publishActivity } from "../events/activity-events.js";
 import { markIdle } from "../events/mind-activity-tracker.js";
 import { notifyExtensionsMindStart, notifyExtensionsMindStop } from "../extensions.js";
@@ -174,6 +175,19 @@ export async function restoreSpendBudget(baseName: string): Promise<void> {
           "`spendCapPeriodMinutes`. Until then this mind has no spend cap.",
       );
     }
+    // The cap is now the one on disk, so ask whether it still holds this mind. A stop
+    // leaves held rows held (see `SpendBudget.removeBudget`) and drops the in-memory
+    // bucket with it, so nothing in memory remembers the hold — and held rows are out of
+    // the redrive sweep entirely. If the cap stopped binding while the mind was down —
+    // the host raised it in volute.json, or removed it, leaving no bucket at all — this
+    // start is the only thing that will ever notice (#962). `releaseHeld` re-checks the
+    // hold itself and reads nothing when there are no held rows, so the ordinary start
+    // pays one indexed query.
+    //
+    // Inside the try on purpose: a config read that threw leaves the cap unknown, and an
+    // unknown cap reads as no cap — which would hand an over-cap mind its whole backlog
+    // at its coldest moment, the hazard `startMindFull` orders this call to avoid.
+    await tryGetDeliveryManager()?.releaseHeld(baseName);
   } catch (err) {
     log.error(`failed to set spend budget for ${baseName}`, log.errorData(err));
   }

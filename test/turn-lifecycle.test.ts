@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, before, describe, it } from "node:test";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { drainEvents } from "../packages/daemon/src/lib/chat/system-events.js";
 import { getTypingMap } from "../packages/daemon/src/lib/chat/typing.js";
 import { getSpendBudget, initSpendBudget } from "../packages/daemon/src/lib/daemon/spend-budget.js";
@@ -813,6 +813,34 @@ describe("turn-lifecycle: spend cap notices", () => {
       await spend(mind, 0.85);
       assert.equal((await budgetNotices(mind)).length, 2, "re-armed for the new period");
     } finally {
+      await sb.removeBudget(mind);
+      await cleanup(mind);
+    }
+  });
+
+  it("a warning that fails to record does not burn the once-per-period flag", async () => {
+    // The exceeded branch already retracts on a failed insert; the warning branch
+    // returned a bare `true`, so a transient DB failure cost the mind its heads-up for
+    // the whole period — silence being the exact failure the warning exists to prevent.
+    const mind = "tl-spend-warn-fail";
+    const sb = getSpendBudget();
+    sb.setBudget(mind, 1, 60);
+    const db = await getDb();
+    const trigger = "tl_spend_warn_fail";
+    await db.run(
+      sql.raw(
+        `CREATE TRIGGER ${trigger} BEFORE INSERT ON system_events WHEN NEW.mind = '${mind}' BEGIN SELECT RAISE(ABORT, 'boom'); END`,
+      ),
+    );
+    try {
+      await spend(mind, 0.85);
+      assert.equal((await budgetNotices(mind)).length, 0, "the insert failed");
+
+      await db.run(sql.raw(`DROP TRIGGER ${trigger}`));
+      await spend(mind, 0.01);
+      assert.equal((await budgetNotices(mind)).length, 1, "warned on the next turn instead");
+    } finally {
+      await db.run(sql.raw(`DROP TRIGGER IF EXISTS ${trigger}`));
       await sb.removeBudget(mind);
       await cleanup(mind);
     }
