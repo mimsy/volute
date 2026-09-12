@@ -39,6 +39,7 @@ function setupMindDir() {
   writeFileSync(resolve(dir, ".mind/identity/public.pem"), "PUBLIC_KEY\n");
   writeFileSync(resolve(dir, ".mind/connectors/discord/config.json"), '{"token":"secret"}\n');
   writeFileSync(resolve(dir, ".mind/sessions/main.json"), '{"id":"sess-1"}\n');
+  writeFileSync(resolve(dir, ".mind/cursor.json"), '{"cursor":1}\n');
   writeFileSync(resolve(dir, "node_modules/.package-lock/lock.json"), "lock\n");
   writeFileSync(resolve(dir, ".variants/test/dummy.txt"), "variant\n");
 
@@ -220,8 +221,12 @@ describe("archive", () => {
       assert.ok(!entries.some((e) => e.includes("mind/src/")));
       assert.ok(entries.includes("mind/home/SOUL.md"));
       assert.ok(entries.includes("mind/home/MEMORY.md"));
-      // .mind/ files should be included (via walkDir, since .mind/ is gitignored)
-      assert.ok(entries.some((e) => e.startsWith("mind/.mind/")));
+      // .mind/ files are included via walkDir, since .mind/ is gitignored
+      assert.ok(entries.includes("mind/.mind/cursor.json"));
+      // ...but not the session pointers, which travel only with --include-sessions.
+      // Carrying them here while the manifest says `sessions: false` handed the
+      // new host a mind holding a session id that resolves to nothing.
+      assert.ok(!entries.some((e) => e.startsWith("mind/.mind/sessions/")));
     });
 
     it("sets format to home-only by default", () => {
