@@ -1193,8 +1193,8 @@ function jumpToLatest() {
           </div>
         {/if}
         {#if name}
-          {@const statusLabel = activeMinds.has(name) ? "active" : mindStatus === "sleeping" ? "asleep" : mindStatus === "running" ? "awake" : "offline"}
-          {@const statusColor = activeMinds.has(name) ? undefined : mindStatus === "sleeping" ? "var(--purple)" : mindStatus === "running" ? "var(--text-0)" : "var(--text-2)"}
+          {@const statusLabel = activeMinds.has(name) ? "active" : mindStatus === "sleeping" ? "asleep" : mindStatus === "waking" ? "waking" : mindStatus === "running" ? "awake" : "offline"}
+          {@const statusColor = activeMinds.has(name) ? undefined : mindStatus === "sleeping" ? "var(--purple)" : mindStatus === "waking" ? "var(--yellow)" : mindStatus === "running" ? "var(--text-0)" : "var(--text-2)"}
           <div class="turn-row turn-row-status">
             <div class="turn-time"></div>
             <div class="turn-rail turn-rail-terminus">

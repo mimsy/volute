@@ -35,7 +35,9 @@ async function notifyMind(mindName: string, message: string): Promise<boolean> {
     if (result.id == null) return false;
     const { getSleepManagerIfReady } = await import("../../lib/daemon/sleep-manager.js");
     const { getBaseName } = await import("../../lib/mind/registry.js");
-    return getSleepManagerIfReady()?.isSleeping(await getBaseName(mindName)) ?? false;
+    // Queued for a sleeping — or still-draining (#920) — mind counts as notified: the
+    // event flushes to it on wake.
+    return getSleepManagerIfReady()?.isQueueingInbound(await getBaseName(mindName)) ?? false;
   } catch (err) {
     log.warn(`[file-sharing] notify mind ${mindName} failed`, log.errorData(err));
     return false;

@@ -30,11 +30,13 @@ function makeEntry(overrides: Partial<MindEntry> & { name: string }): MindEntry 
 function makeDeps(opts: {
   stale?: Set<string>;
   sleeping?: Set<string>;
+  waking?: Set<string>;
   manual?: Set<string>;
 }): SelectEligibleDeps {
   return {
     isStale: (entry: MindEntry) => opts.stale?.has(entry.name) ?? true,
     isSleeping: (name: string) => opts.sleeping?.has(name) ?? false,
+    isWaking: (name: string) => opts.waking?.has(name) ?? false,
     readConfig: (name: string) => (opts.manual?.has(name) ? { upgrades: "manual" as const } : null),
   };
 }
@@ -86,6 +88,7 @@ describe("selectEligible", () => {
     const deps: SelectEligibleDeps = {
       isStale: () => true,
       isSleeping: () => false,
+      isWaking: () => false,
       readConfig: () => ({ upgrades: "auto" }),
     };
     const result = selectEligible(entries, deps);
@@ -106,6 +109,18 @@ describe("selectEligible", () => {
     assert.deepEqual(
       result.map((e) => e.name),
       ["b", "d", "a", "c"],
+    );
+  });
+
+  it("excludes minds mid-wake, which must not be restarted out from under a wake (#920)", () => {
+    // A waking mind reads as awake AND running: upgrading with a restart would kill its
+    // wake turn and the backlog flush behind it, and upgrading without one would rewrite
+    // src/ under a live process. It comes back on the next pass.
+    const entries = [makeEntry({ name: "a" }), makeEntry({ name: "b" }), makeEntry({ name: "c" })];
+    const result = selectEligible(entries, makeDeps({ waking: new Set(["b"]) }));
+    assert.deepEqual(
+      result.map((e) => e.name),
+      ["a", "c"],
     );
   });
 

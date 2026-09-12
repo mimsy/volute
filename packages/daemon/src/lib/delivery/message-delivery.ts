@@ -312,9 +312,12 @@ export async function deliverMessage(
     if (!opts.isFlush) {
       const textContent = extractTextContent(payload.content);
 
-      // Check if mind is sleeping — handle based on whileSleeping or wake triggers
+      // Check if mind is sleeping — handle based on whileSleeping or wake triggers.
+      // A waking mind (#920) queues here too: it is awake, but its night's backlog is
+      // still draining and this message belongs after it.
       const sleepManager = getSleepManagerIfReady();
-      if (sleepManager?.isSleeping(baseName)) {
+      if (sleepManager?.isQueueingInbound(baseName)) {
+        const sleeping = sleepManager.isSleeping(baseName);
         // Sleeping minds queue the message and flush it on wake — it is not gated here.
         // Record at arrival so history keeps the true receipt time.
         await recordInbound(
@@ -325,11 +328,16 @@ export async function deliverMessage(
           textContent,
         );
         const sleepState = sleepManager.getState(baseName);
-        const action = resolveSleepAction(
-          payload.whileSleeping,
-          sleepState.wokenByTrigger,
-          sleepManager.checkWakeTrigger(baseName, payload),
-        );
+        // `whileSleeping` speaks to a *sleeping* mind, and a wake trigger has nothing
+        // left to wake: while waking, the message is queued unconditionally rather than
+        // dropped by a `skip` or spending a no-op wake.
+        const action = sleeping
+          ? resolveSleepAction(
+              payload.whileSleeping,
+              sleepState.wokenByTrigger,
+              sleepManager.checkWakeTrigger(baseName, payload),
+            )
+          : "queue";
 
         if (action === "skip") {
           dlog.info(

@@ -469,6 +469,79 @@ describe("web minds routes", () => {
     }
   });
 
+  it("GET /:name — a mind mid-wake reports waking, but only while its process is up (#920)", async () => {
+    const { mkdirSync, rmSync } = await import("node:fs");
+    const { createServer } = await import("node:http");
+    const { resolve } = await import("node:path");
+    const { addMind, mindDir, removeMind } = await import(
+      "../packages/daemon/src/lib/mind/registry.js"
+    );
+    const { initMindManager, tryGetMindManager } = await import(
+      "../packages/daemon/src/lib/daemon/mind-manager.js"
+    );
+    const { getSleepManagerIfReady, initSleepManager } = await import(
+      "../packages/daemon/src/lib/daemon/sleep-manager.js"
+    );
+    const manager = tryGetMindManager() ?? initMindManager();
+    const sleepManager = getSleepManagerIfReady() ?? initSleepManager();
+
+    const name = `web-waking-${Date.now()}`;
+    const dir = resolve(mindDir(name));
+    mkdirSync(dir, { recursive: true });
+
+    // A stub mind server that answers /health, so the status path sees a live process.
+    const server = createServer((_req, res) => {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ name }));
+    });
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    const port = (server.address() as { port: number }).port;
+    await addMind(name, port, undefined, "claude");
+
+    const states = (sleepManager as unknown as { states: Map<string, unknown> }).states;
+    states.set(name, {
+      sleeping: false,
+      waking: true,
+      sleepingSince: new Date(Date.now() - 3600_000).toISOString(),
+      scheduledWakeAt: null,
+      wokenByTrigger: false,
+      voluntaryWakeAt: null,
+      queuedMessageCount: 0,
+      triggerWakeHistory: [],
+      wakeFailures: 0,
+      nextWakeAttemptAt: null,
+      lastWakeAt: new Date().toISOString(),
+    });
+    // Mark the process running without spawning one — what `isRunning` reads.
+    const tracked = (manager as unknown as { minds: Map<string, unknown> }).minds;
+    tracked.set(name, { child: {}, port });
+
+    try {
+      const cookie = await setupAuth();
+      const { default: app } = await import("../packages/daemon/src/web/app.js");
+      const get = async () => {
+        const res = await app.request(`/api/v1/minds/${name}`, {
+          headers: { Cookie: `volute_session=${cookie}` },
+        });
+        assert.equal(res.status, 200);
+        return (await res.json()) as { status: string };
+      };
+
+      assert.equal((await get()).status, "waking", "up and draining reports waking");
+
+      // Its process dies mid-wake. That is stopped — it must not hide behind the wake
+      // window for the length of the summary wait.
+      tracked.delete(name);
+      assert.equal((await get()).status, "stopped", "a dead process is not waking");
+    } finally {
+      tracked.delete(name);
+      states.delete(name);
+      server.close();
+      await removeMind(name);
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("GET /:name — surfaces lastNotice to admins only (#573)", async () => {
     const { mkdirSync, rmSync } = await import("node:fs");
     const { resolve } = await import("node:path");

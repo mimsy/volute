@@ -540,6 +540,10 @@ export async function deliverEvent(
     const { getSleepManagerIfReady } = await import("../daemon/sleep-manager.js");
     const sleepManager = getSleepManagerIfReady();
     const sleeping = !input.force && sleepManager?.isSleeping(baseName);
+    // A waking mind's backlog is still draining, so its events stay pending and flush in
+    // order behind it (#920) — but it is awake: `skip` doesn't apply and there is nothing
+    // to trigger-wake, so only `sleeping` decides those below.
+    const queued = !input.force && sleepManager?.isQueueingInbound(baseName);
 
     // Sleeping + skip: the mind never sees it.
     const behavior = input.whileSleeping ?? "queue";
@@ -564,7 +568,7 @@ export async function deliverEvent(
       }
     }
 
-    if (!sleeping) {
+    if (!queued) {
       const event = await db.select().from(systemEvents).where(eq(systemEvents.id, eventId)).get();
       if (event && (await postEventEnvelope(mind, event, { force: input.force }))) {
         await markDelivered(eventId);
@@ -581,7 +585,7 @@ export async function deliverEvent(
     }
 
     // Sleeping: "queue" and "trigger-wake" both leave the row pending to flush on wake.
-    if (behavior === "trigger-wake") {
+    if (sleeping && behavior === "trigger-wake") {
       sleepManager
         ?.initiateWake(baseName, { trigger: { channel: `event:${input.type}` } })
         .catch((err) =>

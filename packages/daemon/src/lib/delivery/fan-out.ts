@@ -94,11 +94,12 @@ export async function fanOutToMinds(opts: FanOutOpts): Promise<FanOutResult> {
       .catch((err) => log.warn("fan-out: failed to report send failure", log.errorData(err)));
   };
 
-  // Include running minds AND sleeping minds (sleeping ones route through the sleep queue).
+  // Include running minds AND sleeping-or-waking minds (they route through the sleep
+  // queue — a mind mid-wake whose process crashed is not running but still queues, #920).
   const targetMinds = mindParticipants
     .map((ap) => {
       const key = opts.targetName ? opts.targetName(ap.username) : ap.username;
-      if (manager.isRunning(key) || sm?.isSleeping(ap.username)) return ap.username;
+      if (manager.isRunning(key) || sm?.isQueueingInbound(ap.username)) return ap.username;
       if (ap.username !== opts.senderName) {
         // This is the load-bearing silent drop in delivery: a stopped participant simply
         // never receives the message. Make it traceable (#434) — but only for minds that
@@ -147,14 +148,14 @@ export async function fanOutToMinds(opts: FanOutOpts): Promise<FanOutResult> {
 
   // Predict the gate the same way deliverMessage will resolve it, so the caller can
   // tell the sender the message is held rather than delivered (#723). Advisory only —
-  // a prediction failure must not block delivery. Sleeping recipients never gate on
-  // this path: their message goes to the sleep queue and is delivered on wake, so a
-  // "held pending approval" notice for them would be false. Checked concurrently —
+  // a prediction failure must not block delivery. Recipients whose inbound is queuing
+  // never gate on this path: their message goes to the sleep queue and is delivered on
+  // wake, so a "held pending approval" notice for them would be false. Checked concurrently —
   // this runs before the caller's 200 and must not serialize per-recipient lookups.
   const gatedRecipients = (
     await Promise.all(
       targets.map(async ({ mindName, target, channel }) => {
-        if (sm?.isSleeping(mindName)) return null;
+        if (sm?.isQueueingInbound(mindName)) return null;
         try {
           const gated = await willGateMessage(target, {
             channel,

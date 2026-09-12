@@ -662,12 +662,13 @@ export class MindManager {
     await this.deliverPendingContext(name);
 
     // Redeliver pending immediate events (failed earlier POSTs, or events that arrived
-    // while the mind was stopped). Skipped for sleeping minds — the sleep manager owns
-    // the flush there, after the wake summary, so ordering is preserved. Runs on every
-    // start path (manual start, daemon boot, crash recovery).
+    // while the mind was stopped). Skipped for sleeping minds, and for a mind still
+    // draining its backlog after a wake (#920) — the sleep manager owns the flush there,
+    // after the wake summary, so ordering is preserved. Runs on every start path (manual
+    // start, daemon boot, crash recovery).
     try {
       const { getSleepManagerIfReady } = await import("./sleep-manager.js");
-      if (!getSleepManagerIfReady()?.isSleeping(name)) {
+      if (!getSleepManagerIfReady()?.isQueueingInbound(name)) {
         const { flushQueuedEvents } = await import("../chat/system-events.js");
         const flushed = await flushQueuedEvents(name);
         if (flushed > 0) mlog.info(`redelivered ${flushed} pending event(s) to ${name}`);
