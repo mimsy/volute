@@ -845,23 +845,44 @@ export class MindManager {
         )
         .catch((err) => mlog.warn(`failed to publish crash event for ${name}`, log.errorData(err)));
 
-      const { shouldRestart, delay, attempt } = this.restartTracker.recordCrash(name);
-      this.saveCrashAttempts();
-      if (!shouldRestart) {
-        mlog.error(`${name} crashed ${attempt} times — giving up on restart`);
-        await setMindRunning(name, false);
-        return;
-      }
-      mlog.info(
-        `crash recovery for ${name} — attempt ${attempt}/${this.restartTracker.maxRestartAttempts}, restarting in ${delay}ms`,
-      );
-      setTimeout(() => {
-        if (this.shuttingDown) return;
-        this.startMind(name).catch((err) => {
-          mlog.error(`failed to restart ${name}`, log.errorData(err));
-        });
-      }, delay);
+      await this.scheduleCrashRestart(name);
     });
+  }
+
+  /**
+   * Spend one restart attempt on `name` and schedule the next start, or give up
+   * once the budget is spent. Reached from the exit handler above, and again from
+   * the recovery timer when the restart it fired dies during its own startup —
+   * that death is consumed by `_startMind`'s health probe, not by an exit
+   * handler (none is registered until the probe passes), so before #1060 it ended
+   * the chain at "attempt 1/5" or "attempt 2/5" with the mind stopped and its DB
+   * `running` flag still set.
+   */
+  private async scheduleCrashRestart(name: string): Promise<void> {
+    const { shouldRestart, delay, attempt } = this.restartTracker.recordCrash(name);
+    this.saveCrashAttempts();
+    if (!shouldRestart) {
+      mlog.error(`${name} crashed ${attempt} times — giving up on restart`);
+      await setMindRunning(name, false);
+      return;
+    }
+    mlog.info(
+      `crash recovery for ${name} — attempt ${attempt}/${this.restartTracker.maxRestartAttempts}, restarting in ${delay}ms`,
+    );
+    setTimeout(() => {
+      if (this.shuttingDown) return;
+      this.startMind(name).catch((err) => {
+        mlog.error(`failed to restart ${name}`, log.errorData(err));
+        // Only a startup death is another crash. "already running" (an operator
+        // started it during the backoff) and a shutdown that began while the start
+        // was in flight are not, and must not spend an attempt.
+        if (err instanceof MindStartupError) {
+          this.scheduleCrashRestart(name).catch((e) =>
+            mlog.error(`failed to schedule crash recovery for ${name}`, log.errorData(e)),
+          );
+        }
+      });
+    }, delay);
   }
 
   async stopMind(name: string): Promise<void> {
