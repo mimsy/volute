@@ -1,42 +1,5 @@
+import { chooseModel, resolveModel } from "../lib/choose-model.js";
 import { command } from "../lib/command.js";
-import { promptLine } from "../lib/prompt.js";
-
-type ModelInfo = {
-  id: string;
-  name: string;
-  provider: string;
-  contextWindow?: number;
-  enabled: boolean;
-};
-
-async function chooseModel(
-  daemonFetch: (path: string, options?: RequestInit) => Promise<Response>,
-): Promise<string | undefined> {
-  const res = await daemonFetch("/api/v1/system/ai/models");
-  if (!res.ok) {
-    console.error(`Failed to fetch AI models (HTTP ${res.status}). Is the daemon running?`);
-    process.exit(1);
-  }
-
-  const models = (await res.json()) as ModelInfo[];
-  const enabled = models.filter((m) => m.enabled);
-  if (enabled.length === 0) return undefined;
-
-  console.log("\nAvailable models:");
-  for (let i = 0; i < enabled.length; i++) {
-    console.log(`  ${i + 1}) ${enabled[i].name} (${enabled[i].provider})`);
-  }
-
-  const answer = await promptLine(`\nChoose a model [1-${enabled.length}]: `);
-  const idx = parseInt(answer, 10) - 1;
-  if (Number.isNaN(idx) || idx < 0 || idx >= enabled.length) {
-    console.error("Invalid selection");
-    process.exit(1);
-  }
-
-  const chosen = enabled[idx];
-  return `${chosen.provider}:${chosen.id}`;
-}
 
 const cmd = command({
   name: "volute seed create",
@@ -61,31 +24,22 @@ const cmd = command({
     const client = getClient();
 
     // Auto-resolve template if not specified
-    let model = flags.model;
     let template = flags.template;
     if (!template) {
       const { resolveTemplate } = await import("@volute/daemon/lib/ai-service.js");
-      template = await resolveTemplate(model);
+      template = await resolveTemplate(flags.model);
     }
 
-    // For non-claude templates, resolve model if not specified
-    if (template !== "claude" && !model) {
-      // Non-interactive (e.g. mind running a command): use the spirit model as default
-      if (process.env.VOLUTE_MIND || !process.stdin.isTTY) {
-        const { getSpiritModel } = await import("@volute/daemon/lib/mind/spirit.js");
-        const { qualifyModelId } = await import("@volute/daemon/lib/ai-service.js");
-        const spiritModel = getSpiritModel();
-        if (spiritModel) {
-          model = template === "pi" ? qualifyModelId(spiritModel) : spiritModel;
-        }
-      }
-      // Interactive: prompt for model selection
+    const choice = await resolveModel(template, flags.model);
+    let model = choice.send;
+    // seed create is the one place a host comes to be asked, so it still offers the
+    // picker — but only to someone who can answer. promptLine never resolves on a
+    // stdin that delivers no newline, so asking a script or a mind is a hang.
+    if (choice.mayAsk && !process.env.VOLUTE_MIND && process.stdin.isTTY) {
+      model = await chooseModel(daemonFetch);
       if (!model) {
-        model = await chooseModel(daemonFetch);
-        if (!model) {
-          console.error("No AI models configured. Set up providers in the web dashboard first.");
-          process.exit(1);
-        }
+        console.error("No AI models configured. Set up providers in the web dashboard first.");
+        process.exit(1);
       }
     }
 
