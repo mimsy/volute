@@ -10,7 +10,12 @@
  *    538002 → 584162 → 630756 → 677701 → 724993 across five consecutive turns), so
  *    summing the raw events over-counts by roughly the square of the turn count. That is
  *    what put one local codex mind at 101.9M input tokens over 165 turns. We keep the last
- *    cumulative snapshot per session and emit the field-wise difference.
+ *    cumulative snapshot per session and emit the field-wise difference. The dashboard's
+ *    context estimate is the delta's second consumer, and for the same reason: a
+ *    session-cumulative counter read as a context size passes any window after a handful
+ *    of turns and never comes back down. That figure also drove rotation once, which
+ *    rotated a codex session every turn for the rest of its life (#913); rotation now
+ *    measures the rollout directly and does not read this module at all.
  *
  * 2. **`input_tokens` includes the cached portion.** codex-rs computes
  *    `non_cached_input() = input_tokens - cached_input_tokens`, so `cached_input_tokens`
@@ -64,6 +69,20 @@ export type UsageDelta = {
     cache_read_input_tokens: number;
     cache_creation_input_tokens: number;
   };
+  /**
+   * The turn's own context size: the raw per-turn input delta *before* the cached
+   * portion is taken out for billing, because everything the model read occupies the
+   * window whether or not it was billed at the full rate.
+   *
+   * A display fallback, not the rotation input. Exact on a single-request turn, where
+   * codex's cumulative total advanced by exactly that request's `input_tokens`. An
+   * overshoot on a turn that ran tools, where the total sums every request and the same
+   * context is counted once per request — which is why rotation reads
+   * `last_token_usage.input_tokens` from the rollout instead (see agent.ts's
+   * `measureContext`) and never this. The dashboard falls back to it when the rollout
+   * carries no usage event yet.
+   */
+  contextTokens: number;
   /** The new cumulative snapshot to carry into the next turn. */
   next: UsageSnapshot;
 };
@@ -113,6 +132,7 @@ export function usageDelta(prev: UsageSnapshot, usage: CodexUsage): UsageDelta |
       cache_read_input_tokens: cacheRead,
       cache_creation_input_tokens: cacheCreation,
     },
+    contextTokens: input,
     next,
   };
 }

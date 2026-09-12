@@ -255,6 +255,56 @@ type CodexEntry = {
   };
 };
 
+/**
+ * The context the model was last sent, from the rollout's own `token_count` events —
+ * codex-rs's `last_token_usage.input_tokens`, the size of the most recent request.
+ *
+ * Deliberately separate from `processCodexSession`, which computes the same figure on
+ * its way to a full breakdown: that walk tokenizes every message in the transcript, and
+ * the rotation gate needs this number after *every* turn, on a file that changes every
+ * turn — so the cache that makes the dashboard's polls free would never hit here. This
+ * streams the same file, holds one number rather than the parsed transcript, and skips
+ * `JSON.parse` on any line that can't be a token_count event. Rollouts reach tens of MB.
+ *
+ * Returns null when the rollout can't be read or carries no usage event yet (a thread
+ * whose first turn is still in flight), leaving the caller to fall back.
+ *
+ * Known cost: one pass over the whole rollout per turn, so the work across a session is
+ * quadratic in its turn count. Accepted for now — the pass is I/O plus a substring test
+ * per line, against a turn that just spent seconds in the model. Reading a fixed tail
+ * backwards is the obvious improvement and the obvious trap: a single multi-MB tool
+ * output can push the last `token_count` further back than any fixed window, and a tail
+ * read that silently misses it returns null, which reads to the caller as "not
+ * measurable" and quietly disables rotation. A backward reader has to grow its window
+ * until it finds an event or reaches the start of the file, not guess a size.
+ */
+export async function readLastContextTokens(filePath: string): Promise<number | null> {
+  const stream = createReadStream(filePath, { encoding: "utf-8" });
+  const rl = createInterface({ input: stream, crlfDelay: Infinity });
+  let last: number | null = null;
+  try {
+    for await (const line of rl) {
+      if (!line.includes('"token_count"')) continue;
+      let entry: CodexEntry;
+      try {
+        entry = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      if (entry.type !== "event_msg" || entry.payload?.type !== "token_count") continue;
+      const input = entry.payload.info?.last_token_usage?.input_tokens;
+      if (input) last = input;
+    }
+  } catch (err: any) {
+    if (err?.code !== "ENOENT") console.warn(`context-breakdown: ${filePath}:`, err?.message);
+    return null;
+  } finally {
+    rl.close();
+    stream.destroy();
+  }
+  return last;
+}
+
 // --- Codex: combined parse + extract ---
 
 export async function processCodexSession(
