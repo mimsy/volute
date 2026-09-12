@@ -11,7 +11,7 @@ import {
   findTemplatesRoot,
   renderComposedPackageJson,
 } from "../template/template.js";
-import { exec } from "../util/exec.js";
+import { exec, gitExec } from "../util/exec.js";
 import log from "../util/logger.js";
 import { seedInitLedger } from "./init-ledger.js";
 import { addSpirit, findMind, nextPort, voluteSystemDir } from "./registry.js";
@@ -52,7 +52,7 @@ const TENDING_SCHEDULE = {
 function npmEnv(): NodeJS.ProcessEnv {
   const cacheDir = resolve(voluteSystemDir(), ".npm-cache");
   mkdirSync(cacheDir, { recursive: true });
-  return { ...process.env, npm_config_cache: cacheDir };
+  return { npm_config_cache: cacheDir };
 }
 
 /** Add the tending schedule to spirit's volute.json if missing. Returns true if added. */
@@ -333,9 +333,9 @@ export async function ensureSpiritProject(): Promise<void> {
 
     // git init (before skill install, which does git add)
     try {
-      await exec("git", ["init"], { cwd: dir });
-      await exec("git", ["add", "-A"], { cwd: dir });
-      await exec("git", ["commit", "-m", "initial spirit"], { cwd: dir });
+      await gitExec(["init"], { cwd: dir });
+      await gitExec(["add", "-A"], { cwd: dir });
+      await gitExec(["commit", "-m", "initial spirit"], { cwd: dir });
     } catch (err) {
       slog.warn("git init failed for spirit — not critical", log.errorData(err));
     }

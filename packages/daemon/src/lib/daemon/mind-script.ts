@@ -3,7 +3,7 @@ import { loadMergedEnv } from "../config/env.js";
 import { findMind, mindDir, mindTmpDir, mindTmpEnv, stateDir } from "../mind/registry.js";
 import { isSandboxEnabled, wrapForSandbox } from "../mind/sandbox.js";
 import { exec } from "../util/exec.js";
-import { buildMindBaseEnv } from "./mind-manager.js";
+import { buildMindBaseEnv } from "../util/mind-env.js";
 import { issueScriptToken, revokeScriptToken } from "./mind-tokens.js";
 
 /**

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { buildMindBaseEnv } from "../packages/daemon/src/lib/daemon/mind-manager.js";
+import { buildMindBaseEnv } from "../packages/daemon/src/lib/util/mind-env.js";
 
 describe("buildMindBaseEnv", () => {
   it("withholds the daemon admin token", () => {
@@ -43,6 +43,23 @@ describe("buildMindBaseEnv", () => {
     assert.equal(env.VOLUTE_DAEMON_PORT, "1618");
     assert.equal(env.VOLUTE_HOME, "/data");
     assert.equal(env.VOLUTE_ISOLATION, "user");
+  });
+
+  it("carries XDG_CONFIG_HOME but no npm credential var (#966)", () => {
+    // Both halves are one decision. git and npm must still find a host's config when
+    // it lives off ~/.config, so the directory is allowlisted. The npm *credential*
+    // vars are not, and must not be: a mind's own postinstall script would read them,
+    // which is the leak this change closes rather than an exception to it.
+    const env = buildMindBaseEnv({
+      XDG_CONFIG_HOME: "/etc/xdg-config",
+      NODE_AUTH_TOKEN: "npm-publish-secret",
+      NPM_CONFIG__AUTH: "basic-auth-secret",
+      npm_config__authToken: "registry-secret",
+    });
+    assert.equal(env.XDG_CONFIG_HOME, "/etc/xdg-config");
+    assert.equal(env.NODE_AUTH_TOKEN, undefined);
+    assert.equal(env.NPM_CONFIG__AUTH, undefined);
+    assert.equal(env.npm_config__authToken, undefined);
   });
 
   it("passes through outbound proxy / custom-CA vars", () => {

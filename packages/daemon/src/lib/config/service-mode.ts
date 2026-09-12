@@ -19,6 +19,25 @@ export const LAUNCHD_PLIST_PATH = resolve(
 );
 export const SYSTEM_LAUNCHD_PLIST_PATH = "/Library/LaunchDaemons/com.volute.daemon.plist";
 
+/**
+ * What `sudo` needs from the host that the mind allowlist does not carry.
+ *
+ * `exec` builds every child's environment from that allowlist (#966), which is right
+ * for anything that touches a mind and wrong for `sudo` here: these calls have no TTY,
+ * so a host whose sudoers sets `askpass` can only prompt via `SUDO_ASKPASS`, and a
+ * graphical helper needs `DISPLAY` to put the dialog somewhere. Both name a program or
+ * a screen, not a credential. The sibling `execInherit` calls already take the host
+ * environment whole; this is the same host-facing exemption, written narrowly.
+ */
+function sudoEnv(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const key of ["SUDO_ASKPASS", "DISPLAY"]) {
+    const value = process.env[key];
+    if (value !== undefined) env[key] = value;
+  }
+  return env;
+}
+
 // The daemon binds its HTTP server early (before skill sync / auto-update), so
 // health normally answers within seconds. This ceiling is a belt-and-suspenders
 // margin for a slow first boot, not the expected wait (#510).
@@ -169,7 +188,9 @@ export async function startService(mode: ManagedServiceMode): Promise<void> {
       await execInherit("systemctl", ["--user", "start", "volute"]);
       break;
     case "system-launchd":
-      await exec("sudo", ["launchctl", "bootout", `system/${LAUNCHD_PLIST_LABEL}`]).catch((err) =>
+      await exec("sudo", ["launchctl", "bootout", `system/${LAUNCHD_PLIST_LABEL}`], {
+        env: sudoEnv(),
+      }).catch((err) =>
         console.warn(
           `Warning: launchctl bootout failed (may not be loaded): ${err instanceof Error ? err.message : err}`,
         ),
@@ -221,7 +242,9 @@ export async function restartService(mode: ManagedServiceMode): Promise<void> {
       await execInherit("systemctl", ["--user", "restart", "volute"]);
       break;
     case "system-launchd":
-      await exec("sudo", ["launchctl", "bootout", `system/${LAUNCHD_PLIST_LABEL}`]).catch((err) =>
+      await exec("sudo", ["launchctl", "bootout", `system/${LAUNCHD_PLIST_LABEL}`], {
+        env: sudoEnv(),
+      }).catch((err) =>
         console.warn(
           `Warning: launchctl bootout failed (may not be loaded): ${err instanceof Error ? err.message : err}`,
         ),

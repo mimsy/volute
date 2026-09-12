@@ -1,8 +1,8 @@
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
-import { buildMindBaseEnv } from "../daemon/mind-manager.js";
 import { exec, gitExec } from "../util/exec.js";
 import log from "../util/logger.js";
+import { buildMindBaseEnv } from "../util/mind-env.js";
 import { isIsolationEnabled, wrapForIsolation } from "./isolation.js";
 
 // Skip npm's audit/funding network round-trips — installs here always run

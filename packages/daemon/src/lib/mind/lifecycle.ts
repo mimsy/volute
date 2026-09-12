@@ -529,7 +529,7 @@ export async function createMind(
     // so that initTemplateBranch can git-add all template files)
     let gitWarning: string | undefined;
     try {
-      const env = isIsolationEnabled() ? { ...process.env, HOME: homeDir } : undefined;
+      const env = isIsolationEnabled() ? { HOME: homeDir } : undefined;
       await gitExec(["init"], { cwd: dest, mindName: name, env });
       await configureGitIdentity(name, { cwd: dest, mindName: name, env });
       await initTemplateBranch(dest, composedDir, manifest, name, env);
@@ -787,9 +787,7 @@ async function importFromFullArchive(
     // git init if .git/ doesn't exist (non-fatal — mind works without git)
     if (!existsSync(resolve(dest, ".git"))) {
       try {
-        const env = isIsolationEnabled()
-          ? { ...process.env, HOME: resolve(dest, "home") }
-          : undefined;
+        const env = isIsolationEnabled() ? { HOME: resolve(dest, "home") } : undefined;
         await gitExec(["init"], { cwd: dest, mindName: name, env });
         await configureGitIdentity(name, { cwd: dest, mindName: name, env });
         await gitExec(["add", "-A"], { cwd: dest, mindName: name, env });
@@ -923,7 +921,7 @@ async function importFromHomeOnlyArchive(
     // 10. Git init with template branch (enables upgrades)
     let gitWarning: string | undefined;
     try {
-      const env = isIsolationEnabled() ? { ...process.env, HOME: homeDir } : undefined;
+      const env = isIsolationEnabled() ? { HOME: homeDir } : undefined;
       await gitExec(["init"], { cwd: dest, mindName: name, env });
       await configureGitIdentity(name, { cwd: dest, mindName: name, env });
       await initTemplateBranch(dest, composedDir, templateManifest, name, env);
@@ -1154,7 +1152,7 @@ export async function importOpenClawWorkspace(body: ImportOpenClawInput): Promis
     }
 
     // git init + initial commit
-    const env = isIsolationEnabled() ? { ...process.env, HOME: resolve(dest, "home") } : undefined;
+    const env = isIsolationEnabled() ? { HOME: resolve(dest, "home") } : undefined;
     await gitExec(["init"], { cwd: dest, mindName: name, env });
     await configureGitIdentity(name, { cwd: dest, mindName: name, env });
     await gitExec(["add", "-A"], { cwd: dest, mindName: name, env });
@@ -1290,10 +1288,7 @@ export async function createVariant(input: CreateVariantInput): Promise<CreateVa
   try {
     if (isIsolationEnabled()) {
       const [cmd, args] = await wrapForIsolation("npm", ["install"], parentName);
-      await exec(cmd, args, {
-        cwd: variantDir,
-        env: { ...process.env, HOME: resolve(variantDir, "home") },
-      });
+      await exec(cmd, args, { cwd: variantDir, env: { HOME: resolve(variantDir, "home") } });
     } else {
       await exec("npm", ["install"], { cwd: variantDir });
     }
