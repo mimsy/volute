@@ -24,6 +24,8 @@ import { initDb } from "../packages/extensions/pages/src/db.js";
 import {
   type ChownExec,
   chownToMind,
+  resolveHomeScratchDir,
+  resolvePagesRead,
   resolvePagesWrite,
 } from "../packages/extensions/pages/src/ownership.js";
 import { verifyOwnership, writeQuickPage } from "../packages/extensions/pages/src/publish.js";
@@ -310,6 +312,102 @@ describe("the daemon refuses to be walked out of the pages directory", () => {
       resolvePagesWrite(mindDir, target),
       resolve(realpathSync(resolve(pagesDir, "notes")), "a.md"),
     );
+  });
+});
+
+/**
+ * Reading is not writing, and the write-side check does not cover it.
+ * `resolvePagesWrite` resolves only the parent directory on purpose — the final
+ * component is handled by an exclusive create, which cannot follow a symlink. An
+ * open for reading has no such backstop: it follows the last hop wherever it goes.
+ * So the read side resolves the whole path, and the two differ on exactly that case.
+ */
+describe("the daemon refuses to be walked out of the pages directory when reading", () => {
+  let mindDir: string;
+  let pagesDir: string;
+  let outside: string;
+
+  beforeEach(() => {
+    mindDir = mkdtempSync(resolve(tmpdir(), "pages-read-mind-"));
+    outside = mkdtempSync(resolve(tmpdir(), "pages-read-out-"));
+    pagesDir = resolve(mindDir, "home", "pages");
+    mkdirSync(pagesDir, { recursive: true });
+  });
+  afterEach(() => {
+    rmSync(mindDir, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  });
+
+  it("refuses a page file that is itself a symlink out of pages/", () => {
+    const secret = resolve(outside, "host-only.md");
+    writeFileSync(secret, "host only");
+    const link = resolve(pagesDir, "evil.md");
+    symlinkSync(secret, link);
+
+    assert.throws(
+      () => resolvePagesRead(mindDir, link),
+      /Refusing to read outside the pages directory/,
+    );
+    // The distinction this pair exists to draw: the write-side check passes the
+    // very same path, because `wx` is what refuses it there.
+    assert.equal(resolvePagesWrite(mindDir, link), resolve(realpathSync(pagesDir), "evil.md"));
+  });
+
+  it("refuses a page under a symlinked directory inside pages/", () => {
+    writeFileSync(resolve(outside, "x.md"), "host only");
+    symlinkSync(outside, resolve(pagesDir, "notes"));
+    assert.throws(
+      () => resolvePagesRead(mindDir, resolve(pagesDir, "notes", "x.md")),
+      /Refusing to read outside the pages directory/,
+    );
+  });
+
+  it("returns the real path for an ordinary page", () => {
+    const target = resolve(pagesDir, "a.md");
+    writeFileSync(target, "hello");
+    assert.equal(resolvePagesRead(mindDir, target), resolve(realpathSync(pagesDir), "a.md"));
+  });
+});
+
+/**
+ * The daemon's own scratch directories under `home/` — `.preview` — are not pages,
+ * but they sit in a tree the mind owns and can replace with a symlink. `mkdirSync`
+ * follows one without complaint, so the check has to happen after the mkdir and
+ * against the resolved path.
+ */
+describe("daemon scratch directories stay inside the mind's own directory", () => {
+  let mindDir: string;
+  let outside: string;
+
+  beforeEach(() => {
+    mindDir = mkdtempSync(resolve(tmpdir(), "pages-scratch-mind-"));
+    outside = mkdtempSync(resolve(tmpdir(), "pages-scratch-out-"));
+    mkdirSync(resolve(mindDir, "home"), { recursive: true });
+  });
+  afterEach(() => {
+    rmSync(mindDir, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  });
+
+  it("refuses a home/ subdirectory that is a symlink pointing away", () => {
+    symlinkSync(outside, resolve(mindDir, "home", ".preview"));
+    assert.throws(() => resolveHomeScratchDir(mindDir, ".preview"), /not to where it sits/);
+  });
+
+  it("refuses one that points somewhere else inside the same mind", () => {
+    // The case a containment check waves through and an equality check does not.
+    // It never leaves the mind's directory, and it still aims the daemon's write
+    // at a directory of the mind's choosing — its published pages, say.
+    const pagesDir = resolve(mindDir, "home", "pages");
+    mkdirSync(pagesDir, { recursive: true });
+    symlinkSync(pagesDir, resolve(mindDir, "home", ".preview"));
+    assert.throws(() => resolveHomeScratchDir(mindDir, ".preview"), /not to where it sits/);
+  });
+
+  it("returns the real path for an ordinary directory", () => {
+    const previewDir = resolve(mindDir, "home", ".preview");
+    mkdirSync(previewDir);
+    assert.equal(resolveHomeScratchDir(mindDir, ".preview"), realpathSync(previewDir));
   });
 });
 

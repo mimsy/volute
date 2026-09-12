@@ -140,14 +140,13 @@ function describeBody(text: string): string {
  * channel a mind can read (triage P1-5), so the command output is the only place
  * this fact exists for the person it happened to.
  */
-function ownershipNote(warning: string | null): string[] {
+function ownershipNote(warning: string | null, consequence: string): string[] {
   if (!warning) return [];
-  return [
-    "",
-    `Warning: ${warning}`,
-    "The page is published, but you may not be able to edit its source. Ask your host.",
-  ];
+  return ["", `Warning: ${warning}`, consequence];
 }
+
+const PUBLISH_OWNERSHIP_CONSEQUENCE =
+  "The page is published, but you may not be able to edit its source. Ask your host.";
 
 /**
  * A refusal for positionals a command has no slot for.
@@ -258,7 +257,7 @@ export function createCommands(): Record<string, ExtensionCommand> {
 
         const port = process.env.VOLUTE_DAEMON_PORT || "1618";
         const lines = [`Published: ${ref}`, `http://localhost:${port}/ext/pages/public/${ref}`];
-        lines.push(...ownershipNote(written.ownershipWarning));
+        lines.push(...ownershipNote(written.ownershipWarning, PUBLISH_OWNERSHIP_CONSEQUENCE));
         return { output: lines.join("\n") };
       },
     },
@@ -279,13 +278,22 @@ export function createCommands(): Record<string, ExtensionCommand> {
         if (!mindDir) return { error: `Mind not found: ${mindName}` };
 
         const file = (args.file ?? "index.html").trim();
-        const result = await renderPreview({ mindDir, file });
-        if ("error" in result) return { error: result.error };
+        const result = await renderPreview({ mindDir, mindName, ownership: ctx, file });
+        // Said the same way whether the render worked or not: the run that fails is
+        // the one that creates home/.preview and leaves it empty, so it is exactly
+        // when a mind needs to hear the directory may not be its own to clear.
+        const note = ownershipNote(
+          result.ownershipWarning ?? null,
+          "You may not be able to delete what preview leaves in home/.preview. Ask your host.",
+        );
+        if ("error" in result) return { error: [result.error, ...note].join("\n") };
 
         return {
-          output:
-            `Rendered pages/${file} → ${result.rel}\n` +
+          output: [
+            `Rendered pages/${file} → ${result.rel}`,
             "Open that image to see how your page looks in a browser, then revise and preview again.",
+            ...note,
+          ].join("\n"),
         };
       },
     },
@@ -459,7 +467,7 @@ export function createCommands(): Record<string, ExtensionCommand> {
             : "Comment added.";
         const lines = [placed];
         if (hailed.length > 0) lines.push(`Named: ${hailed.map((h) => `@${h}`).join(", ")}.`);
-        lines.push(...ownershipNote(ownershipWarning));
+        lines.push(...ownershipNote(ownershipWarning, PUBLISH_OWNERSHIP_CONSEQUENCE));
         return { output: lines.join("\n") };
       },
     },
@@ -507,7 +515,7 @@ export function createCommands(): Record<string, ExtensionCommand> {
           output: [
             `Promoted comment #${id} to ${refOf(written.ref)}.`,
             `It still stands in the thread on ${comment.mind}/${comment.file} — now as a pointer to your page.`,
-            ...ownershipNote(written.ownershipWarning),
+            ...ownershipNote(written.ownershipWarning, PUBLISH_OWNERSHIP_CONSEQUENCE),
           ].join("\n"),
         };
       },
