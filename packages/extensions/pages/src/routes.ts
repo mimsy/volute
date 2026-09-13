@@ -1,5 +1,5 @@
-import { readFile, stat } from "node:fs/promises";
-import { extname, resolve } from "node:path";
+import { lstat, readFile, realpath, stat } from "node:fs/promises";
+import { extname, relative, resolve, sep } from "node:path";
 import { boundedIntParam, type ExtensionContext, intParamError } from "@volute/extensions";
 import { Hono } from "hono";
 
@@ -7,7 +7,9 @@ import { getRecentPagesList, getSites } from "./cache.js";
 import { areCommentsClosed, getPage } from "./db.js";
 import { parseFrontmatter, renderMarkdownPage, resolveStylesheet } from "./markdown.js";
 import { resolveMentions } from "./mentions.js";
+import { isMultiplyLinkedFile, within } from "./ownership.js";
 import { defaultPromotionTitle, writeQuickPage } from "./publish.js";
+import { MIME_TYPES, PAGES_CSP } from "./serving.js";
 import {
   addComment,
   deleteComment,
@@ -25,23 +27,6 @@ import {
   toggleReaction,
 } from "./social.js";
 import { toIso } from "./time.js";
-
-const MIME_TYPES: Record<string, string> = {
-  ".html": "text/html",
-  ".js": "application/javascript",
-  ".css": "text/css",
-  ".json": "application/json",
-  ".svg": "image/svg+xml",
-  ".png": "image/png",
-  ".jpg": "image/jpeg",
-  ".jpeg": "image/jpeg",
-  ".gif": "image/gif",
-  ".ico": "image/x-icon",
-  ".woff": "font/woff",
-  ".woff2": "font/woff2",
-  ".txt": "text/plain",
-  ".xml": "application/xml",
-};
 
 async function parseJson<T>(c: { req: { json: () => Promise<unknown> } }): Promise<T | null> {
   try {
@@ -281,6 +266,15 @@ export function createRoutes(ctx: ExtensionContext): Hono {
             title,
             comment.content,
           );
+          // Same reasoning as the ownership warning above: this response goes to
+          // the dashboard, not to a mind reading command output, so an entry the
+          // publish refused is logged rather than returned. It is said properly to
+          // the author on their next `pages publish` or `pages write`.
+          if (written.publish.skipped.length > 0) {
+            console.warn(
+              `[pages] ${actor.username}: skipped linked entries while publishing: ${written.publish.skipped.map((e) => `${e.file} (${e.reason})`).join(", ")}`,
+            );
+          }
           setCommentBody(ctx.db, id, { mind: actor.username, file: written.file });
           return c.json({ ok: true, mind: actor.username, file: written.file });
         } catch (err) {
@@ -334,12 +328,6 @@ export function createRoutes(ctx: ExtensionContext): Hono {
 // origin means external calls carry nothing sensitive. Markdown pages are still
 // DOMPurify-sanitized (defense-in-depth). Omitting allow-forms/allow-popups keeps
 // the sandbox tight.
-const PAGES_CSP =
-  "sandbox allow-scripts; default-src 'self' https:; " +
-  "script-src 'self' 'unsafe-inline' https:; style-src 'self' 'unsafe-inline' https:; " +
-  "img-src 'self' data: https:; font-src 'self' data: https:; connect-src 'self' https:; " +
-  "base-uri 'none'";
-
 // Sandboxed pages run in an opaque origin, so the dashboard iframe can't read
 // their location to keep the breadcrumb in sync when a visitor follows an
 // in-page link. Instead every served HTML page reports its own path to the
@@ -425,6 +413,50 @@ export function createPublicRoutes(ctx: ExtensionContext): Hono {
       } else if (!fileStat?.isFile()) {
         return c.text("Not found", 404);
       }
+
+      // Nothing under this root may be a symlink, or lead through one to a file
+      // outside it. This route is unauthenticated and reads as the daemon — root
+      // on a user-isolation install — so following a link here would serve any
+      // file the daemon can open to anyone who can reach the port. Publish no
+      // longer copies links into a snapshot and the start-up sweep clears the ones
+      // it copied before, but an author also writes straight into the commons
+      // checkout, and git restores symlinks on every checkout. The refusal has to
+      // live here too.
+      //
+      // `pagesRoot` is resolved as well: on macOS `dataDir` commonly sits under
+      // `/var`, which is itself a link to `/private/var`, so comparing a real file
+      // path against an unresolved root would refuse every legitimate page.
+      //
+      // 404, not 403: a distinct status would confirm that the path exists and is
+      // interesting, which is the one thing a prober wants from a public route.
+      const realRoot = await realpath(pagesRoot).catch(() => null);
+      const realFile = await realpath(fileToServe).catch(() => null);
+      const linkStat = await lstat(fileToServe).catch(() => null);
+      if (
+        !realRoot ||
+        !realFile ||
+        !within(realRoot, realFile) ||
+        linkStat?.isSymbolicLink() ||
+        // A second *name* for an inode, not a pointer to a path. Every check above
+        // passes it: it is a regular file, and it resolves inside the root because
+        // that is genuinely where the name lives (#1089).
+        (linkStat && isMultiplyLinkedFile(linkStat))
+      )
+        return c.text("Not found", 404);
+
+      // And the dotfile guard again, this time on the *resolved* path. The check
+      // above runs on the URL, which a link inside the commons checkout walks
+      // straight past: `link/config`, where `link` points at `.git`, carries no dot
+      // segment of its own and lands on a regular file well inside the root. The
+      // repo has no remote, but `.git` is the whole history of the commons —
+      // including the bodies of pages their authors later took down.
+      if (
+        blockDotfiles &&
+        relative(realRoot, realFile)
+          .split(sep)
+          .some((s) => s.startsWith("."))
+      )
+        return c.text("Not found", 404);
 
       const ext = extname(fileToServe);
       try {

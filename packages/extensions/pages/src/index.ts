@@ -14,6 +14,7 @@ import {
   ensurePagesRepo,
   isolationFrom,
 } from "./shared-pages.js";
+import { sweepSnapshotSymlinks } from "./snapshot-sweep.js";
 
 const assetsDir = resolve(import.meta.dirname, "../dist/ui");
 const skillsDir = resolve(import.meta.dirname, "../skills");
@@ -56,6 +57,16 @@ export default createExtension({
   },
 
   onDaemonStart(ctx) {
+    // Before anything is served. Publishing used to copy a symlink from the mind's
+    // pages directory into the snapshot verbatim, and the public route is
+    // unauthenticated — so a snapshot written before that was fixed is a live read
+    // primitive the moment the web server comes up. Its own errors are contained.
+    try {
+      sweepSnapshotSymlinks(ctx.dataDir);
+    } catch (err) {
+      console.error(`[pages] snapshot symlink sweep failed: ${(err as Error).message}`);
+    }
+
     repoReady = ensurePagesRepo(ctx.dataDir, isolationFrom(ctx));
     repoReady
       .then(() => {

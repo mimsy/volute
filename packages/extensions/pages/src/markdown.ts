@@ -1,9 +1,10 @@
-import { existsSync } from "node:fs";
+import { realpathSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
 import DOMPurify from "isomorphic-dompurify";
 import { Marked } from "marked";
 
 import { linkMentions } from "./mentions.js";
+import { within } from "./ownership.js";
 
 const marked = new Marked({ gfm: true });
 
@@ -99,26 +100,55 @@ export function parseFrontmatter(raw: string): Frontmatter {
   };
 }
 
+/**
+ * The stylesheet a markdown page should be rendered with, as a path relative to
+ * the pages root — which is what both callers turn into a URL.
+ *
+ * Containment is measured on real paths. `resolve()` never touches the filesystem,
+ * so the prefix test this replaces passed `style: notes/theme.css` whether `notes`
+ * was a directory or a symlink the mind pointed at somewhere else entirely, and the
+ * renderer would then have named a file outside the tree in the page it built. Every
+ * candidate here — the frontmatter one and the two conventional ones — is resolved
+ * the whole way and must land inside the real root.
+ */
 export function resolveStylesheet(
   mdFilePath: string,
   pagesRoot: string,
   frontmatterStyle?: string,
 ): string | null {
-  // Frontmatter override — path relative to pages root (with containment check)
+  let realRoot: string;
+  try {
+    realRoot = realpathSync(pagesRoot);
+  } catch {
+    return null;
+  }
+
+  /** The relative path to name in the page, or null if it is not really in there. */
+  const contained = (candidate: string): string | null => {
+    try {
+      const real = realpathSync(candidate);
+      if (!within(realRoot, real)) return null;
+      return relative(realRoot, real);
+    } catch {
+      return null;
+    }
+  };
+
+  // Frontmatter override — path relative to pages root.
   if (frontmatterStyle) {
-    const abs = resolve(pagesRoot, frontmatterStyle);
-    if (abs.startsWith(pagesRoot + "/") && existsSync(abs)) return frontmatterStyle;
+    const named = contained(resolve(realRoot, frontmatterStyle));
+    if (named) return named;
   }
 
   // Convention: style.css in same directory as the markdown file
   const dir = dirname(mdFilePath);
-  const localCss = resolve(dir, "style.css");
-  if (existsSync(localCss)) return relative(pagesRoot, localCss);
+  const local = contained(resolve(dir, "style.css"));
+  if (local) return local;
 
   // Fallback: style.css at pages root
-  if (dir !== pagesRoot) {
-    const rootCss = resolve(pagesRoot, "style.css");
-    if (existsSync(rootCss)) return "style.css";
+  if (dir !== realRoot) {
+    const root = contained(resolve(realRoot, "style.css"));
+    if (root) return root;
   }
 
   return null;

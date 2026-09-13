@@ -19,7 +19,7 @@
  * the default.
  */
 import { execFile } from "node:child_process";
-import { realpathSync } from "node:fs";
+import { realpathSync, statSync } from "node:fs";
 import { basename, dirname, resolve, sep } from "node:path";
 
 /** The slice of `ExtensionContext` this needs. Structural, so any ctx satisfies it. */
@@ -36,8 +36,45 @@ const defaultExec: ChownExec = (cmd, args) =>
     execFile(cmd, args, (err) => (err ? rej(err) : res()));
   });
 
+/**
+ * A file with more than one name on disk. Refused wherever the daemon reads or
+ * copies a mind's pages, for the same reason a symlink is (#1089).
+ *
+ * A hard link is not a pointer, it is a second name for the same inode, and it
+ * carries none of the marks a symlink does: `lstat` reports a plain regular file,
+ * containment resolves to a path inside the tree because that *is* where the name
+ * lives, and the bytes come back as the file's own. On Linux
+ * `fs.protected_hardlinks` stops an unprivileged user linking to a file it cannot
+ * read; macOS has no equivalent, so on a macOS system install a mind can put a
+ * second name for a root-only inode straight into `home/pages`, and every check
+ * built for symlinks waves it through.
+ *
+ * The test is `nlink`, and it applies to **regular files only**: every directory
+ * has at least two links — its own entry and its `.` — so testing directories
+ * would refuse the whole tree.
+ *
+ * It does refuse a page a mind hardlinked on purpose. That is vanishingly rare,
+ * and every refusal names the entry and the reason, so nothing vanishes silently.
+ */
+export function isMultiplyLinkedFile(st: { isFile(): boolean; nlink: number }): boolean {
+  return st.isFile() && st.nlink > 1;
+}
+
+/**
+ * Refusal of a page that has more than one name on disk, distinguished from a
+ * containment refusal so a caller can say something true about it.
+ *
+ * The generic wording elsewhere exists to avoid answering the question a symlink
+ * was pointed at something to ask — telling a mind where its link landed is the
+ * one thing the refusal is preventing. A hard link is different: saying "this
+ * page has a second name" reports only what the mind did itself, and reveals
+ * nothing about the inode. So this one gets said plainly, and "must stay within
+ * pages/" is not said about a file that is plainly within pages/.
+ */
+export class MultiplyLinkedPageError extends Error {}
+
 /** Path containment, on real paths only — `startsWith` on unresolved paths proves nothing. */
-function within(base: string, path: string): boolean {
+export function within(base: string, path: string): boolean {
   return path === base || path.startsWith(base + sep);
 }
 
@@ -105,6 +142,18 @@ export function resolvePagesRead(mindDir: string, target: string): string {
   if (!within(realPages, realTarget)) {
     throw new Error(
       `Refusing to read outside the pages directory: ${target} resolves to ${realTarget}`,
+    );
+  }
+  // Containment cannot see a hard link, because a hard link has nothing to see:
+  // it is a second *name* for an inode, so the name really is inside `home/pages`
+  // and the check above is right to say so. The count of names is the only thing
+  // that gives it away. This belongs in the resolver rather than only at the
+  // servers, because the markdown preview reads the resolved path *directly* —
+  // it renders the `.md` itself and never fetches it over the preview origin —
+  // so a check that lived only in the servers would miss that read entirely.
+  if (isMultiplyLinkedFile(statSync(realTarget))) {
+    throw new MultiplyLinkedPageError(
+      `Refusing to read a page with more than one name on disk: ${target}`,
     );
   }
   return realTarget;
