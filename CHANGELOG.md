@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.61.0](https://github.com/mimsy/volute/compare/volute-v0.60.1...volute-v0.61.0) (2026-09-13)
+
+
+### Features
+
+* **cli:** honour --model on volute mind create ([#1034](https://github.com/mimsy/volute/issues/1034)) ([#1085](https://github.com/mimsy/volute/issues/1085)) ([90dd9ef](https://github.com/mimsy/volute/commit/90dd9efeac76a42bdd1a672bb02dbd499440e89d))
+
+
+### Bug Fixes
+
+* **codex:** rotate the session on the turn's context size, not the session-cumulative counter ([#913](https://github.com/mimsy/volute/issues/913)) ([#1093](https://github.com/mimsy/volute/issues/1093)) ([37e7745](https://github.com/mimsy/volute/commit/37e7745ca9d1ff2a9b017a8740571fc1556a0563))
+* **deps:** update anthropic ([#1066](https://github.com/mimsy/volute/issues/1066)) ([916fed1](https://github.com/mimsy/volute/commit/916fed1a891dcf9a9b7cc87863d292d7a8c2cd2f))
+* enforce channel privacy on reads and joins, and keep both privacy columns in sync ([#890](https://github.com/mimsy/volute/issues/890), [#891](https://github.com/mimsy/volute/issues/891)) ([#1075](https://github.com/mimsy/volute/issues/1075)) ([123579f](https://github.com/mimsy/volute/commit/123579f6eb6b72e59057c2eb0346281f1fd43f51))
+* export a running mind, and never sweep runtime caches into the archive ([#1058](https://github.com/mimsy/volute/issues/1058), [#1059](https://github.com/mimsy/volute/issues/1059)) ([#1092](https://github.com/mimsy/volute/issues/1092)) ([9b350bb](https://github.com/mimsy/volute/commit/9b350bb49b8b53c705819cf685b5434725a1cdc5))
+* **isolation:** lock a mind's .claude and .mind subtrees to 700, not just its root ([#959](https://github.com/mimsy/volute/issues/959)) ([#1087](https://github.com/mimsy/volute/issues/1087)) ([30fbe36](https://github.com/mimsy/volute/commit/30fbe3653211796538fc198644b20d3fd9e89a07))
+* keep crash recovery going when the restart attempt itself dies during startup ([#1060](https://github.com/mimsy/volute/issues/1060)) ([#1071](https://github.com/mimsy/volute/issues/1071)) ([41f1a5e](https://github.com/mimsy/volute/commit/41f1a5e09410bb527a30af7e534a1d394b9c752c))
+* **pages:** contain published and previewed pages to home/pages — no symlinks served, no file:// origin ([#1077](https://github.com/mimsy/volute/issues/1077), [#1080](https://github.com/mimsy/volute/issues/1080)) ([#1089](https://github.com/mimsy/volute/issues/1089)) ([a9f7fb5](https://github.com/mimsy/volute/commit/a9f7fb5c92cc3afa9d796abcd2656454d7feae74))
+* **pages:** preview leaves the mind's files mind-owned and refuses targets that escape home/pages ([#964](https://github.com/mimsy/volute/issues/964)) ([#1081](https://github.com/mimsy/volute/issues/1081)) ([357bb33](https://github.com/mimsy/volute/commit/357bb333d4affee06a709ba84b25060c9db41c38))
+* **scheduler:** bound mind-authored scheduled scripts with a timeout and never stack a hung one ([#989](https://github.com/mimsy/volute/issues/989)) ([#1091](https://github.com/mimsy/volute/issues/1091)) ([469130b](https://github.com/mimsy/volute/commit/469130b45a6afc121b94f9658ebdecedb1f8dba3))
+* **security:** scrub the daemon token from every git and npm child at the exec wrapper ([#966](https://github.com/mimsy/volute/issues/966)) ([#1076](https://github.com/mimsy/volute/issues/1076)) ([f408288](https://github.com/mimsy/volute/commit/f408288567425bbd09e871bc0c31ad5d2caf87a6))
+* **sleep:** report a waking mind as awake while its backlog drains, instead of lying for 120s ([#920](https://github.com/mimsy/volute/issues/920)) ([#1086](https://github.com/mimsy/volute/issues/1086)) ([6cc88b9](https://github.com/mimsy/volute/commit/6cc88b98a0c32ff24fe92ab8d50cd59e86d3dc30))
+* **spend-cap:** restarting a held mind no longer archives its backlog, plus five hold-path accounting fixes ([#962](https://github.com/mimsy/volute/issues/962)) ([#1074](https://github.com/mimsy/volute/issues/1074)) ([135b3b0](https://github.com/mimsy/volute/commit/135b3b043752a83f9eca79a5d9be25b33f9fdcab))
+
 ## [0.60.1](https://github.com/mimsy/volute/compare/volute-v0.60.0...volute-v0.60.1) (2026-09-06)
 
 
