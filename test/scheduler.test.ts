@@ -38,6 +38,8 @@ class TestScheduler extends Scheduler {
   systemDeliveries: SystemDelivery[] = [];
   scriptCalls: { script: string; cwd: string; mindName: string }[] = [];
   scriptResult: string | Error = "";
+  /** When set, the stubbed script blocks on it — lets a test hold a run in flight. */
+  scriptGate: Promise<void> | null = null;
 
   protected override async runScript(
     script: string,
@@ -45,6 +47,7 @@ class TestScheduler extends Scheduler {
     mindName: string,
   ): Promise<string> {
     this.scriptCalls.push({ script, cwd, mindName });
+    if (this.scriptGate) await this.scriptGate;
     if (this.scriptResult instanceof Error) throw this.scriptResult;
     return this.scriptResult;
   }
@@ -685,6 +688,266 @@ describe("scheduler state honesty (#867)", () => {
       dueAt: 998,
     });
     scheduler.clearState();
+  });
+});
+
+describe("scheduler script timeout (#989)", () => {
+  /**
+   * A scheduler that runs the *real* `runScript` (so the exec/kill path is under
+   * test) on a short fuse, with delivery captured off the DB.
+   */
+  class TimedScheduler extends Scheduler {
+    readonly stateFile = resolve(mkdtempSync(join(tmpdir(), "sched-timeout-")), "state.json");
+    deliveries: { text: string }[] = [];
+
+    constructor(private readonly timeoutMs: number) {
+      super();
+    }
+
+    protected override get statePath(): string {
+      return this.stateFile;
+    }
+
+    protected override get scriptTimeoutMs(): number {
+      return this.timeoutMs;
+    }
+
+    protected override async deliverSystem(
+      _mindName: string,
+      _scheduleId: string,
+      text: string,
+    ): Promise<{ id?: number; delivered: boolean }> {
+      this.deliveries.push({ text });
+      return { id: 1, delivered: true };
+    }
+  }
+
+  const origSandbox = process.env.VOLUTE_SANDBOX;
+
+  afterEach(() => {
+    if (origSandbox === undefined) delete process.env.VOLUTE_SANDBOX;
+    else process.env.VOLUTE_SANDBOX = origSandbox;
+    revokeMindToken("timeout-mind");
+  });
+
+  /** True once the pid is gone. A killed process may linger briefly as a zombie. */
+  async function waitForDeath(pid: number, budgetMs = 5000): Promise<boolean> {
+    const deadline = Date.now() + budgetMs;
+    while (Date.now() < deadline) {
+      try {
+        process.kill(pid, 0);
+      } catch {
+        return true;
+      }
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    return false;
+  }
+
+  it("kills a script that outruns its timeout, its children with it, and tells the mind", {
+    timeout: 30_000,
+  }, async () => {
+    process.env.VOLUTE_SANDBOX = "0";
+    const dir = mkdtempSync(join(tmpdir(), "sched-mind-"));
+    mkdirSync(join(dir, "home"), { recursive: true });
+    const pidFile = join(dir, "child.pid");
+    const tokenFile = join(dir, "token");
+
+    const scheduler = new TimedScheduler(500);
+    (scheduler as any).mindDirs.set("timeout-mind", dir);
+
+    // The background `sleep` is the discriminator: it is a *different* process
+    // from the bash the daemon spawned, so it survives anything that signals
+    // only the immediate child, and it survives a `kill(-pid)` aimed at a
+    // process that was never made a group leader.
+    await (scheduler as any).fire("timeout-mind", {
+      id: "hangs",
+      cron: "* * * * *",
+      script: `printf '%s' "$VOLUTE_MIND_TOKEN" > ${tokenFile}; sleep 120 & echo $! > ${pidFile}; wait`,
+      enabled: true,
+    });
+
+    assert.equal(scheduler.deliveries.length, 1, "the mind is told, not left guessing");
+    const text = scheduler.deliveries[0].text;
+    assert.match(text, /\[script timeout\]/);
+    // The bound is named as configured, so a shortened one never reports as
+    // the production "10 minutes".
+    assert.match(text, /timed out after 500ms and was killed/);
+
+    const childPid = Number(readFileSync(pidFile, "utf-8").trim());
+    assert.ok(childPid > 0, "the script's background child should have recorded its pid");
+    assert.ok(
+      await waitForDeath(childPid),
+      `background child ${childPid} survived the timeout — the process group was not killed`,
+    );
+
+    // The per-run credential dies with the run even when the run had to be
+    // killed: a hung script must not leave a live token behind.
+    const token = readFileSync(tokenFile, "utf-8").trim();
+    assert.ok(token.length > 0, "the script should have received a token");
+    assert.equal(resolveScriptToken(token), null, "token must be revoked after a timeout");
+  });
+
+  it("does not wait on a grandchild that kept stdout open", async () => {
+    process.env.VOLUTE_SANDBOX = "0";
+    // The shell prints and exits, but its backgrounded child inherited the
+    // stdout pipe and holds it for three seconds, so `close` is three seconds
+    // away. The output is already complete — waiting for `close` unconditionally
+    // would stall every fire behind whatever the script left running.
+    const scheduler = new TimedScheduler(30_000);
+    const started = Date.now();
+    const out = await (
+      scheduler as unknown as {
+        runScript: (s: string, cwd: string, m: string) => Promise<string>;
+      }
+    ).runScript("sleep 3 & printf hello", "/tmp", "timeout-mind");
+    const elapsed = Date.now() - started;
+    assert.equal(out, "hello", "output present despite settling before close");
+    assert.ok(elapsed < 2500, `settled in ${elapsed}ms — the drain wait is not bounded`);
+  });
+
+  it("returns a script's full output, not whatever had arrived by exit", async () => {
+    process.env.VOLUTE_SANDBOX = "0";
+    // Past the 64KB pipe buffer, so the data cannot all be sitting in the pipe
+    // before the child exits. Node emits `exit` and flushes stdio on a later
+    // tick, and which of the two the poll loop services first is a platform
+    // detail — settling straight from `exit` would return a truncated (on some
+    // platforms empty) result for every ordinary scheduled script.
+    const scheduler = new TimedScheduler(30_000);
+    const out = await (
+      scheduler as unknown as {
+        runScript: (s: string, cwd: string, m: string) => Promise<string>;
+      }
+    ).runScript(`printf 'x%.0s' $(seq 1 200000)`, "/tmp", "timeout-mind");
+    assert.equal(out.length, 200000);
+  });
+
+  it("escalates to SIGKILL even when the script's own shell died on the SIGTERM", {
+    timeout: 30_000,
+  }, async () => {
+    process.env.VOLUTE_SANDBOX = "0";
+    const dir = mkdtempSync(join(tmpdir(), "sched-mind-"));
+    mkdirSync(join(dir, "home"), { recursive: true });
+    const pidFile = join(dir, "child.pid");
+
+    const scheduler = new TimedScheduler(300);
+    (scheduler as any).mindDirs.set("timeout-mind", dir);
+
+    // The nastiest shape, and the one that is easy to get wrong: the group
+    // *leader* obeys the SIGTERM and dies, so the run settles and the mind is
+    // told its script was killed — while a member that ignores SIGTERM keeps
+    // going. Disarming the escalation on the leader's exit turns the whole
+    // bound into a lie: the notice says killed and the work runs forever.
+    await (scheduler as any).fire("timeout-mind", {
+      id: "survivor",
+      cron: "* * * * *",
+      script: `bash -c "trap '' TERM; sleep 120" & echo $! > ${pidFile}; wait`,
+      enabled: true,
+    });
+
+    const childPid = Number(readFileSync(pidFile, "utf-8").trim());
+    assert.ok(
+      await waitForDeath(childPid, 10_000),
+      `group member ${childPid} outlived its leader's death — the escalation was disarmed early`,
+    );
+    assert.match(scheduler.deliveries[0]?.text ?? "", /\[script timeout\]/);
+  });
+
+  it("escalates to SIGKILL for a script that ignores SIGTERM", { timeout: 30_000 }, async () => {
+    process.env.VOLUTE_SANDBOX = "0";
+    const dir = mkdtempSync(join(tmpdir(), "sched-mind-"));
+    mkdirSync(join(dir, "home"), { recursive: true });
+    const pidFile = join(dir, "child.pid");
+
+    const scheduler = new TimedScheduler(300);
+    (scheduler as any).mindDirs.set("timeout-mind", dir);
+
+    // An ignored disposition survives fork and exec, so both the bash and the
+    // `sleep` it starts are deaf to SIGTERM. A timeout that sends one signal
+    // and never follows up leaves this running forever — which is the bound
+    // not being a bound at all.
+    await (scheduler as any).fire("timeout-mind", {
+      id: "stubborn",
+      cron: "* * * * *",
+      script: `trap '' TERM; sleep 120 & echo $! > ${pidFile}; wait`,
+      enabled: true,
+    });
+
+    const childPid = Number(readFileSync(pidFile, "utf-8").trim());
+    assert.ok(
+      await waitForDeath(childPid, 8000),
+      `SIGTERM-ignoring script ${childPid} survived — the kill never escalated`,
+    );
+    assert.match(scheduler.deliveries[0]?.text ?? "", /\[script timeout\]/);
+  });
+
+  // Timeout-bounded: without the in-flight guard the second fire blocks on the
+  // gate and this hangs rather than failing.
+  it("does not fire a schedule whose previous script run is still going", {
+    timeout: 10_000,
+  }, async () => {
+    const scheduler = new TestScheduler();
+    const removed: string[] = [];
+    (scheduler as any).removeSchedule = (_m: string, id: string) => removed.push(id);
+
+    let release!: () => void;
+    scheduler.scriptGate = new Promise<void>((r) => {
+      release = r;
+    });
+    scheduler.scriptResult = "done";
+
+    const schedule = {
+      id: "slow-timer",
+      fireAt: new Date(Date.now() - 60000).toISOString(),
+      script: "sleep 600",
+      enabled: true,
+    };
+
+    const first = (scheduler as any).fire("test-mind", schedule);
+    // The tick that follows a minute later, while the first run is still hung.
+    await (scheduler as any).fire("test-mind", schedule);
+    await (scheduler as any).fire("test-mind", schedule);
+
+    assert.equal(scheduler.scriptCalls.length, 1, "a hung run must not be stacked on");
+    assert.equal(scheduler.systemDeliveries.length, 0, "the skipped fires deliver nothing");
+    assert.deepEqual(removed, [], "the in-flight run still owns consuming the one-timer");
+
+    release();
+    await first;
+
+    assert.deepEqual(removed, ["slow-timer"], "and does consume it when it finishes");
+    assert.equal(scheduler.systemDeliveries.length, 1);
+
+    // Once the run is done the schedule is firable again — the guard bounds a
+    // run, it doesn't retire the schedule.
+    scheduler.scriptGate = null;
+    await (scheduler as any).fire("test-mind", {
+      ...schedule,
+      fireAt: undefined,
+      cron: "* * * * *",
+    });
+    assert.equal(scheduler.scriptCalls.length, 2);
+  });
+
+  it("records the skipped fire in the state file rather than leaving a silent gap", {
+    timeout: 10_000,
+  }, async () => {
+    const scheduler = new TestScheduler();
+    let release!: () => void;
+    scheduler.scriptGate = new Promise<void>((r) => {
+      release = r;
+    });
+
+    const schedule = { id: "busy", cron: "* * * * *", script: "sleep 600", enabled: true };
+    const first = (scheduler as any).fire("test-mind", schedule);
+    await (scheduler as any).fire("test-mind", schedule);
+
+    const entry = (scheduler as any).state.get("test-mind:busy");
+    assert.equal(entry?.skipReason, "in_flight");
+    assert.ok(typeof entry?.skippedAt === "number");
+
+    release();
+    await first;
   });
 });
 

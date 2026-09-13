@@ -110,6 +110,30 @@ describe("exec env scrub (#966)", () => {
     assert.equal(out, "token=[]");
   });
 
+  it("a timed child gets the same scrub as an untimed one (#989)", async () => {
+    // `timeout` routes through a different code path — its own `spawn`, not
+    // `execFile` — and that path has to be handed the env the wrapper scrubbed
+    // rather than the caller's raw one. It is the path scheduled mind scripts and
+    // the wake hook take, so it is the one where mind-authored code actually runs.
+    const out = await exec(
+      "sh",
+      [
+        "-c",
+        'printf "token=[%s] host=[%s] extra=[%s] allowed=[%s]" "$VOLUTE_DAEMON_TOKEN" "$HOST_ONLY_SECRET" "$EXTRA" "$VOLUTE_EXEC_ENV_PROBE"',
+      ],
+      { env: { EXTRA: "given" }, timeout: 10_000 },
+    );
+    assert.equal(out, "token=[] host=[] extra=[given] allowed=[allowlisted]");
+  });
+
+  it("a timed child cannot re-admit the token through the caller's own env", async () => {
+    const out = await exec("sh", ["-c", 'printf "token=[%s]" "$VOLUTE_DAEMON_TOKEN"'], {
+      env: { ...process.env, HOME: "/tmp" },
+      timeout: 10_000,
+    });
+    assert.equal(out, "token=[]");
+  });
+
   it("the pages extension's shared-repo commits cannot see the daemon token", async () => {
     const dataDir = join(base, "data");
     const mindDir = join(base, "alpha");

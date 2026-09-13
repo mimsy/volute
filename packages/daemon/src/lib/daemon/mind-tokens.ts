@@ -44,16 +44,17 @@ export function getMindToken(mindName: string): string | null {
  * flight at once and each needs its own revocable credential.
  *
  * The TTL is a backstop for a run that dies without reaching its `finally`, and it
- * *slides*: every successful resolve pushes the expiry out again. A fixed hour would
- * have been a cliff rather than a bound — `Scheduler.runScript` passes no timeout, so a
- * backup or export legitimately running past the hour would start 401ing at minute 61
- * having worked for sixty, a silent partial failure the old long-lived token never had.
- * Sliding it means a script stays authenticated for as long as it is actually working,
- * while an abandoned token still expires an hour after its last use.
+ * *slides*: every successful resolve pushes the expiry out again. It predates the
+ * scheduled-script timeout (#989) and still earns its keep: the pre-sleep and wake
+ * hooks set their own bounds, a `Scheduler` subclass can raise its, and the sliding
+ * window means a script stays authenticated for as long as it is actually working
+ * rather than 401ing mid-job at a fixed hour, while an abandoned token still expires
+ * an hour after its last use.
  *
- * The cost, stated because it is real: work a script backgrounds (`… &`), or work left
- * behind when a `timeout` reaps only the immediate child, loses its credential when the
- * run ends. A script needing to outlive its own run should re-enter through the CLI.
+ * The cost, stated because it is real: work a script backgrounds into its own
+ * process group (`setsid`, `nohup … &`) survives the group kill that ends the run
+ * and loses its credential with it. A script needing to outlive its own run should
+ * re-enter through the CLI.
  */
 const SCRIPT_TOKEN_TTL = 60 * 60 * 1000;
 const scriptTokens = new Map<string, { mind: string; expiresAt: number }>();
