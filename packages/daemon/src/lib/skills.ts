@@ -270,21 +270,23 @@ const TEMPLATE_SKILLS_DIR: Record<string, string> = {
 };
 
 /**
- * Resolve the skills directory for a mind.
- * Detects the template from marker files in the mind directory:
- * - home/AGENTS.md → codex (.agents/skills)
- * - home/MINDS.md → pi (.pi/skills)
- * - otherwise → claude (.claude/skills)
+ * The template a mind's home/ is laid out for, from its mechanics-doc marker:
+ * home/AGENTS.md → codex, home/MINDS.md → pi, home/CLAUDE.md → claude. Undefined
+ * when there is no marker. This is what the *disk* says — it can disagree with the
+ * registry's `template` after a switch that never reached home/.
  */
-export function mindSkillsDir(dir: string): string {
+export function detectHomeTemplate(dir: string): string | undefined {
   const home = resolve(dir, "home");
-  let subdir = TEMPLATE_SKILLS_DIR.claude;
-  if (existsSync(join(home, "AGENTS.md"))) {
-    subdir = TEMPLATE_SKILLS_DIR.codex;
-  } else if (existsSync(join(home, "MINDS.md"))) {
-    subdir = TEMPLATE_SKILLS_DIR.pi;
-  }
-  return resolve(home, subdir);
+  if (existsSync(join(home, "AGENTS.md"))) return "codex";
+  if (existsSync(join(home, "MINDS.md"))) return "pi";
+  if (existsSync(join(home, "CLAUDE.md"))) return "claude";
+  return undefined;
+}
+
+/** Resolve the skills directory for a mind, from its home's template (claude when unmarked). */
+export function mindSkillsDir(dir: string): string {
+  const subdir = TEMPLATE_SKILLS_DIR[detectHomeTemplate(dir) ?? "claude"];
+  return resolve(dir, "home", subdir);
 }
 
 /** Skills subdir relative to home/, e.g. ".claude/skills" */

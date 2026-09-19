@@ -2,9 +2,16 @@ import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } fr
 import { basename, resolve } from "node:path";
 import { qualifyModelId, resolveTemplate, unqualifyModelId } from "../ai-service.js";
 import { getSpiritName, readGlobalConfig } from "../config/setup.js";
-import { getSharedSkill, installSkill, mindSkillsDir } from "../skills.js";
+import {
+  detectHomeTemplate,
+  getSharedSkill,
+  installSkill,
+  migrateSkillsToTemplate,
+  mindSkillsDir,
+} from "../skills.js";
 import {
   applyInitFiles,
+  applyTemplateHomeFiles,
   backfillInitInfrastructure,
   composeTemplate,
   copyTemplateToDir,
@@ -490,6 +497,20 @@ export async function syncSpiritTemplate(): Promise<void> {
     const { minds } = await import("../schema.js");
     const { eq } = await import("drizzle-orm");
     await db.update(minds).set({ template: expectedTemplate }).where(eq(minds.name, spiritName));
+  }
+
+  // home/ is laid out per template too — mechanics doc, .claude/settings.json, the
+  // skills dir — and the switch above touches none of it. Checked against the disk,
+  // not the registry, so a spirit whose switch predates this is repaired as well:
+  // bardo's ran seven weeks as claude with codex's AGENTS.md, no startup-context
+  // hook, and every skill in .agents/skills where the claude SDK never looks.
+  const homeTemplate = detectHomeTemplate(dir);
+  if (homeTemplate && homeTemplate !== expectedTemplate) {
+    applyTemplateHomeFiles(resolve(dir, "home"), expectedTemplate);
+    const migrated = migrateSkillsToTemplate(dir, homeTemplate, expectedTemplate);
+    const { chownMindDir } = await import("./isolation.js");
+    await chownMindDir(dir, spiritName);
+    slog.info(`spirit home switched ${homeTemplate} → ${expectedTemplate}`, { migrated });
   }
 
   const template = expectedTemplate;
