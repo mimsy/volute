@@ -23,6 +23,7 @@ import {
 } from "../mind/registry.js";
 import { isSandboxEnabled, wrapForSandbox } from "../mind/sandbox.js";
 import { reapMindTmp } from "../mind/tmp-reaper.js";
+import { syncMindZshenv } from "../mind/zshenv.js";
 import { getPrompt } from "../prompts.js";
 import { checkHealth } from "../util/health.js";
 import { clearJsonMap, loadJsonMap, saveJsonMap } from "../util/json-state.js";
@@ -472,16 +473,14 @@ export class MindManager {
           env.OPENAI_API_KEY = process.env.OPENAI_API_KEY;
         }
       }
+    }
 
-      // Write .zshenv in the mind's home dir — the codex sandbox runs commands in
-      // /bin/zsh -lc which resets the environment. ZDOTDIR is set via codex config
-      // so the login shell sources this file to restore VOLUTE vars and PATH.
-      const homeDir = resolve(dir, "home");
-      const zshenvLines = Object.entries(env)
-        .filter(([k, v]) => k.startsWith("VOLUTE_") && v != null)
-        .map(([k, v]) => `export ${k}=${JSON.stringify(v)}`);
-      zshenvLines.push(`export PATH=${JSON.stringify(env.PATH ?? "")}`);
-      writeFileSync(resolve(homeDir, ".zshenv"), `${zshenvLines.join("\n")}\n`, { mode: 0o600 });
+    // Codex minds get home/.zshenv; every other template has a stale one removed.
+    try {
+      syncMindZshenv(resolve(dir, "home"), target.template, env);
+    } catch (err) {
+      if (target.template === "codex") throw err;
+      mlog.warn(`failed to remove stale .zshenv for ${name}`, log.errorData(err));
     }
 
     // For claude minds, inject system Anthropic credentials.
