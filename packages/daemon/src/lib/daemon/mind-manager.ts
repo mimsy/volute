@@ -174,6 +174,18 @@ export class DaemonShuttingDownError extends Error {
   }
 }
 
+/**
+ * Thrown when there is nothing to start: the registry has no such mind, or its
+ * directory is gone. Unlike a strained daemon, waiting will not fix it, so crash
+ * recovery ends on it rather than retrying.
+ */
+export class MindUnavailableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "MindUnavailableError";
+  }
+}
+
 function mindPidPath(name: string): string {
   return resolve(stateDir(name), "mind.pid");
 }
@@ -247,6 +259,13 @@ export class MindManager {
   private stopping = new Set<string>();
   private shuttingDown = false;
   private restartTracker = new RestartTracker();
+  // Recovery restarts pending for a mind — waiting out a backoff (`timer` set) or
+  // with the start in flight. The mind is not in `minds` while it waits, so an
+  // operator stop has to find it here (#1070).
+  private recoveries = new Map<string, { timer?: NodeJS.Timeout }>();
+  // Delay before retrying a recovery restart that failed outside the mind's own
+  // startup (spawn EMFILE/EAGAIN, a registry read) — see `onRecoveryStartFailed`.
+  private strainRetryDelayMs = 60_000;
   // Per-name lifecycle mutex: start/stop/restart for a given mind serialize so
   // concurrent callers can't double-spawn or have a loser's cleanup delete the
   // winner's tracked child.
@@ -275,16 +294,16 @@ export class MindManager {
     template?: string;
   }> {
     const entry = await findMind(name);
-    if (!entry) throw new Error(`Unknown mind: ${name}`);
+    if (!entry) throw new MindUnavailableError(`Unknown mind: ${name}`);
 
     if (entry.parent) {
       // Variant — dir and port come from the minds table entry
-      if (!entry.dir) throw new Error(`Variant ${name} has no directory`);
+      if (!entry.dir) throw new MindUnavailableError(`Variant ${name} has no directory`);
       return { dir: entry.dir, port: entry.port, baseName: entry.parent, template: entry.template };
     }
 
     const dir = entry.dir ?? mindDir(name);
-    if (!existsSync(dir)) throw new Error(`Mind directory missing: ${dir}`);
+    if (!existsSync(dir)) throw new MindUnavailableError(`Mind directory missing: ${dir}`);
     return { dir, port: entry.port, baseName: name, template: entry.template };
   }
 
@@ -673,7 +692,9 @@ export class MindManager {
       }
     }
 
-    // Set up crash recovery after successful start
+    // Set up crash recovery after successful start. A start that lands during a
+    // recovery backoff (an operator's) supersedes the pending restart.
+    this.cancelRecovery(name);
     this.setupCrashRecovery(name, child);
     await setMindRunning(name, true);
 
@@ -834,20 +855,84 @@ export class MindManager {
     mlog.info(
       `crash recovery for ${name} — attempt ${attempt}/${this.restartTracker.maxRestartAttempts}, restarting in ${delay}ms`,
     );
-    setTimeout(() => {
-      if (this.shuttingDown) return;
-      this.startMind(name).catch((err) => {
-        mlog.error(`failed to restart ${name}`, log.errorData(err));
-        // Only a startup death is another crash. "already running" (an operator
-        // started it during the backoff) and a shutdown that began while the start
-        // was in flight are not, and must not spend an attempt.
-        if (err instanceof MindStartupError) {
-          this.scheduleCrashRestart(name).catch((e) =>
-            mlog.error(`failed to schedule crash recovery for ${name}`, log.errorData(e)),
-          );
-        }
-      });
+    this.scheduleRecoveryStart(name, delay);
+  }
+
+  /** Start `name` after `delay`, in a timer an operator stop (or shutdown) can cancel. */
+  private scheduleRecoveryStart(name: string, delay: number): void {
+    this.cancelRecovery(name);
+    const recovery: { timer?: NodeJS.Timeout } = {};
+    // Whether this recovery is still the live one — a stop, a start or shutdown
+    // may have cancelled it while its start was in flight.
+    const live = () => this.recoveries.get(name) === recovery;
+    recovery.timer = setTimeout(async () => {
+      recovery.timer = undefined;
+      if (this.shuttingDown || (await this.isAsleep(name))) {
+        if (live()) this.recoveries.delete(name);
+        return;
+      }
+      if (!live()) return;
+      this.startMind(name).then(
+        () => {
+          if (live()) this.recoveries.delete(name);
+        },
+        (err) => {
+          if (!live()) return;
+          this.recoveries.delete(name);
+          this.onRecoveryStartFailed(name, err);
+        },
+      );
     }, delay);
+    this.recoveries.set(name, recovery);
+  }
+
+  /** A mind put to sleep while it waited is the sleep manager's to wake, not ours. */
+  private async isAsleep(name: string): Promise<boolean> {
+    try {
+      const { getSleepManagerIfReady } = await import("./sleep-manager.js");
+      return getSleepManagerIfReady()?.getState(name).sleeping ?? false;
+    } catch (err) {
+      mlog.warn(`failed to check sleep state for ${name}`, log.errorData(err));
+      return false;
+    }
+  }
+
+  private onRecoveryStartFailed(name: string, err: unknown): void {
+    mlog.error(`failed to restart ${name}`, log.errorData(err));
+    // Only a startup death is another crash.
+    if (err instanceof MindStartupError) {
+      this.scheduleCrashRestart(name).catch((e) =>
+        mlog.error(`failed to schedule crash recovery for ${name}`, log.errorData(e)),
+      );
+      return;
+    }
+    // An operator started it during the backoff, or the daemon is on its way out.
+    if (err instanceof DaemonShuttingDownError || this.minds.has(name)) return;
+    // Nothing left to start — the mind was deleted, or its directory is gone.
+    if (err instanceof MindUnavailableError) return;
+    // Anything else failed before or outside the mind's boot — a raw spawn error
+    // (EMFILE, EAGAIN, EACCES) or a registry read. That is evidence the daemon is
+    // strained, not that the mind is broken, so it neither spends the crash budget
+    // nor clears `running` (which would keep the mind down across the next boot).
+    // Retry on a longer fixed delay, for as long as it takes (#1069).
+    mlog.warn(
+      `restart of ${name} failed outside its startup — retrying in ${this.strainRetryDelayMs}ms without spending its crash budget`,
+    );
+    this.scheduleRecoveryStart(name, this.strainRetryDelayMs);
+  }
+
+  /** Cancel a pending recovery restart. Returns whether there was one. */
+  private cancelRecovery(name: string): boolean {
+    const recovery = this.recoveries.get(name);
+    if (!recovery) return false;
+    clearTimeout(recovery.timer);
+    this.recoveries.delete(name);
+    return true;
+  }
+
+  /** True while `name` is down and a crash-recovery restart is pending or in flight. */
+  hasPendingRecovery(name: string): boolean {
+    return this.recoveries.has(name);
   }
 
   async stopMind(name: string): Promise<void> {
@@ -856,35 +941,41 @@ export class MindManager {
 
   private async _stopMind(name: string): Promise<void> {
     const tracked = this.minds.get(name);
-    if (!tracked) return;
+    // A mind waiting out a recovery backoff is not tracked, but it is still coming
+    // back — an operator's stop has to cancel that, and clear its budget and
+    // `running` like any other stop (#1070).
+    const wasRecovering = this.cancelRecovery(name);
+    if (!tracked && !wasRecovering) return;
 
-    this.stopping.add(name);
-    const { child } = tracked;
-    this.minds.delete(name);
+    if (tracked) {
+      this.stopping.add(name);
+      const { child } = tracked;
+      this.minds.delete(name);
 
-    await new Promise<void>((resolve) => {
-      // Force kill after 5s — but disarm it on a clean exit so a stray
-      // group-SIGKILL can't later fire against a reused pgid.
-      const killTimer = setTimeout(() => {
+      await new Promise<void>((resolve) => {
+        // Force kill after 5s — but disarm it on a clean exit so a stray
+        // group-SIGKILL can't later fire against a reused pgid.
+        const killTimer = setTimeout(() => {
+          try {
+            process.kill(-child.pid!, "SIGKILL");
+          } catch {}
+          resolve();
+        }, 5000);
+        child.on("exit", () => {
+          clearTimeout(killTimer);
+          resolve();
+        });
         try {
-          process.kill(-child.pid!, "SIGKILL");
-        } catch {}
-        resolve();
-      }, 5000);
-      child.on("exit", () => {
-        clearTimeout(killTimer);
-        resolve();
+          // Kill the entire process group (node + any children it spawns)
+          process.kill(-child.pid!, "SIGTERM");
+        } catch {
+          clearTimeout(killTimer);
+          resolve();
+        }
       });
-      try {
-        // Kill the entire process group (node + any children it spawns)
-        process.kill(-child.pid!, "SIGTERM");
-      } catch {
-        clearTimeout(killTimer);
-        resolve();
-      }
-    });
 
-    this.stopping.delete(name);
+      this.stopping.delete(name);
+    }
     revokeMindToken(name);
     try {
       const orphanedTurns = await clearTurnState(name);
@@ -935,6 +1026,9 @@ export class MindManager {
 
   async stopAll(): Promise<void> {
     this.shuttingDown = true;
+    // Leave `running` set on minds waiting out a backoff, so the next boot starts them.
+    for (const { timer } of this.recoveries.values()) clearTimeout(timer);
+    this.recoveries.clear();
     const names = [...this.minds.keys()];
     await Promise.all(names.map((name) => this.stopMind(name)));
   }

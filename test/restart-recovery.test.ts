@@ -9,9 +9,15 @@ import {
   DaemonShuttingDownError,
   MindManager,
   MindStartupError,
+  MindUnavailableError,
 } from "../packages/daemon/src/lib/daemon/mind-manager.js";
 import { RestartTracker } from "../packages/daemon/src/lib/daemon/restart-tracker.js";
-import { voluteSystemDir } from "../packages/daemon/src/lib/mind/registry.js";
+import {
+  addMind,
+  findMind,
+  setMindRunning,
+  voluteSystemDir,
+} from "../packages/daemon/src/lib/mind/registry.js";
 import log from "../packages/daemon/src/lib/util/logger.js";
 
 // #1033: both managers cleared the restart budget when the child was *spawned*,
@@ -294,7 +300,11 @@ describe("crash recovery wiring", () => {
     for (const [label, makeError] of [
       [
         "the mind is already running",
-        (name: string) => new Error(`Mind ${name} is already running`),
+        (name: string, mgr: AnyMgr) => {
+          // As `_startMind` finds it: an operator's start got there first.
+          mgr.minds.set(name, { child: fakeChild(), port: 4996 });
+          return new Error(`Mind ${name} is already running`);
+        },
       ],
       ["the daemon is shutting down", (name: string) => new DaemonShuttingDownError(name)],
     ] as const) {
@@ -305,7 +315,7 @@ describe("crash recovery wiring", () => {
         let starts = 0;
         mgr.startMind = async (name: string) => {
           starts++;
-          throw makeError(name);
+          throw makeError(name, mgr);
         };
 
         const child = fakeChild();
@@ -329,9 +339,252 @@ describe("crash recovery wiring", () => {
           msgs().filter((m) => m.startsWith("crash recovery for busy")),
           ["crash recovery for busy — attempt 1/3, restarting in 100ms"],
         );
+        assert.equal(mgr.hasPendingRecovery("busy"), false, "nor retry it as strain");
 
         mgr.shuttingDown = true;
       });
     }
+
+    /** A registered mind marked running, so tests can see what a stop does to the flag. */
+    async function runningMind(name: string, port: number): Promise<void> {
+      await addMind(name, port);
+      await setMindRunning(name, true);
+    }
+
+    // #1070: a mind waiting out its backoff is not in the tracked map, so a stop
+    // used to return early — leaving the timer to restart it, and `running` set.
+    it("an operator stop during the backoff cancels the pending restart", async () => {
+      await runningMind("halted", 4995);
+      const mgr = new MindManager() as AnyMgr;
+      const baseDelay = 300;
+      mgr.restartTracker = new RestartTracker({ maxAttempts: 3, baseDelay, maxDelay: 2000 });
+      let starts = 0;
+      mgr.startMind = async () => {
+        starts++;
+      };
+
+      const child = fakeChild();
+      mgr.minds.set("halted", { child, port: 4995 });
+      mgr.setupCrashRecovery("halted", child);
+      child.emit("exit", 1);
+      assert.ok(
+        await waitFor(() => mgr.hasPendingRecovery("halted"), 5000),
+        "the crash never scheduled a restart",
+      );
+
+      await mgr.stopMind("halted");
+
+      assert.equal(mgr.hasPendingRecovery("halted"), false);
+      assert.equal(mgr.restartTracker.getAttempts("halted"), 0, "a stop clears the budget");
+      assert.equal((await findMind("halted"))?.running, false, "a stop clears `running`");
+
+      // Past the backoff, so a surviving timer would have fired.
+      await delay(baseDelay * 2);
+      assert.equal(starts, 0, "the stop must win over the pending restart");
+
+      mgr.shuttingDown = true;
+    });
+
+    // #1069: a restart that fails outside the mind's own startup (a raw spawn
+    // error, a registry read) is the daemon under strain, not a broken mind.
+    it("retries a restart that failed outside startup without spending the budget", async () => {
+      await runningMind("strained", 4994);
+      const mgr = new MindManager() as AnyMgr;
+      mgr.restartTracker = new RestartTracker({ maxAttempts: 3, baseDelay: 100, maxDelay: 2000 });
+      mgr.strainRetryDelayMs = 150;
+      const startTimes: number[] = [];
+      mgr.startMind = async () => {
+        startTimes.push(Date.now());
+        // Two strained attempts, then one that comes up.
+        if (startTimes.length <= 2) {
+          throw Object.assign(new Error("spawn EMFILE"), { code: "EMFILE" });
+        }
+      };
+
+      const child = fakeChild();
+      mgr.minds.set("strained", { child, port: 4994 });
+      mgr.setupCrashRecovery("strained", child);
+
+      const from = capturedLogs.length;
+      child.emit("exit", 1);
+
+      assert.ok(
+        await waitFor(() => startTimes.length === 3, 5000),
+        `the chain stopped after ${startTimes.length} start(s)`,
+      );
+      const gaps = startTimes.slice(1).map((t, i) => t - startTimes[i]);
+      assert.ok(
+        gaps.every((g) => g >= 140),
+        `retries came too fast: ${gaps.join(", ")}ms`,
+      );
+
+      assert.equal(mgr.restartTracker.getAttempts("strained"), 1, "only the real crash counts");
+      assert.equal((await findMind("strained"))?.running, true, "`running` must be left alone");
+      const msgs = capturedLogs.slice(from).map((l) => JSON.parse(l).msg as string);
+      assert.deepEqual(
+        msgs.filter((m) => m.startsWith("crash recovery for strained")),
+        ["crash recovery for strained — attempt 1/3, restarting in 100ms"],
+      );
+      assert.equal(
+        msgs.filter((m) => m.startsWith("restart of strained failed outside its startup")).length,
+        2,
+      );
+
+      // The one that came up ends the chain.
+      await delay(400);
+      assert.equal(startTimes.length, 3);
+      assert.equal(mgr.hasPendingRecovery("strained"), false);
+
+      mgr.shuttingDown = true;
+    });
+
+    it("an operator stop cancels a pending strain retry", async () => {
+      await runningMind("unstrained", 4993);
+      const mgr = new MindManager() as AnyMgr;
+      mgr.restartTracker = new RestartTracker({ maxAttempts: 3, baseDelay: 100, maxDelay: 2000 });
+      mgr.strainRetryDelayMs = 300;
+      let starts = 0;
+      mgr.startMind = async () => {
+        starts++;
+        throw Object.assign(new Error("spawn EAGAIN"), { code: "EAGAIN" });
+      };
+
+      const child = fakeChild();
+      mgr.minds.set("unstrained", { child, port: 4993 });
+      mgr.setupCrashRecovery("unstrained", child);
+      child.emit("exit", 1);
+      assert.ok(
+        await waitFor(() => starts === 1 && mgr.hasPendingRecovery("unstrained"), 5000),
+        "the strain retry was never scheduled",
+      );
+
+      await mgr.stopMind("unstrained");
+      assert.equal(mgr.hasPendingRecovery("unstrained"), false);
+      assert.equal((await findMind("unstrained"))?.running, false);
+
+      await delay(600);
+      assert.equal(starts, 1, "the stop must win over the strain retry");
+
+      mgr.shuttingDown = true;
+    });
+
+    it("an operator stop while the recovery start is in flight still wins", async () => {
+      await runningMind("inflight", 4991);
+      const mgr = new MindManager() as AnyMgr;
+      mgr.restartTracker = new RestartTracker({ maxAttempts: 3, baseDelay: 100, maxDelay: 2000 });
+      mgr.strainRetryDelayMs = 150;
+      let starts = 0;
+      let release!: () => void;
+      // The real startMind's lock, so the stop queues behind the start as it would.
+      mgr._startMind = async () => {
+        starts++;
+        await new Promise<void>((r) => {
+          release = r;
+        });
+        throw Object.assign(new Error("spawn EMFILE"), { code: "EMFILE" });
+      };
+
+      const child = fakeChild();
+      mgr.minds.set("inflight", { child, port: 4991 });
+      mgr.setupCrashRecovery("inflight", child);
+      child.emit("exit", 1);
+      assert.ok(await waitFor(() => starts === 1, 5000), "the recovery start never began");
+      // Neither tracked nor waiting on a timer — but still coming back.
+      assert.equal(mgr.isRunning("inflight"), false);
+      assert.equal(mgr.hasPendingRecovery("inflight"), true);
+
+      const stopped = mgr.stopMind("inflight");
+      release();
+      await stopped;
+
+      assert.equal(mgr.hasPendingRecovery("inflight"), false);
+      assert.equal((await findMind("inflight"))?.running, false);
+      await delay(400);
+      assert.equal(
+        starts,
+        1,
+        "the strain retry the failed start scheduled must not survive the stop",
+      );
+
+      mgr.shuttingDown = true;
+    });
+
+    it("ends the chain when there is no longer a mind to start", async () => {
+      const mgr = new MindManager() as AnyMgr;
+      mgr.restartTracker = new RestartTracker({ maxAttempts: 3, baseDelay: 100, maxDelay: 2000 });
+      mgr.strainRetryDelayMs = 100;
+      let starts = 0;
+      mgr.startMind = async (name: string) => {
+        starts++;
+        throw new MindUnavailableError(`Unknown mind: ${name}`);
+      };
+
+      const child = fakeChild();
+      mgr.minds.set("vanished", { child, port: 4990 });
+      mgr.setupCrashRecovery("vanished", child);
+      child.emit("exit", 1);
+
+      assert.ok(await waitFor(() => starts === 1, 5000), "the recovery timer never fired");
+      await delay(400);
+      assert.equal(starts, 1, "waiting will not bring a deleted mind back");
+      assert.equal(mgr.hasPendingRecovery("vanished"), false);
+
+      mgr.shuttingDown = true;
+    });
+
+    it("does not restart a mind that was put to sleep during its backoff", async () => {
+      const { getSleepManagerIfReady, initSleepManager } = await import(
+        "../packages/daemon/src/lib/daemon/sleep-manager.js"
+      );
+      const sleepMgr = (getSleepManagerIfReady() ?? initSleepManager()) as AnyMgr;
+      const mgr = new MindManager() as AnyMgr;
+      const baseDelay = 200;
+      mgr.restartTracker = new RestartTracker({ maxAttempts: 3, baseDelay, maxDelay: 2000 });
+      let starts = 0;
+      mgr.startMind = async () => {
+        starts++;
+      };
+
+      const child = fakeChild();
+      mgr.minds.set("drowsy", { child, port: 4988 });
+      mgr.setupCrashRecovery("drowsy", child);
+      child.emit("exit", 1);
+      assert.ok(await waitFor(() => mgr.hasPendingRecovery("drowsy"), 5000));
+
+      // What initiateSleep does to a mind that is not running.
+      sleepMgr.states.set("drowsy", { ...sleepMgr.getState("drowsy"), sleeping: true });
+      try {
+        await delay(baseDelay * 3);
+        assert.equal(starts, 0, "the sleep manager owns a sleeping mind's process");
+        assert.equal(mgr.hasPendingRecovery("drowsy"), false);
+      } finally {
+        sleepMgr.states.delete("drowsy");
+        mgr.shuttingDown = true;
+      }
+    });
+
+    it("daemon shutdown cancels a pending restart but leaves `running` for the next boot", async () => {
+      await runningMind("paused", 4992);
+      const mgr = new MindManager() as AnyMgr;
+      const baseDelay = 300;
+      mgr.restartTracker = new RestartTracker({ maxAttempts: 3, baseDelay, maxDelay: 2000 });
+      let starts = 0;
+      mgr.startMind = async () => {
+        starts++;
+      };
+
+      const child = fakeChild();
+      mgr.minds.set("paused", { child, port: 4992 });
+      mgr.setupCrashRecovery("paused", child);
+      child.emit("exit", 1);
+      assert.ok(await waitFor(() => mgr.hasPendingRecovery("paused"), 5000));
+
+      await mgr.stopAll();
+      assert.equal(mgr.hasPendingRecovery("paused"), false);
+      assert.equal((await findMind("paused"))?.running, true);
+
+      await delay(baseDelay * 2);
+      assert.equal(starts, 0);
+    });
   });
 });

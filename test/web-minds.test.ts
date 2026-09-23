@@ -81,6 +81,69 @@ describe("web minds routes", () => {
     assert.equal(res.status, 404);
   });
 
+  it("POST /:name/stop — stops a mind waiting out a crash-recovery backoff (#1070)", async () => {
+    const { addMind, findMind, removeMind, setMindRunning } = await import(
+      "../packages/daemon/src/lib/mind/registry.js"
+    );
+    const { initMindManager, tryGetMindManager } = await import(
+      "../packages/daemon/src/lib/daemon/mind-manager.js"
+    );
+    const manager = tryGetMindManager() ?? initMindManager();
+    // `stopMindFull` unloads schedules and the spend budget; both are inert until started.
+    const { getScheduler, initScheduler } = await import(
+      "../packages/daemon/src/lib/daemon/scheduler.js"
+    );
+    const { getSpendBudget, initSpendBudget } = await import(
+      "../packages/daemon/src/lib/daemon/spend-budget.js"
+    );
+    try {
+      getScheduler();
+    } catch {
+      initScheduler();
+    }
+    try {
+      getSpendBudget();
+    } catch {
+      initSpendBudget();
+    }
+    const name = `web-backoff-${Date.now()}`;
+    await addMind(name, 4989);
+    await setMindRunning(name, true);
+
+    const cookie = await setupAuth();
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
+    const stop = () =>
+      app.request(`http://localhost/api/v1/minds/${name}/stop`, {
+        method: "POST",
+        headers: postHeaders(cookie),
+      });
+
+    // What the crash handler leaves behind: no process, a restart pending.
+    let fired = false;
+    const recoveries = (
+      manager as unknown as { recoveries: Map<string, { timer?: NodeJS.Timeout }> }
+    ).recoveries;
+    recoveries.set(name, {
+      timer: setTimeout(() => {
+        fired = true;
+      }, 60_000),
+    });
+
+    try {
+      const res = await stop();
+      assert.equal(res.status, 200, "a mind in backoff is not 'not running' — it is coming back");
+      assert.equal(manager.hasPendingRecovery(name), false);
+      assert.equal((await findMind(name))?.running, false);
+      assert.equal(fired, false);
+
+      assert.equal((await stop()).status, 409, "with nothing pending, it really is not running");
+    } finally {
+      clearTimeout(recoveries.get(name)?.timer);
+      recoveries.delete(name);
+      await removeMind(name);
+    }
+  });
+
   it("GET / — requires auth (401 without cookie)", async () => {
     const { default: app } = await import("../packages/daemon/src/web/app.js");
 
