@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import {
   chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   realpathSync,
@@ -14,7 +16,9 @@ import { tmpdir, userInfo } from "node:os";
 import { resolve } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import {
+  chownNoFollow,
   chownTargets,
+  containMindPath,
   isIsolationEnabled,
   lockPrivateSubtrees,
   mindUserName,
@@ -255,5 +259,126 @@ describe("isolation", () => {
     const dir = seedTree("lock-bare-", []);
     assert.deepEqual(await lockPrivateSubtrees(dir), [dir]);
     assert.equal(mode(dir), 0o700);
+  });
+
+  describe("containMindPath", () => {
+    // Unprivileged tests can't give a directory to another uid, so "the mind
+    // owns it" is modelled by inode: the mind owns its project root, and the
+    // real uid check is the same predicate over the same lstat.
+    const seedMind = (): { mind: string; owns: (st: import("node:fs").Stats) => boolean } => {
+      const mind = resolve(mkdtempSync(resolve(tmpdir(), "contain-")), "mind");
+      mkdirSync(resolve(mind, "home/.claude"), { recursive: true });
+      const { ino, dev } = lstatSync(mind);
+      return { mind, owns: (st) => st.ino === ino && st.dev === dev };
+    };
+
+    it("resolves a real path inside the mind's tree", async () => {
+      const { mind, owns } = seedMind();
+      assert.equal(
+        await containMindPath(resolve(mind, "home/.claude"), owns),
+        realpathSync(resolve(mind, "home/.claude")),
+      );
+    });
+
+    it("refuses a path redirected out of the tree through a parent component", async () => {
+      // `mv home home.bak && ln -s /root home`: nothing at the end is a link,
+      // so O_NOFOLLOW alone would chown /root/.claude.
+      const { mind, owns } = seedMind();
+      const elsewhere = mkdtempSync(resolve(tmpdir(), "contain-target-"));
+      mkdirSync(resolve(elsewhere, ".claude"));
+      renameSync(resolve(mind, "home"), resolve(mind, "home.bak"));
+      symlinkSync(elsewhere, resolve(mind, "home"));
+      await assert.rejects(containMindPath(resolve(mind, "home/.claude"), owns), {
+        name: "PathTraversalError",
+      });
+    });
+
+    it("allows a link that stays inside the tree, returning where it lands", async () => {
+      const { mind, owns } = seedMind();
+      renameSync(resolve(mind, "home"), resolve(mind, "home.bak"));
+      symlinkSync(resolve(mind, "home.bak"), resolve(mind, "home"));
+      assert.equal(
+        await containMindPath(resolve(mind, "home/.claude"), owns),
+        realpathSync(resolve(mind, "home.bak/.claude")),
+      );
+    });
+
+    it("refuses a mind-owned root that is itself a symlink", async () => {
+      const elsewhere = mkdtempSync(resolve(tmpdir(), "contain-root-target-"));
+      const link = resolve(mkdtempSync(resolve(tmpdir(), "contain-root-")), "mind");
+      symlinkSync(elsewhere, link);
+      const { ino, dev } = lstatSync(link);
+      await assert.rejects(
+        containMindPath(link, (st) => st.ino === ino && st.dev === dev),
+        /symlink/,
+      );
+    });
+
+    it("leaves a path with no mind-owned component as it is", async () => {
+      const { mind } = seedMind();
+      const path = resolve(mind, "home/.claude");
+      assert.equal(await containMindPath(path, () => false), path);
+    });
+  });
+
+  // Unprivileged, the only ownership change we can make is to a group we're in,
+  // so re-own to a supplementary group and watch the gid move (or not). On a host
+  // with a single group every gid assertion would pass vacuously, so skip.
+  const { uid, gid: primaryGid } = userInfo();
+  const altGid = process.getgroups?.().find((g) => g !== primaryGid) as number;
+  describe("chownNoFollow", {
+    skip: altGid === undefined && "needs a supplementary group to observe an ownership change",
+  }, () => {
+    const gidOf = (path: string): number => statSync(path).gid;
+
+    const scratch = (prefix: string): string => mkdtempSync(resolve(tmpdir(), prefix));
+
+    it("refuses a symlinked directory and leaves its referent alone", async () => {
+      // `ln -s /etc home/.claude`: a bare root chown would hand the mind /etc.
+      const elsewhere = scratch("chown-dir-target-");
+      const link = resolve(scratch("chown-dir-link-"), ".claude");
+      symlinkSync(elsewhere, link);
+      const before = gidOf(elsewhere);
+      // Linux reports ELOOP; macOS checks O_DIRECTORY first and reports ENOTDIR.
+      await assert.rejects(chownNoFollow(link, uid, altGid, "dir"), (err: NodeJS.ErrnoException) =>
+        ["ELOOP", "ENOTDIR"].includes(err.code ?? ""),
+      );
+      assert.equal(gidOf(elsewhere), before, "the symlink's target must be left alone");
+    });
+
+    it("refuses a symlinked file and leaves its referent alone", async () => {
+      const target = resolve(scratch("chown-file-target-"), "passwd");
+      writeFileSync(target, "x");
+      const link = resolve(scratch("chown-file-link-"), "image.png");
+      symlinkSync(target, link);
+      const before = gidOf(target);
+      await assert.rejects(chownNoFollow(link, uid, altGid, "file"), { code: "ELOOP" });
+      assert.equal(gidOf(target), before, "the symlink's target must be left alone");
+    });
+
+    it("re-owns a real directory and a real file", async () => {
+      const dir = scratch("chown-real-");
+      const file = resolve(dir, "f");
+      writeFileSync(file, "x");
+      await chownNoFollow(dir, uid, altGid, "dir");
+      await chownNoFollow(file, uid, altGid, "file");
+      assert.equal(gidOf(dir), altGid);
+      assert.equal(gidOf(file), altGid);
+    });
+
+    it("refuses a file where a directory is expected", async () => {
+      const file = resolve(scratch("chown-notdir-"), "f");
+      writeFileSync(file, "x");
+      await assert.rejects(chownNoFollow(file, uid, altGid, "dir"), { code: "ENOTDIR" });
+    });
+
+    it("does not hang on a FIFO planted where a file is expected", async () => {
+      // chownMindFile opens whatever sits at the path, and a blocking read-only
+      // open of a FIFO waits for a writer that never comes.
+      const fifo = resolve(scratch("chown-fifo-"), "image.png");
+      execFileSync("mkfifo", [fifo]);
+      await chownNoFollow(fifo, uid, altGid, "file");
+      assert.equal(gidOf(fifo), altGid);
+    });
   });
 });

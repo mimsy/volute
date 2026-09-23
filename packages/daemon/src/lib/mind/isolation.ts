@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
-import { constants, existsSync, readdirSync, statSync } from "node:fs";
-import { open } from "node:fs/promises";
-import { resolve } from "node:path";
+import { constants, existsSync, readdirSync, type Stats, statSync } from "node:fs";
+import { type FileHandle, lstat, open } from "node:fs/promises";
+import { dirname, relative, resolve } from "node:path";
 import { alertHost } from "../chat/system-events.js";
 import { exec } from "../util/exec.js";
 import log from "../util/logger.js";
@@ -17,6 +17,13 @@ const ilog = log.child("isolation");
  * exec.
  */
 const knownUsers = new Set<string>();
+
+/**
+ * Numeric uid/gid of each mind user, for the handle-based chowns. Cached like
+ * `knownUsers` (and evicted with it) so a chown doesn't spawn its id lookups
+ * every time; a repaired user keeps its ids, so a repair needs no eviction.
+ */
+const ownerIds = new Map<string, { uid: number; gid: number }>();
 
 /** Returns true when per-mind user isolation is enabled. */
 export function isIsolationEnabled(): boolean {
@@ -267,6 +274,7 @@ export function deleteMindUser(name: string): void {
   if (!isIsolationEnabled()) return;
   const user = mindUserName(name);
   knownUsers.delete(user);
+  ownerIds.delete(user);
 
   if (process.platform === "darwin") {
     try {
@@ -625,6 +633,75 @@ async function userUid(user: string): Promise<number | null> {
   }
 }
 
+/** Resolve a group's numeric gid, or null if the lookup fails. */
+async function groupGid(group: string): Promise<number | null> {
+  try {
+    if (process.platform === "darwin") {
+      const output = await exec("dscl", [".", "-read", `/Groups/${group}`, "PrimaryGroupID"]);
+      const match = output.match(/PrimaryGroupID:\s*(\d+)/);
+      return match ? parseInt(match[1], 10) : null;
+    }
+    const gid = parseInt((await exec("getent", ["group", group])).split(":")[2], 10);
+    return Number.isNaN(gid) ? null : gid;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Numeric ids for `user:group` — the same group name the recursive chown uses,
+ * so the root and the tree under it can't end up in different groups.
+ */
+async function mindOwnerIds(user: string, group: string): Promise<{ uid: number; gid: number }> {
+  const cached = ownerIds.get(user);
+  if (cached) return cached;
+  const [uid, gid] = await Promise.all([userUid(user), groupGid(group)]);
+  if (uid === null || gid === null) {
+    throw new Error(`Failed to chown to ${user}:${group}: could not resolve their numeric ids`);
+  }
+  const ids = { uid, gid };
+  ownerIds.set(user, ids);
+  return ids;
+}
+
+/**
+ * Resolve `path` for a chown the daemon runs as root, refusing one a mind has
+ * steered out of its own tree.
+ *
+ * O_NOFOLLOW only guards a path's last component. A mind can rearrange anything
+ * inside a directory it owns — `mv home home.bak && ln -s /root home` — so a
+ * path like `<mind>/home/.claude` can resolve to `/root/.claude` with no symlink
+ * at the end. The part of a path the mind can't touch is everything above the
+ * topmost component it owns (`mindOwns`, by the lstat'd owner): nothing it
+ * creates can land in a directory it does not own. That component is the base,
+ * and the path's real location must stay inside the base's. With no mind-owned
+ * component (a tree not handed over yet) there is nothing to contain.
+ *
+ * Returns the real path, which callers act on so the check and the act agree
+ * about which tree they mean. What is left is a race: a mind swapping a
+ * directory below the base for a link between this resolve and the chown. That
+ * window is much narrower than a planted link, and closing it needs an
+ * openat-style walk Node does not offer.
+ */
+export async function containMindPath(
+  path: string,
+  mindOwns: (st: Stats) => boolean,
+): Promise<string> {
+  const abs = resolve(path);
+  const ancestors: string[] = [];
+  for (let p = abs; ; p = dirname(p)) {
+    ancestors.unshift(p);
+    if (dirname(p) === p) break;
+  }
+  for (const p of ancestors) {
+    const st = await lstat(p);
+    if (!mindOwns(st)) continue;
+    if (st.isSymbolicLink()) throw new Error(`${p} is a symlink the mind owns`);
+    return resolveRealWithinBase(p, relative(p, abs));
+  }
+  return abs;
+}
+
 /** True if `path` is already owned by `uid`. */
 function ownedBy(path: string, uid: number): boolean {
   try {
@@ -667,7 +744,23 @@ export async function chownMindDir(dir: string, name: string): Promise<void> {
   await ensureMindUser(name);
   const user = mindUserName(name);
   const group = process.platform === "darwin" ? "volute" : user;
-  for (const target of await chownTargets(dir, user)) {
+  const ids = await mindOwnerIds(user, group);
+  let root: string;
+  try {
+    // Contained before anything is chowned or listed: callers hand us paths a
+    // mind can redirect (credential-sync passes `home/.claude`).
+    root = await containMindPath(dir, (st) => st.uid === ids.uid);
+  } catch (err) {
+    throw new Error(
+      `Failed to chown ${dir} to ${user}:${group}: ${err instanceof Error ? err.message : err}`,
+    );
+  }
+  // `chown -R` never follows a symlink it is handed or finds in the tree: -P is
+  // the default under -R for both GNU and BSD chown, which act on the link
+  // itself and leave the inode it points at alone. That covers the final
+  // component and the walk only — links in the components above are
+  // containMindPath's job.
+  for (const target of await chownTargets(root, user)) {
     try {
       await exec("chown", ["-R", `${user}:${group}`, target]);
     } catch (err) {
@@ -677,16 +770,19 @@ export async function chownMindDir(dir: string, name: string): Promise<void> {
       );
     }
   }
-  // The narrowed target list above chowns dir's children, not dir itself, so
-  // set the project root inode's owner non-recursively (a no-op when the loop
-  // already recursed dir directly).
+  // The narrowed target list above chowns the root's children, not the root
+  // itself, so set the root inode's owner non-recursively (a no-op when the loop
+  // already recursed it directly). Through a handle, never a path: a bare
+  // `chown` follows a symlinked root — `ln -s /etc home/.claude` would give the
+  // mind /etc.
   try {
-    await exec("chown", [`${user}:${group}`, dir]);
+    await chownNoFollow(root, ids.uid, ids.gid, "dir");
   } catch (err) {
-    const stderr = String((err as { stderr?: string })?.stderr ?? "").trim();
-    throw new Error(`Failed to chown ${dir} to ${user}:${group}${stderr ? `: ${stderr}` : ""}`);
+    throw new Error(
+      `Failed to chown ${root} to ${user}:${group}: ${err instanceof Error ? err.message : err}`,
+    );
   }
-  await lockPrivateSubtrees(dir);
+  await lockPrivateSubtrees(root);
 }
 
 /**
@@ -714,15 +810,50 @@ const PRIVATE_SUBTREES = ["home/.claude", "home/.claude/projects", ".mind"];
  * Throws the raw errno error: ELOOP (a symlink), ENOTDIR (a file), ENOENT (gone).
  */
 async function chmodDirNoFollow(target: string): Promise<void> {
+  await withNoFollowHandle(target, constants.O_DIRECTORY, (handle) => handle.chmod(0o700));
+}
+
+/**
+ * Open `target` read-only without following a final symlink, run `fn` on the
+ * handle, and close it. O_NONBLOCK is for opens without O_DIRECTORY: a plain
+ * read-only open of a FIFO a mind planted at `target` would otherwise wait for a
+ * writer that never comes, hanging the caller. With O_DIRECTORY it is inert.
+ */
+async function withNoFollowHandle(
+  target: string,
+  flags: number,
+  fn: (handle: FileHandle) => Promise<void>,
+): Promise<void> {
   const handle = await open(
     target,
-    constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW,
+    constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK | flags,
   );
   try {
-    await handle.chmod(0o700);
+    await fn(handle);
   } finally {
     await handle.close();
   }
+}
+
+/**
+ * chown the directory (`kind: "dir"`) or file at `target` to `uid:gid`, refusing
+ * to follow a final symlink — the ownership counterpart to `chmodDirNoFollow`,
+ * for the same reason: the owner lands on the inode that was opened, so a mind
+ * swapping the path for a link can't redirect it. Pair it with
+ * `containMindPath` for the components above.
+ *
+ * Throws the raw errno error: ELOOP (a symlink; macOS reports ENOTDIR for a
+ * symlink opened as "dir"), ENOTDIR (not a directory), ENOENT (gone).
+ */
+export async function chownNoFollow(
+  target: string,
+  uid: number,
+  gid: number,
+  kind: "dir" | "file",
+): Promise<void> {
+  await withNoFollowHandle(target, kind === "dir" ? constants.O_DIRECTORY : 0, (handle) =>
+    handle.chown(uid, gid),
+  );
 }
 
 /** True for the errnos that mean "there is no directory of ours here to lock". */
@@ -821,12 +952,15 @@ export async function chownMindFile(filePath: string, name: string): Promise<voi
   await ensureMindUser(name);
   const user = mindUserName(name);
   const group = process.platform === "darwin" ? "volute" : user;
+  const ids = await mindOwnerIds(user, group);
   try {
-    await exec("chown", [`${user}:${group}`, filePath]);
+    // Same containment and no-follow as chownMindDir's root: the file sits in a
+    // tree the mind can rearrange, and a bare `chown` as root follows a link.
+    const target = await containMindPath(filePath, (st) => st.uid === ids.uid);
+    await chownNoFollow(target, ids.uid, ids.gid, "file");
   } catch (err) {
-    const stderr = String((err as { stderr?: string })?.stderr ?? "").trim();
     throw new Error(
-      `Failed to chown ${filePath} to ${user}:${group}${stderr ? `: ${stderr}` : ""}`,
+      `Failed to chown ${filePath} to ${user}:${group}: ${err instanceof Error ? err.message : err}`,
     );
   }
 }
