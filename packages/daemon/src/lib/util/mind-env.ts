@@ -13,6 +13,12 @@
  * gets this allowlist, never the daemon environment wholesale.
  */
 
+/**
+ * The process isolation a mind's process was actually started under, handed to it
+ * as `VOLUTE_ISOLATION_MODE` so it can tell a boundary from a fault (#368).
+ */
+export type IsolationMode = "user" | "sandbox" | "none";
+
 // Benign system env vars a mind's node/tsx process needs to run. Everything else
 // from the daemon environment (ambient AWS_*/GITHUB_TOKEN/etc.) is withheld.
 const MIND_ENV_ALLOWLIST = [

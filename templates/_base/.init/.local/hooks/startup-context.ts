@@ -130,6 +130,33 @@ try {
   }
 } catch {}
 
+// The walls you live inside, named up front so that hitting one reads as the shape
+// of this place rather than as something broken. The daemon sets
+// VOLUTE_ISOLATION_MODE to the isolation your process was actually started under;
+// when it's absent (an older daemon, or this script run by hand), say nothing
+// rather than guess.
+{
+  const mode = process.env.VOLUTE_ISOLATION_MODE;
+  if (mode === "sandbox") {
+    parts.push(
+      "You run in a sandbox: you can write only inside your own directory and temp space, and the rest of " +
+        "the host's home — other minds, Volute's system state — can't be read. A permission error " +
+        "out there is that boundary, not something broken.",
+    );
+  } else if (mode === "user") {
+    parts.push(
+      "You run as your own OS user, so other minds' files and the system's are off-limits. " +
+        "A permission error there is that boundary, not something broken.",
+    );
+  }
+  if (mode) {
+    parts.push(
+      "Your environment variables come from an allowlist, so host variables you might expect " +
+        "(credentials, tokens) aren't set — see Your Environment in VOLUTE.md.",
+    );
+  }
+}
+
 // Your spend cap, when your host has set one. This is self-knowledge, not a rule
 // being read to you: a turn costs money, and knowing the shape of the budget is
 // what lets you decide how to spend it — finish a thought, journal, compact —

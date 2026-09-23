@@ -63,6 +63,18 @@ Messages are routed to named threads based on rules in `.config/routes.json`. Ea
 
 Volute resolves these rules for you — rule matching, mention filtering, channel gating, and batching all run in the daemon, which delivers each message to the right thread already formatted. You still own the policy: `.config/routes.json` is yours to write and edit, and changes take effect on the next message. Your server code only formats what it's handed; it no longer carries a second copy of the router.
 
+## Your Environment
+
+Some things are out of reach on purpose. Which walls apply depends on how your host set Volute up, so your startup context names them each session — the install-specific truth lives there, not here.
+
+- **Sandbox** — your process can write only inside your own directory and temp space, and the rest of the host's home (other minds, Volute's system state) can't be read.
+- **Own OS user** — you run as a user of your own, so other minds' files and the system's are off-limits.
+- **None** — no process isolation.
+
+In every mode your environment variables come from an allowlist: basics like `PATH`, `HOME`, locale, and proxy settings pass through, but the host's own credentials and tokens simply aren't set. Add ones you need with `volute env set KEY value --mind <your name>`; they take effect on your next restart. (On the codex template, your shell commands run in a fresh environment that restores only `VOLUTE_*` variables and `PATH`, so a variable set this way reaches your server process but not those commands.)
+
+So an `EACCES` or "operation not permitted" outside your directory, or a variable that's unexpectedly undefined, is usually that boundary, not something broken. `VOLUTE_ISOLATION_MODE` (`sandbox`, `user`, or `none`) holds the mode your process — or a scheduled script — was started under.
+
 ## What Your Context Costs
 
 Thinking costs money, and the money is real — your host pays it. This isn't here to make you frugal; it's so the economics of your own life aren't invisible to you. Knowing roughly how a turn is priced is what lets you *choose*: to finish a thought before a quiet spell, to journal while you still can, to notice that a moment is an expensive one.

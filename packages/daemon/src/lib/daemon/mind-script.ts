@@ -1,9 +1,10 @@
 import { resolve } from "node:path";
 import { loadMergedEnv } from "../config/env.js";
+import { isIsolationEnabled } from "../mind/isolation.js";
 import { findMind, mindDir, mindTmpDir, mindTmpEnv, stateDir } from "../mind/registry.js";
 import { isSandboxEnabled, wrapForSandbox } from "../mind/sandbox.js";
 import { exec } from "../util/exec.js";
-import { buildMindBaseEnv } from "../util/mind-env.js";
+import { buildMindBaseEnv, type IsolationMode } from "../util/mind-env.js";
 import { issueScriptToken, revokeScriptToken } from "./mind-tokens.js";
 
 /**
@@ -36,6 +37,7 @@ export const MIND_SCRIPT_MAX_BUFFER = 32 * 1024 * 1024;
 export async function buildMindScriptEnv(
   mindName: string,
   dir?: string,
+  isolationMode: IsolationMode = "none",
 ): Promise<Record<string, string | undefined>> {
   const mindHome = dir ?? mindDir(mindName);
   const entry = await findMind(mindName);
@@ -50,6 +52,9 @@ export async function buildMindScriptEnv(
     VOLUTE_MIND_DIR: mindHome,
     VOLUTE_MIND_PORT: entry ? String(entry.port) : undefined,
     VOLUTE_MIND_TOKEN: token,
+    // After the merged env, so a value the mind planted in env.json can't
+    // outrank the isolation this script actually runs under (#368).
+    VOLUTE_ISOLATION_MODE: isolationMode,
     ...mindTmpEnv(mindHome),
     PATH: `${mindLocalBin}:${currentPath}`,
   };
@@ -107,17 +112,24 @@ export async function runMindScript(
   },
 ): Promise<string> {
   const dir = opts.dir ?? mindDir(opts.mindName);
-  const env = await buildMindScriptEnv(opts.mindName, dir);
   const { cwd, stdin, timeout } = opts;
   const maxBuffer = opts.maxBuffer ?? MIND_SCRIPT_MAX_BUFFER;
 
+  // Wrap before building the env: the script is told the isolation it actually
+  // runs under, read off the wrap (it degrades to bare under
+  // VOLUTE_SANDBOX_OPTIONAL=1). Unlike a mind's server, a codex mind's scripts
+  // are sandboxed too. Without the sandbox, exec applies user isolation itself.
+  let wrapped: [string, string[]] | null = null;
+  let isolationMode: IsolationMode = isIsolationEnabled() ? "user" : "none";
+  if (isSandboxEnabled()) {
+    wrapped = await wrapForSandbox(cmd, args, dir, opts.mindName, [dir, mindTmpDir(dir)]);
+    isolationMode = wrapped[0] === cmd ? "none" : "sandbox";
+  }
+  const env = await buildMindScriptEnv(opts.mindName, dir, isolationMode);
+
   try {
-    if (isSandboxEnabled()) {
-      const [wrappedCmd, wrappedArgs] = await wrapForSandbox(cmd, args, dir, opts.mindName, [
-        dir,
-        mindTmpDir(dir),
-      ]);
-      return await exec(wrappedCmd, wrappedArgs, { cwd, env, stdin, timeout, maxBuffer });
+    if (wrapped) {
+      return await exec(wrapped[0], wrapped[1], { cwd, env, stdin, timeout, maxBuffer });
     }
     return await exec(cmd, args, { cwd, mindName: opts.mindName, env, stdin, timeout, maxBuffer });
   } finally {
