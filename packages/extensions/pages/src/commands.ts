@@ -870,21 +870,39 @@ export function createCommands(): Record<string, ExtensionCommand> {
 
         const sourceDir = resolve(mindDir, "home", "pages");
         const published = new Set(getPublishedPages(db, mindName).map((p) => p.file));
+        // Walked the way publish copies, so a link publish will refuse is shown as
+        // what it is rather than as a draft that never becomes published (#1090).
+        const linked: SkippedEntry[] = [];
         const draftFiles = existsSync(sourceDir)
-          ? collectFiles(sourceDir, sourceDir, [".html", ".md"])
+          ? collectFiles(sourceDir, sourceDir, [".html", ".md"], linked)
           : [];
-        const allFiles = new Set([...published, ...draftFiles]);
+        const linkReason = new Map(linked.map((l) => [l.file, l.reason]));
+        const allFiles = new Set([...published, ...draftFiles, ...linkReason.keys()]);
 
         if (allFiles.size === 0) return { output: "No pages found." };
 
         const lines = [...allFiles].sort().map((file) => {
           const isPublished = published.has(file);
-          const status = isPublished ? "published" : "draft";
-          const url = isPublished
-            ? `http://localhost:${port}/ext/pages/public/${mindName}/${file}`
-            : "";
-          return `${status.padEnd(11)} ${file.padEnd(25)} ${url}`;
+          // A page under a linked directory goes with that directory.
+          const reason =
+            linkReason.get(file) ?? linked.find((l) => file.startsWith(`${l.file}/`))?.reason;
+          if (isPublished) {
+            const url = `http://localhost:${port}/ext/pages/public/${mindName}/${file}`;
+            // Still served from the last snapshot, but the next publish drops it.
+            const note = reason ? `  (now a ${reason} — next publish removes it)` : "";
+            return `${"published".padEnd(13)} ${file.padEnd(25)} ${url}${note}`;
+          }
+          if (reason) return `${"unpublishable".padEnd(13)} ${file.padEnd(25)} (${reason})`;
+          return `${"draft".padEnd(13)} ${file.padEnd(25)} `;
         });
+
+        if (linked.length > 0) {
+          lines.push(
+            "",
+            "Publish leaves out links: a published page is served to anyone, so it has to be " +
+              "a file of its own. Copy the content in to publish it.",
+          );
+        }
 
         return { output: lines.join("\n") };
       },
