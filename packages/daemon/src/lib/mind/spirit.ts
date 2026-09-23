@@ -22,7 +22,12 @@ import { exec, gitExec } from "../util/exec.js";
 import log from "../util/logger.js";
 import { seedInitLedger } from "./init-ledger.js";
 import { addSpirit, findMind, nextPort, voluteSystemDir } from "./registry.js";
-import { readVoluteConfig, type Schedule, writeVoluteConfig } from "./volute-config.js";
+import {
+  chownVoluteConfigPaths,
+  readVoluteConfig,
+  type Schedule,
+  writeVoluteConfig,
+} from "./volute-config.js";
 
 const slog = log.child("spirit");
 
@@ -62,15 +67,17 @@ function npmEnv(): NodeJS.ProcessEnv {
   return { npm_config_cache: cacheDir };
 }
 
-/** Add the tending schedule to spirit's volute.json if missing. Returns true if added. */
-function ensureTendingSchedule(dir: string): boolean {
+/**
+ * Add the tending schedule to spirit's volute.json if missing. Returns null if it
+ * was already there, else the paths the write created (see writeVoluteConfig).
+ */
+function ensureTendingSchedule(dir: string): string[] | null {
   const config = readVoluteConfig(dir) ?? {};
   const schedules = config.schedules ?? [];
-  if (schedules.some((s) => s.id === "tending")) return false;
+  if (schedules.some((s) => s.id === "tending")) return null;
   schedules.push({ ...TENDING_SCHEDULE });
   config.schedules = schedules;
-  writeVoluteConfig(dir, config);
-  return true;
+  return writeVoluteConfig(dir, config);
 }
 
 /**
@@ -649,7 +656,9 @@ export async function syncSpiritTemplate(): Promise<void> {
 
   // Ensure tending schedule exists (handles upgrades)
   try {
-    if (ensureTendingSchedule(dir)) {
+    const created = ensureTendingSchedule(dir);
+    if (created) {
+      await chownVoluteConfigPaths(spiritName, created);
       slog.info("added tending schedule to spirit");
     }
   } catch (err) {

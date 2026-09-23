@@ -1,5 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
+import { chownMindFile } from "./isolation.js";
+import { getBaseName } from "./registry.js";
 
 export type Schedule = {
   id: string;
@@ -92,8 +94,52 @@ export function readVoluteConfig(mindDir: string): VoluteConfig | null {
   return readJson(path);
 }
 
-export function writeVoluteConfig(mindDir: string, config: VoluteConfig) {
+/**
+ * Write volute.json in place. Returns the paths this write created (the config
+ * dir and/or the file) — a created path is born owned by the daemon, so a caller
+ * writing into a live mind's home must hand it over; see writeMindVoluteConfig.
+ */
+export function writeVoluteConfig(mindDir: string, config: VoluteConfig): string[] {
   const path = resolve(mindDir, "home/.config/volute.json");
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`);
+  const created: string[] = [];
+  const firstDir = mkdirSync(dirname(path), { recursive: true });
+  // mkdirSync names only the topmost dir it made; chown each one below it too.
+  if (firstDir) {
+    for (let d = dirname(path); d.length >= firstDir.length; d = dirname(d)) created.unshift(d);
+  }
+  const data = `${JSON.stringify(config, null, 2)}\n`;
+  try {
+    // Exclusive create: tells us the file is new without a check-then-write race.
+    writeFileSync(path, data, { flag: "wx" });
+    created.push(path);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+    // Truncate in place, which keeps the mind's ownership of the existing file.
+    writeFileSync(path, data);
+  }
+  return created;
+}
+
+/**
+ * writeVoluteConfig for a mind that already exists: whatever the write created is
+ * handed to the mind's user, or under user isolation the mind could not edit or
+ * delete its own config (#1072). No-op chown when isolation is off.
+ */
+export async function writeMindVoluteConfig(
+  name: string,
+  mindDir: string,
+  config: VoluteConfig,
+): Promise<void> {
+  await chownVoluteConfigPaths(name, writeVoluteConfig(mindDir, config));
+}
+
+/** Hand paths writeVoluteConfig created to the mind (its parent, for a variant). */
+export async function chownVoluteConfigPaths(
+  name: string,
+  created: string[],
+  chown: (path: string, name: string) => Promise<void> = chownMindFile,
+): Promise<void> {
+  if (created.length === 0) return;
+  const owner = await getBaseName(name);
+  for (const p of created) await chown(p, owner);
 }

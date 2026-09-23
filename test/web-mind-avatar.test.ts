@@ -1,5 +1,17 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { eq } from "drizzle-orm";
@@ -137,5 +149,51 @@ describe("mind profile avatar", () => {
     });
     assert.equal(serve.status, 400, await serve.clone().text());
     assert.equal((await serve.json()).error, "Invalid avatar path");
+  });
+
+  async function uploadAvatar(app: Hono<AuthEnv>) {
+    const form = new FormData();
+    form.append("file", new File([PNG_BYTES], "me.png", { type: "image/png" }));
+    return app.request(`/minds/${testMindName}/avatar`, {
+      method: "POST",
+      headers: { Cookie: adminCookie },
+      body: form,
+    });
+  }
+
+  // The upload writes as the daemon (root under user isolation). A mind that plants
+  // home/avatar.<ext> as a symlink must not get the daemon to write through it.
+  it("replaces a planted avatar symlink instead of writing through it", async () => {
+    const app = createApp();
+    const home = join(mindDir(testMindName), "home");
+    const outside = join(mindDir(testMindName), "outside-target");
+    writeFileSync(outside, "untouched");
+    for (const ext of [".png", ".webp"]) {
+      rmSync(join(home, `avatar${ext}`), { force: true });
+      symlinkSync(outside, join(home, `avatar${ext}`));
+    }
+
+    const res = await uploadAvatar(app);
+    assert.equal(res.status, 200, await res.clone().text());
+    const { avatar } = await res.json();
+    assert.equal(readFileSync(outside, "utf-8"), "untouched");
+    assert.ok(lstatSync(join(home, avatar)).isFile(), "avatar is a regular file, not the link");
+  });
+
+  it("refuses when home/ is a symlink leading out of the mind", async () => {
+    const app = createApp();
+    const dir = mindDir(testMindName);
+    const elsewhere = mkdtempSync(join(tmpdir(), "avatar-elsewhere-"));
+    renameSync(join(dir, "home"), join(dir, "home-real"));
+    symlinkSync(elsewhere, join(dir, "home"));
+    try {
+      const res = await uploadAvatar(app);
+      assert.equal(res.status, 404, await res.clone().text());
+      assert.deepEqual(readdirSync(elsewhere), []);
+    } finally {
+      rmSync(join(dir, "home"));
+      renameSync(join(dir, "home-real"), join(dir, "home"));
+      rmSync(elsewhere, { recursive: true });
+    }
   });
 });
