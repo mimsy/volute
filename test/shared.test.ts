@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, linkSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { voluteHome } from "../packages/daemon/src/lib/mind/registry.js";
@@ -48,7 +48,6 @@ describe("pages collaborative repo", () => {
       } catch {
         // ignore
       }
-      const { rmSync } = await import("node:fs");
       rmSync(dir, { recursive: true, force: true });
     }
   });
@@ -413,6 +412,114 @@ describe("pages collaborative repo", () => {
     assert.equal(diff, "");
 
     await removePagesWorktree("test-pam-happy", mindDir, dataDir);
+  });
+
+  // #1095: `git add -A` runs as the daemon (root under isolation) and commits a
+  // hard link by content, so a planted link to an unreadable file would be
+  // laundered into an ordinary page. Every commit path must refuse it.
+  for (const [label, run] of [
+    [
+      "pagesMerge",
+      (name: string, mindDir: string) => pagesMerge(name, mindDir, testDataDir(), "leak"),
+    ],
+    ["pagesPull", (name: string, mindDir: string) => pagesPull(name, mindDir)],
+    [
+      "pagesPullAndMerge",
+      (name: string, mindDir: string) => pagesPullAndMerge(name, mindDir, testDataDir(), "leak"),
+    ],
+  ] as const) {
+    for (const rel of ["leak.md", "deep/nested/leak.md"]) {
+      it(`${label} refuses a hard-linked file (${rel}) and commits nothing`, async () => {
+        await ensurePagesRepo(dataDir);
+        const name = `test-hardlink-${label}-${rel.includes("/") ? "nested" : "top"}`.toLowerCase();
+        const mindDir = await createFakeMind(name);
+        await addPagesWorktree(name, mindDir, dataDir);
+        const wt = resolve(mindDir, "home", "pages", "_system");
+        const repo = pagesRepoDir(dataDir);
+
+        // Stands in for a root-only file such as secrets.json: outside the worktree.
+        const secret = resolve(mindDir, "secret.json");
+        writeFileSync(secret, '{"key":"sk-secret"}');
+        mkdirSync(resolve(wt, rel, ".."), { recursive: true });
+        linkSync(secret, resolve(wt, rel));
+        writeFileSync(resolve(wt, "ordinary.md"), "fine");
+
+        const mainBefore = (await gitExec(["rev-parse", "main"], { cwd: repo })).trim();
+        const branchBefore = (await gitExec(["rev-parse", "HEAD"], { cwd: wt })).trim();
+
+        const result = await run(name, mindDir);
+        assert.equal(result.ok, false);
+        assert.ok(result.message?.includes(rel), result.message);
+        assert.ok(result.message?.includes("hard link"), result.message);
+
+        assert.equal((await gitExec(["rev-parse", "main"], { cwd: repo })).trim(), mainBefore);
+        assert.equal((await gitExec(["rev-parse", "HEAD"], { cwd: wt })).trim(), branchBefore);
+        // Not even staged: the index holds nothing new.
+        const staged = (await gitExec(["diff", "--cached", "--name-only"], { cwd: wt })).trim();
+        assert.equal(staged, "");
+
+        await removePagesWorktree(name, mindDir, dataDir);
+      });
+    }
+  }
+
+  it("pagesPullAndMerge refuses a tracked page replaced by a hard link", async () => {
+    await ensurePagesRepo(dataDir);
+    const name = "test-hardlink-tracked";
+    const mindDir = await createFakeMind(name);
+    await addPagesWorktree(name, mindDir, dataDir);
+    const wt = resolve(mindDir, "home", "pages", "_system");
+    writeFileSync(resolve(wt, "page.md"), "original");
+    assert.ok((await pagesPullAndMerge(name, mindDir, dataDir, "add page")).ok);
+
+    const secret = resolve(mindDir, "secret.json");
+    writeFileSync(secret, '{"key":"sk-secret"}');
+    rmSync(resolve(wt, "page.md"));
+    linkSync(secret, resolve(wt, "page.md"));
+
+    const result = await pagesPullAndMerge(name, mindDir, dataDir, "leak");
+    assert.equal(result.ok, false);
+    assert.ok(result.message?.includes("page.md"), result.message);
+    const onMain = await gitExec(["show", "main:page.md"], { cwd: pagesRepoDir(dataDir) });
+    assert.equal(onMain, "original");
+
+    await removePagesWorktree(name, mindDir, dataDir);
+  });
+
+  it("a hard link in a gitignored path does not block publishing", async () => {
+    await ensurePagesRepo(dataDir);
+    const name = "test-hardlink-ignored";
+    const mindDir = await createFakeMind(name);
+    await addPagesWorktree(name, mindDir, dataDir);
+    const wt = resolve(mindDir, "home", "pages", "_system");
+    writeFileSync(resolve(wt, ".gitignore"), "node_modules/\n");
+    mkdirSync(resolve(wt, "node_modules"));
+    const store = resolve(mindDir, "store.js");
+    writeFileSync(store, "module.exports = 1;");
+    linkSync(store, resolve(wt, "node_modules", "dep.js"));
+    writeFileSync(resolve(wt, "index.md"), "hello");
+
+    const result = await pagesPullAndMerge(name, mindDir, dataDir, "publish");
+    assert.ok(result.ok, result.message);
+    const onMain = await gitExec(["show", "main:index.md"], { cwd: pagesRepoDir(dataDir) });
+    assert.equal(onMain, "hello");
+
+    await removePagesWorktree(name, mindDir, dataDir);
+  });
+
+  it("a symlink in the worktree is not refused (git stores it as a path)", async () => {
+    await ensurePagesRepo(dataDir);
+    const name = "test-hardlink-symlink-ok";
+    const mindDir = await createFakeMind(name);
+    await addPagesWorktree(name, mindDir, dataDir);
+    const wt = resolve(mindDir, "home", "pages", "_system");
+    const { symlinkSync } = await import("node:fs");
+    symlinkSync("/nonexistent/target", resolve(wt, "link.md"));
+
+    const result = await pagesPullAndMerge(name, mindDir, dataDir, "symlink");
+    assert.ok(result.ok, result.message);
+
+    await removePagesWorktree(name, mindDir, dataDir);
   });
 
   it("pagesPullAndMerge returns nothing-to-publish when no changes", async () => {

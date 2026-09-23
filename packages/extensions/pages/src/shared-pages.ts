@@ -8,6 +8,7 @@ import { execFile as execFileCb } from "node:child_process";
 import {
   chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   readdirSync,
   readFileSync,
@@ -17,6 +18,7 @@ import {
 } from "node:fs";
 import { relative, resolve } from "node:path";
 import { buildMindBaseEnv } from "@volute/daemon/lib/util/mind-env.js";
+import { isMultiplyLinkedFile } from "./ownership.js";
 
 /** Isolation info needed by shared pages operations. */
 export type IsolationInfo = {
@@ -277,6 +279,79 @@ async function withPagesLock<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 /**
+ * Files `git add -A` would stage that have more than one name on disk, relative to
+ * the worktree. Scoped by git itself — untracked and modified paths under the same
+ * ignore rules `add -A` honours — so an ignored directory of legitimate hard links
+ * (a pnpm `node_modules`) never blocks a publish. A tracked file swapped for a link
+ * shows up as modified: its inode changes, and differing content is all that could
+ * leak. Symlinks pass: `lstat` does not follow them, and git stores them as a path.
+ */
+async function findMultiplyLinkedFiles(wt: string, isolation?: IsolationInfo): Promise<string[]> {
+  const out = await gitExec(
+    ["--no-optional-locks", "ls-files", "-z", "-o", "-m", "--exclude-standard"],
+    { cwd: wt },
+    isolation,
+  );
+  const found = new Set<string>();
+  for (const rel of out.split("\0")) {
+    if (!rel) continue;
+    try {
+      if (isMultiplyLinkedFile(lstatSync(resolve(wt, rel)))) found.add(rel);
+    } catch (err: any) {
+      // Listed as modified because it was deleted, or removed since the listing.
+      if (err?.code !== "ENOENT") throw err;
+    }
+  }
+  return [...found].sort();
+}
+
+/**
+ * Commit whatever the mind has left uncommitted in its worktree, or refuse.
+ *
+ * `git add -A` runs as the daemon — root under user isolation — and stores a file
+ * by its *content*. A hard link the mind planted to a file it cannot read (possible
+ * on macOS, which has no `protected_hardlinks`) would be read and committed with
+ * root's privileges, and once squash-merged it is an ordinary file everywhere, past
+ * every per-read guard from #1089 (#1095). So what `add -A` would stage is swept
+ * first, and the whole operation is refused if any of it has a second name.
+ *
+ * Like the containment checks in `ownership.ts`, this closes the durable hole, not
+ * a link swapped in between the sweep and the `add`.
+ */
+async function commitPendingChanges(
+  mindName: string,
+  wt: string,
+  isolation?: IsolationInfo,
+): Promise<{ ok: false; message: string } | null> {
+  const linked = await findMultiplyLinkedFiles(wt, isolation);
+  if (linked.length > 0) {
+    console.warn(
+      `[pages] refused to commit ${mindName}'s worktree: hard-linked ${linked.join(", ")}`,
+    );
+    const list = linked.map((f) => `  ${f}`).join("\n");
+    return {
+      ok: false,
+      message:
+        `Nothing was committed. These files in pages/_system have a second name on disk (a hard link):\n${list}\n` +
+        "Shared pages are committed by the daemon, which reads a file's contents with its own privileges, " +
+        "so a hard-linked file can't be published. Replace each with an ordinary copy " +
+        "(e.g. `cp <file> <file>.tmp && mv <file>.tmp <file>`) and try again.",
+    };
+  }
+
+  const status = (await gitExec(["status", "--porcelain"], { cwd: wt }, isolation)).trim();
+  if (status) {
+    await gitExec(["add", "-A"], { cwd: wt }, isolation);
+    await gitExec(
+      ["commit", "--author", `${mindName} <${mindName}@volute>`, "-m", `wip: ${mindName}`],
+      { cwd: wt },
+      isolation,
+    );
+  }
+  return null;
+}
+
+/**
  * Squash-merge a mind's branch into main, then reset the mind's branch.
  */
 export async function pagesMerge(
@@ -290,16 +365,8 @@ export async function pagesMerge(
     const dir = pagesRepoDir(dataDir);
     const wt = worktreePath(mindDir);
 
-    // Commit pending changes
-    const status = (await gitExec(["status", "--porcelain"], { cwd: wt }, isolation)).trim();
-    if (status) {
-      await gitExec(["add", "-A"], { cwd: wt }, isolation);
-      await gitExec(
-        ["commit", "--author", `${mindName} <${mindName}@volute>`, "-m", `wip: ${mindName}`],
-        { cwd: wt },
-        isolation,
-      );
-    }
+    const refused = await commitPendingChanges(mindName, wt, isolation);
+    if (refused) return refused;
 
     // Check if there's anything to merge
     const diff = (
@@ -370,16 +437,8 @@ export async function pagesPull(
   return withPagesLock(async () => {
     const wt = worktreePath(mindDir);
 
-    // Commit pending changes
-    const status = (await gitExec(["status", "--porcelain"], { cwd: wt }, isolation)).trim();
-    if (status) {
-      await gitExec(["add", "-A"], { cwd: wt }, isolation);
-      await gitExec(
-        ["commit", "--author", `${mindName} <${mindName}@volute>`, "-m", `wip: ${mindName}`],
-        { cwd: wt },
-        isolation,
-      );
-    }
+    const refused = await commitPendingChanges(mindName, wt, isolation);
+    if (refused) return refused;
 
     // Rebase onto main
     try {
@@ -444,15 +503,8 @@ export async function pagesPullAndMerge(
     const dir = pagesRepoDir(dataDir);
 
     // Commit pending changes once (shared by pull and merge)
-    const status = (await gitExec(["status", "--porcelain"], { cwd: wt }, isolation)).trim();
-    if (status) {
-      await gitExec(["add", "-A"], { cwd: wt }, isolation);
-      await gitExec(
-        ["commit", "--author", `${mindName} <${mindName}@volute>`, "-m", `wip: ${mindName}`],
-        { cwd: wt },
-        isolation,
-      );
-    }
+    const refused = await commitPendingChanges(mindName, wt, isolation);
+    if (refused) return refused;
 
     // Rebase onto main (pull)
     try {
