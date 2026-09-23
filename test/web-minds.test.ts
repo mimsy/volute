@@ -228,6 +228,60 @@ describe("web minds routes", () => {
     }
   });
 
+  /**
+   * #1078: a named model is checked against the enabled list for the template before
+   * anything is created — a typo or a foreign-provider model would otherwise be written
+   * into config.json and the mind would never think.
+   */
+  describe("POST / — model validation (#1078)", () => {
+    async function createWith(body: Record<string, unknown>) {
+      const cookie = await setupAuth();
+      const { setEnabledModels } = await import("../packages/daemon/src/lib/ai-service.js");
+      const { findMind } = await import("../packages/daemon/src/lib/mind/registry.js");
+      const { readGlobalConfig, writeGlobalConfig, _resetConfigCache } = await import(
+        "../packages/daemon/src/lib/config/setup.js"
+      );
+      const savedConfig = readGlobalConfig();
+      const name = `model-check-${Date.now()}`;
+      try {
+        setEnabledModels(["anthropic:claude-opus-5", "openai-codex:gpt-5.4"]);
+        const { default: app } = await import("../packages/daemon/src/web/app.js");
+        const res = await app.request("http://localhost/api/v1/minds", {
+          method: "POST",
+          headers: { ...postHeaders(cookie), "Content-Type": "application/json" },
+          body: JSON.stringify({ name, ...body }),
+        });
+        const json = (await res.json()) as { error?: string };
+        assert.equal(await findMind(name), undefined, "a refused create must leave no mind");
+        return { status: res.status, error: json.error ?? "" };
+      } finally {
+        writeGlobalConfig(savedConfig);
+        _resetConfigCache();
+      }
+    }
+
+    it("refuses a misspelled model and lists the valid ids for the template", async () => {
+      const r = await createWith({ template: "claude", model: "claude-opus-5-typo" });
+      assert.equal(r.status, 400);
+      assert.match(r.error, /Unknown or disabled model "claude-opus-5-typo"/);
+      assert.match(r.error, /anthropic:claude-opus-5/);
+      assert.doesNotMatch(r.error, /gpt-5\.4/, "only ids this template can run are offered");
+    });
+
+    it("refuses an enabled model from a provider the template can't run", async () => {
+      const r = await createWith({ template: "codex", model: "anthropic:claude-opus-5" });
+      assert.equal(r.status, 400);
+      assert.match(r.error, /can't run on the codex template/);
+      assert.match(r.error, /openai-codex:gpt-5\.4/);
+    });
+
+    it("refuses a disabled model when the template is inferred from it", async () => {
+      const r = await createWith({ model: "anthropic:claude-haiku-4-5" });
+      assert.equal(r.status, 400);
+      assert.match(r.error, /Unknown or disabled model/);
+    });
+  });
+
   it("GET /api/v1/system/info — aiConfigured tracks whether a model is enabled", async () => {
     const cookie = await setupAuth();
     const { setEnabledModels } = await import("../packages/daemon/src/lib/ai-service.js");

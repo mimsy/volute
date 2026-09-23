@@ -11,14 +11,17 @@ type ModelInfo = {
 type DaemonFetch = (path: string, options?: RequestInit) => Promise<Response>;
 
 /**
- * Interactive picker over the models an admin has enabled. Returns a qualified
- * `provider:id`, or undefined when no model is enabled at all (the caller decides
- * whether that is fatal).
+ * Interactive picker over the models an admin has enabled that `template` can run.
+ * Returns a qualified `provider:id`, or undefined when there are none (the caller
+ * decides whether that is fatal).
  *
  * Only call this with someone at a terminal. `promptLine` resolves on a newline byte
  * and has no end-of-stream handler, so on a closed stdin it waits forever.
  */
-export async function chooseModel(daemonFetch: DaemonFetch): Promise<string | undefined> {
+export async function chooseModel(
+  daemonFetch: DaemonFetch,
+  template: string,
+): Promise<string | undefined> {
   const res = await daemonFetch("/api/v1/system/ai/models");
   if (!res.ok) {
     // The route is admin-only, so the likely failure is authorization, not a dead
@@ -34,7 +37,9 @@ export async function chooseModel(daemonFetch: DaemonFetch): Promise<string | un
   }
 
   const models = (await res.json()) as ModelInfo[];
-  const enabled = models.filter((m) => m.enabled);
+  // Only what this template can run: the daemon refuses anything else (#1078).
+  const { templateCanRun } = await import("@volute/daemon/lib/ai-service.js");
+  const enabled = models.filter((m) => m.enabled && templateCanRun(template, m.provider));
   if (enabled.length === 0) return undefined;
 
   console.log("\nAvailable models:");
@@ -100,13 +105,18 @@ export async function resolveModel(
   }
 
   const { getSpiritModel } = await import("@volute/daemon/lib/mind/spirit.js");
-  const { qualifyModelId, resolveTemplate } = await import("@volute/daemon/lib/ai-service.js");
+  const { matchEnabledModel, resolveTemplate } = await import("@volute/daemon/lib/ai-service.js");
   // Empty for a sandboxed mind — the sandbox denies it the daemon's whole $HOME — which
   // is fine: the answer then falls to the daemon, which can read its own config.
   const spiritModel = getSpiritModel();
-  if (spiritModel && (await resolveTemplate(spiritModel)) === template) {
-    const model = template === "pi" ? qualifyModelId(spiritModel) : spiritModel;
-    return { send: model, describe: `${model} (the spirit's model)`, mayAsk: false };
+  // Borrowed only on the spirit's own template, and only when it passes the check the
+  // daemon applies to any named model (#1078) — an inference it would refuse is none.
+  const match =
+    spiritModel && (await resolveTemplate(spiritModel)) === template
+      ? matchEnabledModel(spiritModel, template)
+      : undefined;
+  if (match?.ok) {
+    return { send: match.model, describe: `${match.model} (the spirit's model)`, mayAsk: false };
   }
 
   return { describe: `the ${template} template's default`, mayAsk: true };

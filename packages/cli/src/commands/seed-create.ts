@@ -36,9 +36,11 @@ const cmd = command({
     // picker — but only to someone who can answer. promptLine never resolves on a
     // stdin that delivers no newline, so asking a script or a mind is a hang.
     if (choice.mayAsk && !process.env.VOLUTE_MIND && process.stdin.isTTY) {
-      model = await chooseModel(daemonFetch);
+      model = await chooseModel(daemonFetch, template);
       if (!model) {
-        console.error("No AI models configured. Set up providers in the web dashboard first.");
+        console.error(
+          `No enabled model runs on the ${template} template. Enable one in the web dashboard (Settings), or choose another template.`,
+        );
         process.exit(1);
       }
     }

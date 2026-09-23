@@ -30,7 +30,7 @@ let modelSearch = $state("");
 let showModelPicker = $state(false);
 
 let enabledModels = $derived(aiModels.filter((m) => m.enabled));
-let selectedModel = $derived(enabledModels.find((m) => m.id === model));
+let selectedModel = $derived(enabledModels.find((m) => m.qualifiedId === model));
 let modelSuggestions = $derived(
   modelSearch.trim()
     ? enabledModels
@@ -153,8 +153,8 @@ async function handleSubmit() {
             />
             {#if showModelPicker && modelSuggestions.length > 0}
               <div class="model-dropdown">
-                {#each modelSuggestions as m (m.id)}
-                  <button class="model-option" onclick={() => { model = m.id; showModelPicker = false; modelSearch = ""; }} type="button">
+                {#each modelSuggestions as m (m.qualifiedId)}
+                  <button class="model-option" onclick={() => { model = m.qualifiedId; showModelPicker = false; modelSearch = ""; }} type="button">
                     <span class="model-option-name">{m.name}</span>
                     <span class="model-option-provider">{m.provider}</span>
                   </button>
