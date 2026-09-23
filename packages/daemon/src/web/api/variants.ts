@@ -10,6 +10,7 @@ import { chownMindDir } from "../../lib/mind/isolation.js";
 import {
   acquireJoinLock,
   describeJoinAge,
+  JoinBlockedByUpgradeError,
   JoinInProgressError,
   joinInProgress,
 } from "../../lib/mind/join-lock.js";
@@ -237,7 +238,9 @@ const app = new Hono<AuthEnv>()
     try {
       releaseJoin = acquireJoinLock(mindName, variantName);
     } catch (err) {
-      if (err instanceof JoinInProgressError) return c.json({ error: err.message }, 409);
+      if (err instanceof JoinInProgressError || err instanceof JoinBlockedByUpgradeError) {
+        return c.json({ error: err.message }, 409);
+      }
       throw err;
     }
 

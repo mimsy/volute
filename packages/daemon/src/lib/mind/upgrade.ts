@@ -15,6 +15,7 @@ import { computeTemplateHash } from "../template/template-hash.js";
 import { gitExec } from "../util/exec.js";
 import log from "../util/logger.js";
 import { chownMindDir, isIsolationEnabled } from "./isolation.js";
+import { beginUpgrade } from "./join-lock.js";
 import { npmInstallAsMind, npmInstallNeeded } from "./npm-install.js";
 import { findMind, mindDir, setMindTemplate, setMindTemplateHash } from "./registry.js";
 import { cleanupVariant } from "./variant-cleanup.js";
@@ -54,10 +55,18 @@ const upgradeLocks = new Map<string, Promise<unknown>>();
  * orphan and aborting it out from under it. Different mind names run unaffected.
  * A rejected op is swallowed before chaining the next one, so a single failure
  * never wedges the queue for that mind.
+ *
+ * A variant join into the same mind is not queued behind, but refused against, in
+ * both directions (#988): this throws `UpgradeBlockedByJoinError` while a join
+ * is in flight, and a join is refused while any op here is queued or running.
  */
 export async function withUpgradeLock<T>(mindName: string, fn: () => Promise<T>): Promise<T> {
+  const endUpgrade = beginUpgrade(mindName);
   const prior = upgradeLocks.get(mindName) ?? Promise.resolve();
-  const run = prior.catch(() => {}).then(fn);
+  const run = prior
+    .catch(() => {})
+    .then(fn)
+    .finally(endUpgrade);
   upgradeLocks.set(
     mindName,
     run.catch(() => {}),

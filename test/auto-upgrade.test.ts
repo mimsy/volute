@@ -14,6 +14,7 @@ import {
   UPGRADE_ALERT_KIND,
   upgradeFailureText,
 } from "../packages/daemon/src/lib/daemon/auto-upgrade.js";
+import { UpgradeBlockedByJoinError } from "../packages/daemon/src/lib/mind/join-lock.js";
 import type { MindEntry } from "../packages/daemon/src/lib/mind/registry.js";
 import { formatNotification } from "../packages/daemon/src/lib/version-notify.js";
 
@@ -253,6 +254,48 @@ describe("autoUpgradeOne", () => {
     const blocked = getUpgradeBlocked("retry-mind");
     assert.ok(blocked, "should record a blocked entry");
     assert.match(blocked!.reason, /Command failed: git commit/);
+  });
+
+  it("join in progress: records a blocked reason without retrying, failing, or alerting (#988)", async () => {
+    const entry = makeEntry({ name: "joining-mind" });
+    const alerts: Alert[] = [];
+    let attempts = 0;
+    const deps = makeUpgradeDeps(alerts, {
+      runUpgrade: async (name) => {
+        attempts++;
+        throw new UpgradeBlockedByJoinError(name, { variant: "v", since: new Date() });
+      },
+    });
+
+    await autoUpgradeOne(entry, false, deps);
+
+    assert.equal(attempts, 1, "a join in progress is not a transient failure to retry");
+    assert.equal(alerts.length, 0);
+    assert.match(getUpgradeBlocked("joining-mind")!.reason, /variant join in progress/);
+    // Not gated as a failure: the next pass attempts again.
+    await autoUpgradeOne(entry, false, deps);
+    assert.equal(attempts, 2);
+  });
+
+  it("join starting during the retry delay: blocked, not a failure (#988)", async () => {
+    const entry = makeEntry({ name: "retry-joining-mind" });
+    const alerts: Alert[] = [];
+    let attempts = 0;
+    const deps = makeUpgradeDeps(alerts, {
+      runUpgrade: async (name) => {
+        attempts++;
+        if (attempts === 1) throw new Error("transient");
+        throw new UpgradeBlockedByJoinError(name, { variant: "v", since: new Date() });
+      },
+    });
+
+    await autoUpgradeOne(entry, false, deps);
+
+    assert.equal(attempts, 2);
+    assert.equal(alerts.length, 0, "a join is not an upgrade failure to alert about");
+    assert.match(getUpgradeBlocked("retry-joining-mind")!.reason, /variant join in progress/);
+    await autoUpgradeOne(entry, false, deps);
+    assert.equal(attempts, 3, "not gated as failed for the rest of the run");
   });
 
   it("does not attempt again after a failure, and does not re-alert", async () => {
