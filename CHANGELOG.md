@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.62.0](https://github.com/mimsy/volute/compare/volute-v0.61.0...volute-v0.62.0) (2026-09-23)
+
+
+### Features
+
+* tell minds their isolation mode and env allowlist at startup ([#1120](https://github.com/mimsy/volute/issues/1120)) ([80e19d3](https://github.com/mimsy/volute/commit/80e19d38401e766113257151a03eb3d0116798a6))
+* **template:** set umask 077 at mind startup so a mind's own files are private ([#1121](https://github.com/mimsy/volute/issues/1121)) ([0a03cb3](https://github.com/mimsy/volute/commit/0a03cb3c25b783ff8ec7510d4806e010271439c7))
+
+
+### Bug Fixes
+
+* **daemon:** answer 503 starting from every manager getter, and accept body-less JSON restarts ([#1117](https://github.com/mimsy/volute/issues/1117)) ([c3348f8](https://github.com/mimsy/volute/commit/c3348f87c6989c677c871539699ae98becd91df4))
+* **daemon:** let a stop cancel crash recovery, and retry strained restarts without spending the budget ([#1115](https://github.com/mimsy/volute/issues/1115)) ([4d9f810](https://github.com/mimsy/volute/commit/4d9f810be4544ac213b39b3e60f7c8e319ec86b3))
+* **isolation:** contain chown targets to the mind's tree and chown through O_NOFOLLOW handles ([#1119](https://github.com/mimsy/volute/issues/1119)) ([ace3b86](https://github.com/mimsy/volute/commit/ace3b8669a24f4ad314cc4198f26a9b073129cee))
+* **isolation:** hand daemon-created volute.json and avatar files to the mind ([#1122](https://github.com/mimsy/volute/issues/1122)) ([681b741](https://github.com/mimsy/volute/commit/681b741eabf278b95f885d4c5c1b28b5db8fe993))
+* make template upgrades and variant joins into one mind exclude each other ([#1112](https://github.com/mimsy/volute/issues/1112)) ([42d99f7](https://github.com/mimsy/volute/commit/42d99f7f6510acaad8dea37426cb686fcbcc8599))
+* **pages:** refuse hard-linked files before committing a mind's commons worktree ([#1111](https://github.com/mimsy/volute/issues/1111)) ([10a8de9](https://github.com/mimsy/volute/commit/10a8de97e5ebb1e2ae0f53af1d061a2ba0878368))
+* **pages:** show linked entries as unpublishable in pages list ([#1109](https://github.com/mimsy/volute/issues/1109)) ([f915a22](https://github.com/mimsy/volute/commit/f915a2271a05409272ea65e95cc96cc897c192ce))
+* **sleep:** end a mind's wake when its process stops mid-wake ([#1118](https://github.com/mimsy/volute/issues/1118)) ([2fd1454](https://github.com/mimsy/volute/commit/2fd1454d0694a7fa51b84603a2268eda8c22b6d8))
+* **spirit:** finish the spirit's template switch in home/ and drop the stale .zshenv it leaves behind ([#1103](https://github.com/mimsy/volute/issues/1103)) ([e863730](https://github.com/mimsy/volute/commit/e86373066ee1ea6a3740bc944508952e0a130dad))
+* validate --model against the enabled list and the template on mind create ([#1113](https://github.com/mimsy/volute/issues/1113)) ([1f630c3](https://github.com/mimsy/volute/commit/1f630c31cae4f5557e690ed05dbf4d041ed220e2))
+
 ## [0.61.0](https://github.com/mimsy/volute/compare/volute-v0.60.1...volute-v0.61.0) (2026-09-13)
 
 
