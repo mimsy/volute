@@ -2901,13 +2901,16 @@ describe("daemon e2e", { timeout: 420000 }, () => {
       assert.ok(fired, "the restarted daemon should still fire a sleeping mind's schedules");
     } finally {
       // Drop the schedule, wake the mind, and leave it stopped and awake for the
-      // tests that follow.
+      // tests that follow. Wait out the whole wake, not just `sleeping` — it flips at the
+      // start of the wake (#920), and a stop mid-wake is its own path (#1097), not this
+      // test's subject.
       await daemonRequest(`/api/v1/minds/${TEST_MIND}/schedules/${SCHED_ID}`, { method: "DELETE" });
       await daemonRequest(`/api/v1/minds/${TEST_MIND}/wake`, { method: "POST" });
       const wakeDeadline = Date.now() + 30000;
       while (Date.now() < wakeDeadline) {
         const res = await daemonRequest(`/api/v1/minds/${TEST_MIND}/sleep`);
-        if (!((await res.json()) as { sleeping: boolean }).sleeping) break;
+        const state = (await res.json()) as { sleeping: boolean; waking?: boolean };
+        if (!state.sleeping && !state.waking) break;
         await new Promise((r) => setTimeout(r, 500));
       }
       await daemonRequest(`/api/v1/minds/${TEST_MIND}/stop`, { method: "POST" });

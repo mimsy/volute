@@ -41,9 +41,10 @@ import { collectTurnContext } from "../turn-context.js";
 import log from "../util/logger.js";
 import { parseDbTimestamp } from "../util/time.js";
 import { ManagerNotReadyError } from "./manager-not-ready.js";
-import { getMindManager } from "./mind-manager.js";
+import { getMindManager, tryGetMindManager } from "./mind-manager.js";
 import { runMindScript } from "./mind-script.js";
 import { sleepMind, wakeMind } from "./mind-service.js";
+import { isShuttingDown } from "./shutdown-state.js";
 
 const slog = log.child("sleep");
 
@@ -481,7 +482,21 @@ export class SleepManager {
         // summary and the per-channel batches arrive as separate, ordered turns rather
         // than interleaving. Bounded so a stuck turn can't wedge the flush — the bound
         // ends the *wait*, nothing more: the mind has been awake since markWaking.
-        await this.waitForIdle(name, this.wakeSummaryTimeoutMs);
+        // A process already gone when the wait begins (a stop that landed mid-POST) has
+        // published its `mind_stopped` before anything was listening for it.
+        const ended =
+          tryGetMindManager()?.isRunning(name) === false
+            ? "stopped"
+            : await this.waitForIdle(name, this.wakeSummaryTimeoutMs);
+        if (ended === "stopped" || isShuttingDown()) {
+          // Stopped or crashed mid-wake (#1097): there is no process to flush the backlog
+          // into, so it stays sleep-queued for the mind's next start, and the finally
+          // below ends the wake — a stopped mind must not read as `waking` (refusing
+          // sleep, queuing inbound) until the bound runs out. A daemon shutdown is the
+          // exception: it leaves `waking` persisted, so the next boot redoes the wake.
+          slog.info(`${name} stopped mid-wake; its backlog waits for its next start`);
+          return;
+        }
       }
 
       // Flush queued messages (grouped into one pre-batched turn per channel)
@@ -520,8 +535,11 @@ export class SleepManager {
       slog.info(`${name} is now awake${opts?.trigger ? " (trigger wake)" : ""}`);
     } finally {
       // A throw between markWaking and markAwake must not strand the mind mid-wake with
-      // its inbound queuing forever.
-      if (!opts?.trigger && this.states.get(name)?.waking) this.markAwake(name);
+      // its inbound queuing forever. Not on shutdown: the persisted `waking` is what
+      // loadState re-wakes from.
+      if (!opts?.trigger && !isShuttingDown() && this.states.get(name)?.waking) {
+        this.markAwake(name);
+      }
       this.transitioning.delete(name);
     }
   }
@@ -1023,21 +1041,30 @@ export class SleepManager {
     }
   }
 
-  /** Resolve when the mind's current turn ends, or after `timeoutMs`. Protected as a
-   *  test seam for the wake sequence. */
-  protected async waitForIdle(name: string, timeoutMs: number): Promise<void> {
-    return new Promise<void>((resolve) => {
+  /** Resolve when the mind's current turn ends, its process goes away (#1097), or after
+   *  `timeoutMs` — saying which. Protected as a test seam for the wake sequence. */
+  protected async waitForIdle(
+    name: string,
+    timeoutMs: number,
+  ): Promise<"idle" | "stopped" | "timeout"> {
+    return new Promise((resolve) => {
       const timeout = setTimeout(() => {
         unsub();
-        resolve();
+        resolve("timeout");
       }, timeoutMs);
 
       const unsub = subscribe((event) => {
         if (event.mind !== name) return;
-        if (event.type === "mind_done" || event.type === "mind_idle") {
+        const ended =
+          event.type === "mind_stopped"
+            ? "stopped"
+            : event.type === "mind_done" || event.type === "mind_idle"
+              ? "idle"
+              : null;
+        if (ended) {
           clearTimeout(timeout);
           unsub();
-          resolve();
+          resolve(ended);
         }
       });
     });

@@ -15,6 +15,10 @@ import { resolve } from "node:path";
 import { describe, it } from "node:test";
 import { and, eq } from "drizzle-orm";
 import {
+  beginShutdown,
+  resetShutdownState,
+} from "../packages/daemon/src/lib/daemon/shutdown-state.js";
+import {
   getSleepManagerIfReady,
   initSleepManager,
   matchesGlob,
@@ -27,6 +31,7 @@ import {
   tryGetDeliveryManager,
 } from "../packages/daemon/src/lib/delivery/delivery-manager.js";
 import { deliverMessage } from "../packages/daemon/src/lib/delivery/message-delivery.js";
+import { publish } from "../packages/daemon/src/lib/events/activity-events.js";
 import { addMind, mindDir, removeMind } from "../packages/daemon/src/lib/mind/registry.js";
 import {
   activity,
@@ -206,9 +211,20 @@ class WakeSleepManager extends SleepManager {
     reported: SleepState;
   } | null = null;
 
-  protected override async waitForIdle(name: string, timeoutMs: number): Promise<void> {
-    if (!this.onWaitForIdle) return super.waitForIdle(name, timeoutMs);
+  /** Runs once the real wait is listening, when set — a seam for ending it mid-wake. */
+  onWaitSubscribed: (() => void) | null = null;
+
+  protected override async waitForIdle(
+    name: string,
+    timeoutMs: number,
+  ): Promise<"idle" | "stopped" | "timeout"> {
+    if (!this.onWaitForIdle) {
+      const wait = super.waitForIdle(name, timeoutMs);
+      this.onWaitSubscribed?.();
+      return wait;
+    }
     await this.onWaitForIdle();
+    return "idle";
   }
 
   deliveredBatches: { channel: string; payloads: any[] }[] = [];
@@ -1665,6 +1681,71 @@ describe("SleepManager.initiateWake (#920)", () => {
         .all();
       assert.equal(left.length, 0, "nothing is left stranded for the next wake");
     } finally {
+      stub.close();
+      await cleanup(mind);
+    }
+  });
+
+  it("a mind stopped mid-wake stops waking at once, keeping its backlog for its next start", async () => {
+    // #1097: a stop before the wake turn began publishes no `mind_idle`, only `mind_stopped`.
+    // Waiting out the bound left the stopped mind `waking` — refusing sleep with a 409 and
+    // queuing inbound — for two minutes.
+    const mind = uniqueMind();
+    const stub = await stubMind(mind);
+    await queueSleepRow(mind, "overnight");
+
+    const sm = new WakeSleepManager();
+    sm.setWakeTimeoutForTest(60_000); // the real wait, with a bound this test must not reach
+    sm.setStateForTest(mind, sleepingState({ queuedMessageCount: 1 }));
+    sm.onWaitSubscribed = () => {
+      void publish({ type: "mind_stopped", mind, summary: `${mind} stopped` });
+    };
+
+    try {
+      const started = Date.now();
+      await sm.initiateWake(mind);
+      assert.ok(Date.now() - started < 5_000, "the wake ended with the process, not the bound");
+
+      const after = sm.getState(mind);
+      assert.equal(after.waking, false, "a stopped mind is not waking");
+      assert.equal(after.sleeping, false, "nor put back to sleep behind the host's back");
+      assert.equal(sm.isQueueingInbound(mind), false);
+      assert.ok(after.lastWakeAt, "the wake is stamped, so the tick won't re-sleep it");
+
+      assert.equal(sm.deliveredBatches.length, 0, "nothing is flushed into a dead process");
+      const db = await getDb();
+      const left = await db
+        .select()
+        .from(deliveryQueue)
+        .where(and(eq(deliveryQueue.mind, mind), eq(deliveryQueue.status, "sleep-queued")))
+        .all();
+      assert.equal(left.length, 1, "the backlog is kept");
+
+      // What the mind manager's start path runs once the mind is up again.
+      assert.equal(await sm.flushQueuedMessages(mind), 1, "and delivered on the next start");
+    } finally {
+      stub.close();
+      await cleanup(mind);
+    }
+  });
+
+  it("a mind stopped mid-wake by daemon shutdown stays waking, so the next boot re-wakes it", async () => {
+    const mind = uniqueMind();
+    const stub = await stubMind(mind);
+
+    const sm = new WakeSleepManager();
+    sm.setWakeTimeoutForTest(60_000);
+    sm.setStateForTest(mind, sleepingState());
+    sm.onWaitSubscribed = () => {
+      beginShutdown();
+      void publish({ type: "mind_stopped", mind, summary: `${mind} stopped` });
+    };
+
+    try {
+      await sm.initiateWake(mind);
+      assert.equal(sm.getState(mind).waking, true, "the persisted flag loadState re-wakes from");
+    } finally {
+      resetShutdownState();
       stub.close();
       await cleanup(mind);
     }

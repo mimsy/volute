@@ -95,7 +95,8 @@ export async function fanOutToMinds(opts: FanOutOpts): Promise<FanOutResult> {
   };
 
   // Include running minds AND sleeping-or-waking minds (they route through the sleep
-  // queue — a mind mid-wake whose process crashed is not running but still queues, #920).
+  // queue). A mind whose process stops or crashes mid-wake stops waking with it (#1097),
+  // so from then on it is skipped here like any other stopped mind.
   const targetMinds = mindParticipants
     .map((ap) => {
       const key = opts.targetName ? opts.targetName(ap.username) : ap.username;
