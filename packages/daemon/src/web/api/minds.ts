@@ -23,6 +23,7 @@ import {
   forgetCredentialDegraded,
   getCredentialDegraded,
 } from "../../lib/daemon/credential-recovery.js";
+import { ManagerNotReadyError } from "../../lib/daemon/manager-not-ready.js";
 import {
   DaemonShuttingDownError,
   getMindManager,
@@ -594,11 +595,15 @@ const app = new Hono<AuthEnv>()
     let context: Record<string, unknown> | undefined;
     const contentType = c.req.header("content-type");
     if (contentType?.includes("application/json")) {
-      try {
-        const body = await c.req.json();
-        if (body?.context) context = body.context as Record<string, unknown>;
-      } catch (err) {
-        log.error(`failed to parse restart context for ${name}`, log.errorData(err));
+      // An empty body is a restart with no context, not a parse failure (#1098).
+      const raw = await c.req.text();
+      if (raw.trim()) {
+        try {
+          const body = JSON.parse(raw);
+          if (body?.context) context = body.context as Record<string, unknown>;
+        } catch (err) {
+          log.warn(`failed to parse restart context for ${name}`, log.errorData(err));
+        }
       }
     }
 
@@ -1745,7 +1750,7 @@ const app = new Hono<AuthEnv>()
       const pending = await getDeliveryManager().getPending(baseName);
       return c.json(pending);
     } catch (err) {
-      if (err instanceof Error && err.message.includes("not initialized")) {
+      if (err instanceof ManagerNotReadyError) {
         return c.json([]);
       }
       log.error(`failed to get pending deliveries for ${baseName}`, log.errorData(err));
@@ -1767,7 +1772,7 @@ const app = new Hono<AuthEnv>()
         const archived = await getDeliveryManager().declineChannel(name, channel);
         return c.json({ ok: true, channel, archived });
       } catch (err) {
-        if (err instanceof Error && err.message.includes("not initialized")) {
+        if (err instanceof ManagerNotReadyError) {
           return c.json({ error: "Delivery manager not available" }, 503);
         }
         // A name that matches no real channel is caller error, not a server fault.
@@ -1794,7 +1799,7 @@ const app = new Hono<AuthEnv>()
         const result = await getDeliveryManager().acceptChannel(name, channel, body.thread?.trim());
         return c.json({ ok: true, channel, ...result });
       } catch (err) {
-        if (err instanceof Error && err.message.includes("not initialized")) {
+        if (err instanceof ManagerNotReadyError) {
           return c.json({ error: "Delivery manager not available" }, 503);
         }
         if (err instanceof Error && err.message.includes("malformed")) {
@@ -1818,7 +1823,7 @@ const app = new Hono<AuthEnv>()
     } catch (err) {
       // Never answer "nothing is held" for a subsystem that simply isn't up — a mind
       // checking whether messages are stranded would read that as a confident no.
-      if (err instanceof Error && err.message.includes("not initialized")) {
+      if (err instanceof ManagerNotReadyError) {
         return c.json({ error: "Delivery manager not available" }, 503);
       }
       log.error(`failed to peek channel ${channel} for ${name}`, log.errorData(err));

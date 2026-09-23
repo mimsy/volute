@@ -4,6 +4,7 @@ import { isMind } from "@volute/api/user-type";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { MIND_LEVEL_THREAD, type RecordNoticeInput } from "../chat/system-events.js";
 import { getTypingMap, publishTypingForChannels } from "../chat/typing.js";
+import { ManagerNotReadyError } from "../daemon/manager-not-ready.js";
 import { tryGetMindManager } from "../daemon/mind-manager.js";
 import { acquireTurnSlot, releaseTurnSlot } from "../daemon/turn-slots.js";
 import { linkInboundToActiveTurn } from "../daemon/turn-tracker.js";
@@ -2655,9 +2656,7 @@ export function initDeliveryManager(): DeliveryManager {
 }
 
 export function getDeliveryManager(): DeliveryManager {
-  if (!instance) {
-    throw new Error("DeliveryManager not initialized — call initDeliveryManager() first");
-  }
+  if (!instance) throw new ManagerNotReadyError("DeliveryManager", "initDeliveryManager");
   return instance;
 }
 

@@ -18,6 +18,7 @@ import { getPrompt } from "../prompts.js";
 import { mindHistory, turns } from "../schema.js";
 import log from "../util/logger.js";
 import { classify } from "./error-classify.js";
+import { ManagerNotReadyError } from "./manager-not-ready.js";
 import { type BudgetScope, getSpendBudget } from "./spend-budget.js";
 import { summarizeTurn } from "./summarizer.js";
 import {
@@ -312,7 +313,7 @@ export async function handleMindEvent(
     try {
       getDeliveryManager().sessionDone(mind, event.session);
     } catch (err) {
-      if (!(err instanceof Error && err.message.includes("not initialized"))) {
+      if (!(err instanceof ManagerNotReadyError)) {
         llog.error(`delivery manager sessionDone failed for ${mind}`, log.errorData(err));
       }
     }
@@ -475,7 +476,7 @@ async function completeTurnAndSummarize(
     const busy = event.session ? dm.isSessionBusy(mind, event.session) : false;
     if (!busy) await finish();
   } catch (err) {
-    if (!(err instanceof Error && err.message.includes("not initialized"))) {
+    if (!(err instanceof ManagerNotReadyError)) {
       llog.error("turn completion check failed", log.errorData(err));
     }
     // DM unavailable — complete immediately as fallback.

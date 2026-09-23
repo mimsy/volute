@@ -3,6 +3,7 @@ import { readSystemsConfig, type SystemsConfig } from "../config/systems-config.
 import { deliverMessage } from "../delivery/message-delivery.js";
 import { findMind } from "../mind/registry.js";
 import log from "../util/logger.js";
+import { ManagerNotReadyError } from "./manager-not-ready.js";
 
 const mlog = log.child("mail");
 
@@ -341,7 +342,7 @@ export function initMailPoller(): MailPoller {
 }
 
 export function getMailPoller(): MailPoller {
-  if (!instance) throw new Error("MailPoller not initialized — call initMailPoller() first");
+  if (!instance) throw new ManagerNotReadyError("MailPoller", "initMailPoller");
   return instance;
 }
 

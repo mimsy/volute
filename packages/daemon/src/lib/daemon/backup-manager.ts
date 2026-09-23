@@ -3,6 +3,7 @@ import { readBackupState, runBackup } from "../backup/backup.js";
 import { getSpiritName, readGlobalConfig } from "../config/setup.js";
 import { publish as publishActivity } from "../events/activity-events.js";
 import log from "../util/logger.js";
+import { ManagerNotReadyError } from "./manager-not-ready.js";
 
 const blog = log.child("backup");
 
@@ -165,6 +166,6 @@ export function initBackupManager(): BackupManager {
 }
 
 export function getBackupManager(): BackupManager {
-  if (!backupManager) throw new Error("BackupManager not initialized");
+  if (!backupManager) throw new ManagerNotReadyError("BackupManager", "initBackupManager");
   return backupManager;
 }

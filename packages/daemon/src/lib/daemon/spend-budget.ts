@@ -3,6 +3,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { stateDir, voluteSystemDir } from "../mind/registry.js";
 import log from "../util/logger.js";
+import { ManagerNotReadyError } from "./manager-not-ready.js";
 
 const tlog = log.child("spend-budget");
 
@@ -553,6 +554,6 @@ export function initSpendBudget(): SpendBudget {
 }
 
 export function getSpendBudget(): SpendBudget {
-  if (!instance) throw new Error("SpendBudget not initialized — call initSpendBudget() first");
+  if (!instance) throw new ManagerNotReadyError("SpendBudget", "initSpendBudget");
   return instance;
 }
