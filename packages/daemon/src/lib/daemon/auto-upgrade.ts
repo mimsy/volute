@@ -1,4 +1,5 @@
 import { alertHost } from "../chat/system-events.js";
+import { UpgradeBlockedByJoinError } from "../mind/join-lock.js";
 import { type MindEntry, mindDir, readRegistry } from "../mind/registry.js";
 import { isTemplateStale } from "../mind/template-staleness.js";
 import {
@@ -234,11 +235,21 @@ export async function autoUpgradeOne(
       });
       return;
     }
+    // A variant join is merging into this mind right now (#988) — same as above: not a
+    // failure, and the next pass looks again. Checked on the retry too, since a join
+    // can start during the retry delay.
+    const blockedByJoin = (e: unknown) => {
+      if (!(e instanceof UpgradeBlockedByJoinError)) return false;
+      blocked.set(entry.name, { reason: "variant join in progress", at: new Date() });
+      return true;
+    };
+    if (blockedByJoin(err)) return;
     // Transient failure — retry once after a short delay before giving up.
     await deps.delay(RETRY_DELAY_MS);
     try {
       outcome = await attempt();
     } catch (err2) {
+      if (blockedByJoin(err2)) return;
       const message = err2 instanceof Error ? err2.message : String(err2);
       alog.error(`auto-upgrade failed for ${entry.name} after retry`, log.errorData(err2));
       await recordFailure(entry.name, message, failureDetail(err2), deps);

@@ -57,8 +57,10 @@ import { deleteMindUser as deleteIsolationUser } from "../../lib/mind/isolation.
 import {
   acquireJoinLock,
   describeJoinAge,
+  JoinBlockedByUpgradeError,
   JoinInProgressError,
   joinInProgress,
+  UpgradeBlockedByJoinError,
 } from "../../lib/mind/join-lock.js";
 import { commitSrcChanges, rollbackSrcChanges } from "../../lib/mind/last-known-good.js";
 import {
@@ -614,7 +616,9 @@ const app = new Hono<AuthEnv>()
       try {
         releaseJoin = acquireJoinLock(baseName, joinVariant);
       } catch (err) {
-        if (err instanceof JoinInProgressError) return c.json({ error: err.message }, 409);
+        if (err instanceof JoinInProgressError || err instanceof JoinBlockedByUpgradeError) {
+          return c.json({ error: err.message }, 409);
+        }
         throw err;
       }
     }
@@ -1371,6 +1375,7 @@ const app = new Hono<AuthEnv>()
         await abortUpgrade(mindName);
         return c.json({ ok: true });
       } catch (err) {
+        if (err instanceof UpgradeBlockedByJoinError) return c.json({ error: err.message }, 409);
         log.error(`failed to abort upgrade for ${mindName}`, log.errorData(err));
         return c.json({ error: "Failed to abort upgrade" }, 500);
       }
@@ -1395,7 +1400,7 @@ const app = new Hono<AuthEnv>()
         return c.json({ ok: true, warning: result.warning });
       } catch (err) {
         const msg = err instanceof Error ? err.message : "Failed to merge upgrade";
-        if (msg === "Unresolved conflicts remain") {
+        if (msg === "Unresolved conflicts remain" || err instanceof UpgradeBlockedByJoinError) {
           return c.json({ error: msg }, 409);
         }
         return c.json({ error: msg }, 500);
@@ -1432,7 +1437,7 @@ const app = new Hono<AuthEnv>()
       }
       return c.json({ ok: true, warning: result.warning });
     } catch (err) {
-      if (err instanceof UpgradeInProgressError) {
+      if (err instanceof UpgradeInProgressError || err instanceof UpgradeBlockedByJoinError) {
         return c.json({ error: err.message }, 409);
       }
       log.error(`failed to merge upgrade for ${mindName}`, log.errorData(err));

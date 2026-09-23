@@ -15,9 +15,13 @@ import { getDb } from "../packages/daemon/src/lib/db.js";
 import {
   acquireJoinLock,
   describeJoinAge,
+  JoinBlockedByUpgradeError,
   JoinInProgressError,
   joinInProgress,
+  UpgradeBlockedByJoinError,
 } from "../packages/daemon/src/lib/mind/join-lock.js";
+import { mindDir } from "../packages/daemon/src/lib/mind/registry.js";
+import { withUpgradeLock } from "../packages/daemon/src/lib/mind/upgrade.js";
 import { minds, users } from "../packages/daemon/src/lib/schema.js";
 import { createSession, deleteSession } from "../packages/daemon/src/web/middleware/auth.js";
 
@@ -384,5 +388,152 @@ describe("join lock (#655)", () => {
     // Exactly one auto-commit happened: the winner's. A second, racing auto-commit
     // would have added another commit on the variant branch.
     assert.equal(git(baseDir, "rev-list", "--count", `HEAD..${VARIANT}`), "1");
+  });
+});
+
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
+
+// #988: a template upgrade merges into the same worktree a join does, so the two
+// exclude each other — each refuses while the other is in flight.
+describe("join lock vs upgrade lock (#988)", () => {
+  beforeEach(cleanup);
+  afterEach(cleanup);
+
+  it("refuses a join while an upgrade of the parent is running, and allows it after", async () => {
+    const gate = deferred();
+    const upgrade = withUpgradeLock(PARENT, () => gate.promise);
+
+    try {
+      assert.throws(
+        () => acquireJoinLock(PARENT, VARIANT),
+        (err: unknown) => {
+          assert.ok(err instanceof JoinBlockedByUpgradeError);
+          assert.match(err.message, new RegExp(`upgrade of ${PARENT} has been running since`));
+          assert.match(err.message, /restart the daemon/);
+          return true;
+        },
+      );
+      // Only the parent being upgraded is blocked.
+      heldLocks.push(acquireJoinLock(OTHER, "other-variant"));
+    } finally {
+      gate.resolve();
+      await upgrade;
+    }
+    heldLocks.push(acquireJoinLock(PARENT, VARIANT));
+  });
+
+  it("keeps refusing joins while a queued upgrade is still waiting its turn", async () => {
+    const first = deferred();
+    const second = deferred();
+    const p1 = withUpgradeLock(PARENT, () => first.promise);
+    const p2 = withUpgradeLock(PARENT, () => second.promise);
+
+    try {
+      first.resolve();
+      await p1;
+      assert.throws(() => acquireJoinLock(PARENT, VARIANT), JoinBlockedByUpgradeError);
+    } finally {
+      first.resolve();
+      second.resolve();
+      await p2;
+    }
+    heldLocks.push(acquireJoinLock(PARENT, VARIANT));
+  });
+
+  it("releases the upgrade side when the upgrade throws", async () => {
+    await assert.rejects(
+      withUpgradeLock(PARENT, async () => {
+        throw new Error("upgrade blew up");
+      }),
+      /upgrade blew up/,
+    );
+    heldLocks.push(acquireJoinLock(PARENT, VARIANT));
+  });
+
+  it("refuses an upgrade while a join into the mind is running, without running it", async () => {
+    heldLocks.push(acquireJoinLock(PARENT, VARIANT));
+    let ran = false;
+
+    await assert.rejects(
+      withUpgradeLock(PARENT, async () => {
+        ran = true;
+      }),
+      (err: unknown) => {
+        assert.ok(err instanceof UpgradeBlockedByJoinError);
+        assert.equal(err.holder, VARIANT);
+        assert.match(err.message, new RegExp(`join of ${VARIANT} into ${PARENT}`));
+        assert.match(err.message, /restart the daemon/);
+        return true;
+      },
+    );
+    assert.equal(ran, false);
+    // A refused upgrade must not leave anything behind that blocks the next join.
+    heldLocks.pop()!();
+    heldLocks.push(acquireJoinLock(PARENT, VARIANT));
+  });
+
+  it("upgrade route: 409 while a join into the mind is running", async () => {
+    await setupParentAndVariant();
+    const cookie = await makeAdmin();
+    // The route checks the mind's canonical dir exists before it gets to the lock.
+    const dir = mindDir(PARENT);
+    mkdirSync(dir, { recursive: true });
+    tempRoots.push(dir);
+    heldLocks.push(acquireJoinLock(PARENT, VARIANT));
+
+    const res = await post(`/api/v1/minds/${PARENT}/upgrade`, cookie, {});
+
+    assert.equal(res.status, 409);
+    const body = (await res.json()) as { error: string };
+    assert.match(body.error, new RegExp(`join of ${VARIANT} into ${PARENT}`));
+  });
+
+  it("merge route: 409 while an upgrade of the parent is running, variant untouched", async () => {
+    const { baseDir, variantDir } = await setupParentAndVariant();
+    const cookie = await makeAdmin();
+    const gate = deferred();
+    const upgrade = withUpgradeLock(PARENT, () => gate.promise);
+
+    try {
+      const headBefore = git(baseDir, "rev-parse", "HEAD");
+      const res = await post(`/api/v1/minds/${PARENT}/variants/${VARIANT}/merge`, cookie, {
+        skipVerify: true,
+      });
+
+      assert.equal(res.status, 409);
+      const body = (await res.json()) as { error: string };
+      assert.match(body.error, new RegExp(`upgrade of ${PARENT}`));
+      assert.ok(existsSync(variantDir));
+      assert.equal(git(baseDir, "rev-parse", "HEAD"), headBefore);
+      assert.equal(git(variantDir, "status", "--porcelain"), "M app.txt");
+    } finally {
+      gate.resolve();
+      await upgrade;
+    }
+  });
+
+  it("restart route: a mind-initiated join gets a 409 while an upgrade is running", async () => {
+    await setupParentAndVariant();
+    const cookie = await makeAdmin();
+    const gate = deferred();
+    const upgrade = withUpgradeLock(PARENT, () => gate.promise);
+
+    try {
+      const res = await post(`/api/v1/minds/${PARENT}/restart`, cookie, {
+        context: { type: "merge", name: VARIANT },
+      });
+      assert.equal(res.status, 409);
+      const body = (await res.json()) as { error: string };
+      assert.match(body.error, new RegExp(`upgrade of ${PARENT}`));
+    } finally {
+      gate.resolve();
+      await upgrade;
+    }
   });
 });
