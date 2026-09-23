@@ -7,6 +7,7 @@ import { readEnv, sharedEnvPath } from "../config/env.js";
 import { daemonLoopback, voluteSystemDir } from "../mind/registry.js";
 import log from "../util/logger.js";
 import { RotatingLog } from "../util/rotating-log.js";
+import { ManagerNotReadyError } from "./manager-not-ready.js";
 import { RestartTracker } from "./restart-tracker.js";
 
 const blog = log.child("bridges");
@@ -325,6 +326,6 @@ export function initBridgeManager(): BridgeManager {
 }
 
 export function getBridgeManager(): BridgeManager {
-  if (!instance) throw new Error("BridgeManager not initialized — call initBridgeManager() first");
+  if (!instance) throw new ManagerNotReadyError("BridgeManager", "initBridgeManager");
   return instance;
 }

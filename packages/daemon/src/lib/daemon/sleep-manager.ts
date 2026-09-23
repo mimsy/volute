@@ -40,6 +40,7 @@ import { deliveryQueue } from "../schema.js";
 import { collectTurnContext } from "../turn-context.js";
 import log from "../util/logger.js";
 import { parseDbTimestamp } from "../util/time.js";
+import { ManagerNotReadyError } from "./manager-not-ready.js";
 import { getMindManager } from "./mind-manager.js";
 import { runMindScript } from "./mind-script.js";
 import { sleepMind, wakeMind } from "./mind-service.js";
@@ -1294,7 +1295,7 @@ export function initSleepManager(): SleepManager {
 }
 
 export function getSleepManager(): SleepManager {
-  if (!instance) throw new Error("SleepManager not initialized — call initSleepManager() first");
+  if (!instance) throw new ManagerNotReadyError("SleepManager", "initSleepManager");
   return instance;
 }
 

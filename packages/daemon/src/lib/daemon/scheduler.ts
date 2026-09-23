@@ -7,6 +7,7 @@ import { mindDir, voluteSystemDir } from "../mind/registry.js";
 import { readVoluteConfig, type Schedule, writeVoluteConfig } from "../mind/volute-config.js";
 import { getPrompt } from "../prompts.js";
 import log from "../util/logger.js";
+import { ManagerNotReadyError } from "./manager-not-ready.js";
 import { runMindScript } from "./mind-script.js";
 
 const slog = log.child("scheduler");
@@ -641,6 +642,6 @@ export function initScheduler(): Scheduler {
 }
 
 export function getScheduler(): Scheduler {
-  if (!instance) throw new Error("Scheduler not initialized — call initScheduler() first");
+  if (!instance) throw new ManagerNotReadyError("Scheduler", "initScheduler");
   return instance;
 }
