@@ -3,6 +3,18 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { log } from "./logger.js";
 
+/**
+ * Make everything this process creates — and every child it spawns — private to
+ * the mind: dirs 0700, files 0600. Under user isolation the umask otherwise comes
+ * from the daemon through `runuser`/`sudo` unchanged, which once left a mind's
+ * session transcripts (`home/.claude/projects`, created by the SDK) at 755 (#959,
+ * #1083). A mind's transcripts are its inner life; private is the default, not a
+ * list of directories the daemon remembers to lock. Call it first in server.ts.
+ */
+export function setPrivateUmask(): void {
+  process.umask(0o077);
+}
+
 export function parseArgs(): { port: number } {
   const args = process.argv.slice(2);
   let port = 4100;

@@ -8,10 +8,12 @@ import {
   loadPackageInfo,
   loadSystemPrompt,
   parseArgs,
+  setPrivateUmask,
   setupShutdown,
 } from "./lib/startup.js";
 import { createVoluteServer } from "./lib/volute-server.js";
 
+setPrivateUmask();
 const { port } = parseArgs();
 const config = loadConfig();
 if (config.logLevel) setLevel(config.logLevel);
