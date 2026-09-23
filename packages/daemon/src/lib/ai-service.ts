@@ -271,6 +271,16 @@ function templateForProvider(provider: string): string {
   return "pi";
 }
 
+/**
+ * Whether a mind on `template` can call a model from `provider`. pi is the
+ * multi-provider runtime and runs any of them (its own fallback is Anthropic);
+ * claude and codex each run only their own provider.
+ */
+export function templateCanRun(template: string, provider: string | undefined): boolean {
+  if (template === "pi") return true;
+  return provider !== undefined && templateForProvider(provider) === template;
+}
+
 /** Env var each provider's key is injected under (mirrors mind-manager injection). */
 const PROVIDER_ENV_VAR: Record<string, string> = {
   anthropic: "ANTHROPIC_API_KEY",
@@ -378,6 +388,41 @@ export async function resolveTemplate(modelId?: string): Promise<string> {
   if (model) return templateForProvider(model.provider);
   // Unknown model without colon — default to claude
   return "claude";
+}
+
+/**
+ * Match a caller-named model against the admin-enabled list, for a mind on `template`
+ * (#1078). A typo, a disabled model, or a model from a provider the template's runtime
+ * can't call would all be written into config.json and leave the mind unable to think,
+ * so each is refused here with the ids that would work. A bare id matches an enabled
+ * `provider:id` entry; the matched entry is returned so the caller writes the model
+ * that was actually enabled.
+ */
+export function matchEnabledModel(
+  modelId: string,
+  template: string,
+): { ok: true; model: string } | { ok: false; error: string } {
+  const enabled = getEnabledModels();
+  const forTemplate = enabled.filter((id) => {
+    const provider = id.includes(":") ? id.slice(0, id.indexOf(":")) : findModel(id)?.provider;
+    return templateCanRun(template, provider);
+  });
+  const named = (id: string) => id === modelId || unqualifyModelId(id) === modelId;
+
+  const match = forTemplate.find(named);
+  if (match) return { ok: true, model: match };
+
+  const valid =
+    forTemplate.length > 0
+      ? `Models enabled for the ${template} template: ${forTemplate.join(", ")}.`
+      : `No enabled model runs on the ${template} template — enable one in Settings, or choose another template.`;
+  if (enabled.some(named)) {
+    return {
+      ok: false,
+      error: `Model "${modelId}" can't run on the ${template} template. ${valid}`,
+    };
+  }
+  return { ok: false, error: `Unknown or disabled model "${modelId}". ${valid}` };
 }
 
 /** Get the admin-configured list of enabled model IDs. */

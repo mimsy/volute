@@ -160,11 +160,20 @@ async function withFakeStdin<T>(
   }
 }
 
-/** Clear every source resolveModel consults, so a test states its own premises. */
+/**
+ * Clear every source resolveModel consults, so a test states its own premises. The
+ * enabled list mirrors MODELS plus the spirit's Anthropic model: an inferred model is
+ * only sent when the daemon would accept it (#1078).
+ */
 function resetModelConfig(): void {
   const config = readGlobalConfig();
   delete config.spiritModel;
   delete config.mindDefaults;
+  config.ai = {
+    ...config.ai,
+    providers: config.ai?.providers ?? {},
+    models: ["openrouter:kimi-k2.5", "openrouter:glm-4.7", SPIRIT_CLAUDE],
+  };
   writeGlobalConfig(config);
 }
 
@@ -395,6 +404,14 @@ describe("resolveModel (shared by mind create and seed create)", { concurrency: 
     assert.equal(r.mayAsk, true, "nothing decided, so a host may still be asked");
   });
 
+  /** #1078: the daemon refuses a disabled model, so inferring one would fail the create. */
+  it("does not borrow the spirit's model when it is not enabled", async () => {
+    setSpiritModel("openrouter:not-enabled");
+    const r = await resolveModel("pi", undefined);
+    assert.equal(r.send, undefined);
+    assert.equal(r.mayAsk, true);
+  });
+
   it("leaves the template default standing when nothing is configured", async () => {
     const r = await resolveModel("pi", undefined);
     assert.equal(r.send, undefined);
@@ -423,8 +440,19 @@ describe("chooseModel", { concurrency: 1 }, () => {
   it("returns nothing when no model is enabled", async () => {
     servedModels = [{ id: "x", name: "X", provider: "openrouter", enabled: false }];
     const { daemonFetch } = await import("../packages/cli/src/lib/daemon-client.js");
-    const model = await withFakeStdin(undefined, () => chooseModel(daemonFetch));
+    const model = await withFakeStdin(undefined, () => chooseModel(daemonFetch, "pi"));
     assert.equal(model, undefined);
+  });
+
+  /** #1078: the daemon refuses a model the template can't run, so it is never offered. */
+  it("offers only the models the template can run", async () => {
+    servedModels = [
+      { id: "claude-opus-5", name: "Opus", provider: "anthropic", enabled: true },
+      { id: "gpt-5.4", name: "GPT", provider: "openai-codex", enabled: true },
+    ];
+    const { daemonFetch } = await import("../packages/cli/src/lib/daemon-client.js");
+    const model = await withFakeStdin("1\n", () => chooseModel(daemonFetch, "codex"));
+    assert.equal(model, "openai-codex:gpt-5.4");
   });
 
   /** Run chooseModel against a fetch that just returns `status`, capturing stderr. */
@@ -442,7 +470,7 @@ describe("chooseModel", { concurrency: 1 }, () => {
       ? daemonFetch
       : async () => new Response("{}", { status, headers: { "Content-Type": "application/json" } });
     try {
-      await chooseModel(fetcher);
+      await chooseModel(fetcher, "pi");
     } catch {
       // the exit mock throws
     } finally {

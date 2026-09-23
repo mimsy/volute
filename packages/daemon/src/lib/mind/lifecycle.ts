@@ -10,6 +10,7 @@ import {
 import { resolve } from "node:path";
 import {
   isAiConfigured,
+  matchEnabledModel,
   missingCredentialWarning,
   qualifyModelId,
   resolveTemplate,
@@ -418,6 +419,15 @@ export async function createMind(
     if (limitError) return { ok: false, status: 409, error: limitError };
   }
 
+  // A named model must be one this template can run (#1078). Only the caller's choice
+  // is checked; with none, the admin default or the template's own config stands.
+  let requestedModel = body.model;
+  if (requestedModel) {
+    const match = matchEnabledModel(requestedModel, template);
+    if (!match.ok) return { ok: false, status: 400, error: match.error };
+    requestedModel = match.model;
+  }
+
   ensureVoluteHome();
   const dest = mindDir(name);
 
@@ -451,7 +461,7 @@ export async function createMind(
     // The model the mind will actually run (request, or default cognition model),
     // provider-qualified — feeds the credential warning below so pi minds created
     // from defaults are checked too.
-    let effectiveModel: string | undefined = body.model;
+    let effectiveModel: string | undefined = requestedModel;
     // Merge default settings into volute.json and config.json
     {
       const { readGlobalConfig: readGlobal } = await import("../config/setup.js");
@@ -482,7 +492,7 @@ export async function createMind(
       writeVoluteConfig(dest, config);
 
       // Apply model (and compaction) to SDK config.json
-      const modelId = body.model ?? cog?.model;
+      const modelId = requestedModel ?? cog?.model;
       effectiveModel = modelId ? qualifyModelId(modelId) : undefined;
       const sdkConfigPath = resolve(dest, "home/.config/config.json");
       if (modelId || cog?.compaction) {
