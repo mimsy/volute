@@ -791,7 +791,9 @@ const app = new Hono<AuthEnv>()
     if (!entry) return c.json({ error: "Mind not found" }, 404);
 
     const manager = getMindManager();
-    if (!manager.isRunning(name)) {
+    // A mind waiting out a crash-recovery backoff is down but coming back; stopping
+    // it is what cancels that (#1070).
+    if (!manager.isRunning(name) && !manager.hasPendingRecovery(name)) {
       return c.json({ error: "Mind is not running" }, 409);
     }
 
@@ -1278,7 +1280,7 @@ const app = new Hono<AuthEnv>()
       const parentEntry = await findMind(entry.parent);
       if (!parentEntry) return c.json({ error: `Parent mind ${entry.parent} not found` }, 404);
 
-      if (manager.isRunning(name)) {
+      if (manager.isRunning(name) || manager.hasPendingRecovery(name)) {
         await stopMindFullService(name);
       }
       await cleanupVariant(name, entry.parent, parentEntry.dir ?? mindDir(entry.parent), entry.dir);
@@ -1296,8 +1298,8 @@ const app = new Hono<AuthEnv>()
     const dir = mindDir(name);
     const force = c.req.query("force") === "true";
 
-    // Stop mind if running
-    if (manager.isRunning(name)) {
+    // Stop mind if running, or if a crash recovery would bring it back
+    if (manager.isRunning(name) || manager.hasPendingRecovery(name)) {
       await stopMindFullService(name);
     }
 
