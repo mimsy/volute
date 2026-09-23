@@ -96,7 +96,11 @@ import {
 } from "../../lib/mind/upgrade.js";
 import { cleanupVariant } from "../../lib/mind/variant-cleanup.js";
 import { validateBranchName } from "../../lib/mind/variants.js";
-import { readVoluteConfig, writeVoluteConfig } from "../../lib/mind/volute-config.js";
+import {
+  chownVoluteConfigPaths,
+  readVoluteConfig,
+  writeMindVoluteConfig,
+} from "../../lib/mind/volute-config.js";
 import { PLATFORMS } from "../../lib/platforms.js";
 import { deliveryQueue, mindHistory, summaries, turns } from "../../lib/schema.js";
 import {
@@ -962,7 +966,7 @@ const app = new Hono<AuthEnv>()
       }
 
       config.profile = profile;
-      writeVoluteConfig(dir, config);
+      await writeMindVoluteConfig(name, dir, config);
 
       // Sync to users table
       const { syncMindProfile } = await import("../../lib/auth.js");
@@ -1199,7 +1203,9 @@ const app = new Hono<AuthEnv>()
     // lands. Fail soft: sprouting must not break over dreaming wiring.
     try {
       const sproutedDir = entry.dir ?? mindDir(name);
-      if (setupDefaultDreaming(sproutedDir).schedulesChanged) {
+      const dreaming = setupDefaultDreaming(sproutedDir);
+      await chownVoluteConfigPaths(name, dreaming.createdPaths);
+      if (dreaming.schedulesChanged) {
         const { getScheduler } = await import("../../lib/daemon/scheduler.js");
         getScheduler().loadSchedules(name, sproutedDir);
       }
@@ -1228,7 +1234,7 @@ const app = new Hono<AuthEnv>()
             ...firstWeekSchedules(name, new Date()).filter((s) => !existing.has(s.id)),
           );
           spiritConfig.schedules = schedules;
-          writeVoluteConfig(sDir, spiritConfig);
+          await writeMindVoluteConfig(spiritName, sDir, spiritConfig);
           // Reload separately: if the write succeeded but the reload throws, the
           // change is on disk and takes effect on the spirit's next restart —
           // that's a different situation from the write itself failing.
@@ -1653,7 +1659,7 @@ const app = new Hono<AuthEnv>()
         existing.unescapeNewlines = body.unescapeNewlines;
       }
 
-      writeVoluteConfig(dir, existing);
+      await writeMindVoluteConfig(name, dir, existing);
 
       // Apply the cap to the live budget, so a host who sets one doesn't have to
       // restart the mind before it means anything.

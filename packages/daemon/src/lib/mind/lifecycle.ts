@@ -87,7 +87,7 @@ import {
   VariantMergeError,
 } from "./variants.js";
 import { verify } from "./verify.js";
-import { readVoluteConfig, writeVoluteConfig } from "./volute-config.js";
+import { readVoluteConfig, writeMindVoluteConfig, writeVoluteConfig } from "./volute-config.js";
 
 const llog = log.child("lifecycle");
 
@@ -611,7 +611,7 @@ export async function createMind(
               whileSleeping: "skip",
             });
             spiritConfig.schedules = schedules;
-            writeVoluteConfig(sDir, spiritConfig);
+            await writeMindVoluteConfig(spiritName, sDir, spiritConfig);
             const { getScheduler } = await import("../daemon/scheduler.js");
             getScheduler().loadSchedules(spiritName, sDir);
           }

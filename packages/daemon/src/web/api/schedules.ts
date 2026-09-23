@@ -9,7 +9,7 @@ import { findMind, mindDir } from "../../lib/mind/registry.js";
 import {
   readVoluteConfig,
   type Schedule,
-  writeVoluteConfig,
+  writeMindVoluteConfig,
 } from "../../lib/mind/volute-config.js";
 import log from "../../lib/util/logger.js";
 import { fireWebhook } from "../../lib/webhook.js";
@@ -181,10 +181,10 @@ export function computeClockEvents(
   return { upcoming: withinHorizon, previous };
 }
 
-function writeSchedules(name: string, dir: string, schedules: Schedule[]): void {
+async function writeSchedules(name: string, dir: string, schedules: Schedule[]): Promise<void> {
   const config = readVoluteConfig(dir) ?? {};
   config.schedules = schedules.length > 0 ? schedules : undefined;
-  writeVoluteConfig(dir, config);
+  await writeMindVoluteConfig(name, dir, config);
   getScheduler().loadSchedules(name, dir);
   getSleepManagerIfReady()?.invalidateSleepConfig(name);
   fireWebhook({
@@ -255,7 +255,7 @@ const app = new Hono<AuthEnv>()
     if (body.wakeTriggers !== undefined) sleep.wakeTriggers = body.wakeTriggers;
 
     config.sleep = sleep;
-    writeVoluteConfig(dir, config);
+    await writeMindVoluteConfig(name, dir, config);
 
     getSleepManagerIfReady()?.invalidateSleepConfig(name);
 
@@ -322,7 +322,7 @@ const app = new Hono<AuthEnv>()
     if (body.script) schedule.script = body.script;
     if (body.whileSleeping) schedule.whileSleeping = body.whileSleeping;
     schedules.push(schedule);
-    writeSchedules(name, dir, schedules);
+    await writeSchedules(name, dir, schedules);
     // `--thread` is sugar for a routes.json event rule (#736) — schedule-fire routing
     // lives in routes.json, not on the schedule itself.
     if (body.thread) upsertEventRule(dir, `schedule:${id}`, body.thread, name);
@@ -397,7 +397,7 @@ const app = new Hono<AuthEnv>()
       return c.json({ error: "schedule must keep a message, messages, or script" }, 400);
     }
 
-    writeSchedules(name, dir, schedules);
+    await writeSchedules(name, dir, schedules);
     return c.json({ ok: true });
   })
   // Delete schedule
@@ -414,7 +414,7 @@ const app = new Hono<AuthEnv>()
       return c.json({ error: "Schedule not found" }, 404);
     }
 
-    writeSchedules(name, dir, filtered);
+    await writeSchedules(name, dir, filtered);
     // Drop the schedule's routing rule too, so a deleted schedule leaves nothing behind.
     upsertEventRule(dir, `schedule:${id}`, null, name);
     return c.json({ ok: true });

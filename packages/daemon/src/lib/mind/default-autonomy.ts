@@ -74,6 +74,8 @@ export type DreamingSetupResult = {
   schedulesChanged: boolean;
   /** Human-readable warnings for steps that failed (also logged). */
   warnings: string[];
+  /** Paths the volute.json write created — for a live mind, hand them over (#1072). */
+  createdPaths: string[];
 };
 
 /**
@@ -88,7 +90,7 @@ export type DreamingSetupResult = {
  */
 export function setupDefaultDreaming(dir: string): DreamingSetupResult {
   const skillDir = resolve(mindSkillsDir(dir), "dreaming");
-  if (!existsSync(skillDir)) return { schedulesChanged: false, warnings: [] };
+  if (!existsSync(skillDir)) return { schedulesChanged: false, warnings: [], createdPaths: [] };
 
   const warnings: string[] = [];
   const warn = (msg: string, err?: unknown) => {
@@ -140,9 +142,10 @@ export function setupDefaultDreaming(dir: string): DreamingSetupResult {
   // mind isn't instructed nightly to use machinery that isn't there.
   if (subagentBroken) {
     warn("dreaming setup: dream schedule not installed because subagent wiring failed");
-    return { schedulesChanged: false, warnings };
+    return { schedulesChanged: false, warnings, createdPaths: [] };
   }
   let schedulesChanged = false;
+  let createdPaths: string[] = [];
   try {
     const voluteJsonPath = resolve(dir, "home/.config/volute.json");
     let config: VoluteConfig = {};
@@ -152,7 +155,7 @@ export function setupDefaultDreaming(dir: string): DreamingSetupResult {
         // Corrupt config: writing a fresh one back would destroy the mind's
         // profile/sleep/schedules. Leave it for the host to fix.
         warn("dreaming setup: volute.json is unparseable — dream schedule not installed");
-        return { schedulesChanged: false, warnings };
+        return { schedulesChanged: false, warnings, createdPaths: [] };
       }
       config = parsed;
     }
@@ -160,7 +163,7 @@ export function setupDefaultDreaming(dir: string): DreamingSetupResult {
     if (!schedules.some((s) => s.id === "dream")) {
       schedules.push(defaultDreamSchedule());
       config.schedules = schedules;
-      writeVoluteConfig(dir, config);
+      createdPaths = writeVoluteConfig(dir, config);
       schedulesChanged = true;
     }
     // The dream's session isolation is an explicit, owned routing rule — added only
@@ -173,5 +176,5 @@ export function setupDefaultDreaming(dir: string): DreamingSetupResult {
     warn("dreaming setup: failed to add default dream schedule", err);
   }
 
-  return { schedulesChanged, warnings };
+  return { schedulesChanged, warnings, createdPaths };
 }

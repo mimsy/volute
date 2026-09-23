@@ -1,12 +1,13 @@
 import type { Dirent } from "node:fs";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { rmSync, writeFileSync } from "node:fs";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { extname, resolve } from "node:path";
 import { Hono } from "hono";
 import { syncMindProfile } from "../../lib/auth.js";
 import { broadcast } from "../../lib/events/activity-events.js";
-import { findMind, mindDir } from "../../lib/mind/registry.js";
-import { readVoluteConfig, writeVoluteConfig } from "../../lib/mind/volute-config.js";
+import { chownMindFile } from "../../lib/mind/isolation.js";
+import { findMind, getBaseName, mindDir } from "../../lib/mind/registry.js";
+import { readVoluteConfig, writeMindVoluteConfig } from "../../lib/mind/volute-config.js";
 import { normalizeAvatar } from "../../lib/util/avatar-image.js";
 import { fileEtag, isNotModified } from "../../lib/util/http-cache.js";
 import {
@@ -75,7 +76,14 @@ const app = new Hono<AuthEnv>()
     }
 
     const dir = entry.dir ?? mindDir(name);
-    const homeDir = resolve(dir, "home");
+    // The daemon writes here with its own privileges (root under user isolation),
+    // so resolve home/ through symlinks and refuse one that leads out of the mind.
+    let homeDir: string;
+    try {
+      homeDir = await resolveRealWithinBase(dir, "home");
+    } catch {
+      return c.json({ error: "Mind home directory not found" }, 404);
+    }
     const filename = `avatar${finalExt}`;
     const avatarPath = resolve(homeDir, filename);
 
@@ -89,14 +97,18 @@ const app = new Hono<AuthEnv>()
       if (oldAvatarPath) rmSync(oldAvatarPath, { force: true });
     }
 
-    mkdirSync(homeDir, { recursive: true });
-    writeFileSync(avatarPath, buffer);
+    // Replace rather than overwrite: rm unlinks a planted symlink (never its
+    // target), and the exclusive create refuses one re-planted in between. The new
+    // file is born owned by the daemon, so hand it to the mind (#1072).
+    rmSync(avatarPath, { force: true });
+    writeFileSync(avatarPath, buffer, { flag: "wx" });
+    await chownMindFile(avatarPath, await getBaseName(name));
 
     // Update volute.json
     const profile = config.profile ?? {};
     profile.avatar = filename;
     config.profile = profile;
-    writeVoluteConfig(dir, config);
+    await writeMindVoluteConfig(name, dir, config);
 
     // Sync to users table and broadcast
     await syncMindProfile(name, profile);
