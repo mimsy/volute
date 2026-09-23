@@ -1,5 +1,14 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import {
+  closeSync,
+  constants,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  realpathSync,
+  writeFileSync,
+} from "node:fs";
+import { dirname, resolve, sep } from "node:path";
 import { chownMindFile } from "./isolation.js";
 import { getBaseName } from "./registry.js";
 
@@ -107,15 +116,29 @@ export function writeVoluteConfig(mindDir: string, config: VoluteConfig): string
   if (firstDir) {
     for (let d = dirname(path); d.length >= firstDir.length; d = dirname(d)) created.unshift(d);
   }
+  // The daemon writes here with its own privileges (root under user isolation), and
+  // the mind owns this tree: refuse a .config/ that a symlink leads out of it, and
+  // never follow a symlink planted at volute.json itself.
+  const realBase = realpathSync(mindDir);
+  if (!realpathSync(dirname(path)).startsWith(realBase + sep)) {
+    throw new Error(`${dirname(path)} resolves outside ${mindDir}`);
+  }
   const data = `${JSON.stringify(config, null, 2)}\n`;
+  const { O_WRONLY, O_CREAT, O_EXCL, O_TRUNC, O_NOFOLLOW } = constants;
+  let fd: number;
   try {
     // Exclusive create: tells us the file is new without a check-then-write race.
-    writeFileSync(path, data, { flag: "wx" });
+    fd = openSync(path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o644);
     created.push(path);
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
     // Truncate in place, which keeps the mind's ownership of the existing file.
-    writeFileSync(path, data);
+    fd = openSync(path, O_WRONLY | O_TRUNC | O_NOFOLLOW);
+  }
+  try {
+    writeFileSync(fd, data);
+  } finally {
+    closeSync(fd);
   }
   return created;
 }

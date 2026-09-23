@@ -1,5 +1,15 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { afterEach, describe, it } from "node:test";
@@ -106,6 +116,33 @@ describe("writeVoluteConfig ownership handoff", () => {
     assert.deepEqual(writeVoluteConfig(d, { model: "b" }), []);
     assert.equal(statSync(path).ino, inode);
     assert.equal(readVoluteConfig(d)?.model, "b");
+  });
+
+  it("refuses to write through a symlink planted at volute.json", () => {
+    const d = freshDir();
+    mkdirSync(resolve(d, "home/.config"), { recursive: true });
+    const outside = resolve(d, "outside");
+    writeFileSync(outside, "untouched");
+    symlinkSync(outside, resolve(d, "home/.config/volute.json"));
+    assert.throws(() => writeVoluteConfig(d, { model: "x" }));
+    assert.equal(readFileSync(outside, "utf-8"), "untouched");
+    // A dangling link must not be followed into creating its target either.
+    rmSync(outside);
+    assert.throws(() => writeVoluteConfig(d, { model: "x" }));
+    assert.equal(existsSync(outside), false);
+  });
+
+  it("refuses a .config/ that a symlink leads out of the mind", () => {
+    const d = freshDir();
+    const elsewhere = mkdtempSync(resolve(tmpdir(), "volute-config-elsewhere-"));
+    try {
+      mkdirSync(resolve(d, "home"), { recursive: true });
+      symlinkSync(elsewhere, resolve(d, "home/.config"));
+      assert.throws(() => writeVoluteConfig(d, {}), /resolves outside/);
+      assert.deepEqual(readdirSync(elsewhere), []);
+    } finally {
+      rmSync(elsewhere, { recursive: true });
+    }
   });
 
   it("hands each created path to the mind, and a variant's to its parent", async () => {
