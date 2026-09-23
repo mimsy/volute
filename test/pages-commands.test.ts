@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import {
   existsSync,
+  linkSync,
   mkdirSync,
   readFileSync,
   rmSync,
   statSync,
+  symlinkSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -498,6 +500,99 @@ describe("pages commands", () => {
     assert.ok("output" in result);
     assert.ok(result.output.includes("post.md"), "should list .md draft");
     assert.ok(result.output.includes("index.html"), "should list .html published");
+  });
+
+  // #1090: publish refuses links, so the list must not call one a draft forever.
+  it("list marks linked entries unpublishable instead of draft", async () => {
+    const outside = resolve(mindDir, "outside");
+    mkdirSync(resolve(outside, "essays"), { recursive: true });
+    writeFileSync(resolve(outside, "secret.md"), "# elsewhere\n");
+    writeFileSync(resolve(outside, "essays", "one.md"), "# one\n");
+    writeFileSync(resolve(pagesDir, "real.md"), "# mine\n");
+    symlinkSync(resolve(outside, "secret.md"), resolve(pagesDir, "linked.md"));
+    symlinkSync(resolve(outside, "essays"), resolve(pagesDir, "essays"));
+    symlinkSync(resolve(outside, "notes.txt"), resolve(pagesDir, "notes.txt"));
+    let hardlinked = true;
+    try {
+      linkSync(resolve(outside, "secret.md"), resolve(pagesDir, "twin.md"));
+    } catch {
+      hardlinked = false;
+    }
+
+    const result = await createCommands().list.handler(
+      { args: {}, flags: { all: false, shared: false }, rest: [] },
+      makeCtx(),
+    );
+    assert.ok("output" in result);
+    const lineFor = (f: string) =>
+      result.output.split("\n").find((l) => l.split(/\s+/)[1] === f) ?? "";
+    assert.match(lineFor("real.md"), /^draft /);
+    assert.match(lineFor("linked.md"), /^unpublishable .*\(symlink\)$/);
+    // A symlinked directory is one entry, not a walk into wherever it points.
+    assert.match(lineFor("essays"), /^unpublishable .*\(symlink\)$/);
+    assert.equal(lineFor("essays/one.md"), "");
+    // Publish refuses and names every link, page-shaped or not; so does the list.
+    assert.match(lineFor("notes.txt"), /^unpublishable .*\(symlink\)$/);
+    if (hardlinked) {
+      assert.match(lineFor("twin.md"), /^unpublishable .*\(hardlink\)$/);
+    }
+    assert.ok(result.output.includes("Copy the content in"));
+  });
+
+  it("list flags a published page that has since become a link", async () => {
+    writeFileSync(resolve(mindDir, "elsewhere.md"), "# x\n");
+    symlinkSync(resolve(mindDir, "elsewhere.md"), resolve(pagesDir, "was-real.md"));
+    syncPublishedPages(db, "test-mind", ph("was-real.md"));
+
+    const result = await createCommands().list.handler(
+      { args: {}, flags: { all: false, shared: false }, rest: [] },
+      makeCtx(),
+    );
+    assert.ok("output" in result);
+    assert.match(result.output, /^published .*was-real\.md.*next publish removes it/m);
+  });
+
+  it("list flags a published page whose directory has since become a link", async () => {
+    mkdirSync(resolve(mindDir, "elsewhere"));
+    writeFileSync(resolve(mindDir, "elsewhere", "one.md"), "# x\n");
+    symlinkSync(resolve(mindDir, "elsewhere"), resolve(pagesDir, "essays"));
+    syncPublishedPages(db, "test-mind", ph("essays/one.md"));
+
+    const result = await createCommands().list.handler(
+      { args: {}, flags: { all: false, shared: false }, rest: [] },
+      makeCtx(),
+    );
+    assert.ok("output" in result);
+    assert.match(result.output, /^published .*essays\/one\.md.*next publish removes it/m);
+  });
+
+  it("list leaves out the shared pages checkout, links and all", async () => {
+    // _system is the commons worktree: publish never copies it, and a link in it
+    // was made by whichever mind committed it, not by the one reading the list.
+    mkdirSync(resolve(pagesDir, "_system"));
+    writeFileSync(resolve(pagesDir, "_system", "shared.md"), "# shared\n");
+    writeFileSync(resolve(mindDir, "elsewhere.md"), "# x\n");
+    symlinkSync(resolve(mindDir, "elsewhere.md"), resolve(pagesDir, "_system", "theirs.md"));
+    writeFileSync(resolve(pagesDir, "real.md"), "# mine\n");
+
+    const result = await createCommands().list.handler(
+      { args: {}, flags: { all: false, shared: false }, rest: [] },
+      makeCtx(),
+    );
+    assert.ok("output" in result);
+    assert.ok(result.output.includes("real.md"));
+    assert.ok(!result.output.includes("_system"));
+    assert.ok(!result.output.includes("Copy the content in"));
+  });
+
+  it("list without links carries no link note", async () => {
+    writeFileSync(resolve(pagesDir, "real.md"), "# mine\n");
+    const result = await createCommands().list.handler(
+      { args: {}, flags: { all: false, shared: false }, rest: [] },
+      makeCtx(),
+    );
+    assert.ok("output" in result);
+    assert.ok(!result.output.includes("Copy the content in"));
   });
 
   it("list --all queries across minds", async () => {

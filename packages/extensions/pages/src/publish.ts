@@ -77,8 +77,23 @@ export function describePages(baseDir: string, files: string[]): PageInput[] {
   });
 }
 
-/** Recursively collect files, returning paths relative to baseDir. Optionally filter by extension(s). */
-export function collectFiles(dir: string, baseDir: string, ext?: string | string[]): string[] {
+/**
+ * Recursively collect files, returning paths relative to baseDir. Optionally filter by extension(s).
+ *
+ * Pass `linked` to walk the way publish copies: entries are `lstat`ed, and a
+ * symlink or a multiply-linked file is recorded there instead of returned —
+ * regardless of extension, and a symlinked directory as one entry — and `_system`
+ * (the shared pages checkout) is left out, as publish leaves it out. That is how a
+ * listing of `home/pages` avoids calling a page a draft when publish will refuse
+ * it every time (#1090). Without it the walk follows links, which is harmless on a snapshot
+ * — publish never copies one into it.
+ */
+export function collectFiles(
+  dir: string,
+  baseDir: string,
+  ext?: string | string[],
+  linked?: SkippedEntry[],
+): string[] {
   const files: string[] = [];
   let items: string[];
   try {
@@ -90,15 +105,23 @@ export function collectFiles(dir: string, baseDir: string, ext?: string | string
 
   for (const item of items) {
     if (item.startsWith(".")) continue;
+    if (linked && item === "_system") continue;
     const fullPath = resolve(dir, item);
     try {
-      const s = statSync(fullPath);
+      const s = linked ? lstatSync(fullPath) : statSync(fullPath);
       const matchesExt =
         !ext || (Array.isArray(ext) ? ext.some((e) => item.endsWith(e)) : item.endsWith(ext));
-      if (s.isFile() && matchesExt) {
+      if (linked && (s.isSymbolicLink() || isMultiplyLinkedFile(s))) {
+        // Every link, whatever its name, as publish names them — and never
+        // followed: the walk runs as the daemon, so even asking whether a link's
+        // target is a directory would answer a question about a path the mind
+        // may not be able to see.
+        const reason = s.isSymbolicLink() ? "symlink" : "hardlink";
+        linked.push({ file: relative(baseDir, fullPath), reason });
+      } else if (s.isFile() && matchesExt) {
         files.push(relative(baseDir, fullPath));
       } else if (s.isDirectory()) {
-        files.push(...collectFiles(fullPath, baseDir, ext));
+        files.push(...collectFiles(fullPath, baseDir, ext, linked));
       }
     } catch (err) {
       console.error(`[pages] failed to stat ${fullPath}: ${(err as Error).message}`);
