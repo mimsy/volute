@@ -476,6 +476,7 @@ describe("composeMindEnv wiring", () => {
       dir: `/tmp/${mindName}`,
       port: 4196,
       mindToken: "tok",
+      isolationMode: "none",
     });
   }
 

@@ -28,7 +28,7 @@ import { getPrompt } from "../prompts.js";
 import { checkHealth } from "../util/health.js";
 import { clearJsonMap, loadJsonMap, saveJsonMap } from "../util/json-state.js";
 import log from "../util/logger.js";
-import { buildMindBaseEnv } from "../util/mind-env.js";
+import { buildMindBaseEnv, type IsolationMode } from "../util/mind-env.js";
 import { RotatingLog } from "../util/rotating-log.js";
 import { markCredentialDegraded, noteCredentialHealthy } from "./credential-recovery.js";
 import { injectPiProviderCredentials, writeClaudeCredentials } from "./credential-sync.js";
@@ -96,6 +96,41 @@ function readLiveSpendCap(baseName: string): { capUsd: number; periodMinutes: nu
 }
 
 /**
+ * Wrap a mind's server command in whatever isolation applies to *this* mind, and
+ * say which one that turned out to be. The mode is read off the wrap itself rather
+ * than off config, because config can say "sandbox" while the mind runs bare —
+ * codex minds are exempt, and `VOLUTE_SANDBOX_OPTIONAL=1` lets a missing runtime
+ * degrade — and the mind is told this mode as a fact about its world (#368).
+ */
+export async function wrapMindServer(
+  cmd: string,
+  args: string[],
+  opts: { name: string; template?: string; dir: string; allowWrite: string[] },
+): Promise<{ cmd: string; args: string[]; isolationMode: IsolationMode }> {
+  if (isIsolationEnabled()) {
+    const [wrappedCmd, wrappedArgs] = await wrapForIsolation(cmd, args, opts.name);
+    return { cmd: wrappedCmd, args: wrappedArgs, isolationMode: "user" };
+  }
+  if (isSandboxEnabled() && opts.template !== "codex") {
+    // Codex minds can't use @anthropic-ai/sandbox-runtime — it blocks Mach IPC
+    // services the Codex binary needs (e.g. SCDynamicStore for network config).
+    // Codex's own seatbelt sandbox is also disabled due to a system-configuration
+    // Rust crate bug (mullvad/system-configuration-rs#59).
+    const [wrappedCmd, wrappedArgs] = await wrapForSandbox(
+      cmd,
+      args,
+      opts.dir,
+      opts.name,
+      opts.allowWrite,
+    );
+    // wrapForSandbox hands the command back unwrapped when it degrades.
+    const isolationMode = wrappedCmd === cmd ? "none" : "sandbox";
+    return { cmd: wrappedCmd, args: wrappedArgs, isolationMode };
+  }
+  return { cmd, args, isolationMode: "none" };
+}
+
+/**
  * The full environment a mind process is spawned with.
  *
  * Extracted from `_startMind` so the *wiring* is testable, not just the pieces.
@@ -115,8 +150,9 @@ export function composeMindEnv(opts: {
   dir: string;
   port: number;
   mindToken: string;
+  isolationMode: IsolationMode;
 }): Record<string, string | undefined> {
-  const { name, baseName, dir, port, mindToken } = opts;
+  const { name, baseName, dir, port, mindToken, isolationMode } = opts;
   // Prepend mind's .local/bin to PATH for skill commands and volute wrapper
   const mindLocalBin = resolve(dir, "home", ".local", "bin");
   const currentPath = process.env.PATH ?? "";
@@ -136,6 +172,11 @@ export function composeMindEnv(opts: {
     // spend is recorded against (`handleMindEvent(baseName, …)`) and the one that
     // holds it. Both keys are cleared when no cap is configured.
     ...spendCapEnv(readLiveSpendCap(baseName)),
+    // The walls this mind lives inside, so its startup context can name them — an
+    // EACCES at the boundary should read as physics, not as something broken
+    // (#368). Always set, "none" included: after loadMergedEnv, so a value the
+    // mind planted in its own env.json can't describe a cage it isn't in.
+    VOLUTE_ISOLATION_MODE: isolationMode,
     ...mindTmpEnv(dir),
     PATH: `${mindLocalBin}:${currentPath}`,
     // Strip CLAUDECODE so the Agent SDK can spawn Claude Code subprocesses
@@ -415,9 +456,28 @@ export class MindManager {
       }
     }
 
+    // Run node directly with tsx as an import loader instead of the tsx bin
+    // shim, which would fork a second node process (~60MB RSS) that does
+    // nothing. VOLUTE_NODE_PATH (e.g. Electron bundled Node) overrides the
+    // node binary. The bare `tsx` specifier resolves against the spawn cwd.
+    const baseBin = process.env.VOLUTE_NODE_PATH ?? process.execPath;
+    const baseArgs = ["--import", "tsx", "src/server.ts", "--port", String(port)];
+    // The mode comes from the wrap that actually happened and is told to the mind
+    // via composeMindEnv below — so the mode it is told is the one it runs under.
+    const {
+      cmd: spawnCmd,
+      args: spawnArgs,
+      isolationMode,
+    } = await wrapMindServer(baseBin, baseArgs, {
+      name,
+      template: target.template,
+      dir,
+      allowWrite: [dir, mindStateDir, mindTmp],
+    });
+
     const logStream = new RotatingLog(resolve(logsDir, "mind.log"));
     const mindToken = generateMindToken(name);
-    const env = composeMindEnv({ name, baseName, dir, port, mindToken });
+    const env = composeMindEnv({ name, baseName, dir, port, mindToken, isolationMode });
 
     // For pi minds, inject the system AI provider's API key
     if (target.template === "pi") {
@@ -555,31 +615,6 @@ export class MindManager {
 
     if (isIsolationEnabled()) {
       env.HOME = resolve(dir, "home");
-    }
-
-    // Run node directly with tsx as an import loader instead of the tsx bin
-    // shim, which would fork a second node process (~60MB RSS) that does
-    // nothing. VOLUTE_NODE_PATH (e.g. Electron bundled Node) overrides the
-    // node binary. The bare `tsx` specifier resolves against the spawn cwd.
-    const baseBin = process.env.VOLUTE_NODE_PATH ?? process.execPath;
-    const baseArgs = ["--import", "tsx", "src/server.ts", "--port", String(port)];
-    let spawnCmd: string;
-    let spawnArgs: string[];
-    if (isIsolationEnabled()) {
-      [spawnCmd, spawnArgs] = await wrapForIsolation(baseBin, baseArgs, name);
-    } else if (isSandboxEnabled() && target.template !== "codex") {
-      // Codex minds can't use @anthropic-ai/sandbox-runtime — it blocks Mach IPC
-      // services the Codex binary needs (e.g. SCDynamicStore for network config).
-      // Codex's own seatbelt sandbox is also disabled due to a system-configuration
-      // Rust crate bug (mullvad/system-configuration-rs#59).
-      [spawnCmd, spawnArgs] = await wrapForSandbox(baseBin, baseArgs, dir, name, [
-        dir,
-        mindStateDir,
-        mindTmp,
-      ]);
-    } else {
-      spawnCmd = baseBin;
-      spawnArgs = baseArgs;
     }
 
     const spawnOpts: SpawnOptions = {
