@@ -29,6 +29,7 @@ import {
 import { TEMPLATE_BRANCH } from "../mind/upgrade.js";
 import { getMindPromptDefaults, getPrompt, getPromptIfCustom, substitute } from "../prompts.js";
 import { mindHistory } from "../schema.js";
+import { seedSkillBackfillLedger } from "../skill-backfill.js";
 import { getStandardSkillsWithExtensions, installSkill, SEED_SKILLS } from "../skills.js";
 import { convertSession } from "../template/convert-session.js";
 import {
@@ -584,6 +585,9 @@ export async function createMind(
         skillWarnings.push(`Failed to install skill: ${skillId}`);
       }
     }
+    // Created with the current default set (or a deliberate --skills choice): nothing
+    // for the backfill of later-added default skills to offer.
+    seedSkillBackfillLedger(name);
 
     // Default autonomy: minds created directly as full minds get working
     // dreaming out of the box; seeds get it at sprout (#581)
@@ -953,6 +957,9 @@ async function importFromHomeOnlyArchive(
         skillWarnings.push(`Failed to install skill: ${skillId}`);
       }
     }
+    // Created with the current default set (or a deliberate --skills choice): nothing
+    // for the backfill of later-added default skills to offer.
+    seedSkillBackfillLedger(name);
 
     // 13. Import history and sessions from archive
     await importHistoryFromArchive(name, tempDir);

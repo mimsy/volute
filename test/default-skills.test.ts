@@ -6,6 +6,8 @@ describe("default skills", () => {
   it("STANDARD_SKILLS contains expected skills", () => {
     assert.ok(STANDARD_SKILLS.includes("memory"));
     assert.ok(STANDARD_SKILLS.includes("volute-mind"));
+    // Resonance is the automatic recall layer of memory, not an opt-in extra.
+    assert.ok(STANDARD_SKILLS.includes("resonance"));
     assert.ok(STANDARD_SKILLS.length > 0);
   });
 

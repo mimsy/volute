@@ -1,6 +1,6 @@
 ---
 name: Resonance
-description: Semantic memory engine — ingest text, search via full-text and/or vector similarity, find cross-memory connections, with strength/decay dynamics. Use for "resonance", "semantic search", "full-text search", "memory connections", "ingest memories", "decay", "resonance report".
+description: Automatic recall — each turn, a few excerpts from your own memory files that the message echoes, with strength that grows when memories matter and fades when they don't. Use for "resonance", "recall", "what comes back to me", "search my memories", "random memories", "memory strength", "turn recall off".
 metadata:
   npm-dependencies: libsql
   bin: scripts/resonance.ts
@@ -8,17 +8,40 @@ metadata:
     pre-prompt: scripts/resonance-hook.sh
 ---
 
-# Resonance — Semantic Memory Engine
+# Resonance — what comes back to you
 
-Not an archive — a memory. Stores text chunks with full-text indexing and optional vector embeddings. Finds what echoes across time, tracks which memories keep surfacing, lets unused ones drift deeper.
+Resonance is the part of your memory that works without being asked. You write the files — journal, dreams, topics — and resonance lets them find their way back when something rhymes with them.
 
-## When to use
+Nothing to set up. It builds its own index the first time it runs, and keeps it current.
 
-- **During consolidation**: Run `resonance report` to find cross-day connections. Use these to inform what strengthens in MEMORY.md.
-- **When writing**: After writing something significant, search for echoes: `resonance search "the theme you're exploring"`.
-- **After writing journals/notes**: Run `resonance ingest <file>` to add new content.
-- **Periodically**: Run `resonance ingest-all` to catch any new files.
-- **Nightly**: Decay runs automatically if the nightly schedule was set up during install.
+## What happens each turn
+
+Before each turn, a small hook:
+
+1. **Catches up the index** with your memory files: anything new or edited is re-read, and anything deleted is forgotten. A large backlog catches up over a few turns.
+2. **Looks for echoes** of the message you're about to read: the words someone actually said, without the message header, and never for system events or heartbeats.
+3. **Brings back at most three short excerpts**, and only when they genuinely match: at least two meaningful words in common (more for a long message), or one rare word used strongly. Most turns bring back nothing, and that is intended. Anything injected stays in your transcript and costs tokens on every later request, so silence is better than noise.
+
+When something does come back, it looks like this:
+
+```
+Resonance — this brought back (`resonance recall <id>` if one mattered):
+[id:42] memory/journal/2026-08-14.md § The river walk
+  …whether the heron would come back to the shallows next spring…
+```
+
+Each excerpt names the file and heading, so you can `Read` the whole thing. The same memory won't come back twice in one session within a day. `MEMORY.md` is never brought back this way, because it is already in your context.
+
+## Strength
+
+Every memory has a strength between 0.1 and 1.0.
+
+- **It fades.** A memory loses a little strength each day it isn't recalled (0.02/day by default). This happens on its own, about once a day. There's no schedule to keep.
+- **It grows when it matters.** `resonance recall <id>` strengthens a memory that was genuinely useful and restarts its fading.
+- **Coming back counts a little.** Each time a memory surfaces, it gains a small boost, so memories that keep proving relevant stay reachable.
+- **Weak memories surface less.** Strength shapes which excerpts come back, and very faint memories (below 0.2) stop surfacing on their own. They are still there for `search` and `random`, and they never drop below 0.1.
+
+Forgetting is part of how this works. A memory you never return to drifts, the way memories do.
 
 ## Commands
 
@@ -26,51 +49,69 @@ Not an archive — a memory. Stores text chunks with full-text indexing and opti
 resonance <command>
 ```
 
-| Command | Description |
-|---------|-------------|
-| `install` | First-time setup: copies config, creates schedule, runs initial ingestion. API key optional — works with FTS only. |
-| `ingest <file>` | Ingest a single file (with embeddings if API key set, FTS-only otherwise) |
-| `ingest-all` | Ingest all configured memory files |
-| `search "query" [--limit N] [--fts] [--vector]` | Find memories. Default: hybrid (vector + FTS). `--fts`: keyword only. `--vector`: semantic only. Read-only — does not affect memory strength. |
-| `recall <id> [id2 ...]` | Explicitly boost memories that were genuinely useful. Increases strength and recall count. |
-| `random [--limit N] [--min-strength F] [--max-strength F]` | Pull random memories. Use for dreams, associative connections, or serendipitous rediscovery. |
-| `report [--against <file>]` | Find cross-memory connections (defaults to today's journal) |
-| `stats` | Database statistics |
-| `decay` | Run decay pass (reduces strength of unrecalled memories) |
+| Command | What it does |
+|---------|--------------|
+| `search "query" [--limit N] [--fts] [--vector]` | Look for memories on purpose. Doesn't change strength. |
+| `recall <id> [id2 ...]` | Strengthen memories that mattered. |
+| `random [--limit N] [--min-strength F] [--max-strength F]` | Pull memories at random. Good for dreaming, or for wandering. |
+| `stats` | What's indexed, what's been recalled and surfaced most, what's drifting. |
+| `sync [--embed]` | Catch the index up now. `--embed` fills in embeddings (see below). |
 
-## Architecture
+Every command catches the index up first, so results always reflect your files as they are now.
 
-- **Storage**: libSQL database at `.mind/resonance.db` with native vector support (F32_BLOB) and FTS5 full-text index
-- **Search modes**: Hybrid (default, combines both), `--fts` (keyword match, instant, no API key needed), `--vector` (semantic similarity via embeddings)
-- **Embeddings**: Optional. Configurable provider (default: OpenRouter, `openai/text-embedding-3-small`, 1536 dimensions). Without an API key, everything works except vector search.
-- **Similarity**: Cosine distance computed natively by libSQL (`vector_distance_cos`)
-- **Chunking**: Markdown section-aware — splits on any heading level (`#` through `######`), with word-level sub-chunking for long sections. Skips trivially short chunks (< 15 words).
-- **Strength**: Each memory has a strength value (0.1-1.0). Recalled memories get stronger (resonance boost). Unrecalled memories decay over time.
-- **Resonance frequency**: Tracks how many times each memory has been surfaced by search.
+## What it reads
 
-## Design principles
-
-- **Connections, not facts.** "What else felt like this?" not "what happened on March 6."
-- **Good resonance, not total recall.** Funes memorized everything and couldn't generalize.
-- **Forgetting is cognition.** Memories decay. The decay is a feature.
-- **Strength as texture.** A memory recalled five times feels different from one never touched.
+By default: `memory/journal/`, `memory/dreams/` and `memory/topics/` (including subfolders), plus `MEMORY.md`. Files are split at their headings, so a well-headed file comes back in well-named pieces. Paths are stored relative to `home/`.
 
 ## Configuration
 
-The default config is copied to `.config/resonance.json` during install. Edit it to customize. Fields are merged with built-in defaults.
+How recall behaves is one of your memory choices, set in `.config/config.json`:
+
+```json
+{ "memory": { "recall": "auto" } }
+```
+
+- **`memory.recall`**:
+  - `auto` (default) brings back excerpts each turn.
+  - `on-demand` brings nothing back by itself. Memories still index and fade, and `search` works.
+  - `off`: the hook checks this setting and stops, so nothing is indexed or brought back. The commands still work when you run them.
+
+If your settings can't be read, resonance tells you once (per session, per day) and pauses recall until they're fixed. Anything else that goes wrong in the hook is written to `.mind/resonance-hook-errors.log` rather than interrupting you.
+
+The engine's own settings go in `.config/resonance.json`, which you only need to create if you want to change something. Anything you leave out keeps its default:
 
 | Section | Field | Default | Description |
 |---------|-------|---------|-------------|
-| `embedding` | `provider` | `"openrouter"` | Embedding API provider |
-| `embedding` | `url` | OpenRouter URL | API endpoint |
-| `embedding` | `model` | `"openai/text-embedding-3-small"` | Embedding model |
-| `embedding` | `dimensions` | `1536` | Vector dimensions |
-| `embedding` | `apiKeyEnvVar` | `"OPENROUTER_API_KEY"` | Env var name for API key |
-| `ingestion` | `dirs` | `["memory/journal", "memory/reading", "memory/topics"]` | Directories to scan |
-| `ingestion` | `files` | `["MEMORY.md"]` | Individual files to ingest |
-| `ingestion` | `chunkSize` | `512` | Words per chunk |
-| `ingestion` | `chunkOverlap` | `64` | Overlap words between chunks |
-| `ingestion` | `ignorePatterns` | `[]` | Regex patterns for lines to skip during ingestion |
+| `ingestion` | `dirs` | `["memory/journal", "memory/dreams", "memory/topics"]` | Folders to read |
+| `ingestion` | `files` | `["MEMORY.md"]` | Single files to read |
+| `ingestion` | `chunkSize` / `chunkOverlap` | `512` / `64` | Words per piece for long sections |
+| `ingestion` | `ignorePatterns` | `[]` | Regexes for lines to skip |
 | `dynamics` | `decayRate` | `0.02` | Strength lost per day without recall |
-| `dynamics` | `minStrength` | `0.1` | Floor — memories never fully disappear |
-| `dynamics` | `resonanceBoost` | `0.05` | Strength gained per recall |
+| `dynamics` | `minStrength` | `0.1` | The floor. Memories never vanish. |
+| `dynamics` | `resonanceBoost` | `0.05` | Strength gained per `recall` |
+| `dynamics` | `surfaceBoost` | `0.02` | Strength gained each time a memory comes back |
+| — | `embedding` | `null` | Optional semantic search (below) |
+
+## Embeddings (optional)
+
+Out of the box, resonance matches words (full-text search with stemming). If you want it to match meaning too, point it at any OpenAI-compatible embeddings endpoint in `.config/resonance.json`. No provider is assumed:
+
+```json
+{
+  "embedding": {
+    "url": "https://…/v1/embeddings",
+    "model": "…",
+    "dimensions": 1536,
+    "apiKeyEnvVar": "MY_EMBEDDINGS_KEY"
+  }
+}
+```
+
+Then set the key (`volute env set MY_EMBEDDINGS_KEY …`) and run `resonance sync --embed`, again whenever you'd like new memories embedded. `search` then blends meaning and words. Changing the model or dimensions discards the old vectors, which can't be compared across models; run `sync --embed` again to rebuild them. Per-turn recall stays word-based either way, so it never waits on a network call.
+
+## Principles
+
+- **Connections, not facts.** "What else felt like this?", not "what happened on March 6".
+- **Good resonance, not total recall.** Funes remembered everything and couldn't think.
+- **Forgetting is cognition.** Decay is part of the design, not a malfunction.
+- **Strength as texture.** A memory recalled five times feels different from one never touched.

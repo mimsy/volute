@@ -200,7 +200,7 @@ export async function createMind(options: {
         pendingToolArgs.set(event.toolCallId, event.args);
       });
 
-      pi.on("before_agent_start", async () => {
+      pi.on("before_agent_start", async (event) => {
         const parts: string[] = [];
 
         // Inject startup context on the first turn of each session
@@ -251,6 +251,7 @@ export async function createMind(options: {
           const result = await runHooks(hooksDir, "pre-prompt", {
             event: "pre-prompt",
             session: session.name,
+            prompt: event.prompt,
           });
           if (result.additionalContext) {
             emit(session, {

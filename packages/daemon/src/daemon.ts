@@ -37,6 +37,7 @@ import {
   voluteHome,
   voluteSystemDir,
 } from "./lib/mind/registry.js";
+import { backfillStandardSkills } from "./lib/skill-backfill.js";
 import {
   autoUpdateMindSkills,
   initDefaultSkills,
@@ -512,6 +513,7 @@ export async function startDaemon(opts: {
     });
 
   // Backfill template hashes + notify minds about version updates
+  let upgradePass: Promise<void> = Promise.resolve();
   try {
     const { backfillTemplateHashes, notifyVersionUpdate, warnStaleTemplates } = await import(
       "./lib/version-notify.js"
@@ -520,7 +522,7 @@ export async function startDaemon(opts: {
     // automatically in a few minutes", so that notice must go out before the pass
     // below actually runs it, not after. Then backfill on-disk hashes, warn about
     // stale minds, then run the serialized auto-upgrade pass over eligible ones.
-    notifyVersionUpdate()
+    upgradePass = notifyVersionUpdate()
       .catch((err) => {
         log.warn("failed to send version update notifications", log.errorData(err));
       })
@@ -556,6 +558,17 @@ export async function startDaemon(opts: {
   delivery.releaseGatedSweep().catch((err) => {
     log.warn("failed to sweep gated messages", log.errorData(err));
   });
+
+  // Offer skills that joined the default set to minds that predate them, once. Not
+  // awaited: it runs an npm install per mind, and on a slow disk that must not hold
+  // every mind's start. A mind that gets its skill a minute late loses nothing — hooks
+  // are discovered per turn. Chained after the auto-upgrade pass so the two never
+  // commit into the same mind's repo at once.
+  upgradePass
+    .then(() => (shuttingDown ? undefined : backfillStandardSkills(undefined, () => shuttingDown)))
+    .catch((err) => {
+      log.warn("failed to backfill standard skills", log.errorData(err));
+    });
 
   // Clean up expired sessions and old log entries (non-blocking)
   cleanExpiredSessions().catch((err) => {
