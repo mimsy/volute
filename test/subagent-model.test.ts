@@ -35,9 +35,10 @@ describe("claude template subagent model", () => {
   it("covers the SDK's built-in agents, which have no model of their own", () => {
     // The CLI resolves a model-less agent definition (general-purpose) from this env var,
     // else the main loop's model. A mind's own setting of it wins.
+    // Set only for a non-inherit default: absent is the CLI's own "inherit".
     assert.match(
       src,
-      /CLAUDE_CODE_SUBAGENT_MODEL: process\.env\.CLAUDE_CODE_SUBAGENT_MODEL \?\? subagentModel,/,
+      /\.\.\.\(subagentModel !== "inherit" &&\s*!process\.env\.CLAUDE_CODE_SUBAGENT_MODEL && \{ CLAUDE_CODE_SUBAGENT_MODEL: subagentModel \}\)/,
     );
   });
 });

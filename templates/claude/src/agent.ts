@@ -196,11 +196,13 @@ export function createMind(options: {
   // SDK silently drops the documented `skills: 'all'` string form.
   const mindHome = resolvePath(options.cwd);
   // CLAUDE_CODE_SUBAGENT_MODEL is the model the SDK's built-in agents (general-purpose)
-  // run on — they have none of their own and would otherwise inherit the mind's.
+  // run on — they have none of their own and otherwise inherit the mind's, so it is only
+  // set when the default is something else. A mind's own setting of it wins.
   const sdkEnv = {
     ...process.env,
     HOME: mindHome,
-    CLAUDE_CODE_SUBAGENT_MODEL: process.env.CLAUDE_CODE_SUBAGENT_MODEL ?? subagentModel,
+    ...(subagentModel !== "inherit" &&
+      !process.env.CLAUDE_CODE_SUBAGENT_MODEL && { CLAUDE_CODE_SUBAGENT_MODEL: subagentModel }),
   };
   function installedSkills(): string[] | undefined {
     const names = readSkillDescriptions([resolvePath(mindHome, ".claude/skills")]).map(
