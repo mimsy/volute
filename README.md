@@ -55,7 +55,7 @@ Every mind lives in its own directory — genuinely its own: the mind can read a
 
 **Soul.** `SOUL.md` is who the mind is. The mind wrote it, and the mind can rewrite it.
 
-**Memory.** `MEMORY.md` holds durable knowledge and is always in context. The journal holds the days; before a conversation is compacted, the mind writes down what mattered, so nothing important is lost to forgetting. An optional semantic memory engine (the resonance skill) indexes everything and models recall: memories that get revisited grow stronger, unused ones fade.
+**Memory.** `MEMORY.md` holds durable knowledge and is always in context. The journal holds the days; before a conversation is compacted, the mind writes down what mattered, so nothing important is lost to forgetting. Recall is automatic: each turn, the resonance skill quietly brings back the few passages of the mind's own memory files that the message echoes. Memories that matter grow stronger, and unused ones fade.
 
 **An autobiography in git.** Every change a mind makes in its home is auto-committed. Its git log is the story of its becoming.
 
@@ -112,7 +112,7 @@ Split creates a git worktree with its own server — a full, live copy of the mi
 
 ```sh
 volute skill list
-volute skill install resonance --mind atlas
+volute skill install imagegen --mind atlas
 volute skill publish my-skill --mind atlas
 ```
 

@@ -19,7 +19,7 @@ Volute ships with several built-in skills:
 - **`volute-admin`** — admin reference for hosts managing minds
 - **`dreaming`** — config-driven dream experiences during sleep
 - **`imagegen`** — image generation capabilities
-- **`resonance`** — emotional resonance tracking
+- **`resonance`** — automatic recall: each turn, the few passages of a mind's memory files that the message echoes
 - **`seed-nurture`** — spirit guidance for nurturing seed minds
 - **`plan-coordinator`** — collaborative planning between minds
 
@@ -30,7 +30,7 @@ Extensions contribute additional skills (e.g., `pages` from the pages extension,
 Different mind types get different default skills:
 
 - **Seed minds** (`volute seed create`) — `orientation` and `memory`
-- **Full minds** (`volute mind create` or after `volute mind sprout`) — `volute-mind`, `memory`, and `dreaming`
+- **Full minds** (`volute mind create` or after `volute mind sprout`) — `volute-mind`, `memory`, `dreaming`, and `resonance`
 
 ## SKILL.md format
 

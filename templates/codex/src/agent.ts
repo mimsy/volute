@@ -325,6 +325,10 @@ export function createMind(options: {
     // Refresh system prompt before each turn (picks up MEMORY.md changes)
     refreshSystemPrompt();
 
+    // The message as it arrived, before any context is prepended — what pre-prompt hooks
+    // (e.g. resonance's per-turn recall) read as `prompt`.
+    const prompt = text;
+
     // Inject startup context on the first turn of each session
     if (!startupContextInjected.has(session.name)) {
       startupContextInjected.add(session.name);
@@ -362,6 +366,7 @@ export function createMind(options: {
       const hookResult = await runHooks(hooksDir, "pre-prompt", {
         event: "pre-prompt",
         session: session.name,
+        prompt,
       });
       if (hookResult.additionalContext) {
         emit(session, {

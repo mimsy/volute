@@ -73,7 +73,12 @@ export type MindConfig = {
    * consolidation nudge is added to the system prompt; over `hardCapTokens` only
    * the head of the file is loaded (the file on disk is never modified).
    */
-  memory?: { softBudgetTokens?: number; hardCapTokens?: number };
+  memory?: {
+    softBudgetTokens?: number;
+    hardCapTokens?: number;
+    /** Read by the resonance skill's pre-prompt hook, not by the server. */
+    recall?: "auto" | "on-demand" | "off";
+  };
   subagents?: Record<string, SubagentConfig>;
   // Template-specific config fields (claude, pi, codex)
   thinking?: ThinkingConfig;
