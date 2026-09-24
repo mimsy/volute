@@ -27,7 +27,7 @@ export type RecollectionEntry = {
   period_key: string;
   /** ISO 8601 */
   start: string;
-  /** ISO 8601, exclusive */
+  /** ISO 8601, exclusive. The hour the verbatim tail starts in ends where the tail starts. */
   end: string;
   content: string;
   /**
@@ -50,7 +50,7 @@ export const RECOLLECTION_ENTRY_MAX_CHARS: Record<RecollectionEntry["period"], n
   hour: 1500,
 };
 
-type Row = { period_key: string; content: string; metadata: string | null };
+type Row = { period_key: string; content: string; metadata: string | null; created_at: string };
 
 function bounds(period: TimerPeriod, key: string): { start: Date; end: Date } {
   const { start, end } = getUtcTimeRange(key, period);
@@ -69,6 +69,21 @@ function authorOf(metadata: string | null): RecollectionEntry["author"] {
   } catch {
     return "consolidation";
   }
+}
+
+/**
+ * A turn's own time from its summary row's metadata (`to_time`: when it ended, `from_time`: when
+ * it began), falling back to when the row was written if absent or unparseable.
+ */
+function turnTime(row: Row, field: "to_time" | "from_time"): Date {
+  try {
+    const t = JSON.parse(row.metadata ?? "{}")[field];
+    if (typeof t === "string") {
+      const d = parseUtcDateTime(t);
+      if (!Number.isNaN(d.getTime())) return d;
+    }
+  } catch {}
+  return parseUtcDateTime(row.created_at);
 }
 
 function entry(
@@ -97,12 +112,19 @@ export async function getRecollection(
   const until = new Date(Math.min(before.getTime(), (opts.now ?? new Date()).getTime()));
   const cutoff = Math.min(until.getTime(), opts.tailStartedAt?.getTime() ?? Infinity);
   const fits = (period: TimerPeriod, key: string) => bounds(period, key).end.getTime() <= cutoff;
+  // The hour the verbatim tail starts in: its memory would retell the tail, but dropping it would
+  // lose everything from the top of the hour to the tail. Its turns before the tail stand in.
+  const tailHour =
+    opts.tailStartedAt && opts.tailStartedAt.getTime() < until.getTime()
+      ? getPeriodKey(opts.tailStartedAt, "hour")
+      : undefined;
 
   const db = await getDb();
   const cols = {
     period_key: summaries.period_key,
     content: summaries.content,
     metadata: summaries.metadata,
+    created_at: summaries.created_at,
   };
   const rowsFor = async (period: TimerPeriod, keys: string[]): Promise<Map<string, Row>> => {
     const rows = await db
@@ -118,7 +140,10 @@ export async function getRecollection(
     return new Map(rows.map((r) => [r.period_key, r]));
   };
 
-  /** A day's completed hours before the cutoff: memories where they exist, else the raw record. */
+  /**
+   * A day's completed hours before the cutoff: memories where they exist, else the raw record —
+   * plus the part of the tail's hour before the tail, as the record up to where the tail begins.
+   */
   const hoursOf = async (dayKey: string): Promise<RecollectionEntry[]> => {
     const out = new Map<string, RecollectionEntry>();
     const hourRows = await db
@@ -137,27 +162,39 @@ export async function getRecollection(
       }
     }
 
+    // A turn lives in the hour its row was written in, as every rollup files it. Whether it is
+    // before the tail is judged by when it ended (`to_time`): the row is written after the turn
+    // ends (after its AI summary returns), so it can land past the tail — even past the tail's
+    // hour — for a turn that wasn't in it. Such a row is served in the tail's hour, the last one
+    // recollection tells, rather than in an hour it never reaches.
     const turnRows = await db
-      .select({ content: summaries.content, created_at: summaries.created_at })
+      .select(cols)
       .from(summaries)
       .where(
         and(
           eq(summaries.mind, mind),
           eq(summaries.period, "turn"),
           gte(summaries.created_at, getUtcTimeRange(dayKey, "day").start),
-          lt(summaries.created_at, utcDateTimeStr(new Date(cutoff))),
+          lt(summaries.created_at, utcDateTimeStr(until)),
         ),
-      )
-      .orderBy(summaries.created_at);
+      );
+    turnRows.sort(
+      (a, b) => turnTime(a, "from_time").getTime() - turnTime(b, "from_time").getTime(),
+    );
     const turnsByHour = new Map<string, string[]>();
     for (const t of turnRows) {
-      const key = getPeriodKey(parseUtcDateTime(t.created_at), "hour");
-      if (out.has(key) || !key.startsWith(dayKey) || !fits("hour", key)) continue;
+      if (turnTime(t, "to_time").getTime() >= cutoff) continue;
+      const written = getPeriodKey(parseUtcDateTime(t.created_at), "hour");
+      const key = tailHour && written > tailHour ? tailHour : written;
+      if (out.has(key) || !key.startsWith(dayKey)) continue;
+      if (!fits("hour", key) && key !== tailHour) continue;
       turnsByHour.set(key, [...(turnsByHour.get(key) ?? []), t.content]);
     }
     for (const [key, texts] of turnsByHour) {
       const joined = boundEntries(texts, RECOLLECTION_ENTRY_MAX_CHARS.hour);
-      out.set(key, entry("hour", key, joined, "record"));
+      const e = entry("hour", key, joined, "record");
+      if (key === tailHour) e.end = new Date(cutoff).toISOString();
+      out.set(key, e);
     }
     return [...out.values()].sort((a, b) => a.period_key.localeCompare(b.period_key));
   };

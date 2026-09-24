@@ -589,37 +589,121 @@ describe("recollection", () => {
     assert.equal(entries[3].end, new Date(2026, 2, 25, 10).toISOString());
   });
 
-  it("stops at the verbatim tail (a 14:40 tail keeps 13:00, drops 14:00)", async () => {
+  it("reaches the verbatim tail: a 14:40 tail keeps 13:00 and 14:00–14:40 as the record", async () => {
     const mind = `${PREFIX}tail`;
     await seed(mind);
-    await insertSummary(mind, "turn", "t14", "IN TAIL", { createdAt: at(2026, 3, 25, 14, 10) });
-    const entries = await getRecollection(mind, before, {
-      tailStartedAt: new Date(2026, 2, 25, 14, 40),
+    await insertSummary(mind, "hour", "2026-03-25T14", "TWO PM, OVERLAPPING THE TAIL");
+    await insertSummary(mind, "turn", "t14a", "BEFORE TAIL", {
+      createdAt: at(2026, 3, 25, 14, 10),
     });
-    assert.deepEqual(keys(entries), [
-      "2026-W12",
-      "2026-03-23",
-      "2026-03-24",
-      "2026-03-25T09",
-      "2026-03-25T13",
-    ]);
+    await insertSummary(mind, "turn", "t14b", "AT TAIL", { createdAt: at(2026, 3, 25, 14, 40) });
+    await insertSummary(mind, "turn", "t14c", "IN TAIL", { createdAt: at(2026, 3, 25, 14, 55) });
+    const tailStartedAt = new Date(2026, 2, 25, 14, 40);
+    const entries = await getRecollection(mind, before, { tailStartedAt });
+    assert.deepEqual(
+      entries.map((e) => [e.period_key, e.content, e.author]),
+      [
+        ["2026-W12", "LAST WEEK", "consolidation"],
+        ["2026-03-23", "MONDAY", "mind"],
+        ["2026-03-24", "TUESDAY", "consolidation"],
+        ["2026-03-25T09", "NINE AM", "consolidation"],
+        ["2026-03-25T13", "ONE PM", "consolidation"],
+        // The hour's memory would retell the tail; its turns before the tail are served instead.
+        ["2026-03-25T14", "BEFORE TAIL", "record"],
+      ],
+    );
+    const partial = entries.at(-1)!;
+    assert.equal(partial.start, new Date(2026, 2, 25, 14).toISOString());
+    assert.equal(partial.end, tailStartedAt.toISOString(), "ends where the tail begins");
+  });
+
+  it("serves the straddling hour's turns when it has no memory at all", async () => {
+    const mind = `${PREFIX}tailraw`;
+    await insertSummary(mind, "turn", "t1", "EARLY", { createdAt: at(2026, 3, 25, 13, 5) });
+    await insertSummary(mind, "turn", "t2", "LATER", { createdAt: at(2026, 3, 25, 13, 20) });
+    const entries = await getRecollection(mind, new Date(2026, 2, 25, 14, 3), {
+      tailStartedAt: new Date(2026, 2, 25, 13, 28),
+    });
+    assert.deepEqual(
+      entries.map((e) => [e.period_key, e.content, e.author, e.end]),
+      [["2026-03-25T13", "EARLY\n\nLATER", "record", new Date(2026, 2, 25, 13, 28).toISOString()]],
+    );
+  });
+
+  it("places a summary written after the tail by when its turn ended", async () => {
+    const mind = `${PREFIX}taillag`;
+    const t = (h: number, mi: number, sec: number) =>
+      utcDateTimeStr(new Date(2026, 2, 25, h, mi, sec));
+    // Ended 14:39:58, summarized 14:40:04 — after the 14:40:01 tail began, yet not in it.
+    await insertSummary(mind, "turn", "ended-before", "ENDED BEFORE", {
+      createdAt: t(14, 40, 4),
+      metadata: { to_time: t(14, 39, 58) },
+    });
+    // A slow summary written past the tail's hour, for a turn that ended before the tail: served
+    // in the tail's hour, the last one recollection tells.
+    await insertSummary(mind, "turn", "slow", "SLOW SUMMARY", {
+      createdAt: t(15, 0, 2),
+      metadata: { to_time: t(14, 35, 0) },
+    });
+    await insertSummary(mind, "turn", "in-tail", "IN TAIL", {
+      createdAt: t(14, 41, 0),
+      metadata: { to_time: t(14, 40, 50) },
+    });
+    await insertSummary(mind, "turn", "mind-authored", "NO TURN TIME", { createdAt: t(14, 45, 0) });
+    const entries = await getRecollection(mind, before, {
+      tailStartedAt: new Date(2026, 2, 25, 14, 40, 1),
+    });
+    assert.deepEqual(
+      entries.map((e) => [e.period_key, e.content]),
+      [["2026-03-25T14", "ENDED BEFORE\n\nSLOW SUMMARY"]],
+    );
+  });
+
+  it("a tail starting on the hour leaves nothing of that hour to serve", async () => {
+    const mind = `${PREFIX}tailtop`;
+    await insertSummary(mind, "hour", "2026-03-25T13", "ONE PM");
+    await insertSummary(mind, "hour", "2026-03-25T14", "TWO PM");
+    await insertSummary(mind, "turn", "t", "AT TAIL", { createdAt: at(2026, 3, 25, 14, 0) });
+    const entries = await getRecollection(mind, before, {
+      tailStartedAt: new Date(2026, 2, 25, 14, 0),
+    });
+    assert.deepEqual(keys(entries), ["2026-03-25T13"]);
   });
 
   it("a restart the next morning serves the tail's day as its hours before the tail", async () => {
     const mind = `${PREFIX}morning`;
     await seed(mind);
     await insertSummary(mind, "day", "2026-03-25", "WEDNESDAY");
+    await insertSummary(mind, "turn", "t14", "BEFORE TAIL", { createdAt: at(2026, 3, 25, 14, 10) });
+    await insertSummary(mind, "turn", "t15", "IN TAIL", { createdAt: at(2026, 3, 25, 15, 10) });
+    await insertSummary(mind, "turn", "t26", "NEXT DAY", { createdAt: at(2026, 3, 26, 8, 10) });
     const entries = await getRecollection(mind, new Date(2026, 2, 26, 9, 0), {
       tailStartedAt: new Date(2026, 2, 25, 14, 40),
     });
-    // Wednesday overlaps the tail, so its day memory would retell it — its hours instead.
+    // Wednesday overlaps the tail, so its day memory would retell it — its hours instead, right
+    // up to the tail.
     assert.deepEqual(keys(entries), [
       "2026-W12",
       "2026-03-23",
       "2026-03-24",
       "2026-03-25T09",
       "2026-03-25T13",
+      "2026-03-25T14",
     ]);
+    assert.equal(entries.at(-1)!.content, "BEFORE TAIL");
+  });
+
+  it("a tail starting in the day's last hour reaches it across midnight", async () => {
+    const mind = `${PREFIX}tailmidnight`;
+    await insertSummary(mind, "turn", "late", "LATE", { createdAt: at(2026, 3, 25, 23, 20) });
+    await insertSummary(mind, "turn", "tail", "IN TAIL", { createdAt: at(2026, 3, 26, 0, 1) });
+    const entries = await getRecollection(mind, new Date(2026, 2, 26, 0, 3), {
+      tailStartedAt: new Date(2026, 2, 25, 23, 45),
+    });
+    assert.deepEqual(
+      entries.map((e) => [e.period_key, e.content]),
+      [["2026-03-25T23", "LATE"]],
+    );
   });
 
   it("just past midnight, a day not yet rolled up is served as its hours", async () => {
@@ -716,6 +800,39 @@ describe("recollection", () => {
     const entries = await getRecollection(mind, new Date(now.getTime() + 2 * 3600_000));
     assert.ok(!entries.some((e) => e.period_key === currentHour), JSON.stringify(entries));
     assert.ok(!entries.some((e) => e.content.includes("HAPPENING NOW")));
+  });
+
+  it("files a turn under the hour its row was written in, in the order the turns began", async () => {
+    const mind = `${PREFIX}turntime`;
+    const t = (h: number, mi: number) => at(2026, 3, 25, h, mi);
+    // Ended 10:59, summarized 11:00 — filed under 11:00, as the hour rollup files it.
+    await insertSummary(mind, "turn", "ten", "ENDED AT TEN", {
+      createdAt: t(11, 0),
+      metadata: { from_time: t(10, 50), to_time: t(10, 59) },
+    });
+    // Written out of order: the later turn's summary landed first.
+    await insertSummary(mind, "turn", "second", "SECOND", {
+      createdAt: t(11, 30),
+      metadata: { from_time: t(11, 20), to_time: t(11, 25) },
+    });
+    await insertSummary(mind, "turn", "first", "FIRST", {
+      createdAt: t(11, 35),
+      metadata: { from_time: t(11, 5), to_time: t(11, 10) },
+    });
+    const expected = [["2026-03-25T11", "ENDED AT TEN\n\nFIRST\n\nSECOND"]];
+    const entries = await getRecollection(mind, before);
+    assert.deepEqual(
+      entries.map((e) => [e.period_key, e.content]),
+      expected,
+    );
+    // With the tail starting at 11:30 (SECOND written right at it), the same turns are the record up to it.
+    const tailed = await getRecollection(mind, before, {
+      tailStartedAt: new Date(2026, 2, 25, 11, 30),
+    });
+    assert.deepEqual(
+      tailed.map((e) => [e.period_key, e.content]),
+      expected,
+    );
   });
 
   it("bounds every entry, the raw fallback included", async () => {
