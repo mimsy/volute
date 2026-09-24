@@ -25,6 +25,7 @@ import { tryGetDeliveryManager } from "../delivery/delivery-manager.js";
 import {
   type DeliveryPayload,
   getRoutingConfig,
+  matchMetaFor,
   parseDeliveryPayload,
   resolveRoute,
 } from "../delivery/delivery-router.js";
@@ -661,12 +662,8 @@ export class SleepManager {
       } catch {
         continue; // the flush path's own drop handling deals with these on the next wake
       }
-      const route = resolveRoute(getRoutingConfig(name), {
-        channel: payload.channel,
-        sender: payload.sender ?? undefined,
-        isDM: payload.isDM,
-        participantCount: payload.participantCount,
-      });
+      const config = getRoutingConfig(name);
+      const route = resolveRoute(config, await matchMetaFor(name, config, payload));
       const thread = payload.session ?? route.session;
       payload.held = {
         at: parseDbTimestamp(row.created_at)?.getTime() ?? Date.now(),

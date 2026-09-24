@@ -306,6 +306,17 @@ async function postEventEnvelope(
     );
   }
   let acked = false;
+  // Messages the mind's routes.json deferred on this thread ride along with the turn this
+  // event starts — sent first, since they arrived first, with the event folding into the
+  // turn they begin. Routing never sees an event, so it has to be done here. If they went
+  // out, a turn is running on this slot whatever happens to the event's own POST.
+  let carried = false;
+  try {
+    const { tryGetDeliveryManager } = await import("../delivery/delivery-manager.js");
+    carried = (await tryGetDeliveryManager()?.flushDeferred(mind, event.thread)) ?? false;
+  } catch (err) {
+    elog.warn(`failed to flush deferred messages for ${mind}`, log.errorData(err));
+  }
   try {
     const res = await fetch(`http://127.0.0.1:${entry.port}/message`, {
       method: "POST",
@@ -361,7 +372,7 @@ async function postEventEnvelope(
     // already running in that session, and freeing that turn's slot would open the gate
     // while the mind is still working. POSTs fail most under load, which is precisely when
     // the gate must hold.
-    if (!acked && slot.owned) releaseTurnSlot(slotMind, event.thread);
+    if (!acked && !carried && slot.owned) releaseTurnSlot(slotMind, event.thread);
   }
 }
 

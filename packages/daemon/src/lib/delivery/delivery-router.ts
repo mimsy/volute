@@ -1,8 +1,11 @@
 import { mkdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import type { ChannelContext, ParticipantProfile } from "@volute/api";
+import { eq } from "drizzle-orm";
 import { MIND_LEVEL_THREAD, recordNotice } from "../chat/system-events.js";
+import { getDb } from "../db.js";
 import { mindDir, stateDir } from "../mind/registry.js";
+import { users } from "../schema.js";
 import { clearJsonMap, loadJsonMap, saveJsonMap } from "../util/json-state.js";
 import log from "../util/logger.js";
 
@@ -23,9 +26,19 @@ export type RoutingRule = {
   sender?: string;
   isDM?: boolean;
   participants?: number;
+  /** Who is speaking — see {@link SenderKind}. Unknown values make the rule unmatchable. */
+  senderKind?: SenderKind;
   mode?: "all" | "mention";
   batch?: number | BatchConfig;
 };
+
+/**
+ * What kind of sender a message comes from: a person using Volute (`human`), another mind
+ * or the spirit (`mind`), someone reaching the mind from another platform through a bridge,
+ * mail, or cloud sync (`bridge`), or the mind itself (`self`). See {@link classifySender}.
+ */
+export type SenderKind = "human" | "mind" | "bridge" | "self";
+export const SENDER_KINDS: readonly SenderKind[] = ["human", "mind", "bridge", "self"];
 
 export type BatchConfig = {
   debounce?: number;
@@ -37,12 +50,18 @@ export type SessionConfig = {
   instructions?: string;
   delivery?: DeliveryMode;
   interrupt?: boolean;
+  rateLimit?: RateLimit;
 };
+
+/** At most `max` wakes on the thread per `windowMinutes`; wakes beyond that defer. */
+export type RateLimit = { max: number; windowMinutes: number };
 
 export type DeliveryMode =
   | "immediate"
   | "batch"
-  | { mode: "batch"; debounce?: number; maxWait?: number; triggers?: string[] };
+  | "defer"
+  | { mode: "batch"; debounce?: number; maxWait?: number; triggers?: string[] }
+  | { mode: "defer"; maxWait?: number };
 
 export type RoutingConfig = {
   rules?: RoutingRule[];
@@ -60,12 +79,15 @@ export type ResolvedRoute = {
 
 export type ResolvedDeliveryMode =
   | { mode: "immediate" }
-  | { mode: "batch"; debounce: number; maxWait: number; triggers?: string[] };
+  | { mode: "batch"; debounce: number; maxWait: number; triggers?: string[] }
+  /** `maxWait` in seconds; undefined = wait for the next turn on the thread, however long. */
+  | { mode: "defer"; maxWait?: number };
 
 export type ResolvedSessionConfig = {
   delivery: ResolvedDeliveryMode;
   instructions?: string;
   interrupt: boolean;
+  rateLimit?: RateLimit;
 };
 
 export type MatchMeta = {
@@ -73,6 +95,7 @@ export type MatchMeta = {
   sender?: string;
   isDM?: boolean;
   participantCount?: number;
+  senderKind?: SenderKind;
 };
 
 // --- Delivery payload ---
@@ -109,6 +132,13 @@ export interface DeliveryPayload {
    * as a field.
    */
   held?: { at: number; scope: "mind" | "system"; until?: number };
+  /**
+   * Stamped when the mind's routes.json deferred this message (`delivery: "defer"`, a
+   * mention-mode non-mention, or a `rateLimit` overflow) — kept rather than waking the
+   * mind, to ride along with its next turn on the thread. `at` is when it arrived. Rendered
+   * into `content` and stripped at delivery time, like `held`.
+   */
+  deferred?: { at: number };
   /**
    * Set when this message's `mind_history` inbound row was deliberately NOT written on
    * arrival, because the mind was over its spend cap and would not see it. The row is
@@ -289,9 +319,10 @@ const KNOWN_RULE_KEYS = new Set([
   "destination",
   "isDM",
   "participants",
+  "senderKind",
   "event",
 ]);
-const KNOWN_THREAD_KEYS = new Set(["instructions", "delivery", "interrupt"]);
+const KNOWN_THREAD_KEYS = new Set(["instructions", "delivery", "interrupt", "rateLimit"]);
 
 function quoteKeys(keys: string[]): string {
   return keys.map((k) => `"${k}"`).join(", ");
@@ -323,6 +354,12 @@ export function routesConfigProblems(config: RoutingConfig): string[] {
             `matches — "mind" is the only destination (file destinations were removed).`,
         );
       }
+      if ("senderKind" in rule && !SENDER_KINDS.includes(rule.senderKind as SenderKind)) {
+        problems.push(
+          `${where} has senderKind ${JSON.stringify(rule.senderKind)}, so the rule never ` +
+            `matches (senderKind is one of: ${SENDER_KINDS.join(", ")}).`,
+        );
+      }
     });
   }
   if (config.threads != null && typeof config.threads === "object") {
@@ -333,6 +370,28 @@ export function routesConfigProblems(config: RoutingConfig): string[] {
         problems.push(
           `threads[${JSON.stringify(pattern)}] has unrecognized key(s) ${quoteKeys(unknown)}, ` +
             `which are ignored (known thread keys: ${[...KNOWN_THREAD_KEYS].join(", ")}).`,
+        );
+      }
+      if ("rateLimit" in threadConfig && parseRateLimit(threadConfig.rateLimit) == null) {
+        problems.push(
+          `threads[${JSON.stringify(pattern)}] has rateLimit ` +
+            `${JSON.stringify(threadConfig.rateLimit)}, which is ignored — it needs a "max" ` +
+            `of at least 1 and a positive "windowMinutes", e.g. { "max": 6, "windowMinutes": 60 }.`,
+        );
+      }
+      const d = threadConfig.delivery;
+      if (
+        d === "defer" ||
+        (d != null &&
+          typeof d === "object" &&
+          d.mode === "defer" &&
+          !(typeof d.maxWait === "number" && d.maxWait > 0))
+      ) {
+        problems.push(
+          `threads[${JSON.stringify(pattern)}] defers with no "maxWait", so messages here wait ` +
+            `until something else wakes this thread — a delivery on it that isn't deferred, an ` +
+            `event routed to it, or a wake-up whose backlog includes one. Nothing on this ` +
+            `thread alone will ever wake you; add a "maxWait" if you want to hear it eventually.`,
         );
       }
     }
@@ -385,30 +444,71 @@ export function forgetReportedRoutesProblems(mindName: string, problems: string[
 export function reportRoutesConfigProblems(mindName: string, config: RoutingConfig): Promise<void> {
   const problems = routesConfigProblems(config);
   const told = loadJsonMap(reportedProblemsPath(mindName));
-  const kept = new Map([...told].filter(([p]) => problems.includes(p)));
+  const kept = new Map([...told].filter(([p]) => problems.includes(p) || p === MENTION_DEFERS_KEY));
   const unheard = problems.filter((p) => !told.has(p));
   for (const p of unheard) kept.set(p, Date.now());
+  // The first time this mind's config is read since mention mode began deferring, and only
+  // then: a mind that already had a mention rule set it up expecting the old behaviour.
+  const firstLook = !told.has(MENTION_DEFERS_KEY);
+  const mentionNote = firstLook && hasMentionRule(config);
+  if (firstLook) kept.set(MENTION_DEFERS_KEY, Date.now());
   // Saved before notifying: recording the notice routes it through this same config.
-  if (kept.size !== told.size || unheard.length > 0) saveReportedProblems(mindName, kept);
-  if (unheard.length === 0) return Promise.resolve();
+  if (kept.size !== told.size || unheard.length > 0 || firstLook) {
+    saveReportedProblems(mindName, kept);
+  }
 
-  dlog.warn(`routes.json for ${mindName}: ${unheard.join(" ")}`);
-  return recordNotice({
-    mind: mindName,
-    thread: MIND_LEVEL_THREAD,
-    kind: "routes",
-    reason: ROUTES_PROBLEMS_REASON,
-    detail:
-      `Your .config/routes.json has settings the router does not act on:\n\n` +
-      `${unheard.map((p) => `- ${p}`).join("\n")}\n\n` +
-      `Until they're fixed, routing behaves as if those settings weren't there. The ` +
-      `volute-mind skill's routing reference describes every field.`,
-    meta: { problems: unheard },
-  }).then(
+  const sent: Promise<unknown>[] = [];
+  if (unheard.length > 0) {
+    dlog.warn(`routes.json for ${mindName}: ${unheard.join(" ")}`);
+    sent.push(
+      recordNotice({
+        mind: mindName,
+        thread: MIND_LEVEL_THREAD,
+        kind: "routes",
+        reason: ROUTES_PROBLEMS_REASON,
+        detail:
+          `Your .config/routes.json has settings that won't do what they might look like ` +
+          `they do:\n\n` +
+          `${unheard.map((p) => `- ${p}`).join("\n")}\n\n` +
+          `Each line says what the router does instead. The volute-mind skill's routing ` +
+          `reference describes every field.`,
+        meta: { problems: unheard },
+      }),
+    );
+  }
+  if (mentionNote) {
+    sent.push(
+      recordNotice({
+        mind: mindName,
+        thread: MIND_LEVEL_THREAD,
+        kind: "routes",
+        reason: ROUTES_MENTION_DEFERS_REASON,
+        detail:
+          `Your .config/routes.json has a rule with mode "mention". Messages on it that don't ` +
+          `mention you used to be dropped from your turns; now they're deferred — kept, and ` +
+          `delivered along with your next turn on that thread — so nothing addressed to you ` +
+          `is lost. They still don't wake you. The volute-mind skill's routing reference has ` +
+          `the details.`,
+      }),
+    );
+  }
+  return Promise.all(sent).then(
     () => {},
     (err) => {
-      dlog.warn(`failed to notify ${mindName} about routes.json problems`, log.errorData(err));
+      dlog.warn(`failed to notify ${mindName} about routes.json`, log.errorData(err));
     },
+  );
+}
+
+/** meta.reason of the one-time notice that mention mode now defers instead of dropping. */
+export const ROUTES_MENTION_DEFERS_REASON = "routes_mention_defers";
+/** Ledger key marking that a mind's config has been checked for the mention-defers notice. */
+const MENTION_DEFERS_KEY = "mention-defers";
+
+function hasMentionRule(config: RoutingConfig): boolean {
+  return (
+    Array.isArray(config.rules) &&
+    config.rules.some((r) => r != null && typeof r === "object" && r.mode === "mention")
   );
 }
 
@@ -430,6 +530,11 @@ function ruleMatches(rule: RoutingRule, meta: MatchMeta): boolean {
     if (key === "participants") {
       if (typeof pattern !== "number") return false;
       if ((meta.participantCount ?? 0) !== pattern) return false;
+      continue;
+    }
+
+    if (key === "senderKind") {
+      if (meta.senderKind === undefined || meta.senderKind !== pattern) return false;
       continue;
     }
 
@@ -547,21 +652,29 @@ export function resolveDeliveryMode(
   for (const [pattern, sessionConfig] of Object.entries(config.threads)) {
     if (globMatch(pattern, sessionName)) {
       let delivery: ResolvedDeliveryMode;
+      const d = sessionConfig.delivery;
 
-      if (sessionConfig.delivery == null || sessionConfig.delivery === "immediate") {
+      if (d == null || d === "immediate") {
         delivery = { mode: "immediate" };
-      } else if (sessionConfig.delivery === "batch") {
+      } else if (d === "batch") {
         delivery = {
           mode: "batch",
           debounce: DEFAULT_BATCH_DEBOUNCE,
           maxWait: DEFAULT_BATCH_MAX_WAIT,
         };
+      } else if (d === "defer") {
+        delivery = { mode: "defer" };
+      } else if (d.mode === "defer") {
+        delivery = {
+          mode: "defer",
+          maxWait: typeof d.maxWait === "number" && d.maxWait > 0 ? d.maxWait : undefined,
+        };
       } else {
         delivery = {
           mode: "batch",
-          debounce: sessionConfig.delivery.debounce ?? DEFAULT_BATCH_DEBOUNCE,
-          maxWait: sessionConfig.delivery.maxWait ?? DEFAULT_BATCH_MAX_WAIT,
-          triggers: sessionConfig.delivery.triggers,
+          debounce: d.debounce ?? DEFAULT_BATCH_DEBOUNCE,
+          maxWait: d.maxWait ?? DEFAULT_BATCH_MAX_WAIT,
+          triggers: d.triggers,
         };
       }
 
@@ -569,6 +682,7 @@ export function resolveDeliveryMode(
         delivery,
         instructions: sessionConfig.instructions,
         interrupt: sessionConfig.interrupt ?? false,
+        rateLimit: parseRateLimit(sessionConfig.rateLimit) ?? undefined,
       };
     }
   }
@@ -588,4 +702,133 @@ export function resolveDeliveryMode(
   }
 
   return defaults;
+}
+
+/** A thread's `rateLimit`, or null when it's missing or malformed (reported as a problem). */
+function parseRateLimit(value: unknown): RateLimit | null {
+  if (value == null || typeof value !== "object") return null;
+  const { max, windowMinutes } = value as Partial<RateLimit>;
+  // A max under one would allow no wakes at all — and no moment the window frees one.
+  if (typeof max !== "number" || !(Math.floor(max) >= 1)) return null;
+  if (typeof windowMinutes !== "number" || !(windowMinutes > 0)) return null;
+  return { max: Math.floor(max), windowMinutes };
+}
+
+// --- Mentions ---
+
+const mentionRegexCache = new Map<string, RegExp>();
+
+/** Whether `text` names the mind — the test `mode: "mention"` rules apply. */
+export function mentionsMind(baseName: string, text: string): boolean {
+  let pattern = mentionRegexCache.get(baseName);
+  if (!pattern) {
+    const escaped = baseName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    pattern = new RegExp(`\\b${escaped}\\b`, "i");
+    mentionRegexCache.set(baseName, pattern);
+  }
+  return pattern.test(text);
+}
+
+/**
+ * Whether routing, by itself, defers this message rather than letting it wake the mind:
+ * the thread's delivery is `defer`, or the matched rule is `mode: "mention"` and the
+ * message doesn't mention the mind. (A `rateLimit` overflow also defers, but that depends
+ * on recent wakes — see `DeliveryManager.rateLimitFull`.) Returns the deadline in ms from
+ * now after which the deferred message flushes on its own, or undefined for "wait for the
+ * next turn on the thread".
+ */
+export function routingDefers(
+  baseName: string,
+  route: ResolvedRoute,
+  sessionConfig: ResolvedSessionConfig,
+  payload: Pick<DeliveryPayload, "content" | "sender">,
+): { maxWaitMs?: number } | null {
+  if (sessionConfig.delivery.mode === "defer") {
+    const maxWait = sessionConfig.delivery.maxWait;
+    return { maxWaitMs: maxWait != null ? maxWait * 1000 : undefined };
+  }
+  if (
+    route.mode === "mention" &&
+    payload.sender &&
+    !mentionsMind(baseName, extractTextContent(payload.content))
+  ) {
+    return {};
+  }
+  return null;
+}
+
+// --- Sender kinds ---
+
+function configUsesSenderKind(config: RoutingConfig): boolean {
+  return (
+    Array.isArray(config.rules) &&
+    config.rules.some((r) => r != null && typeof r === "object" && "senderKind" in r)
+  );
+}
+
+/**
+ * Classify a message's sender for `senderKind` rules. The mind itself is `self`. A sender
+ * Volute authenticated (`senderId`) is classified by its `users.user_type` — `puppet`, a
+ * bridge stand-in, is `bridge`. An unauthenticated sender carrying a `platform:identifier`
+ * name (the `externalSenderName` contract: bridges, mail, cloud sync) is `bridge`; one
+ * without it is looked up by username. Anything still unknown is left unclassified, and
+ * matches no `senderKind` rule.
+ */
+export async function classifySender(
+  baseName: string,
+  sender: string | null | undefined,
+  senderId: number | null | undefined,
+): Promise<SenderKind | undefined> {
+  if (!sender && senderId == null) return undefined;
+  if (sender === baseName) return "self";
+  try {
+    const db = await getDb();
+    const row =
+      senderId != null
+        ? await db
+            .select({ username: users.username, user_type: users.user_type })
+            .from(users)
+            .where(eq(users.id, senderId))
+            .get()
+        : sender?.includes(":")
+          ? undefined
+          : await db
+              .select({ username: users.username, user_type: users.user_type })
+              .from(users)
+              .where(eq(users.username, sender!))
+              .get();
+    if (row) {
+      if (row.username === baseName) return "self";
+      if (row.user_type === "puppet") return "bridge";
+      if (row.user_type === "mind" || row.user_type === "spirit") return "mind";
+      if (row.user_type === "human") return "human";
+      return undefined;
+    }
+  } catch (err) {
+    dlog.warn(`failed to classify sender ${sender} for ${baseName}`, log.errorData(err));
+    return undefined;
+  }
+  if (senderId == null && sender?.includes(":")) return "bridge";
+  return undefined;
+}
+
+/**
+ * The routing match metadata for a payload. Every caller that resolves a route for a
+ * message goes through here, so a `senderKind` rule matches the same way at arrival, at
+ * gated release and on the wake flush. The sender lookup only runs when some rule uses it.
+ */
+export async function matchMetaFor(
+  baseName: string,
+  config: RoutingConfig,
+  payload: Pick<DeliveryPayload, "channel" | "sender" | "senderId" | "isDM" | "participantCount">,
+): Promise<MatchMeta> {
+  return {
+    channel: payload.channel,
+    sender: payload.sender ?? undefined,
+    isDM: payload.isDM,
+    participantCount: payload.participantCount,
+    senderKind: configUsesSenderKind(config)
+      ? await classifySender(baseName, payload.sender, payload.senderId)
+      : undefined,
+  };
 }

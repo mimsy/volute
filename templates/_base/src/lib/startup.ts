@@ -277,18 +277,15 @@ export const DEFAULT_PROMPTS: MindPrompts = {
   reply_instructions: 'To reply to this message, use: volute chat send "${channel}" "your message"',
   event_instructions:
     "This is a system event from your environment — not a message from anyone, and nothing awaits a reply. If it calls for action, use your normal channels. Your closing thoughts on an event turn are kept as a private reflection in your history.",
-  channel_invite: `[Channel Invite]
-\${headers}
+  channel_invite: `[New channel: \${channel}]
+\${heldLine}
+Sender: \${sender}
+\${details}Preview: \${preview}
 
-[\${sender} — \${time}]
-\${preview}
-
-Further messages will be saved to \${filePath}
-
-To accept, add to .config/routes.json:
-  Rule: { "channel": "\${channel}", "session": "\${suggestedSession}" }
-\${batchRecommendation}To respond, use: volute chat send "\${channel}" "your message"
-To reject, delete \${filePath}`,
+To read what's being held: volute chat channels peek "\${channel}"
+To start hearing this channel: volute chat channels accept "\${channel}" — routes it and delivers the \${limit} most recent held messages; older ones stay readable via peek.
+To stop hearing about it: volute chat channels decline "\${channel}"
+Once you hear it, how it wakes you is yours to shape — batched, deferred, or rate-limited — in its thread's settings in .config/routes.json (see the volute-mind skill's routing reference).`,
 };
 
 export function loadPrompts(): MindPrompts {
