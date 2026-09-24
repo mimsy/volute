@@ -46,7 +46,7 @@ import {
 import { createSessionStore, lostRealContext } from "./lib/session-store.js";
 import type { EffortLevel, SubagentConfig, ThinkingConfig } from "./lib/startup.js";
 import { consumeStream, type MessageIdEntry } from "./lib/stream-consumer.js";
-import { defaultSubagentModel } from "./lib/subagent-model.js";
+import { createBuiltinSubagentModelHook, defaultSubagentModel } from "./lib/subagent-model.js";
 import { createSystemPromptSource } from "./lib/system-prompt.js";
 import type {
   HandlerMeta,
@@ -242,14 +242,17 @@ export function createMind(options: {
   // explicit skills array grants the Skill tool for each installed skill — the
   // SDK silently drops the documented `skills: 'all'` string form.
   const mindHome = resolvePath(options.cwd);
-  // CLAUDE_CODE_SUBAGENT_MODEL is the model the SDK's built-in agents (general-purpose)
-  // run on — they have none of their own and otherwise inherit the mind's, so it is only
-  // set when the default is something else. A mind's own setting of it wins.
+  // CLAUDE_CODE_SUBAGENT_MODEL is the model the SDK's model-less built-in agents
+  // (general-purpose) run on — they otherwise inherit the mind's, so it is only set when
+  // the default is something else. The built-ins defined as "inherit" (Explore, Plan)
+  // never read it, so a PreToolUse hook gives their calls the same default. A mind's own
+  // setting of the env var wins, for all of them.
+  const defaultBuiltinSubagents =
+    subagentModel !== "inherit" && !process.env.CLAUDE_CODE_SUBAGENT_MODEL;
   const sdkEnv = {
     ...process.env,
     HOME: mindHome,
-    ...(subagentModel !== "inherit" &&
-      !process.env.CLAUDE_CODE_SUBAGENT_MODEL && { CLAUDE_CODE_SUBAGENT_MODEL: subagentModel }),
+    ...(defaultBuiltinSubagents && { CLAUDE_CODE_SUBAGENT_MODEL: subagentModel }),
   };
   function installedSkills(): string[] | undefined {
     const names = readSkillDescriptions([resolvePath(mindHome, ".claude/skills")]).map(
@@ -420,6 +423,22 @@ export function createMind(options: {
         resume,
         agents,
         hooks: {
+          ...(defaultBuiltinSubagents && {
+            PreToolUse: [
+              {
+                matcher: "Agent",
+                // home/.claude/agents is both the project and the user agents dir (cwd and
+                // HOME are the mind's home).
+                hooks: [
+                  createBuiltinSubagentModelHook(
+                    subagentModel,
+                    Object.keys(agents ?? {}),
+                    resolvePath(mindHome, ".claude/agents"),
+                  ),
+                ],
+              },
+            ],
+          }),
           PostToolUse: [
             ...postToolUseHooks,
             {
