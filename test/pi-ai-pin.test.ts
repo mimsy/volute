@@ -12,7 +12,7 @@ import { lookupRates } from "../packages/daemon/src/lib/daemon/usage-pricing.js"
 // lockfile kept CI on a working version. Global installs ignore our lockfile,
 // so the declared range is the only thing protecting users here.
 //
-// We are past that break now: the pin is 0.84.3 and Volute uses the auth API that
+// We are past that break now: the pin is 0.87.1 and Volute uses the auth API that
 // replaced the registry — per-provider `provider.auth.oauth` (login/refresh/toAuth)
 // reached via `builtinProviders()`. Nothing imports `/oauth` at runtime any more,
 // which is why the assertions below check the new surface.
