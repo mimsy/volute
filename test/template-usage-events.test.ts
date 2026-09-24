@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { composeTemplate } from "../packages/daemon/src/lib/template/template.js";
 import type { UsageByModel } from "../templates/_base/src/lib/types.js";
 import {
+  advanceBaseline,
   buildUsagePayload,
   dominantModel,
   usageByModel,
@@ -222,6 +223,39 @@ describe("claude template usage", () => {
       cache_read_input_tokens: 900,
       cache_creation_input_tokens: 0,
     });
+  });
+
+  it("treats a drop in any counter as a reset, even when output has grown past the old", () => {
+    // A /clear mid-stream: the new accumulator's output already exceeds the old one's, but
+    // its cache reads don't. Testing output alone kept the stale baseline and undercounted.
+    const slices = usageByModel(
+      { "claude-opus-4-6": { inputTokens: 40, outputTokens: 400, cacheReadInputTokens: 900 } },
+      { "claude-opus-4-6": { inputTokens: 30, outputTokens: 300, cacheReadInputTokens: 50_000 } },
+    );
+    assert.deepEqual(slices?.[0], {
+      model: "claude-opus-4-6",
+      input_tokens: 40,
+      output_tokens: 400,
+      cache_read_input_tokens: 900,
+      cache_creation_input_tokens: 0,
+    });
+  });
+
+  it("carries the baseline forward per model", () => {
+    const main = { inputTokens: 10, outputTokens: 200, cacheReadInputTokens: 5_000 };
+    const side = { inputTokens: 899, outputTokens: 9 };
+    // A result that lists only a side-call must not wipe the main loop's baseline — the
+    // next turn would bill the whole stream (#981).
+    assert.deepEqual(advanceBaseline({ "claude-opus-4-6": main }, { "claude-haiku-4-5": side }), {
+      "claude-opus-4-6": main,
+      "claude-haiku-4-5": side,
+    });
+    // Nor a zeroed crash result, entries or none.
+    const zero = { inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0 };
+    assert.deepEqual(advanceBaseline({ "claude-opus-4-6": main }, { "claude-opus-4-6": zero }), {
+      "claude-opus-4-6": main,
+    });
+    assert.deepEqual(advanceBaseline({ "claude-opus-4-6": main }, {}), { "claude-opus-4-6": main });
   });
 
   it("drops a model that consumed nothing on this turn", () => {

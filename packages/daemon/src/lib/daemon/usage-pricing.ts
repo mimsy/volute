@@ -94,6 +94,18 @@ export function formatModelRef(ref: ModelRef): string {
 }
 
 /**
+ * Whether `id` names the model `base`: the same id, a dated form of it
+ * (`claude-opus-4-6-20260115`), or either carrying the SDK's `[1m]` context suffix
+ * (`claude-opus-4-6[1m]`). Directional — `gpt-5.9` does not name `gpt-5`, and neither
+ * does `gpt-5` name `gpt-5-mini`.
+ */
+export function sameModel(id: string, base: string): boolean {
+  const a = id.replace(/\[1m\]$/i, "");
+  const b = base.replace(/\[1m\]$/i, "");
+  return a === b || a.startsWith(`${b}-`);
+}
+
+/**
  * The catalog rates for a model, or null when the model is unknown or unpriced.
  *
  * Providers hand back dated ids (`claude-sonnet-4-5-20250929`) that the catalog may not
@@ -111,7 +123,7 @@ export function lookupRates(ref: ModelRef): CostRates | null {
   if (!model) {
     let best: Model<Api> | undefined;
     for (const candidate of getBuiltinModels(ref.provider as never) as Model<Api>[]) {
-      if (!ref.id.startsWith(`${candidate.id}-`)) continue;
+      if (!sameModel(ref.id, candidate.id)) continue;
       if (!best || candidate.id.length > best.id.length) best = candidate;
     }
     model = best;
@@ -241,16 +253,15 @@ function priceSlices(
 /**
  * The slice the SDK filed the main loop under, given the key the template reported.
  *
- * Exact match first. Failing that, the one slice whose id extends the reported one (or
- * the reverse) at a `-` boundary — a dated id against its alias, as `lookupRates` resolves
- * them. None, or more than one, is `undefined`: guessing would put the 1-hour writes on a
+ * Exact match first. Failing that, the one slice that is the same model by `sameModel`, in
+ * either direction — a dated id against its alias, or one side carrying `[1m]`. None, or more than one, is `undefined`: guessing would put the 1-hour writes on a
  * subagent's slice.
  */
 function findMainSlice(slices: ModelSlice[], mainModel: string): ModelSlice | undefined {
   const exact = slices.find((s) => s.model === mainModel);
   if (exact) return exact;
   const related = slices.filter(
-    (s) => s.model.startsWith(`${mainModel}-`) || mainModel.startsWith(`${s.model}-`),
+    (s) => sameModel(s.model, mainModel) || sameModel(mainModel, s.model),
   );
   return related.length === 1 ? related[0] : undefined;
 }
@@ -376,9 +387,11 @@ export function priceUsageMetadata(
         `(${slices.map((s) => s.model).join(", ")}) — pricing the main loop's aggregate; ` +
         "this turn's subagents and side-calls go uncounted.",
     );
-    // At the main loop's rates: `model` is the dominant label, which a subagent can hold.
+    // At the main loop's rates when they resolve: `model` is the dominant label, which a
+    // subagent can hold. When they don't, the label is still the better guess than nothing.
     const parsed = parseModelRef(mainModel, ctx.template);
-    if (parsed) aggregateRef = parsed.provider ? parsed : { ...parsed, provider: ref.provider };
+    const mainRef = parsed && (parsed.provider ? parsed : { ...parsed, provider: ref.provider });
+    if (mainRef && lookupRates(mainRef)) aggregateRef = mainRef;
   } else if (slices) {
     if (slicesDescribeThisTurn(slices, ref, tokens)) {
       result.cost_usd = priceSlices(slices, ctx);
@@ -391,6 +404,8 @@ export function priceUsageMetadata(
     );
   }
 
+  // Stamp the model the turn is actually priced against.
+  result.model = formatModelRef(aggregateRef);
   const rates = lookupRates(aggregateRef);
   if (!rates) {
     plog.warn(`no pricing for ${formatModelRef(aggregateRef)} — recording tokens without cost`);

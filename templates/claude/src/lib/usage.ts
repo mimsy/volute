@@ -56,19 +56,26 @@ function totalTokens(slice: UsageByModel): number {
   );
 }
 
+const COUNTERS = [
+  "inputTokens",
+  "outputTokens",
+  "cacheReadInputTokens",
+  "cacheCreationInputTokens",
+] as const;
+
 /**
  * The counter this model starts the turn from.
  *
- * Zero when the model is new to the stream, and zero again when its counter went
- * *backwards* — the SDK replaced the accumulator underneath us, so the current values are
- * themselves the turn's usage. Keyed on `outputTokens` alone, like the codex module's
- * equivalent: it is the field that grows on every request a model serves, and testing all
- * four would let a one-token wobble in a minor field rebase the rest, billing a single
- * turn for the whole stream — the exact failure this differencing exists to prevent.
+ * Zero when the model is new to the stream, and zero again when *any* of its counters went
+ * backwards — the SDK replaced the accumulator underneath us (a /clear, a resume), so the
+ * current values are themselves the turn's usage. The SDK's counters only ever grow within
+ * one accumulator, so a drop in any field is a reset; testing output alone missed a reset
+ * whose new output had already passed the old one, and undercounted that turn by the
+ * difference. The daemon trusts this differencing outright (#984), so it has to be right.
  */
 function baselineFor(prev: ModelUsageEntry | undefined, cur: ModelUsageEntry): ModelUsageEntry {
   if (!prev) return {};
-  return (cur.outputTokens ?? 0) < (prev.outputTokens ?? 0) ? {} : prev;
+  return COUNTERS.some((k) => (cur[k] ?? 0) < (prev[k] ?? 0)) ? {} : prev;
 }
 
 /**
@@ -187,13 +194,17 @@ export function buildUsagePayload(
 }
 
 /**
- * Whether a result's `modelUsage` can serve as the next turn's baseline. The SDK notes
- * that crash and startup-error results may carry zeroed usage; adopting one would diff the
- * next turn against zero while the SDK's accumulator kept its real total, billing that
- * turn for the whole stream (#984). Keeping the older baseline is safe: if the accumulator
- * really did reset, the next counters come in below it and `baselineFor` rebases.
+ * The baseline for the next turn: `prev` with this result's counters laid over it, per
+ * model. Only models with a non-zero counter are taken, and a model absent from the result
+ * keeps its old entry. Replacing the whole map instead would let a result that doesn't
+ * list the main loop's key — a crash result, which the SDK notes may carry zeroed usage, or
+ * one that only saw a side-call — wipe its baseline, and bill the next turn for the whole
+ * stream (#981). A genuine reset is caught per model by `baselineFor` instead.
  */
-export function isUsableBaseline(modelUsage: ModelUsageMap): boolean {
-  // Undiffed, `usageByModel` keeps exactly the models with a non-zero counter.
-  return usageByModel(modelUsage) !== undefined;
+export function advanceBaseline(prev: ModelUsageMap, modelUsage: ModelUsageMap): ModelUsageMap {
+  const next = { ...prev };
+  for (const [model, mu] of Object.entries(modelUsage ?? {})) {
+    if (mu && COUNTERS.some((k) => (mu[k] ?? 0) > 0)) next[model] = mu;
+  }
+  return next;
 }

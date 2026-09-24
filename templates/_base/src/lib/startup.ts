@@ -35,8 +35,8 @@ export type SubagentConfig = {
   maxTurns?: number;
   /**
    * The model this subagent runs on (claude template): an alias like "sonnet" or "opus", a
-   * full model id, or "inherit" for the mind's own model. Defaults to "sonnet" — or to
-   * "inherit" for a mind on a model cheaper than Sonnet, so the default never raises cost. pi
+   * full model id, or "inherit" for the mind's own model. Defaults to "sonnet" for a mind on
+   * an Opus- or Fable-class model, and to "inherit" for every other. pi
    * subagents always run on the mind's model.
    */
   model?: string;

@@ -71,6 +71,13 @@ describe("lookupRates", () => {
     assert.notDeepEqual(mini, lookupRates({ provider: "openai", id: "gpt-5" }));
   });
 
+  it("resolves the SDK's [1m] context suffix to the base model", () => {
+    assert.deepEqual(
+      lookupRates({ provider: "anthropic", id: "claude-opus-4-6[1m]" }),
+      lookupRates({ provider: "anthropic", id: "claude-opus-4-6" }),
+    );
+  });
+
   it("does not match across a version separator", () => {
     // `gpt-5` must not stand in for a hypothetical `gpt-5.9`.
     assert.equal(lookupRates({ provider: "openai", id: "gpt-5.9" }), null);
@@ -437,6 +444,27 @@ describe("priceUsageMetadata", () => {
       close(priced.cost_usd, sdkCost);
     });
 
+    it("matches a main_model to its slice across the [1m] suffix", () => {
+      const priced = priceUsageMetadata(
+        {
+          ...turn2,
+          main_model: "claude-haiku-4-5[1m]",
+          models: [{ ...turn2.models[0], model: "claude-haiku-4-5" }],
+        },
+        { template: "claude" },
+      );
+      close(priced.cost_usd, sdkCost);
+    });
+
+    it("keeps the dominant model's rates when main_model has none", () => {
+      const priced = priceUsageMetadata(
+        { ...turn2, main_model: "a-model-nobody-has-priced", models: [turn2.models[0]] },
+        { template: "claude" },
+      );
+      close(priced.cost_usd, (18 * 1 + 582 * 5 + 43_408 * 0.1 + 1_074 * 2) / 1e6);
+      assert.equal(priced.model, "anthropic:claude-haiku-4-5");
+    });
+
     it("prices the main loop's aggregate at its own rates when main_model matches no slice", () => {
       // No slice to hang the 1h writes on, and no way to tell the subagent apart: price
       // what can be priced honestly — the aggregate, 1h split included, at the main
@@ -452,6 +480,8 @@ describe("priceUsageMetadata", () => {
         { template: "claude" },
       );
       close(unmatched.cost_usd, aggregate);
+      // And says so: the row names the model it was priced against, not the dominant label.
+      assert.equal(unmatched.model, "anthropic:claude-opus-4-6");
       // Two slices that could each be it is the same answer, not a guess.
       const ambiguous = priceUsageMetadata(
         {

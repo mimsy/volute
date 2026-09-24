@@ -4,8 +4,8 @@ import { log, warn } from "./logger.js";
 import { filterEvent, loadTransparencyPreset } from "./transparency.js";
 import type { VoluteEvent } from "./types.js";
 import {
+  advanceBaseline,
   buildUsagePayload,
-  isUsableBaseline,
   type ModelUsageMap,
   type ResultUsage,
 } from "./usage.js";
@@ -180,8 +180,7 @@ export async function consumeStream(
       const usage = buildUsagePayload(msg as ResultUsage, prevModelUsage, mainModel);
       // Carried forward even when there was no usage to emit: the counters moved
       // regardless, and a skipped baseline would bill the next turn for both.
-      const modelUsage = (msg as ResultUsage).modelUsage;
-      if (isUsableBaseline(modelUsage)) prevModelUsage = modelUsage;
+      prevModelUsage = advanceBaseline(prevModelUsage, (msg as ResultUsage).modelUsage);
       if (usage) {
         callbacks.broadcast({ type: "usage", ...usage });
         emit(session, { type: "usage", metadata: usage });

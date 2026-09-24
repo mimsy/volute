@@ -5,15 +5,19 @@ import { describe, it } from "node:test";
 import { defaultSubagentModel } from "../templates/claude/src/lib/subagent-model.js";
 
 describe("claude template subagent model", () => {
-  it("defaults to sonnet", () => {
+  it("defaults an opus- or fable-class mind's subagents to sonnet", () => {
     assert.equal(defaultSubagentModel("claude-opus-4-6"), "sonnet");
+    assert.equal(defaultSubagentModel("claude-opus-4-6[1m]"), "sonnet");
+    assert.equal(defaultSubagentModel("opus"), "sonnet");
     assert.equal(defaultSubagentModel("claude-fable-5"), "sonnet");
-    assert.equal(defaultSubagentModel(undefined), "sonnet");
   });
 
-  it("never raises a mind's cost: a haiku mind's subagents inherit its model", () => {
+  it("inherits everywhere else: never a cost rise, a family switch, or a model the backend may lack", () => {
     assert.equal(defaultSubagentModel("claude-haiku-4-5"), "inherit");
-    assert.equal(defaultSubagentModel("haiku"), "inherit");
+    assert.equal(defaultSubagentModel("claude-sonnet-4-5"), "inherit");
+    assert.equal(defaultSubagentModel("us.anthropic.claude-sonnet-4-5-v1:0"), "inherit");
+    assert.equal(defaultSubagentModel("moonshotai/kimi-k2.5"), "inherit");
+    assert.equal(defaultSubagentModel(undefined), "inherit");
   });
 
   // There is no seam to intercept `query()` in a unit test, so pin the source — as

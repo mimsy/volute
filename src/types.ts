@@ -89,7 +89,7 @@ export type VoluteEvent = { messageId?: string } & (
       /**
        * The part of `cache_creation_input_tokens` written with a 1-hour TTL, which costs 2x
        * input rather than the 5-minute 1.25x. Absent when the template doesn't report the
-       * split — usage-pricing.ts then assumes one per template.
+       * split, in which case every write is priced at the 5-minute rate.
        */
       cache_creation_1h_input_tokens?: number;
       /**

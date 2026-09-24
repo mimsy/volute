@@ -127,9 +127,19 @@ export function windowBounds(
 
 const COST = sql`json_extract(${mindHistory.metadata}, '$.cost_usd')`;
 
-/** SUM over a metadata field, coalesced — an all-null SUM is NULL, not 0. */
+/**
+ * SUM over a token field, coalesced — an all-null SUM is NULL, not 0.
+ *
+ * A turn marked with `main_model` counts its per-model slices, which are what it was priced
+ * on: the aggregate fields are the main loop's alone, so they leave out the subagents the
+ * cost includes (#984). Unmarked turns keep the aggregate — an old template's slices may
+ * be a session-cumulative counter (#981).
+ */
 function sumField(path: string) {
-  return sql<number>`COALESCE(SUM(json_extract(${mindHistory.metadata}, ${`$.${path}`})), 0)`;
+  const field = `$.${path}`;
+  return sql<number>`COALESCE(SUM(CASE WHEN json_extract(${mindHistory.metadata}, '$.main_model') IS NOT NULL
+    THEN (SELECT SUM(json_extract(value, ${field})) FROM json_each(${mindHistory.metadata}, '$.models'))
+    ELSE json_extract(${mindHistory.metadata}, ${field}) END), 0)`;
 }
 
 const AGGREGATES = {
