@@ -3,7 +3,12 @@ import { daemonEmit, type EventType } from "./daemon-client.js";
 import { log, warn } from "./logger.js";
 import { filterEvent, loadTransparencyPreset } from "./transparency.js";
 import type { VoluteEvent } from "./types.js";
-import { buildUsagePayload, type ModelUsageMap, type ResultUsage } from "./usage.js";
+import {
+  advanceBaseline,
+  buildUsagePayload,
+  type ModelUsageMap,
+  type ResultUsage,
+} from "./usage.js";
 
 /** A pending message's daemon-facing id (routing/channel key) paired with its channel `seq`. */
 export type MessageIdEntry = { id: string | undefined; seq: number };
@@ -63,6 +68,8 @@ export async function consumeStream(
    * resume, a rotation — opens the SDK's accumulator at zero too.
    */
   let prevModelUsage: ModelUsageMap;
+  /** The main loop's model, as `system/init` names it — its key in `modelUsage`. */
+  let mainModel: string | undefined;
   for await (const msg of stream) {
     if (session.currentMessageId === undefined) {
       const entry = session.messageIds.shift();
@@ -72,6 +79,9 @@ export async function consumeStream(
     }
     if ("session_id" in msg && msg.session_id) {
       callbacks.onSessionId?.(msg.session_id as string);
+    }
+    if (msg.type === "system" && msg.subtype === "init") {
+      mainModel = msg.model;
     }
     if (msg.type === "assistant") {
       const usage = msg.message.usage as unknown as Record<string, unknown> | undefined;
@@ -167,10 +177,10 @@ export async function consumeStream(
           }
         }
       }
-      const usage = buildUsagePayload(msg as ResultUsage, prevModelUsage);
+      const usage = buildUsagePayload(msg as ResultUsage, prevModelUsage, mainModel);
       // Carried forward even when there was no usage to emit: the counters moved
       // regardless, and a skipped baseline would bill the next turn for both.
-      prevModelUsage = (msg as ResultUsage).modelUsage;
+      prevModelUsage = advanceBaseline(prevModelUsage, (msg as ResultUsage).modelUsage);
       if (usage) {
         callbacks.broadcast({ type: "usage", ...usage });
         emit(session, { type: "usage", metadata: usage });

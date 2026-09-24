@@ -87,6 +87,17 @@ export type VoluteEvent = { messageId?: string } & (
       cache_read_input_tokens?: number;
       cache_creation_input_tokens?: number;
       /**
+       * The part of `cache_creation_input_tokens` written with a 1-hour TTL, which costs 2x
+       * input rather than the 5-minute 1.25x. Absent when the template doesn't report the
+       * split, in which case every write is priced at the 5-minute rate.
+       */
+      cache_creation_1h_input_tokens?: number;
+      /**
+       * The main loop's key in `models` (claude template). Sent only by templates whose
+       * `models` is this turn's own usage — the daemon trusts such a breakdown outright.
+       */
+      main_model?: string;
+      /**
        * The model that did most of the turn's work; `provider:id` when the template knows
        * the provider (pi), else a bare id. A label — `models` is what gets priced.
        */

@@ -36,6 +36,8 @@ export type UsageTokens = {
   output: number;
   cacheRead?: number;
   cacheCreation?: number;
+  /** The part of `cacheCreation` written with a 1-hour TTL; the rest is 5-minute. */
+  cacheCreation1h?: number;
 };
 
 /**
@@ -92,6 +94,18 @@ export function formatModelRef(ref: ModelRef): string {
 }
 
 /**
+ * Whether `id` names the model `base`: the same id, a dated form of it
+ * (`claude-opus-4-6-20260115`), or either carrying the SDK's `[1m]` context suffix
+ * (`claude-opus-4-6[1m]`). Directional — `gpt-5.9` does not name `gpt-5`, and neither
+ * does `gpt-5` name `gpt-5-mini`.
+ */
+export function sameModel(id: string, base: string): boolean {
+  const a = id.replace(/\[1m\]$/i, "");
+  const b = base.replace(/\[1m\]$/i, "");
+  return a === b || a.startsWith(`${b}-`);
+}
+
+/**
  * The catalog rates for a model, or null when the model is unknown or unpriced.
  *
  * Providers hand back dated ids (`claude-sonnet-4-5-20250929`) that the catalog may not
@@ -109,7 +123,7 @@ export function lookupRates(ref: ModelRef): CostRates | null {
   if (!model) {
     let best: Model<Api> | undefined;
     for (const candidate of getBuiltinModels(ref.provider as never) as Model<Api>[]) {
-      if (!ref.id.startsWith(`${candidate.id}-`)) continue;
+      if (!sameModel(ref.id, candidate.id)) continue;
       if (!best || candidate.id.length > best.id.length) best = candidate;
     }
     model = best;
@@ -132,13 +146,22 @@ export function lookupRates(ref: ModelRef): CostRates | null {
  * ignored: tiers apply per *request*, and a usage event is a per-*turn* aggregate over
  * however many requests the tool loop made, so no tier can be picked correctly from it.
  * The base rate is the honest approximation.
+ *
+ * The catalog's `cacheWrite` is the 5-minute rate (1.25x input). A 1-hour write costs 2x
+ * input — Anthropic's published multiplier, and exactly what pi-ai's own `calculateCost`
+ * charges for its `cacheWrite1h` — so that share is priced off `input` instead. Writes
+ * are only priced as 1-hour when the template reports the split: the TTL depends on the
+ * SDK, the auth mode and the backend, so no default can be right for all of them.
  */
 export function costOf(rates: CostRates, tokens: UsageTokens): number {
+  const cacheCreation = tokens.cacheCreation ?? 0;
+  const long = Math.min(tokens.cacheCreation1h ?? 0, cacheCreation);
   return (
     (tokens.input * rates.input +
       tokens.output * rates.output +
       (tokens.cacheRead ?? 0) * rates.cacheRead +
-      (tokens.cacheCreation ?? 0) * rates.cacheWrite) /
+      (cacheCreation - long) * rates.cacheWrite +
+      long * rates.input * 2) /
     1_000_000
   );
 }
@@ -195,10 +218,16 @@ function readModelSlices(value: unknown): ModelSlice[] | undefined {
  * All-or-nothing: one unpriceable slice takes the whole turn unpriced. A sum missing a
  * model's share is not a cheaper turn, it is a wrong number, and nothing downstream could
  * tell the two apart.
+ *
+ * `cacheCreation1h` is the turn's 1-hour writes. They are the main loop's (`usage` is
+ * main-loop only), so they go on `main`; every other slice's writes — subagents,
+ * side-calls — are priced at the 5-minute rate.
  */
 function priceSlices(
   slices: ModelSlice[],
   ctx: { mind?: string; template?: string },
+  main?: ModelSlice,
+  cacheCreation1h = 0,
 ): number | null {
   let total = 0;
   for (const slice of slices) {
@@ -215,13 +244,31 @@ function priceSlices(
       output: slice.output_tokens,
       cacheRead: slice.cache_read_input_tokens,
       cacheCreation: slice.cache_creation_input_tokens,
+      cacheCreation1h: slice === main ? cacheCreation1h : 0,
     });
   }
   return total;
 }
 
 /**
- * Whether a per-model breakdown describes *this turn*, or something larger.
+ * The slice the SDK filed the main loop under, given the key the template reported.
+ *
+ * Exact match first. Failing that, the one slice that is the same model by `sameModel`, in
+ * either direction — a dated id against its alias, or one side carrying `[1m]`. None, or more than one, is `undefined`: guessing would put the 1-hour writes on a
+ * subagent's slice.
+ */
+function findMainSlice(slices: ModelSlice[], mainModel: string): ModelSlice | undefined {
+  const exact = slices.find((s) => s.model === mainModel);
+  if (exact) return exact;
+  const related = slices.filter(
+    (s) => sameModel(s.model, mainModel) || sameModel(mainModel, s.model),
+  );
+  return related.length === 1 ? related[0] : undefined;
+}
+
+/**
+ * Whether an *unmarked* breakdown — one from a template that sends no `main_model` —
+ * describes *this turn*, or something larger.
  *
  * A mind runs its own copy of the template, so a breakdown can arrive from one that
  * predates the #981 fix and forwards the SDK's session-cumulative `modelUsage` as though
@@ -237,6 +284,12 @@ function priceSlices(
  *
  * Only fires on evidence: when no slice can be identified as the primary one, the
  * breakdown is trusted as before.
+ *
+ * Its premise fails for Task subagents: the SDK files an `inherit` subagent under the main
+ * loop's key while `usage` excludes it, so every subagent turn trips this and is priced on
+ * the aggregate, dropping the subagent's cost (#984). Templates that send `main_model`
+ * difference the counter themselves and skip this check; minds still on an older template
+ * undercount their subagents until `volute mind upgrade`.
  */
 function slicesDescribeThisTurn(slices: ModelSlice[], ref: ModelRef, aggregate: UsageTokens) {
   const primary =
@@ -309,6 +362,7 @@ export function priceUsageMetadata(
     output: num(metadata.output_tokens) ?? 0,
     cacheRead,
     cacheCreation,
+    cacheCreation1h: num(metadata.cache_creation_1h_input_tokens),
   };
 
   // Prefer the per-model breakdown: a turn spanning a main model and a cheaper side-call
@@ -316,7 +370,29 @@ export function priceUsageMetadata(
   // isn't this turn's, in which case the aggregate below is the ground truth we still
   // have — an undercount by whatever the side-calls used, rather than an overcount by the
   // whole stream.
-  if (slices) {
+  // A `main_model` marks a breakdown the template already differenced to this turn, and
+  // names the slice the main loop — and so the 1-hour writes — belongs to (#984).
+  const mainModel = typeof metadata.main_model === "string" ? metadata.main_model : undefined;
+  let aggregateRef = ref;
+  if (slices && mainModel) {
+    const main = findMainSlice(slices, mainModel);
+    if (main) {
+      result.cost_usd = priceSlices(slices, ctx, main, tokens.cacheCreation1h);
+      return result;
+    }
+    // The subagents can't be separated from the main loop without knowing which slice is
+    // which, so price only what can be: the main loop's own aggregate, 1h split included.
+    plog.warn(
+      `${ctx.mind ? `${ctx.mind}: ` : ""}main_model ${mainModel} matches no per-model slice ` +
+        `(${slices.map((s) => s.model).join(", ")}) — pricing the main loop's aggregate; ` +
+        "this turn's subagents and side-calls go uncounted.",
+    );
+    // At the main loop's rates when they resolve: `model` is the dominant label, which a
+    // subagent can hold. When they don't, the label is still the better guess than nothing.
+    const parsed = parseModelRef(mainModel, ctx.template);
+    const mainRef = parsed && (parsed.provider ? parsed : { ...parsed, provider: ref.provider });
+    if (mainRef && lookupRates(mainRef)) aggregateRef = mainRef;
+  } else if (slices) {
     if (slicesDescribeThisTurn(slices, ref, tokens)) {
       result.cost_usd = priceSlices(slices, ctx);
       return result;
@@ -328,9 +404,11 @@ export function priceUsageMetadata(
     );
   }
 
-  const rates = lookupRates(ref);
+  // Stamp the model the turn is actually priced against.
+  result.model = formatModelRef(aggregateRef);
+  const rates = lookupRates(aggregateRef);
   if (!rates) {
-    plog.warn(`no pricing for ${result.model} — recording tokens without cost`);
+    plog.warn(`no pricing for ${formatModelRef(aggregateRef)} — recording tokens without cost`);
     return result;
   }
   result.cost_usd = costOf(rates, tokens);

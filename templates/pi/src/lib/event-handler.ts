@@ -17,6 +17,8 @@ type AgentEndMessage = {
     input?: number;
     output?: number;
     cacheWrite?: number;
+    /** The part of `cacheWrite` with a 1-hour TTL — set by pi-ai's Anthropic provider only. */
+    cacheWrite1h?: number;
     cache_creation?: number;
     cacheRead?: number;
     cache_read?: number;
@@ -194,6 +196,9 @@ export function createEventHandler(session: EventSession, options: EventHandlerO
           let outputTokens = 0;
           let cacheReadTokens = 0;
           let cacheCreationTokens = 0;
+          // Undefined until a message reports the split: absent, the daemon prices every
+          // write at the catalog's 5-minute rate, which is pi-ai's default retention.
+          let cacheCreation1hTokens: number | undefined;
           let lastInputTokens = 0;
           // The last assistant message names the model that finished the turn. A turn can
           // in principle span models (a subagent on another one); we price the whole turn
@@ -206,6 +211,9 @@ export function createEventHandler(session: EventSession, options: EventHandlerO
               const cacheWrite = msg.usage.cacheWrite ?? msg.usage.cache_creation ?? 0;
               const cacheRead = msg.usage.cacheRead ?? msg.usage.cache_read ?? 0;
               cacheCreationTokens += cacheWrite;
+              if (msg.usage.cacheWrite1h !== undefined) {
+                cacheCreation1hTokens = (cacheCreation1hTokens ?? 0) + msg.usage.cacheWrite1h;
+              }
               cacheReadTokens += cacheRead;
               const contextTokens = (msg.usage.input ?? 0) + cacheWrite + cacheRead;
               if (contextTokens) lastInputTokens = contextTokens;
@@ -218,6 +226,9 @@ export function createEventHandler(session: EventSession, options: EventHandlerO
               output_tokens: outputTokens,
               cache_read_input_tokens: cacheReadTokens,
               cache_creation_input_tokens: cacheCreationTokens,
+              ...(cacheCreation1hTokens !== undefined && {
+                cache_creation_1h_input_tokens: cacheCreation1hTokens,
+              }),
               model,
             };
             options.broadcast({ type: "usage", ...usage });

@@ -33,6 +33,7 @@ import { DEFAULT_SEED_TOKENS, rotateSession, seedSession } from "./lib/session-s
 import { createSessionStore, lostRealContext } from "./lib/session-store.js";
 import type { EffortLevel, SubagentConfig, ThinkingConfig } from "./lib/startup.js";
 import { consumeStream, type MessageIdEntry } from "./lib/stream-consumer.js";
+import { defaultSubagentModel } from "./lib/subagent-model.js";
 import type {
   HandlerMeta,
   HandlerResolver,
@@ -140,11 +141,13 @@ export function createMind(options: {
 
   // --- Subagents (config-driven) ---
 
+  const subagentModel = defaultSubagentModel(options.model);
+
   type SDKAgent = {
     description: string;
     prompt: string;
     tools: string[];
-    model: "inherit";
+    model: string;
     maxTurns?: number;
   };
 
@@ -168,7 +171,7 @@ export function createMind(options: {
           description: config.description,
           prompt,
           tools: config.tools ?? ["Read", "Write", "Bash"],
-          model: "inherit" as const,
+          model: config.model ?? subagentModel,
           maxTurns: config.maxTurns,
         };
       } catch (err: any) {
@@ -192,7 +195,15 @@ export function createMind(options: {
   // explicit skills array grants the Skill tool for each installed skill — the
   // SDK silently drops the documented `skills: 'all'` string form.
   const mindHome = resolvePath(options.cwd);
-  const sdkEnv = { ...process.env, HOME: mindHome };
+  // CLAUDE_CODE_SUBAGENT_MODEL is the model the SDK's built-in agents (general-purpose)
+  // run on — they have none of their own and otherwise inherit the mind's, so it is only
+  // set when the default is something else. A mind's own setting of it wins.
+  const sdkEnv = {
+    ...process.env,
+    HOME: mindHome,
+    ...(subagentModel !== "inherit" &&
+      !process.env.CLAUDE_CODE_SUBAGENT_MODEL && { CLAUDE_CODE_SUBAGENT_MODEL: subagentModel }),
+  };
   function installedSkills(): string[] | undefined {
     const names = readSkillDescriptions([resolvePath(mindHome, ".claude/skills")]).map(
       (s) => s.name,

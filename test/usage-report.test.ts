@@ -149,6 +149,35 @@ describe("usageReport", () => {
     assert.equal(rowA.unpricedTurns, 0);
   });
 
+  it("counts a marked turn's subagents in its token totals, as its cost does", async () => {
+    // `usage` is the main loop's alone; a turn marked with main_model was priced on its
+    // per-model slices, subagents included (#984). An unmarked turn's slices may be an old
+    // template's running total (#981), so it keeps the aggregate.
+    const mind = `usage-slices-${Date.now()}`;
+    const slice = (model: string, n: number) => ({
+      model,
+      input_tokens: n,
+      output_tokens: n,
+      cache_read_input_tokens: n,
+      cache_creation_input_tokens: n,
+    });
+    const models = [slice("claude-opus-4-6", 100), slice("claude-sonnet-5", 1_000)];
+    await seed([
+      {
+        mind,
+        at: NOW - 60_000,
+        metadata: { ...priced(0.1), main_model: "claude-opus-4-6", models },
+      },
+      { mind, at: NOW - 60_000, metadata: { ...priced(0.1), models } },
+    ]);
+
+    const [row] = (await usageReport({ window: "24h", mind, now: NOW })).minds;
+    assert.equal(row.inputTokens, 1_100 + 100);
+    assert.equal(row.outputTokens, 1_100 + 50);
+    assert.equal(row.cacheReadTokens, 1_100 + 800);
+    assert.equal(row.cacheCreationTokens, 1_100 + 100);
+  });
+
   it("counts only usage rows", async () => {
     const mind = `usage-types-${Date.now()}`;
     await seed([

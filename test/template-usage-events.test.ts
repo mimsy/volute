@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { composeTemplate } from "../packages/daemon/src/lib/template/template.js";
 import type { UsageByModel } from "../templates/_base/src/lib/types.js";
 import {
+  advanceBaseline,
   buildUsagePayload,
   dominantModel,
   usageByModel,
@@ -222,6 +223,39 @@ describe("claude template usage", () => {
       cache_read_input_tokens: 900,
       cache_creation_input_tokens: 0,
     });
+  });
+
+  it("treats a drop in any counter as a reset, even when output has grown past the old", () => {
+    // A /clear mid-stream: the new accumulator's output already exceeds the old one's, but
+    // its cache reads don't. Testing output alone kept the stale baseline and undercounted.
+    const slices = usageByModel(
+      { "claude-opus-4-6": { inputTokens: 40, outputTokens: 400, cacheReadInputTokens: 900 } },
+      { "claude-opus-4-6": { inputTokens: 30, outputTokens: 300, cacheReadInputTokens: 50_000 } },
+    );
+    assert.deepEqual(slices?.[0], {
+      model: "claude-opus-4-6",
+      input_tokens: 40,
+      output_tokens: 400,
+      cache_read_input_tokens: 900,
+      cache_creation_input_tokens: 0,
+    });
+  });
+
+  it("carries the baseline forward per model", () => {
+    const main = { inputTokens: 10, outputTokens: 200, cacheReadInputTokens: 5_000 };
+    const side = { inputTokens: 899, outputTokens: 9 };
+    // A result that lists only a side-call must not wipe the main loop's baseline — the
+    // next turn would bill the whole stream (#981).
+    assert.deepEqual(advanceBaseline({ "claude-opus-4-6": main }, { "claude-haiku-4-5": side }), {
+      "claude-opus-4-6": main,
+      "claude-haiku-4-5": side,
+    });
+    // Nor a zeroed crash result, entries or none.
+    const zero = { inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0 };
+    assert.deepEqual(advanceBaseline({ "claude-opus-4-6": main }, { "claude-opus-4-6": zero }), {
+      "claude-opus-4-6": main,
+    });
+    assert.deepEqual(advanceBaseline({ "claude-opus-4-6": main }, {}), { "claude-opus-4-6": main });
   });
 
   it("drops a model that consumed nothing on this turn", () => {
@@ -554,6 +588,144 @@ describe("claude template: consecutive turns in one stream", () => {
         cache_read_input_tokens: 274_273,
         cache_creation_input_tokens: 1_998,
       },
+    ]);
+  });
+
+  it("carries a Task subagent's share, the main model, and the 1h split; a zeroed result keeps the baseline", async () => {
+    // Recorded from a real SDK run (0.3.270): haiku main loop, an `inherit` subagent on
+    // turn 2. The subagent's tokens land under the main loop's key in `modelUsage` and are
+    // absent from `usage` (#984); its 5420 cache-write tokens are 5-minute, the main
+    // loop's 1074 are 1-hour. The dated key is an internal side-call from turn 1.
+    const sideCall = {
+      inputTokens: 899,
+      outputTokens: 9,
+      cacheReadInputTokens: 0,
+      cacheCreationInputTokens: 0,
+    };
+    const messages = [
+      { type: "system", subtype: "init", model: "claude-haiku-4-5" },
+      {
+        type: "result",
+        subtype: "success",
+        usage: {
+          input_tokens: 10,
+          output_tokens: 197,
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 21_569,
+          cache_creation: { ephemeral_1h_input_tokens: 21_569, ephemeral_5m_input_tokens: 0 },
+        },
+        modelUsage: {
+          "claude-haiku-4-5-20251001": sideCall,
+          "claude-haiku-4-5": {
+            inputTokens: 10,
+            outputTokens: 197,
+            cacheReadInputTokens: 0,
+            cacheCreationInputTokens: 21_569,
+          },
+        },
+      },
+      { type: "system", subtype: "init", model: "claude-haiku-4-5" },
+      {
+        type: "result",
+        subtype: "success",
+        usage: {
+          input_tokens: 18,
+          output_tokens: 582,
+          cache_read_input_tokens: 43_408,
+          cache_creation_input_tokens: 1_074,
+          cache_creation: { ephemeral_1h_input_tokens: 1_074, ephemeral_5m_input_tokens: 0 },
+        },
+        modelUsage: {
+          "claude-haiku-4-5-20251001": sideCall,
+          "claude-haiku-4-5": {
+            inputTokens: 38,
+            outputTokens: 927,
+            cacheReadInputTokens: 43_408,
+            cacheCreationInputTokens: 28_063,
+          },
+        },
+      },
+      // A crash result with zeroed counters. Adopted as the baseline, it would bill the
+      // next turn for the whole stream.
+      {
+        type: "result",
+        subtype: "error_during_execution",
+        usage: {
+          input_tokens: 0,
+          output_tokens: 0,
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 0,
+        },
+        modelUsage: {},
+      },
+      {
+        type: "result",
+        subtype: "success",
+        usage: {
+          input_tokens: 10,
+          output_tokens: 73,
+          cache_read_input_tokens: 16_592,
+          cache_creation_input_tokens: 437,
+          cache_creation: { ephemeral_1h_input_tokens: 437, ephemeral_5m_input_tokens: 0 },
+        },
+        modelUsage: {
+          "claude-haiku-4-5-20251001": sideCall,
+          "claude-haiku-4-5": {
+            inputTokens: 48,
+            outputTokens: 1_000,
+            cacheReadInputTokens: 60_000,
+            cacheCreationInputTokens: 28_500,
+          },
+        },
+      },
+    ];
+    const emitted: Record<string, unknown>[] = [];
+    async function* stream() {
+      yield* messages;
+    }
+    await consumeStream(
+      stream() as never,
+      {
+        name: "main",
+        messageIds: [],
+        currentMessageId: undefined,
+        currentSeq: undefined,
+        messageChannels: new Map(),
+      },
+      {
+        broadcast: (event: { type: string }) => {
+          if (event.type === "usage") emitted.push(event);
+        },
+        ack: () => {},
+      } as never,
+    );
+
+    const { type: _, ...turn2 } = emitted[1] as { type: string };
+    assert.deepEqual(turn2, {
+      input_tokens: 18,
+      output_tokens: 582,
+      cache_read_input_tokens: 43_408,
+      cache_creation_input_tokens: 1_074,
+      cache_creation_1h_input_tokens: 1_074,
+      main_model: "claude-haiku-4-5",
+      model: "claude-haiku-4-5",
+      models: [
+        slice("claude-haiku-4-5", {
+          input_tokens: 28,
+          output_tokens: 730,
+          cache_read_input_tokens: 43_408,
+          cache_creation_input_tokens: 6_494,
+        }),
+      ],
+    });
+    // The turn after the crash is differenced against turn 2, not against zero.
+    assert.deepEqual((emitted.at(-1) as { models: UsageByModel[] }).models, [
+      slice("claude-haiku-4-5", {
+        input_tokens: 10,
+        output_tokens: 73,
+        cache_read_input_tokens: 16_592,
+        cache_creation_input_tokens: 437,
+      }),
     ]);
   });
 });
