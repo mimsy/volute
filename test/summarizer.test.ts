@@ -1636,38 +1636,6 @@ describe("summarizer", () => {
         rmSync(mindDir(mind), { recursive: true, force: true });
       }
     });
-
-    it("does not include SOUL.md for hour rollups", async () => {
-      const mind = "label-hour-nosoul-mind";
-      const soulDir = join(mindDir(mind), "home");
-      mkdirSync(soulDir, { recursive: true });
-      writeFileSync(join(soulDir, "SOUL.md"), "SECRET SOUL MARKER");
-      try {
-        await insertSummary(
-          mind,
-          "turn",
-          "turn-a",
-          "I did one thing.",
-          utcFmt(new Date("2026-03-22T15:05:00")),
-        );
-        await insertSummary(
-          mind,
-          "turn",
-          "turn-b",
-          "I did another.",
-          utcFmt(new Date("2026-03-22T15:20:00")),
-        );
-
-        const { calls, complete } = capture();
-        await summarizePeriod(mind, "hour", "2026-03-22T15", complete);
-        assert.ok(
-          !calls[0].system.includes("SECRET SOUL MARKER"),
-          "hour rollup must not include SOUL.md",
-        );
-      } finally {
-        rmSync(mindDir(mind), { recursive: true, force: true });
-      }
-    });
   });
 
   describe("reconcileWedgedTurns", () => {

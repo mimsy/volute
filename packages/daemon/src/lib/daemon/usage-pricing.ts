@@ -445,3 +445,18 @@ export async function mindPricingContext(
   }
   return { mind, template, configuredModel };
 }
+
+/**
+ * The model a mind thinks with, as `provider:id` (or a bare id when the provider can't be
+ * told), with the SDK's `[1m]` context suffix dropped — the model its consolidated memories
+ * are written by. Null when neither its config nor its template names one.
+ */
+export async function mindModelId(mind: string): Promise<string | null> {
+  const { template, configuredModel } = await mindPricingContext(mind);
+  const ref = parseModelRef(
+    configuredModel ?? (template ? TEMPLATE_DEFAULT_MODEL[template] : undefined),
+    template,
+  );
+  if (!ref) return null;
+  return formatModelRef({ ...ref, id: ref.id.replace(/\[1m\]$/i, "") });
+}

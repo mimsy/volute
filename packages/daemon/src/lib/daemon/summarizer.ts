@@ -1,11 +1,8 @@
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
-import { and, desc, eq, gte, inArray, like, lt, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, like, lt, or, sql } from "drizzle-orm";
 import { aiCompleteUtility, aiCompleteUtilityOutcome, getUtilityModel } from "../ai-service.js";
 import { getUserByUsername } from "../auth.js";
 import { getDb } from "../db.js";
 import { publish as publishMindEvent } from "../events/mind-events.js";
-import { resolveMindDir } from "../mind/registry.js";
 import { getPrompt } from "../prompts.js";
 import { messages, mindHistory, summaries, turns } from "../schema.js";
 import { summarizeTool } from "../util/format-tool.js";
@@ -14,11 +11,21 @@ import {
   getPeriodKey,
   getPreviousPeriodKey,
   getTimeRange,
+  getUtcTimeRange,
   parseUtcDateTime,
   type TimerPeriod,
   utcDateTimeStr,
 } from "../util/period-keys.js";
 import { parseDbTimestamp } from "../util/time.js";
+import {
+  boundEntries,
+  type Complete,
+  completeAsMind,
+  gatherOwnWords,
+  gatherWritings,
+  RECORD_MAX_CHARS,
+  readMindSoul,
+} from "./consolidation.js";
 
 const sLog = log.child("summarizer");
 
@@ -37,6 +44,9 @@ export const SYSTEM_MIND = "_system";
  * turn must look before we step in.
  */
 const WEDGED_TURN_IDLE_MS = 15 * 60_000;
+
+/** A tick running longer than this is presumed stuck, and the next one runs anyway. */
+export const TICK_STALE_MS = 30 * 60_000;
 
 // ── Turn summarization (event-driven) ──
 
@@ -689,7 +699,17 @@ function getScopeInstruction(mind: string): string {
   if (mind === SYSTEM_MIND) {
     return 'Write in third person, describing what the minds in the system did (e.g. "Alice explored...", "The system saw activity in..."). Reference minds by name.';
   }
-  return 'Write in first person as the mind who performed the actions (e.g. "I explored...", "I worked on...").';
+  // A mind's rollups are its own memory of the period, not a report about it — they are what it
+  // wakes into. Hence: its voice, no hindsight, nothing the record doesn't show, and other people
+  // kept distinct from "I".
+  return (
+    `You are ${mind}, remembering. Write in the first person, as ${mind}'s own memory of this period — not a report about ${mind}. ` +
+    "Write it as it would have been remembered at the end of the period: no hindsight, nothing from after it. " +
+    "Stay anchored to what actually happened in the material below; don't invent events, feelings, or continuity it doesn't show. " +
+    `When other people or minds appear, name them and attribute their words and actions to them — never fold someone else's statements into "I". Never address anyone as "you". ` +
+    `After the entries, the input may carry ${mind}'s own words from the period, verbatim ("[said HH:MM on <channel>]"), and what ${mind} wrote in its journal or dreams ("[journal <date>]", "[dream <file>]"). ` +
+    "Those are the truest trace of your voice: let them shape how the memory sounds, without quoting them at length."
+  );
 }
 
 // ── Deterministic fallback bounding & provisional retry ──
@@ -837,8 +857,17 @@ function parseMeta(raw: string | null): Record<string, unknown> {
  * `first_attempt_at`) are treated as fresh, so upgrades heal them.
  */
 function shouldRetry(period: TimerPeriod, meta: Record<string, unknown>): boolean {
-  if (period !== "week" && period !== "month") return false;
+  // The mind's own account of a period is never regenerated over.
+  if (meta.author === "mind") return false;
+  // Written from a child's placeholder text that has since been healed.
+  if (meta.rebuild === true) return true;
   if (meta.deterministic !== true) return false;
+  // Deferred while over the spend cap: due whenever the cap allows, with no window or budget.
+  if (meta.deferred === true) return true;
+  // An hour or day is retried only after a real failure (a 429, an outage) — tracked rows. The
+  // untracked deterministic hours of a basic-mode install are its record, not a backlog to bill
+  // the moment a model is configured.
+  if ((period === "hour" || period === "day") && typeof meta.attempts !== "number") return false;
   const attempts = typeof meta.attempts === "number" ? meta.attempts : 0;
   if (attempts >= PROVISIONAL_MAX_ATTEMPTS) return false;
   const first = typeof meta.first_attempt_at === "string" ? Date.parse(meta.first_attempt_at) : NaN;
@@ -972,27 +1001,41 @@ async function gatherChildSummaries(
 }
 
 /**
- * Read a mind's SOUL.md for use as voice/perspective context in its week/month rollups, capped
- * so a pathological file can't blow up the AI call. Missing or unreadable → "".
+ * A per-mind rollup: the mind's own first-person memory of the period, written by its own model
+ * (see consolidation.ts) from the period's child summaries, its own outbound words, and its
+ * journal and dreams. `complete` defaults to that; tests inject their own.
  */
-const SOUL_MAX_CHARS = 8000;
-
-async function readMindSoul(mind: string): Promise<string> {
-  try {
-    const dir = await resolveMindDir(mind);
-    const soul = await readFile(join(dir, "home", "SOUL.md"), "utf8");
-    return soul.length > SOUL_MAX_CHARS ? soul.slice(0, SOUL_MAX_CHARS) : soul;
-  } catch {
-    return "";
-  }
-}
-
-export async function summarizePeriod(
+export function summarizePeriod(
   mind: string,
   period: TimerPeriod,
   periodKey: string,
-  complete: typeof aiCompleteUtilityOutcome = aiCompleteUtilityOutcome,
+  complete: Complete = (system, user) => completeAsMind(mind, system, user),
 ): Promise<boolean> {
+  // One writer per period: a second caller (the tick's catch-up and the reconcile sweep can reach
+  // the same period) joins the call in flight instead of paying for it twice.
+  const key = `${mind}|${period}|${periodKey}`;
+  const running = inFlight.get(key);
+  if (running) return running;
+  const p = summarizePeriodOnce(mind, period, periodKey, complete).finally(() =>
+    inFlight.delete(key),
+  );
+  inFlight.set(key, p);
+  return p;
+}
+
+const inFlight = new Map<string, Promise<boolean>>();
+
+async function summarizePeriodOnce(
+  mind: string,
+  period: TimerPeriod,
+  periodKey: string,
+  complete: Complete,
+): Promise<boolean> {
+  // A period still in progress has no memory yet — writing one now would freeze a partial
+  // account that the rollover then never replaces.
+  if (parseUtcDateTime(getUtcTimeRange(periodKey, period).end).getTime() > Date.now()) {
+    return false;
+  }
   const db = await getDb();
   const existing = await db
     .select({ id: summaries.id, metadata: summaries.metadata })
@@ -1012,11 +1055,14 @@ export async function summarizePeriod(
   const sources = await gatherChildSummaries(mind, period, periodKey);
   if (sources.texts.length === 0) return false;
 
-  // If there's only one child summary, promote it directly instead of
-  // generating a redundant wrapper. E.g. an hour with one turn doesn't
-  // need a separate hourly summary — the turn summary *is* the hourly summary.
-  // (Only for fresh summaries; a provisional retry falls through to the AI path.)
-  if (!existing && sources.texts.length === 1) {
+  const ownWords = await gatherOwnWords(mind, period, periodKey);
+  const writings = await gatherWritings(mind, period, periodKey);
+
+  // If there's only one child summary and nothing of the mind's own words to add, promote it
+  // directly instead of generating a redundant wrapper — e.g. a day with one active hour: that
+  // hour's memory *is* the day's. With its own words in play, a single turn still gets written
+  // in the mind's voice. (Only for fresh summaries; a provisional retry takes the AI path.)
+  if (!existing && sources.texts.length === 1 && !ownWords && !writings) {
     try {
       await db
         .insert(summaries)
@@ -1026,6 +1072,7 @@ export async function summarizePeriod(
           period_key: periodKey,
           content: sources.texts[0],
           metadata: JSON.stringify({
+            author: "consolidation",
             deterministic: false,
             promoted: true,
             source_count: 1,
@@ -1046,28 +1093,26 @@ export async function summarizePeriod(
 
   const entries: ChildEntry[] = sources.texts.map((text, i) => ({ key: sources.keys[i], text }));
   const promptKey = `meta_summary_${period}` as const;
-  const scopeInstruction = getScopeInstruction(mind);
-  let systemPrompt = await getPrompt(promptKey, { scope_instruction: scopeInstruction });
-  // Week/month per-mind rollups get the mind's SOUL.md as voice/perspective context, so the
-  // reflective summary sounds like the mind rather than a neutral narrator. Hour/day, turn, and
-  // _system summaries do not — this is the mind's own long-arc self-narrative.
-  if (period === "week" || period === "month") {
-    const soul = await readMindSoul(mind);
-    if (soul.trim()) {
-      systemPrompt = `${systemPrompt}\n\nFor voice and perspective, this is the mind's own self-description (SOUL.md):\n\n${soul.trim()}`;
-    }
-  }
+  const instruction = await getPrompt(promptKey, { scope_instruction: getScopeInstruction(mind) });
+  // The mind's SOUL.md leads the system prompt, so the memory is written from inside who the
+  // mind is rather than by a narrator describing it.
+  const soul = (await readMindSoul(mind)).trim();
+  const systemPrompt = soul ? `${soul}\n\n---\n\n${instruction}` : instruction;
   // Prefix each child with its temporal label so the model can order events in time. The label
   // convention is documented in the meta_summary prompts, which also tell the model not to echo
   // the brackets.
-  const userMessage = sources.texts
-    .map((text, i) => `[${sources.labels[i]}] ${text}`)
-    .join("\n\n---\n\n");
+  const record = boundEntries(
+    sources.texts.map((text, i) => `[${sources.labels[i]}] ${text}`),
+    RECORD_MAX_CHARS,
+    "\n\n---\n\n",
+  );
+  const userMessage = [record, ownWords, writings].filter(Boolean).join("\n\n===\n\n");
 
   let content: string;
   let deterministic: boolean;
 
   const metadata: Record<string, unknown> = {
+    author: "consolidation",
     source_count: sources.texts.length,
     source_ids: sources.sourceIds,
   };
@@ -1076,6 +1121,9 @@ export async function summarizePeriod(
   if (outcome.status === "ok") {
     content = outcome.text;
     deterministic = false;
+    if (outcome.model) metadata.model = outcome.model;
+    if (outcome.fallback) metadata.model_fallback = true;
+    if (outcome.costUsd !== undefined) metadata.cost_usd = outcome.costUsd;
   } else {
     content = buildPeriodicDeterministicSummary(entries, period, periodKey);
     deterministic = true;
@@ -1083,9 +1131,11 @@ export async function summarizePeriod(
     // nothing to fail, and the budget is sized for outages (5 attempts across 7 days): counting a
     // steady state against it would exhaust it inside the window and scar the row permanently, so
     // configuring a model later could never heal it (#381). An untracked row stays retry-eligible.
-    if ((period === "week" || period === "month") && outcome.status === "failed") {
-      trackProvisionalAttempt(metadata, existingMeta);
-    }
+    if (outcome.status === "failed") trackProvisionalAttempt(metadata, existingMeta);
+    // Over the spend cap: the placeholder stands (so the period isn't missing — `_system` still
+    // sees the mind) and the repair sweep writes the real memory once the cap resets, however
+    // long that takes. No attempt is spent; nothing was tried.
+    if (outcome.status === "deferred") metadata.deferred = true;
   }
   metadata.deterministic = deterministic;
 
@@ -1115,10 +1165,66 @@ export async function summarizePeriod(
     return false;
   }
 
+  // A healed memory has to reach the rollups that were written from its placeholder text.
+  if (existing && !deterministic && existingMeta?.deterministic === true) {
+    await markParentsForRebuild(mind, period, periodKey, existing.id);
+  }
+
   sLog.info(
     `generated ${period} summary for ${mind} (${periodKey})${deterministic ? " [deterministic]" : ""}`,
   );
   return true;
+}
+
+/**
+ * Flag the rollups above a just-healed period for rebuilding: the day above an hour, the week
+ * and month above a day — each only if it was built from the healed row (its `source_ids`) and
+ * isn't the mind's own account. The repair sweep rebuilds flagged rows (see shouldRetry).
+ */
+async function markParentsForRebuild(
+  mind: string,
+  period: TimerPeriod,
+  periodKey: string,
+  childId: number,
+): Promise<void> {
+  const parents: { period: TimerPeriod; key: string }[] =
+    period === "hour"
+      ? [{ period: "day", key: periodKey.slice(0, 10) }]
+      : period === "day"
+        ? [
+            { period: "week", key: getPeriodKey(new Date(`${periodKey}T00:00:00`), "week") },
+            { period: "month", key: periodKey.slice(0, 7) },
+          ]
+        : [];
+  const db = await getDb();
+  for (const parent of parents) {
+    try {
+      const row = await db
+        .select({ id: summaries.id, metadata: summaries.metadata })
+        .from(summaries)
+        .where(
+          and(
+            eq(summaries.mind, mind),
+            eq(summaries.period, parent.period),
+            eq(summaries.period_key, parent.key),
+          ),
+        )
+        .get();
+      if (!row) continue;
+      const meta = parseMeta(row.metadata);
+      const sources = Array.isArray(meta.source_ids) ? meta.source_ids : [];
+      if (meta.author === "mind" || !sources.includes(childId)) continue;
+      await db
+        .update(summaries)
+        .set({ metadata: JSON.stringify({ ...meta, rebuild: true }) })
+        .where(eq(summaries.id, row.id));
+    } catch (err) {
+      sLog.error(
+        `failed to flag ${parent.period} ${parent.key} of ${mind} for rebuild`,
+        log.errorData(err),
+      );
+    }
+  }
 }
 
 // ── System-level summaries ──
@@ -1126,7 +1232,7 @@ export async function summarizePeriod(
 export async function summarizeSystem(
   period: TimerPeriod,
   periodKey: string,
-  complete: typeof aiCompleteUtilityOutcome = aiCompleteUtilityOutcome,
+  complete: Complete = aiCompleteUtilityOutcome,
 ): Promise<void> {
   const db = await getDb();
   const existing = await db
@@ -1217,16 +1323,14 @@ export async function summarizeSystem(
 }
 
 /**
- * Retry provisional (deterministic) week/month summaries that the tick guards would otherwise
- * skip. Per-mind summaries are healed before `_system` so the rollup sees the improved children.
+ * Retry provisional (deterministic) summaries that the tick guards would otherwise skip: every
+ * week/month, and an hour/day whose AI call failed. Per-mind summaries are healed before `_system` so the rollup sees the improved children.
  */
-export async function repairProvisionalSummaries(
-  complete: typeof aiCompleteUtilityOutcome = aiCompleteUtilityOutcome,
-): Promise<void> {
+export async function repairProvisionalSummaries(complete?: Complete): Promise<void> {
   // Nothing to heal with, and this sweep runs every tick: scanning and re-prompting every
   // provisional row only to be told "unconfigured" is pure waste. Rows stay retry-eligible
   // (no attempt is spent), so the first sweep after a model is configured picks them all up.
-  if (complete === aiCompleteUtilityOutcome && !getUtilityModel()) return;
+  if (!complete && !getUtilityModel()) return;
   const db = await getDb();
   const rows = await db
     .select({
@@ -1236,15 +1340,31 @@ export async function repairProvisionalSummaries(
       metadata: summaries.metadata,
     })
     .from(summaries)
-    .where(inArray(summaries.period, ["week", "month"]));
+    .where(
+      and(
+        inArray(summaries.period, ["hour", "day", "week", "month"]),
+        or(
+          like(summaries.metadata, '%"deterministic":true%'),
+          like(summaries.metadata, '%"rebuild":true%'),
+        ),
+      ),
+    );
   const due = rows.filter((r) => shouldRetry(r.period as TimerPeriod, parseMeta(r.metadata)));
-  due.sort((a, b) => (a.mind === SYSTEM_MIND ? 1 : 0) - (b.mind === SYSTEM_MIND ? 1 : 0));
+  // Finer periods first, and per-mind before `_system`, so each rollup sees healed children.
+  const rank: Record<string, number> = { hour: 0, day: 1, week: 2, month: 3 };
+  due.sort(
+    (a, b) =>
+      (a.mind === SYSTEM_MIND ? 1 : 0) - (b.mind === SYSTEM_MIND ? 1 : 0) ||
+      rank[a.period] - rank[b.period],
+  );
   for (const r of due) {
     try {
       if (r.mind === SYSTEM_MIND) {
         await summarizeSystem(r.period as TimerPeriod, r.period_key, complete);
-      } else {
+      } else if (complete) {
         await summarizePeriod(r.mind, r.period as TimerPeriod, r.period_key, complete);
+      } else {
+        await summarizePeriod(r.mind, r.period as TimerPeriod, r.period_key);
       }
     } catch (err) {
       sLog.error(
@@ -1589,7 +1709,23 @@ export class Summarizer {
     }
   }
 
-  private async tick(): Promise<void> {
+  /** When the running tick started; null when none is running. */
+  private tickStartedAt: number | null = null;
+
+  async tick(): Promise<void> {
+    // Consolidation calls run one at a time; a catch-up after downtime can outlast the 5-minute
+    // interval, and an overlapping tick would start the same backlog again in parallel. Every
+    // completion has a deadline, but should a tick wedge anyway, a stale one stops blocking —
+    // one stuck await must not end summarization (and wedged-turn repair) until a restart.
+    const now = Date.now();
+    if (this.tickStartedAt !== null) {
+      if (now - this.tickStartedAt < TICK_STALE_MS) return;
+      sLog.warn(
+        `previous tick has run ${Math.round((now - this.tickStartedAt) / 60_000)} min; starting anew`,
+      );
+    }
+    const startedAt = now;
+    this.tickStartedAt = startedAt;
     try {
       if (!this.hasBackfilled) {
         await backfill();
@@ -1626,10 +1762,13 @@ export class Summarizer {
         await processMonth(prevMonthKey);
       }
 
-      // Re-attempt provisional (deterministic) week/month summaries the guards above skip.
+      // Re-attempt provisional (deterministic) summaries the guards above skip.
       await repairProvisionalSummaries();
     } catch (err) {
       sLog.error("tick failed", log.errorData(err));
+    } finally {
+      // A stale tick finishing late must not clear the guard of the tick that replaced it.
+      if (this.tickStartedAt === startedAt) this.tickStartedAt = null;
     }
   }
 }
