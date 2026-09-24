@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import {
   cpSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   readdirSync,
   readFileSync,
@@ -14,8 +15,9 @@ import { basename, dirname, join, resolve } from "node:path";
 import { eq, sql } from "drizzle-orm";
 import { readGlobalConfig, writeGlobalConfig } from "./config/setup.js";
 import { getDb } from "./db.js";
+import { readInitLedgerFile, writeLedgerFile } from "./mind/init-ledger.js";
 import { chownMindDir } from "./mind/isolation.js";
-import { mindDir, readRegistry, voluteHome } from "./mind/registry.js";
+import { mindDir, readRegistry, stateDir, voluteHome } from "./mind/registry.js";
 import { sharedSkills } from "./schema.js";
 import { exec, gitExec } from "./util/exec.js";
 import log from "./util/logger.js";
@@ -332,7 +334,7 @@ export type InstallResult = {
 };
 
 export async function installSkill(
-  _mindName: string,
+  mindName: string,
   dir: string,
   skillId: string,
 ): Promise<InstallResult> {
@@ -368,8 +370,9 @@ export async function installSkill(
       }
     }
     try {
-      installHookShims(dir, skillId, hooks);
-      if (bin) installBinShim(dir, skillId, bin);
+      // An explicit install gives every shim, even one a previous install of
+      // this skill gave and the mind then deleted.
+      reconcileSkillShims(mindName, dir, skillId, { hooks, bin }, { restoreDeleted: true });
     } catch (e) {
       // Clean up partial install (copied dir + any hook shims) so a failure
       // here — e.g. a bin-shim collision with another skill — doesn't leave
@@ -450,7 +453,7 @@ export type UpdateResult =
   | { status: "conflict"; conflictFiles: string[] };
 
 export async function updateSkill(
-  _mindName: string,
+  mindName: string,
   dir: string,
   skillId: string,
 ): Promise<UpdateResult> {
@@ -471,22 +474,9 @@ export async function updateSkill(
   const sourceDir = join(sharedSkillsDir(), upstream.source);
   if (!existsSync(sourceDir)) throw new Error(`Shared skill files missing: ${upstream.source}`);
 
-  // An update rewires the skill the way installSkill does — otherwise a mind that
-  // installed a skill before hooks (#228) or bins (#231) existed keeps the files
-  // but none of the shims or npm deps they rely on. What can fail (a bin collision,
-  // npm) runs here, before the merge touches the skill dir.
-  const oldBin = readSkillMd(skillDir)?.bin ?? null;
-  const incoming = readSkillMd(sourceDir);
-  if (incoming?.bin) assertBinShimAvailable(dir, skillId, incoming.bin);
-  const npmDependencies = incoming?.npmDependencies ?? [];
-  if (npmDependencies.length > 0) {
-    try {
-      await exec("npm", ["install", ...npmDependencies], { cwd: dir });
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      throw new Error(`Failed to install npm dependencies (${npmDependencies.join(", ")}): ${msg}`);
-    }
-  }
+  // A bin collision is refused before the merge touches the skill dir.
+  const incomingBin = readSkillMd(sourceDir)?.bin;
+  if (incomingBin) assertBinShimAvailable(dir, skillId, incomingBin);
 
   // Collect all files from current, base (git), and new (shared)
   const relSkillPath = join(relSkillsPath(dir), skillId);
@@ -599,38 +589,43 @@ export async function updateSkill(
     return { status: "conflict", conflictFiles };
   }
 
-  // Regenerate shims from the merged SKILL.md: hooks the new version dropped go
-  // away, legacy-prefixed shims are renamed, and a renamed bin command replaces
-  // the old one (only if this skill owns it — an unmarked one may be the mind's).
+  // Wire the merged skill up the way installSkill does — otherwise a mind that
+  // installed it before hooks (#228) or bins (#231) existed keeps the files but
+  // none of the npm deps or shims they rely on.
   const merged = readSkillMd(skillDir);
-  removeHookShims(dir, skillId);
-  installHookShims(dir, skillId, merged?.hooks ?? {});
-  if (merged?.bin) installBinShim(dir, skillId, merged.bin);
-  const newCmd = merged?.bin ? binCommandName(merged.bin) : null;
-  if (oldBin && binCommandName(oldBin) !== newCmd) {
-    const oldShim = join(dir, "home", ".local", "bin", binCommandName(oldBin));
-    if (existsSync(oldShim) && binShimOwner(oldShim) === skillId) rmSync(oldShim);
+  const npmDependencies = merged?.npmDependencies ?? [];
+  if (npmDependencies.length > 0) {
+    try {
+      await exec("npm", ["install", ...npmDependencies], { cwd: dir });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      throw new Error(`Failed to install npm dependencies (${npmDependencies.join(", ")}): ${msg}`);
+    }
   }
+  reconcileSkillShims(mindName, dir, skillId, merged ?? { hooks: {}, bin: null });
 
-  // Update upstream tracking
-  const upstreamInfo: UpstreamInfo = {
-    source: upstream.source,
-    version: shared.version,
-    baseCommit: upstream.baseCommit, // will update after commit
-  };
-  writeFileSync(join(skillDir, ".upstream.json"), `${JSON.stringify(upstreamInfo, null, 2)}\n`);
-
+  // .upstream.json only moves to the new version once the merge is committed:
+  // written first, a failed commit would leave the skill reading as up to date.
   await gitExec(["add", relSkillPath], { cwd: dir });
   await gitExec(["add", join("home", ".local", "hooks")], { cwd: dir }).catch(() => {});
   await gitExec(["add", join("home", ".local", "bin")], { cwd: dir }).catch(() => {});
   if (npmDependencies.length > 0) {
     await gitExec(["add", "package.json", "package-lock.json"], { cwd: dir });
   }
-  await gitExec(["commit", "-m", `Update skill: ${skillId} (v${shared.version})`], { cwd: dir });
+  // --allow-empty: a version bump need not change any file this mind tracks.
+  await gitExec(
+    ["commit", "--allow-empty", "-m", `Update skill: ${skillId} (v${shared.version})`],
+    {
+      cwd: dir,
+    },
+  );
   const commitHash = (await gitExec(["rev-parse", "HEAD"], { cwd: dir })).trim();
 
-  // Update baseCommit to the new commit
-  upstreamInfo.baseCommit = commitHash;
+  const upstreamInfo: UpstreamInfo = {
+    source: upstream.source,
+    version: shared.version,
+    baseCommit: commitHash,
+  };
   writeFileSync(join(skillDir, ".upstream.json"), `${JSON.stringify(upstreamInfo, null, 2)}\n`);
   await gitExec(["add", join(relSkillPath, ".upstream.json")], { cwd: dir });
   await gitExec(["commit", "--amend", "--no-edit"], { cwd: dir });
@@ -820,6 +815,196 @@ export function removeBinShim(dir: string, scriptPath: string): void {
   if (existsSync(shimPath)) rmSync(shimPath);
 }
 
+// --- Shim reconciliation ---
+
+/**
+ * Where a mind's skill-shim ledger lives: every home-relative hook/bin shim path
+ * Volute has ever given the mind for its skills. It does for skill shims what the
+ * init ledger does for `.local/` infrastructure (#811) — it is what separates
+ * "this mind never got the shim" (create it) from "this mind deleted it" (leave
+ * it deleted). Kept in stateDir for the reasons `initLedgerPath` gives.
+ */
+function skillShimLedgerPath(mindName: string): string {
+  return resolve(stateDir(mindName), "skill-shims.json");
+}
+
+const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * Whether `content` is byte-for-byte a shim Volute generates for `skillId` — for
+ * any template's skills dir and any script, as a hook shim or a bin shim with or
+ * without its owner marker. An edited or emptied shim is not: it is the mind's.
+ */
+function isGeneratedShim(content: string, skillId: string): boolean {
+  const subdirs = Object.values(TEMPLATE_SKILLS_DIR).map(escapeRegExp).join("|");
+  const marker = escapeRegExp(`${BIN_SHIM_MARKER} ${skillId}`);
+  return new RegExp(
+    `^#!/bin/bash\\n(?:${marker}\\n)?exec (?:node --import tsx|node|bash) (?:${subdirs})/${skillId}/[^\\s"]+ "\\$@"\\n$`,
+  ).test(content);
+}
+
+/** Largest file worth reading to see whether it is a shim. */
+const MAX_SHIM_BYTES = 4096;
+
+// Reconciliation runs as the daemon — root under user isolation — over paths in a
+// tree the mind controls, so nothing it does may follow a mind-planted symlink:
+// a shim is read, replaced or created only as a plain file under plain dirs.
+
+/** A shim's content, or null unless it is a small regular file (not a symlink). */
+function readShim(abs: string): string | null {
+  try {
+    const st = lstatSync(abs);
+    return st.isFile() && st.size <= MAX_SHIM_BYTES ? readFileSync(abs, "utf-8") : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Whether every component from `dir` down to `dir/rel` is a real directory, never
+ * a symlink — creating missing ones when `create` is set.
+ */
+function realDirChain(dir: string, rel: string, create: boolean): boolean {
+  let cur = dir;
+  for (const part of rel.split("/")) {
+    cur = join(cur, part);
+    let st: ReturnType<typeof lstatSync>;
+    try {
+      st = lstatSync(cur);
+    } catch {
+      if (!create) return false;
+      mkdirSync(cur);
+      continue;
+    }
+    if (!st.isDirectory()) return false;
+  }
+  return true;
+}
+
+/** lstat-based existence: a dangling symlink "doesn't exist" but is not absent. */
+function lexists(abs: string): boolean {
+  try {
+    lstatSync(abs);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Create a shim; `wx` refuses to follow or clobber anything already at the path. */
+function writeShim(abs: string, content: string): void {
+  writeFileSync(abs, content, { mode: 0o755, flag: "wx" });
+}
+
+/**
+ * Bring a skill's hook and bin shims in line with what its SKILL.md declares,
+ * without undoing the mind's own choices about them:
+ *
+ * - a legacy `50-` hook shim is renamed in place, its content kept;
+ * - a declared shim that is absent is created only if it was never given — in
+ *   the ledger and absent means the mind deleted it (`restoreDeleted` overrides
+ *   this for an explicit install);
+ * - a present shim is refreshed only while it is still exactly something Volute
+ *   generated — an edited or emptied one ("not this one", see hook-loader) stays;
+ * - a shim for a hook or bin no longer declared is removed only if unmodified.
+ *
+ * Idempotent, and a few stats per skill, so it runs on every daemon start. Throws
+ * before writing anything if the declared bin belongs to another skill. Returns
+ * whether it changed anything on disk.
+ */
+export function reconcileSkillShims(
+  mindName: string,
+  dir: string,
+  skillId: string,
+  declared: { hooks: Record<string, string>; bin: string | null },
+  { restoreDeleted = false }: { restoreDeleted?: boolean } = {},
+): boolean {
+  const home = join(dir, "home");
+  const skillsSubdir = mindSkillsSubdir(dir);
+  const ledgerPath = skillShimLedgerPath(mindName);
+  const given = readInitLedgerFile(ledgerPath, mindName);
+  let changed = false;
+
+  // home-relative path → the content Volute would generate there now
+  const wanted = new Map<string, string>();
+  for (const [event, script] of Object.entries(declared.hooks)) {
+    wanted.set(
+      `.local/hooks/${event}/${hookShimName(skillId)}`,
+      shimContent(skillId, script, skillsSubdir),
+    );
+  }
+  if (declared.bin) {
+    assertBinShimAvailable(dir, skillId, declared.bin);
+    wanted.set(
+      `.local/bin/${binCommandName(declared.bin)}`,
+      binShimContent(skillId, declared.bin, skillsSubdir),
+    );
+  }
+
+  // This skill's shims already on disk, legacy hook names renamed first.
+  const present: string[] = [];
+  if (realDirChain(dir, "home/.local/hooks", false)) {
+    const hooksBase = join(home, ".local", "hooks");
+    for (const event of readdirSync(hooksBase, { withFileTypes: true })) {
+      if (!event.isDirectory()) continue;
+      const current = join(hooksBase, event.name, hookShimName(skillId));
+      for (const prefix of LEGACY_HOOK_SHIM_PREFIXES) {
+        const legacy = join(hooksBase, event.name, `${prefix}${skillId}.sh`);
+        if (!existsSync(legacy)) continue;
+        if (!existsSync(current)) renameSync(legacy, current);
+        else if (isGeneratedShim(readShim(legacy) ?? "", skillId)) rmSync(legacy);
+        else continue;
+        changed = true;
+      }
+      if (existsSync(current)) present.push(`.local/hooks/${event.name}/${hookShimName(skillId)}`);
+    }
+  }
+  if (realDirChain(dir, "home/.local/bin", false)) {
+    for (const f of readdirSync(join(home, ".local", "bin"))) {
+      const rel = `.local/bin/${f}`;
+      if (isGeneratedShim(readShim(join(home, rel)) ?? "", skillId)) present.push(rel);
+    }
+  }
+
+  for (const rel of present) {
+    if (wanted.has(rel)) continue;
+    const abs = join(home, rel);
+    if (isGeneratedShim(readShim(abs) ?? "", skillId)) {
+      rmSync(abs);
+      given.delete(rel);
+      changed = true;
+    }
+  }
+
+  for (const [rel, content] of wanted) {
+    const abs = join(home, rel);
+    if (lexists(abs)) {
+      const current = readShim(abs);
+      if (current === null) continue; // a symlink or oversized file — not a shim of ours
+      if (current !== content && isGeneratedShim(current, skillId)) {
+        rmSync(abs);
+        writeShim(abs, content);
+        changed = true;
+      }
+    } else if (restoreDeleted || !given.has(rel)) {
+      if (!realDirChain(dir, `home/${dirname(rel)}`, true)) {
+        log.warn(`not creating ${rel} for ${mindName}: a parent is not a plain directory`);
+        continue;
+      }
+      writeShim(abs, content);
+      changed = true;
+    } else {
+      continue; // given, then deleted by the mind
+    }
+    // Recorded only once the file is known to be on disk: a ledger entry for a
+    // shim that never landed would read as "deleted" and withhold it forever.
+    given.add(rel);
+  }
+
+  writeLedgerFile(ledgerPath, given, mindName);
+  return changed;
+}
+
 // --- Template switch migration ---
 
 /**
@@ -955,18 +1140,31 @@ export async function autoUpdateMindSkills(): Promise<void> {
 
     const entries = readdirSync(skillsDir, { withFileTypes: true }).filter((e) => e.isDirectory());
 
+    let wrote = false;
     for (const entry of entries) {
       const upstream = readUpstream(join(skillsDir, entry.name));
       if (!upstream) continue;
 
       const sharedSkill = sharedMap.get(upstream.source);
-      if (!sharedSkill || sharedSkill.version <= upstream.version) continue;
+      if (!sharedSkill || sharedSkill.version <= upstream.version) {
+        // Current skills still get their shims reconciled: an update is the only
+        // other thing that does it, so a skill installed before hooks/bins existed
+        // (or carrying a legacy `50-` shim) would otherwise wait for a version bump.
+        try {
+          const declared = readSkillMd(join(skillsDir, entry.name));
+          if (declared && reconcileSkillShims(mind.name, dir, entry.name, declared)) wrote = true;
+        } catch (err) {
+          log.warn(
+            `failed to reconcile shims for skill ${entry.name} in ${mind.name}`,
+            log.errorData(err),
+          );
+        }
+        continue;
+      }
 
+      wrote = true;
       try {
         const result = await updateSkill(mind.name, dir, entry.name);
-        // The update writes skill files, shims and node_modules as the daemon
-        // (root under user isolation) — hand them back, as the update route does.
-        await chownMindDir(dir, mind.name);
         if (result.status === "updated") {
           log.info(`auto-updated skill ${entry.name} for ${mind.name} (v${sharedSkill.version})`);
         } else if (result.status === "conflict") {
@@ -977,6 +1175,13 @@ export async function autoUpdateMindSkills(): Promise<void> {
       } catch (err) {
         log.error(`failed to auto-update skill ${entry.name} for ${mind.name}`, log.errorData(err));
       }
+    }
+    // Updates and reconciles write as the daemon (root under user isolation) —
+    // hand everything back, even after a failure part-way through.
+    if (wrote) {
+      await chownMindDir(dir, mind.name).catch((err) =>
+        log.error(`failed to chown ${mind.name} after skill updates`, log.errorData(err)),
+      );
     }
   }
 }

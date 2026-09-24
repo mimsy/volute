@@ -7,7 +7,7 @@ import { Hono } from "hono";
 import { getDb } from "../packages/daemon/src/lib/db.js";
 import { addMind, mindDir, voluteHome } from "../packages/daemon/src/lib/mind/registry.js";
 import { sessions, sharedSkills, users } from "../packages/daemon/src/lib/schema.js";
-import { importSkillFromDir } from "../packages/daemon/src/lib/skills.js";
+import { importSkillFromDir, installSkill } from "../packages/daemon/src/lib/skills.js";
 import mindSkillsApp from "../packages/daemon/src/web/api/mind-skills.js";
 import { type AuthEnv, authMiddleware } from "../packages/daemon/src/web/middleware/auth.js";
 import { createMindGitRepo } from "./helpers/git.js";
@@ -100,5 +100,31 @@ describe("mind skills install chowns to the mind under user isolation", () => {
     assert.equal(res.status, 400);
     const body = (await res.json()) as { error: string };
     assert.match(body.error, /chown/i);
+  });
+
+  it("a failed update still hands ownership back (and says when it can't)", async () => {
+    const source = createSharedSkillDir("iso-updatable");
+    await importSkillFromDir(source, "author");
+    process.env.VOLUTE_ISOLATION = "none";
+    await installSkill(testMindName, mindDir(testMindName), "iso-updatable");
+    process.env.VOLUTE_ISOLATION = "user";
+
+    // v2 declares a dependency npm cannot install, so the update throws after
+    // the merge has already written files as the daemon.
+    writeFileSync(
+      join(source, "SKILL.md"),
+      "---\nname: iso-updatable\ndescription: d\nmetadata:\n  npm-dependencies: /nonexistent/volute-dep\n---\n",
+    );
+    await importSkillFromDir(source, "author");
+
+    const res = await createApp().request(`/minds/${testMindName}/skills/update`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: adminCookie },
+      body: JSON.stringify({ skillId: "iso-updatable" }),
+    });
+    assert.equal(res.status, 400);
+    const body = (await res.json()) as { error: string };
+    assert.match(body.error, /npm dependencies/);
+    assert.match(body.error, /restoring ownership also failed: .*chown/i);
   });
 });
