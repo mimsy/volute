@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import { rmSync } from "node:fs";
+import { readFileSync, rmSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
+import { priceUsageMetadata } from "../packages/daemon/src/lib/daemon/usage-pricing.js";
 import { composeTemplate } from "../packages/daemon/src/lib/template/template.js";
 import type { UsageByModel } from "../templates/_base/src/lib/types.js";
 import {
@@ -727,5 +728,257 @@ describe("claude template: consecutive turns in one stream", () => {
         cache_creation_input_tokens: 437,
       }),
     ]);
+  });
+});
+
+/**
+ * Since SDK 0.3.277 a resumed session's `modelUsage` continues from the earlier session's
+ * totals. The numbers below were recorded live on 0.3.281: a haiku turn, then a resume of
+ * the same session. The resumed turn's own `usage` wrote 125 cache tokens, while its
+ * `modelUsage` reported 15006 — the first turn's 14881 carried over.
+ */
+describe("claude template: a resumed stream", () => {
+  let consumeStream: typeof import("../templates/claude/src/lib/stream-consumer.js")["consumeStream"];
+  let composedDir: string;
+
+  before(async () => {
+    composedDir = composeTemplate(
+      resolvePath(fileURLToPath(import.meta.url), "../../templates"),
+      "claude",
+    ).composedDir;
+    ({ consumeStream } = await import(resolvePath(composedDir, "src/lib/stream-consumer.js")));
+  });
+
+  after(() => rmSync(composedDir, { recursive: true, force: true }));
+
+  async function run(messages: unknown[], resumed: boolean) {
+    const emitted: Record<string, unknown>[] = [];
+    async function* stream() {
+      yield* messages;
+    }
+    await consumeStream(
+      stream() as never,
+      {
+        name: "main",
+        messageIds: [],
+        currentMessageId: undefined,
+        currentSeq: undefined,
+        messageChannels: new Map(),
+      },
+      {
+        broadcast: (event: { type: string }) => {
+          if (event.type === "usage") emitted.push(event);
+        },
+        ack: () => {},
+      } as never,
+      { resumed },
+    );
+    return emitted;
+  }
+
+  const init = { type: "system", subtype: "init", model: "claude-haiku-4-5-20251001" };
+  const resumedTurn = {
+    type: "result",
+    subtype: "success",
+    usage: {
+      input_tokens: 10,
+      output_tokens: 83,
+      cache_read_input_tokens: 14_881,
+      cache_creation_input_tokens: 125,
+    },
+    modelUsage: {
+      "claude-haiku-4-5-20251001": {
+        inputTokens: 918,
+        outputTokens: 173,
+        cacheReadInputTokens: 14_881,
+        cacheCreationInputTokens: 15_006,
+      },
+    },
+  };
+  const nextTurn = {
+    type: "result",
+    subtype: "success",
+    usage: {
+      input_tokens: 12,
+      output_tokens: 40,
+      cache_read_input_tokens: 15_006,
+      cache_creation_input_tokens: 60,
+    },
+    modelUsage: {
+      "claude-haiku-4-5-20251001": {
+        inputTokens: 930,
+        outputTokens: 213,
+        cacheReadInputTokens: 29_887,
+        cacheCreationInputTokens: 15_066,
+      },
+    },
+  };
+
+  it("prices the first turn on its own usage, not the restored session totals", async () => {
+    const emitted = await run([init, resumedTurn, nextTurn], true);
+    const { type: _, ...first } = emitted[0] as { type: string };
+    assert.deepEqual(first, {
+      input_tokens: 10,
+      output_tokens: 83,
+      cache_read_input_tokens: 14_881,
+      cache_creation_input_tokens: 125,
+      model: "claude-haiku-4-5-20251001",
+      main_model: "claude-haiku-4-5-20251001",
+      models: undefined,
+    });
+    // ...and differences the next turn against the restored totals.
+    assert.deepEqual((emitted[1] as { models: UsageByModel[] }).models, [
+      slice("claude-haiku-4-5-20251001", {
+        input_tokens: 12,
+        output_tokens: 40,
+        cache_read_input_tokens: 15_006,
+        cache_creation_input_tokens: 60,
+      }),
+    ]);
+  });
+
+  it("the daemon prices that turn on the main loop's own usage", async () => {
+    const emitted = await run([init, resumedTurn], true);
+    const { type: _, ...metadata } = emitted[0] as { type: string };
+    const priced = priceUsageMetadata(metadata, { template: "claude" });
+    assert.equal(priced.partial, undefined);
+    assert.ok(priced.cost_usd !== null && priced.cost_usd > 0);
+    // Priced on the restored totals instead, the 14881 carried cache writes would dominate.
+    const restored = priceUsageMetadata(
+      { ...metadata, cache_creation_input_tokens: 15_006 },
+      { template: "claude" },
+    );
+    assert.ok(priced.cost_usd < (restored.cost_usd ?? 0) / 5);
+  });
+
+  it("keeps the breakdown when the resumed accumulator started at zero (SDK before 0.3.277)", async () => {
+    const fromZero = {
+      ...resumedTurn,
+      modelUsage: {
+        "claude-haiku-4-5-20251001": {
+          inputTokens: 10,
+          outputTokens: 83,
+          cacheReadInputTokens: 14_881,
+          cacheCreationInputTokens: 125,
+        },
+      },
+    };
+    const emitted = await run([init, fromZero], true);
+    assert.equal((emitted[0] as { main_model?: string }).main_model, "claude-haiku-4-5-20251001");
+    assert.deepEqual((emitted[0] as { models: UsageByModel[] }).models, [
+      slice("claude-haiku-4-5-20251001", {
+        input_tokens: 10,
+        output_tokens: 83,
+        cache_read_input_tokens: 14_881,
+        cache_creation_input_tokens: 125,
+      }),
+    ]);
+  });
+
+  it("treats a rotated session the same way — its seeded tail restores part of the totals", async () => {
+    // Recorded live on 0.3.281: `rotateSession` with a small seedTokens budget, then a resume
+    // of the rotated id. The tail's copied lines bring their usage along, so the first turn
+    // reports more than it spent (7092 cache writes against its own 3550).
+    const rotatedTurn = {
+      type: "result",
+      subtype: "success",
+      usage: {
+        input_tokens: 10,
+        output_tokens: 86,
+        cache_read_input_tokens: 11_470,
+        cache_creation_input_tokens: 3_550,
+      },
+      modelUsage: {
+        "claude-haiku-4-5-20251001": {
+          inputTokens: 928,
+          outputTokens: 277,
+          cacheReadInputTokens: 37_822,
+          cacheCreationInputTokens: 7_092,
+        },
+      },
+    };
+    const emitted = await run([init, rotatedTurn], true);
+    const { type: _, ...first } = emitted[0] as { type: string };
+    assert.deepEqual(first, {
+      input_tokens: 10,
+      output_tokens: 86,
+      cache_read_input_tokens: 11_470,
+      cache_creation_input_tokens: 3_550,
+      model: "claude-haiku-4-5-20251001",
+      main_model: "claude-haiku-4-5-20251001",
+      models: undefined,
+    });
+  });
+
+  it("drops the breakdown after a model switch — the old model's key holds the earlier session", async () => {
+    // Opus earlier in the session, sonnet now. The sonnet slice fits its `usage` exactly,
+    // so a main-slice check alone would pass the breakdown and bill opus's whole history.
+    const switched = [
+      { type: "system", subtype: "init", model: "claude-sonnet-4-6" },
+      {
+        type: "result",
+        subtype: "success",
+        usage: {
+          input_tokens: 12,
+          output_tokens: 300,
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 40_000,
+        },
+        modelUsage: {
+          "claude-opus-4-6": {
+            inputTokens: 5_000,
+            outputTokens: 60_000,
+            cacheReadInputTokens: 2_000_000,
+            cacheCreationInputTokens: 150_000,
+          },
+          "claude-sonnet-4-6": {
+            inputTokens: 12,
+            outputTokens: 300,
+            cacheReadInputTokens: 0,
+            cacheCreationInputTokens: 40_000,
+          },
+        },
+      },
+    ];
+    const emitted = await run(switched, true);
+    const { type: _, ...first } = emitted[0] as { type: string };
+    assert.deepEqual(first, {
+      input_tokens: 12,
+      output_tokens: 300,
+      cache_read_input_tokens: 0,
+      cache_creation_input_tokens: 40_000,
+      model: "claude-sonnet-4-6",
+      main_model: "claude-sonnet-4-6",
+      models: undefined,
+    });
+  });
+
+  it("checks the first result that has counters, not a zeroed crash result before it", async () => {
+    const crash = {
+      type: "result",
+      subtype: "error_during_execution",
+      usage: { input_tokens: 0, output_tokens: 0 },
+      modelUsage: {},
+    };
+    const emitted = await run([init, crash, resumedTurn], true);
+    assert.equal((emitted.at(-1) as { models?: unknown }).models, undefined);
+    assert.equal(
+      (emitted.at(-1) as { cache_creation_input_tokens: number }).cache_creation_input_tokens,
+      125,
+    );
+  });
+
+  it("is told which streams are resumed", () => {
+    // The check only runs when the caller says the stream resumed; if nothing passes the
+    // flag, every test above is green while no mind ever runs the check.
+    const agent = readFileSync(resolvePath(composedDir, "src/agent.ts"), "utf-8");
+    assert.match(agent, /consumeStream\([^)]*\{ resumed: resume !== undefined \}\)/);
+  });
+
+  it("leaves a fresh stream's first turn alone", async () => {
+    // A fresh stream's accumulator starts at zero, so a main slice larger than `usage` is a
+    // subagent or side-call at work (#984), not restored totals.
+    const emitted = await run([init, resumedTurn], false);
+    assert.ok((emitted[0] as { models?: unknown }).models);
   });
 });

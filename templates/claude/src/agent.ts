@@ -518,7 +518,7 @@ export function createMind(options: {
       async function runStream(resume?: string) {
         const q = createStream(session, streamAbort, preCompact.hook, resume);
         session.currentQuery = q;
-        await consumeStream(q, session, callbacks);
+        await consumeStream(q, session, callbacks, { resumed: resume !== undefined });
         if (session.currentMessageId !== undefined) {
           session.messageChannels.delete(session.currentMessageId);
           emitDone();

@@ -166,7 +166,8 @@ export function dominantModel(slices: UsageByModel[] | undefined): string | unde
  * under in `modelUsage`. Sent as `main_model`, it tells the daemon which slice the 1-hour
  * cache writes belong to (the main loop's; subagents write 5-minute entries) and that the
  * breakdown is already this turn's own, so a slice larger than `usage` is a subagent at
- * work rather than a running total (#984).
+ * work rather than a running total (#984). With no breakdown it is also the `model`: the
+ * aggregate is the main loop's alone, and without a model the daemon would guess one.
  */
 export function buildUsagePayload(
   result: ResultUsage,
@@ -179,10 +180,10 @@ export function buildUsagePayload(
   const payload: UsagePayload = {
     input_tokens: result.usage.input_tokens ?? 0,
     output_tokens: result.usage.output_tokens ?? 0,
-    model: dominantModel(models),
+    model: dominantModel(models) ?? mainModel,
     models,
   };
-  if (models && mainModel) payload.main_model = mainModel;
+  if (mainModel) payload.main_model = mainModel;
   if (cache_read_input_tokens !== undefined || cache_creation_input_tokens !== undefined) {
     payload.cache_read_input_tokens = cache_read_input_tokens ?? 0;
     payload.cache_creation_input_tokens = cache_creation_input_tokens ?? 0;
@@ -191,6 +192,53 @@ export function buildUsagePayload(
     payload.cache_creation_1h_input_tokens = cache_creation.ephemeral_1h_input_tokens;
   }
   return payload;
+}
+
+/**
+ * Whether a resumed stream's first result counts the earlier session's usage as well.
+ *
+ * Since SDK 0.3.277 a resumed session's `modelUsage` picks up from the earlier session's
+ * totals instead of zero. So a resumed stream (reap → resume, restart, rotation) opens with
+ * those totals, and differencing against a fresh baseline would bill its first turn for the
+ * whole earlier session — the #981 overage again, on every resume. Older SDKs start at zero.
+ * The version isn't a reliable signal (a mind runs whatever its own install resolved), so
+ * this checks the numbers: the main loop's slice can't be larger than the turn's own
+ * `usage` unless it carries earlier turns.
+ *
+ * Any *other* model with counters is treated the same way. After a model switch, the old
+ * model's key carries the whole earlier session while the new main slice fits its `usage`
+ * exactly — checking the main slice alone would bill the old model's history. A genuine
+ * side-call on that one turn is indistinguishable from it here, so it is dropped too.
+ *
+ * Returns true, meaning "don't trust the breakdown", whenever the main slice can't be
+ * identified. The fallback prices the turn on `usage`, which misses only this one turn's
+ * side-calls and subagents; trusting it wrongly would bill the whole earlier session.
+ */
+export function carriesRestoredTotals(result: ResultUsage, mainModel?: string): boolean {
+  const entries = Object.entries(result.modelUsage ?? {}).filter(
+    ([, mu]) => mu && COUNTERS.some((k) => (mu[k] ?? 0) > 0),
+  );
+  const matches = entries.filter(
+    ([model]) => mainModel && (model.startsWith(mainModel) || mainModel.startsWith(model)),
+  );
+  const main =
+    entries.find(([model]) => model === mainModel) ??
+    (matches.length === 1 ? matches[0] : undefined) ??
+    (entries.length === 1 ? entries[0] : undefined);
+  if (!main || entries.length > 1) return true;
+  const mu = main[1] ?? {};
+  const u = result.usage ?? {};
+  return (
+    (mu.inputTokens ?? 0) > (u.input_tokens ?? 0) ||
+    (mu.outputTokens ?? 0) > (u.output_tokens ?? 0) ||
+    (mu.cacheReadInputTokens ?? 0) > (u.cache_read_input_tokens ?? 0) ||
+    (mu.cacheCreationInputTokens ?? 0) > (u.cache_creation_input_tokens ?? 0)
+  );
+}
+
+/** Whether a result moved any counter — a zeroed crash result says nothing about the stream. */
+export function hasUsageCounters(modelUsage: ModelUsageMap): boolean {
+  return Object.values(modelUsage ?? {}).some((mu) => mu && COUNTERS.some((k) => (mu[k] ?? 0) > 0));
 }
 
 /**
