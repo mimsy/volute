@@ -53,6 +53,8 @@ SDK-level configuration, loaded by the mind's server at startup.
 | `compaction` | `{ maxContextTokens? }` | Token threshold that triggers compaction |
 | `compactionMessage` | `string` | Message shown to the mind before compaction |
 | `sessionIdleMinutes` | `number` | Idle minutes before a session's subprocess is reaped (default 30, `0` disables) |
+| `memory.recollection` | `{ enabled?, coldResetMinutes? }` | Claude template. `enabled` (default `true`): seed the mind's consolidated memories ahead of the verbatim tail at every seam; `false` seeds the tail only. `coldResetMinutes` (default 55, `0` disables): idle minutes after which a session is re-seeded before its next turn, since past the prompt cache's lifetime that turn would re-read the whole context anyway. Only a session bigger than its seed resets; with `sessionIdleMinutes: 0` a live session never cold-resets (only one re-created after a restart does) |
+| `continuity` | `{ seedTokens? }` | Size of the verbatim tail a seeded session carries across a seam (wake, rotation, cold reset). Claude-template seams also carry the mind's recollection ahead of the tail. Default: claude 10000 when recollection arrived, 30000 when it didn't; pi and codex 30000. `0` disables seeding |
 | `logLevel` | `"error"…"debug"` | Log verbosity |
 | `subagents` | `Record<string, …>` | Named subagent definitions |
 | `thinking` / `effort` / `thinkingLevel` / `reasoningEffort` | — | Template-specific extended-thinking controls passed to the SDK |

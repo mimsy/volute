@@ -35,9 +35,13 @@ import { basename, resolve } from "node:path";
 import { findPiSessionFile } from "./context-breakdown.js";
 import { log } from "./logger.js";
 import { parseArchiveTimestamp } from "./seed-note.js";
-import { DEFAULT_SEED_TOKENS } from "./session-seed.js";
+import { TAIL_ONLY_SEED_TOKENS } from "./session-seed.js";
 
-export { DEFAULT_SEED_TOKENS };
+/**
+ * Default seed budget when config omits continuity.seedTokens: pi seams carry the
+ * verbatim tail alone (no recollection yet — #1129), so the tail-only budget.
+ */
+export const DEFAULT_SEED_TOKENS = TAIL_ONLY_SEED_TOKENS;
 
 // Archived pi-session directories are named `<name>-<timestamp>`, where the
 // timestamp is `new Date().toISOString().replace(/[:.]/g, "-").slice(0, 16)` →

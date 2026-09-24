@@ -26,6 +26,12 @@ export type SessionRecord = {
    * it closes at that turn.
    */
   committed: boolean;
+  /**
+   * When this session's last turn ended (epoch ms) — how long it has been idle, for the
+   * cold reset (see shouldColdReset). Persisted so the gap survives a reap or a restart.
+   * Absent on a pointer that hasn't finished a turn since it was stamped: no cold reset.
+   */
+  lastActivityAt?: number;
 };
 
 /**
@@ -43,7 +49,7 @@ export function lostRealContext(record: SessionRecord | undefined): boolean {
 
 export type SessionStore = {
   load(name: string): SessionRecord | undefined;
-  save(name: string, id: string, committed?: boolean): void;
+  save(name: string, id: string, committed?: boolean, lastActivityAt?: number): void;
   delete(name: string): void;
 };
 
@@ -57,7 +63,13 @@ export function createSessionStore(sessionsDir: string): SessionStore {
       try {
         const data = JSON.parse(readFileSync(filePath(name), "utf-8"));
         if (typeof data.sessionId !== "string") return undefined;
-        return { sessionId: data.sessionId, committed: data.committed === true };
+        return {
+          sessionId: data.sessionId,
+          committed: data.committed === true,
+          ...(typeof data.lastActivityAt === "number"
+            ? { lastActivityAt: data.lastActivityAt }
+            : {}),
+        };
       } catch (err: any) {
         if (err?.code !== "ENOENT") {
           log("mind", `failed to load session file for "${name}":`, err);
@@ -66,9 +78,9 @@ export function createSessionStore(sessionsDir: string): SessionStore {
       }
     },
 
-    save(name: string, id: string, committed = false) {
+    save(name: string, id: string, committed = false, lastActivityAt?: number) {
       mkdirSync(sessionsDir, { recursive: true });
-      writeFileSync(filePath(name), JSON.stringify({ sessionId: id, committed }));
+      writeFileSync(filePath(name), JSON.stringify({ sessionId: id, committed, lastActivityAt }));
     },
 
     delete(name: string) {

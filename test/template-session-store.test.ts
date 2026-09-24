@@ -7,14 +7,15 @@ import {
   composeTemplate,
   findTemplatesRoot,
 } from "../packages/daemon/src/lib/template/template.js";
+import { shouldColdReset } from "../templates/claude/src/lib/session-reaper.js";
 
 // session-store.ts lives in templates/claude/ but imports ./logger.js from _base, so it
 // only resolves once the template is composed — the same shape a real mind runs.
 let composedDir: string;
-type Record_ = { sessionId: string; committed: boolean };
+type Record_ = { sessionId: string; committed: boolean; lastActivityAt?: number };
 let createSessionStore: (dir: string) => {
   load(name: string): Record_ | undefined;
-  save(name: string, id: string, committed?: boolean): void;
+  save(name: string, id: string, committed?: boolean, lastActivityAt?: number): void;
   delete(name: string): void;
 };
 let lostRealContext: (record: Record_ | undefined) => boolean;
@@ -69,6 +70,36 @@ describe("claude template session store", () => {
       sessionId: "sess-3",
       committed: true,
     });
+  });
+
+  it("round-trips the last turn's end time, which the cold reset measures idleness from", () => {
+    const store = createSessionStore(dir);
+    store.save("idle", "sess-6", true, 1_700_000_000_000);
+    assert.deepEqual(createSessionStore(dir).load("idle"), {
+      sessionId: "sess-6",
+      committed: true,
+      lastActivityAt: 1_700_000_000_000,
+    });
+  });
+
+  it("a restart within the cold-reset window resumes; past it, the session resets", () => {
+    const COLD = 55 * 60_000;
+    const lastTurn = 1_700_000_000_000;
+    createSessionStore(dir).save("main", "sess-7", true, lastTurn);
+    // A restart (crash recovery, `volute mind restart`, a daemon update) reads the pointer
+    // back in a fresh process: the last turn's time survives, so the restart itself
+    // neither resets the session nor restarts the idle clock.
+    const afterRestart = createSessionStore(dir).load("main");
+    assert.equal(
+      shouldColdReset("main", afterRestart, lastTurn + COLD - 60_000, COLD, 10_000),
+      false,
+    );
+    // The resumed stream re-stamps the pointer with the carried time (onSessionId).
+    createSessionStore(dir).save("main", "sess-7", true, afterRestart?.lastActivityAt);
+    assert.equal(
+      shouldColdReset("main", createSessionStore(dir).load("main"), lastTurn + COLD, COLD, 10_000),
+      true,
+    );
   });
 
   it("clears the flag with the pointer on delete", () => {

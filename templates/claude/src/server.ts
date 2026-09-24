@@ -35,6 +35,8 @@ const mind = createMind({
   maxContextTokens: config.compaction?.maxContextTokens,
   sessionIdleMinutes: config.sessionIdleMinutes,
   seedTokens: config.continuity?.seedTokens,
+  coldResetMinutes: config.memory?.recollection?.coldResetMinutes,
+  recollection: config.memory?.recollection?.enabled !== false,
   subagents: config.subagents,
 });
 

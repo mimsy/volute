@@ -166,3 +166,32 @@ export async function daemonSendFile(
   }
   return (await res.json()) as { status: string; id?: string; destPath?: string };
 }
+
+/**
+ * How long a seam waits for recollection before seeding the verbatim tail alone. Short,
+ * because the mind's first reply after the seam waits on it.
+ */
+export const RECOLLECTION_TIMEOUT_MS = 8_000;
+
+/**
+ * The mind's consolidated recollection for a seam: week/day/hour memories before
+ * `before`, stopping where the verbatim tail starts (`tailStartedAt`), oldest → newest.
+ * Throws on any failure, including the timeout — the seeders catch it and seed the
+ * tail alone.
+ */
+export async function daemonRecollection(
+  query: { before: string; tailStartedAt?: string },
+  timeoutMs = RECOLLECTION_TIMEOUT_MS,
+): Promise<unknown[]> {
+  if (!port || !mind) throw new Error("VOLUTE_DAEMON_PORT or VOLUTE_MIND not set");
+  const params = new URLSearchParams({ before: query.before });
+  if (query.tailStartedAt) params.set("tailStartedAt", query.tailStartedAt);
+  const res = await fetch(
+    `http://127.0.0.1:${port}/api/v1/minds/${encodeURIComponent(mind)}/history/recollection?${params}`,
+    { headers: headers(), signal: AbortSignal.timeout(timeoutMs) },
+  );
+  if (!res.ok) throw new Error(`recollection failed: ${res.status}`);
+  const body = (await res.json()) as { entries?: unknown };
+  if (!Array.isArray(body.entries)) throw new Error("recollection response has no entries");
+  return body.entries;
+}
