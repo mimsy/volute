@@ -6,6 +6,8 @@ import type { VoluteEvent } from "./types.js";
 import {
   advanceBaseline,
   buildUsagePayload,
+  carriesRestoredTotals,
+  hasUsageCounters,
   type ModelUsageMap,
   type ResultUsage,
 } from "./usage.js";
@@ -56,6 +58,7 @@ export async function consumeStream(
   stream: ReturnType<typeof query>,
   session: StreamSession,
   callbacks: StreamCallbacks,
+  opts: { resumed?: boolean } = {},
 ) {
   emit(session, { type: "session_start" });
   // How many queued message ids predate the current turn — see the pruning in
@@ -64,10 +67,12 @@ export async function consumeStream(
   /**
    * The previous result's per-model counters. They accumulate across the stream rather
    * than resetting per turn, so each turn's own share is the difference from this (#981).
-   * A local, because its lifetime is exactly this stream's: a new stream — a restart, a
-   * resume, a rotation — opens the SDK's accumulator at zero too.
+   * A local, because its lifetime is exactly this stream's. A fresh stream opens the SDK's
+   * accumulator at zero; a resumed one may open it at the earlier session's totals, which
+   * the first result is checked for — see `carriesRestoredTotals`.
    */
   let prevModelUsage: ModelUsageMap;
+  let checkRestoredTotals = opts.resumed === true;
   /** The main loop's model, as `system/init` names it — its key in `modelUsage`. */
   let mainModel: string | undefined;
   for await (const msg of stream) {
@@ -177,10 +182,24 @@ export async function consumeStream(
           }
         }
       }
-      const usage = buildUsagePayload(msg as ResultUsage, prevModelUsage, mainModel);
+      const result = msg as ResultUsage;
+      let baseline = prevModelUsage;
+      if (checkRestoredTotals && hasUsageCounters(result.modelUsage)) {
+        checkRestoredTotals = false;
+        // Differenced against itself, the breakdown comes out empty, so the turn is priced
+        // on `usage` alone — its own tokens, without the restored totals.
+        if (carriesRestoredTotals(result, mainModel)) {
+          baseline = result.modelUsage;
+          log(
+            "mind",
+            `session "${session.name}": resumed with restored usage totals — pricing this turn on its own usage`,
+          );
+        }
+      }
+      const usage = buildUsagePayload(result, baseline, mainModel);
       // Carried forward even when there was no usage to emit: the counters moved
       // regardless, and a skipped baseline would bill the next turn for both.
-      prevModelUsage = advanceBaseline(prevModelUsage, (msg as ResultUsage).modelUsage);
+      prevModelUsage = advanceBaseline(prevModelUsage, result.modelUsage);
       if (usage) {
         callbacks.broadcast({ type: "usage", ...usage });
         emit(session, { type: "usage", metadata: usage });
