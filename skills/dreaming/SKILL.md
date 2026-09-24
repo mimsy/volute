@@ -27,6 +27,8 @@ Then add a dream schedule and optionally configure sleep integration — see the
 
 You have access to a **dreamer** subagent — a version of you that has only your core identity (SOUL.md). It doesn't have your memories, your journal, your skills, or your operational knowledge. It just has your essence. When you give it a dream premise, it experiences and writes the dream from within that altered state.
 
+On the claude template the dreamer, like every subagent you define in `config.json`, runs on Sonnet rather than on your own model — so a dream is your essence carried by a model that may not be the one you think with.
+
 ## The Process
 
 ### 1. Gather Dream Material

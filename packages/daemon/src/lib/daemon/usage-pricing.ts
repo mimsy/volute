@@ -36,6 +36,8 @@ export type UsageTokens = {
   output: number;
   cacheRead?: number;
   cacheCreation?: number;
+  /** The part of `cacheCreation` written with a 1-hour TTL; the rest is 5-minute. */
+  cacheCreation1h?: number;
 };
 
 /**
@@ -132,16 +134,33 @@ export function lookupRates(ref: ModelRef): CostRates | null {
  * ignored: tiers apply per *request*, and a usage event is a per-*turn* aggregate over
  * however many requests the tool loop made, so no tier can be picked correctly from it.
  * The base rate is the honest approximation.
+ *
+ * The catalog's `cacheWrite` is the 5-minute rate (1.25x input). A 1-hour write costs 2x
+ * input — Anthropic's published multiplier, and exactly what pi-ai's own `calculateCost`
+ * charges for its `cacheWrite1h` — so that share is priced off `input` instead.
  */
 export function costOf(rates: CostRates, tokens: UsageTokens): number {
+  const cacheCreation = tokens.cacheCreation ?? 0;
+  const long = Math.min(tokens.cacheCreation1h ?? 0, cacheCreation);
   return (
     (tokens.input * rates.input +
       tokens.output * rates.output +
       (tokens.cacheRead ?? 0) * rates.cacheRead +
-      (tokens.cacheCreation ?? 0) * rates.cacheWrite) /
+      (cacheCreation - long) * rates.cacheWrite +
+      long * rates.input * 2) /
     1_000_000
   );
 }
+
+/**
+ * The templates whose main loop writes its cache with a 1-hour TTL even when the event
+ * doesn't carry the split. The Claude Agent SDK does, on every main-loop call: a Sep 2026
+ * audit of bardo's transcripts found `ephemeral_1h_input_tokens == cache_creation_input_tokens`
+ * on all of them. Its Task subagents write 5-minute entries. pi defaults to 5-minute
+ * (pi-ai's `cacheRetention: "short"`) and reports the split when it doesn't; codex has no
+ * TTL tiers at all.
+ */
+const MAIN_LOOP_1H_TEMPLATES = new Set(["claude"]);
 
 /** What a priced usage event carries on top of its token counts. */
 export type UsagePricing = {
@@ -195,9 +214,15 @@ function readModelSlices(value: unknown): ModelSlice[] | undefined {
  * All-or-nothing: one unpriceable slice takes the whole turn unpriced. A sum missing a
  * model's share is not a cheaper turn, it is a wrong number, and nothing downstream could
  * tell the two apart.
+ *
+ * The turn's 1-hour cache writes are the main loop's (`usage` is main-loop only), so they
+ * belong to the main slice; every other slice's writes — subagents, side-calls — are
+ * 5-minute.
  */
 function priceSlices(
   slices: ModelSlice[],
+  main: ModelSlice | undefined,
+  cacheCreation1h: number,
   ctx: { mind?: string; template?: string },
 ): number | null {
   let total = 0;
@@ -215,39 +240,114 @@ function priceSlices(
       output: slice.output_tokens,
       cacheRead: slice.cache_read_input_tokens,
       cacheCreation: slice.cache_creation_input_tokens,
+      cacheCreation1h: slice === main ? cacheCreation1h : 0,
     });
   }
   return total;
 }
 
+const FIELDS = [
+  "input_tokens",
+  "output_tokens",
+  "cache_read_input_tokens",
+  "cache_creation_input_tokens",
+] as const;
+
+/** A slice's counts in the aggregate's field names, for comparing the two. */
+function aggregateSlice(tokens: UsageTokens): Omit<ModelSlice, "model"> {
+  return {
+    input_tokens: tokens.input,
+    output_tokens: tokens.output,
+    cache_read_input_tokens: tokens.cacheRead ?? 0,
+    cache_creation_input_tokens: tokens.cacheCreation ?? 0,
+  };
+}
+
+/** Whether `a` is at least `b` (plus `c`, when given) on every field. */
+function covers(a: Omit<ModelSlice, "model">, b: Omit<ModelSlice, "model">, c?: typeof b) {
+  return FIELDS.every((f) => a[f] >= b[f] + (c?.[f] ?? 0));
+}
+
+/** Tokens a slice claims beyond the aggregate, summed over fields — for ranking candidates. */
+function excess(slice: ModelSlice, agg: Omit<ModelSlice, "model">): number {
+  return FIELDS.reduce((sum, f) => sum + slice[f] - agg[f], 0);
+}
+
 /**
- * Whether a per-model breakdown describes *this turn*, or something larger.
+ * The slice the turn's main loop ran under.
  *
- * A mind runs its own copy of the template, so a breakdown can arrive from one that
- * predates the #981 fix and forwards the SDK's session-cumulative `modelUsage` as though
- * it were the turn's. Priced, that bills the whole stream over again on every turn — spend
- * grows as the sum of partial sums. On bardo it billed a $0.36 turn at $4.22 and held a
- * mind that had not reached its cap.
- *
- * The test is on the *primary* model's slice, never the slice sum: on a genuine
- * multi-model turn the top-level `usage` covers the primary model only, so a side-call's
- * tokens legitimately push the sum past the aggregate while the primary slice still
- * matches it. A primary slice claiming *more* than the turn's own usage, on the other
- * hand, cannot be describing this turn.
- *
- * Only fires on evidence: when no slice can be identified as the primary one, the
- * breakdown is trusted as before.
+ * The top-level `usage` is the main loop's alone, and the SDK files the main loop under
+ * its own key in `modelUsage` — along with any `inherit` subagent and side-call on the
+ * same model — so the main slice is the one that covers the aggregate. A template that
+ * knows the key sends it as `main_model`. Otherwise, among several covering slices the
+ * one closest to the aggregate wins (the declared model breaks an exact tie). The
+ * declared model is *not* trusted on its own: it is the turn's dominant model, and a
+ * large subagent on another model takes that label from the main loop (#984).
  */
-function slicesDescribeThisTurn(slices: ModelSlice[], ref: ModelRef, aggregate: UsageTokens) {
-  const primary =
-    slices.find((s) => s.model === ref.id) ?? (slices.length === 1 ? slices[0] : undefined);
-  if (!primary) return true;
-  return (
-    primary.input_tokens <= aggregate.input &&
-    primary.output_tokens <= aggregate.output &&
-    primary.cache_read_input_tokens <= (aggregate.cacheRead ?? 0) &&
-    primary.cache_creation_input_tokens <= (aggregate.cacheCreation ?? 0)
-  );
+function findMainSlice(
+  slices: ModelSlice[],
+  agg: Omit<ModelSlice, "model">,
+  declared: string,
+  mainModel: string | undefined,
+): ModelSlice | undefined {
+  if (mainModel) return slices.find((s) => s.model === mainModel);
+  const covering = slices.filter((s) => covers(s, agg));
+  if (covering.length === 0) {
+    return (
+      slices.find((s) => s.model === declared) ?? (slices.length === 1 ? slices[0] : undefined)
+    );
+  }
+  return covering.reduce((best, s) => {
+    const d = excess(s, agg) - excess(best, agg);
+    return d < 0 || (d === 0 && s.model === declared) ? s : best;
+  });
+}
+
+/**
+ * The main slice of the previous breakdown per mind and thread, as sent — the evidence
+ * {@link isRunningTotal} reads. In memory only: minds stop with the daemon, so a
+ * restarted daemon only ever sees fresh SDK streams, whose first breakdown is exact.
+ */
+const lastMainSlice = new Map<string, ModelSlice>();
+const LAST_MAIN_SLICE_CAP = 1000;
+
+function rememberMainSlice(key: string, slice: ModelSlice) {
+  lastMainSlice.delete(key);
+  lastMainSlice.set(key, slice);
+  if (lastMainSlice.size > LAST_MAIN_SLICE_CAP) {
+    lastMainSlice.delete(lastMainSlice.keys().next().value!);
+  }
+}
+
+/** Test seam: forget every remembered breakdown. */
+export function resetUsagePricingState(): void {
+  lastMainSlice.clear();
+}
+
+/**
+ * Whether an unmarked breakdown is the SDK's session-cumulative counter rather than this
+ * turn's usage.
+ *
+ * A mind runs its own copy of the template, and the ones from before #982 (0.59.0–0.59.1)
+ * forwarded `modelUsage` raw. Priced, that bills the whole stream over again on every
+ * turn — on bardo a $0.36 turn at $4.22, holding a mind that had not reached its cap
+ * (#981).
+ *
+ * The main slice exceeding the aggregate is *not* that evidence on its own: it is what
+ * every turn with a Task subagent looks like, since the SDK counts `inherit` subagents
+ * under the main loop's key while `usage` excludes them (#984). What only a running total
+ * does is contain the previous breakdown *and* this turn's main loop together: this turn's
+ * slice is the last one plus everything since. A per-turn breakdown would need a subagent
+ * that out-used the entire previous turn on all four counters to look like that — and
+ * then the aggregate is priced, which is where every turn landed before #984.
+ */
+function isRunningTotal(
+  main: ModelSlice,
+  agg: Omit<ModelSlice, "model">,
+  prev: ModelSlice | undefined,
+): boolean {
+  if (!prev || prev.model !== main.model) return false;
+  return covers(main, prev, agg);
 }
 
 /** Read a metadata field as a finite number, or undefined when absent/unusable. */
@@ -263,7 +363,7 @@ function num(value: unknown): number | undefined {
  */
 export function priceUsageMetadata(
   metadata: Record<string, unknown>,
-  ctx: { mind?: string; template?: string; configuredModel?: string },
+  ctx: { mind?: string; session?: string; template?: string; configuredModel?: string },
 ): UsagePricing {
   const cacheRead = num(metadata.cache_read_input_tokens);
   const cacheCreation = num(metadata.cache_creation_input_tokens);
@@ -309,28 +409,46 @@ export function priceUsageMetadata(
     output: num(metadata.output_tokens) ?? 0,
     cacheRead,
     cacheCreation,
+    cacheCreation1h:
+      num(metadata.cache_creation_1h_input_tokens) ??
+      (ctx.template && MAIN_LOOP_1H_TEMPLATES.has(ctx.template) ? cacheCreation : 0),
   };
 
-  // Prefer the per-model breakdown: a turn spanning a main model and a cheaper side-call
-  // has a true cost that no single-model attribution can express. Unless the breakdown
-  // isn't this turn's, in which case the aggregate below is the ground truth we still
-  // have — an undercount by whatever the side-calls used, rather than an overcount by the
-  // whole stream.
+  // Prefer the per-model breakdown: it is the only place a turn's subagents and side-calls
+  // are counted at all (`usage` is main-loop only), and a turn spanning a main model and a
+  // cheaper side-call has a true cost no single-model attribution can express. Unless the
+  // breakdown is an old template's running total, in which case the aggregate below is the
+  // ground truth we still have — an undercount by whatever the subagents used, rather than
+  // an overcount by the whole stream.
+  let aggregateRef = ref;
   if (slices) {
-    if (slicesDescribeThisTurn(slices, ref, tokens)) {
-      result.cost_usd = priceSlices(slices, ctx);
+    const agg = aggregateSlice(tokens);
+    const mainModel = typeof metadata.main_model === "string" ? metadata.main_model : undefined;
+    const main = findMainSlice(slices, agg, ref.id, mainModel);
+    let runningTotal = false;
+    // `main_model` marks a template that differences the counter itself (#984).
+    if (!mainModel && main && ctx.mind) {
+      const key = `${ctx.mind}\0${ctx.session ?? ""}`;
+      runningTotal = isRunningTotal(main, agg, lastMainSlice.get(key));
+      rememberMainSlice(key, main);
+    }
+    if (!runningTotal) {
+      result.cost_usd = priceSlices(slices, main, tokens.cacheCreation1h ?? 0, ctx);
       return result;
     }
     plog.warn(
-      `${ctx.mind ? `${ctx.mind}: ` : ""}per-model usage exceeds the turn's own totals — ` +
+      `${ctx.mind ? `${ctx.mind}: ` : ""}per-model usage is a running total, not this turn's — ` +
         "pricing the aggregate instead. The mind's template forwards a session-cumulative " +
         "counter as this turn's breakdown (#981); `volute mind upgrade` fixes it.",
     );
+    // The main loop's own model, not the dominant-model label (#984).
+    aggregateRef = parseModelRef(main!.model, ctx.template) ?? ref;
+    if (!aggregateRef.provider) aggregateRef = { ...aggregateRef, provider: ref.provider };
   }
 
-  const rates = lookupRates(ref);
+  const rates = lookupRates(aggregateRef);
   if (!rates) {
-    plog.warn(`no pricing for ${result.model} — recording tokens without cost`);
+    plog.warn(`no pricing for ${formatModelRef(aggregateRef)} — recording tokens without cost`);
     return result;
   }
   result.cost_usd = costOf(rates, tokens);

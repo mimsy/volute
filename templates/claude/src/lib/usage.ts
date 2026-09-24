@@ -4,8 +4,10 @@
  * The SDK reports cache reads/writes as fields alongside `input_tokens` (they are *not*
  * folded into it), so the shape maps straight onto the daemon's usage event.
  *
- * `result.usage` is the turn's own usage; `result.modelUsage` is the stream's running
- * total. Only the first is safe to forward as-is — see `usageByModel`.
+ * `result.usage` is the turn's own usage, but the **main loop's only** — Task subagents and
+ * side-calls are missing from it. `result.modelUsage` counts everything, but as the
+ * stream's running total. So the aggregate is forwarded as-is and the breakdown is
+ * differenced — see `usageByModel`.
  */
 
 import type { UsageByModel } from "./types.js";
@@ -17,6 +19,7 @@ export type ResultUsage = {
     output_tokens?: number;
     cache_read_input_tokens?: number;
     cache_creation_input_tokens?: number;
+    cache_creation?: { ephemeral_1h_input_tokens?: number; ephemeral_5m_input_tokens?: number };
   };
   modelUsage?: Record<string, ModelUsageEntry | undefined>;
 };
@@ -37,6 +40,8 @@ export type UsagePayload = {
   /** Omitted, not zeroed, when the SDK reports no cache fields at all — see below. */
   cache_read_input_tokens?: number;
   cache_creation_input_tokens?: number;
+  cache_creation_1h_input_tokens?: number;
+  main_model?: string;
   model?: string;
   models?: UsageByModel[];
 };
@@ -149,13 +154,20 @@ export function dominantModel(slices: UsageByModel[] | undefined): string | unde
  * report them. Manufacturing a zero there would price the turn as if nothing was cached —
  * an undercount by orders of magnitude that nothing downstream could detect. Left absent,
  * the daemon flags the turn `partial` and declines to price it.
+ *
+ * `mainModel` is the `system/init` message's model — the key the SDK files the main loop
+ * under in `modelUsage`. Sent as `main_model`, it tells the daemon which slice the 1-hour
+ * cache writes belong to (the main loop's; subagents write 5-minute entries) and that the
+ * breakdown is already this turn's own, so a slice larger than `usage` is a subagent at
+ * work rather than a running total (#984).
  */
 export function buildUsagePayload(
   result: ResultUsage,
   prev?: ModelUsageMap,
+  mainModel?: string,
 ): UsagePayload | undefined {
   if (!result.usage) return undefined;
-  const { cache_read_input_tokens, cache_creation_input_tokens } = result.usage;
+  const { cache_read_input_tokens, cache_creation_input_tokens, cache_creation } = result.usage;
   const models = usageByModel(result.modelUsage, prev);
   const payload: UsagePayload = {
     input_tokens: result.usage.input_tokens ?? 0,
@@ -163,9 +175,31 @@ export function buildUsagePayload(
     model: dominantModel(models),
     models,
   };
+  if (models && mainModel) payload.main_model = mainModel;
   if (cache_read_input_tokens !== undefined || cache_creation_input_tokens !== undefined) {
     payload.cache_read_input_tokens = cache_read_input_tokens ?? 0;
     payload.cache_creation_input_tokens = cache_creation_input_tokens ?? 0;
   }
+  if (cache_creation?.ephemeral_1h_input_tokens !== undefined) {
+    payload.cache_creation_1h_input_tokens = cache_creation.ephemeral_1h_input_tokens;
+  }
   return payload;
+}
+
+/**
+ * Whether a result's `modelUsage` can serve as the next turn's baseline. The SDK notes
+ * that crash and startup-error results may carry zeroed usage; adopting one would diff the
+ * next turn against zero while the SDK's accumulator kept its real total, billing that
+ * turn for the whole stream (#984). Keeping the older baseline is safe: if the accumulator
+ * really did reset, the next counters come in below it and `baselineFor` rebases.
+ */
+export function isUsableBaseline(modelUsage: ModelUsageMap): boolean {
+  return Object.values(modelUsage ?? {}).some(
+    (mu) =>
+      !!mu &&
+      ((mu.inputTokens ?? 0) > 0 ||
+        (mu.outputTokens ?? 0) > 0 ||
+        (mu.cacheReadInputTokens ?? 0) > 0 ||
+        (mu.cacheCreationInputTokens ?? 0) > 0),
+  );
 }

@@ -267,6 +267,43 @@ describe("pi template event-handler usage", () => {
     });
   });
 
+  it("forwards pi-ai's 1-hour cache-write split, and omits it when no message reports one", async () => {
+    // pi-ai's Anthropic provider sets `cacheWrite1h` (0 on a 5-minute write); other
+    // providers never do. An absent split must stay absent, not become 0 or the total:
+    // the daemon then prices at the catalog's 5-minute rate, pi's default retention.
+    const run = async (messages: unknown[]) => {
+      captured = [];
+      const handler = createEventHandler(makeSession("main") as never, {
+        cwd: resolvePath(composedDir, "home"),
+        broadcast: () => {},
+      });
+      handler({ type: "agent_start" } as never);
+      handler({ type: "agent_end", messages } as never);
+      await waitFor(() => captured.some((e) => e.type === "usage"));
+      return captured.find((e) => e.type === "usage")?.metadata;
+    };
+    const anthropic = (cacheWrite: number, cacheWrite1h: number) => ({
+      role: "assistant",
+      provider: "anthropic",
+      model: "claude-haiku-4-5",
+      usage: { input: 10, output: 10, cacheRead: 0, cacheWrite, cacheWrite1h },
+    });
+    const long = await run([anthropic(1_500, 1_500), anthropic(400, 0)]);
+    assert.equal(long?.cache_creation_input_tokens, 1_900);
+    assert.equal(long?.cache_creation_1h_input_tokens, 1_500);
+
+    const other = await run([
+      {
+        role: "assistant",
+        provider: "openrouter",
+        model: "moonshotai/kimi-k2.5",
+        usage: { input: 10, output: 10, cacheRead: 0, cacheWrite: 800 },
+      },
+    ]);
+    assert.equal(other?.cache_creation_input_tokens, 800);
+    assert.ok(!("cache_creation_1h_input_tokens" in (other ?? {})));
+  });
+
   it("emits usage for a turn that was served entirely from cache", async () => {
     captured = [];
     const session = makeSession("main");

@@ -144,7 +144,7 @@ export function createMind(options: {
     description: string;
     prompt: string;
     tools: string[];
-    model: "inherit";
+    model: string;
     maxTurns?: number;
   };
 
@@ -168,7 +168,7 @@ export function createMind(options: {
           description: config.description,
           prompt,
           tools: config.tools ?? ["Read", "Write", "Bash"],
-          model: "inherit" as const,
+          model: "sonnet",
           maxTurns: config.maxTurns,
         };
       } catch (err: any) {
