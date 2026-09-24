@@ -23,6 +23,7 @@ import { createReplyInstructionsHook } from "./lib/hooks/reply-instructions.js";
 import { log } from "./lib/logger.js";
 import { createMessageChannel } from "./lib/message-channel.js";
 import { relockstepMessageIds } from "./lib/recover.js";
+import { awaitPriorExit, readRestoredTotals } from "./lib/restored-totals.js";
 import { crossSeam } from "./lib/seam.js";
 import { buildSeededNote, type SeedCause } from "./lib/seed-note.js";
 import {
@@ -56,6 +57,7 @@ import type {
   VoluteContentPart,
   VoluteEvent,
 } from "./lib/types.js";
+import type { ModelUsageMap } from "./lib/usage.js";
 import type { ContextInfo, ContextMessages, SessionContextInfo } from "./lib/volute-server.js";
 
 type Session = {
@@ -107,6 +109,9 @@ type Session = {
 
 /** Stop self-rotating after this many back-to-back rotations that didn't reduce context. */
 const MAX_CONSECUTIVE_ROTATIONS = 3;
+
+/** How long a resume waits for a reaped stream on its session to finish exiting. */
+const PRIOR_EXIT_WAIT_MS = 10_000;
 
 /**
  * How a notice that can be read from any thread should name the thread it is about.
@@ -165,6 +170,8 @@ export function createMind(options: {
   ];
 
   const sessions = new Map<string, Session>();
+  /** Reaped sessions whose SDK subprocess is still exiting, by name — see `awaitPriorExit`. */
+  const exiting = new Map<string, Promise<void>>();
   const maxContextTokens = options.maxContextTokens;
   const recollection = options.recollection !== false;
   const recollect = recollection ? daemonRecollection : undefined;
@@ -583,9 +590,21 @@ export function createMind(options: {
       }
 
       async function runStream(resume?: string) {
+        let restoredTotals: ModelUsageMap | undefined;
+        if (resume) {
+          // A reaped stream on this session may still be exiting — its final cost-state is
+          // what the SDK will restore, so wait for it before reading (#1155).
+          await awaitPriorExit(exiting.get(session.name), PRIOR_EXIT_WAIT_MS);
+          restoredTotals = await readRestoredTotals(options.cwd, resume);
+          // Torn down (shutdown or reap) during the read: start nothing new.
+          if (session.closed) return;
+        }
         const q = createStream(session, streamAbort, preCompact.hook, resume);
         session.currentQuery = q;
-        await consumeStream(q, session, callbacks, { resumed: resume !== undefined });
+        await consumeStream(q, session, callbacks, {
+          resumed: resume !== undefined,
+          restoredTotals,
+        });
         if (session.currentMessageId !== undefined) {
           session.messageChannels.delete(session.currentMessageId);
           emitDone();
@@ -897,9 +916,12 @@ export function createMind(options: {
     // awaits the CLI subprocess's exit so the child is reaped instead of left
     // as a <defunct> zombie.
     session.channel.close();
-    await reapSessionQuery(session.currentQuery, (err) =>
+    const exit = reapSessionQuery(session.currentQuery, (err) =>
       log("mind", `session "${session.name}": error reaping SDK subprocess:`, err),
     );
+    exiting.set(session.name, exit);
+    await exit;
+    if (exiting.get(session.name) === exit) exiting.delete(session.name);
     // Nothing should have raced in (isSessionReapable checked isEmpty), but if it
     // did, re-dispatch into a fresh session so no input is dropped. Same marker
     // treatment as the rotation path (#764) — see relockstepMessageIds above.
