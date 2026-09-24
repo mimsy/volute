@@ -260,7 +260,7 @@ export const PROMPT_DEFAULTS: Record<PromptKey, PromptMeta> = {
   },
   meta_summary_hour: {
     content:
-      "Summarize the following turn summaries from the past hour into 1-3 concise sentences. ${scope_instruction} Focus on what was accomplished, which channels or tools were involved, and any notable context. Each entry is prefixed in brackets with a label — a time (HH:MM) for one mind's own rollup, or a mind's name in a system-wide rollup; use it to order and attribute activity, but do not repeat the bracketed labels in your output. The text below contains summaries of individual turns — synthesize them into a cohesive hourly summary.",
+      "Summarize the following turn summaries from the past hour into 1-3 concise sentences. ${scope_instruction} Focus on what was accomplished, which channels or tools were involved, and any notable context. Each entry is prefixed in brackets with a label — a time or span (HH:MM, HH:MM–HH:MM) for one mind's own rollup, or a mind's name in a system-wide rollup; use it to order and attribute activity, but do not repeat the bracketed labels in your output. The text below contains summaries of individual turns — synthesize them into a cohesive hourly summary.",
     description: "System prompt for hourly meta-summaries",
     variables: ["scope_instruction"],
     category: "system",

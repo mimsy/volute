@@ -33,7 +33,12 @@ import { resolveMindDir } from "../mind/registry.js";
 import { mindHistory } from "../schema.js";
 import log from "../util/logger.js";
 import { resolveRealWithinBase, resolveWithinBase } from "../util/paths.js";
-import { getUtcTimeRange, parseUtcDateTime, type TimerPeriod } from "../util/period-keys.js";
+import {
+  getTimeRange,
+  getUtcTimeRange,
+  parseUtcDateTime,
+  type TimerPeriod,
+} from "../util/period-keys.js";
 import { getSpendBudget } from "./spend-budget.js";
 import { mindModelId } from "./usage-pricing.js";
 
@@ -217,6 +222,28 @@ export async function readMindSoul(mind: string): Promise<string> {
     return (await readHomeFile(await mindHome(mind), "SOUL.md", SOUL_MAX_CHARS)) ?? "";
   } catch {
     return "";
+  }
+}
+
+/**
+ * The period's own bounds, as the first line of a rollup's input. Server-local, like the period
+ * key and every entry label, so how long and when can be read off the record rather than
+ * guessed (#1145).
+ */
+export function periodBounds(period: TimerPeriod, periodKey: string): string {
+  switch (period) {
+    case "hour": {
+      const next = String(Number(periodKey.slice(11)) + 1).padStart(2, "0");
+      return `[this hour: ${periodKey.slice(0, 10)} ${periodKey.slice(11)}:00–${next}:00]`;
+    }
+    case "day":
+      return `[this day: ${periodKey}]`;
+    case "week": {
+      const { start, end } = getTimeRange(periodKey, "week");
+      return `[this week: ${start.slice(0, 10)} to ${end.slice(0, 10)}]`;
+    }
+    case "month":
+      return `[this month: ${periodKey}]`;
   }
 }
 
