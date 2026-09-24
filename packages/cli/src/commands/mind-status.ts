@@ -30,7 +30,8 @@ const cmd = command({
 
     const mind = (await res.json()) as {
       name: string;
-      port: number;
+      // Withheld from non-admin callers, a mind reading its own status included (#503).
+      port?: number;
       status?: string;
       running?: boolean;
       stage?: string;
@@ -56,7 +57,7 @@ const cmd = command({
     const status = mind.status ?? (mind.running ? "running" : "stopped");
     console.log(`Mind:    ${mind.name}`);
     console.log(`Status:  ${status}`);
-    console.log(`Port:    ${mind.port}`);
+    if (mind.port !== undefined) console.log(`Port:    ${mind.port}`);
     if (mind.stage) console.log(`Stage:   ${mind.stage}`);
     if (mind.parent) console.log(`Parent:  ${mind.parent}`);
     if (mind.model) console.log(`Model:   ${mind.model}`);
