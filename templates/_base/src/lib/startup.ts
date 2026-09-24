@@ -33,6 +33,12 @@ export type SubagentConfig = {
   systemPrompt: string; // path relative to home/, e.g. "SOUL.md"
   tools?: string[];
   maxTurns?: number;
+  /**
+   * The model this subagent runs on (claude template): an alias like "sonnet" or "opus", a
+   * full model id, or "inherit" for the mind's own model. Defaults to "sonnet". pi
+   * subagents always run on the mind's model.
+   */
+  model?: string;
 };
 
 /** Extended-thinking config, passed through to the Claude Agent SDK's `thinking` option.

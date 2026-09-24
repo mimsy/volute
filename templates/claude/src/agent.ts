@@ -90,6 +90,13 @@ type Session = {
 const MAX_CONSECUTIVE_ROTATIONS = 3;
 
 /**
+ * The model subagents run on unless a mind's config chooses otherwise — config-defined ones
+ * via their `model` field, the SDK's built-in ones via CLAUDE_CODE_SUBAGENT_MODEL.
+ * Inheriting the mind's model made subagents a third of some minds' spend.
+ */
+const SUBAGENT_MODEL = "sonnet";
+
+/**
  * How a notice that can be read from any thread should name the thread it is about.
  *
  * Amnesia notices are recorded mind-level so they can't strand (#768), which means the
@@ -168,7 +175,7 @@ export function createMind(options: {
           description: config.description,
           prompt,
           tools: config.tools ?? ["Read", "Write", "Bash"],
-          model: "sonnet",
+          model: config.model ?? SUBAGENT_MODEL,
           maxTurns: config.maxTurns,
         };
       } catch (err: any) {
@@ -192,7 +199,13 @@ export function createMind(options: {
   // explicit skills array grants the Skill tool for each installed skill — the
   // SDK silently drops the documented `skills: 'all'` string form.
   const mindHome = resolvePath(options.cwd);
-  const sdkEnv = { ...process.env, HOME: mindHome };
+  // CLAUDE_CODE_SUBAGENT_MODEL is the model the SDK's built-in agents (general-purpose)
+  // run on — they have none of their own and would otherwise inherit the mind's.
+  const sdkEnv = {
+    ...process.env,
+    HOME: mindHome,
+    CLAUDE_CODE_SUBAGENT_MODEL: process.env.CLAUDE_CODE_SUBAGENT_MODEL ?? SUBAGENT_MODEL,
+  };
   function installedSkills(): string[] | undefined {
     const names = readSkillDescriptions([resolvePath(mindHome, ".claude/skills")]).map(
       (s) => s.name,
