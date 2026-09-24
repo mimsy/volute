@@ -551,7 +551,7 @@ export function backfillInitInfrastructure(
 }
 
 /** Per-runtime mechanics doc filename by template. */
-const MECHANICS_DOCS: Record<string, string> = {
+export const MECHANICS_DOCS: Record<string, string> = {
   claude: "CLAUDE.md",
   pi: "MINDS.md",
   codex: "AGENTS.md",

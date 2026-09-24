@@ -1,19 +1,5 @@
-import {
-  closeSync,
-  constants,
-  existsSync,
-  fstatSync,
-  ftruncateSync,
-  lstatSync,
-  mkdirSync,
-  openSync,
-  readFileSync,
-  realpathSync,
-  type Stats,
-  writeFileSync,
-  writeSync,
-} from "node:fs";
-import { dirname, resolve, sep } from "node:path";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import {
   MIND_LEVEL_THREAD,
@@ -30,6 +16,7 @@ import {
   type RoutingConfig,
 } from "../delivery/delivery-router.js";
 import log from "../util/logger.js";
+import { rewriteMindFileInPlace } from "./mind-file-rewrite.js";
 import { readVoluteConfig, writeVoluteConfig } from "./volute-config.js";
 
 const rlog = log.child("event-routes");
@@ -201,66 +188,33 @@ function renameThreadBatchText(text: string): string {
  * rewrite is surgical (see {@link renameThreadBatchText}); returns what was migrated,
  * empty when there was nothing to do, which also makes a second run a no-op.
  *
- * The daemon may be root and routes.json is the mind's file, so the write is guarded: it
- * only rewrites an existing file in place (so the inode and its ownership stay the mind's),
- * and refuses when `.config/` resolves outside the mind dir, when routes.json is a symlink
- * or has other hard links, or when the file it opened isn't the one it inspected. That
- * narrows what a mind can aim this write at to its own routes.json; it is not a proof
- * against every race on a directory the mind controls.
+ * The write goes through {@link rewriteMindFileInPlace}, which refuses symlinks, hard
+ * links, and a `.config/` that resolves outside the mind dir.
  */
 export function migrateThreadBatchToDelivery(dir: string, name?: string): MigratedThreadBatch[] {
-  const path = routesPath(dir);
-  let inspected: Stats;
-  try {
-    inspected = lstatSync(path);
-  } catch {
-    return [];
-  }
-  // A hard link would let a root write land on a file elsewhere that the mind linked here.
-  if (!inspected.isFile() || inspected.nlink !== 1) {
-    if (inspected.isFile()) rlog.warn(`${path} has other hard links — not migrating it`);
-    return [];
-  }
-  if (!realpathSync(dirname(path)).startsWith(realpathSync(dir) + sep)) {
-    rlog.warn(`${dirname(path)} resolves outside ${dir} — not migrating routes.json`);
-    return [];
-  }
-
-  // O_NOFOLLOW guards only the last path component; the fstat check catches a swap
-  // anywhere between the lstat above and this open.
-  const fd = openSync(path, constants.O_RDWR | constants.O_NOFOLLOW);
-  let migrated: MigratedThreadBatch[];
-  try {
-    const opened = fstatSync(fd);
-    if (opened.dev !== inspected.dev || opened.ino !== inspected.ino || opened.nlink !== 1) {
-      rlog.warn(`${path} changed while being opened — not migrating it`);
-      return [];
-    }
-    const text = readFileSync(fd, "utf-8");
+  let migrated: MigratedThreadBatch[] = [];
+  const wrote = rewriteMindFileInPlace(dir, routesPath(dir), (text) => {
     let parsed: RoutingConfig;
     try {
       parsed = JSON.parse(text);
     } catch {
-      return []; // the router reports an unreadable file; nothing to rename in it
+      return null; // the router reports an unreadable file; nothing to rename in it
     }
-    if (parsed == null || typeof parsed !== "object" || Array.isArray(parsed)) return [];
+    if (parsed == null || typeof parsed !== "object" || Array.isArray(parsed)) return null;
     const result = renameThreadBatch(parsed);
+    if (result.migrated.length === 0) return null;
     migrated = result.migrated;
-    if (migrated.length === 0) return [];
 
-    let out = renameThreadBatchText(text);
+    const out = renameThreadBatchText(text);
     let surgical = true;
     try {
       surgical = isDeepStrictEqual(JSON.parse(out), result.config);
     } catch {
       surgical = false;
     }
-    if (!surgical) out = `${JSON.stringify(result.config, null, 2)}\n`;
-    ftruncateSync(fd, 0);
-    writeSync(fd, out, 0);
-  } finally {
-    closeSync(fd);
-  }
+    return surgical ? out : `${JSON.stringify(result.config, null, 2)}\n`;
+  });
+  if (!wrote) return [];
   // Not a rule change — nothing gated needs re-evaluating.
   if (name) clearConfigCache(name, { notify: false });
   rlog.info(
