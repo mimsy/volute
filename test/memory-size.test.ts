@@ -4,10 +4,14 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import {
+  getMemoryDetail,
   getMemoryStatus,
   MEMORY_HARD_CAP_TOKENS,
   MEMORY_SOFT_BUDGET_TOKENS,
+  parseMemorySections,
+  printableHeading,
 } from "../packages/daemon/src/lib/mind/memory-size.js";
+import { memorySections } from "../templates/_base/src/lib/startup.js";
 
 describe("getMemoryStatus", () => {
   const scratch: string[] = [];
@@ -33,6 +37,7 @@ describe("getMemoryStatus", () => {
     const status = getMemoryStatus(makeProject("m".repeat(4000)));
     assert.ok(status);
     assert.equal(status.bytes, 4000);
+    assert.equal(status.chars, 4000);
     assert.equal(status.estTokens, 1000);
     assert.equal(status.softBudgetTokens, MEMORY_SOFT_BUDGET_TOKENS);
     assert.equal(status.hardCapTokens, MEMORY_HARD_CAP_TOKENS);
@@ -90,5 +95,77 @@ describe("getMemoryStatus", () => {
     const status = getMemoryStatus(dir);
     assert.ok(status);
     assert.equal(status.softBudgetTokens, MEMORY_SOFT_BUDGET_TOKENS);
+  });
+});
+
+describe("MEMORY.md sections (#954, #1124)", () => {
+  const sample = [
+    "Loose preamble line",
+    "# Memory",
+    "## Identity",
+    "who I am",
+    "### A subsection stays inside Identity",
+    "detail",
+    "```md",
+    "## not a heading — inside a fence",
+    "```",
+    "## Right now",
+    "today",
+    "#hashtag is not a heading",
+  ].join("\n");
+
+  it("splits at #/## headings outside fences; the preamble has a null heading", () => {
+    const sections = parseMemorySections(sample);
+    assert.deepEqual(
+      sections.map((s) => s.heading),
+      [null, "# Memory", "## Identity", "## Right now"],
+    );
+    assert.equal(
+      sections.reduce((sum, s) => sum + s.chars, 0),
+      sample.length,
+      "sections tile the whole file",
+    );
+  });
+
+  it("agrees with the template's split, which the overflow notice uses", () => {
+    for (const text of [sample, "", "no headings at all", "## Only\nbody\n", "# A\n# B"]) {
+      assert.deepEqual(
+        parseMemorySections(text).map((s) => [s.heading, s.chars]),
+        memorySections(text).map((s) => [s.heading, s.end - s.start]),
+        JSON.stringify(text),
+      );
+    }
+  });
+
+  it("getMemoryDetail returns the status plus sections", () => {
+    const dir = mkdtempSync(resolve(tmpdir(), "memory-detail-"));
+    try {
+      mkdirSync(resolve(dir, "home"), { recursive: true });
+      writeFileSync(resolve(dir, "home", "MEMORY.md"), "## A\naaaa\n## B\nbb");
+      const detail = getMemoryDetail(dir);
+      assert.ok(detail);
+      assert.equal(detail.chars, 17);
+      assert.deepEqual(
+        detail.sections?.map((s) => [s.heading, s.chars]),
+        [
+          ["## A", 10],
+          ["## B", 7],
+        ],
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("printableHeading", () => {
+  it("strips ANSI, OSC and other control characters from mind-authored headings", () => {
+    assert.equal(
+      printableHeading(
+        "## \x1b[31mred\x1b[0m \x1b]0;pwned\x07title \x1b]8;;http://x\x1b\\link\x1b]8;;\x1b\\ \rbell\x07\x9b",
+      ),
+      "## red title link bell",
+    );
+    assert.equal(printableHeading("## Plain — ünïcode ✓"), "## Plain — ünïcode ✓");
   });
 });

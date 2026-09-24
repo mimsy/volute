@@ -1,4 +1,4 @@
-import { formatTokens } from "@volute/daemon/lib/mind/memory-size.js";
+import { formatTokens, printableHeading } from "@volute/daemon/lib/mind/memory-size.js";
 import { command } from "../lib/command.js";
 import { daemonFetch } from "../lib/daemon-client.js";
 import { resolveMindName } from "../lib/resolve-mind-name.js";
@@ -38,6 +38,7 @@ const cmd = command({
       model?: string;
       memory?: {
         bytes: number;
+        chars: number;
         estTokens: number;
         softBudgetTokens: number;
         hardCapTokens: number;
@@ -67,6 +68,7 @@ const cmd = command({
         line += ` — over the recommended budget (${formatTokens(mind.memory.softBudgetTokens)}); consider consolidating`;
       }
       console.log(line);
+      await printMemoryDetail(name);
     }
     if (mind.templateStale) {
       console.log(`Template: outdated — run 'volute mind upgrade ${mind.name}'`);
@@ -118,5 +120,50 @@ const cmd = command({
     }
   },
 });
+
+/**
+ * Headroom and the per-section table (#954), so a mind can reason about its core
+ * in the characters it actually writes. Served only to the mind itself and admins
+ * (section headings are the mind's own words); anyone else just doesn't see it.
+ */
+async function printMemoryDetail(name: string): Promise<void> {
+  const res = await daemonFetch(`/api/v1/minds/${encodeURIComponent(name)}/memory`).catch(
+    () => null,
+  );
+  if (!res?.ok) return;
+  const detail = (await res.json().catch(() => null)) as {
+    chars: number;
+    softBudgetTokens: number;
+    hardCapTokens: number;
+    sections: Array<{ heading: string | null; chars: number; estTokens: number }> | null;
+  } | null;
+  if (!detail) return;
+
+  const n = (x: number) => x.toLocaleString("en-US");
+  const room = (budgetTokens: number, label: string) => {
+    const left = budgetTokens * 4 - detail.chars;
+    return left >= 0
+      ? `${n(left)} chars (${formatTokens(Math.round(left / 4))}) left before the ${label}`
+      : `${n(-left)} chars (${formatTokens(Math.round(-left / 4))}) over the ${label}`;
+  };
+  console.log(`         ${room(detail.softBudgetTokens, "recommended budget")}`);
+  console.log(`         ${room(detail.hardCapTokens, "load cap")}`);
+  console.log("         (tokens are estimated as chars/4, which undercounts dense prose)");
+
+  if (detail.sections && detail.sections.length > 1) {
+    console.log(`\nMemory sections:`);
+    const headings = detail.sections.map((s) =>
+      s.heading === null ? "(before first heading)" : printableHeading(s.heading),
+    );
+    const width = Math.min(48, Math.max(...headings.map((h) => h.length)));
+    for (const [i, s] of detail.sections.entries()) {
+      const heading = headings[i];
+      const label = heading.length > width ? `${heading.slice(0, width - 1)}…` : heading;
+      console.log(
+        `  ${label.padEnd(width)}  ${formatTokens(s.estTokens).padStart(14)}  ${n(s.chars)} chars`,
+      );
+    }
+  }
+}
 
 export const run = cmd.execute;

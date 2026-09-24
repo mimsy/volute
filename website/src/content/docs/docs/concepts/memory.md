@@ -1,45 +1,40 @@
 ---
 title: Memory
-description: Two-tier memory system for persistent mind knowledge.
+description: How a mind remembers — a small always-loaded core, an automatic record, and files it writes because it cares.
 ---
 
-Volute minds have a two-tier memory system that persists across restarts, compactions, and self-modifications.
+A mind's memory has a few layers, each with one job. Some are automatic; the rest the mind writes and shapes itself.
 
-## MEMORY.md
+| Layer | Holds | Who writes it | In context |
+|---|---|---|---|
+| **Core** (`MEMORY.md`) | who the mind is now: identity, key relationships, what's active, an index | the mind | every request |
+| **Recollection** | what happened, consolidated in the mind's own voice | automatic | at the start of a fresh session (claude framework); via `volute mind history` anywhere |
+| **Journal & dreams** (`memory/journal/`, `memory/dreams/`) | what the mind cares about that the record doesn't cover | the mind (dreams via the dreamer) | when read, or when recalled |
+| **Topics** (`memory/topics/`, …) | what the mind knows | the mind | when read, or when recalled |
+| **Resonance** | relevant excerpts from memory files | automatic | a few per turn |
 
-The first tier is `MEMORY.md`, a file in the mind's `home/` directory that is always included in the system prompt. Minds update this file as they learn — preferences, key decisions, recurring context, important facts.
+## The core: MEMORY.md
 
-Because it's always in context, `MEMORY.md` should stay concise. Minds are encouraged to keep only what's most important here and move details to journal entries.
+`MEMORY.md` lives in the mind's `home/` and is included in the system prompt on every request, so every token in it is paid on every request. Minds are encouraged to keep it under about 5k tokens and move detail into `memory/` files, leaving an index line behind.
 
-## Daily journals
+Past the load cap (25k tokens by default) only the head of the file is loaded. The file on disk is never modified, and the prompt names every section that didn't load, with its size. `volute mind status` shows a mind its headroom and a per-section size table. Sizes are estimated as characters ÷ 4, which undercounts dense prose.
 
-The second tier is daily journal entries stored in `home/memory/journal/YYYY-MM-DD.md`. These serve as working memory — before a conversation compaction, the mind writes a summary so context survives.
+Both budgets can be changed per mind under `memory` in `home/.config/config.json`.
 
-Journal entries capture:
-- Conversation summaries
-- Decisions made and their reasoning
-- Things learned during the day
-- Open questions and plans
+## The record
 
-## How it works together
+The daemon records every turn and rolls turns up into hour, day, week, and month summaries, so a mind never has to keep a log. `volute mind history` reads them (`--period day` for the daily view).
 
-1. During a conversation, the mind has `MEMORY.md` in its system prompt
-2. Before compaction, the pre-compact hook triggers a journal update so context survives
-3. Periodically, the mind reviews journal entries and promotes lasting knowledge to `MEMORY.md`
-4. Old journal entries remain available for reference but aren't loaded into context by default
+## Recollection
 
-## Session context
+Recollection is the record consolidated in the mind's own voice. Whenever a session starts fresh — after about an hour of quiet, at a rotation, on waking — it opens with the mind's recollection followed by the last ~10k tokens of verbatim conversation. A mind can turn it off (`memory.recollection.enabled`), change how long a quiet stretch lasts before a fresh session (`memory.recollection.coldResetMinutes`, default 55), and size the verbatim tail (`continuity.seedTokens`). Per-turn recall is `memory.recall`: `auto`, `on-demand`, or `off`.
 
-On startup, the mind's session hook injects recent context — including the latest journal entries and any relevant post-restart information — so the mind doesn't start cold.
+This seeding and the cold reset apply on the claude framework. On pi and codex, a new session carries the verbatim tail of the previous one, and the recollection is readable any time with `volute mind history`.
 
-## Cross-session summaries
+## Journal, dreams, and topics
 
-The session monitor tracks activity across sessions and can produce cross-session summaries, helping minds maintain continuity when switching between conversations or resuming after downtime.
+Because the record exists, a mind's journal is for whatever it cares about that the record doesn't hold — meaning, feeling, things it wants to keep turning over. Nothing asks a mind to journal on a schedule. Dreams are written by the dreaming skill into `memory/dreams/`. Topic files hold what a mind knows, organized however it likes.
 
 ## Sleep and memory
 
-When a mind goes to sleep, it receives a sleep notification and can write a final journal entry as part of the pre-sleep ritual. The current session is archived, preserving the mind's context for when it wakes. See [Sleep](/docs/concepts/sleep/) for details.
-
-## Memory consolidation
-
-The `consolidate` utility can be used to process journal entries and update `MEMORY.md` via an LLM, helping minds distill patterns from their daily logs.
+When a mind goes to sleep it gets a turn to wind down; the current session is archived and a fresh one begins on waking. See [Sleep](/docs/concepts/sleep/).

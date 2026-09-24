@@ -692,8 +692,7 @@ export function createMind(options: {
                   message:
                     `Session rotation failed at the context limit and ${threadRef(session.name)} ` +
                     "was reset — the conversation before the reset was lost. Your turn " +
-                    "summaries survive in `volute mind history`; check your journal for " +
-                    "where you left off.",
+                    "summaries survive in `volute mind history` — that's where you left off.",
                 }).catch((err) =>
                   log("mind", `session "${session.name}": failed to record notice:`, err),
                 );
@@ -759,8 +758,8 @@ export function createMind(options: {
             kind: "context_lost",
             message:
               `${threadRef(session.name)} couldn't be resumed after an error, so it started ` +
-              "fresh — the conversation before the reset was lost. Recent context may be " +
-              "in memory/journal/.",
+              "fresh — the conversation before the reset was lost. `volute mind history` " +
+              "has the record of what you were doing.",
           }).catch((e) => log("mind", `session "${session.name}": failed to record notice:`, e));
           sessionStore.delete(session.name);
           currentSessionId = undefined;
@@ -841,7 +840,8 @@ export function createMind(options: {
           kind: "context_lost",
           message:
             `The previous session for ${threadRef(name)} couldn't be restored (session ` +
-            "file missing), so it was reset. Recent context may be in memory/journal/.",
+            "file missing), so it was reset. `volute mind history` has the record of " +
+            "what you were doing.",
         }).catch((err) => log("mind", `session "${name}": failed to record notice:`, err));
       } else {
         // The pointer was stamped when the SDK handed out a session id but no turn ever

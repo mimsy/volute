@@ -846,6 +846,63 @@ describe("web minds routes", () => {
     }
   });
 
+  it("GET /:name/memory — headroom and section sizes, to the mind itself only (#954)", async () => {
+    const { mkdirSync, rmSync, writeFileSync } = await import("node:fs");
+    const { resolve } = await import("node:path");
+    const { addMind, mindDir, removeMind } = await import(
+      "../packages/daemon/src/lib/mind/registry.js"
+    );
+    const { getOrCreateMindUser } = await import("../packages/daemon/src/lib/auth.js");
+    const { generateMindToken } = await import("../packages/daemon/src/lib/daemon/mind-tokens.js");
+
+    const name = `web-memsect-${Date.now()}`;
+    const other = `${name}-other`;
+    const dir = resolve(mindDir(name));
+    mkdirSync(resolve(dir, "home"), { recursive: true });
+    writeFileSync(
+      resolve(dir, "home/MEMORY.md"),
+      `# Memory\n## Right now\n${"r".repeat(99)}\n## Concepts\n${"c".repeat(3999)}\n`,
+    );
+    await addMind(name, 4196, undefined, "claude");
+    await addMind(other, 4197, undefined, "claude");
+    await getOrCreateMindUser(name);
+    await getOrCreateMindUser(other);
+
+    try {
+      await setupAuth(); // first user is admin, so the mind users below are not
+      const { default: app } = await import("../packages/daemon/src/web/app.js");
+      const self = await app.request(`/api/v1/minds/${name}/memory`, {
+        headers: { Authorization: `Bearer ${generateMindToken(name)}` },
+      });
+      assert.equal(self.status, 200);
+      const body = (await self.json()) as {
+        chars: number;
+        hardCapTokens: number;
+        sections: Array<{ heading: string | null; chars: number }>;
+      };
+      assert.equal(body.chars, 9 + 113 + 4012);
+      assert.equal(body.hardCapTokens, 25_000);
+      assert.deepEqual(
+        body.sections.map((s) => [s.heading, s.chars]),
+        [
+          ["# Memory", 9],
+          ["## Right now", 113],
+          ["## Concepts", 4012],
+        ],
+      );
+
+      // Headings are the mind's own words — another mind gets nothing.
+      const cross = await app.request(`/api/v1/minds/${name}/memory`, {
+        headers: { Authorization: `Bearer ${generateMindToken(other)}` },
+      });
+      assert.equal(cross.status, 403);
+    } finally {
+      await removeMind(name);
+      await removeMind(other);
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("GET /:name — omits the sprout checklist for sprouted minds (#664)", async () => {
     const { mkdirSync, rmSync } = await import("node:fs");
     const { resolve } = await import("node:path");

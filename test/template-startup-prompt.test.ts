@@ -53,7 +53,7 @@ describe("loadSystemPrompt", () => {
     const prompt = loadSystemPrompt();
     assert.equal(
       prompt,
-      "SOUL-CONTENT\n\n---\n\nV\n\n---\n\n## Memory (~0 tokens, always loaded)\n\nM",
+      "SOUL-CONTENT\n\n---\n\nV\n\n---\n\n## Memory (~0 tokens, always loaded — a chars/4 estimate, low for dense prose)\n\nM",
     );
   });
 
@@ -62,7 +62,12 @@ describe("loadSystemPrompt", () => {
     const dir = makeHome({ "SOUL.md": "S", "MEMORY.md": "m".repeat(4000) });
     process.chdir(dir);
     const prompt = loadSystemPrompt();
-    assert.ok(prompt.includes("## Memory (~1k tokens, always loaded)"), prompt.slice(0, 200));
+    assert.ok(
+      prompt.includes(
+        "## Memory (~1k tokens, always loaded — a chars/4 estimate, low for dense prose)",
+      ),
+      prompt.slice(0, 200),
+    );
   });
 
   it("adds a consolidation nudge when memory exceeds the soft budget (#569)", () => {
@@ -71,7 +76,11 @@ describe("loadSystemPrompt", () => {
     const dir = makeHome({ "SOUL.md": "S", "MEMORY.md": memory });
     process.chdir(dir);
     const prompt = loadSystemPrompt();
-    assert.ok(prompt.includes("## Memory (~10k tokens, always loaded)"));
+    assert.ok(
+      prompt.includes(
+        "## Memory (~10k tokens, always loaded — a chars/4 estimate, low for dense prose)",
+      ),
+    );
     assert.ok(prompt.includes("exceeds the recommended budget of ~5k tokens"));
     // Under the hard cap the content is fully loaded and there is no truncation notice.
     assert.ok(prompt.includes(memory));
@@ -109,6 +118,73 @@ describe("loadSystemPrompt", () => {
     assert.ok(!prompt.includes("line-01000"), "lines past the cap are dropped whole");
     // The file on disk is never modified.
     assert.equal(readFileSync(memoryPath, "utf-8"), memory);
+  });
+
+  it("names every section that didn't load, and the one the cut lands in (#1124)", () => {
+    // ~22.5k tokens of "Identity" loads whole; "Concepts" straddles the 25k cap
+    // (100,000 chars); "Right now" — the newest, at the end — is past it.
+    const memory = [
+      "# Memory",
+      "## Identity",
+      "i".repeat(90_000),
+      "## Concepts",
+      "c".repeat(20_000),
+      "```",
+      "## inside a fence — not a section",
+      "```",
+      "## Right now",
+      "r".repeat(4_000),
+    ].join("\n");
+    const dir = makeHome({ "SOUL.md": "S", "MEMORY.md": memory });
+    process.chdir(dir);
+    const prompt = loadSystemPrompt();
+
+    // "Concepts" is one long line, so the cut lands on the newline after its heading.
+    const notice = prompt.slice(prompt.indexOf("⚠"));
+    assert.ok(notice.includes("These sections are not in your context"), notice);
+    assert.ok(notice.includes("- ## Right now (~1k tokens)"), notice);
+    assert.ok(
+      notice.includes("- ## Concepts — cut partway: ~3 tokens of ~5k tokens loaded"),
+      notice,
+    );
+    assert.ok(!prompt.includes("- ## Identity"), "a fully loaded section isn't listed");
+    assert.ok(!prompt.includes("- # Memory"));
+    assert.ok(!prompt.includes("- ## inside a fence"), "fenced lines aren't headings");
+  });
+
+  it("doesn't call a section that ends exactly at the cut partly loaded", () => {
+    // Cap 25 tokens = 100 chars. "## A\n" + 94 chars ends at index 99, the newline
+    // the line-boundary cut lands on, so A loads whole and only B is missing.
+    const memory = `## A\n${"a".repeat(94)}\n## B\n${"b".repeat(200)}`;
+    const dir = makeHome({
+      "SOUL.md": "S",
+      "MEMORY.md": memory,
+      ".config/config.json": JSON.stringify({ memory: { hardCapTokens: 25 } }),
+    });
+    process.chdir(dir);
+    const prompt = loadSystemPrompt();
+    const notice = prompt.slice(prompt.indexOf("⚠"));
+    assert.ok(prompt.includes("a".repeat(94)), "A is loaded whole");
+    assert.ok(!notice.includes("- ## A"), notice);
+    assert.ok(notice.includes("- ## B (~51 tokens)"), notice);
+  });
+
+  it("lists at most 20 unloaded sections, then a count, so the notice stays small", () => {
+    // s0 still fits under the 100-char cap; s1–s49 are past it.
+    const tail = Array.from({ length: 50 }, (_, i) => `## s${i}\nxxxx`).join("\n");
+    const memory = `## head\n${"h".repeat(80)}\n${tail}`;
+    const dir = makeHome({
+      "SOUL.md": "S",
+      "MEMORY.md": memory,
+      ".config/config.json": JSON.stringify({ memory: { hardCapTokens: 25 } }),
+    });
+    process.chdir(dir);
+    const prompt = loadSystemPrompt();
+    const notice = prompt.slice(prompt.indexOf("⚠"));
+    const listed = notice.split("\n").filter((l) => l.startsWith("- ## s"));
+    assert.equal(listed.length, 20, notice);
+    assert.ok(notice.includes("- …and 29 more sections (~"), notice);
+    assert.ok(!notice.includes("- ## s49"), notice);
   });
 
   it("falls back to a hard cut when the only newline is near the start (one giant line)", () => {

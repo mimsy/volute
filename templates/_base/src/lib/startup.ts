@@ -152,10 +152,84 @@ function headAtLineBoundary(text: string, maxChars: number): string {
 }
 
 /**
+ * MEMORY.md split at its `#`/`##` headings (outside code fences). Text before the
+ * first heading is a section with a null heading. Mirrored by `parseMemorySections`
+ * in packages/daemon/src/lib/mind/memory-size.ts, which `volute mind status` uses —
+ * test/memory-size.test.ts pins the two to the same answer.
+ */
+export function memorySections(
+  text: string,
+): { heading: string | null; start: number; end: number }[] {
+  const sections: { heading: string | null; start: number; end: number }[] = [];
+  let current: { heading: string | null; start: number; end: number } = {
+    heading: null,
+    start: 0,
+    end: 0,
+  };
+  let inFence = false;
+  let pos = 0;
+  for (const line of text.split("\n")) {
+    if (/^\s*(```|~~~)/.test(line)) inFence = !inFence;
+    else if (!inFence && /^#{1,2}\s+\S/.test(line)) {
+      current.end = pos;
+      if (current.end > current.start) sections.push(current);
+      current = { heading: line.trim(), start: pos, end: 0 };
+    }
+    pos += line.length + 1;
+  }
+  current.end = text.length;
+  if (current.end > current.start) sections.push(current);
+  return sections;
+}
+
+const MAX_LISTED_UNLOADED_SECTIONS = 20;
+
+/**
+ * The part of the overflow notice that names what didn't load: every section
+ * that starts past the cut, plus the one the cut lands inside (the first 20, then
+ * a count). Saying *what* is
+ * missing is what lets the mind go and read it instead of guessing (#1124).
+ */
+function unloadedSectionsNotice(memory: string, loadedChars: number): string {
+  const lines: string[] = [];
+  let restCount = 0;
+  let restChars = 0;
+  for (const s of memorySections(memory)) {
+    // A line-boundary cut drops the newline that ends the last loaded section, so a
+    // section ending exactly at the cut is whole — not "cut partway".
+    const end = memory[s.end - 1] === "\n" ? s.end - 1 : s.end;
+    if (end <= loadedChars) continue;
+    // Bounded, so a file of thousands of tiny sections can't rebuild the very
+    // weight the cap exists to shed.
+    if (lines.length >= MAX_LISTED_UNLOADED_SECTIONS) {
+      restCount++;
+      restChars += s.end - Math.max(s.start, loadedChars);
+      continue;
+    }
+    const name = s.heading ?? "(text before the first heading)";
+    const total = formatTokens(estimateTokens(s.end - s.start));
+    if (s.start < loadedChars) {
+      lines.push(
+        `- ${name} — cut partway: ${formatTokens(estimateTokens(loadedChars - s.start))} of ${total} loaded`,
+      );
+    } else {
+      lines.push(`- ${name} (${total})`);
+    }
+  }
+  if (restCount > 0) {
+    lines.push(
+      `- …and ${restCount} more section${restCount === 1 ? "" : "s"} (${formatTokens(estimateTokens(restChars))})`,
+    );
+  }
+  return lines.join("\n");
+}
+
+/**
  * The Memory section of the system prompt: header carries the token cost so the
  * mind sees what its memory weighs on every request; over the soft budget a
  * consolidation nudge is added; over the hard cap only the head is loaded (the
- * file on disk is never touched) with a loud notice explaining how to recover.
+ * file on disk is never touched) with a loud notice naming the sections that
+ * didn't load, so the mind can Read them.
  */
 export function buildMemorySection(memory: string, config: MindConfig): string {
   // typeof guards mirror the daemon's getMemoryStatus: a malformed override
@@ -177,11 +251,15 @@ export function buildMemorySection(memory: string, config: MindConfig): string {
     notice =
       `\n\n⚠ MEMORY.md is ${formatTokens(totalTokens)} — only the first ` +
       `${formatTokens(hardCap)} are loaded. The full file is untouched on disk. ` +
+      `These sections are not in your context (Read MEMORY.md to see them):\n` +
+      `${unloadedSectionsNotice(memory, body.length)}\n` +
       `Consolidate it to restore your full memory.`;
   }
 
   const loadedTokens = estimateTokens(body.length);
-  let header = `## Memory (${formatTokens(loadedTokens)}, always loaded)`;
+  // chars/4 is an estimate, and it undercounts dense prose (#954) — say so where
+  // the number is read, so a mind leaves itself margin.
+  let header = `## Memory (${formatTokens(loadedTokens)}, always loaded — a chars/4 estimate, low for dense prose)`;
   if (!notice && loadedTokens > softBudget) {
     header +=
       `\n\nYour memory exceeds the recommended budget of ${formatTokens(softBudget)} — ` +
