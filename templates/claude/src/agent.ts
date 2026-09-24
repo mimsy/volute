@@ -399,7 +399,9 @@ export function createMind(options: {
       options: {
         // Rebuilt per stream, not per process: an identity edit loads at the next session
         // boundary (reap → resume, rotation, restart) without restarting the mind mid-work.
-        systemPrompt: systemPrompt.forNewStream(),
+        // snapshot: false — otherwise the CLI records the first prompt in the transcript and
+        // replays it on every resume until compaction, so the edit never arrives (#1148).
+        systemPrompt: { type: "custom", prompt: systemPrompt.forNewStream(), snapshot: false },
         permissionMode: "bypassPermissions",
         allowDangerouslySkipPermissions: true,
         settingSources: ["project", "user"],

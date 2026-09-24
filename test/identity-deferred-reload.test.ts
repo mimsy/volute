@@ -191,8 +191,18 @@ describe("template wiring", () => {
   const read = (p: string) => readFileSync(resolve(templatesRoot, p), "utf-8");
 
   it("claude rebuilds the system prompt per SDK stream", () => {
-    assert.match(createStreamSource(), /systemPrompt:\s*systemPrompt\.forNewStream\(\)/);
+    assert.match(createStreamSource(), /prompt:\s*systemPrompt\.forNewStream\(\)/);
     assert.doesNotMatch(read("claude/src/agent.ts"), /options\.systemPrompt\b/);
+  });
+
+  it("claude opts out of the CLI's prompt snapshot, so a resume gets the rebuilt prompt", () => {
+    // With the default (snapshot on), the CLI records the first launch's prompt in the
+    // transcript and replays it verbatim on every resume until compaction — the rebuilt
+    // prompt above would never reach a resumed session (#1148).
+    assert.match(
+      createStreamSource(),
+      /systemPrompt:\s*\{\s*type:\s*"custom",\s*prompt:\s*systemPrompt\.forNewStream\(\),\s*snapshot:\s*false\s*,?\s*\}/,
+    );
   });
 
   it("claude registers the notice hook per stream, for every tool, with history emit", () => {
