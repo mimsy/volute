@@ -205,6 +205,7 @@ export type UtilityOutcome =
 export async function aiCompleteUtilityOutcome(
   systemPrompt: string,
   userMessage: string,
+  opts?: CompletionOptions,
 ): Promise<UtilityOutcome> {
   const utilityModel = getUtilityModel();
   if (!utilityModel) {
@@ -220,7 +221,47 @@ export async function aiCompleteUtilityOutcome(
     }
     return { status: "unconfigured" };
   }
-  const text = await aiComplete(systemPrompt, userMessage, utilityModel);
+  const text = await aiComplete(systemPrompt, userMessage, utilityModel, {
+    timeoutMs: BACKGROUND_COMPLETION_TIMEOUT_MS,
+    ...opts,
+  });
+  return text === null ? { status: "failed" } : { status: "ok", text };
+}
+
+/**
+ * Complete with one named model, reporting `unconfigured` — without calling it, and without the
+ * per-call "model not found" warning — when this daemon can't reach it: the catalog doesn't know
+ * the model, its provider isn't configured in Settings → AI Providers, or that provider yields no
+ * credentials — or the host hasn't enabled it. For a mind's own model that is a steady state (a
+ * mind may run on credentials only it holds, or on a model newer than the catalog), so callers
+ * fall back rather than treating it as an outage.
+ *
+ * The enabled-models allowlist and a configured provider are both required, because the model id
+ * usually comes from mind-writable config: background spend goes only to models the host chose,
+ * through providers the host set up here — never to whatever a mind names (#1078).
+ */
+export async function aiCompleteModelOutcome(
+  systemPrompt: string,
+  userMessage: string,
+  modelId: string,
+  opts?: CompletionOptions,
+): Promise<UtilityOutcome> {
+  const model = findModel(modelId);
+  if (!model || !getAiConfig()?.providers[model.provider]) return { status: "unconfigured" };
+  const qualified = `${model.provider}:${model.id}`;
+  if (!getEnabledModels().some((id) => qualifyModelId(id) === qualified)) {
+    return { status: "unconfigured" };
+  }
+  try {
+    if (!(await resolveApiKey(model.provider))) return { status: "unconfigured" };
+  } catch (err) {
+    aiLog.warn(`could not resolve credentials for ${model.provider}`, log.errorData(err));
+    return { status: "failed" };
+  }
+  const text = await aiComplete(systemPrompt, userMessage, qualified, {
+    timeoutMs: BACKGROUND_COMPLETION_TIMEOUT_MS,
+    ...opts,
+  });
   return text === null ? { status: "failed" } : { status: "ok", text };
 }
 
@@ -736,10 +777,40 @@ function autoSelectModel(): Model<Api> | undefined {
   return undefined;
 }
 
+/**
+ * Deadline for background completions (summaries, rollups, consolidation). They run serially on
+ * the summarizer tick, so without one a single hung request would stall all of them.
+ */
+export const BACKGROUND_COMPLETION_TIMEOUT_MS = 90_000;
+
+/**
+ * Settle with `promise`, or reject once `ms` have passed. The timer is unref'd, so a pending
+ * deadline never holds the process open.
+ */
+export function withDeadline<T>(promise: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`timed out after ${ms}ms`)), ms);
+    timer.unref?.();
+  });
+  return Promise.race([promise, deadline]).finally(() => clearTimeout(timer));
+}
+
+export type CompletionOptions = {
+  /** Abort the request after this long; the completion then counts as failed. */
+  timeoutMs?: number;
+  /**
+   * Called with a successful completion's cost in USD, from the catalog's rates — null when the
+   * model is unpriced (a host-added custom model), where a guessed number would be worse than none.
+   */
+  onCost?: (costUsd: number | null) => void;
+};
+
 export async function aiComplete(
   systemPrompt: string,
   userMessage: string,
   modelId?: string,
+  opts?: CompletionOptions,
 ): Promise<string | null> {
   const model = modelId ? findModel(modelId) : autoSelectModel();
   if (!model) {
@@ -751,20 +822,28 @@ export async function aiComplete(
   try {
     const apiKey = await resolveApiKey(model.provider);
 
-    const response = await models.complete(
+    const signal = opts?.timeoutMs ? AbortSignal.timeout(opts.timeoutMs) : undefined;
+    const request = models.complete(
       model,
       {
         systemPrompt,
         messages: [{ role: "user", content: userMessage, timestamp: Date.now() }],
       },
-      apiKey ? { apiKey } : undefined,
+      apiKey || signal ? { ...(apiKey && { apiKey }), ...(signal && { signal }) } : undefined,
     );
+    // The signal cancels the request; the race holds the deadline even for a provider adapter that
+    // ignores it, so one hung request can't stall the caller forever.
+    const response = opts?.timeoutMs ? await withDeadline(request, opts.timeoutMs) : await request;
 
     const text = response.content
       .filter((c): c is { type: "text"; text: string } => c.type === "text")
       .map((c) => c.text)
       .join("");
 
+    if (text && opts?.onCost) {
+      const unpriced = model.cost.input === 0 && model.cost.output === 0;
+      opts.onCost(unpriced ? null : (response.usage?.cost?.total ?? null));
+    }
     return text || null;
   } catch (err) {
     aiLog.error("completion failed", log.errorData(err));

@@ -34,6 +34,7 @@ import {
   startMindFull as startMindFullService,
   stopMindFull as stopMindFullService,
 } from "../../lib/daemon/mind-service.js";
+import { getRecollection } from "../../lib/daemon/recollection.js";
 import { isShuttingDown } from "../../lib/daemon/shutdown-state.js";
 import { DEFAULT_SPEND_PERIOD_MINUTES, getSpendBudget } from "../../lib/daemon/spend-budget.js";
 import { supersedeTurnSummary } from "../../lib/daemon/summarizer.js";
@@ -2109,6 +2110,27 @@ const app = new Hono<AuthEnv>()
     const db = await getDb();
     const rows = await db.select().from(mindHistory).where(eq(mindHistory.mind, name));
     return c.json(rows);
+  })
+  // The mind's consolidated first-person memories up to `before`, for seeding a fresh session
+  // (#1124): last week, every day since, today's completed hours — oldest first, and
+  // none overlapping the verbatim tail when `tailStartedAt` is given. Read-only and fast (it
+  // blocks a mind's first reply after a cold reset): an hour not yet consolidated is served as its
+  // raw turn summaries, never written on demand.
+  .get("/:name/history/recollection", requireSelf(), async (c) => {
+    const name = c.req.param("name");
+    if (!(await findMind(name))) return c.json({ error: "Mind not found" }, 404);
+    const beforeRaw = c.req.query("before");
+    const before = beforeRaw ? new Date(beforeRaw) : null;
+    if (!before || Number.isNaN(before.getTime())) {
+      return c.json({ error: "before must be an ISO 8601 timestamp" }, 400);
+    }
+    const tailRaw = c.req.query("tailStartedAt");
+    const tailStartedAt = tailRaw ? new Date(tailRaw) : undefined;
+    if (tailStartedAt && Number.isNaN(tailStartedAt.getTime())) {
+      return c.json({ error: "tailStartedAt must be an ISO 8601 timestamp" }, 400);
+    }
+    const entries = await getRecollection(name, before, { tailStartedAt });
+    return c.json({ entries });
   })
   .get("/:name/history/turn", requireSelf(), async (c) => {
     const name = c.req.param("name");
