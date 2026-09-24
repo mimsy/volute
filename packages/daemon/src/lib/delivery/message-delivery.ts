@@ -6,11 +6,16 @@ import { publish as publishMindEvent } from "../events/mind-events.js";
 import { findMind, getBaseName } from "../mind/registry.js";
 import { activity, messages, mindHistory } from "../schema.js";
 import log from "../util/logger.js";
-import { getDeliveryManager, tryGetDeliveryManager } from "./delivery-manager.js";
+import {
+  getDeliveryManager,
+  recordDeferredInbound,
+  tryGetDeliveryManager,
+} from "./delivery-manager.js";
 import {
   type DeliveryPayload,
   extractTextContent,
   getRoutingConfig,
+  matchMetaFor,
   resolveRoute,
   shouldGate,
   toWirePayload,
@@ -244,18 +249,13 @@ export function resolveSleepAction(
  */
 type GateMeta = Pick<
   DeliveryPayload,
-  "channel" | "sender" | "isDM" | "participantCount" | "session"
+  "channel" | "sender" | "senderId" | "isDM" | "participantCount" | "session"
 >;
 
-function willGate(baseName: string, payload: GateMeta): boolean {
+async function willGate(baseName: string, payload: GateMeta): Promise<boolean> {
   if (payload.session) return false; // explicit session bypasses routing
   const config = getRoutingConfig(baseName);
-  const route = resolveRoute(config, {
-    channel: payload.channel,
-    sender: payload.sender ?? undefined,
-    isDM: payload.isDM,
-    participantCount: payload.participantCount,
-  });
+  const route = resolveRoute(config, await matchMetaFor(baseName, config, payload));
   return shouldGate(config, route);
 }
 
@@ -268,7 +268,7 @@ function willGate(baseName: string, payload: GateMeta): boolean {
  */
 export async function willGateMessage(mindName: string, payload: GateMeta): Promise<boolean> {
   const baseName = await getBaseName(mindName);
-  return willGate(baseName, payload);
+  return await willGate(baseName, payload);
 }
 
 /**
@@ -319,14 +319,20 @@ export async function deliverMessage(
       if (sleepManager?.isQueueingInbound(baseName)) {
         const sleeping = sleepManager.isSleeping(baseName);
         // Sleeping minds queue the message and flush it on wake — it is not gated here.
-        // Record at arrival so history keeps the true receipt time.
-        await recordInbound(
-          baseName,
-          payload.channel,
-          payload.sender ?? null,
-          payload.senderId,
-          textContent,
-        );
+        // Record at arrival so history keeps the true receipt time — unless routing will
+        // defer it at wake (#420): then the row is written when it actually reaches the mind.
+        if (await tryGetDeliveryManager()?.willDefer(baseName, payload)) {
+          payload.inboundDeferred = true;
+          payload.deferred ??= { at: Date.now() };
+        } else {
+          await recordInbound(
+            baseName,
+            payload.channel,
+            payload.sender ?? null,
+            payload.senderId,
+            textContent,
+          );
+        }
         const sleepState = sleepManager.getState(baseName);
         // `whileSleeping` speaks to a *sleeping* mind, and a wake trigger has nothing
         // left to wake: while waking, the message is queued unconditionally rather than
@@ -368,8 +374,15 @@ export async function deliverMessage(
       // The flag rather than a re-check at delivery is what makes it exactly-once: the cap
       // can trip or lift between this line and the POST, and either way the flag says
       // whether history still owes this message a row.
-      if (!willGate(baseName, payload)) {
-        if (willHoldMessage(baseName)) payload.inboundDeferred = true;
+      //
+      // A message routing will defer is skipped for the same reason: it waits for the
+      // mind's next turn on its thread and is recorded when it rides along with it.
+      if (!(await willGate(baseName, payload))) {
+        if (
+          willHoldMessage(baseName) ||
+          (await tryGetDeliveryManager()?.willDefer(baseName, payload))
+        )
+          payload.inboundDeferred = true;
         else
           await recordInbound(
             baseName,
@@ -413,25 +426,32 @@ export async function deliverBatch(
       return false;
     }
 
-    // Build the batch payload shape the mind-side router expects. senderId never
-    // crosses to the mind process — see WirePayload (#1017).
-    const channels: Record<string, WirePayload[]> = {};
-    for (const p of payloads) {
-      const ch = p.channel ?? "unknown";
-      if (!channels[ch]) channels[ch] = [];
-      channels[ch].push(toWirePayload(p));
-    }
-
     // Resolve the target session from routing (payloads share a channel, so one
     // route/session applies). An explicit payload session wins.
     const first = payloads[0];
-    const route = resolveRoute(getRoutingConfig(baseName), {
-      channel: first.channel,
-      sender: first.sender ?? undefined,
-      isDM: first.isDM,
-      participantCount: first.participantCount,
-    });
+    const config = getRoutingConfig(baseName);
+    const route = resolveRoute(config, await matchMetaFor(baseName, config, first));
     const session = first.session ?? route.session;
+
+    // Routing applies on the wake path as it does awake: if nothing in this backlog would
+    // have woken the mind (a deferred thread, or only non-mentions under `mode: "mention"`),
+    // waking it for them now would be the same turn it asked not to take. They join the
+    // thread's deferred messages instead, to ride along with its next turn. Otherwise the
+    // whole backlog goes, the would-be-deferred ones riding along with the rest.
+    const manager = tryGetDeliveryManager();
+    const deferrals = manager
+      ? await Promise.all(payloads.map((p) => manager.deferralFor(baseName, p)))
+      : [];
+    if (manager && deferrals.every((d) => d != null)) {
+      for (const [i, p] of payloads.entries()) {
+        // A row that couldn't be written would leave the sleep queue deleting a message
+        // kept nowhere. Report failure so this channel's backlog stays queued for the next
+        // wake — repeating the ones already kept is better than losing one.
+        if (!(await manager.deferMessage(mindName, deferrals[i]!.session, p, deferrals[i]!.until)))
+          return false;
+      }
+      return true;
+    }
 
     // This POSTs straight at the mind rather than going through the delivery queue, so
     // there is no pending row for a redrive sweep to re-offer: the concurrency gate waits
@@ -445,20 +465,52 @@ export async function deliverBatch(
           `still running, but holding the batch any longer would be worse than the overlap`,
       );
     }
+    const wakeAt = slot.owned ? manager?.noteWake(baseName, session) : undefined;
+
+    let riders: Awaited<ReturnType<NonNullable<typeof manager>["claimDeferred"]>> | undefined;
     let ok = false;
+    let rejected = false;
     try {
+      // Deferred messages already waiting on this thread ride along with the turn, first,
+      // since they arrived first.
+      riders = manager ? await manager.claimDeferred(mindName, session) : undefined;
+
+      // Build the batch payload shape the mind-side router expects. senderId never
+      // crosses to the mind process — see WirePayload (#1017) — and neither does daemon
+      // bookkeeping: these are being delivered, not deferred.
+      const channels: Record<string, WirePayload[]> = {};
+      for (const wire of riders?.payloads ?? []) {
+        const ch = wire.channel ?? "unknown";
+        if (!channels[ch]) channels[ch] = [];
+        channels[ch].push(wire);
+      }
+      for (const p of payloads) {
+        const ch = p.channel ?? "unknown";
+        if (!channels[ch]) channels[ch] = [];
+        const { deferred: _d, inboundDeferred: _i, ...wire } = toWirePayload(p);
+        channels[ch].push(wire);
+      }
+
       const res = await fetch(`http://127.0.0.1:${entry.port}/message`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ session, batch: { channels }, interrupt: false }),
       });
       ok = res.ok;
+      rejected = !res.ok;
+      if (ok) {
+        for (const p of payloads) {
+          if (p.inboundDeferred) await recordDeferredInbound(baseName, p);
+        }
+      }
       return ok;
     } finally {
+      await riders?.settle(ok ? "acked" : rejected ? "rejected" : "failed");
       // No turn will run for a batch the mind never took, so the slot must go back — but
       // only if this call took it. `owned: false` means the batch folded into a turn that
-      // was already running, whose slot is not ours to give back.
+      // was already running, whose slot is not ours to give back. Nor did it wake anything.
       if (!ok && slot.owned) releaseTurnSlot(baseName, session);
+      if (!ok) manager?.unnoteWake(baseName, session, wakeAt);
     }
   } catch (err) {
     dlog.warn(`unexpected error delivering batch to ${mindName}`, log.errorData(err));

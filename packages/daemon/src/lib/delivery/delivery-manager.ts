@@ -6,7 +6,7 @@ import { MIND_LEVEL_THREAD, type RecordNoticeInput } from "../chat/system-events
 import { getTypingMap, publishTypingForChannels } from "../chat/typing.js";
 import { ManagerNotReadyError } from "../daemon/manager-not-ready.js";
 import { tryGetMindManager } from "../daemon/mind-manager.js";
-import { acquireTurnSlot, releaseTurnSlot } from "../daemon/turn-slots.js";
+import { acquireTurnSlot, hasTurnSlot, releaseTurnSlot } from "../daemon/turn-slots.js";
 import { linkInboundToActiveTurn } from "../daemon/turn-tracker.js";
 import { getDb } from "../db.js";
 import { getChannelName, getChannelSettings, getParticipants } from "../events/conversations.js";
@@ -26,15 +26,18 @@ import {
   type DeliveryPayload,
   extractTextContent,
   getRoutingConfig,
-  type MatchMeta,
+  matchMetaFor,
   type ParticipantProfile,
   parseDeliveryPayload,
+  type RateLimit,
   type ResolvedDeliveryMode,
+  type ResolvedRoute,
   type ResolvedSessionConfig,
   type RoutingConfig,
   resolveDeliveryMode,
   resolveRoute,
   routesConfigPath,
+  routingDefers,
   setRoutesChangeListener,
   shouldGate,
   toWirePayload,
@@ -123,8 +126,6 @@ const HELD_RELEASE_LIMIT_PER_CHANNEL = 10;
 // point of gating in the first place. The true total is reported alongside.
 const PEEK_LIMIT = 50;
 
-const mentionRegexCache = new Map<string, RegExp>();
-
 type AvatarCacheEntry = { blocks: AvatarBlock[]; expiresAt: number };
 const avatarBlocksCache = new Map<string, AvatarCacheEntry>();
 const AVATAR_CACHE_TTL = 5 * 60 * 1000;
@@ -162,6 +163,13 @@ type QueuedMessage = {
   createdAt: number;
   /** delivery_queue row id backing this message (source of truth). */
   queueId?: number;
+  /**
+   * A deferred message riding along with this delivery (see `takeDeferred`). It didn't
+   * cause the delivery, so a failed POST leaves it `deferred` rather than retrying it.
+   */
+  rider?: boolean;
+  /** Prior failed delivery attempts on the row; a batch holding a retry carries no riders. */
+  attempts?: number;
 };
 
 /**
@@ -221,6 +229,28 @@ function compactLocal(at: number): string {
  * is arriving now, and does not assert why it stopped waiting.
  */
 export function withHeldPreface(payload: DeliveryPayload): WirePayload {
+  return withDeferredPreface(withHeldMarker(payload));
+}
+
+/**
+ * Tell the mind a deferred message waited: its routes.json kept it back instead of waking
+ * the mind, and it is arriving now with a later turn. Without this it would read as just
+ * sent, since the mind stamps each message with the time it formats it.
+ */
+function withDeferredPreface(wire: WirePayload): WirePayload {
+  const { deferred, ...rest } = wire;
+  if (!deferred) return wire;
+  const line =
+    `[deferred — this arrived at ${compactLocal(deferred.at)}; your routes.json kept it ` +
+    `for your next turn on this thread instead of waking you.]`;
+  if (typeof rest.content === "string") return { ...rest, content: `${line}\n${rest.content}` };
+  if (Array.isArray(rest.content)) {
+    return { ...rest, content: [{ type: "text", text: line }, ...rest.content] };
+  }
+  return { ...rest, content: [{ type: "text", text: line }, rest.content] };
+}
+
+function withHeldMarker(payload: DeliveryPayload): WirePayload {
   // senderId never crosses to the mind process — see WirePayload (#1017).
   const wire = toWirePayload(payload);
   const held = wire.held;
@@ -267,7 +297,11 @@ function toDbTimestamp(at: number): string {
  * missing history row is a smaller wrong than a delivery that reports failure and is
  * re-sent.
  */
-async function recordDeferredInbound(baseName: string, payload: DeliveryPayload): Promise<void> {
+export async function recordDeferredInbound(
+  baseName: string,
+  payload: DeliveryPayload,
+): Promise<void> {
+  const arrived = payload.held?.at ?? payload.deferred?.at;
   try {
     const db = await getDb();
     await db.insert(mindHistory).values({
@@ -277,11 +311,19 @@ async function recordDeferredInbound(baseName: string, payload: DeliveryPayload)
       sender: payload.sender ?? null,
       sender_id: payload.senderId,
       content: extractTextContent(payload.content),
-      ...(payload.held ? { created_at: toDbTimestamp(payload.held.at) } : {}),
+      ...(arrived != null ? { created_at: toDbTimestamp(arrived) } : {}),
     });
   } catch (err) {
     dlog.warn(`failed to record deferred inbound for ${baseName}`, log.errorData(err));
+    return;
   }
+  publishMindEvent(baseName, {
+    mind: baseName,
+    type: "inbound",
+    channel: payload.channel,
+    content: extractTextContent(payload.content),
+    sender: payload.sender ?? undefined,
+  });
 }
 
 /** The delivery_queue fields a dead-lettered row carries into its failure notice. */
@@ -300,6 +342,13 @@ type DeadLetterRow = {
 export class DeliveryManager {
   private sessionStates = new Map<string, Map<string, SessionState>>();
   private batchBuffers = new Map<string, BatchBuffer>();
+
+  /**
+   * Per-`baseName:session` start times of the turns delivered on threads with a
+   * `rateLimit`, pruned to the window. In memory: a daemon restart forgets the window, which
+   * errs toward waking the mind, never toward losing a message.
+   */
+  private recentWakes = new Map<string, number[]>();
 
   /**
    * delivery_queue row ids currently owned in-memory — either buffered in a batch
@@ -429,7 +478,7 @@ export class DeliveryManager {
     | {
         routed: true;
         session: string;
-        mode: "immediate" | "batch" | "gated";
+        mode: "immediate" | "batch" | "gated" | "deferred";
       }
     | {
         routed: false;
@@ -455,13 +504,7 @@ export class DeliveryManager {
       return { routed: true, session: sessionName, mode: "immediate" };
     }
 
-    const meta: MatchMeta = {
-      channel: payload.channel,
-      sender: payload.sender ?? undefined,
-      isDM: payload.isDM,
-      participantCount: payload.participantCount,
-    };
-
+    const meta = await matchMetaFor(baseName, config, payload);
     const route = resolveRoute(config, meta);
 
     dlog.debug(`route for ${mindName} ch=${payload.channel}: matched=${route.matched}`);
@@ -473,19 +516,15 @@ export class DeliveryManager {
       return { routed: true, session: route.session, mode: "gated" };
     }
 
-    // Mention-mode filtering
-    if (route.mode === "mention" && payload.sender) {
-      const text = extractTextContent(payload.content);
-      let pattern = mentionRegexCache.get(baseName);
-      if (!pattern) {
-        const escaped = baseName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-        pattern = new RegExp(`\\b${escaped}\\b`, "i");
-        mentionRegexCache.set(baseName, pattern);
+    // Deferred: kept, not woken for — it rides along with the next turn on its thread.
+    const deferral = this.deferDecision(baseName, config, route, payload);
+    if (deferral) {
+      dlog.debug(`deferring message on ${payload.channel} for ${mindName}/${deferral.session}`);
+      if (await this.deferMessage(mindName, deferral.session, payload, deferral.until)) {
+        return { routed: true, session: deferral.session, mode: "deferred" };
       }
-      if (!pattern.test(text)) {
-        dlog.debug(`mention-filtered message on ${payload.channel} for ${mindName}`);
-        return { routed: false, reason: "mention-filtered" };
-      }
+      // No row to wait in means nothing to come back from: deliver it now rather than lose it.
+      dlog.warn(`could not keep a deferred message for ${mindName}; delivering it now`);
     }
 
     // Resolve session name ($new expansion)
@@ -512,6 +551,300 @@ export class DeliveryManager {
     const queueId = await this.persistToQueue(mindName, sessionName, payload);
     await this.deliverToMind(mindName, sessionName, payload, sessionConfig, queueId);
     return { routed: true, session: sessionName, mode: "immediate" };
+  }
+
+  /**
+   * Whether routing defers this message instead of letting it wake the mind, and if so,
+   * which thread it waits on and when (epoch ms) it flushes on its own — undefined for
+   * "only with the next turn on the thread". Deferral is `delivery: "defer"`, a
+   * `mode: "mention"` non-mention, or a thread's `rateLimit` already spent. A message
+   * arriving mid-turn on its thread folds into that turn rather than waking anything, so a
+   * rate limit doesn't hold it back.
+   *
+   * A `$new` route has no next turn to ride along with — every message starts its own
+   * thread — so what it defers waits on the mind's default thread instead.
+   */
+  private deferDecision(
+    baseName: string,
+    config: RoutingConfig,
+    route: ResolvedRoute,
+    payload: DeliveryPayload,
+  ): { session: string; until?: number } | null {
+    const session = route.session === "$new" ? (config.default ?? "main") : route.session;
+    const sessionConfig = resolveDeliveryMode(config, route.session, route.rule);
+    const routed = routingDefers(baseName, route, sessionConfig, payload);
+    if (routed) {
+      return {
+        session,
+        // From arrival: a message deferred overnight on the sleep queue is already due by
+        // the time the wake flush gets here.
+        until:
+          routed.maxWaitMs != null
+            ? (payload.deferred?.at ?? Date.now()) + routed.maxWaitMs
+            : undefined,
+      };
+    }
+    const rl = sessionConfig.rateLimit;
+    if (rl && route.session !== "$new" && !hasTurnSlot(baseName, session)) {
+      const freeAt = this.rateLimitFreesAt(baseName, session, rl);
+      if (freeAt != null) return { session, until: freeAt };
+    }
+    return null;
+  }
+
+  /**
+   * Whether a message would be deferred right now — the arrival-time prediction
+   * `deliverMessage` uses to decide whether `mind_history` should record it yet (#420):
+   * a deferred message hasn't reached the mind. Gated messages answer false; they have
+   * their own rule. Explicit-session deliveries are never deferred.
+   */
+  async willDefer(mindName: string, payload: DeliveryPayload): Promise<boolean> {
+    return (await this.deferralFor(mindName, payload)) != null;
+  }
+
+  /** {@link willDefer}, with the thread the message would wait on and its deadline. */
+  async deferralFor(
+    mindName: string,
+    payload: DeliveryPayload,
+  ): Promise<{ session: string; until?: number } | null> {
+    if (payload.session) return null;
+    const baseName = await getBaseName(mindName);
+    const config = getRoutingConfig(baseName);
+    const route = resolveRoute(config, await matchMetaFor(baseName, config, payload));
+    if (shouldGate(config, route)) return null;
+    return this.deferDecision(baseName, config, route, payload);
+  }
+
+  /**
+   * Keep a message as `deferred` on `session`'s thread, flushing by itself at `until` if set.
+   * Returns false when the row couldn't be written — the caller must then deliver the
+   * message some other way, because nothing was kept.
+   */
+  async deferMessage(
+    mindName: string,
+    session: string,
+    payload: DeliveryPayload,
+    until?: number,
+  ): Promise<boolean> {
+    const before = payload.deferred;
+    payload.deferred ??= { at: Date.now() };
+    const id = await this.persistToQueue(mindName, session, payload, "deferred", until);
+    if (id == null) payload.deferred = before;
+    return id != null;
+  }
+
+  /**
+   * Deliver a thread's deferred messages now, on their own — for a turn on the thread that
+   * starts somewhere this class doesn't POST (a system event), called just before that POST
+   * so they arrive first, the way they arrived first. A no-op when nothing is deferred there.
+   * Returns whether anything was delivered.
+   */
+  async flushDeferred(mindName: string, session: string): Promise<boolean> {
+    const baseName = await getBaseName(mindName);
+    const sessionConfig = resolveDeliveryMode(getRoutingConfig(baseName), session);
+    return await this.deliverBatchToMind(mindName, session, [], sessionConfig);
+  }
+
+  /** When a full rate-limit window frees a wake (epoch ms), or null when it isn't full. */
+  private rateLimitFreesAt(baseName: string, session: string, rl: RateLimit): number | null {
+    const windowMs = rl.windowMinutes * 60_000;
+    const now = Date.now();
+    const key = `${baseName}:${session}`;
+    const recent = (this.recentWakes.get(key) ?? []).filter((t) => now - t < windowMs);
+    this.recentWakes.set(key, recent);
+    if (recent.length < rl.max) return null;
+    return recent[recent.length - rl.max] + windowMs;
+  }
+
+  /**
+   * Count a delivery that started a turn on a rate-limited thread against its window.
+   * Returns the entry, for {@link unnoteWake} if the delivery then fails — a POST the mind
+   * never took woke nothing.
+   */
+  noteWake(
+    baseName: string,
+    session: string,
+    sessionConfig: ResolvedSessionConfig = resolveDeliveryMode(getRoutingConfig(baseName), session),
+  ): number | undefined {
+    if (!sessionConfig.rateLimit) return undefined;
+    const key = `${baseName}:${session}`;
+    const list = this.recentWakes.get(key) ?? [];
+    const at = Date.now();
+    list.push(at);
+    this.recentWakes.set(key, list);
+    return at;
+  }
+
+  /** Take back a {@link noteWake} whose delivery failed. */
+  unnoteWake(baseName: string, session: string, at: number | undefined): void {
+    if (at == null) return;
+    const list = this.recentWakes.get(`${baseName}:${session}`);
+    const i = list?.indexOf(at) ?? -1;
+    if (i >= 0) list!.splice(i, 1);
+  }
+
+  /**
+   * If this delivery would start a turn on a thread whose `rateLimit` is spent, defer its
+   * messages until the window frees a wake instead — never drop them. Returns whether it
+   * did. Deferred messages already waiting on the thread past their own deadline are moved
+   * to the same instant, so the sweep doesn't re-offer them every pass in the meantime.
+   * A message with no queue row can't wait (there'd be nothing to come back from), so a
+   * batch containing one goes out regardless.
+   */
+  private async parkIfRateLimited(
+    baseName: string,
+    session: string,
+    messages: QueuedMessage[],
+    sessionConfig: ResolvedSessionConfig,
+  ): Promise<boolean> {
+    const rl = sessionConfig.rateLimit;
+    if (!rl || hasTurnSlot(baseName, session)) return false;
+    if (messages.some((m) => m.queueId == null)) return false;
+    const freeAt = this.rateLimitFreesAt(baseName, session, rl);
+    if (freeAt == null) return false;
+    dlog.debug(`rate limit reached on ${baseName}/${session}; deferring until ${freeAt}`);
+    try {
+      const db = await getDb();
+      for (const msg of messages) {
+        if (!msg.payload.deferred) {
+          const row = await db
+            .select({ created_at: deliveryQueue.created_at })
+            .from(deliveryQueue)
+            .where(eq(deliveryQueue.id, msg.queueId!))
+            .get();
+          msg.payload.deferred = {
+            at: (row ? parseDbTimestamp(row.created_at)?.getTime() : undefined) ?? Date.now(),
+          };
+        }
+        await db
+          .update(deliveryQueue)
+          .set({
+            status: "deferred",
+            next_attempt_at: toDbTimestamp(freeAt),
+            payload: JSON.stringify(msg.payload),
+          })
+          .where(eq(deliveryQueue.id, msg.queueId!));
+      }
+      await db
+        .update(deliveryQueue)
+        .set({ next_attempt_at: toDbTimestamp(freeAt) })
+        .where(
+          and(
+            eq(deliveryQueue.mind, baseName),
+            eq(deliveryQueue.thread, session),
+            eq(deliveryQueue.status, "deferred"),
+            sql`${deliveryQueue.next_attempt_at} IS NOT NULL`,
+            sql`${deliveryQueue.next_attempt_at} < ${toDbTimestamp(freeAt)}`,
+          ),
+        );
+    } catch (err) {
+      // Left `pending`: the sweep re-offers them, and this check runs again then.
+      dlog.warn(`failed to defer rate-limited delivery to ${baseName}`, log.errorData(err));
+    }
+    return true;
+  }
+
+  /**
+   * Claim the deferred messages waiting on (mind, thread), oldest first, to ride along with
+   * a delivery that is about to go out there. Capped at {@link MAX_BATCH_SIZE}; the rest
+   * ride with the turn after. Claimed rows are owned (`inFlight`) until the caller finishes.
+   */
+  private async takeDeferred(
+    baseName: string,
+    target: string,
+    session: string,
+  ): Promise<QueuedMessage[]> {
+    let rows: (typeof deliveryQueue.$inferSelect)[];
+    try {
+      const db = await getDb();
+      rows = await db
+        .select()
+        .from(deliveryQueue)
+        .where(
+          and(
+            eq(deliveryQueue.mind, baseName),
+            eq(deliveryQueue.thread, session),
+            eq(deliveryQueue.status, "deferred"),
+            sql`coalesce(${deliveryQueue.target_mind}, ${deliveryQueue.mind}) = ${target}`,
+          ),
+        )
+        .orderBy(deliveryQueue.id)
+        .limit(MAX_BATCH_SIZE);
+    } catch (err) {
+      dlog.warn(`failed to read deferred messages for ${baseName}/${session}`, log.errorData(err));
+      return [];
+    }
+    const riders: QueuedMessage[] = [];
+    for (const row of rows) {
+      if (this.inFlight.has(row.id)) continue;
+      let payload: DeliveryPayload;
+      try {
+        payload = parseDeliveryPayload(row.payload);
+      } catch (err) {
+        // It can never be delivered, and left here it would be re-read on every delivery
+        // to the thread. Dead-lettered, not deleted, so the row itself is still there to see.
+        dlog.error(
+          `dead-lettering unparseable deferred row ${row.id} for ${baseName}/${session}`,
+          log.errorData(err),
+        );
+        try {
+          const db = await getDb();
+          await db
+            .update(deliveryQueue)
+            .set({ status: "dead", next_attempt_at: null })
+            .where(eq(deliveryQueue.id, row.id));
+        } catch (updateErr) {
+          dlog.warn(`failed to dead-letter deferred row ${row.id}`, log.errorData(updateErr));
+        }
+        continue;
+      }
+      this.inFlight.add(row.id);
+      riders.push({
+        payload,
+        channel: payload.channel,
+        sender: payload.sender ?? null,
+        createdAt: Date.now(),
+        queueId: row.id,
+        rider: true,
+      });
+    }
+    return riders;
+  }
+
+  /**
+   * Claim a thread's deferred messages for a delivery that POSTs outside this class (the
+   * wake flush), so they can go in the same envelope, ahead of what it carries. The caller
+   * must call `settle` exactly once with how the POST went: acked rows are deleted and
+   * recorded in history, a rejection counts against each rider, and anything else leaves
+   * them deferred.
+   */
+  async claimDeferred(
+    mindName: string,
+    session: string,
+  ): Promise<{
+    payloads: WirePayload[];
+    settle: (outcome: "acked" | "rejected" | "failed") => Promise<void>;
+  }> {
+    const baseName = await getBaseName(mindName);
+    const riders = await this.takeDeferred(baseName, mindName, session);
+    return {
+      payloads: riders.map((r) => withHeldPreface(r.payload)),
+      settle: async (outcome) => {
+        const ids = riders.map((r) => r.queueId!);
+        try {
+          if (outcome === "acked") {
+            await this.deleteQueueRows(ids);
+            for (const r of riders) {
+              if (r.payload.inboundDeferred) await recordDeferredInbound(baseName, r.payload);
+            }
+          } else if (outcome === "rejected") {
+            await this.countRiderRejection(ids);
+          }
+        } finally {
+          for (const id of ids) this.inFlight.delete(id);
+        }
+      },
+    };
   }
 
   /**
@@ -669,16 +1002,58 @@ export class DeliveryManager {
           sender: payload.sender ?? null,
           createdAt: Date.now(),
           queueId: row.id,
+          attempts: row.attempts,
         });
       } else {
-        this.deliverToMind(target, row.thread, payload, sessionConfig, row.id).catch((err) => {
-          dlog.warn(`failed to redrive delivery for ${target}`, log.errorData(err));
-        });
+        this.deliverToMind(target, row.thread, payload, sessionConfig, row.id, row.attempts).catch(
+          (err) => {
+            dlog.warn(`failed to redrive delivery for ${target}`, log.errorData(err));
+          },
+        );
       }
       redriven++;
     }
 
     if (redriven > 0) dlog.info(`redrove ${redriven} pending delivery queue rows`);
+
+    await this.flushDueDeferred();
+  }
+
+  /**
+   * Deliver the threads whose deferred messages have reached their deadline — a `maxWait`,
+   * or the moment a spent rate limit frees a wake — each as one batched turn (which carries
+   * the thread's other deferred messages along too). A mind that isn't running, asleep
+   * included, is skipped: its due messages go out on the first sweep after it's back.
+   */
+  private async flushDueDeferred(): Promise<void> {
+    let due: { mind: string; target: string; thread: string }[];
+    try {
+      const db = await getDb();
+      due = await db
+        .selectDistinct({
+          mind: deliveryQueue.mind,
+          target: sql<string>`coalesce(${deliveryQueue.target_mind}, ${deliveryQueue.mind})`,
+          thread: deliveryQueue.thread,
+        })
+        .from(deliveryQueue)
+        .where(
+          and(
+            eq(deliveryQueue.status, "deferred"),
+            sql`${deliveryQueue.next_attempt_at} IS NOT NULL AND ${deliveryQueue.next_attempt_at} <= datetime('now')`,
+          ),
+        )
+        .limit(REDRIVE_BATCH_LIMIT);
+    } catch (err) {
+      dlog.warn("failed to read due deferred messages", log.errorData(err));
+      return;
+    }
+    for (const { mind, target, thread } of due) {
+      if (!this.isMindRunning(mind)) continue;
+      const sessionConfig = resolveDeliveryMode(getRoutingConfig(mind), thread);
+      this.deliverBatchToMind(target, thread, [], sessionConfig).catch((err) =>
+        dlog.warn(`failed to flush deferred messages for ${target}/${thread}`, log.errorData(err)),
+      );
+    }
   }
 
   /**
@@ -909,13 +1284,7 @@ export class DeliveryManager {
       } catch {
         continue;
       }
-      const meta: MatchMeta = {
-        channel: payload.channel,
-        sender: payload.sender ?? undefined,
-        isDM: payload.isDM,
-        participantCount: payload.participantCount,
-      };
-      const route = resolveRoute(config, meta);
+      const route = resolveRoute(config, await matchMetaFor(baseName, config, payload));
       if (!route.matched) continue; // still unrouted → leave gated
       let session = route.session;
       if (session === "$new") {
@@ -1811,6 +2180,62 @@ export class DeliveryManager {
     }
   }
 
+  /**
+   * A batch the mind rejected may have been rejected because of a rider — so riders count
+   * rejections toward {@link MAX_DELIVERY_ATTEMPTS} too, or one poison message would ride
+   * along with, and sink, every delivery on its thread forever. On a deferred row
+   * `next_attempt_at` is the deadline, so a backoff only ever moves an existing one later.
+   */
+  private async countRiderRejection(ids: number[]): Promise<void> {
+    if (ids.length === 0) return;
+    try {
+      const db = await getDb();
+      const rows = await db
+        .select({
+          id: deliveryQueue.id,
+          attempts: deliveryQueue.attempts,
+          mind: deliveryQueue.mind,
+          target_mind: deliveryQueue.target_mind,
+          thread: deliveryQueue.thread,
+          channel: deliveryQueue.channel,
+          sender: deliveryQueue.sender,
+          created_at: deliveryQueue.created_at,
+        })
+        .from(deliveryQueue)
+        .where(and(inArray(deliveryQueue.id, ids), eq(deliveryQueue.status, "deferred")));
+      const dead: DeadLetterRow[] = [];
+      for (const row of rows) {
+        const attempts = row.attempts + 1;
+        if (attempts < MAX_DELIVERY_ATTEMPTS) {
+          // A row with a deadline is re-offered by the sweep once it's due; push that back by
+          // the usual backoff, or a failing mind would burn through the ceiling in minutes.
+          // A row with none waits for the next turn on the thread as before.
+          await db
+            .update(deliveryQueue)
+            .set({
+              attempts,
+              next_attempt_at: sql`CASE WHEN ${deliveryQueue.next_attempt_at} IS NULL THEN NULL ELSE max(${deliveryQueue.next_attempt_at}, ${this.backoffExpr(attempts)}) END`,
+            })
+            .where(eq(deliveryQueue.id, row.id));
+          continue;
+        }
+        dlog.error(
+          `dead-lettering deferred row ${row.id} for ${row.mind} after ${attempts} live ` +
+            `rejections (channel=${row.channel ?? "?"}, sender=${row.sender ?? "?"})`,
+        );
+        const flipped = await db
+          .update(deliveryQueue)
+          .set({ attempts, status: "dead", next_attempt_at: null })
+          .where(and(eq(deliveryQueue.id, row.id), eq(deliveryQueue.status, "deferred")))
+          .returning({ id: deliveryQueue.id });
+        if (flipped.length > 0) dead.push(row);
+      }
+      if (dead.length > 0) await this.notifyDeadLettered(dead);
+    } catch (err) {
+      dlog.error("failed to record rider rejection / dead-letter", log.errorData(err));
+    }
+  }
+
   /** Exponential backoff window (capped at {@link RETRY_MAX_MS}) as a SQL datetime expr. */
   private backoffExpr(attempts: number) {
     const backoffSec = Math.round(
@@ -1900,6 +2325,8 @@ export class DeliveryManager {
     payload: DeliveryPayload,
     sessionConfig: ResolvedSessionConfig,
     queueId?: number,
+    /** Prior failed attempts on this row: a retry carries no riders (see `takeDeferred`). */
+    attempts = 0,
   ): Promise<void> {
     if (queueId != null) this.inFlight.add(queueId);
 
@@ -1916,6 +2343,25 @@ export class DeliveryManager {
       }
       const { baseName, port } = resolved;
 
+      // A thread whose rate limit is spent defers this instead of waking the mind.
+      const self: QueuedMessage = {
+        payload,
+        channel: payload.channel,
+        sender: payload.sender ?? null,
+        createdAt: Date.now(),
+        queueId,
+      };
+      if (
+        queueId != null &&
+        (await this.parkIfRateLimited(baseName, session, [self], sessionConfig))
+      ) {
+        this.inFlight.delete(queueId);
+        return;
+      }
+      // Deferred messages waiting on this thread ride along — before the hold check, which
+      // must stay in the same tick as the slot claim below.
+      const riders = attempts > 0 ? [] : await this.takeDeferred(baseName, mindName, session);
+
       // Held? Leave the row `pending` and touch nothing else — before the active count,
       // before the stale-send baseline, before typing indicators. A mind that never saw
       // this message must not be recorded as having seen it, must not appear to be
@@ -1927,6 +2373,7 @@ export class DeliveryManager {
       const hold = this.holdCheck(baseName, session);
       if (hold && queueId != null) {
         dlog.debug(`holding delivery to ${baseName}/${session} (${hold.reason})`);
+        for (const r of riders) this.inFlight.delete(r.queueId!);
         if (!hold.momentary) await this.holdRow(queueId, payload, hold);
         this.inFlight.delete(queueId);
         return;
@@ -1936,6 +2383,15 @@ export class DeliveryManager {
           `delivering to ${baseName}/${session} despite a ${hold.reason} hold: the message ` +
             `has no delivery_queue row, so holding it would drop it`,
         );
+        // That exception is for this message alone; what's deferred keeps waiting.
+        for (const r of riders.splice(0)) this.inFlight.delete(r.queueId!);
+      }
+
+      // With riders, this goes out as one batch envelope: the waiting messages first, in
+      // the order they arrived, then the one that caused the turn.
+      if (riders.length > 0) {
+        await this.postBatch(mindName, baseName, port, session, [...riders, self], sessionConfig);
+        return;
       }
 
       // Increment active count before delivery with sender/channel metadata
@@ -1944,48 +2400,53 @@ export class DeliveryManager {
       const channels = new Set<string>();
       if (payload.channel) channels.add(payload.channel);
       const ownsSlot = this.incrementActive(baseName, session, senders, channels);
-
-      // Snapshot the stale-send baseline: the latest message this mind has now seen in
-      // the conversation, so a reply it composes can be held if a peer posts after this.
-      // Awaited so the baseline is set before the mind can receive-and-reply.
-      await onDeliveredToMind(baseName, payload.conversationId);
-
-      // If a turn is already in progress for this session, attribute this mid-turn inbound to
-      // it now. linkPendingInbound only tags at turn creation (bounded sweep), so without this
-      // a batched message arriving mid-turn — or a >5 backlog — would stay untagged.
-      // No-op when no turn is active yet; the turn-creation path tags the trigger then.
-      linkInboundToActiveTurn(baseName, session, payload.channel).catch((err) =>
-        dlog.warn(`failed to link mid-turn inbound for ${baseName}`, log.errorData(err)),
-      );
-
-      // Set typing indicator on both slug and conversationId keys, and publish the
-      // conversationId key so the web UI learns the mind is typing at delivery time
-      // (not incidentally via an unrelated re-publish).
+      const wakeAt = ownsSlot ? this.noteWake(baseName, session, sessionConfig) : undefined;
       const typingMap = getTypingMap();
-      if (payload.channel) {
-        typingMap.set(payload.channel, baseName, { persistent: true });
-      }
-      if (payload.conversationId) {
-        typingMap.set(payload.conversationId, baseName, { persistent: true });
-        publishTypingForChannels([payload.conversationId], typingMap);
-      }
 
-      // Mark mind as active immediately at delivery time (before it emits events)
-      onMindEvent(baseName, "delivery", payload.channel);
-
-      // Enrich with participant profiles on first encounter per channel
-      const enrichedPayload = withHeldPreface(
-        await this.enrichWithProfiles(baseName, session, payload),
-      );
-
-      const body = JSON.stringify({
-        ...enrichedPayload,
-        session,
-        instructions: sessionConfig.instructions,
-        interrupt: sessionConfig.interrupt,
-      });
-
+      // From here the row and (maybe) the turn slot are ours; a throw before the POST must
+      // hand both back, or the slot gates the mind until its TTL.
+      let posting = false;
       try {
+        // Snapshot the stale-send baseline: the latest message this mind has now seen in
+        // the conversation, so a reply it composes can be held if a peer posts after this.
+        // Awaited so the baseline is set before the mind can receive-and-reply.
+        await onDeliveredToMind(baseName, payload.conversationId);
+
+        // If a turn is already in progress for this session, attribute this mid-turn inbound
+        // to it now. linkPendingInbound only tags at turn creation (bounded sweep), so without
+        // this a batched message arriving mid-turn — or a >5 backlog — would stay untagged.
+        // No-op when no turn is active yet; the turn-creation path tags the trigger then.
+        linkInboundToActiveTurn(baseName, session, payload.channel).catch((err) =>
+          dlog.warn(`failed to link mid-turn inbound for ${baseName}`, log.errorData(err)),
+        );
+
+        // Set typing indicator on both slug and conversationId keys, and publish the
+        // conversationId key so the web UI learns the mind is typing at delivery time
+        // (not incidentally via an unrelated re-publish).
+        if (payload.channel) {
+          typingMap.set(payload.channel, baseName, { persistent: true });
+        }
+        if (payload.conversationId) {
+          typingMap.set(payload.conversationId, baseName, { persistent: true });
+          publishTypingForChannels([payload.conversationId], typingMap);
+        }
+
+        // Mark mind as active immediately at delivery time (before it emits events)
+        onMindEvent(baseName, "delivery", payload.channel);
+
+        // Enrich with participant profiles on first encounter per channel
+        const enrichedPayload = withHeldPreface(
+          await this.enrichWithProfiles(baseName, session, payload),
+        );
+
+        const body = JSON.stringify({
+          ...enrichedPayload,
+          session,
+          instructions: sessionConfig.instructions,
+          interrupt: sessionConfig.interrupt,
+        });
+
+        posting = true;
         const ok = await this.postToMind(port, body);
         if (!ok) {
           // Reachable but rejected (non-OK HTTP) → a live rejection that counts toward the ceiling.
@@ -1994,6 +2455,7 @@ export class DeliveryManager {
           // message that folded into a turn already running does not own that turn's slot,
           // and freeing it would open the gate while the mind is still working.
           if (ownsSlot) releaseTurnSlot(baseName, session);
+          this.unnoteWake(baseName, session, wakeAt);
           publishTypingForChannels(typingMap.deleteSender(baseName), typingMap);
           await this.scheduleRetry([queueId], { liveRejection: true });
         } else {
@@ -2008,12 +2470,17 @@ export class DeliveryManager {
           }
         }
       } catch (err) {
-        // Threw → transport failure (mind/variant down or timed out), NOT a live rejection.
-        dlog.warn(`failed to deliver to ${mindName}`, log.errorData(err));
+        // Threw at the POST → transport failure (mind/variant down or timed out), NOT a live
+        // rejection. Threw before it → nothing was sent; the row stays for the sweep.
+        dlog.warn(
+          `failed to ${posting ? "deliver" : "prepare delivery"} to ${mindName}`,
+          log.errorData(err),
+        );
         this.decrementActive(baseName, session);
         if (ownsSlot) releaseTurnSlot(baseName, session);
+        this.unnoteWake(baseName, session, wakeAt);
         publishTypingForChannels(typingMap.deleteSender(baseName), typingMap);
-        await this.scheduleRetry([queueId], { liveRejection: false });
+        if (posting) await this.scheduleRetry([queueId], { liveRejection: false });
       } finally {
         if (queueId != null) this.inFlight.delete(queueId);
       }
@@ -2025,54 +2492,108 @@ export class DeliveryManager {
     session: string,
     messages: QueuedMessage[],
     sessionConfig: ResolvedSessionConfig,
-  ): Promise<void> {
+  ): Promise<boolean> {
     const queueIds = messages
       .map((m) => m.queueId)
       .filter((id): id is number => typeof id === "number");
 
     // Serialize the whole batch delivery per (mind, session) so it can't be
     // reordered against interleaving immediate deliveries to the same session.
-    await this.runSequential(`${mindName}:${session}`, async () => {
+    return await this.runSequential(`${mindName}:${session}`, async () => {
       const resolved = await this.resolvePort(mindName);
       if (!resolved) {
         dlog.warn(`cannot deliver batch to ${mindName}: mind not found`);
         // Leave rows pending for redrive; release ownership so the sweep can retry.
         for (const id of queueIds) this.inFlight.delete(id);
-        return;
+        return false;
       }
       const { baseName, port } = resolved;
+
+      if (await this.parkIfRateLimited(baseName, session, messages, sessionConfig)) {
+        for (const id of queueIds) this.inFlight.delete(id);
+        return false;
+      }
+      // Taken before the hold check, which must stay in the same tick as `postBatch`'s slot
+      // claim (see there). A retry carries none: if the mind is rejecting it, riders would
+      // only be sunk along with it.
+      const riders = messages.some((m) => (m.attempts ?? 0) > 0)
+        ? []
+        : await this.takeDeferred(baseName, mindName, session);
 
       // Held? Same as the immediate path: the whole batch stays `pending` and untouched.
       // A batch is delivered as one envelope, so it is held only when every message in it
       // has a row to be held in — otherwise the unpersisted ones would have nothing to come
-      // back from, and a hold would quietly become a deletion.
+      // back from, and a hold would quietly become a deletion. Riders just stay deferred.
       const hold = this.holdCheck(baseName, session);
       if (hold && queueIds.length === messages.length) {
         dlog.debug(
           `holding batch of ${messages.length} to ${baseName}/${session} (${hold.reason})`,
         );
+        for (const r of riders) this.inFlight.delete(r.queueId!);
         if (!hold.momentary) {
           for (const msg of messages) await this.holdRow(msg.queueId!, msg.payload, hold);
         }
         // The buffer is dropped either way: the rows stay in the queue, and redrive
         // rebuilds the batch when the hold lifts.
         for (const id of queueIds) this.inFlight.delete(id);
-        return;
+        return false;
       }
-      // Claim the slot HERE, in the same tick as the gate check — not at `incrementActive`
-      // below, which sits behind an `await` on profile enrichment. `runSequential` keys on
-      // (mind, session), so two sessions of one mind are not serialized against each other,
-      // and two batch buffers flushing in the same tick would otherwise both pass a gate
-      // neither had claimed. Idempotent, so the later `incrementActive` is a no-op.
-      const ownsSlot = acquireTurnSlot(baseName, session);
       if (hold) {
         dlog.warn(
           `delivering a batch to ${baseName}/${session} despite a ${hold.reason} hold: ` +
             `${messages.length - queueIds.length} message(s) have no delivery_queue row, ` +
             `so holding the batch would drop them`,
         );
+        for (const r of riders.splice(0)) this.inFlight.delete(r.queueId!);
       }
 
+      return await this.postBatch(
+        mindName,
+        baseName,
+        port,
+        session,
+        [...riders, ...messages],
+        sessionConfig,
+      );
+    });
+  }
+
+  /**
+   * POST `messages` to a mind as one batch envelope and settle their rows: deleted on ack,
+   * retried on failure. Riders (deferred messages carried along) are deleted on ack too, but
+   * a failure leaves them `deferred`, untouched — they weren't what this delivery was for.
+   * Runs inside the caller's `runSequential`, called in the same tick as its hold check.
+   */
+  private async postBatch(
+    mindName: string,
+    baseName: string,
+    port: number,
+    session: string,
+    messages: QueuedMessage[],
+    sessionConfig: ResolvedSessionConfig,
+  ): Promise<boolean> {
+    const queueIds = messages
+      .map((m) => m.queueId)
+      .filter((id): id is number => typeof id === "number");
+    const retryIds = messages.filter((m) => !m.rider).map((m) => m.queueId);
+    const riderIds = messages.filter((m) => m.rider).map((m) => m.queueId!);
+    if (messages.length === 0) return false;
+
+    // Claim the slot HERE, in the same tick as the gate check — not at `incrementActive`
+    // below, which sits behind an `await` on profile enrichment. `runSequential` keys on
+    // (mind, session), so two sessions of one mind are not serialized against each other,
+    // and two batch buffers flushing in the same tick would otherwise both pass a gate
+    // neither had claimed. Idempotent, so the later `incrementActive` is a no-op.
+    const ownsSlot = acquireTurnSlot(baseName, session);
+    const wakeAt = ownsSlot ? this.noteWake(baseName, session, sessionConfig) : undefined;
+
+    // From here these rows and (maybe) the turn slot are ours; anything that throws before
+    // the POST must hand both back, or the rows are skipped by every sweep and the slot
+    // gates the mind until its TTL.
+    let incremented = false;
+    let posting = false;
+    let acked = false;
+    try {
       // Enrich first message per new channel with participant profiles
       const firstPerChannel = new Set<string>();
       const isFirstForChannel: boolean[] = [];
@@ -2107,6 +2628,7 @@ export class DeliveryManager {
 
       // Increment active count with metadata (the slot was claimed above).
       this.incrementActive(baseName, session, senders, channelSet);
+      incremented = true;
 
       // Snapshot the stale-send baseline per conversation in this batch (see deliverToMind).
       const convIds = new Set<string>();
@@ -2149,6 +2671,7 @@ export class DeliveryManager {
         interrupt: sessionConfig.interrupt,
       });
 
+      posting = true;
       try {
         const ok = await this.postToMind(port, body);
         if (!ok) {
@@ -2156,15 +2679,27 @@ export class DeliveryManager {
           this.decrementActive(baseName, session);
           // Only if this batch took the slot — see the immediate path.
           if (ownsSlot) releaseTurnSlot(baseName, session);
+          this.unnoteWake(baseName, session, wakeAt);
           publishTypingForChannels(typingMap.deleteSender(baseName), typingMap);
-          await this.scheduleRetry(queueIds, { liveRejection: true });
+          await this.scheduleRetry(retryIds, { liveRejection: true });
+          await this.countRiderRejection(riderIds);
         } else {
           // Mark delivered ONLY on ack, and ONLY the specific rows in this batch —
           // a broad (mind, session, pending) DELETE would race with rows enqueued
           // concurrently during the flush.
+          acked = true;
           await this.deleteQueueRows(queueIds);
+          const lateChannels = new Set<string>();
           for (const msg of messages) {
-            if (msg.payload.inboundDeferred) await recordDeferredInbound(baseName, msg.payload);
+            if (!msg.payload.inboundDeferred) continue;
+            await recordDeferredInbound(baseName, msg.payload);
+            if (msg.channel) lateChannels.add(msg.channel);
+          }
+          // Rows written only now missed the turn-creation link; attribute them to the turn.
+          for (const ch of lateChannels) {
+            linkInboundToActiveTurn(baseName, session, ch).catch((err) =>
+              dlog.warn(`failed to link deferred inbound for ${baseName}`, log.errorData(err)),
+            );
           }
         }
       } catch (err) {
@@ -2172,12 +2707,22 @@ export class DeliveryManager {
         dlog.warn(`failed to deliver batch to ${mindName}`, log.errorData(err));
         this.decrementActive(baseName, session);
         if (ownsSlot) releaseTurnSlot(baseName, session);
+        this.unnoteWake(baseName, session, wakeAt);
         publishTypingForChannels(typingMap.deleteSender(baseName), typingMap);
-        await this.scheduleRetry(queueIds, { liveRejection: false });
-      } finally {
-        for (const id of queueIds) this.inFlight.delete(id);
+        await this.scheduleRetry(retryIds, { liveRejection: false });
       }
-    });
+      return acked;
+    } catch (err) {
+      // The POST path settles its own failures; this is a throw before it got there.
+      if (posting) throw err;
+      dlog.warn(`failed to prepare batch for ${mindName}/${session}`, log.errorData(err));
+      if (incremented) this.decrementActive(baseName, session);
+      if (ownsSlot) releaseTurnSlot(baseName, session);
+      this.unnoteWake(baseName, session, wakeAt);
+      return false;
+    } finally {
+      for (const id of queueIds) this.inFlight.delete(id);
+    }
   }
 
   private async enqueueBatch(
@@ -2385,7 +2930,9 @@ export class DeliveryManager {
     mindName: string,
     session: string,
     payload: DeliveryPayload,
-    status: "pending" | "gated" | "archived" = "pending",
+    status: "pending" | "gated" | "archived" | "deferred" = "pending",
+    /** For a `deferred` row: when it flushes by itself (epoch ms). Null = never on its own. */
+    until?: number,
   ): Promise<number | undefined> {
     try {
       const baseName = await getBaseName(mindName);
@@ -2400,6 +2947,7 @@ export class DeliveryManager {
           sender: payload.sender ?? null,
           status,
           payload: JSON.stringify(payload),
+          next_attempt_at: until != null ? toDbTimestamp(until) : null,
         })
         .returning({ id: deliveryQueue.id });
       return result[0]?.id;

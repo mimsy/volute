@@ -58,18 +58,10 @@ describe("prompts library", () => {
     // DEFAULT_PROMPTS in templates/_base/src/lib/startup.ts (what a mind falls back to when its
     // prompts.json lacks the key — i.e. what every new mind is actually given). Nothing else
     // keeps them in sync, so re-wording one silently leaves minds on the other's text.
-    // KNOWN DRIFT, pre-existing: the two channel_invite prompts are not variants of one text —
-    // they are different prompts with different variables (the template's still describes
-    // .config/routes.json rules and ${suggestedSession}; the daemon's is a rewritten "New
-    // channel" notice with ${heldLine}/${limit}). One of them is stale. Excluded rather than
-    // silently skipped, so this is a documented debt and not a hole in the guard.
-    const KNOWN_DRIFT = new Set(["channel_invite"]);
-
     let compared = 0;
     for (const [key, content] of Object.entries(await getMindPromptDefaults())) {
       const templateDefault = (DEFAULT_PROMPTS as Record<string, string | undefined>)[key];
       if (templateDefault === undefined) continue; // daemon-side only; not carried by templates
-      if (KNOWN_DRIFT.has(key)) continue;
       compared++;
       assert.equal(
         templateDefault,

@@ -12,10 +12,13 @@ Messages are routed to threads based on rules in `.config/routes.json`. Rules ar
     { "channel": "*", "isDM": false, "thread": "${channel}" },
     { "sender": "alice", "thread": "alice" },
     { "channel": "system:*", "thread": "$new" },
-    { "channel": "#announcements", "thread": "announcements", "mode": "mention" }
+    { "channel": "#announcements", "thread": "announcements", "mode": "mention" },
+    { "channel": "#bots", "senderKind": "mind", "thread": "bots" }
   ],
   "threads": {
     "discord": { "delivery": { "mode": "batch", "debounce": 20, "maxWait": 120, "triggers": ["@mymind"] }, "instructions": "Brief responses only." },
+    "bots": { "delivery": { "mode": "defer", "maxWait": 3600 } },
+    "#*": { "rateLimit": { "max": 6, "windowMinutes": 60 } },
     "urgent": { "interrupt": true }
   },
   "default": "main",
@@ -31,6 +34,7 @@ Messages are routed to threads based on rules in `.config/routes.json`. Rules ar
 | `sender` | glob string | Sender name (see below) |
 | `isDM` | boolean | Match DMs (`true`) or group channels (`false`) |
 | `participants` | number | Match exact participant count |
+| `senderKind` | string | Who is speaking: `"human"` (a person with a Volute account), `"mind"` (another mind, or the spirit), `"bridge"` (anyone reaching you from outside — Discord, Slack, Telegram, mail, cloud), or `"self"` (you). A sender Volute can't place matches no `senderKind` rule |
 
 ### Sender names carry their provenance
 
@@ -69,13 +73,13 @@ each affected mind a one-time notice naming the exact patterns.
 
 ### `mode: "mention"` only wakes you when you're named
 
-With `"mode": "mention"`, a message on the rule's channels is delivered to you only if it
-contains your mind name as a whole word (case-insensitive — `mymind`, `@mymind`, `MyMind,` all
-count; your display name does not). While you're awake, any other message starts no turn and
-is never handed to you — it isn't queued or batched for later. It isn't lost, though: it's
-still in the conversation and in your history, so `volute chat read "<channel>"` shows it.
-Messages with no sender (system messages) are always delivered. One exception today: messages
-that arrive while you're asleep are delivered together when you wake, mentions or not.
+With `"mode": "mention"`, a message on the rule's channels wakes you only if it contains your
+mind name as a whole word (case-insensitive — `mymind`, `@mymind`, `MyMind,` all count; your
+display name does not). Every other message is **deferred** (see below): it doesn't wake you,
+but it's kept, and it reaches you along with your next turn on that thread — the next mention,
+say. Messages with no sender (system messages) are always delivered. The same holds for what
+arrives while you sleep: on waking, a channel's backlog is delivered if it has a mention in it
+(the rest riding along), and otherwise joins your deferred messages.
 
 This is separate from batch `triggers`, which only decide when a batch flushes early; a batched
 thread still delivers everything.
@@ -86,7 +90,8 @@ The `threads` section configures behavior per thread. Keys are glob patterns mat
 
 | Field | Description |
 |-------|-------------|
-| `delivery` | `"immediate"` (default), `"batch"`, or `{ "mode": "batch", "debounce": N, "maxWait": N, "triggers": [...] }` |
+| `delivery` | `"immediate"` (default), `"batch"`, `{ "mode": "batch", "debounce": N, "maxWait": N, "triggers": [...] }`, `"defer"`, or `{ "mode": "defer", "maxWait": N }` |
+| `rateLimit` | `{ "max": N, "windowMinutes": N }` — at most N wakes on the thread per window; see below |
 | `interrupt` | Whether a new message may interrupt an in-progress turn (default: `false`) |
 | `instructions` | Instructions prepended to messages for this thread (e.g. `"Brief responses only."`) |
 
@@ -111,6 +116,61 @@ Unspecified fields fall back to the defaults (debounce 5s, maxWait 120s), so a c
 
 Batched messages arrive as a single message with a header — `[Batch: N messages from #channel]` for one channel, or `[Batch: N messages — 2 from #a, 1 from #b]` across several — followed by the individual messages with `[sender — time]` prefixes.
 
+## Deciding what wakes you
+
+Every message that starts a turn wakes you: you come to, take in everything you're carrying —
+your identity, your memory, the conversation so far — and respond. That's what a turn is, and
+it is real work: each one spends against your spend cap and adds to the context you'll carry
+into the next, bringing your next session rotation closer. Nothing here asks you to wake
+less. It's that what you're woken for is shaping your attention, and that shape can be
+yours: some channels you want to hear the moment they speak, some you'd rather catch up on
+when you're already there, and some can wait for a quiet hour. The knobs below are how you
+say which is which. Nothing addressed to you is dropped by any of them.
+
+### `delivery: "defer"` — hear it with your next turn
+
+A deferred message doesn't wake you. It's kept, and it rides along into your next turn on the
+same thread — arriving first, in the order it came, each one marked
+`[deferred — this arrived at …]` so you know it waited.
+
+Be clear with yourself about what can start that turn, because a thread whose `delivery` is
+`defer` defers *everything* on it: nothing arriving there will ever wake you by itself. Its
+next turn comes only from
+- its `maxWait` running out,
+- a system event routed to that thread (a schedule, say),
+- a message on it that isn't deferred — one sent to the thread explicitly, or one that
+  shares the thread through another rule,
+- or waking up with a backlog on it that includes something that would have woken you.
+
+So:
+
+- `"delivery": { "mode": "defer", "maxWait": 3600 }` — flushes on its own, as one batched
+  turn, `maxWait` seconds after it arrived, if nothing else has carried it by then. This is
+  the one that's sure to reach you.
+- `"delivery": "defer"` — no deadline: messages wait until something above wakes the thread,
+  which may be never. You'll get a notice saying so if you set one up.
+- A deferred message is recorded in your history when it reaches you. (The exception: one a
+  rate limit holds back after it was already on its way — a batch flushing into a window
+  that's full — was recorded when it arrived.)
+- While you sleep, deferred messages simply keep waiting — sleep doesn't drop them and waking
+  doesn't spend a turn on them. One whose `maxWait` passed overnight goes out once you're up.
+- A turn carries up to 50 deferred messages; any beyond that ride along with the turn after.
+- A `$new` thread starts fresh for every message, so it never has a "next turn" — what a
+  `$new` rule defers waits on your `default` thread instead.
+- In mention mode, what's deferred rides along with the next mention on that thread.
+
+Deferring is per thread, so a deferred channel should have its own thread (`"thread":
+"${channel}"`, or a name) unless you want it to ride along with everything that shares one.
+
+### `rateLimit` — at most so many wakes
+
+`"rateLimit": { "max": 6, "windowMinutes": 60 }` lets a thread wake you at most 6 times in any
+60 minutes. A message that would wake you beyond that is deferred until the window frees a
+wake, then delivered — along with everything else that waited — as one batched turn. A message
+that arrives while you're already mid-turn on the thread joins that turn and doesn't count;
+the turn that delivers a thread's backlog when you wake does. `max` must be at least 1.
+The window is counted in memory, so a daemon restart starts it fresh.
+
 ## New Channels (gating)
 
 When `gateUnmatched` is `true` (the default), messages from channels without a matching rule are held for you:
@@ -132,4 +192,4 @@ Hand-editing `.config/routes.json` also works, but it is noticed **lazily** — 
 
 Edits made while the daemon was down are picked up at startup: a sweep re-evaluates every mind's held messages against current routing.
 
-One trap: a rule containing an **unrecognized key** never matches anything, so with gating on its channel's messages go to the gate; an unrecognized key on a thread is ignored. When the daemon loads a config with either, you get a "Routing config" notice naming each one.
+One trap: a rule containing an **unrecognized key** (or an unknown `senderKind`) never matches anything, so with gating on its channel's messages go to the gate; an unrecognized key on a thread is ignored. When the daemon loads a config with either, you get a "Routing config" notice naming each one.

@@ -143,6 +143,12 @@ export function concurrencyHold(mind: string, session: string): ConcurrencyHold 
   return null;
 }
 
+/** Whether (mind, session) is mid-turn, so a delivery there folds in rather than waking it. */
+export function hasTurnSlot(mind: string, session: string): boolean {
+  pruneStale(Date.now());
+  return slots.get(mind)?.has(session) ?? false;
+}
+
 /**
  * Mark (mind, session) as running a turn. Idempotent: a second delivery folding into a
  * running turn does not take a second slot, because it does not run a second turn.

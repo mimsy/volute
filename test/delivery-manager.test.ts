@@ -156,7 +156,7 @@ describe("DeliveryManager", () => {
       removeMind(name);
     });
 
-    it("filters mention-mode messages that don't mention the mind", async () => {
+    it("defers mention-mode messages that don't mention the mind, rather than dropping them", async () => {
       const name = createMindWithRoutes({
         rules: [{ channel: "group:*", thread: "group", mode: "mention" }],
       });
@@ -168,9 +168,10 @@ describe("DeliveryManager", () => {
         content: "hey everyone",
       });
 
-      assert.equal(result.routed, false);
-      if (!result.routed) {
-        assert.equal(result.reason, "mention-filtered");
+      assert.equal(result.routed, true);
+      if (result.routed) {
+        assert.equal(result.mode, "deferred");
+        assert.equal(result.session, "group");
       }
       removeMind(name);
     });

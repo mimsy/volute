@@ -161,6 +161,7 @@ export async function fanOutToMinds(opts: FanOutOpts): Promise<FanOutResult> {
           const gated = await willGateMessage(target, {
             channel,
             sender: opts.senderName,
+            senderId: opts.senderId,
             isDM,
             participantCount: participants.length,
           });
