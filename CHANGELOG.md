@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.63.0](https://github.com/mimsy/volute/compare/volute-v0.62.0...volute-v0.63.0) (2026-09-24)
+
+
+### Features
+
+* **memory:** first-person consolidation in the mind's own voice and a recollection endpoint for seeding ([#1138](https://github.com/mimsy/volute/issues/1138)) ([270337b](https://github.com/mimsy/volute/commit/270337b77a968c03f1bc83eb632a435f3d6f2d2f))
+* **memory:** one memory system — layered memory skill, honest MEMORY.md overflow, section sizes in status ([#1133](https://github.com/mimsy/volute/issues/1133)) ([2f2f42b](https://github.com/mimsy/volute/commit/2f2f42b5a5d8ccd5a08114a747c04e18bd5016ee))
+* **resonance:** make resonance the default, automatic recall layer of memory ([#1139](https://github.com/mimsy/volute/issues/1139)) ([63ad2d6](https://github.com/mimsy/volute/commit/63ad2d67190cea0306fbbacf6925e50fa689014f))
+* **routing:** let minds shape what wakes them — defer, rateLimit, senderKind, mention defers ([#1137](https://github.com/mimsy/volute/issues/1137)) ([102f244](https://github.com/mimsy/volute/commit/102f244729b948e7b2abd1ee41101c82d6967fe1))
+* **templates:** cold-reset idle sessions and seed every seam with first-person recollection ([#1136](https://github.com/mimsy/volute/issues/1136)) ([7f53f50](https://github.com/mimsy/volute/commit/7f53f50c69171b469070f4f93caf856c98402aa8))
+* **templates:** load identity edits at the next session boundary instead of restarting ([#1126](https://github.com/mimsy/volute/issues/1126)) ([b1a2e9e](https://github.com/mimsy/volute/commit/b1a2e9e2e91cf83e7c1ad774e81e8310edec8b20))
+
+
+### Bug Fixes
+
+* **cli:** don't print Port: undefined in mind status ([#1147](https://github.com/mimsy/volute/issues/1147)) ([3759dfe](https://github.com/mimsy/volute/commit/3759dfe1e9cb297bb86470ccf6436c42a9c10c0a))
+* **memory:** anchor consolidated memories to the period's real times ([#1151](https://github.com/mimsy/volute/issues/1151)) ([28414c0](https://github.com/mimsy/volute/commit/28414c029c76d4911bc3c075dec8db058313ba65))
+* **memory:** recollection reaches the verbatim tail instead of skipping the hour it starts in ([#1150](https://github.com/mimsy/volute/issues/1150)) ([88a952c](https://github.com/mimsy/volute/commit/88a952cc4ce9c800f3a08305dac4474265a10f2f))
+* **routes:** make shipped channel batching take effect and repair existing minds' routes.json ([#1127](https://github.com/mimsy/volute/issues/1127)) ([538f0f9](https://github.com/mimsy/volute/commit/538f0f925c0acc09d9566254c96536c8d5946db8))
+* **seed:** don't count CLI bookkeeping attachments toward seed budgets ([#1154](https://github.com/mimsy/volute/issues/1154)) ([b892d88](https://github.com/mimsy/volute/commit/b892d8807c4049b473bda86baab2e94d1d7a03fd))
+* **seed:** trim an over-budget final turn so rotation seeds land on budget ([#1128](https://github.com/mimsy/volute/issues/1128)) ([6fa0a30](https://github.com/mimsy/volute/commit/6fa0a302769afe08dccde941be6c8bdc1cdfeffb))
+* **skills:** reconcile hook/bin shims and deps on update without undoing a mind's own choices ([#1134](https://github.com/mimsy/volute/issues/1134)) ([f31797f](https://github.com/mimsy/volute/commit/f31797f4a9d428da0ab2d8e1225419202b5f47f3))
+* **templates:** default the CLI's built-in Explore/Plan subagents to sonnet on opus/fable minds ([#1152](https://github.com/mimsy/volute/issues/1152)) ([6b31747](https://github.com/mimsy/volute/commit/6b3174753e17682409157e462b7c3fb3b15e3007))
+* **templates:** don't bill a resumed stream's first turn for the SDK's restored session totals ([#1135](https://github.com/mimsy/volute/issues/1135)) ([1077779](https://github.com/mimsy/volute/commit/1077779584eb1450c899c0dfebac0fba8f47af41))
+* **templates:** stop the CLI replaying a stale system prompt on resume ([#1153](https://github.com/mimsy/volute/issues/1153)) ([71f1166](https://github.com/mimsy/volute/commit/71f11667809ea7f4f55988f4de7456e4e1b0fe53))
+* **upgrade:** correct the stale identity-restart line in existing minds' mechanics docs ([#1149](https://github.com/mimsy/volute/issues/1149)) ([5eebca4](https://github.com/mimsy/volute/commit/5eebca40f504755c706088767140f3fc81398aaa))
+* **usage:** count subagent usage on a resumed stream's first turn ([#1156](https://github.com/mimsy/volute/issues/1156)) ([67cca4d](https://github.com/mimsy/volute/commit/67cca4d998eb9580bb066187ff38c5fce3ba51ba))
+* **usage:** price 1-hour cache writes and count Task subagents in spend; subagents default to sonnet on opus/fable minds ([#1131](https://github.com/mimsy/volute/issues/1131)) ([64a0055](https://github.com/mimsy/volute/commit/64a0055862bec7449fb68106a7a65761e945bd1a))
+
 ## [0.62.0](https://github.com/mimsy/volute/compare/volute-v0.61.0...volute-v0.62.0) (2026-09-23)
 
 
