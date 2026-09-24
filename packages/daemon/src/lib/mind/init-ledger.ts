@@ -96,7 +96,16 @@ export function readInitLedgerFile(path: string, label: string): Set<string> {
  * all — worth a warning, never worth failing an upgrade over.
  */
 export function writeInitLedger(mindName: string, given: Iterable<string>): void {
-  const path = initLedgerPath(mindName);
+  writeLedgerFile(initLedgerPath(mindName), given, mindName);
+}
+
+/**
+ * Write a ledger to an arbitrary path with {@link writeInitLedger}'s atomic,
+ * best-effort semantics — the pair to {@link readInitLedgerFile}. Also used for
+ * the skill-shim ledger (`skills.ts`), which answers the same question for the
+ * hook and bin shims a skill install gives a mind.
+ */
+export function writeLedgerFile(path: string, given: Iterable<string>, label: string): void {
   const tmp = `${path}.tmp`;
   try {
     mkdirSync(resolve(path, ".."), { recursive: true });
@@ -105,7 +114,7 @@ export function writeInitLedger(mindName: string, given: Iterable<string>): void
     renameSync(tmp, path);
   } catch (err) {
     rmSync(tmp, { force: true });
-    llog.warn(`failed to write the infrastructure ledger for ${mindName}`, log.errorData(err));
+    llog.warn(`failed to write the ledger at ${path} for ${label}`, log.errorData(err));
   }
 }
 

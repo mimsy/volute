@@ -12,6 +12,23 @@ import {
 } from "../../lib/skills.js";
 import { type AuthEnv, requireSelf } from "../middleware/auth.js";
 
+const errorMessage = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
+/**
+ * A skill operation that throws part-way may already have written files as the
+ * daemon (root under user isolation), so ownership goes back to the mind on
+ * failure too. If that fails as well, the error says so — root-owned files in a
+ * mind's tree are the #467 class of break and must not go unreported.
+ */
+async function failureAfterChown(e: unknown, dir: string, name: string): Promise<string> {
+  try {
+    await chownMindDir(dir, name);
+    return errorMessage(e);
+  } catch (chownErr) {
+    return `${errorMessage(e)} (restoring ownership also failed: ${errorMessage(chownErr)})`;
+  }
+}
+
 const app = new Hono<AuthEnv>()
   .get("/:name/skills", async (c) => {
     const name = c.req.param("name");
@@ -34,17 +51,21 @@ const app = new Hono<AuthEnv>()
       const { skillId } = c.req.valid("json");
       const dir = entry.dir ?? mindDir(name);
 
+      let result: Awaited<ReturnType<typeof installSkill>>;
       try {
-        const result = await installSkill(name, dir, skillId);
+        result = await installSkill(name, dir, skillId);
+      } catch (e) {
+        return c.json({ error: await failureAfterChown(e, dir, name) }, 400);
+      }
+      try {
         // installSkill writes files (and git objects) as the daemon (root under
         // user isolation), so hand ownership to the mind — otherwise it can't
         // modify or remove its own skill. No-op when isolation is disabled.
         await chownMindDir(dir, name);
-        return c.json({ ok: true, ...result });
       } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        return c.json({ error: msg }, 400);
+        return c.json({ error: errorMessage(e) }, 400);
       }
+      return c.json({ ok: true, ...result });
     },
   )
   .post(
@@ -59,16 +80,20 @@ const app = new Hono<AuthEnv>()
       const { skillId } = c.req.valid("json");
       const dir = entry.dir ?? mindDir(name);
 
+      let result: Awaited<ReturnType<typeof updateSkill>>;
       try {
-        const result = await updateSkill(name, dir, skillId);
+        result = await updateSkill(name, dir, skillId);
+      } catch (e) {
+        return c.json({ error: await failureAfterChown(e, dir, name) }, 400);
+      }
+      try {
         // Newly written files land as root under user isolation — re-chown so
         // the mind keeps ownership of its skill. No-op when isolation is off.
         await chownMindDir(dir, name);
-        return c.json(result);
       } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        return c.json({ error: msg }, 400);
+        return c.json({ error: errorMessage(e) }, 400);
       }
+      return c.json(result);
     },
   )
   .post(
@@ -87,8 +112,7 @@ const app = new Hono<AuthEnv>()
         const skill = await publishSkill(name, dir, skillId);
         return c.json(skill);
       } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        return c.json({ error: msg }, 400);
+        return c.json({ error: errorMessage(e) }, 400);
       }
     },
   )
@@ -102,13 +126,16 @@ const app = new Hono<AuthEnv>()
 
     try {
       await uninstallSkill(name, dir, skillName);
+    } catch (e) {
+      return c.json({ error: await failureAfterChown(e, dir, name) }, 400);
+    }
+    try {
       // The removal commit's git objects are written as root under user
       // isolation — re-chown so the mind's later commits don't hit EACCES.
       // No-op when isolation is off.
       await chownMindDir(dir, name);
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      return c.json({ error: msg }, 400);
+      return c.json({ error: errorMessage(e) }, 400);
     }
 
     return c.json({ ok: true });
