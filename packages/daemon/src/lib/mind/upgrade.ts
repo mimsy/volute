@@ -17,6 +17,7 @@ import log from "../util/logger.js";
 import { repairThreadBatchConfig } from "./event-routes.js";
 import { chownMindDir, isIsolationEnabled } from "./isolation.js";
 import { beginUpgrade } from "./join-lock.js";
+import { repairMechanicsDoc } from "./mechanics-doc.js";
 import { npmInstallAsMind, npmInstallNeeded } from "./npm-install.js";
 import { findMind, mindDir, setMindTemplate, setMindTemplateHash } from "./registry.js";
 import { cleanupVariant } from "./variant-cleanup.js";
@@ -456,6 +457,11 @@ async function mergeUpgradeAndRestart(
   // template shipped the dead key, so channel batching never ran. `.config/` is the
   // mind's, so this is a surgical in-place key rename, and the mind is told. Never throws.
   await repairThreadBatchConfig(dir, mindName);
+
+  // The mechanics doc is identity, so the merge never updates it — but a paragraph Volute
+  // wrote may have stopped being true (#1144). Corrected only where still verbatim; a mind
+  // that reworded it is told once instead. Never throws.
+  await repairMechanicsDoc(dir, mindName, template);
 
   // Persist the template field only after any switch swap succeeded, so the DB
   // stays consistent with the on-disk template files.
