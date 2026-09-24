@@ -218,7 +218,10 @@ export const TRIMMED_TURN_MARKER =
   "[At this seam, the earlier steps of this turn were left out to keep room to think — what follows are its most recent steps. The full turn is in your previous session's transcript, and turn summaries are in `volute mind history`.]";
 
 /** Which lines to keep: `keep` is ascending parsed indices; `trimmedAt` is set when a turn was cut. */
-type TailPlan = { keep: number[]; trimmedAt?: { prompt: number; resume: number } };
+type TailPlan = {
+  keep: number[];
+  trimmedAt?: { prompt: number; resume: number; parent: string | null };
+};
 
 const range = (start: number, end: number): number[] =>
   Array.from({ length: end - start }, (_, k) => start + k);
@@ -258,8 +261,21 @@ function trimTurn(
   let promptEnd = start + 1;
   while (promptEnd < end && parsed[promptEnd].type !== "assistant") promptEnd++;
   if (promptEnd >= end) return null;
-  let promptCost = TRIMMED_TURN_MARKER.length / CHARS_PER_TOKEN;
-  for (let i = start; i < promptEnd; i++) promptCost += tokens[i];
+  // An already-trimmed prompt (re-seeding a seed) carries the marker in its own cost.
+  let promptCost = hasTrimMarker(parsed[start]) ? 0 : TRIMMED_TURN_MARKER.length / CHARS_PER_TOKEN;
+  const promptUuids: string[] = [];
+  for (let i = start; i < promptEnd; i++) {
+    promptCost += tokens[i];
+    const u = parsed[i].uuid;
+    if (typeof u === "string") promptUuids.push(u);
+  }
+  // Re-link the resumed step where the turn's first step hung — the prompt section's
+  // chain tip — not merely its last uuid'd line, which may be an attachment off-chain.
+  const firstParent = parsed[promptEnd].parentUuid;
+  const parent =
+    typeof firstParent === "string" && promptUuids.includes(firstParent)
+      ? firstParent
+      : (promptUuids.at(-1) ?? null);
 
   const seenIds = new Set<string>();
   const firstOfMessage: boolean[] = [];
@@ -296,7 +312,7 @@ function trimTurn(
   if (best === null) return null;
   return {
     keep: [...range(start, promptEnd), ...range(best, parsed.length)],
-    trimmedAt: { prompt: start, resume: best },
+    trimmedAt: { prompt: start, resume: best, parent },
   };
 }
 
@@ -332,8 +348,16 @@ function planTail(parsed: JsonlLine[], seedTokens: number): TailPlan {
   return { keep: range(boundaries[startTurn], parsed.length) };
 }
 
-/** Append the trim marker to a prompt line's content (string or block array). */
+function hasTrimMarker(o: JsonlLine): boolean {
+  const content = o.message?.content;
+  if (!Array.isArray(content)) return false;
+  const last = content.at(-1) as { type?: string; text?: unknown } | undefined;
+  return last?.type === "text" && last.text === TRIMMED_TURN_MARKER;
+}
+
+/** Append the trim marker to a prompt line's content (string or block array), once. */
 function markTrimmed(o: JsonlLine): void {
+  if (hasTrimMarker(o)) return;
   const marker = { type: "text", text: TRIMMED_TURN_MARKER };
   const content = o.message?.content;
   const blocks = typeof content === "string" ? [{ type: "text", text: content }] : content;
@@ -344,23 +368,21 @@ function markTrimmed(o: JsonlLine): void {
  * Copy the planned lines into a fresh synthetic transcript, rewriting the sessionId
  * on every line and nulling the first chain event's parentUuid (to detach the tail
  * from the dropped history). For a trimmed turn, the prompt carries the trim marker
- * and the resumed step is re-parented onto the last kept line of the prompt section.
+ * and the resumed step is re-parented onto the prompt section's chain tip.
  */
 function emitTail(parsed: JsonlLine[], plan: TailPlan): SeededTranscript {
   const newId = randomUUID();
   const lines: string[] = [];
   let firstChainSeen = false;
-  let lastUuid: string | null = null;
   for (const i of plan.keep) {
     const obj = parsed[i];
     if ("sessionId" in obj) obj.sessionId = newId;
     if (plan.trimmedAt?.prompt === i) markTrimmed(obj);
-    if (plan.trimmedAt?.resume === i) obj.parentUuid = lastUuid;
+    if (plan.trimmedAt?.resume === i) obj.parentUuid = plan.trimmedAt.parent;
     if (!firstChainSeen && isChainEvent(obj)) {
       obj.parentUuid = null;
       firstChainSeen = true;
     }
-    if (typeof obj.uuid === "string") lastUuid = obj.uuid;
     lines.push(JSON.stringify(obj));
   }
   return { sessionId: newId, lines };

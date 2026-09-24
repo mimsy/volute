@@ -336,37 +336,86 @@ describe("buildSeededTranscript — over-budget final turn", () => {
   });
 });
 
+/**
+ * Read a seeded transcript back through the SDK's own transcript reader, which walks
+ * parentUuid from the leaf as resume does — a broken re-link surfaces as a truncated
+ * (or empty) conversation.
+ */
+async function readBackViaSdk(res: { sessionId: string; lines: string[] }) {
+  const root = realpathSync(mkdtempSync(resolve(tmpdir(), "seed-sdk-")));
+  const prevConfigDir = process.env.CLAUDE_CONFIG_DIR;
+  process.env.CLAUDE_CONFIG_DIR = resolve(root, "config");
+  try {
+    const { getSessionMessages } = await import("@anthropic-ai/claude-agent-sdk");
+    const cwd = resolve(root, "home");
+    const projectDir = resolve(root, "config", "projects", cwd.replace(/[^a-zA-Z0-9]/g, "-"));
+    mkdirSync(projectDir, { recursive: true });
+    mkdirSync(cwd);
+    writeFileSync(resolve(projectDir, `${res.sessionId}.jsonl`), `${res.lines.join("\n")}\n`);
+    return await getSessionMessages(res.sessionId, { dir: cwd });
+  } finally {
+    if (prevConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+    else process.env.CLAUDE_CONFIG_DIR = prevConfigDir;
+  }
+}
+
+const markerCount = (lines: string[]) =>
+  lines.join("\n").split(JSON.stringify(TRIMMED_TURN_MARKER).slice(1, -1)).length - 1;
+
 describe("buildSeededTranscript — trimmed turn round-trips through the SDK's transcript reader", () => {
   it("getSessionMessages rebuilds the whole trimmed chain, prompt to final step", async () => {
-    // getSessionMessages walks parentUuid from the leaf, as resume does; a broken
-    // re-link would surface here as a truncated (or empty) conversation.
-    const root = realpathSync(mkdtempSync(resolve(tmpdir(), "seed-sdk-")));
-    const prevConfigDir = process.env.CLAUDE_CONFIG_DIR;
-    process.env.CLAUDE_CONFIG_DIR = resolve(root, "config");
-    try {
-      const { getSessionMessages } = await import("@anthropic-ai/claude-agent-sdk");
-      const cwd = resolve(root, "home");
-      const projectDir = resolve(root, "config", "projects", cwd.replace(/[^a-zA-Z0-9]/g, "-"));
-      mkdirSync(projectDir, { recursive: true });
-      mkdirSync(cwd);
+    const res = buildSeededTranscript(toolLoopTurn(40, 2000).join("\n"), 10_000);
+    assert.ok(res);
+    const msgs = await readBackViaSdk(res);
+    const chain = parse(res.lines).filter((o) => o.type === "user" || o.type === "assistant");
+    assert.deepEqual(
+      msgs.map((m) => m.uuid),
+      chain.map((o) => o.uuid),
+    );
+    assert.equal(msgs[0].uuid, "p");
+    assert.ok(JSON.stringify(msgs[0].message).includes(TRIMMED_TURN_MARKER));
+    assert.equal(msgs.at(-1)?.uuid, "final");
+  });
 
-      const res = buildSeededTranscript(toolLoopTurn(40, 2000).join("\n"), 10_000);
-      assert.ok(res);
-      writeFileSync(resolve(projectDir, `${res.sessionId}.jsonl`), `${res.lines.join("\n")}\n`);
+  it("re-links the resumed step to the prompt's chain, not an off-chain attachment", async () => {
+    // The attachment is the last uuid'd line before the first step, but it hangs off
+    // the chain (its parent isn't in the transcript); the first step hangs off the prompt.
+    const lines = toolLoopTurn(40, 2000).map((l) => {
+      const o = JSON.parse(l);
+      if (o.uuid === "att") o.parentUuid = "elsewhere";
+      if (o.uuid === "a0") o.parentUuid = "p";
+      return JSON.stringify(o);
+    });
+    const res = buildSeededTranscript(lines.join("\n"), 10_000);
+    assert.ok(res);
+    const resumed = parse(res.lines).find((o, k) => k > 0 && o.type === "assistant");
+    assert.equal(resumed.parentUuid, "p");
+    const msgs = await readBackViaSdk(res);
+    assert.equal(msgs[0].uuid, "p");
+    assert.equal(msgs.at(-1)?.uuid, "final");
+  });
 
-      const msgs = await getSessionMessages(res.sessionId, { dir: cwd });
-      const chain = parse(res.lines).filter((o) => o.type === "user" || o.type === "assistant");
-      assert.deepEqual(
-        msgs.map((m) => m.uuid),
-        chain.map((o) => o.uuid),
-      );
-      assert.equal(msgs[0].uuid, "p");
-      assert.ok(JSON.stringify(msgs[0].message).includes(TRIMMED_TURN_MARKER));
-      assert.equal(msgs.at(-1)?.uuid, "final");
-    } finally {
-      if (prevConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR;
-      else process.env.CLAUDE_CONFIG_DIR = prevConfigDir;
-    }
+  it("re-seeding an already-trimmed turn keeps one marker, counted once", async () => {
+    const first = buildSeededTranscript(toolLoopTurn(40, 2000).join("\n"), 10_000);
+    assert.ok(first);
+    const objs = parse(first.lines);
+    // Budget that fits everything but the first kept step — with the marker counted
+    // once. Counting it twice would drop a second step too.
+    const resumeIdx = objs.findIndex((o, k) => k > 0 && o.type === "assistant");
+    const nextIdx = objs.findIndex((o, k) => k > resumeIdx + 1 && o.type === "assistant");
+    const firstStep = estimate(objs.slice(resumeIdx, nextIdx));
+    const budget = estimate(objs) - firstStep + 1;
+
+    const again = buildSeededTranscript(first.lines.join("\n"), budget);
+    assert.ok(again);
+    const againObjs = parse(again.lines);
+    assert.equal(markerCount(again.lines), 1);
+    assert.equal(againObjs.length, objs.length - (nextIdx - resumeIdx));
+    assert.ok(estimate(againObjs) <= budget);
+    assertResumable(againObjs);
+    const msgs = await readBackViaSdk(again);
+    assert.equal(msgs[0].uuid, "p");
+    assert.equal(msgs.at(-1)?.uuid, "final");
   });
 });
 
