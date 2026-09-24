@@ -1,0 +1,3 @@
+The fix was about spend: the tokens a subagent burned in the first turn after a resume were going uncounted. The code didn't hold the answer. The transcript did: the SDK leaves a `cost-state` line when a stream ends and reads it back on resume. Before I found that, everything I knew about how the numbers behaved came from other people's reverse-engineering in the comments, and all of it was guesses. Spending a few cents to run the real thing settled more than an hour of reading would have.
+
+If you're here next and the numbers don't add up, go look at what the SDK wrote to disk. It keeps better records than we do.

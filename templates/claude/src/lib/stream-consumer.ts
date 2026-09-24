@@ -6,10 +6,10 @@ import type { VoluteEvent } from "./types.js";
 import {
   advanceBaseline,
   buildUsagePayload,
-  carriesRestoredTotals,
   hasUsageCounters,
   type ModelUsageMap,
   type ResultUsage,
+  resumedBaseline,
 } from "./usage.js";
 
 /** A pending message's daemon-facing id (routing/channel key) paired with its channel `seq`. */
@@ -60,7 +60,7 @@ export async function consumeStream(
   stream: ReturnType<typeof query>,
   session: StreamSession,
   callbacks: StreamCallbacks,
-  opts: { resumed?: boolean } = {},
+  opts: { resumed?: boolean; restoredTotals?: ModelUsageMap } = {},
 ) {
   emit(session, { type: "session_start" });
   // How many queued message ids predate the current turn — see the pruning in
@@ -70,8 +70,9 @@ export async function consumeStream(
    * The previous result's per-model counters. They accumulate across the stream rather
    * than resetting per turn, so each turn's own share is the difference from this (#981).
    * A local, because its lifetime is exactly this stream's. A fresh stream opens the SDK's
-   * accumulator at zero; a resumed one may open it at the earlier session's totals, which
-   * the first result is checked for — see `carriesRestoredTotals`.
+   * accumulator at zero; a resumed one opens it at the totals its transcript saved, which
+   * the caller reads for the first counted result's baseline (#1155) — see
+   * `resumedBaseline`.
    */
   let prevModelUsage: ModelUsageMap;
   let checkRestoredTotals = opts.resumed === true;
@@ -189,13 +190,14 @@ export async function consumeStream(
       let baseline = prevModelUsage;
       if (checkRestoredTotals && hasUsageCounters(result.modelUsage)) {
         checkRestoredTotals = false;
-        // Differenced against itself, the breakdown comes out empty, so the turn is priced
-        // on `usage` alone — its own tokens, without the restored totals.
-        if (carriesRestoredTotals(result, mainModel)) {
-          baseline = result.modelUsage;
+        const resumed = resumedBaseline(result, opts.restoredTotals, mainModel);
+        baseline = resumed.baseline;
+        if (!resumed.consistent) {
           log(
             "mind",
-            `session "${session.name}": resumed with restored usage totals — pricing this turn on its own usage`,
+            opts.restoredTotals
+              ? `session "${session.name}": resumed usage exceeds the transcript's restored totals — pricing the main model on its own usage`
+              : `session "${session.name}": resumed with restored usage totals — pricing this turn on its own usage`,
           );
         }
       }

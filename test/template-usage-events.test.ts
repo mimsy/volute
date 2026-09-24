@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
-import { readFileSync, rmSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { resolve as resolvePath } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -10,6 +12,7 @@ import {
   advanceBaseline,
   buildUsagePayload,
   dominantModel,
+  restoredTotals,
   usageByModel,
 } from "../templates/claude/src/lib/usage.js";
 import { usageDelta, ZERO_USAGE } from "../templates/codex/src/lib/usage.js";
@@ -751,7 +754,11 @@ describe("claude template: a resumed stream", () => {
 
   after(() => rmSync(composedDir, { recursive: true, force: true }));
 
-  async function run(messages: unknown[], resumed: boolean) {
+  async function run(
+    messages: unknown[],
+    resumed: boolean,
+    restoredTotals?: Record<string, Record<string, number>>,
+  ) {
     const emitted: Record<string, unknown>[] = [];
     async function* stream() {
       yield* messages;
@@ -771,7 +778,7 @@ describe("claude template: a resumed stream", () => {
         },
         ack: () => {},
       } as never,
-      { resumed },
+      { resumed, restoredTotals },
     );
     return emitted;
   }
@@ -972,7 +979,16 @@ describe("claude template: a resumed stream", () => {
     // The check only runs when the caller says the stream resumed; if nothing passes the
     // flag, every test above is green while no mind ever runs the check.
     const agent = readFileSync(resolvePath(composedDir, "src/agent.ts"), "utf-8");
-    assert.match(agent, /consumeStream\([^)]*\{ resumed: resume !== undefined \}\)/);
+    const runStream = agent.slice(agent.indexOf("async function runStream("));
+    // In order: wait out a reaped stream's exit, read the totals, bail if torn down
+    // meanwhile, and only then spawn the SDK child and pass the totals on.
+    assert.match(
+      runStream,
+      /awaitPriorExit\(exiting\.get\(session\.name\), PRIOR_EXIT_WAIT_MS\);\s*restoredTotals = await readRestoredTotals\(options\.cwd, resume\);[\s\S]*?if \(session\.closed\) return;[\s\S]*?createStream\([\s\S]*?consumeStream\(q, session, callbacks, \{\s*resumed: resume !== undefined,\s*restoredTotals,\s*\}\)/,
+    );
+    // ...and the reaper publishes its pending exit for that wait to find.
+    const reap = agent.slice(agent.indexOf("async function reapSession("));
+    assert.match(reap, /exiting\.set\(session\.name, exit\);\s*await exit;/);
   });
 
   it("leaves a fresh stream's first turn alone", async () => {
@@ -980,5 +996,317 @@ describe("claude template: a resumed stream", () => {
     // subagent or side-call at work (#984), not restored totals.
     const emitted = await run([init, resumedTurn], false);
     assert.ok((emitted[0] as { models?: unknown }).models);
+  });
+
+  /**
+   * #1155: the SDK restores *every* model's totals on resume, from the last `cost-state` line
+   * the transcript holds for the session. Recorded live on 0.3.281 (haiku main, a sonnet
+   * subagent): session A ran a plain turn and a subagent turn, its stream ended and wrote
+   * this cost-state; session B ran one plain turn, then was resumed into a subagent turn.
+   */
+  describe("claude template: a resumed stream's first turn, baselined on the restored totals", () => {
+    const init = { type: "system", subtype: "init", model: "claude-haiku-4-5" };
+    const mu = (i: number, o: number, cr: number, cw: number) => ({
+      inputTokens: i,
+      outputTokens: o,
+      cacheReadInputTokens: cr,
+      cacheCreationInputTokens: cw,
+    });
+
+    it("counts a subagent on a model the earlier session never used", async () => {
+      // Session B: its plain turn saved haiku alone; the resumed turn ran the sonnet subagent.
+      const restored = { "claude-haiku-4-5": mu(10, 44, 14_474, 0) };
+      const resumedTurn = {
+        type: "result",
+        subtype: "success",
+        usage: {
+          input_tokens: 18,
+          output_tokens: 806,
+          cache_read_input_tokens: 29_060,
+          cache_creation_input_tokens: 664,
+        },
+        modelUsage: {
+          "claude-haiku-4-5": mu(28, 850, 43_534, 664),
+          "claude-sonnet-5": mu(706, 4, 0, 0),
+        },
+      };
+      const emitted = await run([init, resumedTurn], true, restored);
+      assert.deepEqual((emitted[0] as { models: UsageByModel[] }).models, [
+        slice("claude-haiku-4-5", {
+          input_tokens: 18,
+          output_tokens: 806,
+          cache_read_input_tokens: 29_060,
+          cache_creation_input_tokens: 664,
+        }),
+        slice("claude-sonnet-5", { input_tokens: 706, output_tokens: 4 }),
+      ]);
+      // Priced: the subagent's share reaches spend.
+      const { type: _, ...metadata } = emitted[0] as { type: string };
+      const priced = priceUsageMetadata(metadata, { template: "claude" });
+      const mainOnly = priceUsageMetadata(
+        { ...metadata, models: [(metadata as { models: UsageByModel[] }).models[0]] },
+        { template: "claude" },
+      );
+      assert.ok((priced.cost_usd ?? 0) > (mainOnly.cost_usd ?? 0));
+    });
+
+    it("counts only this turn's share of a model the earlier session also used", async () => {
+      // Session A's cost-state: the sonnet subagent and an ai-title side-call already ran.
+      // Every one of these keys comes back restored, not only the main model's.
+      const restored = {
+        "claude-haiku-4-5": mu(38, 590, 44_171, 15_886),
+        "claude-haiku-4-5-20251001": mu(899, 8, 0, 0),
+        "claude-sonnet-5": mu(706, 4, 0, 0),
+      };
+      const resumedTurn = {
+        type: "result",
+        subtype: "success",
+        usage: {
+          input_tokens: 18,
+          output_tokens: 192,
+          cache_read_input_tokens: 31_904,
+          cache_creation_input_tokens: 678,
+        },
+        modelUsage: {
+          "claude-haiku-4-5": mu(56, 782, 76_075, 16_564),
+          "claude-haiku-4-5-20251001": mu(899, 8, 0, 0),
+          "claude-sonnet-5": mu(1_412, 8, 0, 0),
+        },
+      };
+      const emitted = await run([init, resumedTurn], true, restored);
+      assert.deepEqual((emitted[0] as { models: UsageByModel[] }).models, [
+        slice("claude-haiku-4-5", {
+          input_tokens: 18,
+          output_tokens: 192,
+          cache_read_input_tokens: 31_904,
+          cache_creation_input_tokens: 678,
+        }),
+        slice("claude-sonnet-5", { input_tokens: 706, output_tokens: 4 }),
+      ]);
+    });
+
+    it("bills the next turn against the first, as in any stream", async () => {
+      const restored = { "claude-haiku-4-5": mu(10, 44, 14_474, 0) };
+      const first = {
+        type: "result",
+        subtype: "success",
+        usage: {
+          input_tokens: 18,
+          output_tokens: 806,
+          cache_read_input_tokens: 29_060,
+          cache_creation_input_tokens: 664,
+        },
+        modelUsage: {
+          "claude-haiku-4-5": mu(28, 850, 43_534, 664),
+          "claude-sonnet-5": mu(706, 4, 0, 0),
+        },
+      };
+      const second = {
+        type: "result",
+        subtype: "success",
+        usage: {
+          input_tokens: 10,
+          output_tokens: 123,
+          cache_read_input_tokens: 15_138,
+          cache_creation_input_tokens: 1_061,
+        },
+        modelUsage: {
+          "claude-haiku-4-5": mu(38, 973, 58_672, 1_725),
+          "claude-sonnet-5": mu(706, 4, 0, 0),
+        },
+      };
+      const emitted = await run([init, first, second], true, restored);
+      assert.deepEqual((emitted[1] as { models: UsageByModel[] }).models, [
+        slice("claude-haiku-4-5", {
+          input_tokens: 10,
+          output_tokens: 123,
+          cache_read_input_tokens: 15_138,
+          cache_creation_input_tokens: 1_061,
+        }),
+      ]);
+    });
+
+    it("prices the main model on its own usage when the restored totals lag the SDK's", async () => {
+      // The SDK restored haiku's earlier totals, but the baseline read says nothing was
+      // saved — a cost-state written after the read. The main slice would then carry the
+      // whole earlier session; checked against `usage`, it is cut back to the turn's own.
+      const resumedTurn = {
+        type: "result",
+        subtype: "success",
+        usage: {
+          input_tokens: 18,
+          output_tokens: 806,
+          cache_read_input_tokens: 29_060,
+          cache_creation_input_tokens: 664,
+        },
+        modelUsage: {
+          "claude-haiku-4-5": mu(28, 850, 43_534, 664),
+          "claude-sonnet-5": mu(706, 4, 0, 0),
+        },
+      };
+      const emitted = await run([init, resumedTurn], true, {});
+      assert.deepEqual((emitted[0] as { models: UsageByModel[] }).models, [
+        slice("claude-haiku-4-5", {
+          input_tokens: 18,
+          output_tokens: 806,
+          cache_read_input_tokens: 29_060,
+          cache_creation_input_tokens: 664,
+        }),
+        slice("claude-sonnet-5", { input_tokens: 706, output_tokens: 4 }),
+      ]);
+    });
+
+    it("takes the whole counter as this turn's when the transcript saved no totals", async () => {
+      // No cost-state line: the SDK starts from zero (verified live), so nothing is subtracted.
+      const turn = {
+        type: "result",
+        subtype: "success",
+        usage: {
+          input_tokens: 10,
+          output_tokens: 34,
+          cache_read_input_tokens: 17_115,
+          cache_creation_input_tokens: 46,
+        },
+        modelUsage: { "claude-haiku-4-5": mu(10, 34, 17_115, 46) },
+      };
+      const emitted = await run([init, turn], true, {});
+      assert.deepEqual((emitted[0] as { models: UsageByModel[] }).models, [
+        slice("claude-haiku-4-5", {
+          input_tokens: 10,
+          output_tokens: 34,
+          cache_read_input_tokens: 17_115,
+          cache_creation_input_tokens: 46,
+        }),
+      ]);
+    });
+  });
+});
+
+describe("claude template: restoredTotals", () => {
+  const line = (sessionId: string, input: number) =>
+    JSON.stringify({
+      type: "cost-state",
+      sessionId,
+      totalCostUSD: 0.01,
+      modelUsage: {
+        "claude-haiku-4-5": {
+          inputTokens: input,
+          outputTokens: 1,
+          cacheReadInputTokens: 0,
+          cacheCreationInputTokens: 0,
+        },
+      },
+    });
+  const turn = JSON.stringify({ type: "assistant", sessionId: "s1", message: {} });
+
+  it("takes the last cost-state line for the session", () => {
+    const jsonl = [turn, line("s1", 10), turn, line("s1", 20), turn, ""].join("\n");
+    assert.equal(restoredTotals(jsonl, "s1")["claude-haiku-4-5"]?.inputTokens, 20);
+  });
+
+  it("ignores a cost-state line saved under another session id, as the SDK does", () => {
+    const jsonl = [line("s1", 10), line("other", 99)].join("\n");
+    assert.equal(restoredTotals(jsonl, "s1")["claude-haiku-4-5"]?.inputTokens, 10);
+    assert.deepEqual(restoredTotals(line("other", 99), "s1"), {});
+  });
+
+  it("skips a line the SDK's schema would reject, so an earlier valid one stands", () => {
+    // The SDK validates cost-state and ignores an invalid line rather than resetting —
+    // restoring from the earlier line. Reading the invalid one as "zero" would bill the
+    // resumed turn for everything that earlier line holds.
+    const noUsage = JSON.stringify({ type: "cost-state", sessionId: "s1", totalCostUSD: 0.02 });
+    const partial = JSON.stringify({
+      type: "cost-state",
+      sessionId: "s1",
+      modelUsage: { "claude-haiku-4-5": { inputTokens: 30 } },
+    });
+    const jsonl = [line("s1", 10), noUsage, partial].join("\n");
+    assert.equal(restoredTotals(jsonl, "s1")["claude-haiku-4-5"]?.inputTokens, 10);
+  });
+
+  it("is empty when the transcript saved no totals, or a line doesn't parse", () => {
+    assert.deepEqual(restoredTotals(turn, "s1"), {});
+    assert.deepEqual(restoredTotals('{"type":"cost-state", truncated', "s1"), {});
+  });
+});
+
+describe("claude template: reading the restored totals from disk", () => {
+  let mod: typeof import("../templates/claude/src/lib/restored-totals.js");
+  let composedDir: string;
+  let cwd: string;
+
+  before(async () => {
+    composedDir = composeTemplate(
+      resolvePath(fileURLToPath(import.meta.url), "../../templates"),
+      "claude",
+    ).composedDir;
+    mod = await import(resolvePath(composedDir, "src/lib/restored-totals.js"));
+    cwd = mkdtempSync(resolvePath(tmpdir(), "restored-totals-"));
+  });
+
+  after(() => {
+    rmSync(composedDir, { recursive: true, force: true });
+    rmSync(cwd, { recursive: true, force: true });
+  });
+
+  /** Writes `<cwd>/.claude/projects/p/<id>.jsonl`, where `findClaudeSessionFile` looks. */
+  function transcript(lines: string[]): string {
+    const id = randomUUID();
+    const dir = resolvePath(cwd, ".claude/projects/p");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      resolvePath(dir, `${id}.jsonl`),
+      `${lines.map((l) => l.replaceAll("SID", id)).join("\n")}\n`,
+    );
+    return id;
+  }
+  const costState = (input: number) =>
+    JSON.stringify({
+      type: "cost-state",
+      sessionId: "SID",
+      modelUsage: {
+        "claude-haiku-4-5": {
+          inputTokens: input,
+          outputTokens: 1,
+          cacheReadInputTokens: 0,
+          cacheCreationInputTokens: 0,
+        },
+      },
+    });
+  const filler = (bytes: number) =>
+    JSON.stringify({ type: "assistant", sessionId: "SID", pad: "x".repeat(bytes) });
+
+  it("is undefined when there is no transcript, so the raw-counter check runs instead", async () => {
+    assert.equal(await mod.readRestoredTotals(cwd, randomUUID()), undefined);
+  });
+
+  it("is empty when the transcript saved no totals", async () => {
+    assert.deepEqual(await mod.readRestoredTotals(cwd, transcript([filler(10)])), {});
+  });
+
+  it("finds the totals at the end of the transcript", async () => {
+    const id = transcript([costState(5), filler(400_000), costState(7)]);
+    assert.equal((await mod.readRestoredTotals(cwd, id))?.["claude-haiku-4-5"]?.inputTokens, 7);
+  });
+
+  it("reads the whole transcript when the tail holds none — a crashed last stream", async () => {
+    const id = transcript([costState(5), filler(400_000)]);
+    assert.equal((await mod.readRestoredTotals(cwd, id))?.["claude-haiku-4-5"]?.inputTokens, 5);
+  });
+
+  it("waits for a reaped stream's exit, but not forever", async () => {
+    let exited = false;
+    await mod.awaitPriorExit(
+      new Promise((r) => setTimeout(r, 20)).then(() => {
+        exited = true;
+      }),
+      5_000,
+    );
+    assert.ok(exited);
+    const started = Date.now();
+    await mod.awaitPriorExit(new Promise(() => {}), 30);
+    assert.ok(Date.now() - started < 2_000);
+    await mod.awaitPriorExit(Promise.reject(new Error("wedged")), 5_000);
+    await mod.awaitPriorExit(undefined, 5_000);
   });
 });

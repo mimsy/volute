@@ -195,45 +195,140 @@ export function buildUsagePayload(
 }
 
 /**
- * Whether a resumed stream's first result counts the earlier session's usage as well.
+ * The per-model totals a resumed stream's `modelUsage` opens at, read from the session's
+ * transcript — the baseline its first turn is differenced against.
  *
- * Since SDK 0.3.277 a resumed session's `modelUsage` picks up from the earlier session's
- * totals instead of zero. So a resumed stream (reap → resume, restart, rotation) opens with
- * those totals, and differencing against a fresh baseline would bill its first turn for the
- * whole earlier session — the #981 overage again, on every resume. Older SDKs start at zero.
- * The version isn't a reliable signal (a mind runs whatever its own install resolved), so
- * this checks the numbers: the main loop's slice can't be larger than the turn's own
- * `usage` unless it carries earlier turns.
+ * Since SDK 0.3.277 a resumed session's counters continue from the last valid `cost-state`
+ * line its transcript holds for that session id, and **every** model in it is restored,
+ * not only the main one: a subagent's model and an ai-title side-call's come back too
+ * (#1155, verified live on 0.3.281). The line is written when a stream ends, so it can
+ * include calls the previous stream's last `result` never reported; subtracting it —
+ * rather than the last `modelUsage` this process saw — is what makes the difference exact.
  *
- * Any *other* model with counters is treated the same way. After a model switch, the old
- * model's key carries the whole earlier session while the new main slice fits its `usage`
- * exactly — checking the main slice alone would bill the old model's history. A genuine
- * side-call on that one turn is indistinguishable from it here, so it is dropped too.
- *
- * Returns true, meaning "don't trust the breakdown", whenever the main slice can't be
- * identified. The fallback prices the turn on `usage`, which misses only this one turn's
- * side-calls and subagents; trusting it wrongly would bill the whole earlier session.
+ * This mirrors the SDK's own reading: a line under another session id is ignored, and so
+ * is one that fails the SDK's schema (`modelUsage` a record of entries with all four
+ * counters as non-negative numbers) — the SDK skips it and an earlier valid line stands.
+ * With no valid line the SDK starts from zero, which the empty map says.
  */
-export function carriesRestoredTotals(result: ResultUsage, mainModel?: string): boolean {
-  const entries = Object.entries(result.modelUsage ?? {}).filter(
-    ([, mu]) => mu && COUNTERS.some((k) => (mu[k] ?? 0) > 0),
+export function restoredTotals(jsonl: string, sessionId: string): NonNullable<ModelUsageMap> {
+  let totals: NonNullable<ModelUsageMap> = {};
+  for (const line of jsonl.split("\n")) {
+    if (!line.includes('"cost-state"')) continue;
+    let entry: { type?: unknown; sessionId?: unknown; modelUsage?: unknown };
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (entry.type !== "cost-state" || entry.sessionId !== sessionId) continue;
+    if (isModelUsageMap(entry.modelUsage)) totals = entry.modelUsage;
+  }
+  return totals;
+}
+
+function isModelUsageMap(value: unknown): value is NonNullable<ModelUsageMap> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  return Object.values(value).every(
+    (mu) =>
+      mu &&
+      typeof mu === "object" &&
+      COUNTERS.every((k) => {
+        const n = (mu as Record<string, unknown>)[k];
+        return typeof n === "number" && Number.isFinite(n) && n >= 0;
+      }),
   );
-  const matches = entries.filter(
-    ([model]) => mainModel && (model.startsWith(mainModel) || mainModel.startsWith(model)),
+}
+
+/** The `modelUsage` key the main loop's counters are filed under, if it can be told. */
+function mainKey(modelUsage: ModelUsageMap, mainModel?: string): string | undefined {
+  const keys = Object.entries(modelUsage ?? {})
+    .filter(([, mu]) => mu && COUNTERS.some((k) => (mu[k] ?? 0) > 0))
+    .map(([model]) => model);
+  const matches = keys.filter(
+    (model) => mainModel && (model.startsWith(mainModel) || mainModel.startsWith(model)),
   );
-  const main =
-    entries.find(([model]) => model === mainModel) ??
+  return (
+    keys.find((model) => model === mainModel) ??
     (matches.length === 1 ? matches[0] : undefined) ??
-    (entries.length === 1 ? entries[0] : undefined);
-  if (!main || entries.length > 1) return true;
-  const mu = main[1] ?? {};
-  const u = result.usage ?? {};
+    (keys.length === 1 ? keys[0] : undefined)
+  );
+}
+
+/** Whether a slice claims more than the main loop's own `usage` in any counter. */
+function exceedsUsage(mu: ModelUsageEntry, u: NonNullable<ResultUsage["usage"]>): boolean {
   return (
     (mu.inputTokens ?? 0) > (u.input_tokens ?? 0) ||
     (mu.outputTokens ?? 0) > (u.output_tokens ?? 0) ||
     (mu.cacheReadInputTokens ?? 0) > (u.cache_read_input_tokens ?? 0) ||
     (mu.cacheCreationInputTokens ?? 0) > (u.cache_creation_input_tokens ?? 0)
   );
+}
+
+/**
+ * The baseline a resumed stream's first counted result is differenced against, and whether
+ * the numbers bore it out.
+ *
+ * Since SDK 0.3.277 a resumed stream's `modelUsage` opens at the earlier session's totals
+ * rather than zero; differenced against nothing, its first turn would be billed the whole
+ * earlier session — the #981 overage again, on every resume.
+ *
+ * `restored` is what the transcript says the SDK restored (see `restoredTotals`). It's the
+ * exact baseline, so every model's slice — subagents included — comes out as this turn's
+ * own. It is still checked: the main slice left over must fit the main loop's `usage`. A
+ * baseline that lags what the SDK restored (a `cost-state` written after it was read, a
+ * format change) fails that check, and the main model is then baselined so its slice is
+ * exactly `usage` — this turn's own work. The check can't tell that from a subagent on
+ * the main model, whose tokens share the main key, so such a subagent goes uncounted on
+ * this one turn: an undercount, where trusting a stale baseline would bill history.
+ *
+ * With no `restored` (the transcript couldn't be read) there's nothing per model to
+ * subtract, so the check runs on the raw counters: the main slice must fit `usage` and no
+ * other model may have counters — after a model switch the old model's key carries the
+ * earlier session, indistinguishable from a side-call on this turn. If either fails the
+ * whole map is the baseline, pricing the turn on `usage` alone. Likewise whenever the
+ * main slice can't be identified.
+ */
+export function resumedBaseline(
+  result: ResultUsage,
+  restored: ModelUsageMap,
+  mainModel?: string,
+): { baseline: ModelUsageMap; consistent: boolean } {
+  const cur = result.modelUsage ?? {};
+  const usage = result.usage ?? {};
+  const main = mainKey(cur, mainModel);
+  if (!main) return { baseline: cur, consistent: false };
+  const mu = cur[main] ?? {};
+  if (!restored) {
+    const others = Object.keys(cur).filter(
+      (m) => m !== main && COUNTERS.some((k) => (cur[m]?.[k] ?? 0) > 0),
+    );
+    return others.length > 0 || exceedsUsage(mu, usage)
+      ? { baseline: cur, consistent: false }
+      : { baseline: undefined, consistent: true };
+  }
+  const base = baselineFor(restored[main], mu);
+  const slice: ModelUsageEntry = Object.fromEntries(
+    COUNTERS.map((k) => [k, (mu[k] ?? 0) - (base[k] ?? 0)]),
+  );
+  if (!exceedsUsage(slice, usage)) return { baseline: restored, consistent: true };
+  return {
+    baseline: {
+      ...restored,
+      [main]: {
+        inputTokens: Math.max(0, (mu.inputTokens ?? 0) - (usage.input_tokens ?? 0)),
+        outputTokens: Math.max(0, (mu.outputTokens ?? 0) - (usage.output_tokens ?? 0)),
+        cacheReadInputTokens: Math.max(
+          0,
+          (mu.cacheReadInputTokens ?? 0) - (usage.cache_read_input_tokens ?? 0),
+        ),
+        cacheCreationInputTokens: Math.max(
+          0,
+          (mu.cacheCreationInputTokens ?? 0) - (usage.cache_creation_input_tokens ?? 0),
+        ),
+      },
+    },
+    consistent: false,
+  };
 }
 
 /** Whether a result moved any counter — a zeroed crash result says nothing about the stream. */
