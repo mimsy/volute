@@ -26,7 +26,7 @@ export const SEEDED_SESSION_NOTE_BASE =
  * task, just an honest pointer to where the collapsed turns' summaries live.
  */
 export const ROTATED_SESSION_NOTE =
-  "Note: this session was consolidated at the context limit — the turns above are kept verbatim; summaries of older turns are in your history (`volute mind history`).";
+  "Note: this session was consolidated at the context limit — the recent conversation above is kept verbatim (a long turn may be trimmed to its prompt and latest steps); summaries of older turns are in your history (`volute mind history`).";
 
 /**
  * Parse an archive-pointer timestamp into epoch millis, or null if it doesn't

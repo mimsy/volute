@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { describe, it } from "node:test";
@@ -12,9 +12,11 @@ import {
 import {
   archivePointerTimestamp,
   buildSeededTranscript,
+  estimateLineTokens,
   findLatestArchivedSession,
   rotateSession,
   seedSession,
+  TRIMMED_TURN_MARKER,
   writeRotationArchivePointer,
 } from "../templates/_base/src/lib/session-seed.js";
 
@@ -117,10 +119,9 @@ describe("buildSeededTranscript — turn boundaries", () => {
 
 describe("buildSeededTranscript — token budget selection", () => {
   it("takes as many whole trailing turns as fit in the budget", () => {
-    // 3 single-line turns, each ~1000 est tokens (4000 chars / 4); line overhead
-    // is negligible against the content, so the boundary is unambiguous.
+    // 3 single-line turns, each ~1000 est tokens (2000 chars at ~2 chars/token).
     const mk = (n: number, parent: string | null) => [
-      userPrompt(`u${n}`, parent, "z".repeat(4000)),
+      userPrompt(`u${n}`, parent, "z".repeat(2000)),
     ];
     const lines = [...mk(1, null), ...mk(2, "u1"), ...mk(3, "u2")];
     // Budget fits two turns (~2000) but not three (~3000).
@@ -141,6 +142,329 @@ describe("buildSeededTranscript — token budget selection", () => {
     assert.ok(res);
     assert.equal(res.lines.length, 1);
     assert.equal(parse(res.lines)[0].uuid, "u2");
+  });
+});
+
+// --- Over-budget final turn (the rotation case: the turn that crossed the limit) ---
+
+/** One content-block line of an assistant message (the SDK writes one line per block). */
+function asstLine(uuid: string, parentUuid: string, msgId: string, block: unknown): string {
+  return JSON.stringify({
+    type: "assistant",
+    uuid,
+    parentUuid,
+    sessionId: OLD,
+    message: { id: msgId, role: "assistant", content: [block] },
+  });
+}
+
+/** A tool_result line with sizeable output, plus the SDK's duplicate toolUseResult copy. */
+function bigResult(uuid: string, parentUuid: string, toolUseId: string, chars: number): string {
+  const out = "r".repeat(chars);
+  return JSON.stringify({
+    type: "user",
+    uuid,
+    parentUuid,
+    sessionId: OLD,
+    message: {
+      role: "user",
+      content: [{ type: "tool_result", tool_use_id: toolUseId, content: out }],
+    },
+    toolUseResult: { stdout: out },
+  });
+}
+
+/** A single prompt followed by `steps` tool-loop steps, each ~`stepChars/2` est tokens. */
+function toolLoopTurn(steps: number, stepChars: number): string[] {
+  const lines = [
+    userPrompt("p", null, "please do the long thing"),
+    JSON.stringify({
+      type: "attachment",
+      uuid: "att",
+      parentUuid: "p",
+      sessionId: OLD,
+      attachment: { type: "hook_additional_context", content: ["context"] },
+    }),
+  ];
+  let parent = "att";
+  for (let s = 0; s < steps; s++) {
+    lines.push(
+      asstLine(`a${s}`, parent, `m${s}`, {
+        type: "tool_use",
+        id: `t${s}`,
+        name: "Bash",
+        input: { command: `step ${s}` },
+      }),
+    );
+    lines.push(bigResult(`r${s}`, `a${s}`, `t${s}`, stepChars));
+    parent = `r${s}`;
+  }
+  lines.push(asstLine("final", parent, "mfinal", { type: "text", text: "all done" }));
+  return lines;
+}
+
+/** Structural invariants a resumable transcript must hold. */
+function assertResumable(objs: Record<string, any>[]) {
+  const uuids = new Set(objs.map((o) => o.uuid).filter(Boolean));
+  const uses = new Set<string>();
+  const results: string[] = [];
+  for (const o of objs) {
+    if (o.parentUuid != null) assert.ok(uuids.has(o.parentUuid), `dangling parent ${o.parentUuid}`);
+    for (const b of Array.isArray(o.message?.content) ? o.message.content : []) {
+      if (b.type === "tool_use") uses.add(b.id);
+      if (b.type === "tool_result") results.push(b.tool_use_id);
+    }
+  }
+  for (const r of results) assert.ok(uses.has(r), `orphaned tool_result ${r}`);
+  assert.equal(objs.filter((o) => o.uuid && o.parentUuid === null).length, 1, "one chain root");
+}
+
+const estimate = (objs: Record<string, any>[]) =>
+  objs.reduce((a, o) => a + estimateLineTokens(o), 0);
+
+describe("buildSeededTranscript — over-budget final turn", () => {
+  it("trims inside the turn to fit the budget: prompt + marker, then the latest whole steps", () => {
+    // 40 steps × ~1000 est tokens ≈ 40k — one turn, far over a 10k budget.
+    const lines = toolLoopTurn(40, 2000);
+    const res = buildSeededTranscript(lines.join("\n"), 10_000);
+    assert.ok(res);
+    const objs = parse(res.lines);
+
+    const total = estimate(objs);
+    assert.ok(total <= 10_000, `seed estimate ${total} exceeds the 10k budget`);
+    assert.ok(total >= 8_000, `seed estimate ${total} wastes the budget`);
+
+    // Opening prompt section survives, the prompt now carrying the trim marker.
+    assert.equal(objs[0].uuid, "p");
+    assert.equal(objs[0].parentUuid, null);
+    assert.deepEqual(objs[0].message.content, [
+      { type: "text", text: "please do the long thing" },
+      { type: "text", text: TRIMMED_TURN_MARKER },
+    ]);
+    assert.equal(objs[1].uuid, "att");
+    // The kept steps resume at an assistant line re-parented onto the prompt section.
+    assert.equal(objs[2].type, "assistant");
+    assert.equal(objs[2].parentUuid, "att");
+    assert.equal(objs.at(-1).uuid, "final");
+    assertResumable(objs);
+  });
+
+  it("keeps the prompt and the final step when even one step exceeds the budget", () => {
+    const res = buildSeededTranscript(toolLoopTurn(5, 20_000).join("\n"), 1_000);
+    assert.ok(res);
+    const objs = parse(res.lines);
+    assert.deepEqual(
+      objs.map((o) => o.uuid),
+      ["p", "att", "final"],
+    );
+    assert.equal(objs[2].parentUuid, "att");
+    assertResumable(objs);
+  });
+
+  it("never cuts between a message's tool_use lines and their parallel results", () => {
+    // Step s: one assistant message split over two lines (two parallel tool_uses),
+    // then both results. Resuming at the second line of the message, or after only
+    // one result, would orphan a tool_result.
+    const lines = [userPrompt("p", null, "go")];
+    let parent = "p";
+    for (let s = 0; s < 10; s++) {
+      lines.push(
+        asstLine(`a${s}x`, parent, `m${s}`, {
+          type: "tool_use",
+          id: `t${s}x`,
+          name: "Bash",
+          input: {},
+        }),
+      );
+      lines.push(
+        asstLine(`a${s}y`, `a${s}x`, `m${s}`, {
+          type: "tool_use",
+          id: `t${s}y`,
+          name: "Bash",
+          input: {},
+        }),
+      );
+      lines.push(bigResult(`r${s}x`, `a${s}y`, `t${s}x`, 1000));
+      lines.push(bigResult(`r${s}y`, `r${s}x`, `t${s}y`, 1000));
+      parent = `r${s}y`;
+    }
+    // Budgets that land on every alignment within a step.
+    for (let budget = 900; budget <= 4000; budget += 137) {
+      const res = buildSeededTranscript(lines.join("\n"), budget);
+      assert.ok(res);
+      const objs = parse(res.lines);
+      assert.ok(/^a\dx$/.test(objs[1].uuid), `resumed mid-message at ${objs[1].uuid}`);
+      assertResumable(objs);
+    }
+  });
+
+  it("skips a resume point whose suffix would orphan a tool_result or a parent link", () => {
+    // Each step's result lands after the NEXT message has started, so resuming at
+    // a{s+1} would carry r{s} without the tool_use it answers (and with a dangling parent).
+    const lines = [userPrompt("p", null, "go")];
+    for (let s = 0; s < 10; s++) {
+      lines.push(
+        asstLine(`a${s}`, s === 0 ? "p" : `a${s - 1}`, `m${s}`, {
+          type: "tool_use",
+          id: `t${s}`,
+          name: "Bash",
+          input: {},
+        }),
+      );
+      if (s > 0) lines.push(bigResult(`r${s - 1}`, `a${s - 1}`, `t${s - 1}`, 1000));
+    }
+    lines.push(bigResult("r9", "a9", "t9", 1000));
+    for (let budget = 600; budget <= 4000; budget += 137) {
+      const res = buildSeededTranscript(lines.join("\n"), budget);
+      assert.ok(res);
+      assertResumable(parse(res.lines));
+    }
+  });
+
+  it("keeps a whole final turn that fits, and earlier turns while they fit", () => {
+    const lines = [
+      userPrompt("u0", null, "earlier"),
+      assistant("a0", "u0", [{ type: "text", text: "e".repeat(2000) }]), // ~1000
+      ...toolLoopTurn(3, 2000).map((l) => l.replace('"parentUuid":null', '"parentUuid":"a0"')), // ~3000
+    ];
+    const res = buildSeededTranscript(lines.join("\n"), 5_000);
+    assert.ok(res);
+    const objs = parse(res.lines);
+    assert.equal(objs[0].uuid, "u0");
+    assert.equal(objs.length, lines.length);
+    assert.ok(!JSON.stringify(objs).includes(TRIMMED_TURN_MARKER));
+  });
+});
+
+/**
+ * Read a seeded transcript back through the SDK's own transcript reader, which walks
+ * parentUuid from the leaf as resume does — a broken re-link surfaces as a truncated
+ * (or empty) conversation.
+ */
+async function readBackViaSdk(res: { sessionId: string; lines: string[] }) {
+  const root = realpathSync(mkdtempSync(resolve(tmpdir(), "seed-sdk-")));
+  const prevConfigDir = process.env.CLAUDE_CONFIG_DIR;
+  process.env.CLAUDE_CONFIG_DIR = resolve(root, "config");
+  try {
+    const { getSessionMessages } = await import("@anthropic-ai/claude-agent-sdk");
+    const cwd = resolve(root, "home");
+    const projectDir = resolve(root, "config", "projects", cwd.replace(/[^a-zA-Z0-9]/g, "-"));
+    mkdirSync(projectDir, { recursive: true });
+    mkdirSync(cwd);
+    writeFileSync(resolve(projectDir, `${res.sessionId}.jsonl`), `${res.lines.join("\n")}\n`);
+    return await getSessionMessages(res.sessionId, { dir: cwd });
+  } finally {
+    if (prevConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+    else process.env.CLAUDE_CONFIG_DIR = prevConfigDir;
+  }
+}
+
+const markerCount = (lines: string[]) =>
+  lines.join("\n").split(JSON.stringify(TRIMMED_TURN_MARKER).slice(1, -1)).length - 1;
+
+describe("buildSeededTranscript — trimmed turn round-trips through the SDK's transcript reader", () => {
+  it("getSessionMessages rebuilds the whole trimmed chain, prompt to final step", async () => {
+    const res = buildSeededTranscript(toolLoopTurn(40, 2000).join("\n"), 10_000);
+    assert.ok(res);
+    const msgs = await readBackViaSdk(res);
+    const chain = parse(res.lines).filter((o) => o.type === "user" || o.type === "assistant");
+    assert.deepEqual(
+      msgs.map((m) => m.uuid),
+      chain.map((o) => o.uuid),
+    );
+    assert.equal(msgs[0].uuid, "p");
+    assert.ok(JSON.stringify(msgs[0].message).includes(TRIMMED_TURN_MARKER));
+    assert.equal(msgs.at(-1)?.uuid, "final");
+  });
+
+  it("re-links the resumed step to the prompt's chain, not an off-chain attachment", async () => {
+    // The attachment is the last uuid'd line before the first step, but it hangs off
+    // the chain (its parent isn't in the transcript); the first step hangs off the prompt.
+    const lines = toolLoopTurn(40, 2000).map((l) => {
+      const o = JSON.parse(l);
+      if (o.uuid === "att") o.parentUuid = "elsewhere";
+      if (o.uuid === "a0") o.parentUuid = "p";
+      return JSON.stringify(o);
+    });
+    const res = buildSeededTranscript(lines.join("\n"), 10_000);
+    assert.ok(res);
+    const resumed = parse(res.lines).find((o, k) => k > 0 && o.type === "assistant");
+    assert.equal(resumed.parentUuid, "p");
+    const msgs = await readBackViaSdk(res);
+    assert.equal(msgs[0].uuid, "p");
+    assert.equal(msgs.at(-1)?.uuid, "final");
+  });
+
+  it("re-seeding an already-trimmed turn keeps one marker, counted once", async () => {
+    const first = buildSeededTranscript(toolLoopTurn(40, 2000).join("\n"), 10_000);
+    assert.ok(first);
+    const objs = parse(first.lines);
+    // Budget that fits everything but the first kept step — with the marker counted
+    // once. Counting it twice would drop a second step too.
+    const resumeIdx = objs.findIndex((o, k) => k > 0 && o.type === "assistant");
+    const nextIdx = objs.findIndex((o, k) => k > resumeIdx + 1 && o.type === "assistant");
+    const firstStep = estimate(objs.slice(resumeIdx, nextIdx));
+    const budget = estimate(objs) - firstStep + 1;
+
+    const again = buildSeededTranscript(first.lines.join("\n"), budget);
+    assert.ok(again);
+    const againObjs = parse(again.lines);
+    assert.equal(markerCount(again.lines), 1);
+    assert.equal(againObjs.length, objs.length - (nextIdx - resumeIdx));
+    assert.ok(estimate(againObjs) <= budget);
+    assertResumable(againObjs);
+    const msgs = await readBackViaSdk(again);
+    assert.equal(msgs[0].uuid, "p");
+    assert.equal(msgs.at(-1)?.uuid, "final");
+  });
+});
+
+describe("estimateLineTokens", () => {
+  it("counts an image at a flat cost, not by its base64 size", () => {
+    const line = {
+      type: "user",
+      uuid: "r",
+      message: {
+        role: "user",
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: "t",
+            content: [
+              {
+                type: "image",
+                source: { type: "base64", media_type: "image/png", data: "A".repeat(1_000_000) },
+              },
+            ],
+          },
+        ],
+      },
+    };
+    const est = estimateLineTokens(line);
+    assert.ok(est > 500 && est < 3000, `image estimated at ${est}`);
+  });
+
+  it("counts only what reaches the model — not the toolUseResult copy or line metadata", () => {
+    const withCopy = JSON.parse(bigResult("r", "a", "t", 4000));
+    const without = { ...withCopy, toolUseResult: undefined, cwd: "/x".repeat(500) };
+    assert.equal(estimateLineTokens(withCopy), estimateLineTokens(without));
+    // ~2 chars/token measured on opus-5; the estimate may over-count, never by much.
+    const est = estimateLineTokens(withCopy);
+    assert.ok(est >= 2000 && est <= 2400, `4000 chars estimated at ${est}`);
+  });
+
+  it("counts a thinking block by its signature (the replayed full thinking), not its summary", () => {
+    const line = {
+      type: "assistant",
+      message: {
+        content: [{ type: "thinking", thinking: "short summary", signature: "S".repeat(8000) }],
+      },
+    };
+    assert.equal(estimateLineTokens(line), 2000); // 8000 signature chars / 4
+  });
+
+  it("does not count marker lines", () => {
+    assert.equal(estimateLineTokens({ type: "mode", sessionId: OLD, value: "x".repeat(9999) }), 0);
   });
 });
 
@@ -168,13 +492,13 @@ describe("buildSeededTranscript — rewrites", () => {
 
   it("nulls only the first chain event's parentUuid, leaving later ones intact", () => {
     const lines = [
-      userPrompt("u1", null, "first"),
-      assistant("a1", "u1", [{ type: "text", text: "hi" }]),
-      userPrompt("u2", "a1", "second"),
-      assistant("a2", "u2", [{ type: "text", text: "bye" }]),
+      userPrompt("u1", null, "f".repeat(100)),
+      assistant("a1", "u1", [{ type: "text", text: "h".repeat(100) }]),
+      userPrompt("u2", "a1", "s".repeat(100)),
+      assistant("a2", "u2", [{ type: "text", text: "b".repeat(100) }]),
     ];
-    // Tight budget so the tail starts at u2 (a real parentUuid = "a1").
-    const res = buildSeededTranscript(lines.join("\n"), 40);
+    // Tight budget (each turn ~100 est tokens) so the tail starts at u2 (a real parentUuid = "a1").
+    const res = buildSeededTranscript(lines.join("\n"), 150);
     assert.ok(res);
     const objs = parse(res.lines);
     assert.equal(objs[0].uuid, "u2");
@@ -521,7 +845,7 @@ describe("rotateSession", () => {
       sessionsDir,
       name: "main",
       oldSessionId: OLD,
-      seedTokens: 30, // tight → only the final turn survives
+      seedTokens: 3, // tight → only the final turn ("third" + "saved" ≈ 5 est tokens) survives
     });
     assert.ok(newId);
     const objs = parse(

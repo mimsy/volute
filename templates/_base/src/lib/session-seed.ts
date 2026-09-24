@@ -11,7 +11,10 @@
  * The copy is verbatim: marker lines, thinking blocks, tool_use/tool_result all
  * survive as-is. Only two things are rewritten — the `sessionId` on every line
  * (to the freshly generated session id) and the first chain event's `parentUuid`
- * (nulled, to detach the tail from the dropped history).
+ * (nulled, to detach the tail from the dropped history). The exception is a final
+ * turn too large for the budget on its own (typically the long tool loop that
+ * crossed the context limit): it keeps its opening prompt, marked as trimmed, and
+ * its latest whole steps, re-linked onto the prompt.
  *
  * Nothing here throws: any failure returns null so session start is never blocked.
  */
@@ -38,7 +41,7 @@ type JsonlLine = Record<string, unknown> & {
   parentUuid?: string | null;
   sessionId?: string;
   timestamp?: string;
-  message?: { role?: string; content?: unknown };
+  message?: { role?: string; content?: unknown; id?: string };
 };
 
 /** A resolved archive pointer: the previous session id and when it was archived. */
@@ -108,9 +111,67 @@ function isTurnBoundary(o: JsonlLine): boolean {
   return true;
 }
 
-/** Estimate tokens for a raw JSONL line as its JSON text length / 4. */
-function estimateTokens(raw: string): number {
-  return raw.length / 4;
+// Token estimate for what a line actually sends the model. Constants were fitted
+// (Sep 2026) against per-call usage deltas across ~1.8k tool-loop steps in a
+// production claude-opus-5 mind's transcripts, where visible content (text, tool_use
+// input, tool_result text) measured ~2.0 chars/token (p10 1.85); CHARS_PER_TOKEN sits
+// just below that so the estimate errs toward over-counting, and older Claude
+// tokenizers (~3.5 chars/token) over-count further — a seed can land under its
+// budget, not over. A thinking block is replayed in full, which its signature tracks
+// at ~4.3 chars/token (the visible `thinking` text is only a summary); an image costs
+// ~1.3k tokens regardless of its base64 size. Line metadata (uuids, cwd, toolUseResult
+// copies) is never sent, so it isn't counted — estimating from the raw line length
+// over-counted by 1.3–2× and by ~100× for images.
+const CHARS_PER_TOKEN = 1.8;
+const SIGNATURE_CHARS_PER_TOKEN = 4;
+const IMAGE_TOKENS = 1600;
+
+function textTokens(s: string): number {
+  return s.length / CHARS_PER_TOKEN;
+}
+
+function contentTokens(content: unknown): number {
+  if (typeof content === "string") return textTokens(content);
+  if (!Array.isArray(content)) return content == null ? 0 : textTokens(JSON.stringify(content));
+  let sum = 0;
+  for (const block of content) {
+    const b = block as Record<string, unknown> | null;
+    if (!b || typeof b !== "object") continue;
+    switch (b.type) {
+      case "text":
+        sum += textTokens(String(b.text ?? ""));
+        break;
+      case "thinking":
+        sum +=
+          typeof b.signature === "string" && b.signature
+            ? b.signature.length / SIGNATURE_CHARS_PER_TOKEN
+            : textTokens(String(b.thinking ?? ""));
+        break;
+      case "redacted_thinking":
+        sum += String(b.data ?? "").length / SIGNATURE_CHARS_PER_TOKEN;
+        break;
+      case "image":
+        sum += IMAGE_TOKENS;
+        break;
+      case "tool_use":
+        sum += textTokens(String(b.name ?? "") + JSON.stringify(b.input ?? {}));
+        break;
+      case "tool_result":
+        sum += contentTokens(b.content);
+        break;
+      default:
+        sum += textTokens(JSON.stringify(b));
+    }
+  }
+  return sum;
+}
+
+/** Estimated model tokens a transcript line contributes to the resumed context. */
+export function estimateLineTokens(o: JsonlLine): number {
+  if (o.message) return contentTokens(o.message.content);
+  // Hook output and other attachments reach the model as system reminders.
+  if (o.type === "attachment") return textTokens(JSON.stringify(o.attachment ?? ""));
+  return 0; // markers (mode, last-prompt, snapshots…) aren't sent
 }
 
 /**
@@ -150,44 +211,174 @@ function turnBoundaries(parsed: JsonlLine[]): number[] {
 }
 
 /**
- * Choose the first-kept line index: walk backward from the final turn, taking as
- * many whole turns as fit in `seedTokens` (always at least the final turn even if
- * it alone exceeds the budget). Returns the parsed index of the chosen boundary.
+ * Appended to a trimmed turn's opening prompt so the mind can see the gap in its own
+ * turn: what was left out, that it happened at the seam, and where the full record is.
  */
-function tailStartByBudget(parsed: JsonlLine[], raws: string[], seedTokens: number): number {
+export const TRIMMED_TURN_MARKER =
+  "[At this seam, the earlier steps of this turn were left out to keep room to think — what follows are its most recent steps. The full turn is in your previous session's transcript, and turn summaries are in `volute mind history`.]";
+
+/** Which lines to keep: `keep` is ascending parsed indices; `trimmedAt` is set when a turn was cut. */
+type TailPlan = {
+  keep: number[];
+  trimmedAt?: { prompt: number; resume: number; parent: string | null };
+};
+
+const range = (start: number, end: number): number[] =>
+  Array.from({ length: end - start }, (_, k) => start + k);
+
+/** tool_use ids a line issues and tool_result ids it answers. */
+function toolIds(o: JsonlLine): { uses: string[]; results: string[] } {
+  const uses: string[] = [];
+  const results: string[] = [];
+  const content = o.message?.content;
+  if (Array.isArray(content)) {
+    for (const b of content as Record<string, unknown>[]) {
+      if (b?.type === "tool_use" && typeof b.id === "string") uses.push(b.id);
+      if (b?.type === "tool_result" && typeof b.tool_use_id === "string")
+        results.push(b.tool_use_id);
+    }
+  }
+  return { uses, results };
+}
+
+/**
+ * Cut an over-budget turn [start, end) inside itself: keep its opening prompt section
+ * (the boundary line plus anything before the first assistant line — hook context,
+ * attachments), then the latest run of whole steps that fits the remaining budget.
+ * A step starts at the first line of an assistant message; a resume point is valid
+ * only if the kept suffix is self-contained — every tool_result answers a kept
+ * tool_use and every chain link points at a kept line — so the resumed conversation
+ * never carries an orphaned tool_result (an API error) or a broken parent chain.
+ * Returns null when the turn has no valid interior cut (e.g. a single step).
+ */
+function trimTurn(
+  parsed: JsonlLine[],
+  tokens: number[],
+  start: number,
+  end: number,
+  seedTokens: number,
+): TailPlan | null {
+  let promptEnd = start + 1;
+  while (promptEnd < end && parsed[promptEnd].type !== "assistant") promptEnd++;
+  if (promptEnd >= end) return null;
+  // An already-trimmed prompt (re-seeding a seed) carries the marker in its own cost.
+  let promptCost = hasTrimMarker(parsed[start]) ? 0 : TRIMMED_TURN_MARKER.length / CHARS_PER_TOKEN;
+  const promptUuids: string[] = [];
+  for (let i = start; i < promptEnd; i++) {
+    promptCost += tokens[i];
+    const u = parsed[i].uuid;
+    if (typeof u === "string") promptUuids.push(u);
+  }
+  // Re-link the resumed step where the turn's first step hung — the prompt section's
+  // chain tip — not merely its last uuid'd line, which may be an attachment off-chain.
+  const firstParent = parsed[promptEnd].parentUuid;
+  const parent =
+    typeof firstParent === "string" && promptUuids.includes(firstParent)
+      ? firstParent
+      : (promptUuids.at(-1) ?? null);
+
+  const seenIds = new Set<string>();
+  const firstOfMessage: boolean[] = [];
+  for (let i = 0; i < end; i++) {
+    const id = parsed[i].type === "assistant" ? parsed[i].message?.id : undefined;
+    firstOfMessage[i] = id === undefined || !seenIds.has(id);
+    if (id !== undefined) seenIds.add(id);
+  }
+
+  let best: number | null = null;
+  let suffixCost = 0;
+  const uuids = new Set<string>();
+  const uses = new Set<string>();
+  const parents: string[] = [];
+  const results: string[] = [];
+  for (let c = end - 1; c > promptEnd; c--) {
+    const o = parsed[c];
+    suffixCost += tokens[c];
+    if (typeof o.uuid === "string") uuids.add(o.uuid);
+    const ids = toolIds(o);
+    for (const u of ids.uses) uses.add(u);
+    results.push(...ids.results);
+    if (o.type !== "assistant" || !firstOfMessage[c]) {
+      if (typeof o.parentUuid === "string") parents.push(o.parentUuid);
+      continue;
+    }
+    const valid = results.every((r) => uses.has(r)) && parents.every((p) => uuids.has(p));
+    if (typeof o.parentUuid === "string") parents.push(o.parentUuid);
+    if (!valid) continue;
+    // Always keep at least the final step; beyond that, only what fits.
+    if (best !== null && promptCost + suffixCost > seedTokens) break;
+    best = c;
+  }
+  if (best === null) return null;
+  return {
+    keep: [...range(start, promptEnd), ...range(best, parsed.length)],
+    trimmedAt: { prompt: start, resume: best, parent },
+  };
+}
+
+/**
+ * Plan the tail: walk backward from the final turn, taking as many whole turns as
+ * fit in `seedTokens`. When the final turn alone exceeds the budget — the usual case
+ * at rotation, where the turn that crossed the context limit is a long tool loop —
+ * cut inside it (see trimTurn) rather than carrying the whole turn over.
+ */
+function planTail(parsed: JsonlLine[], seedTokens: number): TailPlan {
   const boundaries = turnBoundaries(parsed);
+  const tokens = parsed.map(estimateLineTokens);
   // Turn t spans lines [boundaries[t], boundaries[t+1]); the last turn runs to EOF.
+  const turnEnd = (t: number) => (t + 1 < boundaries.length ? boundaries[t + 1] : parsed.length);
   const turnTokens = (t: number): number => {
-    const start = boundaries[t];
-    const end = t + 1 < boundaries.length ? boundaries[t + 1] : parsed.length;
     let sum = 0;
-    for (let i = start; i < end; i++) sum += estimateTokens(raws[i]);
+    for (let i = boundaries[t]; i < turnEnd(t); i++) sum += tokens[i];
     return sum;
   };
   const last = boundaries.length - 1;
-  let startTurn = last;
   let accum = turnTokens(last);
+  if (accum > seedTokens) {
+    const trimmed = trimTurn(parsed, tokens, boundaries[last], parsed.length, seedTokens);
+    if (trimmed) return trimmed;
+  }
+  let startTurn = last;
   for (let t = last - 1; t >= 0; t--) {
     const cost = turnTokens(t);
     if (accum + cost > seedTokens) break;
     accum += cost;
     startTurn = t;
   }
-  return boundaries[startTurn];
+  return { keep: range(boundaries[startTurn], parsed.length) };
+}
+
+function hasTrimMarker(o: JsonlLine): boolean {
+  const content = o.message?.content;
+  if (!Array.isArray(content)) return false;
+  const last = content.at(-1) as { type?: string; text?: unknown } | undefined;
+  return last?.type === "text" && last.text === TRIMMED_TURN_MARKER;
+}
+
+/** Append the trim marker to a prompt line's content (string or block array), once. */
+function markTrimmed(o: JsonlLine): void {
+  if (hasTrimMarker(o)) return;
+  const marker = { type: "text", text: TRIMMED_TURN_MARKER };
+  const content = o.message?.content;
+  const blocks = typeof content === "string" ? [{ type: "text", text: content }] : content;
+  o.message = { ...o.message, content: Array.isArray(blocks) ? [...blocks, marker] : [marker] };
 }
 
 /**
- * Copy the tail from `startLine` to EOF into a fresh synthetic transcript,
- * rewriting the sessionId on every line and nulling the first chain event's
- * parentUuid (to detach the tail from the dropped history).
+ * Copy the planned lines into a fresh synthetic transcript, rewriting the sessionId
+ * on every line and nulling the first chain event's parentUuid (to detach the tail
+ * from the dropped history). For a trimmed turn, the prompt carries the trim marker
+ * and the resumed step is re-parented onto the prompt section's chain tip.
  */
-function emitTail(parsed: JsonlLine[], startLine: number): SeededTranscript {
+function emitTail(parsed: JsonlLine[], plan: TailPlan): SeededTranscript {
   const newId = randomUUID();
   const lines: string[] = [];
   let firstChainSeen = false;
-  for (let i = startLine; i < parsed.length; i++) {
+  for (const i of plan.keep) {
     const obj = parsed[i];
     if ("sessionId" in obj) obj.sessionId = newId;
+    if (plan.trimmedAt?.prompt === i) markTrimmed(obj);
+    if (plan.trimmedAt?.resume === i) obj.parentUuid = plan.trimmedAt.parent;
     if (!firstChainSeen && isChainEvent(obj)) {
       obj.parentUuid = null;
       firstChainSeen = true;
@@ -201,8 +392,8 @@ export type SeededTranscript = { sessionId: string; lines: string[] };
 
 /**
  * Build the seeded transcript from an old transcript's raw jsonl text: take as
- * many whole trailing turns as fit in `seedTokens` (always at least the final
- * turn), rewrite the session id on every line, and null the first chain event's
+ * many whole trailing turns as fit in `seedTokens` (trimming the final turn when
+ * it alone is over budget — see planTail), rewrite the session id on every line, and null the first chain event's
  * parentUuid. Returns null if there's nothing seedable (empty, no genuine turn,
  * or a corrupt line — in which case the caller starts clean).
  */
@@ -210,8 +401,7 @@ export function buildSeededTranscript(jsonl: string, seedTokens: number): Seeded
   const p = parseJsonl(jsonl, false);
   if (!p || p.parsed.length === 0) return null;
   if (turnBoundaries(p.parsed).length === 0) return null;
-  const startLine = tailStartByBudget(p.parsed, p.raws, seedTokens);
-  return emitTail(p.parsed, startLine);
+  return emitTail(p.parsed, planTail(p.parsed, seedTokens));
 }
 
 /** Result of a successful seed: the new session id and when the source was archived. */
@@ -288,7 +478,7 @@ export function writeRotationArchivePointer(
 
 /**
  * Rotate a session in place at the context limit. Reads the live transcript, builds
- * a budget-based tail (as many whole trailing turns as fit in `seedTokens`), writes
+ * a budget-based tail (see buildSeededTranscript), writes
  * it as a new synthetic session file next to the source, and — for persistent
  * sessions — archives the rotated-out pointer so the full transcript stays findable.
  * Returns the new session id, or null if rotation can't proceed (the caller then
