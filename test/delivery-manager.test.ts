@@ -48,7 +48,6 @@ describe("DeliveryManager", () => {
       assert.equal(result.routed, true);
       if (result.routed) {
         assert.equal(result.session, "discord");
-        assert.equal(result.destination, "mind");
         // Will fail delivery since no mind server is running, but routing is correct
       }
       removeMind(name);
@@ -116,8 +115,9 @@ describe("DeliveryManager", () => {
       removeMind(name);
     });
 
-    it("returns file destination for file rules", async () => {
+    it("gates a former file-destination rule's messages instead of dropping them", async () => {
       const name = createMindWithRoutes({
+        gateUnmatched: true,
         rules: [{ channel: "logs:*", destination: "file", path: "inbox/logs.md" }],
       });
 
@@ -130,7 +130,7 @@ describe("DeliveryManager", () => {
 
       assert.equal(result.routed, true);
       if (result.routed) {
-        assert.equal(result.destination, "file");
+        assert.equal(result.mode, "gated");
       }
       removeMind(name);
     });

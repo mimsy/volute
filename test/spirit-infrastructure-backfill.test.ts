@@ -125,3 +125,28 @@ describe("the spirit's .local infrastructure", () => {
     assert.equal(existsSync(hook), false, "the removal must survive every restart");
   });
 });
+
+describe("the spirit's routes.json", () => {
+  afterEach(async () => {
+    rmSync(spiritDir(), { recursive: true, force: true });
+    rmSync(stateDir("volute"), { recursive: true, force: true });
+    await removeMind("volute").catch(() => {});
+  });
+
+  it("has its inert threads batch config repaired on daemon start", async () => {
+    // `volute mind upgrade` can't reach the spirit, so syncSpiritTemplate is where
+    // the threads.*.batch → delivery repair has to run for it.
+    const dir = await seedSpiritProject();
+    const routes = resolve(dir, "home/.config/routes.json");
+    writeFileSync(
+      routes,
+      JSON.stringify({ threads: { "#*": { batch: { debounce: 20, triggers: ["@volute"] } } } }),
+    );
+
+    await syncSpiritTemplate();
+
+    assert.deepEqual(JSON.parse(readFileSync(routes, "utf-8")).threads, {
+      "#*": { delivery: { mode: "batch", debounce: 20, triggers: ["@volute"] } },
+    });
+  });
+});

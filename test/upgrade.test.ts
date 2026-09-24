@@ -176,7 +176,10 @@ describe("template helpers", () => {
       const routes = JSON.parse(
         readFileSync(join(dest, "home", ".config", "routes.json"), "utf-8"),
       );
-      assert.deepEqual(routes.threads["#*"].batch.triggers, ["@test-mind"]);
+      // `delivery`, not `batch`: the router reads `delivery` on a thread, and a test
+      // that pinned `batch` here kept the inert key shipping for months.
+      assert.equal(routes.threads["#*"].delivery.mode, "batch");
+      assert.deepEqual(routes.threads["#*"].delivery.triggers, ["@test-mind"]);
 
       rmSync(dest, { recursive: true });
     });

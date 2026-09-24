@@ -59,12 +59,11 @@ Each mind project (created from the template) has:
 ```
 <mind>/
 ├── src/
-│   ├── server.ts              # Wires mind + router + file handler + HTTP server
+│   ├── server.ts              # Wires mind + router + HTTP server
 │   ├── agent.ts               # Core mind handler: session management, SDK integration, HandlerResolver
 │   └── lib/
 │       ├── router.ts          # Message router: prefix formatting, batch buffering, dispatch
 │       ├── volute-server.ts   # Thin HTTP layer: /health, POST /message → JSON response
-│       ├── file-handler.ts    # File destination handler: appends messages to files
 │       ├── types.ts           # ChannelMeta, HandlerMeta, MessageHandler, HandlerResolver, VoluteEvent
 │       ├── format-prefix.ts   # Shared message formatting (channel/sender/time prefix)
 │       ├── startup.ts         # Shared server.ts boilerplate (parseArgs, loadConfig, etc.)
@@ -303,9 +302,9 @@ Rules with a canonical helper or enforcing test hold up; prose-only rules drift.
 - MindManager spawns mind servers as child processes with crash recovery (3s delay) and merge-restart
 - Channel URIs use human-readable slugs: `discord:my-server/general`, `slack:workspace/channel`, `telegram:@username`, `@mind-name`, `#channel-name`. Volute channels use bare slugs (no platform prefix); external platform slugs use `platform:identifier` format. `resolvePlatformId()` extracts the part after the colon, or returns the full string for bare slugs.
 - Channels have optional settings stored in the `channels` DB table: description, rules, char_limit, rate_limit + rate_window (channel-wide: N messages per W seconds, all senders pooled), private. Managed via `PATCH /api/v1/channels/:name` (creator-or-admin only — the creator is the participant stamped `role: "owner"` at creation, so there is no owner column; ownerless channels like the commons are admin-only) and returned by `GET /api/v1/channels/:name`. Both limits are enforced for **every** sender in `lib/chat/channel-limits.ts`, called from the `/api/v1/chat` handler (before file staging, so a refused message stages nothing) and from `echoTextToChannel`; they fail open on a lookup error. Only `role = "user"` rows count toward the rate window — `"system"` notices and `"event"` commons announcements must not spend a budget meant for speech. Bridge inbound is deliberately exempt from enforcement (refusing it would delete words said on another platform) but still counts. Deleting a channel conversation takes the same owner-or-admin authority as editing it, or the settings guard would be bypassable by delete-and-recreate. Channels introduce themselves to minds (description + rules + limits) once per channel per session via `enrichWithProfiles`.
-- Mind message flow: `volute-server` (JSON req/res) → `Router` (formatting/batching) → `MessageHandler` (mind or file destination); web dashboard receives updates via SSE event channel. Live message routing happens daemon-side (`delivery/`)
+- Mind message flow: `volute-server` (JSON req/res) → `Router` (formatting/batching) → `MessageHandler` (the mind); web dashboard receives updates via SSE event channel. Live message routing happens daemon-side (`delivery/`)
 - `MessageHandler` interface: `handle(content, meta, listener) => unsubscribe`; `HandlerResolver`: `(key: string) => MessageHandler`
-- Message routing via `routes.json` rules with glob matching, `isDM`/`participants` matching, template expansion (`${sender}`, `${channel}`), and file/mind destinations
+- Message routing via `routes.json` rules with glob matching, `isDM`/`participants` matching, and template expansion (`${sender}`, `${channel}`); threads take `delivery` (batching), rules take `batch` — `routesConfigProblems()` flags keys the router ignores
 - Channel gating (`gateUnmatched`, default on) holds unrecognized channels in `inbox/` until the mind adds a routing rule
 - Multi-participant conversations with fan-out to all mind participants; mind users tracked in the `users` table with `user_type: "mind"`
 - Variants use git worktrees with detached server processes; tracked as rows in the `minds` DB table with a `parent` field

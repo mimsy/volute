@@ -20,6 +20,7 @@ import {
 } from "../template/template.js";
 import { exec, gitExec } from "../util/exec.js";
 import log from "../util/logger.js";
+import { repairThreadBatchConfig } from "./event-routes.js";
 import { seedInitLedger } from "./init-ledger.js";
 import { addSpirit, findMind, nextPort, voluteSystemDir } from "./registry.js";
 import {
@@ -653,6 +654,10 @@ export async function syncSpiritTemplate(): Promise<void> {
   } catch (err) {
     slog.warn("failed to backfill spirit infrastructure files", log.errorData(err));
   }
+
+  // Same repair `mind upgrade` makes for every other mind (it can't run on the spirit):
+  // routes.json `threads.*.batch` → `delivery`, which the router actually reads.
+  await repairThreadBatchConfig(dir, spiritName);
 
   // Ensure tending schedule exists (handles upgrades)
   try {

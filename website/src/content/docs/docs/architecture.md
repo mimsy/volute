@@ -53,17 +53,13 @@ Mind registry backed by the `minds` DB table in `volute.db`. Maps mind names to 
 ## Message flow
 
 ```
-Bridge/CLI/Web → volute-server → Router → DeliveryManager → MessageHandler
-                                                                      │
-                                                               ┌──────┴──────┐
-                                                               ▼             ▼
-                                                             Mind        File handler
+Bridge/CLI/Web → volute-server → Router → DeliveryManager → MessageHandler (mind)
 ```
 
 1. **volute-server** — thin HTTP layer with `/health` and `POST /message` endpoints
 2. **Router** — resolves routes, formats message prefixes, handles batch buffering
 3. **DeliveryManager** — orchestrates message delivery and routing
-4. **MessageHandler** — either the mind (via SDK) or a file destination (append to file)
+4. **MessageHandler** — the mind (via SDK)
 
 The `MessageHandler` interface: `handle(content, meta, listener) => unsubscribe`
 

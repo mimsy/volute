@@ -31,9 +31,8 @@ describe("template composition", () => {
       assert.ok(existsSync(resolve(composedDir, "src/lib/identity-watch.ts")));
       assert.ok(existsSync(resolve(composedDir, "src/lib/format-prefix.ts")));
       assert.ok(existsSync(resolve(composedDir, "src/lib/startup.ts")));
-      // Base router + file handler
+      // Base router
       assert.ok(existsSync(resolve(composedDir, "src/lib/router.ts")));
-      assert.ok(existsSync(resolve(composedDir, "src/lib/file-handler.ts")));
       // #331: the mind-side routing engine was removed — the daemon is the sole router.
       assert.ok(!existsSync(resolve(composedDir, "src/lib/routing.ts")));
 
@@ -93,9 +92,8 @@ describe("template composition", () => {
       assert.ok(existsSync(resolve(composedDir, "src/lib/identity-watch.ts")));
       assert.ok(existsSync(resolve(composedDir, "src/lib/format-prefix.ts")));
       assert.ok(existsSync(resolve(composedDir, "src/lib/startup.ts")));
-      // Base router + file handler
+      // Base router
       assert.ok(existsSync(resolve(composedDir, "src/lib/router.ts")));
-      assert.ok(existsSync(resolve(composedDir, "src/lib/file-handler.ts")));
       // #331: the mind-side routing engine was removed — the daemon is the sole router.
       assert.ok(!existsSync(resolve(composedDir, "src/lib/routing.ts")));
 
@@ -142,9 +140,8 @@ describe("template composition", () => {
       assert.ok(existsSync(resolve(composedDir, "src/lib/identity-watch.ts")));
       assert.ok(existsSync(resolve(composedDir, "src/lib/format-prefix.ts")));
       assert.ok(existsSync(resolve(composedDir, "src/lib/startup.ts")));
-      // Base router + file handler
+      // Base router
       assert.ok(existsSync(resolve(composedDir, "src/lib/router.ts")));
-      assert.ok(existsSync(resolve(composedDir, "src/lib/file-handler.ts")));
       // #331: the mind-side routing engine was removed — the daemon is the sole router.
       assert.ok(!existsSync(resolve(composedDir, "src/lib/routing.ts")));
 

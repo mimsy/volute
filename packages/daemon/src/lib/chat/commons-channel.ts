@@ -111,7 +111,7 @@ export async function backfillCommonsChannelMembers(): Promise<void> {
  * The channel row is stored with `role: "event"` and no sender so web chat and `chat read`
  * render it as an event. It is delivered to mind participants — and to the spirit (#817),
  * whose room the commons is — through the normal channel-message path (so it follows each
- * recipient's commons routing, batching, gating, and file destinations exactly like any
+ * recipient's commons routing, batching, and gating exactly like any
  * channel message) — but with a null sender, so the prefix the recipient receives frames it
  * by channel and never names the spirit or invents a sender. The spirit's own hand-written
  * messages are unaffected.
