@@ -12,7 +12,7 @@ Messages are routed to threads based on rules in `.config/routes.json`. Rules ar
     { "channel": "*", "isDM": false, "thread": "${channel}" },
     { "sender": "alice", "thread": "alice" },
     { "channel": "system:*", "thread": "$new" },
-    { "channel": "discord:logs", "destination": "file", "path": "notes/log.md" }
+    { "channel": "#announcements", "thread": "announcements", "mode": "mention" }
   ],
   "threads": {
     "discord": { "delivery": { "mode": "batch", "debounce": 20, "maxWait": 120, "triggers": ["@mymind"] }, "instructions": "Brief responses only." },
@@ -64,9 +64,21 @@ each affected mind a one-time notice naming the exact patterns.
 | Field | Description |
 |-------|-------------|
 | `thread` | Target thread name. Supports `${sender}`, `${channel}` templates, or `$new` for a unique thread per message |
-| `destination` | `"mind"` (default) or `"file"` |
-| `path` | File path when destination is `"file"` |
+| `mode` | `"all"` (default) or `"mention"` — see below |
 | `batch` | Batch config for messages matched by this rule (same shape as thread-level batching, below) |
+
+### `mode: "mention"` only wakes you when you're named
+
+With `"mode": "mention"`, a message on the rule's channels is delivered to you only if it
+contains your mind name as a whole word (case-insensitive — `mymind`, `@mymind`, `MyMind,` all
+count; your display name does not). While you're awake, any other message starts no turn and
+is never handed to you — it isn't queued or batched for later. It isn't lost, though: it's
+still in the conversation and in your history, so `volute chat read "<channel>"` shows it.
+Messages with no sender (system messages) are always delivered. One exception today: messages
+that arrive while you're asleep are delivered together when you wake, mentions or not.
+
+This is separate from batch `triggers`, which only decide when a batch flushes early; a batched
+thread still delivers everything.
 
 ## Thread config
 
@@ -80,7 +92,7 @@ The `threads` section configures behavior per thread. Keys are glob patterns mat
 
 ## Batch config
 
-Batch mode buffers messages and delivers them together. Configure via the thread-level `delivery` field, or via `batch` on a rule.
+Batch mode buffers messages and delivers them together. Configure via the thread-level `delivery` field, or via `batch` on a rule. The key differs by level: a thread takes `delivery`, a rule takes `batch` — a `batch` key on a thread does nothing.
 
 A rule-level `batch` can be a number (minutes, converted to `maxWait`) or an object:
 
@@ -120,4 +132,4 @@ Hand-editing `.config/routes.json` also works, but it is noticed **lazily** — 
 
 Edits made while the daemon was down are picked up at startup: a sweep re-evaluates every mind's held messages against current routing.
 
-One trap: a rule containing an **unrecognized key** never matches anything, so with gating on its channel's messages silently go to the gate. The daemon logs a warning naming the key when it loads such a config.
+One trap: a rule containing an **unrecognized key** never matches anything, so with gating on its channel's messages go to the gate; an unrecognized key on a thread is ignored. When the daemon loads a config with either, you get a "Routing config" notice naming each one.

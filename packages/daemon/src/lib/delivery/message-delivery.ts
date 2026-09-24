@@ -423,8 +423,7 @@ export async function deliverBatch(
     }
 
     // Resolve the target session from routing (payloads share a channel, so one
-    // route/session applies). An explicit payload session wins; a file route (which
-    // sleep-queued mind messages never hit) falls back to the default session.
+    // route/session applies). An explicit payload session wins.
     const first = payloads[0];
     const route = resolveRoute(getRoutingConfig(baseName), {
       channel: first.channel,
@@ -432,7 +431,7 @@ export async function deliverBatch(
       isDM: first.isDM,
       participantCount: first.participantCount,
     });
-    const session = first.session ?? (route.destination === "mind" ? route.session : "main");
+    const session = first.session ?? route.session;
 
     // This POSTs straight at the mind rather than going through the delivery queue, so
     // there is no pending row for a redrive sweep to re-offer: the concurrency gate waits

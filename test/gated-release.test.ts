@@ -464,7 +464,7 @@ describe("gated-channel release (#537)", () => {
       );
     });
 
-    it("archives file-destination matches instead of promoting them", async () => {
+    it("keeps a former file-destination rule's channel held rather than discarding it", async () => {
       const name = createMind({ rules: [], default: "main" });
       cleanup.push(name);
       const m = makeManager();
@@ -480,7 +480,7 @@ describe("gated-channel release (#537)", () => {
 
       const after = await rows(name);
       assert.equal(after.filter((r) => r.status === "pending").length, 0);
-      assert.equal(after.filter((r) => r.status === "archived").length, 1, "file match archived");
+      assert.equal(after.filter((r) => r.status === "gated").length, 1, "still held, not lost");
     });
 
     it("leaves genuinely-unmatched channels gated", async () => {

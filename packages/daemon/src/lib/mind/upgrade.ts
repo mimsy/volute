@@ -14,6 +14,7 @@ import {
 import { computeTemplateHash } from "../template/template-hash.js";
 import { gitExec } from "../util/exec.js";
 import log from "../util/logger.js";
+import { repairThreadBatchConfig } from "./event-routes.js";
 import { chownMindDir, isIsolationEnabled } from "./isolation.js";
 import { beginUpgrade } from "./join-lock.js";
 import { npmInstallAsMind, npmInstallNeeded } from "./npm-install.js";
@@ -450,6 +451,11 @@ async function mergeUpgradeAndRestart(
   } catch (err) {
     log.warn(`failed to backfill infrastructure files for ${mindName}`, log.errorData(err));
   }
+
+  // Rename routes.json `threads.*.batch` to the `delivery` key the router reads: the
+  // template shipped the dead key, so channel batching never ran. `.config/` is the
+  // mind's, so this is a surgical in-place key rename, and the mind is told. Never throws.
+  await repairThreadBatchConfig(dir, mindName);
 
   // Persist the template field only after any switch swap succeeded, so the DB
   // stays consistent with the on-disk template files.

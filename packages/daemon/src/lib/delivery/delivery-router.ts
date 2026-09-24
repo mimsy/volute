@@ -1,7 +1,9 @@
-import { readFileSync, statSync } from "node:fs";
-import { resolve } from "node:path";
+import { mkdirSync, readFileSync, statSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import type { ChannelContext, ParticipantProfile } from "@volute/api";
-import { mindDir } from "../mind/registry.js";
+import { MIND_LEVEL_THREAD, recordNotice } from "../chat/system-events.js";
+import { mindDir, stateDir } from "../mind/registry.js";
+import { clearJsonMap, loadJsonMap, saveJsonMap } from "../util/json-state.js";
 import log from "../util/logger.js";
 
 // --- Types ---
@@ -15,8 +17,8 @@ export type RoutingRule = {
    */
   event?: string;
   thread?: string;
-  destination?: "mind" | "file";
-  path?: string;
+  /** Only `"mind"` (the default) exists; any other value makes the rule unmatchable. */
+  destination?: "mind";
   channel?: string;
   sender?: string;
   isDM?: boolean;
@@ -49,15 +51,12 @@ export type RoutingConfig = {
   gateUnmatched?: boolean;
 };
 
-export type ResolvedRoute =
-  | {
-      destination: "mind";
-      session: string;
-      matched: boolean;
-      mode?: "all" | "mention";
-      rule?: RoutingRule;
-    }
-  | { destination: "file"; path: string; matched: boolean };
+export type ResolvedRoute = {
+  session: string;
+  matched: boolean;
+  mode?: "all" | "mention";
+  rule?: RoutingRule;
+};
 
 export type ResolvedDeliveryMode =
   | { mode: "immediate" }
@@ -232,8 +231,8 @@ export function getRoutingConfig(mindName: string): RoutingConfig {
   try {
     const config: RoutingConfig = JSON.parse(readFileSync(path, "utf-8"));
     const changed = cached != null && cached.mtime !== mtime;
-    warnUnknownRuleKeys(mindName, config);
     configCache.set(mindName, { config, mtime });
+    void reportRoutesConfigProblems(mindName, config);
     // A pre-existing cached config with a different mtime means routes.json actually
     // changed — release any gated messages that the new rules now match.
     if (changed) notifyRoutesChanged(mindName);
@@ -283,39 +282,144 @@ function globMatch(pattern: string, value: string): boolean {
 // --- Rule matching ---
 
 const GLOB_MATCH_KEYS = new Set(["channel", "sender"]);
-const NON_MATCH_KEYS = new Set(["thread", "destination", "path", "mode", "batch"]);
+const NON_MATCH_KEYS = new Set(["thread", "mode", "batch"]);
 const KNOWN_RULE_KEYS = new Set([
   ...GLOB_MATCH_KEYS,
   ...NON_MATCH_KEYS,
+  "destination",
   "isDM",
   "participants",
   "event",
 ]);
+const KNOWN_THREAD_KEYS = new Set(["instructions", "delivery", "interrupt"]);
+
+function quoteKeys(keys: string[]): string {
+  return keys.map((k) => `"${k}"`).join(", ");
+}
 
 /**
- * Warn (once per config load, not per message) about rule keys ruleMatches will
- * reject. An unrecognized key makes the whole rule unmatchable — with gating on,
- * that silently diverts the channel's messages into the gate. Catches leftovers
- * from the session→thread rename and future typos alike.
+ * Everything in a routes.json that the router will silently not do, one sentence each.
+ * An unrecognized rule key makes the whole rule unmatchable — with gating on, that
+ * diverts the channel's messages into the gate. An unrecognized thread key is simply
+ * ignored — which is how the shipped `threads."#*".batch` left channel batching inert
+ * for every mind. Catches leftovers from renames and future typos alike.
  */
-export function warnUnknownRuleKeys(mindName: string, config: RoutingConfig): void {
-  if (!Array.isArray(config.rules)) return;
-  for (const rule of config.rules) {
-    if (rule == null || typeof rule !== "object") continue;
-    const unknown = Object.keys(rule).filter((k) => !KNOWN_RULE_KEYS.has(k));
-    if (unknown.length > 0) {
-      dlog.warn(
-        `routes.json for ${mindName} has a rule with unrecognized key(s) ` +
-          `${unknown.map((k) => `"${k}"`).join(", ")} — the rule will never match ` +
-          `(known keys: ${[...KNOWN_RULE_KEYS].join(", ")})`,
-      );
+export function routesConfigProblems(config: RoutingConfig): string[] {
+  const problems: string[] = [];
+  if (Array.isArray(config.rules)) {
+    config.rules.forEach((rule, i) => {
+      if (rule == null || typeof rule !== "object") return;
+      const where = `rules[${i}] (${JSON.stringify(rule)})`;
+      const unknown = Object.keys(rule).filter((k) => !KNOWN_RULE_KEYS.has(k));
+      if (unknown.length > 0) {
+        problems.push(
+          `${where} has unrecognized key(s) ${quoteKeys(unknown)}, so the rule never matches ` +
+            `(known rule keys: ${[...KNOWN_RULE_KEYS].join(", ")}).`,
+        );
+      }
+      if ("destination" in rule && rule.destination !== "mind") {
+        problems.push(
+          `${where} has destination ${JSON.stringify(rule.destination)}, so the rule never ` +
+            `matches — "mind" is the only destination (file destinations were removed).`,
+        );
+      }
+    });
+  }
+  if (config.threads != null && typeof config.threads === "object") {
+    for (const [pattern, threadConfig] of Object.entries(config.threads)) {
+      if (threadConfig == null || typeof threadConfig !== "object") continue;
+      const unknown = Object.keys(threadConfig).filter((k) => !KNOWN_THREAD_KEYS.has(k));
+      if (unknown.length > 0) {
+        problems.push(
+          `threads[${JSON.stringify(pattern)}] has unrecognized key(s) ${quoteKeys(unknown)}, ` +
+            `which are ignored (known thread keys: ${[...KNOWN_THREAD_KEYS].join(", ")}).`,
+        );
+      }
     }
   }
+  return problems;
+}
+
+/** meta.reason of the notice {@link reportRoutesConfigProblems} sends. */
+export const ROUTES_PROBLEMS_REASON = "routes_config_problems";
+
+/**
+ * The problems a mind has already been told about, kept in its state dir so a restart,
+ * crash-restart or update doesn't tell it again — including a mind that keeps an extra
+ * key on purpose. Keyed by the problem sentence; the value is when it was reported.
+ */
+function reportedProblemsPath(mindName: string): string {
+  return resolve(stateDir(mindName), "routes-problems.json");
+}
+
+function saveReportedProblems(mindName: string, told: Map<string, number>): void {
+  const path = reportedProblemsPath(mindName);
+  if (told.size === 0) {
+    clearJsonMap(path, told);
+    return;
+  }
+  mkdirSync(dirname(path), { recursive: true });
+  saveJsonMap(path, told);
+}
+
+/**
+ * Forget that the mind was told about these problems, so they're reported again on the
+ * next load if still true — for when the notice that told it is withdrawn unread.
+ */
+export function forgetReportedRoutesProblems(mindName: string, problems: string[]): void {
+  const told = loadJsonMap(reportedProblemsPath(mindName));
+  let changed = false;
+  for (const p of problems) changed = told.delete(p) || changed;
+  if (changed) saveReportedProblems(mindName, told);
+}
+
+/**
+ * Tell the mind (and the log) about {@link routesConfigProblems}. A daemon log line alone
+ * reaches nobody who can act on it: routes.json is the mind's own file, describing what
+ * it wants to wake it, and a config that silently does nothing misreports its own attention
+ * to it. So the mind gets a next-turn notice naming each problem it hasn't heard about yet.
+ * A problem that goes away is forgotten, so one reintroduced later is reported afresh.
+ * Returns the notice promise (never rejects) so tests can await it; the router fires and
+ * forgets.
+ */
+export function reportRoutesConfigProblems(mindName: string, config: RoutingConfig): Promise<void> {
+  const problems = routesConfigProblems(config);
+  const told = loadJsonMap(reportedProblemsPath(mindName));
+  const kept = new Map([...told].filter(([p]) => problems.includes(p)));
+  const unheard = problems.filter((p) => !told.has(p));
+  for (const p of unheard) kept.set(p, Date.now());
+  // Saved before notifying: recording the notice routes it through this same config.
+  if (kept.size !== told.size || unheard.length > 0) saveReportedProblems(mindName, kept);
+  if (unheard.length === 0) return Promise.resolve();
+
+  dlog.warn(`routes.json for ${mindName}: ${unheard.join(" ")}`);
+  return recordNotice({
+    mind: mindName,
+    thread: MIND_LEVEL_THREAD,
+    kind: "routes",
+    reason: ROUTES_PROBLEMS_REASON,
+    detail:
+      `Your .config/routes.json has settings the router does not act on:\n\n` +
+      `${unheard.map((p) => `- ${p}`).join("\n")}\n\n` +
+      `Until they're fixed, routing behaves as if those settings weren't there. The ` +
+      `volute-mind skill's routing reference describes every field.`,
+    meta: { problems: unheard },
+  }).then(
+    () => {},
+    (err) => {
+      dlog.warn(`failed to notify ${mindName} about routes.json problems`, log.errorData(err));
+    },
+  );
 }
 
 function ruleMatches(rule: RoutingRule, meta: MatchMeta): boolean {
   for (const [key, pattern] of Object.entries(rule)) {
     if (NON_MATCH_KEYS.has(key)) continue;
+
+    if (key === "destination") {
+      if (pattern !== "mind") return false;
+      continue;
+    }
 
     if (key === "isDM") {
       if (typeof pattern !== "boolean") return false;
@@ -353,7 +457,7 @@ export function resolveRoute(config: RoutingConfig, meta: MatchMeta): ResolvedRo
   const fallback = config.default ?? "main";
 
   if (!config.rules) {
-    return { destination: "mind", session: fallback, matched: false };
+    return { session: fallback, matched: false };
   }
 
   for (const rule of config.rules) {
@@ -361,15 +465,7 @@ export function resolveRoute(config: RoutingConfig, meta: MatchMeta): ResolvedRo
     // content — they're resolved by resolveEventRoute (#736).
     if (typeof rule.event === "string") continue;
     if (ruleMatches(rule, meta)) {
-      if (rule.destination === "file") {
-        if (!rule.path) {
-          dlog.warn("file destination rule missing path — falling through");
-          continue;
-        }
-        return { destination: "file", path: rule.path, matched: true };
-      }
       return {
-        destination: "mind",
         session: sanitizeSessionName(expandTemplate(rule.thread ?? fallback, meta)),
         matched: true,
         mode: rule.mode,
@@ -378,7 +474,7 @@ export function resolveRoute(config: RoutingConfig, meta: MatchMeta): ResolvedRo
     }
   }
 
-  return { destination: "mind", session: fallback, matched: false };
+  return { session: fallback, matched: false };
 }
 
 /**
@@ -404,16 +500,16 @@ export function resolveEventRoute(config: RoutingConfig, eventKey: string): stri
  * Whether a resolved route should be gated: the channel is unrouted and gating is on, so
  * the message is held until the mind opts in. A gated message is never delivered to the
  * mind, so callers must NOT record it as inbound history — the mind hasn't seen it (#420).
- * File routes and explicitly-matched rules are never gated.
+ * Explicitly-matched rules are never gated.
  */
 export function shouldGate(config: RoutingConfig, route: ResolvedRoute): boolean {
-  return route.destination === "mind" && !route.matched && config.gateUnmatched !== false;
+  return !route.matched && config.gateUnmatched !== false;
 }
 
 // --- Delivery mode resolution ---
 
-const DEFAULT_BATCH_DEBOUNCE = 5;
-const DEFAULT_BATCH_MAX_WAIT = 120;
+export const DEFAULT_BATCH_DEBOUNCE = 5;
+export const DEFAULT_BATCH_MAX_WAIT = 120;
 
 function normalizeBatchConfig(batch: number | BatchConfig): BatchConfig {
   if (typeof batch === "number") return { maxWait: batch * 60 };

@@ -1,6 +1,34 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import { clearConfigCache, type RoutingConfig } from "../delivery/delivery-router.js";
+import {
+  closeSync,
+  constants,
+  existsSync,
+  fstatSync,
+  ftruncateSync,
+  lstatSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  realpathSync,
+  type Stats,
+  writeFileSync,
+  writeSync,
+} from "node:fs";
+import { dirname, resolve, sep } from "node:path";
+import { isDeepStrictEqual } from "node:util";
+import {
+  MIND_LEVEL_THREAD,
+  recordNotice,
+  supersedeUndeliveredEvents,
+} from "../chat/system-events.js";
+import {
+  type BatchConfig,
+  clearConfigCache,
+  DEFAULT_BATCH_DEBOUNCE,
+  DEFAULT_BATCH_MAX_WAIT,
+  forgetReportedRoutesProblems,
+  ROUTES_PROBLEMS_REASON,
+  type RoutingConfig,
+} from "../delivery/delivery-router.js";
 import log from "../util/logger.js";
 import { readVoluteConfig, writeVoluteConfig } from "./volute-config.js";
 
@@ -87,4 +115,221 @@ export function migrateScheduleThreadsToRoutes(dir: string, name?: string): bool
     `migrated ${threaded.length} schedule thread(s) to routes.json${name ? ` for ${name}` : ""}`,
   );
   return true;
+}
+
+/**
+ * The thread configs a {@link migrateThreadBatchToDelivery} run rewrote, keyed by thread
+ * pattern, each with the batch settings it now runs under.
+ */
+export type MigratedThreadBatch = { pattern: string; batch: BatchConfig };
+
+/**
+ * Object-level form of the migration: each `threads.<pattern>.batch` object becomes
+ * `delivery: { mode: "batch", ...same fields }`, in the same key position. A thread that
+ * already has a `delivery`, or whose `batch` isn't an object, is left as the mind wrote
+ * it — there is no faithful rewrite, and the router's config-problem notice names it.
+ */
+function renameThreadBatch(config: RoutingConfig): {
+  config: RoutingConfig;
+  migrated: MigratedThreadBatch[];
+} {
+  const threads = config.threads;
+  const migrated: MigratedThreadBatch[] = [];
+  if (threads == null || typeof threads !== "object" || Array.isArray(threads)) {
+    return { config, migrated };
+  }
+  const nextThreads: Record<string, unknown> = {};
+  for (const [pattern, tc] of Object.entries(threads as Record<string, unknown>)) {
+    const t = tc as Record<string, unknown> | null;
+    const batch = t?.batch;
+    if (
+      t == null ||
+      typeof t !== "object" ||
+      "delivery" in t ||
+      batch == null ||
+      typeof batch !== "object" ||
+      Array.isArray(batch)
+    ) {
+      nextThreads[pattern] = tc;
+      continue;
+    }
+    migrated.push({ pattern, batch: batch as BatchConfig });
+    nextThreads[pattern] = Object.fromEntries(
+      Object.entries(t).map(([k, v]) =>
+        k === "batch" ? ["delivery", { mode: "batch", ...(v as object) }] : [k, v],
+      ),
+    );
+  }
+  return { config: { ...config, threads: nextThreads as RoutingConfig["threads"] }, migrated };
+}
+
+/** Index just past the `}` closing the object whose `{` is at `open`, respecting strings. */
+function closingBrace(text: string, open: number): number {
+  let depth = 0;
+  for (let i = open; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === '"') {
+      for (i++; i < text.length && text[i] !== '"'; i++) if (text[i] === "\\") i++;
+    } else if (ch === "{") depth++;
+    else if (ch === "}" && --depth === 0) return i + 1;
+  }
+  return -1;
+}
+
+/**
+ * Text-level form of the migration, so the rest of the mind's file keeps its bytes: in the
+ * `threads` object only, `"batch": {` becomes `"delivery": { "mode": "batch",`. The caller
+ * checks the result parses to exactly what {@link renameThreadBatch} produced and falls back
+ * to a re-serialization otherwise, so this only has to be right in the common case.
+ */
+function renameThreadBatchText(text: string): string {
+  const m = /"threads"\s*:\s*\{/.exec(text);
+  if (!m) return text;
+  const start = m.index + m[0].length - 1;
+  const end = closingBrace(text, start);
+  if (end === -1) return text;
+  const span = text
+    .slice(start, end)
+    .replace(/"batch"(\s*):(\s*)\{/g, '"delivery"$1:$2{ "mode": "batch",');
+  return text.slice(0, start) + span + text.slice(end);
+}
+
+/**
+ * Repair routes.json thread configs written with `batch` — the key rules use — where the
+ * router reads `delivery`. The template shipped `threads."#*".batch` for months, so every
+ * mind's channel batching was inert and each channel message woke it immediately. The
+ * rewrite is surgical (see {@link renameThreadBatchText}); returns what was migrated,
+ * empty when there was nothing to do, which also makes a second run a no-op.
+ *
+ * The daemon may be root and routes.json is the mind's file, so the write is guarded: it
+ * only rewrites an existing file in place (so the inode and its ownership stay the mind's),
+ * and refuses when `.config/` resolves outside the mind dir, when routes.json is a symlink
+ * or has other hard links, or when the file it opened isn't the one it inspected. That
+ * narrows what a mind can aim this write at to its own routes.json; it is not a proof
+ * against every race on a directory the mind controls.
+ */
+export function migrateThreadBatchToDelivery(dir: string, name?: string): MigratedThreadBatch[] {
+  const path = routesPath(dir);
+  let inspected: Stats;
+  try {
+    inspected = lstatSync(path);
+  } catch {
+    return [];
+  }
+  // A hard link would let a root write land on a file elsewhere that the mind linked here.
+  if (!inspected.isFile() || inspected.nlink !== 1) {
+    if (inspected.isFile()) rlog.warn(`${path} has other hard links — not migrating it`);
+    return [];
+  }
+  if (!realpathSync(dirname(path)).startsWith(realpathSync(dir) + sep)) {
+    rlog.warn(`${dirname(path)} resolves outside ${dir} — not migrating routes.json`);
+    return [];
+  }
+
+  // O_NOFOLLOW guards only the last path component; the fstat check catches a swap
+  // anywhere between the lstat above and this open.
+  const fd = openSync(path, constants.O_RDWR | constants.O_NOFOLLOW);
+  let migrated: MigratedThreadBatch[];
+  try {
+    const opened = fstatSync(fd);
+    if (opened.dev !== inspected.dev || opened.ino !== inspected.ino || opened.nlink !== 1) {
+      rlog.warn(`${path} changed while being opened — not migrating it`);
+      return [];
+    }
+    const text = readFileSync(fd, "utf-8");
+    let parsed: RoutingConfig;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      return []; // the router reports an unreadable file; nothing to rename in it
+    }
+    if (parsed == null || typeof parsed !== "object" || Array.isArray(parsed)) return [];
+    const result = renameThreadBatch(parsed);
+    migrated = result.migrated;
+    if (migrated.length === 0) return [];
+
+    let out = renameThreadBatchText(text);
+    let surgical = true;
+    try {
+      surgical = isDeepStrictEqual(JSON.parse(out), result.config);
+    } catch {
+      surgical = false;
+    }
+    if (!surgical) out = `${JSON.stringify(result.config, null, 2)}\n`;
+    ftruncateSync(fd, 0);
+    writeSync(fd, out, 0);
+  } finally {
+    closeSync(fd);
+  }
+  // Not a rule change — nothing gated needs re-evaluating.
+  if (name) clearConfigCache(name, { notify: false });
+  rlog.info(
+    `renamed threads.*.batch → delivery in routes.json${name ? ` for ${name}` : ""}: ` +
+      migrated.map((m) => m.pattern).join(", "),
+  );
+  return migrated;
+}
+
+/** What batching a migrated thread now does, in the mind's terms. */
+function describeBatch({ pattern, batch }: MigratedThreadBatch): string {
+  const debounce = batch.debounce ?? DEFAULT_BATCH_DEBOUNCE;
+  const maxWait = batch.maxWait ?? DEFAULT_BATCH_MAX_WAIT;
+  const triggers = batch.triggers?.length
+    ? `, or at once when a message contains ${batch.triggers.map((t) => `"${t}"`).join(" or ")}`
+    : "";
+  return (
+    `- threads matching ${JSON.stringify(pattern)}: messages collect until ${debounce}s pass ` +
+    `with no new one, or ${maxWait}s after the first at most${triggers}, then arrive together.`
+  );
+}
+
+/**
+ * Run {@link migrateThreadBatchToDelivery} for a mind and tell it: its channel messages
+ * will now arrive batched rather than one wake per message, and a mind not told that
+ * would read the new rhythm as something broken. Never throws — callers are upgrade
+ * paths whose own outcome must not hinge on this.
+ */
+export async function repairThreadBatchConfig(dir: string, name: string): Promise<void> {
+  let migrated: MigratedThreadBatch[];
+  try {
+    migrated = migrateThreadBatchToDelivery(dir, name);
+  } catch (err) {
+    rlog.warn(`failed to migrate thread batch config for ${name}`, log.errorData(err));
+    return;
+  }
+  if (migrated.length === 0) return;
+  // An unread "routes.json has settings the router ignores" notice may name the very key
+  // just repaired; delivered alongside this one it would tell the mind something false
+  // about its own config. Withdraw it, and forget what it reported so anything in it that
+  // is still true gets reported again when the config is next read.
+  try {
+    const withdrawn = await supersedeUndeliveredEvents(name, ROUTES_PROBLEMS_REASON);
+    const problems = withdrawn.flatMap((m) =>
+      Array.isArray(m.problems) ? m.problems.filter((p) => typeof p === "string") : [],
+    );
+    if (problems.length > 0) {
+      forgetReportedRoutesProblems(name, problems);
+      clearConfigCache(name, { notify: false });
+    }
+  } catch (err) {
+    rlog.warn(`failed to withdraw stale routes notices for ${name}`, log.errorData(err));
+  }
+  try {
+    await recordNotice({
+      mind: name,
+      thread: MIND_LEVEL_THREAD,
+      kind: "routes",
+      reason: "thread_batch_repaired",
+      detail:
+        `Your channel batching in .config/routes.json never took effect: it was written as ` +
+        `\`batch\` under \`threads\`, where the router reads \`delivery\`, so every message ` +
+        `woke you on its own. Volute renamed it to \`delivery: { "mode": "batch", ... }\` with ` +
+        `your settings unchanged, and it applies from now on:\n\n` +
+        `${migrated.map(describeBatch).join("\n")}\n\n` +
+        `Nothing else in the file was touched. To change or drop it, edit the \`delivery\` ` +
+        `field — \`"immediate"\` turns batching off for that thread.`,
+    });
+  } catch (err) {
+    rlog.warn(`failed to tell ${name} about its repaired batch config`, log.errorData(err));
+  }
 }

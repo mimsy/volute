@@ -429,7 +429,6 @@ export class DeliveryManager {
     | {
         routed: true;
         session: string;
-        destination: "mind" | "file";
         mode: "immediate" | "batch" | "gated";
       }
     | {
@@ -449,11 +448,11 @@ export class DeliveryManager {
       const sessionConfig = resolveDeliveryMode(config, sessionName);
       if (sessionConfig.delivery.mode === "batch") {
         await this.enqueueBatch(mindName, sessionName, payload, sessionConfig);
-        return { routed: true, session: sessionName, destination: "mind", mode: "batch" };
+        return { routed: true, session: sessionName, mode: "batch" };
       }
       const queueId = await this.persistToQueue(mindName, sessionName, payload);
       await this.deliverToMind(mindName, sessionName, payload, sessionConfig, queueId);
-      return { routed: true, session: sessionName, destination: "mind", mode: "immediate" };
+      return { routed: true, session: sessionName, mode: "immediate" };
     }
 
     const meta: MatchMeta = {
@@ -465,20 +464,13 @@ export class DeliveryManager {
 
     const route = resolveRoute(config, meta);
 
-    dlog.debug(
-      `route for ${mindName} ch=${payload.channel}: dest=${route.destination} matched=${route.matched}`,
-    );
-
-    // File destination — not handled by delivery manager
-    if (route.destination === "file") {
-      return { routed: true, session: route.path, destination: "file", mode: "immediate" };
-    }
+    dlog.debug(`route for ${mindName} ch=${payload.channel}: matched=${route.matched}`);
 
     // Gating: unmatched channels with gateUnmatched enabled
     if (shouldGate(config, route)) {
       dlog.debug(`gating unmatched channel ${payload.channel} for ${mindName}`);
       await this.gateMessage(mindName, route.session, payload);
-      return { routed: true, session: route.session, destination: "mind", mode: "gated" };
+      return { routed: true, session: route.session, mode: "gated" };
     }
 
     // Mention-mode filtering
@@ -512,14 +504,14 @@ export class DeliveryManager {
     if (sessionConfig.delivery.mode === "batch") {
       dlog.debug(`enqueueing batch message for ${mindName}/${sessionName}`);
       await this.enqueueBatch(mindName, sessionName, payload, sessionConfig);
-      return { routed: true, session: sessionName, destination: "mind", mode: "batch" };
+      return { routed: true, session: sessionName, mode: "batch" };
     }
 
     // Immediate delivery — persist to the queue BEFORE the POST so a crash or a
     // failed POST leaves an at-least-once record the redrive loop can re-deliver.
     const queueId = await this.persistToQueue(mindName, sessionName, payload);
     await this.deliverToMind(mindName, sessionName, payload, sessionConfig, queueId);
-    return { routed: true, session: sessionName, destination: "mind", mode: "immediate" };
+    return { routed: true, session: sessionName, mode: "immediate" };
   }
 
   /**
@@ -691,14 +683,13 @@ export class DeliveryManager {
 
   /**
    * Re-evaluate a mind's `gated` rows against its current routes.json when the routing
-   * config changes. For each channel that now matches a `mind` route:
+   * config changes. For each channel that now matches a route:
    *  - the newest {@link GATED_RELEASE_LIMIT_PER_CHANNEL} rows are promoted to `pending`
    *    and re-stamped with the freshly-resolved session (NOT the gate-time fallback), so
    *    they land in the correct session instead of `main` (#537 bug 1);
    *  - any older rows are `archived` (inert) so a long backlog can't flood the mind
    *    in one sweep (#537 bug 2), and the mind gets one summary rather than a flood.
-   * Rows resolving to a `file` destination are archived (the delivery manager doesn't
-   * deliver file routes). Declined channels are skipped entirely — they stay gated.
+   * Declined channels are skipped entirely — they stay gated.
    *
    * Releases are serialized per mind: the promote step reads gated rows and then writes
    * `mind_history`, and while the promote UPDATE is idempotent the history INSERT is not —
@@ -926,10 +917,6 @@ export class DeliveryManager {
       };
       const route = resolveRoute(config, meta);
       if (!route.matched) continue; // still unrouted → leave gated
-      if (route.destination === "file") {
-        archiveIds.push(row.id); // not deliverable via the delivery manager
-        continue;
-      }
       let session = route.session;
       if (session === "$new") {
         session = newEphemeralSession();
@@ -1333,7 +1320,7 @@ export class DeliveryManager {
     const finalRoute = ruleAdded ? resolveRoute({ ...config, rules }, { channel }) : existing;
     return {
       ruleAdded,
-      thread: finalRoute.destination === "file" ? finalRoute.path : finalRoute.session,
+      thread: finalRoute.session,
       released,
       archived,
       known: match.known,

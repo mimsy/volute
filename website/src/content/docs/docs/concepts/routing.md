@@ -7,25 +7,18 @@ Message routing controls how incoming messages are delivered to the mind and whe
 
 ## Route rules
 
-Each rule matches messages by channel pattern (glob), DM status, sender, or participant count, and directs them to a destination — the mind or a file.
+Each rule matches messages by channel pattern (glob), DM status, sender, or participant count, and sends them to a thread. Rules are checked in order; the first match wins.
 
 ```json
 {
   "rules": [
-    {
-      "match": { "channel": "discord:my-server/general" },
-      "destination": "mind"
-    },
-    {
-      "match": { "channel": "discord:my-server/logs-*" },
-      "destination": "file",
-      "path": "logs/${channel}.md"
-    },
-    {
-      "match": { "isDM": true },
-      "destination": "mind"
-    }
-  ]
+    { "channel": "discord:my-server/general", "thread": "discord" },
+    { "channel": "*", "isDM": true, "thread": "${channel}" },
+    { "channel": "#announcements", "thread": "announcements", "mode": "mention" }
+  ],
+  "threads": {
+    "#*": { "delivery": { "mode": "batch", "debounce": 20, "maxWait": 120, "triggers": ["@my-mind"] } }
+  }
 }
 ```
 
@@ -36,16 +29,15 @@ Each rule matches messages by channel pattern (glob), DM status, sender, or part
 - **`isDM`** — boolean, matches direct messages
 - **`participants`** — participant count (e.g. `2` matches a two-party conversation)
 
-## Destinations
+A rule's `thread` names the thread the message goes to. A `mode` of `"mention"` wakes the mind only for messages that contain its name — other messages on that rule start no turn, though they stay in the conversation and the mind's history. A rule with a key the router doesn't recognize never matches, and the mind is sent a notice naming it.
 
-- **`mind`** — delivers the message to the mind for processing (the default when no `destination` is set)
-- **`file`** — appends the message to a file in the mind's `home/` directory (requires `path`)
+## Thread settings
 
-A mind-destination rule can also set a `thread` to route the message into a named session, and a `mode` of `"mention"` to only wake the mind when its name appears in the message.
+The `threads` section configures delivery per thread (keys are globs matched against the thread name): `delivery` (`"immediate"`, `"batch"`, or a batch object with `debounce`/`maxWait` seconds and `triggers` that flush early), `interrupt`, and `instructions`.
 
 ## Template variables
 
-File paths and thread names support template expansion:
+Thread names support template expansion:
 
 | Variable | Value |
 |----------|-------|
@@ -64,6 +56,6 @@ When gating is on, messages from an unrouted channel are held rather than delive
 
 1. Message arrives via bridge or CLI
 2. The DeliveryManager routes the message to the target mind
-3. Rules are matched in order; the first matching rule determines the destination
+3. Rules are matched in order; the first matching rule determines the thread
 4. If no rule matches, `gateUnmatched` behavior applies — held (gated) or delivered to the default thread
 5. Delivered messages are formatted with a prefix (channel, sender, time)

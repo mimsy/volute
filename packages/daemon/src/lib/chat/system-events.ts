@@ -136,6 +136,8 @@ export function eventLabel(type: string, meta: Record<string, unknown> | null | 
           return "Variant join blocked";
         case "infrastructure":
           return s("reason") ? `Infrastructure: ${s("reason")}` : "Infrastructure failure";
+        case "routes":
+          return "Routing config";
         default:
           return "Notice";
       }
@@ -155,6 +157,7 @@ export const NOTICE_KINDS = [
   "context_lost",
   "join_blocked",
   "infrastructure",
+  "routes",
 ] as const;
 
 export type NoticeKind = (typeof NOTICE_KINDS)[number];
@@ -1236,6 +1239,35 @@ export async function hasUndeliveredEvent(
     .limit(1)
     .get();
   return row != null;
+}
+
+/**
+ * Withdraw a mind's unread next-turn events with this meta.reason — for a notice that has
+ * stopped being true before the mind read it. Rows are stamped delivered with
+ * `meta.superseded` (visible in the events UI, like the overflow trim). Returns the
+ * withdrawn rows' meta so the caller can undo whatever it recorded about sending them.
+ */
+export async function supersedeUndeliveredEvents(
+  mind: string,
+  reason: string,
+): Promise<Record<string, unknown>[]> {
+  const db = await getDb();
+  const rows = await db
+    .update(systemEvents)
+    .set({
+      delivered_at: sql`(datetime('now'))`,
+      meta: sql`json_set(COALESCE(${systemEvents.meta}, '{}'), '$.superseded', 1)`,
+    })
+    .where(
+      and(
+        eq(systemEvents.mind, mind),
+        eq(systemEvents.delivery, "next-turn"),
+        isNull(systemEvents.delivered_at),
+        sql`json_extract(${systemEvents.meta}, '$.reason') = ${reason}`,
+      ),
+    )
+    .returning({ meta: systemEvents.meta });
+  return rows.map((r) => parseMeta(r.meta, `superseded ${reason} event`));
 }
 
 /**

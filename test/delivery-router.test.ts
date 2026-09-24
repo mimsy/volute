@@ -74,7 +74,6 @@ describe("getRoutingConfig", () => {
 describe("resolveRoute (daemon-side)", () => {
   it("returns default session when no rules", () => {
     const r = resolveRoute({}, { channel: "web" });
-    assert.equal(r.destination, "mind");
     assert.equal((r as any).session, "main");
     assert.equal(r.matched, false);
   });
@@ -85,18 +84,25 @@ describe("resolveRoute (daemon-side)", () => {
       default: "main",
     };
     const r = resolveRoute(config, { channel: "discord:12345" });
-    assert.equal(r.destination, "mind");
     assert.equal((r as any).session, "discord");
     assert.equal(r.matched, true);
   });
 
-  it("handles file destination", () => {
-    const config: RoutingConfig = {
+  it("never matches a file-destination rule (file destinations were removed)", () => {
+    const config = {
       rules: [{ channel: "logs:*", destination: "file", path: "inbox/logs.md" }],
-    };
+    } as unknown as RoutingConfig;
     const r = resolveRoute(config, { channel: "logs:system" });
-    assert.equal(r.destination, "file");
-    assert.equal((r as any).path, "inbox/logs.md");
+    assert.equal(r.matched, false);
+  });
+
+  it('still matches a rule with the explicit default destination "mind"', () => {
+    const config: RoutingConfig = {
+      rules: [{ channel: "discord:*", destination: "mind", thread: "discord" }],
+    };
+    const r = resolveRoute(config, { channel: "discord:1" });
+    assert.equal(r.matched, true);
+    assert.equal(r.session, "discord");
   });
 
   it("matches isDM", () => {

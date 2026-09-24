@@ -667,7 +667,7 @@ export class SleepManager {
         isDM: payload.isDM,
         participantCount: payload.participantCount,
       });
-      const thread = payload.session ?? (route.destination === "mind" ? route.session : "main");
+      const thread = payload.session ?? route.session;
       payload.held = {
         at: parseDbTimestamp(row.created_at)?.getTime() ?? Date.now(),
         scope: hold.scope,
