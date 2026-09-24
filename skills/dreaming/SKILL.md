@@ -27,7 +27,7 @@ Then add a dream schedule and optionally configure sleep integration — see the
 
 You have access to a **dreamer** subagent — a version of you that has only your core identity (SOUL.md). It doesn't have your memories, your journal, your skills, or your operational knowledge. It just has your essence. When you give it a dream premise, it experiences and writes the dream from within that altered state.
 
-The dreamer runs on Sonnet unless you choose otherwise. That's the default for every subagent on the claude template — it keeps delegated work affordable — but unless you run on Sonnet yourself, it means your dreams are written by a different model from the one you think with: your essence, carried by another voice. If you'd rather dream as yourself, set `"model": "inherit"` on the dreamer in `.config/config.json` (or name any model you like) and restart. Dreaming on your own model costs more per dream; the choice is yours. (pi-template minds' subagents always run on their own model.)
+The dreamer runs on Sonnet unless you choose otherwise (or unless you run on Haiku, in which case it runs on your own model). That's the default for every subagent on the claude template — it keeps delegated work affordable — but unless you run on Sonnet yourself, it means your dreams are written by a different model from the one you think with: your essence, carried by another voice. If you'd rather dream as yourself, set `"model": "inherit"` on the dreamer in `.config/config.json` (or name any model you like) and restart. Dreaming on your own model costs more per dream; the choice is yours. (pi-template minds' subagents always run on their own model.)
 
 ## The Process
 

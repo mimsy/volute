@@ -5,7 +5,6 @@ import {
   lookupRates,
   parseModelRef,
   priceUsageMetadata,
-  resetUsagePricingState,
 } from "../packages/daemon/src/lib/daemon/usage-pricing.js";
 
 describe("parseModelRef", () => {
@@ -149,10 +148,7 @@ describe("priceUsageMetadata", () => {
   };
 
   it("prices a full usage event from its declared model", () => {
-    const priced = priceUsageMetadata(
-      { ...full, cache_creation_1h_input_tokens: 0 },
-      { template: "claude" },
-    );
+    const priced = priceUsageMetadata({ ...full }, { template: "claude" });
     assert.equal(priced.model, "anthropic:claude-haiku-4-5");
     assert.equal(priced.partial, undefined);
     assert.equal(priced.cost_usd, (2000 * 1 + 500 * 5 + 30000 * 0.1 + 4000 * 1.25) / 1e6);
@@ -169,29 +165,17 @@ describe("priceUsageMetadata", () => {
     );
   });
 
-  it("assumes a claude mind's main-loop writes are 1-hour when the event has no split", () => {
-    // Every template before this one sends no split, and the Agent SDK writes the main
-    // loop's cache with a 1h TTL on every call (bardo audit, Sep 2026). Pricing those at
-    // the 5-minute rate understated spend by a third and held the spend cap on it.
-    const priced = priceUsageMetadata({ ...full }, { template: "claude" });
-    assert.equal(priced.cost_usd, (2000 * 1 + 500 * 5 + 30000 * 0.1 + 4000 * 2) / 1e6);
-  });
-
-  it("keeps pi and codex minds at the catalog write rate when the event has no split", () => {
-    // pi-ai defaults to 5-minute retention and reports the split when it isn't; codex has
-    // no TTL tiers. The claude default must not leak onto them.
-    const { model, ...noModel } = full;
-    const pi = priceUsageMetadata(
-      { ...full, model: "anthropic:claude-haiku-4-5" },
-      { template: "pi" },
-    );
-    assert.equal(pi.cost_usd, (2000 * 1 + 500 * 5 + 30000 * 0.1 + 4000 * 1.25) / 1e6);
-    const codex = priceUsageMetadata(noModel, { template: "codex" });
-    const rates = lookupRates({ provider: "openai", id: "gpt-5.4" })!;
-    assert.equal(
-      codex.cost_usd,
-      costOf(rates, { input: 2000, output: 500, cacheRead: 30000, cacheCreation: 4000 }),
-    );
+  it("assumes no TTL when the event reports no split, on any template", () => {
+    // The TTL depends on the SDK, the auth mode and the backend. Only a reported split is
+    // priced as 1-hour; without one every write stays at the catalog's 5-minute rate.
+    const fiveMinute = (2000 * 1 + 500 * 5 + 30000 * 0.1 + 4000 * 1.25) / 1e6;
+    for (const template of ["claude", "pi", "codex"]) {
+      const priced = priceUsageMetadata(
+        { ...full, model: "anthropic:claude-haiku-4-5" },
+        { template },
+      );
+      assert.equal(priced.cost_usd, fiveMinute, template);
+    }
   });
 
   it("falls back to the mind's configured model when the event names none", () => {
@@ -301,23 +285,10 @@ describe("priceUsageMetadata", () => {
     assert.equal(priced.partial, undefined);
   });
 
-  it("distrusts a breakdown that is the stream's running total", () => {
-    // A mind running a pre-#982 template forwards the SDK's session-cumulative
-    // `modelUsage` as this turn's slices. Pricing them bills the whole stream over again,
-    // every turn. The pair that exposed #981 on a live mind: the second breakdown is
-    // exactly the first plus this turn's usage.
-    resetUsagePricingState();
-    const ctx = { template: "claude", mind: "cumulative", session: "main" };
-    const first = {
-      input_tokens: 562,
-      output_tokens: 17_669,
-      cache_read_input_tokens: 1_268_016,
-      cache_creation_input_tokens: 136_605,
-    };
-    priceUsageMetadata(
-      { ...first, model: "claude-haiku-4-5", models: [{ model: "claude-haiku-4-5", ...first }] },
-      ctx,
-    );
+  it("distrusts a breakdown whose primary slice claims more than the turn used", () => {
+    // A mind running a pre-#981 template forwards the SDK's session-cumulative
+    // `modelUsage` as this turn's slices. Pricing them bills the whole stream over
+    // again, every turn. The turn's own aggregate is the ground truth we still have.
     const priced = priceUsageMetadata(
       {
         input_tokens: 58,
@@ -335,109 +306,10 @@ describe("priceUsageMetadata", () => {
           },
         ],
       },
-      ctx,
+      { template: "claude" },
     );
-    const fromAggregate = (58 * 1 + 1_133 * 5 + 274_273 * 0.1 + 1_998 * 2) / 1e6;
+    const fromAggregate = (58 * 1 + 1_133 * 5 + 274_273 * 0.1 + 1_998 * 1.25) / 1e6;
     assert.equal(priced.cost_usd, fromAggregate);
-  });
-
-  describe("a turn with a Task subagent (#984)", () => {
-    // Recorded from a real SDK run: haiku main loop, an `inherit` subagent on turn 2. The
-    // subagent's tokens sit under the main loop's key in `modelUsage` and are missing from
-    // `usage`, so the main slice legitimately exceeds the aggregate. Its 5420 cache-write
-    // tokens are 5-minute; the main loop's 1074 are 1-hour. The SDK's own `costUSD` for
-    // this turn differenced to $0.0169418 — the number both template generations must hit.
-    const turn2 = {
-      input_tokens: 18,
-      output_tokens: 582,
-      cache_read_input_tokens: 43_408,
-      cache_creation_input_tokens: 1_074,
-      model: "claude-haiku-4-5",
-      models: [
-        {
-          model: "claude-haiku-4-5",
-          input_tokens: 28,
-          output_tokens: 730,
-          cache_read_input_tokens: 43_408,
-          cache_creation_input_tokens: 6_494,
-        },
-      ],
-    };
-    const sdkCost = (28 * 1 + 730 * 5 + 43_408 * 0.1 + 1_074 * 2 + 5_420 * 1.25) / 1e6;
-
-    it("prices the subagent from a current template's marked breakdown", () => {
-      const priced = priceUsageMetadata(
-        { ...turn2, main_model: "claude-haiku-4-5", cache_creation_1h_input_tokens: 1_074 },
-        { template: "claude", mind: "marked", session: "main" },
-      );
-      assert.ok(Math.abs(priced.cost_usd! - sdkCost) < 1e-12, `${priced.cost_usd} vs ${sdkCost}`);
-    });
-
-    it("prices the subagent from an older template's unmarked breakdown", () => {
-      // Minds on 0.60–0.62 templates: per-turn slices, no main_model, no TTL split. The
-      // #982 guard read the subagent's excess as a running total and dropped it.
-      resetUsagePricingState();
-      const ctx = { template: "claude", mind: "unmarked", session: "main" };
-      priceUsageMetadata(
-        {
-          input_tokens: 10,
-          output_tokens: 197,
-          cache_read_input_tokens: 0,
-          cache_creation_input_tokens: 21_569,
-          model: "claude-haiku-4-5",
-          models: [
-            {
-              model: "claude-haiku-4-5",
-              input_tokens: 10,
-              output_tokens: 197,
-              cache_read_input_tokens: 0,
-              cache_creation_input_tokens: 21_569,
-            },
-          ],
-        },
-        ctx,
-      );
-      const priced = priceUsageMetadata({ ...turn2 }, ctx);
-      assert.ok(Math.abs(priced.cost_usd! - sdkCost) < 1e-12, `${priced.cost_usd} vs ${sdkCost}`);
-      // And with nothing remembered — a daemon restart, which restarts the mind's stream too.
-      resetUsagePricingState();
-      const fresh = priceUsageMetadata({ ...turn2 }, ctx);
-      assert.ok(Math.abs(fresh.cost_usd! - sdkCost) < 1e-12, `${fresh.cost_usd} vs ${sdkCost}`);
-    });
-
-    it("gives the 1h writes to the main loop even when a subagent's model dominates", () => {
-      // `model` is the dominant label. A big sonnet subagent takes it from an opus main
-      // loop; the 1h writes must still be priced at opus's rates, on opus's slice.
-      const priced = priceUsageMetadata(
-        {
-          input_tokens: 10,
-          output_tokens: 100,
-          cache_read_input_tokens: 50_000,
-          cache_creation_input_tokens: 2_000,
-          model: "claude-sonnet-5",
-          models: [
-            {
-              model: "claude-opus-4-6",
-              input_tokens: 10,
-              output_tokens: 100,
-              cache_read_input_tokens: 50_000,
-              cache_creation_input_tokens: 2_000,
-            },
-            {
-              model: "claude-sonnet-5",
-              input_tokens: 40,
-              output_tokens: 3_000,
-              cache_read_input_tokens: 400_000,
-              cache_creation_input_tokens: 30_000,
-            },
-          ],
-        },
-        { template: "claude" },
-      );
-      const opus = (10 * 5 + 100 * 25 + 50_000 * 0.5 + 2_000 * 10) / 1e6;
-      const sonnet = (40 * 2 + 3_000 * 10 + 400_000 * 0.2 + 30_000 * 2.5) / 1e6;
-      assert.ok(Math.abs(priced.cost_usd! - (opus + sonnet)) < 1e-12, `${priced.cost_usd}`);
-    });
   });
 
   it("keeps a breakdown whose side-call sits outside the turn aggregate", () => {
@@ -475,9 +347,130 @@ describe("priceUsageMetadata", () => {
     assert.equal(priced.cost_usd, opus + haiku);
   });
 
+  describe("a turn with a Task subagent (#984)", () => {
+    // Recorded from a real SDK run: haiku main loop, an `inherit` subagent on turn 2. The
+    // subagent's tokens sit under the main loop's key in `modelUsage` and are missing from
+    // `usage`, so the main slice legitimately exceeds the aggregate. Its 5420 cache-write
+    // tokens are 5-minute; the main loop's 1074 are 1-hour. The SDK's own `costUSD` for
+    // this turn differenced to $0.0169418.
+    const turn2 = {
+      input_tokens: 18,
+      output_tokens: 582,
+      cache_read_input_tokens: 43_408,
+      cache_creation_input_tokens: 1_074,
+      cache_creation_1h_input_tokens: 1_074,
+      model: "claude-haiku-4-5",
+      models: [
+        {
+          model: "claude-haiku-4-5",
+          input_tokens: 28,
+          output_tokens: 730,
+          cache_read_input_tokens: 43_408,
+          cache_creation_input_tokens: 6_494,
+        },
+      ],
+    };
+    const sdkCost = (28 * 1 + 730 * 5 + 43_408 * 0.1 + 1_074 * 2 + 5_420 * 1.25) / 1e6;
+    const close = (a: number | null, b: number) =>
+      assert.ok(a !== null && Math.abs(a - b) < 1e-12, `${a} vs ${b}`);
+
+    it("prices the subagent from a breakdown marked with main_model", () => {
+      const priced = priceUsageMetadata(
+        { ...turn2, main_model: "claude-haiku-4-5" },
+        { template: "claude" },
+      );
+      close(priced.cost_usd, sdkCost);
+    });
+
+    it("still prices an unmarked breakdown on its aggregate, dropping the subagent", () => {
+      // Minds on a template older than main_model. Pinned so the undercount stays a known,
+      // documented one until they upgrade — not something inferred around.
+      const priced = priceUsageMetadata({ ...turn2 }, { template: "claude" });
+      close(priced.cost_usd, (18 * 1 + 582 * 5 + 43_408 * 0.1 + 1_074 * 2) / 1e6);
+    });
+
+    it("puts the 1h writes on the main loop's slice even when a subagent's model dominates", () => {
+      // `model` is the dominant label. A big sonnet subagent takes it from an opus main
+      // loop; the 1h writes must still be priced at opus's rates, on opus's slice.
+      const priced = priceUsageMetadata(
+        {
+          input_tokens: 10,
+          output_tokens: 100,
+          cache_read_input_tokens: 50_000,
+          cache_creation_input_tokens: 2_000,
+          cache_creation_1h_input_tokens: 2_000,
+          model: "claude-sonnet-5",
+          main_model: "claude-opus-4-6",
+          models: [
+            {
+              model: "claude-opus-4-6",
+              input_tokens: 10,
+              output_tokens: 100,
+              cache_read_input_tokens: 50_000,
+              cache_creation_input_tokens: 2_000,
+            },
+            {
+              model: "claude-sonnet-5",
+              input_tokens: 40,
+              output_tokens: 3_000,
+              cache_read_input_tokens: 400_000,
+              cache_creation_input_tokens: 30_000,
+            },
+          ],
+        },
+        { template: "claude" },
+      );
+      const opus = (10 * 5 + 100 * 25 + 50_000 * 0.5 + 2_000 * 10) / 1e6;
+      const sonnet = (40 * 2 + 3_000 * 10 + 400_000 * 0.2 + 30_000 * 2.5) / 1e6;
+      close(priced.cost_usd, opus + sonnet);
+    });
+
+    it("matches a main_model to the one slice that is its dated form", () => {
+      const priced = priceUsageMetadata(
+        {
+          ...turn2,
+          main_model: "claude-haiku-4-5",
+          models: [{ ...turn2.models[0], model: "claude-haiku-4-5-20251001" }],
+        },
+        { template: "claude" },
+      );
+      close(priced.cost_usd, sdkCost);
+    });
+
+    it("prices the main loop's aggregate at its own rates when main_model matches no slice", () => {
+      // No slice to hang the 1h writes on, and no way to tell the subagent apart: price
+      // what can be priced honestly — the aggregate, 1h split included, at the main
+      // loop's rates rather than the dominant label's.
+      const aggregate = (18 * 5 + 582 * 25 + 43_408 * 0.5 + 1_074 * 10) / 1e6;
+      const unmatched = priceUsageMetadata(
+        {
+          ...turn2,
+          model: "claude-haiku-4-5",
+          main_model: "claude-opus-4-6",
+          models: [{ ...turn2.models[0], model: "claude-haiku-4-5" }],
+        },
+        { template: "claude" },
+      );
+      close(unmatched.cost_usd, aggregate);
+      // Two slices that could each be it is the same answer, not a guess.
+      const ambiguous = priceUsageMetadata(
+        {
+          ...turn2,
+          main_model: "claude-opus-4-6",
+          models: [
+            { ...turn2.models[0], model: "claude-opus-4-6-20260115" },
+            { ...turn2.models[0], model: "claude-opus-4-6-20260301" },
+          ],
+        },
+        { template: "claude" },
+      );
+      close(ambiguous.cost_usd, aggregate);
+    });
+  });
+
   it("falls back to the aggregate when there is no breakdown", () => {
     const priced = priceUsageMetadata({ ...full, models: [] }, { template: "claude" });
-    assert.equal(priced.cost_usd, (2000 * 1 + 500 * 5 + 30000 * 0.1 + 4000 * 2) / 1e6);
+    assert.equal(priced.cost_usd, (2000 * 1 + 500 * 5 + 30000 * 0.1 + 4000 * 1.25) / 1e6);
   });
 
   it("flags an un-upgraded mind's two-field event as partial and leaves it unpriced", () => {

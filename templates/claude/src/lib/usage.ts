@@ -194,12 +194,6 @@ export function buildUsagePayload(
  * really did reset, the next counters come in below it and `baselineFor` rebases.
  */
 export function isUsableBaseline(modelUsage: ModelUsageMap): boolean {
-  return Object.values(modelUsage ?? {}).some(
-    (mu) =>
-      !!mu &&
-      ((mu.inputTokens ?? 0) > 0 ||
-        (mu.outputTokens ?? 0) > 0 ||
-        (mu.cacheReadInputTokens ?? 0) > 0 ||
-        (mu.cacheCreationInputTokens ?? 0) > 0),
-  );
+  // Undiffed, `usageByModel` keeps exactly the models with a non-zero counter.
+  return usageByModel(modelUsage) !== undefined;
 }

@@ -202,10 +202,7 @@ export async function handleMindEvent(
     try {
       Object.assign(
         event.metadata,
-        priceUsageMetadata(event.metadata, {
-          ...(await mindPricingContext(mind)),
-          session: event.session,
-        }),
+        priceUsageMetadata(event.metadata, await mindPricingContext(mind)),
       );
     } catch (err) {
       llog.error(`failed to price usage event for ${mind}`, log.errorData(err));
