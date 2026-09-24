@@ -125,6 +125,15 @@ describe("parseSkillMd", () => {
     });
   });
 
+  it("never parses a hook event that could leave .local/hooks", () => {
+    // Shims are written as root under user isolation from the mind's own,
+    // editable SKILL.md — the event name becomes a directory under .local/hooks.
+    const result = parseSkillMd(
+      "---\nname: t\ndescription: t\nmetadata:\n  hooks:\n    ../../../etc/cron.d: scripts/x.sh\n    /abs: scripts/x.sh\n    pre-prompt: scripts/ok.sh\n---\n",
+    );
+    assert.deepEqual(result.hooks, { "pre-prompt": "scripts/ok.sh" });
+  });
+
   it("returns empty hooks when none declared", () => {
     const result = parseSkillMd("---\nname: test\ndescription: test\n---\n");
     assert.deepEqual(result.hooks, {});
