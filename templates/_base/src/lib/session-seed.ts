@@ -11,7 +11,9 @@
  * The copy is verbatim: marker lines, thinking blocks, tool_use/tool_result all
  * survive as-is. Only two things are rewritten — the `sessionId` on every line
  * (to the freshly generated session id) and the first chain event's `parentUuid`
- * (nulled, to detach the tail from the dropped history). The exception is a final
+ * (nulled, to detach the tail from the dropped history). The CLI's `prompt_snapshot`
+ * lines are left behind, the chain spliced around them, so the new session renders
+ * the live system prompt. The exception is a final
  * turn too large for the budget on its own (typically the long tool loop that
  * crossed the context limit): it keeps its opening prompt, marked as trimmed, and
  * its latest whole steps, re-linked onto the prompt.
@@ -210,12 +212,173 @@ export function transcriptTokens(jsonl: string): number {
   return p ? p.parsed.reduce((sum, o) => sum + estimateLineTokens(o), 0) : 0;
 }
 
+// What an attachment line sends the model. Transcripts also carry attachments that
+// are CLI bookkeeping and never sent — above all `prompt_snapshot`, a 12k–121k-char
+// copy of the system prompt written in the first turn of each stream, whose counting
+// made every such turn look ~67k tokens (#1141). Read from the bundled CLI (2.1.281 /
+// SDK 0.3.281): when an attachment renders to text, the CLI records exactly that text
+// on the line as `rendered: [{ content }]`, so that is what we measure. It records
+// nothing for bookkeeping (which renders to nothing) or for a render that isn't all
+// text (an image or PDF read), and older CLIs never recorded it; for those lines we
+// fall back on the attachment's own JSON, but only for types its
+// `normalizeAttachmentForAPI` renders at all. That list is an allowlist, as the CLI's
+// is — it sends nothing for a type it doesn't know — so a new bookkeeping type costs 0
+// here rather than breaking seed budgets again.
+const RENDERED_ATTACHMENTS = new Set([
+  "advisor_tool",
+  "agent_listing_delta",
+  "agent_mention",
+  "artifact_opening_prefetch",
+  "async_hook_response",
+  "at_mention_reference",
+  "audio_transcript",
+  "auto_mode",
+  "auto_mode_exit",
+  "bash_output_audience_note",
+  "batching_reminder",
+  "budget_usd",
+  "compact_file_reference",
+  "context_sections",
+  "coordinator_context",
+  "cowork_memory_context",
+  "critical_system_reminder",
+  "date",
+  "date_change",
+  "deferred_tools_delta",
+  "diagnostics",
+  "dir_sync_notice",
+  "directory",
+  "dynamic_skill",
+  "edited_text_file",
+  "environment",
+  "file",
+  "fork_briefing",
+  "hook_additional_context",
+  "hook_blocking_error",
+  "hook_stopped_continuation",
+  "hook_success", // only for the hook events below
+  "inlined_image_paths",
+  "instructions",
+  "invoked_skills",
+  "language",
+  "mcp_dropped_tools_delta",
+  "mcp_instructions_delta",
+  "mcp_resource",
+  "memory_update",
+  "model",
+  "nested_memory",
+  "opened_file_in_ide",
+  "output_style",
+  "output_style_instructions",
+  "output_token_usage",
+  "pdf_reference",
+  "peer_mention",
+  "plan_file_reference",
+  "plan_mode",
+  "plan_mode_exit",
+  "plan_mode_reentry",
+  "poll_events",
+  "prefix_delta",
+  "queued_command",
+  "read_truncation_notice",
+  "relevant_memories",
+  "remote_session_change",
+  "sandbox_instructions",
+  "secondary_reminder",
+  "selected_lines_in_diff",
+  "selected_lines_in_ide",
+  "session_context",
+  "silent_turn_reminder",
+  "skill_listing",
+  "task_reminder",
+  "task_status",
+  "team_context",
+  "teammate_mailbox",
+  "thread_state",
+  "todo_reminder",
+  "token_usage",
+  "tool_hosts_correction",
+  "tool_hosts_notice",
+  "tool_search_usage_reminder",
+  "total_tokens_reminder",
+  "ultra_effort_enter",
+  "ultra_effort_exit",
+  "ultrathink_effort",
+  "unknown_command_fallback",
+  "workflow_keyword_request",
+  "workflow_size_guideline_change",
+]);
+
+/** The hook events whose `hook_success` output the CLI sends (Volute's startup and pre-prompt hooks). */
+const RENDERED_HOOK_SUCCESS = new Set(["SessionStart", "UserPromptSubmit", "UserPromptExpansion"]);
+
+/** Fallback for a line without `rendered`: the attachment's JSON, if its type is sent at all. */
+function attachmentTokens(a: Record<string, unknown>): number {
+  if (typeof a.type !== "string" || !RENDERED_ATTACHMENTS.has(a.type)) return 0;
+  if (a.type === "hook_success" && !RENDERED_HOOK_SUCCESS.has(String(a.hookEvent))) return 0;
+  // A read image carries its base64; the model sees an image block at a flat cost.
+  const content = a.content as { type?: unknown } | null | undefined;
+  if (a.type === "file" && content?.type === "image") return IMAGE_TOKENS;
+  return textTokens(JSON.stringify(a));
+}
+
 /** Estimated model tokens a transcript line contributes to the resumed context. */
 export function estimateLineTokens(o: JsonlLine): number {
   if (o.message) return contentTokens(o.message.content);
-  // Hook output and other attachments reach the model as system reminders.
-  if (o.type === "attachment") return textTokens(JSON.stringify(o.attachment ?? ""));
-  return 0; // markers (mode, last-prompt, snapshots…) aren't sent
+  if (o.type !== "attachment") return 0; // markers (mode, last-prompt, …) aren't sent
+  if (Array.isArray(o.rendered)) {
+    let sum = 0;
+    for (const r of o.rendered as { content?: unknown }[]) sum += contentTokens(r?.content);
+    return sum;
+  }
+  const a = o.attachment as Record<string, unknown> | null | undefined;
+  return a && typeof a === "object" ? attachmentTokens(a) : 0;
+}
+
+/**
+ * Lines a seed leaves behind. Recall lines from an earlier seam: each seam asks the
+ * daemon afresh. And `prompt_snapshot`, which is not inert: the CLI reuses the last
+ * recorded system prompt verbatim instead of the live one (the SDK's
+ * `systemPromptSnapshot`), so a seed carrying one would hold the new session to the old
+ * session's SOUL.md and MEMORY.md. (A plain resume replays it too — that side is #1148.)
+ */
+function isSeedDropped(o: JsonlLine): boolean {
+  if (o.voluteRecall === true) return true;
+  return (
+    o.type === "attachment" &&
+    (o.attachment as { type?: unknown } | null | undefined)?.type === "prompt_snapshot"
+  );
+}
+
+/**
+ * Drop the lines a seed doesn't carry, splicing the chain around them: a snapshot is a
+ * chain link (the first reply of a stream hangs off it), and a line left pointing at a
+ * missing parent would cut everything above it from the resumed conversation. A line
+ * whose dropped ancestry runs out at a root is hung on the kept line before it instead,
+ * so the seed never gains a second root.
+ */
+function dropSeedBookkeeping(parsed: JsonlLine[]): JsonlLine[] {
+  const droppedParent = new Map<string, string | null>();
+  const kept: JsonlLine[] = [];
+  for (const o of parsed) {
+    if (!isSeedDropped(o)) kept.push(o);
+    else if (typeof o.uuid === "string") droppedParent.set(o.uuid, o.parentUuid ?? null);
+  }
+  let previous: string | null = null;
+  for (const o of kept) {
+    let parent = o.parentUuid;
+    if (typeof parent === "string" && droppedParent.has(parent)) {
+      const seen = new Set<string>();
+      while (typeof parent === "string" && droppedParent.has(parent) && !seen.has(parent)) {
+        seen.add(parent);
+        parent = droppedParent.get(parent);
+      }
+      if (typeof parent !== "string" || droppedParent.has(parent)) parent = previous;
+      o.parentUuid = parent;
+    }
+    if (typeof o.uuid === "string") previous = o.uuid;
+  }
+  return kept;
 }
 
 /**
@@ -668,13 +831,14 @@ export type SeededTranscript = { sessionId: string; lines: string[]; recallEntri
 type PlannedSeed = { parsed: JsonlLine[]; plan: TailPlan; tailStartedAt?: string };
 
 /**
- * Parse and plan the verbatim tail. Recall lines from an earlier seam are dropped
- * first — each seam asks the daemon afresh. Null if there's nothing seedable.
+ * Parse and plan the verbatim tail. Recall lines from an earlier seam and prompt
+ * snapshots are dropped first (see dropSeedBookkeeping). Null if there's nothing
+ * seedable.
  */
 function planSeed(jsonl: string, seedTokens: number): PlannedSeed | null {
   const p = parseJsonl(jsonl, false);
   if (!p) return null;
-  const parsed = p.parsed.filter((o) => o.voluteRecall !== true);
+  const parsed = dropSeedBookkeeping(p.parsed);
   if (parsed.length === 0 || turnBoundaries(parsed).length === 0) return null;
   const plan = planTail(parsed, seedTokens);
   const first = plan.keep.map((i) => parsed[i]).find((o) => typeof o.timestamp === "string");

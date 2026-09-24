@@ -33,6 +33,7 @@ import {
   seedSession,
   TAIL_ONLY_SEED_TOKENS,
   TRIMMED_TURN_MARKER,
+  transcriptTokens,
   writeRotationArchivePointer,
 } from "../templates/_base/src/lib/session-seed.js";
 
@@ -1438,5 +1439,186 @@ describe("findLatestArchivedSession — newest minute first", () => {
     writeRotationArchivePointer(sessionsDir, "main", "older", new Date("2026-09-23T09:59:30Z"));
     writeFileSync(resolve(sessionsDir, "archive", "main-2026-09-23T10-00.json"), "{corrupt");
     assert.equal(findLatestArchivedSession(sessionsDir, "main")?.sessionId, "older");
+  });
+});
+
+// --- CLI prompt bookkeeping (#1141) ---
+
+/** An attachment line, shaped as the bundled CLI (2.1.281) writes them. */
+function attachmentLine(
+  uuid: string,
+  parentUuid: string,
+  attachment: Record<string, unknown>,
+  rendered?: string[],
+) {
+  return JSON.stringify({
+    type: "attachment",
+    uuid,
+    parentUuid,
+    sessionId: OLD,
+    attachment,
+    ...(rendered ? { rendered: rendered.map((content) => ({ content })) } : {}),
+  });
+}
+
+/** A `prompt_snapshot`: a copy of the system prompt, never sent to the model. */
+const snapshot = (uuid: string, parentUuid: string) =>
+  attachmentLine(uuid, parentUuid, {
+    type: "prompt_snapshot",
+    systemPrompt: ["s".repeat(100_000)],
+    reminderFold: true,
+  });
+
+/**
+ * Two short turns as a live mind's transcript holds them: each stream's first request
+ * records a snapshot the reply hangs off; a later one records a snapshot, then a
+ * deferred-tools record, then a reminder that does reach the model.
+ */
+const snapshotTranscript = [
+  userPrompt("u1", null, "hello, who's there?"),
+  attachmentLine("env", "u1", { type: "environment", snapshot: { cwd: "/home" } }),
+  snapshot("snap1", "env"),
+  assistant("a1", "snap1", [{ type: "text", text: "it's me" }]),
+  // Kept, but not sent: the CLI renders hook_success only for prompt/startup hooks.
+  attachmentLine("hook", "a1", {
+    type: "hook_success",
+    hookEvent: "PostToolUse",
+    hookName: "PostToolUse:Write",
+    content: "c".repeat(30_000),
+  }),
+  userPrompt("u2", "hook", "and now?"),
+  snapshot("snap2", "u2"),
+  attachmentLine("dtr", "snap2", { type: "deferred_tools_record", entries: ["d".repeat(20_000)] }),
+  attachmentLine("ttr", "dtr", { type: "total_tokens_reminder", text: "tokens: 1234" }, [
+    "<system-reminder>tokens: 1234</system-reminder>",
+  ]),
+  assistant("a2", "ttr", [{ type: "text", text: "still here" }]),
+];
+
+describe("CLI prompt bookkeeping (#1141)", () => {
+  it("doesn't count prompt snapshots or other bookkeeping toward a transcript's size", () => {
+    const size = transcriptTokens(snapshotTranscript.join("\n"));
+    assert.ok(size < 500, `two short turns estimated at ${size} tokens`);
+  });
+
+  it("counts rendered attachments, and hook_success only for the events the CLI sends", () => {
+    const att = (a: Record<string, unknown>) =>
+      estimateLineTokens(JSON.parse(attachmentLine("x", "p", a)));
+    assert.ok(att({ type: "hook_additional_context", content: ["c".repeat(1800)] }) >= 1000);
+    assert.ok(
+      att({ type: "hook_success", hookEvent: "UserPromptSubmit", content: "c".repeat(1800) }) >=
+        1000,
+    );
+    assert.equal(
+      att({ type: "hook_success", hookEvent: "PostToolUse", content: "c".repeat(1800) }),
+      0,
+    );
+    assert.equal(att({ type: "some_future_bookkeeping", data: "c".repeat(1800) }), 0);
+    assert.equal(att({ type: "deferred_tools_record", entries: ["c".repeat(1800)] }), 0);
+  });
+
+  it("measures the text the CLI recorded as sent, not the attachment's own JSON", () => {
+    // advisor_tool: a short attachment that renders to a long reminder.
+    const line = attachmentLine("x", "p", { type: "advisor_tool", enabled: true }, [
+      "r".repeat(1800),
+      "s".repeat(1800),
+    ]);
+    const est = estimateLineTokens(JSON.parse(line));
+    assert.ok(est >= 2000 && est <= 2100, `rendered 3600 chars estimated at ${est}`);
+  });
+
+  it("costs a read image at the flat image rate, not by its base64 size", () => {
+    // An image render isn't all text, so the CLI records no `rendered` for it.
+    const line = attachmentLine("x", "p", {
+      type: "file",
+      filename: "/home/pic.png",
+      content: { type: "image", file: { base64: "A".repeat(1_000_000), type: "image/png" } },
+    });
+    const est = estimateLineTokens(JSON.parse(line));
+    assert.ok(est > 500 && est < 3000, `image read estimated at ${est}`);
+  });
+
+  it("re-seeding a seed keeps one root when a kept line hung off a dropped root", () => {
+    const recall: RecallEntry[] = [
+      {
+        period: "day",
+        period_key: "2026-07-18",
+        start: "2026-07-18T00:00:00.000Z",
+        end: "2026-07-19T00:00:00.000Z",
+        content: "a quiet day",
+      },
+    ];
+    const first = buildSeededTranscript(snapshotTranscript.join("\n"), 1_000_000, recall);
+    assert.ok(first);
+    const firstObjs = parse(first.lines);
+    const recallRoot = firstObjs.find((o) => o.voluteRecall && o.parentUuid === null);
+    // An attachment the CLI hung off the first recall line — a root once recall goes.
+    const lines = [...first.lines];
+    lines.splice(
+      firstObjs.findIndex((o) => o.uuid === "u1") + 1,
+      0,
+      attachmentLine("late", recallRoot.uuid, { type: "date", date: "2026-07-19" }, ["today"]),
+    );
+    const again = buildSeededTranscript(lines.join("\n"), 1_000_000);
+    assert.ok(again);
+    const objs = parse(again.lines);
+    assert.equal(objs.find((o) => o.uuid === "late").parentUuid, "u1");
+    assertResumable(objs);
+  });
+
+  it("keeps the turn carrying a snapshot in the tail, and leaves the snapshot behind", async () => {
+    const res = buildSeededTranscript(snapshotTranscript.join("\n"), DEFAULT_SEED_TOKENS);
+    assert.ok(res);
+    const objs = parse(res.lines);
+    assert.deepEqual(
+      objs.map((o) => o.uuid),
+      ["u1", "env", "a1", "hook", "u2", "dtr", "ttr", "a2"],
+    );
+    // The chain is spliced around the snapshots.
+    assert.equal(objs.find((o) => o.uuid === "a1").parentUuid, "env");
+    assert.equal(objs.find((o) => o.uuid === "dtr").parentUuid, "u2");
+    assertResumable(objs);
+    const msgs = await readBackViaSdk(res);
+    assert.deepEqual(
+      msgs.map((m) => m.uuid),
+      ["u1", "a1", "u2", "a2"],
+    );
+  });
+
+  it("a cold reset keeps a small session that carries snapshots", async () => {
+    const root = mkdtempSync(resolve(tmpdir(), "cold-snapshot-"));
+    const home = resolve(root, "home");
+    const projectDir = resolve(home, ".claude", "projects", "proj");
+    mkdirSync(projectDir, { recursive: true });
+    writeFileSync(resolve(projectDir, `${OLD}.jsonl`), `${snapshotTranscript.join("\n")}\n`);
+    const sessionsDir = resolve(root, ".mind", "sessions");
+    const rotated = await rotateSession({
+      cwd: home,
+      sessionsDir,
+      name: "main",
+      oldSessionId: OLD,
+      minSourceTokens: 35_000,
+    });
+    assert.equal(rotated, null);
+    assert.equal(findLatestArchivedSession(sessionsDir, "main"), null);
+  });
+
+  it("a snapshot in an over-budget turn's prompt doesn't crowd out its steps", () => {
+    // The first step hangs off the snapshot, as in a live transcript.
+    const lines = toolLoopTurn(40, 2000).flatMap((l) => {
+      const o = JSON.parse(l);
+      if (o.uuid === "a0")
+        return [snapshot("snap", "att"), JSON.stringify({ ...o, parentUuid: "snap" })];
+      return [l];
+    });
+    const res = buildSeededTranscript(lines.join("\n"), 10_000);
+    assert.ok(res);
+    const objs = parse(res.lines);
+    const total = estimate(objs);
+    assert.ok(total >= 8_000, `seed estimate ${total} left the budget unused`);
+    assert.ok(!objs.some((o) => o.attachment?.type === "prompt_snapshot"));
+    assert.equal(objs[2].type, "assistant");
+    assert.equal(objs[2].parentUuid, "att");
+    assertResumable(objs);
   });
 });
