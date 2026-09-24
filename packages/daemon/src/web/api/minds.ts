@@ -70,7 +70,7 @@ import {
   importOpenClawWorkspace,
   mergeVariant,
 } from "../../lib/mind/lifecycle.js";
-import { getMemoryStatus } from "../../lib/mind/memory-size.js";
+import { getMemoryDetail, getMemoryStatus } from "../../lib/mind/memory-size.js";
 import {
   findMind,
   findVariants,
@@ -528,6 +528,16 @@ const app = new Hono<AuthEnv>()
         },
       }),
     });
+  })
+  // MEMORY.md headroom + per-section sizes (#954). Separate from GET /:name because
+  // section headings are the mind's own words, and that payload is public.
+  .get("/:name/memory", requireSelf(), async (c) => {
+    const name = c.req.param("name");
+    const entry = await findMind(name);
+    if (!entry) return c.json({ error: "Mind not found" }, 404);
+    const detail = getMemoryDetail(entry.dir ?? mindDir(name));
+    if (!detail) return c.json({ error: "MEMORY.md not found" }, 404);
+    return c.json(detail);
   })
   // Context info — proxy to mind's /context endpoint
   .get("/:name/context", requireSelf(), async (c) => proxyToMind(c, "context"))

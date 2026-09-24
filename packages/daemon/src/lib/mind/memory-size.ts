@@ -14,6 +14,8 @@ export const MEMORY_HARD_CAP_TOKENS = 25000;
 
 export type MemoryStatus = {
   bytes: number;
+  /** Characters — what the template's estimate and cap are measured in. */
+  chars: number;
   /** Estimated tokens (chars / 4 — the same estimate the mind's template uses). */
   estTokens: number;
   softBudgetTokens: number;
@@ -73,12 +75,87 @@ export function getMemoryStatus(projectDir: string): MemoryStatus | null {
   const estTokens = Math.round(chars / 4);
   return {
     bytes,
+    chars,
     estTokens,
     softBudgetTokens,
     hardCapTokens,
     overBudget: estTokens > softBudgetTokens,
     overHardCap: estTokens > hardCapTokens,
   };
+}
+
+export type MemorySection = {
+  /** The heading line as written (`## Concepts`), or null for text before the first heading. */
+  heading: string | null;
+  chars: number;
+  estTokens: number;
+};
+
+/**
+ * MEMORY.md split at its `#`/`##` headings (outside code fences), mirroring
+ * `memorySections` in templates/_base/src/lib/startup.ts — the same split the
+ * overflow notice names when the file is over the cap.
+ */
+export function parseMemorySections(text: string): MemorySection[] {
+  const sections: MemorySection[] = [];
+  let heading: string | null = null;
+  let start = 0;
+  let inFence = false;
+  let pos = 0;
+  const push = (end: number) => {
+    if (end > start) {
+      sections.push({ heading, chars: end - start, estTokens: Math.round((end - start) / 4) });
+    }
+  };
+  for (const line of text.split("\n")) {
+    if (/^\s*(```|~~~)/.test(line)) inFence = !inFence;
+    else if (!inFence && /^#{1,2}\s+\S/.test(line)) {
+      push(pos);
+      heading = line.trim();
+      start = pos;
+    }
+    pos += line.length + 1;
+  }
+  push(text.length);
+  return sections;
+}
+
+/**
+ * Size + budgets plus the per-section breakdown. Section headings are the mind's
+ * own words, so this is served only to the mind itself (and admins) — the public
+ * mind payload carries `getMemoryStatus` alone. Sections are null when the file
+ * is too large to read (see MAX_READ_BYTES).
+ */
+export function getMemoryDetail(
+  projectDir: string,
+): (MemoryStatus & { sections: MemorySection[] | null }) | null {
+  const status = getMemoryStatus(projectDir);
+  if (!status) return null;
+  if (status.bytes > MAX_READ_BYTES) return { ...status, sections: null };
+  try {
+    const text = readFileSync(resolve(projectDir, "home", "MEMORY.md"), "utf-8");
+    return { ...status, sections: parseMemorySections(text) };
+  } catch {
+    return { ...status, sections: null };
+  }
+}
+
+/**
+ * A MEMORY.md heading made safe to print in a terminal. Headings are mind-authored
+ * and `mind status` runs in an admin's shell, so escape sequences (ANSI/CSI, OSC —
+ * which can retitle the window or plant hyperlinks) and other control characters
+ * are stripped rather than passed through.
+ */
+export function printableHeading(heading: string): string {
+  return (
+    heading
+      // biome-ignore lint/suspicious/noControlCharactersInRegex: stripping them is the point
+      .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?/g, "")
+      // biome-ignore lint/suspicious/noControlCharactersInRegex: stripping them is the point
+      .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "")
+      // biome-ignore lint/suspicious/noControlCharactersInRegex: stripping them is the point
+      .replace(/[\x00-\x1f\x7f-\x9f]/g, "")
+  );
 }
 
 /** "~13.3k tokens" / "~800 tokens" — shared formatting for status output. */

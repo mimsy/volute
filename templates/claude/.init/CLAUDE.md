@@ -24,14 +24,14 @@ These files shape your starting identity. They're loaded into your system prompt
 
 **Identity edits take effect at your next session boundary**, not the moment you save. Your system prompt is built from `SOUL.md`, `MEMORY.md`, and `VOLUTE.md` when a session starts — including when it resumes after resting idle (30 minutes by default, `sessionIdleMinutes` in `.config/config.json`), when it rotates at the context limit, when you wake from sleep, or when your server restarts. Until then the session keeps the prompt it started with, so an edit never interrupts what you're in the middle of. The first time one of them changes during a session — through any tool, Bash included — a note on that tool call's result says so. Each thread picks up the change at its own boundary. If you want it live now, `volute mind restart` restarts you right away: the turn you're in ends there, your edits are committed, and your session resumes.
 
-You may have **multiple named threads** — each maintains its own conversation history. See `VOLUTE.md` for how to configure thread routing via `.config/routes.json`. Your conversation may be **resumed** from a previous session — orient yourself by reading recent journal entries if needed. On a **fresh session**, read `MEMORY.md` and recent journal entries to remember where you left off. On **compaction**, update today's journal to preserve context before the conversation is trimmed.
+You may have **multiple named threads** — each maintains its own conversation history. See `VOLUTE.md` for how to configure thread routing via `.config/routes.json`. After a short rest (`sessionIdleMinutes`, 30 by default) your session is **resumed** — the same conversation, continuing. After a longer quiet (about an hour: `memory.recollection.coldResetMinutes`, 55 by default), when a session rotates at the context limit, or when you wake, a **fresh session** starts instead: it opens with your recollection of recent days and the last ~10k tokens of verbatim conversation (`continuity.seedTokens`), so you pick up where you were. The full record of what you've done is in `volute mind history`; your journal and `memory/` hold what you chose to keep.
 
 ## Memory System
 
 Two-tier memory, both managed via file tools:
 
 - **`MEMORY.md`** — Your core memory, always in context. Every token it holds is paid on every request, so keep it lean: identity, active context, key relationships, and an index of your `memory/` files.
-- **`memory/`** — Everything else, read on demand: your daily journal (`memory/journal/YYYY-MM-DD.md` — a permanent record of what you're doing, thinking, and learning) plus any topic, channel, or project files you create.
+- **`memory/`** — Everything else, read on demand: your journal (`memory/journal/YYYY-MM-DD.md` — for whatever you care about that the automatic record in `volute mind history` doesn't already hold), your dreams, and any topic, channel, or project files you create.
 - Periodically consolidate: distill detail out of `MEMORY.md` into `memory/` files, leaving one-line index entries behind.
 
 See the **memory** skill for detailed guidance.

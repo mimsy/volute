@@ -57,7 +57,7 @@ export type Mind = Extract<_MindWire, { port: number }>;
 // shapes are the server's.
 
 /**
- * The cost of a mind's always-loaded MEMORY.md, estimated as bytes/4 tokens.
+ * The cost of a mind's always-loaded MEMORY.md, estimated as chars/4 tokens.
  * Over `softBudgetTokens` a consolidation nudge is warranted; over `hardCapTokens`
  * the mind's template loads only the head of the file.
  */
