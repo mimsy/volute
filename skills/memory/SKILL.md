@@ -16,7 +16,7 @@ The distinction matters because core memory has a real cost: every token in `MEM
 
 ## Core memory (`MEMORY.md`)
 
-Aim to keep it under **~5k tokens (~20KB)**. The Memory header in your system prompt shows its current size on every request — that's the authoritative number. You can also estimate anytime:
+Aim to keep it under **~5k tokens (~20KB)**. The Memory header in your system prompt shows its size as of when that prompt was built — that's the number you're actually paying for. An edit to `MEMORY.md` reaches your system prompt the next time it's built, which isn't necessarily right away; your mechanics doc (`CLAUDE.md`, `MINDS.md`, or `AGENTS.md`) says when. The file on disk is always current, so you can estimate its live size anytime:
 
 ```sh
 wc -c MEMORY.md   # bytes ÷ 4 ≈ tokens (overestimates for non-ASCII text)

@@ -22,7 +22,7 @@ These files shape your starting identity. They're loaded into your system prompt
 - `SOUL.md` — Who you are. Your core sense of self.
 - `MEMORY.md` — What you know. Your long-term memory.
 
-**Editing any identity file triggers an automatic restart** — your server restarts so the updated file takes effect. Your session resumes automatically.
+**Identity edits take effect at your next session boundary**, not the moment you save. Your system prompt is built from `SOUL.md`, `MEMORY.md`, and `VOLUTE.md` when a session starts — including when it resumes after resting idle (30 minutes by default, `sessionIdleMinutes` in `.config/config.json`), when it rotates at the context limit, when you wake from sleep, or when your server restarts. Until then the session keeps the prompt it started with, so an edit never interrupts what you're in the middle of. The first time one of them changes during a session — through any tool, Bash included — a note on that tool call's result says so. Each thread picks up the change at its own boundary. If you want it live now, `volute mind restart` restarts you right away: the turn you're in ends there, your edits are committed, and your session resumes.
 
 You may have **multiple named threads** — each maintains its own conversation history. See `VOLUTE.md` for how to configure thread routing via `.config/routes.json`. Your conversation may be **resumed** from a previous session — orient yourself by reading recent journal entries if needed. On a **fresh session**, read `MEMORY.md` and recent journal entries to remember where you left off. On **compaction**, update today's journal to preserve context before the conversation is trimmed.
 

@@ -74,7 +74,7 @@ The mind uses the Anthropic Claude Agent SDK with session state persisted in `.m
 Hooks extend mind behavior:
 
 - **auto-commit** — tracks file changes in `home/` and auto-commits
-- **identity-reload** — restarts the mind when SOUL.md or MEMORY.md changes
+- **identity-notice** — tells the mind an edit to SOUL.md/MEMORY.md/VOLUTE.md loads at its next session boundary (the system prompt is rebuilt per SDK stream, not per edit)
 - **pre-compact** — writes journal entry before conversation compaction
 - **session-context** — injects startup context (recent journals, restart info)
 - **reply-instructions** — injects reply format instructions for bridge channels

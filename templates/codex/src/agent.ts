@@ -19,7 +19,7 @@ import {
   readSdkInstructions,
   readSkillDescriptions,
 } from "./lib/context-breakdown.js";
-import { daemonEmit, daemonRestart, type EventType } from "./lib/daemon-client.js";
+import { daemonEmit, type EventType } from "./lib/daemon-client.js";
 import { runHooks } from "./lib/hook-loader.js";
 import { log, warn } from "./lib/logger.js";
 import {
@@ -165,14 +165,17 @@ export function createMind(options: {
 
   // Write system prompt to file for Codex model_instructions_file
   const promptPath = resolvePath(options.mindDir, ".mind/system-prompt.md");
+  // The prompt most recently written — what the next turn runs with, and what the context
+  // panel reports.
+  let systemPrompt = options.systemPrompt;
   function refreshSystemPrompt() {
     try {
-      // Re-read and re-compose the system prompt (picks up MEMORY.md changes)
-      writeFileSync(promptPath, loadSystemPrompt());
+      // Re-read and re-compose the system prompt (picks up identity-file edits)
+      systemPrompt = loadSystemPrompt();
     } catch (err) {
-      warn("mind", "failed to refresh system prompt, using initial prompt:", err);
-      writeFileSync(promptPath, options.systemPrompt);
+      warn("mind", "failed to refresh system prompt, keeping the last good one:", err);
     }
+    writeFileSync(promptPath, systemPrompt);
   }
   refreshSystemPrompt();
 
@@ -322,7 +325,13 @@ export function createMind(options: {
       return;
     }
 
-    // Refresh system prompt before each turn (picks up MEMORY.md changes)
+    // Refresh system prompt before each turn — this is how an identity edit takes effect.
+    // The SDK spawns a fresh `codex exec` per run (codex-sdk 0.145 `exec.run`), passing
+    // model_instructions_file as a --config override each time, so the next turn is handed
+    // the edit; a restart would only repeat that same resume. (Unverified here: that Codex
+    // prefers the override to the base_instructions a resumed rollout's session_meta
+    // carries.) Deferring to a session boundary as the claude template does isn't possible:
+    // the file is shared by every thread.
     refreshSystemPrompt();
 
     // Inject startup context on the first turn of each session
@@ -421,9 +430,8 @@ export function createMind(options: {
 
       // Track text deltas per item for streaming
       const itemText = new Map<string, string>();
-      // Track file paths for auto-commit and identity reload
+      // Track file paths for auto-commit
       const changedFiles: string[] = [];
-      let needsReload = false;
 
       for await (const event of events) {
         try {
@@ -565,10 +573,6 @@ export function createMind(options: {
                 if (filePath) {
                   changedFiles.push(filePath);
                   trackFileChange(filePath, options.cwd);
-                  // Check for identity files
-                  if (/\b(SOUL|MEMORY|VOLUTE)\.md$/.test(filePath)) {
-                    needsReload = true;
-                  }
                 }
                 emit(session, {
                   type: "tool_result",
@@ -629,12 +633,6 @@ export function createMind(options: {
 
       // Turn complete — flush file changes
       await flushFileChanges(options.cwd);
-
-      // Identity reload
-      if (needsReload) {
-        log("mind", `session "${session.name}": identity file changed, requesting restart`);
-        daemonRestart({ type: "reload" }).catch((err) => log("mind", "daemonRestart failed:", err));
-      }
 
       log("mind", `session "${session.name}": turn done`);
     } catch (err: any) {
@@ -857,7 +855,6 @@ export function createMind(options: {
     return handler;
   }
 
-  const systemPromptTokens = countSystemPromptTokens(options.systemPrompt);
   const claudeMdTokens = countSdkInstructionTokens(options.cwd);
   const skillDescTokens = countSkillDescriptionTokens([resolvePath(options.cwd, ".agents/skills")]);
 
@@ -879,7 +876,7 @@ export function createMind(options: {
                 (
                   await processCodexSession(
                     jsonlPath,
-                    systemPromptTokens,
+                    countSystemPromptTokens(systemPrompt),
                     claudeMdTokens,
                     skillDescTokens,
                   )
@@ -906,7 +903,7 @@ export function createMind(options: {
         });
       }
     }
-    return { sessions: infos, systemPrompt: systemPromptTokens };
+    return { sessions: infos, systemPrompt: countSystemPromptTokens(systemPrompt) };
   }
 
   async function getContextMessages(): Promise<ContextMessages> {
@@ -918,7 +915,7 @@ export function createMind(options: {
         const result = jsonlPath
           ? await processCodexSession(
               jsonlPath,
-              systemPromptTokens,
+              countSystemPromptTokens(systemPrompt),
               claudeMdTokens,
               skillDescTokens,
             )
@@ -931,7 +928,7 @@ export function createMind(options: {
     }
     return {
       preamble: {
-        systemPrompt: options.systemPrompt,
+        systemPrompt,
         sdkInstructions: readSdkInstructions(options.cwd),
         skillDescriptions: readSkillDescriptions([skillsDir]),
       },

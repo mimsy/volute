@@ -2,9 +2,11 @@ import { resolve } from "node:path";
 
 /**
  * The identity files a mind authors about itself, all of which its system prompt is built
- * from. Every template reads them once, at startup, so an edit only takes effect after the
- * process restarts. (The prompt also draws on files a mind does not author — SPIRIT.md,
- * and pi's MINDS.md — which is why this is a list and not "everything the prompt reads".)
+ * from. When an edit takes effect differs by template: pi reads them once, at startup, and
+ * restarts after a turn that edits one; claude rebuilds the prompt at each session boundary
+ * (a new SDK stream); codex rebuilds it before every turn. (The prompt also draws on files a
+ * mind does not author — SPIRIT.md, and pi's MINDS.md — which is why this is a list and not
+ * "everything the prompt reads".)
  */
 export const IDENTITY_FILES = ["SOUL.md", "MEMORY.md", "VOLUTE.md"];
 
@@ -17,9 +19,8 @@ export type IdentityWatch = {
 
 /**
  * Watches the mind's own edits for identity-file changes and latches a single restart
- * request. Framework-agnostic on purpose: the claude template drives it from an SDK
- * PreToolUse hook (`lib/hooks/identity-reload.ts`), the pi template from its
- * `tool_execution_end` event.
+ * request. Used by the pi template, from its `tool_execution_end` event; the claude
+ * template doesn't restart (see `lib/hooks/identity-notice.ts`).
  */
 export function createIdentityWatch(cwd: string): IdentityWatch {
   let reloadNeeded = false;

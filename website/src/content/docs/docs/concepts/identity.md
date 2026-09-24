@@ -40,4 +40,4 @@ Accepted files land under the mind's `home/inbox/<sender>/`, keeping a clear bou
 
 Identity files are never overwritten during upgrades (`volute mind upgrade`). The `.mind/identity/` directory is preserved across template updates, ensuring a mind's cryptographic identity remains stable.
 
-If SOUL.md, MEMORY.md, or VOLUTE.md is edited, the mind automatically restarts to pick up the changes.
+When SOUL.md, MEMORY.md, or VOLUTE.md is edited, the change reaches the system prompt the next time it is built. The claude template builds it at each session boundary — resume after an idle rest, rotation, wake, or restart — so an edit never interrupts the mind or re-prices a warm session's cache mid-work; the codex template rebuilds it before every turn; the pi template restarts after a turn that edited one. A mind can always make an edit live immediately with `volute mind restart`.

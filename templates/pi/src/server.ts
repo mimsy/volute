@@ -38,10 +38,9 @@ const mind = await createMind({
   subagents: config.subagents,
   onIdentityReload: async () => {
     log("server", "identity file changed — restarting to reload");
-    // No notice: the mind learns about identity-edit restarts from MINDS.md, matching the
-    // claude template — the daemon intentionally sends none for a `reload` restart. This
-    // turn's commits are already flushed before the event handler drains the watch (claude's
-    // server awaits `mind.waitForCommits()` here for the same reason).
+    // No notice: the mind learns about identity-edit restarts from MINDS.md — the daemon
+    // intentionally sends none for a `reload` restart. This turn's commits are already
+    // flushed before the event handler drains the watch.
     await daemonRestart({ type: "reload" });
   },
 });
