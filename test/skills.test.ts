@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { basename, join } from "node:path";
 import { after, afterEach, before, beforeEach, describe, it } from "node:test";
 import { eq } from "drizzle-orm";
 import { getDb } from "../packages/daemon/src/lib/db.js";
@@ -9,6 +17,8 @@ import { minds, sharedSkills } from "../packages/daemon/src/lib/schema.js";
 import {
   autoUpdateMindSkills,
   getSharedSkill,
+  HOOK_SHIM_PREFIX,
+  hookShimName,
   importSkillFromDir,
   installBinShim,
   installHookShims,
@@ -28,6 +38,7 @@ import {
   updateSkill,
 } from "../packages/daemon/src/lib/skills.js";
 import { exec } from "../packages/daemon/src/lib/util/exec.js";
+import { discoverHooks } from "../templates/_base/src/lib/hook-loader.js";
 import { createMindGitRepo } from "./helpers/git.js";
 
 async function cleanup() {
@@ -589,6 +600,137 @@ describe("mind skill operations", () => {
     // Local changes to extra.md should be preserved
     assert.ok(readFileSync(localExtra, "utf-8").includes("My local changes"));
   });
+
+  /** Write a shared skill source whose SKILL.md declares the given metadata lines. */
+  function writeWiredSkill(id: string, metadata: string[], scripts: string[]): string {
+    const dir = join(voluteHome(), "tmp-skill-source", id);
+    mkdirSync(join(dir, "scripts"), { recursive: true });
+    const meta = metadata.length > 0 ? `metadata:\n${metadata.join("\n")}\n` : "";
+    writeFileSync(join(dir, "SKILL.md"), `---\nname: ${id}\ndescription: d\n${meta}---\n\nBody\n`);
+    for (const script of scripts) writeFileSync(join(dir, "scripts", script), "echo hi\n");
+    return dir;
+  }
+
+  it("update wires up the hooks and bin an older install never got", async () => {
+    // v1 predates hooks/bins — the install that left mimsy's resonance inert.
+    writeWiredSkill("wired", [], []);
+    const source = join(voluteHome(), "tmp-skill-source", "wired");
+    await importSkillFromDir(source, "author");
+    await installSkill(mindName, mindDir, "wired");
+
+    writeWiredSkill(
+      "wired",
+      ["  bin: scripts/wire.ts", "  hooks:", "    pre-prompt: scripts/hook.sh"],
+      ["wire.ts", "hook.sh"],
+    );
+    await importSkillFromDir(source, "author");
+    const result = await updateSkill(mindName, mindDir, "wired");
+    assert.equal(result.status, "updated");
+
+    const hookShim = join(mindDir, "home", ".local", "hooks", "pre-prompt", hookShimName("wired"));
+    const binShim = join(mindDir, "home", ".local", "bin", "wire");
+    assert.ok(readFileSync(hookShim, "utf-8").includes(".claude/skills/wired/scripts/hook.sh"));
+    assert.ok(readFileSync(binShim, "utf-8").includes(".claude/skills/wired/scripts/wire.ts"));
+
+    // The shims ride in the update commit rather than lingering uncommitted.
+    const status = await exec("git", ["status", "--porcelain"], { cwd: mindDir });
+    assert.equal(status.trim(), "");
+  });
+
+  it("update removes shims the new version dropped and renames legacy 50- shims", async () => {
+    const source = writeWiredSkill(
+      "wired",
+      [
+        "  bin: scripts/old.ts",
+        "  hooks:",
+        "    pre-prompt: scripts/hook.sh",
+        "    post-tool-use: scripts/hook.sh",
+      ],
+      ["old.ts", "hook.sh"],
+    );
+    await importSkillFromDir(source, "author");
+    await installSkill(mindName, mindDir, "wired");
+
+    // Simulate a shim written before the rename.
+    const preDir = join(mindDir, "home", ".local", "hooks", "pre-prompt");
+    rmSync(join(preDir, hookShimName("wired")));
+    writeFileSync(join(preDir, "50-wired.sh"), "#!/bin/bash\nexec bash old\n");
+
+    writeWiredSkill(
+      "wired",
+      ["  bin: scripts/new.ts", "  hooks:", "    pre-prompt: scripts/hook.sh"],
+      ["new.ts", "hook.sh"],
+    );
+    await importSkillFromDir(source, "author");
+    assert.equal((await updateSkill(mindName, mindDir, "wired")).status, "updated");
+
+    assert.ok(existsSync(join(preDir, hookShimName("wired"))), "shim regenerated under new name");
+    assert.ok(!existsSync(join(preDir, "50-wired.sh")), "legacy 50- shim removed");
+    const postShim = join(
+      mindDir,
+      "home",
+      ".local",
+      "hooks",
+      "post-tool-use",
+      hookShimName("wired"),
+    );
+    assert.ok(!existsSync(postShim), "dropped hook's shim removed");
+    const binDir = join(mindDir, "home", ".local", "bin");
+    assert.ok(!existsSync(join(binDir, "old")), "renamed bin's old command removed");
+    assert.ok(existsSync(join(binDir, "new")), "new bin command installed");
+  });
+
+  it("update leaves a same-named bin command the skill does not own", async () => {
+    const source = writeWiredSkill("wired", ["  bin: scripts/old.ts"], ["old.ts"]);
+    await importSkillFromDir(source, "author");
+    await installSkill(mindName, mindDir, "wired");
+
+    // The mind replaced the command with its own script (no skill marker).
+    const oldCmd = join(mindDir, "home", ".local", "bin", "old");
+    writeFileSync(oldCmd, "#!/bin/bash\necho mine\n");
+
+    writeWiredSkill("wired", [], []);
+    await importSkillFromDir(source, "author");
+    assert.equal((await updateSkill(mindName, mindDir, "wired")).status, "updated");
+    assert.equal(readFileSync(oldCmd, "utf-8"), "#!/bin/bash\necho mine\n");
+  });
+
+  it("update refuses a bin collision before touching the skill", async () => {
+    const other = writeWiredSkill("other", ["  bin: scripts/tool.ts"], ["tool.ts"]);
+    await importSkillFromDir(other, "author");
+    await installSkill(mindName, mindDir, "other");
+    const source = writeWiredSkill("wired", [], []);
+    await importSkillFromDir(source, "author");
+    await installSkill(mindName, mindDir, "wired");
+
+    writeWiredSkill("wired", ["  bin: scripts/tool.ts"], ["tool.ts"]);
+    await importSkillFromDir(source, "author");
+    await assert.rejects(
+      () => updateSkill(mindName, mindDir, "wired"),
+      /already provided by skill "other"/,
+    );
+    const status = await exec("git", ["status", "--porcelain"], { cwd: mindDir });
+    assert.equal(status.trim(), "", "skill dir left as it was");
+  });
+
+  it("update installs the npm dependencies the new version declares", async () => {
+    // A local package, so the install needs no registry.
+    const pkg = join(voluteHome(), "tmp-skill-source", "fake-dep");
+    mkdirSync(pkg, { recursive: true });
+    writeFileSync(join(pkg, "package.json"), '{"name":"fake-dep","version":"1.0.0"}\n');
+
+    const source = writeWiredSkill("wired", [], []);
+    await importSkillFromDir(source, "author");
+    await installSkill(mindName, mindDir, "wired");
+
+    writeWiredSkill("wired", [`  npm-dependencies: ${pkg}`], []);
+    await importSkillFromDir(source, "author");
+    assert.equal((await updateSkill(mindName, mindDir, "wired")).status, "updated");
+
+    assert.ok(existsSync(join(mindDir, "node_modules", "fake-dep", "package.json")));
+    const manifest = JSON.parse(readFileSync(join(mindDir, "package.json"), "utf-8"));
+    assert.ok(manifest.dependencies["fake-dep"], "dependency recorded and committed");
+  });
 });
 
 describe("syncBuiltinSkills", () => {
@@ -676,7 +818,7 @@ describe("hook shim management", () => {
       "pre-prompt": "scripts/resonance-hook.sh",
     });
 
-    const shimPath = join(dir, "home", ".local", "hooks", "pre-prompt", "50-resonance.sh");
+    const shimPath = join(dir, "home", ".local", "hooks", "pre-prompt", hookShimName("resonance"));
     assert.ok(existsSync(shimPath), "shim file should exist");
     const content = readFileSync(shimPath, "utf-8");
     assert.ok(content.includes("exec bash"), "shim should use bash for .sh scripts");
@@ -696,7 +838,14 @@ describe("hook shim management", () => {
       "post-tool-use": "scripts/hook.ts",
     });
 
-    const shimPath = join(dir, "home", ".local", "hooks", "post-tool-use", "50-test-skill.sh");
+    const shimPath = join(
+      dir,
+      "home",
+      ".local",
+      "hooks",
+      "post-tool-use",
+      hookShimName("test-skill"),
+    );
     assert.ok(existsSync(shimPath));
     const content = readFileSync(shimPath, "utf-8");
     assert.ok(
@@ -712,15 +861,19 @@ describe("hook shim management", () => {
     const eventDir = join(dir, "home", ".local", "hooks", "pre-prompt");
     mkdirSync(eventDir, { recursive: true });
 
-    // Create a shim
+    // Create a shim, plus one under the pre-rename `50-` prefix
+    writeFileSync(join(eventDir, hookShimName("resonance")), "#!/bin/bash\necho test");
     writeFileSync(join(eventDir, "50-resonance.sh"), "#!/bin/bash\necho test");
-    // Create another skill's shim that should be kept
+    // Create another skill's shims that should be kept
+    writeFileSync(join(eventDir, hookShimName("other-skill")), "#!/bin/bash\necho other");
     writeFileSync(join(eventDir, "50-other-skill.sh"), "#!/bin/bash\necho other");
 
     removeHookShims(dir, "resonance");
 
-    assert.ok(!existsSync(join(eventDir, "50-resonance.sh")), "resonance shim should be removed");
-    assert.ok(existsSync(join(eventDir, "50-other-skill.sh")), "other skill shim should be kept");
+    assert.ok(!existsSync(join(eventDir, hookShimName("resonance"))), "resonance shim removed");
+    assert.ok(!existsSync(join(eventDir, "50-resonance.sh")), "legacy resonance shim removed");
+    assert.ok(existsSync(join(eventDir, hookShimName("other-skill"))), "other shim kept");
+    assert.ok(existsSync(join(eventDir, "50-other-skill.sh")), "other legacy shim kept");
 
     rmSync(dir, { recursive: true });
   });
@@ -823,8 +976,12 @@ description: A test skill
       "post-tool-use": "scripts/post.sh",
     });
 
-    assert.ok(existsSync(join(dir, "home", ".local", "hooks", "pre-prompt", "50-my-skill.sh")));
-    assert.ok(existsSync(join(dir, "home", ".local", "hooks", "post-tool-use", "50-my-skill.sh")));
+    assert.ok(
+      existsSync(join(dir, "home", ".local", "hooks", "pre-prompt", hookShimName("my-skill"))),
+    );
+    assert.ok(
+      existsSync(join(dir, "home", ".local", "hooks", "post-tool-use", hookShimName("my-skill"))),
+    );
 
     rmSync(dir, { recursive: true });
   });
@@ -839,7 +996,7 @@ description: A test skill
       "pre-prompt": "scripts/resonance-hook.sh",
     });
 
-    const shimPath = join(dir, "home", ".local", "hooks", "pre-prompt", "50-resonance.sh");
+    const shimPath = join(dir, "home", ".local", "hooks", "pre-prompt", hookShimName("resonance"));
     assert.ok(existsSync(shimPath), "shim file should exist");
     const content = readFileSync(shimPath, "utf-8");
     assert.ok(
@@ -852,6 +1009,39 @@ description: A test skill
     );
 
     rmSync(dir, { recursive: true });
+  });
+});
+
+describe("skill hook shim ordering", () => {
+  it("sorts every skill shim after the base hooks _base ships", () => {
+    // hook-loader gives the earliest hooks the fullest share of the event's time
+    // budget, so the notices drain (and every other base hook) must run first.
+    const baseDir = join(
+      import.meta.dirname,
+      "..",
+      "templates",
+      "_base",
+      ".init",
+      ".local",
+      "hooks",
+    );
+    const hooksDir = join(voluteHome(), `test-hook-order-${Date.now()}`);
+    for (const event of readdirSync(baseDir, { withFileTypes: true })) {
+      if (!event.isDirectory()) continue;
+      const eventDir = join(hooksDir, event.name);
+      mkdirSync(eventDir, { recursive: true });
+      const base = readdirSync(join(baseDir, event.name));
+      for (const f of base) writeFileSync(join(eventDir, f), "x");
+      // "aaa" and "notices" are the ids most likely to sort early.
+      for (const id of ["aaa", "notices", "resonance"]) {
+        writeFileSync(join(eventDir, hookShimName(id)), "x");
+      }
+      const order = discoverHooks(hooksDir, event.name).map((p) => basename(p));
+      assert.ok(base.length > 0);
+      assert.deepEqual(order.slice(0, base.length), [...base].sort(), `${event.name} order`);
+      assert.ok(order.slice(base.length).every((f) => f.startsWith(HOOK_SHIM_PREFIX)));
+    }
+    rmSync(hooksDir, { recursive: true });
   });
 });
 
@@ -929,7 +1119,7 @@ describe("migrateSkillsToTemplate", () => {
     seedInstalledSkill(dir, ".claude/skills", "my-skill");
 
     // Sanity: shims point at the old (.claude) path before migration.
-    const hookShim = join(dir, "home", ".local", "hooks", "pre-prompt", "50-my-skill.sh");
+    const hookShim = join(dir, "home", ".local", "hooks", "pre-prompt", hookShimName("my-skill"));
     const binShim = join(dir, "home", ".local", "bin", "run");
     assert.ok(readFileSync(hookShim, "utf-8").includes(".claude/skills/my-skill"));
     assert.ok(readFileSync(binShim, "utf-8").includes(".claude/skills/my-skill"));

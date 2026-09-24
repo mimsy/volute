@@ -14,6 +14,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { eq, sql } from "drizzle-orm";
 import { readGlobalConfig, writeGlobalConfig } from "./config/setup.js";
 import { getDb } from "./db.js";
+import { chownMindDir } from "./mind/isolation.js";
 import { mindDir, readRegistry, voluteHome } from "./mind/registry.js";
 import { sharedSkills } from "./schema.js";
 import { exec, gitExec } from "./util/exec.js";
@@ -438,6 +439,11 @@ export async function uninstallSkill(
   await gitExec(["commit", "-m", `Uninstall skill: ${skillId}`], { cwd: dir });
 }
 
+function readSkillMd(skillDir: string): ReturnType<typeof parseSkillMd> | null {
+  const skillMdPath = join(skillDir, "SKILL.md");
+  return existsSync(skillMdPath) ? parseSkillMd(readFileSync(skillMdPath, "utf-8")) : null;
+}
+
 export type UpdateResult =
   | { status: "updated" }
   | { status: "up-to-date" }
@@ -464,6 +470,23 @@ export async function updateSkill(
 
   const sourceDir = join(sharedSkillsDir(), upstream.source);
   if (!existsSync(sourceDir)) throw new Error(`Shared skill files missing: ${upstream.source}`);
+
+  // An update rewires the skill the way installSkill does — otherwise a mind that
+  // installed a skill before hooks (#228) or bins (#231) existed keeps the files
+  // but none of the shims or npm deps they rely on. What can fail (a bin collision,
+  // npm) runs here, before the merge touches the skill dir.
+  const oldBin = readSkillMd(skillDir)?.bin ?? null;
+  const incoming = readSkillMd(sourceDir);
+  if (incoming?.bin) assertBinShimAvailable(dir, skillId, incoming.bin);
+  const npmDependencies = incoming?.npmDependencies ?? [];
+  if (npmDependencies.length > 0) {
+    try {
+      await exec("npm", ["install", ...npmDependencies], { cwd: dir });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      throw new Error(`Failed to install npm dependencies (${npmDependencies.join(", ")}): ${msg}`);
+    }
+  }
 
   // Collect all files from current, base (git), and new (shared)
   const relSkillPath = join(relSkillsPath(dir), skillId);
@@ -576,6 +599,19 @@ export async function updateSkill(
     return { status: "conflict", conflictFiles };
   }
 
+  // Regenerate shims from the merged SKILL.md: hooks the new version dropped go
+  // away, legacy-prefixed shims are renamed, and a renamed bin command replaces
+  // the old one (only if this skill owns it — an unmarked one may be the mind's).
+  const merged = readSkillMd(skillDir);
+  removeHookShims(dir, skillId);
+  installHookShims(dir, skillId, merged?.hooks ?? {});
+  if (merged?.bin) installBinShim(dir, skillId, merged.bin);
+  const newCmd = merged?.bin ? binCommandName(merged.bin) : null;
+  if (oldBin && binCommandName(oldBin) !== newCmd) {
+    const oldShim = join(dir, "home", ".local", "bin", binCommandName(oldBin));
+    if (existsSync(oldShim) && binShimOwner(oldShim) === skillId) rmSync(oldShim);
+  }
+
   // Update upstream tracking
   const upstreamInfo: UpstreamInfo = {
     source: upstream.source,
@@ -585,6 +621,11 @@ export async function updateSkill(
   writeFileSync(join(skillDir, ".upstream.json"), `${JSON.stringify(upstreamInfo, null, 2)}\n`);
 
   await gitExec(["add", relSkillPath], { cwd: dir });
+  await gitExec(["add", join("home", ".local", "hooks")], { cwd: dir }).catch(() => {});
+  await gitExec(["add", join("home", ".local", "bin")], { cwd: dir }).catch(() => {});
+  if (npmDependencies.length > 0) {
+    await gitExec(["add", "package.json", "package-lock.json"], { cwd: dir });
+  }
   await gitExec(["commit", "-m", `Update skill: ${skillId} (v${shared.version})`], { cwd: dir });
   const commitHash = (await gitExec(["rev-parse", "HEAD"], { cwd: dir })).trim();
 
@@ -659,6 +700,18 @@ export async function publishSkill(
 
 // --- Hook shim management ---
 
+// hook-loader runs an event's hooks in plain `.sort()` order and gives the
+// earliest ones the fullest share of the event's time budget, so the base hooks
+// (`notices.ts` — the next-turn drain — first) must sort ahead of every skill.
+// Digits sort before letters, so the old `50-` prefix put skill shims *first*;
+// `zz-` sorts after any lowercase name. Shims are renamed on skill update.
+export const HOOK_SHIM_PREFIX = "zz-";
+const LEGACY_HOOK_SHIM_PREFIXES = ["50-"];
+
+export function hookShimName(skillId: string): string {
+  return `${HOOK_SHIM_PREFIX}${skillId}.sh`;
+}
+
 function shimContent(skillId: string, scriptPath: string, skillsSubdir: string): string {
   const ext = scriptPath.split(".").pop() ?? "sh";
   const skillScriptPath = `${skillsSubdir}/${skillId}/${scriptPath}`;
@@ -680,7 +733,7 @@ export function installHookShims(
   for (const [event, scriptPath] of Object.entries(hooks)) {
     const eventDir = join(dir, "home", ".local", "hooks", event);
     mkdirSync(eventDir, { recursive: true });
-    const shimPath = join(eventDir, `50-${skillId}.sh`);
+    const shimPath = join(eventDir, hookShimName(skillId));
     const content = shimContent(skillId, scriptPath, skillsSubdir);
     writeFileSync(shimPath, content, { mode: 0o755 });
   }
@@ -692,8 +745,10 @@ export function removeHookShims(dir: string, skillId: string): void {
 
   for (const eventDir of readdirSync(hooksBase, { withFileTypes: true })) {
     if (!eventDir.isDirectory()) continue;
-    const shimPath = join(hooksBase, eventDir.name, `50-${skillId}.sh`);
-    if (existsSync(shimPath)) rmSync(shimPath);
+    for (const prefix of [HOOK_SHIM_PREFIX, ...LEGACY_HOOK_SHIM_PREFIXES]) {
+      const shimPath = join(hooksBase, eventDir.name, `${prefix}${skillId}.sh`);
+      if (existsSync(shimPath)) rmSync(shimPath);
+    }
   }
 }
 
@@ -739,17 +794,24 @@ export function installBinShim(
   mkdirSync(binDir, { recursive: true });
   const cmdName = binCommandName(scriptPath);
   const shimPath = join(binDir, cmdName);
-  // Refuse to overwrite a shim owned by a different skill — two skills that each
-  // ship e.g. `scripts/sync.ts` must not silently clobber each other's command.
-  if (existsSync(shimPath)) {
-    const owner = binShimOwner(shimPath);
-    if (owner && owner !== skillId) {
-      throw new Error(
-        `Bin command "${cmdName}" is already provided by skill "${owner}"; skill "${skillId}" cannot overwrite it`,
-      );
-    }
-  }
+  assertBinShimAvailable(dir, skillId, scriptPath);
   writeFileSync(shimPath, binShimContent(skillId, scriptPath, skillsSubdir), { mode: 0o755 });
+}
+
+/**
+ * Refuse to overwrite a shim owned by a different skill — two skills that each
+ * ship e.g. `scripts/sync.ts` must not silently clobber each other's command.
+ */
+function assertBinShimAvailable(dir: string, skillId: string, scriptPath: string): void {
+  const cmdName = binCommandName(scriptPath);
+  const shimPath = join(dir, "home", ".local", "bin", cmdName);
+  if (!existsSync(shimPath)) return;
+  const owner = binShimOwner(shimPath);
+  if (owner && owner !== skillId) {
+    throw new Error(
+      `Bin command "${cmdName}" is already provided by skill "${owner}"; skill "${skillId}" cannot overwrite it`,
+    );
+  }
 }
 
 export function removeBinShim(dir: string, scriptPath: string): void {
@@ -902,6 +964,9 @@ export async function autoUpdateMindSkills(): Promise<void> {
 
       try {
         const result = await updateSkill(mind.name, dir, entry.name);
+        // The update writes skill files, shims and node_modules as the daemon
+        // (root under user isolation) — hand them back, as the update route does.
+        await chownMindDir(dir, mind.name);
         if (result.status === "updated") {
           log.info(`auto-updated skill ${entry.name} for ${mind.name} (v${sharedSkill.version})`);
         } else if (result.status === "conflict") {
