@@ -13,7 +13,7 @@ import {
   readSdkInstructions,
   readSkillDescriptions,
 } from "./lib/context-breakdown.js";
-import { daemonEmit, daemonNotice } from "./lib/daemon-client.js";
+import { daemonEmit, daemonNotice, daemonRecollection } from "./lib/daemon-client.js";
 import { runHooks } from "./lib/hook-loader.js";
 import { createAutoCommitHook } from "./lib/hooks/auto-commit.js";
 import { createIdentityNoticeHook } from "./lib/hooks/identity-notice.js";
@@ -23,13 +23,26 @@ import { createReplyInstructionsHook } from "./lib/hooks/reply-instructions.js";
 import { log } from "./lib/logger.js";
 import { createMessageChannel } from "./lib/message-channel.js";
 import { relockstepMessageIds } from "./lib/recover.js";
+import { crossSeam } from "./lib/seam.js";
 import { buildSeededNote, type SeedCause } from "./lib/seed-note.js";
 import {
+  coldResetPossible,
+  createActivityClock,
+  DEFAULT_COLD_RESET_MINUTES,
+  interruptCurrentTurn,
   isSessionReapable,
   reapSessionQuery,
   reapSessionsForShutdown,
+  reapTimeoutMs,
+  shouldColdReset,
 } from "./lib/session-reaper.js";
-import { DEFAULT_SEED_TOKENS, rotateSession, seedSession } from "./lib/session-seed.js";
+import {
+  DEFAULT_SEED_TOKENS,
+  RECALL_TOKEN_CAP,
+  rotateSession,
+  seedSession,
+  TAIL_ONLY_SEED_TOKENS,
+} from "./lib/session-seed.js";
 import { createSessionStore, lostRealContext } from "./lib/session-store.js";
 import type { EffortLevel, SubagentConfig, ThinkingConfig } from "./lib/startup.js";
 import { consumeStream, type MessageIdEntry } from "./lib/stream-consumer.js";
@@ -71,6 +84,10 @@ type Session = {
   seededArchivedAt: number | null;
   /** Why the tail is seeded — picks the boundary note's wording. Last cause wins. */
   seededCause: SeedCause;
+  /** Whether the seed carried recall entries — the seam note says so only then. */
+  seededRecollection: boolean;
+  /** Torn down (idle reap or shutdown): a seam in flight must not start a new stream. */
+  closed: boolean;
   /**
    * Back-to-back rotations that did NOT bring context under the threshold (reset by
    * any healthy turn). Guards against a runaway loop when the tail alone can't fit —
@@ -116,8 +133,12 @@ export function createMind(options: {
   subagents?: Record<string, SubagentConfig>;
   /** Idle minutes before a session's SDK subprocess is reaped. 0 disables. Default 30. */
   sessionIdleMinutes?: number;
-  /** Estimated-token budget for seeding a fresh persistent session. 0 disables. Default 30000. */
+  /** Estimated-token budget for a seed's verbatim tail. 0 disables seeding. Default 10000. */
   seedTokens?: number;
+  /** Idle minutes before a persistent session is archived and re-seeded. 0 disables. Default 55. */
+  coldResetMinutes?: number;
+  /** Seed the mind's recollection ahead of the verbatim tail at every seam. Default true. */
+  recollection?: boolean;
 }): {
   resolve: HandlerResolver;
   flushFileChanges: () => Promise<void>;
@@ -127,7 +148,17 @@ export function createMind(options: {
 } {
   const autoCommit = createAutoCommitHook(options.cwd);
   const systemPrompt = createSystemPromptSource(options.loadSystemPrompt);
-  const idleMinutes = options.sessionIdleMinutes ?? 30;
+  // Undefined → the seeders size the tail by what arrived (see SeedBudget.seedTokens).
+  const seedTokens = options.seedTokens;
+  const configuredColdResetMs = (options.coldResetMinutes ?? DEFAULT_COLD_RESET_MINUTES) * 60_000;
+  const coldResetMs = coldResetPossible(configuredColdResetMs, seedTokens)
+    ? configuredColdResetMs
+    : 0;
+  // The reaper also retires a live session by the cold-reset threshold (unless reaping
+  // is off), so it cold-resets when its next turn arrives. It's also the resume boundary
+  // the identity notice names.
+  const idleMinutes =
+    reapTimeoutMs((options.sessionIdleMinutes ?? 30) * 60_000, coldResetMs) / 60_000;
   const sessionStore = createSessionStore(options.sessionsDir);
   const postToolUseHooks: { matcher: string; hooks: HookCallback[] }[] = [
     { matcher: "Edit|Write", hooks: [autoCommit.hook] },
@@ -135,7 +166,21 @@ export function createMind(options: {
 
   const sessions = new Map<string, Session>();
   const maxContextTokens = options.maxContextTokens;
-  const seedTokens = options.seedTokens ?? DEFAULT_SEED_TOKENS;
+  const recollection = options.recollection !== false;
+  const recollect = recollection ? daemonRecollection : undefined;
+  // A quarter of the window at most, so prefix + recollection + tail stays well under
+  // the rotation threshold (a prefix too big for that is the consecutive-rotation cap's).
+  const recallTokens = Math.min(
+    RECALL_TOKEN_CAP,
+    maxContextTokens ? Math.floor(maxContextTokens / 4) : RECALL_TOKEN_CAP,
+  );
+  // The biggest seed a cold reset could produce, plus a margin: a session no larger than
+  // this (estimated from its transcript) just resumes — re-seeding it would save nothing.
+  const coldResetMinSourceTokens =
+    (seedTokens !== undefined
+      ? seedTokens + (recollection ? recallTokens : 0)
+      : Math.max(DEFAULT_SEED_TOKENS + (recollection ? recallTokens : 0), TAIL_ONLY_SEED_TOKENS)) +
+    5000;
 
   if (maxContextTokens) {
     log("mind", `compaction threshold: ${maxContextTokens} tokens`);
@@ -307,6 +352,7 @@ export function createMind(options: {
           const note = buildSeededNote({
             cause: session.seededCause,
             archivedAtMs: session.seededArchivedAt,
+            recollection: session.seededRecollection,
           });
           additionalContext = additionalContext ? `${note}\n\n${additionalContext}` : note;
           // Also surface the note as its own context event (matching codex/pi) so it
@@ -410,7 +456,13 @@ export function createMind(options: {
   /** Sentinel error used to signal that the stream was aborted for compaction */
   class CompactionAbort extends Error {}
 
-  function startSession(session: Session, savedSessionId?: string, savedCommitted = false) {
+  function startSession(
+    session: Session,
+    savedSessionId?: string,
+    savedCommitted = false,
+    savedLastActivityAt?: number,
+    seed?: "restored" | "cold",
+  ) {
     (async () => {
       log("mind", `session "${session.name}": stream consumer started`);
       let currentSessionId = savedSessionId;
@@ -418,6 +470,21 @@ export function createMind(options: {
       // conversation — see SessionRecord.committed. Sticky within the session's life;
       // cleared only where we drop the pointer and genuinely start over.
       let committed = savedCommitted;
+      // When the session last did anything (turn activity or turn end), carried on every
+      // pointer save — the cold reset's clock. See createActivityClock.
+      let lastActivityAt = savedLastActivityAt;
+      const activity = createActivityClock(
+        (at) => {
+          if (currentSessionId && !session.name.startsWith("new-"))
+            sessionStore.save(session.name, currentSessionId, committed, at);
+        },
+        (err) => log("mind", `session "${session.name}": failed to record activity:`, err),
+      );
+      function touchActivity(force: boolean) {
+        session.lastActivityAt = Date.now();
+        lastActivityAt = session.lastActivityAt;
+        activity.touch(lastActivityAt, force);
+      }
       let streamAbort = new AbortController();
 
       /** Mark the session to rotate in place when the current turn ends. */
@@ -444,22 +511,22 @@ export function createMind(options: {
           // its content is still real (#769). Resetting here would be the worse error —
           // it would silence a genuine loss, where carrying it forward could at worst
           // repeat the false notice once for a session that had already earned the flag.
-          if (!session.name.startsWith("new-")) sessionStore.save(session.name, id, committed);
+          if (!session.name.startsWith("new-"))
+            sessionStore.save(session.name, id, committed, lastActivityAt);
         },
+        onActivity: () => touchActivity(false),
         broadcast: (event: VoluteEvent) => broadcastToSession(session, event),
         // Identity-based ack — stream-consumer.ts calls this once per message the
         // just-finished turn covers (its own driving message, plus any folded in
         // mid-run) so none of them strand in the channel's in-flight set (#764).
         ack: (seq: number) => session.channel.ack(seq),
         onTurnEnd: async () => {
-          session.lastActivityAt = Date.now();
           // A turn has landed in the transcript, so this pointer now references real
           // conversation: if it later goes missing, the loss is genuine and the mind
-          // should be told (#769). One write per session — the flag is sticky.
-          if (!committed && currentSessionId && !session.name.startsWith("new-")) {
-            committed = true;
-            sessionStore.save(session.name, currentSessionId, true);
-          }
+          // should be told (#769) — the flag is sticky. The (forced) write also records
+          // when the turn ended, which the cold reset measures idleness from.
+          if (currentSessionId && !session.name.startsWith("new-")) committed = true;
+          touchActivity(true);
           // A turn resolved — the seeded note's injection had its chance to land
           // (the pre-prompt hook ran and wasn't cancelled by an interrupt), so stop
           // re-offering it. This is the honest place to clear: a completed turn is
@@ -527,6 +594,61 @@ export function createMind(options: {
       }
 
       try {
+        if (seed) {
+          // Before the first stream: a restore seed (recollection, then the previous
+          // session's verbatim tail) so the mind continues rather than waking empty, or
+          // a cold reset — idle past the prompt cache's life, the next turn would rewrite
+          // the whole context anyway, so rebuild it compactly (#1124). Awaited here, not
+          // in getOrCreateSession, because recollection comes from the daemon; inbound
+          // messages queue in the channel meanwhile.
+          const seam = await crossSeam({
+            seed,
+            liveSessionId: currentSessionId,
+            lastActivityAt: savedLastActivityAt,
+            restore: () =>
+              seedSession({
+                cwd: options.cwd,
+                sessionsDir: options.sessionsDir,
+                name: session.name,
+                seedTokens,
+                recallTokens,
+                recollect,
+              }),
+            coldReset: (live) =>
+              rotateSession({
+                cwd: options.cwd,
+                sessionsDir: options.sessionsDir,
+                name: session.name,
+                oldSessionId: live,
+                seedTokens,
+                recallTokens,
+                recollect,
+                minSourceTokens: coldResetMinSourceTokens,
+              }),
+            // The seeded transcript carries the previous session's tail — real content
+            // from the first stamp, so losing it later is a genuine loss (#769).
+            save: (id) => sessionStore.save(session.name, id, true),
+            isClosed: () => session.closed,
+          });
+          if (seam.kind === "closed") {
+            log("mind", `session "${session.name}": closed while seeding — not starting`);
+            return;
+          }
+          if (seam.kind === "seeded") {
+            committed = true;
+            currentSessionId = seam.sessionId;
+            lastActivityAt = undefined;
+            session.seeded = true;
+            session.seededArchivedAt = seam.gapFrom;
+            session.seededCause = seam.cause;
+            session.seededRecollection = seam.recalled;
+            log("mind", `session "${session.name}": seeded (${seam.cause}) → ${seam.sessionId}`);
+          } else if (seed === "cold") {
+            log("mind", `session "${session.name}": no cold reset, resuming ${currentSessionId}`);
+          } else {
+            log("mind", `session "${session.name}": starting fresh`);
+          }
+        }
         // eslint-disable-next-line no-constant-condition -- loop exits via break (normal) or throw (error)
         while (true) {
           try {
@@ -539,15 +661,23 @@ export function createMind(options: {
               currentSessionId
             ) {
               // Stream was aborted to rotate: replace the session with a synthetic one
-              // holding the verbatim recent tail (the seedTokens-budget tail), then resume it.
-              const rotatedId = rotateSession({
+              // holding recollection and the verbatim recent tail, then resume it. The
+              // aborted query is dead; drop it before awaiting recollection so an
+              // interrupt arriving meanwhile doesn't reach into it.
+              session.currentQuery = undefined;
+              const rotated = await rotateSession({
                 cwd: options.cwd,
                 sessionsDir: options.sessionsDir,
                 name: session.name,
                 oldSessionId: currentSessionId,
                 seedTokens,
+                recallTokens,
+                recollect,
               });
               session.rotationPending = false;
+              // Torn down (shutdown or reap) during the fetch: start nothing new.
+              if (session.closed) break;
+              const rotatedId = rotated?.sessionId;
               if (!rotatedId) {
                 // Rotation couldn't proceed — fall back to a fresh session (no seed).
                 // Unlike a successful rotation (boundary note, verbatim tail, archived
@@ -581,11 +711,12 @@ export function createMind(options: {
               // new pointer references real content from the moment it is stamped.
               committed = true;
               if (!session.name.startsWith("new-"))
-                sessionStore.save(session.name, rotatedId, true);
+                sessionStore.save(session.name, rotatedId, true, lastActivityAt);
               currentSessionId = rotatedId;
               session.seeded = true;
               session.seededCause = "rotation";
               session.seededArchivedAt = null;
+              session.seededRecollection = (rotated?.recallEntries ?? 0) > 0;
               // Count this rotation; a healthy turn resets it. If back-to-back rotations
               // don't reduce context (system prompt too large to fit the tail under the
               // threshold), the cap stops the loop and defers to native compaction.
@@ -658,7 +789,8 @@ export function createMind(options: {
         // abandonment) — drop the session so the sessions map doesn't retain dead
         // entries. Matters most for ephemeral $new sessions once the idle reaper
         // (#458) kills their subprocess, but also for any named session that ends.
-        sessions.delete(session.name);
+        // Only this session — a fresh one may already hold the name.
+        if (sessions.get(session.name) === session) sessions.delete(session.name);
         log("mind", `session "${session.name}": stream consumer ended`);
       }
     })();
@@ -682,6 +814,8 @@ export function createMind(options: {
       seeded: false,
       seededArchivedAt: null,
       seededCause: "restored",
+      seededRecollection: false,
+      closed: false,
       consecutiveRotations: 0,
       rotationPending: false,
     };
@@ -717,39 +851,30 @@ export function createMind(options: {
       }
       committed = false;
     }
+    let seed: "restored" | "cold" | undefined;
     if (savedSessionId) {
-      log("mind", `session "${name}": resuming ${savedSessionId}`);
-    } else if (!isEphemeral) {
-      // Fresh persistent session — seed it from the previous session's archived
-      // transcript so the mind experiences the conversation continuing rather
-      // than waking into an empty context. Ephemeral `new-*` sessions never seed.
-      const seeded = seedSession({
-        cwd: options.cwd,
-        sessionsDir: options.sessionsDir,
-        name,
-        seedTokens: options.seedTokens ?? DEFAULT_SEED_TOKENS,
-      });
-      if (seeded) {
-        // The seeded transcript carries the previous session's tail — real content
-        // from the first stamp, so losing it later is a genuine loss (#769).
-        sessionStore.save(name, seeded.sessionId, true);
-        committed = true;
-        savedSessionId = seeded.sessionId;
-        session.seeded = true;
-        session.seededArchivedAt = seeded.archivedAt;
-        session.seededCause = "restored";
-        log(
-          "mind",
-          `session "${name}": seeded from previous transcript, resuming ${seeded.sessionId}`,
-        );
+      // Idle past the cold-reset threshold (and a seed can be built): startSession
+      // re-seeds it before its first turn, or resumes it as is if seeding fails.
+      if (shouldColdReset(name, stored, Date.now(), coldResetMs, seedTokens)) {
+        log("mind", `session "${name}": idle past ${coldResetMs / 60_000} min — cold reset`);
+        seed = "cold";
       } else {
-        log("mind", `session "${name}": starting fresh`);
+        log("mind", `session "${name}": resuming ${savedSessionId}`);
       }
+    } else if (!isEphemeral) {
+      // Seeded in startSession. Ephemeral `new-*` sessions never seed.
+      seed = "restored";
     } else {
       log("mind", `session "${name}": starting fresh`);
     }
 
-    startSession(session, savedSessionId, committed);
+    startSession(
+      session,
+      savedSessionId,
+      committed,
+      savedSessionId ? stored?.lastActivityAt : undefined,
+      seed,
+    );
     return session;
   }
 
@@ -765,6 +890,7 @@ export function createMind(options: {
     // Delete first so a racing inbound message spins up a fresh resumed session
     // instead of reusing the one we're tearing down.
     sessions.delete(session.name);
+    session.closed = true;
     // End the input iterable so the stream consumer unwinds (its finally block
     // also deletes from the map, now a no-op), then await the SDK's graceful
     // shutdown via query.return() — unlike the fire-and-forget close(), this
@@ -797,7 +923,10 @@ export function createMind(options: {
     const live = [...sessions.values()];
     if (live.length === 0) return;
     log("mind", `shutdown: reaping ${live.length} live SDK subprocess(es)`);
-    for (const s of live) sessions.delete(s.name);
+    for (const s of live) {
+      sessions.delete(s.name);
+      s.closed = true;
+    }
     await reapSessionsForShutdown(live, (name, err) =>
       log("mind", `session "${name}": shutdown reap failed:`, err),
     );
@@ -865,9 +994,13 @@ export function createMind(options: {
         }
 
         // Interrupt if requested and session is mid-turn
-        if (meta.interrupt && session.currentMessageId !== undefined && session.currentQuery) {
+        if (
+          meta.interrupt &&
+          interruptCurrentTurn(session, (err) =>
+            log("mind", `session "${sessionName}": interrupt failed:`, err),
+          )
+        ) {
           log("mind", `session "${sessionName}": interrupting current turn`);
-          session.currentQuery.interrupt();
         }
 
         // Push message into SDK

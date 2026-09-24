@@ -8,10 +8,11 @@
 /**
  * Why a session is presenting a seeded tail. `"restored"` — resumed from a
  * previous session's archived transcript (sleep/wake, restart). `"rotation"` —
- * rotated in place at the context limit, earlier turns collapsed. Each gets its
- * own note so the reader knows which boundary they've crossed.
+ * rotated in place at the context limit, earlier turns collapsed. `"cold"` —
+ * refreshed after a quiet stretch longer than the prompt cache lives (#1124). Each
+ * gets its own note so the reader knows which boundary they've crossed.
  */
-export type SeedCause = "restored" | "rotation";
+export type SeedCause = "restored" | "rotation" | "cold";
 
 /**
  * Base note for the "restored" cause, used verbatim when the gap can't be computed.
@@ -27,6 +28,20 @@ export const SEEDED_SESSION_NOTE_BASE =
  */
 export const ROTATED_SESSION_NOTE =
   "Note: this session was consolidated at the context limit — the recent conversation above is kept verbatim (a long turn may be trimmed to its prompt and latest steps); summaries of older turns are in your history (`volute mind history`).";
+
+/**
+ * Appended to any cause's note when recall entries were actually seeded ahead of the
+ * tail (claude template), so the note never claims recollection that isn't there.
+ */
+export const RECALL_NOTE_SUFFIX =
+  " The [recall: …] entries before it are your consolidated memory of the days before, not a transcript.";
+
+/**
+ * Base note for the "cold" cause, used verbatim when the gap can't be computed.
+ * buildSeededNote() enriches the parenthetical with how long the quiet lasted.
+ */
+export const COLD_SESSION_NOTE_BASE =
+  "Note: this session was refreshed after a quiet stretch (you had been idle a while) — the recent conversation above is kept verbatim; summaries of older turns are in your history (`volute mind history`).";
 
 /**
  * Parse an archive-pointer timestamp into epoch millis, or null if it doesn't
@@ -56,23 +71,33 @@ function formatGap(ms: number): string | null {
 /**
  * Build the honest-boundary note for a seeded session, chosen by `cause`:
  *   - "rotation" → the rotation note (no gap clause).
+ *   - "cold" → the cold-reset note, with the gap since the session's last activity
+ *     (`archivedAtMs` is that time — the caller passes it, not the pointer's).
  *   - "restored" (default) → the restored note, enriched with a coarse
  *     gap-duration clause when `archivedAtMs` is known (epoch millis from
  *     parseArchiveTimestamp(); null → no clause). `nowMs` defaults to now so the
  *     gap reflects when the mind actually reads the note.
+ * `recollection` (recall entries were seeded) appends RECALL_NOTE_SUFFIX.
  */
 export function buildSeededNote(opts: {
   cause?: SeedCause;
   archivedAtMs?: number | null;
   nowMs?: number;
+  recollection?: boolean;
 }): string {
-  if (opts.cause === "rotation") return ROTATED_SESSION_NOTE;
+  const suffix = opts.recollection ? RECALL_NOTE_SUFFIX : "";
+  if (opts.cause === "rotation") return ROTATED_SESSION_NOTE + suffix;
+  const base = opts.cause === "cold" ? COLD_SESSION_NOTE_BASE : SEEDED_SESSION_NOTE_BASE;
   const archivedAtMs = opts.archivedAtMs ?? null;
-  if (archivedAtMs == null) return SEEDED_SESSION_NOTE_BASE;
-  const gap = formatGap((opts.nowMs ?? Date.now()) - archivedAtMs);
-  if (!gap) return SEEDED_SESSION_NOTE_BASE;
-  return SEEDED_SESSION_NOTE_BASE.replace(
-    "(restored after archival)",
-    `(restored after archival; the break lasted ${gap})`,
+  const gap = archivedAtMs == null ? null : formatGap((opts.nowMs ?? Date.now()) - archivedAtMs);
+  if (!gap) return base + suffix;
+  if (opts.cause === "cold") {
+    return base.replace("(you had been idle a while)", `(the quiet lasted ${gap})`) + suffix;
+  }
+  return (
+    base.replace(
+      "(restored after archival)",
+      `(restored after archival; the break lasted ${gap})`,
+    ) + suffix
   );
 }

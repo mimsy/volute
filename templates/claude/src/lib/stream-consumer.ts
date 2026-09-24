@@ -25,6 +25,8 @@ export type StreamSession = {
 
 export type StreamCallbacks = {
   onSessionId?: (sessionId: string) => void;
+  /** Any non-system stream message: the model is working (the cold reset's idle clock). */
+  onActivity?: () => void;
   broadcast: (event: VoluteEvent) => void;
   onTurnEnd?: () => void;
   onContextTokens?: (tokens: number) => void;
@@ -85,6 +87,7 @@ export async function consumeStream(
     if ("session_id" in msg && msg.session_id) {
       callbacks.onSessionId?.(msg.session_id as string);
     }
+    if (msg.type !== "system") callbacks.onActivity?.();
     if (msg.type === "system" && msg.subtype === "init") {
       mainModel = msg.model;
     }

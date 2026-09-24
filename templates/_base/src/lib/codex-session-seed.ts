@@ -35,10 +35,13 @@ import { dirname, resolve } from "node:path";
 import { findCodexSessionFile } from "./context-breakdown.js";
 import { log } from "./logger.js";
 import { parseArchiveTimestamp } from "./seed-note.js";
-import { archivePointerTimestamp } from "./session-seed.js";
+import { archivePointerTimestamp, TAIL_ONLY_SEED_TOKENS } from "./session-seed.js";
 
-/** Default seed budget (estimated tokens) when config omits continuity.seedTokens. */
-export const DEFAULT_SEED_TOKENS = 30000;
+/**
+ * Default seed budget when config omits continuity.seedTokens: codex seams carry the
+ * verbatim tail alone (no recollection yet — #1129), so the tail-only budget.
+ */
+export const DEFAULT_SEED_TOKENS = TAIL_ONLY_SEED_TOKENS;
 
 // Archived pointers are named `<name>-<timestamp>.json`, where the timestamp is
 // `new Date().toISOString().replace(/[:.]/g, "-").slice(0, 16)` → `YYYY-MM-DDTHH-MM`
