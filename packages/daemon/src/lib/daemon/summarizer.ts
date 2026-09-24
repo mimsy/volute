@@ -23,6 +23,7 @@ import {
   completeAsMind,
   gatherOwnWords,
   gatherWritings,
+  periodBounds,
   RECORD_MAX_CHARS,
   readMindSoul,
 } from "./consolidation.js";
@@ -706,6 +707,7 @@ function getScopeInstruction(mind: string): string {
     `You are ${mind}, remembering. Write in the first person, as ${mind}'s own memory of this period — not a report about ${mind}. ` +
     "Write it as it would have been remembered at the end of the period: no hindsight, nothing from after it. " +
     "Stay anchored to what actually happened in the material below; don't invent events, feelings, or continuity it doesn't show. " +
+    "The input opens with the period's bounds and every entry carries its time — a turn may have begun, or even ended, just before the period's start and been recorded inside it: read how long things took from each entry's own span and what came first from the order, and don't state a duration, count, or time the record doesn't show. " +
     `When other people or minds appear, name them and attribute their words and actions to them — never fold someone else's statements into "I". Never address anyone as "you". ` +
     `After the entries, the input may carry ${mind}'s own words from the period, verbatim ("[said HH:MM on <channel>]"), and what ${mind} wrote in its journal or dreams ("[journal <date>]", "[dream <file>]"). ` +
     "Those are the truest trace of your voice: let them shape how the memory sounds, without quoting them at length."
@@ -894,19 +896,44 @@ function trackProvisionalAttempt(
   metadata.last_attempt_at = new Date().toISOString();
 }
 
+function localHHMM(ts: string): string {
+  const d = parseDbTimestamp(ts);
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
+const DB_TIMESTAMP_GLOB =
+  "[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9] [0-9][0-9]:[0-9][0-9]:[0-9][0-9]";
+
+/** A turn summary's recorded `from_time`/`to_time`, when it is a well-formed DB timestamp. */
+function turnMetaTime(field: "from_time" | "to_time") {
+  const path = `$.${field}`;
+  return sql`CASE WHEN json_valid(${summaries.metadata}) AND json_extract(${summaries.metadata}, ${path}) GLOB ${DB_TIMESTAMP_GLOB} THEN json_extract(${summaries.metadata}, ${path}) END`;
+}
+
+/**
+ * When a turn ended, and when it began, from the times its summary recorded — falling back to the
+ * summary row's `created_at` when it recorded none (a mind-authored one, say). These label and
+ * order an hour's turns; which hour a turn belongs to stays its `created_at`, as every rollup
+ * path reads it, so no turn is ever left out. A turn recorded just after an hour turned can
+ * therefore show a span that began, or even ended, before its hour's bounds (#1145).
+ */
+const turnEndedAt = sql<string>`COALESCE(${turnMetaTime("to_time")}, ${summaries.created_at})`;
+const turnStartedAt = sql<string>`COALESCE(${turnMetaTime("from_time")}, ${turnEndedAt})`;
+
 /**
  * A short temporal label identifying a child within its parent period, prefixed to each child
  * in the AI rollup input so the model can order events in time without guessing. Turn keys are
- * UUIDs, so hour rollups label their turn-children by wall-clock time (HH:MM, server-local);
- * day rollups label hour-children HH:00; week/month rollups label day-children by date.
+ * UUIDs, so hour rollups label their turn-children by wall-clock time (server-local): the span
+ * the turn actually took (HH:MM–HH:MM), or HH:MM when it began and ended in the same minute or
+ * recorded no span — so a ten-minute conversation reads as ten minutes (#1145). Day rollups
+ * label hour-children HH:00; week/month rollups label day-children by date.
  */
-function childLabel(period: TimerPeriod, key: string, createdAt: string): string {
+function childLabel(period: TimerPeriod, key: string, startedAt = "", endedAt = ""): string {
   switch (period) {
     case "hour": {
-      const d = parseDbTimestamp(createdAt);
-      const hh = String(d.getHours()).padStart(2, "0");
-      const mm = String(d.getMinutes()).padStart(2, "0");
-      return `${hh}:${mm}`;
+      const from = localHHMM(startedAt);
+      const to = localHHMM(endedAt);
+      return from === to ? to : `${from}–${to}`;
     }
     case "day":
       // hour key = "YYYY-MM-DDTHH"
@@ -935,7 +962,8 @@ async function gatherChildSummaries(
         id: summaries.id,
         content: summaries.content,
         key: summaries.period_key,
-        created_at: summaries.created_at,
+        started_at: turnStartedAt,
+        ended_at: turnEndedAt,
       })
       .from(summaries)
       .where(
@@ -946,12 +974,12 @@ async function gatherChildSummaries(
           lt(summaries.created_at, end),
         ),
       )
-      .orderBy(summaries.created_at);
+      .orderBy(turnStartedAt, summaries.id);
     return {
       texts: rows.map((r) => r.content),
       sourceIds: rows.map((r) => r.id),
       keys: rows.map((r) => r.key),
-      labels: rows.map((r) => childLabel(period, r.key, r.created_at)),
+      labels: rows.map((r) => childLabel(period, r.key, r.started_at, r.ended_at)),
     };
   }
 
@@ -1106,7 +1134,8 @@ async function summarizePeriodOnce(
     RECORD_MAX_CHARS,
     "\n\n---\n\n",
   );
-  const userMessage = [record, ownWords, writings].filter(Boolean).join("\n\n===\n\n");
+  const body = [record, ownWords, writings].filter(Boolean).join("\n\n===\n\n");
+  const userMessage = `${periodBounds(period, periodKey)}\n\n${body}`;
 
   let content: string;
   let deterministic: boolean;

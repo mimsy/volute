@@ -34,7 +34,11 @@ import { getDb } from "../packages/daemon/src/lib/db.js";
 import { addMind, mindDir, removeMind } from "../packages/daemon/src/lib/mind/registry.js";
 import { PROMPT_DEFAULTS } from "../packages/daemon/src/lib/prompts.js";
 import { mindHistory, summaries, users } from "../packages/daemon/src/lib/schema.js";
-import { getPeriodKey, utcDateTimeStr } from "../packages/daemon/src/lib/util/period-keys.js";
+import {
+  getPeriodKey,
+  type TimerPeriod,
+  utcDateTimeStr,
+} from "../packages/daemon/src/lib/util/period-keys.js";
 import { createSession, deleteSession } from "../packages/daemon/src/web/middleware/auth.js";
 
 const PREFIX = "test-consol-";
@@ -304,6 +308,100 @@ describe("first-person consolidation: input", () => {
     assert.equal(got, null);
     // The honest file itself reads fine.
     assert.equal(await readHomeFile(base, "memory/journal/2026-03-20.md", 1000), "innocent");
+  });
+
+  // #1145: an hour memory said "four hours at the table" of a ten-minute conversation. The input
+  // has to carry the period's real bounds and each entry's real time for the model to read from.
+  it("opens every period with its real bounds, in the frame the entries use", async () => {
+    const mind = `${PREFIX}bounds`;
+    home(mind);
+    await insertSummary(mind, "turn", "t1", "A.", { createdAt: at(2026, 3, 22, 13, 5) });
+    await insertSummary(mind, "turn", "t2", "B.", { createdAt: at(2026, 3, 22, 13, 9) });
+    await insertSummary(mind, "hour", "2026-03-20T09", "Morning.");
+    await insertSummary(mind, "hour", "2026-03-20T14", "Afternoon.");
+    await insertSummary(mind, "day", "2026-03-09", "Monday.");
+    await insertSummary(mind, "day", "2026-03-11", "Wednesday.");
+
+    const cases: [TimerPeriod, string, string][] = [
+      ["hour", "2026-03-22T13", "[this hour: 2026-03-22 13:00–14:00]"],
+      ["day", "2026-03-20", "[this day: 2026-03-20]"],
+      ["week", "2026-W11", "[this week: 2026-03-09 to 2026-03-15]"],
+      ["month", "2026-03", "[this month: 2026-03]"],
+    ];
+    for (const [period, key, bounds] of cases) {
+      const { calls, complete } = capture();
+      assert.equal(await summarizePeriod(mind, period, key, complete), true, key);
+      assert.ok(calls[0].user.startsWith(`${bounds}\n\n`), calls[0].user);
+      assert.match(calls[0].system, /don't state a duration, count, or time/);
+    }
+  });
+
+  it("labels an hour's turns with the span each actually took", async () => {
+    const mind = `${PREFIX}spans`;
+    home(mind);
+    await insertSummary(mind, "turn", "t1", "I joined the table.", {
+      createdAt: at(2026, 3, 22, 13, 4),
+      metadata: { from_time: at(2026, 3, 22, 13, 2), to_time: at(2026, 3, 22, 13, 4) },
+    });
+    // A turn that began in the previous hour shows where it really began.
+    await insertSummary(mind, "turn", "t2", "I kept talking.", {
+      createdAt: at(2026, 3, 22, 13, 12),
+      metadata: { from_time: at(2026, 3, 22, 12, 58), to_time: at(2026, 3, 22, 13, 11) },
+    });
+    // No recorded span (a mind-authored summary): its own time.
+    await insertSummary(mind, "turn", "t3", "I wrote it down.", {
+      createdAt: at(2026, 3, 22, 13, 15),
+      metadata: { author: "mind" },
+    });
+    const { calls, complete } = capture();
+    await summarizePeriod(mind, "hour", "2026-03-22T13", complete);
+    const { user } = calls[0];
+    assert.ok(user.includes("[13:02–13:04] I joined the table."), user);
+    assert.ok(user.includes("[12:58–13:11] I kept talking."), user);
+    assert.ok(user.includes("[13:15] I wrote it down."), user);
+  });
+
+  // A turn's summary row is written after the turn ends, so it can be recorded in the next hour.
+  // It stays in the hour it was recorded in — no turn is ever left out of a rollup — but shows its
+  // real span, ordered by when it began, and the instruction says a span may precede the bounds.
+  it("a turn recorded just after its hour shows its real span, ordered by when it began", async () => {
+    const mind = `${PREFIX}late`;
+    home(mind);
+    await insertSummary(mind, "turn", "early", "I started a thread.", {
+      createdAt: at(2026, 3, 22, 10, 20),
+      metadata: { from_time: at(2026, 3, 22, 10, 10), to_time: at(2026, 3, 22, 10, 20) },
+    });
+    await insertSummary(mind, "turn", "early2", "I kept at it.", {
+      createdAt: at(2026, 3, 22, 10, 30),
+      metadata: { from_time: at(2026, 3, 22, 10, 25), to_time: at(2026, 3, 22, 10, 30) },
+    });
+    await insertSummary(mind, "turn", "next", "I wrote it down.", {
+      createdAt: at(2026, 3, 22, 11, 30),
+      metadata: { from_time: at(2026, 3, 22, 11, 25), to_time: at(2026, 3, 22, 11, 30) },
+    });
+    // Recorded after `next`, but began before it: sorts first.
+    await insertSummary(mind, "turn", "late", "I talked at the table.", {
+      createdAt: at(2026, 3, 22, 11, 31),
+      metadata: { from_time: at(2026, 3, 22, 10, 50), to_time: at(2026, 3, 22, 10, 59) },
+    });
+    await insertSummary(mind, "turn", "last", "I went quiet.", {
+      createdAt: at(2026, 3, 22, 11, 40),
+      metadata: { from_time: at(2026, 3, 22, 11, 40), to_time: at(2026, 3, 22, 11, 40) },
+    });
+
+    const ten = capture();
+    await summarizePeriod(mind, "hour", "2026-03-22T10", ten.complete);
+    assert.ok(!ten.calls[0].user.includes("I talked at the table."), ten.calls[0].user);
+
+    const eleven = capture();
+    await summarizePeriod(mind, "hour", "2026-03-22T11", eleven.complete);
+    const { system, user } = eleven.calls[0];
+    assert.ok(user.startsWith("[this hour: 2026-03-22 11:00–12:00]"), user);
+    const talked = user.indexOf("[10:50–10:59] I talked at the table.");
+    const wrote = user.indexOf("[11:25–11:30] I wrote it down.");
+    const quiet = user.indexOf("[11:40] I went quiet.");
+    assert.ok(talked >= 0 && wrote > talked && quiet > wrote, user);
+    assert.match(system, /may have begun, or even ended, just before the period's start/);
   });
 
   it("bounds the mind's own words", async () => {
