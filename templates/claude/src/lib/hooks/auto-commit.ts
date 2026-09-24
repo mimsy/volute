@@ -12,7 +12,6 @@ export function createAutoCommitHook(cwd: string) {
 
   return {
     hook,
-    waitForCommits: () => flushFileChanges(cwd),
     flushFileChanges: () => flushFileChanges(cwd),
   };
 }

@@ -42,7 +42,7 @@ describe("template composition", () => {
       assert.ok(existsSync(resolve(composedDir, "src/lib/message-channel.ts")));
       assert.ok(existsSync(resolve(composedDir, "src/lib/hooks/auto-commit.ts")));
       assert.ok(existsSync(resolve(composedDir, "src/lib/hooks/pre-compact.ts")));
-      assert.ok(existsSync(resolve(composedDir, "src/lib/hooks/identity-reload.ts")));
+      assert.ok(existsSync(resolve(composedDir, "src/lib/hooks/identity-notice.ts")));
 
       // Init files (from base + template)
       assert.ok(existsSync(resolve(composedDir, ".init/SOUL.md")));

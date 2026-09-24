@@ -78,7 +78,7 @@ Each mind project (created from the template) has:
 │       ├── stream-consumer.ts # SDK stream event consumer (claude template only)
 │       └── hooks/             # SDK hooks (claude template only)
 │           ├── auto-commit.ts     # File change auto-commit hook
-│           ├── identity-reload.ts # Restart on SOUL.md/MEMORY.md change
+│           ├── identity-notice.ts # Tells the mind an identity edit loads at the next session boundary
 │           ├── pre-compact.ts     # Journal update before compaction
 │           ├── reply-instructions.ts # Reply format instructions
 ├── home/                      # Mind working directory (cwd for the SDK)

@@ -380,13 +380,13 @@ export class SleepManager {
       // Wait for mind to finish processing (timeout 120s)
       if (delivered) await this.waitForIdle(name, 120_000);
 
-      // Wait a beat for hooks (identity-reload, auto-commit) to settle
+      // Wait a beat for hooks (auto-commit, pi's identity-edit restart) to settle
       await new Promise((r) => setTimeout(r, 3000));
 
       // Stop the mind process (not connectors) before archiving
       await sleepMind(name);
 
-      // Kill any orphan process still on the port (e.g. from identity-reload hook restart)
+      // Kill any orphan process still on the port (e.g. from a pi identity-edit restart)
       await this.killOrphanOnPort(entry.port);
 
       // Archive sessions after process is stopped
@@ -1215,7 +1215,7 @@ export class SleepManager {
 
   /**
    * Kill any process still listening on a port after stopMind.
-   * Handles the case where a hook (e.g. identity-reload) restarted the server.
+   * Handles the case where a hook (e.g. pi's identity-edit restart) restarted the server.
    */
   private async killOrphanOnPort(port: number): Promise<void> {
     try {

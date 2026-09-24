@@ -1,6 +1,5 @@
 import { resolve } from "node:path";
 import { createMind } from "./agent.js";
-import { daemonRestart } from "./lib/daemon-client.js";
 import { log, setLevel } from "./lib/logger.js";
 import { createRouter } from "./lib/router.js";
 import {
@@ -21,13 +20,12 @@ if (config.model) log("server", `using model: ${config.model}`);
 if (config.thinking) log("server", `thinking: ${JSON.stringify(config.thinking)}`);
 if (config.effort) log("server", `effort: ${config.effort}`);
 
-const systemPrompt = loadSystemPrompt(config);
 const sessionsDir = resolve(".mind/sessions");
 
 const pkg = loadPackageInfo();
 const abortController = new AbortController();
 const mind = createMind({
-  systemPrompt,
+  loadSystemPrompt: () => loadSystemPrompt(config),
   cwd: resolve("home"),
   abortController,
   model: config.model,
@@ -38,11 +36,6 @@ const mind = createMind({
   sessionIdleMinutes: config.sessionIdleMinutes,
   seedTokens: config.continuity?.seedTokens,
   subagents: config.subagents,
-  onIdentityReload: async () => {
-    log("server", "identity file changed — restarting to reload");
-    await mind.waitForCommits();
-    await daemonRestart({ type: "reload" });
-  },
 });
 
 const router = createRouter({
@@ -73,5 +66,11 @@ server.listen(port, () => {
 // re-orphan the very child we're reaping).
 setupShutdown(async () => {
   server.close();
-  await mind.reapAllSessions();
+  // Commit edits from a turn the shutdown cut short — e.g. the mind ran `volute mind
+  // restart` mid-turn to load an identity edit; that turn never reaches its own flush.
+  // Alongside the reap, so a wedged git can't hold the children past the shutdown bound.
+  await Promise.all([
+    mind.flushFileChanges().catch((err) => log("server", "shutdown commit failed:", err)),
+    mind.reapAllSessions(),
+  ]);
 });

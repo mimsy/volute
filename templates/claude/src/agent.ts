@@ -16,7 +16,7 @@ import {
 import { daemonEmit, daemonNotice } from "./lib/daemon-client.js";
 import { runHooks } from "./lib/hook-loader.js";
 import { createAutoCommitHook } from "./lib/hooks/auto-commit.js";
-import { createIdentityReloadHook } from "./lib/hooks/identity-reload.js";
+import { createIdentityNoticeHook } from "./lib/hooks/identity-notice.js";
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports -- used as value
 import { createPreCompactHook } from "./lib/hooks/pre-compact.js";
 import { createReplyInstructionsHook } from "./lib/hooks/reply-instructions.js";
@@ -34,6 +34,7 @@ import { createSessionStore, lostRealContext } from "./lib/session-store.js";
 import type { EffortLevel, SubagentConfig, ThinkingConfig } from "./lib/startup.js";
 import { consumeStream, type MessageIdEntry } from "./lib/stream-consumer.js";
 import { defaultSubagentModel } from "./lib/subagent-model.js";
+import { createSystemPromptSource } from "./lib/system-prompt.js";
 import type {
   HandlerMeta,
   HandlerResolver,
@@ -103,7 +104,8 @@ function threadRef(name: string): string {
 }
 
 export function createMind(options: {
-  systemPrompt: string;
+  /** Builds the system prompt from disk — once now, then again for every new SDK stream. */
+  loadSystemPrompt: () => string;
   cwd: string;
   abortController: AbortController;
   model?: string;
@@ -112,23 +114,23 @@ export function createMind(options: {
   sessionsDir: string;
   maxContextTokens?: number;
   subagents?: Record<string, SubagentConfig>;
-  onIdentityReload?: () => Promise<void>;
   /** Idle minutes before a session's SDK subprocess is reaped. 0 disables. Default 30. */
   sessionIdleMinutes?: number;
   /** Estimated-token budget for seeding a fresh persistent session. 0 disables. Default 30000. */
   seedTokens?: number;
 }): {
   resolve: HandlerResolver;
-  waitForCommits: () => Promise<void>;
+  flushFileChanges: () => Promise<void>;
   getContextInfo: () => Promise<ContextInfo>;
   getContextMessages: () => Promise<ContextMessages>;
   reapAllSessions: () => Promise<void>;
 } {
   const autoCommit = createAutoCommitHook(options.cwd);
-  const identityReload = createIdentityReloadHook(options.cwd);
+  const systemPrompt = createSystemPromptSource(options.loadSystemPrompt);
+  const idleMinutes = options.sessionIdleMinutes ?? 30;
   const sessionStore = createSessionStore(options.sessionsDir);
   const postToolUseHooks: { matcher: string; hooks: HookCallback[] }[] = [
-    { matcher: "Edit|Write", hooks: [autoCommit.hook, identityReload.hook] },
+    { matcher: "Edit|Write", hooks: [autoCommit.hook] },
   ];
 
   const sessions = new Map<string, Session>();
@@ -288,7 +290,8 @@ export function createMind(options: {
             log("mind", `dynamic hook emit failed for ${event}:`, err);
           }
         }
-        // Only UserPromptSubmit hooks can inject additionalContext into the conversation
+        // Only the pre-prompt event injects the dynamic hooks' additionalContext; their
+        // post-tool-use output is emitted above but not handed to the SDK.
         if (event !== "pre-prompt") return {};
         let additionalContext = result.additionalContext;
         // On a seeded session, prepend the honest-boundary note. Deliberately NOT
@@ -348,7 +351,9 @@ export function createMind(options: {
     return query({
       prompt: session.channel.iterable,
       options: {
-        systemPrompt: options.systemPrompt,
+        // Rebuilt per stream, not per process: an identity edit loads at the next session
+        // boundary (reap → resume, rotation, restart) without restarting the mind mid-work.
+        systemPrompt: systemPrompt.forNewStream(),
         permissionMode: "bypassPermissions",
         allowDangerouslySkipPermissions: true,
         settingSources: ["project", "user"],
@@ -371,6 +376,18 @@ export function createMind(options: {
         hooks: {
           PostToolUse: [
             ...postToolUseHooks,
+            {
+              // Created with this stream's prompt (above), so its baseline is what the
+              // prompt was built from. Any tool: Bash edits identity files too.
+              matcher: ".*",
+              hooks: [
+                wrapHookWithEmit(
+                  createIdentityNoticeHook(options.cwd, idleMinutes),
+                  "identity-notice",
+                  session,
+                ),
+              ],
+            },
             {
               matcher: ".*",
               hooks: [createDynamicHook("post-tool-use", session)],
@@ -460,7 +477,6 @@ export function createMind(options: {
             // A healthy turn (context under the threshold) — the rotation streak, if
             // any, is over, so re-arm the self-rotation cap.
             session.consecutiveRotations = 0;
-            if (identityReload.shouldRequestReload()) options.onIdentityReload?.();
           }
         },
         onContextTokens: (tokens: number) => {
@@ -742,7 +758,7 @@ export function createMind(options: {
   // After the idle timeout, shut the subprocess down while keeping the session
   // resumable: the session id is persisted, so the next inbound message
   // transparently re-creates the session via getOrCreateSession's resume path.
-  const idleTimeoutMs = (options.sessionIdleMinutes ?? 30) * 60_000;
+  const idleTimeoutMs = idleMinutes * 60_000;
 
   async function reapSession(session: Session) {
     log("mind", `session "${session.name}": idle — reaping SDK subprocess (resumable)`);
@@ -888,7 +904,6 @@ export function createMind(options: {
     return handler;
   }
 
-  const systemPromptTokens = countSystemPromptTokens(options.systemPrompt);
   const claudeMdTokens = countSdkInstructionTokens(options.cwd);
   const skillDescTokens = countSkillDescriptionTokens([resolvePath(options.cwd, ".claude/skills")]);
 
@@ -910,7 +925,7 @@ export function createMind(options: {
                 (
                   await processClaudeSession(
                     jsonlPath,
-                    systemPromptTokens,
+                    countSystemPromptTokens(systemPrompt.current()),
                     claudeMdTokens,
                     skillDescTokens,
                   )
@@ -932,7 +947,7 @@ export function createMind(options: {
         });
       }
     }
-    return { sessions: infos, systemPrompt: systemPromptTokens };
+    return { sessions: infos, systemPrompt: countSystemPromptTokens(systemPrompt.current()) };
   }
 
   async function getContextMessages(): Promise<ContextMessages> {
@@ -944,7 +959,7 @@ export function createMind(options: {
         const result = jsonlPath
           ? await processClaudeSession(
               jsonlPath,
-              systemPromptTokens,
+              countSystemPromptTokens(systemPrompt.current()),
               claudeMdTokens,
               skillDescTokens,
             )
@@ -957,7 +972,7 @@ export function createMind(options: {
     }
     return {
       preamble: {
-        systemPrompt: options.systemPrompt,
+        systemPrompt: systemPrompt.current(),
         sdkInstructions: readSdkInstructions(options.cwd),
         skillDescriptions: readSkillDescriptions([skillsDir]),
       },
@@ -971,7 +986,7 @@ export function createMind(options: {
 
   return {
     resolve,
-    waitForCommits: autoCommit.waitForCommits,
+    flushFileChanges: autoCommit.flushFileChanges,
     getContextInfo,
     getContextMessages,
     reapAllSessions,

@@ -179,11 +179,11 @@ export function loadSystemPrompt(config: MindConfig = loadConfig()): string {
   const memoryPath = resolve("home/MEMORY.md");
   const volutePath = resolve("home/VOLUTE.md");
 
+  // Throws rather than exiting: the claude template rebuilds the prompt at every session
+  // boundary, where an unreadable SOUL.md must fall back to the last good prompt instead of
+  // killing the process. At startup the throw is uncaught and exits all the same.
   const soul = loadFile(soulPath);
-  if (!soul) {
-    console.error(`Could not read soul file: ${soulPath}`);
-    process.exit(1);
-  }
+  if (!soul) throw new Error(`Could not read soul file: ${soulPath}`);
 
   // SPIRIT.md exists only for the system spirit — daemon-owned doctrine (role,
   // philosophy), kept separate so SOUL.md can be entirely the spirit's own.
