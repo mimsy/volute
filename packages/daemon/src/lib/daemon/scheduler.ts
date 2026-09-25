@@ -72,8 +72,9 @@ export type ScheduleState = {
   skippedAt?: number;
   /**
    * Why the last skip happened: `"stale_catchup"` (a caught-up cron fire too old
-   * to deliver) or `"in_flight"` (the previous run of this script had not
-   * returned, so this fire was not stacked on top of it — #989).
+   * to deliver), `"in_flight"` (the previous run of this script had not
+   * returned, so this fire was not stacked on top of it — #989), or `"undated"`
+   * (a hand-edited schedule with no usable cron or fireAt — #948).
    */
   skipReason?: string;
   /**
@@ -82,6 +83,18 @@ export type ScheduleState = {
    * this the file could not tell a punctual one-timer from a six-hour-late one.
    */
   dueAt?: number;
+  /**
+   * The cron expression `slot` was measured against. `slot` is a minute of *this*
+   * cron, so when the expression changes (a PUT, or a hand-edit picked up on
+   * restart) the old cursor means nothing to the new one — see `loadSchedules`.
+   * Exactly one of `cron` / `fireAt` is recorded; neither means the entry
+   * predates them (or the schedule is undated).
+   */
+  cron?: string;
+  /** The one-time `fireAt` this entry belongs to — recorded so a later switch to
+   * a cron is recognised as an edit, not mistaken for an entry from before these
+   * fields existed. */
+  fireAt?: string;
 };
 
 /** Read `scheduler-state.json`. Entries that aren't well-formed are skipped. */
@@ -102,6 +115,8 @@ function loadScheduleStates(path: string): Map<string, ScheduleState> {
         ...(typeof v.skippedAt === "number" ? { skippedAt: v.skippedAt } : {}),
         ...(typeof v.skipReason === "string" ? { skipReason: v.skipReason } : {}),
         ...(typeof v.dueAt === "number" ? { dueAt: v.dueAt } : {}),
+        ...(typeof v.cron === "string" ? { cron: v.cron } : {}),
+        ...(typeof v.fireAt === "string" ? { fireAt: v.fireAt } : {}),
       });
     }
   } catch (err) {
@@ -226,9 +241,38 @@ export class Scheduler {
         this.stateDirty = true;
       }
     }
-    // Baseline-init newly-seen schedules so catch-up never replays history (#453).
-    for (const key of validKeys) {
-      if (!this.state.has(key)) this.mark(key, { slot: epochMinute });
+    for (const schedule of schedules) {
+      const key = `${mindName}:${schedule.id}`;
+      const entry = this.state.get(key);
+      const spec = schedule.cron
+        ? { cron: schedule.cron }
+        : schedule.fireAt
+          ? { fireAt: schedule.fireAt }
+          : {};
+      // Baseline-init newly-seen schedules so catch-up never replays history (#453).
+      if (!entry) {
+        this.mark(key, { slot: epochMinute, ...spec });
+      } else if (schedule.cron && entry.cron !== schedule.cron) {
+        // An edited cron — or a one-timer turned recurring — is re-baselined,
+        // keeping the fire history. The old slot is a minute of the *old* timing:
+        // left in place, the new cron's most recent minute usually lands after it,
+        // and catch-up reads that as a fire it missed hours ago, telling the mind
+        // a schedule it just tuned "did not run" (#948). An entry saved before
+        // the timing was recorded at all is adopted as-is rather than
+        // re-baselined, so the upgrade restart — exactly when a catch-up fire
+        // matters — doesn't cost every schedule one.
+        const legacy =
+          entry.cron === undefined && entry.fireAt === undefined && entry.skipReason !== "undated";
+        this.mark(key, legacy ? spec : { slot: epochMinute, ...spec });
+        delete entry.fireAt;
+        if (entry.skipReason === "undated") delete entry.skipReason;
+      } else if (schedule.fireAt && entry.fireAt !== schedule.fireAt) {
+        // Recurring turned one-time (or a moved fireAt). Forget the cron, so that
+        // switching back later re-baselines instead of reading every cron minute
+        // in between as missed.
+        this.mark(key, spec);
+        delete entry.cron;
+      }
     }
     if (this.stateDirty) {
       this.saveState().catch((err) =>
@@ -276,6 +320,10 @@ export class Scheduler {
     // One-time timer: fireAt
     if (schedule.fireAt) {
       const fireTime = Math.floor(new Date(schedule.fireAt).getTime() / 60000);
+      if (Number.isNaN(fireTime)) {
+        this.skipUndated(mind, schedule, epochMinute, "its fireAt is not a valid date");
+        return false;
+      }
       if (epochMinute < fireTime) return false;
       // Deliberate policy: one-timers have no staleness cap. A reminder armed for
       // a moment that has passed is still the only copy of that intention, so it
@@ -291,7 +339,10 @@ export class Scheduler {
     }
 
     // Recurring: cron
-    if (!schedule.cron) return false;
+    if (!schedule.cron) {
+      this.skipUndated(mind, schedule, epochMinute, "it has neither a cron nor a fireAt");
+      return false;
+    }
 
     let prevMinute = cronCache.get(schedule.cron);
     if (prevMinute === undefined) {
@@ -333,6 +384,23 @@ export class Scheduler {
       return false;
     }
     return true;
+  }
+
+  /**
+   * A schedule with no usable time can never fire. Only a hand-edit reaches this
+   * (the API validates both fields), and a silent `return false` every tick made
+   * it indistinguishable from a schedule with nothing due. Record the reason and
+   * tell the mind — once, not every minute. A one-timer is consumed, as `fire()`
+   * does for one that has nothing to send; the notice says so.
+   */
+  private skipUndated(mind: string, schedule: Schedule, epochMinute: number, reason: string): void {
+    const key = `${mind}:${schedule.id}`;
+    if (this.state.get(key)?.skipReason === "undated") return;
+    this.mark(key, { skippedAt: epochMinute, skipReason: "undated" });
+    this.noticeInvalidSchedule(mind, schedule, reason).catch((err) =>
+      slog.warn(`failed to record undated notice for ${key}`, log.errorData(err)),
+    );
+    if (schedule.fireAt) this.removeSchedule(mind, schedule.id);
   }
 
   /**
