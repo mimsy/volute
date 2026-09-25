@@ -1,5 +1,5 @@
 import { zValidator } from "@hono/zod-validator";
-import { isMind } from "@volute/api/user-type";
+import { isMind, isSystemSpirit } from "@volute/api/user-type";
 import { type Context, Hono } from "hono";
 import { z } from "zod";
 import { getOrCreateMindUser, getUserByUsername } from "../../../lib/auth.js";
@@ -88,7 +88,10 @@ const app = new Hono<AuthEnv>()
       const existing = await getUserByUsername(name);
       if (existing) {
         participantIds.add(existing.id);
-        if (!firstMindName && isMind(existing)) firstMindName = name;
+        // Any mind (local or external) counts, and so does the spirit.
+        if (!firstMindName && (isMind(existing) || isSystemSpirit(existing))) {
+          firstMindName = name;
+        }
         continue;
       }
       if (await findMind(name)) {
@@ -100,8 +103,18 @@ const app = new Hono<AuthEnv>()
       return c.json({ error: `User not found: ${name}` }, 400);
     }
 
+    // A DM with no mind in it has nowhere to be read yet: the dashboard only opens
+    // conversations with a mind, and `volute chat read` is mind-scoped. Say so plainly —
+    // a host reaching for another person should learn why, not a bare rule (#1000).
     if (!firstMindName) {
-      return c.json({ error: "At least one mind participant is required" }, 400);
+      return c.json(
+        {
+          error:
+            "Direct messages between people aren't supported yet — a direct message needs " +
+            "a mind in it. Nothing was sent. To talk with them, use a channel you share.",
+        },
+        400,
+      );
     }
 
     if (participantIds.size > 2) {

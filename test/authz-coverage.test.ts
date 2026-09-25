@@ -460,6 +460,9 @@ const SPIRIT_AUTHZ_EXEMPT: Record<string, string> = {
     "refuses password login to minds and the spirit — a denial, not a grant",
   "daemon/src/lib/chat/commons-channel.ts": "recipient filtering for commons announcements",
   "daemon/src/lib/delivery/fan-out.ts": "delivery routing to the spirit as a participant",
+  "daemon/src/web/api/v1/conversations.ts":
+    "classifies a DM's *named recipient* — the spirit counts as the mind a DM needs — " +
+    "which decides whether the conversation has a read surface, not what the caller may do",
 };
 
 describe("authz coverage: no authorization on spirit identity", () => {

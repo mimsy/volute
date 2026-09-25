@@ -6,10 +6,14 @@ describe("send self-DM fast-path", () => {
   afterEach(() => {
     mock.restoreAll();
     delete process.env.VOLUTE_MIND;
+    delete process.env.VOLUTE_MIND_TOKEN;
   });
 
   it("errors and exits 1 when a mind sends to its own @self channel", async () => {
+    // A mind process carries its token alongside its name; VOLUTE_MIND alone is a
+    // host-side convenience, not an identity (#500).
     process.env.VOLUTE_MIND = "volute";
+    process.env.VOLUTE_MIND_TOKEN = "unused-token";
     const exitMock = mock.method(process, "exit", () => {
       throw new Error("exit");
     });
