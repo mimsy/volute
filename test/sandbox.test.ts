@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { _resetConfigCache } from "../packages/daemon/src/lib/config/setup.js";
-import { voluteSystemDir } from "../packages/daemon/src/lib/mind/registry.js";
+import { stateDir, voluteSystemDir } from "../packages/daemon/src/lib/mind/registry.js";
 import {
   buildSandboxReadConfig,
   isSandboxEnabled,
@@ -99,6 +99,14 @@ describe("buildSandboxReadConfig", () => {
   it("allows the mind's own directory", async () => {
     const { allowRead } = await buildSandboxReadConfig("alice", "/tmp/minds/alice");
     assert.ok(allowRead.includes("/tmp/minds/alice"), "should allow mind's own dir");
+  });
+
+  it("allows the mind's own logs, and only those, from its state dir (#938)", async () => {
+    const { allowRead } = await buildSandboxReadConfig("alice", "/tmp/minds/alice");
+    const aliceState = stateDir("alice");
+    assert.ok(allowRead.includes(resolve(aliceState, "logs")), "own logs must be readable");
+    assert.ok(!allowRead.includes(aliceState), "not the whole state dir");
+    assert.ok(!allowRead.some((p) => p.startsWith(`${stateDir("bob")}`)), "no other mind's state");
   });
 
   // A mind acts and speaks only through the volute CLI. Installed under $HOME

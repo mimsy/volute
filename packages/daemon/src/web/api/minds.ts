@@ -2286,8 +2286,9 @@ const app = new Hono<AuthEnv>()
     return c.json({ context: await collectTurnContext(baseName, reason) });
   })
   // Record a notice for a mind (mind → daemon). Templates use this to surface
-  // context-loss the daemon can't see (missing session file, compaction failure) so
-  // it lands in the same next-turn notices drain as daemon-recorded failures (#367).
+  // context-loss the daemon can't see (missing session file, compaction failure) and
+  // their own hooks failing (#938), so it lands in the same next-turn notices drain as
+  // daemon-recorded failures (#367).
   // A `thread` scopes the notice to that thread's drain; omitted → mind-level
   // (drained by whichever thread next runs a turn).
   //
@@ -2298,13 +2299,14 @@ const app = new Hono<AuthEnv>()
   .post(
     "/:name/notices",
     requireSelf(),
-    // Deliberately narrower than NOTICE_KINDS: only these two are mind-postable
+    // Deliberately narrower than NOTICE_KINDS: only these are mind-postable
     // (see the route comment) — the enum enforces that a mind can't forge a
-    // daemon-authored kind about itself.
+    // daemon-authored kind about itself. hook_failed belongs here because hooks run
+    // mind-side: the mind's server is the only one that sees them fail (#938).
     zValidator(
       "json",
       z.object({
-        kind: z.enum(["context_lost", "delivery_failed"]),
+        kind: z.enum(["context_lost", "delivery_failed", "hook_failed"]),
         message: z.string(),
         thread: z.string().optional(),
       }),

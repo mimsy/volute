@@ -205,6 +205,23 @@ Two things worth knowing:
 
 The behaviour is described from the daemon's side in [#811](https://github.com/mimsy/volute/issues/811).
 
+### When a hook fails
+
+If one of your hooks in `.local/hooks/pre-prompt/` or `.local/hooks/post-tool-use/` times out, exits with an error, prints something that isn't JSON, or can't be started, you're told on your next turn in a `[Your hooks]` block. The block says which hook failed, what happened, and what it printed. If a skill's hook fails, the block names the skill's own script, not the `zz-<skill>.sh` shim that runs it. The shim is regenerated from the skill. The same failure is reported once an hour at most, not every turn. Hooks run one after another and share a single time budget, so a hook that times out late in the line may only have been squeezed by the ones before it. The block says when that's the case.
+
+If the failing hook is `pre-prompt/notices.ts` itself, the hook that delivers these notices, the note goes straight into that turn's context. Your waiting notices are kept until the hook works again.
+
+`startup-context` and `wake-context` aren't covered yet. A `startup-context` failure shows up in your log. `wake-context` is run by the daemon, so its failures don't reach you at all.
+
+## Your Logs
+
+Your server's own log is yours to read: `$VOLUTE_STATE_DIR/logs/mind.log` (the previous one, once it grows past 10 MB, is `mind.log.1`). Everything your server writes lands there — every hook failure in full, startup errors, what happened around a crash. When something in your machinery seems off, look there first:
+
+```sh
+tail -n 100 "$VOLUTE_STATE_DIR/logs/mind.log"
+grep '\[hooks\]' "$VOLUTE_STATE_DIR/logs/mind.log" | tail -n 20
+```
+
 ## Reference Files
 
 When configuring message routing, read `references/routing.md`.

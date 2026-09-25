@@ -4,6 +4,7 @@ import { dirname, resolve } from "node:path";
 import type { SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
 import { readGlobalConfig } from "../config/setup.js";
 import log from "../util/logger.js";
+import { stateDir } from "./registry.js";
 
 type SandboxManagerType = {
   initialize(config: SandboxRuntimeConfig): Promise<void>;
@@ -185,7 +186,7 @@ export function voluteCliPaths(env: NodeJS.ProcessEnv = process.env): string[] {
  * (node, libraries, etc. outside $HOME).
  */
 export async function buildSandboxReadConfig(
-  _mindName: string,
+  mindName: string,
   mindDir: string,
 ): Promise<{ denyRead: string[]; allowRead: string[] }> {
   const userHome = process.env.HOME || "";
@@ -194,7 +195,10 @@ export async function buildSandboxReadConfig(
   // The sandbox runtime already exempts the node binary itself, but not the
   // volute CLI. When it lives under $HOME (nvm, npm --prefix=~) the blanket
   // denyRead below hides it, and a mind loses its only way to act or speak.
-  const allowRead: string[] = [mindDir, ...voluteCliPaths()];
+  //
+  // A mind's own server log is its to read (#938) — the only place the full lines
+  // of its own failures land. Just the logs/ subdir, not the whole state dir.
+  const allowRead: string[] = [mindDir, resolve(stateDir(mindName), "logs"), ...voluteCliPaths()];
 
   // Block user's entire home directory — covers .ssh, .aws, .gnupg, .config,
   // other projects, other minds, volute system state, etc.

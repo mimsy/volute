@@ -31,9 +31,11 @@ try {
     `http://127.0.0.1:${VOLUTE_DAEMON_PORT}/api/v1/minds/${VOLUTE_MIND}/history/notices?session=${encodeURIComponent(session)}`,
     { headers: { Authorization: `Bearer ${VOLUTE_MIND_TOKEN}` } },
   );
+  // A failed drain exits non-zero so the hook loader sees it and tells you in-band —
+  // printing "{}" here once hid a stale path's 404 for weeks (#938).
   if (!res.ok) {
-    console.log("{}");
-    process.exit(0);
+    console.error(`notices drain failed: ${res.status} ${await res.text().catch(() => "")}`);
+    process.exit(1);
   }
   const { context } = (await res.json()) as { context: string | null };
   if (context) {
@@ -41,6 +43,7 @@ try {
   } else {
     console.log("{}");
   }
-} catch {
-  console.log("{}");
+} catch (err) {
+  console.error(`notices drain failed: ${err instanceof Error ? err.message : err}`);
+  process.exit(1);
 }

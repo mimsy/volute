@@ -110,21 +110,27 @@ export async function daemonEmit(event: DaemonEvent): Promise<void> {
   }
 }
 
+/** Whether this process has a daemon to talk to (false in tests or a server run by hand). */
+export function hasDaemon(): boolean {
+  return Boolean(port && mind);
+}
+
 /**
  * Record a notice with the daemon — it reaches the mind through the next-turn
  * notices drain (the pre-prompt hook). Use for failures the daemon can't see
  * itself, like context loss inside the mind process. `thread` scopes the notice
  * to one thread's drain; omitted, any thread's next turn picks it up.
- * Best-effort: logs on failure, never throws.
+ * Best-effort: logs on failure, never throws. Resolves true once the daemon has
+ * recorded it.
  */
 export async function daemonNotice(input: {
   kind: string;
   message: string;
   thread?: string;
-}): Promise<void> {
+}): Promise<boolean> {
   if (!port || !mind) {
     console.error("[volute] daemonNotice: VOLUTE_DAEMON_PORT or VOLUTE_MIND not set");
-    return;
+    return false;
   }
   try {
     const res = await fetch(
@@ -139,9 +145,12 @@ export async function daemonNotice(input: {
       console.error(
         `[volute] daemonNotice failed: ${res.status} ${await res.text().catch(() => "")}`,
       );
+      return false;
     }
+    return true;
   } catch (err) {
     console.error("[volute] daemonNotice request errored:", err);
+    return false;
   }
 }
 

@@ -1456,6 +1456,24 @@ describe("system-events formatEvents", () => {
     assert.ok(out.indexOf("[Notices]") < out.indexOf("[Notes]"));
   });
 
+  it("renders hook failures as information about the mind's machinery, not as failed turns", () => {
+    // #938: a hook failing is not a turn failing — the "[Notices] ... turns failed"
+    // header would be false, and those subtypes also drive the host's failed-turn surface.
+    const events = [
+      {
+        ...base,
+        id: 1,
+        type: "notice",
+        body: "Your pre-prompt hook .local/hooks/pre-prompt/x.ts timed out",
+        meta: noticeMeta("hook_failed", "hook_failed"),
+        created_at: at("14:02"),
+      },
+    ] as SystemEvent[];
+    const out = formatEvents(events)!;
+    assert.match(out, /^\[Your hooks\]\n- .*x\.ts timed out/);
+    assert.doesNotMatch(out, /turns? failed/);
+  });
+
   it("renders budget and version events in their own blocks", () => {
     const events = [
       { ...base, id: 1, type: "budget", body: "budget pause", meta: null, created_at: at("14:02") },
