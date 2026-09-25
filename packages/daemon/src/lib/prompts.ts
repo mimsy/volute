@@ -164,7 +164,7 @@ export const PROMPT_DEFAULTS: Record<PromptKey, PromptMeta> = {
   },
   pre_sleep: {
     content:
-      "Time to rest. You have this turn to wind down however feels right — reflect on your day, update your journal or memory, finish any threads of thought, or simply settle.\n\nYour current session will be archived and a fresh one will begin when you wake. Anything in session context that isn't saved to files will be lost.\n\nYou'll wake ${wakeTime}.",
+      "Time to rest. You have this turn to wind down however feels right — reflect on your day, update your journal or memory, finish any threads of thought, or simply settle.\n\nThis session closes while you sleep and a fresh one begins when you wake. Ordinarily the last stretch of your conversation comes with you, so you'll pick up close to where you left off — but what matters most is safest in your own files. If there's something you want to be sure to find when you wake, leave yourself a note.\n\nYou'll wake ${wakeTime}.",
     description: "Pre-sleep message sent before stopping the mind",
     variables: ["wakeTime"],
     category: "system",
