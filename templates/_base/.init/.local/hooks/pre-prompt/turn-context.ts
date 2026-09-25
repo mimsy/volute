@@ -19,12 +19,14 @@ try {
       signal: AbortSignal.timeout(3000),
     },
   );
+  // Exit non-zero on failure so the hook loader can tell you (#938); "{}" hid it.
   if (!res.ok) {
-    console.log("{}");
-    process.exit(0);
+    console.error(`turn context failed: ${res.status} ${await res.text().catch(() => "")}`);
+    process.exit(1);
   }
   const { context } = (await res.json()) as { context: string | null };
   console.log(context ? JSON.stringify({ additionalContext: context }) : "{}");
-} catch {
-  console.log("{}");
+} catch (err) {
+  console.error(`turn context failed: ${err instanceof Error ? err.message : err}`);
+  process.exit(1);
 }

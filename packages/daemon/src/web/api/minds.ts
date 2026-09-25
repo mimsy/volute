@@ -2287,7 +2287,8 @@ const app = new Hono<AuthEnv>()
   })
   // Record a notice for a mind (mind → daemon). Templates use this to surface
   // context-loss the daemon can't see (missing session file, compaction failure) and
-  // their own hooks failing (#938), so it lands in the same next-turn notices drain as daemon-recorded failures (#367).
+  // their own hooks failing (#938), so it lands in the same next-turn notices drain as
+  // daemon-recorded failures (#367).
   // A `thread` scopes the notice to that thread's drain; omitted → mind-level
   // (drained by whichever thread next runs a turn).
   //

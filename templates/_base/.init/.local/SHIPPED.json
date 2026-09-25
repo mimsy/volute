@@ -14,11 +14,13 @@
   ".local/hooks/pre-prompt/session-activity.ts": [
     "31156860bef02a7d48c4b99dcf4271821a1a5a3dd630f24d2f9ac43dcf474290",
     "aa88ea0adb49b7c94a91058824afac69788bdc2ae060868737bbd288ec52b046",
-    "da3f234001f7d1b640d48eb3ebb1cc5603c31949e189c5b05a56fd3229b53baa"
+    "da3f234001f7d1b640d48eb3ebb1cc5603c31949e189c5b05a56fd3229b53baa",
+    "d226f72a82083765d706bcb895bd9c24b72b2e292af49cd0ca461adf7efa888d"
   ],
   ".local/hooks/pre-prompt/turn-context.ts": [
     "0582eba89c045d234773cf517b0c3e32e11acce7504474ac15f31901c1c6d418",
-    "9cb3676d62da3a12bcd6c0a7c094f10a2ee7c239e2689b0e862ca3bc4fbb21bb"
+    "9cb3676d62da3a12bcd6c0a7c094f10a2ee7c239e2689b0e862ca3bc4fbb21bb",
+    "87e913318ce8dc416f6ce7c9e236c76620747b636dc17407d45244e9488038ed"
   ],
   ".local/hooks/startup-context.ts": [
     "04dae0cc44efe59184fad489d00aa405bb173e7bcefc864fa9e88812334cbdec",

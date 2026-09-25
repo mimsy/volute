@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
-import { existsSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, dirname, extname, join, relative, resolve } from "node:path";
-import { daemonNotice } from "./daemon-client.js";
+import { daemonNotice, hasDaemon } from "./daemon-client.js";
 import { log } from "./logger.js";
 
 /** How a hook failed. Set by {@link executeHook} only when the hook did not succeed. */
@@ -229,9 +229,20 @@ export async function runHooks(
 
   for (const script of scripts) {
     const remaining = Math.max(MIN_HOOK_MS, deadline - Date.now());
-    const result = await executeHook(script, input, Math.min(timeout, remaining), homeDir);
+    const budget = Math.min(timeout, remaining);
+    const result = await executeHook(script, input, budget, homeDir);
     if (result.failure) {
-      const told = tellMindAboutHookFailure(script, homeDir, event, result.failure);
+      const told = tellMindAboutHookFailure({
+        scriptPath: script,
+        homeDir,
+        event,
+        failure: result.failure,
+        session: (input as { session?: unknown }).session,
+        // A timeout on a squeezed budget is the hooks before it running long, not
+        // necessarily this hook being broken — say so rather than blame it.
+        squeezed:
+          result.failure.kind === "timeout" && budget < timeout ? { budget, timeout } : undefined,
+      });
       if (told) contextParts.push(told);
     }
     if (result.additionalContext) {
@@ -262,10 +273,16 @@ export async function runHooks(
 export const HOOK_FAILURE_QUIET_MS = 60 * 60 * 1000;
 
 const lastTold = new Map<string, number>();
+const inFlight = new Set<Promise<void>>();
 
 /** Forget which failures have been told — for tests. */
 export function resetHookFailureDedupe(): void {
   lastTold.clear();
+}
+
+/** Wait for every in-flight failure report to settle — for tests. */
+export async function flushHookFailureReports(): Promise<void> {
+  await Promise.all([...inFlight]);
 }
 
 /**
@@ -281,54 +298,105 @@ function isNoticesDrain(scriptPath: string, event: string): boolean {
 }
 
 /**
+ * A skill's hook runs through a generated shim (`zz-<skill>.sh`, see installHookShims
+ * in the daemon's skills.ts) that just execs the skill's own script. The shim is
+ * regenerated from the skill, so the notice names the script, which is what the mind
+ * would actually look at.
+ */
+function skillHook(scriptPath: string): { skill: string; script: string } | undefined {
+  const m = /^zz-(.+)\.sh$/.exec(basename(scriptPath));
+  if (!m) return undefined;
+  try {
+    const exec = /^exec (?:node --import tsx|node|bash) (\S+) "\$@"$/m.exec(
+      readFileSync(scriptPath, "utf-8"),
+    );
+    return exec ? { skill: m[1], script: exec[1] } : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+type FailureReport = {
+  scriptPath: string;
+  homeDir: string;
+  event: string;
+  failure: HookFailure;
+  session: unknown;
+  squeezed?: { budget: number; timeout: number };
+};
+
+/**
  * Tell the mind, plainly, that part of its own machinery failed (#938). Without this
  * the failure goes only to mind.log, and the mind learns about it by noticing a
  * symptom and guessing.
  *
  * Most failures go to the daemon as a `hook_failed` notice, which the notices drain
  * delivers on the next turn — fire-and-forget, so reporting never adds to the turn's
- * wait. Recording a notice runs no hooks, so there is no loop.
+ * wait. The quiet window is only kept once the daemon has recorded the notice; a
+ * report that didn't land is retried the next time the hook fails. Recording a notice
+ * runs no hooks, so there is no loop.
  *
  * The drain itself is the exception: a notice about the drain failing would sit behind
- * the very hook that isn't working. So for the drain, on a pre-prompt event, the note
- * is returned for the caller to put straight into this turn's context. A failing
- * drain on any other event can't happen (it only runs on pre-prompt).
+ * the very hook that isn't working. So for the drain the note is returned for the
+ * caller to put straight into this turn's context — the full note once per session per
+ * quiet window, and a one-line reminder on every other turn it fails. Every failing
+ * turn says something because nothing confirms an in-band note was seen (the SDK
+ * cancels pre-prompt hooks on interrupt), and "your notices are held" is true of each
+ * such turn.
  *
  * Returns in-band text to add to this turn's context, or undefined.
  */
-function tellMindAboutHookFailure(
-  scriptPath: string,
-  homeDir: string,
-  event: string,
-  failure: HookFailure,
-): string | undefined {
-  const key = `${scriptPath}\n${failure.kind}`;
-  const now = Date.now();
-  const last = lastTold.get(key);
-  if (last !== undefined && now - last < HOOK_FAILURE_QUIET_MS) return undefined;
-  lastTold.set(key, now);
-
+function tellMindAboutHookFailure(r: FailureReport): string | undefined {
+  const { scriptPath, homeDir, event, failure, squeezed } = r;
   const hook = relative(homeDir, scriptPath);
-  const output = failure.output ? `\nIt said:\n${clip(failure.output)}` : "";
-  const quiet = `If it keeps failing you'll hear about it again in about an hour, not every turn; the full lines are in $VOLUTE_STATE_DIR/logs/mind.log.`;
+  const now = Date.now();
+  const drain = isNoticesDrain(scriptPath, event);
+  const key = `${drain ? `${String(r.session ?? "")}\n` : ""}${scriptPath}\n${failure.kind}`;
+  const last = lastTold.get(key);
+  const quiet = last !== undefined && now - last < HOOK_FAILURE_QUIET_MS;
 
-  if (isNoticesDrain(scriptPath, event)) {
+  const output = failure.output ? `\nIt said:\n${clip(failure.output)}` : "";
+  const repeat =
+    "If it keeps failing you'll hear about it again in about an hour, not every turn; " +
+    "the full lines are in $VOLUTE_STATE_DIR/logs/mind.log.";
+  const summary = squeezed
+    ? `ran out of time (${squeezed.budget}ms). That may not be its fault: hooks run one ` +
+      `after another within a shared ${squeezed.timeout}ms budget, and the ones before it ` +
+      `this turn left it only that much`
+    : failure.summary;
+
+  if (drain) {
+    if (quiet) {
+      return `[Your hooks] Your notices hook (${hook}) is still failing; any waiting notices are held until it works.`;
+    }
+    lastTold.set(key, now);
     return (
-      `[Your hooks] Your notices hook (${hook}) ${failure.summary}, so any notices ` +
-      `waiting for you couldn't be delivered this turn — they're kept until it works. ` +
-      `${quiet}${output}`
+      `[Your hooks] Your notices hook (${hook}) ${summary}, so any notices waiting ` +
+      `for you couldn't be delivered this turn — they're kept until it works. ${repeat}${output}`
     );
   }
 
-  // No daemon to tell (tests, or a server run by hand): the log line is all there is.
-  if (!process.env.VOLUTE_DAEMON_PORT || !process.env.VOLUTE_MIND) return undefined;
-  daemonNotice({
+  if (quiet || !hasDaemon()) return undefined;
+  lastTold.set(key, now);
+
+  const skill = skillHook(scriptPath);
+  const what = skill
+    ? `The ${event} hook from your ${skill.skill} skill (${skill.script}, run by ${hook})`
+    : `Your ${event} hook ${hook}`;
+  const whose = squeezed
+    ? ""
+    : skill
+      ? ` The ${hook} shim is regenerated from the skill; the script is the part to look at.`
+      : " It's part of your own machinery — yours to look into.";
+  const report = daemonNotice({
     kind: "hook_failed",
-    message:
-      `Your ${event} hook ${hook} ${failure.summary}, so whatever it adds was skipped ` +
-      `that time. It's part of your own machinery — yours to read, fix, or remove. ` +
-      `${quiet}${output}`,
-  }).catch(() => {});
+    message: `${what} ${summary}, so whatever it adds was skipped that time.${whose} ${repeat}${output}`,
+  }).then((ok) => {
+    // Not recorded: forget it was "told", so the next failure tries again.
+    if (!ok && lastTold.get(key) === now) lastTold.delete(key);
+  });
+  inFlight.add(report);
+  report.finally(() => inFlight.delete(report));
   return undefined;
 }
 

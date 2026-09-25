@@ -207,7 +207,11 @@ The behaviour is described from the daemon's side in [#811](https://github.com/m
 
 ### When a hook fails
 
-If one of your hooks times out, exits with an error, prints something that isn't JSON, or can't be started, you're told on your next turn, in a `[Your hooks]` block: which hook, what happened, and what it printed. The same failure repeating is told about once an hour, not every turn. If the failing hook is `pre-prompt/notices.ts` itself — the hook that delivers these notices — the note comes straight into that turn's context instead, and any waiting notices are kept until it works again.
+If one of your hooks in `.local/hooks/pre-prompt/` or `.local/hooks/post-tool-use/` times out, exits with an error, prints something that isn't JSON, or can't be started, you're told on your next turn in a `[Your hooks]` block. The block says which hook failed, what happened, and what it printed. If a skill's hook fails, the block names the skill's own script, not the `zz-<skill>.sh` shim that runs it. The shim is regenerated from the skill. The same failure is reported once an hour at most, not every turn. Hooks run one after another and share a single time budget, so a hook that times out late in the line may only have been squeezed by the ones before it. The block says when that's the case.
+
+If the failing hook is `pre-prompt/notices.ts` itself, the hook that delivers these notices, the note goes straight into that turn's context. Your waiting notices are kept until the hook works again.
+
+`startup-context` and `wake-context` aren't covered yet. A `startup-context` failure shows up in your log. `wake-context` is run by the daemon, so its failures don't reach you at all.
 
 ## Your Logs
 
