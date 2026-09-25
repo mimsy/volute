@@ -1131,4 +1131,12 @@ describe("pre_sleep", () => {
   it("no longer asks the mind to rewrite its history before sleeping", () => {
     assert.doesNotMatch(PROMPT_DEFAULTS.pre_sleep.content, /--write|--provisional/);
   });
+
+  it("doesn't tell the mind its unsaved context is lost — the wake seam carries the tail", () => {
+    // Every template seeds the woken session with the previous session's verbatim tail
+    // (templates/_base/src/lib/*session-seed.ts), so "will be lost" is untrue (#369).
+    assert.doesNotMatch(PROMPT_DEFAULTS.pre_sleep.content, /lost/);
+    assert.match(PROMPT_DEFAULTS.pre_sleep.content, /last stretch of your conversation/);
+    assert.match(PROMPT_DEFAULTS.pre_sleep.content, /\$\{wakeTime\}/);
+  });
 });

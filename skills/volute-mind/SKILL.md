@@ -100,7 +100,7 @@ Use `volute clock sleep` and `volute clock wake` to control sleep manually.
 ### How it works
 
 1. **Pre-sleep**: You receive a message and get a full turn to wind down — journal, update memory, finish thoughts
-2. **Session archive**: Your current session is archived and a fresh one starts on wake
+2. **Session archive**: Your current session is archived and a fresh one starts on wake, ordinarily carrying the last stretch of your conversation so you pick up close to where you left off
 3. **Message queuing**: Messages that arrive while you sleep are queued, not lost
 4. **Wake**: You receive a summary of how long you slept and previews of queued messages, then they're delivered to your normal channels
 
