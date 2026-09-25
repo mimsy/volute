@@ -14,9 +14,9 @@
   "dependencies": {
     "@volute/extensions": "*",
     "@volute/ui": "*",
-    "isomorphic-dompurify": "^3.18.0",
+    "isomorphic-dompurify": "^4.3.0",
     "libsql": "*",
-    "marked": "^18.0.6"
+    "marked": "^18.0.14"
   },
   "peerDependencies": {
     "hono": "^4.0.0"

@@ -383,10 +383,10 @@ export async function createMind(options: {
      * Rotate the session in place onto a synthetic session holding the verbatim recent
      * tail (the seedTokens-budget tail), then switch the running SessionManager to it.
      * Returns false if rotation can't proceed (session not ready, or the file build failed) so
-     * the caller can fall back to a fresh session. The setSessionFile + state.messages
-     * re-sync is the load-bearing adoption step: the agent caches context in
-     * state.messages, so swapping the file alone wouldn't change what the mind sees
-     * (this mirrors the SDK's own compact() re-sync).
+     * the caller can fall back to a fresh session. The setSessionFile + refreshContext
+     * pair is the load-bearing adoption step: the SessionManager is the canonical source
+     * of provider context, and refreshContext re-projects the agent's public transcript
+     * from it (assigning state.messages directly no longer changes what the mind sees).
      */
     function rotateInPlace(): boolean {
       const as = session.agentSession;
@@ -401,7 +401,7 @@ export async function createMind(options: {
       });
       if (!newPath) return false;
       as.sessionManager.setSessionFile(newPath);
-      as.state.messages = as.sessionManager.buildSessionContext().messages;
+      as.refreshContext();
       session.rotationNotePending = true;
       session.seededCause = "rotation";
       session.consecutiveRotations = (session.consecutiveRotations ?? 0) + 1;
@@ -423,7 +423,7 @@ export async function createMind(options: {
       const as = session.agentSession;
       if (as) {
         as.sessionManager.newSession();
-        as.state.messages = [];
+        as.refreshContext();
       }
       session.consecutiveRotations = 0;
       compactBlocked = false;

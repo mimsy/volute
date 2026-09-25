@@ -10,12 +10,12 @@
     "astro": "astro"
   },
   "dependencies": {
-    "@astrojs/starlight": "^0.37.6",
-    "@astrojs/svelte": "^7.2.5",
-    "astro": "^5.6.1",
-    "dompurify": "^3.4.11",
-    "marked": "^18.0.5",
-    "sharp": "^0.34.2",
-    "svelte": "^5.56.4"
+    "@astrojs/starlight": "^0.42.3",
+    "@astrojs/svelte": "^9.0.1",
+    "astro": "^7.3.4",
+    "dompurify": "^3.4.16",
+    "marked": "^18.0.14",
+    "sharp": "^0.35.4",
+    "svelte": "^5.57.1"
   }
 }
