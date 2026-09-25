@@ -8,7 +8,8 @@
   ".local/hooks/pre-prompt/notices.ts": [
     "1b2fffd2f3fd9f00638d561c99f90b8b73a9aeb2beec923cbafbd7c83b9037f6",
     "a081dd868f2f02a9f3644beb3a3517ce9c4fe12bd6c6e840436f8e5f77be23d1",
-    "b21094641367f5b0945086e4afcb03f3d9814c8c8b6f953f02c50bfc715a7912"
+    "b21094641367f5b0945086e4afcb03f3d9814c8c8b6f953f02c50bfc715a7912",
+    "70e4a353c5859cb510d1d079349cc39ec69fbe295a107ea0e3884d04285cc9bb"
   ],
   ".local/hooks/pre-prompt/session-activity.ts": [
     "31156860bef02a7d48c4b99dcf4271821a1a5a3dd630f24d2f9ac43dcf474290",

@@ -87,24 +87,28 @@ describe("executeHook", () => {
     assert.equal(result.additionalContext, "hello from hook");
   });
 
-  it("returns empty result for non-zero exit code", async () => {
+  it("returns no context, and says why, for non-zero exit code", async () => {
     const scriptDir = join(testDir, "exec-fail");
     mkdirSync(scriptDir, { recursive: true });
     const script = join(scriptDir, "fail.sh");
-    writeFileSync(script, "#!/bin/bash\nexit 1", { mode: 0o755 });
+    writeFileSync(script, "#!/bin/bash\necho 'gone' >&2\nexit 1", { mode: 0o755 });
 
     const result = await executeHook(script, {});
-    assert.deepEqual(result, {});
+    assert.deepEqual(result, {
+      failure: { kind: "exit", summary: "exited with code 1", output: "gone" },
+    });
   });
 
-  it("returns empty result for non-JSON output", async () => {
+  it("returns no context, and says why, for non-JSON output", async () => {
     const scriptDir = join(testDir, "exec-bad-json");
     mkdirSync(scriptDir, { recursive: true });
     const script = join(scriptDir, "bad.sh");
     writeFileSync(script, '#!/bin/bash\necho "not json"', { mode: 0o755 });
 
     const result = await executeHook(script, {});
-    assert.deepEqual(result, {});
+    assert.equal(result.additionalContext, undefined);
+    assert.equal(result.failure?.kind, "invalid_output");
+    assert.equal(result.failure?.output, "not json");
   });
 
   it("returns empty result for empty output", async () => {
@@ -139,7 +143,8 @@ describe("executeHook", () => {
     writeFileSync(script, "#!/bin/bash\nsleep 10\necho '{}'", { mode: 0o755 });
 
     const result = await executeHook(script, {}, 500);
-    assert.deepEqual(result, {});
+    assert.equal(result.additionalContext, undefined);
+    assert.equal(result.failure?.kind, "timeout");
   });
 
   it("parses decision field", async () => {
@@ -280,7 +285,12 @@ describe("hook timeouts", () => {
       result = await executeHook(script, {}, 300);
     });
 
-    assert.deepEqual(result, {}, "a timed-out hook must degrade to no context, not throw");
+    assert.equal(
+      (result as { additionalContext?: string }).additionalContext,
+      undefined,
+      "a timed-out hook must degrade to no context, not throw",
+    );
+    assert.equal((result as { failure?: { kind: string } }).failure?.kind, "timeout");
     assert.match(logged, /timed out after 300ms/, `log was: ${logged}`);
     assert.match(logged, /VOLUTE_HOOK_TIMEOUT_MS/, "the message must say how to raise it");
     assert.doesNotMatch(logged, /exited with code null/);

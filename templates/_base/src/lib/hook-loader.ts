@@ -1,12 +1,23 @@
 import { spawn } from "node:child_process";
 import { existsSync, readdirSync, statSync } from "node:fs";
-import { extname, join, resolve } from "node:path";
+import { basename, dirname, extname, join, relative, resolve } from "node:path";
+import { daemonNotice } from "./daemon-client.js";
 import { log } from "./logger.js";
+
+/** How a hook failed. Set by {@link executeHook} only when the hook did not succeed. */
+export type HookFailure = {
+  kind: "timeout" | "exit" | "spawn" | "invalid_output";
+  /** One plain sentence, e.g. "timed out after 15000ms". */
+  summary: string;
+  /** What the hook wrote to stderr (or the bad stdout), trimmed — may be empty. */
+  output: string;
+};
 
 export type HookResult = {
   additionalContext?: string;
   metadata?: Record<string, unknown>;
   decision?: "block";
+  failure?: HookFailure;
 };
 
 export type AggregatedResult = {
@@ -133,7 +144,15 @@ export function executeHook(
                 `raise VOLUTE_HOOK_TIMEOUT_MS if it needs longer: ${stderr.trim()}`
             : `hook ${scriptPath} exited with code ${code}${signal ? ` (${signal})` : ""}: ${stderr.trim()}`,
         );
-        resolve({});
+        resolve({
+          failure: timedOut
+            ? { kind: "timeout", summary: `timed out after ${timeout}ms`, output: stderr.trim() }
+            : {
+                kind: "exit",
+                summary: signal ? `was killed by ${signal}` : `exited with code ${code}`,
+                output: stderr.trim(),
+              },
+        });
         return;
       }
 
@@ -152,7 +171,13 @@ export function executeHook(
         });
       } catch {
         log("hooks", `hook ${scriptPath} returned invalid JSON: ${trimmed.slice(0, 200)}`);
-        resolve({});
+        resolve({
+          failure: {
+            kind: "invalid_output",
+            summary: "printed something that isn't JSON",
+            output: trimmed.slice(0, 200),
+          },
+        });
       }
     });
 
@@ -160,7 +185,7 @@ export function executeHook(
       if (settled) return;
       settled = true;
       log("hooks", `hook ${scriptPath} failed to spawn: ${err.message}`);
-      resolve({});
+      resolve({ failure: { kind: "spawn", summary: "couldn't be started", output: err.message } });
     });
   });
 }
@@ -205,6 +230,10 @@ export async function runHooks(
   for (const script of scripts) {
     const remaining = Math.max(MIN_HOOK_MS, deadline - Date.now());
     const result = await executeHook(script, input, Math.min(timeout, remaining), homeDir);
+    if (result.failure) {
+      const told = tellMindAboutHookFailure(script, homeDir, event, result.failure);
+      if (told) contextParts.push(told);
+    }
     if (result.additionalContext) {
       contextParts.push(result.additionalContext);
     }
@@ -221,4 +250,89 @@ export async function runHooks(
     metadata,
     blocked,
   };
+}
+
+/**
+ * How long one hook's failure of one kind stays quiet after the mind has been told
+ * about it. A hook that fails every turn would otherwise put the same notice in front
+ * of the mind every turn; once an hour is enough to know it is still happening.
+ * In-memory, so a restarted server tells the mind again — a fresh start is a fair
+ * moment to repeat it.
+ */
+export const HOOK_FAILURE_QUIET_MS = 60 * 60 * 1000;
+
+const lastTold = new Map<string, number>();
+
+/** Forget which failures have been told — for tests. */
+export function resetHookFailureDedupe(): void {
+  lastTold.clear();
+}
+
+/**
+ * The next-turn notices drain. Its own failure can't travel through the notices it
+ * delivers, so it is told in-band instead (see {@link tellMindAboutHookFailure}).
+ */
+function isNoticesDrain(scriptPath: string, event: string): boolean {
+  return (
+    event === "pre-prompt" &&
+    basename(dirname(scriptPath)) === "pre-prompt" &&
+    /^notices\.(ts|js|sh)$/.test(basename(scriptPath))
+  );
+}
+
+/**
+ * Tell the mind, plainly, that part of its own machinery failed (#938). Without this
+ * the failure goes only to mind.log, and the mind learns about it by noticing a
+ * symptom and guessing.
+ *
+ * Most failures go to the daemon as a `hook_failed` notice, which the notices drain
+ * delivers on the next turn — fire-and-forget, so reporting never adds to the turn's
+ * wait. Recording a notice runs no hooks, so there is no loop.
+ *
+ * The drain itself is the exception: a notice about the drain failing would sit behind
+ * the very hook that isn't working. So for the drain, on a pre-prompt event, the note
+ * is returned for the caller to put straight into this turn's context. A failing
+ * drain on any other event can't happen (it only runs on pre-prompt).
+ *
+ * Returns in-band text to add to this turn's context, or undefined.
+ */
+function tellMindAboutHookFailure(
+  scriptPath: string,
+  homeDir: string,
+  event: string,
+  failure: HookFailure,
+): string | undefined {
+  const key = `${scriptPath}\n${failure.kind}`;
+  const now = Date.now();
+  const last = lastTold.get(key);
+  if (last !== undefined && now - last < HOOK_FAILURE_QUIET_MS) return undefined;
+  lastTold.set(key, now);
+
+  const hook = relative(homeDir, scriptPath);
+  const output = failure.output ? `\nIt said:\n${clip(failure.output)}` : "";
+  const quiet = `If it keeps failing you'll hear about it again in about an hour, not every turn; the full lines are in $VOLUTE_STATE_DIR/logs/mind.log.`;
+
+  if (isNoticesDrain(scriptPath, event)) {
+    return (
+      `[Your hooks] Your notices hook (${hook}) ${failure.summary}, so any notices ` +
+      `waiting for you couldn't be delivered this turn — they're kept until it works. ` +
+      `${quiet}${output}`
+    );
+  }
+
+  // No daemon to tell (tests, or a server run by hand): the log line is all there is.
+  if (!process.env.VOLUTE_DAEMON_PORT || !process.env.VOLUTE_MIND) return undefined;
+  daemonNotice({
+    kind: "hook_failed",
+    message:
+      `Your ${event} hook ${hook} ${failure.summary}, so whatever it adds was skipped ` +
+      `that time. It's part of your own machinery — yours to read, fix, or remove. ` +
+      `${quiet}${output}`,
+  }).catch(() => {});
+  return undefined;
+}
+
+function clip(text: string): string {
+  const MAX = 1000;
+  return text.length > MAX ? `…${text.slice(-MAX)}` : text;
 }

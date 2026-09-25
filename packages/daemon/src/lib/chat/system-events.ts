@@ -138,6 +138,8 @@ export function eventLabel(type: string, meta: Record<string, unknown> | null | 
           return s("reason") ? `Infrastructure: ${s("reason")}` : "Infrastructure failure";
         case "routes":
           return "Routing config";
+        case "hook_failed":
+          return "Hook failed";
         default:
           return "Notice";
       }
@@ -158,6 +160,7 @@ export const NOTICE_KINDS = [
   "join_blocked",
   "infrastructure",
   "routes",
+  "hook_failed",
 ] as const;
 
 export type NoticeKind = (typeof NOTICE_KINDS)[number];
@@ -980,6 +983,7 @@ export function formatEvents(events: SystemEvent[]): string | null {
   const budgets: SystemEvent[] = [];
   const versions: SystemEvent[] = [];
   const extensions: SystemEvent[] = [];
+  const hooks: SystemEvent[] = [];
   const others: SystemEvent[] = [];
   for (const e of events) {
     if (e.type === "budget") budgets.push(e);
@@ -988,6 +992,7 @@ export function formatEvents(events: SystemEvent[]): string | null {
       const subtype = String(metaOf(e).subtype);
       if (FAILURE_SUBTYPES.has(subtype)) failures.push(e);
       else if (subtype === "extension") extensions.push(e);
+      else if (subtype === "hook_failed") hooks.push(e);
       else others.push(e);
     } else others.push(e);
   }
@@ -1042,6 +1047,13 @@ export function formatEvents(events: SystemEvent[]): string | null {
       const lines = items.map((e) => `- ${localHM(e.created_at)} ${e.body}`);
       blocks.push(`${header}\n${lines.join("\n")}`);
     }
+  }
+
+  // Not under the failure header: a hook failing is not a turn failing, and saying so
+  // would be false. It's information about the mind's own machinery, in its own block.
+  if (hooks.length > 0) {
+    const lines = hooks.map((e) => `- ${localHM(e.created_at)} ${e.body}`);
+    blocks.push(`[Your hooks]\n${lines.join("\n")}`);
   }
 
   if (others.length > 0) {

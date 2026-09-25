@@ -48,6 +48,25 @@ describe("POST /api/v1/minds/:name/notices", () => {
     }
   });
 
+  it("accepts hook_failed — hooks run mind-side, so only the mind sees them fail (#938)", async () => {
+    const name = `notice-api-${Date.now()}-h`;
+    const token = await makeMind(name);
+    const { default: app } = await import("../packages/daemon/src/web/app.js");
+    try {
+      const res = await app.request(`http://localhost/api/v1/minds/${name}/notices`, {
+        method: "POST",
+        headers: postHeaders(token),
+        body: JSON.stringify({ kind: "hook_failed", message: "Your hook timed out." }),
+      });
+      assert.equal(res.status, 200);
+      const drained = await drainEvents(name, "main");
+      assert.equal(drained.length, 1);
+      assert.equal(parseMeta(drained[0].meta).subtype, "hook_failed");
+    } finally {
+      await removeMind(name);
+    }
+  });
+
   it("scopes the notice to the given thread", async () => {
     const name = `notice-api-${Date.now()}-b`;
     const token = await makeMind(name);
