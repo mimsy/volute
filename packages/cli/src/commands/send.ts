@@ -360,7 +360,7 @@ const cmd = command({
       };
 
       // For mind senders, use the daemon file-send API (reads from mind's home/)
-      const mindSelf = process.env.VOLUTE_MIND;
+      const mindSelf = selfMindIdentity();
       if (mindSelf) {
         const staged = await postStaging(
           `/api/v1/minds/${encodeURIComponent(mindSelf)}/files/send`,
@@ -419,7 +419,9 @@ const cmd = command({
     if (parsed.isDM && parsed.platform === "volute") {
       // For volute DMs (@target), create/find conversation via daemon
       const targetName = parsed.identifier.slice(1); // strip @
-      const mindSelf = process.env.VOLUTE_MIND;
+      // Only a mind process speaks as a mind: a host who merely exported VOLUTE_MIND
+      // is still a host, and must not take the mind-scoped path below (#500).
+      const mindSelf = selfMindIdentity();
 
       // Sending to yourself is a dead end: it would resolve to a
       // one-participant conversation that reaches nobody.
@@ -434,32 +436,38 @@ const cmd = command({
       const targetIsMind = await isMind(targetName);
       waitMindName = targetIsMind ? targetName : undefined;
 
-      // Use the sender mind's context when VOLUTE_MIND is set (so the daemon
-      // token matches), otherwise use the target mind's context.
-      const contextMind = mindSelf ?? targetName;
-      // A mind names its counterpart; a host names nobody. The host's own identity is
-      // resolved daemon-side from the authenticated session rather than guessed from the
-      // OS account here — the target mind is already a participant by virtue of being
-      // `contextMind` (#993).
-      const participants = mindSelf ? [targetName] : [];
-
-      // Create/find conversation via daemon
-      const createRes = await daemonFetch(
-        urlOf(client.api.v1.minds[":name"].channels.create.$url({ param: { name: contextMind } })),
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ platform: "volute", participants, sender: claimedSender }),
-        },
-      );
+      // A mind creates the DM in its own context (so its token passes the mind-scoped
+      // guard) and names its counterpart. A host has no mind of its own, so it goes
+      // through the non-mind-scoped create route instead: borrowing the target's name as
+      // context 403'd every non-admin host and told anyone DMing a human "Mind not
+      // found" (#1000). That route also answers, in its own words, when the target
+      // can't be DMed. Either way the host's own identity is resolved daemon-side from
+      // the authenticated session, not guessed from the OS account (#993).
+      const createRes = mindSelf
+        ? await daemonFetch(
+            urlOf(client.api.v1.minds[":name"].channels.create.$url({ param: { name: mindSelf } })),
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                platform: "volute",
+                participants: [targetName],
+                sender: claimedSender,
+              }),
+            },
+          )
+        : await daemonFetch(urlOf(client.api.v1.conversations.$url()), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ participantNames: [targetName] }),
+          });
       if (!createRes.ok) {
         const data = await createRes.json().catch(() => ({ error: "Unknown error" }));
         console.error((data as { error: string }).error);
         process.exit(1);
       }
-      const { conversationId: convId } = (await createRes.json()) as {
-        conversationId?: string;
-      };
+      const created = (await createRes.json()) as { conversationId?: string; id?: string };
+      const convId = mindSelf ? created.conversationId : created.id;
       if (convId) waitConversationId = convId;
 
       // Send via daemon chat API
@@ -471,7 +479,9 @@ const cmd = command({
           conversationId: convId,
           images,
           sender: claimedSender,
-          targetMind: contextMind,
+          // Variant-aware delivery keys off targetMind; a target the CLI can't confirm
+          // is a local mind (an external mind, say) is reached by conversationId alone.
+          targetMind: mindSelf ?? (targetIsMind ? targetName : undefined),
         }),
       });
       if (!sendRes.ok) {
@@ -512,7 +522,7 @@ const cmd = command({
 
       // For volute group channels (#general), look up by name and send
       const channelName = parsed.identifier.slice(1);
-      const mindSelf = process.env.VOLUTE_MIND;
+      const mindSelf = selfMindIdentity();
 
       // Look up channel conversation ID
       const channelRes = await daemonFetch(`/api/v1/channels/${encodeURIComponent(channelName)}`);
