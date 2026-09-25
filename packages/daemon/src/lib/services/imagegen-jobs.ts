@@ -9,11 +9,11 @@
  * tells the mind to re-run.
  */
 
-import { mkdir, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { relative } from "node:path";
 import { deliverEvent } from "../chat/system-events.js";
-import { chownMindFile } from "../mind/isolation.js";
-import { resolveMindDir } from "../mind/registry.js";
+import { mindFileOwner } from "../mind/isolation.js";
+import { writeMindFile } from "../mind/mind-file-write.js";
+import { getBaseName, resolveMindDir } from "../mind/registry.js";
 import log from "../util/logger.js";
 import { safeResolveWithinBase } from "../util/paths.js";
 import { generateImage } from "./imagegen.js";
@@ -156,13 +156,13 @@ async function runJob(
   try {
     const buf = await generate(model, prompt, controller.signal);
 
-    const home = `${await resolveMindDir(record.mind)}/home`;
-    const target = safeResolveWithinBase(home, `images/${filename}.png`);
+    const dir = await resolveMindDir(record.mind);
+    const target = safeResolveWithinBase(`${dir}/home`, `images/${filename}.png`);
     if (!target) throw new Error(`Invalid image filename: ${filename}`);
-
-    await mkdir(dirname(target), { recursive: true });
-    await writeFile(target, buf);
-    await chownMindFile(target, record.mind);
+    // Root under user isolation, writing into a tree the mind can rearrange.
+    await writeMindFile(dir, relative(dir, target), buf, {
+      owner: await mindFileOwner(await getBaseName(record.mind)),
+    });
 
     settle(record, { status: "done", path: target });
 

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
+import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { promisify } from "node:util";
@@ -9,6 +10,7 @@ import {
   readGlobalConfig,
   writeGlobalConfig,
 } from "../packages/daemon/src/lib/config/setup.js";
+import { mindDir } from "../packages/daemon/src/lib/mind/registry.js";
 import {
   generateImage,
   getConfiguredProviders,
@@ -626,6 +628,7 @@ describe("imagegen jobs", () => {
 
   it("does not fire a completion event when the job finishes within the foreground wait", async () => {
     const events: unknown[] = [];
+    mkdirSync(mindDir("mind-fast"), { recursive: true });
     const id = createImagegenJob("mind-fast", "any:model", "p", "f", {
       generate: async () => Buffer.from("png"),
       deliver: async (mind, event) => {
@@ -646,6 +649,7 @@ describe("imagegen jobs", () => {
     const gate = new Promise<void>((r) => {
       release = r;
     });
+    mkdirSync(mindDir("mind-slow"), { recursive: true });
     const id = createImagegenJob("mind-slow", "any:model", "p", "f", {
       generate: async () => {
         await gate;
@@ -678,6 +682,33 @@ describe("imagegen jobs", () => {
     const job = await waitForImagegenJob("mind-escape", id, 1000);
     assert.equal(job?.status, "error");
     if (job?.status === "error") assert.match(job.error, /Invalid image filename/);
+  });
+
+  // #1110: under user isolation the daemon is root; a mind can plant a link where
+  // its image will land and have root overwrite the referent.
+  it("refuses a symlink planted at the image path instead of writing through it", async () => {
+    const images = resolve(mindDir("mind-link"), "home", "images");
+    mkdirSync(images, { recursive: true });
+    const victim = resolve(mindDir("mind-link"), "..", "mind-link-victim");
+    writeFileSync(victim, "untouched");
+    symlinkSync(victim, resolve(images, "x.png"));
+    const id = createImagegenJob("mind-link", "any:model", "p", "x", {
+      generate: async () => Buffer.from("png"),
+    });
+    const job = await waitForImagegenJob("mind-link", id, 1000);
+    assert.equal(job?.status, "error");
+    assert.equal(readFileSync(victim, "utf-8"), "untouched");
+  });
+
+  it("refuses a FIFO planted at the image path instead of hanging on it", async () => {
+    const images = resolve(mindDir("mind-fifo"), "home", "images");
+    mkdirSync(images, { recursive: true });
+    await execFileAsync("mkfifo", [resolve(images, "x.png")]);
+    const id = createImagegenJob("mind-fifo", "any:model", "p", "x", {
+      generate: async () => Buffer.from("png"),
+    });
+    const job = await waitForImagegenJob("mind-fifo", id, 2000);
+    assert.equal(job?.status, "error");
   });
 
   it("notifies the mind when a backgrounded job fails", async () => {

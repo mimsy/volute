@@ -12,7 +12,11 @@ import {
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { after, before, describe, it } from "node:test";
-import { reapMindTmp, STALE_MIND_TMP_MS } from "../packages/daemon/src/lib/mind/tmp-reaper.js";
+import {
+  prepareMindTmp,
+  reapMindTmp,
+  STALE_MIND_TMP_MS,
+} from "../packages/daemon/src/lib/mind/tmp-reaper.js";
 
 describe("reapMindTmp", () => {
   let root: string;
@@ -140,5 +144,43 @@ describe("reapMindTmp", () => {
 
   it("returns an empty list for a missing tmp dir without throwing", async () => {
     assert.deepEqual(await reapMindTmp(resolve(root, "does-not-exist")), []);
+  });
+});
+
+describe("prepareMindTmp", () => {
+  function staleFile(dir: string): string {
+    mkdirSync(dir, { recursive: true });
+    const path = resolve(dir, "stale");
+    writeFileSync(path, "x");
+    const when = (Date.now() - STALE_MIND_TMP_MS * 2) / 1000;
+    utimesSync(path, when, when);
+    return path;
+  }
+
+  it("creates a missing .mind/tmp and reaps stale scratch in it", async () => {
+    const dir = mkdtempSync(resolve(tmpdir(), "prep-tmp-"));
+    await prepareMindTmp(dir, null);
+    assert.equal(existsSync(resolve(dir, ".mind/tmp")), true);
+    const stale = staleFile(resolve(dir, ".mind/tmp"));
+    await prepareMindTmp(dir, null);
+    assert.equal(existsSync(stale), false);
+  });
+
+  // `.mind -> /var` would make `.mind/tmp` the host's /var/tmp, reaped as root.
+  it("touches nothing outside the mind dir when .mind is a link out of it", async () => {
+    const dir = mkdtempSync(resolve(tmpdir(), "prep-tmp-"));
+    const outside = mkdtempSync(resolve(tmpdir(), "prep-tmp-host-"));
+    const stale = staleFile(resolve(outside, "tmp"));
+    symlinkSync(outside, resolve(dir, ".mind"));
+    await prepareMindTmp(dir, null);
+    assert.equal(existsSync(stale), true);
+  });
+
+  it("creates nothing outside when .mind links to a place with no tmp yet", async () => {
+    const dir = mkdtempSync(resolve(tmpdir(), "prep-tmp-"));
+    const outside = mkdtempSync(resolve(tmpdir(), "prep-tmp-host-"));
+    symlinkSync(outside, resolve(dir, ".mind"));
+    await prepareMindTmp(dir, null);
+    assert.equal(existsSync(resolve(outside, "tmp")), false);
   });
 });

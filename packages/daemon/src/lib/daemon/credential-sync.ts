@@ -1,4 +1,3 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import {
   getAiConfig,
@@ -7,7 +6,8 @@ import {
   resolveOAuthCredentials,
   resolveProviderKey,
 } from "../ai-service.js";
-import { chownMindDir, isIsolationEnabled } from "../mind/isolation.js";
+import { chownMindDir, isIsolationEnabled, mindFileOwner } from "../mind/isolation.js";
+import { readMindFile, writeMindFile } from "../mind/mind-file-write.js";
 import { findMind, mindDir } from "../mind/registry.js";
 import log from "../util/logger.js";
 import { markCredentialDegraded, noteCredentialHealthy } from "./credential-recovery.js";
@@ -42,6 +42,13 @@ const PI_PROVIDER_ENV_VAR: Record<string, string> = {
   zai: "ZAI_API_KEY",
 };
 
+/** A pi mind's agent dir (PI_CODING_AGENT_DIR), relative to its mind dir. */
+const PI_AGENT_DIR = ".mind/pi-agent";
+
+function piAgentDir(dir: string): string {
+  return resolve(dir, PI_AGENT_DIR);
+}
+
 export type AnthropicOauth = {
   access: string;
   refresh: string;
@@ -55,14 +62,13 @@ export type AnthropicOauth = {
  * fresh token into a running mind without a restart. Returns the config dir.
  */
 export async function writeClaudeCredentials(
-  homeDir: string,
+  dir: string,
   baseName: string,
   oauth: AnthropicOauth,
 ): Promise<string> {
-  const claudeDir = resolve(homeDir, ".claude");
-  mkdirSync(claudeDir, { recursive: true });
-  writeFileSync(
-    resolve(claudeDir, ".credentials.json"),
+  await writeMindFile(
+    dir,
+    "home/.claude/.credentials.json",
     JSON.stringify({
       claudeAiOauth: {
         accessToken: oauth.access,
@@ -71,8 +77,9 @@ export async function writeClaudeCredentials(
         scopes: ["user:inference", "user:profile"],
       },
     }),
-    { mode: 0o600 },
+    { owner: await mindFileOwner(baseName), mode: 0o600 },
   );
+  const claudeDir = resolve(dir, "home", ".claude");
   if (isIsolationEnabled()) {
     await chownMindDir(claudeDir, baseName);
   }
@@ -87,21 +94,12 @@ export async function writeClaudeCredentials(
  * every read and reloads itself when it moves (no watcher on the template side).
  */
 export async function writePiProviderKey(
-  piAgentDir: string,
+  dir: string,
   baseName: string,
   provider: string,
   key: string,
 ): Promise<void> {
-  mkdirSync(piAgentDir, { recursive: true });
-  const authPath = resolve(piAgentDir, "auth.json");
-  const authData: Record<string, unknown> = existsSync(authPath)
-    ? JSON.parse(readFileSync(authPath, "utf-8"))
-    : {};
-  authData[provider] = { type: "api_key", key };
-  writeFileSync(authPath, JSON.stringify(authData, null, 2), { mode: 0o600 });
-  if (isIsolationEnabled()) {
-    await chownMindDir(piAgentDir, baseName);
-  }
+  await setPiAuthEntry(dir, baseName, provider, { type: "api_key", key });
 }
 
 /**
@@ -115,20 +113,37 @@ export async function writePiProviderKey(
  * daemon's refresh fan-out.
  */
 export async function writePiProviderOAuth(
-  piAgentDir: string,
+  dir: string,
   baseName: string,
   provider: string,
   oauth: Record<string, unknown>,
 ): Promise<void> {
-  mkdirSync(piAgentDir, { recursive: true });
-  const authPath = resolve(piAgentDir, "auth.json");
-  const authData: Record<string, unknown> = existsSync(authPath)
-    ? JSON.parse(readFileSync(authPath, "utf-8"))
-    : {};
-  authData[provider] = { type: "oauth", ...oauth };
-  writeFileSync(authPath, JSON.stringify(authData, null, 2), { mode: 0o600 });
+  await setPiAuthEntry(dir, baseName, provider, { type: "oauth", ...oauth });
+}
+
+/**
+ * Set one provider's entry in a pi mind's auth.json, keeping the others. The
+ * read goes through the same guarded handle as the write, so a link planted at
+ * auth.json is never read from as root either.
+ */
+async function setPiAuthEntry(
+  dir: string,
+  baseName: string,
+  provider: string,
+  entry: Record<string, unknown>,
+): Promise<void> {
+  await writeMindFile(
+    dir,
+    `${PI_AGENT_DIR}/auth.json`,
+    (existing) => {
+      const authData: Record<string, unknown> = existing ? JSON.parse(existing) : {};
+      authData[provider] = entry;
+      return JSON.stringify(authData, null, 2);
+    },
+    { owner: await mindFileOwner(baseName), mode: 0o600 },
+  );
   if (isIsolationEnabled()) {
-    await chownMindDir(piAgentDir, baseName);
+    await chownMindDir(piAgentDir(dir), baseName);
   }
 }
 
@@ -148,12 +163,12 @@ export async function writePiProviderOAuth(
  */
 export async function injectPiProviderCredentials(opts: {
   provider: string;
-  piAgentDir: string;
+  dir: string;
   baseName: string;
   mindName: string;
   env: Record<string, string | undefined>;
 }): Promise<void> {
-  const { provider, piAgentDir, baseName, mindName, env } = opts;
+  const { provider, dir, baseName, mindName, env } = opts;
 
   let oauthCreds: Awaited<ReturnType<typeof resolveOAuthCredentials>>;
   let oauthError: OAuthRefreshError | undefined;
@@ -170,8 +185,8 @@ export async function injectPiProviderCredentials(opts: {
   }
 
   if (oauthCreds && !DAEMON_ONLY_OAUTH.has(provider)) {
-    await writePiProviderOAuth(piAgentDir, baseName, provider, oauthCreds);
-    env.PI_CODING_AGENT_DIR = piAgentDir;
+    await writePiProviderOAuth(dir, baseName, provider, oauthCreds);
+    env.PI_CODING_AGENT_DIR = piAgentDir(dir);
     await noteCredentialHealthy(mindName);
     return;
   }
@@ -189,8 +204,8 @@ export async function injectPiProviderCredentials(opts: {
   }
 
   if (apiKey) {
-    await writePiProviderKey(piAgentDir, baseName, provider, apiKey);
-    env.PI_CODING_AGENT_DIR = piAgentDir;
+    await writePiProviderKey(dir, baseName, provider, apiKey);
+    env.PI_CODING_AGENT_DIR = piAgentDir(dir);
     const providerEnv = PI_PROVIDER_ENV_VAR[provider];
     if (providerEnv) env[providerEnv] = apiKey;
     await noteCredentialHealthy(mindName);
@@ -222,11 +237,13 @@ type SyncDeps = {
 };
 
 /** True if a pi mind's auth.json already has an entry for the given provider. */
-function piUsesProvider(piAgentDir: string, provider: string): boolean {
+async function piUsesProvider(dir: string, baseName: string, provider: string): Promise<boolean> {
   try {
-    const authPath = resolve(piAgentDir, "auth.json");
-    if (!existsSync(authPath)) return false;
-    const data = JSON.parse(readFileSync(authPath, "utf-8")) as Record<string, unknown>;
+    const auth = await readMindFile(dir, `${PI_AGENT_DIR}/auth.json`, {
+      owner: await mindFileOwner(baseName),
+    });
+    if (!auth) return false;
+    const data = JSON.parse(auth.text) as Record<string, unknown>;
     return data[provider] != null;
   } catch {
     return false;
@@ -261,12 +278,11 @@ export async function syncProviderToMinds(provider: string, deps: SyncDeps = {})
       const template = entry.template;
 
       if (template === "pi") {
-        const piAgentDir = resolve(dir, ".mind", "pi-agent");
-        if (piUsesProvider(piAgentDir, provider)) {
-          await writePiProviderKey(piAgentDir, baseName, provider, oauth.access);
+        if (await piUsesProvider(dir, baseName, provider)) {
+          await writePiProviderKey(dir, baseName, provider, oauth.access);
         }
       } else if (provider === "anthropic" && (template === "claude" || !template)) {
-        await writeClaudeCredentials(resolve(dir, "home"), baseName, oauth);
+        await writeClaudeCredentials(dir, baseName, oauth);
       }
     } catch (err) {
       // A desync leaves this mind on a stale token → its next model call auth-fails

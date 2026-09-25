@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { execFile } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { describe, it } from "node:test";
+import { promisify } from "node:util";
 import { removeProviderConfig, saveProviderConfig } from "../packages/daemon/src/lib/ai-service.js";
 import {
   injectPiProviderCredentials,
@@ -29,7 +31,7 @@ describe("writeClaudeCredentials", () => {
     const homeDir = resolve(dir, "home");
     mkdirSync(homeDir, { recursive: true });
 
-    const claudeDir = await writeClaudeCredentials(homeDir, "mymind", OAUTH);
+    const claudeDir = await writeClaudeCredentials(dir, "mymind", OAUTH);
 
     assert.equal(claudeDir, resolve(homeDir, ".claude"));
     const creds = JSON.parse(readFileSync(resolve(claudeDir, ".credentials.json"), "utf-8"));
@@ -54,7 +56,7 @@ describe("writePiProviderKey", () => {
       JSON.stringify({ openai: { type: "api_key", key: "openai-key" } }),
     );
 
-    await writePiProviderKey(piAgentDir, "mymind", "anthropic", OAUTH.access);
+    await writePiProviderKey(dir, "mymind", "anthropic", OAUTH.access);
 
     const auth = JSON.parse(readFileSync(resolve(piAgentDir, "auth.json"), "utf-8"));
     assert.deepEqual(auth, {
@@ -66,7 +68,7 @@ describe("writePiProviderKey", () => {
   it("creates auth.json when none exists", async () => {
     const dir = tmpRoot("pi-fresh");
     const piAgentDir = resolve(dir, ".mind", "pi-agent");
-    await writePiProviderKey(piAgentDir, "mymind", "anthropic", OAUTH.access);
+    await writePiProviderKey(dir, "mymind", "anthropic", OAUTH.access);
     const auth = JSON.parse(readFileSync(resolve(piAgentDir, "auth.json"), "utf-8"));
     assert.deepEqual(auth, { anthropic: { type: "api_key", key: OAUTH.access } });
   });
@@ -86,7 +88,7 @@ describe("writePiProviderOAuth", () => {
       ...OAUTH,
       availableModelIds: ["claude-sonnet-4.6"],
     };
-    await writePiProviderOAuth(piAgentDir, "mymind", "github-copilot", copilotOauth);
+    await writePiProviderOAuth(dir, "mymind", "github-copilot", copilotOauth);
 
     const auth = JSON.parse(readFileSync(resolve(piAgentDir, "auth.json"), "utf-8"));
     assert.deepEqual(auth, {
@@ -98,7 +100,7 @@ describe("writePiProviderOAuth", () => {
   it("creates auth.json when none exists", async () => {
     const dir = tmpRoot("pi-oauth-fresh");
     const piAgentDir = resolve(dir, ".mind", "pi-agent");
-    await writePiProviderOAuth(piAgentDir, "mymind", "github-copilot", OAUTH);
+    await writePiProviderOAuth(dir, "mymind", "github-copilot", OAUTH);
     const auth = JSON.parse(readFileSync(resolve(piAgentDir, "auth.json"), "utf-8"));
     assert.deepEqual(auth, { "github-copilot": { type: "oauth", ...OAUTH } });
   });
@@ -126,7 +128,7 @@ describe("injectPiProviderCredentials", () => {
       });
       await injectPiProviderCredentials({
         provider: "anthropic",
-        piAgentDir,
+        dir,
         baseName: "mymind",
         mindName: "mymind",
         env,
@@ -279,5 +281,64 @@ describe("syncProviderToMinds", () => {
       },
       lookup: async () => undefined,
     });
+  });
+});
+
+// #1110: under user isolation the daemon is root, and every path below the mind
+// dir is the mind's to rearrange. None of these may be written (or read) through.
+describe("credential writes refuse links a mind planted", () => {
+  function victimFile(content: string): string {
+    const path = resolve(tmpRoot("victim"), "victim");
+    writeFileSync(path, content);
+    return path;
+  }
+
+  it("a symlink at home/.claude/.credentials.json", async () => {
+    const dir = tmpRoot("claude-link-file");
+    mkdirSync(resolve(dir, "home", ".claude"), { recursive: true });
+    const victim = victimFile("untouched");
+    symlinkSync(victim, resolve(dir, "home", ".claude", ".credentials.json"));
+    await assert.rejects(writeClaudeCredentials(dir, "mymind", OAUTH), /ELOOP/);
+    assert.equal(readFileSync(victim, "utf-8"), "untouched");
+  });
+
+  it("a symlinked home/.claude directory", async () => {
+    const dir = tmpRoot("claude-link-dir");
+    mkdirSync(resolve(dir, "home"), { recursive: true });
+    const elsewhere = tmpRoot("claude-elsewhere");
+    symlinkSync(elsewhere, resolve(dir, "home", ".claude"));
+    await assert.rejects(writeClaudeCredentials(dir, "mymind", OAUTH), /escapes base directory/);
+    assert.equal(existsSync(resolve(elsewhere, ".credentials.json")), false);
+  });
+
+  it("a home/ swapped for a link out of the mind dir", async () => {
+    const dir = tmpRoot("claude-link-home");
+    const elsewhere = tmpRoot("home-elsewhere");
+    mkdirSync(resolve(elsewhere, ".claude"));
+    symlinkSync(elsewhere, resolve(dir, "home"));
+    await assert.rejects(writeClaudeCredentials(dir, "mymind", OAUTH), /escapes base directory/);
+    assert.equal(existsSync(resolve(elsewhere, ".claude", ".credentials.json")), false);
+  });
+
+  it("a symlink at pi-agent/auth.json is neither read nor written", async () => {
+    const dir = tmpRoot("pi-link");
+    mkdirSync(resolve(dir, ".mind", "pi-agent"), { recursive: true });
+    const victim = victimFile(JSON.stringify({ secret: "another principal's" }));
+    symlinkSync(victim, resolve(dir, ".mind", "pi-agent", "auth.json"));
+    await assert.rejects(writePiProviderKey(dir, "mymind", "anthropic", OAUTH.access), /ELOOP/);
+    assert.equal(readFileSync(victim, "utf-8"), JSON.stringify({ secret: "another principal's" }));
+  });
+
+  it("a FIFO at pi-agent/auth.json doesn't hang the refresh fan-out", async () => {
+    const dir = tmpRoot("pi-fifo");
+    mkdirSync(resolve(dir, ".mind", "pi-agent"), { recursive: true });
+    await promisify(execFile)("mkfifo", [resolve(dir, ".mind", "pi-agent", "auth.json")]);
+    const sync = syncProviderToMinds("anthropic", {
+      getOauth: () => OAUTH,
+      listRunning: () => ["piffy"],
+      lookup: async () => ({ name: "piffy", template: "pi", dir }),
+    });
+    const hung = new Promise((r) => setTimeout(() => r("hung"), 2000).unref());
+    assert.equal(await Promise.race([sync.then(() => "done"), hung]), "done");
   });
 });
