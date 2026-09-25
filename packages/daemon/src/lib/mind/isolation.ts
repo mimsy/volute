@@ -664,6 +664,24 @@ async function mindOwnerIds(user: string, group: string): Promise<{ uid: number;
   return ids;
 }
 
+/** The `user:group` a mind's files belong to under isolation. */
+function mindOwnerNames(name: string): { user: string; group: string } {
+  const user = mindUserName(name);
+  return { user, group: process.platform === "darwin" ? "volute" : user };
+}
+
+/**
+ * Numeric owner of a mind's files — what chownMindDir/chownMindFile set, and what
+ * `writeMindFile` sets on its open handle — or null when isolation is off and the
+ * daemon's own ownership is already right.
+ */
+export async function mindFileOwner(name: string): Promise<{ uid: number; gid: number } | null> {
+  if (!isIsolationEnabled()) return null;
+  await ensureMindUser(name);
+  const { user, group } = mindOwnerNames(name);
+  return mindOwnerIds(user, group);
+}
+
 /**
  * Resolve `path` for a chown the daemon runs as root, refusing one a mind has
  * steered out of its own tree.
@@ -740,11 +758,9 @@ export async function chownTargets(dir: string, user: string): Promise<string[]>
  * chown never blocks the daemon event loop (these run from request handlers).
  */
 export async function chownMindDir(dir: string, name: string): Promise<void> {
-  if (!isIsolationEnabled()) return;
-  await ensureMindUser(name);
-  const user = mindUserName(name);
-  const group = process.platform === "darwin" ? "volute" : user;
-  const ids = await mindOwnerIds(user, group);
+  const ids = await mindFileOwner(name);
+  if (!ids) return;
+  const { user, group } = mindOwnerNames(name);
   let root: string;
   try {
     // Contained before anything is chowned or listed: callers hand us paths a
@@ -948,11 +964,9 @@ export async function lockPrivateSubtrees(dir: string): Promise<string[]> {
  * the mind without re-chowning the whole tree. No-op when isolation is off.
  */
 export async function chownMindFile(filePath: string, name: string): Promise<void> {
-  if (!isIsolationEnabled()) return;
-  await ensureMindUser(name);
-  const user = mindUserName(name);
-  const group = process.platform === "darwin" ? "volute" : user;
-  const ids = await mindOwnerIds(user, group);
+  const ids = await mindFileOwner(name);
+  if (!ids) return;
+  const { user, group } = mindOwnerNames(name);
   try {
     // Same containment and no-follow as chownMindDir's root: the file sits in a
     // tree the mind can rearrange, and a bare `chown` as root follows a link.

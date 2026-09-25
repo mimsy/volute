@@ -74,7 +74,7 @@ const OLD_SHIPPED = `{
 
 describe("shipped routes.json", () => {
   for (const rel of [".init/.config/routes.json", "home/.config/routes.json"]) {
-    it(`${rel} batches channel threads, flushing early on a mention`, () => {
+    it(`${rel} batches channel threads, flushing early on a mention`, async () => {
       const config = shippedRoutes(rel, "nova");
       const route = resolveRoute(config, { channel: "#garden" });
       assert.equal(route.session, "#garden");
@@ -90,13 +90,13 @@ describe("shipped routes.json", () => {
 });
 
 describe("routesConfigProblems", () => {
-  it("flags a batch key on a thread, which the router ignores", () => {
+  it("flags a batch key on a thread, which the router ignores", async () => {
     const problems = routesConfigProblems(JSON.parse(OLD_SHIPPED));
     assert.equal(problems.length, 1);
     assert.match(problems[0], /threads\["#\*"\] has unrecognized key\(s\) "batch"/);
   });
 
-  it("flags unknown rule keys and non-mind destinations", () => {
+  it("flags unknown rule keys and non-mind destinations", async () => {
     const problems = routesConfigProblems({
       rules: [
         { channel: "a", session: "x" },
@@ -148,9 +148,9 @@ describe("reportRoutesConfigProblems", () => {
 });
 
 describe("migrateThreadBatchToDelivery", () => {
-  it("renames the key in place and leaves every other byte alone", () => {
+  it("renames the key in place and leaves every other byte alone", async () => {
     const dir = mindDirWithRoutes(OLD_SHIPPED);
-    const migrated = migrateThreadBatchToDelivery(dir);
+    const migrated = await migrateThreadBatchToDelivery(dir);
     assert.deepEqual(migrated, [
       { pattern: "#*", batch: { debounce: 20, maxWait: 120, triggers: ["@mimsy"] } },
     ]);
@@ -163,15 +163,15 @@ describe("migrateThreadBatchToDelivery", () => {
     assert.equal(resolveDeliveryMode(config, "#garden").delivery.mode, "batch");
   });
 
-  it("is idempotent", () => {
+  it("is idempotent", async () => {
     const dir = mindDirWithRoutes(OLD_SHIPPED);
-    migrateThreadBatchToDelivery(dir);
+    await migrateThreadBatchToDelivery(dir);
     const once = readRoutes(dir);
-    assert.deepEqual(migrateThreadBatchToDelivery(dir), []);
+    assert.deepEqual(await migrateThreadBatchToDelivery(dir), []);
     assert.equal(readRoutes(dir), once);
   });
 
-  it("handles multi-line batch objects and keeps unrelated threads and settings", () => {
+  it("handles multi-line batch objects and keeps unrelated threads and settings", async () => {
     const text = `{
   "rules": [{ "channel": "#*", "thread": "\${channel}" }],
   "threads": {
@@ -187,25 +187,25 @@ describe("migrateThreadBatchToDelivery", () => {
 `;
     const dir = mindDirWithRoutes(text);
     assert.deepEqual(
-      migrateThreadBatchToDelivery(dir).map((m) => m.pattern),
+      (await migrateThreadBatchToDelivery(dir)).map((m) => m.pattern),
       ["volute:*"],
     );
     assert.equal(readRoutes(dir), text.replace('"batch": {\n', '"delivery": { "mode": "batch",\n'));
   });
 
-  it("leaves a thread alone when it already has delivery, or batch isn't an object", () => {
+  it("leaves a thread alone when it already has delivery, or batch isn't an object", async () => {
     const text = `{"threads":{"a":{"delivery":"immediate","batch":{"maxWait":5}},"b":{"batch":30}}}`;
     const dir = mindDirWithRoutes(text);
-    assert.deepEqual(migrateThreadBatchToDelivery(dir), []);
+    assert.deepEqual(await migrateThreadBatchToDelivery(dir), []);
     assert.equal(readRoutes(dir), text);
   });
 
-  it("falls back to re-serializing when the text rewrite can't be exact", () => {
+  it("falls back to re-serializing when the text rewrite can't be exact", async () => {
     // A thread *named* "batch" defeats the text rewrite; the result must still be right.
     const text = `{"threads":{"batch":{"interrupt":true},"#*":{"batch":{"debounce":3}}}}`;
     const dir = mindDirWithRoutes(text);
     assert.deepEqual(
-      migrateThreadBatchToDelivery(dir).map((m) => m.pattern),
+      (await migrateThreadBatchToDelivery(dir)).map((m) => m.pattern),
       ["#*"],
     );
     assert.deepEqual(JSON.parse(readRoutes(dir)), {
@@ -213,29 +213,29 @@ describe("migrateThreadBatchToDelivery", () => {
     });
   });
 
-  it("never writes through a symlink planted at routes.json", () => {
+  it("never writes through a symlink planted at routes.json", async () => {
     const dir = mkdtempSync(resolve(tmpdir(), "routes-batch-"));
     mkdirSync(resolve(dir, "home/.config"), { recursive: true });
     const outside = resolve(mkdtempSync(resolve(tmpdir(), "routes-outside-")), "victim.json");
     writeFileSync(outside, OLD_SHIPPED);
     symlinkSync(outside, resolve(dir, "home/.config/routes.json"));
-    assert.deepEqual(migrateThreadBatchToDelivery(dir), []);
+    assert.deepEqual(await migrateThreadBatchToDelivery(dir), []);
     assert.equal(readFileSync(outside, "utf-8"), OLD_SHIPPED);
   });
 
-  it("never writes through a hard link to a file elsewhere", () => {
+  it("never writes through a hard link to a file elsewhere", async () => {
     const outside = resolve(mkdtempSync(resolve(tmpdir(), "routes-outside-")), "victim.json");
     writeFileSync(outside, OLD_SHIPPED);
     const dir = mkdtempSync(resolve(tmpdir(), "routes-batch-"));
     mkdirSync(resolve(dir, "home/.config"), { recursive: true });
     linkSync(outside, resolve(dir, "home/.config/routes.json"));
-    assert.deepEqual(migrateThreadBatchToDelivery(dir), []);
+    assert.deepEqual(await migrateThreadBatchToDelivery(dir), []);
     assert.equal(readFileSync(outside, "utf-8"), OLD_SHIPPED);
   });
 
-  it("does nothing when there is no routes.json", () => {
+  it("does nothing when there is no routes.json", async () => {
     const dir = mkdtempSync(resolve(tmpdir(), "routes-batch-"));
-    assert.deepEqual(migrateThreadBatchToDelivery(dir), []);
+    assert.deepEqual(await migrateThreadBatchToDelivery(dir), []);
   });
 });
 

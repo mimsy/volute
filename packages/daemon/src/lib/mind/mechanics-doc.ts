@@ -4,8 +4,9 @@ import { deliverEvent, MIND_LEVEL_THREAD } from "../chat/system-events.js";
 import { MECHANICS_DOCS } from "../template/template.js";
 import { loadJsonMap, saveJsonMap } from "../util/json-state.js";
 import log from "../util/logger.js";
-import { rewriteMindFileInPlace } from "./mind-file-rewrite.js";
-import { stateDir } from "./registry.js";
+import { mindFileOwner } from "./isolation.js";
+import { type MindFileOwner, rewriteMindFileInPlace } from "./mind-file-write.js";
+import { getBaseName, stateDir } from "./registry.js";
 
 const mlog = log.child("mechanics-doc");
 
@@ -70,31 +71,40 @@ export function mechanicsDocCorrections(template: string): Correction[] {
  * upgrade — so this corrects only Volute's own words; anything else in the file keeps its
  * bytes. Idempotent: once replaced, a stale line is gone.
  */
-export function correctMechanicsDoc(dir: string, template: string): MechanicsDocOutcome {
+export async function correctMechanicsDoc(
+  dir: string,
+  template: string,
+  owner: MindFileOwner | null = null,
+): Promise<MechanicsDocOutcome> {
   const outcome: MechanicsDocOutcome = { rewritten: [], edited: [] };
   const corrections = CORRECTIONS[template];
   const doc = MECHANICS_DOCS[template];
   if (!corrections || !doc) return outcome;
 
-  rewriteMindFileInPlace(dir, resolve(dir, "home", doc), (text) => {
-    const lines = text.split("\n");
-    for (const c of corrections) {
-      let replaced = false;
-      for (let i = 0; i < lines.length; i++) {
-        // A CRLF file keeps its line ending on the replaced line.
-        const cr = lines[i].endsWith("\r") ? "\r" : "";
-        if (c.stale.includes(cr ? lines[i].slice(0, -1) : lines[i])) {
-          lines[i] = c.current + cr;
-          replaced = true;
+  await rewriteMindFileInPlace(
+    dir,
+    resolve(dir, "home", doc),
+    (text) => {
+      const lines = text.split("\n");
+      for (const c of corrections) {
+        let replaced = false;
+        for (let i = 0; i < lines.length; i++) {
+          // A CRLF file keeps its line ending on the replaced line.
+          const cr = lines[i].endsWith("\r") ? "\r" : "";
+          if (c.stale.includes(cr ? lines[i].slice(0, -1) : lines[i])) {
+            lines[i] = c.current + cr;
+            replaced = true;
+          }
+        }
+        if (replaced) outcome.rewritten.push(c.id);
+        else if (lines.some((l) => l.includes(c.claim) && l.replace(/\r$/, "") !== c.current)) {
+          outcome.edited.push(c.id);
         }
       }
-      if (replaced) outcome.rewritten.push(c.id);
-      else if (lines.some((l) => l.includes(c.claim) && l.replace(/\r$/, "") !== c.current)) {
-        outcome.edited.push(c.id);
-      }
-    }
-    return outcome.rewritten.length > 0 ? lines.join("\n") : null;
-  });
+      return outcome.rewritten.length > 0 ? lines.join("\n") : null;
+    },
+    owner,
+  );
   return outcome;
 }
 
@@ -113,7 +123,11 @@ function toldPath(name: string): string {
 export async function repairMechanicsDoc(dir: string, name: string, template: string) {
   let outcome: MechanicsDocOutcome;
   try {
-    outcome = correctMechanicsDoc(dir, template);
+    outcome = await correctMechanicsDoc(
+      dir,
+      template,
+      await mindFileOwner(await getBaseName(name)),
+    );
   } catch (err) {
     mlog.warn(`failed to check the mechanics doc for ${name}`, log.errorData(err));
     return;

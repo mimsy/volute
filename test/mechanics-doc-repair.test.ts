@@ -59,7 +59,7 @@ describe("mechanics doc corrections", () => {
   // When a template's paragraph changes again, this fails: update `current`, and move the
   // outgoing text into `stale` — minds created today will be carrying it.
   for (const template of ["claude", "codex"] as const) {
-    it(`${template}: the current wording is what the template ships`, () => {
+    it(`${template}: the current wording is what the template ships`, async () => {
       const shipped = readFileSync(
         resolve(templatesRoot, template, ".init", DOCS[template]),
         "utf-8",
@@ -71,20 +71,20 @@ describe("mechanics doc corrections", () => {
     });
   }
 
-  it("pi's doc is left alone — pi still restarts on an identity edit", () => {
+  it("pi's doc is left alone — pi still restarts on an identity edit", async () => {
     const shipped = readFileSync(resolve(templatesRoot, "pi/.init/MINDS.md"), "utf-8");
     const dir = mindDirWithDoc("pi", shipped);
-    assert.deepEqual(correctMechanicsDoc(dir, "pi"), { rewritten: [], edited: [] });
+    assert.deepEqual(await correctMechanicsDoc(dir, "pi"), { rewritten: [], edited: [] });
     assert.equal(readDoc(dir, "pi"), shipped);
   });
 });
 
 describe("correctMechanicsDoc", () => {
   for (const stale of claude.stale) {
-    it(`claude: replaces a verbatim stale paragraph (${stale.slice(60, 100)}…)`, () => {
+    it(`claude: replaces a verbatim stale paragraph (${stale.slice(60, 100)}…)`, async () => {
       const dir = mindDirWithDoc("claude", docWith(stale));
       const ino = statSync(resolve(dir, "home/CLAUDE.md")).ino;
-      assert.deepEqual(correctMechanicsDoc(dir, "claude"), {
+      assert.deepEqual(await correctMechanicsDoc(dir, "claude"), {
         rewritten: ["identity-edits"],
         edited: [],
       });
@@ -94,84 +94,84 @@ describe("correctMechanicsDoc", () => {
     });
   }
 
-  it("codex: replaces the verbatim stale paragraph", () => {
+  it("codex: replaces the verbatim stale paragraph", async () => {
     const dir = mindDirWithDoc("codex", docWith(codex.stale[0]));
-    assert.deepEqual(correctMechanicsDoc(dir, "codex").rewritten, ["identity-edits"]);
+    assert.deepEqual((await correctMechanicsDoc(dir, "codex")).rewritten, ["identity-edits"]);
     assert.equal(readDoc(dir, "codex"), docWith(codex.current));
   });
 
-  it("handles CRLF line endings, keeping them", () => {
+  it("handles CRLF line endings, keeping them", async () => {
     const crlf = (t: string) => t.replaceAll("\n", "\r\n");
     const dir = mindDirWithDoc("claude", crlf(docWith(claude.stale[2])));
-    assert.deepEqual(correctMechanicsDoc(dir, "claude"), {
+    assert.deepEqual(await correctMechanicsDoc(dir, "claude"), {
       rewritten: ["identity-edits"],
       edited: [],
     });
     assert.equal(readDoc(dir, "claude"), crlf(docWith(claude.current)));
-    assert.deepEqual(correctMechanicsDoc(dir, "claude"), { rewritten: [], edited: [] });
+    assert.deepEqual(await correctMechanicsDoc(dir, "claude"), { rewritten: [], edited: [] });
   });
 
-  it("is idempotent", () => {
+  it("is idempotent", async () => {
     const dir = mindDirWithDoc("claude", docWith(claude.stale[2]));
-    correctMechanicsDoc(dir, "claude");
-    assert.deepEqual(correctMechanicsDoc(dir, "claude"), { rewritten: [], edited: [] });
+    await correctMechanicsDoc(dir, "claude");
+    assert.deepEqual(await correctMechanicsDoc(dir, "claude"), { rewritten: [], edited: [] });
     assert.equal(readDoc(dir, "claude"), docWith(claude.current));
   });
 
-  it("leaves a reworded paragraph alone and reports it", () => {
+  it("leaves a reworded paragraph alone and reports it", async () => {
     const edited = docWith(
       "Editing SOUL.md triggers an automatic restart, which I've come to think of as a breath.",
     );
     const dir = mindDirWithDoc("claude", edited);
-    assert.deepEqual(correctMechanicsDoc(dir, "claude"), {
+    assert.deepEqual(await correctMechanicsDoc(dir, "claude"), {
       rewritten: [],
       edited: ["identity-edits"],
     });
     assert.equal(readDoc(dir, "claude"), edited);
   });
 
-  it("does nothing when the paragraph was removed, or the doc is already current", () => {
+  it("does nothing when the paragraph was removed, or the doc is already current", async () => {
     for (const text of [docWith("I rewrote this whole part."), docWith(claude.current)]) {
       const dir = mindDirWithDoc("claude", text);
-      assert.deepEqual(correctMechanicsDoc(dir, "claude"), { rewritten: [], edited: [] });
+      assert.deepEqual(await correctMechanicsDoc(dir, "claude"), { rewritten: [], edited: [] });
       assert.equal(readDoc(dir, "claude"), text);
     }
   });
 
-  it("does nothing when there is no mechanics doc", () => {
+  it("does nothing when there is no mechanics doc", async () => {
     const dir = mkdtempSync(resolve(tmpdir(), "mechanics-doc-"));
     mkdirSync(resolve(dir, "home"));
-    assert.deepEqual(correctMechanicsDoc(dir, "claude"), { rewritten: [], edited: [] });
+    assert.deepEqual(await correctMechanicsDoc(dir, "claude"), { rewritten: [], edited: [] });
   });
 
-  it("never writes through a symlink planted at the doc", () => {
+  it("never writes through a symlink planted at the doc", async () => {
     const outside = mkdtempSync(resolve(tmpdir(), "mechanics-doc-target-"));
     const target = resolve(outside, "victim.md");
     writeFileSync(target, docWith(claude.stale[2]));
     const dir = mkdtempSync(resolve(tmpdir(), "mechanics-doc-"));
     mkdirSync(resolve(dir, "home"));
     symlinkSync(target, resolve(dir, "home/CLAUDE.md"));
-    assert.deepEqual(correctMechanicsDoc(dir, "claude"), { rewritten: [], edited: [] });
+    assert.deepEqual(await correctMechanicsDoc(dir, "claude"), { rewritten: [], edited: [] });
     assert.equal(readFileSync(target, "utf-8"), docWith(claude.stale[2]));
   });
 
-  it("never writes through a hard link to a file elsewhere", () => {
+  it("never writes through a hard link to a file elsewhere", async () => {
     const outside = mkdtempSync(resolve(tmpdir(), "mechanics-doc-target-"));
     const target = resolve(outside, "victim.md");
     writeFileSync(target, docWith(claude.stale[2]));
     const dir = mkdtempSync(resolve(tmpdir(), "mechanics-doc-"));
     mkdirSync(resolve(dir, "home"));
     linkSync(target, resolve(dir, "home/CLAUDE.md"));
-    assert.deepEqual(correctMechanicsDoc(dir, "claude"), { rewritten: [], edited: [] });
+    assert.deepEqual(await correctMechanicsDoc(dir, "claude"), { rewritten: [], edited: [] });
     assert.equal(readFileSync(target, "utf-8"), docWith(claude.stale[2]));
   });
 
-  it("never writes when home/ resolves outside the mind dir", () => {
+  it("never writes when home/ resolves outside the mind dir", async () => {
     const outside = mkdtempSync(resolve(tmpdir(), "mechanics-doc-target-"));
     writeFileSync(resolve(outside, "CLAUDE.md"), docWith(claude.stale[2]));
     const dir = mkdtempSync(resolve(tmpdir(), "mechanics-doc-"));
     symlinkSync(outside, resolve(dir, "home"));
-    assert.deepEqual(correctMechanicsDoc(dir, "claude"), { rewritten: [], edited: [] });
+    assert.deepEqual(await correctMechanicsDoc(dir, "claude"), { rewritten: [], edited: [] });
     assert.equal(readFileSync(resolve(outside, "CLAUDE.md"), "utf-8"), docWith(claude.stale[2]));
   });
 });

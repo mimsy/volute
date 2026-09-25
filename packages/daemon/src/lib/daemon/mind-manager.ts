@@ -3,15 +3,17 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { resolve } from "node:path";
 import { promisify } from "node:util";
 import { getAiConfig, resolveApiKey } from "../ai-service.js";
-import { deliverEvent, recordNotice } from "../chat/system-events.js";
+import { deliverEvent, MIND_LEVEL_THREAD, recordNotice } from "../chat/system-events.js";
 import { loadMergedEnv } from "../config/env.js";
 import { getSystemName, readGlobalConfig } from "../config/setup.js";
 import {
   chownMindDir,
   isIsolationEnabled,
   lockPrivateSubtrees,
+  mindFileOwner,
   wrapForIsolation,
 } from "../mind/isolation.js";
+import { readMindFile, writeMindFile } from "../mind/mind-file-write.js";
 import {
   findMind,
   mindDir,
@@ -22,7 +24,7 @@ import {
   voluteSystemDir,
 } from "../mind/registry.js";
 import { isSandboxEnabled, wrapForSandbox } from "../mind/sandbox.js";
-import { reapMindTmp } from "../mind/tmp-reaper.js";
+import { prepareMindTmp } from "../mind/tmp-reaper.js";
 import { syncMindZshenv } from "../mind/zshenv.js";
 import { getPrompt } from "../prompts.js";
 import { checkHealth } from "../util/health.js";
@@ -416,13 +418,13 @@ export class MindManager {
 
     // Per-mind tmp dir so minds never share a writable /tmp (a cross-mind channel).
     const mindTmp = mindTmpDir(dir);
-    mkdirSync(mindTmp, { recursive: true });
+    const owner = await mindFileOwner(baseName);
     // A private /tmp needs a janitor, and nothing else clears this one: scratch a
     // killed process leaves here stays forever (#805). Spawn is the one moment we
     // know nothing of this mind's is running, so it is where the reap belongs.
     // Awaited, so the child never races the removal — and async, so clearing
     // gigabytes delays this one mind's start instead of stalling the daemon.
-    await reapMindTmp(mindTmp);
+    await prepareMindTmp(dir, owner);
 
     // State dir is created by root — chown so the mind user can write to it.
     // Chown .mind itself, not just .mind/tmp: in a variant worktree .mind is
@@ -482,16 +484,16 @@ export class MindManager {
     // For pi minds, inject the system AI provider's API key
     if (target.template === "pi") {
       try {
-        const configPath = resolve(dir, "home/.config/config.json");
-        if (existsSync(configPath)) {
-          const config = JSON.parse(readFileSync(configPath, "utf-8"));
+        // The mind's own file, read as root: no link or FIFO planted there is followed.
+        const configFile = await readMindFile(dir, "home/.config/config.json", { owner });
+        if (configFile) {
+          const config = JSON.parse(configFile.text);
           const modelStr = config.model as string | undefined;
           if (modelStr?.includes(":")) {
             const provider = modelStr.split(":")[0];
-            const piAgentDir = resolve(dir, ".mind", "pi-agent");
             await injectPiProviderCredentials({
               provider,
-              piAgentDir,
+              dir,
               baseName,
               mindName: name,
               env,
@@ -515,27 +517,28 @@ export class MindManager {
           // The codex CLI reads from CODEX_HOME/auth.json. We point CODEX_HOME to
           // a per-mind .codex dir so credentials don't collide with the host user's.
           const codexDir = resolve(dir, ".mind", "codex");
-          mkdirSync(codexDir, { recursive: true });
           env.CODEX_HOME = codexDir;
-          const authPath = resolve(codexDir, "auth.json");
-          writeFileSync(
-            authPath,
+          const { access, refresh } = codexConfig.oauth;
+          await writeMindFile(
+            dir,
+            ".mind/codex/auth.json",
             JSON.stringify({
               auth_mode: "chatgpt",
-              tokens: {
-                access_token: codexConfig.oauth.access,
-                refresh_token: codexConfig.oauth.refresh,
-                id_token: codexConfig.oauth.access,
-              },
+              tokens: { access_token: access, refresh_token: refresh, id_token: access },
               last_refresh: new Date().toISOString(),
             }),
-            { mode: 0o600 },
+            { owner, mode: 0o600 },
           );
           // Ensure codex uses file-based credential storage
-          const configTomlPath = resolve(codexDir, "config.toml");
-          if (!existsSync(configTomlPath)) {
-            writeFileSync(configTomlPath, 'cli_auth_credentials_store = "file"\n');
-          }
+          await writeMindFile(
+            dir,
+            ".mind/codex/config.toml",
+            'cli_auth_credentials_store = "file"\n',
+            {
+              owner,
+              create: "if-absent",
+            },
+          );
           if (isIsolationEnabled()) {
             await chownMindDir(codexDir, baseName);
           }
@@ -557,10 +560,26 @@ export class MindManager {
 
     // Codex minds get home/.zshenv; every other template has a stale one removed.
     try {
-      syncMindZshenv(resolve(dir, "home"), target.template, env);
+      await syncMindZshenv(dir, baseName, target.template, env);
     } catch (err) {
-      if (target.template === "codex") throw err;
-      mlog.warn(`failed to remove stale .zshenv for ${name}`, log.errorData(err));
+      if (target.template !== "codex") {
+        mlog.warn(`failed to remove stale .zshenv for ${name}`, log.errorData(err));
+      } else {
+        // Refused (a link or FIFO where .zshenv goes) or failed: how a mind arranges its
+        // own dotfiles is its call, and never a reason for it not to wake. Tell it why its
+        // shell will start without its Volute environment.
+        mlog.warn(`not writing .zshenv for ${name}`, log.errorData(err));
+        recordNotice({
+          mind: name,
+          thread: MIND_LEVEL_THREAD,
+          kind: "startup",
+          reason: "zshenv_refused",
+          detail:
+            "Volute couldn't write home/.zshenv this start: it only writes a regular file " +
+            "there, never through a symlink. Your shell commands may run without VOLUTE_* " +
+            "variables or PATH until home/.zshenv is a plain file (or absent) again.",
+        }).catch((e) => mlog.warn(`failed to record .zshenv notice for ${name}`, log.errorData(e)));
+      }
     }
 
     // For claude minds, inject system Anthropic credentials.
@@ -580,7 +599,7 @@ export class MindManager {
           const key = await resolveApiKey("anthropic");
           const oauth = getAiConfig()?.providers.anthropic?.oauth;
           if (key && oauth) {
-            const claudeDir = await writeClaudeCredentials(resolve(dir, "home"), baseName, oauth);
+            const claudeDir = await writeClaudeCredentials(dir, baseName, oauth);
             env.CLAUDE_CONFIG_DIR = claudeDir;
             await noteCredentialHealthy(name);
           } else {

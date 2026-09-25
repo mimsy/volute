@@ -1,6 +1,7 @@
 import { lstat, readdir, rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import log from "../util/logger.js";
+import { ensureMindDir, type MindFileOwner } from "./mind-file-write.js";
 
 const rlog = log.child("minds");
 
@@ -133,4 +134,22 @@ export async function reapMindTmp(
     );
   }
   return removed;
+}
+
+/**
+ * Create a mind's `.mind/tmp` if it is missing, then reap it — both on the real path
+ * `ensureMindDir` vouches for. `reapMindTmp` refuses a tmp dir that is itself a link, but
+ * the path above it is the mind's too: `.mind -> /var` would make `.mind/tmp` the host's
+ * `/var/tmp`, created and emptied as root. A tmp dir that resolves outside the mind dir —
+ * a planted link, or a host's own tmpfs — is left alone, and the mind still starts.
+ */
+export async function prepareMindTmp(dir: string, owner: MindFileOwner | null): Promise<void> {
+  let tmp: string;
+  try {
+    tmp = await ensureMindDir(dir, ".mind/tmp", owner);
+  } catch (err) {
+    rlog.warn(`not creating or reaping ${dir}/.mind/tmp`, log.errorData(err));
+    return;
+  }
+  await reapMindTmp(tmp);
 }

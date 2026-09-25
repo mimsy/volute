@@ -16,7 +16,9 @@ import {
   type RoutingConfig,
 } from "../delivery/delivery-router.js";
 import log from "../util/logger.js";
-import { rewriteMindFileInPlace } from "./mind-file-rewrite.js";
+import { mindFileOwner } from "./isolation.js";
+import { type MindFileOwner, rewriteMindFileInPlace } from "./mind-file-write.js";
+import { getBaseName } from "./registry.js";
 import { readVoluteConfig, writeVoluteConfig } from "./volute-config.js";
 
 const rlog = log.child("event-routes");
@@ -191,9 +193,14 @@ function renameThreadBatchText(text: string): string {
  * The write goes through {@link rewriteMindFileInPlace}, which refuses symlinks, hard
  * links, and a `.config/` that resolves outside the mind dir.
  */
-export function migrateThreadBatchToDelivery(dir: string, name?: string): MigratedThreadBatch[] {
+export async function migrateThreadBatchToDelivery(
+  dir: string,
+  name?: string,
+  owner: MindFileOwner | null = null,
+): Promise<MigratedThreadBatch[]> {
   let migrated: MigratedThreadBatch[] = [];
-  const wrote = rewriteMindFileInPlace(dir, routesPath(dir), (text) => {
+  const wrote = await rewriteMindFileInPlace(dir, routesPath(dir), repair, owner);
+  function repair(text: string): string | null {
     let parsed: RoutingConfig;
     try {
       parsed = JSON.parse(text);
@@ -213,7 +220,7 @@ export function migrateThreadBatchToDelivery(dir: string, name?: string): Migrat
       surgical = false;
     }
     return surgical ? out : `${JSON.stringify(result.config, null, 2)}\n`;
-  });
+  }
   if (!wrote) return [];
   // Not a rule change — nothing gated needs re-evaluating.
   if (name) clearConfigCache(name, { notify: false });
@@ -246,7 +253,11 @@ function describeBatch({ pattern, batch }: MigratedThreadBatch): string {
 export async function repairThreadBatchConfig(dir: string, name: string): Promise<void> {
   let migrated: MigratedThreadBatch[];
   try {
-    migrated = migrateThreadBatchToDelivery(dir, name);
+    migrated = await migrateThreadBatchToDelivery(
+      dir,
+      name,
+      await mindFileOwner(await getBaseName(name)),
+    );
   } catch (err) {
     rlog.warn(`failed to migrate thread batch config for ${name}`, log.errorData(err));
     return;
