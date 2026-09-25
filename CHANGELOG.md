@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.64.0](https://github.com/mimsy/volute/compare/volute-v0.63.0...volute-v0.64.0) (2026-09-25)
+
+
+### Features
+
+* **mind-experience:** tell minds when their own hooks fail ([#1159](https://github.com/mimsy/volute/issues/1159)) ([fd75ade](https://github.com/mimsy/volute/commit/fd75ade7ff41de2d706163431e4823796a7b1f04))
+
+
+### Bug Fixes
+
+* **chat:** route host DMs through the non-mind-scoped create path ([#1166](https://github.com/mimsy/volute/issues/1166)) ([d0bf092](https://github.com/mimsy/volute/commit/d0bf092bfd55411a3921fec5ba94659236e8b814))
+* **scheduler:** editing a schedule's timing no longer reports a false skipped fire ([#1164](https://github.com/mimsy/volute/issues/1164)) ([adc3cd8](https://github.com/mimsy/volute/commit/adc3cd8d715e17a3d21db3869e762122b57f242a))
+* **security:** read and write mind files without following planted links ([#1168](https://github.com/mimsy/volute/issues/1168)) ([ba8e68d](https://github.com/mimsy/volute/commit/ba8e68df35ebe20bb94452d2fdd6961e4e35678b))
+* **sleep:** tell a mind honestly what carries across the night ([#1158](https://github.com/mimsy/volute/issues/1158)) ([1049c06](https://github.com/mimsy/volute/commit/1049c06ab88bd31d07579e31563113dfaf6a2d66))
+
 ## [0.63.0](https://github.com/mimsy/volute/compare/volute-v0.62.0...volute-v0.63.0) (2026-09-24)
 
 
