@@ -3,9 +3,12 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { after, describe, it } from "node:test";
+import { addCustomModel, removeCustomModel } from "../packages/daemon/src/lib/ai-service.js";
 import {
+  mindModelId,
   mindPricingContext,
   priceUsageMetadata,
+  resolveModelAlias,
 } from "../packages/daemon/src/lib/daemon/usage-pricing.js";
 import { addMind, addVariant, mindDir } from "../packages/daemon/src/lib/mind/registry.js";
 
@@ -90,5 +93,39 @@ describe("mindPricingContext: a variant inherits its parent's template", () => {
       (1000 * 1 + 1000 * 5) / 1e6,
       "the variant's turn has a real cost",
     );
+  });
+});
+
+describe("resolveModelAlias", () => {
+  it("resolves an SDK alias to the newest catalog model in that family", () => {
+    assert.equal(resolveModelAlias("haiku"), "anthropic:claude-haiku-4-5");
+    assert.equal(resolveModelAlias("anthropic:sonnet"), "anthropic:claude-sonnet-5");
+  });
+
+  it("orders by version, not catalog order or string order", () => {
+    // The catalog carries claude-opus-4-5 … 4-8, claude-opus-5 and claude-opus-5-5: major, then minor.
+    assert.equal(resolveModelAlias("opus"), "anthropic:claude-opus-5-5");
+    assert.equal(resolveModelAlias("fable"), "anthropic:claude-fable-5-1");
+  });
+
+  it("counts the host's custom models, so a model newer than the catalog wins", () => {
+    addCustomModel("anthropic", "claude-opus-6");
+    try {
+      assert.equal(resolveModelAlias("opus"), "anthropic:claude-opus-6");
+    } finally {
+      removeCustomModel("anthropic", "claude-opus-6");
+    }
+  });
+
+  it("passes anything that isn't an alias through unchanged", () => {
+    assert.equal(resolveModelAlias("anthropic:claude-haiku-4-5"), "anthropic:claude-haiku-4-5");
+    assert.equal(resolveModelAlias("openai-codex:gpt-5.4"), "openai-codex:gpt-5.4");
+    assert.equal(resolveModelAlias("anthropic:nonesuch"), "anthropic:nonesuch");
+  });
+
+  it("mindModelId resolves a mind configured with an alias", async () => {
+    await addMind("pc-alias", 4805, undefined, "claude");
+    writeConfig(mindDir("pc-alias"), "haiku");
+    assert.equal(await mindModelId("pc-alias"), "anthropic:claude-haiku-4-5");
   });
 });
