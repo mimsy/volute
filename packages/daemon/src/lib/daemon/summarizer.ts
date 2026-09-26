@@ -1329,6 +1329,9 @@ export async function summarizeSystem(
     if ((period === "week" || period === "month") && outcome.status === "failed") {
       trackProvisionalAttempt(metadata, existingMeta);
     }
+    // Over the spirit's or the install's cap: the placeholder stands and the repair sweep writes
+    // the real rollup once the cap resets — the same rule as a mind's own deferred periods.
+    if (outcome.status === "deferred") metadata.deferred = true;
   }
   metadata.deterministic = deterministic;
 

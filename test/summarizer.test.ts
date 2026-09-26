@@ -1585,6 +1585,23 @@ describe("summarizer", () => {
       assert.equal(meta.cost_usd, 0.003);
     });
 
+    it("a deferred _system hour stands as a placeholder and heals after the cap resets", async () => {
+      const key = "2026-05-14T08";
+      await insertSummary("sys-defer-a", "hour", key, "Walked by the sea.");
+      await insertSummary("sys-defer-b", "hour", key, "Mended a net.");
+      await summarizeSystem("hour", key, async () => ({ status: "deferred" }) as const);
+      const meta = JSON.parse((await getSummary("_system", "hour", key))!.metadata!);
+      assert.equal(meta.deterministic, true);
+      assert.equal(meta.deferred, true);
+
+      await repairProvisionalSummaries(
+        async () => ({ status: "ok", text: "THE SYSTEM'S HOUR" }) as const,
+      );
+      const healed = await getSummary("_system", "hour", key);
+      assert.equal(healed!.content, "THE SYSTEM'S HOUR");
+      assert.equal(JSON.parse(healed!.metadata!).deferred, undefined);
+    });
+
     it("the repair sweep asks an unusable mind once per sweep, not once per row", async () => {
       const mind = "repair-unusable";
       for (const month of ["2025-01", "2025-02", "2025-03"]) {
