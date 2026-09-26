@@ -321,7 +321,7 @@ describe("daily digest", () => {
     let called = false;
     const result = await getDailyDigest(async () => {
       called = true;
-      return "fresh";
+      return { status: "ok", text: "fresh" } as const;
     });
     assert.equal(result.content, "cached digest text");
     assert.equal(called, false, "AI must not run when a cache row exists");
@@ -336,7 +336,9 @@ describe("daily digest", () => {
       content: "feed-test-source hour summary",
     });
 
-    const result = await getDailyDigest(async () => "an AI digest");
+    const result = await getDailyDigest(
+      async () => ({ status: "ok", text: "an AI digest" }) as const,
+    );
     assert.equal(result.content, "an AI digest");
 
     const cached = await db
@@ -345,6 +347,23 @@ describe("daily digest", () => {
       .where(and(eq(summaries.mind, "system"), eq(summaries.period, "day")))
       .get();
     assert.equal(cached?.content, "an AI digest", "AI digest must be cached");
+  });
+
+  it("stores what the digest cost, so the host sees it with the spirit's summaries", async () => {
+    const db = await getDb();
+    await db.insert(summaries).values({
+      mind: "_system",
+      period: "hour",
+      period_key: `${todayKey}T12`,
+      content: "feed-test-source hour summary",
+    });
+    await getDailyDigest(async () => ({ status: "ok", text: "digest", costUsd: 0.002 }) as const);
+    const cached = await db
+      .select({ metadata: summaries.metadata })
+      .from(summaries)
+      .where(and(eq(summaries.mind, "system"), eq(summaries.period, "day")))
+      .get();
+    assert.equal(JSON.parse(cached!.metadata!).cost_usd, 0.002);
   });
 
   it("falls back to a deterministic one-liner without caching on AI failure", async () => {
@@ -356,7 +375,7 @@ describe("daily digest", () => {
       content: "feed-test-source hour summary",
     });
 
-    const result = await getDailyDigest(async () => null);
+    const result = await getDailyDigest(async () => ({ status: "failed" }) as const);
     assert.match(result.content, /active across .* today\./);
 
     const cached = await db
@@ -388,7 +407,7 @@ describe("daily digest", () => {
     let captured = "";
     const result = await getDailyDigest(async (_system, material) => {
       captured = material;
-      return "the digest";
+      return { status: "ok", text: "the digest" } as const;
     });
     assert.equal(result.content, "the digest");
     assert.ok(captured.includes("[feed-test-x]"), "material carries the per-mind prefix");
@@ -403,7 +422,7 @@ describe("daily digest", () => {
     let called = false;
     const result = await getDailyDigest(async () => {
       called = true;
-      return "unused";
+      return { status: "ok", text: "unused" } as const;
     });
     assert.equal(result.content, "");
     assert.equal(called, false, "AI must not run without material");
@@ -428,7 +447,7 @@ describe("daily digest", () => {
     const conv = await createConversation({ participantIds: [] });
     await insertMsg(conv.id, "user", "feed-test-solo", "hi", ago(5));
 
-    const result = await getDailyDigest(async () => null);
+    const result = await getDailyDigest(async () => ({ status: "failed" }) as const);
     assert.equal(result.content, "1 mind was active across 1 conversation today.");
 
     await db.delete(messages).where(eq(messages.conversation_id, conv.id));

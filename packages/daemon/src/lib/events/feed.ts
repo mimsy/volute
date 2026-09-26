@@ -1,6 +1,7 @@
 import type { FeedChatEvent, FeedDigest, FeedLifecycleEvent, Participant } from "@volute/api";
 import { and, desc, eq, gte, inArray, ne, sql } from "drizzle-orm";
-import { aiCompleteUtility } from "../ai-service.js";
+import { getSpiritName } from "../config/setup.js";
+import { type Complete, completeAsMind } from "../daemon/consolidation.js";
 import { SYSTEM_MIND } from "../daemon/summarizer.js";
 import { getDb } from "../db.js";
 import { getPrompt } from "../prompts.js";
@@ -305,11 +306,12 @@ function redactLifecycleSummary(type: string, summary: string, privileged: boole
  * The AI daily digest for the home feed. Cached under `mind = "system"` (distinct
  * from the summarizer's `mind = "_system"` rollups) keyed on today's day period.
  * Sources the last 24h of `_system` hour summaries; falls back to recent per-mind
- * turn summaries. On AI failure, returns a deterministic one-liner WITHOUT caching
- * so a later request retries the AI. `complete` is injectable for tests.
+ * turn summaries. Written by the spirit's model. On AI failure (including the spirit's
+ * model being unusable here), returns a deterministic one-liner WITHOUT caching so a
+ * later request retries the AI. `complete` is injectable for tests.
  */
 export async function getDailyDigest(
-  complete: typeof aiCompleteUtility = aiCompleteUtility,
+  complete: Complete = (system, user) => completeAsMind(getSpiritName(), system, user),
 ): Promise<FeedDigest> {
   const db = await getDb();
   const periodKey = getPeriodKey(new Date(), "day");
@@ -362,13 +364,20 @@ export async function getDailyDigest(
 
   if (!material.trim()) return { content: "" };
 
-  const aiResult = await complete(await getPrompt("system_daily_digest"), material);
-  if (aiResult) {
+  const outcome = await complete(await getPrompt("system_daily_digest"), material);
+  if (outcome.status === "ok") {
     await db
       .insert(summaries)
-      .values({ mind: DIGEST_MIND, period: "day", period_key: periodKey, content: aiResult })
+      .values({
+        mind: DIGEST_MIND,
+        period: "day",
+        period_key: periodKey,
+        content: outcome.text,
+        metadata:
+          outcome.costUsd === undefined ? null : JSON.stringify({ cost_usd: outcome.costUsd }),
+      })
       .onConflictDoNothing();
-    return { content: aiResult };
+    return { content: outcome.text };
   }
 
   const counts = await digestCounts(cutoff);

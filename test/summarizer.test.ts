@@ -1570,6 +1570,36 @@ describe("summarizer", () => {
       assert.match(row!.content, /^fresh: Reviewed pull requests\./m);
     });
 
+    it("the _system rollup records the model and cost of what wrote it", async () => {
+      const key = "2026-05-13T10";
+      await insertSummary("sys-cost-a", "hour", key, "Read a book.");
+      await insertSummary("sys-cost-b", "hour", key, "Wrote a letter.");
+      await summarizeSystem("hour", key, async () => ({
+        status: "ok",
+        text: "The system's hour.",
+        model: "anthropic:spirit-model",
+        costUsd: 0.003,
+      }));
+      const meta = JSON.parse((await getSummary("_system", "hour", key))!.metadata!);
+      assert.equal(meta.model, "anthropic:spirit-model");
+      assert.equal(meta.cost_usd, 0.003);
+    });
+
+    it("the repair sweep asks an unusable mind once per sweep, not once per row", async () => {
+      const mind = "repair-unusable";
+      for (const month of ["2025-01", "2025-02", "2025-03"]) {
+        await insertSummary(mind, "day", `${month}-05`, `A day in ${month}.`);
+        await insertSummary(mind, "month", month, "provisional", { deterministic: true });
+      }
+      // The sweep sees every provisional row in the DB (other tests' too); count this mind's.
+      let asked = 0;
+      await repairProvisionalSummaries(async (_system, user) => {
+        if (user.includes("A day in 2025-")) asked++;
+        return { status: "unconfigured" } as const;
+      });
+      assert.equal(asked, 1);
+    });
+
     it("repairProvisionalSummaries heals per-mind and _system rows", async () => {
       const mind = "repair-mind";
       await insertSummary(mind, "day", "2026-06-01", "Day one.");
