@@ -1158,10 +1158,10 @@ async function summarizePeriodOnce(
   } else {
     content = buildPeriodicDeterministicSummary(entries, period, periodKey);
     deterministic = true;
-    // Only a *failed* call spends the retry budget. With no utility model configured there was
-    // nothing to fail, and the budget is sized for outages (5 attempts across 7 days): counting a
-    // steady state against it would exhaust it inside the window and scar the row permanently, so
-    // configuring a model later could never heal it (#381). An untracked row stays retry-eligible.
+    // Only a *failed* call spends the retry budget. When the mind's model can't be used here there
+    // was nothing to fail, and the budget is sized for outages (5 attempts across 7 days): counting
+    // a steady state against it would exhaust it inside the window and scar the row permanently,
+    // so enabling the model later could never heal it (#381). An untracked row stays retry-eligible.
     if (outcome.status === "failed") trackProvisionalAttempt(metadata, existingMeta);
     // Over the spend cap: the placeholder stands (so the period isn't missing — `_system` still
     // sees the mind) and the repair sweep writes the real memory once the cap resets, however

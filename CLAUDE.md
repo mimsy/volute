@@ -311,7 +311,7 @@ Rules with a canonical helper or enforcing test hold up; prose-only rules drift.
 - Mind system prompt built from: SOUL.md + VOLUTE.md + MEMORY.md
 - Model configurable via `VOLUTE_MODEL` env var
 - Auto-commit hooks track file changes in mind `home/` directory
-- Centralized message persistence in `mind_history` table via daemon routes (text + tool call summaries). Turn summarizer fires on each `done` event to generate a `summary` row (AI-powered via `aiComplete()` with deterministic fallback)
+- Centralized message persistence in `mind_history` table via daemon routes (text + tool call summaries). Turn summarizer fires on each `done` event to generate a `summary` row. Every summary — turn, hour/day/week/month rollup — is written by its owner's own model via `completeAsMind()` (`lib/daemon/consolidation.ts`; `_system` rollups and the feed digest by the spirit's), with a deterministic fallback when that model can't be used; its cost counts toward the install-wide cap, never the mind's own (`SpendBudget.recordBackgroundUsage`)
 - System AI service configured via `ai` field in GlobalConfig (`~/.volute/system/config.json`), supports multiple providers with API key, OAuth, or env var auth; admin selects enabled models via web UI
 - Mind process isolation: sandbox mode (local installs, `@anthropic-ai/sandbox-runtime`), per-user mode (system installs, Linux/macOS), or none. Configured via `volute setup`, stored in `config.json` as `setup.isolation`
 - `volute setup` is the required first-run command; CLI commands are gated on `isSetupComplete()` with auto-migration for existing users via `migrateSetupConfig()`

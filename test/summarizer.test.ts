@@ -1439,11 +1439,11 @@ describe("summarizer", () => {
       assert.equal(JSON.parse(row!.metadata!).attempts, 1);
     });
 
-    it("an unconfigured utility model spends no retry attempt, so the row can still heal", async () => {
-      // The retry budget is sized for *outages* — 5 attempts spaced across 7 days. An
-      // unconfigured utility model is a steady state, not a transient failure: counting it
+    it("an unusable model spends no retry attempt, so the row can still heal", async () => {
+      // The retry budget is sized for *outages* — 5 attempts spaced across 7 days. A mind's
+      // model that can't be used here is a steady state, not a transient failure: counting it
       // would burn all 5 inside the window and scar the row permanently, so an admin who
-      // configures a model later could never heal it (#381).
+      // enables the model later could never heal it (#381).
       const mind = "unconfigured-no-attempt";
       for (let d = 9; d <= 11; d++) {
         await insertSummary(mind, "day", `2026-03-${d}`, `Day ${d} happened.`);
