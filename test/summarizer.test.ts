@@ -181,6 +181,63 @@ describe("summarizer", () => {
       assert.deepEqual(meta.tools, ["Read"]);
     });
 
+    /** Seed a one-turn history for `m` and return its done id. */
+    async function seedTurn(m: string): Promise<number> {
+      const db = await getDb();
+      const insert = async (type: string, opts?: Record<string, unknown>) => {
+        const r = await db
+          .insert(mindHistory)
+          .values({ mind: m, type, thread: `${m}-s`, ...opts })
+          .returning({ id: mindHistory.id });
+        return r[0].id;
+      };
+      await insert("inbound", { content: "what time is it?", channel: "@chat" });
+      await insert("outbound", { content: "about noon" });
+      return insert("done");
+    }
+
+    async function turnSummary(m: string) {
+      const db = await getDb();
+      return db
+        .select()
+        .from(summaries)
+        .where(and(eq(summaries.mind, m), eq(summaries.period, "turn")))
+        .get();
+    }
+
+    it("writes the turn summary with the mind's own model and records which", async () => {
+      const m = "turn-own-model";
+      const doneId = await seedTurn(m);
+      const asked: string[] = [];
+      await summarizeTurn(m, `${m}-s`, "@chat", doneId, undefined, async () => {
+        asked.push(m);
+        return {
+          status: "ok",
+          text: "I told someone the time.",
+          model: "anthropic:m",
+          costUsd: 0.01,
+        };
+      });
+      const row = await turnSummary(m);
+      assert.equal(row!.content, "I told someone the time.");
+      const meta = JSON.parse(row!.metadata!);
+      assert.equal(meta.deterministic, false);
+      assert.equal(meta.model, "anthropic:m");
+      assert.equal(meta.cost_usd, 0.01);
+      assert.deepEqual(asked, [m]);
+    });
+
+    it("falls back to the deterministic turn summary when the mind's model is unusable or over cap", async () => {
+      for (const status of ["unconfigured", "deferred", "failed"] as const) {
+        const m = `turn-${status}`;
+        const doneId = await seedTurn(m);
+        await summarizeTurn(m, `${m}-s`, "@chat", doneId, undefined, async () => ({ status }));
+        const meta = JSON.parse((await turnSummary(m))!.metadata!);
+        assert.equal(meta.deterministic, true, status);
+        assert.equal(meta.model, undefined, status);
+      }
+    });
+
     it("names the system event that triggered a turn in the deterministic summary", async () => {
       // The deterministic path is the fallback used whenever AI summarization is unavailable
       // (unconfigured, 401, rate-limited). If it ignores event rows — as buildTranscript once

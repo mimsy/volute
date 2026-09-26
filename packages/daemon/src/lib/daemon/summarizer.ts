@@ -1,5 +1,5 @@
 import { and, desc, eq, gte, inArray, like, lt, or, sql } from "drizzle-orm";
-import { aiCompleteUtility, aiCompleteUtilityOutcome, getUtilityModel } from "../ai-service.js";
+import { aiCompleteUtilityOutcome, getUtilityModel } from "../ai-service.js";
 import { getUserByUsername } from "../auth.js";
 import { getDb } from "../db.js";
 import { publish as publishMindEvent } from "../events/mind-events.js";
@@ -172,9 +172,10 @@ function buildTurnDeterministicSummary(
       if (ev.channel) channels.add(ev.channel);
     }
     // Events need naming here too, not only in buildTranscript. This is the fallback used
-    // whenever aiCompleteUtility() returns null (AI unconfigured, 401, rate-limited, expired
-    // OAuth) — without it a schedule/orientation/wake turn degrades to a bare "Turn completed."
-    // and the trigger vanishes precisely when a host is least able to see what happened.
+    // whenever the mind's model can't write the summary (unusable here, over its cap, 401,
+    // rate-limited, expired OAuth) — without it a schedule/orientation/wake turn degrades to a
+    // bare "Turn completed." and the trigger vanishes precisely when a host is least able to
+    // see what happened.
     if (ev.type === "event") {
       const label = parsedMeta.get(ev.id)?.label;
       eventLabel = typeof label === "string" && label ? label : "System event";
@@ -418,6 +419,7 @@ export async function summarizeTurn(
   channel: string | undefined,
   doneId: number,
   turnId?: string,
+  complete: Complete = (system, user) => completeAsMind(mind, system, user),
 ): Promise<void> {
   const { events, fromId, toId } = turnId
     ? await gatherTurnEventsByTurnId(turnId)
@@ -486,20 +488,20 @@ export async function summarizeTurn(
 
   let summaryText: string;
   let deterministic: boolean;
+  const written: Record<string, unknown> = {};
 
   const transcript = buildTranscript(events, parsedMeta, mind);
-  if (transcript.trim()) {
-    const summaryPrompt = await getPrompt("turn_summary", { mind });
-    const identity = await getMindIdentityLine(mind);
-    const input = identity ? `${identity}\n\n${transcript}` : transcript;
-    const aiResult = await aiCompleteUtility(summaryPrompt, input);
-    if (aiResult) {
-      summaryText = aiResult;
-      deterministic = false;
-    } else {
-      summaryText = buildTurnDeterministicSummary(events, parsedMeta);
-      deterministic = true;
-    }
+  const outcome = transcript.trim()
+    ? await complete(
+        await getPrompt("turn_summary", { mind }),
+        [await getMindIdentityLine(mind), transcript].filter(Boolean).join("\n\n"),
+      )
+    : null;
+  if (outcome?.status === "ok") {
+    summaryText = outcome.text;
+    deterministic = false;
+    if (outcome.model) written.model = outcome.model;
+    if (outcome.costUsd !== undefined) written.cost_usd = outcome.costUsd;
   } else {
     summaryText = buildTurnDeterministicSummary(events, parsedMeta);
     deterministic = true;
@@ -507,6 +509,7 @@ export async function summarizeTurn(
 
   const metadata = {
     deterministic,
+    ...written,
     tool_count: tools.length,
     tools: [...new Set(tools)],
     from_id: fromId,
