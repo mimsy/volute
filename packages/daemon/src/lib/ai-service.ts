@@ -187,7 +187,7 @@ export function setUtilityModel(modelId: string | undefined): void {
  * Spending an outage-sized budget on a steady state exhausts it and scars the record permanently
  * — see the provisional week/month retries in summarizer.ts.
  */
-export type UtilityOutcome =
+export type CompletionOutcome =
   | { status: "ok"; text: string }
   | { status: "unconfigured" }
   | { status: "failed" };
@@ -206,7 +206,7 @@ export async function aiCompleteUtilityOutcome(
   systemPrompt: string,
   userMessage: string,
   opts?: CompletionOptions,
-): Promise<UtilityOutcome> {
+): Promise<CompletionOutcome> {
   const utilityModel = getUtilityModel();
   if (!utilityModel) {
     // Only worth saying on an install that *has* models to choose from. With no AI configured at
@@ -245,7 +245,7 @@ export async function aiCompleteModelOutcome(
   userMessage: string,
   modelId: string,
   opts?: CompletionOptions,
-): Promise<UtilityOutcome> {
+): Promise<CompletionOutcome> {
   const model = findModel(modelId);
   if (!model || !getAiConfig()?.providers[model.provider]) return { status: "unconfigured" };
   const qualified = `${model.provider}:${model.id}`;

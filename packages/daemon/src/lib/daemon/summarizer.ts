@@ -1151,7 +1151,6 @@ async function summarizePeriodOnce(
     content = outcome.text;
     deterministic = false;
     if (outcome.model) metadata.model = outcome.model;
-    if (outcome.fallback) metadata.model_fallback = true;
     if (outcome.costUsd !== undefined) metadata.cost_usd = outcome.costUsd;
   } else {
     content = buildPeriodicDeterministicSummary(entries, period, periodKey);
