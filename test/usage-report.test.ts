@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  backgroundSpend,
   cacheHitRatio,
   readWindow,
   usageReport,
   windowBounds,
 } from "../packages/daemon/src/lib/daemon/usage-report.js";
 import { getDb } from "../packages/daemon/src/lib/db.js";
-import { mindHistory } from "../packages/daemon/src/lib/schema.js";
+import { mindHistory, summaries } from "../packages/daemon/src/lib/schema.js";
 
 /** A fixed "now" so window boundaries are exact rather than whatever the clock says. */
 const NOW = Date.parse("2026-08-24T13:30:00Z");
@@ -353,5 +354,33 @@ describe("usageReport", () => {
     assert.ok(report.total.costUsd >= cost);
     assert.ok(report.total.unpricedTurns >= unpriced);
     assert.ok(report.total.cacheHitRatio >= 0 && report.total.cacheHitRatio <= 1);
+  });
+});
+
+async function seedSummary(mind: string, at: number, cost: number | null, period = "turn") {
+  const db = await getDb();
+  await db.insert(summaries).values({
+    mind,
+    period,
+    period_key: `${mind}-${at}-${period}`,
+    content: "x",
+    metadata: JSON.stringify(cost === null ? { deterministic: true } : { cost_usd: cost }),
+    created_at: dbStamp(at),
+  });
+}
+
+describe("backgroundSpend", () => {
+  it("sums each mind's summary cost in the window, the system's under the spirit", async () => {
+    await seedSummary("bg-a", NOW - 3_600_000, 0.01);
+    await seedSummary("bg-a", NOW - 7_200_000, 0.02, "hour");
+    await seedSummary("bg-a", NOW - 3_600_000, null, "day"); // deterministic: no cost
+    await seedSummary("_system", NOW - 3_600_000, 0.005, "hour");
+    await seedSummary("system", NOW - 3_600_000, 0.001, "day"); // feed digest
+    await seedSummary("bg-a", NOW - 3 * 86_400_000, 9, "week"); // outside 24h
+    const bg = await backgroundSpend({ window: "24h", spirit: "bg-spirit", now: NOW });
+    assert.ok(Math.abs(bg["bg-a"] - 0.03) < 1e-9, `bg-a: ${bg["bg-a"]}`);
+    assert.ok(Math.abs(bg["bg-spirit"] - 0.006) < 1e-9, `spirit: ${bg["bg-spirit"]}`);
+    assert.equal(bg._system, undefined);
+    assert.equal(bg.system, undefined);
   });
 });

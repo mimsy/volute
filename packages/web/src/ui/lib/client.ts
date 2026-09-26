@@ -644,7 +644,11 @@ export type SystemSpend = {
   percentUsed: number;
 };
 
-export type SystemUsageReport = UsageReport & { system: SystemSpend | null };
+export type SystemUsageReport = UsageReport & {
+  system: SystemSpend | null;
+  /** USD each mind's summaries cost in the window — never counted against the mind's own cap. */
+  background: Record<string, number>;
+};
 
 export function fetchUsage(window: UsageWindow = "24h"): Promise<SystemUsageReport> {
   return get(`${V1}/usage?window=${window}`);

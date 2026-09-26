@@ -19,7 +19,7 @@
 
 import { and, eq, sql } from "drizzle-orm";
 import { getDb } from "../db.js";
-import { mindHistory } from "../schema.js";
+import { mindHistory, summaries } from "../schema.js";
 
 /** Windows the API accepts. Anything else is a 400 rather than a silent default. */
 export const USAGE_WINDOWS = ["24h", "7d", "30d"] as const;
@@ -300,4 +300,37 @@ export async function usageReport(opts: {
     minds,
     series,
   };
+}
+
+/**
+ * What the summaries of each mind's turns and days cost over the window, in USD — spend made in
+ * a mind's voice but never charged to its own cap (see `SpendBudget.recordBackgroundUsage`), so
+ * the host sees it here and nowhere mind-facing. `_system` rollups and the feed digest are the
+ * spirit's.
+ */
+export async function backgroundSpend(opts: {
+  window: UsageWindow;
+  spirit: string;
+  now?: number;
+}): Promise<Record<string, number>> {
+  const { startMs, endMs } = windowBounds(opts.window, opts.now);
+  const db = await getDb();
+  const cost = sql`json_extract(${summaries.metadata}, '$.cost_usd')`;
+  const rows = await db
+    .select({ mind: summaries.mind, costUsd: sql<number>`coalesce(sum(${cost}), 0)` })
+    .from(summaries)
+    .where(
+      and(
+        sql`${summaries.created_at} >= ${dbStamp(startMs)}`,
+        sql`${summaries.created_at} < ${dbStamp(endMs)}`,
+        sql`${cost} is not null`,
+      ),
+    )
+    .groupBy(summaries.mind);
+  const out: Record<string, number> = {};
+  for (const r of rows) {
+    const mind = r.mind === "_system" || r.mind === "system" ? opts.spirit : r.mind;
+    out[mind] = (out[mind] ?? 0) + Number(r.costUsd);
+  }
+  return out;
 }

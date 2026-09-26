@@ -58,6 +58,7 @@ describe("GET /api/v1/usage", () => {
       assert.equal(body.window, "24h");
       assert.equal(body.series.length, 24);
       assert.ok("system" in body, "the install-wide bucket is reported, even as null");
+      assert.equal(typeof (body as { background?: unknown }).background, "object");
       const row = body.minds.find((m) => m.mind === mind);
       assert.ok(row, "the seeded mind appears in the per-mind array");
       assert.equal(row.costUsd, 0.42);
@@ -134,6 +135,7 @@ describe("GET /api/v1/minds/:name/usage", () => {
         "scoped to this mind alone",
       );
       assert.equal(body.total.costUsd, 0.11);
+      assert.ok(!("background" in body), "summary cost is the host's, never shown to the mind");
     } finally {
       await removeMind(mind);
     }
