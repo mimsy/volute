@@ -13,7 +13,6 @@ import {
   getConfiguredProviders,
   getCustomModels,
   getEnabledModels,
-  getUtilityModel,
   isAiConfigured,
   needsRefresh,
   providerOAuth,
@@ -23,7 +22,6 @@ import {
   resolveApiKey,
   saveProviderConfig,
   setEnabledModels,
-  setUtilityModel,
 } from "../../lib/ai-service.js";
 import { getSpiritName, readGlobalConfig, writeGlobalConfig } from "../../lib/config/setup.js";
 import {
@@ -432,8 +430,7 @@ const app = new Hono<AuthEnv>()
           provider: m.provider,
           contextWindow: m.contextWindow,
           maxTokens: m.maxTokens,
-          // Token rates, so the UI can suggest the cheapest enabled model as the utility model
-          // instead of guessing from the name (#381). Custom models carry zeroed cost
+          // Token rates per model. Custom models carry zeroed cost
           // (buildCustomModel has no catalog rates), so 0 here means "unknown", not "free".
           inputCost: m.cost?.input ?? 0,
           outputCost: m.cost?.output ?? 0,
@@ -485,29 +482,17 @@ const app = new Hono<AuthEnv>()
   })
   .get("/ai/defaults", requireAdmin, (c) => {
     const config = readGlobalConfig();
-    return c.json({
-      spiritModel: config.spiritModel ?? null,
-      utilityModel: getUtilityModel() ?? null,
-    });
+    return c.json({ spiritModel: config.spiritModel ?? null });
   })
   .put(
     "/ai/defaults",
     requireAdmin,
-    zValidator(
-      "json",
-      z.object({
-        spiritModel: z.string().nullable().optional(),
-        utilityModel: z.string().nullable(),
-      }),
-    ),
+    zValidator("json", z.object({ spiritModel: z.string().nullable() })),
     (c) => {
-      const { spiritModel, utilityModel } = c.req.valid("json");
+      const { spiritModel } = c.req.valid("json");
       const config = readGlobalConfig();
-      if (spiritModel !== undefined) {
-        config.spiritModel = spiritModel ?? undefined;
-        writeGlobalConfig(config);
-      }
-      setUtilityModel(utilityModel ?? undefined);
+      config.spiritModel = spiritModel ?? undefined;
+      writeGlobalConfig(config);
       return c.json({ ok: true });
     },
   )

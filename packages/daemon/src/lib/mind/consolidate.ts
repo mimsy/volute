@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { aiCompleteUserInvoked } from "../ai-service.js";
+import { aiCompleteModelOutcome, aiCompleteUserInvoked } from "../ai-service.js";
+import { mindModelId } from "../daemon/usage-pricing.js";
 import log from "../util/logger.js";
 
 const cLog = log.child("consolidate");
@@ -53,22 +54,34 @@ export function boundLogText(logs: string[], maxChars = MAX_CONSOLIDATION_INPUT_
   return kept.join("\n\n");
 }
 
+/** The imported mind's own model when this daemon can use it; otherwise the host's first enabled one. */
+async function completeForImport(mind: string, system: string, user: string) {
+  const model = await mindModelId(mind).catch(() => null);
+  if (model) {
+    const out = await aiCompleteModelOutcome(system, user, model);
+    if (out.status === "ok") return out.text;
+  }
+  return aiCompleteUserInvoked(system, user);
+}
+
 /**
  * One-shot memory consolidation. Reads daily logs from a mind directory and
- * produces consolidated MEMORY.md content via the system AI service (preferring the
- * utility model used for turn summaries), so it works for any template and isn't
- * pinned to a retired model. No-ops if no logs exist or no model is configured.
+ * produces consolidated MEMORY.md content via the system AI service — with the
+ * mind's own model when this daemon can use it — so it works for any template and
+ * isn't pinned to a retired model. No-ops if no logs exist or no model is configured.
  * The `complete` param is injectable for testing.
  *
- * This runs on `volute mind import` — a host command, not a background task — so it uses
- * `aiCompleteUserInvoked` and will auto-select a model when no utility model is configured.
+ * This runs on `volute mind import` — a host command, not a background task — so when
+ * the mind's model can't be used it auto-selects one (`aiCompleteUserInvoked`).
  * Refusing here wouldn't save a host from unchosen spend (they typed the command); it would
  * just land the imported mind with no MEMORY.md. See the note on that function for why this
  * exemption stops here.
  */
 export async function consolidateMemory(
   mindDir: string,
-  complete: (system: string, user: string) => Promise<string | null> = aiCompleteUserInvoked,
+  mind: string,
+  complete: (system: string, user: string) => Promise<string | null> = (s, u) =>
+    completeForImport(mind, s, u),
 ): Promise<void> {
   const soulPath = resolve(mindDir, "home/SOUL.md");
   const memoryPath = resolve(mindDir, "home/MEMORY.md");

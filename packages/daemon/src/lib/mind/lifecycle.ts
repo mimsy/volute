@@ -1165,7 +1165,7 @@ export async function importOpenClawWorkspace(body: ImportOpenClawInput): Promis
 
     // Consolidate memory if no MEMORY.md but daily logs exist
     if (!hasMemory && dailyLogCount > 0) {
-      await consolidateMemory(dest);
+      await consolidateMemory(dest, name);
     }
 
     // git init + initial commit

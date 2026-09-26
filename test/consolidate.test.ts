@@ -64,7 +64,7 @@ describe("consolidateMemory", () => {
   it("skips (and never calls the model) when there are no logs", async () => {
     const dir = makeMind({});
     let called = false;
-    await consolidateMemory(dir, async () => {
+    await consolidateMemory(dir, "imported", async () => {
       called = true;
       return "should not run";
     });
@@ -76,7 +76,7 @@ describe("consolidateMemory", () => {
     const dir = makeMind({ "2026-01-01.md": "did a thing" }, "You are Soulful.\n");
     let seenSystem: string | undefined;
     let seenUser: string | undefined;
-    await consolidateMemory(dir, async (system, user) => {
+    await consolidateMemory(dir, "imported", async (system, user) => {
       seenSystem = system;
       seenUser = user;
       return "# Memory\n\nConsolidated.";
@@ -91,7 +91,7 @@ describe("consolidateMemory", () => {
 
   it("does not write MEMORY.md when the model returns null (e.g. no model configured)", async () => {
     const dir = makeMind({ "2026-01-01.md": "did a thing" });
-    await consolidateMemory(dir, async () => null);
+    await consolidateMemory(dir, "imported", async () => null);
     assert.equal(existsSync(resolve(dir, "home/MEMORY.md")), false);
   });
 
@@ -104,7 +104,7 @@ describe("consolidateMemory", () => {
     }
     const dir = makeMind(logs);
     let seenUser = "";
-    await consolidateMemory(dir, async (_system, user) => {
+    await consolidateMemory(dir, "imported", async (_system, user) => {
       seenUser = user;
       return "ok";
     });
