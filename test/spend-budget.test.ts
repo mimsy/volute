@@ -68,6 +68,48 @@ describe("SpendBudget", () => {
     assert.equal(sb.getUsage("unknown"), null);
   });
 
+  // --- background spend (summaries written for a mind, not by it) ---
+
+  it("recordBackgroundUsage counts toward the install-wide cap only", () => {
+    const sb = new SpendBudget();
+    sb.setBudget("mind1", 10, 1440);
+    sb.setSystemCap(20);
+    sb.recordBackgroundUsage(9);
+    assert.equal(sb.getUsage("mind1")!.spentUsd, 0, "a mind's own number never moves");
+    assert.equal(sb.getSystemUsage()!.spentUsd, 9);
+  });
+
+  it("background spend never warns or holds a mind on its own cap", () => {
+    const sb = new SpendBudget();
+    sb.setBudget("mind1", 1, 1440);
+    sb.recordBackgroundUsage(5); // 500% of the mind's cap, if it counted
+    assert.deepEqual(sb.checkBudget("mind1"), { status: "ok", scope: null });
+    assert.equal(sb.holdFor("mind1"), null);
+  });
+
+  it("background spend can still exhaust the install-wide cap", () => {
+    const sb = new SpendBudget();
+    sb.setSystemCap(1);
+    sb.recordBackgroundUsage(1.5);
+    assert.deepEqual(sb.checkBudget("mind1"), { status: "exceeded", scope: "system" });
+  });
+
+  it("an unpriced background completion flags the system bucket as a floor", () => {
+    const sb = new SpendBudget();
+    sb.setSystemCap(5);
+    sb.recordBackgroundUsage(null);
+    assert.equal(sb.getSystemUsage()!.hasUnpricedTurns, true);
+    assert.equal(sb.getSystemUsage()!.spentUsd, 0);
+  });
+
+  it("recordBackgroundUsage is a no-op with no system cap", () => {
+    const sb = new SpendBudget();
+    sb.setBudget("mind1", 10, 1440);
+    sb.recordBackgroundUsage(3);
+    assert.equal(sb.getUsage("mind1")!.spentUsd, 0);
+    assert.equal(sb.getSystemUsage(), null);
+  });
+
   // --- unpriced turns ---
 
   it("an unpriced turn accumulates nothing but flags the period", () => {
