@@ -788,7 +788,7 @@ export function deleteCustomModel(provider: string, id: string): Promise<void> {
   return del(`${V1}/system/ai/models/custom?provider=${enc(provider)}&id=${enc(id)}`);
 }
 
-export type AiDefaults = { spiritModel?: string | null; utilityModel: string | null };
+export type AiDefaults = { spiritModel: string | null };
 
 export function fetchAiDefaults(): Promise<AiDefaults> {
   return get(`${V1}/system/ai/defaults`);

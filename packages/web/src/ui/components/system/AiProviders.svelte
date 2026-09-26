@@ -20,12 +20,10 @@ import ModelSelect from "./ModelSelect.svelte";
 let {
   showModelDefaults = false,
   spiritModel = $bindable(""),
-  utilityModel = $bindable(""),
   onLoad,
 }: {
   showModelDefaults?: boolean;
   spiritModel?: string;
-  utilityModel?: string;
   onLoad?: (enabledModels: AiModel[]) => void;
 } = $props();
 
@@ -88,21 +86,6 @@ function shortProviderLabel(p: AiProvider): string {
 function modelsForProvider(providerId: string) {
   return enabledModels.filter((m) => m.provider === providerId);
 }
-
-// The cheapest enabled model, offered as a one-click utility-model suggestion. Background
-// summaries run on the utility model, so leaving it unset used to silently auto-select the
-// first enabled model — usually a flagship — and bill it on every mind turn (#381). We now
-// suggest rather than set: an unaccepted suggestion writes nothing, so the host still chooses.
-//
-// Only *custom* models are excluded, because buildCustomModel has no catalog rates to copy and
-// stamps them 0 — an unknown price, not a free one. The exclusion is keyed on the `custom` flag
-// rather than on cost being 0: 119 of pi-ai's 1312 builtin models are genuinely free, and
-// treating price as the proxy would drop exactly those and suggest a paid flagship instead.
-let cheapestModel = $derived(
-  enabledModels
-    .filter((m) => !m.custom)
-    .sort((a, b) => a.inputCost + a.outputCost - (b.inputCost + b.outputCost))[0],
-);
 
 let modelSuggestions = $derived(
   modelSearch.trim()
@@ -202,10 +185,9 @@ async function handleProviderRemove(providerId: string) {
   error = "";
   try {
     await removeProviderConfig(providerId);
-    // Clear utility model if it belonged to this provider
+    // Clear the spirit model if it belonged to this provider
     const removedModels = aiModels.filter((m) => m.provider === providerId && m.enabled);
     for (const m of removedModels) {
-      if (utilityModel === m.qualifiedId) utilityModel = "";
       if (spiritModel === m.qualifiedId) spiritModel = "";
     }
     await load();
@@ -340,7 +322,6 @@ async function removeModel(model: AiModel) {
     try {
       await deleteCustomModel(model.provider, model.id);
       aiModels = aiModels.filter((m) => m.qualifiedId !== model.qualifiedId);
-      if (utilityModel === model.qualifiedId) utilityModel = "";
       if (spiritModel === model.qualifiedId) spiritModel = "";
     } catch (err) {
       error = err instanceof Error ? err.message : "Failed to remove custom model";
@@ -353,7 +334,6 @@ async function removeModel(model: AiModel) {
     aiModels = aiModels.map((m) =>
       m.qualifiedId === model.qualifiedId ? { ...m, enabled: false } : m,
     );
-    if (utilityModel === model.qualifiedId) utilityModel = "";
     if (spiritModel === model.qualifiedId) spiritModel = "";
   } catch (err) {
     error = err instanceof Error ? err.message : "Failed to remove model";
@@ -401,7 +381,7 @@ async function removeModel(model: AiModel) {
     </button>
   {/if}
 
-  <!-- System / utility model selection -->
+  <!-- Spirit model selection -->
   {#if showModelDefaults && enabledModels.length > 0}
     <div class="model-defaults">
       <span class="label">Spirit model</span>
@@ -411,28 +391,6 @@ async function removeModel(model: AiModel) {
         placeholder="Search models..."
       />
       <div class="hint">The model that runs Volute's guiding spirit.</div>
-
-      <span class="label mt">Utility model <span class="optional">(optional)</span></span>
-      <ModelSelect
-        items={enabledModels.map((m) => ({ id: m.qualifiedId, label: `${m.name} · ${m.provider}` }))}
-        bind:value={utilityModel}
-        placeholder="Search models..."
-        emptyLabel="None"
-      />
-      <div class="hint">A smaller model for summaries and background tasks.</div>
-      {#if !utilityModel}
-        <div class="basic-mode">
-          Without one, background summaries run in basic (non-AI) mode. Pick a utility model for
-          richer summaries.
-          {#if cheapestModel}
-            <button
-              class="suggest-btn"
-              type="button"
-              onclick={() => { utilityModel = cheapestModel.qualifiedId; }}
-            >Use {cheapestModel.name} — cheapest enabled</button>
-          {/if}
-        </div>
-      {/if}
     </div>
   {/if}
 
@@ -985,41 +943,9 @@ async function removeModel(model: AiModel) {
     margin-bottom: 6px;
   }
 
-  .optional {
-    color: var(--text-2);
-    font-weight: 400;
-  }
-
   .hint {
     color: var(--text-2);
     font-size: 12px;
     margin-top: 6px;
   }
-
-  .mt { margin-top: 14px; }
-
-  .basic-mode {
-    color: var(--text-2);
-    font-size: 12px;
-    line-height: 1.5;
-    margin-top: 8px;
-    padding: 8px 10px;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    background: var(--bg-2);
-  }
-
-  .suggest-btn {
-    display: inline-block;
-    margin-top: 6px;
-    padding: 4px 10px;
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    background: none;
-    color: var(--text-1);
-    font-size: 12px;
-    cursor: pointer;
-  }
-
-  .suggest-btn:hover { border-color: var(--accent); color: var(--accent); }
 </style>

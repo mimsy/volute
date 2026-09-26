@@ -90,7 +90,6 @@ let slugError = $derived(
 // Step 4: Provider + Models
 let aiProvidersRef = $state<AiProviders>();
 let spiritModel = $state("");
-let utilityModel = $state("");
 let enabledModelIds = $state<string[]>([]);
 
 function handleProviderLoad(enabledModels: AiModel[]) {
@@ -331,7 +330,6 @@ async function handleModelsSubmit(e: Event) {
       body: JSON.stringify({
         models: enabledModelIds,
         spiritModel,
-        utilityModel: utilityModel || undefined,
       }),
     });
     if (!res.ok) {
@@ -730,7 +728,6 @@ $effect(() => {
         bind:this={aiProvidersRef}
         showModelDefaults
         bind:spiritModel
-        bind:utilityModel
         onLoad={handleProviderLoad}
       />
 
