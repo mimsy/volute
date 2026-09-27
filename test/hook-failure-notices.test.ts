@@ -254,6 +254,14 @@ describe("hook failure notices", () => {
       assert.match(context ?? "", /hook_event_name:SessionStart/);
     });
 
+    it("takes plain text as the context, as the script's header promises", async () => {
+      writeStartupHook("echo 'You woke at dawn.'\n");
+      const context = await startup.getStartupContext({ session: "main", source: "startup" });
+      await loader.flushHookFailureReports();
+      assert.equal(context, "You woke at dawn.");
+      assert.equal(received.length, 0);
+    });
+
     it("tells the mind when it fails, the way any hook failure is told", async () => {
       writeStartupHook("echo 'budget fetch blew up' >&2\nexit 3\n");
       const context = await startup.getStartupContext({ session: "main", source: "startup" });

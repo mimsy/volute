@@ -32,6 +32,8 @@ type ScriptedTurn = {
   throws?: string;
   /** Run while the turn is "in flight", e.g. to write files like a shell command would. */
   during?: () => unknown;
+  /** Run after the events are yielded; an abort by then ends the stream as codex's would. */
+  after?: () => unknown;
 };
 
 type RecordedCall = {
@@ -72,6 +74,14 @@ class Thread {
       for (const e of turn.events ?? []) {
         if (e.type === "thread.started") self._id = e.thread_id;
         yield e;
+      }
+      if (turn.after) {
+        await turn.after();
+        if (opts.signal?.aborted) {
+          const err = new Error("aborted");
+          err.name = "AbortError";
+          throw err;
+        }
       }
       if (turn.throws) throw new Error(turn.throws);
     }
@@ -1036,8 +1046,32 @@ describe("codex runs the post-tool-use lane, in claude's shape (#1199)", () => {
               changes: [
                 { path: patched, kind: "add" },
                 { path: "MEMORY.md", kind: "update" },
+                // Gone: a hook matching Edit would go looking for it.
+                { path: "old.md", kind: "delete" },
               ],
               status: "completed",
+            },
+          },
+          // Failed tools aren't reported — claude's PostToolUse runs after success only.
+          {
+            type: "item.completed",
+            item: {
+              id: "fc_2",
+              type: "file_change",
+              changes: [{ path: "never.md", kind: "add" }],
+              status: "failed",
+            },
+          },
+          {
+            type: "item.completed",
+            item: {
+              id: "mcp_2",
+              type: "mcp_tool_call",
+              server: "notes",
+              tool: "write",
+              arguments: {},
+              status: "failed",
+              error: { message: "read-only" },
             },
           },
           {
@@ -1092,5 +1126,52 @@ describe("codex runs the post-tool-use lane, in claude's shape (#1199)", () => {
     assert.equal(contexts.length, 5);
     const done = eventsFor("lane", "done")[0];
     for (const c of contexts) assert.ok(posted.indexOf(c) < posted.indexOf(done));
+  });
+});
+
+describe("codex's post-tool-use lane stands aside for an interrupt (#1199)", () => {
+  it("skips the hooks an interrupted turn hadn't started yet", async () => {
+    const laneDir = resolve(mindDir, "home/.local/hooks/post-tool-use");
+    const record = resolve(mindDir, "post-tool-use-interrupt.jsonl");
+    mkdirSync(laneDir, { recursive: true });
+    writeFileSync(
+      resolve(laneDir, "record.sh"),
+      `input=$(cat)\nsleep 0.3\nprintf '%s\\n' "$input" >> '${record}'\n`,
+    );
+    const command = (id: string) => ({
+      type: "item.completed",
+      item: {
+        id,
+        type: "command_execution",
+        command: "ls",
+        aggregated_output: "",
+        exit_code: 0,
+        status: "completed",
+      },
+    });
+    let interrupting: Promise<unknown> | undefined;
+    try {
+      script("lane-int", {
+        events: [
+          { type: "thread.started", thread_id: "t-lane-int" },
+          command("c1"),
+          command("c2"),
+          command("c3"),
+        ],
+        after: async () => {
+          interrupting = send("lane-int", [{ type: "text", text: "stop" }], mind, {
+            interrupt: true,
+          });
+          await settle();
+        },
+      });
+      await send("lane-int");
+      await interrupting;
+      await new Promise((r) => setTimeout(r, 1000));
+    } finally {
+      rmSync(laneDir, { recursive: true, force: true });
+    }
+    const ran = readFileSync(record, "utf-8").trim().split("\n");
+    assert.equal(ran.length, 1, "only the hook already running when the turn was interrupted");
   });
 });

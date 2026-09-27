@@ -89,7 +89,8 @@ function getRunner(scriptPath: string): { cmd: string; args: string[] } {
 }
 
 /**
- * Execute a single hook script with JSON on stdin, parse JSON from stdout.
+ * Execute a single hook script with JSON on stdin, parse JSON from stdout. With
+ * `plainText`, stdout that isn't JSON is the hook's context rather than a failure.
  */
 export function executeHook(
   scriptPath: string,
@@ -97,6 +98,7 @@ export function executeHook(
   timeout = defaultHookTimeout(),
   cwd?: string,
   env: NodeJS.ProcessEnv = process.env,
+  plainText = false,
 ): Promise<HookResult> {
   return new Promise((resolve) => {
     const { cmd, args } = getRunner(scriptPath);
@@ -174,6 +176,10 @@ export function executeHook(
           decision: parsed.decision,
         });
       } catch {
+        if (plainText) {
+          resolve({ additionalContext: trimmed });
+          return;
+        }
         log("hooks", `hook ${scriptPath} returned invalid JSON: ${trimmed.slice(0, 200)}`);
         resolve({
           failure: {
@@ -271,7 +277,14 @@ export async function runHook(
   scriptPath: string,
   event: string,
   input: object,
-  opts: { homeDir: string; cwd?: string; timeout?: number; fullTimeout?: number },
+  opts: {
+    homeDir: string;
+    cwd?: string;
+    timeout?: number;
+    fullTimeout?: number;
+    /** Take stdout that isn't JSON as the context (see executeHook). */
+    plainText?: boolean;
+  },
 ): Promise<HookResult & { told?: string }> {
   const timeout = opts.timeout ?? defaultHookTimeout();
   const fullTimeout = opts.fullTimeout ?? timeout;
@@ -282,7 +295,14 @@ export async function runHook(
   if (typeof session === "string" && session) env.VOLUTE_SESSION = session;
   else delete env.VOLUTE_SESSION;
 
-  const result = await executeHook(scriptPath, input, timeout, opts.cwd ?? opts.homeDir, env);
+  const result = await executeHook(
+    scriptPath,
+    input,
+    timeout,
+    opts.cwd ?? opts.homeDir,
+    env,
+    opts.plainText,
+  );
   if (!result.failure) return result;
   const told = tellMindAboutHookFailure({
     scriptPath,

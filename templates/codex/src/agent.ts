@@ -206,9 +206,11 @@ type ToolCall = {
  * - a shell command is `Bash`. codex reports stdout and stderr as one stream, so it all
  *   arrives as `stdout`; `exit_code` is codex's.
  * - a file change (one apply_patch, possibly several files) is one call per file: `Write`
- *   for a new file, `Edit` otherwise, with codex's `kind` (add/update/delete) alongside.
+ *   for a new file, `Edit` for an update. A deletion has no claude tool of its own and a
+ *   hook matching Edit would go looking for a file that's gone, so it isn't reported.
  * - an MCP call is `mcp__<server>__<tool>`; a web search is `WebSearch`.
- * Anything else — reasoning, messages, todo lists — is not a tool call.
+ * A failed file change or MCP call isn't reported either: claude's PostToolUse runs only
+ * after a tool succeeds. Anything else — reasoning, messages, todo lists — is not a tool call.
  */
 function postToolUseCalls(item: ThreadItem, cwd: string): ToolCall[] {
   switch (item.type) {
@@ -227,21 +229,24 @@ function postToolUseCalls(item: ThreadItem, cwd: string): ToolCall[] {
         },
       ];
     case "file_change":
-      return item.changes.map((change) => {
+      if (item.status === "failed") return [];
+      return item.changes.flatMap((change) => {
+        if (change.kind === "delete") return [];
         const filePath = resolvePath(cwd, change.path);
         return {
           tool_name: change.kind === "add" ? "Write" : "Edit",
           tool_input: { file_path: filePath, kind: change.kind },
-          tool_response: { filePath, kind: change.kind, success: item.status !== "failed" },
+          tool_response: { filePath, kind: change.kind, success: true },
           tool_use_id: item.id,
         };
       });
     case "mcp_tool_call":
+      if (item.status === "failed" || item.error) return [];
       return [
         {
           tool_name: `mcp__${item.server}__${item.tool}`,
           tool_input: (item.arguments ?? {}) as Record<string, unknown>,
-          tool_response: item.error ? { error: item.error.message } : (item.result ?? null),
+          tool_response: item.result ?? null,
           tool_use_id: item.id,
         },
       ];
@@ -663,17 +668,19 @@ export function createMind(options: {
     const prompt = text;
 
     // Whether this turn's prompt carries the startup context — a retry on a fresh thread
-    // (below) must carry it too, but not twice.
+    // (below) must carry it too, but not twice. Started now and awaited alongside the
+    // pre-prompt hooks below, so the two hook spawns don't queue behind each other.
     const carriesStartupContext = session.startupSource !== null;
-    text = await withStartupContext(session, text);
+    const orientation = takeStartupContext(session);
 
     // On the first turn of a seeded session, prepend the honest-boundary note
     // (consumed once) so the mind knows the tail above was restored (restart) or
     // rotated (context limit). The restored note carries a coarse gap-duration
     // clause when the archive time is known; the rotation note has no gap clause.
+    let note: string | undefined;
     if (session.seeded) {
       session.seeded = false;
-      const note = buildSeededNote({
+      note = buildSeededNote({
         cause: session.seededCause,
         archivedAtMs: session.seededArchivedAt,
         recollection: session.seededRecollection,
@@ -683,26 +690,28 @@ export function createMind(options: {
         content: note,
         metadata: { source: "seeded-session" },
       });
-      text = `${note}\n\n${text}`;
     }
 
-    // Run pre-prompt hooks
-    try {
-      const hookResult = await runHooks(hooksDir, "pre-prompt", {
+    const [startupContext, hookResult] = await Promise.all([
+      orientation,
+      runHooks(hooksDir, "pre-prompt", {
         event: "pre-prompt",
         session: session.name,
         prompt,
+      }).catch((err) => {
+        warn("mind", "pre-prompt hook failed:", err);
+        return null;
+      }),
+    ]);
+    if (startupContext) text = `${startupContext}\n\n${text}`;
+    if (note) text = `${note}\n\n${text}`;
+    if (hookResult?.additionalContext) {
+      emit(session, {
+        type: "context",
+        content: hookResult.additionalContext,
+        metadata: { source: "dynamic:pre-prompt", ...hookResult.metadata },
       });
-      if (hookResult.additionalContext) {
-        emit(session, {
-          type: "context",
-          content: hookResult.additionalContext,
-          metadata: { source: "dynamic:pre-prompt", ...hookResult.metadata },
-        });
-        text = `${hookResult.additionalContext}\n\n${text}`;
-      }
-    } catch (err) {
-      warn("mind", "pre-prompt hook failed:", err);
+      text = `${hookResult.additionalContext}\n\n${text}`;
     }
 
     // Either the system-event note or reply instructions — never both, and never reply
@@ -761,7 +770,8 @@ export function createMind(options: {
           if (session.thread) {
             emit(session, { type: "context", content: lost, metadata: { source: "context-lost" } });
             if (carriesStartupContext) session.startupSource = null;
-            const retryText = await withStartupContext(session, lost);
+            const retryContext = await takeStartupContext(session);
+            const retryText = retryContext ? `${retryContext}\n\n${lost}` : lost;
             failure = await streamTurn(session, prependText(input, retryText));
           }
           // The retry carried the news itself; a notice is only needed when the mind hasn't
@@ -777,21 +787,22 @@ export function createMind(options: {
   }
 
   /**
-   * Prepend startup context on the first turn of a thread — run then, for this session and
-   * why its thread started, so it is current (#1199).
+   * The startup context owed to the first turn of a thread — run at that turn, for this
+   * session and why its thread started, so it is current (#1199). Null when it's owed none.
    */
-  async function withStartupContext(session: CodexSession, text: string): Promise<string> {
+  async function takeStartupContext(session: CodexSession): Promise<string | null> {
     const source = session.startupSource;
-    if (!source) return text;
+    if (!source) return null;
     session.startupSource = null;
     const startupContext = await getStartupContext({ session: session.name, source });
-    if (!startupContext) return text;
-    emit(session, {
-      type: "context",
-      content: startupContext,
-      metadata: { source: "startup-context" },
-    });
-    return `${startupContext}\n\n${text}`;
+    if (startupContext) {
+      emit(session, {
+        type: "context",
+        content: startupContext,
+        metadata: { source: "startup-context" },
+      });
+    }
+    return startupContext;
   }
 
   /**
@@ -842,12 +853,17 @@ export function createMind(options: {
     // Post-tool-use hooks run one after another, in the order the tools completed, and the
     // turn isn't over until they are — their context belongs to this turn, before `done`.
     // Only when the mind has any: most don't, and then there is nothing to spawn.
+    // An interrupted turn doesn't wait on them: hooks not yet started are skipped, and one
+    // already running finishes on its own.
     const toolHooks = discoverHooks(hooksDir, "post-tool-use").length > 0;
+    const { signal } = session.abortController;
     let toolHooksDone = Promise.resolve();
     const afterTool = (item: ThreadItem) => {
       if (!toolHooks) return;
       for (const call of postToolUseCalls(item, options.cwd)) {
-        toolHooksDone = toolHooksDone.then(() => runPostToolUse(session, call));
+        toolHooksDone = toolHooksDone.then(() =>
+          signal.aborted ? undefined : runPostToolUse(session, call),
+        );
       }
     };
 
@@ -954,7 +970,6 @@ export function createMind(options: {
               const item = event.item;
               // Same id emitted on item.started, so the daemon links this result to its tool_use.
               const itemId = item.id;
-              afterTool(item);
 
               if (item.type === "reasoning") {
                 if (item.text) emit(session, { type: "thinking", content: item.text });
@@ -1010,6 +1025,7 @@ export function createMind(options: {
                 });
                 broadcast(session, { type: "tool_result", output: "search completed" });
               }
+              afterTool(item);
               break;
             }
 
@@ -1058,7 +1074,6 @@ export function createMind(options: {
     } catch (err: any) {
       if (err?.name === "AbortError") {
         log("mind", `session "${session.name}": turn aborted`);
-        await toolHooksDone;
         return null;
       }
       thrown = err instanceof Error ? err.message : String(err);

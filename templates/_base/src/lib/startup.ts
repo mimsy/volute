@@ -318,8 +318,8 @@ export type StartupSource = "startup" | "resume" | "compact";
  * today's, not the snapshot from boot (#1199). It runs through the hook runner, with the
  * same timeout and the same `[Your hooks]` report on failure as every other hook.
  *
- * `.sh` is the fallback when there is no `.ts`. Returns null if there's no hook, it
- * printed nothing, or it failed.
+ * `.sh` is the fallback when there is no `.ts`. It may print claude's hook JSON or plain
+ * text. Returns null if there's no hook, it printed nothing, or it failed.
  */
 export async function getStartupContext(opts: {
   session: string;
@@ -332,11 +332,12 @@ export async function getStartupContext(opts: {
   if (!scriptPath) return null;
 
   // Run from the mind dir: the script reads `.mind/…` and `home/memory/…` from there.
+  // Plain text is its context too, as the script's own header has always promised.
   const result = await runHook(
     scriptPath,
     "startup-context",
     { hook_event_name: "SessionStart", source: opts.source, session: opts.session },
-    { homeDir, cwd: process.cwd() },
+    { homeDir, cwd: process.cwd(), plainText: true },
   );
   return result.additionalContext?.trim() || null;
 }
