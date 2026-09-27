@@ -4,6 +4,7 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   statSync,
   utimesSync,
@@ -106,7 +107,7 @@ describe("import: importPiSession", () => {
     const destPath = resolve(scratchDir, ".mind/pi-sessions/main/session.jsonl");
     const lines = readFileSync(destPath, "utf-8").trim().split("\n");
     const header = JSON.parse(lines[0]);
-    assert.equal(header.cwd, resolve(scratchDir, "home"));
+    assert.equal(header.cwd, resolve(realpathSync(scratchDir), "home"));
     assert.equal(header.type, "session");
     assert.equal(header.version, 3);
     assert.equal(header.id, "abc-123");

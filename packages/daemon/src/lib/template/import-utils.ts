@@ -1,4 +1,14 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  statSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { basename, resolve } from "node:path";
 import { setBridgeConfig } from "../bridges/bridges.js";
@@ -49,33 +59,87 @@ export function sessionMatchesWorkspace(sessionPath: string, workspaceDir: strin
 }
 
 /**
+ * A pi session file with its header's `cwd` set to `cwd`, or null when the
+ * first line is not a session header. Only that line is touched; the rest is
+ * spliced back byte for byte, never decoded.
+ *
+ * pi's `continueRecent` resumes only a session whose header `cwd` matches the
+ * mind's own, so a session file moved to a different home without this is
+ * passed over and the mind starts empty, with nothing telling it why.
+ */
+export function withPiSessionCwd(data: Buffer, cwd: string): Buffer | null {
+  const end = data.indexOf(0x0a);
+  const first = end === -1 ? data : data.subarray(0, end);
+  let header: any;
+  try {
+    header = JSON.parse(first.toString("utf-8"));
+  } catch {
+    return null;
+  }
+  if (header?.type !== "session") return null;
+  header.cwd = cwd;
+  const rest = end === -1 ? Buffer.alloc(0) : data.subarray(end);
+  return Buffer.concat([Buffer.from(JSON.stringify(header)), rest]);
+}
+
+/**
+ * When pi created a session file, from the `<iso>_<id>.jsonl` name it gives
+ * one (`:` and `.` written as `-`), or null for any other name.
+ */
+function piSessionFileTime(name: string): Date | null {
+  const m = /^(\d{4}-\d{2}-\d{2}T\d{2})-(\d{2})-(\d{2})-(\d{3}Z)_/.exec(name);
+  if (!m) return null;
+  const date = new Date(`${m[1]}:${m[2]}:${m[3]}.${m[4]}`);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+/**
+ * Point every pi session under `<root>/.mind/pi-sessions` at `cwd`.
+ *
+ * For an archive import, run on the extracted archive before it is copied
+ * into the new mind dir: the archive is the only place the files are not yet
+ * the mind's, and they are routinely larger than a mind-file rewrite will read.
+ * Only real directories are descended and only regular files rewritten.
+ *
+ * pi resumes the newest file in a session dir by mtime, and every step of an
+ * export and import leaves the mtimes at whenever that step ran. So each file
+ * also gets back the time its name says it was created, which orders a dir's
+ * sessions the way pi made them; the copy into the mind dir must keep it.
+ */
+export function rewritePiSessionCwds(root: string, cwd: string): void {
+  const walk = (dir: string) => {
+    for (const entry of readdirSync(dir)) {
+      const path = resolve(dir, entry);
+      const stat = lstatSync(path);
+      if (stat.isDirectory()) walk(path);
+      else if (stat.isFile() && entry.endsWith(".jsonl")) {
+        const data = withPiSessionCwd(readFileSync(path), cwd);
+        if (data !== null) writeFileSync(path, data);
+        const created = piSessionFileTime(entry);
+        if (created) utimesSync(path, created, created);
+      }
+    }
+  };
+  const sessionsDir = resolve(root, ".mind/pi-sessions");
+  if (existsSync(sessionsDir) && lstatSync(sessionsDir).isDirectory()) walk(sessionsDir);
+}
+
+/**
  * Import a session for the pi template.
  * OpenClaw sessions use the same JSONL format as pi-coding-agent,
  * so we copy directly and just update the cwd in the session header.
  */
 export function importPiSession(sessionFile: string, mindDirPath: string) {
-  const homeDir = resolve(mindDirPath, "home");
+  // Canonical, as the mind's own cwd will be — pi compares the two by string.
+  const homeDir = resolve(realpathSync(mindDirPath), "home");
   const piSessionDir = resolve(mindDirPath, ".mind/pi-sessions/main");
   mkdirSync(piSessionDir, { recursive: true });
 
-  // Read session and update cwd in header to point to new mind's home dir
-  const content = readFileSync(sessionFile, "utf-8");
-  const lines = content.trim().split("\n");
-
-  try {
-    const header = JSON.parse(lines[0]);
-    if (header.type === "session") {
-      header.cwd = homeDir;
-      lines[0] = JSON.stringify(header);
-    }
-  } catch {
-    // Not a valid header, copy as-is
-  }
-
+  const content = readFileSync(sessionFile);
   const filename = basename(sessionFile);
   const destPath = resolve(piSessionDir, filename);
-  writeFileSync(destPath, `${lines.join("\n")}\n`);
-  console.log(`Imported session (${lines.length} entries)`);
+  writeFileSync(destPath, withPiSessionCwd(content, homeDir) ?? content);
+  console.log(`Imported session (${content.toString("utf-8").trim().split("\n").length} entries)`);
 }
 
 type OpenClawDiscordConfig = {

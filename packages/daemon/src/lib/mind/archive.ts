@@ -84,6 +84,22 @@ const EXCLUDED_DIRS = new Set([
  * mind runs (#1058). The rest are toolchain caches a mind installs into its
  * home — `home/.npm/_cacache` alone was 150 MB on a fresh mind (#1059).
  *
+ * Some are not droppings but secrets, and they must never leave the machine
+ * whatever the export was asked for (#1191). The daemon writes the host's own
+ * provider credentials into a mind on every start, one file per template, so
+ * none of them ever needs to travel:
+ * - `home/.claude/.credentials.json` — the host's Anthropic OAuth tokens
+ *   (`writeClaudeCredentials`).
+ * - `.mind/pi-agent/auth.json` — the host's provider API keys and OAuth grants
+ *   (`setPiAuthEntry`).
+ * - `.mind/codex/auth.json` — the host's `openai-codex` OAuth tokens
+ *   (mind-manager's codex branch).
+ *
+ * And `.mind/codex/shell_snapshots`, where the codex CLI records the mind's
+ * shell, `export -p` included: the whole mind environment, which carries the
+ * mind's live token, an injected provider key, and every `env.json` variable
+ * that `--include-env` exists to gate. Codex recaptures it each session.
+ *
  * Applied to every path an export considers, both walked and git-listed. The
  * template's `.gitignore` already covers most of them on the git branch, but
  * that file lives in the mind's own writable tree, so leaning on it would make
@@ -91,6 +107,10 @@ const EXCLUDED_DIRS = new Set([
  */
 const EXCLUDED_PATHS = [
   ".mind/tmp",
+  "home/.claude/.credentials.json",
+  ".mind/pi-agent/auth.json",
+  ".mind/codex/auth.json",
+  ".mind/codex/shell_snapshots",
   "home/.npm",
   "home/.cache",
   "home/.rustup",
@@ -100,6 +120,16 @@ const EXCLUDED_PATHS = [
   "home/.local/lib",
   "home/.local/pipx",
 ];
+
+/**
+ * Secrets the daemon writes into a codex mind only, dropped from its exports.
+ *
+ * `home/.zshenv` restores the codex sandbox's environment, so the daemon writes
+ * the mind's live `VOLUTE_MIND_TOKEN` into it on every start (`syncMindZshenv`).
+ * Only for codex: every other template's `.zshenv`, if it has one, is the
+ * mind's own.
+ */
+const CODEX_EXCLUDED_PATHS = ["home/.zshenv"];
 
 /**
  * SDK runtime state, carried only when the export was asked for sessions.
@@ -119,6 +149,20 @@ const SESSION_PATHS = [
   "home/.claude/todos",
   "home/.claude/session-env",
 ];
+
+/**
+ * The pi and codex templates' session state, gated on the same flag as
+ * {@link SESSION_PATHS} so `--include-sessions` means one thing for every
+ * template (#1084). Kept apart from that list only because it is walked in
+ * differently: these sit under `.mind/`, which every export walks anyway.
+ *
+ * Codex's two directories travel together or not at all: `codex-sessions`
+ * holds the thread pointers and `codex/sessions` the rollouts they resolve to,
+ * and a pointer whose rollout is missing resumes into nothing. Left behind, a
+ * pi or codex mind starts its sessions fresh on the new host — the same as a
+ * claude mind exported without sessions.
+ */
+const MIND_SESSION_PATHS = [".mind/pi-sessions", ".mind/codex-sessions", ".mind/codex/sessions"];
 
 /** `.gitignore` rules and zip entry names both speak forward slashes. */
 function toPosix(relPath: string): string {
@@ -164,7 +208,7 @@ function isExcludedPath(relPath: string): boolean {
 
 /** Whether a mind-relative path is dropped unless the export asked for sessions. */
 function isSessionPath(relPath: string): boolean {
-  return isUnder(relPath, SESSION_PATHS);
+  return isUnder(relPath, SESSION_PATHS) || isUnder(relPath, MIND_SESSION_PATHS);
 }
 
 /**
@@ -476,11 +520,13 @@ export function createExportArchive(options: ExportOptions): AdmZip {
   const state = safeRealpath(stateDir(name));
   const zip = new AdmZip();
   const format = includeSrc ? "full" : "home-only";
+  const templateExcluded = template === "codex" ? CODEX_EXCLUDED_PATHS : [];
 
   if (includeSrc) {
     // Full export: walk entire mind directory (original behavior)
     const files = walkDir(dir, undefined, includeSessions);
     for (const relPath of files) {
+      if (isUnder(relPath, templateExcluded)) continue;
       if (!includeIdentity && relPath.startsWith(join(".mind", "identity"))) continue;
       if (!includeConnectors && relPath.startsWith(join(".mind", "connectors"))) continue;
       const fullPath = resolve(dir, relPath);
@@ -491,6 +537,7 @@ export function createExportArchive(options: ExportOptions): AdmZip {
   } else {
     // Home-only export: listHomeFiles for home/, walkDir for .mind/
     for (const relPath of listHomeFiles(dir, includeSessions)) {
+      if (isUnder(relPath, templateExcluded)) continue;
       const fullPath = resolve(dir, relPath);
       // `git ls-files` reports symlinks — including dangling ones and ones
       // pointing at a directory — so this branch needs the same guard the walks
