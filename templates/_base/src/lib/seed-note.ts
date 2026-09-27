@@ -31,7 +31,7 @@ export const ROTATED_SESSION_NOTE =
 
 /**
  * Appended to any cause's note when recall entries were actually seeded ahead of the
- * tail (claude template), so the note never claims recollection that isn't there.
+ * tail, so the note never claims recollection that isn't there.
  */
 export const RECALL_NOTE_SUFFIX =
   " The [recall: …] entries before it are your consolidated memory of the days before, not a transcript.";

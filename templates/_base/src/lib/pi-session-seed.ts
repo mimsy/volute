@@ -24,7 +24,17 @@
  * The copy is verbatim: message/tool_use/tool_result/thinking entries survive
  * as-is, keeping their own ids. Only two things are rewritten — the header
  * (fresh id, correct cwd, new timestamp, source recorded as `parentSession`) and
- * the first kept entry's `parentId` (nulled, to make the tail a clean root).
+ * the first kept entry's `parentId` (re-linked onto the recollection, or nulled to
+ * make the tail a clean root). The exception is a final turn too large for the
+ * budget on its own: it keeps its opening prompt, marked as trimmed, and its latest
+ * whole steps, re-linked onto the prompt (the planner is shared with the claude
+ * seeder — see planTail in session-seed.ts).
+ *
+ * When the caller passes a recollection source, the mind's recall entries go ahead
+ * of the tail as `custom_message` entries (customType `volute-recall`). pi-coding-agent
+ * (0.87.1) feeds a custom_message into context as a user-role message
+ * (sessionEntryToContextMessages → convertToLlm), so a pi mind reads its memories as
+ * text handed to it rather than as its own earlier replies, as a claude mind does.
  *
  * Nothing here throws: any failure returns null so session start is never blocked.
  */
@@ -35,13 +45,35 @@ import { basename, resolve } from "node:path";
 import { findPiSessionFile } from "./context-breakdown.js";
 import { log } from "./logger.js";
 import { parseArchiveTimestamp } from "./seed-note.js";
-import { TAIL_ONLY_SEED_TOKENS } from "./session-seed.js";
+import {
+  CHARS_PER_TOKEN,
+  hasRecollect,
+  IMAGE_TOKENS,
+  OPENAI_CHARS_PER_TOKEN,
+  planTail,
+  planWithRecollection,
+  RECALL_PREAMBLE,
+  type RecallEntry,
+  type RecollectionOptions,
+  recallHeading,
+  recallTimestamp,
+  type SeedBudget,
+  type SeedLine,
+  SIGNATURE_CHARS_PER_TOKEN,
+  TAIL_ONLY_SEED_TOKENS,
+  type TailPlan,
+  TRIMMED_TURN_MARKER,
+  type WithRecollection,
+} from "./session-seed.js";
 
 /**
- * Default seed budget when config omits continuity.seedTokens: pi seams carry the
- * verbatim tail alone (no recollection yet — #1129), so the tail-only budget.
+ * Default seed budget when config omits continuity.seedTokens: the pi template doesn't
+ * fetch recollection at its seams yet, so the tail carries continuity alone.
  */
 export const DEFAULT_SEED_TOKENS = TAIL_ONLY_SEED_TOKENS;
+
+/** customType of the recall entries a seed writes ahead of the tail. */
+export const RECALL_CUSTOM_TYPE = "volute-recall";
 
 // Archived pi-session directories are named `<name>-<timestamp>`, where the
 // timestamp is `new Date().toISOString().replace(/[:.]/g, "-").slice(0, 16)` →
@@ -64,7 +96,11 @@ type PiEntry = Record<string, unknown> & {
   id?: string;
   parentId?: string | null;
   timestamp?: string;
-  message?: { role?: string };
+  customType?: string;
+  content?: unknown;
+  summary?: unknown;
+  replacement?: unknown;
+  message?: { role?: string; content?: unknown; toolCallId?: unknown };
 };
 
 /** A resolved archive directory: its absolute path and when it was archived. */
@@ -109,33 +145,105 @@ function isTurnBoundary(entry: PiEntry): boolean {
   return entry.type === "message" && entry.message?.role === "user";
 }
 
-/** Estimate tokens for a raw JSONL line as its JSON text length / 4. */
-function estimateTokens(raw: string): number {
-  return raw.length / 4;
+// What an entry sends the model. pi-ai drives any provider, so the text rate follows
+// the transcript's own model: claude's fitted 1.8 chars/token (see session-seed.ts) for
+// an Anthropic model, or when there's no reply yet to tell; OPENAI_CHARS_PER_TOKEN
+// otherwise. That rate was measured on OpenAI models only — other providers' tokenizers
+// (~4 chars/token for English) are assumed to be no denser. Entries pi doesn't put in
+// context (model/thinking-level changes, labels, plain `custom` state, session info)
+// cost nothing.
+function charsPerToken(entries: PiEntry[]): number {
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const m = entries[i].message as
+      | { role?: string; provider?: unknown; model?: unknown }
+      | undefined;
+    if (entries[i].type !== "message" || m?.role !== "assistant") continue;
+    return /anthropic|claude/i.test(`${m.provider ?? ""} ${m.model ?? ""}`)
+      ? CHARS_PER_TOKEN
+      : OPENAI_CHARS_PER_TOKEN;
+  }
+  return CHARS_PER_TOKEN;
+}
+
+function blocksTokens(content: unknown, cpt: number): number {
+  const text = (s: string) => s.length / cpt;
+  if (typeof content === "string") return text(content);
+  if (!Array.isArray(content)) return content == null ? 0 : text(JSON.stringify(content));
+  let sum = 0;
+  for (const block of content) {
+    const b = block as Record<string, unknown> | null;
+    if (!b || typeof b !== "object") continue;
+    switch (b.type) {
+      case "text":
+        sum += text(String(b.text ?? ""));
+        break;
+      case "thinking":
+        // Replayed by its signature where the provider keeps one (the visible text may
+        // be a summary, or empty when redacted).
+        sum +=
+          typeof b.thinkingSignature === "string" && b.thinkingSignature
+            ? b.thinkingSignature.length / SIGNATURE_CHARS_PER_TOKEN
+            : text(String(b.thinking ?? ""));
+        break;
+      case "image":
+        sum += IMAGE_TOKENS;
+        break;
+      case "toolCall":
+        sum += text(String(b.name ?? "") + JSON.stringify(b.arguments ?? {}));
+        break;
+      default:
+        sum += text(JSON.stringify(b));
+    }
+  }
+  return sum;
 }
 
 /**
- * Parse pi jsonl into aligned parsed/raw arrays (header at index 0). In strict mode
- * a corrupt line aborts (returns null — used when copying verbatim, where a broken
- * line means we can't faithfully reconstruct the tail). In lenient mode corrupt
- * lines are skipped (used at warn time, when the live transcript may be mid-write).
+ * Estimated model tokens an entry contributes to the resumed context, at `cpt` chars
+ * per token for text (default: claude's rate — the densest, so an over-count).
  */
-function parsePiJsonl(
-  jsonl: string,
-  lenient: boolean,
-): { parsed: PiEntry[]; raws: string[] } | null {
+export function estimatePiEntryTokens(entry: PiEntry, cpt = CHARS_PER_TOKEN): number {
+  switch (entry.type) {
+    case "message": {
+      const m = entry.message as Record<string, unknown> | undefined;
+      // A `!command` run: sent as its command and output, unless excluded (`!!`).
+      if (m?.role === "bashExecution") {
+        return m.excludeFromContext
+          ? 0
+          : (String(m.command ?? "") + String(m.output ?? "")).length / cpt;
+      }
+      return m?.content === undefined
+        ? JSON.stringify(m ?? {}).length / cpt
+        : blocksTokens(m.content, cpt);
+    }
+    case "custom_message":
+      return blocksTokens(entry.content, cpt);
+    case "compaction":
+    case "branch_summary":
+      return typeof entry.summary === "string" ? entry.summary.length / cpt : 0;
+    case "context_edit":
+      // Replaces its target's content; the target is still counted at its own size, so
+      // this over-counts.
+      return blocksTokens((entry.replacement as { content?: unknown } | null)?.content, cpt);
+    default:
+      return 0;
+  }
+}
+
+/**
+ * Parse pi jsonl into aligned parsed/raw arrays (header at index 0). A corrupt line
+ * aborts (returns null — a broken line means we can't faithfully reconstruct the tail).
+ */
+function parsePiJsonl(jsonl: string): { parsed: PiEntry[]; raws: string[] } | null {
   const rawLines = jsonl.split("\n").filter((l) => l.trim().length > 0);
   const parsed: PiEntry[] = [];
   const raws: string[] = [];
   for (const raw of rawLines) {
-    let obj: PiEntry;
     try {
-      obj = JSON.parse(raw);
+      parsed.push(JSON.parse(raw));
     } catch {
-      if (lenient) continue;
       return null;
     }
-    parsed.push(obj);
     raws.push(raw);
   }
   return { parsed, raws };
@@ -155,92 +263,185 @@ function splitPiHeader(
   return { header, entries: parsed.slice(1), entryRaws: raws.slice(1) };
 }
 
-/** Indices (into entries) of the genuine turn boundaries (user-role messages). */
-function turnBoundaries(entries: PiEntry[]): number[] {
-  const boundaries: number[] = [];
-  for (let i = 0; i < entries.length; i++) {
-    if (isTurnBoundary(entries[i])) boundaries.push(i);
-  }
-  return boundaries;
+function hasTrimMarker(entry: PiEntry): boolean {
+  const content = entry.message?.content;
+  if (!Array.isArray(content)) return false;
+  const last = content.at(-1) as { type?: string; text?: unknown } | undefined;
+  return last?.type === "text" && last.text === TRIMMED_TURN_MARKER;
+}
+
+/** Map pi entries onto the shared planner's lines: a step starts at each assistant message. */
+function toSeedLines(entries: PiEntry[], cpt: number): SeedLine[] {
+  return entries.map((e) => {
+    const uses: string[] = [];
+    const results: string[] = [];
+    const role = e.type === "message" ? e.message?.role : undefined;
+    if (role === "assistant" && Array.isArray(e.message?.content)) {
+      for (const b of e.message.content as Record<string, unknown>[]) {
+        if (b?.type === "toolCall" && typeof b.id === "string") uses.push(b.id);
+      }
+    }
+    if (role === "toolResult" && typeof e.message?.toolCallId === "string") {
+      results.push(e.message.toolCallId);
+    }
+    return {
+      tokens: estimatePiEntryTokens(e, cpt),
+      boundary: isTurnBoundary(e),
+      stepStart: role === "assistant",
+      id: typeof e.id === "string" ? e.id : undefined,
+      parent: e.parentId,
+      uses,
+      results,
+      marked: hasTrimMarker(e),
+    };
+  });
+}
+
+/** Append the trim marker to a prompt entry's content (string or block array), once. */
+function markTrimmed(entry: PiEntry): PiEntry {
+  if (hasTrimMarker(entry)) return entry;
+  const marker = { type: "text", text: TRIMMED_TURN_MARKER };
+  const content = entry.message?.content;
+  const blocks = typeof content === "string" ? [{ type: "text", text: content }] : content;
+  return {
+    ...entry,
+    message: { ...entry.message, content: Array.isArray(blocks) ? [...blocks, marker] : [marker] },
+  };
 }
 
 /**
- * Choose the first-kept entry index: walk backward from the final turn, taking as
- * many whole turns as fit in `seedTokens` (always at least the final turn even if
- * it alone exceeds the budget). Returns a boundary index, or -1 if there's no turn.
+ * Render recall entries as a chain of `custom_message` entries, the first opening
+ * with RECALL_PREAMBLE. Hidden from any display (`display: false`); the model sees
+ * them. Returns the entries and the id the tail should hang from.
  */
-function tailStartByBudget(entries: PiEntry[], entryRaws: string[], seedTokens: number): number {
-  const boundaries = turnBoundaries(entries);
-  if (boundaries.length === 0) return -1;
-  // Turn t spans entries [boundaries[t], boundaries[t+1]); the last runs to EOF.
-  const turnTokens = (t: number): number => {
-    const start = boundaries[t];
-    const end = t + 1 < boundaries.length ? boundaries[t + 1] : entries.length;
-    let sum = 0;
-    for (let i = start; i < end; i++) sum += estimateTokens(entryRaws[i]);
-    return sum;
-  };
-  const last = boundaries.length - 1;
-  let startTurn = last;
-  let accum = turnTokens(last);
-  for (let t = last - 1; t >= 0; t--) {
-    const cost = turnTokens(t);
-    if (accum + cost > seedTokens) break;
-    accum += cost;
-    startTurn = t;
-  }
-  return boundaries[startTurn];
+function renderPiRecall(
+  recall: RecallEntry[],
+  timeZone: string | undefined,
+): { lines: string[]; tip: string | null } {
+  const lines: string[] = [];
+  let parent: string | null = null;
+  recall.forEach((entry, k) => {
+    const id = randomUUID();
+    const heading = recallHeading(entry, timeZone);
+    lines.push(
+      JSON.stringify({
+        type: "custom_message",
+        customType: RECALL_CUSTOM_TYPE,
+        content: `${k === 0 ? `${RECALL_PREAMBLE}\n` : ""}${heading}\n${entry.content}`,
+        display: false,
+        id,
+        parentId: parent,
+        timestamp: recallTimestamp(entry),
+      }),
+    );
+    parent = id;
+  });
+  return { lines, tip: parent };
 }
 
-export type SeededPiTranscript = { sessionId: string; lines: string[] };
+export type SeededPiTranscript = { sessionId: string; lines: string[]; recallEntries: number };
+
+type PlannedPiSeed = {
+  header: PiHeader;
+  entries: PiEntry[];
+  entryRaws: string[];
+  plan: TailPlan;
+  tailStartedAt?: string;
+};
+
+/** Parse and plan the tail. Null if there's nothing seedable. */
+function planPiSeed(jsonl: string, seedTokens: number): PlannedPiSeed | null {
+  const p = parsePiJsonl(jsonl);
+  if (!p) return null;
+  const h = splitPiHeader(p.parsed, p.raws);
+  if (!h) return null;
+  // Recall entries an earlier seam wrote sit ahead of its first prompt, and a tail starts
+  // at a prompt, so they are never carried over: each seam asks the daemon afresh.
+  const { entries, entryRaws } = h;
+  const cpt = charsPerToken(entries);
+  const plan = planTail(toSeedLines(entries, cpt), seedTokens, TRIMMED_TURN_MARKER.length / cpt);
+  if (!plan) return null;
+  const first = plan.keep.map((i) => entries[i]).find((e) => typeof e.timestamp === "string");
+  return { header: h.header, entries, entryRaws, plan, tailStartedAt: first?.timestamp };
+}
 
 /**
  * Emit the seeded transcript: a fresh header (new id, rewritten cwd, source recorded
- * as `parentSession`) followed by the tail from `startIdx` through EOF. The tail is
- * copied byte-for-byte from the original raw lines; only the first kept entry is
- * re-serialized, to null its parentId (detaching the tail into a clean root).
+ * as `parentSession`), any recall entries, then the planned tail. Kept entries are
+ * copied byte-for-byte except the few that are rewritten: the first (re-parented
+ * onto the recollection, or nulled to make the tail a clean root) and, for a trimmed
+ * turn, its prompt (carrying the marker) and resumed step (re-parented onto the
+ * prompt section's tip).
  */
-function emitPiTail(
-  header: PiHeader,
-  entries: PiEntry[],
-  entryRaws: string[],
-  startIdx: number,
-  cwd: string,
-  sourcePath?: string,
+function emitPiSeed(
+  planned: PlannedPiSeed,
+  opts: { cwd: string; sourcePath?: string; recall?: RecallEntry[]; timeZone?: string },
 ): SeededPiTranscript {
+  const { header, entries, entryRaws, plan } = planned;
   const newId = randomUUID();
   const newHeader: PiHeader = {
     type: "session",
     version: typeof header.version === "number" ? header.version : 3,
     id: newId,
     timestamp: new Date().toISOString(),
-    cwd: resolve(cwd),
-    ...(sourcePath ? { parentSession: sourcePath } : {}),
+    cwd: resolve(opts.cwd),
+    ...(opts.sourcePath ? { parentSession: opts.sourcePath } : {}),
   };
-  const lines: string[] = [JSON.stringify(newHeader)];
-  for (let i = startIdx; i < entries.length; i++) {
-    lines.push(i === startIdx ? JSON.stringify({ ...entries[i], parentId: null }) : entryRaws[i]);
-  }
-  return { sessionId: newId, lines };
+  const recall = renderPiRecall(opts.recall ?? [], opts.timeZone);
+  const lines: string[] = [JSON.stringify(newHeader), ...recall.lines];
+  plan.keep.forEach((i, k) => {
+    let entry = entries[i];
+    let changed = false;
+    if (plan.trimmedAt?.prompt === i) {
+      entry = markTrimmed(entry);
+      changed = true;
+    }
+    if (plan.trimmedAt?.resume === i) {
+      entry = { ...entry, parentId: plan.trimmedAt.parent };
+      changed = true;
+    }
+    if (k === 0) {
+      entry = { ...entry, parentId: recall.tip };
+      changed = true;
+    }
+    lines.push(changed ? JSON.stringify(entry) : entryRaws[i]);
+  });
+  return { sessionId: newId, lines, recallEntries: recall.lines.length };
 }
 
 /**
- * Build the seeded transcript from a source pi session file's raw jsonl text: take
- * as many whole trailing turns as fit in `seedTokens` (always at least the final
- * turn), keeping the tail entries verbatim. Returns null if there's nothing
- * seedable (no header, no genuine turn, or a corrupt line — start clean instead).
+ * Build the seeded transcript from a source pi session file's raw jsonl text: any
+ * recall entries, then as many whole trailing turns as fit in `seedTokens` (trimming
+ * the final turn when it alone is over budget — see planTail), kept verbatim. Returns
+ * null if there's nothing seedable (no header, no genuine turn, or a corrupt line —
+ * start clean instead).
  */
 export function buildSeededPiTranscript(
   jsonl: string,
-  opts: { cwd: string; seedTokens: number; sourcePath?: string },
+  opts: {
+    cwd: string;
+    seedTokens: number;
+    sourcePath?: string;
+    recall?: RecallEntry[];
+    timeZone?: string;
+  },
 ): SeededPiTranscript | null {
-  const p = parsePiJsonl(jsonl, false);
-  if (!p) return null;
-  const h = splitPiHeader(p.parsed, p.raws);
-  if (!h) return null;
-  const startIdx = tailStartByBudget(h.entries, h.entryRaws, opts.seedTokens);
-  if (startIdx < 0) return null;
-  return emitPiTail(h.header, h.entries, h.entryRaws, startIdx, opts.cwd, opts.sourcePath);
+  const planned = planPiSeed(jsonl, opts.seedTokens);
+  return planned ? emitPiSeed(planned, opts) : null;
+}
+
+/**
+ * Plan and emit a seed, fetching recollection first when the caller supplies a source
+ * (see planWithRecollection — the budget and fail-soft rules are claude's).
+ */
+async function composePiSeed(
+  jsonl: string,
+  opts: RecollectionOptions &
+    SeedBudget & { cwd: string; sourcePath?: string; name: string; before: Date },
+): Promise<SeededPiTranscript | null> {
+  const composed = await planWithRecollection((budget) => planPiSeed(jsonl, budget), opts);
+  if (!composed) return null;
+  return emitPiSeed(composed.planned, { ...opts, recall: composed.recall });
 }
 
 /**
@@ -255,8 +456,67 @@ export function hasLivePiSession(piSessionsDir: string, name: string): boolean {
   }
 }
 
-/** Result of a successful pi seed: the new session id and when the source was archived. */
-export type SeededPiOutcome = { sessionId: string; archivedAt: number | null };
+/**
+ * Result of a successful pi seed: the new session id, when the source was archived,
+ * and how many recall entries went ahead of the tail.
+ */
+export type SeededPiOutcome = {
+  sessionId: string;
+  archivedAt: number | null;
+  recallEntries: number;
+};
+
+type SeedPiOptions = { cwd: string; piSessionsDir: string; name: string; seedTokens: number };
+
+/** Where a seed comes from: the newest archived transcript for `name`. */
+function findPiSeedSource(opts: {
+  piSessionsDir: string;
+  name: string;
+  seedTokens?: number;
+}): { sourcePath: string; archivedAt: number | null } | null {
+  const { piSessionsDir, name, seedTokens } = opts;
+  // Ephemeral `new-*` sessions are never persisted or archived, so they never
+  // seed. The agent caller already gates on this; guard here too so the invariant
+  // holds wherever seedPiSession is called.
+  if (name.startsWith("new-")) return null;
+  if (seedTokens !== undefined && seedTokens <= 0) return null; // seeding disabled
+  // A live session already exists — let continueRecent resume it, don't seed.
+  if (hasLivePiSession(piSessionsDir, name)) return null;
+  const archived = findLatestArchivedPiSession(piSessionsDir, name);
+  if (!archived) return null;
+  // findPiSessionFile picks the latest `.jsonl` in `<base>/<subdir>`; here the
+  // subdir is the archived `<name>-<ts>` directory we just located.
+  const sourcePath = findPiSessionFile(resolve(piSessionsDir, "archive"), basename(archived.dir));
+  if (!sourcePath) return null; // no transcript survived archival — start clean
+  return { sourcePath, archivedAt: archived.archivedAt };
+}
+
+/** Write a seed into `<dir>/` under pi's `<timestamp>_<id>.jsonl` naming; returns its path. */
+function writePiSeed(dir: string, seeded: SeededPiTranscript): string {
+  mkdirSync(dir, { recursive: true });
+  const fileTimestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const destPath = resolve(dir, `${fileTimestamp}_${seeded.sessionId}.jsonl`);
+  writeFileSync(destPath, `${seeded.lines.join("\n")}\n`);
+  return destPath;
+}
+
+function seededPi(
+  opts: { piSessionsDir: string; name: string },
+  source: { sourcePath: string; archivedAt: number | null },
+  seeded: SeededPiTranscript | null,
+): SeededPiOutcome | null {
+  if (!seeded) return null;
+  writePiSeed(resolve(opts.piSessionsDir, opts.name), seeded);
+  log(
+    "mind",
+    `session "${opts.name}": seeded ${seeded.lines.length - 1} entr(ies) (${seeded.recallEntries} recalled) from ${source.sourcePath} → ${seeded.sessionId}`,
+  );
+  return {
+    sessionId: seeded.sessionId,
+    archivedAt: source.archivedAt,
+    recallEntries: seeded.recallEntries,
+  };
+}
 
 /**
  * Seed a fresh persistent pi session from the mind's previous archived transcript.
@@ -264,51 +524,43 @@ export type SeededPiOutcome = { sessionId: string; archivedAt: number | null };
  * new session id (the header id continueRecent will adopt) plus the archived-at
  * time (for the gap note), or null if there's nothing to seed. Never throws — any
  * failure returns null so session start is never blocked.
+ *
+ * Given a `recollect` source, it is async: the mind's recollection up to the archive
+ * time goes ahead of the tail (see composePiSeed); without one it seeds the tail alone,
+ * synchronously.
  */
-export function seedPiSession(opts: {
-  cwd: string;
-  piSessionsDir: string;
-  name: string;
-  seedTokens: number;
-}): SeededPiOutcome | null {
-  const { cwd, piSessionsDir, name, seedTokens } = opts;
-  // Ephemeral `new-*` sessions are never persisted or archived, so they never
-  // seed. The agent caller already gates on this; guard here too so the invariant
-  // holds wherever seedPiSession is called.
-  if (name.startsWith("new-")) return null;
-  if (seedTokens <= 0) return null; // seeding disabled
-  // A live session already exists — let continueRecent resume it, don't seed.
-  if (hasLivePiSession(piSessionsDir, name)) return null;
-
-  try {
-    const archived = findLatestArchivedPiSession(piSessionsDir, name);
-    if (!archived) return null;
-
-    // findPiSessionFile picks the latest `.jsonl` in `<base>/<subdir>`; here the
-    // subdir is the archived `<name>-<ts>` directory we just located.
-    const sourcePath = findPiSessionFile(resolve(piSessionsDir, "archive"), basename(archived.dir));
-    if (!sourcePath) return null; // no transcript survived archival — start clean
-
-    const seeded = buildSeededPiTranscript(readFileSync(sourcePath, "utf-8"), {
-      cwd,
-      seedTokens,
-      sourcePath,
-    });
-    if (!seeded) return null;
-
-    const destDir = resolve(piSessionsDir, name);
-    mkdirSync(destDir, { recursive: true });
-    const fileTimestamp = new Date().toISOString().replace(/[:.]/g, "-");
-    const destPath = resolve(destDir, `${fileTimestamp}_${seeded.sessionId}.jsonl`);
-    writeFileSync(destPath, `${seeded.lines.join("\n")}\n`);
-    log(
-      "mind",
-      `session "${name}": seeded ${seeded.lines.length - 1} entr(ies) from ${sourcePath} → ${seeded.sessionId}`,
-    );
-    return { sessionId: seeded.sessionId, archivedAt: archived.archivedAt };
-  } catch (err) {
-    log("mind", `session "${name}": seeding failed, starting fresh:`, err);
+export function seedPiSession(
+  opts: WithRecollection<SeedPiOptions>,
+): Promise<SeededPiOutcome | null>;
+export function seedPiSession(opts: SeedPiOptions): SeededPiOutcome | null;
+export function seedPiSession(
+  opts: SeedPiOptions | WithRecollection<SeedPiOptions>,
+): SeededPiOutcome | null | Promise<SeededPiOutcome | null> {
+  const fail = (err: unknown) => {
+    log("mind", `session "${opts.name}": seeding failed, starting fresh:`, err);
     return null;
+  };
+  try {
+    const source = findPiSeedSource(opts);
+    if (!source) return hasRecollect(opts) ? Promise.resolve(null) : null;
+    const jsonl = readFileSync(source.sourcePath, "utf-8");
+    if (hasRecollect(opts)) {
+      return composePiSeed(jsonl, {
+        ...opts,
+        sourcePath: source.sourcePath,
+        before: new Date(source.archivedAt ?? Date.now()),
+      })
+        .then((seeded) => seededPi(opts, source, seeded))
+        .catch(fail);
+    }
+    return seededPi(
+      opts,
+      source,
+      buildSeededPiTranscript(jsonl, { ...opts, sourcePath: source.sourcePath }),
+    );
+  } catch (err) {
+    const result = fail(err);
+    return hasRecollect(opts) ? Promise.resolve(result) : result;
   }
 }
 
@@ -338,52 +590,84 @@ function archiveRotatedPiFile(
   renameSync(sourcePath, resolve(dest, basename(sourcePath)));
 }
 
-/**
- * Rotate a pi session in place at the context limit. Reads the live session file,
- * builds a budget-based tail (as many whole trailing turns as fit in `seedTokens`),
- * writes it as a new session file in the same live dir, and — for persistent
- * sessions — archives the rotated-out file so the full transcript stays findable.
- * Returns the new session file **path** (the caller switches the running
- * SessionManager to it), or null if rotation can't proceed (the caller then falls
- * back to a fresh session). Never throws.
- */
-export function rotatePiSession(opts: {
+type RotatePiOptions = {
   cwd: string;
   sessionsDir: string;
   name: string;
   sourcePath: string;
   seedTokens: number;
-}): string | null {
-  const { cwd, sessionsDir, name, sourcePath, seedTokens } = opts;
-  try {
-    const jsonl = readFileSync(sourcePath, "utf-8");
-    const seeded = buildSeededPiTranscript(jsonl, { cwd, seedTokens, sourcePath });
-    if (!seeded) return null;
+};
 
-    const liveDir = resolve(sessionsDir, name);
-    mkdirSync(liveDir, { recursive: true });
-    const fileTimestamp = new Date().toISOString().replace(/[:.]/g, "-");
-    const destPath = resolve(liveDir, `${fileTimestamp}_${seeded.sessionId}.jsonl`);
-    writeFileSync(destPath, `${seeded.lines.join("\n")}\n`);
+/** A rotation with recollection: the new session file's path and how many recall entries it carries. */
+export type RotatedPiOutcome = { path: string; recallEntries: number };
 
-    // Archive the rotated-out session (mirrors sleep archival's dir layout). A
-    // failure here is non-fatal — the new file is already live; the stale old file
-    // just lingers (continueRecent still picks the newer one). Ephemeral `new-*`
-    // sessions never reach here (they're inMemory, with no source file).
-    if (!name.startsWith("new-")) {
-      try {
-        archiveRotatedPiFile(sessionsDir, name, sourcePath);
-      } catch (err) {
-        log("mind", `session "${name}": archiving rotated-out file failed:`, err);
-      }
+/** Write the rotated seed into the live dir and archive the rotated-out file; returns the new path. */
+function adoptRotatedPi(
+  opts: RotatePiOptions | WithRecollection<RotatePiOptions>,
+  seeded: SeededPiTranscript,
+): string {
+  const { sessionsDir, name, sourcePath } = opts;
+  const destPath = writePiSeed(resolve(sessionsDir, name), seeded);
+  // Archive the rotated-out session (mirrors sleep archival's dir layout). A
+  // failure here is non-fatal — the new file is already live; the stale old file
+  // just lingers (continueRecent still picks the newer one). Ephemeral `new-*`
+  // sessions never reach here (they're inMemory, with no source file).
+  if (!name.startsWith("new-")) {
+    try {
+      archiveRotatedPiFile(sessionsDir, name, sourcePath);
+    } catch (err) {
+      log("mind", `session "${name}": archiving rotated-out file failed:`, err);
     }
-    log(
-      "mind",
-      `session "${name}": rotated ${basename(sourcePath)} → ${seeded.sessionId} (${seeded.lines.length - 1} entries)`,
-    );
-    return destPath;
-  } catch (err) {
-    log("mind", `session "${name}": rotation failed:`, err);
+  }
+  log(
+    "mind",
+    `session "${name}": rotated ${basename(sourcePath)} → ${seeded.sessionId} (${seeded.lines.length - 1} entries, ${seeded.recallEntries} recalled)`,
+  );
+  return destPath;
+}
+
+/**
+ * Rotate a pi session in place at the context limit. Reads the live session file,
+ * builds a budget-based tail (as many whole trailing turns as fit in `seedTokens`,
+ * trimming an over-budget final turn), writes it as a new session file in the same
+ * live dir, and — for persistent sessions — archives the rotated-out file so the full
+ * transcript stays findable. Returns the new session file **path** (the caller
+ * switches the running SessionManager to it), or null if rotation can't proceed (the
+ * caller then falls back to a fresh session). Never throws.
+ *
+ * Given a `recollect` source, it is async, seeds the mind's recollection ahead of the
+ * tail, and resolves to the path plus how many recall entries it carries. The caller
+ * must hold the session quiet across that await: the live transcript is read before it,
+ * so anything appended while recollection loads never reaches the new session (the
+ * claude agent drops its query before awaiting, for the same
+ * reason).
+ */
+export function rotatePiSession(
+  opts: WithRecollection<RotatePiOptions>,
+): Promise<RotatedPiOutcome | null>;
+export function rotatePiSession(opts: RotatePiOptions): string | null;
+export function rotatePiSession(
+  opts: RotatePiOptions | WithRecollection<RotatePiOptions>,
+): string | null | Promise<RotatedPiOutcome | null> {
+  const fail = (err: unknown) => {
+    log("mind", `session "${opts.name}": rotation failed:`, err);
     return null;
+  };
+  try {
+    const jsonl = readFileSync(opts.sourcePath, "utf-8");
+    if (hasRecollect(opts)) {
+      return composePiSeed(jsonl, { ...opts, before: new Date() })
+        .then((seeded) =>
+          seeded
+            ? { path: adoptRotatedPi(opts, seeded), recallEntries: seeded.recallEntries }
+            : null,
+        )
+        .catch(fail);
+    }
+    const seeded = buildSeededPiTranscript(jsonl, opts);
+    return seeded ? adoptRotatedPi(opts, seeded) : null;
+  } catch (err) {
+    const result = fail(err);
+    return hasRecollect(opts) ? Promise.resolve(result) : result;
   }
 }

@@ -161,12 +161,21 @@ function isTurnBoundary(o: JsonlLine): boolean {
 // at ~4.3 chars/token (the visible `thinking` text is only a summary); an image costs
 // ~1.3k tokens regardless of its base64 size. Line metadata (uuids, cwd, toolUseResult
 // copies) is never sent, so it isn't counted — estimating from the raw line length
-// over-counted by 1.3–2× and by ~100× for images.
-const CHARS_PER_TOKEN = 1.8;
-const SIGNATURE_CHARS_PER_TOKEN = 4;
-const IMAGE_TOKENS = 1600;
+// over-counted by 1.3–2× and by ~100× for images. The pi seeder shares these (pi-ai can
+// drive the same models); codex fits its own text constant.
+export const CHARS_PER_TOKEN = 1.8;
+export const SIGNATURE_CHARS_PER_TOKEN = 4;
+export const IMAGE_TOKENS = 1600;
 
-function textTokens(s: string): number {
+// Visible content per token for OpenAI models (codex, and pi on OpenAI). Fitted (Sep
+// 2026) on a local codex mind (lucy, gpt-5.x): across 40 seeded rollouts, the first
+// request's input tokens against the content characters of the rollout's response items
+// (28.7k–125k chars → 15.6k–38.7k tokens) give ~4.2 chars/token over a ~8.8k fixed
+// prefix. 3.5 sits below that so the estimate over-counts and a seed lands under its
+// budget, not over.
+export const OPENAI_CHARS_PER_TOKEN = 3.5;
+
+export function textTokens(s: string): number {
   return s.length / CHARS_PER_TOKEN;
 }
 
@@ -408,15 +417,6 @@ function parseJsonl(
   return { parsed, raws };
 }
 
-/** Indices (into parsed) of the genuine turn boundaries. */
-function turnBoundaries(parsed: JsonlLine[]): number[] {
-  const boundaries: number[] = [];
-  for (let i = 0; i < parsed.length; i++) {
-    if (isTurnBoundary(parsed[i])) boundaries.push(i);
-  }
-  return boundaries;
-}
-
 /**
  * Appended to a trimmed turn's opening prompt so the mind can see the gap in its own
  * turn: what was left out, that it happened at the seam, and where the full record is.
@@ -424,14 +424,141 @@ function turnBoundaries(parsed: JsonlLine[]): number[] {
 export const TRIMMED_TURN_MARKER =
   "[At this seam, the earlier steps of this turn were left out to keep room to think — what follows are its most recent steps. The full turn is in your previous session's transcript, and turn summaries are in `volute mind history`.]";
 
-/** Which lines to keep: `keep` is ascending parsed indices; `trimmedAt` is set when a turn was cut. */
-type TailPlan = {
+/**
+ * A transcript line as the tail planner sees it. The planner is shared by every
+ * framework's seeder (claude here, pi and codex in their own modules); each maps its
+ * own format onto this shape.
+ */
+export type SeedLine = {
+  /** Estimated model tokens the line puts back in context. */
+  tokens: number;
+  /** Starts a turn: a genuine incoming prompt. */
+  boundary: boolean;
+  /** Could open a kept suffix inside a turn: the first line of a model response. */
+  stepStart: boolean;
+  /** Chain link, for formats whose lines form one (claude uuids, pi entry ids). */
+  id?: string;
+  parent?: string | null;
+  /** tool call ids the line issues, and tool call ids whose results it carries. */
+  uses: string[];
+  results: string[];
+  /** A prompt that already carries TRIMMED_TURN_MARKER (re-seeding a seed). */
+  marked?: boolean;
+};
+
+/** Which lines to keep: `keep` is ascending line indices; `trimmedAt` is set when a turn was cut. */
+export type TailPlan = {
   keep: number[];
   trimmedAt?: { prompt: number; resume: number; parent: string | null };
 };
 
 const range = (start: number, end: number): number[] =>
   Array.from({ length: end - start }, (_, k) => start + k);
+
+/**
+ * Cut an over-budget turn [start, end) inside itself: keep its opening prompt section
+ * (the boundary line plus anything before the first step — hook context,
+ * attachments), then the latest run of whole steps that fits the remaining budget.
+ * A resume point is valid only if the kept suffix is self-contained — every tool
+ * result answers a kept tool call and every chain link points at a kept line — so the
+ * resumed conversation never carries an orphaned tool result (an API error) or a
+ * broken parent chain. `markerTokens` is what TRIMMED_TURN_MARKER costs in the
+ * caller's format. Returns null when the turn has no valid interior cut (e.g. a
+ * single step).
+ */
+function trimTurn(
+  lines: SeedLine[],
+  start: number,
+  end: number,
+  seedTokens: number,
+  markerTokens: number,
+): TailPlan | null {
+  let promptEnd = start + 1;
+  while (promptEnd < end && !lines[promptEnd].stepStart) promptEnd++;
+  if (promptEnd >= end) return null;
+  // An already-trimmed prompt (re-seeding a seed) carries the marker in its own cost.
+  let promptCost = lines[start].marked ? 0 : markerTokens;
+  const promptIds: string[] = [];
+  for (let i = start; i < promptEnd; i++) {
+    promptCost += lines[i].tokens;
+    const id = lines[i].id;
+    if (typeof id === "string") promptIds.push(id);
+  }
+  // Re-link the resumed step where the turn's first step hung — the prompt section's
+  // chain tip — not merely its last linked line, which may be an attachment off-chain.
+  const firstParent = lines[promptEnd].parent;
+  const parent =
+    typeof firstParent === "string" && promptIds.includes(firstParent)
+      ? firstParent
+      : (promptIds.at(-1) ?? null);
+
+  let best: number | null = null;
+  let suffixCost = 0;
+  const ids = new Set<string>();
+  const uses = new Set<string>();
+  const parents: string[] = [];
+  const results: string[] = [];
+  for (let c = end - 1; c > promptEnd; c--) {
+    const line = lines[c];
+    suffixCost += line.tokens;
+    if (typeof line.id === "string") ids.add(line.id);
+    for (const u of line.uses) uses.add(u);
+    results.push(...line.results);
+    if (!line.stepStart) {
+      if (typeof line.parent === "string") parents.push(line.parent);
+      continue;
+    }
+    const valid = results.every((r) => uses.has(r)) && parents.every((p) => ids.has(p));
+    if (typeof line.parent === "string") parents.push(line.parent);
+    if (!valid) continue;
+    // Always keep at least the final step; beyond that, only what fits.
+    if (best !== null && promptCost + suffixCost > seedTokens) break;
+    best = c;
+  }
+  if (best === null) return null;
+  return {
+    keep: [...range(start, promptEnd), ...range(best, lines.length)],
+    trimmedAt: { prompt: start, resume: best, parent },
+  };
+}
+
+/**
+ * Plan the tail: walk backward from the final turn, taking as many whole turns as
+ * fit in `seedTokens`. When the final turn alone exceeds the budget — the usual case
+ * at rotation, where the turn that crossed the context limit is a long tool loop —
+ * cut inside it (see trimTurn) rather than carrying the whole turn over. Null when
+ * there's no turn at all.
+ */
+export function planTail(
+  lines: SeedLine[],
+  seedTokens: number,
+  markerTokens: number,
+): TailPlan | null {
+  const boundaries: number[] = [];
+  for (let i = 0; i < lines.length; i++) if (lines[i].boundary) boundaries.push(i);
+  if (boundaries.length === 0) return null;
+  // Turn t spans lines [boundaries[t], boundaries[t+1]); the last turn runs to EOF.
+  const turnEnd = (t: number) => (t + 1 < boundaries.length ? boundaries[t + 1] : lines.length);
+  const turnTokens = (t: number): number => {
+    let sum = 0;
+    for (let i = boundaries[t]; i < turnEnd(t); i++) sum += lines[i].tokens;
+    return sum;
+  };
+  const last = boundaries.length - 1;
+  let accum = turnTokens(last);
+  if (accum > seedTokens) {
+    const trimmed = trimTurn(lines, boundaries[last], lines.length, seedTokens, markerTokens);
+    if (trimmed) return trimmed;
+  }
+  let startTurn = last;
+  for (let t = last - 1; t >= 0; t--) {
+    const cost = turnTokens(t);
+    if (accum + cost > seedTokens) break;
+    accum += cost;
+    startTurn = t;
+  }
+  return { keep: range(boundaries[startTurn], lines.length) };
+}
 
 /** tool_use ids a line issues and tool_result ids it answers. */
 function toolIds(o: JsonlLine): { uses: string[]; results: string[] } {
@@ -449,110 +576,26 @@ function toolIds(o: JsonlLine): { uses: string[]; results: string[] } {
 }
 
 /**
- * Cut an over-budget turn [start, end) inside itself: keep its opening prompt section
- * (the boundary line plus anything before the first assistant line — hook context,
- * attachments), then the latest run of whole steps that fits the remaining budget.
- * A step starts at the first line of an assistant message; a resume point is valid
- * only if the kept suffix is self-contained — every tool_result answers a kept
- * tool_use and every chain link points at a kept line — so the resumed conversation
- * never carries an orphaned tool_result (an API error) or a broken parent chain.
- * Returns null when the turn has no valid interior cut (e.g. a single step).
+ * Map a claude transcript onto the planner's lines. A step starts at the first line
+ * of an assistant message (the SDK writes one line per content block, sharing the
+ * message id).
  */
-function trimTurn(
-  parsed: JsonlLine[],
-  tokens: number[],
-  start: number,
-  end: number,
-  seedTokens: number,
-): TailPlan | null {
-  let promptEnd = start + 1;
-  while (promptEnd < end && parsed[promptEnd].type !== "assistant") promptEnd++;
-  if (promptEnd >= end) return null;
-  // An already-trimmed prompt (re-seeding a seed) carries the marker in its own cost.
-  let promptCost = hasTrimMarker(parsed[start]) ? 0 : TRIMMED_TURN_MARKER.length / CHARS_PER_TOKEN;
-  const promptUuids: string[] = [];
-  for (let i = start; i < promptEnd; i++) {
-    promptCost += tokens[i];
-    const u = parsed[i].uuid;
-    if (typeof u === "string") promptUuids.push(u);
-  }
-  // Re-link the resumed step where the turn's first step hung — the prompt section's
-  // chain tip — not merely its last uuid'd line, which may be an attachment off-chain.
-  const firstParent = parsed[promptEnd].parentUuid;
-  const parent =
-    typeof firstParent === "string" && promptUuids.includes(firstParent)
-      ? firstParent
-      : (promptUuids.at(-1) ?? null);
-
+function toSeedLines(parsed: JsonlLine[]): SeedLine[] {
   const seenIds = new Set<string>();
-  const firstOfMessage: boolean[] = [];
-  for (let i = 0; i < end; i++) {
-    const id = parsed[i].type === "assistant" ? parsed[i].message?.id : undefined;
-    firstOfMessage[i] = id === undefined || !seenIds.has(id);
+  return parsed.map((o) => {
+    const id = o.type === "assistant" ? o.message?.id : undefined;
+    const stepStart = o.type === "assistant" && (id === undefined || !seenIds.has(id));
     if (id !== undefined) seenIds.add(id);
-  }
-
-  let best: number | null = null;
-  let suffixCost = 0;
-  const uuids = new Set<string>();
-  const uses = new Set<string>();
-  const parents: string[] = [];
-  const results: string[] = [];
-  for (let c = end - 1; c > promptEnd; c--) {
-    const o = parsed[c];
-    suffixCost += tokens[c];
-    if (typeof o.uuid === "string") uuids.add(o.uuid);
-    const ids = toolIds(o);
-    for (const u of ids.uses) uses.add(u);
-    results.push(...ids.results);
-    if (o.type !== "assistant" || !firstOfMessage[c]) {
-      if (typeof o.parentUuid === "string") parents.push(o.parentUuid);
-      continue;
-    }
-    const valid = results.every((r) => uses.has(r)) && parents.every((p) => uuids.has(p));
-    if (typeof o.parentUuid === "string") parents.push(o.parentUuid);
-    if (!valid) continue;
-    // Always keep at least the final step; beyond that, only what fits.
-    if (best !== null && promptCost + suffixCost > seedTokens) break;
-    best = c;
-  }
-  if (best === null) return null;
-  return {
-    keep: [...range(start, promptEnd), ...range(best, parsed.length)],
-    trimmedAt: { prompt: start, resume: best, parent },
-  };
-}
-
-/**
- * Plan the tail: walk backward from the final turn, taking as many whole turns as
- * fit in `seedTokens`. When the final turn alone exceeds the budget — the usual case
- * at rotation, where the turn that crossed the context limit is a long tool loop —
- * cut inside it (see trimTurn) rather than carrying the whole turn over.
- */
-function planTail(parsed: JsonlLine[], seedTokens: number): TailPlan {
-  const boundaries = turnBoundaries(parsed);
-  const tokens = parsed.map(estimateLineTokens);
-  // Turn t spans lines [boundaries[t], boundaries[t+1]); the last turn runs to EOF.
-  const turnEnd = (t: number) => (t + 1 < boundaries.length ? boundaries[t + 1] : parsed.length);
-  const turnTokens = (t: number): number => {
-    let sum = 0;
-    for (let i = boundaries[t]; i < turnEnd(t); i++) sum += tokens[i];
-    return sum;
-  };
-  const last = boundaries.length - 1;
-  let accum = turnTokens(last);
-  if (accum > seedTokens) {
-    const trimmed = trimTurn(parsed, tokens, boundaries[last], parsed.length, seedTokens);
-    if (trimmed) return trimmed;
-  }
-  let startTurn = last;
-  for (let t = last - 1; t >= 0; t--) {
-    const cost = turnTokens(t);
-    if (accum + cost > seedTokens) break;
-    accum += cost;
-    startTurn = t;
-  }
-  return { keep: range(boundaries[startTurn], parsed.length) };
+    return {
+      tokens: estimateLineTokens(o),
+      boundary: isTurnBoundary(o),
+      stepStart,
+      id: typeof o.uuid === "string" ? o.uuid : undefined,
+      parent: o.parentUuid,
+      ...toolIds(o),
+      marked: hasTrimMarker(o),
+    };
+  });
 }
 
 function hasTrimMarker(o: JsonlLine): boolean {
@@ -706,6 +749,22 @@ export function recallLabel(entry: RecallEntry, timeZone?: string): string {
   return `${s.weekday} ${s.day} ${s.month}, ${s.hour}:${s.minute}${e ? `–${e.hour}:${e.minute}` : ""}`;
 }
 
+/** The `[recall: <when>]` line that introduces a memory, naming who wrote it when that isn't consolidation. */
+export function recallHeading(entry: RecallEntry, timeZone?: string): string {
+  const provenance =
+    entry.author === "mind"
+      ? " — you wrote this one"
+      : entry.author === "record"
+        ? " — a plain record of turn summaries, not yet a memory"
+        : "";
+  return `[recall: ${recallLabel(entry, timeZone)}${provenance}]`;
+}
+
+/** When a memory sits in the transcript: the end of its period (its start if the end won't parse). */
+export function recallTimestamp(entry: RecallEntry): string {
+  return Number.isNaN(Date.parse(entry.end)) ? entry.start : entry.end;
+}
+
 /**
  * Ask for recollection, failing soft: any error (including the source's own timeout)
  * or malformed reply yields no entries (logged) — a seam never fails because memories
@@ -753,14 +812,8 @@ function renderRecall(
   const lines: JsonlLine[] = [];
   let parent: string | null = null;
   entries.forEach((entry, k) => {
-    const provenance =
-      entry.author === "mind"
-        ? " — you wrote this one"
-        : entry.author === "record"
-          ? " — a plain record of turn summaries, not yet a memory"
-          : "";
-    const label = `[recall: ${recallLabel(entry, timeZone)}${provenance}]`;
-    const timestamp = Number.isNaN(Date.parse(entry.end)) ? entry.start : entry.end;
+    const label = recallHeading(entry, timeZone);
+    const timestamp = recallTimestamp(entry);
     const userUuid = randomUUID();
     const assistantUuid = randomUUID();
     lines.push({
@@ -839,8 +892,12 @@ function planSeed(jsonl: string, seedTokens: number): PlannedSeed | null {
   const p = parseJsonl(jsonl, false);
   if (!p) return null;
   const parsed = dropSeedBookkeeping(p.parsed);
-  if (parsed.length === 0 || turnBoundaries(parsed).length === 0) return null;
-  const plan = planTail(parsed, seedTokens);
+  const plan = planTail(
+    toSeedLines(parsed),
+    seedTokens,
+    TRIMMED_TURN_MARKER.length / CHARS_PER_TOKEN,
+  );
+  if (!plan) return null;
   const first = plan.keep.map((i) => parsed[i]).find((o) => typeof o.timestamp === "string");
   return { parsed, plan, tailStartedAt: first?.timestamp };
 }
@@ -883,12 +940,17 @@ export type SeedBudget = {
   recallTokens?: number;
 };
 
-/** Plan the tail, fetch recollection for the gap before it, and emit both. */
-async function composeSeed(
-  jsonl: string,
+/**
+ * Plan the tail, then fetch recollection for the gap before it — every framework's
+ * seams share this. `plan(seedTokens)` plans the tail at a budget; when the budget was
+ * left to follow what arrived and no recollection came back, the tail is replanned at
+ * TAIL_ONLY_SEED_TOKENS. Null if there's nothing seedable.
+ */
+export async function planWithRecollection<P extends { tailStartedAt?: string }>(
+  plan: (seedTokens: number) => P | null,
   opts: RecollectionOptions & SeedBudget & { name: string; before: Date },
-): Promise<SeededTranscript | null> {
-  let planned = planSeed(jsonl, opts.seedTokens ?? DEFAULT_SEED_TOKENS);
+): Promise<{ planned: P; recall: RecallEntry[] } | null> {
+  let planned = plan(opts.seedTokens ?? DEFAULT_SEED_TOKENS);
   if (!planned) return null;
   const recall = opts.recollect
     ? capRecollection(
@@ -901,9 +963,39 @@ async function composeSeed(
       )
     : [];
   if (opts.seedTokens === undefined && recall.length === 0) {
-    planned = planSeed(jsonl, TAIL_ONLY_SEED_TOKENS) ?? planned;
+    planned = plan(TAIL_ONLY_SEED_TOKENS) ?? planned;
   }
+  return { planned, recall };
+}
+
+/** Plan the tail, fetch recollection for the gap before it, and emit both. */
+async function composeSeed(
+  jsonl: string,
+  opts: RecollectionOptions & SeedBudget & { name: string; before: Date },
+): Promise<SeededTranscript | null> {
+  const composed = await planWithRecollection((budget) => planSeed(jsonl, budget), opts);
+  if (!composed) return null;
+  const { planned, recall } = composed;
   return emitTail(planned.parsed, planned.plan, recall, opts.timeZone);
+}
+
+/**
+ * A pi or codex seam given a recollection source: the source is required (it makes the
+ * seam async), and the tail budget may be left to follow what arrived.
+ */
+export type WithRecollection<T extends { seedTokens: number }> = Omit<T, "seedTokens"> &
+  RecollectionOptions &
+  SeedBudget & { recollect: RecollectionSource };
+
+/**
+ * Whether a seam call takes its async path. Tests the value, not the key: options built
+ * as `{ …, recollect: enabled ? source : undefined }` type-check against the sync
+ * overload, so they must run it.
+ */
+export function hasRecollect<T extends { seedTokens: number }>(
+  opts: T | WithRecollection<T>,
+): opts is WithRecollection<T> {
+  return typeof (opts as { recollect?: unknown }).recollect === "function";
 }
 
 /** Result of a successful seed: the new session id and when the source was archived. */

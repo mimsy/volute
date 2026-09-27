@@ -12,6 +12,7 @@ import { resolve } from "node:path";
 import { describe, it } from "node:test";
 import {
   buildSeededRollout,
+  estimateRolloutItemTokens,
   findLatestArchivedThread,
   generateThreadId,
   rotateCodexSession,
@@ -19,6 +20,12 @@ import {
   writeCodexRotationArchivePointer,
 } from "../templates/_base/src/lib/codex-session-seed.js";
 import { buildSeededNote } from "../templates/_base/src/lib/seed-note.js";
+import {
+  RECALL_PREAMBLE,
+  type RecallEntry,
+  type RecollectionQuery,
+  TRIMMED_TURN_MARKER,
+} from "../templates/_base/src/lib/session-seed.js";
 
 // --- Rollout line builders (approximate real Codex rollout shapes) ---
 
@@ -37,6 +44,7 @@ function sessionMeta(id: string): string {
       originator: "codex_sdk_ts",
       cli_version: "0.144.3",
       history_mode: "legacy",
+      base_instructions: { text: "You are x. You're a seed." },
     },
   });
 }
@@ -140,6 +148,9 @@ describe("buildSeededRollout — session_meta rewrite", () => {
     assert.equal(meta.payload.session_id, NEW);
     assert.equal(meta.payload.id, NEW);
     assert.equal("parent_thread_id" in meta.payload, false);
+    // The chain's first soul must not ride along into every later seed; codex takes the
+    // live model_instructions_file the template passes.
+    assert.equal("base_instructions" in meta.payload, false);
     assert.equal(meta.payload.timestamp, NOW.toISOString());
     assert.equal(meta.timestamp, NOW.toISOString());
     // Non-identity fields are preserved.
@@ -572,7 +583,7 @@ describe("rotateCodexSession", () => {
       mindDir,
       name: "main",
       oldThreadId: OLD,
-      seedTokens: 30,
+      seedTokens: 4, // under one turn's ~5 estimated tokens
       now: NOW,
     });
     assert.ok(newId);
@@ -655,5 +666,381 @@ describe("buildSeededNote — cause", () => {
     const note = buildSeededNote({ cause: "restored", archivedAtMs: null });
     assert.match(note, /restored after archival/);
     assert.doesNotMatch(note, /consolidated at the context limit/);
+  });
+});
+
+// --- Estimator: what an item actually sends the model -------------------------
+
+describe("estimateRolloutItemTokens", () => {
+  const item = (payload: Record<string, unknown>) =>
+    ({ type: "response_item", payload }) as Parameters<typeof estimateRolloutItemTokens>[0];
+
+  it("counts message text at 3.5 chars/token, not the line's JSON", () => {
+    const m = item({
+      type: "message",
+      role: "user",
+      id: "x".repeat(900),
+      content: [{ type: "input_text", text: "a".repeat(350) }],
+    });
+    assert.equal(estimateRolloutItemTokens(m), 100);
+  });
+
+  it("counts an image at a flat cost, not by its base64 size", () => {
+    const m = item({
+      type: "message",
+      role: "user",
+      content: [{ type: "input_image", image_url: `data:image/png;base64,${"A".repeat(500_000)}` }],
+    });
+    assert.equal(estimateRolloutItemTokens(m), 1600);
+  });
+
+  it("counts a tool call's name and input, and its output's text", () => {
+    assert.equal(
+      estimateRolloutItemTokens(
+        item({ type: "custom_tool_call", name: "exec", input: "b".repeat(346) }),
+      ),
+      100,
+    );
+    assert.equal(
+      estimateRolloutItemTokens(
+        item({
+          type: "custom_tool_call_output",
+          call_id: "c",
+          output: [{ type: "input_text", text: "c".repeat(350) }],
+        }),
+      ),
+      100,
+    );
+  });
+});
+
+// --- Trimming an over-budget final turn ---------------------------------------
+
+function textMessage(
+  role: string,
+  text: string,
+  type = role === "assistant" ? "output_text" : "input_text",
+): string {
+  return JSON.stringify({
+    timestamp: "2026-07-13T22:07:00.000Z",
+    type: "response_item",
+    payload: { type: "message", role, content: [{ type }].map((c) => ({ ...c, text })) },
+  });
+}
+
+function bigOutput(callId: string, chars: number): string {
+  return JSON.stringify({
+    timestamp: "2026-07-13T22:07:02.000Z",
+    type: "response_item",
+    payload: {
+      type: "custom_tool_call_output",
+      call_id: callId,
+      output: [{ type: "input_text", text: "x".repeat(chars) }],
+    },
+  });
+}
+
+/** A long tool loop: one prompt, `steps` tool calls each with a 1000-token output, then a reply. */
+function codexToolLoop(steps: number): string[] {
+  const lines = [sessionMeta(OLD), textMessage("user", "earlier"), textMessage("assistant", "ok")];
+  lines.push(textMessage("user", "do the long thing"));
+  for (let k = 0; k < steps; k++) {
+    lines.push(reasoning(), toolCall(`c${k}`), bigOutput(`c${k}`, 3500));
+  }
+  lines.push(textMessage("assistant", "finished"));
+  return lines;
+}
+
+const codexMarkerCount = (lines: string[]) =>
+  lines.join("\n").split(JSON.stringify(TRIMMED_TURN_MARKER).slice(1, -1)).length - 1;
+
+function assertPairedTools(objs: Record<string, any>[]) {
+  const calls = objs
+    .filter((o) => o.payload?.type === "custom_tool_call")
+    .map((o) => o.payload.call_id);
+  const outs = objs
+    .filter((o) => o.payload?.type === "custom_tool_call_output")
+    .map((o) => o.payload.call_id);
+  assert.deepEqual([...calls].sort(), [...outs].sort());
+}
+
+describe("buildSeededRollout — trimming an over-budget final turn", () => {
+  it("keeps the prompt, marked, then the latest whole steps that fit", () => {
+    const res = buildSeededRollout(codexToolLoop(10).join("\n"), NEW, 3500, NOW);
+    assert.ok(res);
+    const body = parseLines(res.lines).slice(1);
+    const prompt = body[0].payload;
+    assert.equal(prompt.role, "user");
+    assert.equal(prompt.content[0].text, "do the long thing");
+    assert.equal(prompt.content.at(-1).text, TRIMMED_TURN_MARKER);
+    assert.equal(prompt.content.at(-1).type, "input_text");
+    assert.equal(body[1].payload.type, "custom_tool_call");
+    assert.equal(body.at(-1).payload.content[0].text, "finished");
+    assert.ok(body.length < 20, "the turn was cut");
+    const total = body.reduce((sum, o) => sum + estimateRolloutItemTokens(o), 0);
+    assert.ok(total <= 3500, `seed ~${Math.round(total)} tokens is over budget`);
+    assertPairedTools(body);
+  });
+
+  it("floors at the prompt plus the final step", () => {
+    const res = buildSeededRollout(codexToolLoop(4).join("\n"), NEW, 1, NOW);
+    assert.ok(res);
+    const body = parseLines(res.lines).slice(1);
+    assert.deepEqual(
+      body.map((o) => o.payload.content?.[0]?.text ?? o.payload.type),
+      ["do the long thing", "finished"],
+    );
+  });
+
+  it("never splits a response's parallel tool calls from their outputs", () => {
+    const lines = [
+      sessionMeta(OLD),
+      textMessage("user", "go"),
+      toolCall("p1"),
+      toolCall("p2"),
+      bigOutput("p1", 3500),
+      bigOutput("p2", 3500),
+      textMessage("assistant", "done"),
+    ];
+    const res = buildSeededRollout(lines.join("\n"), NEW, 1100, NOW);
+    assert.ok(res);
+    const body = parseLines(res.lines).slice(1);
+    // No valid cut between p1 and p2 — the trim resumes at the reply, not at p2.
+    assert.equal(body.filter((o) => o.payload.type === "custom_tool_call").length, 0);
+    assertPairedTools(body);
+  });
+
+  it("re-seeding a trimmed seed keeps one marker, counted once", () => {
+    const first = buildSeededRollout(codexToolLoop(10).join("\n"), NEW, 3500, NOW);
+    assert.ok(first);
+    // A tighter budget cuts the already-trimmed turn again.
+    const again = buildSeededRollout(first.lines.join("\n"), NEW, 2400, NOW);
+    assert.ok(again);
+    assert.equal(codexMarkerCount(again.lines), 1);
+    assert.ok(again.lines.length < first.lines.length, "cut again");
+    const total = parseLines(again.lines)
+      .slice(1)
+      .reduce((sum, o) => sum + estimateRolloutItemTokens(o), 0);
+    assert.ok(total <= 2400, `seed ~${Math.round(total)} tokens is over budget`);
+  });
+});
+
+// --- Recollection -----------------------------------------------------------
+
+const RECALL: RecallEntry[] = [
+  {
+    period: "day",
+    period_key: "2026-07-16",
+    start: "2026-07-16T00:00:00.000Z",
+    end: "2026-07-17T00:00:00.000Z",
+    content: "I rewrote the pond poem twice.",
+    author: "mind",
+  },
+  {
+    period: "hour",
+    period_key: "2026-07-17T09",
+    start: "2026-07-17T09:00:00.000Z",
+    end: "2026-07-17T10:00:00.000Z",
+    content: "Talked with alice about moss.",
+    author: "consolidation",
+  },
+];
+
+describe("buildSeededRollout — recall pairs", () => {
+  const convo = [
+    sessionMeta(OLD),
+    messageAt("user", "hello", T0),
+    textMessage("assistant", "hi"),
+    messageAt("user", "again", T1),
+    textMessage("assistant", "yes"),
+  ].join("\n");
+
+  it("places recall pairs oldest-first between session_meta and the tail", () => {
+    const res = buildSeededRollout(convo, NEW, 1_000_000, NOW, RECALL, "UTC");
+    assert.ok(res);
+    assert.equal(res.recallEntries, 2);
+    const objs = parseLines(res.lines);
+    assert.equal(objs[0].type, "session_meta");
+    const roles = objs.slice(1, 5).map((o) => [o.type, o.payload.type, o.payload.role]);
+    assert.deepEqual(roles, [
+      ["response_item", "message", "user"],
+      ["response_item", "message", "assistant"],
+      ["response_item", "message", "user"],
+      ["response_item", "message", "assistant"],
+    ]);
+    assert.equal(
+      objs[1].payload.content[0].text,
+      `${RECALL_PREAMBLE}\n[recall: Thursday 16 Jul — you wrote this one]`,
+    );
+    assert.deepEqual(objs[2].payload.content, [
+      { type: "output_text", text: "I rewrote the pond poem twice." },
+    ]);
+    assert.equal(objs[3].payload.content[0].text, "[recall: Friday 17 Jul, 09:00–10:00]");
+    assert.equal(objs[5].payload.content[0].text, "hello");
+    // No invented ids: codex may send an item's id to the API.
+    assert.ok(objs.slice(1, 5).every((o) => !("id" in o.payload)));
+  });
+
+  it("re-seeding a seeded rollout replaces its recall pairs rather than keeping them", () => {
+    const first = buildSeededRollout(convo, NEW, 1_000_000, NOW, RECALL, "UTC");
+    assert.ok(first);
+    const again = buildSeededRollout(
+      first.lines.join("\n"),
+      NEW,
+      1_000_000,
+      NOW,
+      [RECALL[1]],
+      "UTC",
+    );
+    assert.ok(again);
+    const texts = parseLines(again.lines)
+      .slice(1)
+      .map((o) => o.payload.content[0].text);
+    assert.deepEqual(texts, [
+      `${RECALL_PREAMBLE}\n[recall: Friday 17 Jul, 09:00–10:00]`,
+      "Talked with alice about moss.",
+      "hello",
+      "hi",
+      "again",
+      "yes",
+    ]);
+  });
+
+  it("recognises an earlier seam's recall by its heading, whatever the preamble said", () => {
+    const old = [
+      sessionMeta(OLD),
+      textMessage("user", "[An older preamble, worded differently.]\n[recall: Thursday 16 Jul]"),
+      textMessage("assistant", "old memory"),
+      textMessage("user", "[recall: Friday 17 Jul, 09:00–10:00]"),
+      textMessage("assistant", "older memory"),
+      messageAt("user", "hello", T0),
+      textMessage("assistant", "hi"),
+    ].join("\n");
+    const res = buildSeededRollout(old, NEW, 1_000_000, NOW);
+    assert.ok(res);
+    assert.deepEqual(
+      parseLines(res.lines)
+        .slice(1)
+        .map((o) => o.payload.content[0].text),
+      ["hello", "hi"],
+    );
+  });
+
+  it("a seed without recollection drops an earlier seam's recall too", () => {
+    const first = buildSeededRollout(convo, NEW, 1_000_000, NOW, RECALL, "UTC");
+    assert.ok(first);
+    const again = buildSeededRollout(first.lines.join("\n"), NEW, 1_000_000, NOW);
+    assert.ok(again);
+    assert.equal(parseLines(again.lines)[1].payload.content[0].text, "hello");
+  });
+});
+
+describe("seedCodexSession / rotateCodexSession — recollection", () => {
+  function setup(lines: string[]) {
+    const mindDir = mkdtempSync(resolve(tmpdir(), "codex-recall-mind-"));
+    const archive = resolve(mindDir, ".mind", "codex-sessions", "archive");
+    mkdirSync(archive, { recursive: true });
+    writeFileSync(
+      resolve(archive, "main-2026-07-18T10-00.json"),
+      JSON.stringify({ threadId: OLD }),
+    );
+    const rolloutDir = resolve(mindDir, ".mind", "codex", "sessions", "2026", "07", "13");
+    mkdirSync(rolloutDir, { recursive: true });
+    writeFileSync(
+      resolve(rolloutDir, `rollout-2026-07-13T22-06-52-${OLD}.jsonl`),
+      `${lines.join("\n")}\n`,
+    );
+    return mindDir;
+  }
+
+  function readNew(mindDir: string, threadId: string) {
+    const y = String(NOW.getFullYear());
+    const mo = String(NOW.getMonth() + 1).padStart(2, "0");
+    const d = String(NOW.getDate()).padStart(2, "0");
+    const dir = resolve(mindDir, ".mind", "codex", "sessions", y, mo, d);
+    const file = readdirSync(dir).find((f) => f.includes(threadId));
+    assert.ok(file);
+    return parseLines(readFileSync(resolve(dir, file), "utf-8").trim().split("\n"));
+  }
+
+  const lines = [sessionMeta(OLD), messageAt("user", "hello", T0), textMessage("assistant", "hi")];
+
+  it("asks for memories before the archive time, up to where the tail starts", async () => {
+    const mindDir = setup(lines);
+    const queries: RecollectionQuery[] = [];
+    const seeded = await seedCodexSession({
+      mindDir,
+      name: "main",
+      seedTokens: 30000,
+      now: NOW,
+      recollect: async (q) => {
+        queries.push(q);
+        return RECALL;
+      },
+    });
+    assert.ok(seeded);
+    assert.equal(seeded.recallEntries, 2);
+    assert.deepEqual(queries, [{ before: "2026-07-18T10:00:00.000Z", tailStartedAt: T0 }]);
+    const objs = readNew(mindDir, seeded.threadId);
+    assert.match(objs[1].payload.content[0].text, /^\[What follows is what you remember/);
+    assert.equal(objs[5].payload.content[0].text, "hello");
+  });
+
+  it("fails soft to a tail-only seed when recollection rejects", async () => {
+    const mindDir = setup(lines);
+    const seeded = await seedCodexSession({
+      mindDir,
+      name: "main",
+      seedTokens: 30000,
+      now: NOW,
+      recollect: async () => {
+        throw new Error("daemon down");
+      },
+    });
+    assert.ok(seeded);
+    assert.equal(seeded.recallEntries, 0);
+    assert.equal(readNew(mindDir, seeded.threadId)[1].payload.content[0].text, "hello");
+  });
+
+  it("rotation seeds recollection ahead of its tail and reports how many", async () => {
+    const mindDir = setup(lines);
+    const rotated = await rotateCodexSession({
+      mindDir,
+      name: "main",
+      oldThreadId: OLD,
+      seedTokens: 30000,
+      now: NOW,
+      recollect: async () => RECALL,
+    });
+    assert.ok(rotated);
+    assert.equal(rotated.recallEntries, 2);
+    const objs = readNew(mindDir, rotated.threadId);
+    assert.equal(objs.length, 1 + 4 + 2);
+    assert.equal(
+      findLatestArchivedThread(resolve(mindDir, ".mind", "codex-sessions"), "main")?.threadId,
+      OLD,
+    );
+  });
+});
+
+describe("seedCodexSession — recollection is chosen by value", () => {
+  it("an undefined recollect runs the sync path", () => {
+    const mindDir = mkdtempSync(resolve(tmpdir(), "codex-sync-mind-"));
+    const archive = resolve(mindDir, ".mind", "codex-sessions", "archive");
+    mkdirSync(archive, { recursive: true });
+    writeFileSync(
+      resolve(archive, "main-2026-07-18T10-00.json"),
+      JSON.stringify({ threadId: OLD }),
+    );
+    const rolloutDir = resolve(mindDir, ".mind", "codex", "sessions", "2026", "07", "13");
+    mkdirSync(rolloutDir, { recursive: true });
+    writeFileSync(
+      resolve(rolloutDir, `rollout-2026-07-13T22-06-52-${OLD}.jsonl`),
+      `${[sessionMeta(OLD), message("user", "hello")].join("\n")}\n`,
+    );
+    const opts = { mindDir, name: "main", seedTokens: 30000, now: NOW, recollect: undefined };
+    const seeded = seedCodexSession(opts);
+    assert.ok(seeded && !(seeded instanceof Promise));
+    assert.equal(seeded.recallEntries, 0);
   });
 });
