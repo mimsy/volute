@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
 import { Codex } from "@openai/codex-sdk";
 import { flushFileChanges, trackFileChange } from "./lib/auto-commit.js";
@@ -58,6 +58,8 @@ type QueuedMessage = { text: string; meta: HandlerMeta };
 
 type CodexSession = {
   name: string;
+  /** This session's own client — its shell environment names this session. */
+  client?: Codex;
   thread: CodexThread | null;
   listeners: Set<Listener>;
   currentMessageId?: string;
@@ -182,30 +184,43 @@ export function createMind(options: {
   // Use OPENAI_API_KEY if available, otherwise let codex CLI use its own auth (~/.codex/auth.json)
   const apiKey = process.env.OPENAI_API_KEY;
 
-  const codex = new Codex({
-    ...(apiKey ? { apiKey } : {}),
-    config: {
-      model_instructions_file: promptPath,
-      // Rotation is the primary path: at maxContextTokens we silently rotate onto the
-      // verbatim tail between turns. The SDK's native auto-compaction is only an emergency
-      // backstop — set above the volute threshold (1.5×) so it fires solely when rotation
-      // can't relieve context (e.g. a system prompt too large to fit the tail under the
-      // threshold), after the runaway guard stops self-rotating.
-      model_auto_compact_token_limit: maxContextTokens
-        ? Math.floor(maxContextTokens * 1.5)
-        : 999999999,
-      // Enable reasoning summaries so they appear as events
-      model_reasoning_summary: "auto",
-      model_supports_reasoning_summaries: true,
-      // The codex sandbox runs commands in /bin/zsh -lc which resets the environment.
-      // Set ZDOTDIR so the login shell sources our .zshenv with VOLUTE env vars and PATH.
-      shell_environment_policy: {
-        inherit: "all",
-        ignore_default_excludes: true,
-        set: { ZDOTDIR: options.cwd },
+  // One client per session, kept on the session so it lives exactly as long: the shell
+  // environment is set per client, and it carries the session's slug so that session's
+  // own commands (`volute chat send`) name it in X-Volute-Thread. A shared carrier names
+  // whichever session wrote it last, and a send got stamped with a sibling thread's turn
+  // (#1173).
+  const codexFor = (session: CodexSession): Codex => {
+    if (session.client) return session.client;
+    const sessionName = session.name;
+    const client = new Codex({
+      ...(apiKey ? { apiKey } : {}),
+      config: {
+        model_instructions_file: promptPath,
+        // Rotation is the primary path: at maxContextTokens we silently rotate onto the
+        // verbatim tail between turns. The SDK's native auto-compaction is only an emergency
+        // backstop — set above the volute threshold (1.5×) so it fires solely when rotation
+        // can't relieve context (e.g. a system prompt too large to fit the tail under the
+        // threshold), after the runaway guard stops self-rotating.
+        model_auto_compact_token_limit: maxContextTokens
+          ? Math.floor(maxContextTokens * 1.5)
+          : 999999999,
+        // Enable reasoning summaries so they appear as events
+        model_reasoning_summary: "auto",
+        model_supports_reasoning_summaries: true,
+        // The codex sandbox runs commands in /bin/zsh -lc which resets the environment.
+        // Set ZDOTDIR so the login shell sources our .zshenv with VOLUTE env vars and PATH.
+        // That file never names VOLUTE_SESSION (the daemon rewrites it on every start), so
+        // the value set here survives it.
+        shell_environment_policy: {
+          inherit: "all",
+          ignore_default_excludes: true,
+          set: { ZDOTDIR: options.cwd, VOLUTE_SESSION: sessionName },
+        },
       },
-    },
-  });
+    });
+    session.client = client;
+    return client;
+  };
 
   // Track which sessions have received startup context
   const startupContextInjected = new Set<string>();
@@ -282,7 +297,7 @@ export function createMind(options: {
       if (resumeThreadId) {
         try {
           log("mind", `session "${session.name}": resuming thread ${resumeThreadId}`);
-          session.thread = codex.resumeThread(resumeThreadId, threadOptions());
+          session.thread = codexFor(session).resumeThread(resumeThreadId, threadOptions());
           session.currentThreadId = resumeThreadId;
           return;
         } catch (err) {
@@ -295,7 +310,7 @@ export function createMind(options: {
     }
 
     try {
-      session.thread = codex.startThread(threadOptions());
+      session.thread = codexFor(session).startThread(threadOptions());
       log("mind", `session "${session.name}": new thread started`);
     } catch (err) {
       warn("mind", `session "${session.name}": failed to start thread:`, err);
@@ -402,31 +417,6 @@ export function createMind(options: {
     }
 
     session.abortController = new AbortController();
-
-    // Sync VOLUTE_SESSION to .zshenv so codex shell commands know which session they're in.
-    // The codex sandbox doesn't pass env through, so this file is the only carrier — and it
-    // is still last-writer-wins across sessions, unlike the claude template's per-stream env.
-    try {
-      const zshenvPath = resolvePath(options.cwd, ".zshenv");
-      let existing: string;
-      try {
-        existing = readFileSync(zshenvPath, "utf-8");
-      } catch {
-        // .zshenv doesn't exist (non-codex template) — not critical
-        existing = "";
-      }
-      if (existing) {
-        const sessionLine = `export VOLUTE_SESSION=${JSON.stringify(session.name)}`;
-        const updated = existing.replace(/^export VOLUTE_SESSION=.*$/m, sessionLine);
-        if (updated === existing && !existing.includes("VOLUTE_SESSION")) {
-          writeFileSync(zshenvPath, `${existing.trimEnd()}\n${sessionLine}\n`);
-        } else if (updated !== existing) {
-          writeFileSync(zshenvPath, updated);
-        }
-      }
-    } catch (err) {
-      warn("mind", `session "${session.name}": failed to sync VOLUTE_SESSION to .zshenv:`, err);
-    }
 
     try {
       const { events } = await session.thread.runStreamed(text, {
@@ -682,7 +672,7 @@ export function createMind(options: {
     }
 
     try {
-      session.thread = codex.resumeThread(newThreadId, threadOptions());
+      session.thread = codexFor(session).resumeThread(newThreadId, threadOptions());
     } catch (err) {
       warn("mind", `session "${session.name}": failed to resume rotated thread:`, err);
       return; // keep the old thread; the SDK backstop covers a runaway

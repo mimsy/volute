@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { describe, it } from "node:test";
 import { promisify } from "node:util";
+import { composeMindEnv } from "../packages/daemon/src/lib/daemon/mind-manager.js";
 import { syncMindZshenv } from "../packages/daemon/src/lib/mind/zshenv.js";
 
 const execFileAsync = promisify(execFile);
@@ -32,6 +33,38 @@ describe("syncMindZshenv", () => {
     assert.match(content, /export VOLUTE_MIND_TOKEN="live-token"/);
     assert.match(content, /export PATH="\/usr\/bin"/);
     assert.doesNotMatch(content, /HOME/);
+  });
+
+  it("a daemon started from a mind's shell doesn't pin every codex thread to its slug (#1173)", async (t) => {
+    // codex runs each command in `zsh -lc` with the per-session shell environment
+    // (VOLUTE_SESSION among it) and ZDOTDIR=home, so zsh sources this file *after* the
+    // env is set: a slug written here would override every thread's own. The daemon's
+    // own VOLUTE_SESSION must not reach the composed mind env this file is written from.
+    const saved = process.env.VOLUTE_SESSION;
+    process.env.VOLUTE_SESSION = "main";
+    let composed: Record<string, string | undefined>;
+    try {
+      composed = composeMindEnv({
+        name: "zsh-1173",
+        baseName: "zsh-1173",
+        dir: "/tmp/zsh-1173",
+        port: 4195,
+        mindToken: "tok",
+        isolationMode: "none",
+      });
+    } finally {
+      if (saved === undefined) delete process.env.VOLUTE_SESSION;
+      else process.env.VOLUTE_SESSION = saved;
+    }
+    const dir = mindDir();
+    await syncMindZshenv(dir, "m", "codex", composed);
+
+    const zsh = ["/bin/zsh", "/usr/bin/zsh"].find((p) => existsSync(p));
+    if (!zsh) return t.skip("zsh not installed");
+    const { stdout } = await execFileAsync(zsh, ["-lc", 'printf %s "$VOLUTE_SESSION"'], {
+      env: { ZDOTDIR: resolve(dir, "home"), VOLUTE_SESSION: "#bardo", PATH: "/usr/bin:/bin" },
+    });
+    assert.equal(stdout, "#bardo");
   });
 
   // #1123: the daemon is root under user isolation, and a mind can plant a link.

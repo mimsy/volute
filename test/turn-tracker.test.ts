@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { eq } from "drizzle-orm";
 import {
-  assignSession,
   clearMind,
   completeOrphanedTurns,
   completeTurn,
@@ -57,18 +56,19 @@ describe("turn-tracker", () => {
     await clearMind(mind);
   });
 
-  it("assigns session and re-keys", async () => {
-    const turnId = await createTurn(mind);
-    assert.equal(getActiveTurnId(mind), turnId);
-
-    await assignSession(mind, turnId, "sess-1");
-
-    // Should now be keyed by session
+  it("keys a thread's turn by its thread from the start, with no fallback", async () => {
+    const turnId = await createTurn(mind, "sess-1");
+    assert.ok(turnId);
     assert.equal(getActiveTurnId(mind, "sess-1"), turnId);
-    // Wildcard should no longer resolve
+    // Neither the sessionless slot nor another thread resolves to it, and a thread with
+    // no turn of its own never resolves to the sessionless one (#1173).
     assert.equal(getActiveTurnId(mind), undefined);
+    assert.equal(getActiveTurnId(mind, "sess-2"), undefined);
+    const sessionless = await createTurn(mind);
+    assert.ok(sessionless && sessionless !== turnId);
+    assert.equal(getActiveTurnId(mind, "sess-2"), undefined);
+    assert.equal(getActiveTurnId(mind), sessionless);
 
-    // DB should reflect session
     const db = await getDb();
     const row = await db.select().from(turns).where(eq(turns.id, turnId)).get();
     assert.equal(row!.thread, "sess-1");
@@ -130,14 +130,25 @@ describe("turn-tracker", () => {
     assert.equal(row!.status, "complete");
   });
 
+  it("a done closes only its own thread's turn, never an unrelated sessionless one", async () => {
+    const sessionless = await createTurn(mind);
+    assert.equal(await completeTurn(mind, "s1"), undefined, "s1 has no turn to close");
+    assert.equal(getActiveTurnId(mind), sessionless, "the sessionless turn is not s1's");
+
+    const own = await createTurn(mind, "s1");
+    assert.equal(await completeTurn(mind, "s1"), own);
+    assert.equal(getActiveTurnId(mind), sessionless);
+    assert.equal(await completeTurn(mind), sessionless, "a sessionless done closes it");
+    await clearMind(mind);
+  });
+
   it("completeTurn returns undefined when no active turn", async () => {
     const result = await completeTurn("nonexistent-mind");
     assert.equal(result, undefined);
   });
 
   it("clearMind removes all entries and returns orphaned turns", async () => {
-    const turnId = await createTurn(mind);
-    await assignSession(mind, turnId!, "s1");
+    const turnId = await createTurn(mind, "s1");
 
     // Create another turn for a different mind
     const otherMind = "test-turn-tracker-other";
@@ -224,9 +235,8 @@ describe("turn-tracker", () => {
       sess: string,
       events: { type: string; msAgo: number }[],
     ): Promise<string> {
-      const id = await createTurn("sweep-mind");
+      const id = await createTurn("sweep-mind", sess);
       assert.ok(id);
-      await assignSession("sweep-mind", id!, sess);
       const db = await getDb();
       for (const e of events) {
         await db.insert(mindHistory).values({
@@ -318,15 +328,57 @@ describe("turn-tracker", () => {
       assert.equal(getActiveTurnId("sweep-nosess"), undefined, "in-memory wildcard entry cleared");
     });
 
+    it("sweeps a quiet sessionless turn with no done, but not a quiet thread's", async () => {
+      // Only a sessionless done closes a sessionless turn, and a template that tags only
+      // its done never sends one: idleness is the only other end it can have.
+      const bare = await createTurn("sweep-bare");
+      const threaded = await createTurn("sweep-bare", "t1");
+      const db = await getDb();
+      for (const [id, thread] of [
+        [bare, null],
+        [threaded, "t1"],
+      ] as const) {
+        await db.insert(mindHistory).values({
+          mind: "sweep-bare",
+          type: "text",
+          thread,
+          turn_id: id,
+          created_at: utcStamp(30 * 60_000),
+        });
+      }
+      const swept = await sweepWedgedTurns(idleMs);
+      assert.ok(
+        swept.find((t) => t.turnId === bare),
+        "quiet sessionless turn swept",
+      );
+      assert.equal(getActiveTurnId("sweep-bare"), undefined);
+      assert.ok(!swept.find((t) => t.turnId === threaded), "a thread's turn waits for its done");
+      assert.equal(getActiveTurnId("sweep-bare", "t1"), threaded);
+      await clearMind("sweep-bare");
+    });
+
     it("does NOT clobber the in-memory slot when a newer turn reused the session key", async () => {
-      const oldId = await seedTurn("wsX", [
+      // The old turn is still `active` in the DB but no longer holds the in-memory slot;
+      // a newer turn on the same session does.
+      const oldId = "sweep-old-wsX";
+      const db0 = await getDb();
+      await db0
+        .insert(turns)
+        .values({ id: oldId, mind: "sweep-mind", thread: "wsX", status: "active" });
+      for (const e of [
         { type: "text", msAgo: 30 * 60_000 },
         { type: "done", msAgo: 20 * 60_000 },
-      ]);
-      // A newer turn opens on the same session and reuses the mind:session slot.
-      const newId = await createTurn("sweep-mind");
+      ]) {
+        await db0.insert(mindHistory).values({
+          mind: "sweep-mind",
+          type: e.type,
+          thread: "wsX",
+          turn_id: oldId,
+          created_at: utcStamp(e.msAgo),
+        });
+      }
+      const newId = await createTurn("sweep-mind", "wsX");
       assert.ok(newId);
-      await assignSession("sweep-mind", newId!, "wsX");
       assert.equal(getActiveTurnId("sweep-mind", "wsX"), newId);
 
       const swept = await sweepWedgedTurns(idleMs);

@@ -17,11 +17,7 @@ import {
   revokeMindToken,
   revokeScriptToken,
 } from "../packages/daemon/src/lib/daemon/mind-tokens.js";
-import {
-  assignSession,
-  clearMind,
-  createTurn,
-} from "../packages/daemon/src/lib/daemon/turn-tracker.js";
+import { clearMind, createTurn } from "../packages/daemon/src/lib/daemon/turn-tracker.js";
 import { getDb } from "../packages/daemon/src/lib/db.js";
 import {
   addMind,
@@ -107,9 +103,8 @@ type TurnRow =
  * the slug `buildVoluteSlug` derived from the conversation's participants.
  */
 async function openTurn(session: string, rows: TurnRow[]): Promise<string> {
-  const turnId = await createTurn(SPIRIT);
+  const turnId = await createTurn(SPIRIT, session);
   assert.ok(turnId);
-  await assignSession(SPIRIT, turnId, session);
   const db = await getDb();
   let eventId = 0;
   for (const row of rows) {
@@ -284,9 +279,8 @@ describe("spirit effective principal (#433 / #1017)", () => {
 
   it("refuses a claimed session the turn's own recorded thread does not match", async () => {
     const spirit = await spiritUser();
-    // getActiveTurnId falls back to the sessionless `mind:*` slot, so without a check
-    // against the thread the daemon recorded, any slug at all resolves to whatever turn
-    // is mid-creation.
+    // A sessionless turn (no thread recorded) must not be claimable by any slug, nor by
+    // the absence of one.
     const turnId = await createTurn(SPIRIT);
     assert.ok(turnId);
     const db = await getDb();
@@ -310,9 +304,8 @@ describe("spirit effective principal (#433 / #1017)", () => {
     // linkPendingInbound is warn-and-continue, so a user-triggered turn can end up
     // with nothing linked to it. Reading "no inbound rows" as "self-initiated" would
     // turn a failed DB write into an escalation, so system needs positive evidence.
-    const turnId = await createTurn(SPIRIT);
+    const turnId = await createTurn(SPIRIT, "main");
     assert.ok(turnId);
-    await assignSession(SPIRIT, turnId, "main");
 
     assert.equal((await resolveEffective({ user: spirit, mindSession: "main" })).role, "basic");
   });

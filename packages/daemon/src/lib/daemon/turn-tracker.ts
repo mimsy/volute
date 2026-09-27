@@ -12,13 +12,32 @@ type ActiveTurn = {
   lastToolUseEventId: number | undefined;
   /** SDK tool_use id → mind_history event id, so a tool_result links to its own tool_use. */
   toolUseEventIds: Map<string, number>;
+  /**
+   * The process whose events opened the turn — the mind, or one of its variants. Turns
+   * are keyed by base name, so a variant's thread shares its parent's key; a send is
+   * only stamped with a turn its own process opened (see `turnStamp`).
+   */
+  owner: string;
 };
 
-/** In-memory map of active turns, keyed by `mind:session` (or `mind:*` for sessionless). */
+/**
+ * In-memory map of active turns, keyed by `mind:thread` (or `mind:*` for events that carry
+ * no thread). Every lookup is exact: a thread never resolves to another key's turn. A
+ * fallback from a thread to the sessionless slot once credited one thread's send to a
+ * sibling thread's turn (#1173).
+ */
 const activeTurns = new Map<string, ActiveTurn>();
 
+/**
+ * A thread name as the daemon records it: undefined for no thread. "" and "*" are no
+ * thread — "*" is the sessionless slot's own key, so a thread by that name would alias it.
+ */
+export function normalizeThread(thread: string | null | undefined): string | undefined {
+  return thread && thread !== "*" ? thread : undefined;
+}
+
 function key(mind: string, session?: string | null): string {
-  return `${mind}:${session ?? "*"}`;
+  return `${mind}:${normalizeThread(session) ?? "*"}`;
 }
 
 /**
@@ -40,15 +59,19 @@ export function takeErrored(mind: string, session?: string | null): boolean {
 }
 
 /**
- * Create a turn for a mind (or reuse an existing active one).
- * Initially sessionless — keyed as `mind:*`.
+ * Create a turn for a mind's thread (or reuse the thread's active one). Keyed by the
+ * thread from the start and recorded with it; with no thread, keyed as `mind:*`.
  *
  * The in-memory map entry is set BEFORE the DB insert to prevent a race where
  * two concurrent substantive events both pass the existence check. If the DB
  * insert fails, the entry is rolled back.
  */
-export async function createTurn(mind: string): Promise<string | undefined> {
-  const k = key(mind);
+export async function createTurn(
+  mind: string,
+  session?: string | null,
+  owner: string = mind,
+): Promise<string | undefined> {
+  const k = key(mind, session);
   const existing = activeTurns.get(k);
   if (existing) return existing.turnId;
 
@@ -57,13 +80,16 @@ export async function createTurn(mind: string): Promise<string | undefined> {
     turnId,
     lastToolUseEventId: undefined,
     toolUseEventIds: new Map(),
+    owner,
   };
   // Reserve the slot synchronously to prevent concurrent callers from creating duplicates
   activeTurns.set(k, entry);
 
   try {
     const db = await getDb();
-    await db.insert(turns).values({ id: turnId, mind, status: "active" });
+    await db
+      .insert(turns)
+      .values({ id: turnId, mind, thread: normalizeThread(session) ?? null, status: "active" });
   } catch (err) {
     tlog.error(`failed to create turn for ${mind}`, log.errorData(err));
     // Roll back the in-memory reservation
@@ -74,9 +100,14 @@ export async function createTurn(mind: string): Promise<string | undefined> {
   return turnId;
 }
 
-/** Get the active turn ID for a mind+session, falling back to the sessionless `mind:*` key. */
+/** The process that opened this mind+thread's active turn (see `ActiveTurn.owner`). */
+export function getActiveTurnOwner(mind: string, session?: string | null): string | undefined {
+  return activeTurns.get(key(mind, session))?.owner;
+}
+
+/** Get the active turn ID for exactly this mind+thread (`mind:*` when there is none). */
 export function getActiveTurnId(mind: string, session?: string | null): string | undefined {
-  return (activeTurns.get(key(mind, session)) ?? activeTurns.get(key(mind)))?.turnId;
+  return activeTurns.get(key(mind, session))?.turnId;
 }
 
 /**
@@ -136,7 +167,7 @@ export function trackToolUse(
   eventId: number,
   toolUseId?: string,
 ): void {
-  const entry = activeTurns.get(key(mind, session)) ?? activeTurns.get(key(mind));
+  const entry = activeTurns.get(key(mind, session));
   if (!entry) return;
   entry.lastToolUseEventId = eventId;
   if (toolUseId) entry.toolUseEventIds.set(toolUseId, eventId);
@@ -144,7 +175,7 @@ export function trackToolUse(
 
 /** Get the last tool_use event ID for a mind+session. */
 export function getLastToolUseEventId(mind: string, session?: string | null): number | undefined {
-  return (activeTurns.get(key(mind, session)) ?? activeTurns.get(key(mind)))?.lastToolUseEventId;
+  return activeTurns.get(key(mind, session))?.lastToolUseEventId;
 }
 
 /**
@@ -157,7 +188,7 @@ export function getToolUseEventId(
   session: string | null | undefined,
   toolUseId?: string,
 ): number | undefined {
-  const entry = activeTurns.get(key(mind, session)) ?? activeTurns.get(key(mind));
+  const entry = activeTurns.get(key(mind, session));
   if (!entry) return undefined;
   if (toolUseId) {
     const id = entry.toolUseEventIds.get(toolUseId);
@@ -167,37 +198,16 @@ export function getToolUseEventId(
 }
 
 /**
- * Assign a session to a sessionless turn.
- * Re-keys from `mind:*` to `mind:session` and updates the DB.
+ * Mark a turn as complete on a `done`. Returns the turnId (or undefined if none was active).
+ * A `done` closes exactly its own thread's turn; only a sessionless `done` closes the
+ * sessionless `mind:*` turn — a thread ending never ends an unrelated one.
  */
-export async function assignSession(mind: string, turnId: string, session: string): Promise<void> {
-  const wildcardKey = key(mind);
-  const entry = activeTurns.get(wildcardKey);
-  if (!entry || entry.turnId !== turnId) {
-    tlog.warn(`assignSession: no matching turn for ${mind} (turnId=${turnId}, session=${session})`);
-    return;
-  }
-
-  try {
-    const db = await getDb();
-    await db.update(turns).set({ thread: session }).where(eq(turns.id, turnId));
-  } catch (err) {
-    tlog.error(`failed to assign session to turn ${turnId}`, log.errorData(err));
-    return;
-  }
-
-  activeTurns.delete(wildcardKey);
-  activeTurns.set(key(mind, session), entry);
-}
-
-/** Mark a turn as complete. Returns the turnId (or undefined if none was active). */
 export async function completeTurn(
   mind: string,
   session?: string | null,
 ): Promise<string | undefined> {
   const k = key(mind, session);
-  const wildcardKey = key(mind);
-  const entry = activeTurns.get(k) ?? activeTurns.get(wildcardKey);
+  const entry = activeTurns.get(k);
   if (!entry) return undefined;
 
   try {
@@ -210,7 +220,6 @@ export async function completeTurn(
   }
 
   activeTurns.delete(k);
-  activeTurns.delete(wildcardKey);
 
   return entry.turnId;
 }
@@ -278,7 +287,8 @@ export async function clearMind(mind: string): Promise<OrphanedTurn[]> {
 }
 
 /**
- * Reconcile turns wedged in `active` despite already having received a `done`.
+ * Reconcile turns wedged in `active` despite already having received a `done`, and
+ * sessionless turns that have gone quiet.
  *
  * A turn with a session completes only when a `done` arrives AND the delivery manager
  * reports the session as not busy (activeCount === 0). That counter increments per delivery
@@ -288,7 +298,10 @@ export async function clearMind(mind: string): Promise<OrphanedTurn[]> {
  * never summarized, and keeps absorbing later events.
  *
  * This sweep catches that drift: an active turn that has seen ≥1 `done` and has had no
- * events for `idleMs` is genuinely finished. We mark it complete and drop any in-memory
+ * events for `idleMs` is genuinely finished. A sessionless `mind:*` turn is closed only
+ * by a sessionless `done` (a thread's `done` never ends an unrelated turn), and a
+ * template that tags only its `done` never sends one — so a sessionless turn with no
+ * events for `idleMs` is finished too, `done` or not. We mark it complete and drop any in-memory
  * entry so the next event opens a fresh turn. Callers summarize the returned turns and
  * reset the leaked session counter. Idempotent and safe to run on a timer.
  */
@@ -306,7 +319,7 @@ export async function sweepWedgedTurns(idleMs: number): Promise<OrphanedTurn[]> 
       .where(eq(turns.status, "active"))
       .groupBy(turns.id)
       .having(
-        sql`max(${mindHistory.created_at}) < ${cutoff} and sum(case when ${mindHistory.type} = 'done' then 1 else 0 end) > 0`,
+        sql`max(${mindHistory.created_at}) < ${cutoff} and (${turns.thread} is null or sum(case when ${mindHistory.type} = 'done' then 1 else 0 end) > 0)`,
       );
   } catch (err) {
     tlog.error("failed to query wedged turns", log.errorData(err));

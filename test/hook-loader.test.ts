@@ -180,6 +180,30 @@ describe("runHooks", () => {
     assert.equal(result.blocked, false);
   });
 
+  it("runs each hook with the session it runs for as VOLUTE_SESSION (#1173)", async () => {
+    // A `volute chat send` from a hook must name its own thread; the mind server's
+    // environment names none, and a stale one must not leak in.
+    const hooksDir = join(testDir, "run-hooks-session");
+    const eventDir = join(hooksDir, "pre-prompt");
+    mkdirSync(eventDir, { recursive: true });
+    writeFileSync(
+      join(eventDir, "10-session.sh"),
+      '#!/bin/bash\nread input\necho "{\\"additionalContext\\": \\"[${VOLUTE_SESSION-unset}]\\"}"',
+      { mode: 0o755 },
+    );
+    const saved = process.env.VOLUTE_SESSION;
+    process.env.VOLUTE_SESSION = "stale";
+    try {
+      const a = await runHooks(hooksDir, "pre-prompt", { session: "#bardo" });
+      assert.equal(a.additionalContext, "[#bardo]");
+      const b = await runHooks(hooksDir, "pre-prompt", {});
+      assert.equal(b.additionalContext, "[unset]");
+    } finally {
+      if (saved === undefined) delete process.env.VOLUTE_SESSION;
+      else process.env.VOLUTE_SESSION = saved;
+    }
+  });
+
   it("aggregates context from multiple hooks", async () => {
     const hooksDir = join(testDir, "run-hooks-multi");
     const eventDir = join(hooksDir, "pre-prompt");

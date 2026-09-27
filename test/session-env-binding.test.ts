@@ -19,20 +19,47 @@ describe("per-stream session env binding", () => {
     assert.match(src, /env:\s*\{\s*\.\.\.sdkEnv,\s*VOLUTE_SESSION:\s*session\.name\s*\}/);
   });
 
-  it("pi template sets its process-global carrier at dispatch", () => {
-    // pi's tools spawn children from the mind process itself — there is no
-    // per-session subprocess to bind env to, so the process-global (correct for
-    // a single active turn, last-writer-wins across concurrent ones) is pi's
-    // only carrier. Losing this line leaves pi minds with no X-Volute-Thread
-    // at all: paths without a marker fallback record turn_id NULL silently.
-    const src = readFileSync(resolve(import.meta.dirname, "../templates/pi/src/agent.ts"), "utf-8");
-    assert.match(src, /process\.env\.VOLUTE_SESSION\s*=\s*sessionName/);
+  it("pi template binds VOLUTE_SESSION per session in its bash tool", () => {
+    // pi runs tools in-process, so a process-global slug names whichever session
+    // wrote it last — a send from one thread was stamped with a sibling's turn
+    // (#1173). Each session (and each subagent it runs) gets its own bash tool
+    // whose spawnHook sets the slug; registered as `bash`, it replaces the built-in.
+    const dir = resolve(import.meta.dirname, "../templates/pi/src");
+    const bash = readFileSync(resolve(dir, "lib/session-bash.ts"), "utf-8");
+    assert.match(bash, /spawnHook:[\s\S]*VOLUTE_SESSION:\s*sessionName/);
+    const agent = readFileSync(resolve(dir, "agent.ts"), "utf-8");
+    assert.match(
+      agent,
+      /customTools:\s*\[createSessionBashTool\(options\.cwd,\s*session\.name,\s*settingsManager\)\]/,
+    );
+    assert.match(agent, /sessionName:\s*session\.name/, "subagents get the parent session");
+    const subagents = readFileSync(resolve(dir, "lib/subagents.ts"), "utf-8");
+    assert.match(
+      subagents,
+      /customTools:\s*\[\s*createSessionBashTool\(context\.cwd,\s*context\.sessionName,\s*settingsManager\),?\s*\]/,
+    );
   });
 
-  it("shared template code carries no process-global or file-based session carrier", () => {
+  it("codex template binds VOLUTE_SESSION per session in its shell environment", () => {
+    // One Codex client per session, its shell_environment_policy carrying the slug.
+    // The shared home/.zshenv this used to be written into was last-writer-wins
+    // (#1173) — and zsh sources that file after the policy env is applied, so a
+    // VOLUTE_SESSION line there would override the per-session value.
+    const src = readFileSync(
+      resolve(import.meta.dirname, "../templates/codex/src/agent.ts"),
+      "utf-8",
+    );
+    assert.match(src, /set:\s*\{\s*ZDOTDIR:\s*options\.cwd,\s*VOLUTE_SESSION:\s*sessionName\s*\}/);
+    assert.doesNotMatch(src, /\bcodex\.(start|resume)Thread\(/, "a thread on a shared client");
+    assert.doesNotMatch(src, /export VOLUTE_SESSION=/, "codex template still writes .zshenv");
+  });
+
+  it("template code carries no process-global or file-based session carrier", () => {
     for (const file of [
       "../templates/_base/src/lib/router.ts",
       "../templates/_base/src/lib/daemon-client.ts",
+      "../templates/pi/src/agent.ts",
+      "../templates/codex/src/agent.ts",
     ]) {
       const src = readFileSync(resolve(import.meta.dirname, file), "utf-8");
       assert.doesNotMatch(src, /process\.env\.VOLUTE_SESSION\s*=/, `${file} writes the global`);

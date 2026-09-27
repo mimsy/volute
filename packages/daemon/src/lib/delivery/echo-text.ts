@@ -12,7 +12,7 @@ import { mindDir } from "../mind/registry.js";
 import { readVoluteConfig } from "../mind/volute-config.js";
 import { fixModelEscapes } from "../util/fix-model-escapes.js";
 import log from "../util/logger.js";
-import { recordOutbound } from "./message-delivery.js";
+import { recordOutbound, type TurnStamp } from "./message-delivery.js";
 
 const dlog = log.child("echo-text");
 
@@ -87,7 +87,7 @@ export async function echoTextToChannel(
   mind: string,
   channel: string,
   text: string,
-  turnId: string | undefined,
+  stamp: TurnStamp,
   textEventId: number | undefined,
 ): Promise<number | undefined> {
   const cfg = getEchoConfig(mind);
@@ -120,7 +120,7 @@ export async function echoTextToChannel(
   const contentBlocks: ContentBlock[] = [{ type: "text", text }];
 
   const message = await addMessage(conversationId, "user", mind, contentBlocks, {
-    turnId,
+    turnId: stamp.turnId,
     sourceEventId: textEventId,
   });
 
@@ -129,8 +129,8 @@ export async function echoTextToChannel(
   });
 
   const outboundId = await recordOutbound(mind, channel, text, {
+    ...stamp,
     messageId: message != null ? String(message.id) : undefined,
-    turnId,
   });
 
   if (outboundId != null) {
@@ -139,7 +139,8 @@ export async function echoTextToChannel(
       type: "outbound",
       channel,
       content: text,
-      turnId,
+      session: stamp.thread,
+      turnId: stamp.turnId,
     });
   }
 

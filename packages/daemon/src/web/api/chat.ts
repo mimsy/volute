@@ -12,10 +12,9 @@ import {
   SPIRIT_NOTICE_PREFIX,
   type SpiritStatus,
 } from "../../lib/chat/spirit-availability.js";
-import { getActiveTurnId } from "../../lib/daemon/turn-tracker.js";
 import { extractTextContent } from "../../lib/delivery/delivery-router.js";
 import { fanOutToMinds } from "../../lib/delivery/fan-out.js";
-import { recordOutbound } from "../../lib/delivery/message-delivery.js";
+import { recordOutbound, turnStamp } from "../../lib/delivery/message-delivery.js";
 import { checkStaleSend, formatHoldNotice } from "../../lib/delivery/send-gate.js";
 import { subscribe } from "../../lib/events/conversation-events.js";
 import {
@@ -308,13 +307,19 @@ export const chatApp = new Hono<AuthEnv>().post("/", zValidator("json", chatSche
 
   // Resolve the sending mind's active turn from the per-request X-Volute-Thread header
   // (captured into context as `mindSession`). This is the primary turn-attribution path:
-  // it records turn_id directly on send, replacing the racy process-global VOLUTE_SESSION
-  // lookup and the marker-only correlation that ran after the fact.
+  // it records the thread, and that thread's turn, directly on send. Exact or nothing:
+  // when the thread has no active turn the send waits for a tool_result marker from the
+  // same thread, rather than being credited to a sibling thread's turn (#1173).
   let outboundTurnId: string | undefined;
+  let outboundThread: string | undefined;
   let senderBase: string | undefined;
   if (senderIsMind) {
     senderBase = await getBaseName(senderName);
-    outboundTurnId = getActiveTurnId(senderBase, c.get("mindSession"));
+    ({ turnId: outboundTurnId, thread: outboundThread } = turnStamp(
+      senderBase,
+      c.get("mindSession"),
+      senderName,
+    ));
   }
 
   // Stale-send hold: if a peer posted to this conversation after this mind's turn began,
@@ -336,7 +341,8 @@ export const chatApp = new Hono<AuthEnv>().post("/", zValidator("json", chatSche
   }
 
   // Save message. turn_id is attributed directly for mind senders (see above); when the
-  // turn can't be resolved it stays null and is linked later via the tool_result marker.
+  // turn can't be resolved it stays null, and is linked later only by a tool_result marker
+  // from the send's own thread — a send with no thread never is.
   const message = await addMessage(conversationId!, "user", senderName, contentBlocks, {
     turnId: outboundTurnId,
   });
@@ -358,16 +364,18 @@ export const chatApp = new Hono<AuthEnv>().post("/", zValidator("json", chatSche
       outboundId = await recordOutbound(senderName, channel, text, {
         messageId: message?.id != null ? String(message.id) : undefined,
         turnId: outboundTurnId,
+        thread: outboundThread,
       });
-      // When the turn is known, publish the outbound to SSE now (correctly tagged).
-      // Otherwise linkToolResultToTurn publishes it when the marker arrives.
-      if (outboundTurnId) {
+      // Published now, with its turn when known. A send whose thread had no turn yet is
+      // published again, with the turn, when its marker links it (linkToolResultToTurn).
+      if (outboundId != null) {
         const mindKey = senderBase ?? senderName;
         publishMindEvent(mindKey, {
           mind: mindKey,
           type: "outbound",
           channel,
           content: text,
+          session: outboundThread,
           turnId: outboundTurnId,
         });
       }

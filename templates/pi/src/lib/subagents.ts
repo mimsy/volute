@@ -10,6 +10,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 import { log } from "./logger.js";
+import { createSessionBashTool } from "./session-bash.js";
 
 export type SubagentDefinition = {
   description: string;
@@ -24,6 +25,8 @@ export function createSubagentExtension(
     cwd: string;
     model: Model<any>;
     modelRuntime: ModelRuntime;
+    /** The parent session — bound into the subagent's bash so its sends carry it. */
+    sessionName: string;
   },
 ): ExtensionFactory {
   return (pi) => {
@@ -47,14 +50,18 @@ export function createSubagentExtension(
             });
             await loader.reload();
 
+            const settingsManager = SettingsManager.inMemory({});
             const { session } = await createAgentSession({
               cwd: context.cwd,
               model: context.model,
               tools,
               resourceLoader: loader,
               sessionManager: SessionManager.inMemory(),
-              settingsManager: SettingsManager.inMemory({}),
+              settingsManager,
               modelRuntime: context.modelRuntime,
+              customTools: [
+                createSessionBashTool(context.cwd, context.sessionName, settingsManager),
+              ],
             });
 
             const textParts: string[] = [];

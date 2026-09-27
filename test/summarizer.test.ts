@@ -21,11 +21,7 @@ import {
   TRANSCRIPT_INBOUND_MAX_CHARS,
   TRANSCRIPT_MAX_CHARS,
 } from "../packages/daemon/src/lib/daemon/summarizer.js";
-import {
-  assignSession,
-  clearMind,
-  createTurn,
-} from "../packages/daemon/src/lib/daemon/turn-tracker.js";
+import { clearMind, createTurn } from "../packages/daemon/src/lib/daemon/turn-tracker.js";
 import { getDb } from "../packages/daemon/src/lib/db.js";
 import {
   initDeliveryManager,
@@ -1645,9 +1641,8 @@ describe("summarizer", () => {
       const idleMs = 10 * 60_000;
 
       // A wedged turn: has a `done`, last event well past the idle window.
-      const id = await createTurn(mind);
+      const id = await createTurn(mind, session);
       assert.ok(id);
-      await assignSession(mind, id!, session);
       const db = await getDb();
       for (const e of [
         { type: "text", msAgo: 30 * 60_000 },

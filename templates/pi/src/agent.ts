@@ -31,6 +31,7 @@ import { DEFAULT_SEED_TOKENS, rotatePiSession, seedPiSession } from "./lib/pi-se
 import { createReplyInstructionsExtension } from "./lib/reply-instructions-extension.js";
 import { resolveModel } from "./lib/resolve-model.js";
 import { buildSeededNote, type SeedCause } from "./lib/seed-note.js";
+import { createSessionBashTool } from "./lib/session-bash.js";
 import { getStartupContext, loadPrompts, type SubagentConfig } from "./lib/startup.js";
 import { createSubagentExtension, type SubagentDefinition } from "./lib/subagents.js";
 import type {
@@ -178,11 +179,6 @@ export async function createMind(options: {
 
   const subagents = loadSubagents(options.subagents);
 
-  const subagentExtension =
-    Object.keys(subagents).length > 0
-      ? createSubagentExtension(subagents, { cwd: options.cwd, model, modelRuntime })
-      : undefined;
-
   // --- Startup context (loaded once, injected on first turn per session) ---
 
   const startupContextPromise = getStartupContext().catch(() => null);
@@ -283,6 +279,7 @@ export async function createMind(options: {
         try {
           const result = await runHooks(hooksDir, "post-tool-use", {
             event: "post-tool-use",
+            session: session.name,
             tool_name: event.toolName,
             tool_input: toolInput,
           });
@@ -495,6 +492,17 @@ export async function createMind(options: {
 
     const dynamicHookExtension = createDynamicHookExtension(session);
 
+    // Per session, so a subagent's commands carry the slug of the session that ran it.
+    const subagentExtension =
+      Object.keys(subagents).length > 0
+        ? createSubagentExtension(subagents, {
+            cwd: options.cwd,
+            model,
+            modelRuntime,
+            sessionName: session.name,
+          })
+        : undefined;
+
     const resourceLoader = new DefaultResourceLoader({
       cwd: options.cwd,
       agentDir: getAgentDir(),
@@ -517,6 +525,7 @@ export async function createMind(options: {
       sessionManager,
       settingsManager,
       resourceLoader,
+      customTools: [createSessionBashTool(options.cwd, session.name, settingsManager)],
     });
 
     session.agentSession = agentSession;
@@ -661,14 +670,6 @@ export async function createMind(options: {
             broadcast(session, { type: "done" });
             return;
           }
-          // pi's tools run in-process and spawn their children from this very
-          // process, so there is no per-session subprocess to bind VOLUTE_SESSION
-          // to (the claude template binds it in the SDK subprocess env at spawn).
-          // A process-global is the only carrier pi has: each tool child snapshots
-          // env at its own spawn, so this is correct for a single active turn and
-          // last-writer-wins across genuinely concurrent pi turns — which is why a
-          // spirit on this template fails closed to `basic` for #1017 delegation.
-          process.env.VOLUTE_SESSION = sessionName;
           // This await is load-bearing: without it a prompt rejection (burst race,
           // auth failure, ...) floats as an unhandled rejection and crashes the
           // mind server instead of landing in the .catch below (issue #565).

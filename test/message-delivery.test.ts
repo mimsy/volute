@@ -6,6 +6,7 @@ import { resolve } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { and, eq } from "drizzle-orm";
 import { releaseTurnSlot } from "../packages/daemon/src/lib/daemon/turn-slots.js";
+import { clearMind, createTurn } from "../packages/daemon/src/lib/daemon/turn-tracker.js";
 import { getDb } from "../packages/daemon/src/lib/db.js";
 import {
   clearConfigCache,
@@ -15,6 +16,7 @@ import {
   deliverBatch,
   deliverMessage,
   linkToolResultToTurn,
+  publishTurnActivity,
   recordInbound,
   recordOutbound,
   resolveSleepAction,
@@ -359,13 +361,26 @@ describe("recordOutbound", () => {
     assert.equal(rows[0].message_id, "msg-456");
   });
 
-  it("stores turn_id when provided", async () => {
+  it("stores turn_id and thread together when both are provided", async () => {
     await recordOutbound("test-out", "dm:alice", "hi", {
       turnId: "turn-789",
+      thread: "main",
     });
     const db = await getDb();
     const rows = await db.select().from(mindHistory).where(eq(mindHistory.mind, "test-out"));
     assert.equal(rows[0].turn_id, "turn-789");
+    assert.equal(rows[0].thread, "main");
+  });
+
+  it("stores a thread without a turn, as a send from a thread with no active turn is", async () => {
+    await recordOutbound("test-out", "dm:alice", "a", { thread: "main" });
+    await recordOutbound("test-out", "dm:alice", "b", { thread: "" });
+    const db = await getDb();
+    const rows = await db.select().from(mindHistory).where(eq(mindHistory.mind, "test-out"));
+    const a = rows.find((r) => r.content === "a")!;
+    assert.equal(a.thread, "main");
+    assert.equal(a.turn_id, null);
+    assert.equal(rows.find((r) => r.content === "b")!.thread, null, '"" is no thread');
   });
 
   it("returns the inserted record id", async () => {
@@ -450,7 +465,7 @@ describe("linkToolResultToTurn", () => {
   afterEach(cleanupLinkData);
 
   it("links outbound record to turn via marker", async () => {
-    const outId = await recordOutbound(LINK_MIND, "dm:alice", "hello");
+    const outId = await recordOutbound(LINK_MIND, "dm:alice", "hello", { thread: "main" });
     assert.ok(outId != null);
 
     await linkToolResultToTurn(
@@ -458,11 +473,79 @@ describe("linkToolResultToTurn", () => {
       LINK_TURN_ID,
       `sent [volute:outbound:${outId}]`,
       undefined,
+      { thread: "main" },
     );
 
     const db = await getDb();
     const rows = await db.select().from(mindHistory).where(eq(mindHistory.id, outId));
     assert.equal(rows[0].turn_id, LINK_TURN_ID);
+    assert.equal(rows[0].thread, "main");
+  });
+
+  it("never links an outbound to a marker from another thread (#1173)", async () => {
+    const db = await getDb();
+    const convId = "conv-link-test";
+    await db.insert(conversations).values({ id: convId, type: "dm" });
+    const [msg] = await db
+      .insert(messages)
+      .values({ conversation_id: convId, role: "user", sender_name: LINK_MIND, content: "x" })
+      .returning({ id: messages.id });
+    const outId = await recordOutbound(LINK_MIND, "dm:alice", "x", {
+      thread: "main",
+      messageId: String(msg.id),
+    });
+
+    // Echoed into #bardo's tool output, and into a sessionless one: neither is main.
+    await linkToolResultToTurn(LINK_MIND, "turn-bardo", `[volute:outbound:${outId}]`, 5, {
+      thread: "#bardo",
+    });
+    await linkToolResultToTurn(LINK_MIND, "turn-bare", `[volute:outbound:${outId}]`, 6);
+
+    const row = await db.select().from(mindHistory).where(eq(mindHistory.id, outId!)).get();
+    assert.equal(row!.turn_id, null);
+    assert.equal(row!.thread, "main");
+    const m = await db.select().from(messages).where(eq(messages.id, msg.id)).get();
+    assert.equal(m!.turn_id, null, "the message must not name a turn its history row doesn't");
+  });
+
+  it("never links a send recorded with no thread, whatever turn prints its marker", async () => {
+    const sole = await createTurn(LINK_MIND);
+    const id = await recordOutbound(LINK_MIND, "dm:alice", "from nowhere");
+    await linkToolResultToTurn(LINK_MIND, sole!, `[volute:outbound:${id}]`, undefined);
+    await linkToolResultToTurn(LINK_MIND, "turn-x", `[volute:outbound:${id}]`, undefined, {
+      thread: "main",
+    });
+    await clearMind(LINK_MIND);
+    const db = await getDb();
+    const row = await db.select().from(mindHistory).where(eq(mindHistory.id, id!)).get();
+    assert.equal(row!.turn_id, null);
+  });
+
+  it("stamps a command's activity with the caller's turn, even acting --mind for another", async () => {
+    // The spirit (or an admin) runs a command acting for another mind: the activity is
+    // about that mind, but it happened in the caller's turn.
+    const callerTurn = await createTurn(LINK_MIND, "main");
+    const actId = await publishTurnActivity(
+      { type: "mind_active", mind: "test-link-acted-for", summary: "done for them" },
+      { mind: LINK_MIND, thread: "main" },
+    );
+    await linkToolResultToTurn(LINK_MIND, callerTurn!, `[volute:activity:${actId}]`, 7, {
+      thread: "main",
+    });
+    await clearMind(LINK_MIND);
+
+    const db = await getDb();
+    const act = await db.select().from(activity).where(eq(activity.id, actId)).get();
+    assert.equal(act!.turn_id, callerTurn);
+    assert.equal(act!.source_event_id, 7, "the marker still supplies the source event");
+    const rows = await db
+      .select()
+      .from(mindHistory)
+      .where(and(eq(mindHistory.mind, LINK_MIND), eq(mindHistory.type, "activity")));
+    assert.equal(rows.length, 1, "one row, in the caller's history");
+    assert.equal(rows[0].turn_id, callerTurn);
+    assert.equal(rows[0].thread, "main");
+    await db.delete(activity).where(eq(activity.id, actId));
   });
 
   it("links activity record to turn via marker", async () => {
@@ -479,6 +562,53 @@ describe("linkToolResultToTurn", () => {
     const rows = await db.select().from(activity).where(eq(activity.id, actId));
     assert.equal(rows[0].turn_id, LINK_TURN_ID);
     assert.equal(rows[0].source_event_id, 99);
+  });
+
+  it("links an activity once: a repeated marker neither moves it nor duplicates its row", async () => {
+    const actId = await publishActivity({
+      type: "mind_active",
+      mind: LINK_MIND,
+      summary: "once",
+    });
+    await linkToolResultToTurn(LINK_MIND, LINK_TURN_ID, `[volute:activity:${actId}]`, 1, {
+      thread: "main",
+    });
+    await linkToolResultToTurn(LINK_MIND, "turn-other", `[volute:activity:${actId}]`, 2, {
+      thread: "#other",
+    });
+
+    const db = await getDb();
+    const act = await db.select().from(activity).where(eq(activity.id, actId)).get();
+    assert.equal(act!.turn_id, LINK_TURN_ID);
+    assert.equal(act!.source_event_id, 1);
+    const rows = await db
+      .select()
+      .from(mindHistory)
+      .where(and(eq(mindHistory.mind, LINK_MIND), eq(mindHistory.type, "activity")));
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].turn_id, LINK_TURN_ID);
+    assert.equal(rows[0].thread, "main");
+  });
+
+  it("never links another mind's activity, whatever marker a mind prints", async () => {
+    const actId = await publishActivity({
+      type: "mind_active",
+      mind: "test-link-someone-else",
+      summary: "not yours",
+    });
+    await linkToolResultToTurn(LINK_MIND, LINK_TURN_ID, `[volute:activity:${actId}]`, 1, {
+      thread: "main",
+    });
+
+    const db = await getDb();
+    const act = await db.select().from(activity).where(eq(activity.id, actId)).get();
+    assert.equal(act!.turn_id, null);
+    const rows = await db
+      .select()
+      .from(mindHistory)
+      .where(and(eq(mindHistory.mind, LINK_MIND), eq(mindHistory.type, "activity")));
+    assert.equal(rows.length, 0, "no copy of its summary in this mind's history");
+    await db.delete(activity).where(eq(activity.id, actId));
   });
 
   it("links message turn_id and source_event_id", async () => {
@@ -502,6 +632,7 @@ describe("linkToolResultToTurn", () => {
     const msgId = msgResult[0].id;
 
     const outId = await recordOutbound(LINK_MIND, "dm:alice", "hello", {
+      thread: "main",
       messageId: String(msgId),
     });
     assert.ok(outId != null);
@@ -512,6 +643,7 @@ describe("linkToolResultToTurn", () => {
       LINK_TURN_ID,
       `sent [volute:outbound:${outId}]`,
       toolUseEventId,
+      { thread: "main" },
     );
 
     const msgRows = await db.select().from(messages).where(eq(messages.id, msgId));
@@ -520,7 +652,7 @@ describe("linkToolResultToTurn", () => {
   });
 
   it("handles multiple markers in one result", async () => {
-    const outId = await recordOutbound(LINK_MIND, "dm:alice", "hi");
+    const outId = await recordOutbound(LINK_MIND, "dm:alice", "hi", { thread: "main" });
     assert.ok(outId != null);
 
     const actId = await publishActivity({
@@ -531,7 +663,7 @@ describe("linkToolResultToTurn", () => {
     assert.ok(actId > 0);
 
     const content = `sent [volute:outbound:${outId}] and logged [volute:activity:${actId}]`;
-    await linkToolResultToTurn(LINK_MIND, LINK_TURN_ID, content, undefined);
+    await linkToolResultToTurn(LINK_MIND, LINK_TURN_ID, content, undefined, { thread: "main" });
 
     const db = await getDb();
     const outRows = await db.select().from(mindHistory).where(eq(mindHistory.id, outId));
@@ -562,28 +694,68 @@ describe("linkToolResultToTurn", () => {
     );
   });
 
-  it("publishes SSE event for outbound", async () => {
-    const outId = await recordOutbound(LINK_MIND, "dm:alice", "hello from mind");
-    assert.ok(outId != null);
-
+  it("publishes the outbound once, with its turn, when a marker claims it", async () => {
+    const outId = await recordOutbound(LINK_MIND, "dm:alice", "hello from mind", {
+      thread: "main",
+    });
     const events: MindEvent[] = [];
     const unsub = subscribe(LINK_MIND, (e) => events.push(e));
     try {
-      await linkToolResultToTurn(LINK_MIND, LINK_TURN_ID, `[volute:outbound:${outId}]`, undefined);
-      assert.equal(events.length, 1);
-      assert.equal(events[0].type, "outbound");
-      assert.equal(events[0].channel, "dm:alice");
-      assert.equal(events[0].content, "hello from mind");
-      assert.equal(events[0].turnId, LINK_TURN_ID);
+      const marker = `[volute:outbound:${outId}]`;
+      await linkToolResultToTurn(LINK_MIND, LINK_TURN_ID, marker, undefined, { thread: "main" });
+      await linkToolResultToTurn(LINK_MIND, LINK_TURN_ID, marker, undefined, { thread: "main" });
     } finally {
       unsub();
     }
+    assert.equal(events.length, 1);
+    assert.equal(events[0].type, "outbound");
+    assert.equal(events[0].content, "hello from mind");
+    assert.equal(events[0].turnId, LINK_TURN_ID);
+  });
+
+  it("claims an outbound once when two markers from the thread race for it", async () => {
+    const db = await getDb();
+    const convId = "conv-link-test";
+    await db.insert(conversations).values({ id: convId, type: "dm" });
+    const [msg] = await db
+      .insert(messages)
+      .values({ conversation_id: convId, role: "user", sender_name: LINK_MIND, content: "r" })
+      .returning({ id: messages.id });
+    const outId = await recordOutbound(LINK_MIND, "dm:alice", "r", {
+      thread: "main",
+      messageId: String(msg.id),
+    });
+    const marker = `[volute:outbound:${outId}]`;
+    await Promise.all([
+      linkToolResultToTurn(LINK_MIND, "turn-first", marker, 1, { thread: "main" }),
+      linkToolResultToTurn(LINK_MIND, "turn-second", marker, 2, { thread: "main" }),
+    ]);
+    const row = await db.select().from(mindHistory).where(eq(mindHistory.id, outId!)).get();
+    assert.equal(row!.turn_id, "turn-first", "the first claim wins; the second finds it taken");
+    const m = await db.select().from(messages).where(eq(messages.id, msg.id)).get();
+    assert.equal(m!.turn_id, "turn-first", "the message names the same turn as its row");
+    assert.equal(m!.source_event_id, 1);
   });
 
   it("is idempotent: skips re-tag and re-publish when the outbound is already attributed", async () => {
     // Direct attribution (session header at send time) already set the turn_id and published.
+    const db = await getDb();
+    const convId = "conv-link-test";
+    await db.insert(conversations).values({ id: convId, type: "dm" });
+    const [msg] = await db
+      .insert(messages)
+      .values({
+        conversation_id: convId,
+        role: "user",
+        sender_name: LINK_MIND,
+        content: "already tagged",
+        turn_id: LINK_TURN_ID,
+      })
+      .returning({ id: messages.id });
     const outId = await recordOutbound(LINK_MIND, "dm:alice", "already tagged", {
       turnId: LINK_TURN_ID,
+      thread: "main",
+      messageId: String(msg.id),
     });
     assert.ok(outId != null);
 
@@ -591,14 +763,20 @@ describe("linkToolResultToTurn", () => {
     const unsub = subscribe(LINK_MIND, (e) => events.push(e));
     try {
       // A stray marker referencing a DIFFERENT turn must not steal or re-publish it.
-      await linkToolResultToTurn(LINK_MIND, "turn-other-999", `[volute:outbound:${outId}]`, 7);
+      await linkToolResultToTurn(LINK_MIND, "turn-other-999", `[volute:outbound:${outId}]`, 7, {
+        thread: "#other",
+      });
       assert.equal(events.length, 0, "should not re-publish an already-attributed outbound");
     } finally {
       unsub();
     }
 
-    const db = await getDb();
     const row = await db.select().from(mindHistory).where(eq(mindHistory.id, outId!)).get();
     assert.equal(row!.turn_id, LINK_TURN_ID, "existing turn_id must be preserved");
+    assert.equal(row!.thread, "main");
+    // The linked message keeps naming the same turn as its history row.
+    const m = await db.select().from(messages).where(eq(messages.id, msg.id)).get();
+    assert.equal(m!.turn_id, LINK_TURN_ID);
+    assert.equal(m!.source_event_id, null);
   });
 });

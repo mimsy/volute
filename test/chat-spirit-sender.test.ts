@@ -77,13 +77,14 @@ async function setupSpiritDM(): Promise<{ token: string; conversationId: string 
   return { token, conversationId: conv.id };
 }
 
-function spiritSend(app: { request: typeof fetch }, token: string, body: unknown) {
+function spiritSend(app: { request: typeof fetch }, token: string, body: unknown, thread?: string) {
   return app.request("http://localhost/api/v1/chat", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${token}`,
       Origin: "http://localhost",
       "Content-Type": "application/json",
+      ...(thread ? { "X-Volute-Thread": thread } : {}),
     },
     body: JSON.stringify(body),
   } as RequestInit);
@@ -139,17 +140,18 @@ describe("spirit as a mind sender via POST /api/v1/chat", () => {
     const { token, conversationId } = await setupSpiritDM();
     const { default: app } = await import("../packages/daemon/src/web/app.js");
 
-    // Open a sessionless turn for the spirit (keyed `volute:*`). getActiveTurnId
-    // falls back to it when the send carries no X-Volute-Thread header, so the
+    // Open a turn on the spirit's `main` thread and send from that thread, so the
     // outbound must be tagged with this turn — the attribution that was skipped
     // entirely while the spirit was misclassified as a non-mind sender.
-    const turnId = await createTurn("volute");
+    const turnId = await createTurn("volute", "main");
     assert.ok(turnId, "createTurn should return a turn id");
 
-    const res = await spiritSend(app as never, token, {
-      conversationId,
-      message: "tagged reply",
-    });
+    const res = await spiritSend(
+      app as never,
+      token,
+      { conversationId, message: "tagged reply" },
+      "main",
+    );
     assert.equal(res.status, 200);
 
     const db = await getDb();
@@ -157,6 +159,7 @@ describe("spirit as a mind sender via POST /api/v1/chat", () => {
     const outbound = rows.find((r) => r.type === "outbound" && r.content?.includes("tagged reply"));
     assert.ok(outbound, "spirit send should be recorded as an outbound");
     assert.equal(outbound!.turn_id, turnId, "outbound should carry the active turn's id");
+    assert.equal(outbound!.thread, "main");
 
     // Exactly one reply — the send itself, no fallback loop even with a turn active.
     const msgs = await db

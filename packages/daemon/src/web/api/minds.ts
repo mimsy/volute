@@ -39,10 +39,10 @@ import { isShuttingDown } from "../../lib/daemon/shutdown-state.js";
 import { DEFAULT_SPEND_PERIOD_MINUTES, getSpendBudget } from "../../lib/daemon/spend-budget.js";
 import { supersedeTurnSummary } from "../../lib/daemon/summarizer.js";
 import { handleMindEvent, setNoticeDrainWatermark } from "../../lib/daemon/turn-lifecycle.js";
-import { getActiveTurnId } from "../../lib/daemon/turn-tracker.js";
 import { readWindow, usageReport } from "../../lib/daemon/usage-report.js";
 import { getDb } from "../../lib/db.js";
 import { getDeliveryManager, UnknownChannelError } from "../../lib/delivery/delivery-manager.js";
+import { turnStamp } from "../../lib/delivery/message-delivery.js";
 import { broadcast } from "../../lib/events/activity-events.js";
 import {
   getConversation,
@@ -1899,7 +1899,7 @@ const app = new Hono<AuthEnv>()
         return c.json({ error: `type "${body.type}" is daemon-authored` }, 400);
       }
 
-      await handleMindEvent(baseName, body);
+      await handleMindEvent(baseName, body, name);
 
       return c.json({ ok: true });
     },
@@ -2008,11 +2008,14 @@ const app = new Hono<AuthEnv>()
         return c.json({ error: refusedSenderMessage(body.sender, baseName) }, 403);
       }
 
-      // Best-effort turn lookup for external bridge sends (these don't go through
-      // volute chat send, so they won't have tool_result correlation markers).
-      const mindSession = c.get("mindSession");
-      const outboundTurnId = getActiveTurnId(baseName, mindSession);
-
+      // External bridge sends don't go through volute chat send, so they have no
+      // tool_result marker to link them later: stamped with the sending thread and its
+      // exact turn now, or with no turn — never a sibling thread's (#1173).
+      const stamp = turnStamp(
+        baseName,
+        c.get("mindSession"),
+        user.id === 0 ? baseName : user.username,
+      );
       const db = await getDb();
       try {
         await db.insert(mindHistory).values({
@@ -2021,7 +2024,8 @@ const app = new Hono<AuthEnv>()
           channel: body.channel,
           sender: user.id === 0 && body.sender ? body.sender : baseName,
           content: body.content,
-          turn_id: outboundTurnId ?? null,
+          turn_id: stamp.turnId ?? null,
+          thread: stamp.thread ?? null,
         });
       } catch (err) {
         log.error(`failed to persist external send for ${baseName}`, log.errorData(err));
