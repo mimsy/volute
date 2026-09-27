@@ -611,41 +611,50 @@ export function findCodexSessionFile(
   if (sessionsRoot) searchDirs.push(resolve(sessionsRoot));
   if (mindDir) searchDirs.push(resolve(mindDir, ".mind/codex/sessions"));
   searchDirs.push(resolve(process.env.HOME ?? "", ".codex/sessions"));
-
   for (const codexDir of searchDirs) {
-    try {
-      for (const year of readdirSync(codexDir)) {
-        const yearDir = resolve(codexDir, year);
+    const found = findRolloutIn(codexDir, threadId);
+    if (found) return found;
+  }
+  return null;
+}
+
+/**
+ * Find a thread's rollout (`YYYY/MM/DD/rollout-*-<id>.jsonl`) under one codex sessions
+ * root, or null. The one walk of that layout, for callers that must search a single root.
+ */
+export function findRolloutIn(codexDir: string, threadId: string): string | null {
+  try {
+    for (const year of readdirSync(codexDir)) {
+      const yearDir = resolve(codexDir, year);
+      try {
+        if (!statSync(yearDir).isDirectory()) continue;
+      } catch {
+        continue;
+      }
+      for (const month of readdirSync(yearDir)) {
+        const monthDir = resolve(yearDir, month);
         try {
-          if (!statSync(yearDir).isDirectory()) continue;
+          if (!statSync(monthDir).isDirectory()) continue;
         } catch {
           continue;
         }
-        for (const month of readdirSync(yearDir)) {
-          const monthDir = resolve(yearDir, month);
+        for (const day of readdirSync(monthDir)) {
+          const dayDir = resolve(monthDir, day);
           try {
-            if (!statSync(monthDir).isDirectory()) continue;
+            if (!statSync(dayDir).isDirectory()) continue;
           } catch {
             continue;
           }
-          for (const day of readdirSync(monthDir)) {
-            const dayDir = resolve(monthDir, day);
-            try {
-              if (!statSync(dayDir).isDirectory()) continue;
-            } catch {
-              continue;
-            }
-            for (const file of readdirSync(dayDir)) {
-              if (file.endsWith(".jsonl") && file.includes(threadId)) {
-                return resolve(dayDir, file);
-              }
+          for (const file of readdirSync(dayDir)) {
+            if (file.endsWith(".jsonl") && file.includes(threadId)) {
+              return resolve(dayDir, file);
             }
           }
         }
       }
-    } catch (err: any) {
-      if (err?.code !== "ENOENT") console.warn("context-breakdown: codex sessions:", err?.message);
     }
+  } catch (err: any) {
+    if (err?.code !== "ENOENT") console.warn("context-breakdown: codex sessions:", err?.message);
   }
   return null;
 }

@@ -35,6 +35,7 @@ import {
 import { buildSeededNote, type SeedCause } from "./lib/seed-note.js";
 import { createSessionStore, lostRealContext } from "./lib/session-store.js";
 import { getStartupContext, loadPrompts, loadSystemPrompt } from "./lib/startup.js";
+import { threadRef } from "./lib/thread-ref.js";
 import { filterEvent, loadTransparencyPreset } from "./lib/transparency.js";
 import { turnContextFor } from "./lib/turn-context.js";
 import type {
@@ -137,21 +138,20 @@ function emit(
 }
 
 /**
- * How a notice that can be read from any thread should name the thread it is about — the
- * claude template's helper. `context_lost` notices are mind-level so they can't strand
- * (#768), so the reader may be on another thread, and a `new-*` id means nothing to it.
- */
-function threadRef(name: string): string {
-  return name.startsWith("new-") ? "a one-off session" : `the \`${name}\` thread`;
-}
-
-/**
  * Record a `context_lost` notice. Mind-level (no `thread`), so whichever thread next runs a
  * turn reads it, rather than it waiting on a turn in this one that may never come (#768).
  */
-function noticeContextLost(name: string, message: string) {
-  daemonNotice({ kind: "context_lost", message }).catch((err) =>
+async function noticeContextLost(name: string, message: string): Promise<void> {
+  await daemonNotice({ kind: "context_lost", message }).catch((err) =>
     log("mind", `session "${name}": failed to record notice:`, err),
+  );
+}
+
+/** `prefix` ahead of an input's text, whether the input is a bare string or has images. */
+function prependText(input: Input, prefix: string): Input {
+  if (typeof input === "string") return `${prefix}\n\n${input}`;
+  return input.map((part, i) =>
+    i === 0 && part.type === "text" ? { ...part, text: `${prefix}\n\n${part.text}` } : part,
   );
 }
 
@@ -387,6 +387,8 @@ export function createMind(options: {
   }
 
   function startFreshThread(session: CodexSession) {
+    // A fresh thread knows nothing of the orientation the old one was given.
+    startupContextInjected.delete(session.name);
     session.thread = null;
     session.currentThreadId = null;
     session.committed = false;
@@ -432,15 +434,27 @@ export function createMind(options: {
     emit(session, { type: "done" });
   }
 
-  /** Commit what the turn changed under home/ — see lib/home-changes.ts for why git is asked. */
+  /**
+   * Commit what changed under home/ and in the pages worktree, which the mind's own repo
+   * ignores — see lib/home-changes.ts for why git is asked rather than the turn's items.
+   */
   async function commitHomeChanges() {
     try {
-      for (const path of await changedPaths(options.cwd)) trackFileChange(path, options.cwd);
+      for (const dir of [options.cwd, resolvePath(options.cwd, "pages/_system")]) {
+        for (const path of await changedPaths(dir)) trackFileChange(path, options.cwd);
+      }
       await flushFileChanges(options.cwd);
     } catch (err) {
       warn("mind", "auto-commit failed:", err);
     }
   }
+
+  /**
+   * Sessions of this mind currently inside a turn. Git sees the whole of home/, not whose
+   * edit is whose, so a turn that ends while another is mid-write would commit that one's
+   * half-written file. Only the last turn to end commits; it gathers everyone's work.
+   */
+  let turnsInFlight = 0;
 
   async function runTurn(
     session: CodexSession,
@@ -448,13 +462,37 @@ export function createMind(options: {
     images: ImagePart[],
     meta: HandlerMeta,
   ) {
+    turnsInFlight++;
+    try {
+      await runTurnBody(session, text, images, meta);
+    } finally {
+      turnsInFlight--;
+    }
+    // Commit even after a failed turn: whatever it wrote to disk is still the mind's work.
+    if (turnsInFlight === 0) await commitHomeChanges();
+
+    emitDone(session);
+
+    if (session.currentMessageId) {
+      session.messageChannels.delete(session.currentMessageId);
+    }
+    session.currentMessageId = undefined;
+  }
+
+  async function runTurnBody(
+    session: CodexSession,
+    text: string,
+    images: ImagePart[],
+    meta: HandlerMeta,
+  ) {
+    // A thread that failed to start is tried again for each message, not left wedged.
+    if (!session.thread) startFreshThread(session);
     if (!session.thread) {
       warn("mind", `session "${session.name}": no thread, dropping message`);
       await emitError(
         session,
         "Codex could not start a thread for this session, so the message was not processed.",
       );
-      emitDone(session);
       return;
     }
 
@@ -471,19 +509,11 @@ export function createMind(options: {
     // (e.g. resonance's per-turn recall) read as `prompt`.
     const prompt = text;
 
-    // Inject startup context on the first turn of each session
-    if (!startupContextInjected.has(session.name)) {
-      startupContextInjected.add(session.name);
-      const startupContext = await startupContextPromise;
-      if (startupContext) {
-        emit(session, {
-          type: "context",
-          content: startupContext,
-          metadata: { source: "startup-context" },
-        });
-        text = `${startupContext}\n\n${text}`;
-      }
-    }
+    // Whether this turn's prompt carries the startup context — a retry on a fresh thread
+    // (below) must carry it too, but not twice.
+    const hadStartupContext = startupContextInjected.has(session.name);
+    text = await withStartupContext(session, text);
+    const carriesStartupContext = !hadStartupContext;
 
     // On the first turn of a seeded session, prepend the honest-boundary note
     // (consumed once) so the mind knows the tail above was restored (restart) or
@@ -556,10 +586,11 @@ export function createMind(options: {
 
       // A failed turn on a thread whose rollout codex can no longer see will fail the same
       // way on every later turn, so drop it rather than leave the thread wedged. If it held
-      // real conversation, that's a loss the mind is told about, and this message gets one
-      // try on the fresh thread. If it never did — typically a brand-new thread whose first
-      // turn failed before codex wrote anything — nothing was lost, and a retry would only
-      // repeat whatever failed.
+      // real conversation, that's a loss, and this message gets one try on the fresh thread
+      // — told, in the retry itself, that the thread was reset, so the mind never answers
+      // on an empty thread believing it continuous. If it never held any — typically a
+      // brand-new thread whose first turn failed before codex wrote anything — nothing was
+      // lost, and a retry would only repeat whatever failed.
       const lostThreadId = session.currentThreadId;
       if (failure && lostThreadId && !rolloutVisibleToCodex(lostThreadId)) {
         const lostContext = session.committed;
@@ -570,13 +601,19 @@ export function createMind(options: {
         if (!session.name.startsWith("new-")) sessionStore.delete(session.name);
         startFreshThread(session);
         if (lostContext) {
-          noticeContextLost(
-            session.name,
+          const lost =
             `${threadRef(session.name)} couldn't be resumed (its codex rollout is missing), ` +
-              "so it started fresh — the conversation before the reset was lost. " +
-              "`volute mind history` has the record of what you were doing.",
-          );
-          if (session.thread) failure = await streamTurn(session, input);
+            "so it started fresh — the conversation before the reset was lost. " +
+            "`volute mind history` has the record of what you were doing.";
+          if (session.thread) {
+            emit(session, { type: "context", content: lost, metadata: { source: "context-lost" } });
+            if (carriesStartupContext) startupContextInjected.add(session.name);
+            const retryText = await withStartupContext(session, lost);
+            failure = await streamTurn(session, prependText(input, retryText));
+          }
+          // The retry carried the news itself; a notice is only needed when the mind hasn't
+          // heard it — no retry, or one that failed too.
+          if (failure || !session.thread) await noticeContextLost(session.name, lost);
         }
       }
 
@@ -584,16 +621,20 @@ export function createMind(options: {
     } finally {
       for (const path of written.paths) rmSync(path, { force: true });
     }
+  }
 
-    // Commit even after a failed turn: whatever it wrote to disk is still the mind's work.
-    await commitHomeChanges();
-
-    emitDone(session);
-
-    if (session.currentMessageId) {
-      session.messageChannels.delete(session.currentMessageId);
-    }
-    session.currentMessageId = undefined;
+  /** Prepend the session's startup context on the first turn of its thread. */
+  async function withStartupContext(session: CodexSession, text: string): Promise<string> {
+    if (startupContextInjected.has(session.name)) return text;
+    startupContextInjected.add(session.name);
+    const startupContext = await startupContextPromise;
+    if (!startupContext) return text;
+    emit(session, {
+      type: "context",
+      content: startupContext,
+      metadata: { source: "startup-context" },
+    });
+    return `${startupContext}\n\n${text}`;
   }
 
   /**
@@ -823,7 +864,10 @@ export function createMind(options: {
       thrown = err instanceof Error ? err.message : String(err);
     }
 
-    const failure = turnFailed ?? thrown ?? (completed ? null : streamError);
+    const failure =
+      turnFailed ??
+      thrown ??
+      (completed ? null : (streamError ?? "The turn ended before codex reported it complete."));
     if (failure) warn("mind", `session "${session.name}": turn failed: ${failure}`);
     else log("mind", `session "${session.name}": turn done`);
     return failure;

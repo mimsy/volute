@@ -31,7 +31,7 @@ type ScriptedTurn = {
   /** Thrown after the events, as the SDK throws when `codex exec` exits non-zero. */
   throws?: string;
   /** Run while the turn is "in flight", e.g. to write files like a shell command would. */
-  during?: () => void;
+  during?: () => unknown;
 };
 
 type RecordedCall = {
@@ -68,7 +68,7 @@ class Thread {
     const turn = queue.shift() ?? { events: [{ type: "turn.completed", usage: usage() }] };
     const self = this;
     async function* events() {
-      turn.during?.();
+      await turn.during?.();
       for (const e of turn.events ?? []) {
         if (e.type === "thread.started") self._id = e.thread_id;
         yield e;
@@ -222,6 +222,8 @@ before(async () => {
   mkdirSync(resolve(mindDir, "home/memory/journal"), { recursive: true });
   mkdirSync(resolve(mindDir, ".mind"), { recursive: true });
   writeFileSync(resolve(mindDir, "home/SOUL.md"), "You are a test mind.\n");
+  mkdirSync(resolve(mindDir, "home/.local/hooks"), { recursive: true });
+  writeFileSync(resolve(mindDir, "home/.local/hooks/startup-context.sh"), "echo ORIENTATION\n");
   copyFileSync(resolve(templates, "_base/gitignore"), resolve(mindDir, ".gitignore"));
   git("init", "-q");
   git("config", "user.email", "test@volute");
@@ -312,6 +314,24 @@ describe("codex turn failures reach the daemon (#1188)", () => {
     assert.equal(eventsFor("no-thread", "error").length, 1);
     assert.ok(eventsFor("no-thread", "done")[0].errorAnswered);
     assert.equal(seen.at(-1).type, "done");
+    // Not wedged: the next message tries to start a thread again.
+    control.failStartThread.delete("no-thread");
+    await send("no-thread");
+    assert.equal(control.calls.filter((c) => c.session === "no-thread").length, 1);
+    assert.equal(eventsFor("no-thread", "error").length, 1);
+  });
+
+  it("counts a stream that ends without completing as failed", async () => {
+    script("cut-off", {
+      events: [
+        { type: "thread.started", thread_id: "t-cut-off" },
+        { type: "item.started", item: { id: "msg_1", type: "agent_message", text: "" } },
+      ],
+    });
+    await send("cut-off");
+    const errors = eventsFor("cut-off", "error");
+    assert.equal(errors.length, 1);
+    assert.match(errors[0].body.content, /ended before codex reported it complete/);
   });
 });
 
@@ -379,14 +399,41 @@ describe("codex resume checks the rollout codex will read (#1188, #985)", () => 
       ["t-vanish", "t-vanish", null],
       "expected the failed resume to be retried once on a fresh thread",
     );
-    assert.deepEqual(calls[2].input, calls[1].input, "the retry carries the same message");
-    // The retry succeeded, so the turn isn't reported failed — but the loss is.
+    const [first, failed, retry] = calls.map((c) => c.input as string);
+    assert.match(first, /ORIENTATION/, "the session's first turn is oriented");
+    assert.doesNotMatch(failed, /ORIENTATION/);
+    // The retry is told, in itself, that the thread was reset — and, being a fresh
+    // thread, gets the orientation a fresh thread gets.
+    assert.ok(retry.endsWith(failed), "the retry carries the same message");
+    assert.match(retry, /`vanish` thread couldn't be resumed/);
+    assert.equal(retry.match(/ORIENTATION/g)?.length, 1);
+    // The retry succeeded and carried the news itself, so nothing failed and there's no
+    // notice to repeat it next turn.
     assert.equal(eventsFor("vanish", "error").length, 0);
     await settle();
-    const notices = noticesMentioning("vanish");
+    assert.equal(noticesMentioning("vanish").length, 0);
+    assert.deepEqual(readPointer("vanish"), { threadId: "t-vanish-fresh", committed: true });
+  });
+
+  it("records the loss as a notice when the retry fails too", async () => {
+    const rollout = writeRollout(resolve(codexHome, "sessions"), "t-vanish2");
+    writePointer("vanish2", "t-vanish2", true);
+    await send("vanish2");
+    rmSync(rollout);
+    script("vanish2", { throws: "no rollout found" }, { throws: "auth failed" });
+    await send("vanish2");
+    assert.equal(control.calls.filter((c) => c.session === "vanish2").length, 3);
+    const errors = eventsFor("vanish2", "error");
+    assert.equal(errors.length, 1);
+    assert.equal(errors[0].body.content, "auth failed");
+    const notices = noticesMentioning("vanish2");
     assert.equal(notices.length, 1);
     assert.equal(notices[0].body.kind, "context_lost");
-    assert.deepEqual(readPointer("vanish"), { threadId: "t-vanish-fresh", committed: true });
+    assert.equal(notices[0].body.thread, undefined);
+    assert.ok(
+      posted.indexOf(notices[0]) < posted.indexOf(errors[0]),
+      "notice recorded before the turn ends",
+    );
   });
 
   it("drops a brand-new thread whose first turn failed before it wrote a rollout", async () => {
@@ -548,6 +595,56 @@ describe("codex auto-commit (#1189)", () => {
     assert.equal(result.content, `add: ${patched}`);
   });
 
+  it("commits shell edits in the pages worktree, which the mind's repo ignores", async () => {
+    const pages = resolve(mindDir, "home/pages/_system");
+    mkdirSync(pages, { recursive: true });
+    const pagesGit = (...args: string[]) =>
+      execFileSync("git", args, { cwd: pages, encoding: "utf-8" });
+    pagesGit("init", "-q");
+    pagesGit("config", "user.email", "test@volute");
+    pagesGit("config", "user.name", "test");
+    pagesGit("commit", "-q", "--allow-empty", "-m", "init");
+    script("pages", { during: () => writeFileSync(resolve(pages, "tide.html"), "<p>tide</p>\n") });
+    await send("pages");
+    assert.equal(pagesGit("log", "-1", "--format=%s").trim(), "Update tide.html");
+    assert.equal(pagesGit("status", "--porcelain"), "");
+  });
+
+  it("leaves a sibling turn's half-written file for the last turn to end to commit", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    let entered!: () => void;
+    const started = new Promise<void>((r) => {
+      entered = r;
+    });
+    const mine = resolve(mindDir, "home/memory/journal/quick.md");
+    const theirs = resolve(mindDir, "home/memory/journal/slow.md");
+    script("slow", {
+      during: async () => {
+        entered();
+        writeFileSync(theirs, "half of a thou");
+        await gate;
+        writeFileSync(theirs, "half of a thought, finished\n");
+      },
+    });
+    script("quick", { during: () => writeFileSync(mine, "done\n") });
+    const head = git("rev-parse", "HEAD");
+    const slow = send("slow");
+    await started;
+    await send("quick");
+    assert.equal(git("rev-parse", "HEAD"), head, "committed while another turn was mid-write");
+    release();
+    await slow;
+    const committed = git("show", "--name-only", "--format=", "HEAD").trim().split("\n");
+    assert.deepEqual(committed.sort(), [
+      "home/memory/journal/quick.md",
+      "home/memory/journal/slow.md",
+    ]);
+    assert.equal(git("show", "HEAD:home/memory/journal/slow.md"), "half of a thought, finished\n");
+  });
+
   it("commits a file changed after the turn, on shutdown", async () => {
     const late = resolve(mindDir, "home/memory/journal/late.md");
     writeFileSync(late, "cut short\n");
@@ -580,5 +677,26 @@ describe("codex images (#1189)", () => {
     const call = control.calls.find((c) => c.session === "bad-image");
     assert.equal(typeof call?.input, "string");
     assert.match(call?.input as string, /1 image was attached.*couldn't be passed through/);
+  });
+});
+
+describe("codex home-changes parsing", () => {
+  it("follows a rename reported in the worktree column", async () => {
+    const { changedPaths } = await import(resolve(composedDir, "src/lib/home-changes.ts"));
+    const repo = mkdtempSync(resolve(tmpdir(), "codex-rename-"));
+    const g = (...args: string[]) => execFileSync("git", args, { cwd: repo, encoding: "utf-8" });
+    g("init", "-q");
+    g("config", "user.email", "t@t");
+    g("config", "user.name", "t");
+    writeFileSync(resolve(repo, "old.md"), "same content, long enough to be a rename\n");
+    g("add", ".");
+    g("commit", "-q", "-m", "init");
+    // An intent-to-add path makes git report the rename in the Y column: " R new\0old".
+    execFileSync("mv", [resolve(repo, "old.md"), resolve(repo, "new.md")]);
+    g("add", "-N", "new.md");
+    assert.match(g("status", "--porcelain"), /^ R /m);
+    const paths = (await changedPaths(repo)).map((p: string) => p.slice(repo.length + 1)).sort();
+    rmSync(repo, { recursive: true, force: true });
+    assert.deepEqual(paths, ["new.md", "old.md"]);
   });
 });
