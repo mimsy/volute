@@ -200,7 +200,7 @@ export function createMind(options: {
   function rolloutPathFor(threadId: string): string | null {
     const cached = rolloutPaths.get(threadId);
     if (cached) return cached;
-    const path = findCodexSessionFile(threadId, options.mindDir);
+    const path = findCodexSessionFile(threadId, options.mindDir, codexSessionsRoot());
     if (path) rolloutPaths.set(threadId, path);
     return path;
   }
