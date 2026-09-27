@@ -4,10 +4,11 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import {
   isAiConfigured,
   matchEnabledModel,
@@ -37,6 +38,7 @@ import {
   importOpenClawConnectors,
   importPiSession,
   parseNameFromIdentity,
+  rewritePiSessionCwds,
 } from "../template/import-utils.js";
 import {
   applyInitFiles,
@@ -733,6 +735,16 @@ export async function importMindFromArchive(
   return importFromFullArchive(tempDir, extractedMindDir, nameOverride, manifest);
 }
 
+/**
+ * The home a mind at `dest` will run in, as its own `process.cwd()` will report
+ * it: canonical, since pi compares a session's header `cwd` to it by string and
+ * a host's minds dir is often reached through a link (`/var` -> `/private/var`).
+ */
+function canonicalHome(dest: string): string {
+  mkdirSync(dirname(dest), { recursive: true });
+  return join(realpathSync(dirname(dest)), basename(dest), "home");
+}
+
 /** Import a full archive (contains src/, home/, .mind/) — original behavior. */
 async function importFromFullArchive(
   tempDir: string,
@@ -753,8 +765,13 @@ async function importFromFullArchive(
   if (existsSync(dest)) return { ok: false, status: 409, error: "Mind directory already exists" };
 
   try {
-    // Copy extracted mind directory to final location
-    cpSync(extractedMindDir, dest, { recursive: true });
+    // The mind's pi sessions name the exporting host's home; re-pointed here, in
+    // the archive, so the mind resumes them rather than silently starting empty.
+    rewritePiSessionCwds(extractedMindDir, canonicalHome(dest));
+
+    // Copy extracted mind directory to final location, keeping mtimes: pi picks
+    // the session it resumes by them (see rewritePiSessionCwds).
+    cpSync(extractedMindDir, dest, { recursive: true, preserveTimestamps: true });
 
     // This path composes no template, so there is no applyInitFiles return to
     // seed from — read the archive's own `.local/` instead. An archive carries
@@ -889,10 +906,15 @@ async function importFromHomeOnlyArchive(
     // undo it on the first upgrade, which is the move #811 exists to survive.
     seedInitLedger(name, [...given, ...listInfrastructureOnDisk(homeDir)]);
 
-    // 3. Overlay .mind/ from archive (preserves schedules, etc.)
+    // 3. Overlay .mind/ from archive (preserves schedules, etc.), with the pi
+    //    sessions re-pointed at this home first — see importFromFullArchive.
+    rewritePiSessionCwds(extractedMindDir, canonicalHome(dest));
     const extractedMindInternal = resolve(extractedMindDir, ".mind");
     if (existsSync(extractedMindInternal)) {
-      cpSync(extractedMindInternal, resolve(dest, ".mind"), { recursive: true });
+      cpSync(extractedMindInternal, resolve(dest, ".mind"), {
+        recursive: true,
+        preserveTimestamps: true,
+      });
     }
 
     // 4. Generate new identity if not included in archive
