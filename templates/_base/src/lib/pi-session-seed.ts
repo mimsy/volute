@@ -36,7 +36,7 @@
  * (sessionEntryToContextMessages → convertToLlm), so a pi mind reads its memories as
  * text handed to it rather than as its own earlier replies, as a claude mind does.
  *
- * Nothing here throws: any failure returns null so session start is never blocked.
+ * Nothing here throws: any failure resolves null so session start is never blocked.
  */
 
 import { randomUUID } from "node:crypto";
@@ -47,9 +47,7 @@ import { log } from "./logger.js";
 import { parseArchiveTimestamp } from "./seed-note.js";
 import {
   CHARS_PER_TOKEN,
-  failSoft,
   failSoftAsync,
-  hasRecollect,
   IMAGE_TOKENS,
   OPENAI_CHARS_PER_TOKEN,
   planTail,
@@ -62,17 +60,9 @@ import {
   type SeedBudget,
   type SeedLine,
   SIGNATURE_CHARS_PER_TOKEN,
-  TAIL_ONLY_SEED_TOKENS,
   type TailPlan,
   TRIMMED_TURN_MARKER,
-  type WithRecollection,
 } from "./session-seed.js";
-
-/**
- * Default seed budget when config omits continuity.seedTokens: the pi template doesn't
- * fetch recollection at its seams yet, so the tail carries continuity alone.
- */
-export const DEFAULT_SEED_TOKENS = TAIL_ONLY_SEED_TOKENS;
 
 /** customType of the recall entries a seed writes ahead of the tail. */
 export const RECALL_CUSTOM_TYPE = "volute-recall";
@@ -511,7 +501,6 @@ type SeedPiOptions = {
   cwd: string;
   piSessionsDir: string;
   name: string;
-  seedTokens: number;
   model?: string;
 };
 
@@ -566,51 +555,32 @@ function seededPi(
 }
 
 /**
- * Seed a fresh persistent pi session from the mind's previous archived transcript.
- * Writes the synthetic session file into `<piSessionsDir>/<name>/` and returns the
- * new session id (the header id continueRecent will adopt) plus the archived-at
- * time (for the gap note), or null if there's nothing to seed. Never throws — any
- * failure returns null so session start is never blocked.
- *
- * Given a `recollect` source, it is async: the mind's recollection up to the archive
- * time goes ahead of the tail (see composePiSeed); without one it seeds the tail alone,
- * synchronously.
+ * Seed a fresh persistent pi session from the mind's previous archived transcript: the
+ * mind's recollection up to the archive time (when `recollect` is given — see
+ * composePiSeed), then the tail. Writes the synthetic session file into
+ * `<piSessionsDir>/<name>/` and resolves to the new session id (the header id
+ * continueRecent will adopt), the archived-at time (for the gap note) and the recall
+ * count, or null if there's nothing to seed. Never rejects — any failure resolves null
+ * so session start is never blocked.
  */
 export function seedPiSession(
-  opts: WithRecollection<SeedPiOptions>,
-): Promise<SeededPiOutcome | null>;
-export function seedPiSession(opts: SeedPiOptions): SeededPiOutcome | null;
-export function seedPiSession(
-  opts: SeedPiOptions | WithRecollection<SeedPiOptions>,
-): SeededPiOutcome | null | Promise<SeededPiOutcome | null> {
-  const fail = (err: unknown) =>
-    log("mind", `session "${opts.name}": seeding failed, starting fresh:`, err);
-  const find = () => {
-    const source = findPiSeedSource(opts);
-    return source && { ...source, jsonl: readFileSync(source.sourcePath, "utf-8") };
-  };
-  if (hasRecollect(opts)) {
-    return failSoftAsync(async () => {
-      const source = find();
+  opts: SeedPiOptions & RecollectionOptions & SeedBudget,
+): Promise<SeededPiOutcome | null> {
+  return failSoftAsync(
+    async () => {
+      const source = findPiSeedSource(opts);
       if (!source) return null;
+      const jsonl = readFileSync(source.sourcePath, "utf-8");
       const before = new Date(source.archivedAt ?? Date.now());
-      const seeded = await composePiSeed(source.jsonl, {
+      const seeded = await composePiSeed(jsonl, {
         ...opts,
         sourcePath: source.sourcePath,
         before,
       });
       return seededPi(opts, source, seeded);
-    }, fail);
-  }
-  return failSoft(() => {
-    const source = find();
-    if (!source) return null;
-    const seeded = buildSeededPiTranscript(source.jsonl, {
-      ...opts,
-      sourcePath: source.sourcePath,
-    });
-    return seededPi(opts, source, seeded);
-  }, fail);
+    },
+    (err) => log("mind", `session "${opts.name}": seeding failed, starting fresh:`, err),
+  );
 }
 
 /**
@@ -644,7 +614,6 @@ type RotatePiOptions = {
   sessionsDir: string;
   name: string;
   sourcePath: string;
-  seedTokens: number;
   /** The model the mind is on; it sets the estimate's rate. */
   model?: string;
 };
@@ -653,10 +622,7 @@ type RotatePiOptions = {
 export type RotatedPiOutcome = { path: string; recallEntries: number };
 
 /** Write the rotated seed into the live dir and archive the rotated-out file; returns the new path. */
-function adoptRotatedPi(
-  opts: RotatePiOptions | WithRecollection<RotatePiOptions>,
-  seeded: SeededPiTranscript,
-): string {
+function adoptRotatedPi(opts: RotatePiOptions, seeded: SeededPiTranscript): string {
   const { sessionsDir, name, sourcePath } = opts;
   const destPath = writePiSeed(resolve(sessionsDir, name), seeded);
   // Archive the rotated-out session (mirrors sleep archival's dir layout). A
@@ -678,38 +644,29 @@ function adoptRotatedPi(
 }
 
 /**
- * Rotate a pi session in place at the context limit. Reads the live session file,
- * builds a budget-based tail (as many whole trailing turns as fit in `seedTokens`,
- * trimming an over-budget final turn), writes it as a new session file in the same
- * live dir, and — for persistent sessions — archives the rotated-out file so the full
- * transcript stays findable. Returns the new session file **path** (the caller
- * switches the running SessionManager to it), or null if rotation can't proceed (the
- * caller then falls back to a fresh session). Never throws.
+ * Rotate a pi session in place at the context limit. Reads the live session file, builds
+ * the mind's recollection (when `recollect` is given) and a budget-based tail (as many
+ * whole trailing turns as fit, trimming an over-budget final turn), writes it as a new
+ * session file in the same live dir, and — for persistent sessions — archives the
+ * rotated-out file so the full transcript stays findable. Resolves to the new session
+ * file's path (the caller switches the running SessionManager to it) and its recall
+ * count, or null if rotation can't proceed (the caller then falls back to a fresh
+ * session). Never rejects.
  *
- * Given a `recollect` source, it is async, seeds the mind's recollection ahead of the
- * tail, and resolves to the path plus how many recall entries it carries. The caller
- * must hold the session quiet across that await: the live transcript is read before it,
- * so anything appended while recollection loads never reaches the new session (the
- * claude agent drops its query before awaiting, for the same reason).
+ * The caller must hold the session quiet across the await: the live transcript is read
+ * before it, so anything appended while recollection loads never reaches the new session
+ * (the claude agent drops its query before awaiting, for the same reason).
  */
 export function rotatePiSession(
-  opts: WithRecollection<RotatePiOptions>,
-): Promise<RotatedPiOutcome | null>;
-export function rotatePiSession(opts: RotatePiOptions): string | null;
-export function rotatePiSession(
-  opts: RotatePiOptions | WithRecollection<RotatePiOptions>,
-): string | null | Promise<RotatedPiOutcome | null> {
-  const fail = (err: unknown) => log("mind", `session "${opts.name}": rotation failed:`, err);
-  if (hasRecollect(opts)) {
-    return failSoftAsync(async () => {
+  opts: RotatePiOptions & RecollectionOptions & SeedBudget,
+): Promise<RotatedPiOutcome | null> {
+  return failSoftAsync(
+    async () => {
       const jsonl = readFileSync(opts.sourcePath, "utf-8");
       const seeded = await composePiSeed(jsonl, { ...opts, before: new Date() });
       if (!seeded) return null;
       return { path: adoptRotatedPi(opts, seeded), recallEntries: seeded.recallEntries };
-    }, fail);
-  }
-  return failSoft(() => {
-    const seeded = buildSeededPiTranscript(readFileSync(opts.sourcePath, "utf-8"), opts);
-    return seeded ? adoptRotatedPi(opts, seeded) : null;
-  }, fail);
+    },
+    (err) => log("mind", `session "${opts.name}": rotation failed:`, err),
+  );
 }
