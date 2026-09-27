@@ -216,8 +216,10 @@ function compactLocal(at: number): string {
 }
 
 /**
- * Render a held message's wait into its content, and strip the marker so it never reaches
- * the mind as a raw field.
+ * Render the daemon's notes about a message — that it was held, deferred, or already
+ * peeked at — into its content, and strip their fields (with `inboundDeferred`), so none
+ * reaches the mind as a raw field. This is the single strip point for every daemon-only
+ * preface field on the way to the wire.
  *
  * The preface goes into `content` — not into a new payload field — because every template
  * already renders content verbatim, while a new field would be silently dropped by every
@@ -229,7 +231,21 @@ function compactLocal(at: number): string {
  * is arriving now, and does not assert why it stopped waiting.
  */
 export function withHeldPreface(payload: DeliveryPayload): WirePayload {
-  return withDeferredPreface(withHeldMarker(payload));
+  return withPeekedPreface(withDeferredPreface(withHeldMarker(payload)));
+}
+
+/**
+ * Tell the thread a released message lands in that the mind was already shown it by
+ * `peek` — the latest peek's thread and time — so it isn't met as new and answered twice
+ * (#1172). Informational only: nothing is held back.
+ */
+function withPeekedPreface(wire: WirePayload): WirePayload {
+  const { peeked, ...rest } = wire;
+  if (!peeked) return wire;
+  const line =
+    `[peeked — you peeked this from thread ${JSON.stringify(peeked.thread)} at ` +
+    `${compactLocal(peeked.at)}.]`;
+  return prependLine(rest, line);
 }
 
 /**
@@ -243,11 +259,7 @@ function withDeferredPreface(wire: WirePayload): WirePayload {
   const line =
     `[deferred — this arrived at ${compactLocal(deferred.at)}; your routes.json kept it ` +
     `for your next turn on this thread instead of waking you.]`;
-  if (typeof rest.content === "string") return { ...rest, content: `${line}\n${rest.content}` };
-  if (Array.isArray(rest.content)) {
-    return { ...rest, content: [{ type: "text", text: line }, ...rest.content] };
-  }
-  return { ...rest, content: [{ type: "text", text: line }, rest.content] };
+  return prependLine(rest, line);
 }
 
 function withHeldMarker(payload: DeliveryPayload): WirePayload {
@@ -266,16 +278,58 @@ function withHeldMarker(payload: DeliveryPayload): WirePayload {
   const line =
     `[held — this arrived at ${compactLocal(held.at)}, when ${whose} was reached, ` +
     `and waited rather than reaching you then. It is reaching you now.]`;
-  if (typeof rest.content === "string") {
-    return { ...rest, content: `${line}\n${rest.content}` };
+  return prependLine(rest, line);
+}
+
+/**
+ * Put a daemon-authored line ahead of a message's content, whatever its shape. Some other
+ * shape entirely is wrapped in blocks: that still delivers it and still carries the line,
+ * where returning it bare would hand the mind a message that looks brand new — the one
+ * outcome these prefaces exist to prevent.
+ */
+function prependLine(wire: WirePayload, line: string): WirePayload {
+  if (typeof wire.content === "string") return { ...wire, content: `${line}\n${wire.content}` };
+  if (Array.isArray(wire.content)) {
+    return { ...wire, content: [{ type: "text", text: line }, ...wire.content] };
   }
-  if (Array.isArray(rest.content)) {
-    return { ...rest, content: [{ type: "text", text: line }, ...rest.content] };
+  return { ...wire, content: [{ type: "text", text: line }, wire.content] };
+}
+
+/**
+ * A queue row's payload as the delivery path sends it: the stored payload, plus the
+ * latest peek from the row's own columns (#1172). Every reader that turns a queued row
+ * into a delivery goes through this (redrive, and the deferred riders), and every write
+ * of a payload back to a row drops it again (`storedPayload`), so the columns are its one
+ * source. A peek stamped after the release still reaches the wire — unless a delivery had
+ * already read the row. Throws like `parseDeliveryPayload`.
+ */
+export function queuedPayload(row: typeof deliveryQueue.$inferSelect): DeliveryPayload {
+  const payload = parseDeliveryPayload(row.payload);
+  if (row.peeked_at && row.peeked_thread) {
+    payload.peeked = {
+      thread: row.peeked_thread,
+      at: parseDbTimestamp(row.peeked_at).getTime(),
+    };
   }
-  // Some other shape entirely. Wrapping it in blocks still delivers it and still says it
-  // waited; returning it bare would strip the marker and hand the mind a message that
-  // looks brand new, which is the one outcome this function exists to prevent.
-  return { ...rest, content: [{ type: "text", text: line }, rest.content] };
+  return payload;
+}
+
+/** Whether message content is all text — everything a peek can show of it. */
+function isTextOnly(content: unknown): boolean {
+  return (
+    typeof content === "string" ||
+    (Array.isArray(content) && content.every((p) => (p as { type?: string }).type === "text"))
+  );
+}
+
+/**
+ * A payload as stored in a queue row. `peeked` is dropped: its source is the row's own
+ * columns, attached on read by `queuedPayload`, and a copy persisted by a hold or deferral
+ * would be a second source of truth (#1172).
+ */
+function storedPayload(payload: DeliveryPayload): string {
+  const { peeked: _peeked, ...stored } = payload;
+  return JSON.stringify(stored);
 }
 
 /** A DB timestamp: zone-less UTC `YYYY-MM-DD HH:MM:SS`, the shape `datetime('now')` writes. */
@@ -721,7 +775,7 @@ export class DeliveryManager {
           .set({
             status: "deferred",
             next_attempt_at: toDbTimestamp(freeAt),
-            payload: JSON.stringify(msg.payload),
+            payload: storedPayload(msg.payload),
           })
           .where(eq(deliveryQueue.id, msg.queueId!));
       }
@@ -779,7 +833,7 @@ export class DeliveryManager {
       if (this.inFlight.has(row.id)) continue;
       let payload: DeliveryPayload;
       try {
-        payload = parseDeliveryPayload(row.payload);
+        payload = queuedPayload(row);
       } catch (err) {
         // It can never be delivered, and left here it would be re-read on every delivery
         // to the thread. Dead-lettered, not deleted, so the row itself is still there to see.
@@ -964,7 +1018,7 @@ export class DeliveryManager {
 
       let payload: DeliveryPayload;
       try {
-        payload = parseDeliveryPayload(row.payload);
+        payload = queuedPayload(row);
       } catch (parseErr) {
         dlog.warn(
           `corrupt payload in delivery queue row ${row.id}, dropping`,
@@ -1697,7 +1751,7 @@ export class DeliveryManager {
   }
 
   /**
-   * Read the messages held on a channel without changing anything. Archived rows are
+   * Read the messages held on a channel. Archived rows are
    * included: a truncated or declined backlog stays readable, which is what the invite and
    * release-summary texts promise. Gated messages have no conversation, so `volute chat
    * read` can't show them — this is the only way to see them.
@@ -1705,10 +1759,17 @@ export class DeliveryManager {
    * Returns the most recent {@link PEEK_LIMIT} messages (oldest-first within that window)
    * alongside the true total, so peeking at a spam channel with a huge backlog can't dump
    * all of it into the mind's context — the same reason releases are truncated. #537
+   *
+   * Given a `reader` (the peeking mind or variant, from one of its threads), the held rows
+   * it was shown in full — addressed to it, and text only, since peek shows only text — are
+   * stamped with that thread and when (the latest peek overwrites), and arrive prefaced with
+   * that when their channel is routed (#1172). That note is the one thing a peek writes, and
+   * it never costs the read: a failed stamp is logged, not thrown.
    */
   async peekChannel(
     mindName: string,
     channel: string,
+    reader?: { name: string; thread: string },
   ): Promise<{
     channel: string;
     count: number;
@@ -1729,23 +1790,52 @@ export class DeliveryManager {
         ),
       );
 
-    const messages = rows
+    const shown = rows
       .sort((a, b) => a.id - b.id)
       .slice(-PEEK_LIMIT)
       .map((row) => {
-        let content = "";
+        let payload: DeliveryPayload | null = null;
         try {
-          content = extractTextContent(parseDeliveryPayload(row.payload).content);
-        } catch {
-          content = "(unreadable payload)";
-        }
-        return {
-          sender: row.sender,
-          content,
-          createdAt: row.created_at,
-          status: row.status,
-        };
+          payload = parseDeliveryPayload(row.payload);
+        } catch {}
+        return { row, payload };
       });
+
+    // Stamp the rows the reader was shown in full and that are addressed to it: a variant's
+    // peek marks rows sent to the variant, the parent's marks rows sent to the parent
+    // (`target_mind` null or its name). Peek shows text only, so a message with any other
+    // part was not shown in full.
+    const ids = reader
+      ? shown
+          .filter(
+            ({ row, payload }) =>
+              row.status === "gated" &&
+              (row.target_mind ?? baseName) === reader.name &&
+              payload != null &&
+              isTextOnly(payload.content),
+          )
+          .map(({ row }) => row.id)
+      : [];
+    if (reader && ids.length > 0) {
+      try {
+        // Not serialized with releases — a peek never waits behind one — and not
+        // conditioned on `gated`: a release may have promoted a row since the read above,
+        // and the mind has still been shown it. A row already delivered is gone.
+        await db
+          .update(deliveryQueue)
+          .set({ peeked_at: sql`datetime('now')`, peeked_thread: reader.thread })
+          .where(inArray(deliveryQueue.id, ids));
+      } catch (err) {
+        dlog.warn(`failed to record peek of ${channel} for ${baseName}`, log.errorData(err));
+      }
+    }
+
+    const messages = shown.map(({ row, payload }) => ({
+      sender: row.sender,
+      content: payload ? extractTextContent(payload.content) : "(unreadable payload)",
+      createdAt: row.created_at,
+      status: row.status,
+    }));
 
     // "No held messages on garden" is a confident answer to the wrong question when the
     // caller meant "#garden". Peek doesn't refuse — reading is harmless and an empty
@@ -2077,7 +2167,7 @@ export class DeliveryManager {
       payload.held = { at: arrived ?? Date.now(), scope: hold.scope, until: hold.until };
       await db
         .update(deliveryQueue)
-        .set({ status: "held", payload: JSON.stringify(payload) })
+        .set({ status: "held", payload: storedPayload(payload) })
         .where(eq(deliveryQueue.id, queueId));
     } catch (err) {
       // The row stays `pending` and is re-offered on the next sweep, where this is
@@ -2946,7 +3036,7 @@ export class DeliveryManager {
           channel: payload.channel ?? null,
           sender: payload.sender ?? null,
           status,
-          payload: JSON.stringify(payload),
+          payload: storedPayload(payload),
           next_attempt_at: until != null ? toDbTimestamp(until) : null,
         })
         .returning({ id: deliveryQueue.id });

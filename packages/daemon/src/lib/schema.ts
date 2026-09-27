@@ -192,6 +192,11 @@ export const deliveryQueue = sqliteTable(
     // earliest time the row is eligible for a retry (null = deliver ASAP).
     attempts: integer("attempts").notNull().default(0),
     next_attempt_at: text("next_attempt_at"),
+    // The latest time the mind itself was shown this gated row by `channels peek`, and the
+    // thread it peeked from. Overwritten on each peek; read at delivery to preface the
+    // message so it isn't met as new (#1172).
+    peeked_at: text("peeked_at"),
+    peeked_thread: text("peeked_thread"),
     created_at: text("created_at").notNull().default(sql`(datetime('now'))`),
   },
   (table) => [

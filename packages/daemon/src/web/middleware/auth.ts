@@ -33,6 +33,8 @@ export type AuthEnv = {
   Variables: {
     user: User;
     mindSession?: string;
+    /** The credential was one the daemon minted for a script it spawned. */
+    viaScript?: boolean;
     /**
      * The authority this request actually runs at. `user` stays the authenticated
      * account so the audit trail keeps saying who made the call; `effective` is what
@@ -247,6 +249,7 @@ export const authMiddleware = createMiddleware<AuthEnv>(async (c, next) => {
 
   c.set("user", principal.user);
   if (principal.mindSession) c.set("mindSession", principal.mindSession);
+  if (principal.viaScript) c.set("viaScript", true);
   c.set("effective", await resolveEffective(principal));
   await next();
 });

@@ -379,7 +379,7 @@ Sender: \${sender}
 \${details}Preview: \${preview}
 
 To read what's being held: volute chat channels peek "\${channel}"
-To start hearing this channel: volute chat channels accept "\${channel}" — routes it and delivers the \${limit} most recent held messages; older ones stay readable via peek.
+To start hearing this channel: volute chat channels accept "\${channel}" — routes it and delivers the \${limit} most recent held messages; older ones stay readable via peek. Ones you peeked at arrive marked with the thread you peeked from and when.
 To stop hearing about it: volute chat channels decline "\${channel}"
 Once you hear it, how it wakes you is yours to shape — batched, deferred, or rate-limited — in its thread's settings in .config/routes.json (see the volute-mind skill's routing reference).`,
 };

@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { relative, resolve } from "node:path";
 import { zValidator } from "@hono/zod-validator";
+import { isLocalMind } from "@volute/api/user-type";
 import { and, desc, eq, gte, lte, type SQL, sql } from "drizzle-orm";
 import { type Context, Hono } from "hono";
 import { z } from "zod";
@@ -1829,14 +1830,24 @@ const app = new Hono<AuthEnv>()
       }
     },
   )
-  // Read the messages held on a gated channel, without changing anything. Gated rows have no
-  // conversation, so `volute chat read` can't reach them.
+  // Read the messages held on a gated channel. Gated rows have no conversation, so `volute
+  // chat read` can't reach them. One side effect: when the mind itself peeks, the rows it
+  // was shown are noted as peeked from its thread, so they arrive labeled on release (#1172).
   .get("/:name/gates/peek", requireSelf(), async (c) => {
     const name = c.req.param("name");
     const channel = c.req.query("channel")?.trim();
     if (!channel) return c.json({ error: "channel required" }, 400);
     try {
-      return c.json(await getDeliveryManager().peekChannel(name, channel));
+      // Only the mind itself peeking from one of its threads counts — not a host on the
+      // dashboard, nor a script whose output may never reach the mind. peekChannel stamps
+      // only the rows addressed to this reader (a variant's own, or the parent's).
+      const user = c.get("user");
+      const thread = c.get("mindSession");
+      const reader =
+        isLocalMind(user) && thread && !c.get("viaScript")
+          ? { name: user.username, thread }
+          : undefined;
+      return c.json(await getDeliveryManager().peekChannel(name, channel, reader));
     } catch (err) {
       // Never answer "nothing is held" for a subsystem that simply isn't up — a mind
       // checking whether messages are stranded would read that as a confident no.
