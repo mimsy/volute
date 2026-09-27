@@ -11,7 +11,9 @@ export type TurnContext = {
 /** The mutable per-session state this decision reads and updates. */
 export type TurnContextState = {
   eventNoteFired: boolean;
-  firstMessagePerChannel: Set<string>;
+  /** routes.json `replyInstructions`: "once" per session, "always", or "never". */
+  replyInstructionsMode: "once" | "always" | "never";
+  replyInstructionsFired: boolean;
 };
 
 /**
@@ -24,8 +26,11 @@ export type TurnContextState = {
  * a message nobody sent (observed: the seed "lucy" spent her first turn on exactly this).
  *
  * The event note fires once per session, not once per event: it states a standing fact about
- * events (also in VOLUTE.md), and it is deliberately NOT keyed on `firstMessagePerChannel`,
- * whose key is a distinct channel per event id and so would fire on every single event.
+ * events (also in VOLUTE.md), and each event arrives on a distinct channel, so keying it on
+ * the channel would fire it on every single event.
+ *
+ * Reply instructions follow the route's `replyInstructions`, exactly as the claude template's
+ * hook does (hooks/reply-instructions.ts): "once" per session, "always", or "never" (#1199).
  */
 export function turnContextFor(
   meta: ChannelMeta,
@@ -40,8 +45,10 @@ export function turnContextFor(
     return { content: prompts.event_instructions, source: "event-instructions" };
   }
 
-  if (!channel || session.firstMessagePerChannel.has(channel)) return null;
-  session.firstMessagePerChannel.add(channel);
+  if (session.replyInstructionsMode === "never") return null;
+  if (session.replyInstructionsMode === "once" && session.replyInstructionsFired) return null;
+  if (!channel) return null;
+  session.replyInstructionsFired = true;
 
   const content =
     meta.sender === "volute"

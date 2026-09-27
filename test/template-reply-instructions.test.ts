@@ -197,7 +197,11 @@ describe("codex template: reply instructions vs system events", () => {
     prompts = loadPrompts();
   });
 
-  const newSession = () => ({ eventNoteFired: false, firstMessagePerChannel: new Set<string>() });
+  const newSession = (replyInstructionsMode: "once" | "always" | "never" = "once") => ({
+    eventNoteFired: false,
+    replyInstructionsMode,
+    replyInstructionsFired: false,
+  });
 
   it("an event turn gets the event note, never reply instructions", () => {
     const session = newSession();
@@ -225,7 +229,7 @@ describe("codex template: reply instructions vs system events", () => {
     assert.ok(
       turnContextFor({ channel: "event:orientation:1" } as never, session, prompts as never),
     );
-    // A distinct channel per event id: keying this on firstMessagePerChannel would re-fire here.
+    // A distinct channel per event id: keying this on the channel would re-fire here.
     assert.equal(
       turnContextFor({ channel: "event:schedule:42" } as never, session, prompts as never),
       null,
@@ -254,5 +258,41 @@ describe("codex template: reply instructions vs system events", () => {
     );
     assert.equal(ctx?.source, "reply-instructions");
     assert.ok(ctx?.content.includes("@alice"));
+  });
+
+  describe("honours the route's replyInstructions, as claude does (#1199)", () => {
+    const alice = { channel: "@alice", sender: "alice" } as never;
+    const bob = { channel: "@bob", sender: "bob" } as never;
+
+    it('"once" fires on the session\'s first message only, not once per channel', () => {
+      const session = newSession("once");
+      assert.equal(turnContextFor(alice, session, prompts as never)?.source, "reply-instructions");
+      assert.equal(turnContextFor(alice, session, prompts as never), null);
+      assert.equal(turnContextFor(bob, session, prompts as never), null);
+    });
+
+    it('"always" fires on every message', () => {
+      const session = newSession("always");
+      assert.ok(turnContextFor(alice, session, prompts as never)?.content.includes("@alice"));
+      assert.ok(turnContextFor(alice, session, prompts as never)?.content.includes("@alice"));
+      assert.ok(turnContextFor(bob, session, prompts as never)?.content.includes("@bob"));
+    });
+
+    it('"never" suppresses them, a system message\'s note included', () => {
+      const session = newSession("never");
+      assert.equal(turnContextFor(alice, session, prompts as never), null);
+      assert.equal(
+        turnContextFor({ channel: "@alice", sender: "volute" } as never, session, prompts as never),
+        null,
+      );
+    });
+
+    it('"never" still leaves the event note', () => {
+      const session = newSession("never");
+      assert.equal(
+        turnContextFor({ channel: "event:schedule:1" } as never, session, prompts as never)?.source,
+        "event-instructions",
+      );
+    });
   });
 });

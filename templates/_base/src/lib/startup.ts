@@ -65,10 +65,9 @@ export type MindConfig = {
   /**
    * Session continuity across seams (wake/restart, rotation, cold reset). A seeded
    * session carries the tail of the previous session's transcript (up to `seedTokens`
-   * estimated tokens) so the conversation continues. The claude template seeds the
-   * mind's recollection ahead of the tail; unset, its tail is 10000 when recollection
-   * arrived and 30000 when it didn't. pi and codex seed the tail alone and default to
-   * 30000. 0 disables.
+   * estimated tokens) so the conversation continues, with the mind's recollection seeded
+   * ahead of it. Unset, the tail is 10000 when recollection arrived and 30000 when it
+   * didn't. 0 disables.
    */
   continuity?: { seedTokens?: number };
   /**
@@ -82,11 +81,11 @@ export type MindConfig = {
     /** Read by the resonance skill's pre-prompt hook, not by the server. */
     recall?: "auto" | "on-demand" | "off";
     /**
-     * Recollection at seams (claude template). `enabled` (default true): seed the mind's
-     * consolidated memories ahead of the verbatim tail; false seeds the tail only.
-     * `coldResetMinutes` (default 55; 0 disables): idle minutes after which a persistent
-     * session is re-seeded before its next turn, since past the prompt cache's lifetime
-     * that turn would rewrite the whole context anyway. Only a session bigger than its
+     * Recollection at seams. `enabled` (default true): seed the mind's consolidated
+     * memories ahead of the verbatim tail; false seeds the tail only.
+     * `coldResetMinutes` (claude template; default 55; 0 disables): idle minutes after
+     * which a persistent session is re-seeded before its next turn, since past the prompt
+     * cache's lifetime that turn would rewrite the whole context anyway. Only a session bigger than its
      * seed resets. With `sessionIdleMinutes: 0` (never reap) a live session is never
      * cold-reset; only one re-created after a restart is.
      */

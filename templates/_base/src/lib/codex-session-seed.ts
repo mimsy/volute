@@ -49,9 +49,7 @@ import { log } from "./logger.js";
 import { parseArchiveTimestamp } from "./seed-note.js";
 import {
   archivePointerTimestamp,
-  failSoft,
   failSoftAsync,
-  hasRecollect,
   IMAGE_TOKENS,
   OPENAI_CHARS_PER_TOKEN,
   planTail,
@@ -64,17 +62,9 @@ import {
   recallTimestamp,
   type SeedBudget,
   type SeedLine,
-  TAIL_ONLY_SEED_TOKENS,
   type TailPlan,
   TRIMMED_TURN_MARKER,
-  type WithRecollection,
 } from "./session-seed.js";
-
-/**
- * Default seed budget when config omits continuity.seedTokens: the codex template
- * doesn't fetch recollection at its seams yet, so the tail carries continuity alone.
- */
-export const DEFAULT_SEED_TOKENS = TAIL_ONLY_SEED_TOKENS;
 
 // Archived pointers are named `<name>-<timestamp>.json`, where the timestamp is
 // `new Date().toISOString().replace(/[:.]/g, "-").slice(0, 16)` → `YYYY-MM-DDTHH-MM`
@@ -506,13 +496,13 @@ export type SeededThreadOutcome = {
  * the auth mode the mind will resume under. It is searched first for the source rollout
  * too, so a chain seeded there stays findable. Omitted, the seed goes beside its source.
  */
-type SeedCodexOptions = {
-  mindDir: string;
-  name: string;
-  seedTokens: number;
-  now?: Date;
-  sessionsRoot?: string;
-};
+type SeedCodexOptions = RecollectionOptions &
+  SeedBudget & {
+    mindDir: string;
+    name: string;
+    now?: Date;
+    sessionsRoot?: string;
+  };
 
 /** Where a seed comes from: the rollout of the newest archived thread for `name`. */
 function findCodexSeedSource(opts: {
@@ -581,21 +571,15 @@ function seededCodex(
  * new thread id plus the archived-at time (for the gap note), or null if there's nothing
  * to seed. Never throws — any failure returns null so session start is never blocked.
  *
- * Given a `recollect` source, it is async: the mind's recollection up to the archive
- * time goes ahead of the tail; without one it seeds the tail alone, synchronously.
+ * The mind's recollection up to the archive time goes ahead of the tail when `recollect`
+ * is given; without it, or when it fails, the tail is seeded alone.
  */
-export function seedCodexSession(
-  opts: WithRecollection<SeedCodexOptions>,
-): Promise<SeededThreadOutcome | null>;
-export function seedCodexSession(opts: SeedCodexOptions): SeededThreadOutcome | null;
-export function seedCodexSession(
-  opts: SeedCodexOptions | WithRecollection<SeedCodexOptions>,
-): SeededThreadOutcome | null | Promise<SeededThreadOutcome | null> {
+export async function seedCodexSession(
+  opts: SeedCodexOptions,
+): Promise<SeededThreadOutcome | null> {
   const now = opts.now ?? new Date();
-  const fail = (err: unknown) =>
-    log("mind", `session "${opts.name}": codex seeding failed, starting fresh:`, err);
-  if (hasRecollect(opts)) {
-    return failSoftAsync(async () => {
+  return failSoftAsync(
+    async () => {
       const source = readSeamSource(findCodexSeedSource(opts), now);
       if (!source) return null;
       const before = new Date(source.archivedAt ?? now.getTime());
@@ -604,14 +588,9 @@ export function seedCodexSession(
         before,
       });
       return seededCodex(opts, source, seeded, now);
-    }, fail);
-  }
-  return failSoft(() => {
-    const source = readSeamSource(findCodexSeedSource(opts), now);
-    if (!source) return null;
-    const seeded = buildSeededRollout(source.jsonl, source.threadId, opts.seedTokens, now);
-    return seededCodex(opts, source, seeded, now);
-  }, fail);
+    },
+    (err) => log("mind", `session "${opts.name}": codex seeding failed, starting fresh:`, err),
+  );
 }
 
 /**
@@ -659,22 +638,22 @@ export function writeCodexRotationArchivePointer(
   writeFileSync(dest, JSON.stringify({ threadId }));
 }
 
-type RotateCodexOptions = {
-  mindDir: string;
-  name: string;
-  oldThreadId: string;
-  seedTokens: number;
-  now?: Date;
-  /** Where codex reads rollouts on resume: searched first, and the seed is written there. */
-  sessionsRoot?: string;
-};
+type RotateCodexOptions = RecollectionOptions &
+  SeedBudget & {
+    mindDir: string;
+    name: string;
+    oldThreadId: string;
+    now?: Date;
+    /** Where codex reads rollouts on resume: searched first, and the seed is written there. */
+    sessionsRoot?: string;
+  };
 
-/** A rotation with recollection: the new thread id and how many recall entries it carries. */
+/** A rotation: the new thread id and how many recall entries it carries. */
 export type RotatedCodexOutcome = { threadId: string; recallEntries: number };
 
 /** Write the rotated seed and archive the rotated-out thread's pointer. */
 function adoptRotatedCodex(
-  opts: RotateCodexOptions | WithRecollection<RotateCodexOptions>,
+  opts: RotateCodexOptions,
   sourcePath: string,
   seeded: SeededRollout,
   now: Date,
@@ -700,32 +679,23 @@ function adoptRotatedCodex(
  * pointer so the full transcript stays findable. Returns the new thread id, or null if
  * rotation can't proceed (the caller then leaves the old thread in place). Never throws.
  *
- * Given a `recollect` source, it is async, seeds the mind's recollection ahead of the
- * tail, and resolves to the thread id plus how many recall entries it carries. The caller
- * must hold the session quiet across that await: the live transcript is read before it,
+ * Given a `recollect` source, the mind's recollection goes ahead of the tail. The caller
+ * must hold the session quiet across the await: the live transcript is read before it,
  * so anything appended while recollection loads never reaches the new session (the
  * claude agent drops its query before awaiting, for the same reason).
  */
-export function rotateCodexSession(
-  opts: WithRecollection<RotateCodexOptions>,
-): Promise<RotatedCodexOutcome | null>;
-export function rotateCodexSession(opts: RotateCodexOptions): string | null;
-export function rotateCodexSession(
-  opts: RotateCodexOptions | WithRecollection<RotateCodexOptions>,
-): string | null | Promise<RotatedCodexOutcome | null> {
+export async function rotateCodexSession(
+  opts: RotateCodexOptions,
+): Promise<RotatedCodexOutcome | null> {
   const now = opts.now ?? new Date();
-  const fail = (err: unknown) => log("mind", `session "${opts.name}": rotation failed:`, err);
-  // The live rollout; not found → leave the old thread.
-  const find = () => {
-    const sourcePath = findCodexSessionFile(opts.oldThreadId, opts.mindDir, opts.sessionsRoot);
-    return readSeamSource(
-      sourcePath ? { oldThreadId: opts.oldThreadId, sourcePath, archivedAt: null } : null,
-      now,
-    );
-  };
-  if (hasRecollect(opts)) {
-    return failSoftAsync(async () => {
-      const source = find();
+  return failSoftAsync(
+    async () => {
+      // The live rollout; not found → leave the old thread.
+      const sourcePath = findCodexSessionFile(opts.oldThreadId, opts.mindDir, opts.sessionsRoot);
+      const source = readSeamSource(
+        sourcePath ? { oldThreadId: opts.oldThreadId, sourcePath, archivedAt: null } : null,
+        now,
+      );
       if (!source) return null;
       const seeded = await composeRolloutSeed(source.jsonl, source.threadId, now, {
         ...opts,
@@ -734,14 +704,7 @@ export function rotateCodexSession(
       if (!seeded) return null;
       adoptRotatedCodex(opts, source.sourcePath, seeded, now);
       return { threadId: seeded.threadId, recallEntries: seeded.recallEntries };
-    }, fail);
-  }
-  return failSoft(() => {
-    const source = find();
-    if (!source) return null;
-    const seeded = buildSeededRollout(source.jsonl, source.threadId, opts.seedTokens, now);
-    if (!seeded) return null;
-    adoptRotatedCodex(opts, source.sourcePath, seeded, now);
-    return seeded.threadId;
-  }, fail);
+    },
+    (err) => log("mind", `session "${opts.name}": rotation failed:`, err),
+  );
 }

@@ -440,9 +440,9 @@ describe("seedCodexSession", () => {
 
   const rollout = [sessionMeta(OLD), message("user", "hello"), message("assistant", "hi there")];
 
-  it("seeds a fresh persistent session: writes a rollout under today's date and returns its id + archived-at", () => {
+  it("seeds a fresh persistent session: writes a rollout under today's date and returns its id + archived-at", async () => {
     const mindDir = setup(OLD, rollout);
-    const seeded = seedCodexSession({ mindDir, name: "main", seedTokens: 30000, now: NOW });
+    const seeded = await seedCodexSession({ mindDir, name: "main", seedTokens: 30000, now: NOW });
     assert.ok(seeded);
     assert.notEqual(seeded.threadId, OLD);
     // Archived-at parsed from the pointer filename (`main-2026-07-18T10-00.json`).
@@ -464,23 +464,29 @@ describe("seedCodexSession", () => {
     assert.equal(objs[1].payload.content[0].text, "hello");
   });
 
-  it("returns null when seedTokens is 0 (disabled)", () => {
+  it("returns null when seedTokens is 0 (disabled)", async () => {
     const mindDir = setup(OLD, rollout);
-    assert.equal(seedCodexSession({ mindDir, name: "main", seedTokens: 0, now: NOW }), null);
+    assert.equal(await seedCodexSession({ mindDir, name: "main", seedTokens: 0, now: NOW }), null);
   });
 
-  it("returns null for an ephemeral new-* session", () => {
+  it("returns null for an ephemeral new-* session", async () => {
     const mindDir = setup(OLD, rollout);
-    assert.equal(seedCodexSession({ mindDir, name: "new-abc", seedTokens: 30000, now: NOW }), null);
+    assert.equal(
+      await seedCodexSession({ mindDir, name: "new-abc", seedTokens: 30000, now: NOW }),
+      null,
+    );
   });
 
-  it("returns null when there is no archived pointer", () => {
+  it("returns null when there is no archived pointer", async () => {
     const mindDir = mkdtempSync(resolve(tmpdir(), "codex-seed-none-"));
     mkdirSync(resolve(mindDir, ".mind", "codex-sessions"), { recursive: true });
-    assert.equal(seedCodexSession({ mindDir, name: "main", seedTokens: 30000, now: NOW }), null);
+    assert.equal(
+      await seedCodexSession({ mindDir, name: "main", seedTokens: 30000, now: NOW }),
+      null,
+    );
   });
 
-  it("returns null when the archived rollout no longer exists", () => {
+  it("returns null when the archived rollout no longer exists", async () => {
     const mindDir = mkdtempSync(resolve(tmpdir(), "codex-seed-orphan-"));
     const archive = resolve(mindDir, ".mind", "codex-sessions", "archive");
     mkdirSync(archive, { recursive: true });
@@ -488,10 +494,13 @@ describe("seedCodexSession", () => {
       resolve(archive, "main-2026-07-18T10-00.json"),
       JSON.stringify({ threadId: "019f-missing" }),
     );
-    assert.equal(seedCodexSession({ mindDir, name: "main", seedTokens: 30000, now: NOW }), null);
+    assert.equal(
+      await seedCodexSession({ mindDir, name: "main", seedTokens: 30000, now: NOW }),
+      null,
+    );
   });
 
-  it("writes the seed into the source rollout's sessions root (~/.codex case)", () => {
+  it("writes the seed into the source rollout's sessions root (~/.codex case)", async () => {
     // When CODEX_HOME is unset, Codex reads/writes rollouts under ~/.codex/sessions,
     // so findCodexSessionFile locates the old rollout there — the seed must land in
     // that same root, not under mindDir/.mind/codex/sessions.
@@ -512,9 +521,9 @@ describe("seedCodexSession", () => {
 
     const prevHome = process.env.HOME;
     process.env.HOME = home;
-    let seeded: ReturnType<typeof seedCodexSession>;
+    let seeded: Awaited<ReturnType<typeof seedCodexSession>>;
     try {
-      seeded = seedCodexSession({ mindDir, name: "main", seedTokens: 30000, now: NOW });
+      seeded = await seedCodexSession({ mindDir, name: "main", seedTokens: 30000, now: NOW });
     } finally {
       process.env.HOME = prevHome;
     }
@@ -577,15 +586,17 @@ describe("rotateCodexSession", () => {
     return resolve(mindDir, ".mind", "codex", "sessions", y, mo, d);
   }
 
-  it("writes a budget tail rollout + archives the old thread", () => {
+  it("writes a budget tail rollout + archives the old thread", async () => {
     const mindDir = setup(OLD, rollout);
-    const newId = rotateCodexSession({
-      mindDir,
-      name: "main",
-      oldThreadId: OLD,
-      seedTokens: 4, // under one turn's ~5 estimated tokens
-      now: NOW,
-    });
+    const newId = (
+      await rotateCodexSession({
+        mindDir,
+        name: "main",
+        oldThreadId: OLD,
+        seedTokens: 4, // under one turn's ~5 estimated tokens
+        now: NOW,
+      })
+    )?.threadId;
     assert.ok(newId);
     assert.notEqual(newId, OLD);
     // New rollout under today's date, named with the new thread id.
@@ -605,15 +616,17 @@ describe("rotateCodexSession", () => {
     assert.equal(archived?.threadId, OLD);
   });
 
-  it("keeps as many whole trailing turns as fit the budget", () => {
+  it("keeps as many whole trailing turns as fit the budget", async () => {
     const mindDir = setup(OLD, rollout);
-    const newId = rotateCodexSession({
-      mindDir,
-      name: "main",
-      oldThreadId: OLD,
-      seedTokens: 30000,
-      now: NOW,
-    });
+    const newId = (
+      await rotateCodexSession({
+        mindDir,
+        name: "main",
+        oldThreadId: OLD,
+        seedTokens: 30000,
+        now: NOW,
+      })
+    )?.threadId;
     assert.ok(newId);
     // Budget large enough to keep both turns.
     const files = readdirSync(todayDir(mindDir));
@@ -626,31 +639,33 @@ describe("rotateCodexSession", () => {
     assert.equal(msgs[0].payload.content[0].text, "turn one");
   });
 
-  it("rotates an ephemeral new-* session but writes no archive pointer", () => {
+  it("rotates an ephemeral new-* session but writes no archive pointer", async () => {
     const mindDir = setup(OLD, rollout);
-    const newId = rotateCodexSession({
-      mindDir,
-      name: "new-abc",
-      oldThreadId: OLD,
-      seedTokens: 30000,
-      now: NOW,
-    });
+    const newId = (
+      await rotateCodexSession({
+        mindDir,
+        name: "new-abc",
+        oldThreadId: OLD,
+        seedTokens: 30000,
+        now: NOW,
+      })
+    )?.threadId;
     assert.ok(newId);
     assert.equal(readdirSync(todayDir(mindDir)).length, 1);
     // No archive pointer for ephemeral sessions.
     assert.equal(existsSync(resolve(mindDir, ".mind", "codex-sessions", "archive")), false);
   });
 
-  it("returns null when the live rollout can't be found", () => {
+  it("returns null when the live rollout can't be found", async () => {
     const mindDir = mkdtempSync(resolve(tmpdir(), "codex-rot-missing-"));
-    const newId = rotateCodexSession({
+    const rotated = await rotateCodexSession({
       mindDir,
       name: "main",
       oldThreadId: "019f-missing",
       seedTokens: 30000,
       now: NOW,
     });
-    assert.equal(newId, null);
+    assert.equal(rotated, null);
   });
 });
 
@@ -1039,28 +1054,6 @@ describe("seedCodexSession / rotateCodexSession — recollection", () => {
   });
 });
 
-describe("seedCodexSession — recollection is chosen by value", () => {
-  it("an undefined recollect runs the sync path", () => {
-    const mindDir = mkdtempSync(resolve(tmpdir(), "codex-sync-mind-"));
-    const archive = resolve(mindDir, ".mind", "codex-sessions", "archive");
-    mkdirSync(archive, { recursive: true });
-    writeFileSync(
-      resolve(archive, "main-2026-07-18T10-00.json"),
-      JSON.stringify({ threadId: OLD }),
-    );
-    const rolloutDir = resolve(mindDir, ".mind", "codex", "sessions", "2026", "07", "13");
-    mkdirSync(rolloutDir, { recursive: true });
-    writeFileSync(
-      resolve(rolloutDir, `rollout-2026-07-13T22-06-52-${OLD}.jsonl`),
-      `${[sessionMeta(OLD), message("user", "hello")].join("\n")}\n`,
-    );
-    const opts = { mindDir, name: "main", seedTokens: 30000, now: NOW, recollect: undefined };
-    const seeded = seedCodexSession(opts);
-    assert.ok(seeded && !(seeded instanceof Promise));
-    assert.equal(seeded.recallEntries, 0);
-  });
-});
-
 describe("seedCodexSession / rotateCodexSession — sessionsRoot", () => {
   function setup() {
     const mindDir = mkdtempSync(resolve(tmpdir(), "codex-root-mind-"));
@@ -1087,9 +1080,9 @@ describe("seedCodexSession / rotateCodexSession — sessionsRoot", () => {
     return resolve(root, y, mo, d);
   }
 
-  it("a seed is written under the given root, not beside its source", () => {
+  it("a seed is written under the given root, not beside its source", async () => {
     const { mindDir, otherRoot } = setup();
-    const seeded = seedCodexSession({
+    const seeded = await seedCodexSession({
       mindDir,
       name: "main",
       seedTokens: 30000,
@@ -1103,16 +1096,18 @@ describe("seedCodexSession / rotateCodexSession — sessionsRoot", () => {
     assert.equal(existsSync(dayDir(resolve(mindDir, ".mind", "codex", "sessions"))), false);
   });
 
-  it("a rotation is written under the given root, not beside its source", () => {
+  it("a rotation is written under the given root, not beside its source", async () => {
     const { mindDir, otherRoot } = setup();
-    const threadId = rotateCodexSession({
-      mindDir,
-      name: "main",
-      oldThreadId: OLD,
-      seedTokens: 30000,
-      now: NOW,
-      sessionsRoot: otherRoot,
-    });
+    const threadId = (
+      await rotateCodexSession({
+        mindDir,
+        name: "main",
+        oldThreadId: OLD,
+        seedTokens: 30000,
+        now: NOW,
+        sessionsRoot: otherRoot,
+      })
+    )?.threadId;
     assert.ok(threadId);
     assert.ok(readdirSync(dayDir(otherRoot))[0].includes(threadId));
     assert.equal(existsSync(dayDir(resolve(mindDir, ".mind", "codex", "sessions"))), false);
@@ -1185,10 +1180,13 @@ describe("seedCodexSession / rotateCodexSession — a seed in sessionsRoot stays
     return { mindDir, sessionsRoot };
   }
 
-  it("seeds from a rollout that lives only in sessionsRoot", () => {
+  it("seeds from a rollout that lives only in sessionsRoot", async () => {
     const { mindDir, sessionsRoot } = setupIn(".mind/codex-apikey/sessions");
-    assert.equal(seedCodexSession({ mindDir, name: "main", seedTokens: 30000, now: NOW }), null);
-    const seeded = seedCodexSession({
+    assert.equal(
+      await seedCodexSession({ mindDir, name: "main", seedTokens: 30000, now: NOW }),
+      null,
+    );
+    const seeded = await seedCodexSession({
       mindDir,
       name: "main",
       seedTokens: 30000,
@@ -1198,9 +1196,9 @@ describe("seedCodexSession / rotateCodexSession — a seed in sessionsRoot stays
     assert.ok(seeded);
   });
 
-  it("rotates a thread that was seeded into sessionsRoot", () => {
+  it("rotates a thread that was seeded into sessionsRoot", async () => {
     const { mindDir, sessionsRoot } = setupIn(".mind/codex-apikey/sessions");
-    const seeded = seedCodexSession({
+    const seeded = await seedCodexSession({
       mindDir,
       name: "main",
       seedTokens: 30000,
@@ -1208,7 +1206,7 @@ describe("seedCodexSession / rotateCodexSession — a seed in sessionsRoot stays
       sessionsRoot,
     });
     assert.ok(seeded);
-    const rotated = rotateCodexSession({
+    const rotated = await rotateCodexSession({
       mindDir,
       name: "main",
       oldThreadId: seeded.threadId,

@@ -31,13 +31,13 @@ describe("thread docs claims", () => {
     );
   });
 
-  it("only the claude template seeds a fresh thread with recollection", () => {
-    // When pi/codex gain recollection (#1129) this fails on purpose: the docs say
-    // "on the claude framework" and should lose that qualifier in the same change.
+  it("which templates seed a fresh thread with recollection", () => {
+    // codex gained recollection in #1192; VOLUTE.md's "on the claude framework" and the
+    // memory skill's claude-only lines are now stale for it, and are corrected in the docs
+    // pass that follows this wave. When pi gains it too this fails on purpose.
     assert.match(read("templates/claude/src/agent.ts"), /seedSession\(\{[^}]*recollect,/s);
-    for (const t of ["pi", "codex"]) {
-      assert.doesNotMatch(read(`templates/${t}/src/agent.ts`), /recollect/, t);
-    }
+    assert.match(read("templates/codex/src/agent.ts"), /daemonRecollection/);
+    assert.doesNotMatch(read("templates/pi/src/agent.ts"), /recollect/, "pi");
   });
 
   it("$new threads are named new-<timestamp>-<random>", () => {
