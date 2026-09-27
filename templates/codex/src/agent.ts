@@ -559,9 +559,12 @@ export function createMind(options: {
 
   // --- Event broadcasting ---
 
+  /** To this session's listeners, tagged with the current message unless the event names one. */
   function broadcast(session: CodexSession, event: VoluteEvent) {
     const tagged =
-      session.currentMessageId != null ? { ...event, messageId: session.currentMessageId } : event;
+      event.messageId === undefined && session.currentMessageId != null
+        ? { ...event, messageId: session.currentMessageId }
+        : event;
     for (const listener of session.listeners) {
       try {
         listener(tagged);
@@ -583,8 +586,9 @@ export function createMind(options: {
     await emit(session, { type: "error", content: message });
   }
 
-  function emitDone(session: CodexSession) {
-    broadcast(session, { type: "done" });
+  /** One `done` for the daemon, and one for each message the turn absorbed. */
+  function emitDone(session: CodexSession, messageIds: string[]) {
+    for (const messageId of messageIds) broadcast(session, { type: "done", messageId });
     emit(session, { type: "done" });
   }
 
@@ -610,35 +614,53 @@ export function createMind(options: {
    */
   let turnsInFlight = 0;
 
-  async function runTurn(
-    session: CodexSession,
-    text: string,
-    images: ImagePart[],
-    meta: HandlerMeta,
-  ) {
-    turnsInFlight++;
-    try {
-      await runTurnBody(session, text, images, meta);
-    } finally {
-      turnsInFlight--;
-    }
-    // Commit even after a failed turn: whatever it wrote to disk is still the mind's work.
-    if (turnsInFlight === 0) await commitHomeChanges();
+  /**
+   * Run one turn: everything queued now, and whatever arrives while it runs, with a single
+   * `done` at the end (#1200).
+   *
+   * The daemon holds the mind's turn slot from a delivery until that `done`, and delivers a
+   * message for the thread already mid-turn straight in, trusting it to join that turn —
+   * claude folds it into the running SDK stream. `codex exec` takes its whole input up front
+   * (the SDK writes stdin and closes it), so a run can't be joined once started. The next
+   * best thing keeps the promise the slot makes: messages queued together go into one run,
+   * and anything arriving during a run goes into another run of the same turn, so no
+   * `done` releases the slot while this thread still has work — the overlap with another
+   * thread that #939 exists to prevent.
+   *
+   * The last queue check and the `done` have no await between them: a message that lands
+   * after it is a fresh delivery, which takes its own slot.
+   */
+  async function runTurn(session: CodexSession) {
+    const absorbed: string[] = [];
+    do {
+      turnsInFlight++;
+      try {
+        while (session.messageQueue.length > 0) {
+          // Between runs of one turn — the context the last run left is what the next reads.
+          if (absorbed.length > 0) await maybeRotate(session);
+          const batch = session.messageQueue.splice(0);
+          if (batch.length === 0) break;
+          for (const m of batch) absorbed.push(m.meta.messageId);
+          session.currentMessageId = batch[0].meta.messageId;
+          await runTurnBody(session, batch);
+        }
+      } finally {
+        turnsInFlight--;
+      }
+      // Commit even after a failed turn: whatever it wrote to disk is still the mind's work.
+      if (turnsInFlight === 0) await commitHomeChanges();
+    } while (session.messageQueue.length > 0);
 
-    emitDone(session);
-
-    if (session.currentMessageId) {
-      session.messageChannels.delete(session.currentMessageId);
-    }
+    emitDone(session, absorbed);
+    for (const id of absorbed) session.messageChannels.delete(id);
     session.currentMessageId = undefined;
   }
 
-  async function runTurnBody(
-    session: CodexSession,
-    text: string,
-    images: ImagePart[],
-    meta: HandlerMeta,
-  ) {
+  /** One `codex exec` run over a batch of queued messages. */
+  async function runTurnBody(session: CodexSession, batch: QueuedMessage[]) {
+    // Each message already carries its own channel/sender prefix from the router.
+    let text = batch.map((m) => m.text).join("\n\n");
+    const images = batch.flatMap((m) => m.images);
     // A thread that failed to start is tried again for each message, not left wedged.
     if (!session.thread) startFreshThread(session);
     if (!session.thread) {
@@ -712,7 +734,11 @@ export function createMind(options: {
 
     // Either the system-event note or reply instructions — never both, and never reply
     // instructions on an event turn. See turn-context.ts for the rule and why it matters.
-    const turnContext = turnContextFor(meta, session, prompts);
+    const turnContext = turnContextFor(
+      batch.map((m) => m.meta),
+      session,
+      prompts,
+    );
     if (turnContext) {
       emit(session, {
         type: "context",
@@ -1221,10 +1247,8 @@ export function createMind(options: {
     await session.ready;
 
     while (session.messageQueue.length > 0) {
-      const next = session.messageQueue.shift()!;
-      session.currentMessageId = next.meta.messageId;
-      await runTurn(session, next.text, next.images, next.meta);
-      // Post-turn is between-turns for the queue, so rotate here if we're over.
+      await runTurn(session);
+      // After the turn's `done` is between turns, so rotate here if we're over.
       await maybeRotate(session);
     }
 

@@ -71,19 +71,22 @@ class Thread {
     const queue = c.turns.get(this.session) ?? [];
     const turn = queue.shift() ?? { events: [{ type: "turn.completed", usage: usage() }] };
     const self = this;
+    const abortIfAsked = () => {
+      if (!opts.signal?.aborted) return;
+      const err = new Error("aborted");
+      err.name = "AbortError";
+      throw err;
+    };
     async function* events() {
       await turn.during?.();
+      abortIfAsked();
       for (const e of turn.events ?? []) {
         if (e.type === "thread.started") self._id = e.thread_id;
         yield e;
       }
       if (turn.after) {
         await turn.after();
-        if (opts.signal?.aborted) {
-          const err = new Error("aborted");
-          err.name = "AbortError";
-          throw err;
-        }
+        abortIfAsked();
       }
       if (turn.throws) throw new Error(turn.throws);
     }
@@ -990,8 +993,10 @@ describe("codex recollection at seams (#1192)", () => {
       recallEntries = null;
       recallDelayMs = 0;
     }
+    // Both waited for the seed, and — queued together — run as one turn (#1200).
     const calls = control.calls.filter((c) => c.session === "recall-slow");
-    assert.equal(calls.length, 2);
+    assert.equal(calls.length, 1);
+    assert.match(calls[0].input as string, /hello[\s\S]*hello/);
     assert.ok(calls[0].threadId && calls[0].threadId !== archived, "ran before the seed landed");
     assert.match(rolloutText(calls[0].threadId), /pond poem/);
   });
@@ -1174,5 +1179,85 @@ describe("codex's post-tool-use lane stands aside for an interrupt (#1199)", () 
     }
     const ran = readFileSync(record, "utf-8").trim().split("\n");
     assert.equal(ran.length, 1, "only the hook already running when the turn was interrupted");
+  });
+});
+
+describe("codex folds what arrives mid-turn into that turn (#1200)", () => {
+  const text = (t: string) => [{ type: "text", text: t }];
+  const donesFor = (session: string) => eventsFor(session, "done").length;
+
+  it("runs messages that arrive during a run as one more run of the same turn, with one done", async () => {
+    let later: Promise<unknown>[] = [];
+    script("fold", {
+      during: async () => {
+        later = [send("fold", text("second")), send("fold", text("third"))];
+        await settle();
+      },
+      events: [
+        { type: "thread.started", thread_id: "t-fold" },
+        { type: "turn.completed", usage: USAGE },
+      ],
+    });
+    // The first message's done comes only once the late ones have run too.
+    await send("fold", text("first"));
+    assert.equal(later.length, 2);
+    await Promise.all(later);
+    const inputs = control.calls.filter((c) => c.session === "fold").map((c) => c.input as string);
+    assert.equal(inputs.length, 2, "the two late messages share one run");
+    assert.match(inputs[0], /first/);
+    assert.match(inputs[1], /second[\s\S]*third/);
+    assert.equal(
+      donesFor("fold"),
+      1,
+      "one turn, one done — the slot is held until the queue drains",
+    );
+  });
+
+  it("an interrupt aborts the run and takes the next one, still inside the same turn", async () => {
+    let interrupting: Promise<any[]> | undefined;
+    script("fold-int", {
+      during: async () => {
+        interrupting = send("fold-int", text("stop, listen"), mind, { interrupt: true });
+        await settle();
+      },
+    });
+    const first = await send("fold-int", text("long task"));
+    const second = await interrupting;
+    const inputs = control.calls
+      .filter((c) => c.session === "fold-int")
+      .map((c) => c.input as string);
+    assert.equal(inputs.length, 2);
+    assert.match(inputs[1], /stop, listen/);
+    assert.ok(
+      first.some((e) => e.type === "done"),
+      "the interrupted message's turn ended",
+    );
+    assert.ok(second?.some((e) => e.type === "done"));
+    assert.equal(donesFor("fold-int"), 1);
+  });
+
+  it("rotates between runs of a turn, and the next run is told", async () => {
+    let later: Promise<unknown> | undefined;
+    const live = "019f5e60-0000-7000-8000-0000000002a3";
+    const over = overThreshold(live);
+    script("fold-rot", {
+      ...over,
+      during: async () => {
+        over.during();
+        later = send("fold-rot", text("meanwhile"), rotatingMind);
+        await settle();
+      },
+    });
+    await send("fold-rot", text("start"), rotatingMind);
+    await later;
+    const calls = control.calls.filter((c) => c.session === "fold-rot");
+    assert.equal(calls.length, 2);
+    assert.ok(
+      calls[1].threadId && calls[1].threadId !== live,
+      "the second run is on the rotated thread",
+    );
+    assert.match(calls[1].input as string, /consolidated at the context limit/);
+    assert.match(calls[1].input as string, /ORIENTATION fold-rot compact/);
+    assert.equal(donesFor("fold-rot"), 1);
   });
 });

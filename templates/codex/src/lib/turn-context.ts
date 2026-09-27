@@ -16,7 +16,8 @@ export type TurnContextState = {
 };
 
 /**
- * Decide what context (if any) to prepend to an incoming turn. Returns null for "nothing".
+ * Decide what context (if any) to prepend to a turn over `metas` — the messages it runs,
+ * oldest first. Returns null for "nothing".
  *
  * Pulled out of agent.ts so it can actually be tested: this is the rule that keeps a system
  * event from looking like a message. Reply instructions must never fire on an event turn —
@@ -34,19 +35,24 @@ export type TurnContextState = {
  * told how to answer. (routes.json's `replyInstructions` never reaches any template — #1205.)
  */
 export function turnContextFor(
-  meta: ChannelMeta,
+  metas: ChannelMeta[],
   session: TurnContextState,
   prompts: MindPrompts,
 ): TurnContext | null {
-  const channel = meta.channel;
+  const isEvent = (m: ChannelMeta) => m.isEvent || isEventChannel(m.channel);
 
-  if (meta.isEvent || isEventChannel(channel)) {
+  // A turn that also carries a real message is a message turn: there is someone to answer.
+  if (metas.length > 0 && metas.every(isEvent)) {
     if (session.eventNoteFired) return null;
     session.eventNoteFired = true;
     return { content: prompts.event_instructions, source: "event-instructions" };
   }
 
-  if (session.replyInstructionsFired || !channel) return null;
+  if (session.replyInstructionsFired) return null;
+  // Name a channel the mind can actually send to — never an event's.
+  const meta = metas.find((m) => m.channel && !isEvent(m));
+  const channel = meta?.channel;
+  if (!meta || !channel) return null;
   if (meta.sender === "volute") {
     return {
       content: "This is a system message — no reply is needed.",
