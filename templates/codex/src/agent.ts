@@ -1,4 +1,4 @@
-import { readFileSync, rmSync, writeFileSync } from "node:fs";
+import { rmSync, writeFileSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
 import {
   Codex,
@@ -46,6 +46,7 @@ import { createSessionStore, lostRealContext } from "./lib/session-store.js";
 import {
   getStartupContext,
   loadPrompts,
+  loadSubagents,
   loadSystemPrompt,
   type StartupSource,
   type SubagentConfig,
@@ -124,9 +125,9 @@ type CodexSession = {
   contextTokens: number;
   /** Last cumulative usage snapshot from `turn.completed`, for per-turn deltas (see lib/usage.ts). */
   lastUsage: UsageSnapshot;
-  /** A codex run is in flight — a subagent finishing now belongs to its usage. */
-  runInFlight: boolean;
-  /** Usage of subagents that finished during the run in flight, added to that run's own. */
+  /** The turn in flight's own usage, one entry per codex run, reported once at its end. */
+  turnUsage: UsagePayload[];
+  /** Usage of subagents the turn in flight called — the same model, reported with it. */
   subagentUsage: UsagePayload[];
   /** Subagents running for this session, stopped when the run that called them ends. */
   subagentRuns: Set<AbortController>;
@@ -169,6 +170,13 @@ function addUsage(a: UsagePayload, b: UsagePayload): UsagePayload {
     cache_creation_input_tokens: a.cache_creation_input_tokens + b.cache_creation_input_tokens,
   };
 }
+
+const ZERO_PAYLOAD: UsagePayload = {
+  input_tokens: 0,
+  output_tokens: 0,
+  cache_read_input_tokens: 0,
+  cache_creation_input_tokens: 0,
+};
 
 // Loaded once at startup
 const preset = loadTransparencyPreset();
@@ -346,25 +354,7 @@ export function createMind(options: {
 
   // --- Subagents (config-driven) ---
 
-  /** name → its description and the file its whole system prompt is read from. */
-  const subagents = new Map<string, { description: string; promptPath: string }>();
-  for (const [name, config] of Object.entries(options.subagents ?? {})) {
-    if (!config?.description || !config.systemPrompt) {
-      log("mind", `subagent "${name}": missing description or systemPrompt, skipping`);
-      continue;
-    }
-    const promptPath = resolvePath(options.cwd, config.systemPrompt);
-    try {
-      if (!readFileSync(promptPath, "utf-8").trim()) {
-        log("mind", `subagent "${name}": ${config.systemPrompt} is empty, skipping`);
-        continue;
-      }
-    } catch (err: any) {
-      log("mind", `subagent "${name}": can't read ${config.systemPrompt} (${err?.code}), skipping`);
-      continue;
-    }
-    subagents.set(name, { description: config.description, promptPath });
-  }
+  const subagents = new Map(Object.entries(loadSubagents(options.subagents, options.cwd)));
   /** The MCP endpoint the subagents are offered on, once it is listening. */
   let subagentServer: SubagentServer | null = null;
   // Sessions wait for it (see getOrCreateSession), so no thread starts without its tools.
@@ -459,12 +449,34 @@ export function createMind(options: {
     };
   }
 
-  /** Subagent usage with no run of its own to join — counted all the same. */
-  function emitSubagentUsage(session: CodexSession, payloads: UsagePayload[]) {
-    if (payloads.length === 0) return;
-    const metadata = { ...payloads.reduce(addUsage), model: options.model, subagent: true };
-    emit(session, { type: "usage", metadata });
+  /**
+   * The turn's usage, once: the sum of its codex runs, plus its subagents as a per-model
+   * breakdown the daemon prices slice by slice, as pi reports them. Everything here ran on
+   * the mind's own model, so there is a single slice; `main_model` names it. Without a
+   * model name to key a slice on, the subagents' usage joins the aggregate instead, which
+   * the daemon prices against the mind's configured model — the same one.
+   */
+  function emitTurnUsage(session: CodexSession) {
+    const own = session.turnUsage.splice(0);
+    const subagentRuns = session.subagentUsage.splice(0);
+    if (own.length === 0 && subagentRuns.length === 0) return;
+    const ownTotal = own.length > 0 ? own.reduce(addUsage) : ZERO_PAYLOAD;
+    const model = options.model;
+    const payload =
+      model && subagentRuns.length > 0
+        ? {
+            ...ownTotal,
+            model,
+            main_model: model,
+            models: [{ model, ...[ownTotal, ...subagentRuns].reduce(addUsage) }],
+          }
+        : { ...[ownTotal, ...subagentRuns].reduce(addUsage), model };
+    broadcast(session, { type: "usage", ...payload });
+    emit(session, { type: "usage", metadata: payload });
   }
+
+  /** One subagent at a time for the whole mind; a call waits its turn. */
+  let subagentQueue: Promise<void> = Promise.resolve();
 
   /**
    * Run one subagent on behalf of a session's current turn: a nested codex thread whose
@@ -474,10 +486,9 @@ export function createMind(options: {
    * codex 0.156.1's request body, where none of the three appear with these settings.
    *
    * It runs in the mind's home, on the mind's model, with a shell that names the calling
-   * session. It is stopped when the run that called it ends, or after SUBAGENT_TIMEOUT_MS.
-   * Its usage joins that run's own usage row (the same model, so the fields add); if the run
-   * fails before reporting any, it goes out on its own, so it counts against the spend cap
-   * either way.
+   * session. One runs at a time. It is stopped when the run that called it ends, however
+   * that run ends, or after SUBAGENT_TIMEOUT_MS. Its usage is reported with the calling
+   * turn's (see emitTurnUsage), so it counts against the spend cap.
    */
   async function runSubagent(
     sessionName: string,
@@ -486,21 +497,46 @@ export function createMind(options: {
   ): Promise<SubagentOutcome> {
     const def = subagents.get(name);
     const session = sessions.get(sessionName);
-    if (!def || !session) {
+    if (!def || !session?.processing) {
       return { text: `No ${name} subagent for thread ${sessionName}.`, isError: true };
     }
+    const run = new AbortController();
+    session.subagentRuns.add(run);
+    const previous = subagentQueue;
+    let release = () => {};
+    subagentQueue = new Promise((resolve) => {
+      release = resolve;
+    });
+    try {
+      await previous;
+      if (run.signal.aborted) {
+        return { text: "[subagent error] the run that called it ended first", isError: true };
+      }
+      return await runSubagentThread(session, def.promptPath, name, prompt, run);
+    } finally {
+      session.subagentRuns.delete(run);
+      release();
+    }
+  }
+
+  async function runSubagentThread(
+    session: CodexSession,
+    promptPath: string,
+    name: string,
+    prompt: string,
+    run: AbortController,
+  ): Promise<SubagentOutcome> {
+    const sessionName = session.name;
     const client = new Codex({
       ...(apiKey ? { apiKey } : {}),
       config: {
-        model_instructions_file: def.promptPath,
+        model_instructions_file: promptPath,
         project_doc_max_bytes: 0,
         skills: { include_instructions: false },
         features: { multi_agent: false },
         shell_environment_policy: shellEnv(sessionName),
       },
     });
-    const run = new AbortController();
-    session.subagentRuns.add(run);
     const signal = AbortSignal.any([run.signal, AbortSignal.timeout(SUBAGENT_TIMEOUT_MS)]);
     let text = "";
     let failure: string | null = null;
@@ -515,12 +551,9 @@ export function createMind(options: {
           text = event.item.text;
         } else if (event.type === "turn.completed") {
           completed = true;
-          // A fresh thread's cumulative counter is this run's own usage. It joins the
-          // calling run's usage, one row per run as pi does, or goes on its own if that
-          // run has already ended.
+          // A fresh thread's cumulative counter is this run's own usage.
           const delta = usageDelta(ZERO_USAGE, event.usage);
-          if (delta && session.runInFlight) session.subagentUsage.push(delta.payload);
-          else if (delta) emitSubagentUsage(session, [delta.payload]);
+          if (delta) session.subagentUsage.push(delta.payload);
         } else if (event.type === "turn.failed") {
           failure = event.error.message;
         } else if (event.type === "error") {
@@ -530,7 +563,6 @@ export function createMind(options: {
     } catch (err) {
       failure = err instanceof Error ? err.message : String(err);
     } finally {
-      session.subagentRuns.delete(run);
       // Nothing reads a subagent's rollout again, and each one left behind lengthens the
       // walk every rollout lookup makes; the dream itself is in the mind's files.
       const rollout =
@@ -564,7 +596,7 @@ export function createMind(options: {
       ready: Promise.resolve(),
       contextTokens: 0,
       lastUsage: ZERO_USAGE,
-      runInFlight: false,
+      turnUsage: [],
       subagentUsage: [],
       subagentRuns: new Set(),
       seeded: false,
@@ -766,18 +798,11 @@ export function createMind(options: {
   }
 
   /** One `done` for the daemon, and one for each message the turn absorbed. */
-  /**
-   * The turn's end, once per message it absorbed — to its local listener, and to the daemon,
-   * which counts a `done` against each delivery: one `done` for several would leave the
-   * session looking busy, and the turn would never be completed or summarized. All are sent
-   * together at the turn's end, so the slot is still held until then.
-   */
+  /** One `done` for the daemon, as claude sends, and one for each message the turn absorbed. */
   function emitDone(session: CodexSession, messageIds: string[]) {
-    for (const messageId of messageIds) {
-      broadcast(session, { type: "done", messageId });
-      session.currentMessageId = messageId; // emit() reads the channel from it
-      emit(session, { type: "done" });
-    }
+    for (const messageId of messageIds) broadcast(session, { type: "done", messageId });
+    session.currentMessageId = messageIds[0]; // emit() reads the channel from it
+    emit(session, { type: "done" });
   }
 
   /**
@@ -803,20 +828,39 @@ export function createMind(options: {
   let turnsInFlight = 0;
 
   /**
-   * Run one turn: everything queued now, and whatever arrives while it runs, with a single
-   * `done` at the end (#1200).
+   * The next run's messages, taken off the queue: the one at its head, and every other
+   * queued message for the same channel. A run answers one channel, so its replies, its
+   * reply instructions and its event note are all about that channel; a system event is
+   * never folded with anything, since nothing awaits a reply to it. Everything else stays
+   * queued for the next run of the same turn.
+   */
+  function nextBatch(queue: QueuedMessage[]): QueuedMessage[] {
+    const isEvent = (m: QueuedMessage) => !!m.meta.isEvent || isEventChannel(m.meta.channel);
+    const head = queue[0];
+    const joins = (m: QueuedMessage) =>
+      m === head || (!isEvent(head) && !isEvent(m) && m.meta.channel === head.meta.channel);
+    const batch = queue.filter(joins);
+    const rest = queue.filter((m) => !joins(m));
+    queue.splice(0, queue.length, ...rest);
+    return batch;
+  }
+
+  /**
+   * Run one turn: the message at the head of the queue, and whatever else is queued or
+   * arrives while it runs, with a single `done` at the end (#1200).
    *
    * The daemon holds the mind's turn slot from a delivery until that `done`, and delivers a
    * message for the thread already mid-turn straight in, trusting it to join that turn —
    * claude folds it into the running SDK stream. `codex exec` takes its whole input up front
    * (the SDK writes stdin and closes it), so a run can't be joined once started. The next
-   * best thing keeps the promise the slot makes: messages queued together go into one run,
-   * and anything arriving during a run goes into another run of the same turn, so no
-   * `done` releases the slot while this thread still has work — the overlap with another
-   * thread that #939 exists to prevent.
+   * best thing keeps the promise the slot makes: queued messages for one channel go into one
+   * run, and everything else — another channel, a system event, anything arriving during a
+   * run — into further runs of the same turn, so no `done` releases the slot while this
+   * thread still has work. That is the overlap with another thread #939 exists to prevent.
    *
    * The last queue check and the `done` have no await between them: a message that lands
-   * after it is a fresh delivery, which takes its own slot.
+   * after it is a fresh delivery, which takes its own slot. And the `done` is sent however
+   * the turn ends — a lost one would hold the slot and leave this thread queueing forever.
    */
   async function runTurn(session: CodexSession) {
     const absorbed: string[] = [];
@@ -827,12 +871,9 @@ export function createMind(options: {
           while (session.messageQueue.length > 0) {
             // Between runs of one turn — the context the last run left is what the next reads.
             if (absorbed.length > 0) await maybeRotate(session);
-            const batch = session.messageQueue.splice(0);
+            const batch = nextBatch(session.messageQueue);
             for (const m of batch) absorbed.push(m.meta.messageId);
-            // The run's replies are attributed to one message: the first a person sent,
-            // not a system event queued ahead of it, which has no channel to answer on.
-            const lead = batch.find((m) => !m.meta.isEvent && !isEventChannel(m.meta.channel));
-            session.currentMessageId = (lead ?? batch[0]).meta.messageId;
+            session.currentMessageId = batch[0].meta.messageId;
             await runTurnBody(session, batch);
           }
         } finally {
@@ -842,15 +883,14 @@ export function createMind(options: {
         if (turnsInFlight === 0) await commitHomeChanges();
       } while (session.messageQueue.length > 0);
     } catch (err) {
-      // Whatever broke, the turn still ends — a lost `done` would hold the mind's turn slot
-      // and leave this thread queueing forever.
       warn("mind", `session "${session.name}": turn broke:`, err);
       await emitError(session, `The turn stopped on an internal error: ${String(err)}`);
+    } finally {
+      emitTurnUsage(session);
+      emitDone(session, absorbed);
+      for (const id of absorbed) session.messageChannels.delete(id);
+      session.currentMessageId = undefined;
     }
-
-    emitDone(session, absorbed);
-    for (const id of absorbed) session.messageChannels.delete(id);
-    session.currentMessageId = undefined;
   }
 
   /** One `codex exec` run over a batch of queued messages. */
@@ -1059,15 +1099,11 @@ export function createMind(options: {
    * failed, or null when it completed (or was interrupted — an abort isn't a failure).
    */
   async function streamTurn(session: CodexSession, input: Input): Promise<string | null> {
-    session.runInFlight = true;
     try {
       return await streamRun(session, input);
     } finally {
-      session.runInFlight = false;
       // A subagent outliving the run that called it has no one left to answer.
       for (const run of session.subagentRuns) run.abort();
-      // Usage that never joined a completed run still counts.
-      emitSubagentUsage(session, session.subagentUsage.splice(0));
     }
   }
 
@@ -1274,23 +1310,14 @@ export function createMind(options: {
               // codex's usage is cumulative over the whole thread — the per-turn cost is
               // the difference from the last snapshot (see lib/usage.ts).
               const delta = usageDelta(session.lastUsage, event.usage);
-              // Subagents it called ran on the same model — their usage is this run's too.
-              const subagentUsage = session.subagentUsage.splice(0);
-              if (delta || subagentUsage.length > 0) {
-                if (delta) {
-                  session.lastUsage = delta.next;
-                  // The turn's own context size, not the thread's running total. Feeds
-                  // the dashboard's fallback estimate only; rotation measures the
-                  // rollout itself (see measureContext).
-                  session.contextTokens = delta.contextTokens;
-                }
-                const own = delta ? [delta.payload] : [];
-                const payload = {
-                  ...[...own, ...subagentUsage].reduce(addUsage),
-                  model: options.model,
-                };
-                broadcast(session, { type: "usage", ...payload });
-                emit(session, { type: "usage", metadata: payload });
+              if (delta) {
+                session.lastUsage = delta.next;
+                // The turn's own context size, not the thread's running total. Feeds
+                // the dashboard's fallback estimate only; rotation measures the
+                // rollout itself (see measureContext).
+                session.contextTokens = delta.contextTokens;
+                // Reported once, for the whole turn, at its end (see emitTurnUsage).
+                session.turnUsage.push(delta.payload);
               }
               break;
             }
@@ -1467,15 +1494,16 @@ export function createMind(options: {
   async function processQueue(session: CodexSession) {
     if (session.processing) return;
     session.processing = true;
-    await session.ready;
-
-    while (session.messageQueue.length > 0) {
-      await runTurn(session);
-      // After the turn's `done` is between turns, so rotate here if we're over.
-      await maybeRotate(session);
+    try {
+      await session.ready;
+      while (session.messageQueue.length > 0) {
+        await runTurn(session);
+        // After the turn's `done` is between turns, so rotate here if we're over.
+        await maybeRotate(session);
+      }
+    } finally {
+      session.processing = false;
     }
-
-    session.processing = false;
     // An ephemeral `new-*` session never recurs, so once its queue drains nothing will
     // use it again — drop it and its client, or each one is held for the process's life.
     // Synchronous with the loop's exit, so no message can queue between the check and the

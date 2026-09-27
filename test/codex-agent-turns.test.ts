@@ -342,6 +342,7 @@ before(async () => {
   });
   dreamingMind = createMind({
     systemPrompt: "You are a test mind.",
+    model: "gpt-test",
     cwd: resolve(mindDir, "home"),
     mindDir,
     subagents: {
@@ -1220,7 +1221,8 @@ describe("codex folds what arrives mid-turn into that turn (#1200)", () => {
       },
       {
         during: () => (donesAtSecondRun = donesFor("fold")),
-        events: [{ type: "turn.completed", usage: USAGE }],
+        // codex's counter is cumulative over the thread: this run used 15 more.
+        events: [{ type: "turn.completed", usage: { ...USAGE, input_tokens: 25 } }],
       },
     );
     // The first message's done comes only once the late ones have run too.
@@ -1233,8 +1235,12 @@ describe("codex folds what arrives mid-turn into that turn (#1200)", () => {
     assert.match(inputs[1], /second[\s\S]*third/);
     // The slot is held until the queue drains: nothing ended before the second run.
     assert.equal(donesAtSecondRun, 0);
-    // Then one `done` per delivery, which is what the daemon counts deliveries off.
-    assert.equal(donesFor("fold"), 3);
+    // Then one `done`, as claude sends for a folded turn.
+    assert.equal(donesFor("fold"), 1);
+    // And one usage report for the turn, summing both runs (10, then 15 more).
+    const usage = eventsFor("fold", "usage").map((p) => p.body.metadata);
+    assert.equal(usage.length, 1);
+    assert.equal(usage[0].input_tokens, 25);
   });
 
   it("an interrupt aborts the run and takes the next one, still inside the same turn", async () => {
@@ -1257,7 +1263,7 @@ describe("codex folds what arrives mid-turn into that turn (#1200)", () => {
       "the interrupted message's turn ended",
     );
     assert.ok(second?.some((e) => e.type === "done"));
-    assert.equal(donesFor("fold-int"), 2);
+    assert.equal(donesFor("fold-int"), 1);
   });
 
   it("rotates between runs of a turn, and the next run is told", async () => {
@@ -1282,7 +1288,7 @@ describe("codex folds what arrives mid-turn into that turn (#1200)", () => {
     );
     assert.match(calls[1].input as string, /consolidated at the context limit/);
     assert.match(calls[1].input as string, /ORIENTATION fold-rot compact/);
-    assert.equal(donesFor("fold-rot"), 2);
+    assert.equal(donesFor("fold-rot"), 1);
   });
 });
 
@@ -1382,11 +1388,21 @@ describe("codex subagents are real, and their usage counts (#1200)", () => {
     const call = control.calls.filter((c) => c.session === "sub-run")[1];
     assert.equal(call.input, "dream of tides");
 
-    // One usage row for the run, the dream's usage in it (10+40 in, 5+9 out).
+    // One usage report for the turn: its own run as the aggregate, and the dream in the
+    // per-model breakdown the daemon prices (10+40 in, 5+9 out), as pi reports subagents.
     const usage = eventsFor("sub-run", "usage").map((p) => p.body.metadata);
     assert.equal(usage.length, 1);
-    assert.equal(usage[0].input_tokens, 50);
-    assert.equal(usage[0].output_tokens, 14);
+    assert.equal(usage[0].input_tokens, 10);
+    assert.equal(usage[0].main_model, "gpt-test");
+    assert.deepEqual(usage[0].models, [
+      {
+        model: "gpt-test",
+        input_tokens: 50,
+        output_tokens: 14,
+        cache_read_input_tokens: 0,
+        cache_creation_input_tokens: 0,
+      },
+    ]);
     assert.ok(
       posted.indexOf(eventsFor("sub-run", "usage")[0]) <
         posted.indexOf(eventsFor("sub-run", "done")[0]),
@@ -1453,36 +1469,116 @@ describe("codex subagents are real, and their usage counts (#1200)", () => {
   });
 });
 
-describe("codex attributes a folded run to the message a person sent (#1200)", () => {
-  it("a system event queued ahead of a DM doesn't take the DM's reply", async () => {
+describe("codex folds only one channel into a run (#1200)", () => {
+  const text = (t: string) => [{ type: "text", text: t }];
+
+  it("runs a system event, and each channel, as runs of their own inside one turn", async () => {
     let later: Promise<unknown>[] = [];
+    const reply = (t: string) => ({
+      events: [
+        { type: "item.completed", item: { id: t, type: "agent_message", text: t } },
+        { type: "turn.completed", usage: USAGE },
+      ],
+    });
     script(
-      "attr",
+      "mix",
       {
         during: async () => {
           later = [
-            send("attr", [{ type: "text", text: "tick" }], mind, {
-              channel: "event:schedule:77",
-              isEvent: true,
-            }),
-            send("attr", [{ type: "text", text: "hi" }], mind, { channel: "@alice" }),
+            send("mix", text("tick"), mind, { channel: "event:schedule:77", isEvent: true }),
+            send("mix", text("hi from alice"), mind, { channel: "@alice" }),
+            send("mix", text("hi from general"), mind, { channel: "#general" }),
+            send("mix", text("alice again"), mind, { channel: "@alice" }),
           ];
           await settle();
         },
       },
+      reply("to the event"),
+      reply("to alice"),
+      reply("to general"),
+    );
+    await send("mix", text("start"), mind, { channel: "#general" });
+    await Promise.all(later);
+    const inputs = control.calls.filter((c) => c.session === "mix").map((c) => c.input as string);
+    assert.equal(inputs.length, 4);
+    assert.match(inputs[1], /tick/);
+    assert.doesNotMatch(inputs[1], /alice|general/, "an event is never folded with a message");
+    assert.match(inputs[1], /system event from your environment/, "and keeps its note");
+    assert.match(inputs[2], /hi from alice[\s\S]*alice again/, "one channel's messages fold");
+    assert.doesNotMatch(inputs[2], /general|tick/);
+    assert.match(inputs[3], /hi from general/);
+    const channelOf = (t: string) =>
+      eventsFor("mix", "text").find((p) => p.body.content === t)?.body.channel;
+    assert.equal(channelOf("to alice"), "@alice");
+    assert.equal(channelOf("to general"), "#general");
+    assert.equal(eventsFor("mix", "done").length, 1, "still one turn");
+  });
+});
+
+describe("codex always ends a turn (#1200)", () => {
+  it("sends its error and done when the turn breaks, and the thread keeps working", async () => {
+    // A directory where the prompt file goes: the turn's prompt write throws.
+    const promptPath = resolve(mindDir, ".mind/system-prompt.md");
+    rmSync(promptPath, { force: true });
+    mkdirSync(promptPath);
+    try {
+      await send("broken");
+    } finally {
+      rmSync(promptPath, { recursive: true, force: true });
+    }
+    assert.equal(eventsFor("broken", "error").length, 1);
+    assert.match(eventsFor("broken", "error")[0].body.content, /internal error/);
+    assert.equal(eventsFor("broken", "done").length, 1);
+    await send("broken");
+    assert.equal(eventsFor("broken", "done").length, 2, "the thread was left wedged");
+  });
+});
+
+describe("codex runs one subagent at a time (#1200)", () => {
+  it("makes a second call wait for the first to finish", async () => {
+    const order: string[] = [];
+    let replies: Promise<any>[] = [];
+    script(
+      "sub-one",
       {
-        events: [
-          {
-            type: "item.completed",
-            item: { id: "m1", type: "agent_message", text: "hello alice" },
-          },
-          { type: "turn.completed", usage: USAGE },
-        ],
+        during: async () => {
+          const call = (id: number) =>
+            fetch(
+              control.clients.find(
+                (c) => c.session === "sub-one" && c.config.model_auto_compact_token_limit,
+              ).config.mcp_servers.subagents.url,
+              {
+                method: "POST",
+                headers: {
+                  "content-type": "application/json",
+                  authorization: `Bearer ${process.env.VOLUTE_SUBAGENT_TOKEN}`,
+                },
+                body: JSON.stringify({
+                  jsonrpc: "2.0",
+                  id,
+                  method: "tools/call",
+                  params: { name: "dreamer", arguments: { prompt: `dream ${id}` } },
+                }),
+              },
+            ).then((r) => r.json());
+          replies = [call(1), call(2)];
+          await Promise.all(replies);
+        },
+      },
+      {
+        during: () => order.push("start 1"),
+        after: async () => {
+          await new Promise((r) => setTimeout(r, 200));
+          order.push("end 1");
+        },
+        events: [{ type: "turn.completed", usage: USAGE }],
+      },
+      {
+        during: () => order.push("start 2"),
+        events: [{ type: "turn.completed", usage: USAGE }],
       },
     );
-    await send("attr");
-    await Promise.all(later);
-    const reply = eventsFor("attr", "text").find((p) => p.body.content === "hello alice");
-    assert.equal(reply?.body.channel, "@alice");
+    await send("sub-one", undefined, dreamingMind);
+    assert.deepEqual(order, ["start 1", "end 1", "start 2"]);
   });
 });
