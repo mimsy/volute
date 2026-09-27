@@ -108,12 +108,15 @@ let server: Server;
 const posted: Posted[] = [];
 let lastErrorAnswered = true;
 const control: FakeControl = { turns: new Map(), calls: [], failStartThread: new Set() };
-let mind: {
+type Mind = {
   resolve: (name: string) => {
     handle: (content: unknown[], meta: any, listener?: (e: any) => void) => () => void;
   };
   getContextInfo: () => Promise<{ sessions: { name: string }[] }>;
 };
+let mind: Mind;
+/** A second mind over the same directory, with a context threshold set, for rotation. */
+let rotatingMind: Mind;
 
 const ROLLOUT_DAY = ["2026", "09", "27"];
 
@@ -174,11 +177,15 @@ function script(session: string, ...turns: ScriptedTurn[]) {
 let messageSeq = 0;
 
 /** Send one message to a session and resolve with its broadcast events once it's done. */
-function send(session: string, content: unknown[] = [{ type: "text", text: "hello" }]) {
+function send(
+  session: string,
+  content: unknown[] = [{ type: "text", text: "hello" }],
+  to: Mind = mind,
+) {
   const messageId = `m${++messageSeq}`;
   return new Promise<any[]>((done) => {
     const seen: any[] = [];
-    mind.resolve(session).handle(content, { messageId }, (e) => {
+    to.resolve(session).handle(content, { messageId }, (e) => {
       seen.push(e);
       // The daemon's copy of `done` is still in flight when the listener hears it.
       if (e.type === "done") settle().then(() => done(seen));
@@ -273,6 +280,12 @@ before(async () => {
     systemPrompt: "You are a test mind.",
     cwd: resolve(mindDir, "home"),
     mindDir,
+  });
+  rotatingMind = createMind({
+    systemPrompt: "You are a test mind.",
+    cwd: resolve(mindDir, "home"),
+    mindDir,
+    maxContextTokens: 1000,
   });
 });
 
@@ -783,5 +796,36 @@ describe("codex home-changes parsing", () => {
     const paths = (await changedPaths(repo)).map((p: string) => p.slice(repo.length + 1)).sort();
     rmSync(repo, { recursive: true, force: true });
     assert.deepEqual(paths, ["new.md", "old.md"]);
+  });
+});
+
+describe("codex rotation writes where codex reads", () => {
+  it("lands the rotated rollout in codex's root, though the live one sits in the other", async () => {
+    // The live rollout is where the broad lookup finds it but codex doesn't read — the
+    // state a provider switch leaves mid-life. Over the threshold, it rotates; the new
+    // rollout must land where the next turn's `codex exec resume` will look.
+    const live = "019f5e60-0000-7000-8000-00000000a07a";
+    script("rot", {
+      during: () => {
+        const path = writeConversation(resolve(process.env.HOME ?? "", ".codex/sessions"), live);
+        const tokenCount = JSON.stringify({
+          timestamp: "2026-09-27T10:00:00.000Z",
+          type: "event_msg",
+          payload: { type: "token_count", info: { last_token_usage: { input_tokens: 5000 } } },
+        });
+        writeFileSync(path, `${readFileSync(path, "utf-8")}${tokenCount}\n`);
+      },
+      events: [
+        { type: "thread.started", thread_id: live },
+        { type: "turn.completed", usage: USAGE },
+      ],
+    });
+    await send("rot", undefined, rotatingMind);
+    await send("rot", undefined, rotatingMind);
+    const calls = control.calls.filter((c) => c.session === "rot");
+    const rotated = calls[1]?.threadId;
+    assert.ok(rotated && rotated !== live, `expected a rotation, got ${rotated}`);
+    const { rolloutVisibleToCodex } = await import(resolve(composedDir, "src/lib/rollout.ts"));
+    assert.ok(rolloutVisibleToCodex(rotated), "rotated rollout isn't where codex reads");
   });
 });
