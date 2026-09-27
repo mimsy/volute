@@ -31,7 +31,7 @@ export const ROTATED_SESSION_NOTE =
 
 /**
  * Appended to any cause's note when recall entries were actually seeded ahead of the
- * tail (claude template), so the note never claims recollection that isn't there.
+ * tail, so the note never claims recollection that isn't there.
  */
 export const RECALL_NOTE_SUFFIX =
   " The [recall: …] entries before it are your consolidated memory of the days before, not a transcript.";
@@ -57,7 +57,7 @@ export function parseArchiveTimestamp(ts: string): number | null {
 }
 
 /** Coarse human phrasing of a gap in millis: minutes, then hours, then days. */
-function formatGap(ms: number): string | null {
+export function formatGap(ms: number): string | null {
   if (ms < 0) return null;
   const minutes = Math.round(ms / 60_000);
   if (minutes < 1) return "less than a minute";

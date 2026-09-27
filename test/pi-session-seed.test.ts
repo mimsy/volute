@@ -3,15 +3,23 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { describe, it } from "node:test";
-import { SessionManager } from "@earendil-works/pi-coding-agent";
+import { convertToLlm, SessionManager } from "@earendil-works/pi-coding-agent";
 import {
   buildSeededPiTranscript,
+  estimatePiEntryTokens,
   findLatestArchivedPiSession,
   hasLivePiSession,
+  RECALL_CUSTOM_TYPE,
   rotatePiSession,
   seedPiSession,
 } from "../templates/_base/src/lib/pi-session-seed.js";
 import { buildSeededNote } from "../templates/_base/src/lib/seed-note.js";
+import {
+  RECALL_PREAMBLE,
+  type RecallEntry,
+  type RecollectionQuery,
+  TRIMMED_TURN_MARKER,
+} from "../templates/_base/src/lib/session-seed.js";
 
 // --- Pi session-file line builders (mirror the real on-disk JSONL shapes) ---
 
@@ -154,15 +162,15 @@ describe("buildSeededPiTranscript — turn boundaries", () => {
 
 describe("buildSeededPiTranscript — token budget selection", () => {
   it("takes as many whole trailing turns as fit in the budget", () => {
-    const big = "z".repeat(4000); // ~1000 est tokens per turn
+    const big = "z".repeat(3600); // 2000 est tokens per turn (1.8 chars/token)
     const lines = [
       header(),
       userMsg("u1", null, big),
       userMsg("u2", "u1", big),
       userMsg("u3", "u2", big),
     ];
-    // Budget fits two turns (~2000) but not three (~3000).
-    const res = buildSeededPiTranscript(lines.join("\n"), { cwd: "/home", seedTokens: 2500 });
+    // Budget fits two turns (4000) but not three (6000).
+    const res = buildSeededPiTranscript(lines.join("\n"), { cwd: "/home", seedTokens: 5000 });
     assert.ok(res);
     // header + 2 entries.
     assert.equal(res.lines.length, 3);
@@ -724,5 +732,552 @@ describe("ephemeral new-* sessions (file-backed, real SDK)", () => {
     const text = JSON.stringify(sm.buildSessionContext().messages);
     assert.match(text, /second/);
     assert.doesNotMatch(text, /first/);
+  });
+});
+
+// --- Estimator: what an entry actually sends the model -----------------------
+
+describe("estimatePiEntryTokens", () => {
+  const entry = (o: Record<string, unknown>) => o as Parameters<typeof estimatePiEntryTokens>[0];
+
+  it("counts an image at a flat cost, not by its base64 size", () => {
+    const withImage = entry({
+      type: "message",
+      message: { role: "user", content: [{ type: "image", data: "A".repeat(500_000) }] },
+    });
+    assert.equal(estimatePiEntryTokens(withImage), 1600);
+  });
+
+  it("counts thinking by its signature when the provider keeps one", () => {
+    const thinking = entry({
+      type: "message",
+      message: {
+        role: "assistant",
+        content: [
+          { type: "thinking", thinking: "short summary", thinkingSignature: "s".repeat(400) },
+        ],
+      },
+    });
+    assert.equal(estimatePiEntryTokens(thinking), 100);
+  });
+
+  it("counts visible text, not line metadata", () => {
+    const text = entry({
+      type: "message",
+      id: "x".repeat(1000),
+      message: { role: "user", content: "a".repeat(180), usage: { big: "y".repeat(1000) } },
+    });
+    assert.equal(estimatePiEntryTokens(text), 100);
+  });
+
+  it("costs nothing for entries pi keeps out of context", () => {
+    assert.equal(
+      estimatePiEntryTokens(entry({ type: "model_change", modelId: "m".repeat(900) })),
+      0,
+    );
+    assert.equal(estimatePiEntryTokens(entry({ type: "custom", data: "d".repeat(900) })), 0);
+  });
+
+  it("counts a bash execution by its command and output, unless excluded", () => {
+    const run = (excludeFromContext: boolean) =>
+      entry({
+        type: "message",
+        message: {
+          role: "bashExecution",
+          command: "ls",
+          output: "o".repeat(178),
+          excludeFromContext,
+        },
+      });
+    assert.equal(estimatePiEntryTokens(run(false)), 100);
+    assert.equal(estimatePiEntryTokens(run(true)), 0);
+  });
+
+  it("counts a context edit's replacement content", () => {
+    const edit = entry({
+      type: "context_edit",
+      targetId: "x",
+      replacement: { content: "r".repeat(180) },
+    });
+    assert.equal(estimatePiEntryTokens(edit), 100);
+  });
+
+  it("counts a custom message's content — pi sends it as a user message", () => {
+    assert.equal(
+      estimatePiEntryTokens(entry({ type: "custom_message", content: "c".repeat(180) })),
+      100,
+    );
+  });
+});
+
+// --- Trimming an over-budget final turn ---------------------------------------
+
+/** A long tool loop: one prompt, `steps` tool calls each with a big result, then a reply. */
+function toolLoop(steps: number, resultChars = 1800): string[] {
+  const lines = [
+    header(),
+    userMsg("u0", null, "earlier"),
+    assistantMsg("a0", "u0", [{ type: "text", text: "ok" }]),
+  ];
+  lines.push(userMsg("u1", "a0", "do the long thing"));
+  let parent = "u1";
+  for (let k = 0; k < steps; k++) {
+    lines.push(
+      assistantMsg(`a${k + 1}`, parent, [
+        { type: "toolCall", id: `t${k}`, name: "Bash", arguments: {} },
+      ]),
+    );
+    lines.push(
+      JSON.stringify({
+        type: "message",
+        id: `r${k}`,
+        parentId: `a${k + 1}`,
+        timestamp: "2026-07-18T00:00:03.000Z",
+        message: {
+          role: "toolResult",
+          toolCallId: `t${k}`,
+          toolName: "Bash",
+          content: [{ type: "text", text: "x".repeat(resultChars) }],
+          isError: false,
+          timestamp: 0,
+        },
+      }),
+    );
+    parent = `r${k}`;
+  }
+  lines.push(assistantMsg("af", parent, [{ type: "text", text: "finished" }]));
+  return lines;
+}
+
+const markerCount = (lines: string[]) =>
+  lines.join("\n").split(JSON.stringify(TRIMMED_TURN_MARKER).slice(1, -1)).length - 1;
+
+/** Every toolResult in `objs` answers a toolCall that is also in `objs`. */
+function assertNoOrphanResults(objs: Record<string, any>[]) {
+  const calls = new Set<string>();
+  for (const o of objs) {
+    if (o.message?.role === "assistant") {
+      for (const b of o.message.content) if (b.type === "toolCall") calls.add(b.id);
+    }
+  }
+  for (const o of objs) {
+    if (o.message?.role === "toolResult") assert.ok(calls.has(o.message.toolCallId), o.id);
+  }
+}
+
+describe("buildSeededPiTranscript — trimming an over-budget final turn", () => {
+  it("keeps the prompt, marked, then the latest whole steps that fit", () => {
+    // Each step is a 1000-token result; the turn is ~10k against a 3500 budget.
+    const res = buildSeededPiTranscript(toolLoop(10).join("\n"), {
+      cwd: "/home",
+      seedTokens: 3500,
+    });
+    assert.ok(res);
+    const objs = parse(res.lines).slice(1);
+    assert.equal(objs[0].id, "u1");
+    assert.equal(objs[0].parentId, null);
+    assert.equal(objs[0].message.content.at(-1).text, TRIMMED_TURN_MARKER);
+    assert.equal(objs[0].message.content[0].text, "do the long thing");
+    // Resumed at a step start, re-linked onto the prompt.
+    assert.equal(objs[1].message.role, "assistant");
+    assert.equal(objs[1].parentId, "u1");
+    assert.equal(objs.at(-1).id, "af");
+    assert.ok(objs.length < 20, "the turn was cut");
+    const total = objs.reduce((sum, o) => sum + estimatePiEntryTokens(o as never), 0);
+    assert.ok(total <= 3500, `seed ~${Math.round(total)} tokens is over budget`);
+    assertNoOrphanResults(objs);
+  });
+
+  it("floors at the prompt plus the final step", () => {
+    const res = buildSeededPiTranscript(toolLoop(4).join("\n"), { cwd: "/home", seedTokens: 1 });
+    assert.ok(res);
+    const objs = parse(res.lines).slice(1);
+    assert.deepEqual(
+      objs.map((o) => o.id),
+      ["u1", "af"],
+    );
+    assert.equal(objs[1].parentId, "u1");
+  });
+
+  it("never splits a response's parallel tool calls from their results", () => {
+    const lines = [
+      header(),
+      userMsg("u1", null, "go"),
+      assistantMsg("a1", "u1", [
+        { type: "toolCall", id: "p1", name: "Bash", arguments: {} },
+        { type: "toolCall", id: "p2", name: "Bash", arguments: {} },
+      ]),
+      toolResultMsg("r1", "a1", "p1"),
+      toolResultMsg("r2", "r1", "p2"),
+      assistantMsg("a2", "r2", [{ type: "text", text: "z".repeat(3600) }]),
+    ];
+    const res = buildSeededPiTranscript(lines.join("\n"), { cwd: "/home", seedTokens: 100 });
+    assert.ok(res);
+    assertNoOrphanResults(parse(res.lines));
+  });
+
+  it("re-seeding a trimmed seed keeps one marker, counted once", () => {
+    const first = buildSeededPiTranscript(toolLoop(10).join("\n"), {
+      cwd: "/home",
+      seedTokens: 3500,
+    });
+    assert.ok(first);
+    // A tighter budget cuts the already-trimmed turn again.
+    const again = buildSeededPiTranscript(first.lines.join("\n"), {
+      cwd: "/home",
+      seedTokens: 2400,
+    });
+    assert.ok(again);
+    assert.equal(markerCount(again.lines), 1);
+    const objs = parse(again.lines).slice(1);
+    assert.ok(objs.length < parse(first.lines).length - 1, "cut again");
+    const total = objs.reduce((sum, o) => sum + estimatePiEntryTokens(o as never), 0);
+    assert.ok(total <= 2400, `seed ~${Math.round(total)} tokens is over budget`);
+  });
+
+  it("the real SessionManager resumes the whole trimmed chain, prompt to final step", () => {
+    const home = resolve(scratch(), "home");
+    mkdirSync(home, { recursive: true });
+    const piSessionsDir = resolve(scratch(), ".mind/pi-sessions");
+    makeArchive(piSessionsDir, "main", "2026-07-18T09-30", toolLoop(10));
+    const seeded = seedPiSession({ cwd: home, piSessionsDir, name: "main", seedTokens: 3500 });
+    assert.ok(seeded);
+    const sm = SessionManager.continueRecent(home, resolve(piSessionsDir, "main"));
+    assert.equal(sm.getSessionId(), seeded.sessionId);
+    const { messages } = sm.buildSessionContext();
+    const file = readdirSync(resolve(piSessionsDir, "main"))[0];
+    const onDisk = readFileSync(resolve(piSessionsDir, "main", file), "utf-8")
+      .trim()
+      .split("\n");
+    // Every seeded entry is on the path from the leaf: none cut off by a broken link.
+    assert.equal(messages.length, onDisk.length - 1);
+    assert.match(JSON.stringify(messages[0]), /do the long thing/);
+    assert.match(JSON.stringify(messages[0]), /left out to keep room to think/);
+    assert.match(JSON.stringify(messages.at(-1)), /finished/);
+  });
+});
+
+// --- Recollection -----------------------------------------------------------
+
+const RECALL: RecallEntry[] = [
+  {
+    period: "day",
+    period_key: "2026-07-16",
+    start: "2026-07-16T00:00:00.000Z",
+    end: "2026-07-17T00:00:00.000Z",
+    content: "I rewrote the pond poem twice.",
+    author: "mind",
+  },
+  {
+    period: "hour",
+    period_key: "2026-07-17T09",
+    start: "2026-07-17T09:00:00.000Z",
+    end: "2026-07-17T10:00:00.000Z",
+    content: "Talked with alice about moss.",
+    author: "consolidation",
+  },
+];
+
+const convo = () => [
+  header(SRC_ID, "/orig/home"),
+  userMsg("u1", null, "first prompt"),
+  assistantMsg("a1", "u1", [{ type: "text", text: "hi there" }]),
+  userMsg("u2", "a1", "second prompt"),
+  assistantMsg("a2", "u2", [{ type: "text", text: "all done" }]),
+];
+
+describe("seedPiSession / rotatePiSession — recollection", () => {
+  function setup(lines = convo()) {
+    const home = resolve(scratch(), "home");
+    mkdirSync(home, { recursive: true });
+    const piSessionsDir = resolve(scratch(), ".mind/pi-sessions");
+    makeArchive(piSessionsDir, "main", "2026-07-18T09-30", lines);
+    return { home, piSessionsDir };
+  }
+
+  function readSeed(piSessionsDir: string, name = "main") {
+    const dir = resolve(piSessionsDir, name);
+    const file = readdirSync(dir).find((f) => f.endsWith(".jsonl"));
+    assert.ok(file);
+    return readFileSync(resolve(dir, file), "utf-8").trim().split("\n");
+  }
+
+  it("asks for memories before the archive time, up to where the tail starts", async () => {
+    const { home, piSessionsDir } = setup();
+    const queries: RecollectionQuery[] = [];
+    const seeded = await seedPiSession({
+      cwd: home,
+      piSessionsDir,
+      name: "main",
+      seedTokens: 1_000_000,
+      recollect: async (q) => {
+        queries.push(q);
+        return RECALL;
+      },
+      timeZone: "UTC",
+    });
+    assert.ok(seeded);
+    assert.equal(seeded.recallEntries, 2);
+    assert.deepEqual(queries, [
+      { before: "2026-07-18T09:30:00.000Z", tailStartedAt: "2026-07-18T00:00:01.000Z" },
+    ]);
+    const objs = parse(readSeed(piSessionsDir)).slice(1);
+    assert.deepEqual(
+      objs.map((o) => o.type === "custom_message" && o.customType === RECALL_CUSTOM_TYPE),
+      [true, true, false, false, false, false],
+    );
+    assert.ok(
+      objs[0].content.startsWith(
+        `${RECALL_PREAMBLE}\n[recall: Thursday 16 Jul — you wrote this one]`,
+      ),
+    );
+    assert.equal(objs[0].parentId, null);
+    assert.equal(objs[1].parentId, objs[0].id);
+    assert.equal(objs[2].id, "u1");
+    assert.equal(objs[2].parentId, objs[1].id);
+  });
+
+  it("reaches the model: the real SessionManager puts the memories ahead of the tail", async () => {
+    const { home, piSessionsDir } = setup();
+    const seeded = await seedPiSession({
+      cwd: home,
+      piSessionsDir,
+      name: "main",
+      seedTokens: 1_000_000,
+      recollect: async () => RECALL,
+      timeZone: "UTC",
+    });
+    assert.ok(seeded);
+    const sm = SessionManager.continueRecent(home, resolve(piSessionsDir, "main"));
+    assert.equal(sm.getSessionId(), seeded.sessionId);
+    const llm = convertToLlm(sm.buildSessionContext().messages);
+    assert.deepEqual(
+      llm.map((m) => m.role),
+      ["user", "user", "user", "assistant", "user", "assistant"],
+    );
+    assert.match(JSON.stringify(llm[0]), /pond poem/);
+    assert.match(JSON.stringify(llm[1]), /moss/);
+    assert.match(JSON.stringify(llm[2]), /first prompt/);
+  });
+
+  for (const [what, recollect] of [
+    [
+      "rejects",
+      async () => {
+        throw new Error("daemon down");
+      },
+    ],
+    ["returns malformed entries", async () => [{ nope: true }]],
+  ] as const) {
+    it(`fails soft to a tail-only seed when recollection ${what}`, async () => {
+      const { home, piSessionsDir } = setup();
+      const seeded = await seedPiSession({
+        cwd: home,
+        piSessionsDir,
+        name: "main",
+        seedTokens: 1_000_000,
+        recollect,
+      });
+      assert.ok(seeded);
+      assert.equal(seeded.recallEntries, 0);
+      const objs = parse(readSeed(piSessionsDir)).slice(1);
+      assert.equal(objs[0].id, "u1");
+      assert.equal(objs[0].parentId, null);
+    });
+  }
+
+  it("re-seeding a seeded transcript replaces its recall entries rather than keeping them", async () => {
+    const { home, piSessionsDir } = setup();
+    await seedPiSession({
+      cwd: home,
+      piSessionsDir,
+      name: "main",
+      seedTokens: 1_000_000,
+      recollect: async () => RECALL,
+    });
+    const again = buildSeededPiTranscript(readSeed(piSessionsDir).join("\n"), {
+      cwd: home,
+      seedTokens: 1_000_000,
+      recall: [RECALL[1]],
+    });
+    assert.ok(again);
+    const objs = parse(again.lines).slice(1);
+    assert.equal(objs.filter((o) => o.type === "custom_message").length, 1);
+    assert.match(objs[0].content, /moss/);
+    assert.equal(objs[1].id, "u1");
+    assert.equal(objs[1].parentId, objs[0].id);
+  });
+
+  it("rotation seeds recollection ahead of its tail and reports how many", async () => {
+    const home = resolve(scratch(), "home");
+    const sessionsDir = resolve(scratch(), ".mind/pi-sessions");
+    const liveDir = resolve(sessionsDir, "main");
+    mkdirSync(liveDir, { recursive: true });
+    const sourcePath = resolve(liveDir, "2026-07-18T00-00-00-000Z_src.jsonl");
+    writeFileSync(sourcePath, `${convo().join("\n")}\n`);
+    const queries: RecollectionQuery[] = [];
+    const rotated = await rotatePiSession({
+      cwd: home,
+      sessionsDir,
+      name: "main",
+      sourcePath,
+      seedTokens: 1_000_000,
+      recollect: async (q) => {
+        queries.push(q);
+        return RECALL;
+      },
+    });
+    assert.ok(rotated);
+    assert.equal(rotated.recallEntries, 2);
+    assert.equal(queries[0].tailStartedAt, "2026-07-18T00:00:01.000Z");
+    const objs = parse(readFileSync(rotated.path, "utf-8").trim().split("\n")).slice(1);
+    assert.equal(objs.filter((o) => o.customType === RECALL_CUSTOM_TYPE).length, 2);
+  });
+});
+
+describe("buildSeededPiTranscript — text rate follows the transcript's model", () => {
+  const turns = (provider: string, model: string) => {
+    const reply = (id: string, parentId: string) =>
+      JSON.stringify({
+        type: "message",
+        id,
+        parentId,
+        timestamp: "2026-07-18T00:00:02.000Z",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "ok" }],
+          api: "x",
+          provider,
+          model,
+          usage: { totalTokens: 1 },
+          stopReason: "stop",
+          timestamp: 0,
+        },
+      });
+    return [
+      header(),
+      userMsg("u1", null, "p".repeat(3500)),
+      reply("a1", "u1"),
+      userMsg("u2", "a1", "q".repeat(3500)),
+      reply("a2", "u2"),
+    ].join("\n");
+  };
+
+  it("keeps two ~1000-token turns in 2100 for an OpenAI model", () => {
+    const res = buildSeededPiTranscript(turns("openai", "gpt-5.5"), {
+      cwd: "/home",
+      seedTokens: 2100,
+    });
+    assert.ok(res);
+    assert.equal(parse(res.lines)[1].id, "u1");
+  });
+
+  it("counts the same turns at claude's denser rate for an Anthropic model", () => {
+    const res = buildSeededPiTranscript(turns("anthropic", "claude-opus-5"), {
+      cwd: "/home",
+      seedTokens: 2100,
+    });
+    assert.ok(res);
+    assert.equal(parse(res.lines)[1].id, "u2");
+  });
+});
+
+describe("seedPiSession — recollection is chosen by value", () => {
+  it("an undefined recollect runs the sync path", () => {
+    const home = resolve(scratch(), "home");
+    mkdirSync(home, { recursive: true });
+    const piSessionsDir = resolve(scratch(), ".mind/pi-sessions");
+    makeArchive(piSessionsDir, "main", "2026-07-18T09-30", convo());
+    const opts = {
+      cwd: home,
+      piSessionsDir,
+      name: "main",
+      seedTokens: 1_000_000,
+      recollect: undefined,
+    };
+    const seeded = seedPiSession(opts);
+    assert.ok(seeded && !(seeded instanceof Promise));
+    assert.equal(seeded.recallEntries, 0);
+  });
+});
+
+// --- Review follow-ups ---------------------------------------------------------
+
+describe("buildSeededPiTranscript — an OpenAI thinking signature is not its cost", () => {
+  it("counts an OpenAI reply's thinking by its text, not its encrypted reasoning item", () => {
+    const reply = (id: string, parentId: string) =>
+      JSON.stringify({
+        type: "message",
+        id,
+        parentId,
+        timestamp: "2026-07-18T00:00:02.000Z",
+        message: {
+          role: "assistant",
+          content: [
+            {
+              type: "thinking",
+              thinking: "",
+              thinkingSignature: JSON.stringify({
+                type: "reasoning",
+                encrypted_content: "e".repeat(40_000),
+              }),
+            },
+            { type: "text", text: "ok" },
+          ],
+          api: "openai-responses",
+          provider: "openai",
+          model: "gpt-5.5",
+          usage: { totalTokens: 1 },
+          stopReason: "stop",
+          timestamp: 0,
+        },
+      });
+    const lines = [
+      header(),
+      userMsg("u1", null, "first"),
+      reply("a1", "u1"),
+      userMsg("u2", "a1", "second"),
+      reply("a2", "u2"),
+    ];
+    const res = buildSeededPiTranscript(lines.join("\n"), { cwd: "/home", seedTokens: 1000 });
+    assert.ok(res);
+    assert.equal(parse(res.lines)[1].id, "u1");
+  });
+});
+
+describe("buildSeededPiTranscript — the rate follows the model the mind is on", () => {
+  const anthropicTurns = () => [
+    header(),
+    userMsg("u1", null, "p".repeat(3500)),
+    assistantMsg("a1", "u1", [{ type: "text", text: "ok" }]),
+    userMsg("u2", "a1", "q".repeat(3500)),
+    assistantMsg("a2", "u2", [{ type: "text", text: "ok" }]),
+  ];
+
+  it("an explicit resume model wins over the transcript's", () => {
+    const res = buildSeededPiTranscript(anthropicTurns().join("\n"), {
+      cwd: "/home",
+      seedTokens: 2100,
+      model: "openai/gpt-5.5",
+    });
+    assert.ok(res);
+    assert.equal(parse(res.lines)[1].id, "u1");
+  });
+
+  it("a model change after the last reply sets the rate", () => {
+    const lines = [
+      ...anthropicTurns(),
+      JSON.stringify({
+        type: "model_change",
+        id: "m1",
+        parentId: "a2",
+        timestamp: "2026-07-18T00:00:04.000Z",
+        provider: "openai",
+        modelId: "gpt-5.5",
+      }),
+    ];
+    const res = buildSeededPiTranscript(lines.join("\n"), { cwd: "/home", seedTokens: 2100 });
+    assert.ok(res);
+    assert.equal(parse(res.lines)[1].id, "u1");
   });
 });
