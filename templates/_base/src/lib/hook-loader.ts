@@ -166,7 +166,10 @@ export function executeHook(
       try {
         const parsed = JSON.parse(trimmed);
         resolve({
-          additionalContext: parsed.additionalContext,
+          // Claude's own hook shape (`hookSpecificOutput.additionalContext`) is accepted
+          // too, so one script — startup-context.ts — serves every template.
+          additionalContext:
+            parsed.additionalContext ?? parsed.hookSpecificOutput?.additionalContext,
           metadata: parsed.metadata,
           decision: parsed.decision,
         });
@@ -208,13 +211,6 @@ export async function runHooks(
   // so resolving ../.. gives the home directory.
   const homeDir = resolve(hooksDir, "../..");
 
-  // A hook runs on behalf of one session, and a `volute` call it makes must name that
-  // session in X-Volute-Thread — the mind server's own environment names none (#1173).
-  const session = (input as { session?: unknown }).session;
-  const env: NodeJS.ProcessEnv = { ...process.env };
-  if (typeof session === "string" && session) env.VOLUTE_SESSION = session;
-  else delete env.VOLUTE_SESSION;
-
   const contextParts: string[] = [];
   const metadata: Record<string, unknown> = {};
   let blocked = false;
@@ -238,21 +234,12 @@ export async function runHooks(
   for (const script of scripts) {
     const remaining = Math.max(MIN_HOOK_MS, deadline - Date.now());
     const budget = Math.min(timeout, remaining);
-    const result = await executeHook(script, input, budget, homeDir, env);
-    if (result.failure) {
-      const told = tellMindAboutHookFailure({
-        scriptPath: script,
-        homeDir,
-        event,
-        failure: result.failure,
-        session,
-        // A timeout on a squeezed budget is the hooks before it running long, not
-        // necessarily this hook being broken — say so rather than blame it.
-        squeezed:
-          result.failure.kind === "timeout" && budget < timeout ? { budget, timeout } : undefined,
-      });
-      if (told) contextParts.push(told);
-    }
+    const result = await runHook(script, event, input, {
+      homeDir,
+      timeout: budget,
+      fullTimeout: timeout,
+    });
+    if (result.told) contextParts.push(result.told);
     if (result.additionalContext) {
       contextParts.push(result.additionalContext);
     }
@@ -269,6 +256,48 @@ export async function runHooks(
     metadata,
     blocked,
   };
+}
+
+/**
+ * Run one hook script for `event` on behalf of the session named in `input.session`, and
+ * tell the mind if it fails, exactly as {@link runHooks} does for each script it finds.
+ * For a hook that lives outside a lane directory — startup-context.ts.
+ *
+ * `told` is in-band text for this turn's context (only ever the notices drain's own
+ * failure); every other failure goes to the daemon as a notice. `cwd` defaults to
+ * `homeDir`; `fullTimeout` is the event's whole budget when `timeout` was squeezed from it.
+ */
+export async function runHook(
+  scriptPath: string,
+  event: string,
+  input: object,
+  opts: { homeDir: string; cwd?: string; timeout?: number; fullTimeout?: number },
+): Promise<HookResult & { told?: string }> {
+  const timeout = opts.timeout ?? defaultHookTimeout();
+  const fullTimeout = opts.fullTimeout ?? timeout;
+  // A hook runs on behalf of one session, and a `volute` call it makes must name that
+  // session in X-Volute-Thread — the mind server's own environment names none (#1173).
+  const session = (input as { session?: unknown }).session;
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  if (typeof session === "string" && session) env.VOLUTE_SESSION = session;
+  else delete env.VOLUTE_SESSION;
+
+  const result = await executeHook(scriptPath, input, timeout, opts.cwd ?? opts.homeDir, env);
+  if (!result.failure) return result;
+  const told = tellMindAboutHookFailure({
+    scriptPath,
+    homeDir: opts.homeDir,
+    event,
+    failure: result.failure,
+    session,
+    // A timeout on a squeezed budget is the hooks before it running long, not
+    // necessarily this hook being broken — say so rather than blame it.
+    squeezed:
+      result.failure.kind === "timeout" && timeout < fullTimeout
+        ? { budget: timeout, timeout: fullTimeout }
+        : undefined,
+  });
+  return { ...result, told };
 }
 
 /**

@@ -202,7 +202,10 @@ export async function createMind(options: {
 
   // --- Startup context (loaded once, injected on first turn per session) ---
 
-  const startupContextPromise = getStartupContext().catch(() => null);
+  // Placeholder until this template runs startup context per session (#1199).
+  const startupContextPromise = getStartupContext({ session: "main", source: "startup" }).catch(
+    () => null,
+  );
 
   // --- Dynamic hook extension ---
 

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -215,4 +215,73 @@ describe("hook failure notices", () => {
       assert.equal(ok.failure, undefined, JSON.stringify(ok));
     });
   }
+
+  describe("startup context runs per session, through the hook runner (#1199)", () => {
+    let mindDir: string;
+    let startup: typeof import("../templates/_base/src/lib/startup.js");
+    const cwd = process.cwd();
+
+    before(async () => {
+      startup = await import("../templates/_base/src/lib/startup.js");
+    });
+
+    beforeEach(() => {
+      // getStartupContext reads the mind's home/ from the process cwd, as the servers do.
+      mindDir = mkdtempSync(join(tmpdir(), "volute-startup-context-"));
+      mkdirSync(join(mindDir, "home/.local/hooks"), { recursive: true });
+      process.chdir(mindDir);
+    });
+
+    afterEach(() => {
+      process.chdir(cwd);
+      rmSync(mindDir, { recursive: true, force: true });
+    });
+
+    const writeStartupHook = (body: string) =>
+      writeFileSync(join(mindDir, "home/.local/hooks/startup-context.sh"), body);
+
+    it("hands the hook the session and why it started, and names the session in its env", async () => {
+      writeStartupHook(
+        [
+          "input=$(cat)",
+          `printf '{"additionalContext":"%s %s"}' "$VOLUTE_SESSION" "$(printf '%s' "$input" | tr -d '"{}')"`,
+        ].join("\n"),
+      );
+      const context = await startup.getStartupContext({ session: "garden", source: "compact" });
+      assert.match(context ?? "", /^garden /);
+      assert.match(context ?? "", /source:compact/);
+      assert.match(context ?? "", /session:garden/);
+      assert.match(context ?? "", /hook_event_name:SessionStart/);
+    });
+
+    it("tells the mind when it fails, the way any hook failure is told", async () => {
+      writeStartupHook("echo 'budget fetch blew up' >&2\nexit 3\n");
+      const context = await startup.getStartupContext({ session: "main", source: "startup" });
+      await loader.flushHookFailureReports();
+      assert.equal(context, null);
+      assert.equal(received.length, 1);
+      assert.equal(received[0].body.kind, "hook_failed");
+      assert.match(
+        received[0].body.message,
+        /startup-context hook \.local\/hooks\/startup-context\.sh/,
+      );
+      assert.match(received[0].body.message, /exited with code 3/);
+      assert.match(received[0].body.message, /budget fetch blew up/);
+    });
+
+    it("runs the shipped script, whose claude-shaped output reaches the mind", async () => {
+      // The shipped script prints claude's SessionStart shape. tsx resolves from the mind dir,
+      // which is an ES module package as a real mind's is.
+      symlinkSync(join(cwd, "node_modules"), join(mindDir, "node_modules"));
+      writeFileSync(join(mindDir, "package.json"), JSON.stringify({ type: "module" }));
+      copyFileSync(
+        resolve(import.meta.dirname, "../templates/_base/.init/.local/hooks/startup-context.ts"),
+        join(mindDir, "home/.local/hooks/startup-context.ts"),
+      );
+      const context = await startup.getStartupContext({ session: "main", source: "resume" });
+      await loader.flushHookFailureReports();
+      assert.equal(received.length, 0, JSON.stringify(received));
+      assert.match(context ?? "", /Session resume at /);
+    });
+  });
 });

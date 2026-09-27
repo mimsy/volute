@@ -258,7 +258,10 @@ before(async () => {
   mkdirSync(resolve(mindDir, ".mind"), { recursive: true });
   writeFileSync(resolve(mindDir, "home/SOUL.md"), "You are a test mind.\n");
   mkdirSync(resolve(mindDir, "home/.local/hooks"), { recursive: true });
-  writeFileSync(resolve(mindDir, "home/.local/hooks/startup-context.sh"), "echo ORIENTATION\n");
+  writeFileSync(
+    resolve(mindDir, "home/.local/hooks/startup-context.sh"),
+    `echo '{"additionalContext":"ORIENTATION"}'\n`,
+  );
   copyFileSync(resolve(templates, "_base/gitignore"), resolve(mindDir, ".gitignore"));
   git("init", "-q");
   git("config", "user.email", "test@volute");

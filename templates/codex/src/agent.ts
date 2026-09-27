@@ -205,7 +205,10 @@ export function createMind(options: {
     return path;
   }
   const hooksDir = resolvePath(options.cwd, ".local/hooks");
-  const startupContextPromise = getStartupContext().catch(() => null);
+  // Placeholder until this template runs startup context per session (#1199).
+  const startupContextPromise = getStartupContext({ session: "main", source: "startup" }).catch(
+    () => null,
+  );
 
   // Write system prompt to file for Codex model_instructions_file
   const promptPath = resolvePath(options.mindDir, ".mind/system-prompt.md");

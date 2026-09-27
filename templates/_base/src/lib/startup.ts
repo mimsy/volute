@@ -1,6 +1,6 @@
-import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { runHook } from "./hook-loader.js";
 import { log } from "./logger.js";
 
 /**
@@ -304,52 +304,42 @@ export function loadPackageInfo(): { name: string; version: string } {
 }
 
 /**
- * Run the startup-context hook and return the generated context string.
- * Returns null if no hook is found or it produces no output.
+ * Why a session is being oriented — the SessionStart `source` claude's SDK passes the same
+ * script: a new thread (`startup`), one resumed after a restart (`resume`), or one rotated
+ * at the context limit (`compact`).
  */
-export async function getStartupContext(): Promise<string | null> {
-  // Prefer .ts, fall back to .sh for backwards compatibility
-  const tsPath = resolve("home/.local/hooks/startup-context.ts");
-  const shPath = resolve("home/.local/hooks/startup-context.sh");
+export type StartupSource = "startup" | "resume" | "compact";
+
+/**
+ * Run the startup-context hook for one session as it starts, and return what it says.
+ *
+ * Per session, not once per process: claude runs the same script as a SessionStart hook
+ * on every new stream, so spend, time and extensions are current for the thread they
+ * orient — a thread first used hours after the server started, or a rotated one, gets
+ * today's, not the snapshot from boot (#1199). It runs through the hook runner, with the
+ * same timeout and the same `[Your hooks]` report on failure as every other hook.
+ *
+ * `.sh` is the fallback when there is no `.ts`. Returns null if there's no hook, it
+ * printed nothing, or it failed.
+ */
+export async function getStartupContext(opts: {
+  session: string;
+  source: StartupSource;
+}): Promise<string | null> {
+  const homeDir = resolve("home");
+  const tsPath = resolve(homeDir, ".local/hooks/startup-context.ts");
+  const shPath = resolve(homeDir, ".local/hooks/startup-context.sh");
   const scriptPath = existsSync(tsPath) ? tsPath : existsSync(shPath) ? shPath : null;
   if (!scriptPath) return null;
 
-  const isTs = scriptPath.endsWith(".ts");
-
-  try {
-    const stdout = await new Promise<string>((resolve, reject) => {
-      const child = isTs
-        ? spawn(process.execPath, ["--import", "tsx", scriptPath], { timeout: 5000 })
-        : spawn("bash", [scriptPath], { timeout: 5000 });
-      let out = "";
-      child.stdout.on("data", (d: Buffer) => {
-        out += d.toString();
-      });
-      // Ignore stdin errors — the hook may exit before reading (EPIPE); an
-      // unhandled stream error here would kill the mind's server process.
-      child.stdin.on("error", () => {});
-      child.stdin.end(JSON.stringify({ source: "startup" }));
-      child.on("close", (code) =>
-        code === 0 ? resolve(out) : reject(new Error(`exit code ${code}`)),
-      );
-      child.on("error", reject);
-    });
-
-    // Try to parse as JSON hook output
-    let context: string | null = null;
-    try {
-      const parsed = JSON.parse(stdout);
-      context = parsed?.hookSpecificOutput?.additionalContext ?? null;
-    } catch {
-      // Fall back to plain text
-      context = stdout.trim();
-    }
-
-    return context || null;
-  } catch (e) {
-    log("server", "failed to run startup context hook:", e);
-    return null;
-  }
+  // Run from the mind dir: the script reads `.mind/…` and `home/memory/…` from there.
+  const result = await runHook(
+    scriptPath,
+    "startup-context",
+    { hook_event_name: "SessionStart", source: opts.source, session: opts.session },
+    { homeDir, cwd: process.cwd() },
+  );
+  return result.additionalContext?.trim() || null;
 }
 
 export type MindPrompts = {
