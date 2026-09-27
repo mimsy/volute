@@ -3,7 +3,10 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { mergeWithUntrackResolution } from "../packages/daemon/src/lib/mind/upgrade.js";
+import {
+  mergeWithUntrackResolution,
+  resolvePackageJsonConflict,
+} from "../packages/daemon/src/lib/mind/upgrade.js";
 import { cleanupVariant } from "../packages/daemon/src/lib/mind/variant-cleanup.js";
 import { gitExec } from "../packages/daemon/src/lib/util/exec.js";
 import { logBuffer } from "../packages/daemon/src/lib/util/log-buffer.js";
@@ -231,5 +234,64 @@ describe("cleanupVariant branch resolution", () => {
     );
     const infos = entries.filter((e) => e.level === "info" && e.msg.includes("already deleted"));
     assert.ok(infos.length > 0, "should log at info that the branch was already deleted");
+  });
+});
+
+describe("resolvePackageJsonConflict", () => {
+  const pkg = (deps: Record<string, string>) =>
+    `${JSON.stringify({ name: "m", version: "0.1.0", dependencies: deps }, null, 2)}\n`;
+
+  beforeEach(async () => {
+    repo = mkdtempSync(join(tmpdir(), "upgrade-pkg-test-"));
+    await git("init", "-b", "main");
+    await git("config", "user.name", "test");
+    await git("config", "user.email", "test@example.com");
+    write("package.json", pkg({ "@anthropic-ai/tokenizer": "^0.0.4", tsx: "^4.23.1" }));
+    await commitAll("initial");
+  });
+
+  afterEach(() => {
+    rmSync(repo, { recursive: true, force: true });
+  });
+
+  async function conflictWith(ours: Record<string, string>, theirs: Record<string, string>) {
+    await git("checkout", "-b", "template");
+    write("package.json", pkg(theirs));
+    await commitAll("template update");
+    await git("checkout", "main");
+    write("package.json", pkg(ours));
+    await commitAll("mind change");
+    await assert.rejects(git("merge", "template", "-m", "merge template update"));
+  }
+
+  it("keeps a skill-added dependency beside the template's version bump (#1185)", async () => {
+    await conflictWith(
+      { "@anthropic-ai/tokenizer": "^0.0.4", libsql: "^0.5.22", tsx: "^4.23.1" },
+      { "@anthropic-ai/tokenizer": "^0.0.4", tsx: "^4.23.15", zod: "^4.0.0" },
+    );
+
+    assert.equal(await resolvePackageJsonConflict(repo, null), true);
+
+    assert.equal(
+      readFileSync(resolve(repo, "package.json"), "utf-8"),
+      pkg({
+        "@anthropic-ai/tokenizer": "^0.0.4",
+        libsql: "^0.5.22",
+        tsx: "^4.23.15",
+        zod: "^4.0.0",
+      }),
+    );
+    assert.equal((await git("diff", "--name-only", "--diff-filter=U")).trim(), "");
+  });
+
+  it("leaves the conflict when both sides changed the same dependency differently", async () => {
+    await conflictWith(
+      { "@anthropic-ai/tokenizer": "^0.0.4", tsx: "^4.30.0" },
+      { "@anthropic-ai/tokenizer": "^0.0.4", tsx: "^4.23.15" },
+    );
+
+    assert.equal(await resolvePackageJsonConflict(repo, null), false);
+
+    assert.equal((await git("diff", "--name-only", "--diff-filter=U")).trim(), "package.json");
   });
 });
