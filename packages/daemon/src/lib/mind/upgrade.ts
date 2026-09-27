@@ -15,9 +15,10 @@ import { computeTemplateHash } from "../template/template-hash.js";
 import { gitExec } from "../util/exec.js";
 import log from "../util/logger.js";
 import { repairThreadBatchConfig } from "./event-routes.js";
-import { chownMindDir, isIsolationEnabled } from "./isolation.js";
+import { chownMindDir, isIsolationEnabled, mindFileOwner } from "./isolation.js";
 import { beginUpgrade } from "./join-lock.js";
 import { repairMechanicsDoc } from "./mechanics-doc.js";
+import { type MindFileOwner, writeMindFile } from "./mind-file-write.js";
 import { npmInstallAsMind, npmInstallNeeded } from "./npm-install.js";
 import { findMind, mindDir, setMindTemplate, setMindTemplateHash } from "./registry.js";
 import { cleanupVariant } from "./variant-cleanup.js";
@@ -194,11 +195,81 @@ async function updateTemplateBranch(projectRoot: string, template: string, mindN
   }
 }
 
+const JSON_CONFLICT = Symbol("json-conflict");
+const DEPENDENCY_MAPS = [
+  "dependencies",
+  "devDependencies",
+  "optionalDependencies",
+  "peerDependencies",
+];
+
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+function sameJson(a: unknown, b: unknown): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+/** Three-way merge of JSON values, key by key; JSON_CONFLICT when both sides changed one key differently. */
+function mergeJson(base: unknown, ours: unknown, theirs: unknown): unknown {
+  if (sameJson(ours, theirs)) return ours;
+  if (sameJson(ours, base)) return theirs;
+  if (sameJson(theirs, base)) return ours;
+  if (!isPlainObject(ours) || !isPlainObject(theirs)) return JSON_CONFLICT;
+  const b = isPlainObject(base) ? base : {};
+  const out: Record<string, unknown> = {};
+  for (const key of new Set([...Object.keys(ours), ...Object.keys(theirs)])) {
+    const v = mergeJson(b[key], ours[key], theirs[key]);
+    if (v === JSON_CONFLICT) return JSON_CONFLICT;
+    if (v !== undefined) out[key] = v;
+  }
+  return out;
+}
+
+/**
+ * Resolve a both-modified package.json conflict in `dir` by merging it key by key,
+ * and stage the result. A skill's npm-dependencies land in the mind's package.json
+ * right beside the template's own, so a template dependency bump collides line-wise
+ * with a skill install that touched nothing the template did (#1185). Each side's
+ * changes survive; a key both sides changed differently leaves the conflict as it
+ * was. Returns true when package.json was resolved.
+ */
+export async function resolvePackageJsonConflict(
+  dir: string,
+  owner: MindFileOwner | null,
+): Promise<boolean> {
+  let stages: unknown[];
+  try {
+    stages = await Promise.all(
+      [1, 2, 3].map(async (n) =>
+        JSON.parse(await gitExec(["show", `:${n}:package.json`], { cwd: dir })),
+      ),
+    );
+  } catch {
+    return false; // package.json isn't a both-modified conflict, or a side isn't valid JSON
+  }
+  const merged = mergeJson(stages[0], stages[1], stages[2]);
+  if (!isPlainObject(merged)) return false;
+  // npm keeps dependency maps sorted; match it so the post-merge install writes no diff
+  for (const key of DEPENDENCY_MAPS) {
+    const deps = merged[key];
+    if (isPlainObject(deps)) {
+      merged[key] = Object.fromEntries(
+        Object.entries(deps).sort(([a], [b]) => a.localeCompare(b, "en")),
+      );
+    }
+  }
+  await writeMindFile(dir, "package.json", `${JSON.stringify(merged, null, 2)}\n`, { owner });
+  await gitExec(["add", "package.json"], { cwd: dir });
+  return true;
+}
+
 /**
  * Merge the template branch into the current worktree.
  * Returns true if there are merge conflicts.
  */
-async function mergeTemplateBranch(worktreeDir: string): Promise<boolean> {
+async function mergeTemplateBranch(worktreeDir: string, mindName: string): Promise<boolean> {
   try {
     await gitExec(
       ["merge", TEMPLATE_BRANCH, "--allow-unrelated-histories", "-m", "merge template update"],
@@ -211,7 +282,18 @@ async function mergeTemplateBranch(worktreeDir: string): Promise<boolean> {
       const hasConflictMarkers = status
         .split("\n")
         .some((line) => line.startsWith("UU") || line.startsWith("AA"));
-      if (hasConflictMarkers) return true;
+      if (hasConflictMarkers) {
+        if (await resolvePackageJsonConflict(worktreeDir, await mindFileOwner(mindName))) {
+          const left = await gitExec(["diff", "--name-only", "--diff-filter=U"], {
+            cwd: worktreeDir,
+          });
+          if (!left.trim()) {
+            await gitExec(["commit", "--no-edit"], { cwd: worktreeDir });
+            return false;
+          }
+        }
+        return true;
+      }
     } catch {
       // fall through to rethrow
     }
@@ -817,7 +899,7 @@ async function runUpgradeCore(
     }
 
     // Merge template branch
-    const hasConflicts = await mergeTemplateBranch(worktreeDir);
+    const hasConflicts = await mergeTemplateBranch(worktreeDir, mindName);
 
     if (!hasConflicts) {
       // Re-add home files that match the new .gitignore allowlist patterns
