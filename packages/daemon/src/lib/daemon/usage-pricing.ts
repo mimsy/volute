@@ -14,6 +14,7 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { getBuiltinModel, getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
+import { getCustomModels } from "../ai-service.js";
 import { findMind, mindDir } from "../mind/registry.js";
 import log from "../util/logger.js";
 
@@ -446,10 +447,44 @@ export async function mindPricingContext(
   return { mind, template, configuredModel };
 }
 
+/** The Claude SDK's model aliases; the SDK resolves each to its newest family member. */
+const SDK_ALIASES = new Set(["haiku", "sonnet", "opus", "fable"]);
+
+/** `claude-<family>-<major>[-<minor>]` → [major, minor]; null for dated or unrelated ids. */
+function familyVersion(id: string, family: string): [number, number] | null {
+  const m = id.match(new RegExp(`^claude-${family}-(\\d+)(?:-(\\d{1,2}))?$`));
+  return m ? [Number(m[1]), Number(m[2] ?? 0)] : null;
+}
+
+/**
+ * Resolve a Claude SDK alias (`haiku`, `anthropic:opus`, …) to the newest concrete Anthropic
+ * model this daemon knows — the built-in catalog plus the host's custom models — so a mind
+ * configured with an alias can be priced and called like any other. Anything that isn't an
+ * alias is returned unchanged.
+ */
+export function resolveModelAlias(ref: string): string {
+  const bare = ref.startsWith("anthropic:") ? ref.slice("anthropic:".length) : ref;
+  if (!SDK_ALIASES.has(bare)) return ref;
+  const ids = [
+    ...(getBuiltinModels("anthropic" as never) as Model<Api>[]).map((m) => m.id),
+    ...getCustomModels()
+      .filter((c) => c.provider === "anthropic")
+      .map((c) => c.id),
+  ];
+  let best: { id: string; v: [number, number] } | null = null;
+  for (const id of ids) {
+    const v = familyVersion(id, bare);
+    if (v && (!best || v[0] > best.v[0] || (v[0] === best.v[0] && v[1] > best.v[1]))) {
+      best = { id, v };
+    }
+  }
+  return best ? `anthropic:${best.id}` : ref;
+}
+
 /**
  * The model a mind thinks with, as `provider:id` (or a bare id when the provider can't be
- * told), with the SDK's `[1m]` context suffix dropped — the model its consolidated memories
- * are written by. Null when neither its config nor its template names one.
+ * told), with the SDK's `[1m]` context suffix dropped and an SDK alias resolved — the model
+ * its summaries are written by. Null when neither its config nor its template names one.
  */
 export async function mindModelId(mind: string): Promise<string | null> {
   const { template, configuredModel } = await mindPricingContext(mind);
@@ -458,5 +493,5 @@ export async function mindModelId(mind: string): Promise<string | null> {
     template,
   );
   if (!ref) return null;
-  return formatModelRef({ ...ref, id: ref.id.replace(/\[1m\]$/i, "") });
+  return resolveModelAlias(formatModelRef({ ...ref, id: ref.id.replace(/\[1m\]$/i, "") }));
 }

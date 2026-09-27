@@ -644,7 +644,11 @@ export type SystemSpend = {
   percentUsed: number;
 };
 
-export type SystemUsageReport = UsageReport & { system: SystemSpend | null };
+export type SystemUsageReport = UsageReport & {
+  system: SystemSpend | null;
+  /** USD each mind's summaries cost in the window — never counted against the mind's own cap. */
+  background: Record<string, number>;
+};
 
 export function fetchUsage(window: UsageWindow = "24h"): Promise<SystemUsageReport> {
   return get(`${V1}/usage?window=${window}`);
@@ -788,7 +792,7 @@ export function deleteCustomModel(provider: string, id: string): Promise<void> {
   return del(`${V1}/system/ai/models/custom?provider=${enc(provider)}&id=${enc(id)}`);
 }
 
-export type AiDefaults = { spiritModel?: string | null; utilityModel: string | null };
+export type AiDefaults = { spiritModel: string | null };
 
 export function fetchAiDefaults(): Promise<AiDefaults> {
   return get(`${V1}/system/ai/defaults`);

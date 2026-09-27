@@ -253,6 +253,20 @@ export class SpendBudget {
   }
 
   /**
+   * Record the cost of work done *for* a mind but not *by* it — the summaries of its turns and
+   * days, written in its voice by its model. It counts toward the install-wide cap, which is
+   * the host's brake, and never toward the mind's own: a mind's number measures its own turns,
+   * the only spend it can see and reason about, and background cost landing between turns
+   * would move it for reasons it can't see.
+   */
+  recordBackgroundUsage(costUsd: number | null): void {
+    if (!this.system) return;
+    if (costUsd === null) this.system.hasUnpricedTurns = true;
+    else this.system.spentUsd += costUsd;
+    this.systemDirty = true;
+  }
+
+  /**
    * Budget status for a mind across both its own cap and the system cap. Does not
    * mutate — call acknowledgeWarning() after delivering a warning.
    */

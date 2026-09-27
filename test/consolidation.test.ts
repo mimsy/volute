@@ -429,16 +429,15 @@ describe("first-person consolidation: authorship", () => {
     const { complete } = capture({
       status: "ok",
       text: "I spent the day by the water.",
-      model: "anthropic:util",
-      fallback: true,
+      model: "anthropic:mind-model",
     });
     await summarizePeriod(mind, "day", "2026-03-20", complete);
     const row = await getRow(mind, "day", "2026-03-20");
     const meta = JSON.parse(row!.metadata!);
     assert.equal(row!.content, "I spent the day by the water.");
     assert.equal(meta.author, "consolidation");
-    assert.equal(meta.model, "anthropic:util");
-    assert.equal(meta.model_fallback, true);
+    assert.equal(meta.model, "anthropic:mind-model");
+    assert.equal(meta.model_fallback, undefined);
   });
 
   it("never regenerates over a mind-authored period, even a provisional one", async () => {
@@ -472,10 +471,10 @@ describe("first-person consolidation: authorship", () => {
 describe("first-person consolidation: the writer", () => {
   function deps(over: Partial<CompleteAsMindDeps>): CompleteAsMindDeps & {
     used: string[];
-    charged: [string, number | null][];
+    charged: (number | null)[];
   } {
     const used: string[] = [];
-    const charged: [string, number | null][] = [];
+    const charged: (number | null)[] = [];
     return {
       used,
       charged,
@@ -485,13 +484,7 @@ describe("first-person consolidation: the writer", () => {
         opts.onCost?.(0.02);
         return { status: "ok", text: "in my voice" };
       },
-      utility: async (_s, _u, opts) => {
-        used.push("utility");
-        opts.onCost?.(0.004);
-        return { status: "ok", text: "in the utility's voice" };
-      },
-      utilityModel: () => "anthropic:util",
-      recordCost: (mind, c) => charged.push([mind, c]),
+      recordCost: (c) => charged.push(c),
       overCap: () => false,
       deadlineMs: 5000,
       ...over,
@@ -528,10 +521,9 @@ describe("first-person consolidation: the writer", () => {
     }
   });
 
-  it("uses the mind's own model, and charges the mind for it", async () => {
-    const mind = `${PREFIX}w`;
+  it("uses the mind's own model, and records the cost as background spend", async () => {
     const d = deps({});
-    const out = await completeAsMind(mind, "s", "u", d);
+    const out = await completeAsMind(`${PREFIX}w`, "s", "u", d);
     assert.deepEqual(out, {
       status: "ok",
       text: "in my voice",
@@ -539,61 +531,34 @@ describe("first-person consolidation: the writer", () => {
       costUsd: 0.02,
     });
     assert.deepEqual(d.used, ["anthropic:mind-model"]);
-    assert.deepEqual(d.charged, [[mind, 0.02]]);
+    assert.deepEqual(d.charged, [0.02]);
   });
 
-  it("falls back to the utility model, and says so, when it can't", async () => {
+  it("never falls back to another model when the mind's can't be used", async () => {
     const d = deps({ withModel: async () => ({ status: "unconfigured" }) });
-    const out = await completeAsMind(`${PREFIX}w`, "s", "u", d);
-    assert.deepEqual(out, {
-      status: "ok",
-      text: "in the utility's voice",
-      model: "anthropic:util",
-      fallback: true,
-      costUsd: 0.004,
-    });
-  });
-
-  it("falls back when the mind's model is unknown or its call fails", async () => {
-    const unknown = await completeAsMind(
-      `${PREFIX}w`,
-      "s",
-      "u",
-      deps({ modelFor: async () => null }),
-    );
-    assert.equal(unknown.status === "ok" && unknown.fallback, true);
-    const failed = await completeAsMind(
-      `${PREFIX}w`,
-      "s",
-      "u",
-      deps({ withModel: async () => ({ status: "failed" }) }),
-    );
-    assert.equal(failed.status === "ok" && failed.fallback, true);
-  });
-
-  it("basic mode is free: with no utility model, not even the mind's model is called (#381)", async () => {
-    const d = deps({ utilityModel: () => undefined });
     assert.deepEqual(await completeAsMind(`${PREFIX}w`, "s", "u", d), { status: "unconfigured" });
-    assert.deepEqual(d.used, []);
+    const unknown = deps({ modelFor: async () => null });
+    assert.deepEqual(await completeAsMind(`${PREFIX}w`, "s", "u", unknown), {
+      status: "unconfigured",
+    });
+    assert.deepEqual(unknown.used, [], "nothing is called when the model can't be determined");
+  });
+
+  it("a failed call is failed — not retried on anything else", async () => {
+    const d = deps({ withModel: async () => ({ status: "failed" }) });
+    assert.deepEqual(await completeAsMind(`${PREFIX}w`, "s", "u", d), { status: "failed" });
   });
 
   it("a hung completion times out and counts as failed, so nothing waits on it forever", async () => {
     const hung = () => new Promise<never>(() => {});
     const started = Date.now();
-    const fellBack = await completeAsMind(
+    const out = await completeAsMind(
       `${PREFIX}w`,
       "s",
       "u",
       deps({ withModel: hung, deadlineMs: 30 }),
     );
-    assert.equal(fellBack.status === "ok" && fellBack.fallback, true);
-    const both = await completeAsMind(
-      `${PREFIX}w`,
-      "s",
-      "u",
-      deps({ withModel: hung, utility: hung, deadlineMs: 30 }),
-    );
-    assert.deepEqual(both, { status: "failed" });
+    assert.deepEqual(out, { status: "failed" });
     assert.ok(Date.now() - started < 2000);
     await assert.rejects(withDeadline(hung(), 20), /timed out/);
   });
@@ -626,29 +591,6 @@ describe("first-person consolidation: the writer", () => {
     const healed = await getRow(mind, "day", "2026-01-20");
     assert.equal(healed!.content, "THE REAL DAY");
     assert.equal(JSON.parse(healed!.metadata!).deferred, undefined);
-  });
-
-  it("keeps failed vs unconfigured, so a retry budget is spent only on real failures", async () => {
-    const none = await completeAsMind(
-      `${PREFIX}w`,
-      "s",
-      "u",
-      deps({
-        withModel: async () => ({ status: "unconfigured" }),
-        utility: async () => ({ status: "unconfigured" }),
-      }),
-    );
-    assert.deepEqual(none, { status: "unconfigured" });
-    const failed = await completeAsMind(
-      `${PREFIX}w`,
-      "s",
-      "u",
-      deps({
-        withModel: async () => ({ status: "failed" }),
-        utility: async () => ({ status: "unconfigured" }),
-      }),
-    );
-    assert.deepEqual(failed, { status: "failed" });
   });
 });
 

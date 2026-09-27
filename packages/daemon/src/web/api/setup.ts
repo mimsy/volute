@@ -47,7 +47,6 @@ const accountBodySchema = z.object({
 const modelsBodySchema = z.object({
   models: z.array(z.string()),
   spiritModel: z.string(),
-  utilityModel: z.string().optional(),
 });
 const spiritBodySchema = z.object({
   name: z.string(),
@@ -374,7 +373,7 @@ setup.post("/models", zValidator("json", modelsBodySchema), async (c) => {
   }
 
   try {
-    const { setEnabledModels, setUtilityModel } = await import("../../lib/ai-service.js");
+    const { setEnabledModels } = await import("../../lib/ai-service.js");
 
     setEnabledModels(body.models);
 
@@ -382,11 +381,6 @@ setup.post("/models", zValidator("json", modelsBodySchema), async (c) => {
     const config = readGlobalConfig();
     config.spiritModel = body.spiritModel.trim();
     writeGlobalConfig(config);
-
-    // Save utility model
-    if (body.utilityModel?.trim()) {
-      setUtilityModel(body.utilityModel.trim());
-    }
 
     return c.json({ ok: true });
   } catch (err) {

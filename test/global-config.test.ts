@@ -86,13 +86,13 @@ describe("readGlobalConfig", () => {
   it("round-trips provider credentials by merging secrets.json back on read", () => {
     mkdirSync(voluteSystemDir(), { recursive: true });
     writeGlobalConfig({
-      ai: { providers: { openai: { apiKey: "sk-round" } }, utilityModel: "u" },
+      ai: { providers: { openai: { apiKey: "sk-round" } }, models: ["openai:gpt-5"] },
       imagegen: { providers: { fal: { apiKey: "fal-key" } }, enabled: true },
     });
     _resetConfigCache();
     const config = readGlobalConfig();
     assert.equal(config.ai?.providers.openai.apiKey, "sk-round");
-    assert.equal(config.ai?.utilityModel, "u");
+    assert.deepEqual(config.ai?.models, ["openai:gpt-5"]);
     assert.equal(config.imagegen?.providers?.fal.apiKey, "fal-key");
     assert.equal(config.imagegen?.enabled, true);
   });

@@ -181,6 +181,63 @@ describe("summarizer", () => {
       assert.deepEqual(meta.tools, ["Read"]);
     });
 
+    /** Seed a one-turn history for `m` and return its done id. */
+    async function seedTurn(m: string): Promise<number> {
+      const db = await getDb();
+      const insert = async (type: string, opts?: Record<string, unknown>) => {
+        const r = await db
+          .insert(mindHistory)
+          .values({ mind: m, type, thread: `${m}-s`, ...opts })
+          .returning({ id: mindHistory.id });
+        return r[0].id;
+      };
+      await insert("inbound", { content: "what time is it?", channel: "@chat" });
+      await insert("outbound", { content: "about noon" });
+      return insert("done");
+    }
+
+    async function turnSummary(m: string) {
+      const db = await getDb();
+      return db
+        .select()
+        .from(summaries)
+        .where(and(eq(summaries.mind, m), eq(summaries.period, "turn")))
+        .get();
+    }
+
+    it("writes the turn summary with the mind's own model and records which", async () => {
+      const m = "turn-own-model";
+      const doneId = await seedTurn(m);
+      const asked: string[] = [];
+      await summarizeTurn(m, `${m}-s`, "@chat", doneId, undefined, async () => {
+        asked.push(m);
+        return {
+          status: "ok",
+          text: "I told someone the time.",
+          model: "anthropic:m",
+          costUsd: 0.01,
+        };
+      });
+      const row = await turnSummary(m);
+      assert.equal(row!.content, "I told someone the time.");
+      const meta = JSON.parse(row!.metadata!);
+      assert.equal(meta.deterministic, false);
+      assert.equal(meta.model, "anthropic:m");
+      assert.equal(meta.cost_usd, 0.01);
+      assert.deepEqual(asked, [m]);
+    });
+
+    it("falls back to the deterministic turn summary when the mind's model is unusable or over cap", async () => {
+      for (const status of ["unconfigured", "deferred", "failed"] as const) {
+        const m = `turn-${status}`;
+        const doneId = await seedTurn(m);
+        await summarizeTurn(m, `${m}-s`, "@chat", doneId, undefined, async () => ({ status }));
+        const meta = JSON.parse((await turnSummary(m))!.metadata!);
+        assert.equal(meta.deterministic, true, status);
+        assert.equal(meta.model, undefined, status);
+      }
+    });
+
     it("names the system event that triggered a turn in the deterministic summary", async () => {
       // The deterministic path is the fallback used whenever AI summarization is unavailable
       // (unconfigured, 401, rate-limited). If it ignores event rows — as buildTranscript once
@@ -1382,11 +1439,11 @@ describe("summarizer", () => {
       assert.equal(JSON.parse(row!.metadata!).attempts, 1);
     });
 
-    it("an unconfigured utility model spends no retry attempt, so the row can still heal", async () => {
-      // The retry budget is sized for *outages* — 5 attempts spaced across 7 days. An
-      // unconfigured utility model is a steady state, not a transient failure: counting it
+    it("an unusable model spends no retry attempt, so the row can still heal", async () => {
+      // The retry budget is sized for *outages* — 5 attempts spaced across 7 days. A mind's
+      // model that can't be used here is a steady state, not a transient failure: counting it
       // would burn all 5 inside the window and scar the row permanently, so an admin who
-      // configures a model later could never heal it (#381).
+      // enables the model later could never heal it (#381).
       const mind = "unconfigured-no-attempt";
       for (let d = 9; d <= 11; d++) {
         await insertSummary(mind, "day", `2026-03-${d}`, `Day ${d} happened.`);
@@ -1511,6 +1568,53 @@ describe("summarizer", () => {
       assert.equal(noticeCount, 1, `child digest header must be stripped: ${row!.content}`);
       assert.match(row!.content, /^echo: 2026-05-11: Shipped the feature\./m, "keeps attribution");
       assert.match(row!.content, /^fresh: Reviewed pull requests\./m);
+    });
+
+    it("the _system rollup records the model and cost of what wrote it", async () => {
+      const key = "2026-05-13T10";
+      await insertSummary("sys-cost-a", "hour", key, "Read a book.");
+      await insertSummary("sys-cost-b", "hour", key, "Wrote a letter.");
+      await summarizeSystem("hour", key, async () => ({
+        status: "ok",
+        text: "The system's hour.",
+        model: "anthropic:spirit-model",
+        costUsd: 0.003,
+      }));
+      const meta = JSON.parse((await getSummary("_system", "hour", key))!.metadata!);
+      assert.equal(meta.model, "anthropic:spirit-model");
+      assert.equal(meta.cost_usd, 0.003);
+    });
+
+    it("a deferred _system hour stands as a placeholder and heals after the cap resets", async () => {
+      const key = "2026-05-14T08";
+      await insertSummary("sys-defer-a", "hour", key, "Walked by the sea.");
+      await insertSummary("sys-defer-b", "hour", key, "Mended a net.");
+      await summarizeSystem("hour", key, async () => ({ status: "deferred" }) as const);
+      const meta = JSON.parse((await getSummary("_system", "hour", key))!.metadata!);
+      assert.equal(meta.deterministic, true);
+      assert.equal(meta.deferred, true);
+
+      await repairProvisionalSummaries(
+        async () => ({ status: "ok", text: "THE SYSTEM'S HOUR" }) as const,
+      );
+      const healed = await getSummary("_system", "hour", key);
+      assert.equal(healed!.content, "THE SYSTEM'S HOUR");
+      assert.equal(JSON.parse(healed!.metadata!).deferred, undefined);
+    });
+
+    it("the repair sweep asks an unusable mind once per sweep, not once per row", async () => {
+      const mind = "repair-unusable";
+      for (const month of ["2025-01", "2025-02", "2025-03"]) {
+        await insertSummary(mind, "day", `${month}-05`, `A day in ${month}.`);
+        await insertSummary(mind, "month", month, "provisional", { deterministic: true });
+      }
+      // The sweep sees every provisional row in the DB (other tests' too); count this mind's.
+      let asked = 0;
+      await repairProvisionalSummaries(async (_system, user) => {
+        if (user.includes("A day in 2025-")) asked++;
+        return { status: "unconfigured" } as const;
+      });
+      assert.equal(asked, 1);
     });
 
     it("repairProvisionalSummaries heals per-mind and _system rows", async () => {

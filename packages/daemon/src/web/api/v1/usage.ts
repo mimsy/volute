@@ -1,6 +1,7 @@
 import { Hono } from "hono";
+import { getSpiritName } from "../../../lib/config/setup.js";
 import { getSpendBudget } from "../../../lib/daemon/spend-budget.js";
-import { readWindow, usageReport } from "../../../lib/daemon/usage-report.js";
+import { backgroundSpend, readWindow, usageReport } from "../../../lib/daemon/usage-report.js";
 import { type AuthEnv, authMiddleware, requireAdmin } from "../../middleware/auth.js";
 
 /**
@@ -26,8 +27,11 @@ const app = new Hono<AuthEnv>()
   .get("/", requireAdmin, async (c) => {
     const window = readWindow(c.req.query("window"));
     if (!window) return c.json({ error: "Invalid window" }, 400);
-    const report = await usageReport({ window });
-    return c.json({ ...report, system: systemBudget() });
+    const [report, background] = await Promise.all([
+      usageReport({ window }),
+      backgroundSpend({ window, spirit: getSpiritName() }),
+    ]);
+    return c.json({ ...report, background, system: systemBudget() });
   });
 
 export default app;

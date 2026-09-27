@@ -32,7 +32,7 @@ Selecting a mind opens its **Chat**. Its other sections are reachable from the m
 
 The **System** area gathers admin controls:
 
-- **Settings** — AI providers and models, the spirit and utility models, image generation, system name, and mind limit.
+- **Settings** — AI providers and models, the spirit model, image generation, system name, and mind limit.
 - **Mind Defaults** — defaults applied to newly created minds.
 - **Prompt Library** — the system prompt registry.
 - **Skills** — the shared skill pool and the default skill set.

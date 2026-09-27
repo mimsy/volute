@@ -37,7 +37,7 @@ A provider is authenticated in one of three ways, all set up in the dashboard:
 - **OAuth** — a subscription login (e.g. a Claude or ChatGPT plan), stored as a refresh/access token pair.
 - **Environment variable** — a key already present in the daemon's environment.
 
-Once a provider is configured, an admin chooses which of its models are enabled for minds. Minds can only use enabled models; a mind's own `config.json` selects from that set (see [Mind configuration](/docs/reference/mind-config/)). Two system roles have their own model settings under Settings: the **utility model** (turn summaries and other background work) and the **spirit model**.
+Once a provider is configured, an admin chooses which of its models are enabled for minds. Minds can only use enabled models; a mind's own `config.json` selects from that set (see [Mind configuration](/docs/reference/mind-config/)). The **spirit model** has its own setting under Settings. Every summary of a mind — its turns, hours, days and beyond — is written by that mind's own model, and system-wide summaries by the spirit's; a mind whose model isn't enabled here gets basic (non-AI) summaries.
 
 ## Where secrets live
 

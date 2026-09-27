@@ -173,6 +173,7 @@ function windowLabel(w: UsageWindow): string {
         {#each rows as row (row.mind)}
           {@const figure = spendFigure(row)}
           {@const badge = unpricedLabel(row)}
+          {@const summariesUsd = report.background?.[row.mind] ?? 0}
           <div class="row">
             <div class="row-main">
               <button class="mind-name" onclick={() => navigate(`/minds/${encodeURIComponent(row.mind)}`)}>{row.mind}</button>
@@ -193,6 +194,12 @@ function windowLabel(w: UsageWindow): string {
             <div class="row-meta">
               <span>{row.turns} {row.turns === 1 ? "turn" : "turns"}</span>
               <span>{formatPercent(row.cacheHitRatio)} cache</span>
+              {#if summariesUsd > 0}
+                <span
+                  use:tooltip={"Summaries of this mind's turns and days, written in its voice. Not counted against its own cap."}
+                  >+{formatUsd(summariesUsd)} summaries</span
+                >
+              {/if}
               <span class="row-spark">
                 <Sparkline series={row.series} bucketMinutes={report.bucketMinutes} height={18} />
               </span>

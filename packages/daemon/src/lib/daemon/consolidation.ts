@@ -7,9 +7,8 @@
  * - **The material.** Besides the period's child summaries, a mind's rollup is given its own
  *   outbound words verbatim — what it said is what carries its voice — and whatever it wrote in
  *   its journal and dreams in the period. Every input is bounded, so the per-call cost is too.
- * - **The writer.** The mind's own model writes the memory. When this daemon can't call that
- *   model (not in the catalog, or no credentials for its provider here), the utility model does,
- *   and the row records which model wrote it.
+ * - **The writer.** The mind's own model writes the memory, and no other: when this daemon can't
+ *   call that model, the rollup stays deterministic (see `completeAsMind`).
  *
  * Mind files are read with daemon privileges (root on system installs), so every read goes
  * through `resolveRealWithinBase`: a mind that symlinks `memory/journal/<date>.md` at a host file
@@ -21,11 +20,9 @@ import { resolve } from "node:path";
 import { and, eq, gte, lt } from "drizzle-orm";
 import {
   aiCompleteModelOutcome,
-  aiCompleteUtilityOutcome,
   BACKGROUND_COMPLETION_TIMEOUT_MS,
   type CompletionOptions,
-  getUtilityModel,
-  type UtilityOutcome,
+  type CompletionOutcome,
   withDeadline,
 } from "../ai-service.js";
 import { getDb } from "../db.js";
@@ -44,9 +41,9 @@ import { mindModelId } from "./usage-pricing.js";
 
 const cLog = log.child("consolidation");
 
-/** A completion that also says which model wrote it, and whether that was a fallback. */
+/** A completion that also says which model wrote it and what it cost. */
 export type Completion =
-  | { status: "ok"; text: string; model?: string; fallback?: boolean; costUsd?: number | null }
+  | { status: "ok"; text: string; model?: string; costUsd?: number | null }
   | { status: "unconfigured" }
   | { status: "failed" }
   /** Not attempted: the mind is over its spend cap. Write the placeholder; heal it after reset. */
@@ -343,8 +340,8 @@ export async function gatherWritings(
 
 // ── Choosing the writer ──
 
-/** Minds already told about, so a missing model is logged once per daemon run, not per hour. */
-const fallbackLogged = new Set<string>();
+/** Minds already told about, so an unusable model is logged once per daemon run, not per hour. */
+const unusableLogged = new Set<string>();
 
 export type CompleteAsMindDeps = {
   modelFor: (mind: string) => Promise<string | null>;
@@ -353,11 +350,9 @@ export type CompleteAsMindDeps = {
     user: string,
     model: string,
     opts: CompletionOptions,
-  ) => Promise<UtilityOutcome>;
-  utility: (system: string, user: string, opts: CompletionOptions) => Promise<UtilityOutcome>;
-  utilityModel: () => string | undefined;
-  /** Charge a consolidation's cost to the mind it was written for. */
-  recordCost: (mind: string, costUsd: number | null) => void;
+  ) => Promise<CompletionOutcome>;
+  /** Record what a summary cost. Background spend: never the mind's own cap (see spend-budget). */
+  recordCost: (costUsd: number | null) => void;
   /** Whether the mind (or the install) has spent its cap for this period. */
   overCap: (mind: string) => boolean;
   /** Per-attempt deadline; a hung completion counts as failed. */
@@ -372,10 +367,9 @@ function isOverCap(mind: string): boolean {
   }
 }
 
-/** Consolidation is spent on the mind's behalf, so it counts against that mind's cap. */
-function recordConsolidationCost(mind: string, costUsd: number | null): void {
+function recordBackgroundCost(costUsd: number | null): void {
   try {
-    getSpendBudget().recordUsage(mind, costUsd);
+    getSpendBudget().recordBackgroundUsage(costUsd);
   } catch {
     // No spend budget running (startup, tests) — nothing to charge against.
   }
@@ -384,36 +378,33 @@ function recordConsolidationCost(mind: string, costUsd: number | null): void {
 const defaultDeps: CompleteAsMindDeps = {
   modelFor: mindModelId,
   withModel: aiCompleteModelOutcome,
-  utility: aiCompleteUtilityOutcome,
-  utilityModel: getUtilityModel,
-  recordCost: recordConsolidationCost,
+  recordCost: recordBackgroundCost,
   overCap: isOverCap,
   // The completion carries its own abort deadline; this is the backstop around the whole attempt.
   deadlineMs: BACKGROUND_COMPLETION_TIMEOUT_MS + 5_000,
 };
 
 /** One attempt, bounded: a hung or throwing completion counts as failed. */
-async function attempt(p: Promise<UtilityOutcome>, ms: number): Promise<UtilityOutcome> {
+async function attempt(p: Promise<CompletionOutcome>, ms: number): Promise<CompletionOutcome> {
   try {
     return await withDeadline(p, ms);
   } catch (err) {
-    cLog.warn("consolidation attempt failed", log.errorData(err));
+    cLog.warn("summary attempt failed", log.errorData(err));
     return { status: "failed" };
   }
 }
 
 /**
- * Write a mind's consolidation with its own model, falling back to the utility model when this
- * daemon can't use it (not enabled here, no configured provider, or the call fails). The result
- * names the model that actually wrote it, and its cost is charged to the mind.
+ * Write a summary in a mind's voice with the mind's own model — every summary of a mind, from a
+ * single turn to a month, and (under the spirit's name) the system's. No other model ever writes
+ * one: when this daemon can't use the mind's model (unknown, not enabled in Settings, no
+ * configured provider or credentials), the result is `unconfigured` and the caller writes its
+ * deterministic fallback, so a mind's memory is never a mix of voices.
  *
- * Over its spend cap, the mind's consolidation is deferred rather than billed.
+ * Over the mind's (or the install's) spend cap the summary is deferred rather than billed. The
+ * cost is background spend: it counts toward the install-wide cap, never the mind's own.
  *
- * With no utility model configured this is basic mode, which is free (#381): nothing is called —
- * not even the mind's own model — and the rollup stays deterministic.
- *
- * The outcome keeps the utility completer's `failed` vs `unconfigured` distinction — a retry
- * budget is only spent on `failed` — and reports `failed` if either attempt genuinely failed.
+ * `failed` vs `unconfigured` is kept for callers holding a retry budget: only `failed` spends it.
  */
 export async function completeAsMind(
   mind: string,
@@ -421,48 +412,41 @@ export async function completeAsMind(
   userMessage: string,
   deps: CompleteAsMindDeps = defaultDeps,
 ): Promise<Completion> {
-  const utilityModel = deps.utilityModel();
-  if (!utilityModel) return { status: "unconfigured" };
   // Spending past the host's limit on the mind's behalf isn't ours to do. Defer: the caller writes
   // a placeholder that the repair sweep heals once the cap resets.
   if (deps.overCap(mind)) return { status: "deferred" };
 
-  let costUsd: number | null | undefined;
-  const opts: CompletionOptions = {
-    onCost: (c) => {
-      costUsd = c;
-      deps.recordCost(mind, c);
-    },
-  };
-
-  const cost = () => (costUsd === undefined ? {} : { costUsd });
-
-  let failed = false;
-  let reason: string;
   const model = await deps.modelFor(mind).catch(() => null);
-  if (model) {
-    const out = await attempt(
-      deps.withModel(systemPrompt, userMessage, model, opts),
-      deps.deadlineMs,
-    );
-    if (out.status === "ok") return { status: "ok", text: out.text, model, ...cost() };
-    failed = out.status === "failed";
-    reason = failed
-      ? `its model (${model}) failed`
-      : `this daemon can't use its model (${model}: not enabled in Settings, or no configured provider for it)`;
-  } else {
-    reason = "its model could not be determined";
+  if (!model) {
+    logUnusable(mind, "its model could not be determined");
+    return { status: "unconfigured" };
   }
 
-  const key = `${mind}|${reason}`;
-  if (!fallbackLogged.has(key)) {
-    fallbackLogged.add(key);
-    cLog.warn(`consolidating ${mind}'s memories with the utility model: ${reason}`);
-  }
-
-  const out = await attempt(deps.utility(systemPrompt, userMessage, opts), deps.deadlineMs);
+  let costUsd: number | null | undefined;
+  const out = await attempt(
+    deps.withModel(systemPrompt, userMessage, model, {
+      onCost: (c) => {
+        costUsd = c;
+        deps.recordCost(c);
+      },
+    }),
+    deps.deadlineMs,
+  );
   if (out.status === "ok") {
-    return { status: "ok", text: out.text, model: utilityModel, fallback: true, ...cost() };
+    return { status: "ok", text: out.text, model, ...(costUsd === undefined ? {} : { costUsd }) };
   }
-  return failed || out.status === "failed" ? { status: "failed" } : { status: "unconfigured" };
+  if (out.status === "unconfigured") {
+    logUnusable(
+      mind,
+      `this daemon can't use its model (${model}: not enabled in Settings, or no configured provider for it)`,
+    );
+  }
+  return out;
+}
+
+function logUnusable(mind: string, reason: string): void {
+  const key = `${mind}|${reason}`;
+  if (unusableLogged.has(key)) return;
+  unusableLogged.add(key);
+  cLog.warn(`${mind}'s summaries are running in basic (non-AI) mode: ${reason}`);
 }

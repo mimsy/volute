@@ -44,7 +44,6 @@ export type AiConfig = {
   providers: Record<string, AiProviderConfig>;
   models?: string[];
   customModels?: CustomModel[];
-  utilityModel?: string;
 };
 
 /** Shared across daemon services (imagegen, future TTS, etc.) */

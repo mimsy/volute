@@ -80,7 +80,6 @@ let systemSaving = $state(false);
 
 // AI defaults
 let spiritModel = $state("");
-let utilityModel = $state("");
 let defaultsLoaded = $state(false);
 
 let aiProvidersRef: AiProviders;
@@ -101,7 +100,6 @@ onMount(async () => {
   try {
     const defaults = await fetchAiDefaults();
     spiritModel = defaults.spiritModel ?? "";
-    utilityModel = defaults.utilityModel ?? "";
   } catch {
     // will show via AiProviders load error
   }
@@ -143,9 +141,8 @@ async function saveMindLimit() {
 // Auto-save when defaults change (after initial load)
 $effect(() => {
   const s = spiritModel;
-  const u = utilityModel;
   if (!defaultsLoaded) return;
-  saveAiDefaults({ spiritModel: s || null, utilityModel: u || null }).catch(() => {});
+  saveAiDefaults({ spiritModel: s || null }).catch(() => {});
 });
 
 async function handleSystemAction() {
@@ -319,7 +316,6 @@ async function handleSystemLogout() {
       bind:this={aiProvidersRef}
       showModelDefaults
       bind:spiritModel
-      bind:utilityModel
     />
   </div>
 

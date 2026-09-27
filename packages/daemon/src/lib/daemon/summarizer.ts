@@ -1,6 +1,6 @@
 import { and, desc, eq, gte, inArray, like, lt, or, sql } from "drizzle-orm";
-import { aiCompleteUtility, aiCompleteUtilityOutcome, getUtilityModel } from "../ai-service.js";
 import { getUserByUsername } from "../auth.js";
+import { getSpiritName } from "../config/setup.js";
 import { getDb } from "../db.js";
 import { publish as publishMindEvent } from "../events/mind-events.js";
 import { getPrompt } from "../prompts.js";
@@ -172,9 +172,10 @@ function buildTurnDeterministicSummary(
       if (ev.channel) channels.add(ev.channel);
     }
     // Events need naming here too, not only in buildTranscript. This is the fallback used
-    // whenever aiCompleteUtility() returns null (AI unconfigured, 401, rate-limited, expired
-    // OAuth) — without it a schedule/orientation/wake turn degrades to a bare "Turn completed."
-    // and the trigger vanishes precisely when a host is least able to see what happened.
+    // whenever the mind's model can't write the summary (unusable here, over its cap, 401,
+    // rate-limited, expired OAuth) — without it a schedule/orientation/wake turn degrades to a
+    // bare "Turn completed." and the trigger vanishes precisely when a host is least able to
+    // see what happened.
     if (ev.type === "event") {
       const label = parsedMeta.get(ev.id)?.label;
       eventLabel = typeof label === "string" && label ? label : "System event";
@@ -418,6 +419,7 @@ export async function summarizeTurn(
   channel: string | undefined,
   doneId: number,
   turnId?: string,
+  complete: Complete = (system, user) => completeAsMind(mind, system, user),
 ): Promise<void> {
   const { events, fromId, toId } = turnId
     ? await gatherTurnEventsByTurnId(turnId)
@@ -486,20 +488,20 @@ export async function summarizeTurn(
 
   let summaryText: string;
   let deterministic: boolean;
+  const written: Record<string, unknown> = {};
 
   const transcript = buildTranscript(events, parsedMeta, mind);
-  if (transcript.trim()) {
-    const summaryPrompt = await getPrompt("turn_summary", { mind });
-    const identity = await getMindIdentityLine(mind);
-    const input = identity ? `${identity}\n\n${transcript}` : transcript;
-    const aiResult = await aiCompleteUtility(summaryPrompt, input);
-    if (aiResult) {
-      summaryText = aiResult;
-      deterministic = false;
-    } else {
-      summaryText = buildTurnDeterministicSummary(events, parsedMeta);
-      deterministic = true;
-    }
+  const outcome = transcript.trim()
+    ? await complete(
+        await getPrompt("turn_summary", { mind }),
+        [await getMindIdentityLine(mind), transcript].filter(Boolean).join("\n\n"),
+      )
+    : null;
+  if (outcome?.status === "ok") {
+    summaryText = outcome.text;
+    deterministic = false;
+    if (outcome.model) written.model = outcome.model;
+    if (outcome.costUsd !== undefined) written.cost_usd = outcome.costUsd;
   } else {
     summaryText = buildTurnDeterministicSummary(events, parsedMeta);
     deterministic = true;
@@ -507,6 +509,7 @@ export async function summarizeTurn(
 
   const metadata = {
     deterministic,
+    ...written,
     tool_count: tools.length,
     tools: [...new Set(tools)],
     from_id: fromId,
@@ -1151,15 +1154,14 @@ async function summarizePeriodOnce(
     content = outcome.text;
     deterministic = false;
     if (outcome.model) metadata.model = outcome.model;
-    if (outcome.fallback) metadata.model_fallback = true;
     if (outcome.costUsd !== undefined) metadata.cost_usd = outcome.costUsd;
   } else {
     content = buildPeriodicDeterministicSummary(entries, period, periodKey);
     deterministic = true;
-    // Only a *failed* call spends the retry budget. With no utility model configured there was
-    // nothing to fail, and the budget is sized for outages (5 attempts across 7 days): counting a
-    // steady state against it would exhaust it inside the window and scar the row permanently, so
-    // configuring a model later could never heal it (#381). An untracked row stays retry-eligible.
+    // Only a *failed* call spends the retry budget. When the mind's model can't be used here there
+    // was nothing to fail, and the budget is sized for outages (5 attempts across 7 days): counting
+    // a steady state against it would exhaust it inside the window and scar the row permanently,
+    // so enabling the model later could never heal it (#381). An untracked row stays retry-eligible.
     if (outcome.status === "failed") trackProvisionalAttempt(metadata, existingMeta);
     // Over the spend cap: the placeholder stands (so the period isn't missing — `_system` still
     // sees the mind) and the repair sweep writes the real memory once the cap resets, however
@@ -1261,7 +1263,7 @@ async function markParentsForRebuild(
 export async function summarizeSystem(
   period: TimerPeriod,
   periodKey: string,
-  complete: Complete = aiCompleteUtilityOutcome,
+  complete: Complete = (system, user) => completeAsMind(getSpiritName(), system, user),
 ): Promise<void> {
   const db = await getDb();
   const existing = await db
@@ -1315,16 +1317,21 @@ export async function summarizeSystem(
   if (outcome.status === "ok") {
     content = outcome.text;
     deterministic = false;
+    if (outcome.model) metadata.model = outcome.model;
+    if (outcome.costUsd !== undefined) metadata.cost_usd = outcome.costUsd;
   } else {
     content = buildSystemDeterministicSummary(entries, period, periodKey);
     deterministic = true;
-    // Only a *failed* call spends the retry budget. With no utility model configured there was
-    // nothing to fail, and the budget is sized for outages (5 attempts across 7 days): counting a
+    // Only a *failed* call spends the retry budget. When the spirit's model can't be used here
+    // there was nothing to fail, and the budget is sized for outages (5 attempts across 7 days): counting a
     // steady state against it would exhaust it inside the window and scar the row permanently, so
     // configuring a model later could never heal it (#381). An untracked row stays retry-eligible.
     if ((period === "week" || period === "month") && outcome.status === "failed") {
       trackProvisionalAttempt(metadata, existingMeta);
     }
+    // Over the spirit's or the install's cap: the placeholder stands and the repair sweep writes
+    // the real rollup once the cap resets — the same rule as a mind's own deferred periods.
+    if (outcome.status === "deferred") metadata.deferred = true;
   }
   metadata.deterministic = deterministic;
 
@@ -1356,10 +1363,6 @@ export async function summarizeSystem(
  * week/month, and an hour/day whose AI call failed. Per-mind summaries are healed before `_system` so the rollup sees the improved children.
  */
 export async function repairProvisionalSummaries(complete?: Complete): Promise<void> {
-  // Nothing to heal with, and this sweep runs every tick: scanning and re-prompting every
-  // provisional row only to be told "unconfigured" is pure waste. Rows stay retry-eligible
-  // (no attempt is spent), so the first sweep after a model is configured picks them all up.
-  if (!complete && !getUtilityModel()) return;
   const db = await getDb();
   const rows = await db
     .select({
@@ -1386,14 +1389,34 @@ export async function repairProvisionalSummaries(complete?: Complete): Promise<v
       (a.mind === SYSTEM_MIND ? 1 : 0) - (b.mind === SYSTEM_MIND ? 1 : 0) ||
       rank[a.period] - rank[b.period],
   );
+  // An owner whose model can't be used here answers `unconfigured` for every row; ask once per
+  // sweep, not once per row — this runs every tick. Rows stay retry-eligible (no attempt is
+  // spent), so the first sweep after the model becomes usable picks them all up.
+  const unusable = new Set<string>();
+  const once =
+    (owner: string, write: Complete): Complete =>
+    async (system, user) => {
+      if (unusable.has(owner)) return { status: "unconfigured" };
+      const out = await write(system, user);
+      if (out.status === "unconfigured") unusable.add(owner);
+      return out;
+    };
   for (const r of due) {
     try {
       if (r.mind === SYSTEM_MIND) {
-        await summarizeSystem(r.period as TimerPeriod, r.period_key, complete);
-      } else if (complete) {
-        await summarizePeriod(r.mind, r.period as TimerPeriod, r.period_key, complete);
+        const spirit = getSpiritName();
+        await summarizeSystem(
+          r.period as TimerPeriod,
+          r.period_key,
+          once(spirit, complete ?? ((s, u) => completeAsMind(spirit, s, u))),
+        );
       } else {
-        await summarizePeriod(r.mind, r.period as TimerPeriod, r.period_key);
+        await summarizePeriod(
+          r.mind,
+          r.period as TimerPeriod,
+          r.period_key,
+          once(r.mind, complete ?? ((s, u) => completeAsMind(r.mind, s, u))),
+        );
       }
     } catch (err) {
       sLog.error(
