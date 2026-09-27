@@ -228,7 +228,8 @@ describe("template wiring", () => {
   it("codex relies on its per-turn prompt refresh instead of a restart", () => {
     const agent = read("codex/src/agent.ts");
     assert.doesNotMatch(agent, /daemonRestart/);
-    const start = agent.indexOf("async function runTurn(");
+    // Every codex run re-reads it — each run of a turn is its own `codex exec`.
+    const start = agent.indexOf("async function runTurnBody(");
     assert.notEqual(start, -1);
     assert.match(agent.slice(start, start + 2000), /refreshSystemPrompt\(\);/);
   });
