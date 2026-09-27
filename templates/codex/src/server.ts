@@ -34,6 +34,7 @@ const mind = createMind({
   maxContextTokens: config.compaction?.maxContextTokens,
   seedTokens: config.continuity?.seedTokens,
   recollection: config.memory?.recollection?.enabled !== false,
+  subagents: config.subagents,
 });
 
 const router = createRouter({

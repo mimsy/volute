@@ -31,12 +31,14 @@ export function parseArgs(): { port: number } {
 export type SubagentConfig = {
   description: string;
   systemPrompt: string; // path relative to home/, e.g. "SOUL.md"
+  /** claude and pi. A codex subagent has codex's own tools (shell, file edits). */
   tools?: string[];
+  /** claude and pi. A codex subagent runs a single codex turn. */
   maxTurns?: number;
   /**
    * The model this subagent runs on (claude template): an alias like "sonnet" or "opus", a
    * full model id, or "inherit" for the mind's own model. Defaults to "sonnet" for a mind on
-   * an Opus- or Fable-class model, and to "inherit" for every other. pi
+   * an Opus- or Fable-class model, and to "inherit" for every other. pi and codex
    * subagents always run on the mind's model.
    */
   model?: string;

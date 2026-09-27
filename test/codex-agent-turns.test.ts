@@ -51,6 +51,8 @@ type FakeControl = {
   failStartThread: Set<string>;
   /** Sessions whose next resumeThread throws, once. */
   failResumeThread: Set<string>;
+  /** The config every Codex client was constructed with, by the session it names. */
+  clients: { session: string; config: any }[];
 };
 
 const FAKE_SDK = `
@@ -97,7 +99,10 @@ function usage() {
   return { input_tokens: 10, cached_input_tokens: 0, cache_write_input_tokens: 0, output_tokens: 5, reasoning_output_tokens: 0 };
 }
 export class Codex {
-  constructor(options) { this.session = options?.config?.shell_environment_policy?.set?.VOLUTE_SESSION; }
+  constructor(options) {
+    this.session = options?.config?.shell_environment_policy?.set?.VOLUTE_SESSION;
+    control().clients.push({ session: this.session, config: options?.config ?? {} });
+  }
   startThread() {
     if (control().failStartThread.has(this.session)) throw new Error("spawn failed");
     return new Thread(this.session, null);
@@ -135,6 +140,7 @@ const control: FakeControl = {
   calls: [],
   failStartThread: new Set(),
   failResumeThread: new Set(),
+  clients: [],
 };
 type Mind = {
   resolve: (name: string) => {
@@ -145,6 +151,8 @@ type Mind = {
 let mind: Mind;
 /** A second mind over the same directory, with a context threshold set, for rotation. */
 let rotatingMind: Mind;
+/** A third, with a dreamer subagent configured. */
+let dreamingMind: Mind;
 
 const ROLLOUT_DAY = ["2026", "09", "27"];
 
@@ -331,6 +339,15 @@ before(async () => {
     cwd: resolve(mindDir, "home"),
     mindDir,
     maxContextTokens: 1000,
+  });
+  dreamingMind = createMind({
+    systemPrompt: "You are a test mind.",
+    cwd: resolve(mindDir, "home"),
+    mindDir,
+    subagents: {
+      dreamer: { description: "Dreams from your essence.", systemPrompt: "SOUL.md" },
+      broken: { description: "Points at nothing.", systemPrompt: "NOPE.md" },
+    },
   });
 });
 
@@ -1259,5 +1276,131 @@ describe("codex folds what arrives mid-turn into that turn (#1200)", () => {
     assert.match(calls[1].input as string, /consolidated at the context limit/);
     assert.match(calls[1].input as string, /ORIENTATION fold-rot compact/);
     assert.equal(donesFor("fold-rot"), 1);
+  });
+});
+
+describe("codex subagents are real, and their usage counts (#1200)", () => {
+  const parentConfig = (session: string) =>
+    control.clients.find((c) => c.session === session && c.config.model_auto_compact_token_limit)
+      ?.config;
+
+  /** Call a subagent tool the way codex would, through the MCP endpoint the thread was given. */
+  async function mcp(session: string, body: object, token?: string) {
+    const server = parentConfig(session).mcp_servers.subagents;
+    const res = await fetch(server.url, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${token ?? process.env[server.bearer_token_env_var]}`,
+      },
+      body: JSON.stringify({ jsonrpc: "2.0", ...body }),
+    });
+    return { status: res.status, body: res.status === 200 ? await res.json() : null };
+  }
+
+  it("offers configured subagents to each thread over MCP, and none without config", async () => {
+    await send("sub-offer", undefined, dreamingMind);
+    const server = parentConfig("sub-offer").mcp_servers.subagents;
+    assert.match(server.url, /^http:\/\/127\.0\.0\.1:\d+\/mcp\/sub-offer$/);
+    assert.equal(server.bearer_token_env_var, "VOLUTE_SUBAGENT_TOKEN");
+    assert.equal(server.default_tools_approval_mode, "approve");
+    assert.ok(server.tool_timeout_sec > 60, "codex's 60s default would cut a dream short");
+    assert.ok(
+      !JSON.stringify(parentConfig("sub-offer")).includes(process.env.VOLUTE_SUBAGENT_TOKEN ?? "?"),
+    );
+
+    const init = await mcp("sub-offer", {
+      id: 1,
+      method: "initialize",
+      params: { protocolVersion: "2025-06-18" },
+    });
+    assert.equal(init.body.result.protocolVersion, "2025-06-18");
+    const list = await mcp("sub-offer", { id: 2, method: "tools/list" });
+    assert.deepEqual(
+      list.body.result.tools.map((t: any) => t.name),
+      ["dreamer"],
+      "a subagent whose prompt file is missing isn't offered",
+    );
+    assert.match(list.body.result.tools[0].description, /subagent/);
+    assert.equal((await mcp("sub-offer", { id: 3, method: "tools/list" }, "wrong")).status, 401);
+
+    await send("no-sub");
+    assert.equal(parentConfig("no-sub").mcp_servers, undefined);
+  });
+
+  it("runs the subagent as a SOUL-only codex thread and reports its usage on the calling thread", async () => {
+    let reply: any;
+    script(
+      "sub-run",
+      {
+        during: async () => {
+          reply = await mcp("sub-run", {
+            id: 7,
+            method: "tools/call",
+            params: { name: "dreamer", arguments: { prompt: "dream of tides" } },
+          });
+        },
+        events: [
+          { type: "thread.started", thread_id: "t-sub-run" },
+          { type: "turn.completed", usage: USAGE },
+        ],
+      },
+      // The nested thread's run.
+      {
+        events: [
+          { type: "thread.started", thread_id: "t-dream" },
+          {
+            type: "item.completed",
+            item: { id: "m", type: "agent_message", text: "the tide came in" },
+          },
+          { type: "turn.completed", usage: { ...USAGE, input_tokens: 40, output_tokens: 9 } },
+        ],
+      },
+    );
+    await send("sub-run", undefined, dreamingMind);
+    assert.deepEqual(reply.body.result, { content: [{ type: "text", text: "the tide came in" }] });
+
+    const nested = control.clients.find(
+      (c) => c.session === "sub-run" && c.config.project_doc_max_bytes === 0,
+    );
+    assert.ok(nested, "no nested client");
+    assert.equal(nested.config.model_instructions_file, resolve(mindDir, "home/SOUL.md"));
+    assert.equal(nested.config.skills.include_instructions, false);
+    assert.equal(nested.config.features.multi_agent, false);
+    assert.equal(nested.config.mcp_servers, undefined, "a subagent doesn't get subagents");
+    const call = control.calls.filter((c) => c.session === "sub-run")[1];
+    assert.equal(call.input, "dream of tides");
+
+    const usage = eventsFor("sub-run", "usage").map((p) => p.body.metadata);
+    const dream = usage.find((m) => m.subagent === "dreamer");
+    assert.ok(dream, "the subagent's usage never reached the daemon");
+    assert.equal(dream.input_tokens, 40);
+    assert.equal(dream.output_tokens, 9);
+    const done = eventsFor("sub-run", "done")[0];
+    assert.ok(
+      posted.indexOf(eventsFor("sub-run", "usage").find((p) => p.body.metadata.subagent)!) <
+        posted.indexOf(done),
+    );
+  });
+
+  it("says so when the subagent fails, and reports no usage it didn't have", async () => {
+    let reply: any;
+    script(
+      "sub-fail",
+      {
+        during: async () => {
+          reply = await mcp("sub-fail", {
+            id: 8,
+            method: "tools/call",
+            params: { name: "dreamer", arguments: { prompt: "dream" } },
+          });
+        },
+      },
+      { events: [{ type: "turn.failed", error: { message: "usage limit reached" } }] },
+    );
+    await send("sub-fail", undefined, dreamingMind);
+    assert.equal(reply.body.result.isError, true);
+    assert.match(reply.body.result.content[0].text, /usage limit reached/);
+    assert.equal(eventsFor("sub-fail", "usage").filter((p) => p.body.metadata.subagent).length, 0);
   });
 });

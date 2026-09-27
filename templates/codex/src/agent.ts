@@ -1,4 +1,4 @@
-import { rmSync, writeFileSync } from "node:fs";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
 import {
   Codex,
@@ -47,7 +47,13 @@ import {
   loadPrompts,
   loadSystemPrompt,
   type StartupSource,
+  type SubagentConfig,
 } from "./lib/startup.js";
+import {
+  type SubagentOutcome,
+  type SubagentServer,
+  startSubagentServer,
+} from "./lib/subagent-server.js";
 import { threadRef } from "./lib/thread-ref.js";
 import { filterEvent, loadTransparencyPreset } from "./lib/transparency.js";
 import { turnContextFor } from "./lib/turn-context.js";
@@ -147,6 +153,9 @@ type CodexSession = {
 
 // Loaded once at startup
 const preset = loadTransparencyPreset();
+
+/** How long a subagent may run before it is stopped. */
+const SUBAGENT_TIMEOUT_MS = 15 * 60_000;
 
 function emit(
   session: CodexSession,
@@ -277,6 +286,8 @@ export function createMind(options: {
   seedTokens?: number;
   /** Seed the mind's recollection ahead of the verbatim tail at every seam. Default true. */
   recollection?: boolean;
+  /** `subagents` from config.json — each is offered to codex as a tool (see runSubagent). */
+  subagents?: Record<string, SubagentConfig>;
 }): {
   resolve: HandlerResolver;
   getContextInfo: () => Promise<ContextInfo>;
@@ -313,6 +324,46 @@ export function createMind(options: {
     return path;
   }
   const hooksDir = resolvePath(options.cwd, ".local/hooks");
+
+  // --- Subagents (config-driven) ---
+
+  /** name → its description and the file its whole system prompt is read from. */
+  const subagents = new Map<string, { description: string; promptPath: string }>();
+  for (const [name, config] of Object.entries(options.subagents ?? {})) {
+    if (!config?.description || !config.systemPrompt) {
+      log("mind", `subagent "${name}": missing description or systemPrompt, skipping`);
+      continue;
+    }
+    const promptPath = resolvePath(options.cwd, config.systemPrompt);
+    try {
+      if (!readFileSync(promptPath, "utf-8").trim()) {
+        log("mind", `subagent "${name}": ${config.systemPrompt} is empty, skipping`);
+        continue;
+      }
+    } catch (err: any) {
+      log("mind", `subagent "${name}": can't read ${config.systemPrompt} (${err?.code}), skipping`);
+      continue;
+    }
+    subagents.set(name, { description: config.description, promptPath });
+  }
+  /** The MCP endpoint the subagents are offered on, once it is listening. */
+  let subagentServer: SubagentServer | null = null;
+  // Sessions wait for it (see getOrCreateSession), so no thread starts without its tools.
+  const subagentsReady: Promise<void> =
+    subagents.size === 0
+      ? Promise.resolve()
+      : startSubagentServer(
+          [...subagents].map(([name, def]) => ({
+            name,
+            description: `Your ${name} subagent: ${def.description}`,
+          })),
+          (session, name, prompt) => runSubagent(session, name, prompt),
+        ).then(
+          (server) => {
+            subagentServer = server;
+          },
+          (err) => warn("mind", "failed to offer subagents, running without them:", err),
+        );
 
   // Write system prompt to file for Codex model_instructions_file
   const promptPath = resolvePath(options.mindDir, ".mind/system-prompt.md");
@@ -365,11 +416,99 @@ export function createMind(options: {
           ignore_default_excludes: true,
           set: { ZDOTDIR: options.cwd, VOLUTE_SESSION: sessionName },
         },
+        ...(subagentServer && {
+          mcp_servers: {
+            subagents: {
+              url: subagentServer.url(sessionName),
+              // The token's *name*: `--config` values are on argv, visible in `ps`.
+              bearer_token_env_var: subagentServer.tokenEnvVar,
+              default_tools_approval_mode: "approve",
+              // A dream runs for minutes; codex's default would cut the call at 60s.
+              tool_timeout_sec: SUBAGENT_TIMEOUT_MS / 1000 + 60,
+              startup_timeout_sec: 30,
+            },
+          },
+        }),
       },
     });
     session.client = client;
     return client;
   };
+
+  /**
+   * Run one subagent on behalf of a session's current turn: a nested codex thread whose
+   * whole prompt is the subagent's `systemPrompt` file — for the dreamer, SOUL.md and
+   * nothing else (#1200). codex would otherwise add the mind's AGENTS.md, its skills
+   * catalog and its native multi-agent tools, so each is switched off: verified against
+   * codex 0.156.1's request body, where none of the three appear with these settings.
+   *
+   * It runs in the mind's home, on the mind's model, with a shell that names the calling
+   * session, and is aborted with that session's turn. Its usage is reported as its own
+   * `usage` event on the calling session the moment it completes, so it counts against the
+   * spend cap even if the turn that called it then fails.
+   */
+  async function runSubagent(
+    sessionName: string,
+    name: string,
+    prompt: string,
+  ): Promise<SubagentOutcome> {
+    const def = subagents.get(name);
+    const session = sessions.get(sessionName);
+    if (!def || !session) {
+      return { text: `No ${name} subagent for thread ${sessionName}.`, isError: true };
+    }
+    const client = new Codex({
+      ...(apiKey ? { apiKey } : {}),
+      config: {
+        model_instructions_file: def.promptPath,
+        project_doc_max_bytes: 0,
+        skills: { include_instructions: false },
+        features: { multi_agent: false },
+        shell_environment_policy: {
+          inherit: "all",
+          ignore_default_excludes: true,
+          set: { ZDOTDIR: options.cwd, VOLUTE_SESSION: sessionName },
+        },
+      },
+    });
+    const signal = AbortSignal.any([
+      session.abortController?.signal ?? new AbortController().signal,
+      AbortSignal.timeout(SUBAGENT_TIMEOUT_MS),
+    ]);
+    let text = "";
+    let failure: string | null = null;
+    let completed = false;
+    try {
+      const { events } = await client.startThread(threadOptions()).runStreamed(prompt, { signal });
+      for await (const event of events) {
+        if (event.type === "item.completed" && event.item.type === "agent_message") {
+          text = event.item.text;
+        } else if (event.type === "turn.completed") {
+          completed = true;
+          // A fresh thread's cumulative counter is this run's own usage.
+          const delta = usageDelta(ZERO_USAGE, event.usage);
+          if (delta) {
+            emit(session, {
+              type: "usage",
+              metadata: { ...delta.payload, model: options.model, subagent: name },
+            });
+          }
+        } else if (event.type === "turn.failed") {
+          failure = event.error.message;
+        } else if (event.type === "error") {
+          failure ??= event.message;
+        }
+      }
+    } catch (err) {
+      failure = err instanceof Error ? err.message : String(err);
+    }
+    if (!completed) {
+      warn("mind", `subagent "${name}" for session "${sessionName}" failed: ${failure}`);
+      return { text: `[subagent error] ${failure ?? "it ended without finishing"}`, isError: true };
+    }
+    log("mind", `subagent "${name}" for session "${sessionName}": done`);
+    return { text: text || "(no output)" };
+  }
 
   // --- Session lifecycle ---
 
@@ -401,12 +540,14 @@ export function createMind(options: {
     };
     sessions.set(name, session);
 
-    session.ready = initSession(session).catch((err) => {
-      warn("mind", `session "${name}": failed to initialise, a fresh thread will start:`, err);
-      // Never tell the mind a tail was restored onto the empty thread that starts instead.
-      session.seeded = false;
-      session.seededRecollection = false;
-    });
+    session.ready = subagentsReady
+      .then(() => initSession(session))
+      .catch((err) => {
+        warn("mind", `session "${name}": failed to initialise, a fresh thread will start:`, err);
+        // Never tell the mind a tail was restored onto the empty thread that starts instead.
+        session.seeded = false;
+        session.seededRecollection = false;
+      });
     return session;
   }
 
