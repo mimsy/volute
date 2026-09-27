@@ -140,6 +140,14 @@ export interface DeliveryPayload {
    */
   deferred?: { at: number };
   /**
+   * The latest `volute chat channels peek` that showed the mind this message while it was
+   * gated: the thread it peeked from and when. Its one source is the queue row's peek
+   * columns: attached when the row is read for delivery (`queuedPayload`), dropped whenever
+   * a payload is written back to a row (`storedPayload`). Rendered into `content` and
+   * stripped, like `held`, so the thread it lands in doesn't meet it as new (#1172).
+   */
+  peeked?: { thread: string; at: number };
+  /**
    * Set when this message's `mind_history` inbound row was deliberately NOT written on
    * arrival, because the mind was over its spend cap and would not see it. The row is
    * written when the message actually reaches the mind — history must not claim a mind
@@ -153,8 +161,9 @@ export interface DeliveryPayload {
  * The payload as POSTed to a mind process: `senderId` is stripped. It is the daemon's
  * record of the authenticated principal (#1017), and the mind's side of the wire is an
  * untrusted process — a field it could echo back must never exist in a shape that looks
- * authoritative. `held`/`inboundDeferred` are likewise daemon bookkeeping, stripped by
- * `withHeldPreface` on the same boundary.
+ * authoritative. `held`/`deferred`/`peeked`/`inboundDeferred` are likewise daemon
+ * bookkeeping, rendered and stripped by `withHeldPreface`, the one strip point on the
+ * same boundary.
  */
 export type WirePayload = Omit<DeliveryPayload, "senderId">;
 

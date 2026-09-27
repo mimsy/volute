@@ -7,6 +7,8 @@ import { getDb } from "../packages/daemon/src/lib/db.js";
 import {
   DeliveryManager,
   formatSuggestions,
+  queuedPayload,
+  withHeldPreface,
 } from "../packages/daemon/src/lib/delivery/delivery-manager.js";
 import {
   clearConfigCache,
@@ -968,6 +970,211 @@ describe("gated-channel release (#537)", () => {
       const peeked = await manager.peekChannel(name, "discord:nothing");
       assert.equal(peeked.count, 0);
       assert.deepEqual(peeked.messages, []);
+    });
+  });
+
+  describe("peeked messages arrive prefaced (#1172)", () => {
+    const reader = (name: string, thread = "main") => ({ name, thread });
+    const wireContent = (row: typeof deliveryQueue.$inferSelect) =>
+      withHeldPreface(queuedPayload(row)).content;
+
+    it("stamps the rows the mind was shown with its latest peek", async () => {
+      const name = createMind({ rules: [], default: "main" });
+      cleanup.push(name);
+      const m = makeManager();
+      manager = m.manager;
+
+      await gate(manager, name, "@claude", "hello");
+      await manager.peekChannel(name, "@claude"); // a host on the dashboard
+      assert.equal((await rows(name))[0].peeked_at, null, "a host's peek isn't the mind's");
+
+      await manager.peekChannel(name, "@claude", reader(name));
+      await manager.peekChannel(name, "@claude", reader(name, "other"));
+      const [row] = await rows(name);
+      assert.ok(row.peeked_at);
+      assert.equal(row.peeked_thread, "other", "the latest peek overwrites");
+      assert.equal(row.status, "gated", "peeking changes nothing about delivery");
+    });
+
+    it("stamps only the rows addressed to the reader — a variant's, or the parent's", async () => {
+      const name = createMind({ rules: [], default: "main" });
+      cleanup.push(name);
+      const variant = `${name}-exp`;
+      const m = makeManager();
+      manager = m.manager;
+
+      await gate(manager, name, "@claude", "to the parent");
+      await gate(manager, name, "@claude", "to the variant");
+      const db = await getDb();
+      const [, toVariant] = (await rows(name)).sort((x, y) => x.id - y.id);
+      await db
+        .update(deliveryQueue)
+        .set({ target_mind: variant })
+        .where(eq(deliveryQueue.id, toVariant.id));
+
+      await manager.peekChannel(name, "@claude", reader(variant, "v-main"));
+      let [p, v] = (await rows(name)).sort((x, y) => x.id - y.id);
+      assert.equal(p.peeked_at, null, "a variant's peek isn't the parent having looked");
+      assert.equal(v.peeked_thread, "v-main");
+
+      await manager.peekChannel(name, "@claude", reader(name, "main"));
+      [p, v] = (await rows(name)).sort((x, y) => x.id - y.id);
+      assert.equal(p.peeked_thread, "main");
+      assert.equal(v.peeked_thread, "v-main", "nor the parent's the variant having looked");
+    });
+
+    it("delivers a peeked message prefaced, and an unpeeked one as it was", async () => {
+      const name = createMind({ rules: [], default: "main" });
+      cleanup.push(name);
+      const m = makeManager();
+      manager = m.manager;
+
+      await gate(manager, name, "@claude", "are you there?");
+      await manager.peekChannel(name, "@claude", reader(name));
+      await gate(manager, name, "@claude", "one more thing"); // arrives after the peek
+
+      const result = await manager.acceptChannel(name, "@claude");
+      assert.equal(result.released, 2, "both are delivered — nothing is held back");
+
+      const [peeked, fresh] = (await rows(name)).sort((a, b) => a.id - b.id);
+      assert.match(
+        String(wireContent(peeked)),
+        /^\[peeked — you peeked this from thread "main" at \d{4}-\d{2}-\d{2} \d{2}:\d{2}\.\]\nare you there\?$/,
+      );
+      assert.equal(
+        "peeked" in withHeldPreface(queuedPayload(peeked)),
+        false,
+        "the marker never reaches the mind as a raw field",
+      );
+      assert.equal(wireContent(fresh), "one more thing", "never peeked, so as it was");
+      assert.equal(JSON.parse(peeked.payload).peeked, undefined, "nothing written into payloads");
+
+      const db = await getDb();
+      const inbound = await db
+        .select()
+        .from(mindHistory)
+        .where(and(eq(mindHistory.mind, name), eq(mindHistory.type, "inbound")));
+      assert.ok(
+        inbound.some((r) => r.content === "are you there?"),
+        "history keeps what the sender actually wrote",
+      );
+    });
+
+    it("prefaces a message peeked after its release promoted it, if not yet delivered", async () => {
+      const name = createMind({ rules: [], default: "main" });
+      cleanup.push(name);
+      const m = makeManager();
+      manager = m.manager;
+
+      await gate(manager, name, "@claude", "hi");
+      writeRoutes(name, { rules: [{ channel: "@claude", thread: "claude" }], default: "main" });
+      // The peek has read the row as gated (and will show it); the release commits before
+      // the stamp is written. The mind isn't running, so nothing has been delivered yet —
+      // a delivery that had already read the row would go out unprefaced (a known limit).
+      const db = await getDb();
+      const update = db.update;
+      db.update = ((...args: Parameters<typeof update>) => {
+        db.update = update;
+        const released = manager!.releaseGated(name);
+        const builder = update.apply(db, args);
+        const set = builder.set.bind(builder);
+        builder.set = ((values: never) => {
+          const where = set(values);
+          const run = where.where.bind(where);
+          where.where = ((cond: never) => {
+            const q = run(cond);
+            return released.then(() => q);
+          }) as never;
+          return where;
+        }) as never;
+        return builder;
+      }) as typeof db.update;
+      try {
+        const peeked = await manager.peekChannel(name, "@claude", reader(name));
+        assert.equal(peeked.messages[0].content, "hi", "the mind was shown it");
+      } finally {
+        db.update = update;
+      }
+
+      const [row] = await rows(name);
+      assert.equal(row.status, "pending", "the release got there first");
+      assert.match(String(wireContent(row)), /^\[peeked — /, "and it still says it was seen");
+    });
+
+    it("keeps the peek out of payloads a hold writes back, and still prefaces", async () => {
+      const name = createMind({ rules: [], default: "main" });
+      cleanup.push(name);
+      const m = makeManager();
+      manager = m.manager;
+
+      await gate(manager, name, "@claude", "hi");
+      await manager.peekChannel(name, "@claude", reader(name));
+      // A spend hold parks the released row, writing its payload back to the queue.
+      manager.setHoldCheck(() => ({ reason: "spend", scope: "mind" }));
+      manager.setRunningCheck(() => true);
+      await manager.acceptChannel(name, "@claude");
+
+      const [row] = await rows(name);
+      assert.equal(row.status, "held");
+      const stored = JSON.parse(row.payload);
+      assert.ok(stored.held, "the hold did write the payload back");
+      assert.equal(stored.peeked, undefined, "the columns stay the one source");
+      assert.match(String(wireContent(row)), /\[peeked — you peeked this from thread "main"/);
+    });
+
+    it("prefaces block content with a leading text block", () => {
+      const wire = withHeldPreface({
+        channel: "@claude",
+        sender: "a",
+        senderId: null,
+        content: [
+          { type: "text", text: "hi" },
+          { type: "text", text: "there" },
+        ],
+        peeked: { thread: "main", at: Date.now() },
+      });
+      const blocks = wire.content as { type: string; text?: string }[];
+      assert.equal(blocks.length, 3);
+      assert.match(blocks[0].text!, /^\[peeked — you peeked this from thread "main" at /);
+    });
+
+    it("never marks a message with parts a peek couldn't show", async () => {
+      const name = createMind({ rules: [], default: "main" });
+      cleanup.push(name);
+      const m = makeManager();
+      manager = m.manager;
+
+      await manager.routeAndDeliver(name, {
+        channel: "@claude",
+        sender: "alice",
+        content: [
+          { type: "text", text: "look" },
+          { type: "image", media_type: "image/png", data: "iVBORw0KGgo=" },
+        ],
+      });
+      await manager.peekChannel(name, "@claude", reader(name));
+      assert.equal((await rows(name))[0].peeked_at, null, "the image was never shown");
+    });
+
+    it("a failed stamp still returns what was held", async () => {
+      const name = createMind({ rules: [], default: "main" });
+      cleanup.push(name);
+      const m = makeManager();
+      manager = m.manager;
+
+      await gate(manager, name, "@claude", "hi");
+      const db = await getDb();
+      const update = db.update;
+      db.update = (() => {
+        throw new Error("disk full");
+      }) as typeof db.update;
+      try {
+        const peeked = await manager.peekChannel(name, "@claude", reader(name));
+        assert.equal(peeked.messages[0].content, "hi");
+      } finally {
+        db.update = update;
+      }
+      assert.equal((await rows(name))[0].peeked_at, null);
     });
   });
 
