@@ -4,39 +4,33 @@ import { daemonEmit, type EventType } from "./daemon-client.js";
 import type { IdentityWatch } from "./identity-watch.js";
 import { log, warn } from "./logger.js";
 import { filterEvent, loadTransparencyPreset } from "./transparency.js";
-import type { VoluteEvent } from "./types.js";
+import type { UsageByModel, VoluteEvent } from "./types.js";
+import { hasTokens, mergeSlices, sumAssistantUsage, usageSlice } from "./usage-slices.js";
 
-/** Minimal shape of the messages in an agent_end event (subset of AgentMessage). */
-type AgentEndMessage = {
-  role?: string;
-  errorMessage?: string;
-  /** pi-ai's provider id (`anthropic`, `openrouter`, …) — pairs with `model` for pricing. */
-  provider?: string;
-  model?: string;
-  usage?: {
-    input?: number;
-    output?: number;
-    cacheWrite?: number;
-    /** The part of `cacheWrite` with a 1-hour TTL — set by pi-ai's Anthropic provider only. */
-    cacheWrite1h?: number;
-    cache_creation?: number;
-    cacheRead?: number;
-    cache_read?: number;
-  };
-};
+/** The error field of an agent_end message (subset of AgentMessage). */
+type AgentEndMessage = { errorMessage?: string };
 
 export type EventSession = {
   name: string;
   messageIds: (string | undefined)[];
   currentMessageId?: string;
   messageChannels: Map<string, { channel: string; sender?: string }>;
+  /**
+   * Usage from subagents that ran during the current turn, per model. They run as
+   * separate in-process agent sessions, so the parent's agent_end never sees their
+   * messages — without this the spend cap would never count them. Drained at agent_end.
+   */
+  subagentUsage?: UsageByModel[];
 };
 
 export type EventHandlerOptions = {
   cwd: string;
   broadcast: (event: VoluteEvent) => void;
   onContextTokens?: (tokens: number) => void;
-  /** Returns true if the turn ended in a session rotation — see the identity reload below. */
+  /**
+   * Returns true if this run is rotating or has rotated the session (rotation itself
+   * happens once the run settles, not here) — see the identity reload below.
+   */
   onTurnEnd?: () => boolean;
   /**
    * Watches the mind's own edits for identity-file changes (#998). pi composes the system
@@ -46,6 +40,11 @@ export type EventHandlerOptions = {
   identityWatch?: IdentityWatch;
   /** Requests the restart that puts an edited identity file into effect. */
   onIdentityReload?: () => void | Promise<void>;
+  /**
+   * `provider:model` of the main loop's configured model — names its usage slice when no
+   * message this turn reported a model, so a subagent breakdown always has a main slice.
+   */
+  mainModel?: string;
 };
 
 // Loaded once at startup — mind restarts on config changes
@@ -157,6 +156,7 @@ export function createEventHandler(session: EventSession, options: EventHandlerO
         // emits below run asynchronously, but currentMessageId must be reset synchronously
         // so the next turn shifts a fresh id (see the currentMessageId guard above).
         const messageId = session.currentMessageId;
+        const channel = messageId ? session.messageChannels.get(messageId)?.channel : undefined;
         if (messageId) {
           session.messageChannels.delete(messageId);
         }
@@ -171,7 +171,6 @@ export function createEventHandler(session: EventSession, options: EventHandlerO
           session.messageIds.length = 0;
           session.messageChannels.clear();
         }
-        const channel = messageId ? session.messageChannels.get(messageId)?.channel : undefined;
         log("mind", `session "${session.name}": turn done`);
         // Collect any agent-level errors (e.g. a provider 401 reported inside agent_end).
         // Warn-logging alone left the failure invisible at every host surface (#619);
@@ -191,52 +190,38 @@ export function createEventHandler(session: EventSession, options: EventHandlerO
         }
         // Sum usage from assistant messages. The last assistant message's input tokens
         // approximate current context size (it includes the full conversation up to that point).
-        if (event.messages) {
-          let inputTokens = 0;
-          let outputTokens = 0;
-          let cacheReadTokens = 0;
-          let cacheCreationTokens = 0;
-          // Undefined until a message reports the split: absent, the daemon prices every
-          // write at the catalog's 5-minute rate, which is pi-ai's default retention.
-          let cacheCreation1hTokens: number | undefined;
-          let lastInputTokens = 0;
-          // The last assistant message names the model that finished the turn. A turn can
-          // in principle span models (a subagent on another one); we price the whole turn
-          // at this one's rate, as the event shape carries a single model id.
-          let model: string | undefined;
-          for (const msg of event.messages as AgentEndMessage[]) {
-            if (msg.role === "assistant" && msg.usage) {
-              inputTokens += msg.usage.input ?? 0;
-              outputTokens += msg.usage.output ?? 0;
-              const cacheWrite = msg.usage.cacheWrite ?? msg.usage.cache_creation ?? 0;
-              const cacheRead = msg.usage.cacheRead ?? msg.usage.cache_read ?? 0;
-              cacheCreationTokens += cacheWrite;
-              if (msg.usage.cacheWrite1h !== undefined) {
-                cacheCreation1hTokens = (cacheCreation1hTokens ?? 0) + msg.usage.cacheWrite1h;
-              }
-              cacheReadTokens += cacheRead;
-              const contextTokens = (msg.usage.input ?? 0) + cacheWrite + cacheRead;
-              if (contextTokens) lastInputTokens = contextTokens;
-              if (msg.model) model = msg.provider ? `${msg.provider}:${msg.model}` : msg.model;
-            }
-          }
-          if (inputTokens > 0 || outputTokens > 0 || cacheReadTokens > 0) {
-            const usage = {
-              input_tokens: inputTokens,
-              output_tokens: outputTokens,
-              cache_read_input_tokens: cacheReadTokens,
-              cache_creation_input_tokens: cacheCreationTokens,
-              ...(cacheCreation1hTokens !== undefined && {
-                cache_creation_1h_input_tokens: cacheCreation1hTokens,
+        // The aggregate is the main loop's own; the last assistant message names its model.
+        const own = sumAssistantUsage(event.messages);
+        const subagents = session.subagentUsage?.splice(0) ?? [];
+        const mainModel = own.model ?? options.mainModel;
+        if (hasTokens(own) || subagents.length > 0) {
+          const usage = {
+            input_tokens: own.input,
+            output_tokens: own.output,
+            cache_read_input_tokens: own.cacheRead,
+            cache_creation_input_tokens: own.cacheWrite,
+            // Undefined until a message reports the split: absent, the daemon prices every
+            // write at the catalog's 5-minute rate, which is pi-ai's default retention.
+            ...(own.cacheWrite1h !== undefined && {
+              cache_creation_1h_input_tokens: own.cacheWrite1h,
+            }),
+            model: mainModel,
+            // Subagents ran this turn: send a per-model breakdown the daemon prices slice
+            // by slice, with `main_model` naming the main loop's slice (the 1-hour writes
+            // are its own). The main slice is always present, even at zero, so main_model
+            // always matches one and every subagent slice is priced — without this their
+            // spend would never reach the cap.
+            ...(subagents.length > 0 &&
+              mainModel && {
+                models: mergeSlices([usageSlice(own, mainModel), ...subagents]),
+                main_model: mainModel,
               }),
-              model,
-            };
-            options.broadcast({ type: "usage", ...usage });
-            emit(session, { type: "usage", metadata: usage });
-          }
-          if (lastInputTokens > 0) {
-            options.onContextTokens?.(lastInputTokens);
-          }
+          };
+          options.broadcast({ type: "usage", ...usage });
+          emit(session, { type: "usage", metadata: usage });
+        }
+        if (own.lastContext > 0) {
+          options.onContextTokens?.(own.lastContext);
         }
         options.broadcast({ type: "done" });
         session.currentMessageId = undefined;

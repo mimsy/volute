@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
 import {
   createAgentSession,
@@ -21,7 +21,7 @@ import {
   readSdkInstructions,
   readSkillDescriptions,
 } from "./lib/context-breakdown.js";
-import { daemonEmit } from "./lib/daemon-client.js";
+import { daemonEmit, daemonNotice } from "./lib/daemon-client.js";
 import { dispatchPrompt } from "./lib/dispatch.js";
 import { createEventHandler, emit } from "./lib/event-handler.js";
 import { runHooks } from "./lib/hook-loader.js";
@@ -32,13 +32,21 @@ import { createReplyInstructionsExtension } from "./lib/reply-instructions-exten
 import { resolveModel } from "./lib/resolve-model.js";
 import { buildSeededNote, type SeedCause } from "./lib/seed-note.js";
 import { createSessionBashTool } from "./lib/session-bash.js";
-import { getStartupContext, loadPrompts, type SubagentConfig } from "./lib/startup.js";
+import {
+  capitalize,
+  clearCommitted,
+  isCommitted,
+  markCommitted,
+  threadRef,
+} from "./lib/session-marker.js";
+import { getStartupContext, type SubagentConfig } from "./lib/startup.js";
 import { createSubagentExtension, type SubagentDefinition } from "./lib/subagents.js";
 import type {
   HandlerMeta,
   HandlerResolver,
   Listener,
   MessageHandler,
+  UsageByModel,
   VoluteContentPart,
   VoluteEvent,
 } from "./lib/types.js";
@@ -56,9 +64,22 @@ type PiSession = {
   currentMessageId?: string;
   messageChannels: Map<string, { channel: string; sender?: string }>;
   contextTokens: number;
+  /** Why the session failed to start, for the messages that were waiting on it. */
+  initError?: unknown;
+  /** Prompts handed to pi and not yet resolved — an ephemeral session is evicted at 0. */
+  inFlight: number;
+  /** Subagent usage for the current turn — see EventSession.subagentUsage. */
+  subagentUsage: UsageByModel[];
   /**
-   * True when this session was seeded from the previous session's transcript.
-   * Consumed once, on the first turn, to inject the honest-boundary note.
+   * One-shot injections offered to the run in flight — cleared (as delivered) only once
+   * that run settles, so a turn that never ran re-offers them rather than losing them.
+   */
+  offered: Set<"seeded" | "startup" | "rotation">;
+  /** True once the startup context has reached a settled run. */
+  startupContextDelivered?: boolean;
+  /**
+   * True when this session was seeded from the previous session's transcript. Injects
+   * the honest-boundary note until a run it was offered to settles (matching claude).
    */
   seeded?: boolean;
   /** When the seeded-from session was archived (epoch ms), for the gap note; null if unknown. */
@@ -101,6 +122,8 @@ export async function createMind(options: {
    * inert until the process restarts — the server answers this by restarting.
    */
   onIdentityReload?: () => void | Promise<void>;
+  /** The model runtime to use instead of creating one — lets tests supply a fake provider. */
+  modelRuntime?: ModelRuntime;
 }): Promise<{
   resolve: HandlerResolver;
   getContextInfo: () => Promise<ContextInfo>;
@@ -110,8 +133,6 @@ export async function createMind(options: {
   // One watch per process, matching the claude template: the latch inside it means a
   // failed restart doesn't re-fire on every later turn of every session.
   const identityWatch = createIdentityWatch(options.cwd);
-  const prompts = loadPrompts();
-  const compactionInstructions = prompts.compaction_instructions;
   const maxContextTokens = options.maxContextTokens;
   const seedTokens = options.seedTokens ?? DEFAULT_SEED_TOKENS;
 
@@ -124,7 +145,7 @@ export async function createMind(options: {
   // ModelRuntime is the canonical model/auth object since pi-coding-agent 0.84;
   // it owns the credential store that AuthStorage used to be. ModelRegistry is now
   // a thin synchronous facade over it, kept here for the find() lookup below.
-  const modelRuntime = await ModelRuntime.create();
+  const modelRuntime = options.modelRuntime ?? (await ModelRuntime.create());
   const modelRegistry = new ModelRegistry(modelRuntime);
   // Prefer the registry's model: for OAuth providers with a per-credential baseUrl
   // (e.g. GitHub Copilot, whose token is pinned to an individual/business/enterprise
@@ -188,7 +209,6 @@ export async function createMind(options: {
   const hooksDir = resolvePath(options.cwd, ".local/hooks");
 
   function createDynamicHookExtension(session: PiSession): ExtensionFactory {
-    let startupContextInjected = false;
     const pendingToolArgs = new Map<string, Record<string, unknown>>();
 
     return (pi) => {
@@ -199,25 +219,31 @@ export async function createMind(options: {
       pi.on("before_agent_start", async (event) => {
         const parts: string[] = [];
 
+        // The one-shot injections below (seeded note, startup context, rotation note) are
+        // not consumed here: this is only dispatch, and a turn that never runs would lose
+        // them forever and invisibly. Each is recorded as offered and cleared once the
+        // run settles (see onSettled); worst case one is offered twice (cosmetic) rather
+        // than never.
+
+        // On a seeded session, lead with the honest-boundary note so the restored
+        // transcript above isn't mistaken for a continuously-lived conversation.
+        if (session.seeded) {
+          session.offered.add("seeded");
+          const note = buildSeededNote({
+            cause: "restored",
+            archivedAtMs: session.seededArchivedAt ?? null,
+          });
+          emit(session, {
+            type: "context",
+            content: note,
+            metadata: { source: "seeded-session" },
+          });
+          parts.push(note);
+        }
+
         // Inject startup context on the first turn of each session
-        if (!startupContextInjected) {
-          startupContextInjected = true;
-          // On the first turn of a seeded session, lead with the honest-boundary
-          // note (consumed once) so the restored transcript above isn't mistaken
-          // for a continuously-lived conversation.
-          if (session.seeded) {
-            session.seeded = false;
-            const note = buildSeededNote({
-              cause: "restored",
-              archivedAtMs: session.seededArchivedAt ?? null,
-            });
-            emit(session, {
-              type: "context",
-              content: note,
-              metadata: { source: "seeded-session" },
-            });
-            parts.push(note);
-          }
+        if (!session.startupContextDelivered) {
+          session.offered.add("startup");
           const startupContext = await startupContextPromise;
           if (startupContext) {
             emit(session, {
@@ -231,9 +257,9 @@ export async function createMind(options: {
 
         // On the first turn after an in-place rotation, tell the mind the earlier
         // turns collapsed at the context limit (distinct from the restored-seed note,
-        // which only fires on a freshly created agent session). Consumed once.
+        // which only fires on a freshly created agent session).
         if (session.rotationNotePending) {
-          session.rotationNotePending = false;
+          session.offered.add("rotation");
           const note = buildSeededNote({ cause: "rotation" });
           emit(session, {
             type: "context",
@@ -311,18 +337,39 @@ export async function createMind(options: {
       messageIds: [],
       messageChannels: new Map(),
       contextTokens: 0,
+      inFlight: 0,
+      subagentUsage: [],
+      offered: new Set(),
     };
     sessions.set(name, session);
 
     session.ready = initSession(session).catch((err) => {
-      session.messageChannels.clear();
       log("mind", `session "${session.name}": init failed:`, err);
+      // The messages already waiting on this session each report the failure to the
+      // daemon (see handle) — otherwise their turns never end and hold the mind's turn
+      // slot. Evict it so the next message makes a fresh attempt instead of meeting
+      // this dead entry for the life of the process.
+      session.initError = err;
+      session.messageChannels.clear();
+      if (sessions.get(name) === session) sessions.delete(name);
     });
     return session;
   }
 
+  /**
+   * Tell the mind a thread started over without what it held. Mind-level (no `thread`):
+   * a thread-scoped notice waits for a turn on that exact thread, which may be hours
+   * away or never — the mind stays silently amnesiac meanwhile (#768).
+   */
+  function noticeContextLost(name: string, message: string) {
+    daemonNotice({ kind: "context_lost", message }).catch((err) =>
+      log("mind", `session "${name}": failed to record notice:`, err),
+    );
+  }
+
   async function initSession(session: PiSession) {
     const isEphemeral = session.name.startsWith("new-");
+    const dir = resolvePath(options.sessionsDir, session.name);
 
     // Fresh persistent session — seed it from the previous session's archived
     // transcript so the mind experiences the conversation continuing rather than
@@ -338,20 +385,73 @@ export async function createMind(options: {
           seedTokens,
         });
 
+    // Whether this thread is known to hold real conversation — see session-marker.ts.
+    // Sticky; cleared only where the thread genuinely starts over.
+    let committed = !isEphemeral && isCommitted(dir);
+
     // Every session (ephemeral too) is file-backed under its own name-scoped dir,
     // so rotation applies uniformly at the context limit. Ephemerality is only that
     // `new-*` sessions never seed at start and never archive on rotation — not a
     // different backing store. Their unique `new-<ts>-<rand>` names mean the dir is
     // always fresh, so continueRecent starts them empty (no seed to adopt).
-    const sessionManager = SessionManager.continueRecent(
-      options.cwd,
-      resolvePath(options.sessionsDir, session.name),
-    );
+    //
+    // Opening is the one step whose failure belongs to the transcript: continueRecent
+    // reads and parses it, and buildSessionContext is the projection createAgentSession
+    // would build from it. So it's the one failure a fresh start gets past. Anything
+    // later (resource loading, the model runtime) has nothing to do with the transcript:
+    // it fails the turn and leaves the transcript for the next message to resume.
+    let sessionManager: SessionManager;
+    // A session file already on disk is real conversation: pi writes one only after the
+    // first assistant reply, and seeds and rotations write theirs with a tail. Absent,
+    // continueRecent started an empty session.
+    let resumed = false;
+    // If continueRecent adopted our seed file, its header id is the seeded id; if it
+    // fell back to a truly fresh session it minted a different id, so the honest-boundary
+    // note never lies about a conversation that didn't continue.
+    let adoptedSeed = false;
+    try {
+      sessionManager = SessionManager.continueRecent(options.cwd, dir);
+      resumed = existsSync(sessionManager.getSessionFile() ?? "");
+      adoptedSeed = !!seeded && sessionManager.getSessionId() === seeded.sessionId;
+      if (resumed) sessionManager.buildSessionContext();
+    } catch (err) {
+      log("mind", `session "${session.name}": transcript can't be resumed, starting fresh:`, err);
+      // Throws too when the directory itself is unusable: then nothing was abandoned,
+      // and the error fails the turn with the transcript left in place.
+      sessionManager = SessionManager.create(options.cwd, dir);
+      // A seed just written is the newest transcript, so it's the one that failed. It
+      // is the restored conversation even before the thread has a marker (sleep archived
+      // that along with the directory), so its loss is real too.
+      if (committed || seeded) {
+        noticeContextLost(
+          session.name,
+          `${capitalize(threadRef(session.name))} couldn't be resumed after an error, so it ` +
+            "started fresh — the conversation before the reset was lost. `volute mind " +
+            "history` has the record of what you were doing.",
+        );
+      }
+      if (!isEphemeral) clearCommitted(dir);
+      committed = false;
+      resumed = false;
+      adoptedSeed = false;
+    }
 
-    // If continueRecent adopted our seed file, its header id is the seeded id;
-    // if it fell back to a truly fresh session it minted a different id, so the
-    // honest-boundary note never lies about a conversation that didn't continue.
-    if (seeded && sessionManager.getSessionId() === seeded.sessionId) {
+    if (!resumed && committed) {
+      // The thread held conversation and there is none to resume: the transcripts are
+      // gone, or no longer match (continueRecent matches them by the cwd in their
+      // header, so a mind whose home path changed finds none).
+      log("mind", `session "${session.name}": committed transcript not found, starting fresh`);
+      noticeContextLost(
+        session.name,
+        `The previous session for ${threadRef(session.name)} couldn't be restored (no ` +
+          "transcript for it was found), so it was reset. `volute mind history` has the " +
+          "record of what you were doing.",
+      );
+      clearCommitted(dir);
+      committed = false;
+    }
+
+    if (seeded && adoptedSeed) {
       session.seeded = true;
       session.seededArchivedAt = seeded.archivedAt;
       session.seededCause = "restored";
@@ -362,19 +462,15 @@ export async function createMind(options: {
 
     // Compaction is rotation (not SDK /compact), and it's silent: crossing the
     // threshold (onContextTokens) or a native PreCompact just sets rotatePending; the
-    // session rotates in place at the end of the turn that crossed it — no warning, no
-    // wrap-up turn. The auto summarizer's turn summaries are the record of collapsed
+    // session rotates in place once the run that crossed it has settled — no warning,
+    // no wrap-up turn. The auto summarizer's turn summaries are the record of collapsed
     // turns, and the one-line rotation note marks the boundary on the next turn. Past
-    // the runaway cap, onTurnEnd defers to the native compact() backstop instead.
+    // the runaway cap nothing schedules a rotation, so the SDK's native compaction (let
+    // through on its second pass, inside the run) is the backstop.
     let compactBlocked = false;
-    let manualCompactPending = false;
     let rotatePending = false;
-    let compactionInProgress = false;
-
-    function resetCompactionState() {
-      rotatePending = false;
-      compactionInProgress = false;
-    }
+    // A rotation (or its fallback) ran since this run started — see onTurnEnd below.
+    let rotatedThisRun = false;
 
     /**
      * Rotate the session in place onto a synthetic session holding the verbatim recent
@@ -414,7 +510,7 @@ export async function createMind(options: {
      * Rotation couldn't proceed — start a fresh session in place (new empty transcript,
      * cleared context), matching the claude template's rotation-failure fallback. Fresh
      * is a far smaller cliff now that seeding exists; crucially it is NOT a silent native
-     * compaction.
+     * compaction. Unlike a rotation it genuinely loses the live context, so say so (#367).
      */
     function freshFallback() {
       const as = session.agentSession;
@@ -425,46 +521,78 @@ export async function createMind(options: {
       session.consecutiveRotations = 0;
       compactBlocked = false;
       log("mind", `session "${session.name}": rotation failed, starting fresh`);
+      if (committed) {
+        noticeContextLost(
+          session.name,
+          `Session rotation failed at the context limit and ${threadRef(session.name)} ` +
+            "was reset — the conversation before the reset was lost. Your turn " +
+            "summaries survive in `volute mind history` — that's where you left off.",
+        );
+      }
+      if (!isEphemeral) clearCommitted(dir);
+      committed = false;
     }
 
     /**
-     * The SDK's native compaction, used as the emergency backstop past the runaway cap —
-     * when rotation can't relieve context (e.g. the system prompt alone fills most of the
-     * window, so no tail fits under the threshold). The sole remaining use of the custom
-     * compaction instructions.
+     * A run has fully settled: pi has finished any retry, native-compaction check and
+     * queued continuation, and nothing is streaming. This — not agent_end, which the
+     * daemon's `done` follows, and after which a queued follow-up can still be streaming
+     * in the same run — is the only point where swapping the session file can't land
+     * under a live turn. It runs synchronously inside pi's settle emission, during which
+     * a new prompt() is deferred until after it, so nothing can start mid-swap. (A
+     * prompt() that entered before settle and is still in its pre-run awaits will run on
+     * the rotated context — consistent, just without the rotation note until the next
+     * turn.)
      */
-    function runBackstopCompact() {
-      manualCompactPending = true;
-      compactionInProgress = true;
-      log("mind", `session "${session.name}": rotation cap reached — native compaction backstop`);
-      Promise.resolve(session.agentSession?.compact(compactionInstructions))
-        .catch((err) => log("mind", `session "${session.name}": backstop compact() failed:`, err))
-        .finally(() => {
-          compactionInProgress = false;
-        });
-    }
-
-    const preCompactExtension: ExtensionFactory = (pi) => {
-      pi.on("session_before_compact", () => {
-        // Our own backstop compact() call (past the runaway cap) — allow through.
-        if (manualCompactPending) {
-          manualCompactPending = false;
-          log("mind", `session "${session.name}": allowing native compaction backstop`);
+    function onSettled() {
+      try {
+        const as = session.agentSession;
+        // The run resolved, so the one-shot injections offered to it had their chance to
+        // land. Cleared before any rotation below arms the next rotation note.
+        if (session.offered.has("seeded")) session.seeded = false;
+        if (session.offered.has("startup")) session.startupContextDelivered = true;
+        if (session.offered.has("rotation")) session.rotationNotePending = false;
+        session.offered.clear();
+        // Its transcript is on disk now (pi writes the file at the first assistant
+        // reply), so from here a missing transcript is a real loss.
+        if (!committed && as && existsSync(as.sessionManager.getSessionFile() ?? "")) {
+          committed = true;
+          if (!isEphemeral) markCommitted(dir);
+        }
+        if (!rotatePending) {
+          // A healthy turn (context under the threshold) — the rotation streak, if
+          // any, is over, so re-arm the self-rotation cap.
+          session.consecutiveRotations = 0;
           return;
         }
+        rotatePending = false;
+        rotatedThisRun = true;
+        if (!rotateInPlace()) {
+          // Rotation couldn't proceed — fresh session, not a silent native compaction.
+          freshFallback();
+        }
+      } catch (err) {
+        log("mind", `session "${session.name}": settle error, resetting rotation state:`, err);
+        rotatePending = false;
+        // Compaction state is unknown after a throw — hold the identity restart back.
+        rotatedThisRun = true;
+      }
+    }
 
+    const turnBoundaryExtension: ExtensionFactory = (pi) => {
+      pi.on("agent_start", () => {
+        rotatedThisRun = false;
+      });
+      pi.on("agent_settled", onSettled);
+      pi.on("session_before_compact", () => {
         // The SDK's native auto-compaction wants to fire. Converge it onto rotation:
-        // the first pass marks the session for rotation at turn end (unless the
+        // the first pass marks the session for rotation once the run settles (unless the
         // threshold path already did, or the runaway cap is hit) and blocks the native
         // compaction; the second pass allows native compaction as the emergency
         // backstop (only reachable if rotation never brought context under control).
         if (!compactBlocked) {
           compactBlocked = true;
-          if (
-            !rotatePending &&
-            !compactionInProgress &&
-            (session.consecutiveRotations ?? 0) < MAX_CONSECUTIVE_ROTATIONS
-          ) {
+          if (!rotatePending && (session.consecutiveRotations ?? 0) < MAX_CONSECUTIVE_ROTATIONS) {
             log(
               "mind",
               `session "${session.name}": native compaction — rotation pending at turn end`,
@@ -480,53 +608,67 @@ export async function createMind(options: {
       });
     };
 
-    const settingsManager = SettingsManager.inMemory({
-      retry: { enabled: true, maxRetries: 3 },
-    });
+    async function startAgentSession(sessionManager: SessionManager): Promise<PiAgentSession> {
+      const settingsManager = SettingsManager.inMemory({
+        retry: { enabled: true, maxRetries: 3 },
+      });
 
-    const replyInstructionsExtension = createReplyInstructionsExtension(
-      session.messageChannels,
-      emit,
-      session,
-    );
+      const replyInstructionsExtension = createReplyInstructionsExtension(
+        session.messageChannels,
+        emit,
+        session,
+      );
 
-    const dynamicHookExtension = createDynamicHookExtension(session);
+      const dynamicHookExtension = createDynamicHookExtension(session);
 
-    // Per session, so a subagent's commands carry the slug of the session that ran it.
-    const subagentExtension =
-      Object.keys(subagents).length > 0
-        ? createSubagentExtension(subagents, {
-            cwd: options.cwd,
-            model,
-            modelRuntime,
-            sessionName: session.name,
-          })
-        : undefined;
+      // Per session, so a subagent's commands carry the slug of the session that ran it.
+      const subagentExtension =
+        Object.keys(subagents).length > 0
+          ? createSubagentExtension(subagents, {
+              cwd: options.cwd,
+              model,
+              modelRuntime,
+              sessionName: session.name,
+              onUsage: (usage) => session.subagentUsage.push(usage),
+            })
+          : undefined;
 
-    const resourceLoader = new DefaultResourceLoader({
-      cwd: options.cwd,
-      agentDir: getAgentDir(),
-      settingsManager,
-      systemPrompt: options.systemPrompt,
-      extensionFactories: [
-        preCompactExtension,
-        replyInstructionsExtension,
-        ...(subagentExtension ? [subagentExtension] : []),
-        dynamicHookExtension,
-      ],
-    });
-    await resourceLoader.reload();
+      const resourceLoader = new DefaultResourceLoader({
+        cwd: options.cwd,
+        agentDir: getAgentDir(),
+        settingsManager,
+        systemPrompt: options.systemPrompt,
+        extensionFactories: [
+          turnBoundaryExtension,
+          replyInstructionsExtension,
+          ...(subagentExtension ? [subagentExtension] : []),
+          dynamicHookExtension,
+        ],
+      });
+      await resourceLoader.reload();
 
-    const { session: agentSession } = await createAgentSession({
-      cwd: options.cwd,
-      model,
-      thinkingLevel: options.thinkingLevel,
-      modelRuntime,
-      sessionManager,
-      settingsManager,
-      resourceLoader,
-      customTools: [createSessionBashTool(options.cwd, session.name, settingsManager)],
-    });
+      const { session: agentSession } = await createAgentSession({
+        cwd: options.cwd,
+        model,
+        thinkingLevel: options.thinkingLevel,
+        modelRuntime,
+        sessionManager,
+        settingsManager,
+        resourceLoader,
+        customTools: [createSessionBashTool(options.cwd, session.name, settingsManager)],
+      });
+      return agentSession;
+    }
+
+    const agentSession = await startAgentSession(sessionManager);
+
+    // Started cleanly: a transcript on disk is real conversation (see `resumed`). Marked
+    // only now, so a thread that can't start isn't marked on the strength of a transcript
+    // it never got to use.
+    if (!committed && !isEphemeral && existsSync(sessionManager.getSessionFile() ?? "")) {
+      markCommitted(dir);
+      committed = true;
+    }
 
     session.agentSession = agentSession;
 
@@ -536,22 +678,15 @@ export async function createMind(options: {
         broadcast: (event) => broadcast(session, event),
         identityWatch,
         onIdentityReload: options.onIdentityReload,
+        mainModel: `${model.provider}:${model.id}`,
         onContextTokens: (tokens: number) => {
           session.contextTokens = tokens;
           if (
             maxContextTokens &&
             tokens >= maxContextTokens &&
             !rotatePending &&
-            !compactionInProgress &&
             (session.consecutiveRotations ?? 0) < MAX_CONSECUTIVE_ROTATIONS
           ) {
-            if (!session.agentSession) {
-              log(
-                "mind",
-                `session "${session.name}": compaction threshold hit but session not ready`,
-              );
-              return;
-            }
             log(
               "mind",
               `session "${session.name}": ${tokens} tokens >= ${maxContextTokens} — rotation pending at turn end`,
@@ -559,54 +694,36 @@ export async function createMind(options: {
             rotatePending = true;
           }
         },
-        // Returns true when this turn ended in a rotation (or its compaction backstop),
-        // which tells the caller to hold back the identity-reload restart — it would
-        // land on top of the session we just rewrote in place.
-        onTurnEnd: maxContextTokens
-          ? () => {
-              try {
-                // The turn that crossed the threshold is done — rotate the session in
-                // place onto the verbatim recent tail. Silent: no warning, no wrap-up.
-                if (rotatePending) {
-                  rotatePending = false;
-                  if ((session.consecutiveRotations ?? 0) >= MAX_CONSECUTIVE_ROTATIONS) {
-                    // Runaway guard: rotation isn't relieving context (system prompt too
-                    // large to fit the tail under the threshold) — defer to the SDK.
-                    runBackstopCompact();
-                  } else if (!rotateInPlace()) {
-                    // Rotation couldn't proceed — fresh session, not a silent native
-                    // compaction.
-                    freshFallback();
-                  }
-                  return true;
-                }
-                // A healthy turn (context under the threshold) — the rotation streak,
-                // if any, is over, so re-arm the self-rotation cap.
-                session.consecutiveRotations = 0;
-                return false;
-              } catch (err) {
-                log(
-                  "mind",
-                  `session "${session.name}": onTurnEnd error, resetting compaction state:`,
-                  err,
-                );
-                resetCompactionState();
-                // Compaction state is unknown after a throw — hold the restart back.
-                return true;
-              }
-            }
-          : undefined,
+        // True when this run is rotating (or has rotated) the session, which tells the
+        // caller to hold back the identity-reload restart — it would land on top of the
+        // session being rewritten in place.
+        onTurnEnd: () => rotatePending || rotatedThisRun,
       }),
     );
 
     log("mind", `session "${session.name}": ready`);
   }
 
+  /** Drop a finished ephemeral session: `new-*` names are never reused, so it only holds memory. */
+  function evictEphemeral(session: PiSession) {
+    const as = session.agentSession;
+    if (session.inFlight > 0 || as?.isStreaming) return;
+    if (sessions.get(session.name) !== session) return;
+    sessions.delete(session.name);
+    session.unsubscribe?.();
+    as?.dispose();
+    log("mind", `session "${session.name}": ephemeral session done, evicted`);
+  }
+
   // --- Event broadcasting ---
 
   function broadcast(session: PiSession, event: VoluteEvent) {
+    // An event that names its own message (a failed dispatch's done) keeps it: re-tagged
+    // with whichever turn is current, its caller's listener would never see it.
     const tagged =
-      session.currentMessageId != null ? { ...event, messageId: session.currentMessageId } : event;
+      event.messageId == null && session.currentMessageId != null
+        ? { ...event, messageId: session.currentMessageId }
+        : event;
     for (const listener of session.listeners) {
       try {
         listener(tagged);
@@ -663,12 +780,14 @@ export async function createMind(options: {
         const opts = images.length ? { images } : {};
 
         // Fire-and-forget: await session ready then prompt
+        session.inFlight++;
         (async () => {
           await session.ready;
           if (!session.agentSession) {
-            log("mind", `session "${sessionName}": not initialized, dropping message`);
-            broadcast(session, { type: "done" });
-            return;
+            // The session failed to start (and has been evicted). Fail this turn loudly
+            // through the catch below rather than dropping the message with only a local
+            // done: the daemon would never hear the turn ended.
+            throw session.initError ?? new Error("session failed to start");
           }
           // This await is load-bearing: without it a prompt rejection (burst race,
           // auth failure, ...) floats as an unhandled rejection and crashes the
@@ -676,16 +795,22 @@ export async function createMind(options: {
           await dispatchPrompt(session.agentSession, text, opts, meta.interrupt === true, () =>
             interruptSession(sessionName),
           );
-        })().catch(async (err) => {
-          log("mind", `session "${sessionName}": prompt failed:`, err);
-          // Tell the daemon the turn failed (so it records a notice for the mind's next
-          // successful turn) before done, then complete the turn locally and on the daemon.
-          await daemonEmit({ type: "error", session: sessionName, content: String(err) }).catch(
-            () => {},
-          );
-          await daemonEmit({ type: "done", session: sessionName }).catch(() => {});
-          broadcast(session, { type: "done" });
-        });
+        })()
+          .catch(async (err) => {
+            log("mind", `session "${sessionName}": prompt failed:`, err);
+            // Tell the daemon the turn failed (so it records a notice for the mind's next
+            // successful turn) before done, then complete the turn locally and on the daemon.
+            await daemonEmit({ type: "error", session: sessionName, content: String(err) }).catch(
+              () => {},
+            );
+            await daemonEmit({ type: "done", session: sessionName }).catch(() => {});
+            broadcast(session, { type: "done", messageId: meta.messageId });
+          })
+          .finally(() => {
+            session.inFlight--;
+            if (sessionName.startsWith("new-")) evictEphemeral(session);
+          })
+          .catch((err) => log("mind", `session "${sessionName}": post-turn error:`, err));
 
         return () => {
           if (filteredListener) session.listeners.delete(filteredListener);
