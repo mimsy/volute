@@ -55,4 +55,9 @@ server.listen(port, async () => {
   log("server", `listening on :${actualPort}`);
 });
 
-setupShutdown();
+// Commit edits from a turn the shutdown cut short — e.g. the mind ran `volute mind restart`
+// mid-turn to load an identity edit; that turn never reaches its own commit.
+setupShutdown(async () => {
+  server.close();
+  await mind.flushFileChanges().catch((err) => log("server", "shutdown commit failed:", err));
+});
