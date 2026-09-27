@@ -6,7 +6,12 @@ import { MIND_LEVEL_THREAD, type RecordNoticeInput } from "../chat/system-events
 import { getTypingMap, publishTypingForChannels } from "../chat/typing.js";
 import { ManagerNotReadyError } from "../daemon/manager-not-ready.js";
 import { tryGetMindManager } from "../daemon/mind-manager.js";
-import { acquireTurnSlot, hasTurnSlot, releaseTurnSlot } from "../daemon/turn-slots.js";
+import {
+  acquireTurnSlot,
+  hasTurnSlot,
+  releaseTurnSlot,
+  turnSlotHolders,
+} from "../daemon/turn-slots.js";
 import { linkInboundToActiveTurn } from "../daemon/turn-tracker.js";
 import { getDb } from "../db.js";
 import { getChannelName, getChannelSettings, getParticipants } from "../events/conversations.js";
@@ -19,7 +24,7 @@ import { type AvatarBlock, renderAvatarBlock } from "../util/avatar-image.js";
 import log from "../util/logger.js";
 import { newEphemeralSession } from "../util/session-name.js";
 import { slugify } from "../util/slugify.js";
-import { parseDbTimestamp } from "../util/time.js";
+import { parseDbTimestamp, toDbTimestamp } from "../util/time.js";
 import {
   type ChannelContext,
   clearConfigCache,
@@ -44,6 +49,7 @@ import {
   type WirePayload,
 } from "./delivery-router.js";
 import { clearMind, onDeliveredToMind, resetTurn } from "./send-gate.js";
+import { sinceNoteFor, withSinceNote } from "./since-last-here.js";
 
 const dlog = log.child("delivery-manager");
 
@@ -332,11 +338,6 @@ function storedPayload(payload: DeliveryPayload): string {
   return JSON.stringify(stored);
 }
 
-/** A DB timestamp: zone-less UTC `YYYY-MM-DD HH:MM:SS`, the shape `datetime('now')` writes. */
-function toDbTimestamp(at: number): string {
-  return new Date(at).toISOString().slice(0, 19).replace("T", " ");
-}
-
 /**
  * Write the `mind_history` inbound row for a message whose arrival-time recording was
  * skipped because the mind was over its spend cap.
@@ -410,6 +411,14 @@ export class DeliveryManager {
    * double-delivers a row that the normal path is already handling.
    */
   private inFlight = new Set<number>();
+
+  /**
+   * delivery_queue row id → when the concurrency gate first held it and which of the mind's
+   * threads it was waiting behind, so the turn it finally starts can say so (#939). In
+   * memory: a restart forgets a wait, which costs the line, not the message. Cleared when
+   * the row is delivered.
+   */
+  private waitingSince = new Map<number, { since: number; behind: string[] }>();
 
   /**
    * Per-`(baseName:session)` promise chain that serializes POSTs so two rapid
@@ -729,6 +738,27 @@ export class DeliveryManager {
     return at;
   }
 
+  /** Remember that the concurrency gate is holding this row, for {@link waitFor}. */
+  private noteGateWait(queueId: number, baseName: string): void {
+    if (this.waitingSince.has(queueId)) return;
+    const now = Date.now();
+    // A row that is never delivered (dead-lettered, deleted by hand) would otherwise stay.
+    for (const [id, w] of this.waitingSince) {
+      if (now - w.since > 24 * 60 * 60_000) this.waitingSince.delete(id);
+    }
+    this.waitingSince.set(queueId, { since: now, behind: turnSlotHolders(baseName) });
+  }
+
+  /** The longest gate wait among these rows, if any was held. */
+  private waitFor(queueIds: (number | undefined)[]): { ms: number; behind: string[] } | undefined {
+    let first: { since: number; behind: string[] } | undefined;
+    for (const id of queueIds) {
+      const w = id != null ? this.waitingSince.get(id) : undefined;
+      if (w && (!first || w.since < first.since)) first = w;
+    }
+    return first ? { ms: Date.now() - first.since, behind: first.behind } : undefined;
+  }
+
   /** Take back a {@link noteWake} whose delivery failed. */
   unnoteWake(baseName: string, session: string, at: number | undefined): void {
     if (at == null) return;
@@ -1037,6 +1067,7 @@ export class DeliveryManager {
         // on the next sweep, and the sweep that matters is the one `sessionDone` kicks off the
         // instant the turn ends. Moving it to `held` would strand it until a spend release ran.
         if (!hold.momentary) await this.holdRow(row.id, payload, hold);
+        else this.noteGateWait(row.id, row.mind);
         continue;
       }
 
@@ -2148,6 +2179,8 @@ export class DeliveryManager {
     payload: DeliveryPayload,
     hold: DeliveryHold,
   ): Promise<void> {
+    // Whatever it waited on from here isn't another thread; the held preface says what it is.
+    this.waitingSince.delete(queueId);
     try {
       const db = await getDb();
       let arrived = payload.held?.at;
@@ -2181,6 +2214,7 @@ export class DeliveryManager {
   private async deleteQueueRows(ids: (number | undefined)[]): Promise<void> {
     const valid = [...new Set(ids.filter((id): id is number => typeof id === "number"))];
     if (valid.length === 0) return;
+    for (const id of valid) this.waitingSince.delete(id);
     try {
       const db = await getDb();
       await db.delete(deliveryQueue).where(inArray(deliveryQueue.id, valid));
@@ -2212,6 +2246,8 @@ export class DeliveryManager {
     opts: { liveRejection: boolean },
   ): Promise<void> {
     const valid = [...new Set(ids.filter((id): id is number => typeof id === "number"))];
+    // A failed POST means the gate had let it through: a backoff is not time behind a thread.
+    for (const id of valid) this.waitingSince.delete(id);
     if (valid.length === 0) return;
     try {
       const db = await getDb();
@@ -2465,6 +2501,7 @@ export class DeliveryManager {
         dlog.debug(`holding delivery to ${baseName}/${session} (${hold.reason})`);
         for (const r of riders) this.inFlight.delete(r.queueId!);
         if (!hold.momentary) await this.holdRow(queueId, payload, hold);
+        else this.noteGateWait(queueId, baseName);
         this.inFlight.delete(queueId);
         return;
       }
@@ -2525,8 +2562,19 @@ export class DeliveryManager {
         onMindEvent(baseName, "delivery", payload.channel);
 
         // Enrich with participant profiles on first encounter per channel
-        const enrichedPayload = withHeldPreface(
-          await this.enrichWithProfiles(baseName, session, payload),
+        const enrichedPayload = withSinceNote(
+          withHeldPreface(await this.enrichWithProfiles(baseName, session, payload)),
+          // A turn this message starts opens with what the mind's other threads did in
+          // between (#939). One that folds into a running turn adds nothing.
+          ownsSlot
+            ? await sinceNoteFor(mindName, {
+                mind: baseName,
+                thread: session,
+                channels: [payload.channel],
+                conversationIds: [payload.conversationId],
+                waited: this.waitFor([queueId]),
+              })
+            : null,
         );
 
         const body = JSON.stringify({
@@ -2622,6 +2670,8 @@ export class DeliveryManager {
         for (const r of riders) this.inFlight.delete(r.queueId!);
         if (!hold.momentary) {
           for (const msg of messages) await this.holdRow(msg.queueId!, msg.payload, hold);
+        } else {
+          for (const id of queueIds) this.noteGateWait(id, baseName);
         }
         // The buffer is dropped either way: the rows stay in the queue, and redrive
         // rebuilds the batch when the hold lifts.
@@ -2699,6 +2749,22 @@ export class DeliveryManager {
           return { ...msg, payload: enrichedPayload };
         }),
       ).then((msgs) => msgs.map((m) => ({ ...m, payload: withHeldPreface(m.payload) })));
+      // A turn this batch starts opens with what the mind's other threads did in between
+      // (#939), on its first message — the one the mind reads first. A batch that folds into
+      // a running turn adds nothing.
+      if (ownsSlot) {
+        const note = await sinceNoteFor(mindName, {
+          mind: baseName,
+          thread: session,
+          channels: messages.map((m) => m.channel),
+          conversationIds: messages.map((m) => m.payload.conversationId),
+          waited: this.waitFor(messages.map((m) => m.queueId)),
+        });
+        enrichedMessages[0] = {
+          ...enrichedMessages[0],
+          payload: withSinceNote(enrichedMessages[0].payload, note),
+        };
+      }
 
       // Group messages by channel
       const channels: Record<string, WirePayload[]> = {};

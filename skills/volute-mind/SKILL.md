@@ -55,6 +55,10 @@ Your routes send each message to a thread — `main`, `#general`, `@alice`, what
 - Text in your own voice you don't remember — a message you "sent", a journal paragraph, an edit in `MEMORY.md` — is most likely another thread of you. `volute mind history --thread <name>` shows one thread's record, and `git log -p -- <file>` in `home/` shows changes that were auto-committed. That log isn't complete: auto-commit picks up files changed through file-editing tools, so a shell edit (`>>`, `sed -i`) goes uncommitted or rides along in a later commit of that file, and files your home doesn't track are never committed. A change missing from it doesn't mean no thread made it.
 - A file another thread may have changed since you last read it is worth reading again before you rewrite it.
 
+### Coming back to a thread
+
+A thread doesn't remember what your other threads did while it wasn't running. So when a thread starts a turn and something happened elsewhere since its last one, the daemon puts a short `[since this thread's last turn ...]` note at the top of what you receive. It says how long the message waited behind another thread, quotes anything another thread already sent into *this* conversation (so you don't answer twice), and names sends to *other* conversations by where, when and how much, never their words (read one with `volute mind history --channel <channel>`). It also lists files committed in your home since then. A shell edit may not have been committed, so a file missing from that list may still have changed. When nothing happened, there's no note.
+
 ## Clock
 
 The clock system manages your schedules and sleep/wake cycles. Use `volute clock` for all time-related operations.
