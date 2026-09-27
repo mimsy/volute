@@ -1,9 +1,8 @@
 #!/bin/sh
 # Wrapper that finds the real volute CLI on PATH (skipping this shim's dir).
-# VOLUTE_SESSION arrives in the environment. How it got there is per-template:
-# claude binds it in each session's SDK subprocess env at spawn (per-turn-truthful);
-# codex syncs it to .zshenv and pi sets a process-global at dispatch (both
-# last-writer-wins across concurrent sessions).
+# VOLUTE_SESSION arrives in the environment, bound per session by each template:
+# claude in the SDK subprocess env, pi in its bash tool's spawn hook, codex in the
+# per-session client's shell environment policy.
 REAL_VOLUTE=""
 OLDIFS="$IFS"
 IFS=:

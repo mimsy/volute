@@ -44,8 +44,13 @@ export function subscribe(callback: Callback): () => void {
   };
 }
 
+/** Now, as the zone-less UTC "YYYY-MM-DD HH:MM:SS" an activity's `created_at` holds. */
+export function activityTimestamp(): string {
+  return new Date().toISOString().replace("T", " ").slice(0, 19);
+}
+
 export async function publish(event: ActivityEvent): Promise<number> {
-  const created_at = event.created_at ?? new Date().toISOString().replace("T", " ").slice(0, 19);
+  const created_at = event.created_at ?? activityTimestamp();
 
   let id = 0;
   try {
@@ -71,7 +76,7 @@ export async function publish(event: ActivityEvent): Promise<number> {
 
 /** Broadcast to subscribers without persisting to DB. */
 export function broadcast(event: ActivityEvent): void {
-  const created_at = event.created_at ?? new Date().toISOString().replace("T", " ").slice(0, 19);
+  const created_at = event.created_at ?? activityTimestamp();
   notify({ ...event, id: 0, created_at });
 }
 

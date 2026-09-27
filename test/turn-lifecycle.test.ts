@@ -14,6 +14,7 @@ import { getDb } from "../packages/daemon/src/lib/db.js";
 import {
   recordInbound,
   recordOutbound,
+  turnStamp,
 } from "../packages/daemon/src/lib/delivery/message-delivery.js";
 import { subscribe as subscribeActivity } from "../packages/daemon/src/lib/events/activity-events.js";
 import {
@@ -40,16 +41,21 @@ describe("turn-lifecycle: handleMindEvent", () => {
     }
   });
 
-  it("session_start assigns a session to an existing sessionless turn", async () => {
+  it("session_start never adopts a sessionless turn into a thread (#1173)", async () => {
     const mind = "tl-session-start";
     // A sessionless turn opens on the first substantive event without a session.
     await handleMindEvent(mind, { type: "tool_use", content: "x" });
-    assert.ok(getActiveTurnId(mind), "sessionless turn should exist");
+    const sessionless = getActiveTurnId(mind);
+    assert.ok(sessionless, "sessionless turn should exist");
 
+    // A thread starting is not evidence the sessionless events were its own.
     await handleMindEvent(mind, { type: "session_start", session: "s1" });
-    const turnId = getActiveTurnId(mind, "s1");
-    assert.ok(turnId, "turn should now be keyed by session s1");
+    assert.equal(getActiveTurnId(mind, "s1"), undefined);
+    assert.equal(getActiveTurnId(mind), sessionless);
 
+    // The thread's own first substantive event opens its own turn, recorded with it.
+    const { turnId } = await handleMindEvent(mind, { type: "text", session: "s1", content: "y" });
+    assert.ok(turnId && turnId !== sessionless);
     const db = await getDb();
     const row = await db.select().from(turns).where(eq(turns.id, turnId!)).get();
     assert.equal(row!.thread, "s1");
@@ -342,19 +348,21 @@ describe("turn-lifecycle: handleMindEvent", () => {
 
   it("tool_result marker links an outbound when no session attribution happened (fallback)", async () => {
     const mind = "tl-marker-fallback";
-    // Outbound recorded with no turn_id (no session header path).
-    const outboundId = await recordOutbound(mind, "@bob", "sent via CLI");
-    // Turn opens sessionless, then the tool_result carries the correlation marker.
-    await handleMindEvent(mind, { type: "tool_use", content: "volute chat send" });
-    const turnId = getActiveTurnId(mind);
+    // Outbound recorded from thread s1 before s1 had an active turn: no turn_id yet.
+    const outboundId = await recordOutbound(mind, "@bob", "sent via CLI", { thread: "s1" });
+    // The turn opens on its thread, then the tool_result carries the correlation marker.
+    await handleMindEvent(mind, { type: "tool_use", session: "s1", content: "volute chat send" });
+    const turnId = getActiveTurnId(mind, "s1");
     await handleMindEvent(mind, {
       type: "tool_result",
+      session: "s1",
       content: `Message sent.\n[volute:outbound:${outboundId}]`,
     });
 
     const db = await getDb();
     const row = await db.select().from(mindHistory).where(eq(mindHistory.id, outboundId!)).get();
     assert.equal(row!.turn_id, turnId, "marker fallback should attribute the outbound to the turn");
+    assert.equal(row!.thread, "s1");
     await cleanup(mind);
   });
 });
@@ -684,12 +692,8 @@ describe("turn-lifecycle: concurrent sessions", () => {
 
     // Simulate the direct attribution path (volute/chat.ts): the send resolves the sending
     // mind's active turn from its session header and records the outbound tagged with it.
-    const outA = await recordOutbound(mind, "@a", "from A", {
-      turnId: getActiveTurnId(mind, "sA"),
-    });
-    const outB = await recordOutbound(mind, "@b", "from B", {
-      turnId: getActiveTurnId(mind, "sB"),
-    });
+    const outA = await recordOutbound(mind, "@a", "from A", turnStamp(mind, "sA"));
+    const outB = await recordOutbound(mind, "@b", "from B", turnStamp(mind, "sB"));
 
     const db = await getDb();
     const rowA = await db.select().from(mindHistory).where(eq(mindHistory.id, outA!)).get();

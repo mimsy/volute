@@ -13,6 +13,14 @@ describe("buildMindBaseEnv", () => {
     assert.ok(!Object.values(env).includes("admin-secret"));
   });
 
+  it("withholds a thread slug the daemon itself was started with (#1173)", () => {
+    // A daemon started from a mind's shell carries that thread's VOLUTE_SESSION; handed
+    // on, every mind's commands would name that thread and be stamped as its sends.
+    const env = buildMindBaseEnv({ VOLUTE_SESSION: "main", VOLUTE_DAEMON_PORT: "1618" });
+    assert.equal(env.VOLUTE_SESSION, undefined);
+    assert.equal(env.VOLUTE_DAEMON_PORT, "1618");
+  });
+
   it("withholds ambient host secrets (allowlist, not full spread)", () => {
     const env = buildMindBaseEnv({
       AWS_SECRET_ACCESS_KEY: "aws-secret",

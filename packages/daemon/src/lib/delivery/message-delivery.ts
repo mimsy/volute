@@ -1,10 +1,16 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, or, sql } from "drizzle-orm";
 import { getSleepManagerIfReady } from "../daemon/sleep-manager.js";
 import { releaseTurnSlot, takeTurnSlot } from "../daemon/turn-slots.js";
+import { getActiveTurnId, getActiveTurnOwner, normalizeThread } from "../daemon/turn-tracker.js";
 import { getDb } from "../db.js";
+import {
+  type ActivityEvent,
+  activityTimestamp,
+  publish as publishActivity,
+} from "../events/activity-events.js";
 import { publish as publishMindEvent } from "../events/mind-events.js";
 import { findMind, getBaseName } from "../mind/registry.js";
-import { activity, messages, mindHistory } from "../schema.js";
+import { activity, messages, mindHistory, minds } from "../schema.js";
 import log from "../util/logger.js";
 import {
   getDeliveryManager,
@@ -69,23 +75,44 @@ export async function recordInbound(
   return insertedId;
 }
 
+/** The thread an outbound row came from and that thread's turn, as recorded on the row. */
+export type TurnStamp = { turnId?: string; thread?: string };
+
 /**
- * Record an outbound message: persist to mind_history.
+ * The stamp for a send from `thread` (its `X-Volute-Thread`): the thread itself, and its
+ * active turn when it has one — exact, never a sibling thread's (#1173). With no thread
+ * ("", "*" and absent alike) the send is of unknown origin and gets neither, for good.
  *
- * When the caller knows the sending mind's active turn (resolved from the per-request
- * `X-Volute-Thread` header — the primary attribution path), it passes `turnId` and is
- * responsible for publishing the SSE event itself. When `turnId` is omitted (e.g. a
- * sessionless path), the record is left untagged and its turn is resolved later when the
- * corresponding tool_result event arrives with a `[volute:outbound:NNN]` marker (via
- * `linkToolResultToTurn`), which also publishes the SSE event then.
+ * `mind` is the base name turns are kept under; `sender` is who is sending — the mind or
+ * one of its variants. A variant's thread shares its parent's turn key, so the turn is
+ * only this send's when `sender` is the process that opened it; otherwise no turn.
+ */
+export function turnStamp(
+  mind: string,
+  thread: string | null | undefined,
+  sender: string = mind,
+): TurnStamp {
+  const t = normalizeThread(thread);
+  if (!t) return {};
+  const turnId = getActiveTurnOwner(mind, t) === sender ? getActiveTurnId(mind, t) : undefined;
+  return turnId ? { turnId, thread: t } : { thread: t };
+}
+
+/**
+ * Record an outbound message: persist to mind_history with the stamp the caller resolved
+ * (`turnStamp` for a send; a mind event's own turn and thread for echo-text). The caller
+ * publishes the SSE event at send time. A row with a thread but no turn yet may be
+ * linked later by a `[volute:outbound:NNN]` marker from that thread (via
+ * `linkToolResultToTurn`), which publishes it again, then with its turn.
  *
- * Returns the inserted mind_history record ID (used as a correlation key in tool output).
+ * Returns the inserted mind_history record ID (used as a correlation key in tool output),
+ * or undefined if it could not be persisted.
  */
 export async function recordOutbound(
   mind: string,
   channel: string,
   content: string | null,
-  opts: { messageId?: string; turnId?: string } = {},
+  opts: TurnStamp & { messageId?: string } = {},
 ): Promise<number | undefined> {
   try {
     const db = await getDb();
@@ -96,7 +123,8 @@ export async function recordOutbound(
         type: "outbound",
         channel,
         content,
-        turn_id: opts.turnId ?? null,
+        turn_id: opts.turnId || null,
+        thread: normalizeThread(opts.thread) ?? null,
         message_id: opts.messageId ?? null,
       })
       .returning({ id: mindHistory.id });
@@ -107,6 +135,59 @@ export async function recordOutbound(
   }
 }
 
+/** A linked activity's row in its turn's event stream. */
+async function recordActivityRow(
+  mind: string,
+  turnId: string,
+  thread: string | undefined,
+  a: { summary: string; metadata: string | null; created_at: string },
+): Promise<void> {
+  const db = await getDb();
+  await db.insert(mindHistory).values({
+    mind,
+    type: "activity",
+    content: a.summary,
+    metadata: a.metadata,
+    turn_id: turnId,
+    thread: thread ?? null,
+    created_at: a.created_at,
+  });
+}
+
+/**
+ * Publish an activity from an extension command, attributed to the turn that ran the
+ * command: the caller's thread's exact turn (`turnStamp`), which also gets the
+ * activity's mind_history row. The caller is who ran the command, not the mind the
+ * activity is about — an admin or the spirit acting `--mind` for another mind ran it
+ * in its own turn. With no turn to stamp, the activity waits for its marker.
+ */
+export async function publishTurnActivity(
+  event: ActivityEvent,
+  caller: { mind: string; thread?: string; sender: string },
+): Promise<number> {
+  const stamp = turnStamp(caller.mind, caller.thread, caller.sender);
+  const created_at = activityTimestamp();
+  const id = await publishActivity({
+    ...event,
+    created_at,
+    ...(stamp.turnId ? { turn_id: stamp.turnId } : {}),
+  });
+  if (id > 0 && stamp.turnId) {
+    // The activity is persisted either way; a missing history row must not cost the
+    // command its marker.
+    try {
+      await recordActivityRow(caller.mind, stamp.turnId, stamp.thread, {
+        summary: event.summary,
+        metadata: event.metadata ? JSON.stringify(event.metadata) : null,
+        created_at,
+      });
+    } catch (err) {
+      dlog.warn(`failed to record activity ${id} in turn ${stamp.turnId}`, log.errorData(err));
+    }
+  }
+  return id;
+}
+
 /** Regexes to extract correlation IDs from tool_result content. */
 const OUTBOUND_MARKER_RE = /\[volute:outbound:(\d+)\]/g;
 const ACTIVITY_MARKER_RE = /\[volute:activity:(\d+)\]/g;
@@ -114,23 +195,34 @@ const ACTIVITY_MARKER_RE = /\[volute:activity:(\d+)\]/g;
 /**
  * Link outbound records and extension activities to a turn using correlation
  * markers in tool_result content. Called from the events endpoint when a
- * tool_result event arrives.
+ * tool_result event arrives; `turnId`, `source.thread` and `source.sender` (the
+ * process that sent it) are the tool_result's own.
  *
- * Scans the content for `[volute:outbound:NNN]` and `[volute:activity:NNN]`
- * markers. For outbound markers:
- * - Sets the outbound record's turn_id
- * - Fixes the linked message's turn_id and source_event_id
- * - Publishes the outbound event to SSE (correctly tagged)
- * For activity markers:
- * - Sets the activity record's turn_id and source_event_id
+ * A marker is only evidence of where a record came from when nothing else could have
+ * printed it: a mind can echo a marker into another thread's tool output (cat-ing its
+ * own log), or print any id at all. So linking never overwrites a turn, never crosses
+ * threads or minds, and is claimed with `turn_id IS NULL` in the UPDATE itself (#1173).
+ *
+ * An outbound record with no turn yet is linked when it was sent from this same thread;
+ * a send recorded with no thread is never linked. Its linked message gets the same turn
+ * and the `source_event_id`, and the outbound is published again with its turn (the send
+ * published it before the turn existed). A record already carrying this turn only gets
+ * `source_event_id`.
+ *
+ * Activity markers claim this mind's (or its variants') activities with no turn yet, and
+ * add a mind_history row for each. An activity already stamped with this turn at publish
+ * (`publishTurnActivity`) only gets `source_event_id`. Activities record no thread, so
+ * no thread check is possible for the unstamped ones.
  */
 export async function linkToolResultToTurn(
   mind: string,
   turnId: string,
   toolResultContent: string | null,
   toolUseEventId: number | undefined,
+  source: { thread?: string | null; sender?: string } = {},
 ): Promise<void> {
   if (!toolResultContent) return;
+  const ownThread = normalizeThread(source.thread);
 
   const db = await getDb();
 
@@ -138,32 +230,47 @@ export async function linkToolResultToTurn(
   for (const match of toolResultContent.matchAll(OUTBOUND_MARKER_RE)) {
     const outboundId = Number(match[1]);
     try {
-      const rows = await db
+      // Recorded under the sender's own name (a variant's sends under the variant).
+      const own = and(
+        eq(mindHistory.id, outboundId),
+        eq(mindHistory.mind, source.sender ?? mind),
+        eq(mindHistory.type, "outbound"),
+      );
+      const row = await db
         .select({
-          id: mindHistory.id,
           channel: mindHistory.channel,
           content: mindHistory.content,
           message_id: mindHistory.message_id,
           turn_id: mindHistory.turn_id,
+          thread: mindHistory.thread,
         })
         .from(mindHistory)
-        .where(and(eq(mindHistory.id, outboundId), eq(mindHistory.mind, mind)))
-        .limit(1);
-
-      const row = rows[0];
+        .where(own)
+        .get();
       if (!row) {
         dlog.warn(`outbound marker references missing record: mind=${mind} id=${outboundId}`);
         continue;
       }
 
-      // Direct attribution (session header at send time) is the primary path: if the
-      // outbound already carries a turn_id, the sender already tagged and published it.
-      // Only fill in source_event_id on the linked message; don't re-tag or re-publish.
-      const alreadyTagged = row.turn_id != null;
-      if (!alreadyTagged) {
-        await db.update(mindHistory).set({ turn_id: turnId }).where(eq(mindHistory.id, outboundId));
+      let linked = row.turn_id === turnId;
+      let claimed = false;
+      if (row.turn_id == null && row.thread != null && row.thread === ownThread) {
+        const rows = await db
+          .update(mindHistory)
+          .set({ turn_id: turnId })
+          .where(and(own, sql`${mindHistory.turn_id} IS NULL`))
+          .returning({ id: mindHistory.id });
+        claimed = linked = rows.length > 0;
+      }
+      if (!linked) {
+        dlog.warn(
+          `outbound ${outboundId} for ${mind} (turn ${row.turn_id ?? "none"}, thread ${row.thread ?? "none"}) ` +
+            `not linked to turn ${turnId} (thread ${ownThread ?? "none"})`,
+        );
+        continue;
       }
 
+      // The linked message follows the history row, so the two never name different turns.
       if (row.message_id) {
         await db
           .update(messages)
@@ -174,14 +281,14 @@ export async function linkToolResultToTurn(
           .where(eq(messages.id, Number(row.message_id)));
       }
 
-      // Publish the outbound event to SSE — correctly tagged. Skipped when the sender
-      // already published it via direct attribution to avoid a duplicate stream event.
-      if (!alreadyTagged) {
+      // Once, on the claim: the live view can now place the send in its turn.
+      if (claimed) {
         publishMindEvent(mind, {
           mind,
           type: "outbound",
           channel: row.channel ?? undefined,
           content: row.content ?? undefined,
+          session: ownThread,
           turnId,
         });
       }
@@ -191,34 +298,48 @@ export async function linkToolResultToTurn(
   }
 
   // --- Activity markers ---
-  const activityIds: number[] = [];
+  const markerIds: number[] = [];
   for (const match of toolResultContent.matchAll(ACTIVITY_MARKER_RE)) {
-    activityIds.push(Number(match[1]));
+    markerIds.push(Number(match[1]));
   }
-  if (activityIds.length > 0) {
+  if (markerIds.length > 0) {
     try {
-      await db
-        .update(activity)
-        .set({
-          turn_id: turnId,
-          ...(toolUseEventId != null ? { source_event_id: toolUseEventId } : {}),
-        })
-        .where(inArray(activity.id, activityIds));
-
-      // Insert mind_history rows so activities appear in the turn event stream
-      const actRows = await db.select().from(activity).where(inArray(activity.id, activityIds));
-      if (actRows.length > 0) {
-        await db.insert(mindHistory).values(
-          actRows.map((a) => ({
-            mind,
-            type: "activity",
-            content: a.summary,
-            metadata: a.metadata,
-            turn_id: turnId,
-            created_at: a.created_at,
-          })),
-        );
+      const sourceEvent = toolUseEventId != null ? { source_event_id: toolUseEventId } : {};
+      // Stamped at publish by this very turn: only the source event is missing.
+      if (toolUseEventId != null) {
+        await db
+          .update(activity)
+          .set(sourceEvent)
+          .where(
+            and(
+              inArray(activity.id, markerIds),
+              eq(activity.turn_id, turnId),
+              sql`${activity.source_event_id} IS NULL`,
+            ),
+          );
       }
+      // Unstamped: only this mind's own activities (a variant publishes under its own
+      // name) — a marker is text a mind can print, and must not pull another mind's
+      // activity into its turn. Claimed with `turn_id IS NULL`, so a repeated or echoed
+      // marker neither moves an activity nor adds a second history row for it.
+      const linked = await db
+        .update(activity)
+        .set({ turn_id: turnId, ...sourceEvent })
+        .where(
+          and(
+            inArray(activity.id, markerIds),
+            sql`${activity.turn_id} IS NULL`,
+            or(
+              eq(activity.mind, mind),
+              inArray(
+                activity.mind,
+                db.select({ name: minds.name }).from(minds).where(eq(minds.parent, mind)),
+              ),
+            ),
+          ),
+        )
+        .returning();
+      for (const a of linked) await recordActivityRow(mind, turnId, ownThread, a);
     } catch (err) {
       dlog.warn(`failed to link activities to turn ${turnId}`, log.errorData(err));
     }

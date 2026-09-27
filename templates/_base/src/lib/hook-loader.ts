@@ -96,6 +96,7 @@ export function executeHook(
   input: object,
   timeout = defaultHookTimeout(),
   cwd?: string,
+  env: NodeJS.ProcessEnv = process.env,
 ): Promise<HookResult> {
   return new Promise((resolve) => {
     const { cmd, args } = getRunner(scriptPath);
@@ -104,7 +105,7 @@ export function executeHook(
       timeout,
       stdio: ["pipe", "pipe", "pipe"],
       cwd: cwd ?? process.cwd(),
-      env: process.env,
+      env,
     });
 
     let stdout = "";
@@ -207,6 +208,13 @@ export async function runHooks(
   // so resolving ../.. gives the home directory.
   const homeDir = resolve(hooksDir, "../..");
 
+  // A hook runs on behalf of one session, and a `volute` call it makes must name that
+  // session in X-Volute-Thread — the mind server's own environment names none (#1173).
+  const session = (input as { session?: unknown }).session;
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  if (typeof session === "string" && session) env.VOLUTE_SESSION = session;
+  else delete env.VOLUTE_SESSION;
+
   const contextParts: string[] = [];
   const metadata: Record<string, unknown> = {};
   let blocked = false;
@@ -230,14 +238,14 @@ export async function runHooks(
   for (const script of scripts) {
     const remaining = Math.max(MIN_HOOK_MS, deadline - Date.now());
     const budget = Math.min(timeout, remaining);
-    const result = await executeHook(script, input, budget, homeDir);
+    const result = await executeHook(script, input, budget, homeDir, env);
     if (result.failure) {
       const told = tellMindAboutHookFailure({
         scriptPath: script,
         homeDir,
         event,
         failure: result.failure,
-        session: (input as { session?: unknown }).session,
+        session,
         // A timeout on a squeezed budget is the hooks before it running long, not
         // necessarily this hook being broken — say so rather than blame it.
         squeezed:

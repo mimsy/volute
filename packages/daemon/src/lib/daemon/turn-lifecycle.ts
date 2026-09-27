@@ -22,12 +22,13 @@ import { ManagerNotReadyError } from "./manager-not-ready.js";
 import { type BudgetScope, getSpendBudget } from "./spend-budget.js";
 import { summarizeTurn } from "./summarizer.js";
 import {
-  assignSession,
   completeTurn,
   createTurn,
   getActiveTurnId,
+  getActiveTurnOwner,
   getToolUseEventId,
   markErrored,
+  normalizeThread,
   takeErrored,
   trackToolUse,
 } from "./turn-tracker.js";
@@ -113,8 +114,8 @@ async function linkPendingInbound(
   if (!scopeChannel) return;
   const db = await getDb();
 
-  // Lower-bound the sweep by the previous turn on this session (assignSession has already
-  // written this turn's `session`, so `id != turnId` excludes it from the max).
+  // Lower-bound the sweep by the previous turn on this session (createTurn has already
+  // written this turn's thread, so `id != turnId` excludes it from the max).
   let lowerBound: string | undefined;
   if (session) {
     const prev = await db
@@ -156,28 +157,26 @@ async function linkPendingInbound(
  * failure/budget notices, the summarization trigger, and budget accounting. Extracted
  * here so the state machine is unit-testable without a live HTTP server.
  *
+ * `mind` is the base name history is kept under; `process` is the mind or variant whose
+ * server sent the event (it owns a turn it opens — see `ActiveTurn.owner`).
+ *
  * Returns the resolved `turnId` (if any) and the persisted mind_history `insertedId`.
  */
 export async function handleMindEvent(
   mind: string,
   event: MindEvent,
+  process: string = mind,
 ): Promise<{ turnId?: string; insertedId?: number }> {
-  // Assign session to a sessionless turn on first session_start.
-  if (event.type === "session_start" && event.session) {
-    const activeTurnId = getActiveTurnId(mind);
-    if (activeTurnId) await assignSession(mind, activeTurnId, event.session);
-  }
-
   // Look up active turn for this event; create one if missing for substantive events.
-  // Turns are created per-session when the mind starts processing, not when inbound arrives.
+  // Turns are created per-session when the mind starts processing, not when inbound arrives,
+  // and keyed by the event's own thread from the start — never borrowed from a sibling.
   let turnId = getActiveTurnId(mind, event.session);
   if (!turnId && SUBSTANTIVE_TYPES.has(event.type)) {
-    turnId = await createTurn(mind);
+    turnId = await createTurn(mind, event.session, process);
     if (!turnId) {
       llog.warn(`skipping turn tracking for ${mind}: createTurn failed`);
     } else {
       publishMindEvent(mind, { mind, type: "turn_created", turnId });
-      if (event.session) await assignSession(mind, turnId, event.session);
       // Link the triggering inbound(s) and set the turn's trigger_event_id.
       try {
         await linkPendingInbound(mind, turnId, event.channel, event.session);
@@ -246,16 +245,26 @@ export async function handleMindEvent(
     trackToolUse(mind, event.session, insertedId, toolUseId);
   }
 
-  // Fallback/activity linking via correlation markers. Outbound turn attribution is now
-  // primary via the session header at send time (see api/chat.ts); linkToolResultToTurn
-  // is idempotent (won't re-publish an already-attributed outbound) and still links
-  // extension activities and any outbound the direct path couldn't attribute.
-  if (event.type === "tool_result" && turnId && event.content) {
+  // Fallback linking via correlation markers. Sends and command activities are attributed
+  // at send/publish time from the caller's thread (api/chat.ts, publishTurnActivity);
+  // linkToolResultToTurn fills in what that couldn't: a send from this thread made before
+  // its turn existed (re-published once, with the turn), or an unstamped activity of this
+  // mind. It never overwrites a turn or crosses threads — or processes: a variant's thread
+  // shares its parent's turn key, so only the process that opened the turn links into it.
+  if (
+    event.type === "tool_result" &&
+    turnId &&
+    event.content &&
+    getActiveTurnOwner(mind, event.session) === process
+  ) {
     const resultToolUseId =
       typeof event.metadata?.tool_use_id === "string" ? event.metadata.tool_use_id : undefined;
     const toolUseEventId = getToolUseEventId(mind, event.session, resultToolUseId);
     try {
-      await linkToolResultToTurn(mind, turnId, event.content, toolUseEventId);
+      await linkToolResultToTurn(mind, turnId, event.content, toolUseEventId, {
+        thread: event.session,
+        sender: process,
+      });
     } catch (err) {
       llog.error("failed to link tool_result to turn", log.errorData(err));
     }
@@ -274,8 +283,16 @@ export async function handleMindEvent(
   });
 
   if (event.type === "text" && event.channel && cleanContent) {
-    echoTextToChannel(mind, event.channel, cleanContent, turnId ?? undefined, insertedId).catch(
-      (err) => llog.error(`echo-text failed for ${mind} on ${event.channel}`, log.errorData(err)),
+    // The text event's own turn and thread, as resolved above — the echo never looks the
+    // turn up again (a `done` may already have closed it) and never borrows another's.
+    echoTextToChannel(
+      mind,
+      event.channel,
+      cleanContent,
+      { turnId: turnId ?? undefined, thread: normalizeThread(event.session) },
+      insertedId,
+    ).catch((err) =>
+      llog.error(`echo-text failed for ${mind} on ${event.channel}`, log.errorData(err)),
     );
   }
 

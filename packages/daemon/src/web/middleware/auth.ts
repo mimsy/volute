@@ -6,6 +6,7 @@ import { createMiddleware } from "hono/factory";
 import { API_TOKEN_PREFIX, resolveApiToken } from "../../lib/api-tokens.js";
 import { getOrCreateMindUser, getUser, type User } from "../../lib/auth.js";
 import { resolveMindToken, resolveScriptToken } from "../../lib/daemon/mind-tokens.js";
+import { normalizeThread } from "../../lib/daemon/turn-tracker.js";
 import { getDb } from "../../lib/db.js";
 import { getBaseName } from "../../lib/mind/registry.js";
 import { sessions } from "../../lib/schema.js";
@@ -171,8 +172,9 @@ export async function resolvePrincipal(c: Context): Promise<Principal | null> {
   const authHeader = c.req.header("Authorization");
   if (authHeader?.startsWith("Bearer ")) {
     const token = authHeader.slice(7);
-    // Mind session, captured for turn resolution.
-    const mindSession = c.req.header("X-Volute-Thread") || undefined;
+    // Mind session, captured for turn resolution. "" and "*" name no thread ("*" is the
+    // sessionless turn's own key, and must not be claimable as a thread).
+    const mindSession = normalizeThread(c.req.header("X-Volute-Thread"));
 
     // 1. Daemon token — internal, always admin
     if (token && isValidDaemonToken(token)) {

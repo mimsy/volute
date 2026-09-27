@@ -145,11 +145,11 @@ export async function resolveEffective(principal: {
   const turnId = getActiveTurnId(self, mindSession);
   if (!turnId) return BASIC(self);
 
-  // `getActiveTurnId` falls back to the sessionless `mind:*` slot, and every turn is
-  // sessionless until `assignSession` re-keys it. Without this check any slug at all —
-  // including one naming no session the spirit has ever had — resolves to whatever turn
-  // happens to be mid-creation. Re-read the thread the daemon actually recorded and
-  // require it to match the claim.
+  // `getActiveTurnId` is exact per thread, and a turn records its thread when it is
+  // created, so for a request naming a thread this re-read agrees with the lookup. It is
+  // what refuses a request naming none: that resolves the sessionless `mind:*` turn,
+  // which belongs to no thread a request could claim. Authority never rests on the
+  // in-memory key alone.
   let thread: string | null | undefined;
   try {
     const db = await getDb();

@@ -79,6 +79,10 @@ export function buildMindBaseEnv(
   for (const [key, value] of Object.entries(source)) {
     // Withhold the daemon admin token — minds get their own VOLUTE_MIND_TOKEN.
     if (key === "VOLUTE_DAEMON_TOKEN") continue;
+    // A thread slug names one thread of one mind, bound per session by each template. A
+    // daemon started from a mind's own shell carries that mind's slug, which would
+    // otherwise reach every mind and stamp their sends as that thread's (#1173).
+    if (key === "VOLUTE_SESSION") continue;
     if (key.startsWith("VOLUTE_")) base[key] = value;
   }
   return base;

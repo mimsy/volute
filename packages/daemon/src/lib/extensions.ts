@@ -23,10 +23,12 @@ import { announceToCommons } from "./chat/commons-channel.js";
 import { MIND_LEVEL_THREAD, recordNotice as recordMindNotice } from "./chat/system-events.js";
 import { getSpiritName, readGlobalConfig, writeGlobalConfig } from "./config/setup.js";
 import { readSystemsConfig } from "./config/systems-config.js";
+import { publishTurnActivity } from "./delivery/message-delivery.js";
 import { publish } from "./events/activity-events.js";
 import { isIsolationEnabled, mindUserName } from "./mind/isolation.js";
 import {
   findMind,
+  getBaseName,
   readRegistry,
   resolveMindDir,
   voluteHome,
@@ -438,6 +440,12 @@ async function loadExtension(
           // to the output (linked to the correct turn when the tool_result event
           // arrives at the events endpoint).
           const activityPromises: Promise<number>[] = [];
+          // Who ran the command — resolved once, and only if it publishes anything.
+          let caller: Promise<{ mind: string; sender: string } | undefined> | undefined;
+          const resolveCaller = () =>
+            (caller ??= user
+              ? getBaseName(user.username).then((mind) => ({ mind, sender: user.username }))
+              : Promise.resolve(undefined));
           const parsed = parseCommandArgs(body.args ?? [], cmd.args ?? [], cmd.flags ?? {});
           const result = await cmd.handler(parsed, {
             ...context,
@@ -445,14 +453,23 @@ async function loadExtension(
             publishActivity: (rawEvent) => {
               const metadata = enrichActivityMetadata(manifest, rawEvent.metadata);
               const event = { ...rawEvent, metadata };
+              const activityEvent = event as Parameters<typeof publish>[0];
               activityPromises.push(
-                publish(event as Parameters<typeof publish>[0]).catch((err) => {
-                  log.error(
-                    `extension ${manifest.id}: failed to publish activity`,
-                    log.errorData(err),
-                  );
-                  return 0;
-                }),
+                // Attributed to the turn that ran this command — the caller's, even when an
+                // admin or the spirit acts `--mind` for another mind.
+                resolveCaller()
+                  .then((who) =>
+                    who
+                      ? publishTurnActivity(activityEvent, { ...who, thread: session })
+                      : publish(activityEvent),
+                  )
+                  .catch((err) => {
+                    log.error(
+                      `extension ${manifest.id}: failed to publish activity`,
+                      log.errorData(err),
+                    );
+                    return 0;
+                  }),
               );
             },
             mindName,

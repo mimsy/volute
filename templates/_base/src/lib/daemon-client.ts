@@ -7,8 +7,8 @@ function headers(): Record<string, string> {
   if (token) h.Authorization = `Bearer ${token}`;
   // Origin header required for CSRF checks on mutation requests
   if (port) h.Origin = `http://127.0.0.1:${port}`;
-  // Tag requests with the current session for turn resolution. Set per SDK
-  // subprocess at spawn (templates/claude/src/agent.ts createStream), so it is
+  // Tag requests with the current session for turn resolution. Each template binds
+  // it per session in the environment of the commands that session runs, so it is
   // per-turn-truthful — not a process-global.
   const session = process.env.VOLUTE_SESSION;
   if (session) h["X-Volute-Thread"] = session;
