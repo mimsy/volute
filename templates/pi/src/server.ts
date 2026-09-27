@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 import { createMind } from "./agent.js";
+import { flushFileChanges } from "./lib/auto-commit.js";
 import { daemonRestart } from "./lib/daemon-client.js";
 import { log, setLevel } from "./lib/logger.js";
 import { withMechanicsDoc } from "./lib/mechanics-doc.js";
@@ -65,4 +66,11 @@ server.listen(port, () => {
   log("server", `listening on :${actualPort}`);
 });
 
-setupShutdown();
+// Commit edits from a turn the shutdown cut short — e.g. the mind ran `volute mind
+// restart` mid-turn; that turn never reaches its own flush. Stop accepting messages first.
+setupShutdown(async () => {
+  server.close();
+  await flushFileChanges(resolve("home")).catch((err) =>
+    log("server", "shutdown commit failed:", err),
+  );
+});

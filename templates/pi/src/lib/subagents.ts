@@ -9,8 +9,10 @@ import {
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
+import { subagentUsageSlice } from "./event-handler.js";
 import { log } from "./logger.js";
 import { createSessionBashTool } from "./session-bash.js";
+import type { UsageByModel } from "./types.js";
 
 export type SubagentDefinition = {
   description: string;
@@ -27,6 +29,8 @@ export function createSubagentExtension(
     modelRuntime: ModelRuntime;
     /** The parent session — bound into the subagent's bash so its sends carry it. */
     sessionName: string;
+    /** Receives each subagent run's usage, to be counted in the parent turn's spend. */
+    onUsage?: (usage: UsageByModel) => void;
   },
 ): ExtensionFactory {
   return (pi) => {
@@ -76,6 +80,9 @@ export function createSubagentExtension(
               session.subscribe((event) => {
                 if (event.type === "agent_end") {
                   clearTimeout(timeout);
+                  // Before the error check: a run that failed or was aborted still spent.
+                  const usage = subagentUsageSlice(event.messages);
+                  if (usage) context.onUsage?.(usage);
                   // Check for error messages first
                   for (const msg of event.messages ?? []) {
                     const m = msg as { errorMessage?: string };
