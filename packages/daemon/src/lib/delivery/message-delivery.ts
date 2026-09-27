@@ -27,6 +27,7 @@ import {
   toWirePayload,
   type WirePayload,
 } from "./delivery-router.js";
+import { sinceNoteFor, withSinceNote } from "./since-last-here.js";
 
 const dlog = log.child("delivery");
 
@@ -599,16 +600,27 @@ export async function deliverBatch(
       // Build the batch payload shape the mind-side router expects. senderId never
       // crosses to the mind process — see WirePayload (#1017) — and neither does daemon
       // bookkeeping: these are being delivered, not deferred.
+      const wires: WirePayload[] = [...(riders?.payloads ?? [])];
+      for (const p of payloads) {
+        const { deferred: _d, inboundDeferred: _i, ...wire } = toWirePayload(p);
+        wires.push(wire);
+      }
+      // A turn this batch starts opens with what the mind's other threads did in between
+      // (#939), on its first message. A batch folding into a running turn adds nothing.
+      if (slot.owned) {
+        const note = await sinceNoteFor(mindName, {
+          mind: baseName,
+          thread: session,
+          channels: wires.map((w) => w.channel),
+          conversationIds: wires.map((w) => w.conversationId),
+          waited: { ms: slot.waitedMs, behind: slot.behind },
+        });
+        wires[0] = withSinceNote(wires[0], note);
+      }
       const channels: Record<string, WirePayload[]> = {};
-      for (const wire of riders?.payloads ?? []) {
+      for (const wire of wires) {
         const ch = wire.channel ?? "unknown";
         if (!channels[ch]) channels[ch] = [];
-        channels[ch].push(wire);
-      }
-      for (const p of payloads) {
-        const ch = p.channel ?? "unknown";
-        if (!channels[ch]) channels[ch] = [];
-        const { deferred: _d, inboundDeferred: _i, ...wire } = toWirePayload(p);
         channels[ch].push(wire);
       }
 

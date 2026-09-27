@@ -143,6 +143,12 @@ export function concurrencyHold(mind: string, session: string): ConcurrencyHold 
   return null;
 }
 
+/** The sessions of `mind` currently running a turn — what a held delivery is waiting behind. */
+export function turnSlotHolders(mind: string): string[] {
+  pruneStale(Date.now());
+  return [...(slots.get(mind)?.keys() ?? [])];
+}
+
 /** Whether (mind, session) is mid-turn, so a delivery there folds in rather than waking it. */
 export function hasTurnSlot(mind: string, session: string): boolean {
   pruneStale(Date.now());
@@ -222,18 +228,27 @@ export function takeTurnSlot(
   mind: string,
   session: string,
   opts: { wait?: boolean; timeoutMs?: number } = {},
-): Promise<{ waitedMs: number; timedOut: boolean; owned: boolean }> {
+): Promise<{ waitedMs: number; timedOut: boolean; owned: boolean; behind: string[] }> {
   const started = Date.now();
   if (opts.wait === false || !concurrencyHold(mind, session)) {
-    return Promise.resolve({ waitedMs: 0, timedOut: false, owned: acquireTurnSlot(mind, session) });
+    return Promise.resolve({
+      waitedMs: 0,
+      timedOut: false,
+      owned: acquireTurnSlot(mind, session),
+      behind: [],
+    });
   }
 
+  // Who holds the mind's slots as the wait begins, so the delivery can say what it waited
+  // behind (#939). Empty when the hold is install-wide rather than this mind's own.
+  const behind = turnSlotHolders(mind);
   const timeoutMs = opts.timeoutMs ?? SLOT_WAIT_TIMEOUT_MS;
   return new Promise((resolve) => {
     const waiter: Waiter = {
       mind,
       session,
-      resolve: (timedOut, owned) => resolve({ waitedMs: Date.now() - started, timedOut, owned }),
+      resolve: (timedOut, owned) =>
+        resolve({ waitedMs: Date.now() - started, timedOut, owned, behind }),
       timer: setTimeout(() => {
         const idx = waiters.indexOf(waiter);
         if (idx >= 0) waiters.splice(idx, 1);

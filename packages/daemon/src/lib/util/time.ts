@@ -9,6 +9,11 @@ export function parseDbTimestamp(ts: string): Date {
   return new Date(`${ts.replace(" ", "T")}Z`);
 }
 
+/** Epoch millis → the DB's zone-less UTC text (`YYYY-MM-DD HH:MM:SS`), the inverse of the above. */
+export function toDbTimestamp(at: number): string {
+  return new Date(at).toISOString().slice(0, 19).replace("T", " ");
+}
+
 /**
  * Normalize a caller-supplied date bound to the DB's zone-less UTC text format
  * ("YYYY-MM-DD HH:MM:SS"), so it compares correctly as a plain string against

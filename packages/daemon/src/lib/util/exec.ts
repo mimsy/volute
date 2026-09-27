@@ -344,6 +344,7 @@ export function gitExec(
     env?: NodeJS.ProcessEnv;
     maxBuffer?: number;
     stdin?: string;
+    timeout?: number;
   },
 ): Promise<string> {
   const fullArgs =

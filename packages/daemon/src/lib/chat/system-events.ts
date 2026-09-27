@@ -3,6 +3,7 @@ import { getSpiritName } from "../config/setup.js";
 import { releaseTurnSlot, takeTurnSlot } from "../daemon/turn-slots.js";
 import { getDb } from "../db.js";
 import { getRoutingConfig, resolveEventRoute } from "../delivery/delivery-router.js";
+import { sinceNoteFor } from "../delivery/since-last-here.js";
 import { publish as publishActivity } from "../events/activity-events.js";
 import { publish as publishMindEvent } from "../events/mind-events.js";
 import { findMind, getBaseName } from "../mind/registry.js";
@@ -309,6 +310,19 @@ async function postEventEnvelope(
     );
   }
   let acked = false;
+  // A turn this event starts opens with what the mind's other threads did in between (#939).
+  // Folding into a running turn (`owned: false`) adds nothing: that turn is current. The
+  // deferred riders flushed below fold into this slot and carry no note of their own, so on
+  // that path the note arrives with the event, just after them.
+  const note = slot.owned
+    ? await sinceNoteFor(mind, {
+        mind: slotMind,
+        thread: event.thread,
+        channels: [],
+        conversationIds: [],
+        waited: { ms: slot.waitedMs, behind: slot.behind },
+      })
+    : null;
   // Messages the mind's routes.json deferred on this thread ride along with the turn this
   // event starts — sent first, since they arrived first, with the event folding into the
   // turn they begin. Routing never sees an event, so it has to be done here. If they went
@@ -330,7 +344,7 @@ async function postEventEnvelope(
           id: event.id,
           type: event.type,
           label: eventLabel(event.type, meta),
-          body: event.body,
+          body: note ? `${note}\n\n${event.body}` : event.body,
           at: event.created_at,
         },
         session: event.thread,
