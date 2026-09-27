@@ -47,6 +47,8 @@ import { log } from "./logger.js";
 import { parseArchiveTimestamp } from "./seed-note.js";
 import {
   CHARS_PER_TOKEN,
+  failSoft,
+  failSoftAsync,
   hasRecollect,
   IMAGE_TOKENS,
   OPENAI_CHARS_PER_TOKEN,
@@ -145,28 +147,40 @@ function isTurnBoundary(entry: PiEntry): boolean {
   return entry.type === "message" && entry.message?.role === "user";
 }
 
-// What an entry sends the model. pi-ai drives any provider, so the text rate follows
-// the transcript's own model: claude's fitted 1.8 chars/token (see session-seed.ts) for
-// an Anthropic model, or when there's no reply yet to tell; OPENAI_CHARS_PER_TOKEN
-// otherwise. That rate was measured on OpenAI models only — other providers' tokenizers
-// (~4 chars/token for English) are assumed to be no denser. Entries pi doesn't put in
-// context (model/thinking-level changes, labels, plain `custom` state, session info)
-// cost nothing.
-function charsPerToken(entries: PiEntry[]): number {
+// What an entry sends the model. pi-ai drives any provider, so the estimate follows the
+// model the mind is on: the caller's resume model when given, else the transcript's
+// latest model change or reply. For an Anthropic model (or when nothing tells), claude's
+// fitted 1.8 chars/token (see session-seed.ts), with thinking counted by its signature,
+// which the API replays. Otherwise OPENAI_CHARS_PER_TOKEN — measured on OpenAI models
+// only; other providers' tokenizers (~4 chars/token for English) are assumed no denser —
+// and thinking by its text: pi-ai's OpenAI `thinkingSignature` is the whole reasoning
+// item, base64 `encrypted_content` included, whose length is nothing like its cost.
+// Entries pi keeps out of context (model/thinking-level changes, labels, plain `custom`
+// state, session info) cost nothing.
+export type PiRate = { charsPerToken: number; signatures: boolean };
+
+const ANTHROPIC_RATE: PiRate = { charsPerToken: CHARS_PER_TOKEN, signatures: true };
+const OTHER_RATE: PiRate = { charsPerToken: OPENAI_CHARS_PER_TOKEN, signatures: false };
+
+const rateFor = (model: string): PiRate =>
+  /anthropic|claude/i.test(model) ? ANTHROPIC_RATE : OTHER_RATE;
+
+/** The rate for `model` (e.g. "openai/gpt-5.5"), else for the transcript's latest model. */
+function piRate(entries: PiEntry[], model?: string): PiRate {
+  if (model) return rateFor(model);
   for (let i = entries.length - 1; i >= 0; i--) {
-    const m = entries[i].message as
-      | { role?: string; provider?: unknown; model?: unknown }
-      | undefined;
-    if (entries[i].type !== "message" || m?.role !== "assistant") continue;
-    return /anthropic|claude/i.test(`${m.provider ?? ""} ${m.model ?? ""}`)
-      ? CHARS_PER_TOKEN
-      : OPENAI_CHARS_PER_TOKEN;
+    const e = entries[i] as PiEntry & { provider?: unknown; modelId?: unknown };
+    if (e.type === "model_change") return rateFor(`${e.provider ?? ""} ${e.modelId ?? ""}`);
+    const m = e.message as { role?: string; provider?: unknown; model?: unknown } | undefined;
+    if (e.type === "message" && m?.role === "assistant") {
+      return rateFor(`${m.provider ?? ""} ${m.model ?? ""}`);
+    }
   }
-  return CHARS_PER_TOKEN;
+  return ANTHROPIC_RATE;
 }
 
-function blocksTokens(content: unknown, cpt: number): number {
-  const text = (s: string) => s.length / cpt;
+function blocksTokens(content: unknown, rate: PiRate): number {
+  const text = (s: string) => s.length / rate.charsPerToken;
   if (typeof content === "string") return text(content);
   if (!Array.isArray(content)) return content == null ? 0 : text(JSON.stringify(content));
   let sum = 0;
@@ -178,10 +192,10 @@ function blocksTokens(content: unknown, cpt: number): number {
         sum += text(String(b.text ?? ""));
         break;
       case "thinking":
-        // Replayed by its signature where the provider keeps one (the visible text may
-        // be a summary, or empty when redacted).
+        // Anthropic replays thinking by its signature (the visible text may be a summary,
+        // or empty when redacted).
         sum +=
-          typeof b.thinkingSignature === "string" && b.thinkingSignature
+          rate.signatures && typeof b.thinkingSignature === "string" && b.thinkingSignature
             ? b.thinkingSignature.length / SIGNATURE_CHARS_PER_TOKEN
             : text(String(b.thinking ?? ""));
         break;
@@ -199,10 +213,11 @@ function blocksTokens(content: unknown, cpt: number): number {
 }
 
 /**
- * Estimated model tokens an entry contributes to the resumed context, at `cpt` chars
- * per token for text (default: claude's rate — the densest, so an over-count).
+ * Estimated model tokens an entry contributes to the resumed context, at `rate` (default:
+ * an Anthropic model's — the densest, so an over-count elsewhere).
  */
-export function estimatePiEntryTokens(entry: PiEntry, cpt = CHARS_PER_TOKEN): number {
+export function estimatePiEntryTokens(entry: PiEntry, rate: PiRate = ANTHROPIC_RATE): number {
+  const cpt = rate.charsPerToken;
   switch (entry.type) {
     case "message": {
       const m = entry.message as Record<string, unknown> | undefined;
@@ -214,17 +229,17 @@ export function estimatePiEntryTokens(entry: PiEntry, cpt = CHARS_PER_TOKEN): nu
       }
       return m?.content === undefined
         ? JSON.stringify(m ?? {}).length / cpt
-        : blocksTokens(m.content, cpt);
+        : blocksTokens(m.content, rate);
     }
     case "custom_message":
-      return blocksTokens(entry.content, cpt);
+      return blocksTokens(entry.content, rate);
     case "compaction":
     case "branch_summary":
       return typeof entry.summary === "string" ? entry.summary.length / cpt : 0;
     case "context_edit":
       // Replaces its target's content; the target is still counted at its own size, so
       // this over-counts.
-      return blocksTokens((entry.replacement as { content?: unknown } | null)?.content, cpt);
+      return blocksTokens((entry.replacement as { content?: unknown } | null)?.content, rate);
     default:
       return 0;
   }
@@ -271,7 +286,7 @@ function hasTrimMarker(entry: PiEntry): boolean {
 }
 
 /** Map pi entries onto the shared planner's lines: a step starts at each assistant message. */
-function toSeedLines(entries: PiEntry[], cpt: number): SeedLine[] {
+function toSeedLines(entries: PiEntry[], rate: PiRate): SeedLine[] {
   return entries.map((e) => {
     const uses: string[] = [];
     const results: string[] = [];
@@ -285,7 +300,7 @@ function toSeedLines(entries: PiEntry[], cpt: number): SeedLine[] {
       results.push(e.message.toolCallId);
     }
     return {
-      tokens: estimatePiEntryTokens(e, cpt),
+      tokens: estimatePiEntryTokens(e, rate),
       boundary: isTurnBoundary(e),
       stepStart: role === "assistant",
       id: typeof e.id === "string" ? e.id : undefined,
@@ -341,28 +356,43 @@ function renderPiRecall(
 
 export type SeededPiTranscript = { sessionId: string; lines: string[]; recallEntries: number };
 
-type PlannedPiSeed = {
+/** A parsed transcript with its planner lines, ready to plan at any budget. */
+type SeedablePi = {
   header: PiHeader;
   entries: PiEntry[];
   entryRaws: string[];
-  plan: TailPlan;
-  tailStartedAt?: string;
+  lines: SeedLine[];
+  rate: PiRate;
 };
 
-/** Parse and plan the tail. Null if there's nothing seedable. */
-function planPiSeed(jsonl: string, seedTokens: number): PlannedPiSeed | null {
+type PlannedPiSeed = SeedablePi & {
+  plan: TailPlan;
+  tailStartedAt?: string;
+  charsPerToken: number;
+};
+
+/**
+ * Parse a transcript and estimate its lines at the rate for `model` (else the
+ * transcript's own). Recall entries an earlier seam wrote sit ahead of its first
+ * prompt, and a tail starts at a prompt, so they are never carried over: each seam asks
+ * the daemon afresh.
+ */
+function readPiSeed(jsonl: string, model?: string): SeedablePi | null {
   const p = parsePiJsonl(jsonl);
   if (!p) return null;
   const h = splitPiHeader(p.parsed, p.raws);
   if (!h) return null;
-  // Recall entries an earlier seam wrote sit ahead of its first prompt, and a tail starts
-  // at a prompt, so they are never carried over: each seam asks the daemon afresh.
-  const { entries, entryRaws } = h;
-  const cpt = charsPerToken(entries);
-  const plan = planTail(toSeedLines(entries, cpt), seedTokens, TRIMMED_TURN_MARKER.length / cpt);
+  const rate = piRate(h.entries, model);
+  return { ...h, lines: toSeedLines(h.entries, rate), rate };
+}
+
+/** Plan the tail at a budget. Null if there's nothing seedable. */
+function planPiSeed(r: SeedablePi, seedTokens: number): PlannedPiSeed | null {
+  const cpt = r.rate.charsPerToken;
+  const plan = planTail(r.lines, seedTokens, TRIMMED_TURN_MARKER.length / cpt);
   if (!plan) return null;
-  const first = plan.keep.map((i) => entries[i]).find((e) => typeof e.timestamp === "string");
-  return { header: h.header, entries, entryRaws, plan, tailStartedAt: first?.timestamp };
+  const first = plan.keep.map((i) => r.entries[i]).find((e) => typeof e.timestamp === "string");
+  return { ...r, plan, tailStartedAt: first?.timestamp, charsPerToken: cpt };
 }
 
 /**
@@ -424,9 +454,11 @@ export function buildSeededPiTranscript(
     sourcePath?: string;
     recall?: RecallEntry[];
     timeZone?: string;
+    model?: string;
   },
 ): SeededPiTranscript | null {
-  const planned = planPiSeed(jsonl, opts.seedTokens);
+  const r = readPiSeed(jsonl, opts.model);
+  const planned = r && planPiSeed(r, opts.seedTokens);
   return planned ? emitPiSeed(planned, opts) : null;
 }
 
@@ -437,9 +469,17 @@ export function buildSeededPiTranscript(
 async function composePiSeed(
   jsonl: string,
   opts: RecollectionOptions &
-    SeedBudget & { cwd: string; sourcePath?: string; name: string; before: Date },
+    SeedBudget & {
+      cwd: string;
+      sourcePath?: string;
+      name: string;
+      before: Date;
+      model?: string;
+    },
 ): Promise<SeededPiTranscript | null> {
-  const composed = await planWithRecollection((budget) => planPiSeed(jsonl, budget), opts);
+  const r = readPiSeed(jsonl, opts.model);
+  if (!r) return null;
+  const composed = await planWithRecollection((budget) => planPiSeed(r, budget), opts);
   if (!composed) return null;
   return emitPiSeed(composed.planned, { ...opts, recall: composed.recall });
 }
@@ -466,7 +506,14 @@ export type SeededPiOutcome = {
   recallEntries: number;
 };
 
-type SeedPiOptions = { cwd: string; piSessionsDir: string; name: string; seedTokens: number };
+/** `model` is the one the mind will resume on (e.g. "openai/gpt-5.5"); it sets the estimate's rate. */
+type SeedPiOptions = {
+  cwd: string;
+  piSessionsDir: string;
+  name: string;
+  seedTokens: number;
+  model?: string;
+};
 
 /** Where a seed comes from: the newest archived transcript for `name`. */
 function findPiSeedSource(opts: {
@@ -536,32 +583,34 @@ export function seedPiSession(opts: SeedPiOptions): SeededPiOutcome | null;
 export function seedPiSession(
   opts: SeedPiOptions | WithRecollection<SeedPiOptions>,
 ): SeededPiOutcome | null | Promise<SeededPiOutcome | null> {
-  const fail = (err: unknown) => {
+  const fail = (err: unknown) =>
     log("mind", `session "${opts.name}": seeding failed, starting fresh:`, err);
-    return null;
-  };
-  try {
+  const find = () => {
     const source = findPiSeedSource(opts);
-    if (!source) return hasRecollect(opts) ? Promise.resolve(null) : null;
-    const jsonl = readFileSync(source.sourcePath, "utf-8");
-    if (hasRecollect(opts)) {
-      return composePiSeed(jsonl, {
+    return source && { ...source, jsonl: readFileSync(source.sourcePath, "utf-8") };
+  };
+  if (hasRecollect(opts)) {
+    return failSoftAsync(async () => {
+      const source = find();
+      if (!source) return null;
+      const before = new Date(source.archivedAt ?? Date.now());
+      const seeded = await composePiSeed(source.jsonl, {
         ...opts,
         sourcePath: source.sourcePath,
-        before: new Date(source.archivedAt ?? Date.now()),
-      })
-        .then((seeded) => seededPi(opts, source, seeded))
-        .catch(fail);
-    }
-    return seededPi(
-      opts,
-      source,
-      buildSeededPiTranscript(jsonl, { ...opts, sourcePath: source.sourcePath }),
-    );
-  } catch (err) {
-    const result = fail(err);
-    return hasRecollect(opts) ? Promise.resolve(result) : result;
+        before,
+      });
+      return seededPi(opts, source, seeded);
+    }, fail);
   }
+  return failSoft(() => {
+    const source = find();
+    if (!source) return null;
+    const seeded = buildSeededPiTranscript(source.jsonl, {
+      ...opts,
+      sourcePath: source.sourcePath,
+    });
+    return seededPi(opts, source, seeded);
+  }, fail);
 }
 
 /**
@@ -596,6 +645,8 @@ type RotatePiOptions = {
   name: string;
   sourcePath: string;
   seedTokens: number;
+  /** The model the mind is on; it sets the estimate's rate. */
+  model?: string;
 };
 
 /** A rotation with recollection: the new session file's path and how many recall entries it carries. */
@@ -639,8 +690,7 @@ function adoptRotatedPi(
  * tail, and resolves to the path plus how many recall entries it carries. The caller
  * must hold the session quiet across that await: the live transcript is read before it,
  * so anything appended while recollection loads never reaches the new session (the
- * claude agent drops its query before awaiting, for the same
- * reason).
+ * claude agent drops its query before awaiting, for the same reason).
  */
 export function rotatePiSession(
   opts: WithRecollection<RotatePiOptions>,
@@ -649,25 +699,17 @@ export function rotatePiSession(opts: RotatePiOptions): string | null;
 export function rotatePiSession(
   opts: RotatePiOptions | WithRecollection<RotatePiOptions>,
 ): string | null | Promise<RotatedPiOutcome | null> {
-  const fail = (err: unknown) => {
-    log("mind", `session "${opts.name}": rotation failed:`, err);
-    return null;
-  };
-  try {
-    const jsonl = readFileSync(opts.sourcePath, "utf-8");
-    if (hasRecollect(opts)) {
-      return composePiSeed(jsonl, { ...opts, before: new Date() })
-        .then((seeded) =>
-          seeded
-            ? { path: adoptRotatedPi(opts, seeded), recallEntries: seeded.recallEntries }
-            : null,
-        )
-        .catch(fail);
-    }
-    const seeded = buildSeededPiTranscript(jsonl, opts);
-    return seeded ? adoptRotatedPi(opts, seeded) : null;
-  } catch (err) {
-    const result = fail(err);
-    return hasRecollect(opts) ? Promise.resolve(result) : result;
+  const fail = (err: unknown) => log("mind", `session "${opts.name}": rotation failed:`, err);
+  if (hasRecollect(opts)) {
+    return failSoftAsync(async () => {
+      const jsonl = readFileSync(opts.sourcePath, "utf-8");
+      const seeded = await composePiSeed(jsonl, { ...opts, before: new Date() });
+      if (!seeded) return null;
+      return { path: adoptRotatedPi(opts, seeded), recallEntries: seeded.recallEntries };
+    }, fail);
   }
+  return failSoft(() => {
+    const seeded = buildSeededPiTranscript(readFileSync(opts.sourcePath, "utf-8"), opts);
+    return seeded ? adoptRotatedPi(opts, seeded) : null;
+  }, fail);
 }

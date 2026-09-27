@@ -49,12 +49,15 @@ import { log } from "./logger.js";
 import { parseArchiveTimestamp } from "./seed-note.js";
 import {
   archivePointerTimestamp,
+  failSoft,
+  failSoftAsync,
   hasRecollect,
   IMAGE_TOKENS,
   OPENAI_CHARS_PER_TOKEN,
   planTail,
   planWithRecollection,
   RECALL_PREAMBLE,
+  RECALL_PREAMBLE_OPENING,
   type RecallEntry,
   type RecollectionOptions,
   recallHeading,
@@ -166,9 +169,31 @@ export function estimateRolloutItemTokens(o: RolloutLine): number {
   }
 }
 
-/** A turn starts at a user `message` response_item (the incoming prompt). */
+/**
+ * Codex's own context, written as user messages: `<environment_context>`,
+ * `<recommended_plugins>`, `<turn_aborted>` and other tag-wrapped fragments, and the
+ * AGENTS.md block (codex-rs core/src/context/contextual_user_message.rs lists them).
+ * Every text item is one of those; a prompt the daemon delivers never is.
+ */
+function isContextualUserMessage(o: RolloutLine): boolean {
+  const content = o.payload?.content;
+  if (!Array.isArray(content) || content.length === 0) return false;
+  return content.every((item) => {
+    const text = typeof item?.text === "string" ? item.text.trim() : "";
+    return (
+      (text.startsWith("<") && text.endsWith(">")) ||
+      text.startsWith("# AGENTS.md instructions for")
+    );
+  });
+}
+
+/**
+ * A turn starts at a user `message` response_item (the incoming prompt) — not at the
+ * context codex writes between turns, which would otherwise make a trailing context
+ * message the "final turn" and cost the seed the tool loop the mind was actually in.
+ */
 function isTurnBoundary(o: RolloutLine): boolean {
-  return o.payload?.type === "message" && o.payload?.role === "user";
+  return isMessage(o, "user") && !isContextualUserMessage(o);
 }
 
 /** Response-item payload types that carry conversation content we keep. */
@@ -210,22 +235,27 @@ function firstText(o: RolloutLine): string | undefined {
 const isMessage = (o: RolloutLine, role: string) =>
   o.payload?.type === "message" && o.payload?.role === role;
 
-// A recall heading on the message's first line, or on its second after a preamble line —
-// matched on the heading, not the preamble's wording, which may change between releases.
-const RECALL_HEADING = /^(?:[^\n]*\n)?\[recall: /;
-
 /**
  * Drop the recall pairs an earlier seam wrote — each seam asks the daemon afresh. A
- * seed writes them first, straight after session_meta, and codex appends after them,
- * so they are exactly the leading run of user messages carrying a `[recall: …]`
- * heading, each with the assistant message that follows it. Recognised by content
- * because a codex message has nowhere else to carry a mark: unknown fields may not
- * survive codex's own reader, and a made-up item `id` could be sent to the API.
+ * seed writes them first, straight after session_meta, and codex appends after them:
+ * a user message opening with the preamble and a `[recall: …]` heading, then further
+ * user messages that are a bare heading, each followed by its assistant memory. Only a
+ * run that opens with the preamble is taken, so a real prompt that happens to quote a
+ * heading is never dropped. Recognised by content because a codex message has nowhere
+ * else to carry a mark: unknown fields may not survive codex's own reader, and a
+ * made-up item `id` could be sent to the API.
  */
 function dropEarlierRecall(kept: RolloutLine[]): RolloutLine[] {
+  const opens = (o: RolloutLine | undefined) => {
+    const text = o && isMessage(o, "user") ? (firstText(o) ?? "") : "";
+    return text.startsWith(RECALL_PREAMBLE_OPENING) && text.includes("]\n[recall: ");
+  };
+  if (!opens(kept[0])) return kept;
   let i = 0;
-  while (i < kept.length && isMessage(kept[i], "user")) {
-    if (!RECALL_HEADING.test(firstText(kept[i]) ?? "")) break;
+  while (
+    i < kept.length &&
+    (i === 0 || (isMessage(kept[i], "user") && (firstText(kept[i]) ?? "").startsWith("[recall: ")))
+  ) {
     i += i + 1 < kept.length && isMessage(kept[i + 1], "assistant") ? 2 : 1;
   }
   return kept.slice(i);
@@ -339,20 +369,26 @@ function renderCodexRecall(recall: RecallEntry[], timeZone: string | undefined):
 
 export type SeededRollout = { threadId: string; lines: string[]; recallEntries: number };
 
-type PlannedRollout = ParsedRollout & { plan: TailPlan; tailStartedAt?: string };
+/** A parsed rollout with its planner lines, ready to plan at any budget. */
+type SeedableRollout = ParsedRollout & { lines: SeedLine[] };
 
-/** Parse and plan the tail. Null if there's nothing seedable. */
-function planRolloutSeed(jsonl: string, seedTokens: number): PlannedRollout | null {
+type PlannedRollout = SeedableRollout & {
+  plan: TailPlan;
+  tailStartedAt?: string;
+  charsPerToken: number;
+};
+
+function readRollout(jsonl: string): SeedableRollout | null {
   const p = parseRollout(jsonl);
-  if (!p) return null;
-  const plan = planTail(
-    toSeedLines(p.kept),
-    seedTokens,
-    TRIMMED_TURN_MARKER.length / OPENAI_CHARS_PER_TOKEN,
-  );
+  return p ? { ...p, lines: toSeedLines(p.kept) } : null;
+}
+
+/** Plan the tail at a budget. Null if there's nothing seedable. */
+function planRollout(r: SeedableRollout, seedTokens: number): PlannedRollout | null {
+  const plan = planTail(r.lines, seedTokens, TRIMMED_TURN_MARKER.length / OPENAI_CHARS_PER_TOKEN);
   if (!plan) return null;
-  const first = plan.keep.map((i) => p.kept[i]).find((o) => typeof o.timestamp === "string");
-  return { ...p, plan, tailStartedAt: first?.timestamp };
+  const first = plan.keep.map((i) => r.kept[i]).find((o) => typeof o.timestamp === "string");
+  return { ...r, plan, tailStartedAt: first?.timestamp, charsPerToken: OPENAI_CHARS_PER_TOKEN };
 }
 
 /**
@@ -428,7 +464,8 @@ export function buildSeededRollout(
   recall: RecallEntry[] = [],
   timeZone?: string,
 ): SeededRollout | null {
-  const planned = planRolloutSeed(jsonl, seedTokens);
+  const r = readRollout(jsonl);
+  const planned = r && planRollout(r, seedTokens);
   return planned ? emitRollout(planned, threadId, now, recall, timeZone) : null;
 }
 
@@ -442,7 +479,9 @@ async function composeRolloutSeed(
   now: Date,
   opts: RecollectionOptions & SeedBudget & { name: string; before: Date },
 ): Promise<SeededRollout | null> {
-  const composed = await planWithRecollection((budget) => planRolloutSeed(jsonl, budget), opts);
+  const r = readRollout(jsonl);
+  if (!r) return null;
+  const composed = await planWithRecollection((budget) => planRollout(r, budget), opts);
   if (!composed) return null;
   return emitRollout(composed.planned, threadId, now, composed.recall, opts.timeZone);
 }
@@ -464,7 +503,8 @@ export type SeededThreadOutcome = {
 
 /**
  * `sessionsRoot` is where codex will look for the seed on resume — CODEX_HOME/sessions for
- * the auth mode the mind will resume under. Omitted, the seed goes beside its source.
+ * the auth mode the mind will resume under. It is searched first for the source rollout
+ * too, so a chain seeded there stays findable. Omitted, the seed goes beside its source.
  */
 type SeedCodexOptions = {
   mindDir: string;
@@ -479,6 +519,7 @@ function findCodexSeedSource(opts: {
   mindDir: string;
   name: string;
   seedTokens?: number;
+  sessionsRoot?: string;
 }): { oldThreadId: string; sourcePath: string; archivedAt: number | null } | null {
   const { mindDir, name, seedTokens } = opts;
   // Ephemeral `new-*` sessions are never persisted or archived, so they never
@@ -488,23 +529,43 @@ function findCodexSeedSource(opts: {
   const sessionsDir = resolve(mindDir, ".mind", "codex-sessions");
   const archived = findLatestArchivedThread(sessionsDir, name);
   if (!archived) return null;
-  const sourcePath = findCodexSessionFile(archived.threadId, mindDir);
+  const sourcePath = findCodexSessionFile(archived.threadId, mindDir, opts.sessionsRoot);
   if (!sourcePath) return null; // rollout didn't survive archival — start clean
   return { oldThreadId: archived.threadId, sourcePath, archivedAt: archived.archivedAt };
 }
 
+/** Where a seam reads from and writes to. */
+type CodexSeamSource = {
+  oldThreadId: string;
+  sourcePath: string;
+  archivedAt: number | null;
+  jsonl: string;
+  threadId: string;
+};
+
+function readSeamSource(
+  found: { oldThreadId: string; sourcePath: string; archivedAt: number | null } | null,
+  now: Date,
+): CodexSeamSource | null {
+  if (!found) return null;
+  return {
+    ...found,
+    jsonl: readFileSync(found.sourcePath, "utf-8"),
+    threadId: generateThreadId(now),
+  };
+}
+
 function seededCodex(
   opts: { name: string; sessionsRoot?: string },
-  source: { oldThreadId: string; sourcePath: string; archivedAt: number | null },
+  source: CodexSeamSource,
   seeded: SeededRollout | null,
   now: Date,
 ): SeededThreadOutcome | null {
   if (!seeded) return null;
-  const { name } = opts;
   writeSeededRollout(opts.sessionsRoot ?? sessionsRootOf(source.sourcePath), seeded, now);
   log(
     "mind",
-    `session "${name}": seeded ${seeded.lines.length} line(s) (${seeded.recallEntries} recalled) from ${source.oldThreadId} → ${seeded.threadId}`,
+    `session "${opts.name}": seeded ${seeded.lines.length} line(s) (${seeded.recallEntries} recalled) from ${source.oldThreadId} → ${seeded.threadId}`,
   );
   return {
     threadId: seeded.threadId,
@@ -514,12 +575,11 @@ function seededCodex(
 }
 
 /**
- * Seed a fresh persistent codex session from the mind's previous archived
- * rollout. Writes the synthetic rollout under `<sessionsRoot>/YYYY/MM/DD/` (matching
- * the real Codex layout; beside the source rollout when `sessionsRoot` is omitted) and
- * returns the new thread id plus the
- * archived-at time (for the gap note), or null if there's nothing to seed. Never
- * throws — any failure returns null so session start is never blocked.
+ * Seed a fresh persistent codex session from the mind's previous archived rollout.
+ * Writes the synthetic rollout under `<sessionsRoot>/YYYY/MM/DD/` (matching the real
+ * Codex layout; beside the source rollout when `sessionsRoot` is omitted) and returns the
+ * new thread id plus the archived-at time (for the gap note), or null if there's nothing
+ * to seed. Never throws — any failure returns null so session start is never blocked.
  *
  * Given a `recollect` source, it is async: the mind's recollection up to the archive
  * time goes ahead of the tail; without one it seeds the tail alone, synchronously.
@@ -532,33 +592,26 @@ export function seedCodexSession(
   opts: SeedCodexOptions | WithRecollection<SeedCodexOptions>,
 ): SeededThreadOutcome | null | Promise<SeededThreadOutcome | null> {
   const now = opts.now ?? new Date();
-  const fail = (err: unknown) => {
+  const fail = (err: unknown) =>
     log("mind", `session "${opts.name}": codex seeding failed, starting fresh:`, err);
-    return null;
-  };
-  try {
-    const source = findCodexSeedSource(opts);
-    if (!source) return hasRecollect(opts) ? Promise.resolve(null) : null;
-    const jsonl = readFileSync(source.sourcePath, "utf-8");
-    const threadId = generateThreadId(now);
-    if (hasRecollect(opts)) {
-      return composeRolloutSeed(jsonl, threadId, now, {
+  if (hasRecollect(opts)) {
+    return failSoftAsync(async () => {
+      const source = readSeamSource(findCodexSeedSource(opts), now);
+      if (!source) return null;
+      const before = new Date(source.archivedAt ?? now.getTime());
+      const seeded = await composeRolloutSeed(source.jsonl, source.threadId, now, {
         ...opts,
-        before: new Date(source.archivedAt ?? now.getTime()),
-      })
-        .then((seeded) => seededCodex(opts, source, seeded, now))
-        .catch(fail);
-    }
-    return seededCodex(
-      opts,
-      source,
-      buildSeededRollout(jsonl, threadId, opts.seedTokens, now),
-      now,
-    );
-  } catch (err) {
-    const result = fail(err);
-    return hasRecollect(opts) ? Promise.resolve(result) : result;
+        before,
+      });
+      return seededCodex(opts, source, seeded, now);
+    }, fail);
   }
+  return failSoft(() => {
+    const source = readSeamSource(findCodexSeedSource(opts), now);
+    if (!source) return null;
+    const seeded = buildSeededRollout(source.jsonl, source.threadId, opts.seedTokens, now);
+    return seededCodex(opts, source, seeded, now);
+  }, fail);
 }
 
 /**
@@ -612,7 +665,7 @@ type RotateCodexOptions = {
   oldThreadId: string;
   seedTokens: number;
   now?: Date;
-  /** Where codex will look for the seed on resume; omitted, beside the source. */
+  /** Where codex reads rollouts on resume: searched first, and the seed is written there. */
   sessionsRoot?: string;
 };
 
@@ -640,19 +693,18 @@ function adoptRotatedCodex(
 }
 
 /**
- * Rotate a codex session in place at the context limit. Reads the live rollout, builds
- * a seeded budget-based tail (trimming an over-budget final turn), writes it as a new
- * synthetic rollout under `sessionsRoot` (beside the source when omitted), and — for persistent sessions — archives the
- * rotated-out thread pointer so the full transcript stays findable. Returns the new
- * thread id, or null if rotation can't proceed (the caller then leaves the old thread
- * in place). Never throws.
+ * Rotate a codex session in place at the context limit. Reads the live rollout (looking
+ * in `sessionsRoot` first), builds a seeded budget-based tail (trimming an over-budget
+ * final turn), writes it as a new synthetic rollout under `sessionsRoot` (beside the
+ * source when omitted), and — for persistent sessions — archives the rotated-out thread
+ * pointer so the full transcript stays findable. Returns the new thread id, or null if
+ * rotation can't proceed (the caller then leaves the old thread in place). Never throws.
  *
  * Given a `recollect` source, it is async, seeds the mind's recollection ahead of the
  * tail, and resolves to the thread id plus how many recall entries it carries. The caller
  * must hold the session quiet across that await: the live transcript is read before it,
  * so anything appended while recollection loads never reaches the new session (the
- * claude agent drops its query before awaiting, for the same
- * reason).
+ * claude agent drops its query before awaiting, for the same reason).
  */
 export function rotateCodexSession(
   opts: WithRecollection<RotateCodexOptions>,
@@ -662,30 +714,34 @@ export function rotateCodexSession(
   opts: RotateCodexOptions | WithRecollection<RotateCodexOptions>,
 ): string | null | Promise<RotatedCodexOutcome | null> {
   const now = opts.now ?? new Date();
-  const fail = (err: unknown) => {
-    log("mind", `session "${opts.name}": rotation failed:`, err);
-    return null;
+  const fail = (err: unknown) => log("mind", `session "${opts.name}": rotation failed:`, err);
+  // The live rollout; not found → leave the old thread.
+  const find = () => {
+    const sourcePath = findCodexSessionFile(opts.oldThreadId, opts.mindDir, opts.sessionsRoot);
+    return readSeamSource(
+      sourcePath ? { oldThreadId: opts.oldThreadId, sourcePath, archivedAt: null } : null,
+      now,
+    );
   };
-  try {
-    const sourcePath = findCodexSessionFile(opts.oldThreadId, opts.mindDir);
-    if (!sourcePath) return hasRecollect(opts) ? Promise.resolve(null) : null; // live rollout not found — leave the old thread
-    const jsonl = readFileSync(sourcePath, "utf-8");
-    const threadId = generateThreadId(now);
-    if (hasRecollect(opts)) {
-      return composeRolloutSeed(jsonl, threadId, now, { ...opts, before: now })
-        .then((seeded) => {
-          if (!seeded) return null;
-          adoptRotatedCodex(opts, sourcePath, seeded, now);
-          return { threadId, recallEntries: seeded.recallEntries };
-        })
-        .catch(fail);
-    }
-    const seeded = buildSeededRollout(jsonl, threadId, opts.seedTokens, now);
-    if (!seeded) return null;
-    adoptRotatedCodex(opts, sourcePath, seeded, now);
-    return threadId;
-  } catch (err) {
-    const result = fail(err);
-    return hasRecollect(opts) ? Promise.resolve(result) : result;
+  if (hasRecollect(opts)) {
+    return failSoftAsync(async () => {
+      const source = find();
+      if (!source) return null;
+      const seeded = await composeRolloutSeed(source.jsonl, source.threadId, now, {
+        ...opts,
+        before: now,
+      });
+      if (!seeded) return null;
+      adoptRotatedCodex(opts, source.sourcePath, seeded, now);
+      return { threadId: seeded.threadId, recallEntries: seeded.recallEntries };
+    }, fail);
   }
+  return failSoft(() => {
+    const source = find();
+    if (!source) return null;
+    const seeded = buildSeededRollout(source.jsonl, source.threadId, opts.seedTokens, now);
+    if (!seeded) return null;
+    adoptRotatedCodex(opts, source.sourcePath, seeded, now);
+    return seeded.threadId;
+  }, fail);
 }

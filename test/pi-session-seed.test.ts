@@ -1200,3 +1200,84 @@ describe("seedPiSession — recollection is chosen by value", () => {
     assert.equal(seeded.recallEntries, 0);
   });
 });
+
+// --- Review follow-ups ---------------------------------------------------------
+
+describe("buildSeededPiTranscript — an OpenAI thinking signature is not its cost", () => {
+  it("counts an OpenAI reply's thinking by its text, not its encrypted reasoning item", () => {
+    const reply = (id: string, parentId: string) =>
+      JSON.stringify({
+        type: "message",
+        id,
+        parentId,
+        timestamp: "2026-07-18T00:00:02.000Z",
+        message: {
+          role: "assistant",
+          content: [
+            {
+              type: "thinking",
+              thinking: "",
+              thinkingSignature: JSON.stringify({
+                type: "reasoning",
+                encrypted_content: "e".repeat(40_000),
+              }),
+            },
+            { type: "text", text: "ok" },
+          ],
+          api: "openai-responses",
+          provider: "openai",
+          model: "gpt-5.5",
+          usage: { totalTokens: 1 },
+          stopReason: "stop",
+          timestamp: 0,
+        },
+      });
+    const lines = [
+      header(),
+      userMsg("u1", null, "first"),
+      reply("a1", "u1"),
+      userMsg("u2", "a1", "second"),
+      reply("a2", "u2"),
+    ];
+    const res = buildSeededPiTranscript(lines.join("\n"), { cwd: "/home", seedTokens: 1000 });
+    assert.ok(res);
+    assert.equal(parse(res.lines)[1].id, "u1");
+  });
+});
+
+describe("buildSeededPiTranscript — the rate follows the model the mind is on", () => {
+  const anthropicTurns = () => [
+    header(),
+    userMsg("u1", null, "p".repeat(3500)),
+    assistantMsg("a1", "u1", [{ type: "text", text: "ok" }]),
+    userMsg("u2", "a1", "q".repeat(3500)),
+    assistantMsg("a2", "u2", [{ type: "text", text: "ok" }]),
+  ];
+
+  it("an explicit resume model wins over the transcript's", () => {
+    const res = buildSeededPiTranscript(anthropicTurns().join("\n"), {
+      cwd: "/home",
+      seedTokens: 2100,
+      model: "openai/gpt-5.5",
+    });
+    assert.ok(res);
+    assert.equal(parse(res.lines)[1].id, "u1");
+  });
+
+  it("a model change after the last reply sets the rate", () => {
+    const lines = [
+      ...anthropicTurns(),
+      JSON.stringify({
+        type: "model_change",
+        id: "m1",
+        parentId: "a2",
+        timestamp: "2026-07-18T00:00:04.000Z",
+        provider: "openai",
+        modelId: "gpt-5.5",
+      }),
+    ];
+    const res = buildSeededPiTranscript(lines.join("\n"), { cwd: "/home", seedTokens: 2100 });
+    assert.ok(res);
+    assert.equal(parse(res.lines)[1].id, "u1");
+  });
+});

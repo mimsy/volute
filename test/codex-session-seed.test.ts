@@ -906,10 +906,13 @@ describe("buildSeededRollout — recall pairs", () => {
     ]);
   });
 
-  it("recognises an earlier seam's recall by its heading, whatever the preamble said", () => {
+  it("recognises an earlier seam's recall by the preamble's stable opening", () => {
     const old = [
       sessionMeta(OLD),
-      textMessage("user", "[An older preamble, worded differently.]\n[recall: Thursday 16 Jul]"),
+      textMessage(
+        "user",
+        "[What follows is what you remember, reworded.]\n[recall: Thursday 16 Jul]",
+      ),
       textMessage("assistant", "old memory"),
       textMessage("user", "[recall: Friday 17 Jul, 09:00–10:00]"),
       textMessage("assistant", "older memory"),
@@ -924,6 +927,19 @@ describe("buildSeededRollout — recall pairs", () => {
         .map((o) => o.payload.content[0].text),
       ["hello", "hi"],
     );
+  });
+
+  it("never drops a real prompt that quotes a recall heading", () => {
+    const lines = [
+      sessionMeta(OLD),
+      messageAt("user", "[#garden — alice]\n[recall: Tuesday 22 Sep] is what you said", T0),
+      textMessage("assistant", "I remember"),
+      textMessage("user", "[recall: Monday 21 Sep]"),
+      textMessage("assistant", "that too"),
+    ].join("\n");
+    const res = buildSeededRollout(lines, NEW, 1_000_000, NOW);
+    assert.ok(res);
+    assert.equal(res.lines.length, 5);
   });
 
   it("a seed without recollection drops an earlier seam's recall too", () => {
@@ -1110,5 +1126,126 @@ describe("formatGap", () => {
     assert.equal(formatGap(3 * 3_600_000), "about 3 hours");
     assert.equal(formatGap(2 * 86_400_000), "about 2 days");
     assert.equal(formatGap(-1), null);
+  });
+});
+
+// --- Review follow-ups ---------------------------------------------------------
+
+describe("buildSeededRollout — codex's own context messages are not turns", () => {
+  const envContext = () =>
+    textMessage(
+      "user",
+      "<environment_context>\n  <cwd>/minds/x/home</cwd>\n</environment_context>",
+    );
+
+  it("a trailing context message doesn't cost the seed the tool loop the mind was in", () => {
+    const lines = [...codexToolLoop(10), envContext()];
+    const res = buildSeededRollout(lines.join("\n"), NEW, 3500, NOW);
+    assert.ok(res);
+    const texts = parseLines(res.lines)
+      .slice(1)
+      .map((o) => o.payload.content?.[0]?.text);
+    assert.equal(texts[0], "do the long thing");
+    assert.ok(texts.includes("finished"));
+    assert.equal(codexMarkerCount(res.lines), 1);
+  });
+
+  it("the AGENTS.md block and plugin notes fold into the turn around them", () => {
+    const lines = [
+      sessionMeta(OLD),
+      textMessage("user", "# AGENTS.md instructions for /home\n\n<INSTRUCTIONS>x</INSTRUCTIONS>"),
+      envContext(),
+      messageAt("user", "hello", T0),
+      textMessage("assistant", "hi"),
+      textMessage("user", "<recommended_plugins>none</recommended_plugins>"),
+    ];
+    // The only real turn is "hello"; a budget of one turn keeps it.
+    const res = buildSeededRollout(lines.join("\n"), NEW, 5, NOW);
+    assert.ok(res);
+    assert.equal(parseLines(res.lines)[1].payload.content[0].text, "hello");
+  });
+});
+
+describe("seedCodexSession / rotateCodexSession — a seed in sessionsRoot stays findable", () => {
+  function setupIn(root: string) {
+    const mindDir = mkdtempSync(resolve(tmpdir(), "codex-find-mind-"));
+    const archive = resolve(mindDir, ".mind", "codex-sessions", "archive");
+    mkdirSync(archive, { recursive: true });
+    writeFileSync(
+      resolve(archive, "main-2026-07-18T10-00.json"),
+      JSON.stringify({ threadId: OLD }),
+    );
+    const sessionsRoot = resolve(mindDir, root);
+    const rolloutDir = resolve(sessionsRoot, "2026", "07", "13");
+    mkdirSync(rolloutDir, { recursive: true });
+    writeFileSync(
+      resolve(rolloutDir, `rollout-2026-07-13T22-06-52-${OLD}.jsonl`),
+      `${[sessionMeta(OLD), message("user", "hello"), message("assistant", "hi")].join("\n")}\n`,
+    );
+    return { mindDir, sessionsRoot };
+  }
+
+  it("seeds from a rollout that lives only in sessionsRoot", () => {
+    const { mindDir, sessionsRoot } = setupIn(".mind/codex-apikey/sessions");
+    assert.equal(seedCodexSession({ mindDir, name: "main", seedTokens: 30000, now: NOW }), null);
+    const seeded = seedCodexSession({
+      mindDir,
+      name: "main",
+      seedTokens: 30000,
+      now: NOW,
+      sessionsRoot,
+    });
+    assert.ok(seeded);
+  });
+
+  it("rotates a thread that was seeded into sessionsRoot", () => {
+    const { mindDir, sessionsRoot } = setupIn(".mind/codex-apikey/sessions");
+    const seeded = seedCodexSession({
+      mindDir,
+      name: "main",
+      seedTokens: 30000,
+      now: NOW,
+      sessionsRoot,
+    });
+    assert.ok(seeded);
+    const rotated = rotateCodexSession({
+      mindDir,
+      name: "main",
+      oldThreadId: seeded.threadId,
+      seedTokens: 30000,
+      now: NOW,
+      sessionsRoot,
+    });
+    assert.ok(rotated);
+  });
+});
+
+describe("seedCodexSession — recollection is priced at codex's rate", () => {
+  it("keeps memories that fit the cap at 3.5 chars/token", async () => {
+    const mindDir = mkdtempSync(resolve(tmpdir(), "codex-cap-mind-"));
+    const archive = resolve(mindDir, ".mind", "codex-sessions", "archive");
+    mkdirSync(archive, { recursive: true });
+    writeFileSync(
+      resolve(archive, "main-2026-07-18T10-00.json"),
+      JSON.stringify({ threadId: OLD }),
+    );
+    const rolloutDir = resolve(mindDir, ".mind", "codex", "sessions", "2026", "07", "13");
+    mkdirSync(rolloutDir, { recursive: true });
+    writeFileSync(
+      resolve(rolloutDir, `rollout-2026-07-13T22-06-52-${OLD}.jsonl`),
+      `${[sessionMeta(OLD), messageAt("user", "hello", T0), message("assistant", "hi")].join("\n")}\n`,
+    );
+    // Each ~514+40 tokens at 3.5 chars/token (both fit 1200); ~1000+40 at claude's 1.8 (one).
+    const days = RECALL.map((e) => ({ ...e, content: "m".repeat(1800) }));
+    const seeded = await seedCodexSession({
+      mindDir,
+      name: "main",
+      seedTokens: 30000,
+      now: NOW,
+      recallTokens: 1200,
+      recollect: async () => days,
+    });
+    assert.ok(seeded);
+    assert.equal(seeded.recallEntries, 2);
   });
 });

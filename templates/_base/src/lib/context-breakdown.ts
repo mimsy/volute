@@ -597,10 +597,18 @@ export function findClaudeSessionFile(cwd: string, sessionId: string): string | 
   return null;
 }
 
-/** Find the Codex JSONL file for a thread ID. */
-export function findCodexSessionFile(threadId: string, mindDir?: string): string | null {
-  // Check mind-local Codex sessions first, then global ~/.codex/sessions
+/**
+ * Find the Codex JSONL file for a thread ID. `sessionsRoot` (a CODEX_HOME/sessions the
+ * caller knows codex reads, e.g. where a seed was written) is searched first.
+ */
+export function findCodexSessionFile(
+  threadId: string,
+  mindDir?: string,
+  sessionsRoot?: string,
+): string | null {
+  // Check the given root, then mind-local Codex sessions, then global ~/.codex/sessions
   const searchDirs: string[] = [];
+  if (sessionsRoot) searchDirs.push(resolve(sessionsRoot));
   if (mindDir) searchDirs.push(resolve(mindDir, ".mind/codex/sessions"));
   searchDirs.push(resolve(process.env.HOME ?? "", ".codex/sessions"));
 

@@ -642,12 +642,18 @@ export type RecollectionQuery = { before: string; tailStartedAt?: string };
 export type RecollectionSource = (query: RecollectionQuery) => Promise<unknown[]>;
 
 /**
+ * The preamble's stable opening. The codex seeder recognises an earlier seam's recall by
+ * it (a rollout message can carry no other mark), so a rewording of the preamble keeps
+ * this prefix — or seeds written before the change carry their old recall forward once.
+ */
+export const RECALL_PREAMBLE_OPENING = "[What follows is what you remember";
+
+/**
  * Opens the first recall entry, so the mind knows what it is reading and where it
  * came from. It lives in the transcript itself, not the hook-injected seam note,
  * which an interrupt can cancel.
  */
-export const RECALL_PREAMBLE =
-  "[What follows is what you remember of recent days: memories consolidated in your own voice while you weren't looking. They are recollection, not a transcript; the full record is in `volute mind history`.]";
+export const RECALL_PREAMBLE = `${RECALL_PREAMBLE_OPENING} of recent days: memories consolidated in your own voice while you weren't looking. They are recollection, not a transcript; the full record is in \`volute mind history\`.]`;
 
 const isDate = (v: unknown): v is string => typeof v === "string" && !Number.isNaN(Date.parse(v));
 
@@ -671,9 +677,13 @@ function isRecallEntry(e: unknown): e is RecallEntry {
  * Hold recollection to `capTokens`: keep the newest day/hour entries that fit, dropping
  * the oldest first, then the week line if it still fits. Chronological order is kept.
  */
-export function capRecollection(entries: RecallEntry[], capTokens: number): RecallEntry[] {
-  // Content plus its `[recall: …]` label line.
-  const cost = (e: RecallEntry) => textTokens(e.content) + 40;
+export function capRecollection(
+  entries: RecallEntry[],
+  capTokens: number,
+  charsPerToken = CHARS_PER_TOKEN,
+): RecallEntry[] {
+  // Content plus its `[recall: …]` label line, at the seeding framework's text rate.
+  const cost = (e: RecallEntry) => e.content.length / charsPerToken + 40;
   const kept = new Set<RecallEntry>();
   let used = 0;
   const newestFirst = [...entries].reverse();
@@ -942,11 +952,14 @@ export type SeedBudget = {
 
 /**
  * Plan the tail, then fetch recollection for the gap before it — every framework's
- * seams share this. `plan(seedTokens)` plans the tail at a budget; when the budget was
+ * seams share this. `plan(seedTokens)` plans the tail at a budget (and says the text rate
+ * its format was estimated at, which prices the recollection too); when the budget was
  * left to follow what arrived and no recollection came back, the tail is replanned at
  * TAIL_ONLY_SEED_TOKENS. Null if there's nothing seedable.
  */
-export async function planWithRecollection<P extends { tailStartedAt?: string }>(
+export async function planWithRecollection<
+  P extends { tailStartedAt?: string; charsPerToken?: number },
+>(
   plan: (seedTokens: number) => P | null,
   opts: RecollectionOptions & SeedBudget & { name: string; before: Date },
 ): Promise<{ planned: P; recall: RecallEntry[] } | null> {
@@ -960,6 +973,7 @@ export async function planWithRecollection<P extends { tailStartedAt?: string }>
           opts.name,
         ),
         opts.recallTokens ?? RECALL_TOKEN_CAP,
+        planned.charsPerToken,
       )
     : [];
   if (opts.seedTokens === undefined && recall.length === 0) {
@@ -977,6 +991,29 @@ async function composeSeed(
   if (!composed) return null;
   const { planned, recall } = composed;
   return emitTail(planned.parsed, planned.plan, recall, opts.timeZone);
+}
+
+/** Run a seam's sync path; any throw is reported and becomes null — seams never throw. */
+export function failSoft<T>(run: () => T | null, onError: (err: unknown) => void): T | null {
+  try {
+    return run();
+  } catch (err) {
+    onError(err);
+    return null;
+  }
+}
+
+/** failSoft for a seam's async path. */
+export async function failSoftAsync<T>(
+  run: () => Promise<T | null>,
+  onError: (err: unknown) => void,
+): Promise<T | null> {
+  try {
+    return await run();
+  } catch (err) {
+    onError(err);
+    return null;
+  }
 }
 
 /**
