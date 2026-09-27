@@ -57,7 +57,7 @@ export function parseArchiveTimestamp(ts: string): number | null {
 }
 
 /** Coarse human phrasing of a gap in millis: minutes, then hours, then days. */
-function formatGap(ms: number): string | null {
+export function formatGap(ms: number): string | null {
   if (ms < 0) return null;
   const minutes = Math.round(ms / 60_000);
   if (minutes < 1) return "less than a minute";

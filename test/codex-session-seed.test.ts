@@ -19,7 +19,7 @@ import {
   seedCodexSession,
   writeCodexRotationArchivePointer,
 } from "../templates/_base/src/lib/codex-session-seed.js";
-import { buildSeededNote } from "../templates/_base/src/lib/seed-note.js";
+import { buildSeededNote, formatGap } from "../templates/_base/src/lib/seed-note.js";
 import {
   RECALL_PREAMBLE,
   type RecallEntry,
@@ -1042,5 +1042,73 @@ describe("seedCodexSession — recollection is chosen by value", () => {
     const seeded = seedCodexSession(opts);
     assert.ok(seeded && !(seeded instanceof Promise));
     assert.equal(seeded.recallEntries, 0);
+  });
+});
+
+describe("seedCodexSession / rotateCodexSession — sessionsRoot", () => {
+  function setup() {
+    const mindDir = mkdtempSync(resolve(tmpdir(), "codex-root-mind-"));
+    const archive = resolve(mindDir, ".mind", "codex-sessions", "archive");
+    mkdirSync(archive, { recursive: true });
+    writeFileSync(
+      resolve(archive, "main-2026-07-18T10-00.json"),
+      JSON.stringify({ threadId: OLD }),
+    );
+    const rolloutDir = resolve(mindDir, ".mind", "codex", "sessions", "2026", "07", "13");
+    mkdirSync(rolloutDir, { recursive: true });
+    writeFileSync(
+      resolve(rolloutDir, `rollout-2026-07-13T22-06-52-${OLD}.jsonl`),
+      `${[sessionMeta(OLD), message("user", "hello"), message("assistant", "hi")].join("\n")}\n`,
+    );
+    // Codex's other root (e.g. after an OAuth ↔ API-key switch), where it will read on resume.
+    return { mindDir, otherRoot: resolve(mindDir, ".mind", "codex-apikey", "sessions") };
+  }
+
+  function dayDir(root: string): string {
+    const y = String(NOW.getFullYear());
+    const mo = String(NOW.getMonth() + 1).padStart(2, "0");
+    const d = String(NOW.getDate()).padStart(2, "0");
+    return resolve(root, y, mo, d);
+  }
+
+  it("a seed is written under the given root, not beside its source", () => {
+    const { mindDir, otherRoot } = setup();
+    const seeded = seedCodexSession({
+      mindDir,
+      name: "main",
+      seedTokens: 30000,
+      now: NOW,
+      sessionsRoot: otherRoot,
+    });
+    assert.ok(seeded);
+    const files = readdirSync(dayDir(otherRoot));
+    assert.equal(files.length, 1);
+    assert.ok(files[0].includes(seeded.threadId));
+    assert.equal(existsSync(dayDir(resolve(mindDir, ".mind", "codex", "sessions"))), false);
+  });
+
+  it("a rotation is written under the given root, not beside its source", () => {
+    const { mindDir, otherRoot } = setup();
+    const threadId = rotateCodexSession({
+      mindDir,
+      name: "main",
+      oldThreadId: OLD,
+      seedTokens: 30000,
+      now: NOW,
+      sessionsRoot: otherRoot,
+    });
+    assert.ok(threadId);
+    assert.ok(readdirSync(dayDir(otherRoot))[0].includes(threadId));
+    assert.equal(existsSync(dayDir(resolve(mindDir, ".mind", "codex", "sessions"))), false);
+  });
+});
+
+describe("formatGap", () => {
+  it("phrases a gap coarsely, and refuses a negative one", () => {
+    assert.equal(formatGap(20_000), "less than a minute");
+    assert.equal(formatGap(5 * 60_000), "about 5 minutes");
+    assert.equal(formatGap(3 * 3_600_000), "about 3 hours");
+    assert.equal(formatGap(2 * 86_400_000), "about 2 days");
+    assert.equal(formatGap(-1), null);
   });
 });

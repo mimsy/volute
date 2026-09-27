@@ -462,7 +462,17 @@ export type SeededThreadOutcome = {
   recallEntries: number;
 };
 
-type SeedCodexOptions = { mindDir: string; name: string; seedTokens: number; now?: Date };
+/**
+ * `sessionsRoot` is where codex will look for the seed on resume — CODEX_HOME/sessions for
+ * the auth mode the mind will resume under. Omitted, the seed goes beside its source.
+ */
+type SeedCodexOptions = {
+  mindDir: string;
+  name: string;
+  seedTokens: number;
+  now?: Date;
+  sessionsRoot?: string;
+};
 
 /** Where a seed comes from: the rollout of the newest archived thread for `name`. */
 function findCodexSeedSource(opts: {
@@ -484,13 +494,14 @@ function findCodexSeedSource(opts: {
 }
 
 function seededCodex(
-  name: string,
+  opts: { name: string; sessionsRoot?: string },
   source: { oldThreadId: string; sourcePath: string; archivedAt: number | null },
   seeded: SeededRollout | null,
   now: Date,
 ): SeededThreadOutcome | null {
   if (!seeded) return null;
-  writeSeededRollout(source.sourcePath, seeded, now);
+  const { name } = opts;
+  writeSeededRollout(opts.sessionsRoot ?? sessionsRootOf(source.sourcePath), seeded, now);
   log(
     "mind",
     `session "${name}": seeded ${seeded.lines.length} line(s) (${seeded.recallEntries} recalled) from ${source.oldThreadId} → ${seeded.threadId}`,
@@ -504,8 +515,9 @@ function seededCodex(
 
 /**
  * Seed a fresh persistent codex session from the mind's previous archived
- * rollout. Writes the synthetic rollout under `.mind/codex/sessions/YYYY/MM/DD/`
- * (matching the real Codex layout) and returns the new thread id plus the
+ * rollout. Writes the synthetic rollout under `<sessionsRoot>/YYYY/MM/DD/` (matching
+ * the real Codex layout; beside the source rollout when `sessionsRoot` is omitted) and
+ * returns the new thread id plus the
  * archived-at time (for the gap note), or null if there's nothing to seed. Never
  * throws — any failure returns null so session start is never blocked.
  *
@@ -534,11 +546,11 @@ export function seedCodexSession(
         ...opts,
         before: new Date(source.archivedAt ?? now.getTime()),
       })
-        .then((seeded) => seededCodex(opts.name, source, seeded, now))
+        .then((seeded) => seededCodex(opts, source, seeded, now))
         .catch(fail);
     }
     return seededCodex(
-      opts.name,
+      opts,
       source,
       buildSeededRollout(jsonl, threadId, opts.seedTokens, now),
       now,
@@ -550,15 +562,19 @@ export function seedCodexSession(
 }
 
 /**
- * Write a seeded rollout next to its source: into the SAME sessions root the source
- * rollout was found in, so it lands wherever Codex will look on resume — that root is
- * CODEX_HOME/sessions (`.mind/codex/sessions` when CODEX_HOME is set) or ~/.codex/sessions
- * otherwise. `sourcePath` is `<sessionsRoot>/YYYY/MM/DD/rollout-*.jsonl`; climb three
- * levels. Rollouts live under a local-time YYYY/MM/DD tree with a local-time filename
- * timestamp, mirroring how Codex itself names them.
+ * The sessions root a rollout was found in: `<sessionsRoot>/YYYY/MM/DD/rollout-*.jsonl`,
+ * so three levels up.
  */
-function writeSeededRollout(sourcePath: string, seeded: SeededRollout, now: Date): void {
-  const sessionsRoot = resolve(dirname(sourcePath), "..", "..", "..");
+function sessionsRootOf(sourcePath: string): string {
+  return resolve(dirname(sourcePath), "..", "..", "..");
+}
+
+/**
+ * Write a seeded rollout under `sessionsRoot` — the root codex will read on resume
+ * (CODEX_HOME/sessions). Rollouts live under a local-time YYYY/MM/DD tree with a
+ * local-time filename timestamp, mirroring how Codex itself names them.
+ */
+function writeSeededRollout(sessionsRoot: string, seeded: SeededRollout, now: Date): void {
   const y = String(now.getFullYear());
   const mo = pad2(now.getMonth() + 1);
   const d = pad2(now.getDate());
@@ -596,12 +612,14 @@ type RotateCodexOptions = {
   oldThreadId: string;
   seedTokens: number;
   now?: Date;
+  /** Where codex will look for the seed on resume; omitted, beside the source. */
+  sessionsRoot?: string;
 };
 
 /** A rotation with recollection: the new thread id and how many recall entries it carries. */
 export type RotatedCodexOutcome = { threadId: string; recallEntries: number };
 
-/** Write the rotated seed next to its source and archive the rotated-out thread's pointer. */
+/** Write the rotated seed and archive the rotated-out thread's pointer. */
 function adoptRotatedCodex(
   opts: RotateCodexOptions | WithRecollection<RotateCodexOptions>,
   sourcePath: string,
@@ -609,7 +627,7 @@ function adoptRotatedCodex(
   now: Date,
 ): void {
   const { mindDir, name, oldThreadId } = opts;
-  writeSeededRollout(sourcePath, seeded, now);
+  writeSeededRollout(opts.sessionsRoot ?? sessionsRootOf(sourcePath), seeded, now);
   // Ephemeral `new-*` sessions rotate too, but leave no pointer/archive behind.
   if (!name.startsWith("new-")) {
     const sessionsDir = resolve(mindDir, ".mind", "codex-sessions");
@@ -624,7 +642,7 @@ function adoptRotatedCodex(
 /**
  * Rotate a codex session in place at the context limit. Reads the live rollout, builds
  * a seeded budget-based tail (trimming an over-budget final turn), writes it as a new
- * synthetic rollout next to the source, and — for persistent sessions — archives the
+ * synthetic rollout under `sessionsRoot` (beside the source when omitted), and — for persistent sessions — archives the
  * rotated-out thread pointer so the full transcript stays findable. Returns the new
  * thread id, or null if rotation can't proceed (the caller then leaves the old thread
  * in place). Never throws.
