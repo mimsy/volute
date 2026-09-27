@@ -2,7 +2,8 @@ import { execFile } from "node:child_process";
 import { resolve } from "node:path";
 import { log, warn } from "./logger.js";
 
-function gitArgs(args: string[]): string[] {
+/** Args for a git command in a worktree the mind may not own (the pages worktree, under user isolation). */
+export function gitArgs(args: string[]): string[] {
   return process.env.VOLUTE_ISOLATION === "user" ? ["-c", "safe.directory=*", ...args] : args;
 }
 

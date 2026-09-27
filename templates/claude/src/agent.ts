@@ -49,6 +49,7 @@ import type { EffortLevel, SubagentConfig, ThinkingConfig } from "./lib/startup.
 import { consumeStream, type MessageIdEntry } from "./lib/stream-consumer.js";
 import { createBuiltinSubagentModelHook, defaultSubagentModel } from "./lib/subagent-model.js";
 import { createSystemPromptSource } from "./lib/system-prompt.js";
+import { threadRef } from "./lib/thread-ref.js";
 import type {
   HandlerMeta,
   HandlerResolver,
@@ -112,18 +113,6 @@ const MAX_CONSECUTIVE_ROTATIONS = 3;
 
 /** How long a resume waits for a reaped stream on its session to finish exiting. */
 const PRIOR_EXIT_WAIT_MS = 10_000;
-
-/**
- * How a notice that can be read from any thread should name the thread it is about.
- *
- * Amnesia notices are recorded mind-level so they can't strand (#768), which means the
- * reader may be somewhere else entirely and "this thread" points at nothing. Ephemeral
- * `new-*` sessions are named after nothing the mind has ever seen, so naming one would
- * be worse than not naming it.
- */
-function threadRef(name: string): string {
-  return name.startsWith("new-") ? "a one-off session" : `the \`${name}\` thread`;
-}
 
 export function createMind(options: {
   /** Builds the system prompt from disk — once now, then again for every new SDK stream. */
