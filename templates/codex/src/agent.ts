@@ -1,12 +1,14 @@
 import { rmSync, writeFileSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
-import { Codex, type Input, type McpToolCallItem, type ThreadEvent } from "@openai/codex-sdk";
-import { flushFileChanges, trackFileChange } from "./lib/auto-commit.js";
 import {
-  DEFAULT_SEED_TOKENS,
-  rotateCodexSession,
-  seedCodexSession,
-} from "./lib/codex-session-seed.js";
+  Codex,
+  type Input,
+  type McpToolCallItem,
+  type ThreadEvent,
+  type ThreadItem,
+} from "@openai/codex-sdk";
+import { flushFileChanges, trackFileChange } from "./lib/auto-commit.js";
+import { rotateCodexSession, seedCodexSession } from "./lib/codex-session-seed.js";
 import { extractImages, extractText, type ImagePart, writeImages } from "./lib/content.js";
 import {
   countSdkInstructionTokens,
@@ -19,9 +21,14 @@ import {
   readSdkInstructions,
   readSkillDescriptions,
 } from "./lib/context-breakdown.js";
-import { daemonEmit, daemonNotice, type EventType } from "./lib/daemon-client.js";
+import {
+  daemonEmit,
+  daemonNotice,
+  daemonRecollection,
+  type EventType,
+} from "./lib/daemon-client.js";
 import { changedPaths } from "./lib/home-changes.js";
-import { runHooks } from "./lib/hook-loader.js";
+import { discoverHooks, runHooks } from "./lib/hook-loader.js";
 import { log, warn } from "./lib/logger.js";
 import { codexSessionsRoot, rolloutVisibleToCodex } from "./lib/rollout.js";
 import {
@@ -33,8 +40,14 @@ import {
   shouldRotate,
 } from "./lib/rotation.js";
 import { buildSeededNote, formatGap, type SeedCause } from "./lib/seed-note.js";
+import { recallTokenBudget } from "./lib/session-seed.js";
 import { createSessionStore, lostRealContext } from "./lib/session-store.js";
-import { getStartupContext, loadPrompts, loadSystemPrompt } from "./lib/startup.js";
+import {
+  getStartupContext,
+  loadPrompts,
+  loadSystemPrompt,
+  type StartupSource,
+} from "./lib/startup.js";
 import { threadRef } from "./lib/thread-ref.js";
 import { filterEvent, loadTransparencyPreset } from "./lib/transparency.js";
 import { turnContextFor } from "./lib/turn-context.js";
@@ -75,9 +88,21 @@ type CodexSession = {
   processing: boolean;
   abortController?: AbortController;
   messageChannels: Map<string, string>;
-  firstMessagePerChannel: Set<string>;
+  /** Reply instructions have been given in this session (see turn-context.ts). */
+  replyInstructionsFired: boolean;
   /** The event note is a standing fact about events, so it fires once per session. */
   eventNoteFired: boolean;
+  /**
+   * Why the current thread started, until its first turn has been oriented — the source
+   * the startup-context hook is run with. Null once that turn has run it.
+   */
+  startupSource: StartupSource | null;
+  /**
+   * Settles once the session's thread is chosen — resumed, or seeded from the archive,
+   * which waits on the daemon for recollection. Turns wait on it, so a message arriving
+   * meanwhile queues rather than landing on a thread the seed is about to replace.
+   */
+  ready: Promise<void>;
   /**
    * The last turn's own input delta, never codex's session-cumulative counter (see
    * `UsageDelta.contextTokens`). A cumulative figure here reported a thread's lifetime
@@ -99,6 +124,8 @@ type CodexSession = {
   seeded: boolean;
   /** When the seeded-from session was archived (epoch ms), for the gap note; null if unknown. */
   seededArchivedAt: number | null;
+  /** Whether recollection went ahead of the seeded tail — the note says so only when it did. */
+  seededRecollection: boolean;
   /**
    * The live Codex thread id, tracked in-memory (from thread.started) so rotation can
    * locate the rollout even for ephemeral `new-*` sessions, which persist no pointer.
@@ -164,6 +191,78 @@ function mcpResultText(result: McpToolCallItem["result"]): string {
   return text || JSON.stringify(result.structured_content ?? result.content);
 }
 
+/** A completed tool call, as claude's PostToolUse hook input names its parts. */
+type ToolCall = {
+  tool_name: string;
+  tool_input: Record<string, unknown>;
+  tool_response: unknown;
+  tool_use_id: string;
+};
+
+/**
+ * A completed codex item as the tool calls claude would have made for it — the names a
+ * mind's hook already matches on (#1199):
+ * - a shell command is `Bash`. codex reports stdout and stderr as one stream, so it all
+ *   arrives as `stdout`; `exit_code` is codex's.
+ * - a file change (one apply_patch, possibly several files) is one call per file: `Write`
+ *   for a new file, `Edit` for an update. A deletion has no claude tool of its own and a
+ *   hook matching Edit would go looking for a file that's gone, so it isn't reported.
+ * - an MCP call is `mcp__<server>__<tool>`; a web search is `WebSearch`.
+ * A failed file change or MCP call isn't reported either: claude's PostToolUse runs only
+ * after a tool succeeds. Anything else — reasoning, messages, todo lists — is not a tool call.
+ */
+function postToolUseCalls(item: ThreadItem, cwd: string): ToolCall[] {
+  switch (item.type) {
+    case "command_execution":
+      return [
+        {
+          tool_name: "Bash",
+          tool_input: { command: item.command },
+          tool_response: {
+            stdout: item.aggregated_output,
+            stderr: "",
+            exit_code: item.exit_code ?? null,
+            interrupted: false,
+          },
+          tool_use_id: item.id,
+        },
+      ];
+    case "file_change":
+      if (item.status === "failed") return [];
+      return item.changes.flatMap((change) => {
+        if (change.kind === "delete") return [];
+        const filePath = resolvePath(cwd, change.path);
+        return {
+          tool_name: change.kind === "add" ? "Write" : "Edit",
+          tool_input: { file_path: filePath, kind: change.kind },
+          tool_response: { filePath, kind: change.kind, success: true },
+          tool_use_id: item.id,
+        };
+      });
+    case "mcp_tool_call":
+      if (item.status === "failed" || item.error) return [];
+      return [
+        {
+          tool_name: `mcp__${item.server}__${item.tool}`,
+          tool_input: (item.arguments ?? {}) as Record<string, unknown>,
+          tool_response: item.result ?? null,
+          tool_use_id: item.id,
+        },
+      ];
+    case "web_search":
+      return [
+        {
+          tool_name: "WebSearch",
+          tool_input: { query: item.query },
+          tool_response: { query: item.query },
+          tool_use_id: item.id,
+        },
+      ];
+    default:
+      return [];
+  }
+}
+
 export function createMind(options: {
   systemPrompt: string;
   cwd: string;
@@ -171,8 +270,13 @@ export function createMind(options: {
   model?: string;
   reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh";
   maxContextTokens?: number;
-  /** Estimated-token budget for seeding a fresh persistent session. 0 disables. Default 30000. */
+  /**
+   * Estimated-token budget for a seeded session's verbatim tail. 0 disables. Unset, it
+   * follows what arrived: 10000 behind recollection, 30000 when there was none.
+   */
   seedTokens?: number;
+  /** Seed the mind's recollection ahead of the verbatim tail at every seam. Default true. */
+  recollection?: boolean;
 }): {
   resolve: HandlerResolver;
   getContextInfo: () => Promise<ContextInfo>;
@@ -182,7 +286,11 @@ export function createMind(options: {
   const sessions = new Map<string, CodexSession>();
   const prompts = loadPrompts();
   const maxContextTokens = options.maxContextTokens;
-  const seedTokens = options.seedTokens ?? DEFAULT_SEED_TOKENS;
+  const seedTokens = options.seedTokens;
+  const recollect = options.recollection !== false ? daemonRecollection : undefined;
+  const recallTokens = recallTokenBudget(maxContextTokens);
+  /** Budget and recollection shared by every seam. */
+  const seam = () => ({ seedTokens, recallTokens, recollect, sessionsRoot: codexSessionsRoot() });
 
   if (maxContextTokens) {
     log("mind", `compaction threshold: ${maxContextTokens} tokens`);
@@ -205,7 +313,6 @@ export function createMind(options: {
     return path;
   }
   const hooksDir = resolvePath(options.cwd, ".local/hooks");
-  const startupContextPromise = getStartupContext().catch(() => null);
 
   // Write system prompt to file for Codex model_instructions_file
   const promptPath = resolvePath(options.mindDir, ".mind/system-prompt.md");
@@ -264,9 +371,6 @@ export function createMind(options: {
     return client;
   };
 
-  // Track which sessions have received startup context
-  const startupContextInjected = new Set<string>();
-
   // --- Session lifecycle ---
 
   function getOrCreateSession(name: string): CodexSession {
@@ -280,12 +384,15 @@ export function createMind(options: {
       messageQueue: [],
       processing: false,
       messageChannels: new Map(),
-      firstMessagePerChannel: new Set(),
+      replyInstructionsFired: false,
       eventNoteFired: false,
+      startupSource: null,
+      ready: Promise.resolve(),
       contextTokens: 0,
       lastUsage: ZERO_USAGE,
       seeded: false,
       seededArchivedAt: null,
+      seededRecollection: false,
       currentThreadId: null,
       seededCause: "restored",
       rotationGuard: createRotationGuard(),
@@ -294,7 +401,12 @@ export function createMind(options: {
     };
     sessions.set(name, session);
 
-    initSession(session);
+    session.ready = initSession(session).catch((err) => {
+      warn("mind", `session "${name}": failed to initialise, a fresh thread will start:`, err);
+      // Never tell the mind a tail was restored onto the empty thread that starts instead.
+      session.seeded = false;
+      session.seededRecollection = false;
+    });
     return session;
   }
 
@@ -313,7 +425,7 @@ export function createMind(options: {
     };
   }
 
-  function initSession(session: CodexSession) {
+  async function initSession(session: CodexSession) {
     const isEphemeral = session.name.startsWith("new-");
     log("mind", `session "${session.name}": ${isEphemeral ? "ephemeral" : "persistent"}`);
     emit(session, { type: "session_start" });
@@ -348,20 +460,19 @@ export function createMind(options: {
       // moves CODEX_HOME. Then this thread's own tail can be carried to where codex looks
       // now: the same conversation, restored the way any restart restores it.
       if (lostThreadId && findCodexSessionFile(lostThreadId, options.mindDir)) {
-        const carried = rotateCodexSession({
+        const carried = await rotateCodexSession({
           mindDir: options.mindDir,
           name: session.name,
           oldThreadId: lostThreadId,
-          seedTokens,
-          sessionsRoot: codexSessionsRoot(),
+          ...seam(),
         });
         if (carried) {
           log(
             "mind",
-            `session "${session.name}": carried ${lostThreadId} to codex's root as ${carried}`,
+            `session "${session.name}": carried ${lostThreadId} to codex's root as ${carried.threadId}`,
           );
-          resumeThreadId = carried;
-          armSeeded(session, carried, null);
+          resumeThreadId = carried.threadId;
+          armSeeded(session, carried.threadId, null, carried.recallEntries);
           lostThreadId = undefined;
         }
       }
@@ -370,15 +481,14 @@ export function createMind(options: {
         // Fresh persistent session — seed it from the previous session's archived
         // rollout so the mind experiences the conversation continuing rather than
         // waking into an empty context.
-        const seeded = seedCodexSession({
+        const seeded = await seedCodexSession({
           mindDir: options.mindDir,
           name: session.name,
-          seedTokens,
-          sessionsRoot: codexSessionsRoot(),
+          ...seam(),
         });
         if (seeded) {
           resumeThreadId = seeded.threadId;
-          armSeeded(session, seeded.threadId, seeded.archivedAt);
+          armSeeded(session, seeded.threadId, seeded.archivedAt, seeded.recallEntries);
           log("mind", `session "${session.name}": seeded from previous transcript`);
         }
         if (lostThreadId) {
@@ -401,6 +511,8 @@ export function createMind(options: {
         log("mind", `session "${session.name}": resuming thread ${resumeThreadId}`);
         session.thread = codexFor(session).resumeThread(resumeThreadId, threadOptions());
         session.currentThreadId = resumeThreadId;
+        // A seeded thread is new to this session; a stored one is resumed.
+        session.startupSource = session.seeded ? "startup" : "resume";
         return;
       }
     }
@@ -414,17 +526,23 @@ export function createMind(options: {
    * does, not at the first turn's thread.started, or a restart before that turn would seed
    * again from the same source.
    */
-  function armSeeded(session: CodexSession, threadId: string, archivedAt: number | null) {
+  function armSeeded(
+    session: CodexSession,
+    threadId: string,
+    archivedAt: number | null,
+    recallEntries: number,
+  ) {
     session.seeded = true;
     session.seededArchivedAt = archivedAt;
     session.seededCause = "restored";
+    session.seededRecollection = recallEntries > 0;
     session.committed = true;
     sessionStore.save(session.name, threadId, true);
   }
 
   function startFreshThread(session: CodexSession) {
     // A fresh thread knows nothing of the orientation the old one was given.
-    startupContextInjected.delete(session.name);
+    session.startupSource = "startup";
     session.thread = null;
     session.currentThreadId = null;
     session.committed = false;
@@ -546,46 +664,50 @@ export function createMind(options: {
     const prompt = text;
 
     // Whether this turn's prompt carries the startup context — a retry on a fresh thread
-    // (below) must carry it too, but not twice.
-    const hadStartupContext = startupContextInjected.has(session.name);
-    text = await withStartupContext(session, text);
-    const carriesStartupContext = !hadStartupContext;
+    // (below) must carry it too, but not twice. Started now and awaited alongside the
+    // pre-prompt hooks below, so the two hook spawns don't queue behind each other.
+    const carriesStartupContext = session.startupSource !== null;
+    const orientation = takeStartupContext(session);
 
     // On the first turn of a seeded session, prepend the honest-boundary note
     // (consumed once) so the mind knows the tail above was restored (restart) or
     // rotated (context limit). The restored note carries a coarse gap-duration
     // clause when the archive time is known; the rotation note has no gap clause.
+    let note: string | undefined;
     if (session.seeded) {
       session.seeded = false;
-      const note = buildSeededNote({
+      note = buildSeededNote({
         cause: session.seededCause,
         archivedAtMs: session.seededArchivedAt,
+        recollection: session.seededRecollection,
       });
       emit(session, {
         type: "context",
         content: note,
         metadata: { source: "seeded-session" },
       });
-      text = `${note}\n\n${text}`;
     }
 
-    // Run pre-prompt hooks
-    try {
-      const hookResult = await runHooks(hooksDir, "pre-prompt", {
+    const [startupContext, hookResult] = await Promise.all([
+      orientation,
+      runHooks(hooksDir, "pre-prompt", {
         event: "pre-prompt",
         session: session.name,
         prompt,
+      }).catch((err) => {
+        warn("mind", "pre-prompt hook failed:", err);
+        return null;
+      }),
+    ]);
+    if (startupContext) text = `${startupContext}\n\n${text}`;
+    if (note) text = `${note}\n\n${text}`;
+    if (hookResult?.additionalContext) {
+      emit(session, {
+        type: "context",
+        content: hookResult.additionalContext,
+        metadata: { source: "dynamic:pre-prompt", ...hookResult.metadata },
       });
-      if (hookResult.additionalContext) {
-        emit(session, {
-          type: "context",
-          content: hookResult.additionalContext,
-          metadata: { source: "dynamic:pre-prompt", ...hookResult.metadata },
-        });
-        text = `${hookResult.additionalContext}\n\n${text}`;
-      }
-    } catch (err) {
-      warn("mind", "pre-prompt hook failed:", err);
+      text = `${hookResult.additionalContext}\n\n${text}`;
     }
 
     // Either the system-event note or reply instructions — never both, and never reply
@@ -643,8 +765,9 @@ export function createMind(options: {
             "`volute mind history` has the record of what you were doing.";
           if (session.thread) {
             emit(session, { type: "context", content: lost, metadata: { source: "context-lost" } });
-            if (carriesStartupContext) startupContextInjected.add(session.name);
-            const retryText = await withStartupContext(session, lost);
+            if (carriesStartupContext) session.startupSource = null;
+            const retryContext = await takeStartupContext(session);
+            const retryText = retryContext ? `${retryContext}\n\n${lost}` : lost;
             failure = await streamTurn(session, prependText(input, retryText));
           }
           // The retry carried the news itself; a notice is only needed when the mind hasn't
@@ -659,18 +782,53 @@ export function createMind(options: {
     }
   }
 
-  /** Prepend the session's startup context on the first turn of its thread. */
-  async function withStartupContext(session: CodexSession, text: string): Promise<string> {
-    if (startupContextInjected.has(session.name)) return text;
-    startupContextInjected.add(session.name);
-    const startupContext = await startupContextPromise;
-    if (!startupContext) return text;
-    emit(session, {
-      type: "context",
-      content: startupContext,
-      metadata: { source: "startup-context" },
-    });
-    return `${startupContext}\n\n${text}`;
+  /**
+   * The startup context owed to the first turn of a thread — run at that turn, for this
+   * session and why its thread started, so it is current (#1199). Null when it's owed none.
+   */
+  async function takeStartupContext(session: CodexSession): Promise<string | null> {
+    const source = session.startupSource;
+    if (!source) return null;
+    session.startupSource = null;
+    const startupContext = await getStartupContext({ session: session.name, source });
+    if (startupContext) {
+      emit(session, {
+        type: "context",
+        content: startupContext,
+        metadata: { source: "startup-context" },
+      });
+    }
+    return startupContext;
+  }
+
+  /**
+   * Run the mind's `post-tool-use` hooks for one completed tool call. The stdin is claude's
+   * PostToolUse shape, with codex's items mapped onto claude's tool names (see
+   * {@link postToolUseCalls}), so one hook works under every template (#1199). As on claude,
+   * what a hook prints is recorded as context for the dashboard, not handed to the model —
+   * codex runs the whole turn inside `codex exec`, so there is nothing to hand it to.
+   */
+  async function runPostToolUse(session: CodexSession, call: ToolCall) {
+    try {
+      const threadId = session.currentThreadId;
+      const result = await runHooks(hooksDir, "post-tool-use", {
+        hook_event_name: "PostToolUse",
+        session: session.name,
+        session_id: threadId ?? undefined,
+        transcript_path: (threadId && rolloutPathFor(threadId)) || undefined,
+        cwd: options.cwd,
+        ...call,
+      });
+      if (result.additionalContext || Object.keys(result.metadata).length > 0) {
+        emit(session, {
+          type: "context",
+          content: result.additionalContext,
+          metadata: { source: "dynamic:post-tool-use", ...result.metadata },
+        });
+      }
+    } catch (err) {
+      warn("mind", "post-tool-use hook failed:", err);
+    }
   }
 
   /**
@@ -688,6 +846,22 @@ export function createMind(options: {
     let streamError: string | null = null;
     let thrown: string | null = null;
     let completed = false;
+    // Post-tool-use hooks run one after another, in the order the tools completed, and the
+    // turn isn't over until they are — their context belongs to this turn, before `done`.
+    // Only when the mind has any: most don't, and then there is nothing to spawn.
+    // An interrupted turn doesn't wait on them: hooks not yet started are skipped, and one
+    // already running finishes on its own.
+    const toolHooks = discoverHooks(hooksDir, "post-tool-use").length > 0;
+    const { signal } = session.abortController;
+    let toolHooksDone = Promise.resolve();
+    const afterTool = (item: ThreadItem) => {
+      if (!toolHooks) return;
+      for (const call of postToolUseCalls(item, options.cwd)) {
+        toolHooksDone = toolHooksDone.then(() =>
+          signal.aborted ? undefined : runPostToolUse(session, call),
+        );
+      }
+    };
 
     try {
       const { events } = await thread.runStreamed(input, {
@@ -847,6 +1021,7 @@ export function createMind(options: {
                 });
                 broadcast(session, { type: "tool_result", output: "search completed" });
               }
+              afterTool(item);
               break;
             }
 
@@ -899,6 +1074,7 @@ export function createMind(options: {
       }
       thrown = err instanceof Error ? err.message : String(err);
     }
+    await toolHooksDone;
 
     const failure =
       turnFailed ??
@@ -917,18 +1093,20 @@ export function createMind(options: {
    * we leave the old thread in place and let the SDK's native backstop handle it if
    * context keeps climbing.
    */
-  function performRotation(session: CodexSession) {
+  async function performRotation(session: CodexSession) {
     const oldThreadId = session.currentThreadId;
 
-    const newThreadId = oldThreadId
-      ? rotateCodexSession({
+    // Awaited between turns, inside the queue loop, so the session stays quiet while
+    // recollection loads: nothing is appended to the rollout this seed was read from.
+    const rotated = oldThreadId
+      ? await rotateCodexSession({
           mindDir: options.mindDir,
           name: session.name,
           oldThreadId,
-          seedTokens,
-          sessionsRoot: codexSessionsRoot(),
+          ...seam(),
         })
       : null;
+    const newThreadId = rotated?.threadId;
     if (!newThreadId) {
       log("mind", `session "${session.name}": rotation failed, deferring to SDK backstop`);
       return;
@@ -951,6 +1129,8 @@ export function createMind(options: {
     session.seeded = true;
     session.seededCause = "rotation";
     session.seededArchivedAt = null;
+    session.seededRecollection = (rotated?.recallEntries ?? 0) > 0;
+    session.startupSource = "compact";
     // Spend a slot. Recorded only here, after the rotation actually landed — a failed
     // attempt must not count against the streak.
     recordRotation(session.rotationGuard);
@@ -1030,7 +1210,7 @@ export function createMind(options: {
       "mind",
       `session "${session.name}": ${contextTokens} tokens >= ${maxContextTokens} — rotating`,
     );
-    performRotation(session);
+    await performRotation(session);
   }
 
   // --- Message queue processing ---
@@ -1038,6 +1218,7 @@ export function createMind(options: {
   async function processQueue(session: CodexSession) {
     if (session.processing) return;
     session.processing = true;
+    await session.ready;
 
     while (session.messageQueue.length > 0) {
       const next = session.messageQueue.shift()!;
@@ -1054,7 +1235,6 @@ export function createMind(options: {
     // delete.
     if (session.name.startsWith("new-") && sessions.get(session.name) === session) {
       sessions.delete(session.name);
-      startupContextInjected.delete(session.name);
     }
   }
 

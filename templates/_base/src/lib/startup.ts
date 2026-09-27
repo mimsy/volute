@@ -1,6 +1,6 @@
-import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { runHook } from "./hook-loader.js";
 import { log } from "./logger.js";
 
 /**
@@ -65,10 +65,9 @@ export type MindConfig = {
   /**
    * Session continuity across seams (wake/restart, rotation, cold reset). A seeded
    * session carries the tail of the previous session's transcript (up to `seedTokens`
-   * estimated tokens) so the conversation continues. The claude template seeds the
-   * mind's recollection ahead of the tail; unset, its tail is 10000 when recollection
-   * arrived and 30000 when it didn't. pi and codex seed the tail alone and default to
-   * 30000. 0 disables.
+   * estimated tokens) so the conversation continues, with the mind's recollection seeded
+   * ahead of it. Unset, the tail is 10000 when recollection arrived and 30000 when it
+   * didn't. 0 disables.
    */
   continuity?: { seedTokens?: number };
   /**
@@ -82,11 +81,11 @@ export type MindConfig = {
     /** Read by the resonance skill's pre-prompt hook, not by the server. */
     recall?: "auto" | "on-demand" | "off";
     /**
-     * Recollection at seams (claude template). `enabled` (default true): seed the mind's
-     * consolidated memories ahead of the verbatim tail; false seeds the tail only.
-     * `coldResetMinutes` (default 55; 0 disables): idle minutes after which a persistent
-     * session is re-seeded before its next turn, since past the prompt cache's lifetime
-     * that turn would rewrite the whole context anyway. Only a session bigger than its
+     * Recollection at seams. `enabled` (default true): seed the mind's consolidated
+     * memories ahead of the verbatim tail; false seeds the tail only.
+     * `coldResetMinutes` (claude template; default 55; 0 disables): idle minutes after
+     * which a persistent session is re-seeded before its next turn, since past the prompt
+     * cache's lifetime that turn would rewrite the whole context anyway. Only a session bigger than its
      * seed resets. With `sessionIdleMinutes: 0` (never reap) a live session is never
      * cold-reset; only one re-created after a restart is.
      */
@@ -304,52 +303,52 @@ export function loadPackageInfo(): { name: string; version: string } {
 }
 
 /**
- * Run the startup-context hook and return the generated context string.
- * Returns null if no hook is found or it produces no output.
+ * Why a session is being oriented — the SessionStart `source` claude's SDK passes the same
+ * script: a new thread (`startup`), one resumed after a restart (`resume`), one rotated at
+ * the context limit (`compact`), or one cleared (`clear`).
  */
-export async function getStartupContext(): Promise<string | null> {
-  // Prefer .ts, fall back to .sh for backwards compatibility
-  const tsPath = resolve("home/.local/hooks/startup-context.ts");
-  const shPath = resolve("home/.local/hooks/startup-context.sh");
+export type StartupSource = "startup" | "resume" | "compact" | "clear";
+
+/**
+ * Run the startup-context hook for one session as it starts, and return what it says.
+ *
+ * Per session, not once per process: claude runs the same script as a SessionStart hook
+ * on every new stream, so spend, time and extensions are current for the thread they
+ * orient — a thread first used hours after the server started, or a rotated one, gets
+ * today's, not the snapshot from boot (#1199). It runs through the hook runner, with the
+ * same timeout and the same `[Your hooks]` report on failure as every other hook.
+ *
+ * `mindDir` is the mind's directory (default: the process cwd, as the servers run); the
+ * hook is `home/.local/hooks/startup-context.ts` under it (`.sh` as fallback) and runs from
+ * it. `session` names the thread in the hook's stdin and `VOLUTE_SESSION`; omit it only
+ * when the context isn't for one thread. The hook may print claude's hook JSON or plain
+ * text. Returns null if there's no hook, it printed nothing, or it failed.
+ */
+export async function getStartupContext(opts: {
+  source: StartupSource;
+  session?: string;
+  mindDir?: string;
+}): Promise<string | null> {
+  const mindDir = opts.mindDir ?? process.cwd();
+  const homeDir = resolve(mindDir, "home");
+  const tsPath = resolve(homeDir, ".local/hooks/startup-context.ts");
+  const shPath = resolve(homeDir, ".local/hooks/startup-context.sh");
   const scriptPath = existsSync(tsPath) ? tsPath : existsSync(shPath) ? shPath : null;
   if (!scriptPath) return null;
 
-  const isTs = scriptPath.endsWith(".ts");
-
-  try {
-    const stdout = await new Promise<string>((resolve, reject) => {
-      const child = isTs
-        ? spawn(process.execPath, ["--import", "tsx", scriptPath], { timeout: 5000 })
-        : spawn("bash", [scriptPath], { timeout: 5000 });
-      let out = "";
-      child.stdout.on("data", (d: Buffer) => {
-        out += d.toString();
-      });
-      // Ignore stdin errors — the hook may exit before reading (EPIPE); an
-      // unhandled stream error here would kill the mind's server process.
-      child.stdin.on("error", () => {});
-      child.stdin.end(JSON.stringify({ source: "startup" }));
-      child.on("close", (code) =>
-        code === 0 ? resolve(out) : reject(new Error(`exit code ${code}`)),
-      );
-      child.on("error", reject);
-    });
-
-    // Try to parse as JSON hook output
-    let context: string | null = null;
-    try {
-      const parsed = JSON.parse(stdout);
-      context = parsed?.hookSpecificOutput?.additionalContext ?? null;
-    } catch {
-      // Fall back to plain text
-      context = stdout.trim();
-    }
-
-    return context || null;
-  } catch (e) {
-    log("server", "failed to run startup context hook:", e);
-    return null;
-  }
+  // Run from the mind dir: the script reads `.mind/…` and `home/memory/…` from there.
+  // Plain text is its context too, as the script's own header has always promised.
+  const result = await runHook(
+    scriptPath,
+    "startup-context",
+    {
+      hook_event_name: "SessionStart",
+      source: opts.source,
+      ...(opts.session ? { session: opts.session } : {}),
+    },
+    { homeDir, cwd: mindDir, plainText: true },
+  );
+  return result.additionalContext?.trim() || null;
 }
 
 export type MindPrompts = {

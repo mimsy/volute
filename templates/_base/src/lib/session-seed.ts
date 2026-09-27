@@ -54,6 +54,18 @@ export const TAIL_ONLY_SEED_TOKENS = 30000;
  */
 export const RECALL_TOKEN_CAP = 12000;
 
+/**
+ * The recollection budget for a mind whose rotation threshold is `maxContextTokens`: a
+ * quarter of the window at most, so prefix + recollection + tail stays well under the
+ * threshold (a prefix too big for that is the consecutive-rotation cap's).
+ */
+export function recallTokenBudget(maxContextTokens: number | undefined): number {
+  return Math.min(
+    RECALL_TOKEN_CAP,
+    maxContextTokens ? Math.floor(maxContextTokens / 4) : RECALL_TOKEN_CAP,
+  );
+}
+
 // Archived pointers are named `<name>-<timestamp>.json`, where the timestamp is
 // `new Date().toISOString().replace(/[:.]/g, "-").slice(0, 16)` → `YYYY-MM-DDTHH-MM`
 // (see archiveSessions in the daemon's sleep-manager). Pointers the template writes

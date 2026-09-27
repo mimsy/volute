@@ -31,12 +31,14 @@ describe("thread docs claims", () => {
     );
   });
 
-  it("only the claude template seeds a fresh thread with recollection", () => {
-    // When pi/codex gain recollection (#1129) this fails on purpose: the docs say
-    // "on the claude framework" and should lose that qualifier in the same change.
+  it("claude and codex seed a fresh thread with recollection, pi doesn't yet", () => {
+    // The Threads sections say "on the claude and codex frameworks". When pi gains
+    // recollection this fails on purpose, and the qualifier should go in the same change.
     assert.match(read("templates/claude/src/agent.ts"), /seedSession\(\{[^}]*recollect,/s);
-    for (const t of ["pi", "codex"]) {
-      assert.doesNotMatch(read(`templates/${t}/src/agent.ts`), /recollect/, t);
+    assert.match(read("templates/codex/src/agent.ts"), /recollect = [^;]*daemonRecollection/);
+    assert.doesNotMatch(read("templates/pi/src/agent.ts"), /recollect/, "pi");
+    for (const doc of ["templates/_base/home/VOLUTE.md", "skills/volute-mind/SKILL.md"]) {
+      assert.match(read(doc), /on the claude and codex frameworks/i, doc);
     }
   });
 

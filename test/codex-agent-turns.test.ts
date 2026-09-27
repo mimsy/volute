@@ -32,6 +32,8 @@ type ScriptedTurn = {
   throws?: string;
   /** Run while the turn is "in flight", e.g. to write files like a shell command would. */
   during?: () => unknown;
+  /** Run after the events are yielded; an abort by then ends the stream as codex's would. */
+  after?: () => unknown;
 };
 
 type RecordedCall = {
@@ -47,6 +49,8 @@ type FakeControl = {
   turns: Map<string, ScriptedTurn[]>;
   calls: RecordedCall[];
   failStartThread: Set<string>;
+  /** Sessions whose next resumeThread throws, once. */
+  failResumeThread: Set<string>;
 };
 
 const FAKE_SDK = `
@@ -73,6 +77,14 @@ class Thread {
         if (e.type === "thread.started") self._id = e.thread_id;
         yield e;
       }
+      if (turn.after) {
+        await turn.after();
+        if (opts.signal?.aborted) {
+          const err = new Error("aborted");
+          err.name = "AbortError";
+          throw err;
+        }
+      }
       if (turn.throws) throw new Error(turn.throws);
     }
     return { events: events() };
@@ -87,7 +99,10 @@ export class Codex {
     if (control().failStartThread.has(this.session)) throw new Error("spawn failed");
     return new Thread(this.session, null);
   }
-  resumeThread(id) { return new Thread(this.session, id); }
+  resumeThread(id) {
+    if (control().failResumeThread.delete(this.session)) throw new Error("resume failed");
+    return new Thread(this.session, id);
+  }
 }
 `;
 
@@ -107,7 +122,17 @@ let codexHome: string;
 let server: Server;
 const posted: Posted[] = [];
 let lastErrorAnswered = true;
-const control: FakeControl = { turns: new Map(), calls: [], failStartThread: new Set() };
+/** What the fake daemon answers a recollection request with; null answers `{}` (a failure). */
+let recallEntries: unknown[] | null = null;
+const recallQueries: string[] = [];
+/** How long the fake daemon takes to answer a recollection request. */
+let recallDelayMs = 0;
+const control: FakeControl = {
+  turns: new Map(),
+  calls: [],
+  failStartThread: new Set(),
+  failResumeThread: new Set(),
+};
 type Mind = {
   resolve: (name: string) => {
     handle: (content: unknown[], meta: any, listener?: (e: any) => void) => () => void;
@@ -181,11 +206,12 @@ function send(
   session: string,
   content: unknown[] = [{ type: "text", text: "hello" }],
   to: Mind = mind,
+  meta: Record<string, unknown> = {},
 ) {
   const messageId = `m${++messageSeq}`;
   return new Promise<any[]>((done) => {
     const seen: any[] = [];
-    to.resolve(session).handle(content, { messageId }, (e) => {
+    to.resolve(session).handle(content, { ...meta, messageId }, (e) => {
       seen.push(e);
       // The daemon's copy of `done` is still in flight when the listener hears it.
       if (e.type === "done") settle().then(() => done(seen));
@@ -235,6 +261,15 @@ before(async () => {
         res.writeHead(200, { "content-type": "application/json" });
         res.end("{}");
       };
+      if (req.url?.includes("/history/recollection")) {
+        recallQueries.push(req.url);
+        const entries = recallEntries;
+        setTimeout(() => {
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify(entries ? { entries } : {}));
+        }, recallDelayMs);
+        return;
+      }
       if (body.type === "error") {
         // Answer an error slowly: a `done` that arrives before this answer was sent
         // without waiting for it.
@@ -258,7 +293,14 @@ before(async () => {
   mkdirSync(resolve(mindDir, ".mind"), { recursive: true });
   writeFileSync(resolve(mindDir, "home/SOUL.md"), "You are a test mind.\n");
   mkdirSync(resolve(mindDir, "home/.local/hooks"), { recursive: true });
-  writeFileSync(resolve(mindDir, "home/.local/hooks/startup-context.sh"), "echo ORIENTATION\n");
+  // Says which session it oriented and why that session's thread started.
+  writeFileSync(
+    resolve(mindDir, "home/.local/hooks/startup-context.sh"),
+    [
+      'source=$(cat | grep -o \'"source":"[a-z]*"\' | cut -d\'"\' -f4)',
+      `printf '{"additionalContext":"ORIENTATION %s %s"}' "$VOLUTE_SESSION" "$source"`,
+    ].join("\n"),
+  );
   copyFileSync(resolve(templates, "_base/gitignore"), resolve(mindDir, ".gitignore"));
   git("init", "-q");
   git("config", "user.email", "test@volute");
@@ -424,6 +466,19 @@ describe("codex resume checks the rollout codex will read (#1188, #985)", () => 
     assert.ok(call?.threadId && call.threadId !== archived, "expected a freshly seeded thread");
     assert.deepEqual(pointerDuringTurn, { threadId: call?.threadId, committed: true });
     assert.match(call?.input as string, /restored/i, "the seeded note reaches the first turn");
+    // The fake daemon's recollection failed, so the seed is the tail alone — and says so.
+    assert.doesNotMatch(call?.input as string, /consolidated memory/);
+  });
+
+  it("never says a tail was restored when the seeded thread couldn't be resumed", async () => {
+    const archived = "019f5e60-0000-7000-8000-00000000fa11";
+    writeArchivePointer("seed-fail", "2026-09-20T10-00", archived);
+    writeConversation(resolve(codexHome, "sessions"), archived);
+    control.failResumeThread.add("seed-fail");
+    await send("seed-fail");
+    const call = control.calls.find((c) => c.session === "seed-fail");
+    assert.equal(call?.threadId, null, "expected a fresh thread");
+    assert.doesNotMatch(call?.input as string, /restored/i);
   });
 
   it("carries a lost thread's own rollout over from the root codex used to read", async () => {
@@ -827,5 +882,297 @@ describe("codex rotation writes where codex reads", () => {
     assert.ok(rotated && rotated !== live, `expected a rotation, got ${rotated}`);
     const { rolloutVisibleToCodex } = await import(resolve(composedDir, "src/lib/rollout.ts"));
     assert.ok(rolloutVisibleToCodex(rotated), "rotated rollout isn't where codex reads");
+  });
+});
+
+const RECALL = [
+  {
+    period: "day",
+    period_key: "2026-09-19",
+    start: "2026-09-19T00:00:00.000Z",
+    end: "2026-09-20T00:00:00.000Z",
+    content: "I rewrote the pond poem twice.",
+    author: "mind",
+  },
+];
+
+/** The rollout codex would resume for a thread id, as text. */
+function rolloutText(threadId: string): string {
+  const dir = resolve(codexHome, "sessions");
+  const found = execFileSync("find", [dir, "-name", `*${threadId}.jsonl`], { encoding: "utf-8" })
+    .trim()
+    .split("\n")[0];
+  assert.ok(found, `no rollout for ${threadId}`);
+  return readFileSync(found, "utf-8");
+}
+
+/** A rollout past `rotatingMind`'s threshold, written while the turn runs. */
+function overThreshold(threadId: string) {
+  return {
+    during: () => {
+      const path = writeConversation(resolve(codexHome, "sessions"), threadId);
+      const tokenCount = JSON.stringify({
+        timestamp: "2026-09-27T10:00:00.000Z",
+        type: "event_msg",
+        payload: { type: "token_count", info: { last_token_usage: { input_tokens: 5000 } } },
+      });
+      writeFileSync(path, `${readFileSync(path, "utf-8")}${tokenCount}\n`);
+    },
+    events: [
+      { type: "thread.started", thread_id: threadId },
+      { type: "turn.completed", usage: USAGE },
+    ],
+  };
+}
+
+describe("codex orients each session as its thread starts (#1199)", () => {
+  it("runs startup context for a resumed thread's first turn only, as that session", async () => {
+    writeRollout(resolve(codexHome, "sessions"), "t-orient");
+    writePointer("orient", "t-orient", true);
+    await send("orient");
+    await send("orient");
+    const [first, second] = control.calls
+      .filter((c) => c.session === "orient")
+      .map((c) => c.input as string);
+    assert.match(first, /ORIENTATION orient resume/);
+    assert.doesNotMatch(second, /ORIENTATION/);
+  });
+
+  it("orients a brand-new thread as a startup, for its own session", async () => {
+    await send("orient-new");
+    const call = control.calls.find((c) => c.session === "orient-new");
+    assert.match(call?.input as string, /ORIENTATION orient-new startup/);
+  });
+
+  it("orients a rotated thread again, as a compaction", async () => {
+    script("orient-rot", overThreshold("019f5e60-0000-7000-8000-0000000002a1"));
+    await send("orient-rot", undefined, rotatingMind);
+    await send("orient-rot", undefined, rotatingMind);
+    const [first, afterRotation] = control.calls
+      .filter((c) => c.session === "orient-rot")
+      .map((c) => c.input as string);
+    assert.match(first, /ORIENTATION orient-rot startup/);
+    assert.match(afterRotation, /ORIENTATION orient-rot compact/);
+  });
+});
+
+describe("codex recollection at seams (#1192)", () => {
+  it("seeds a waking session with recollection ahead of the tail, and says so", async () => {
+    const archived = "019f5e60-0000-7000-8000-00000000ec01";
+    writeArchivePointer("recall-wake", "2026-09-21T10-00", archived);
+    writeConversation(resolve(codexHome, "sessions"), archived);
+    recallEntries = RECALL;
+    recallQueries.length = 0;
+    try {
+      await send("recall-wake");
+    } finally {
+      recallEntries = null;
+    }
+    const call = control.calls.find((c) => c.session === "recall-wake");
+    assert.ok(call?.threadId && call.threadId !== archived);
+    assert.match(call.input as string, /consolidated memory of the days before/);
+    const rollout = rolloutText(call.threadId);
+    assert.match(rollout, /I rewrote the pond poem twice/);
+    assert.ok(rollout.indexOf("pond poem") < rollout.indexOf("tending the tideline"));
+    assert.equal(recallQueries.length, 1);
+    assert.match(recallQueries[0], /before=2026-09-21T10%3A00/);
+  });
+
+  it("holds a message that arrives while recollection loads until the seed is in place", async () => {
+    const archived = "019f5e60-0000-7000-8000-00000000ec02";
+    writeArchivePointer("recall-slow", "2026-09-21T10-00", archived);
+    writeConversation(resolve(codexHome, "sessions"), archived);
+    recallEntries = RECALL;
+    recallDelayMs = 300;
+    try {
+      await Promise.all([send("recall-slow"), send("recall-slow")]);
+    } finally {
+      recallEntries = null;
+      recallDelayMs = 0;
+    }
+    const calls = control.calls.filter((c) => c.session === "recall-slow");
+    assert.equal(calls.length, 2);
+    assert.ok(calls[0].threadId && calls[0].threadId !== archived, "ran before the seed landed");
+    assert.match(rolloutText(calls[0].threadId), /pond poem/);
+  });
+
+  it("seeds a rotation with recollection too", async () => {
+    recallEntries = RECALL;
+    try {
+      script("recall-rot", overThreshold("019f5e60-0000-7000-8000-0000000002a2"));
+      await send("recall-rot", undefined, rotatingMind);
+      await send("recall-rot", undefined, rotatingMind);
+    } finally {
+      recallEntries = null;
+    }
+    const calls = control.calls.filter((c) => c.session === "recall-rot");
+    const rotated = calls[1]?.threadId;
+    assert.ok(rotated && rotated !== "019f5e60-0000-7000-8000-0000000002a2");
+    assert.match(calls[1].input as string, /consolidated memory of the days before/);
+    assert.match(rolloutText(rotated), /pond poem/);
+  });
+});
+
+describe("codex runs the post-tool-use lane, in claude's shape (#1199)", () => {
+  it("hands each completed tool call to the mind's hooks before the turn is done", async () => {
+    const laneDir = resolve(mindDir, "home/.local/hooks/post-tool-use");
+    const record = resolve(mindDir, "post-tool-use.jsonl");
+    mkdirSync(laneDir, { recursive: true });
+    writeFileSync(
+      resolve(laneDir, "record.sh"),
+      // Slow enough that a turn which didn't wait for its hooks would be done first.
+      `input=$(cat)\nsleep 0.2\nprintf '%s\\n' "$input" >> '${record}'\necho '{"additionalContext":"noted"}'\n`,
+    );
+    const patched = resolve(mindDir, "home/notes.md");
+    try {
+      script("lane", {
+        events: [
+          { type: "thread.started", thread_id: "t-lane" },
+          {
+            type: "item.completed",
+            item: {
+              id: "cmd_1",
+              type: "command_execution",
+              command: "ls",
+              aggregated_output: "SOUL.md\n",
+              exit_code: 0,
+              status: "completed",
+            },
+          },
+          {
+            type: "item.completed",
+            item: {
+              id: "fc_1",
+              type: "file_change",
+              changes: [
+                { path: patched, kind: "add" },
+                { path: "MEMORY.md", kind: "update" },
+                // Gone: a hook matching Edit would go looking for it.
+                { path: "old.md", kind: "delete" },
+              ],
+              status: "completed",
+            },
+          },
+          // Failed tools aren't reported — claude's PostToolUse runs after success only.
+          {
+            type: "item.completed",
+            item: {
+              id: "fc_2",
+              type: "file_change",
+              changes: [{ path: "never.md", kind: "add" }],
+              status: "failed",
+            },
+          },
+          {
+            type: "item.completed",
+            item: {
+              id: "mcp_2",
+              type: "mcp_tool_call",
+              server: "notes",
+              tool: "write",
+              arguments: {},
+              status: "failed",
+              error: { message: "read-only" },
+            },
+          },
+          {
+            type: "item.completed",
+            item: {
+              id: "mcp_1",
+              type: "mcp_tool_call",
+              server: "notes",
+              tool: "search",
+              arguments: { q: "tide" },
+              status: "completed",
+              result: { content: [{ type: "text", text: "found" }], structured_content: null },
+            },
+          },
+          {
+            type: "item.completed",
+            item: { id: "ws_1", type: "web_search", query: "tides" },
+          },
+          { type: "item.completed", item: { id: "msg_1", type: "agent_message", text: "done" } },
+          { type: "turn.completed", usage: USAGE },
+        ],
+      });
+      await send("lane");
+    } finally {
+      rmSync(laneDir, { recursive: true, force: true });
+    }
+    const calls = readFileSync(record, "utf-8")
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l));
+    assert.deepEqual(
+      calls.map((c) => c.tool_name),
+      ["Bash", "Write", "Edit", "mcp__notes__search", "WebSearch"],
+    );
+    for (const c of calls) {
+      assert.equal(c.hook_event_name, "PostToolUse");
+      assert.equal(c.session, "lane");
+      assert.equal(c.session_id, "t-lane");
+    }
+    assert.deepEqual(calls[0].tool_input, { command: "ls" });
+    assert.equal(calls[0].tool_response.stdout, "SOUL.md\n");
+    assert.equal(calls[0].tool_use_id, "cmd_1");
+    assert.equal(calls[1].tool_input.file_path, patched);
+    assert.equal(calls[2].tool_input.file_path, resolve(mindDir, "home/MEMORY.md"));
+    assert.deepEqual(calls[3].tool_input, { q: "tide" });
+    assert.equal(calls[3].tool_response.content[0].text, "found");
+    assert.deepEqual(calls[4].tool_input, { query: "tides" });
+
+    const contexts = eventsFor("lane", "context").filter(
+      (p) => p.body.metadata?.source === "dynamic:post-tool-use",
+    );
+    assert.equal(contexts.length, 5);
+    const done = eventsFor("lane", "done")[0];
+    for (const c of contexts) assert.ok(posted.indexOf(c) < posted.indexOf(done));
+  });
+});
+
+describe("codex's post-tool-use lane stands aside for an interrupt (#1199)", () => {
+  it("skips the hooks an interrupted turn hadn't started yet", async () => {
+    const laneDir = resolve(mindDir, "home/.local/hooks/post-tool-use");
+    const record = resolve(mindDir, "post-tool-use-interrupt.jsonl");
+    mkdirSync(laneDir, { recursive: true });
+    writeFileSync(
+      resolve(laneDir, "record.sh"),
+      `input=$(cat)\nsleep 0.3\nprintf '%s\\n' "$input" >> '${record}'\n`,
+    );
+    const command = (id: string) => ({
+      type: "item.completed",
+      item: {
+        id,
+        type: "command_execution",
+        command: "ls",
+        aggregated_output: "",
+        exit_code: 0,
+        status: "completed",
+      },
+    });
+    let interrupting: Promise<unknown> | undefined;
+    try {
+      script("lane-int", {
+        events: [
+          { type: "thread.started", thread_id: "t-lane-int" },
+          command("c1"),
+          command("c2"),
+          command("c3"),
+        ],
+        after: async () => {
+          interrupting = send("lane-int", [{ type: "text", text: "stop" }], mind, {
+            interrupt: true,
+          });
+          await settle();
+        },
+      });
+      await send("lane-int");
+      await interrupting;
+      await new Promise((r) => setTimeout(r, 1000));
+    } finally {
+      rmSync(laneDir, { recursive: true, force: true });
+    }
+    const ran = readFileSync(record, "utf-8").trim().split("\n");
+    assert.equal(ran.length, 1, "only the hook already running when the turn was interrupted");
   });
 });

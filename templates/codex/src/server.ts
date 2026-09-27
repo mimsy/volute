@@ -33,6 +33,7 @@ const mind = createMind({
   reasoningEffort: config.reasoningEffort,
   maxContextTokens: config.compaction?.maxContextTokens,
   seedTokens: config.continuity?.seedTokens,
+  recollection: config.memory?.recollection?.enabled !== false,
 });
 
 const router = createRouter({

@@ -197,7 +197,7 @@ describe("codex template: reply instructions vs system events", () => {
     prompts = loadPrompts();
   });
 
-  const newSession = () => ({ eventNoteFired: false, firstMessagePerChannel: new Set<string>() });
+  const newSession = () => ({ eventNoteFired: false, replyInstructionsFired: false });
 
   it("an event turn gets the event note, never reply instructions", () => {
     const session = newSession();
@@ -225,7 +225,7 @@ describe("codex template: reply instructions vs system events", () => {
     assert.ok(
       turnContextFor({ channel: "event:orientation:1" } as never, session, prompts as never),
     );
-    // A distinct channel per event id: keying this on firstMessagePerChannel would re-fire here.
+    // A distinct channel per event id: keying this on the channel would re-fire here.
     assert.equal(
       turnContextFor({ channel: "event:schedule:42" } as never, session, prompts as never),
       null,
@@ -254,5 +254,28 @@ describe("codex template: reply instructions vs system events", () => {
     );
     assert.equal(ctx?.source, "reply-instructions");
     assert.ok(ctx?.content.includes("@alice"));
+  });
+
+  describe("once per session, as claude does (#1199)", () => {
+    const alice = { channel: "@alice", sender: "alice" } as never;
+    const bob = { channel: "@bob", sender: "bob" } as never;
+
+    it("fires on the session's first message only, not once per channel", () => {
+      const session = newSession();
+      assert.equal(turnContextFor(alice, session, prompts as never)?.source, "reply-instructions");
+      assert.equal(turnContextFor(alice, session, prompts as never), null);
+      assert.equal(turnContextFor(bob, session, prompts as never), null);
+    });
+
+    it("a system message's note doesn't spend the one firing", () => {
+      const session = newSession();
+      const system = turnContextFor(
+        { channel: "@volute", sender: "volute" } as never,
+        session,
+        prompts as never,
+      );
+      assert.match(system?.content ?? "", /no reply is needed/);
+      assert.ok(turnContextFor(bob, session, prompts as never)?.content.includes("@bob"));
+    });
   });
 });

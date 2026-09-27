@@ -11,7 +11,8 @@ export type TurnContext = {
 /** The mutable per-session state this decision reads and updates. */
 export type TurnContextState = {
   eventNoteFired: boolean;
-  firstMessagePerChannel: Set<string>;
+  /** Reply instructions have been given in this session — they're given once. */
+  replyInstructionsFired: boolean;
 };
 
 /**
@@ -24,8 +25,13 @@ export type TurnContextState = {
  * a message nobody sent (observed: the seed "lucy" spent her first turn on exactly this).
  *
  * The event note fires once per session, not once per event: it states a standing fact about
- * events (also in VOLUTE.md), and it is deliberately NOT keyed on `firstMessagePerChannel`,
- * whose key is a distinct channel per event id and so would fire on every single event.
+ * events (also in VOLUTE.md), and each event arrives on a distinct channel, so keying it on
+ * the channel would fire it on every single event.
+ *
+ * Reply instructions are given once per session, as the claude template's hook gives them
+ * (hooks/reply-instructions.ts) — not once per channel, as codex used to. A system message's
+ * "no reply is needed" doesn't spend that one firing, so the first real message still gets
+ * told how to answer. (routes.json's `replyInstructions` never reaches any template — #1205.)
  */
 export function turnContextFor(
   meta: ChannelMeta,
@@ -40,12 +46,16 @@ export function turnContextFor(
     return { content: prompts.event_instructions, source: "event-instructions" };
   }
 
-  if (!channel || session.firstMessagePerChannel.has(channel)) return null;
-  session.firstMessagePerChannel.add(channel);
-
-  const content =
-    meta.sender === "volute"
-      ? "This is a system message — no reply is needed."
-      : prompts.reply_instructions.replace(/\$\{channel\}/g, channel);
-  return { content, source: "reply-instructions" };
+  if (session.replyInstructionsFired || !channel) return null;
+  if (meta.sender === "volute") {
+    return {
+      content: "This is a system message — no reply is needed.",
+      source: "reply-instructions",
+    };
+  }
+  session.replyInstructionsFired = true;
+  return {
+    content: prompts.reply_instructions.replace(/\$\{channel\}/g, channel),
+    source: "reply-instructions",
+  };
 }
