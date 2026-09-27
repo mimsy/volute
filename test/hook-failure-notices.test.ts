@@ -1,5 +1,13 @@
 import assert from "node:assert/strict";
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -252,6 +260,13 @@ describe("hook failure notices", () => {
       assert.match(context ?? "", /source:compact/);
       assert.match(context ?? "", /session:garden/);
       assert.match(context ?? "", /hook_event_name:SessionStart/);
+    });
+
+    it("runs a mind dir other than the cwd, and names no thread when given none", async () => {
+      writeStartupHook(`printf '{"additionalContext":"[%s] %s"}' "$VOLUTE_SESSION" "$PWD"\n`);
+      process.chdir(cwd);
+      const context = await startup.getStartupContext({ source: "startup", mindDir });
+      assert.equal(context, `[] ${realpathSync(mindDir)}`);
     });
 
     it("takes plain text as the context, as the script's header promises", async () => {

@@ -304,10 +304,10 @@ export function loadPackageInfo(): { name: string; version: string } {
 
 /**
  * Why a session is being oriented — the SessionStart `source` claude's SDK passes the same
- * script: a new thread (`startup`), one resumed after a restart (`resume`), or one rotated
- * at the context limit (`compact`).
+ * script: a new thread (`startup`), one resumed after a restart (`resume`), one rotated at
+ * the context limit (`compact`), or one cleared (`clear`).
  */
-export type StartupSource = "startup" | "resume" | "compact";
+export type StartupSource = "startup" | "resume" | "compact" | "clear";
 
 /**
  * Run the startup-context hook for one session as it starts, and return what it says.
@@ -318,14 +318,19 @@ export type StartupSource = "startup" | "resume" | "compact";
  * today's, not the snapshot from boot (#1199). It runs through the hook runner, with the
  * same timeout and the same `[Your hooks]` report on failure as every other hook.
  *
- * `.sh` is the fallback when there is no `.ts`. It may print claude's hook JSON or plain
+ * `mindDir` is the mind's directory (default: the process cwd, as the servers run); the
+ * hook is `home/.local/hooks/startup-context.ts` under it (`.sh` as fallback) and runs from
+ * it. `session` names the thread in the hook's stdin and `VOLUTE_SESSION`; omit it only
+ * when the context isn't for one thread. The hook may print claude's hook JSON or plain
  * text. Returns null if there's no hook, it printed nothing, or it failed.
  */
 export async function getStartupContext(opts: {
-  session: string;
   source: StartupSource;
+  session?: string;
+  mindDir?: string;
 }): Promise<string | null> {
-  const homeDir = resolve("home");
+  const mindDir = opts.mindDir ?? process.cwd();
+  const homeDir = resolve(mindDir, "home");
   const tsPath = resolve(homeDir, ".local/hooks/startup-context.ts");
   const shPath = resolve(homeDir, ".local/hooks/startup-context.sh");
   const scriptPath = existsSync(tsPath) ? tsPath : existsSync(shPath) ? shPath : null;
@@ -336,8 +341,12 @@ export async function getStartupContext(opts: {
   const result = await runHook(
     scriptPath,
     "startup-context",
-    { hook_event_name: "SessionStart", source: opts.source, session: opts.session },
-    { homeDir, cwd: process.cwd(), plainText: true },
+    {
+      hook_event_name: "SessionStart",
+      source: opts.source,
+      ...(opts.session ? { session: opts.session } : {}),
+    },
+    { homeDir, cwd: mindDir, plainText: true },
   );
   return result.additionalContext?.trim() || null;
 }

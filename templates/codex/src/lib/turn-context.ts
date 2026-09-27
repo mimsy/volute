@@ -11,8 +11,7 @@ export type TurnContext = {
 /** The mutable per-session state this decision reads and updates. */
 export type TurnContextState = {
   eventNoteFired: boolean;
-  /** routes.json `replyInstructions`: "once" per session, "always", or "never". */
-  replyInstructionsMode: "once" | "always" | "never";
+  /** Reply instructions have been given in this session — they're given once. */
   replyInstructionsFired: boolean;
 };
 
@@ -29,8 +28,10 @@ export type TurnContextState = {
  * events (also in VOLUTE.md), and each event arrives on a distinct channel, so keying it on
  * the channel would fire it on every single event.
  *
- * Reply instructions follow the route's `replyInstructions`, exactly as the claude template's
- * hook does (hooks/reply-instructions.ts): "once" per session, "always", or "never" (#1199).
+ * Reply instructions are given once per session, as the claude template's hook gives them
+ * (hooks/reply-instructions.ts) — not once per channel, as codex used to. A system message's
+ * "no reply is needed" doesn't spend that one firing, so the first real message still gets
+ * told how to answer. (routes.json's `replyInstructions` never reaches any template — #1205.)
  */
 export function turnContextFor(
   meta: ChannelMeta,
@@ -45,14 +46,16 @@ export function turnContextFor(
     return { content: prompts.event_instructions, source: "event-instructions" };
   }
 
-  if (session.replyInstructionsMode === "never") return null;
-  if (session.replyInstructionsMode === "once" && session.replyInstructionsFired) return null;
-  if (!channel) return null;
+  if (session.replyInstructionsFired || !channel) return null;
+  if (meta.sender === "volute") {
+    return {
+      content: "This is a system message — no reply is needed.",
+      source: "reply-instructions",
+    };
+  }
   session.replyInstructionsFired = true;
-
-  const content =
-    meta.sender === "volute"
-      ? "This is a system message — no reply is needed."
-      : prompts.reply_instructions.replace(/\$\{channel\}/g, channel);
-  return { content, source: "reply-instructions" };
+  return {
+    content: prompts.reply_instructions.replace(/\$\{channel\}/g, channel),
+    source: "reply-instructions",
+  };
 }

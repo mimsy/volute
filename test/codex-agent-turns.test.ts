@@ -49,6 +49,8 @@ type FakeControl = {
   turns: Map<string, ScriptedTurn[]>;
   calls: RecordedCall[];
   failStartThread: Set<string>;
+  /** Sessions whose next resumeThread throws, once. */
+  failResumeThread: Set<string>;
 };
 
 const FAKE_SDK = `
@@ -97,7 +99,10 @@ export class Codex {
     if (control().failStartThread.has(this.session)) throw new Error("spawn failed");
     return new Thread(this.session, null);
   }
-  resumeThread(id) { return new Thread(this.session, id); }
+  resumeThread(id) {
+    if (control().failResumeThread.delete(this.session)) throw new Error("resume failed");
+    return new Thread(this.session, id);
+  }
 }
 `;
 
@@ -122,7 +127,12 @@ let recallEntries: unknown[] | null = null;
 const recallQueries: string[] = [];
 /** How long the fake daemon takes to answer a recollection request. */
 let recallDelayMs = 0;
-const control: FakeControl = { turns: new Map(), calls: [], failStartThread: new Set() };
+const control: FakeControl = {
+  turns: new Map(),
+  calls: [],
+  failStartThread: new Set(),
+  failResumeThread: new Set(),
+};
 type Mind = {
   resolve: (name: string) => {
     handle: (content: unknown[], meta: any, listener?: (e: any) => void) => () => void;
@@ -458,6 +468,17 @@ describe("codex resume checks the rollout codex will read (#1188, #985)", () => 
     assert.match(call?.input as string, /restored/i, "the seeded note reaches the first turn");
     // The fake daemon's recollection failed, so the seed is the tail alone — and says so.
     assert.doesNotMatch(call?.input as string, /consolidated memory/);
+  });
+
+  it("never says a tail was restored when the seeded thread couldn't be resumed", async () => {
+    const archived = "019f5e60-0000-7000-8000-00000000fa11";
+    writeArchivePointer("seed-fail", "2026-09-20T10-00", archived);
+    writeConversation(resolve(codexHome, "sessions"), archived);
+    control.failResumeThread.add("seed-fail");
+    await send("seed-fail");
+    const call = control.calls.find((c) => c.session === "seed-fail");
+    assert.equal(call?.threadId, null, "expected a fresh thread");
+    assert.doesNotMatch(call?.input as string, /restored/i);
   });
 
   it("carries a lost thread's own rollout over from the root codex used to read", async () => {
@@ -932,26 +953,6 @@ describe("codex orients each session as its thread starts (#1199)", () => {
       .map((c) => c.input as string);
     assert.match(first, /ORIENTATION orient-rot startup/);
     assert.match(afterRotation, /ORIENTATION orient-rot compact/);
-  });
-});
-
-describe("codex reply instructions follow the route (#1199)", () => {
-  const alice = { channel: "@alice", sender: "alice" };
-
-  it('"always" repeats them on every turn', async () => {
-    await send("ri-always", undefined, mind, { ...alice, replyInstructions: "always" });
-    await send("ri-always", undefined, mind, { ...alice, replyInstructions: "always" });
-    const inputs = control.calls
-      .filter((c) => c.session === "ri-always")
-      .map((c) => c.input as string);
-    assert.equal(inputs.length, 2);
-    for (const input of inputs) assert.match(input, /volute chat send "@alice"/);
-  });
-
-  it('"never" leaves them out', async () => {
-    await send("ri-never", undefined, mind, { ...alice, replyInstructions: "never" });
-    const call = control.calls.find((c) => c.session === "ri-never");
-    assert.doesNotMatch(call?.input as string, /volute chat send/);
   });
 });
 

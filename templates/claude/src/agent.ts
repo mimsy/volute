@@ -39,7 +39,7 @@ import {
 } from "./lib/session-reaper.js";
 import {
   DEFAULT_SEED_TOKENS,
-  RECALL_TOKEN_CAP,
+  recallTokenBudget,
   rotateSession,
   seedSession,
   TAIL_ONLY_SEED_TOKENS,
@@ -164,12 +164,7 @@ export function createMind(options: {
   const maxContextTokens = options.maxContextTokens;
   const recollection = options.recollection !== false;
   const recollect = recollection ? daemonRecollection : undefined;
-  // A quarter of the window at most, so prefix + recollection + tail stays well under
-  // the rotation threshold (a prefix too big for that is the consecutive-rotation cap's).
-  const recallTokens = Math.min(
-    RECALL_TOKEN_CAP,
-    maxContextTokens ? Math.floor(maxContextTokens / 4) : RECALL_TOKEN_CAP,
-  );
+  const recallTokens = recallTokenBudget(maxContextTokens);
   // The biggest seed a cold reset could produce, plus a margin: a session no larger than
   // this (estimated from its transcript) just resumes — re-seeding it would save nothing.
   const coldResetMinSourceTokens =

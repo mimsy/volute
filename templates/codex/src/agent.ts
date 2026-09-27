@@ -40,7 +40,7 @@ import {
   shouldRotate,
 } from "./lib/rotation.js";
 import { buildSeededNote, formatGap, type SeedCause } from "./lib/seed-note.js";
-import { RECALL_TOKEN_CAP } from "./lib/session-seed.js";
+import { recallTokenBudget } from "./lib/session-seed.js";
 import { createSessionStore, lostRealContext } from "./lib/session-store.js";
 import {
   getStartupContext,
@@ -88,8 +88,7 @@ type CodexSession = {
   processing: boolean;
   abortController?: AbortController;
   messageChannels: Map<string, string>;
-  /** routes.json `replyInstructions` for this session, from the latest message's route. */
-  replyInstructionsMode: "once" | "always" | "never";
+  /** Reply instructions have been given in this session (see turn-context.ts). */
   replyInstructionsFired: boolean;
   /** The event note is a standing fact about events, so it fires once per session. */
   eventNoteFired: boolean;
@@ -289,12 +288,7 @@ export function createMind(options: {
   const maxContextTokens = options.maxContextTokens;
   const seedTokens = options.seedTokens;
   const recollect = options.recollection !== false ? daemonRecollection : undefined;
-  // A quarter of the window at most, as claude does, so prefix + recollection + tail stays
-  // well under the rotation threshold.
-  const recallTokens = Math.min(
-    RECALL_TOKEN_CAP,
-    maxContextTokens ? Math.floor(maxContextTokens / 4) : RECALL_TOKEN_CAP,
-  );
+  const recallTokens = recallTokenBudget(maxContextTokens);
   /** Budget and recollection shared by every seam. */
   const seam = () => ({ seedTokens, recallTokens, recollect, sessionsRoot: codexSessionsRoot() });
 
@@ -390,7 +384,6 @@ export function createMind(options: {
       messageQueue: [],
       processing: false,
       messageChannels: new Map(),
-      replyInstructionsMode: "once",
       replyInstructionsFired: false,
       eventNoteFired: false,
       startupSource: null,
@@ -410,6 +403,9 @@ export function createMind(options: {
 
     session.ready = initSession(session).catch((err) => {
       warn("mind", `session "${name}": failed to initialise, a fresh thread will start:`, err);
+      // Never tell the mind a tail was restored onto the empty thread that starts instead.
+      session.seeded = false;
+      session.seededRecollection = false;
     });
     return session;
   }
@@ -1268,7 +1264,6 @@ export function createMind(options: {
         if (meta.channel) {
           session.messageChannels.set(meta.messageId, meta.channel);
         }
-        if (meta.replyInstructions) session.replyInstructionsMode = meta.replyInstructions;
 
         const text = extractText(content);
         const images = extractImages(content);

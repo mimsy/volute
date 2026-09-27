@@ -31,13 +31,15 @@ describe("thread docs claims", () => {
     );
   });
 
-  it("which templates seed a fresh thread with recollection", () => {
-    // codex gained recollection in #1192; VOLUTE.md's "on the claude framework" and the
-    // memory skill's claude-only lines are now stale for it, and are corrected in the docs
-    // pass that follows this wave. When pi gains it too this fails on purpose.
+  it("claude and codex seed a fresh thread with recollection, pi doesn't yet", () => {
+    // The Threads sections say "on the claude and codex frameworks". When pi gains
+    // recollection this fails on purpose, and the qualifier should go in the same change.
     assert.match(read("templates/claude/src/agent.ts"), /seedSession\(\{[^}]*recollect,/s);
-    assert.match(read("templates/codex/src/agent.ts"), /daemonRecollection/);
+    assert.match(read("templates/codex/src/agent.ts"), /recollect = [^;]*daemonRecollection/);
     assert.doesNotMatch(read("templates/pi/src/agent.ts"), /recollect/, "pi");
+    for (const doc of ["templates/_base/home/VOLUTE.md", "skills/volute-mind/SKILL.md"]) {
+      assert.match(read(doc), /on the claude and codex frameworks/i, doc);
+    }
   });
 
   it("$new threads are named new-<timestamp>-<random>", () => {
