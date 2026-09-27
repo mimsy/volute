@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.65.0](https://github.com/mimsy/volute/compare/volute-v0.64.0...volute-v0.65.0) (2026-09-27)
+
+
+### Features
+
+* **delivery:** tell a thread what the mind's other threads did since its last turn ([#1183](https://github.com/mimsy/volute/issues/1183)) ([9d5de20](https://github.com/mimsy/volute/commit/9d5de204804bd9220fcf8844495403b28484f4ff))
+
+
+### Bug Fixes
+
+* **gating:** preface a peeked message when its channel is routed ([#1181](https://github.com/mimsy/volute/issues/1181)) ([7f570a9](https://github.com/mimsy/volute/commit/7f570a963b40653e37b0ec232b41551277b36d7f))
+* **history:** stamp a send with its own thread and turn, or none ([#1176](https://github.com/mimsy/volute/issues/1176)) ([c728fa0](https://github.com/mimsy/volute/commit/c728fa078a18282b4519703d77172105cc1e4db0))
+* **upgrade:** merge package.json key by key so a skill's dependency survives a template bump ([#1186](https://github.com/mimsy/volute/issues/1186)) ([4955ade](https://github.com/mimsy/volute/commit/4955ade3ccb553f677b9809b658355bc49d4d353))
+
 ## [0.64.0](https://github.com/mimsy/volute/compare/volute-v0.63.0...volute-v0.64.0) (2026-09-25)
 
 
