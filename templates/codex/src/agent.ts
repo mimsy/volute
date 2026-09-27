@@ -372,6 +372,10 @@ export function createMind(options: {
           // The seeded rollout carries the previous session's tail — real content from
           // the start, so losing it later is a genuine loss.
           session.committed = true;
+          // Stamped now, as claude does, not at the first turn's thread.started: a restart
+          // before that turn would otherwise seed again from the same archive, leaving
+          // an orphan rollout behind each time.
+          sessionStore.save(session.name, seeded.threadId, true);
           log("mind", `session "${session.name}": seeded from previous transcript`);
         }
       }

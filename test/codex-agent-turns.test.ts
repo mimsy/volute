@@ -369,6 +369,40 @@ describe("codex resume checks the rollout codex will read (#1188, #985)", () => 
     assert.deepEqual(readPointer("moved"), { threadId: "t-moved-fresh", committed: true });
   });
 
+  it("stamps a seeded thread's pointer before its first turn runs", async () => {
+    const archived = "019f5e60-86f5-7770-80fa-6e9eadf58c24";
+    const archiveDir = resolve(mindDir, ".mind/codex-sessions/archive");
+    mkdirSync(archiveDir, { recursive: true });
+    writeFileSync(
+      resolve(archiveDir, "seeded-2026-09-20T10-00.json"),
+      JSON.stringify({ threadId: archived }),
+    );
+    const line = (type: string, payload: Record<string, unknown>) =>
+      JSON.stringify({ timestamp: "2026-09-20T09:00:00.000Z", type, payload });
+    const msg = (role: string, text: string) =>
+      line("response_item", { type: "message", role, content: [{ type: "input_text", text }] });
+    const rollout = writeRollout(resolve(codexHome, "sessions"), archived);
+    writeFileSync(
+      rollout,
+      `${[
+        line("session_meta", {
+          id: archived,
+          session_id: archived,
+          timestamp: "2026-09-20T09:00:00.000Z",
+        }),
+        msg("user", "what were we doing"),
+        msg("assistant", "tending the tideline"),
+      ].join("\n")}\n`,
+    );
+    let pointerDuringTurn: unknown = null;
+    script("seeded", { during: () => (pointerDuringTurn = readPointer("seeded")) });
+    await send("seeded");
+    const call = control.calls.find((c) => c.session === "seeded");
+    assert.ok(call?.threadId && call.threadId !== archived, "expected a freshly seeded thread");
+    assert.deepEqual(pointerDuringTurn, { threadId: call?.threadId, committed: true });
+    assert.match(call?.input as string, /restored/i, "the seeded note reaches the first turn");
+  });
+
   it("drops an uncommitted pointer without claiming a loss (#769)", async () => {
     writePointer("never-turned", "t-never", false);
     await send("never-turned");
