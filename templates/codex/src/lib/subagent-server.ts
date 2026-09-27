@@ -20,7 +20,6 @@ export type SubagentServer = {
   url: (session: string) => string;
   /** The env var codex reads the bearer token from (`bearer_token_env_var`). */
   tokenEnvVar: string;
-  close: () => Promise<void>;
 };
 
 export const SUBAGENT_TOKEN_ENV = "VOLUTE_SUBAGENT_TOKEN";
@@ -128,7 +127,13 @@ export async function startSubagentServer(
       res.writeHead(405, { Allow: "POST" }).end();
       return;
     }
-    const session = decodeURIComponent(match[1]);
+    let session: string;
+    try {
+      session = decodeURIComponent(match[1]);
+    } catch {
+      res.writeHead(400).end();
+      return;
+    }
     let raw = "";
     req.on("data", (d) => {
       raw += d;
@@ -179,6 +184,5 @@ export async function startSubagentServer(
   return {
     url: (session) => `http://127.0.0.1:${port}/mcp/${encodeURIComponent(session)}`,
     tokenEnvVar: SUBAGENT_TOKEN_ENV,
-    close: () => new Promise((resolve) => server.close(() => resolve())),
   };
 }

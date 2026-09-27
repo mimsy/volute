@@ -1203,18 +1203,26 @@ describe("codex folds what arrives mid-turn into that turn (#1200)", () => {
   const text = (t: string) => [{ type: "text", text: t }];
   const donesFor = (session: string) => eventsFor(session, "done").length;
 
-  it("runs messages that arrive during a run as one more run of the same turn, with one done", async () => {
+  it("runs messages that arrive during a run as one more run of the same turn, ending once", async () => {
     let later: Promise<unknown>[] = [];
-    script("fold", {
-      during: async () => {
-        later = [send("fold", text("second")), send("fold", text("third"))];
-        await settle();
+    let donesAtSecondRun = -1;
+    script(
+      "fold",
+      {
+        during: async () => {
+          later = [send("fold", text("second")), send("fold", text("third"))];
+          await settle();
+        },
+        events: [
+          { type: "thread.started", thread_id: "t-fold" },
+          { type: "turn.completed", usage: USAGE },
+        ],
       },
-      events: [
-        { type: "thread.started", thread_id: "t-fold" },
-        { type: "turn.completed", usage: USAGE },
-      ],
-    });
+      {
+        during: () => (donesAtSecondRun = donesFor("fold")),
+        events: [{ type: "turn.completed", usage: USAGE }],
+      },
+    );
     // The first message's done comes only once the late ones have run too.
     await send("fold", text("first"));
     assert.equal(later.length, 2);
@@ -1223,11 +1231,10 @@ describe("codex folds what arrives mid-turn into that turn (#1200)", () => {
     assert.equal(inputs.length, 2, "the two late messages share one run");
     assert.match(inputs[0], /first/);
     assert.match(inputs[1], /second[\s\S]*third/);
-    assert.equal(
-      donesFor("fold"),
-      1,
-      "one turn, one done — the slot is held until the queue drains",
-    );
+    // The slot is held until the queue drains: nothing ended before the second run.
+    assert.equal(donesAtSecondRun, 0);
+    // Then one `done` per delivery, which is what the daemon counts deliveries off.
+    assert.equal(donesFor("fold"), 3);
   });
 
   it("an interrupt aborts the run and takes the next one, still inside the same turn", async () => {
@@ -1250,7 +1257,7 @@ describe("codex folds what arrives mid-turn into that turn (#1200)", () => {
       "the interrupted message's turn ended",
     );
     assert.ok(second?.some((e) => e.type === "done"));
-    assert.equal(donesFor("fold-int"), 1);
+    assert.equal(donesFor("fold-int"), 2);
   });
 
   it("rotates between runs of a turn, and the next run is told", async () => {
@@ -1275,7 +1282,7 @@ describe("codex folds what arrives mid-turn into that turn (#1200)", () => {
     );
     assert.match(calls[1].input as string, /consolidated at the context limit/);
     assert.match(calls[1].input as string, /ORIENTATION fold-rot compact/);
-    assert.equal(donesFor("fold-rot"), 1);
+    assert.equal(donesFor("fold-rot"), 2);
   });
 });
 
@@ -1330,6 +1337,7 @@ describe("codex subagents are real, and their usage counts (#1200)", () => {
 
   it("runs the subagent as a SOUL-only codex thread and reports its usage on the calling thread", async () => {
     let reply: any;
+    let dreamRollout = "";
     script(
       "sub-run",
       {
@@ -1347,6 +1355,9 @@ describe("codex subagents are real, and their usage counts (#1200)", () => {
       },
       // The nested thread's run.
       {
+        during: () => {
+          dreamRollout = writeRollout(resolve(codexHome, "sessions"), "t-dream");
+        },
         events: [
           { type: "thread.started", thread_id: "t-dream" },
           {
@@ -1371,16 +1382,16 @@ describe("codex subagents are real, and their usage counts (#1200)", () => {
     const call = control.calls.filter((c) => c.session === "sub-run")[1];
     assert.equal(call.input, "dream of tides");
 
+    // One usage row for the run, the dream's usage in it (10+40 in, 5+9 out).
     const usage = eventsFor("sub-run", "usage").map((p) => p.body.metadata);
-    const dream = usage.find((m) => m.subagent === "dreamer");
-    assert.ok(dream, "the subagent's usage never reached the daemon");
-    assert.equal(dream.input_tokens, 40);
-    assert.equal(dream.output_tokens, 9);
-    const done = eventsFor("sub-run", "done")[0];
+    assert.equal(usage.length, 1);
+    assert.equal(usage[0].input_tokens, 50);
+    assert.equal(usage[0].output_tokens, 14);
     assert.ok(
-      posted.indexOf(eventsFor("sub-run", "usage").find((p) => p.body.metadata.subagent)!) <
-        posted.indexOf(done),
+      posted.indexOf(eventsFor("sub-run", "usage")[0]) <
+        posted.indexOf(eventsFor("sub-run", "done")[0]),
     );
+    assert.equal(existsSync(dreamRollout), false, "the subagent's rollout was left behind");
   });
 
   it("says so when the subagent fails, and reports no usage it didn't have", async () => {
@@ -1401,6 +1412,77 @@ describe("codex subagents are real, and their usage counts (#1200)", () => {
     await send("sub-fail", undefined, dreamingMind);
     assert.equal(reply.body.result.isError, true);
     assert.match(reply.body.result.content[0].text, /usage limit reached/);
-    assert.equal(eventsFor("sub-fail", "usage").filter((p) => p.body.metadata.subagent).length, 0);
+    // Only the calling run's own usage — the failed dream reported none.
+    const usage = eventsFor("sub-fail", "usage").map((p) => p.body.metadata);
+    assert.ok(usage.every((m) => m.input_tokens === 10));
+  });
+
+  it("stops a subagent still running when the run that called it ends", async () => {
+    let reply: Promise<any> | undefined;
+    script(
+      "sub-orphan",
+      {
+        during: async () => {
+          reply = mcp("sub-orphan", {
+            id: 9,
+            method: "tools/call",
+            params: { name: "dreamer", arguments: { prompt: "a long dream" } },
+          });
+          await settle();
+        },
+      },
+      // Still dreaming when the caller's run is over.
+      { after: () => new Promise((r) => setTimeout(r, 300)) },
+    );
+    await send("sub-orphan", undefined, dreamingMind);
+    const answer = await reply;
+    assert.equal(answer.body.result.isError, true);
+    assert.match(answer.body.result.content[0].text, /aborted/);
+  });
+
+  it("answers a malformed thread name with 400 rather than falling over", async () => {
+    await send("sub-bad", undefined, dreamingMind);
+    const server = parentConfig("sub-bad").mcp_servers.subagents;
+    const res = await fetch(server.url.replace(/sub-bad$/, "%E0%A4%A"), {
+      method: "POST",
+      headers: { authorization: `Bearer ${process.env[server.bearer_token_env_var]}` },
+      body: "{}",
+    });
+    assert.equal(res.status, 400);
+    assert.equal((await mcp("sub-bad", { id: 1, method: "ping" })).status, 200);
+  });
+});
+
+describe("codex attributes a folded run to the message a person sent (#1200)", () => {
+  it("a system event queued ahead of a DM doesn't take the DM's reply", async () => {
+    let later: Promise<unknown>[] = [];
+    script(
+      "attr",
+      {
+        during: async () => {
+          later = [
+            send("attr", [{ type: "text", text: "tick" }], mind, {
+              channel: "event:schedule:77",
+              isEvent: true,
+            }),
+            send("attr", [{ type: "text", text: "hi" }], mind, { channel: "@alice" }),
+          ];
+          await settle();
+        },
+      },
+      {
+        events: [
+          {
+            type: "item.completed",
+            item: { id: "m1", type: "agent_message", text: "hello alice" },
+          },
+          { type: "turn.completed", usage: USAGE },
+        ],
+      },
+    );
+    await send("attr");
+    await Promise.all(later);
+    const reply = eventsFor("attr", "text").find((p) => p.body.content === "hello alice");
+    assert.equal(reply?.body.channel, "@alice");
   });
 });
