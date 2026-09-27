@@ -157,6 +157,21 @@ describe("getCachedContextInfo", () => {
     assert.equal(third, sentinel);
   });
 
+  it("recomputes when its key changes (a rebuilt prompt) though the file didn't", async () => {
+    const filePath = join(tmpDir, "cache-keyed.jsonl");
+    writeFileSync(filePath, "one\n");
+    let computeCount = 0;
+    const compute = async () => {
+      computeCount++;
+      return null;
+    };
+    await getCachedContextInfo(filePath, compute, "100");
+    await getCachedContextInfo(filePath, compute, "100");
+    assert.equal(computeCount, 1);
+    await getCachedContextInfo(filePath, compute, "250");
+    assert.equal(computeCount, 2, "a different prompt size is a different answer");
+  });
+
   it("returns null without computing for a missing file", async () => {
     let called = false;
     const result = await getCachedContextInfo(join(tmpDir, "nope.jsonl"), async () => {

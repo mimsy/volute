@@ -24,8 +24,7 @@ import { composeTemplate } from "../packages/daemon/src/lib/template/template.js
  *
  * The composed template lives in a temp dir, so the repo's node_modules is linked in,
  * entry by entry, for its bare imports to resolve (to the same module instances this
- * file imports). The one gap: the template depends on `@sinclair/typebox`, which the
- * repo doesn't install; pi's own `typebox` has the same `Type.Object`/`Type.String`.
+ * file imports).
  * daemon-client reads the daemon port at module load, so the capture server and env
  * come first, then the dynamic import.
  */
@@ -53,6 +52,8 @@ let modelRuntime: any;
 let pca: any;
 let createEventHandler: typeof import("../templates/pi/src/lib/event-handler.js")["createEventHandler"];
 const scratch: string[] = [];
+/** chmod can't make a file unreadable to root; tests that fail a read that way skip there. */
+const asRoot = process.getuid?.() === 0;
 /** What the fake daemon answers a recollection request with (null → no entries field). */
 let recollection: { entries: object[] | null; delayMs: number } = { entries: null, delayMs: 0 };
 /** Recollection requests the fake daemon hasn't answered yet — a rotation in progress. */
@@ -97,7 +98,7 @@ async function newMind(
   extra: Partial<Parameters<typeof createMind>[0]> = {},
 ) {
   return createMind({
-    systemPrompt: "You are a test mind.",
+    loadSystemPrompt: () => "You are a test mind.",
     cwd: layout.cwd,
     mindDir: layout.dir,
     sessionsDir: layout.sessionsDir,
@@ -163,12 +164,11 @@ before(async () => {
   composedDir = composeTemplate(resolvePath(repoRoot, "templates"), "pi").composedDir;
   const rootModules = resolvePath(repoRoot, "node_modules");
   const modules = resolvePath(composedDir, "node_modules");
-  mkdirSync(join(modules, "@sinclair"), { recursive: true });
+  mkdirSync(modules, { recursive: true });
   for (const entry of readdirSync(rootModules)) {
     if (entry === ".bin" || entry.startsWith(".")) continue;
     symlinkSync(join(rootModules, entry), join(modules, entry));
   }
-  symlinkSync(join(rootModules, "typebox"), join(modules, "@sinclair", "typebox"));
 
   await new Promise<void>((r) => {
     server = createServer((req, res) => {
@@ -511,7 +511,9 @@ describe("pi rotation", () => {
 });
 
 describe("pi rotation failure", () => {
-  it("falls back to a fresh session and tells the mind the context was lost", async () => {
+  it("falls back to a fresh session and tells the mind the context was lost", {
+    skip: asRoot && "chmod can't block root's read",
+  }, async () => {
     const layout = makeMindDir();
     const dir = join(layout.sessionsDir, "main");
     const mind = await newMind(layout, { maxContextTokens: 50 });
@@ -693,6 +695,13 @@ describe("pi shutdown", () => {
     const server = readFileSync(resolvePath(repoRoot, "templates/pi/src/server.ts"), "utf-8");
     const shutdown = server.split("setupShutdown(")[1] ?? "";
     assert.match(shutdown, /flushFileChanges\(/);
+  });
+
+  it("never restarts the mind on an identity edit", () => {
+    for (const file of ["agent.ts", "server.ts", "lib/event-handler.ts"]) {
+      const src = readFileSync(resolvePath(repoRoot, "templates/pi/src", file), "utf-8");
+      assert.doesNotMatch(src, /daemonRestart|onIdentityReload/, `${file} restarts the mind`);
+    }
   });
 });
 
@@ -1039,5 +1048,215 @@ describe("pi startup context per session (#1199)", () => {
       assert.ok(events("text", "main").some((e) => e.content === "fine without it"));
       assert.ok(!captured.some((e) => e.type === "error" && e.messageId === id));
     }
+  });
+});
+
+describe("pi identity edits load at the next session boundary (#1201)", () => {
+  /** A mind whose prompt is its SOUL.md, and a model that records the prompt it was sent. */
+  async function identityMind(extra: Partial<Parameters<typeof createMind>[0]> = {}) {
+    const layout = makeMindDir();
+    writeFileSync(join(layout.cwd, "SOUL.md"), "I am the first soul.");
+    const loader = { fail: false };
+    const mind = await newMind(layout, {
+      loadSystemPrompt: () => {
+        if (loader.fail) throw new Error("can't read the soul right now");
+        return readFileSync(join(layout.cwd, "SOUL.md"), "utf-8");
+      },
+      ...extra,
+    });
+    const { getCurrentSystemPrompt, fauxToolCall } = await import("@earendil-works/pi-ai");
+    const prompts: string[] = [];
+    const contexts: string[] = [];
+    const reply =
+      (content: Parameters<typeof fauxAssistantMessage>[0]) => (context: { messages: any[] }) => {
+        prompts.push(getCurrentSystemPrompt(context.messages));
+        contexts.push(JSON.stringify(context.messages));
+        return fauxAssistantMessage(content);
+      };
+    const editThroughBash = () =>
+      reply(fauxToolCall("bash", { command: "echo 'I am the second soul.' > SOUL.md" }));
+    /** Identity notices told on this message's turn — never another test's mind's. */
+    const noticesFor = (messageId: string) =>
+      captured.filter(
+        (e) =>
+          e.path === "events" &&
+          e.type === "context" &&
+          e.messageId === messageId &&
+          e.metadata?.source === "identity-notice",
+      );
+    return {
+      layout,
+      mind,
+      loader,
+      prompts,
+      contexts,
+      reply,
+      editThroughBash,
+      fauxToolCall,
+      noticesFor,
+    };
+  }
+
+  it("a bash edit's tool result says when the edit loads, once per session", async () => {
+    const { mind, contexts, reply, editThroughBash, fauxToolCall, noticesFor } =
+      await identityMind();
+    faux.setResponses([
+      editThroughBash(),
+      reply(fauxToolCall("bash", { command: "echo again > SOUL.md" })),
+      reply("done"),
+    ]);
+    const id = send(mind, "main", "change who you are");
+    await waitFor(() => doneFor(id), "done");
+
+    assert.match(contexts[1], /SOUL\.md changed on disk/, "the edit's own result carries it");
+    assert.match(contexts[1], /next boundary — when it rotates at the context limit/);
+    assert.doesNotMatch(contexts[1], /idle minutes/, "pi has no idle resume to promise");
+    assert.equal(noticesFor(id).length, 1, "told once per session, not on every later edit");
+  });
+
+  it("flags a MINDS.md that still says an edit restarts the mind", async () => {
+    const { layout, mind, contexts, reply, editThroughBash } = await identityMind();
+    writeFileSync(
+      join(layout.cwd, "MINDS.md"),
+      "Edit them — **editing any identity file (`SOUL.md`, `MEMORY.md`, `VOLUTE.md`) triggers an automatic restart**.",
+    );
+    faux.setResponses([editThroughBash(), reply("done")]);
+    const id = send(mind, "main", "change who you are");
+    await waitFor(() => doneFor(id), "done");
+    assert.match(contexts[1], /Your MINDS\.md still says an identity edit restarts you/);
+  });
+
+  it("the running session keeps its prompt; a session that starts later gets the edit", async () => {
+    const { mind, prompts, reply, editThroughBash } = await identityMind();
+    faux.setResponses([editThroughBash(), reply("edited"), reply("still me")]);
+    const one = send(mind, "main", "change who you are");
+    await waitFor(() => doneFor(one), "first done");
+    const two = send(mind, "main", "who are you now?");
+    await waitFor(() => doneFor(two), "second done");
+    assert.match(prompts[2], /first soul/, "no mid-session prompt change");
+    assert.doesNotMatch(prompts[2], /second soul/);
+
+    faux.setResponses([reply("hello from another thread")]);
+    const three = send(mind, "other", "hi");
+    await waitFor(() => doneFor(three), "other thread's done");
+    assert.match(prompts[3], /second soul/, "a new session is built from the edited file");
+  });
+
+  it("rotation loads the edit, and says the note it carried over is no longer true", async () => {
+    const { layout, mind, prompts, contexts, reply, editThroughBash } = await identityMind({
+      maxContextTokens: 50,
+    });
+    faux.setResponses([editThroughBash(), reply("edited"), reply("rotated")]);
+    const one = send(mind, "main", "change who you are");
+    await waitFor(() => doneFor(one), "first done");
+    await waitFor(() => existsSync(join(layout.sessionsDir, "archive")), "rotation");
+    const two = send(mind, "main", "who are you now?");
+    await waitFor(() => doneFor(two), "second done");
+    assert.match(prompts[1], /first soul/);
+    assert.match(prompts[2], /second soul/, "loaded at the rotation");
+    // The rotated tail still holds the notice that called the edit pending.
+    assert.match(contexts[2], /still holds the version this session started with/);
+    assert.match(
+      contexts[2],
+      /an identity edit that an earlier note above calls pending is now loaded/,
+    );
+  });
+
+  it("context info counts each thread's own prompt, not the newest one", async () => {
+    const { layout, mind, reply } = await identityMind();
+    faux.setResponses([reply("short soul")]);
+    const one = send(mind, "main", "hi");
+    await waitFor(() => doneFor(one), "main's done");
+    writeFileSync(join(layout.cwd, "SOUL.md"), `I am a much longer soul. ${"x".repeat(4000)}`);
+    faux.setResponses([reply("long soul")]);
+    const two = send(mind, "other", "hi");
+    await waitFor(() => doneFor(two), "other's done");
+
+    const info = await mind.getContextInfo();
+    const tokensOf = (name: string) =>
+      info.sessions.find((x) => x.name === name)?.breakdown?.systemPrompt;
+    assert.ok(tokensOf("main")! < 100, "main still runs the short prompt it started with");
+    assert.ok(tokensOf("other")! > 500, "other runs the long one");
+  });
+
+  it("a failed rebuild keeps the old prompt and tells the mind its edit didn't load", async () => {
+    const {
+      layout,
+      mind,
+      loader,
+      prompts,
+      contexts,
+      reply,
+      editThroughBash,
+      fauxToolCall,
+      noticesFor,
+    } = await identityMind({ maxContextTokens: 50 });
+    faux.setResponses([
+      editThroughBash(),
+      (context: { messages: any[] }) => {
+        loader.fail = true; // the rotation after this turn can't rebuild
+        return reply("edited")(context);
+      },
+      reply(fauxToolCall("bash", { command: "true" })),
+      reply("still the old me"),
+    ]);
+    const one = send(mind, "main", "change who you are");
+    await waitFor(() => doneFor(one), "first done");
+    await waitFor(() => existsSync(join(layout.sessionsDir, "archive")), "rotation");
+    const two = send(mind, "main", "who are you now?");
+    await waitFor(() => doneFor(two), "second done");
+    assert.match(prompts[2], /first soul/, "the last good prompt is kept");
+    // (The rotated tail also carries turn one's notice, so look at this turn's own.)
+    assert.equal(noticesFor(two).length, 1, "and the mind is told on its next tool");
+    assert.doesNotMatch(
+      contexts[2],
+      /is now loaded/,
+      "never told a pending edit loaded when it didn't",
+    );
+  });
+});
+
+describe("pi rotation failure leaves nothing to resurrect", () => {
+  it("moves the lost transcript where neither a resume nor a wake seed finds it", {
+    skip: asRoot && "chmod can't block root's read",
+  }, async () => {
+    const layout = makeMindDir();
+    const dir = join(layout.sessionsDir, "main");
+    const mind = await newMind(layout, { maxContextTokens: 50 });
+    faux.setResponses([fauxAssistantMessage("over the limit")]);
+    let blocked = false;
+    send(mind, "main", "the thing I was told I lost", (e) => {
+      if (e.type === "done" && !blocked) {
+        blocked = true;
+        for (const f of readdirSync(dir)) if (f.endsWith(".jsonl")) chmodSync(join(dir, f), 0o200);
+      }
+    });
+    await waitFor(() => notices().length > 0, "rotation-failure notice");
+    assert.deepEqual(
+      readdirSync(dir).filter((f) => f.endsWith(".jsonl")),
+      [],
+      "the live dir holds no transcript the mind was told it lost",
+    );
+    const [lost] = readdirSync(join(layout.sessionsDir, "archive"));
+    assert.match(lost, /^main-.*-lost$/, "kept on disk, under a name no seed matches");
+    for (const f of readdirSync(join(layout.sessionsDir, "archive", lost)))
+      chmodSync(join(layout.sessionsDir, "archive", lost, f), 0o600);
+
+    // The server restarts before the fresh session ever replied.
+    const restarted = await newMind(layout);
+    let seen = "";
+    faux.setResponses([
+      (context: { messages: unknown[] }) => {
+        seen = JSON.stringify(context.messages);
+        return fauxAssistantMessage("fresh");
+      },
+    ]);
+    const id = send(restarted, "main", "hello again");
+    await waitFor(() => doneFor(id), "done after restart");
+    assert.doesNotMatch(seen, /the thing I was told I lost/, "nothing came back");
+    assert.ok(
+      !captured.some((e) => e.messageId === id && e.metadata?.source === "seeded-session"),
+      "no restored-session note",
+    );
   });
 });

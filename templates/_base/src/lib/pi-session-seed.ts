@@ -609,6 +609,23 @@ function archiveRotatedPiFile(
   renameSync(sourcePath, resolve(dest, basename(sourcePath)));
 }
 
+/**
+ * Keep a transcript whose context the mind was told it lost (rotation failed and the
+ * thread started fresh) — out of the live dir, so a restart can't resume it, and under
+ * `archive/<name>-<ts>-lost/`, a name findLatestArchivedPiSession never matches, so a
+ * wake can't seed it back either. It stays on disk, readable, for anyone looking.
+ */
+export function archiveLostPiTranscript(
+  piSessionsDir: string,
+  name: string,
+  sourcePath: string,
+  now: Date = new Date(),
+): void {
+  const dest = resolve(piSessionsDir, "archive", `${name}-${archivePiSessionTimestamp(now)}-lost`);
+  mkdirSync(dest, { recursive: true });
+  renameSync(sourcePath, resolve(dest, basename(sourcePath)));
+}
+
 type RotatePiOptions = {
   cwd: string;
   sessionsDir: string;
