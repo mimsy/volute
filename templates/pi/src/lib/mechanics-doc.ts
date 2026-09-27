@@ -5,6 +5,12 @@ import { resolve } from "node:path";
 export const MECHANICS_DOC = "MINDS.md";
 
 /**
+ * What MINDS.md said before identity edits stopped restarting the mind — the daemon's
+ * mechanics-doc correction for pi carries the same claim.
+ */
+export const STALE_DOC_LINE = "triggers an automatic restart";
+
+/**
  * Append the mechanics doc to the system prompt.
  *
  * pi-coding-agent only auto-loads a project context file named AGENTS.md or

@@ -1,4 +1,4 @@
-import type { Model } from "@earendil-works/pi-ai";
+import { type Model, Type } from "@earendil-works/pi-ai";
 import {
   createAgentSession,
   DefaultResourceLoader,
@@ -8,7 +8,6 @@ import {
   SessionManager,
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
-import { Type } from "@sinclair/typebox";
 import { log } from "./logger.js";
 import { createSessionBashTool } from "./session-bash.js";
 import type { UsageByModel } from "./types.js";

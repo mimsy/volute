@@ -62,12 +62,19 @@ async function readJsonlEntries<T>(filePath: string): Promise<T[] | null> {
 // mind takes a turn, so cache the computed breakdown keyed by (path, mtimeMs, size)
 // and serve polls between turns for free. Only the small ParsedContext is retained
 // — never the parsed messages.
-type InfoCacheEntry = { mtimeMs: number; size: number; parsed: ParsedContext | null };
+type InfoCacheEntry = {
+  mtimeMs: number;
+  size: number;
+  key: string;
+  parsed: ParsedContext | null;
+};
 const infoCache = new Map<string, InfoCacheEntry>();
 
 export async function getCachedContextInfo(
   filePath: string,
   compute: () => Promise<ParsedContext | null>,
+  /** Anything else the result depends on (e.g. the prompt's token count) — a change recomputes. */
+  key = "",
 ): Promise<ParsedContext | null> {
   let mtimeMs: number;
   let size: number;
@@ -79,11 +86,11 @@ export async function getCachedContextInfo(
     return null;
   }
   const cached = infoCache.get(filePath);
-  if (cached && cached.mtimeMs === mtimeMs && cached.size === size) {
+  if (cached && cached.mtimeMs === mtimeMs && cached.size === size && cached.key === key) {
     return cached.parsed;
   }
   const parsed = await compute();
-  infoCache.set(filePath, { mtimeMs, size, parsed });
+  infoCache.set(filePath, { mtimeMs, size, key, parsed });
   return parsed;
 }
 

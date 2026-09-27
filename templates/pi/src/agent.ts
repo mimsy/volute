@@ -25,9 +25,16 @@ import { daemonEmit, daemonNotice, daemonRecollection } from "./lib/daemon-clien
 import { dispatchPrompt } from "./lib/dispatch.js";
 import { createEventHandler, emit } from "./lib/event-handler.js";
 import { runHooks } from "./lib/hook-loader.js";
-import { createIdentityWatch } from "./lib/identity-watch.js";
+import {
+  createIdentityNotice,
+  IDENTITY_PENDING_PHRASE,
+  type IdentitySnapshot,
+  sameIdentity,
+  snapshotIdentityFiles,
+} from "./lib/identity-watch.js";
 import { log } from "./lib/logger.js";
-import { rotatePiSession, seedPiSession } from "./lib/pi-session-seed.js";
+import { MECHANICS_DOC, STALE_DOC_LINE } from "./lib/mechanics-doc.js";
+import { archiveLostPiTranscript, rotatePiSession, seedPiSession } from "./lib/pi-session-seed.js";
 import { postToolUseInput } from "./lib/post-tool-use-input.js";
 import { createReplyInstructionsExtension } from "./lib/reply-instructions-extension.js";
 import { resolveModel } from "./lib/resolve-model.js";
@@ -66,6 +73,26 @@ type PiSession = {
   currentMessageId?: string;
   messageChannels: Map<string, { channel: string; sender?: string }>;
   contextTokens: number;
+  /**
+   * The system prompt this session runs on, rebuilt from disk when the session is created
+   * and when it rotates or starts over — so an identity edit loads at the next boundary
+   * without restarting the mind or rewriting a live session's prompt (and cache) — with
+   * the notice that tells the mind, once, when an identity file differs from what it was
+   * built from.
+   */
+  prompt?: SessionPrompt;
+  /**
+   * The prompt the current run was actually sent (captured as it starts). The identity
+   * notice checks against this one, so a rebuild that lands while a run is already under
+   * way can't make a pre-edit prompt look current.
+   */
+  runPrompt?: SessionPrompt;
+  /**
+   * The transcript this session started on carries an identity notice that called an
+   * edit pending — true no longer, since the prompt was rebuilt at that boundary. Says so
+   * once, on the next turn.
+   */
+  identityLoadedNotePending?: boolean;
   /** Why the session failed to start, for the messages that were waiting on it. */
   initError?: unknown;
   /** Prompts handed to pi and not yet resolved — an ephemeral session is evicted at 0. */
@@ -76,7 +103,7 @@ type PiSession = {
    * One-shot injections offered to the run in flight — cleared (as delivered) only once
    * that run settles, so a turn that never ran re-offers them rather than losing them.
    */
-  offered: Set<"seeded" | "startup" | "rotation">;
+  offered: Set<"seeded" | "startup" | "rotation" | "identity-loaded">;
   /**
    * The seam this session's startup context names — set when the session starts, rotates
    * or starts over (as claude's SessionStart runs per stream). The hook itself runs on the
@@ -132,8 +159,19 @@ type PiSession = {
 /** Stop self-rotating after this many back-to-back rotations that didn't reduce context. */
 const MAX_CONSECUTIVE_ROTATIONS = 3;
 
+/** A built system prompt and the identity files it was built from. */
+type PromptBuild = { prompt: string; baseline: IdentitySnapshot; tokens?: number };
+type SessionPrompt = { build: PromptBuild; notice: { check(): string | null } };
+
+/** Told on the first turn of a session whose carried transcript holds an identity notice. */
+const IDENTITY_LOADED_NOTE =
+  "Your system prompt was rebuilt from your identity files as they are now when this " +
+  "session started, so an identity edit that an earlier note above calls pending is " +
+  "now loaded.";
+
 export async function createMind(options: {
-  systemPrompt: string;
+  /** Builds the system prompt from disk; throws when it can't (at startup, that's fatal). */
+  loadSystemPrompt: () => string;
   cwd: string;
   mindDir: string;
   /** Directory holding pi session subdirs (`<sessionsDir>/<name>/*.jsonl`). */
@@ -149,12 +187,6 @@ export async function createMind(options: {
   /** Seed the mind's recollection ahead of the verbatim tail at every seam. Default true. */
   recollection?: boolean;
   subagents?: Record<string, SubagentConfig>;
-  /**
-   * Called at the end of a turn in which the mind edited its own SOUL.md, MEMORY.md or
-   * VOLUTE.md (#998). The system prompt is composed once, at startup, so the edit is
-   * inert until the process restarts — the server answers this by restarting.
-   */
-  onIdentityReload?: () => void | Promise<void>;
   /** The model runtime to use instead of creating one — lets tests supply a fake provider. */
   modelRuntime?: ModelRuntime;
 }): Promise<{
@@ -163,9 +195,29 @@ export async function createMind(options: {
   getContextMessages: () => Promise<ContextMessages>;
 }> {
   const sessions = new Map<string, PiSession>();
-  // One watch per process, matching the claude template: the latch inside it means a
-  // failed restart doesn't re-fire on every later turn of every session.
-  const identityWatch = createIdentityWatch(options.cwd);
+  /**
+   * Build the prompt and record the identity files it was built from. The files are read
+   * on both sides of the build and it's retried if they moved, so the baseline is the
+   * bytes the prompt holds; if they keep moving, the earlier read is kept — erring toward
+   * a notice the mind didn't need rather than a change it's never told about.
+   */
+  function loadPromptBuild(): PromptBuild {
+    let before = snapshotIdentityFiles(options.cwd);
+    for (let attempt = 0; ; attempt++) {
+      const prompt = options.loadSystemPrompt();
+      const after = snapshotIdentityFiles(options.cwd);
+      if (sameIdentity(before, after) || attempt === 2) return { prompt, baseline: before };
+      before = after;
+    }
+  }
+  /** Loaded at startup, where a failure is fatal; afterwards the last one that loaded. */
+  let lastGoodBuild = loadPromptBuild();
+  /** The startup build is fresh: the first session takes it rather than loading again. */
+  let startupBuildUnused = true;
+  function promptTokens(build: PromptBuild): number {
+    build.tokens ??= countSystemPromptTokens(build.prompt);
+    return build.tokens;
+  }
   const maxContextTokens = options.maxContextTokens;
   const seedTokens = options.seedTokens;
   const recollect = options.recollection !== false ? daemonRecollection : undefined;
@@ -234,6 +286,42 @@ export async function createMind(options: {
   }
 
   const subagents = loadSubagents(options.subagents);
+
+  /**
+   * A session boundary: rebuild the system prompt from disk and start the identity-edit
+   * baseline at the files it was built from. If the rebuild fails, the last good prompt
+   * is kept *with its own baseline*, so the mind is told its edit didn't load rather than
+   * shown a notice-free session running an older prompt. pi has no idle reaper, so the
+   * boundaries the notice names are rotation, sleep and restart. Returns whether it rebuilt.
+   */
+  function rebuildSystemPrompt(session: PiSession): boolean {
+    let rebuilt = true;
+    try {
+      if (!startupBuildUnused) lastGoodBuild = loadPromptBuild();
+      startupBuildUnused = false;
+    } catch (err) {
+      rebuilt = false;
+      log("mind", "failed to rebuild system prompt, keeping the last good one:", err);
+    }
+    session.prompt = {
+      build: lastGoodBuild,
+      notice: createIdentityNotice(options.cwd, {
+        sessionIdleMinutes: 0,
+        mechanicsDoc: { file: MECHANICS_DOC, staleLine: STALE_DOC_LINE },
+        baseline: lastGoodBuild.baseline,
+      }),
+    };
+    return rebuilt;
+  }
+
+  /** The transcript a boundary handed this session still holds an identity notice. */
+  function carriesIdentityNotice(path: string | undefined): boolean {
+    try {
+      return !!path && readFileSync(path, "utf-8").includes(IDENTITY_PENDING_PHRASE);
+    } catch {
+      return false;
+    }
+  }
 
   /** A session just started, rotated or reset: its next turn is oriented afresh. */
   function refreshStartupContext(session: PiSession, source: StartupSource) {
@@ -325,6 +413,16 @@ export async function createMind(options: {
             metadata: { source: "seeded-session" },
           });
           parts.push(note);
+        }
+
+        if (session.identityLoadedNotePending) {
+          session.offered.add("identity-loaded");
+          emit(session, {
+            type: "context",
+            content: IDENTITY_LOADED_NOTE,
+            metadata: { source: "identity-notice" },
+          });
+          parts.push(IDENTITY_LOADED_NOTE);
         }
 
         try {
@@ -437,6 +535,7 @@ export async function createMind(options: {
 
   async function initSession(session: PiSession) {
     const isEphemeral = session.name.startsWith("new-");
+    const rebuilt = rebuildSystemPrompt(session);
     const dir = resolvePath(options.sessionsDir, session.name);
 
     // Fresh persistent session — seed it from the previous session's archived
@@ -535,6 +634,10 @@ export async function createMind(options: {
     // A seeded thread is a new session carrying a tail; only a transcript resumed as it was
     // continues an existing one.
     refreshStartupContext(session, resumed && !adoptedSeed ? "resume" : "startup");
+    // The prompt was rebuilt above; an identity notice in what this session carries over
+    // (resumed or seeded) promised an edit that is now loaded.
+    session.identityLoadedNotePending =
+      rebuilt && resumed && carriesIdentityNotice(sessionManager.getSessionFile());
 
     // Compaction is rotation (not SDK /compact), and it's silent: crossing the
     // threshold (onContextTokens) or a native PreCompact just sets rotatePending; the
@@ -545,8 +648,6 @@ export async function createMind(options: {
     // through on its second pass, inside the run) is the backstop.
     let compactBlocked = false;
     let rotatePending = false;
-    // A rotation (or its fallback) ran since this run started — see onTurnEnd below.
-    let rotatedThisRun = false;
 
     /**
      * Rotate the session in place onto a synthetic session holding the verbatim recent
@@ -581,6 +682,8 @@ export async function createMind(options: {
       session.seededCause = "rotation";
       session.seededRecollection = rotated.recallEntries > 0;
       refreshStartupContext(session, "compact");
+      session.identityLoadedNotePending =
+        rebuildSystemPrompt(session) && carriesIdentityNotice(rotated.path);
       session.consecutiveRotations = (session.consecutiveRotations ?? 0) + 1;
       compactBlocked = false; // re-arm the native-compaction backstop
       log(
@@ -599,10 +702,24 @@ export async function createMind(options: {
     function freshFallback() {
       const as = session.agentSession;
       if (as) {
+        // Move the old transcript out of the live dir first: left there, a restart before
+        // the fresh session's first reply is written would resume it (continueRecent picks
+        // the newest file there) — bringing back the context the mind was just told it lost.
+        // Nor into the archive a wake seeds from, for the same reason.
+        const oldPath = as.sessionManager.getSessionFile();
+        if (!isEphemeral && oldPath && existsSync(oldPath)) {
+          try {
+            archiveLostPiTranscript(options.sessionsDir, session.name, oldPath);
+          } catch (err) {
+            log("mind", `session "${session.name}": archiving the lost transcript failed:`, err);
+          }
+        }
         as.sessionManager.newSession();
         as.refreshContext();
       }
       refreshStartupContext(session, "clear");
+      rebuildSystemPrompt(session);
+      session.identityLoadedNotePending = false;
       session.consecutiveRotations = 0;
       compactBlocked = false;
       log("mind", `session "${session.name}": rotation failed, starting fresh`);
@@ -638,6 +755,7 @@ export async function createMind(options: {
         if (session.offered.has("seeded")) session.seeded = false;
         if (session.offered.has("startup")) session.startupContextDelivered = true;
         if (session.offered.has("rotation")) session.rotationNotePending = false;
+        if (session.offered.has("identity-loaded")) session.identityLoadedNotePending = false;
         session.offered.clear();
         // Its transcript is on disk now (pi writes the file at the first assistant
         // reply), so from here a missing transcript is a real loss.
@@ -652,7 +770,6 @@ export async function createMind(options: {
           return;
         }
         rotatePending = false;
-        rotatedThisRun = true;
         if (!(await rotateInPlace())) {
           // Rotation couldn't proceed — fresh session, not a silent native compaction.
           freshFallback();
@@ -660,16 +777,30 @@ export async function createMind(options: {
       } catch (err) {
         log("mind", `session "${session.name}": settle error, resetting rotation state:`, err);
         rotatePending = false;
-        // Compaction state is unknown after a throw — hold the identity restart back.
-        rotatedThisRun = true;
       } finally {
         session.settle?.release();
       }
     }
 
     const turnBoundaryExtension: ExtensionFactory = (pi) => {
+      // Every run is sent this session's own prompt. pi resets a run's prompt options when
+      // it settles, and diffs the prompt against the one its transcript last carried, so a
+      // rebuilt prompt reaches the model as a patch on the next run — and a prompt that
+      // hasn't changed sends nothing.
+      pi.on("before_agent_start", (event) => {
+        session.runPrompt = session.prompt;
+        event.systemPromptOptions.customPrompt = session.runPrompt?.build.prompt;
+      });
+      // After any tool — an identity edit can come through edit, write or bash — tell the
+      // mind, once per prompt build, that the edit loads at the next boundary. Appended to
+      // the tool's own result, where claude's PostToolUse context lands.
+      pi.on("tool_result", (event) => {
+        const note = session.runPrompt?.notice.check();
+        if (!note) return;
+        emit(session, { type: "context", content: note, metadata: { source: "identity-notice" } });
+        return { content: [...event.content, { type: "text" as const, text: note }] };
+      });
       pi.on("agent_start", () => {
-        rotatedThisRun = false;
         session.onRunStart?.();
         session.onRunStart = undefined;
       });
@@ -728,7 +859,7 @@ export async function createMind(options: {
         cwd: options.cwd,
         agentDir: getAgentDir(),
         settingsManager,
-        systemPrompt: options.systemPrompt,
+        systemPrompt: session.prompt?.build.prompt,
         extensionFactories: [
           turnBoundaryExtension,
           replyInstructionsExtension,
@@ -767,8 +898,6 @@ export async function createMind(options: {
       createEventHandler(session, {
         cwd: options.cwd,
         broadcast: (event) => broadcast(session, event),
-        identityWatch,
-        onIdentityReload: options.onIdentityReload,
         mainModel: `${model.provider}:${model.id}`,
         onContextTokens: (tokens: number) => {
           session.contextTokens = tokens;
@@ -785,10 +914,6 @@ export async function createMind(options: {
             rotatePending = true;
           }
         },
-        // True when this run is rotating (or has rotated) the session, which tells the
-        // caller to hold back the identity-reload restart — it would land on top of the
-        // session being rewritten in place.
-        onTurnEnd: () => rotatePending || rotatedThisRun,
       }),
     );
 
@@ -973,7 +1098,6 @@ export async function createMind(options: {
   }
 
   const piSessionsDir = resolvePath(options.mindDir, ".mind/pi-sessions");
-  const systemPromptTokens = countSystemPromptTokens(options.systemPrompt);
   const claudeMdTokens = countSdkInstructionTokens(options.cwd);
   const skillDescTokens = countSkillDescriptionTokens([resolvePath(options.cwd, ".pi/skills")]);
 
@@ -982,19 +1106,15 @@ export async function createMind(options: {
     for (const s of sessions.values()) {
       try {
         const jsonlPath = findPiSessionFile(piSessionsDir, s.name);
-        // Cache the computed breakdown by file identity: polls between turns are free.
+        // Each thread runs its own prompt (built at its last boundary). Cache the computed
+        // breakdown by file identity and that prompt: polls between turns are free.
+        const tokens = promptTokens(s.prompt?.build ?? lastGoodBuild);
         const parsed = jsonlPath
           ? await getCachedContextInfo(
               jsonlPath,
               async () =>
-                (
-                  await processPiSession(
-                    jsonlPath,
-                    systemPromptTokens,
-                    claudeMdTokens,
-                    skillDescTokens,
-                  )
-                ).parsed,
+                (await processPiSession(jsonlPath, tokens, claudeMdTokens, skillDescTokens)).parsed,
+              String(tokens),
             )
           : null;
         infos.push({
@@ -1012,7 +1132,7 @@ export async function createMind(options: {
         });
       }
     }
-    return { sessions: infos, systemPrompt: systemPromptTokens };
+    return { sessions: infos, systemPrompt: promptTokens(lastGoodBuild) };
   }
 
   async function getContextMessages(): Promise<ContextMessages> {
@@ -1022,7 +1142,12 @@ export async function createMind(options: {
       try {
         const jsonlPath = findPiSessionFile(piSessionsDir, s.name);
         const result = jsonlPath
-          ? await processPiSession(jsonlPath, systemPromptTokens, claudeMdTokens, skillDescTokens)
+          ? await processPiSession(
+              jsonlPath,
+              promptTokens(s.prompt?.build ?? lastGoodBuild),
+              claudeMdTokens,
+              skillDescTokens,
+            )
           : null;
         sessionMessages.push({ name: s.name, messages: result?.messages ?? [] });
       } catch (err) {
@@ -1032,7 +1157,9 @@ export async function createMind(options: {
     }
     return {
       preamble: {
-        systemPrompt: options.systemPrompt,
+        // One preamble for every thread: the newest prompt built. Each thread's own is
+        // counted in its breakdown above.
+        systemPrompt: lastGoodBuild.prompt,
         sdkInstructions: readSdkInstructions(options.cwd),
         skillDescriptions: readSkillDescriptions([skillsDir]),
       },

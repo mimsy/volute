@@ -5,7 +5,6 @@ import { resolve } from "node:path";
 import { after, afterEach, before, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { composeTemplate } from "../packages/daemon/src/lib/template/template.js";
-import { createIdentityWatch } from "../templates/_base/src/lib/identity-watch.js";
 import { loadSystemPrompt } from "../templates/_base/src/lib/startup.js";
 
 /**
@@ -240,38 +239,5 @@ describe("template wiring", () => {
     // failed-rebuild fallback, the context panel) uses the refreshed prompt.
     assert.equal(agent.match(/options\.systemPrompt\b/g)?.length, 1);
     assert.match(agent, /let systemPrompt = options\.systemPrompt;/);
-  });
-});
-
-// pi still restarts after a turn that edited an identity file (#998); it keeps the latch.
-describe("identity watch (pi)", () => {
-  it("does not request a reload without an identity-file edit", () => {
-    const watch = createIdentityWatch(cwd);
-    watch.noteFileChange("notes/todo.md");
-    assert.equal(watch.shouldRequestReload(), false);
-  });
-
-  it("requests a reload for each of the system prompt's source files", () => {
-    for (const file of ["SOUL.md", "MEMORY.md", "VOLUTE.md"]) {
-      const watch = createIdentityWatch(cwd);
-      watch.noteFileChange(file);
-      assert.equal(watch.shouldRequestReload(), true, `${file} should request a reload`);
-    }
-  });
-
-  it("ignores identity-named files outside the mind's cwd", () => {
-    const watch = createIdentityWatch(cwd);
-    watch.noteFileChange("/etc/SOUL.md");
-    watch.noteFileChange("/home/mind-backup/SOUL.md");
-    assert.equal(watch.shouldRequestReload(), false);
-  });
-
-  it("latches: fires at most once so a failed restart doesn't loop", () => {
-    const watch = createIdentityWatch(cwd);
-    watch.noteFileChange("SOUL.md");
-    assert.equal(watch.shouldRequestReload(), true, "first check should request the reload");
-    assert.equal(watch.shouldRequestReload(), false, "subsequent checks must not re-fire");
-    watch.noteFileChange("VOLUTE.md");
-    assert.equal(watch.shouldRequestReload(), false, "latch stays closed after the first request");
   });
 });

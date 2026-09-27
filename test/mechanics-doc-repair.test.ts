@@ -25,6 +25,7 @@ const DOCS = { claude: "CLAUDE.md", codex: "AGENTS.md", pi: "MINDS.md" } as cons
 
 const [claude] = mechanicsDocCorrections("claude");
 const [codex] = mechanicsDocCorrections("codex");
+const [pi] = mechanicsDocCorrections("pi");
 
 function docWith(paragraph: string): string {
   return `# Mechanics\n\nSomething the mind wrote.\n\n${paragraph}\n\nMore of its own words.\n`;
@@ -58,7 +59,7 @@ async function noticesFor(mind: string, reason: string) {
 describe("mechanics doc corrections", () => {
   // When a template's paragraph changes again, this fails: update `current`, and move the
   // outgoing text into `stale` — minds created today will be carrying it.
-  for (const template of ["claude", "codex"] as const) {
+  for (const template of ["claude", "codex", "pi"] as const) {
     it(`${template}: the current wording is what the template ships`, async () => {
       const shipped = readFileSync(
         resolve(templatesRoot, template, ".init", DOCS[template]),
@@ -71,11 +72,13 @@ describe("mechanics doc corrections", () => {
     });
   }
 
-  it("pi's doc is left alone — pi still restarts on an identity edit", async () => {
-    const shipped = readFileSync(resolve(templatesRoot, "pi/.init/MINDS.md"), "utf-8");
-    const dir = mindDirWithDoc("pi", shipped);
-    assert.deepEqual(await correctMechanicsDoc(dir, "pi"), { rewritten: [], edited: [] });
-    assert.equal(readDoc(dir, "pi"), shipped);
+  it("every template has an identity-edits correction (#1126, pi #1201)", () => {
+    for (const template of ["claude", "codex", "pi"] as const) {
+      assert.deepEqual(
+        mechanicsDocCorrections(template).map((c) => c.id),
+        ["identity-edits"],
+      );
+    }
   });
 });
 
@@ -99,6 +102,17 @@ describe("correctMechanicsDoc", () => {
     assert.deepEqual((await correctMechanicsDoc(dir, "codex")).rewritten, ["identity-edits"]);
     assert.equal(readDoc(dir, "codex"), docWith(codex.current));
   });
+
+  for (const stale of pi.stale) {
+    it(`pi: replaces a verbatim stale paragraph (${stale.slice(130, 170)}…)`, async () => {
+      const dir = mindDirWithDoc("pi", docWith(stale));
+      assert.deepEqual(await correctMechanicsDoc(dir, "pi"), {
+        rewritten: ["identity-edits"],
+        edited: [],
+      });
+      assert.equal(readDoc(dir, "pi"), docWith(pi.current));
+    });
+  }
 
   it("handles CRLF line endings, keeping them", async () => {
     const crlf = (t: string) => t.replaceAll("\n", "\r\n");

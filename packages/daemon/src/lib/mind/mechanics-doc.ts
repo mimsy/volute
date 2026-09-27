@@ -49,7 +49,20 @@ const CORRECTIONS: Record<string, Correction[]> = {
       untrue: "identity edits wait for your server to restart",
     },
   ],
-  // pi still restarts on an identity edit, so MINDS.md is still true.
+  // #1201 (#1126 for pi): identity edits load at the next session boundary; nothing restarts.
+  pi: [
+    {
+      id: "identity-edits",
+      stale: [
+        "Your identity lives in `SOUL.md` (who you are) and `MEMORY.md` (what you know) — both are loaded into your system prompt. Edit them as you evolve — **editing any identity file (`SOUL.md`, `MEMORY.md`, `VOLUTE.md`) triggers an automatic restart** so the updated file takes effect. Your session resumes automatically.",
+        "Your identity lives in `SOUL.md` (who you are) and `MEMORY.md` (what you know) — both are loaded into your system prompt. Edit them as you evolve; changes take effect the next time your server restarts (`volute mind restart` when you want them live now).",
+      ],
+      current:
+        "Your identity lives in `SOUL.md` (who you are) and `MEMORY.md` (what you know) — both are loaded into your system prompt. Edit them as you evolve. **Identity edits take effect at your next session boundary**, not the moment you save: your system prompt is built from `SOUL.md`, `MEMORY.md`, and `VOLUTE.md` when a thread's session starts — including when it rotates at the context limit, when you wake from sleep, or when your server restarts. Until then the session keeps the prompt it started with, so an edit never interrupts what you're in the middle of. The first time one of them changes during a session — through any tool, bash included — a note on that tool call's result says so. Each thread picks up the change at its own boundary. If you want it live now, `volute mind restart` restarts you right away: the turn you're in ends there, your edits are committed, and your session resumes.",
+      claim: "triggers an automatic restart",
+      untrue: "editing an identity file restarts your server",
+    },
+  ],
 };
 
 export type MechanicsDocOutcome = {

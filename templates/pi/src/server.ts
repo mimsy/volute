@@ -1,7 +1,6 @@
 import { resolve } from "node:path";
 import { createMind } from "./agent.js";
 import { flushFileChanges } from "./lib/auto-commit.js";
-import { daemonRestart } from "./lib/daemon-client.js";
 import { log, setLevel } from "./lib/logger.js";
 import { withMechanicsDoc } from "./lib/mechanics-doc.js";
 import { createRouter } from "./lib/router.js";
@@ -22,13 +21,13 @@ if (config.logLevel) setLevel(config.logLevel);
 if (config.model) log("server", `using model: ${config.model}`);
 if (config.thinkingLevel) log("server", `thinking level: ${config.thinkingLevel}`);
 
-// pi does not auto-load MINDS.md, so the mechanics doc is appended by hand.
-const systemPrompt = withMechanicsDoc(loadSystemPrompt(config), resolve("home"));
 const pkg = loadPackageInfo();
 
 const mindDir = resolve(".");
 const mind = await createMind({
-  systemPrompt,
+  // pi does not auto-load MINDS.md, so the mechanics doc is appended by hand. Rebuilt at
+  // each session boundary, so an identity edit loads there without a restart.
+  loadSystemPrompt: () => withMechanicsDoc(loadSystemPrompt(config), resolve("home")),
   cwd: resolve("home"),
   mindDir,
   sessionsDir: resolve(".mind/pi-sessions"),
@@ -38,13 +37,6 @@ const mind = await createMind({
   seedTokens: config.continuity?.seedTokens,
   recollection: config.memory?.recollection?.enabled !== false,
   subagents: config.subagents,
-  onIdentityReload: async () => {
-    log("server", "identity file changed — restarting to reload");
-    // No notice: the mind learns about identity-edit restarts from MINDS.md — the daemon
-    // intentionally sends none for a `reload` restart. This turn's commits are already
-    // flushed before the event handler drains the watch.
-    await daemonRestart({ type: "reload" });
-  },
 });
 
 const router = createRouter({

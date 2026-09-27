@@ -1,7 +1,6 @@
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import { flushFileChanges, trackFileChange } from "./auto-commit.js";
 import { daemonEmit, type EventType } from "./daemon-client.js";
-import type { IdentityWatch } from "./identity-watch.js";
 import { log, warn } from "./logger.js";
 import { filterEvent, loadTransparencyPreset } from "./transparency.js";
 import type { UsageByModel, VoluteEvent } from "./types.js";
@@ -27,19 +26,6 @@ export type EventHandlerOptions = {
   cwd: string;
   broadcast: (event: VoluteEvent) => void;
   onContextTokens?: (tokens: number) => void;
-  /**
-   * Returns true if this run is rotating or has rotated the session (rotation itself
-   * happens once the run settles, not here) — see the identity reload below.
-   */
-  onTurnEnd?: () => boolean;
-  /**
-   * Watches the mind's own edits for identity-file changes (#998). pi composes the system
-   * prompt once, at startup, so an edited SOUL.md/MEMORY.md/VOLUTE.md is inert until the
-   * process restarts — the watch is fed here and drained at turn end.
-   */
-  identityWatch?: IdentityWatch;
-  /** Requests the restart that puts an edited identity file into effect. */
-  onIdentityReload?: () => void | Promise<void>;
   /**
    * `provider:model` of the main loop's configured model — names its usage slice when no
    * message this turn reported a model, so a subagent breakdown always has a main slice.
@@ -138,14 +124,11 @@ export function createEventHandler(session: EventSession, options: EventHandlerO
           },
         });
 
-        // Auto-commit file changes in home/, and notice edits to the mind's own identity.
+        // Auto-commit file changes in home/.
         if ((event.toolName === "edit" || event.toolName === "write") && !event.isError) {
           const args = toolArgs.get(event.toolCallId);
           const filePath = typeof args?.path === "string" ? args.path : undefined;
-          if (filePath) {
-            trackFileChange(filePath, options.cwd);
-            options.identityWatch?.noteFileChange(filePath);
-          }
+          if (filePath) trackFileChange(filePath, options.cwd);
         }
         toolArgs.delete(event.toolCallId);
       }
@@ -252,24 +235,9 @@ export function createEventHandler(session: EventSession, options: EventHandlerO
         })().catch((err) =>
           warn("mind", `session "${session.name}": error/done emit failed:`, err),
         );
-        const willRetry = event.willRetry;
-        flushFileChanges(options.cwd)
-          .then(async () => {
-            const rotated = options.onTurnEnd?.();
-            // Commits are flushed and the turn has settled: if it rewrote an identity
-            // file, ask for the restart that makes the new system prompt real. Latched
-            // to once per process, so a refused restart doesn't retry every turn.
-            //
-            // Not on a retry (the queued prompts this agent_end preserved haven't run —
-            // restarting now would drop the sender's message) and not on a rotation (the
-            // restart would land on top of a session we just rewrote in place). Neither
-            // drains the latch, so the reload fires at the end of the next settled turn.
-            if (willRetry || rotated) return;
-            if (options.identityWatch?.shouldRequestReload()) {
-              await options.onIdentityReload?.();
-            }
-          })
-          .catch((err) => log("mind", `session "${session.name}": flush/turn-end error:`, err));
+        flushFileChanges(options.cwd).catch((err) =>
+          log("mind", `session "${session.name}": commit error:`, err),
+        );
       }
     } catch (err) {
       // warn-level: this block now drives turn-completion (error/done emission), so a throw
