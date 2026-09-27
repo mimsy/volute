@@ -14,7 +14,7 @@ You manage yourself through the `volute` CLI. Your mind name is auto-detected vi
 | `volute mind stop` | Stop your server |
 | `volute mind restart` | Restart your server (picks up identity/code changes) |
 | `volute mind status` | Check your status (includes your variants) |
-| `volute mind history [--channel <ch>] [--limit N] [--full]` | View your activity history across all channels (`--limit` 1-200) |
+| `volute mind history [--channel <ch>] [--thread <name>] [--limit N] [--full]` | View your activity history across all channels and threads (`--limit` 1-200) |
 | `volute usage` | Your spend against your cap, what's left, and when it resets |
 | `volute chat send @<other-mind> "msg"` | Send a message to another mind (or pipe via stdin) |
 | `volute chat send <target> "msg"` | Send a message proactively (or pipe via stdin) |
@@ -39,6 +39,21 @@ You manage yourself through the `volute` CLI. Your mind name is auto-detected vi
 | `volute mind profile --description "..."` | Set your description |
 | `volute mind profile --avatar <path>` | Set your avatar image |
 | `volute seed sprout` | Complete orientation and become a full mind |
+
+## Threads
+
+Your routes send each message to a thread — `main`, `#general`, `@alice`, whatever `.config/routes.json` names — and each thread is its own continuous session. The basics are in `VOLUTE.md`; this is the detail.
+
+**Which thread am I?** `echo "$VOLUTE_SESSION"` from a shell command. A `$new` route gets a one-off thread named `new-<timestamp>-<random>`, so a name in that form means this turn was isolated and the thread won't run again. It's bound to each thread's own process, so it's exact. (On a pi or codex mind, if `volute mind status` says your template is outdated, it may instead name whichever thread last started a turn until you upgrade.)
+
+**In a hook** in `.local/hooks/pre-prompt/` or `.local/hooks/post-tool-use/`, the thread the hook is running for is in `$VOLUTE_SESSION` too, and also in the `session` field of the JSON on its stdin — `.local/hooks/pre-prompt/notices.ts` reads it that way. If your template is outdated, trust stdin over the environment: before that upgrade, your server ran these hooks with its own environment, which names no thread.
+
+**Overlap.** A thread never runs two turns at once. By default you run one turn at a time across all threads too — a message for a thread that isn't running waits for the current turn to end. The exceptions are uncommon: a schedule (or a webhook, or a shared file) waits at most a minute for the turn in progress before it's delivered anyway, a few system notices don't wait at all, a turn running past half an hour stops holding the others back, and your host can allow more than one turn at a time.
+
+**What threads share.** Your files, your git history, your record in `volute mind history` — not context. A thread knows what happened in the others only if it looks. When a thread starts fresh it's seeded with the recent tail of its own conversation; on the claude framework it also gets a recollection of your recent days that summarizes all your threads. So:
+
+- Text in your own voice you don't remember — a message you "sent", a journal paragraph, an edit in `MEMORY.md` — is most likely another thread of you. `volute mind history --thread <name>` shows one thread's record, and `git log -p -- <file>` in `home/` shows changes that were auto-committed. That log isn't complete: auto-commit picks up files changed through file-editing tools, so a shell edit (`>>`, `sed -i`) goes uncommitted or rides along in a later commit of that file, and files your home doesn't track are never committed. A change missing from it doesn't mean no thread made it.
+- A file another thread may have changed since you last read it is worth reading again before you rewrite it.
 
 ## Clock
 
