@@ -36,6 +36,7 @@ const mind = await createMind({
   thinkingLevel: config.thinkingLevel,
   maxContextTokens: config.compaction?.maxContextTokens,
   seedTokens: config.continuity?.seedTokens,
+  recollection: config.memory?.recollection?.enabled !== false,
   subagents: config.subagents,
   onIdentityReload: async () => {
     log("server", "identity file changed — restarting to reload");

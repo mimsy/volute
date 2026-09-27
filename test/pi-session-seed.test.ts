@@ -342,12 +342,17 @@ describe("seedPiSession", () => {
     assistantMsg("a2", "u2", [{ type: "text", text: "done" }]),
   ];
 
-  it("writes a seed file into a fresh live dir and returns the new session id + archived-at", () => {
+  it("writes a seed file into a fresh live dir and returns the new session id + archived-at", async () => {
     const home = resolve(scratch(), "home");
     const piSessionsDir = resolve(scratch(), ".mind/pi-sessions");
     makeArchive(piSessionsDir, "main", "2026-07-18T09-30", transcript());
 
-    const seeded = seedPiSession({ cwd: home, piSessionsDir, name: "main", seedTokens: 1_000_000 });
+    const seeded = await seedPiSession({
+      cwd: home,
+      piSessionsDir,
+      name: "main",
+      seedTokens: 1_000_000,
+    });
     assert.ok(seeded);
     assert.equal(seeded.archivedAt, Date.UTC(2026, 6, 18, 9, 30));
 
@@ -360,55 +365,58 @@ describe("seedPiSession", () => {
     assert.equal(h.cwd, resolve(home));
   });
 
-  it("returns null when there is no archive", () => {
+  it("returns null when there is no archive", async () => {
     const piSessionsDir = resolve(scratch(), ".mind/pi-sessions");
     assert.equal(
-      seedPiSession({ cwd: "/home", piSessionsDir, name: "main", seedTokens: 1000 }),
+      await seedPiSession({ cwd: "/home", piSessionsDir, name: "main", seedTokens: 1000 }),
       null,
     );
   });
 
-  it("returns null when the archive dir has no jsonl", () => {
+  it("returns null when the archive dir has no jsonl", async () => {
     const piSessionsDir = resolve(scratch(), ".mind/pi-sessions");
     mkdirSync(resolve(piSessionsDir, "archive", "main-2026-07-18T09-30"), { recursive: true });
     assert.equal(
-      seedPiSession({ cwd: "/home", piSessionsDir, name: "main", seedTokens: 1000 }),
+      await seedPiSession({ cwd: "/home", piSessionsDir, name: "main", seedTokens: 1000 }),
       null,
     );
   });
 
-  it("returns null on a corrupt source transcript", () => {
+  it("returns null on a corrupt source transcript", async () => {
     const piSessionsDir = resolve(scratch(), ".mind/pi-sessions");
     makeArchive(piSessionsDir, "main", "2026-07-18T09-30", [header(), "{bad json"]);
     assert.equal(
-      seedPiSession({ cwd: "/home", piSessionsDir, name: "main", seedTokens: 1000 }),
+      await seedPiSession({ cwd: "/home", piSessionsDir, name: "main", seedTokens: 1000 }),
       null,
     );
   });
 
-  it("never seeds an ephemeral new-* session", () => {
+  it("never seeds an ephemeral new-* session", async () => {
     const piSessionsDir = resolve(scratch(), ".mind/pi-sessions");
     makeArchive(piSessionsDir, "new-abc", "2026-07-18T09-30", transcript());
     assert.equal(
-      seedPiSession({ cwd: "/home", piSessionsDir, name: "new-abc", seedTokens: 1000 }),
+      await seedPiSession({ cwd: "/home", piSessionsDir, name: "new-abc", seedTokens: 1000 }),
       null,
     );
   });
 
-  it("is disabled when seedTokens is 0", () => {
+  it("is disabled when seedTokens is 0", async () => {
     const piSessionsDir = resolve(scratch(), ".mind/pi-sessions");
     makeArchive(piSessionsDir, "main", "2026-07-18T09-30", transcript());
-    assert.equal(seedPiSession({ cwd: "/home", piSessionsDir, name: "main", seedTokens: 0 }), null);
+    assert.equal(
+      await seedPiSession({ cwd: "/home", piSessionsDir, name: "main", seedTokens: 0 }),
+      null,
+    );
   });
 
-  it("does not seed over an existing live session", () => {
+  it("does not seed over an existing live session", async () => {
     const piSessionsDir = resolve(scratch(), ".mind/pi-sessions");
     makeArchive(piSessionsDir, "main", "2026-07-18T09-30", transcript());
     const liveDir = resolve(piSessionsDir, "main");
     mkdirSync(liveDir, { recursive: true });
     writeFileSync(resolve(liveDir, "existing.jsonl"), `${header("live-id")}\n`);
     assert.equal(
-      seedPiSession({ cwd: "/home", piSessionsDir, name: "main", seedTokens: 1000 }),
+      await seedPiSession({ cwd: "/home", piSessionsDir, name: "main", seedTokens: 1000 }),
       null,
     );
   });
@@ -417,7 +425,7 @@ describe("seedPiSession", () => {
 // --- Load-bearing: the real SessionManager resumes the seed ----------------
 
 describe("seedPiSession + SessionManager.continueRecent (real SDK)", () => {
-  it("continueRecent adopts the seeded file and exposes the prior conversation", () => {
+  it("continueRecent adopts the seeded file and exposes the prior conversation", async () => {
     const home = resolve(scratch(), "home");
     mkdirSync(home, { recursive: true });
     const piSessionsDir = resolve(scratch(), ".mind/pi-sessions");
@@ -429,7 +437,7 @@ describe("seedPiSession + SessionManager.continueRecent (real SDK)", () => {
       assistantMsg("a2", "u2", [{ type: "text", text: "all done" }]),
     ]);
 
-    const seeded = seedPiSession({
+    const seeded = await seedPiSession({
       cwd: home,
       piSessionsDir,
       name: "main",
@@ -450,7 +458,7 @@ describe("seedPiSession + SessionManager.continueRecent (real SDK)", () => {
     assert.match(texts, /all done/);
   });
 
-  it("does NOT adopt the seed when the header cwd doesn't match (cwd rewrite is load-bearing)", () => {
+  it("does NOT adopt the seed when the header cwd doesn't match (cwd rewrite is load-bearing)", async () => {
     const home = resolve(scratch(), "home");
     mkdirSync(home, { recursive: true });
     const piSessionsDir = resolve(scratch(), ".mind/pi-sessions");
@@ -459,7 +467,7 @@ describe("seedPiSession + SessionManager.continueRecent (real SDK)", () => {
       userMsg("u1", null, "hi"),
       assistantMsg("a1", "u1", [{ type: "text", text: "yo" }]),
     ]);
-    const seeded = seedPiSession({
+    const seeded = await seedPiSession({
       cwd: home,
       piSessionsDir,
       name: "main",
@@ -497,18 +505,20 @@ describe("rotatePiSession", () => {
     return path;
   }
 
-  it("writes the budget tail into the live dir and archives the old file", () => {
+  it("writes the budget tail into the live dir and archives the old file", async () => {
     const home = resolve(scratch(), "home");
     const piSessionsDir = resolve(scratch(), ".mind/pi-sessions");
     const sourcePath = makeLive(piSessionsDir, "main", liveTranscript());
 
-    const newPath = rotatePiSession({
-      cwd: home,
-      sessionsDir: piSessionsDir,
-      name: "main",
-      sourcePath,
-      seedTokens: 1_000_000, // large → whole transcript
-    });
+    const newPath = (
+      await rotatePiSession({
+        cwd: home,
+        sessionsDir: piSessionsDir,
+        name: "main",
+        sourcePath,
+        seedTokens: 1_000_000, // large → whole transcript
+      })
+    )?.path;
     assert.ok(newPath);
 
     // Live dir now holds only the rotated session (old file moved out).
@@ -537,7 +547,7 @@ describe("rotatePiSession", () => {
     assert.ok(archivedFiles.some((f) => f.endsWith(".jsonl")));
   });
 
-  it("keeps only the trailing turns that fit a tight budget", () => {
+  it("keeps only the trailing turns that fit a tight budget", async () => {
     const home = resolve(scratch(), "home");
     const piSessionsDir = resolve(scratch(), ".mind/pi-sessions");
     // Two turns; a tiny budget keeps only the last.
@@ -546,13 +556,15 @@ describe("rotatePiSession", () => {
       userMsg("u1", null, "first"),
       userMsg("u2", "u1", "q".repeat(4000)),
     ]);
-    const newPath = rotatePiSession({
-      cwd: home,
-      sessionsDir: piSessionsDir,
-      name: "main",
-      sourcePath,
-      seedTokens: 10,
-    });
+    const newPath = (
+      await rotatePiSession({
+        cwd: home,
+        sessionsDir: piSessionsDir,
+        name: "main",
+        sourcePath,
+        seedTokens: 10,
+      })
+    )?.path;
     assert.ok(newPath);
     const objs = parse(readFileSync(newPath, "utf-8").trim().split("\n"));
     assert.deepEqual(
@@ -561,10 +573,10 @@ describe("rotatePiSession", () => {
     );
   });
 
-  it("returns null when the source file can't be read", () => {
+  it("returns null when the source file can't be read", async () => {
     const piSessionsDir = resolve(scratch(), ".mind/pi-sessions");
     assert.equal(
-      rotatePiSession({
+      await rotatePiSession({
         cwd: "/home",
         sessionsDir: piSessionsDir,
         name: "main",
@@ -575,17 +587,19 @@ describe("rotatePiSession", () => {
     );
   });
 
-  it("does not archive for ephemeral new-* names", () => {
+  it("does not archive for ephemeral new-* names", async () => {
     const home = resolve(scratch(), "home");
     const piSessionsDir = resolve(scratch(), ".mind/pi-sessions");
     const sourcePath = makeLive(piSessionsDir, "new-abc", liveTranscript());
-    const newPath = rotatePiSession({
-      cwd: home,
-      sessionsDir: piSessionsDir,
-      name: "new-abc",
-      sourcePath,
-      seedTokens: 1_000_000,
-    });
+    const newPath = (
+      await rotatePiSession({
+        cwd: home,
+        sessionsDir: piSessionsDir,
+        name: "new-abc",
+        sourcePath,
+        seedTokens: 1_000_000,
+      })
+    )?.path;
     assert.ok(newPath);
     // No archive dir created for ephemeral sessions.
     assert.equal(readdirSync(piSessionsDir).includes("archive"), false);
@@ -606,7 +620,7 @@ describe("rotation boundary note", () => {
 // --- Load-bearing: a live SessionManager adopts the rotated session ---------
 
 describe("rotatePiSession + SessionManager adoption (real SDK)", () => {
-  it("switching the live SessionManager to the rotated file exposes only the tail", () => {
+  it("switching the live SessionManager to the rotated file exposes only the tail", async () => {
     const home = resolve(scratch(), "home");
     mkdirSync(home, { recursive: true });
     const piSessionsDir = resolve(scratch(), ".mind/pi-sessions");
@@ -635,13 +649,15 @@ describe("rotatePiSession + SessionManager adoption (real SDK)", () => {
     // Rotate onto the budget tail — this is what rotateInPlace does, minus the
     // agent.state re-sync (which assigns the value below). A tight budget keeps only
     // the final turn (u3 onward), so the assertion is deterministic.
-    const newPath = rotatePiSession({
-      cwd: home,
-      sessionsDir: piSessionsDir,
-      name: "main",
-      sourcePath,
-      seedTokens: 1,
-    });
+    const newPath = (
+      await rotatePiSession({
+        cwd: home,
+        sessionsDir: piSessionsDir,
+        name: "main",
+        sourcePath,
+        seedTokens: 1,
+      })
+    )?.path;
     assert.ok(newPath);
 
     // The load-bearing adoption step: switch the live SM to the rotated file.
@@ -697,7 +713,7 @@ describe("ephemeral new-* sessions (file-backed, real SDK)", () => {
     assert.doesNotMatch(JSON.stringify(sm.buildSessionContext().messages), /ephemeral turn/);
   });
 
-  it("rotates a file-backed ephemeral onto the tail but writes no archive", () => {
+  it("rotates a file-backed ephemeral onto the tail but writes no archive", async () => {
     const home = resolve(scratch(), "home");
     mkdirSync(home, { recursive: true });
     const piSessionsDir = resolve(scratch(), ".mind/pi-sessions");
@@ -717,13 +733,15 @@ describe("ephemeral new-* sessions (file-backed, real SDK)", () => {
     const sm = SessionManager.continueRecent(home, ephDir);
     const sourcePath = sm.getSessionFile();
     assert.ok(sourcePath);
-    const newPath = rotatePiSession({
-      cwd: home,
-      sessionsDir: piSessionsDir,
-      name: "new-xyz",
-      sourcePath,
-      seedTokens: 1,
-    });
+    const newPath = (
+      await rotatePiSession({
+        cwd: home,
+        sessionsDir: piSessionsDir,
+        name: "new-xyz",
+        sourcePath,
+        seedTokens: 1,
+      })
+    )?.path;
     assert.ok(newPath);
     // Ephemeral rotation writes no archive (no pointer/archive for one-offs).
     assert.equal(readdirSync(piSessionsDir).includes("archive"), false);
@@ -935,12 +953,17 @@ describe("buildSeededPiTranscript — trimming an over-budget final turn", () =>
     assert.ok(total <= 2400, `seed ~${Math.round(total)} tokens is over budget`);
   });
 
-  it("the real SessionManager resumes the whole trimmed chain, prompt to final step", () => {
+  it("the real SessionManager resumes the whole trimmed chain, prompt to final step", async () => {
     const home = resolve(scratch(), "home");
     mkdirSync(home, { recursive: true });
     const piSessionsDir = resolve(scratch(), ".mind/pi-sessions");
     makeArchive(piSessionsDir, "main", "2026-07-18T09-30", toolLoop(10));
-    const seeded = seedPiSession({ cwd: home, piSessionsDir, name: "main", seedTokens: 3500 });
+    const seeded = await seedPiSession({
+      cwd: home,
+      piSessionsDir,
+      name: "main",
+      seedTokens: 3500,
+    });
     assert.ok(seeded);
     const sm = SessionManager.continueRecent(home, resolve(piSessionsDir, "main"));
     assert.equal(sm.getSessionId(), seeded.sessionId);
@@ -1182,21 +1205,20 @@ describe("buildSeededPiTranscript — text rate follows the transcript's model",
   });
 });
 
-describe("seedPiSession — recollection is chosen by value", () => {
-  it("an undefined recollect runs the sync path", () => {
+describe("seedPiSession — without a recollection source", () => {
+  it("seeds the tail alone when recollect is undefined (recollection disabled)", async () => {
     const home = resolve(scratch(), "home");
     mkdirSync(home, { recursive: true });
     const piSessionsDir = resolve(scratch(), ".mind/pi-sessions");
     makeArchive(piSessionsDir, "main", "2026-07-18T09-30", convo());
-    const opts = {
+    const seeded = await seedPiSession({
       cwd: home,
       piSessionsDir,
       name: "main",
       seedTokens: 1_000_000,
       recollect: undefined,
-    };
-    const seeded = seedPiSession(opts);
-    assert.ok(seeded && !(seeded instanceof Promise));
+    });
+    assert.ok(seeded);
     assert.equal(seeded.recallEntries, 0);
   });
 });

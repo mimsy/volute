@@ -21,13 +21,14 @@ import {
   readSdkInstructions,
   readSkillDescriptions,
 } from "./lib/context-breakdown.js";
-import { daemonEmit, daemonNotice } from "./lib/daemon-client.js";
+import { daemonEmit, daemonNotice, daemonRecollection } from "./lib/daemon-client.js";
 import { dispatchPrompt } from "./lib/dispatch.js";
 import { createEventHandler, emit } from "./lib/event-handler.js";
 import { runHooks } from "./lib/hook-loader.js";
 import { createIdentityWatch } from "./lib/identity-watch.js";
 import { log } from "./lib/logger.js";
-import { DEFAULT_SEED_TOKENS, rotatePiSession, seedPiSession } from "./lib/pi-session-seed.js";
+import { rotatePiSession, seedPiSession } from "./lib/pi-session-seed.js";
+import { postToolUseInput } from "./lib/post-tool-use-input.js";
 import { createReplyInstructionsExtension } from "./lib/reply-instructions-extension.js";
 import { resolveModel } from "./lib/resolve-model.js";
 import { buildSeededNote, type SeedCause } from "./lib/seed-note.js";
@@ -39,7 +40,8 @@ import {
   markCommitted,
   threadRef,
 } from "./lib/session-marker.js";
-import { getStartupContext, type SubagentConfig } from "./lib/startup.js";
+import { recallTokenBudget } from "./lib/session-seed.js";
+import { getStartupContext, type StartupSource, type SubagentConfig } from "./lib/startup.js";
 import { createSubagentExtension, type SubagentDefinition } from "./lib/subagents.js";
 import type {
   HandlerMeta,
@@ -75,7 +77,13 @@ type PiSession = {
    * that run settles, so a turn that never ran re-offers them rather than losing them.
    */
   offered: Set<"seeded" | "startup" | "rotation">;
-  /** True once the startup context has reached a settled run. */
+  /**
+   * The seam this session's startup context names — set when the session starts, rotates
+   * or starts over (as claude's SessionStart runs per stream). The hook itself runs on the
+   * first turn after it, so what it reports (the time, the spend line) is current then.
+   */
+  startupSource?: StartupSource;
+  /** True once the current startup context has reached a settled run. */
   startupContextDelivered?: boolean;
   /**
    * True when this session was seeded from the previous session's transcript. Injects
@@ -86,6 +94,26 @@ type PiSession = {
   seededArchivedAt?: number | null;
   /** Why the tail is seeded — picks the boundary note's wording. Last cause wins. */
   seededCause?: SeedCause;
+  /** The latest seed (restore or rotation) carried recollection — the note says so. */
+  seededRecollection?: boolean;
+  /**
+   * Open from a run's agent_end — when the daemon hears `done` and may send the next
+   * message — until the run has settled and any rotation (which may await the daemon's
+   * recollection) is done. New messages wait on it before dispatching, rather than
+   * joining a run that's winding down or piling into pi's settle-deferral queue (which
+   * runs them inside the settling prompt's own call, where one message's failure lands on
+   * another's turn and cuts off the rest).
+   */
+  settle?: { promise: Promise<void>; open: boolean; release(): void };
+  /**
+   * Open while a fresh prompt is on its way into a run (pi's pre-run awaits: hooks, image
+   * normalization) and closed at agent_start. The next message waits for it, so at most
+   * one prompt is ever between pi's checks and its run: a second one can't slip into a
+   * run of its own while the first run's settle is rotating the session under it.
+   */
+  freshPrompt?: Promise<void>;
+  /** Closes `freshPrompt` when the run it was waiting for starts. */
+  onRunStart?: () => void;
   /**
    * Set after an in-place rotation so the mind is told, on its next turn, that the
    * session rotated at the context limit. Delivered separately from the restored-seed
@@ -113,8 +141,13 @@ export async function createMind(options: {
   model?: string;
   thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
   maxContextTokens?: number;
-  /** Estimated-token budget for seeding a fresh persistent session. 0 disables. Default 30000. */
+  /**
+   * Estimated-token budget for a seed's verbatim tail. 0 disables seeding. Omitted, it
+   * follows what arrived (see SeedBudget.seedTokens).
+   */
   seedTokens?: number;
+  /** Seed the mind's recollection ahead of the verbatim tail at every seam. Default true. */
+  recollection?: boolean;
   subagents?: Record<string, SubagentConfig>;
   /**
    * Called at the end of a turn in which the mind edited its own SOUL.md, MEMORY.md or
@@ -134,7 +167,9 @@ export async function createMind(options: {
   // failed restart doesn't re-fire on every later turn of every session.
   const identityWatch = createIdentityWatch(options.cwd);
   const maxContextTokens = options.maxContextTokens;
-  const seedTokens = options.seedTokens ?? DEFAULT_SEED_TOKENS;
+  const seedTokens = options.seedTokens;
+  const recollect = options.recollection !== false ? daemonRecollection : undefined;
+  const recallTokens = recallTokenBudget(maxContextTokens);
 
   if (maxContextTokens) {
     log("mind", `compaction threshold: ${maxContextTokens} tokens`);
@@ -200,10 +235,28 @@ export async function createMind(options: {
 
   const subagents = loadSubagents(options.subagents);
 
-  // --- Startup context (loaded once, injected on first turn per session) ---
+  /** A session just started, rotated or reset: its next turn is oriented afresh. */
+  function refreshStartupContext(session: PiSession, source: StartupSource) {
+    session.startupContextDelivered = false;
+    session.startupSource = source;
+  }
 
-  // Placeholder until this template runs startup context per session (#1199).
-  const startupContextPromise = getStartupContext({ source: "startup" }).catch(() => null);
+  /**
+   * Run the startup-context hook for this turn. getStartupContext reports a hook's own
+   * failure; anything that escapes it is logged here, and the turn runs without it.
+   */
+  async function loadStartupContext(session: PiSession): Promise<string | null> {
+    try {
+      return await getStartupContext({
+        session: session.name,
+        source: session.startupSource ?? "startup",
+        mindDir: options.mindDir,
+      });
+    } catch (err) {
+      log("mind", `session "${session.name}": startup context failed:`, err);
+      return null;
+    }
+  }
 
   // --- Dynamic hook extension ---
 
@@ -233,6 +286,7 @@ export async function createMind(options: {
           const note = buildSeededNote({
             cause: "restored",
             archivedAtMs: session.seededArchivedAt ?? null,
+            recollection: session.seededRecollection,
           });
           emit(session, {
             type: "context",
@@ -245,7 +299,7 @@ export async function createMind(options: {
         // Inject startup context on the first turn of each session
         if (!session.startupContextDelivered) {
           session.offered.add("startup");
-          const startupContext = await startupContextPromise;
+          const startupContext = await loadStartupContext(session);
           if (startupContext) {
             emit(session, {
               type: "context",
@@ -261,7 +315,10 @@ export async function createMind(options: {
         // which only fires on a freshly created agent session).
         if (session.rotationNotePending) {
           session.offered.add("rotation");
-          const note = buildSeededNote({ cause: "rotation" });
+          const note = buildSeededNote({
+            cause: "rotation",
+            recollection: session.seededRecollection,
+          });
           emit(session, {
             type: "context",
             content: note,
@@ -303,13 +360,23 @@ export async function createMind(options: {
       pi.on("tool_execution_end", async (event) => {
         const toolInput = pendingToolArgs.get(event.toolCallId);
         pendingToolArgs.delete(event.toolCallId);
+        // As on claude, post-tool-use hooks follow a call that succeeded.
+        if (event.isError) return;
         try {
-          const result = await runHooks(hooksDir, "post-tool-use", {
-            event: "post-tool-use",
-            session: session.name,
-            tool_name: event.toolName,
-            tool_input: toolInput,
-          });
+          const result = await runHooks(
+            hooksDir,
+            "post-tool-use",
+            postToolUseInput({
+              session: session.name,
+              sessionId: session.agentSession?.sessionManager.getSessionId(),
+              transcriptPath: session.agentSession?.sessionManager.getSessionFile(),
+              cwd: options.cwd,
+              toolName: event.toolName,
+              toolCallId: event.toolCallId,
+              toolInput,
+              toolResponse: event.result,
+            }),
+          );
           if (result.additionalContext) {
             emit(session, {
               type: "context",
@@ -376,14 +443,18 @@ export async function createMind(options: {
     // transcript so the mind experiences the conversation continuing rather than
     // waking into an empty context. seedPiSession no-ops when a live session
     // already exists (continueRecent will resume that instead). Ephemeral
-    // `new-*` sessions are one-offs — they never seed at start.
+    // `new-*` sessions are one-offs — they never seed at start. Awaited here because
+    // recollection comes from the daemon; messages wait on session.ready meanwhile.
     const seeded = isEphemeral
       ? null
-      : seedPiSession({
+      : await seedPiSession({
           cwd: options.cwd,
           piSessionsDir: options.sessionsDir,
           name: session.name,
           seedTokens,
+          recallTokens,
+          recollect,
+          model: `${model.provider}/${model.id}`,
         });
 
     // Whether this thread is known to hold real conversation — see session-marker.ts.
@@ -456,10 +527,14 @@ export async function createMind(options: {
       session.seeded = true;
       session.seededArchivedAt = seeded.archivedAt;
       session.seededCause = "restored";
+      session.seededRecollection = seeded.recallEntries > 0;
       log("mind", `session "${session.name}": seeded from previous transcript`);
     }
 
     log("mind", `session "${session.name}": ${isEphemeral ? "ephemeral" : "persistent"}`);
+    // A seeded thread is a new session carrying a tail; only a transcript resumed as it was
+    // continues an existing one.
+    refreshStartupContext(session, resumed && !adoptedSeed ? "resume" : "startup");
 
     // Compaction is rotation (not SDK /compact), and it's silent: crossing the
     // threshold (onContextTokens) or a native PreCompact just sets rotatePending; the
@@ -482,22 +557,30 @@ export async function createMind(options: {
      * of provider context, and refreshContext re-projects the agent's public transcript
      * from it (assigning state.messages directly no longer changes what the mind sees).
      */
-    function rotateInPlace(): boolean {
+    async function rotateInPlace(): Promise<boolean> {
       const as = session.agentSession;
       const sourcePath = as?.sessionManager.getSessionFile();
       if (!as || !sourcePath) return false; // not ready — fall back to fresh
-      const newPath = rotatePiSession({
+      // Recollection comes from the daemon, so this awaits. The session stays quiet across
+      // it: this runs inside pi's agent_settled emission, which pi awaits, deferring any
+      // prompt() until it returns — nothing is appended to the transcript read here.
+      const rotated = await rotatePiSession({
         cwd: options.cwd,
         sessionsDir: options.sessionsDir,
         name: session.name,
         sourcePath,
         seedTokens,
+        recallTokens,
+        recollect,
+        model: `${model.provider}/${model.id}`,
       });
-      if (!newPath) return false;
-      as.sessionManager.setSessionFile(newPath);
+      if (!rotated) return false;
+      as.sessionManager.setSessionFile(rotated.path);
       as.refreshContext();
       session.rotationNotePending = true;
       session.seededCause = "rotation";
+      session.seededRecollection = rotated.recallEntries > 0;
+      refreshStartupContext(session, "compact");
       session.consecutiveRotations = (session.consecutiveRotations ?? 0) + 1;
       compactBlocked = false; // re-arm the native-compaction backstop
       log(
@@ -519,6 +602,7 @@ export async function createMind(options: {
         as.sessionManager.newSession();
         as.refreshContext();
       }
+      refreshStartupContext(session, "clear");
       session.consecutiveRotations = 0;
       compactBlocked = false;
       log("mind", `session "${session.name}": rotation failed, starting fresh`);
@@ -539,13 +623,14 @@ export async function createMind(options: {
      * queued continuation, and nothing is streaming. This — not agent_end, which the
      * daemon's `done` follows, and after which a queued follow-up can still be streaming
      * in the same run — is the only point where swapping the session file can't land
-     * under a live turn. It runs synchronously inside pi's settle emission, during which
-     * a new prompt() is deferred until after it, so nothing can start mid-swap. (A
-     * prompt() that entered before settle and is still in its pre-run awaits will run on
-     * the rotated context — consistent, just without the rotation note until the next
-     * turn.)
+     * under a live turn. pi awaits it inside its settle emission, during which a new
+     * prompt() is deferred until after it, so nothing can start mid-swap — including
+     * while rotation awaits the daemon's recollection. Our own messages don't lean on
+     * that deferral: they wait on `session.settle`, held from agent_end, and on
+     * `session.freshPrompt`, so none is in pi's pre-run while a settle rotates.
      */
-    function onSettled() {
+    async function onSettled() {
+      holdForSettle(session);
       try {
         const as = session.agentSession;
         // The run resolved, so the one-shot injections offered to it had their chance to
@@ -568,7 +653,7 @@ export async function createMind(options: {
         }
         rotatePending = false;
         rotatedThisRun = true;
-        if (!rotateInPlace()) {
+        if (!(await rotateInPlace())) {
           // Rotation couldn't proceed — fresh session, not a silent native compaction.
           freshFallback();
         }
@@ -577,13 +662,18 @@ export async function createMind(options: {
         rotatePending = false;
         // Compaction state is unknown after a throw — hold the identity restart back.
         rotatedThisRun = true;
+      } finally {
+        session.settle?.release();
       }
     }
 
     const turnBoundaryExtension: ExtensionFactory = (pi) => {
       pi.on("agent_start", () => {
         rotatedThisRun = false;
+        session.onRunStart?.();
+        session.onRunStart = undefined;
       });
+      pi.on("agent_end", () => holdForSettle(session));
       pi.on("agent_settled", onSettled);
       pi.on("session_before_compact", () => {
         // The SDK's native auto-compaction wants to fire. Converge it onto rotation:
@@ -705,6 +795,30 @@ export async function createMind(options: {
     log("mind", `session "${session.name}": ready`);
   }
 
+  /** Open the session's settle hold, unless one is already open. See PiSession.settle. */
+  function holdForSettle(session: PiSession) {
+    if (session.settle?.open) return;
+    let resolve!: () => void;
+    const settle = {
+      promise: new Promise<void>((r) => {
+        resolve = r;
+      }),
+      open: true,
+      release() {
+        settle.open = false;
+        // Released on the next macrotask, not now: pi is still inside its settle emission
+        // until the handler's promise has resolved through it, and a prompt() made before
+        // then would be deferred into the queue we're keeping messages out of. Cleared
+        // only if no later run has opened a hold of its own meanwhile.
+        setImmediate(() => {
+          if (session.settle === settle) session.settle = undefined;
+          resolve();
+        });
+      },
+    };
+    session.settle = settle;
+  }
+
   /** Drop a finished ephemeral session: `new-*` names are never reused, so it only holds memory. */
   function evictEphemeral(session: PiSession) {
     const as = session.agentSession;
@@ -784,18 +898,39 @@ export async function createMind(options: {
         session.inFlight++;
         (async () => {
           await session.ready;
-          if (!session.agentSession) {
+          for (;;) {
+            const wait = session.settle?.promise ?? session.freshPrompt;
+            if (!wait) break;
+            await wait;
+          }
+          const as = session.agentSession;
+          if (!as) {
             // The session failed to start (and has been evicted). Fail this turn loudly
             // through the catch below rather than dropping the message with only a local
             // done: the daemon would never hear the turn ended.
             throw session.initError ?? new Error("session failed to start");
           }
-          // This await is load-bearing: without it a prompt rejection (burst race,
-          // auth failure, ...) floats as an unhandled rejection and crashes the
-          // mind server instead of landing in the .catch below (issue #565).
-          await dispatchPrompt(session.agentSession, text, opts, meta.interrupt === true, () =>
-            interruptSession(sessionName),
-          );
+          let releaseFresh: (() => void) | undefined;
+          if (!as.isStreaming) {
+            const gate = new Promise<void>((r) => {
+              releaseFresh = () => {
+                if (session.freshPrompt === gate) session.freshPrompt = undefined;
+                r();
+              };
+            });
+            session.freshPrompt = gate;
+            session.onRunStart = releaseFresh;
+          }
+          try {
+            // This await is load-bearing: without it a prompt rejection (burst race,
+            // auth failure, ...) floats as an unhandled rejection and crashes the
+            // mind server instead of landing in the .catch below (issue #565).
+            await dispatchPrompt(as, text, opts, meta.interrupt === true, () =>
+              interruptSession(sessionName),
+            );
+          } finally {
+            releaseFresh?.();
+          }
         })()
           .catch(async (err) => {
             log("mind", `session "${sessionName}": prompt failed:`, err);

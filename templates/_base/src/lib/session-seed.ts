@@ -1005,17 +1005,7 @@ async function composeSeed(
   return emitTail(planned.parsed, planned.plan, recall, opts.timeZone);
 }
 
-/** Run a seam's sync path; any throw is reported and becomes null — seams never throw. */
-export function failSoft<T>(run: () => T | null, onError: (err: unknown) => void): T | null {
-  try {
-    return run();
-  } catch (err) {
-    onError(err);
-    return null;
-  }
-}
-
-/** failSoft for a seam's async path. */
+/** Run a seam; any throw is reported and becomes null — seams never throw. */
 export async function failSoftAsync<T>(
   run: () => Promise<T | null>,
   onError: (err: unknown) => void,
@@ -1026,25 +1016,6 @@ export async function failSoftAsync<T>(
     onError(err);
     return null;
   }
-}
-
-/**
- * A pi or codex seam given a recollection source: the source is required (it makes the
- * seam async), and the tail budget may be left to follow what arrived.
- */
-export type WithRecollection<T extends { seedTokens: number }> = Omit<T, "seedTokens"> &
-  RecollectionOptions &
-  SeedBudget & { recollect: RecollectionSource };
-
-/**
- * Whether a seam call takes its async path. Tests the value, not the key: options built
- * as `{ …, recollect: enabled ? source : undefined }` type-check against the sync
- * overload, so they must run it.
- */
-export function hasRecollect<T extends { seedTokens: number }>(
-  opts: T | WithRecollection<T>,
-): opts is WithRecollection<T> {
-  return typeof (opts as { recollect?: unknown }).recollect === "function";
 }
 
 /** Result of a successful seed: the new session id and when the source was archived. */

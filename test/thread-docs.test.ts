@@ -31,14 +31,20 @@ describe("thread docs claims", () => {
     );
   });
 
-  it("claude and codex seed a fresh thread with recollection, pi doesn't yet", () => {
-    // The Threads sections say "on the claude and codex frameworks". When pi gains
-    // recollection this fails on purpose, and the qualifier should go in the same change.
+  it("every template seeds a fresh thread with recollection", () => {
+    // VOLUTE.md's Threads section and the volute-mind skill say so for every framework
+    // (#1192), naming the exceptions: `$new` threads, nothing to continue, recollection off.
     assert.match(read("templates/claude/src/agent.ts"), /seedSession\(\{[^}]*recollect,/s);
-    assert.match(read("templates/codex/src/agent.ts"), /recollect = [^;]*daemonRecollection/);
-    assert.doesNotMatch(read("templates/pi/src/agent.ts"), /recollect/, "pi");
+    assert.match(read("templates/codex/src/agent.ts"), /daemonRecollection/);
+    assert.match(read("templates/pi/src/agent.ts"), /seedPiSession\(\{[^}]*recollect,/s);
+    assert.match(read("templates/pi/src/agent.ts"), /rotatePiSession\(\{[^}]*recollect,/s);
     for (const doc of ["templates/_base/home/VOLUTE.md", "skills/volute-mind/SKILL.md"]) {
-      assert.match(read(doc), /on the claude and codex frameworks/i, doc);
+      assert.doesNotMatch(
+        read(doc),
+        /on the claude (and codex )?frameworks?[^.]*recollection/i,
+        doc,
+      );
+      assert.match(read(doc), /usually also[^.]*recollection[^.]*`\$new` thread/s, doc);
     }
   });
 

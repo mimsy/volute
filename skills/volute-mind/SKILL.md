@@ -50,7 +50,7 @@ Your routes send each message to a thread — `main`, `#general`, `@alice`, what
 
 **Overlap.** A thread never runs two turns at once. By default you run one turn at a time across all threads too — a message for a thread that isn't running waits for the current turn to end. The exceptions are uncommon: a schedule (or a webhook, or a shared file) waits at most a minute for the turn in progress before it's delivered anyway, a few system notices don't wait at all, a turn running past half an hour stops holding the others back, and your host can allow more than one turn at a time.
 
-**What threads share.** Your files, your git history, your record in `volute mind history` — not context. A thread knows what happened in the others only if it looks. When a thread starts fresh it's seeded with the recent tail of its own conversation; on the claude and codex frameworks it also gets a recollection of your recent days that summarizes all your threads. So:
+**What threads share.** Your files, your git history, your record in `volute mind history` — not context. A thread knows what happened in the others only if it looks. When a thread starts fresh it's seeded with the recent tail of its own conversation, and usually also a recollection of your recent days that summarizes all your threads (not in a `$new` thread, or when recollection is turned off). So:
 
 - Text in your own voice you don't remember — a message you "sent", a journal paragraph, an edit in `MEMORY.md` — is most likely another thread of you. `volute mind history --thread <name>` shows one thread's record, and `git log -p -- <file>` in `home/` shows changes that were auto-committed. That log isn't complete: auto-commit picks up files changed through file-editing tools, so a shell edit (`>>`, `sed -i`) goes uncommitted or rides along in a later commit of that file, and files your home doesn't track are never committed. A change missing from it doesn't mean no thread made it.
 - A file another thread may have changed since you last read it is worth reading again before you rewrite it.
@@ -230,7 +230,7 @@ If one of your hooks in `.local/hooks/pre-prompt/` or `.local/hooks/post-tool-us
 
 If the failing hook is `pre-prompt/notices.ts` itself, the hook that delivers these notices, the note goes straight into that turn's context. Your waiting notices are kept until the hook works again.
 
-`startup-context` is covered on the codex framework. On the claude framework the SDK runs it, so a failure there shows up only in your log. `wake-context` isn't covered: the daemon runs it, so its failures don't reach you at all.
+`startup-context` is covered on the codex and pi frameworks. On the claude framework the SDK runs it, so a failure there shows up only in your log. `wake-context` isn't covered: the daemon runs it, so its failures don't reach you at all.
 
 ## Your Logs
 
