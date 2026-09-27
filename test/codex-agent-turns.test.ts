@@ -125,6 +125,34 @@ function writeRollout(root: string, threadId: string) {
   return path;
 }
 
+/** A rollout with real conversation in it, which the seeders can build a tail from. */
+function writeConversation(root: string, threadId: string) {
+  const line = (type: string, payload: Record<string, unknown>) =>
+    JSON.stringify({ timestamp: "2026-09-20T09:00:00.000Z", type, payload });
+  const msg = (role: string, text: string) =>
+    line("response_item", { type: "message", role, content: [{ type: "input_text", text }] });
+  const path = writeRollout(root, threadId);
+  writeFileSync(
+    path,
+    `${[
+      line("session_meta", {
+        id: threadId,
+        session_id: threadId,
+        timestamp: "2026-09-20T09:00:00.000Z",
+      }),
+      msg("user", "what were we doing"),
+      msg("assistant", "tending the tideline"),
+    ].join("\n")}\n`,
+  );
+  return path;
+}
+
+function writeArchivePointer(name: string, stamp: string, threadId: string) {
+  const archiveDir = resolve(mindDir, ".mind/codex-sessions/archive");
+  mkdirSync(archiveDir, { recursive: true });
+  writeFileSync(resolve(archiveDir, `${name}-${stamp}.json`), JSON.stringify({ threadId }));
+}
+
 function writePointer(name: string, threadId: string, committed: boolean) {
   const dir = resolve(mindDir, ".mind/codex-sessions");
   mkdirSync(dir, { recursive: true });
@@ -235,6 +263,9 @@ before(async () => {
   process.env.VOLUTE_MIND = "codex-test";
   process.env.VOLUTE_MIND_TOKEN = "t";
   process.env.CODEX_HOME = codexHome;
+  // The other root codex reads — `~/.codex/sessions` without CODEX_HOME — kept in the
+  // scratch dir rather than the real home.
+  process.env.HOME = resolve(mindDir, "fakehome");
   process.chdir(mindDir);
 
   const { createMind } = await import(resolve(composedDir, "src/agent.ts"));
@@ -371,29 +402,8 @@ describe("codex resume checks the rollout codex will read (#1188, #985)", () => 
 
   it("stamps a seeded thread's pointer before its first turn runs", async () => {
     const archived = "019f5e60-86f5-7770-80fa-6e9eadf58c24";
-    const archiveDir = resolve(mindDir, ".mind/codex-sessions/archive");
-    mkdirSync(archiveDir, { recursive: true });
-    writeFileSync(
-      resolve(archiveDir, "seeded-2026-09-20T10-00.json"),
-      JSON.stringify({ threadId: archived }),
-    );
-    const line = (type: string, payload: Record<string, unknown>) =>
-      JSON.stringify({ timestamp: "2026-09-20T09:00:00.000Z", type, payload });
-    const msg = (role: string, text: string) =>
-      line("response_item", { type: "message", role, content: [{ type: "input_text", text }] });
-    const rollout = writeRollout(resolve(codexHome, "sessions"), archived);
-    writeFileSync(
-      rollout,
-      `${[
-        line("session_meta", {
-          id: archived,
-          session_id: archived,
-          timestamp: "2026-09-20T09:00:00.000Z",
-        }),
-        msg("user", "what were we doing"),
-        msg("assistant", "tending the tideline"),
-      ].join("\n")}\n`,
-    );
+    writeArchivePointer("seeded", "2026-09-20T10-00", archived);
+    writeConversation(resolve(codexHome, "sessions"), archived);
     let pointerDuringTurn: unknown = null;
     script("seeded", { during: () => (pointerDuringTurn = readPointer("seeded")) });
     await send("seeded");
@@ -401,6 +411,47 @@ describe("codex resume checks the rollout codex will read (#1188, #985)", () => 
     assert.ok(call?.threadId && call.threadId !== archived, "expected a freshly seeded thread");
     assert.deepEqual(pointerDuringTurn, { threadId: call?.threadId, committed: true });
     assert.match(call?.input as string, /restored/i, "the seeded note reaches the first turn");
+  });
+
+  it("carries a lost thread's own rollout over from the root codex used to read", async () => {
+    // A provider switch: the committed thread's rollout is in ~/.codex/sessions, but
+    // CODEX_HOME now points codex at .mind/codex. Its own tail is carried across.
+    const lost = "019f5e60-0000-7000-8000-00000000ca11";
+    writeConversation(resolve(process.env.HOME ?? "", ".codex/sessions"), lost);
+    writePointer("switched", lost, true);
+    await send("switched");
+    const call = control.calls.find((c) => c.session === "switched");
+    assert.ok(
+      call?.threadId && call.threadId !== lost,
+      "expected the tail carried to a new thread",
+    );
+    const { rolloutVisibleToCodex } = await import(resolve(composedDir, "src/lib/rollout.ts"));
+    assert.ok(rolloutVisibleToCodex(call.threadId), "carried rollout isn't where codex reads");
+    assert.match(call.input as string, /restored/i, "the first turn says the tail was restored");
+    await settle();
+    assert.equal(noticesMentioning("switched").length, 0, "nothing was lost");
+    assert.deepEqual(readPointer("switched"), { threadId: call.threadId, committed: true });
+  });
+
+  it("says how old an archive is when it stands in for a lost thread", async () => {
+    const archived = "019f5e60-0000-7000-8000-0000000a2c41";
+    const stamp = new Date(Date.now() - 3 * 86_400_000)
+      .toISOString()
+      .replace(/[:.]/g, "-")
+      .slice(0, 16);
+    writeArchivePointer("stand-in", stamp, archived);
+    // The archive's rollout is in the other root too: the seed must land where codex reads.
+    writeConversation(resolve(process.env.HOME ?? "", ".codex/sessions"), archived);
+    writePointer("stand-in", "019f5e60-0000-7000-8000-0000000905e0", true);
+    await send("stand-in");
+    const call = control.calls.find((c) => c.session === "stand-in");
+    assert.ok(call?.threadId && call.threadId !== archived);
+    const { rolloutVisibleToCodex } = await import(resolve(composedDir, "src/lib/rollout.ts"));
+    assert.ok(rolloutVisibleToCodex(call.threadId), "seed isn't where codex reads");
+    await settle();
+    const notices = noticesMentioning("stand-in");
+    assert.equal(notices.length, 1);
+    assert.match(notices[0].body.message, /older session, archived about 3 days ago/);
   });
 
   it("drops an uncommitted pointer without claiming a loss (#769)", async () => {

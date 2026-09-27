@@ -23,7 +23,7 @@ import { daemonEmit, daemonNotice, type EventType } from "./lib/daemon-client.js
 import { changedPaths } from "./lib/home-changes.js";
 import { runHooks } from "./lib/hook-loader.js";
 import { log, warn } from "./lib/logger.js";
-import { rolloutVisibleToCodex } from "./lib/rollout.js";
+import { codexSessionsRoot, rolloutVisibleToCodex } from "./lib/rollout.js";
 import {
   budgetSpent,
   createRotationGuard,
@@ -32,7 +32,7 @@ import {
   recordRotation,
   shouldRotate,
 } from "./lib/rotation.js";
-import { buildSeededNote, type SeedCause } from "./lib/seed-note.js";
+import { buildSeededNote, formatGap, type SeedCause } from "./lib/seed-note.js";
 import { createSessionStore, lostRealContext } from "./lib/session-store.js";
 import { getStartupContext, loadPrompts, loadSystemPrompt } from "./lib/startup.js";
 import { threadRef } from "./lib/thread-ref.js";
@@ -321,32 +321,51 @@ export function createMind(options: {
     if (!isEphemeral) {
       const stored = sessionStore.load(session.name);
       let resumeThreadId = stored?.threadId;
+      // A committed thread whose rollout codex can't read — the one this session would
+      // otherwise be waking into, and what it lost if nothing can bring it back.
+      let lostThreadId: string | undefined;
       // `resumeThread` never throws — it only builds an object — so a pointer to a rollout
       // codex can't find has to be caught here, or it fails every turn on this thread.
       if (resumeThreadId && !rolloutVisibleToCodex(resumeThreadId)) {
         log(
           "mind",
-          `session "${session.name}": stored thread ${resumeThreadId} not found, starting fresh`,
+          `session "${session.name}": stored thread ${resumeThreadId} not found by codex`,
         );
         sessionStore.delete(session.name);
-        resumeThreadId = undefined;
         if (lostRealContext(stored)) {
-          // Worded to stay true whether or not seeding (below) restores part of it: the
-          // live thread is gone either way.
-          noticeContextLost(
-            session.name,
-            `The previous session for ${threadRef(session.name)} couldn't be restored ` +
-              "(its codex rollout is missing), so it was reset. `volute mind history` has " +
-              "the record of what you were doing.",
-          );
+          lostThreadId = resumeThreadId;
         } else {
           // Stamped at thread.started, but no turn ever completed in it — nothing to lose,
           // and saying otherwise on an ordinary restart would be a lie (#769).
           log("mind", `session "${session.name}": pointer never carried a turn — nothing was lost`);
         }
+        resumeThreadId = undefined;
       } else if (stored && resumeThreadId) {
         session.committed = stored.committed;
       }
+
+      // The lost rollout may still exist in the root codex used to read — a provider switch
+      // moves CODEX_HOME. Then this thread's own tail can be carried to where codex looks
+      // now: the same conversation, restored the way any restart restores it.
+      if (lostThreadId && findCodexSessionFile(lostThreadId, options.mindDir)) {
+        const carried = rotateCodexSession({
+          mindDir: options.mindDir,
+          name: session.name,
+          oldThreadId: lostThreadId,
+          seedTokens,
+          sessionsRoot: codexSessionsRoot(),
+        });
+        if (carried) {
+          log(
+            "mind",
+            `session "${session.name}": carried ${lostThreadId} to codex's root as ${carried}`,
+          );
+          resumeThreadId = carried;
+          armSeeded(session, carried, null);
+          lostThreadId = undefined;
+        }
+      }
+
       if (!resumeThreadId) {
         // Fresh persistent session — seed it from the previous session's archived
         // rollout so the mind experiences the conversation continuing rather than
@@ -355,28 +374,27 @@ export function createMind(options: {
           mindDir: options.mindDir,
           name: session.name,
           seedTokens,
+          sessionsRoot: codexSessionsRoot(),
         });
-        if (seeded && !rolloutVisibleToCodex(seeded.threadId)) {
-          // The seed is written next to its source rollout, which can be a root codex
-          // no longer reads (CODEX_HOME changes with the provider). Resuming it would
-          // fail every turn, so treat it as a seed that didn't happen.
-          log(
-            "mind",
-            `session "${session.name}": seeded thread ${seeded.threadId} isn't where codex looks — starting fresh`,
-          );
-        } else if (seeded) {
+        if (seeded) {
           resumeThreadId = seeded.threadId;
-          session.seeded = true;
-          session.seededArchivedAt = seeded.archivedAt;
-          session.seededCause = "restored";
-          // The seeded rollout carries the previous session's tail — real content from
-          // the start, so losing it later is a genuine loss.
-          session.committed = true;
-          // Stamped now, as claude does, not at the first turn's thread.started: a restart
-          // before that turn would otherwise seed again from the same archive, leaving
-          // an orphan rollout behind each time.
-          sessionStore.save(session.name, seeded.threadId, true);
+          armSeeded(session, seeded.threadId, seeded.archivedAt);
           log("mind", `session "${session.name}": seeded from previous transcript`);
+        }
+        if (lostThreadId) {
+          // The live thread is gone. If an older archive stood in for it, say how old, so
+          // the "restored" note on that tail and this notice tell one story, not two.
+          const gap = seeded?.archivedAt != null ? formatGap(Date.now() - seeded.archivedAt) : null;
+          const standIn = !seeded
+            ? ""
+            : ` What you see in it now is an older session${gap ? `, archived ${gap} ago` : ""}` +
+              " — everything after that is lost.";
+          noticeContextLost(
+            session.name,
+            `The previous session for ${threadRef(session.name)} couldn't be restored ` +
+              `(its codex rollout is missing), so it was reset.${standIn} ` +
+              "`volute mind history` has the record of what you were doing.",
+          );
         }
       }
       if (resumeThreadId) {
@@ -388,6 +406,20 @@ export function createMind(options: {
     }
 
     startFreshThread(session);
+  }
+
+  /**
+   * Arm a session to resume a seeded thread: the boundary note for its first turn, and a
+   * committed pointer — the tail is real content from the start. Stamped now, as claude
+   * does, not at the first turn's thread.started, or a restart before that turn would seed
+   * again from the same source.
+   */
+  function armSeeded(session: CodexSession, threadId: string, archivedAt: number | null) {
+    session.seeded = true;
+    session.seededArchivedAt = archivedAt;
+    session.seededCause = "restored";
+    session.committed = true;
+    sessionStore.save(session.name, threadId, true);
   }
 
   function startFreshThread(session: CodexSession) {
@@ -894,6 +926,7 @@ export function createMind(options: {
           name: session.name,
           oldThreadId,
           seedTokens,
+          sessionsRoot: codexSessionsRoot(),
         })
       : null;
     if (!newThreadId) {
