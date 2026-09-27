@@ -49,3 +49,7 @@ export function clearCommitted(dir: string): void {
 export function threadRef(name: string): string {
   return name.startsWith("new-") ? "a one-off session" : `the \`${name}\` thread`;
 }
+
+export function capitalize(text: string): string {
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}

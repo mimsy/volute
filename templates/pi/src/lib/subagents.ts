@@ -9,10 +9,10 @@ import {
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
-import { subagentUsageSlice } from "./event-handler.js";
 import { log } from "./logger.js";
 import { createSessionBashTool } from "./session-bash.js";
 import type { UsageByModel } from "./types.js";
+import { runUsageSlice } from "./usage-slices.js";
 
 export type SubagentDefinition = {
   description: string;
@@ -81,7 +81,7 @@ export function createSubagentExtension(
                 if (event.type === "agent_end") {
                   clearTimeout(timeout);
                   // Before the error check: a run that failed or was aborted still spent.
-                  const usage = subagentUsageSlice(event.messages);
+                  const usage = runUsageSlice(event.messages);
                   if (usage) context.onUsage?.(usage);
                   // Check for error messages first
                   for (const msg of event.messages ?? []) {

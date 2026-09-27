@@ -5,25 +5,10 @@ import type { IdentityWatch } from "./identity-watch.js";
 import { log, warn } from "./logger.js";
 import { filterEvent, loadTransparencyPreset } from "./transparency.js";
 import type { UsageByModel, VoluteEvent } from "./types.js";
+import { hasTokens, mergeSlices, sumAssistantUsage, usageSlice } from "./usage-slices.js";
 
-/** Minimal shape of the messages in an agent_end event (subset of AgentMessage). */
-type AgentEndMessage = {
-  role?: string;
-  errorMessage?: string;
-  /** pi-ai's provider id (`anthropic`, `openrouter`, …) — pairs with `model` for pricing. */
-  provider?: string;
-  model?: string;
-  usage?: {
-    input?: number;
-    output?: number;
-    cacheWrite?: number;
-    /** The part of `cacheWrite` with a 1-hour TTL — set by pi-ai's Anthropic provider only. */
-    cacheWrite1h?: number;
-    cache_creation?: number;
-    cacheRead?: number;
-    cache_read?: number;
-  };
-};
+/** The error field of an agent_end message (subset of AgentMessage). */
+type AgentEndMessage = { errorMessage?: string };
 
 export type EventSession = {
   name: string;
@@ -37,74 +22,6 @@ export type EventSession = {
    */
   subagentUsage?: UsageByModel[];
 };
-
-/** Summed usage of the assistant messages in one agent_end's `messages`. */
-export type AssistantUsage = {
-  input: number;
-  output: number;
-  cacheRead: number;
-  cacheWrite: number;
-  /** Undefined until a message reports the 1-hour split. */
-  cacheWrite1h?: number;
-  /** Context size at the last assistant message (input + cache), 0 if none reported. */
-  lastContext: number;
-  /** `provider:model` of the last assistant message. */
-  model?: string;
-};
-
-export function sumAssistantUsage(messages: unknown[] | undefined): AssistantUsage {
-  const sum: AssistantUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, lastContext: 0 };
-  for (const msg of (messages ?? []) as AgentEndMessage[]) {
-    if (msg.role !== "assistant" || !msg.usage) continue;
-    sum.input += msg.usage.input ?? 0;
-    sum.output += msg.usage.output ?? 0;
-    const cacheWrite = msg.usage.cacheWrite ?? msg.usage.cache_creation ?? 0;
-    const cacheRead = msg.usage.cacheRead ?? msg.usage.cache_read ?? 0;
-    sum.cacheWrite += cacheWrite;
-    if (msg.usage.cacheWrite1h !== undefined) {
-      sum.cacheWrite1h = (sum.cacheWrite1h ?? 0) + msg.usage.cacheWrite1h;
-    }
-    sum.cacheRead += cacheRead;
-    const context = (msg.usage.input ?? 0) + cacheWrite + cacheRead;
-    if (context) sum.lastContext = context;
-    if (msg.model) sum.model = msg.provider ? `${msg.provider}:${msg.model}` : msg.model;
-  }
-  return sum;
-}
-
-function hasTokens(u: { input: number; output: number; cacheRead: number; cacheWrite: number }) {
-  return u.input > 0 || u.output > 0 || u.cacheRead > 0 || u.cacheWrite > 0;
-}
-
-/** A subagent run's usage as a per-model slice, or undefined if it reported none. */
-export function subagentUsageSlice(messages: unknown[] | undefined): UsageByModel | undefined {
-  const u = sumAssistantUsage(messages);
-  if (!u.model || !hasTokens(u)) return undefined;
-  return {
-    model: u.model,
-    input_tokens: u.input,
-    output_tokens: u.output,
-    cache_read_input_tokens: u.cacheRead,
-    cache_creation_input_tokens: u.cacheWrite,
-  };
-}
-
-/** Sum slices that share a model id, keeping first-seen order. */
-function mergeSlices(slices: UsageByModel[]): UsageByModel[] {
-  const byModel = new Map<string, UsageByModel>();
-  for (const s of slices) {
-    const acc = byModel.get(s.model);
-    if (!acc) {
-      byModel.set(s.model, { ...s });
-      continue;
-    }
-    acc.input_tokens += s.input_tokens;
-    acc.output_tokens += s.output_tokens;
-    acc.cache_read_input_tokens += s.cache_read_input_tokens;
-    acc.cache_creation_input_tokens += s.cache_creation_input_tokens;
-  }
-  return [...byModel.values()];
-}
 
 export type EventHandlerOptions = {
   cwd: string;
@@ -123,6 +40,11 @@ export type EventHandlerOptions = {
   identityWatch?: IdentityWatch;
   /** Requests the restart that puts an edited identity file into effect. */
   onIdentityReload?: () => void | Promise<void>;
+  /**
+   * `provider:model` of the main loop's configured model — names its usage slice when no
+   * message this turn reported a model, so a subagent breakdown always has a main slice.
+   */
+  mainModel?: string;
 };
 
 // Loaded once at startup — mind restarts on config changes
@@ -234,6 +156,7 @@ export function createEventHandler(session: EventSession, options: EventHandlerO
         // emits below run asynchronously, but currentMessageId must be reset synchronously
         // so the next turn shifts a fresh id (see the currentMessageId guard above).
         const messageId = session.currentMessageId;
+        const channel = messageId ? session.messageChannels.get(messageId)?.channel : undefined;
         if (messageId) {
           session.messageChannels.delete(messageId);
         }
@@ -248,7 +171,6 @@ export function createEventHandler(session: EventSession, options: EventHandlerO
           session.messageIds.length = 0;
           session.messageChannels.clear();
         }
-        const channel = messageId ? session.messageChannels.get(messageId)?.channel : undefined;
         log("mind", `session "${session.name}": turn done`);
         // Collect any agent-level errors (e.g. a provider 401 reported inside agent_end).
         // Warn-logging alone left the failure invisible at every host surface (#619);
@@ -271,6 +193,7 @@ export function createEventHandler(session: EventSession, options: EventHandlerO
         // The aggregate is the main loop's own; the last assistant message names its model.
         const own = sumAssistantUsage(event.messages);
         const subagents = session.subagentUsage?.splice(0) ?? [];
+        const mainModel = own.model ?? options.mainModel;
         if (hasTokens(own) || subagents.length > 0) {
           const usage = {
             input_tokens: own.input,
@@ -282,27 +205,17 @@ export function createEventHandler(session: EventSession, options: EventHandlerO
             ...(own.cacheWrite1h !== undefined && {
               cache_creation_1h_input_tokens: own.cacheWrite1h,
             }),
-            model: own.model,
+            model: mainModel,
             // Subagents ran this turn: send a per-model breakdown the daemon prices slice
             // by slice, with `main_model` naming the main loop's slice (the 1-hour writes
-            // are its own). Without it their spend would never reach the cap.
-            ...(subagents.length > 0 && {
-              models: mergeSlices([
-                ...(own.model && hasTokens(own)
-                  ? [
-                      {
-                        model: own.model,
-                        input_tokens: own.input,
-                        output_tokens: own.output,
-                        cache_read_input_tokens: own.cacheRead,
-                        cache_creation_input_tokens: own.cacheWrite,
-                      },
-                    ]
-                  : []),
-                ...subagents,
-              ]),
-              ...(own.model && { main_model: own.model }),
-            }),
+            // are its own). The main slice is always present, even at zero, so main_model
+            // always matches one and every subagent slice is priced — without this their
+            // spend would never reach the cap.
+            ...(subagents.length > 0 &&
+              mainModel && {
+                models: mergeSlices([usageSlice(own, mainModel), ...subagents]),
+                main_model: mainModel,
+              }),
           };
           options.broadcast({ type: "usage", ...usage });
           emit(session, { type: "usage", metadata: usage });

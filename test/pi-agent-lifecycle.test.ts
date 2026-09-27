@@ -50,6 +50,8 @@ let createMind: typeof import("../templates/pi/src/agent.js")["createMind"];
 let faux: any;
 let fauxAssistantMessage: any;
 let modelRuntime: any;
+let pca: any;
+let createEventHandler: typeof import("../templates/pi/src/lib/event-handler.js")["createEventHandler"];
 const scratch: string[] = [];
 
 function events(type: string, session?: string) {
@@ -188,13 +190,14 @@ before(async () => {
   process.env.PI_OFFLINE = "1";
 
   const piAi = await import("@earendil-works/pi-ai");
-  const pca = await import("@earendil-works/pi-coding-agent");
+  pca = await import("@earendil-works/pi-coding-agent");
   fauxAssistantMessage = piAi.fauxAssistantMessage;
   faux = piAi.fauxProvider();
   modelRuntime = await pca.ModelRuntime.create();
   modelRuntime.registerNativeProvider(faux.provider);
 
   ({ createMind } = await import(resolvePath(composedDir, "src/agent.js")));
+  ({ createEventHandler } = await import(resolvePath(composedDir, "src/lib/event-handler.js")));
 });
 
 after(() => {
@@ -258,9 +261,119 @@ describe("pi session init failure", () => {
     assert.equal(lost.length, 1);
     assert.equal(lost[0].kind, "context_lost");
     assert.equal(lost[0].thread, undefined, "mind-level, so it can't strand (#768)");
-    assert.match(lost[0].message ?? "", /`main` thread couldn't be resumed/);
+    assert.match(lost[0].message ?? "", /^The `main` thread couldn't be resumed/);
     // The fresh session's first turn is real conversation again.
     await waitFor(() => existsSync(join(dir, ".committed")), "marker re-set after the turn");
+  });
+
+  it("starts fresh when the transcript can't even be opened", async () => {
+    const layout = makeMindDir();
+    const dir = join(layout.sessionsDir, "main");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "old.jsonl"), transcript(layout.cwd, "s1"));
+    writeFileSync(join(dir, ".committed"), "");
+    const mind = await newMind(layout);
+
+    // continueRecent reads and parses the newest transcript; make that throw once, as
+    // an unreadable or unparseable file does.
+    const continueRecent = pca.SessionManager.continueRecent;
+    let failed = false;
+    pca.SessionManager.continueRecent = (...args: any[]) => {
+      if (!failed) {
+        failed = true;
+        throw new Error("Session file is not a valid session");
+      }
+      return continueRecent.apply(pca.SessionManager, args);
+    };
+    try {
+      faux.setResponses([fauxAssistantMessage("fresh start")]);
+      send(mind, "main", "hi");
+      await waitFor(() => events("done", "main").length > 0, "done");
+      assert.equal(events("error").length, 0, "the fresh session answered");
+      assert.equal(notices().length, 1);
+      assert.match(notices()[0].message ?? "", /couldn't be resumed/);
+    } finally {
+      pca.SessionManager.continueRecent = continueRecent;
+    }
+  });
+
+  it("keeps an intact transcript through a failure that isn't the transcript's", async () => {
+    const layout = makeMindDir();
+    const dir = join(layout.sessionsDir, "main");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "old.jsonl"), transcript(layout.cwd, "s1"));
+    writeFileSync(join(dir, ".committed"), "");
+    const mind = await newMind(layout);
+
+    // A transient failure after the transcript opened cleanly (resource loading here).
+    const reload = pca.DefaultResourceLoader.prototype.reload;
+    let failed = false;
+    pca.DefaultResourceLoader.prototype.reload = async function (this: unknown, ...args: any[]) {
+      if (!failed) {
+        failed = true;
+        throw new Error("transient");
+      }
+      return reload.apply(this, args);
+    };
+    try {
+      send(mind, "main", "hi");
+      await waitFor(() => events("done", "main").length > 0, "done for the failed turn");
+      assert.equal(events("error", "main").length, 1);
+      assert.equal(notices().length, 0, "nothing was lost, so the mind isn't told it was");
+
+      captured = [];
+      faux.setResponses([
+        (context: any) => {
+          // The next message resumes the same conversation.
+          const said = JSON.stringify(context.messages);
+          return fauxAssistantMessage(said.includes("earlier reply") ? "remembered" : "forgot");
+        },
+      ]);
+      send(mind, "main", "again");
+      await waitFor(() => events("done", "main").length > 0, "done for the next turn");
+      assert.ok(events("text", "main").some((e) => e.content === "remembered"));
+      assert.equal(notices().length, 0);
+      assert.deepEqual(
+        readdirSync(dir).filter((f) => f.endsWith(".jsonl")),
+        ["old.jsonl"],
+        "no fresh transcript was started",
+      );
+    } finally {
+      pca.DefaultResourceLoader.prototype.reload = reload;
+    }
+  });
+
+  it("tells the mind when a seeded tail can't be resumed, marker or not", async () => {
+    const layout = makeMindDir();
+    const archived = join(layout.sessionsDir, "archive", "main-2026-09-01T10-00");
+    mkdirSync(archived, { recursive: true });
+    writeFileSync(join(archived, "old.jsonl"), transcript("/old/home", "s0"));
+    const mind = await newMind(layout);
+
+    const build = pca.SessionManager.prototype.buildSessionContext;
+    let failed = false;
+    pca.SessionManager.prototype.buildSessionContext = function (this: unknown, ...args: any[]) {
+      if (!failed) {
+        failed = true;
+        throw new Error("unreadable seed");
+      }
+      return build.apply(this, args);
+    };
+    try {
+      faux.setResponses([fauxAssistantMessage("fresh")]);
+      send(mind, "main", "hi");
+      await waitFor(() => events("done", "main").length > 0, "done");
+      const lost = notices();
+      assert.equal(lost.length, 1, "the restored conversation was real, and it's gone");
+      assert.match(lost[0].message ?? "", /couldn't be resumed/);
+      assert.equal(
+        events("context", "main").filter((e) => e.metadata?.source === "seeded-session").length,
+        0,
+        "no restored-session note for a conversation that didn't continue",
+      );
+    } finally {
+      pca.SessionManager.prototype.buildSessionContext = build;
+    }
   });
 
   it("stays quiet about a resume failure when the thread was never known to hold anything", async () => {
@@ -425,6 +538,71 @@ describe("pi seeded note", () => {
     send(mind, "main", "two");
     await waitFor(() => events("done", "main").length === 2, "second done");
     assert.equal(seededNotes().length, 1, "not repeated once a turn has settled");
+  });
+});
+
+describe("pi failed dispatch", () => {
+  it("delivers a failed message's done to its own listener while another turn is current", async () => {
+    const layout = makeMindDir();
+    const mind = await newMind(layout);
+    const prompt = pca.AgentSession.prototype.prompt;
+    pca.AgentSession.prototype.prompt = function (this: unknown, text: string, ...rest: any[]) {
+      if (text === "fail-me") return Promise.reject(new Error("queue refused"));
+      return prompt.call(this, text, ...rest);
+    };
+    try {
+      let bDone = false;
+      faux.setResponses([
+        async () => {
+          // Turn A is current while B arrives and fails.
+          send(mind, "main", "fail-me", (e) => {
+            if (e.type === "done") bDone = true;
+          });
+          await waitFor(() => bDone, "B's done at B's listener");
+          return fauxAssistantMessage("A done");
+        },
+      ]);
+      send(mind, "main", "A");
+      await waitFor(() => events("done", "main").length >= 2, "both turns done");
+      assert.ok(bDone);
+    } finally {
+      pca.AgentSession.prototype.prompt = prompt;
+    }
+  });
+});
+
+describe("pi usage breakdown", () => {
+  it("always names a main slice, even at zero usage, so subagent slices are priced", async () => {
+    const session = {
+      name: "main",
+      messageIds: ["m1"] as (string | undefined)[],
+      messageChannels: new Map([["m1", { channel: "#test" }]]),
+      subagentUsage: [
+        {
+          model: "other:sub-1",
+          input_tokens: 10,
+          output_tokens: 5,
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 0,
+        },
+      ],
+    };
+    const handler = createEventHandler(session as never, {
+      cwd: makeMindDir().cwd,
+      broadcast: () => {},
+      mainModel: "faux:faux-1",
+    });
+    handler({ type: "agent_start" } as never);
+    handler({ type: "agent_end", messages: [] } as never);
+    await waitFor(() => events("done", "main").length > 0, "done");
+    const [usage] = events("usage", "main");
+    assert.equal(usage.metadata!.main_model, "faux:faux-1");
+    assert.deepEqual(
+      usage.metadata!.models.map((s: any) => s.model),
+      ["faux:faux-1", "other:sub-1"],
+    );
+    // The turn's channel survives into its done (it used to be read after its deletion).
+    assert.equal((events("done", "main")[0] as any).channel, "#test");
   });
 });
 
