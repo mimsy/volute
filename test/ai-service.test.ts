@@ -3,6 +3,8 @@ import { describe, it } from "node:test";
 import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
 import {
   addCustomModel,
+  aiComplete,
+  aiCompleteModelOutcome,
   aiCompleteUserInvoked,
   buildCustomModel,
   findModel,
@@ -391,5 +393,152 @@ describe("aiCompleteUserInvoked — the one host-invoked auto-select (#381)", ()
     enableOneModel();
     const calls = await callsMade(() => aiCompleteUserInvoked("system", "user"));
     assert.ok(calls > 0, "a host-invoked operation should still reach a model");
+  });
+});
+
+describe("openai-codex completions reach the endpoint its credential works on (#1228)", () => {
+  // The Responses API stream a completion reads: one assistant message, then completion.
+  function responsesStream(text: string): Response {
+    const events = [
+      { type: "response.created", response: { id: "resp_1" } },
+      {
+        type: "response.output_item.added",
+        output_index: 0,
+        item: { type: "message", id: "msg_1", role: "assistant", content: [] },
+      },
+      { type: "response.output_text.delta", output_index: 0, delta: text },
+      {
+        type: "response.output_item.done",
+        output_index: 0,
+        item: {
+          type: "message",
+          id: "msg_1",
+          role: "assistant",
+          content: [{ type: "output_text", text }],
+        },
+      },
+      {
+        type: "response.completed",
+        response: {
+          id: "resp_1",
+          status: "completed",
+          usage: { input_tokens: 10, output_tokens: 3, total_tokens: 13 },
+        },
+      },
+    ];
+    const body = events.map((e) => `event: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`).join("");
+    return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
+  }
+
+  /** Complete once with every network path stubbed, recording where the request went. */
+  async function complete(modelId: string) {
+    const realFetch = globalThis.fetch;
+    const realWebSocket = globalThis.WebSocket;
+    const requests: { url: string; headers: Headers }[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const req = new Request(input, init);
+      requests.push({ url: req.url, headers: req.headers });
+      return responsesStream("in my voice");
+    }) as typeof fetch;
+    // No WebSocket in this runtime: the codex API falls back to SSE over the stubbed fetch.
+    (globalThis as { WebSocket?: unknown }).WebSocket = undefined;
+    try {
+      const outcome = await aiCompleteModelOutcome("system", "user", modelId);
+      return { outcome, requests };
+    } finally {
+      globalThis.fetch = realFetch;
+      globalThis.WebSocket = realWebSocket;
+    }
+  }
+
+  /** A ChatGPT OAuth access token: a JWT carrying the account id the codex API requires. */
+  function chatgptToken(): string {
+    const part = (o: object) => Buffer.from(JSON.stringify(o)).toString("base64url");
+    const claims = { "https://api.openai.com/auth": { chatgpt_account_id: "acct-test" } };
+    return `${part({ alg: "none" })}.${part(claims)}.sig`;
+  }
+
+  it("with OAuth, calls the ChatGPT codex backend with the account token", async () => {
+    removeAiConfig();
+    const access = chatgptToken();
+    saveProviderConfig("openai-codex", {
+      oauth: { access, refresh: "r", expires: Date.now() + 3_600_000 },
+    });
+    setEnabledModels(["openai-codex:gpt-5.5"]);
+    try {
+      const { outcome, requests } = await complete("openai-codex:gpt-5.5");
+      assert.deepEqual(outcome, { status: "ok", text: "in my voice" });
+      const req = requests.at(-1)!;
+      assert.match(req.url, /^https:\/\/chatgpt\.com\/backend-api\//);
+      assert.equal(req.headers.get("authorization"), `Bearer ${access}`);
+      assert.equal(req.headers.get("chatgpt-account-id"), "acct-test");
+    } finally {
+      removeAiConfig();
+    }
+  });
+
+  it("never refreshes inside pi-ai: Volute stays the only refresh authority", async () => {
+    // A refresh pi-ai ran against its credential store would rotate the refresh token into a
+    // store nothing persists. With an expired token and Volute's own refresh failing, the only
+    // token-endpoint request is Volute's, and the codex call goes out on the stale token.
+    removeAiConfig();
+    const access = chatgptToken();
+    saveProviderConfig("openai-codex", { oauth: { access, refresh: "r", expires: 0 } });
+    const realFetch = globalThis.fetch;
+    const realWebSocket = globalThis.WebSocket;
+    const tokenRequests: string[] = [];
+    const codexAuth: (string | null)[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const req = new Request(input, init);
+      if (req.url.startsWith("https://chatgpt.com/")) {
+        codexAuth.push(req.headers.get("authorization"));
+        return responsesStream("in my voice");
+      }
+      tokenRequests.push(req.url);
+      throw new Error("token endpoint unreachable");
+    }) as typeof fetch;
+    (globalThis as { WebSocket?: unknown }).WebSocket = undefined;
+    try {
+      assert.equal(await aiComplete("system", "user", "openai-codex:gpt-5.5"), "in my voice");
+      assert.equal(tokenRequests.length, 1, `token requests: ${tokenRequests.join(", ")}`);
+      assert.deepEqual(codexAuth, [`Bearer ${access}`]);
+      assert.equal(getAiConfig()?.providers["openai-codex"]?.oauth?.refresh, "r");
+    } finally {
+      globalThis.fetch = realFetch;
+      globalThis.WebSocket = realWebSocket;
+      removeAiConfig();
+    }
+  });
+
+  it("with an API key, calls the OpenAI platform — as the codex CLI does with that key", async () => {
+    // pi-ai's codex API only takes a ChatGPT token; handed an API key it can't even build a
+    // request, so the completion would fail on every summary.
+    removeAiConfig();
+    saveProviderConfig("openai-codex", { apiKey: "sk-codex-test" });
+    setEnabledModels(["openai-codex:gpt-5.5"]);
+    try {
+      const { outcome, requests } = await complete("openai-codex:gpt-5.5");
+      assert.deepEqual(outcome, { status: "ok", text: "in my voice" });
+      const req = requests.at(-1)!;
+      assert.match(req.url, /^https:\/\/api\.openai\.com\/v1\/responses/);
+      assert.equal(req.headers.get("authorization"), "Bearer sk-codex-test");
+    } finally {
+      removeAiConfig();
+    }
+  });
+
+  it("with an API key and no platform model of that id, is unconfigured rather than failing", async () => {
+    removeAiConfig();
+    saveProviderConfig("openai-codex", { apiKey: "sk-codex-test" });
+    addCustomModel("openai-codex", "gpt-codex-only");
+    setEnabledModels(["openai-codex:gpt-codex-only"]);
+    try {
+      const { outcome, requests } = await complete("openai-codex:gpt-codex-only");
+      assert.deepEqual(outcome, { status: "unconfigured" });
+      assert.equal(requests.length, 0);
+    } finally {
+      removeCustomModel("openai-codex", "gpt-codex-only");
+      removeAiConfig();
+    }
   });
 });
