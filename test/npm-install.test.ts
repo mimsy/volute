@@ -171,6 +171,40 @@ describe("npmInstallAsMind retry", () => {
     assert.equal(attempts.length, 1, "one attempt only");
   });
 
+  describe("under user isolation", () => {
+    const original = process.env.VOLUTE_ISOLATION;
+    const isoCwd = join(tmpDir, "install-iso");
+    before(() => {
+      process.env.VOLUTE_ISOLATION = "user";
+    });
+    after(() => {
+      if (original === undefined) delete process.env.VOLUTE_ISOLATION;
+      else process.env.VOLUTE_ISOLATION = original;
+      rmSync(isoCwd, { recursive: true, force: true });
+    });
+
+    // #1231: npm runs as the mind, so node_modules must be the mind's first. The
+    // mind user here doesn't exist, so the reclaim fails — which proves it runs,
+    // and runs before npm.
+    it("reclaims an existing node_modules before npm runs", async () => {
+      mkdirSync(join(isoCwd, "node_modules"), { recursive: true });
+      const { attempts, run } = recorder([], etarget);
+      await assert.rejects(
+        () => npmInstallAsMind(isoCwd, "no-such-iso-mind", [], run),
+        /Failed to reclaim .*node_modules/,
+      );
+      assert.equal(attempts.length, 0, "npm must not run on a tree it can't write");
+    });
+
+    it("has nothing to reclaim when there is no node_modules yet", async () => {
+      rmSync(join(isoCwd, "node_modules"), { recursive: true, force: true });
+      mkdirSync(isoCwd, { recursive: true });
+      const { attempts, run } = recorder([], etarget);
+      await npmInstallAsMind(isoCwd, "no-such-iso-mind", [], run);
+      assert.equal(attempts.length, 1);
+    });
+  });
+
   it("recognises the stale-cache signature wherever npm puts it", () => {
     assert.equal(isStaleCacheFailure({ stderr: "npm error code ETARGET" }), true);
     assert.equal(isStaleCacheFailure({ stderr: "npm error code ENOTCACHED" }), true);

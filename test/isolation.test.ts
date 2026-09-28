@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import {
   chmodSync,
   existsSync,
+  linkSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
@@ -16,6 +17,7 @@ import { tmpdir, userInfo } from "node:os";
 import { resolve } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import {
+  chownForeignOwned,
   chownNoFollow,
   chownTargets,
   containMindPath,
@@ -133,6 +135,55 @@ describe("isolation", () => {
         resolve(dir, "src"),
       ].sort(),
     );
+  });
+
+  // #1231: a root-run npm leaves root-owned packages under a node_modules whose
+  // own inode is still the mind's, so the check must look inside, not at the top.
+  describe("chownForeignOwned", () => {
+    // Not root here, so the "foreign" owner is uid+1 and the chown hands entries
+    // to ourselves — allowed, and it drives the real find/-execdir/chown pass.
+    const self = {
+      spec: `${userInfo().username}:${execFileSync("id", ["-gn"], { encoding: "utf-8" }).trim()}`,
+      uid: userInfo().uid,
+      gid: userInfo().gid,
+    };
+    const seed = (): string => {
+      const dir = realpathSync(mkdtempSync(resolve(tmpdir(), "foreign-owned-")));
+      mkdirSync(resolve(dir, "libsql", "lib"), { recursive: true });
+      writeFileSync(resolve(dir, "libsql", "lib", "index.js"), "");
+      symlinkSync("/etc", resolve(dir, "planted"));
+      writeFileSync(resolve(dir, "outside"), "");
+      linkSync(resolve(dir, "outside"), resolve(dir, "libsql", "hardlink"));
+      return dir;
+    };
+
+    it("re-owns nothing in a tree that is already the mind's", async () => {
+      const dir = seed();
+      assert.deepEqual(await chownForeignOwned(dir, self.uid, self), []);
+    });
+
+    it("re-owns every foreign entry, deep ones included, but no hard-linked file", async () => {
+      const dir = seed();
+      const got = await chownForeignOwned(dir, self.uid + 1, self);
+      const names = got.map((p) => resolve(dir, p).slice(dir.length));
+      for (const want of ["", "/libsql", "/libsql/lib", "/libsql/lib/index.js", "/planted"]) {
+        assert.ok(names.includes(want), `${want || "root"} should be re-owned: ${names}`);
+      }
+      // A hard link re-owns the file it points at — the mind could have linked
+      // /etc/sudoers in.
+      assert.ok(!names.includes("/libsql/hardlink"), "hard-linked file must be skipped");
+      assert.ok(!names.includes("/outside"), "hard-linked file must be skipped");
+    });
+
+    it("throws when the pass fails rather than falling back", async () => {
+      const dir = seed();
+      await assert.rejects(() =>
+        chownForeignOwned(dir, self.uid + 1, {
+          ...self,
+          spec: "no-such-user-xyz-123:no-such-group",
+        }),
+      );
+    });
   });
 
   it("chownTargets recurses the whole dir when node_modules owner differs", async () => {
