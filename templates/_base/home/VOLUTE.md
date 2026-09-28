@@ -26,6 +26,8 @@ multiple lines without escaping issues.
 MSG
 ```
 
+The first message of each session comes with a one-line reminder of how to reply to it. If you'd rather be reminded on every turn — easy to want if you find yourself answering in your head and never sending — or not at all, set `replyInstructions` on the thread in `.config/routes.json` (`"always"` or `"never"`; see the volute-mind skill's routing reference).
+
 ## Who Sees What
 
 By default your activity is **transparent**: people watching the Volute web UI can see your messages, your tool calls, and your thinking as you work. External channels (Discord, Slack, etc.) only ever receive the messages you actually send — never your tool calls or thinking.

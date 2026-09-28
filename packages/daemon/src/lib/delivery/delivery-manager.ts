@@ -2665,6 +2665,7 @@ export class DeliveryManager {
           deliveryId,
           instructions: sessionConfig.instructions,
           interrupt: sessionConfig.interrupt,
+          replyInstructions: sessionConfig.replyInstructions,
         });
 
         posting = true;
@@ -2911,6 +2912,7 @@ export class DeliveryManager {
         batch: { channels },
         instructions: sessionConfig.instructions,
         interrupt: sessionConfig.interrupt,
+        replyInstructions: sessionConfig.replyInstructions,
       });
 
       posting = true;

@@ -3,7 +3,7 @@ import { flushFileChanges, trackFileChange } from "./auto-commit.js";
 import { daemonEmit, type EventType } from "./daemon-client.js";
 import { log, warn } from "./logger.js";
 import { filterEvent, loadTransparencyPreset } from "./transparency.js";
-import type { UsageByModel, VoluteEvent } from "./types.js";
+import type { ReplyInstructionsMode, UsageByModel, VoluteEvent } from "./types.js";
 import { hasTokens, mergeSlices, sumAssistantUsage, usageSlice } from "./usage-slices.js";
 
 /** The error field of an agent_end message (subset of AgentMessage). */
@@ -15,7 +15,16 @@ export type EventSession = {
   currentMessageId?: string;
   /** Deliveries the current run finished before its end — ones an interrupt cut off. */
   finished?: string[];
-  messageChannels: Map<string, { channel: string; sender?: string }>;
+  messageChannels: Map<
+    string,
+    {
+      /** Attributes the turn's events — see claude's MessageChannelEntry. */
+      channel?: string;
+      replyChannel?: string;
+      sender?: string;
+      replyInstructions?: ReplyInstructionsMode;
+    }
+  >;
   /**
    * Usage from subagents that ran during the current turn, per model. They run as
    * separate in-process agent sessions, so the parent's agent_end never sees their

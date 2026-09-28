@@ -18,6 +18,9 @@ export type ChannelInfo = {
   rateWindow?: number | null;
 };
 
+/** When a turn opens with the reminder of how to reply — see turn-context.ts. */
+export type ReplyInstructionsMode = "once" | "always" | "never";
+
 export type ChannelMeta = {
   channel?: string;
   sender?: string;
@@ -38,7 +41,14 @@ export type ChannelMeta = {
   /** The channel's own description, rules, and limits — sent once per channel per session. */
   channelInfo?: ChannelInfo;
   typing?: string[];
-  replyInstructions?: "once" | "always" | "never";
+  /** The thread's routes.json `replyInstructions`, resolved by the daemon for each delivery. */
+  replyInstructions?: ReplyInstructionsMode;
+  /**
+   * Where a batched turn's reply reminder points: its first message's channel. Deliberately
+   * not `channel`, which attributes the turn's events to a channel — and so echoes its text
+   * there — when a batch can span several.
+   */
+  replyChannel?: string;
   interrupt?: boolean;
   /**
    * The daemon's id for this delivery. Adopted as the message's `messageId`, so a `done`

@@ -270,3 +270,70 @@ describe("claude: every turn ends with a done naming what it took (#1207)", () =
     assert.equal(answered.length, 0, "the dying session did not run d1 again itself");
   });
 });
+
+describe("claude: reply instructions follow routes.json (#1205)", () => {
+  const replyNotes = (session: string) =>
+    posted.filter(
+      (p) =>
+        p.path.endsWith("/events") &&
+        p.body.session === session &&
+        p.body.type === "context" &&
+        p.body.metadata?.source === "reply-instructions",
+    );
+
+  async function twoTurns(session: string, meta: Record<string, unknown>) {
+    const mind = newMind();
+    for (const id of [`${session}-1`, `${session}-2`]) {
+      mind.resolve(session).handle([{ type: "text", text: `hello ${id}` }], {
+        ...meta,
+        messageId: id,
+      });
+      await waitFor(() => dones(session).some((d) => d.body.messageId === id), `${id}'s done`);
+    }
+    return replyNotes(session);
+  }
+
+  const alice = { channel: "@alice", sender: "alice" };
+
+  it("always: the delivered mode reaches the hook and every turn is reminded", async () => {
+    const notes = await twoTurns("ri-always", { ...alice, replyInstructions: "always" });
+    assert.equal(notes.length, 2);
+    assert.match(notes[1].body.content, /volute chat send "@alice"/);
+    // A single message's events do name its channel — what the batch case below must not.
+    const text = posted.filter(
+      (p) => p.path.endsWith("/events") && p.body.session === "ri-always" && p.body.type === "text",
+    );
+    assert.ok(text.length > 0 && text.every((p) => p.body.channel === "@alice"));
+  });
+
+  it("once (the default): only the first turn", async () => {
+    assert.equal((await twoTurns("ri-once", alice)).length, 1);
+  });
+
+  it("never: no turn", async () => {
+    assert.equal((await twoTurns("ri-never", { ...alice, replyInstructions: "never" })).length, 0);
+  });
+
+  it("a batch is reminded of its replyChannel, and none of its events name a channel", async () => {
+    // A batch can span several channels; an event carrying one would be echoed there
+    // (echoText) — the reply meant for @bob, posted in #garden.
+    const notes = await twoTurns("ri-batch", {
+      replyChannel: "#garden",
+      sender: "alice",
+      replyInstructions: "always",
+    });
+    assert.equal(notes.length, 2);
+    assert.match(notes[0].body.content, /volute chat send "#garden"/);
+    const events = posted.filter(
+      (p) => p.path.endsWith("/events") && p.body.session === "ri-batch",
+    );
+    assert.ok(
+      events.some((p) => p.body.type === "text"),
+      "the turns said something",
+    );
+    assert.ok(
+      events.every((p) => p.body.channel === undefined),
+      `no event names a channel: ${JSON.stringify(events.map((p) => p.body.channel))}`,
+    );
+  });
+});

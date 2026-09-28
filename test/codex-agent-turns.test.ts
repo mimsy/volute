@@ -1587,3 +1587,48 @@ describe("codex runs one subagent at a time (#1200)", () => {
     assert.deepEqual(order, ["start 1", "end 1", "start 2"]);
   });
 });
+
+describe("codex reply instructions follow routes.json (#1205)", () => {
+  const replyNotes = (session: string) =>
+    eventsFor(session, "context").filter((p) => p.body.metadata?.source === "reply-instructions");
+
+  async function twoTurns(session: string, meta: Record<string, unknown>) {
+    await send(session, undefined, mind, meta);
+    await send(session, undefined, mind, meta);
+    return replyNotes(session);
+  }
+
+  const alice = { channel: "@alice", sender: "alice" };
+
+  it("always: the delivered mode reaches the decision and every turn is reminded", async () => {
+    const notes = await twoTurns("ri-always", { ...alice, replyInstructions: "always" });
+    assert.equal(notes.length, 2);
+    assert.match(notes[1].body.content, /volute chat send "@alice"/);
+    // A single message's events do name its channel — what the batch case below must not.
+    assert.ok(eventsFor("ri-always").some((p) => p.body.channel === "@alice"));
+  });
+
+  it("once (the default): only the first turn", async () => {
+    assert.equal((await twoTurns("ri-once", alice)).length, 1);
+  });
+
+  it("never: no turn", async () => {
+    assert.equal((await twoTurns("ri-never", { ...alice, replyInstructions: "never" })).length, 0);
+  });
+
+  it("a batch is reminded of its replyChannel, and none of its events name a channel", async () => {
+    const notes = await twoTurns("ri-batch", {
+      replyChannel: "#garden",
+      sender: "alice",
+      replyInstructions: "always",
+    });
+    assert.equal(notes.length, 2);
+    assert.match(notes[0].body.content, /volute chat send "#garden"/);
+    const events = eventsFor("ri-batch");
+    assert.ok(events.length > 0);
+    assert.ok(
+      events.every((p) => p.body.channel === undefined),
+      `no event names a channel: ${JSON.stringify(events.map((p) => p.body.channel))}`,
+    );
+  });
+});

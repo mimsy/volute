@@ -1294,3 +1294,53 @@ describe("pi rotation failure leaves nothing to resurrect", () => {
     );
   });
 });
+
+describe("pi reply instructions follow routes.json (#1205)", () => {
+  const replyNotes = (session: string) =>
+    events("context", session).filter((e) => e.metadata?.source === "reply-instructions");
+
+  async function twoTurns(replyInstructions?: string) {
+    const layout = makeMindDir();
+    const mind = await newMind(layout);
+    faux.setResponses([fauxAssistantMessage("a"), fauxAssistantMessage("b")]);
+    const meta = { channel: "@alice", sender: "alice", replyInstructions };
+    send(mind, "main", "one", undefined, meta);
+    await waitFor(() => events("done", "main").length === 1, "first done");
+    send(mind, "main", "two", undefined, meta);
+    await waitFor(() => events("done", "main").length === 2, "second done");
+    return replyNotes("main");
+  }
+
+  it("always: the delivered mode reaches the extension and every turn is reminded", async () => {
+    const notes = await twoTurns("always");
+    assert.equal(notes.length, 2);
+    assert.match(notes[1].content ?? "", /volute chat send "@alice"/);
+  });
+
+  it("once (the default): only the first turn", async () => {
+    assert.equal((await twoTurns()).length, 1);
+  });
+
+  it("never: no turn", async () => {
+    assert.equal((await twoTurns("never")).length, 0);
+  });
+
+  it("a batch is reminded of its replyChannel without its events being attributed to it", async () => {
+    const layout = makeMindDir();
+    const mind = await newMind(layout);
+    faux.setResponses([fauxAssistantMessage("a")]);
+    const id = send(mind, "main", "[Batch: 1 message from #garden]", undefined, {
+      replyChannel: "#garden",
+      sender: "alice",
+      replyInstructions: "always",
+    });
+    await waitFor(() => doneFor(id), "done");
+    assert.match(replyNotes("main")[0]?.content ?? "", /volute chat send "#garden"/);
+    const text = events("text", "main");
+    assert.ok(text.length > 0);
+    assert.ok(
+      text.every((e) => (e as { channel?: string }).channel === undefined),
+      "a batch's text is never echoed into one of its channels",
+    );
+  });
+});

@@ -319,6 +319,37 @@ describe("deliverBatch (#382)", () => {
     }
   });
 
+  it("carries the thread's replyInstructions on the wake flush's POST (#1205)", async () => {
+    let received: any;
+    const server = await startMindServer((b) => {
+      received = b;
+    });
+    await addMind(BATCH_MIND, portOf(server));
+    const configDir = resolve(process.env.VOLUTE_HOME!, "minds", BATCH_MIND, "home/.config");
+    mkdirSync(configDir, { recursive: true });
+    writeFileSync(
+      resolve(configDir, "routes.json"),
+      JSON.stringify({
+        rules: [{ channel: "@volute", thread: "night" }],
+        threads: { night: { replyInstructions: "always" } },
+        gateUnmatched: false,
+      }),
+    );
+    clearConfigCache(BATCH_MIND);
+    try {
+      assert.equal(
+        await deliverBatch(BATCH_MIND, [{ channel: "@volute", sender: "a", content: "one" }]),
+        true,
+      );
+      assert.equal(received.session, "night");
+      assert.equal(received.replyInstructions, "always");
+    } finally {
+      rmSync(configDir, { recursive: true, force: true });
+      clearConfigCache(BATCH_MIND);
+      await new Promise<void>((r) => server.close(() => r()));
+    }
+  });
+
   it("returns false when the mind server rejects the batch", async () => {
     const server = await startMindServer(() => {}, 500);
     await addMind(BATCH_MIND, portOf(server));

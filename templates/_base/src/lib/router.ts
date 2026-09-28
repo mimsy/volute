@@ -17,9 +17,11 @@ import type { ChannelMeta, HandlerResolver, Listener, VoluteContentPart } from "
  * mentions, gates unrecognized channels, and buffers batches (see
  * `packages/daemon/src/lib/delivery/`). By the time a message reaches this
  * template it has already been routed to a named session — the mind only
- * formats it (channel/sender/time prefix, typing suffix, session reply
- * instructions) and hands it to its session handler. `.config/routes.json`
- * stays mind-owned; only the resolution *engine* lives daemon-side.
+ * formats it (channel/sender/time prefix, typing suffix, the thread's
+ * `instructions`) and hands it to its session handler, with what the daemon
+ * resolved for the thread (e.g. `replyInstructions`) on the meta as it came.
+ * `.config/routes.json` stays mind-owned; only the resolution *engine* lives
+ * daemon-side.
  */
 
 /** Shape of a single message in a batch payload (subset of daemon DeliveryPayload). */
@@ -47,13 +49,11 @@ export type Router = {
 export type SessionConfig = {
   interrupt?: boolean;
   instructions?: string;
-  replyInstructions?: "once" | "always" | "never";
 };
 
 type ResolvedSessionConfig = {
   interrupt: boolean;
   instructions?: string;
-  replyInstructions: "once" | "always" | "never";
 };
 
 type RoutingConfig = {
@@ -92,7 +92,7 @@ function globMatch(pattern: string, value: string): boolean {
  * glob-pattern keys in `config.threads`. First match wins; defaults otherwise.
  */
 function resolveSessionConfig(config: RoutingConfig, sessionName: string): ResolvedSessionConfig {
-  const defaults: ResolvedSessionConfig = { interrupt: false, replyInstructions: "once" };
+  const defaults: ResolvedSessionConfig = { interrupt: false };
   if (!config.threads) return defaults;
 
   for (const [pattern, sessionConfig] of Object.entries(config.threads)) {
@@ -100,7 +100,6 @@ function resolveSessionConfig(config: RoutingConfig, sessionName: string): Resol
       return {
         interrupt: sessionConfig.interrupt ?? false,
         instructions: sessionConfig.instructions,
-        replyInstructions: sessionConfig.replyInstructions ?? "once",
       };
     }
   }
@@ -222,13 +221,7 @@ export function createRouter(options: {
     const interrupt = meta.interrupt ?? sessionConfig.interrupt;
     const unsubscribe = handler.handle(
       withInstructions,
-      {
-        ...meta,
-        sessionName: session,
-        messageId,
-        interrupt,
-        replyInstructions: sessionConfig.replyInstructions,
-      },
+      { ...meta, sessionName: session, messageId, interrupt },
       listener,
     );
     return { messageId, unsubscribe };
@@ -301,7 +294,16 @@ export function createRouter(options: {
     const handler = options.mindHandler(session);
 
     try {
-      handler.handle(withInstructions, { sessionName: session, messageId });
+      // The batch's first message is who its reply reminder names, as the header names
+      // every channel. A batch has no `channel`: that would attribute the whole turn to one.
+      const first = allMessages[0];
+      handler.handle(withInstructions, {
+        sessionName: session,
+        messageId,
+        replyChannel: first.channel === "unknown" ? undefined : first.channel,
+        sender: first.payload.sender ?? undefined,
+        replyInstructions: meta.replyInstructions,
+      });
       log("router", `dispatched batch for session ${session}: ${allMessages.length} messages`);
     } catch (err) {
       log("router", `error dispatching batch for session ${session}:`, err);

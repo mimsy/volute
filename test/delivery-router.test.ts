@@ -236,6 +236,28 @@ describe("resolveDeliveryMode", () => {
     assert.equal(r.interrupt, false);
   });
 
+  it("resolves replyInstructions, defaulting to once (#1205)", () => {
+    assert.equal(resolveDeliveryMode({}, "main").replyInstructions, "once");
+    const config: RoutingConfig = {
+      threads: {
+        loud: { replyInstructions: "always" },
+        quiet: { replyInstructions: "never" },
+        bad: { replyInstructions: "sometimes" as never },
+        other: { delivery: "batch" },
+      },
+    };
+    assert.equal(resolveDeliveryMode(config, "loud").replyInstructions, "always");
+    assert.equal(resolveDeliveryMode(config, "quiet").replyInstructions, "never");
+    assert.equal(resolveDeliveryMode(config, "bad").replyInstructions, "once");
+    assert.equal(resolveDeliveryMode(config, "other").replyInstructions, "once");
+    // A rule-level batch with no matching thread config still gets the default.
+    assert.equal(
+      resolveDeliveryMode({ threads: {} }, "x", { thread: "x", batch: 5 } as never)
+        .replyInstructions,
+      "once",
+    );
+  });
+
   it("honors an explicit interrupt: true in the matched thread config", () => {
     const config: RoutingConfig = {
       threads: { main: { interrupt: true } },

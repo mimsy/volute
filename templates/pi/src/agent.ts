@@ -23,7 +23,7 @@ import {
 } from "./lib/context-breakdown.js";
 import { daemonEmit, daemonNotice, daemonRecollection } from "./lib/daemon-client.js";
 import { dispatchPrompt } from "./lib/dispatch.js";
-import { createEventHandler, emit } from "./lib/event-handler.js";
+import { createEventHandler, type EventSession, emit } from "./lib/event-handler.js";
 import { runHooks } from "./lib/hook-loader.js";
 import {
   createIdentityNotice,
@@ -78,7 +78,7 @@ type PiSession = {
   currentMessageId?: string;
   /** Deliveries the current run finished before its end — ones an interrupt cut off. */
   finished?: string[];
-  messageChannels: Map<string, { channel: string; sender?: string }>;
+  messageChannels: EventSession["messageChannels"];
   contextTokens: number;
   /**
    * The system prompt this session runs on, rebuilt from disk when the session is created
@@ -983,11 +983,13 @@ export async function createMind(options: {
           session.listeners.add(filteredListener);
         }
 
-        // Track channel for reply instructions
-        if (meta.channel) {
+        // Track channel/sender, and the thread's reply-instructions mode, for reply instructions
+        if (meta.channel || meta.replyChannel) {
           session.messageChannels.set(meta.messageId, {
             channel: meta.channel,
+            replyChannel: meta.replyChannel,
             sender: meta.sender,
+            replyInstructions: meta.replyInstructions,
           });
         }
 
