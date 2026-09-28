@@ -34,11 +34,16 @@ import {
 } from "./lib/identity-watch.js";
 import { log } from "./lib/logger.js";
 import { MECHANICS_DOC, STALE_DOC_LINE } from "./lib/mechanics-doc.js";
-import { archiveLostPiTranscript, rotatePiSession, seedPiSession } from "./lib/pi-session-seed.js";
+import {
+  archiveLostPiTranscript,
+  hasLivePiSession,
+  rotatePiSession,
+  seedPiSession,
+} from "./lib/pi-session-seed.js";
 import { postToolUseInput } from "./lib/post-tool-use-input.js";
 import { createReplyInstructionsExtension } from "./lib/reply-instructions-extension.js";
 import { resolveModel } from "./lib/resolve-model.js";
-import { buildSeededNote, type SeedCause } from "./lib/seed-note.js";
+import { buildSeededNote, formatGap, type SeedCause } from "./lib/seed-note.js";
 import { createSessionBashTool } from "./lib/session-bash.js";
 import {
   capitalize,
@@ -513,6 +518,12 @@ export async function createMind(options: {
     const isEphemeral = session.name.startsWith("new-");
     const rebuilt = rebuildSystemPrompt(session);
     const dir = resolvePath(options.sessionsDir, session.name);
+    // A committed thread with no live transcript lost it (sleep archives the marker along
+    // with the directory, so a wake never looks like this). Read before seeding: a seed
+    // from an older archive becomes the live transcript, and continueRecent resumes it as
+    // though nothing were missing.
+    const liveLost =
+      !isEphemeral && isCommitted(dir) && !hasLivePiSession(options.sessionsDir, session.name);
 
     // Fresh persistent session — seed it from the previous session's archived
     // transcript so the mind experiences the conversation continuing rather than
@@ -583,19 +594,32 @@ export async function createMind(options: {
       adoptedSeed = false;
     }
 
-    if (!resumed && committed) {
+    if (committed && (!resumed || liveLost)) {
       // The thread held conversation and there is none to resume: the transcripts are
       // gone, or no longer match (continueRecent matches them by the cwd in their
-      // header, so a mind whose home path changed finds none).
-      log("mind", `session "${session.name}": committed transcript not found, starting fresh`);
+      // header, so a mind whose home path changed finds none). If an older archive stood
+      // in for it, say how old, so the "restored" note on that tail and this notice tell
+      // one story, not two.
+      log("mind", `session "${session.name}": committed transcript not found`);
+      const gap =
+        adoptedSeed && seeded?.archivedAt != null
+          ? formatGap(Date.now() - seeded.archivedAt)
+          : null;
+      const standIn = !adoptedSeed
+        ? ""
+        : ` What you see in it now is an older session${gap ? `, archived ${gap} ago` : ""}` +
+          " — everything after that is lost.";
       noticeContextLost(
         session.name,
         `The previous session for ${threadRef(session.name)} couldn't be restored (no ` +
-          "transcript for it was found), so it was reset. `volute mind history` has the " +
-          "record of what you were doing.",
+          `transcript for it was found), so it was reset.${standIn} \`volute mind history\` ` +
+          "has the record of what you were doing.",
       );
-      clearCommitted(dir);
-      committed = false;
+      // A seeded tail is real conversation, so the thread stays committed on it.
+      if (!resumed) {
+        clearCommitted(dir);
+        committed = false;
+      }
     }
 
     if (seeded && adoptedSeed) {

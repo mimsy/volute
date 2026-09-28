@@ -433,6 +433,73 @@ describe("pi context_lost on a missing transcript", () => {
     assert.match(lost[0].message ?? "", /previous session for the `main` thread/);
   });
 
+  it("tells the mind its live transcript is gone when an older archive stands in (#1230)", async () => {
+    const layout = makeMindDir();
+    // Slept and woke 12 minutes ago, then talked on: the live transcript and its marker
+    // are post-wake — and the transcript has gone missing.
+    const archivedAt = new Date(Date.now() - 12 * 60_000);
+    const stamp = archivedAt.toISOString().replace(/[:.]/g, "-").slice(0, 16);
+    const archived = join(layout.sessionsDir, "archive", `main-${stamp}`);
+    mkdirSync(archived, { recursive: true });
+    writeFileSync(join(archived, "old.jsonl"), transcript("/old/home", "s0"));
+    const dir = join(layout.sessionsDir, "main");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, ".committed"), "");
+    const mind = await newMind(layout);
+
+    faux.setResponses([fauxAssistantMessage("hello")]);
+    send(mind, "main", "hi");
+    await waitFor(() => events("done", "main").length > 0, "done");
+    const lost = notices();
+    assert.equal(lost.length, 1, "the post-wake conversation is gone");
+    assert.equal(lost[0].kind, "context_lost");
+    assert.match(
+      lost[0].message ?? "",
+      /an older session, archived about 1[23] minutes ago — everything after that is lost/,
+    );
+    // The seeded tail still continues, and its note dates the same archive.
+    const seededNotes = events("context", "main").filter(
+      (e) => e.metadata?.source === "seeded-session",
+    );
+    assert.equal(seededNotes.length, 1);
+    assert.match(seededNotes[0].content ?? "", /the break lasted about 1[23] minutes/);
+    assert.ok(existsSync(join(dir, ".committed")), "the seeded tail is real conversation");
+  });
+
+  it("tells the mind its live transcript is gone when nothing stands in", async () => {
+    const layout = makeMindDir();
+    const dir = join(layout.sessionsDir, "main");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, ".committed"), "");
+    const mind = await newMind(layout);
+
+    faux.setResponses([fauxAssistantMessage("hello")]);
+    send(mind, "main", "hi");
+    await waitFor(() => events("done", "main").length > 0, "done");
+    const lost = notices();
+    assert.equal(lost.length, 1);
+    assert.doesNotMatch(lost[0].message ?? "", /older session/);
+  });
+
+  it("says nothing on an ordinary wake, where the marker left with the archive (#769)", async () => {
+    const layout = makeMindDir();
+    const archived = join(layout.sessionsDir, "archive", "main-2026-09-01T10-00");
+    mkdirSync(archived, { recursive: true });
+    writeFileSync(join(archived, "old.jsonl"), transcript("/old/home", "s0"));
+    writeFileSync(join(archived, ".committed"), "");
+    const mind = await newMind(layout);
+
+    faux.setResponses([fauxAssistantMessage("good morning")]);
+    send(mind, "main", "hi");
+    await waitFor(() => events("done", "main").length > 0, "done");
+    assert.equal(notices().length, 0);
+    assert.equal(
+      events("context", "main").filter((e) => e.metadata?.source === "seeded-session").length,
+      1,
+      "the wake is restored as usual",
+    );
+  });
+
   it("says nothing when the same thread was never committed (#769)", async () => {
     const layout = makeMindDir();
     const dir = join(layout.sessionsDir, "main");
