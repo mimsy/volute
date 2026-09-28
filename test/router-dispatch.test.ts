@@ -106,23 +106,35 @@ describe("dispatch formatting", () => {
     assert.ok(textOf(calls[0].content).endsWith("\n[carol is typing]"));
   });
 
-  it("carries the session's replyInstructions through to the handler meta", () => {
-    const configPath = writeConfig({ threads: { main: { replyInstructions: "always" } } });
+  it("passes the daemon's replyInstructions through to the handler meta (#1205)", () => {
     const { mindHandler, calls } = createTestHandler();
-    const router = createRouter({ configPath, mindHandler });
+    const router = createRouter({ mindHandler });
 
-    router.dispatch([{ type: "text", text: "x" }], "main", { channel: "web", sender: "a" });
+    router.dispatch([{ type: "text", text: "x" }], "main", {
+      channel: "web",
+      sender: "a",
+      replyInstructions: "always",
+    });
 
     assert.equal(calls[0].meta.replyInstructions, "always");
   });
 
-  it("defaults replyInstructions to 'once' with no thread config", () => {
+  it("never resolves replyInstructions itself — the daemon is the one resolver (#1205)", () => {
+    // A second resolver here once overrode whatever the daemon sent, from its own read of
+    // routes.json — two copies of one rule, free to disagree.
+    const configPath = writeConfig({ threads: { main: { replyInstructions: "never" } } });
     const { mindHandler, calls } = createTestHandler();
-    const router = createRouter({ mindHandler });
+    const router = createRouter({ configPath, mindHandler });
 
     router.dispatch([{ type: "text", text: "x" }], "main", { channel: "web", sender: "a" });
+    router.dispatch([{ type: "text", text: "y" }], "main", {
+      channel: "web",
+      sender: "a",
+      replyInstructions: "always",
+    });
 
-    assert.equal(calls[0].meta.replyInstructions, "once");
+    assert.equal(calls[0].meta.replyInstructions, undefined);
+    assert.equal(calls[1].meta.replyInstructions, "always");
   });
 
   it("prepends session instructions only on the first message per session", () => {
@@ -240,6 +252,31 @@ describe("dispatchBatch formatting", () => {
     router.dispatchBatch({ channels: { web: [{ sender: "a", content: "x" }] } }, "main", {});
 
     assert.ok(textOf(calls[0].content).includes("[Session instructions: Batched.]"));
+  });
+
+  it("gives a batch a reply target and the daemon's replyInstructions, but no channel (#1205)", () => {
+    // Without a target a batched turn had nothing to name, so no template could remind the
+    // mind how to reply on it — `always` included. It must not be `channel`, though: that
+    // attributes the turn's events to one channel, and echoes its text there (echoText), when
+    // this batch spans two.
+    const { mindHandler, calls } = createTestHandler();
+    const router = createRouter({ mindHandler });
+
+    router.dispatchBatch(
+      {
+        channels: {
+          "#garden": [{ sender: "alice", content: "hi" }],
+          "@bob": [{ sender: "bob", content: "yo" }],
+        },
+      },
+      "main",
+      { replyInstructions: "always" },
+    );
+
+    assert.equal(calls[0].meta.replyChannel, "#garden");
+    assert.equal(calls[0].meta.channel, undefined);
+    assert.equal(calls[0].meta.sender, "alice");
+    assert.equal(calls[0].meta.replyInstructions, "always");
   });
 
   it("does nothing for an empty batch", () => {

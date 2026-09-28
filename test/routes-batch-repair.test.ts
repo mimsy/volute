@@ -109,6 +109,26 @@ describe("routesConfigProblems", () => {
     assert.match(problems[1], /rules\[1\].*"path".*never matches/);
     assert.match(problems[2], /rules\[1\].*destination "file".*never matches/);
   });
+
+  it("knows replyInstructions, and flags a value it can't honour (#1205)", async () => {
+    assert.deepEqual(
+      routesConfigProblems({
+        threads: {
+          a: { replyInstructions: "once" },
+          b: { replyInstructions: "always" },
+          c: { replyInstructions: "never" },
+        },
+      }),
+      [],
+      "a mind that sets it must not be told it's ignored",
+    );
+    const problems = routesConfigProblems({
+      threads: { d: { replyInstructions: "Always" } },
+    } as unknown as RoutingConfig);
+    assert.equal(problems.length, 1);
+    assert.match(problems[0], /threads\["d"\] has replyInstructions "Always", which is ignored/);
+    assert.match(problems[0], /"once", "always", "never"/);
+  });
 });
 
 describe("reportRoutesConfigProblems", () => {

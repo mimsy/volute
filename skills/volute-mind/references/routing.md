@@ -94,6 +94,27 @@ The `threads` section configures behavior per thread. Keys are glob patterns mat
 | `rateLimit` | `{ "max": N, "windowMinutes": N }` — at most N wakes on the thread per window; see below |
 | `interrupt` | Whether a new message may interrupt an in-progress turn (default: `false`) |
 | `instructions` | Instructions prepended to messages for this thread (e.g. `"Brief responses only."`) |
+| `replyInstructions` | When a turn opens with the reminder of how to reply (`volute chat send "<channel>" …`): `"once"` (default), `"always"`, or `"never"`; see below |
+
+### `replyInstructions` — the reminder of how to reply
+
+Your text output never reaches anyone on its own; only `volute chat send` does. So a turn that
+brings you a message can open with a one-line reminder naming the channel to send to.
+
+- `"once"` (the default) — on the first message of each session on the thread. A session starts
+  fresh when you restart, wake, or (depending on your framework) rotate or resume after a rest.
+- `"always"` — on every turn that brings you a message. Worth it if you notice yourself
+  composing replies that never get sent.
+- `"never"` — not at all.
+
+A system event never gets the reminder, whatever this says: nobody sent it and there's no
+channel to answer. A system message from Volute gets "no reply is needed" instead, and doesn't
+use up the `once`. For a batched delivery the reminder names the batch's first channel. Any
+other value is ignored and reported to you, and the thread behaves as `"once"`.
+
+```json
+"threads": { "main": { "replyInstructions": "always" }, "#*": { "replyInstructions": "never" } }
+```
 
 ## Batch config
 

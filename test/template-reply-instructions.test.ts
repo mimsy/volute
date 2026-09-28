@@ -58,11 +58,7 @@ describe("claude template: reply instructions vs system events", () => {
 
   function setup() {
     const messageChannels = new Map<string, { channel: string; sender?: string }>();
-    const sessionState = {
-      replyInstructionsFired: false,
-      replyInstructionsMode: "once" as const,
-      eventNoteFired: false,
-    };
+    const sessionState = { replyInstructionsFired: false, eventNoteFired: false };
     const { hook } = createReplyInstructionsHook(messageChannels, sessionState);
     // The SDK passes input/toolUseId/options; this hook reads none of them.
     const fire = async (): Promise<string | undefined> => {
@@ -186,7 +182,7 @@ describe("pi template: reply instructions vs system events", () => {
 });
 
 describe("codex template: reply instructions vs system events", () => {
-  let turnContextForBatch: typeof import("../templates/codex/src/lib/turn-context.js")["turnContextFor"];
+  let turnContextForBatch: typeof import("../templates/_base/src/lib/turn-context.js")["turnContextFor"];
   /** Most cases run one message per turn. */
   const turnContextFor = (
     meta: Parameters<typeof turnContextForBatch>[0][number],
@@ -309,3 +305,148 @@ describe("codex template: reply instructions vs system events", () => {
     });
   });
 });
+
+/**
+ * routes.json's `threads.<name>.replyInstructions` (#1205). The daemon resolves it for each
+ * delivery and sends it on the message's meta; every template must then honour it the same
+ * way, since a mind that sets `always` because it knows it forgets to reply is asking for
+ * exactly this. Each template is driven through its own real entry point: claude's hook,
+ * pi's extension, codex's per-run call.
+ */
+type Entry = {
+  channel?: string;
+  replyChannel?: string;
+  sender?: string;
+  replyInstructions?: "once" | "always" | "never";
+};
+type Fire = (entries: Entry[]) => Promise<string | undefined>;
+
+const modeHarnesses: Record<string, () => Promise<() => Fire>> = {
+  claude: async () => {
+    const dir = composeTemplate(templatesRoot, "claude").composedDir;
+    composed.push(dir);
+    const { createReplyInstructionsHook } = await import(
+      resolvePath(dir, "src/lib/hooks/reply-instructions.js")
+    );
+    return () => {
+      const pending = new Map<string, Entry>();
+      const { hook } = createReplyInstructionsHook(pending, {
+        replyInstructionsFired: false,
+        eventNoteFired: false,
+      });
+      return async (entries) => {
+        pending.clear();
+        for (const [i, e] of entries.entries()) pending.set(`m${i}`, e);
+        const out = (await hook({} as never, undefined, {} as never)) as {
+          hookSpecificOutput?: { additionalContext?: string };
+        };
+        return out?.hookSpecificOutput?.additionalContext;
+      };
+    };
+  },
+  pi: async () => {
+    const dir = composeTemplate(templatesRoot, "pi").composedDir;
+    composed.push(dir);
+    const { createReplyInstructionsExtension } = await import(
+      resolvePath(dir, "src/lib/reply-instructions-extension.js")
+    );
+    return () => {
+      const pending = new Map<string, Entry>();
+      let handler: (() => { message?: { content: string } } | undefined) | undefined;
+      createReplyInstructionsExtension(pending)({
+        on: (event: string, fn: typeof handler) => {
+          if (event === "before_agent_start") handler = fn;
+        },
+      } as never);
+      return async (entries) => {
+        pending.clear();
+        for (const [i, e] of entries.entries()) pending.set(`m${i}`, e);
+        return handler?.()?.message?.content;
+      };
+    };
+  },
+  codex: async () => {
+    const dir = composeTemplate(templatesRoot, "codex").composedDir;
+    composed.push(dir);
+    const { turnContextFor } = await import(resolvePath(dir, "src/lib/turn-context.js"));
+    const { loadPrompts } = await import(resolvePath(dir, "src/lib/startup.js"));
+    const prompts = loadPrompts();
+    return () => {
+      const session = { replyInstructionsFired: false, eventNoteFired: false };
+      return async (entries) => turnContextFor(entries, session, prompts)?.content;
+    };
+  },
+};
+
+for (const [template, harness] of Object.entries(modeHarnesses)) {
+  describe(`${template} template: routes.json replyInstructions (#1205)`, () => {
+    let newSession: () => Fire;
+    before(async () => {
+      newSession = await harness();
+    });
+
+    const alice = (mode?: Entry["replyInstructions"]): Entry => ({
+      channel: "@alice",
+      sender: "alice",
+      ...(mode ? { replyInstructions: mode } : {}),
+    });
+
+    it("unset means once: the session's first message only", async () => {
+      const fire = newSession();
+      assert.match((await fire([alice()])) ?? "", /volute chat send "@alice"/);
+      assert.equal(await fire([alice()]), undefined);
+    });
+
+    it("once: the session's first message only", async () => {
+      const fire = newSession();
+      assert.match((await fire([alice("once")])) ?? "", /@alice/);
+      assert.equal(await fire([alice("once")]), undefined);
+    });
+
+    it("always: every turn with someone to answer", async () => {
+      const fire = newSession();
+      for (let i = 0; i < 3; i++) {
+        assert.match((await fire([alice("always")])) ?? "", /volute chat send "@alice"/);
+      }
+    });
+
+    it("never: not even the first message", async () => {
+      const fire = newSession();
+      assert.equal(await fire([alice("never")]), undefined);
+      assert.equal(await fire([alice("never")]), undefined);
+    });
+
+    it("follows the thread the message came from, not the session's last setting", async () => {
+      const fire = newSession();
+      assert.ok(await fire([alice("once")]));
+      assert.match((await fire([alice("always")])) ?? "", /@alice/);
+      assert.equal(await fire([alice("once")]), undefined, "once is spent for the session");
+    });
+
+    it("always still never names an event channel on an event turn", async () => {
+      const fire = newSession();
+      const note = await fire([{ channel: "event:schedule:1", replyInstructions: "always" }]);
+      assert.ok(note && !note.includes("volute chat send"), `got: ${note}`);
+    });
+
+    it("a batch is reminded of its replyChannel", async () => {
+      const fire = newSession();
+      const batch = {
+        replyChannel: "#garden",
+        sender: "alice",
+        replyInstructions: "always" as const,
+      };
+      assert.match((await fire([batch])) ?? "", /volute chat send "#garden"/);
+      assert.match((await fire([batch])) ?? "", /#garden/);
+    });
+
+    it("a system message's note doesn't spend the once firing", async () => {
+      const fire = newSession();
+      assert.match(
+        (await fire([{ channel: "@volute", sender: "volute" }])) ?? "",
+        /no reply is needed/,
+      );
+      assert.match((await fire([alice()])) ?? "", /@alice/);
+    });
+  });
+}

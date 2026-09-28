@@ -22,11 +22,21 @@ export function isEventChannel(channel: string | undefined | null): boolean {
 }
 
 /**
+ * Whether one pending message is a system event: flagged as one by the router, or on an
+ * event's synthetic channel.
+ */
+export function isEventEntry(entry: { channel?: string; isEvent?: boolean }): boolean {
+  return !!entry.isEvent || isEventChannel(entry.channel);
+}
+
+/**
  * The first entry a reply could actually be sent to. Event channels are skipped: they are
  * turn-attribution handles, not reply targets.
  */
-export function firstReplyableEntry<T extends { channel: string }>(entries: T[]): T | undefined {
-  return entries.find((e) => !isEventChannel(e.channel));
+export function firstReplyableEntry<T extends { channel?: string; isEvent?: boolean }>(
+  entries: T[],
+): (T & { channel: string }) | undefined {
+  return entries.find((e): e is T & { channel: string } => !!e.channel && !isEventEntry(e));
 }
 
 /**
@@ -34,6 +44,6 @@ export function firstReplyableEntry<T extends { channel: string }>(entries: T[])
  * reply instructions). A turn that also carries a real message is a message turn — the mind
  * does have someone to answer.
  */
-export function isEventTurn(entries: { channel: string }[]): boolean {
-  return entries.length > 0 && entries.every((e) => isEventChannel(e.channel));
+export function isEventTurn(entries: { channel?: string; isEvent?: boolean }[]): boolean {
+  return entries.length > 0 && entries.every(isEventEntry);
 }

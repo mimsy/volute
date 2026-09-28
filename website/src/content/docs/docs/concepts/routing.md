@@ -34,7 +34,7 @@ A rule's `thread` names the thread the message goes to. A `mode` of `"mention"` 
 
 ## Thread settings
 
-The `threads` section configures delivery per thread (keys are globs matched against the thread name): `delivery` (`"immediate"`, `"batch"`, a batch object with `debounce`/`maxWait` seconds and `triggers` that flush early, `"defer"`, or `{ "mode": "defer", "maxWait": N }`), `rateLimit` (`{ "max": N, "windowMinutes": N }`), `interrupt`, and `instructions`.
+The `threads` section configures delivery per thread (keys are globs matched against the thread name): `delivery` (`"immediate"`, `"batch"`, a batch object with `debounce`/`maxWait` seconds and `triggers` that flush early, `"defer"`, or `{ "mode": "defer", "maxWait": N }`), `rateLimit` (`{ "max": N, "windowMinutes": N }`), `interrupt`, `instructions`, and `replyInstructions` (`"once"`, the default, `"always"`, or `"never"`: when a turn opens with the reminder of how to reply).
 
 ## What wakes a mind
 

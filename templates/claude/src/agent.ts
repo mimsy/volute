@@ -46,7 +46,11 @@ import {
 } from "./lib/session-seed.js";
 import { createSessionStore, lostRealContext } from "./lib/session-store.js";
 import type { EffortLevel, SubagentConfig, ThinkingConfig } from "./lib/startup.js";
-import { consumeStream, type MessageIdEntry } from "./lib/stream-consumer.js";
+import {
+  consumeStream,
+  type MessageChannelEntry,
+  type MessageIdEntry,
+} from "./lib/stream-consumer.js";
 import { createBuiltinSubagentModelHook, defaultSubagentModel } from "./lib/subagent-model.js";
 import { createSystemPromptSource } from "./lib/system-prompt.js";
 import { threadRef } from "./lib/thread-ref.js";
@@ -69,9 +73,8 @@ type Session = {
   currentMessageId?: string;
   currentSeq?: number;
   currentQuery?: ReturnType<typeof query>;
-  messageChannels: Map<string, { channel: string; sender?: string }>;
+  messageChannels: Map<string, MessageChannelEntry>;
   replyInstructionsFired: boolean;
-  replyInstructionsMode: "once" | "always" | "never";
   /** The event note is a standing fact about events, so it fires once per session. */
   eventNoteFired: boolean;
   contextTokens: number;
@@ -903,7 +906,6 @@ export function createMind(options: {
       messageIds: [],
       messageChannels: new Map(),
       replyInstructionsFired: false,
-      replyInstructionsMode: "once",
       eventNoteFired: false,
       contextTokens: 0,
       lastActivityAt: Date.now(),
@@ -1080,17 +1082,14 @@ export function createMind(options: {
           session.listeners.add(filteredListener);
         }
 
-        // Track channel/sender for reply instructions
-        if (meta.channel) {
+        // Track channel/sender, and the thread's reply-instructions mode, for reply instructions
+        if (meta.channel || meta.replyChannel) {
           session.messageChannels.set(meta.messageId, {
             channel: meta.channel,
+            replyChannel: meta.replyChannel,
             sender: meta.sender,
+            replyInstructions: meta.replyInstructions,
           });
-        }
-
-        // Update reply instructions mode from routing config
-        if (meta.replyInstructions) {
-          session.replyInstructionsMode = meta.replyInstructions;
         }
 
         // Interrupt if requested and session is mid-turn

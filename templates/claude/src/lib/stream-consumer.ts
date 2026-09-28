@@ -2,7 +2,7 @@ import type { query } from "@anthropic-ai/claude-agent-sdk";
 import { daemonEmit, type EventType } from "./daemon-client.js";
 import { log, warn } from "./logger.js";
 import { filterEvent, loadTransparencyPreset } from "./transparency.js";
-import type { VoluteEvent } from "./types.js";
+import type { ReplyInstructionsMode, VoluteEvent } from "./types.js";
 import {
   advanceBaseline,
   buildUsagePayload,
@@ -25,7 +25,18 @@ export type StreamSession = {
   messageIds: MessageIdEntry[];
   currentMessageId?: string;
   currentSeq?: number;
-  messageChannels: Map<string, { channel: string; sender?: string }>;
+  messageChannels: Map<string, MessageChannelEntry>;
+};
+
+/**
+ * A pending message's channel (which its turn's events are attributed to), and what its reply
+ * reminder needs: a batch has no `channel`, only a `replyChannel`.
+ */
+export type MessageChannelEntry = {
+  channel?: string;
+  replyChannel?: string;
+  sender?: string;
+  replyInstructions?: ReplyInstructionsMode;
 };
 
 export type StreamCallbacks = {

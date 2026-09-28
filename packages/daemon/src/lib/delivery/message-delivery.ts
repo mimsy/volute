@@ -22,6 +22,7 @@ import {
   extractTextContent,
   getRoutingConfig,
   matchMetaFor,
+  resolveDeliveryMode,
   resolveRoute,
   shouldGate,
   toWirePayload,
@@ -627,7 +628,12 @@ export async function deliverBatch(
       const res = await fetch(`http://127.0.0.1:${entry.port}/message`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ session, batch: { channels }, interrupt: false }),
+        body: JSON.stringify({
+          session,
+          batch: { channels },
+          interrupt: false,
+          replyInstructions: resolveDeliveryMode(config, session).replyInstructions,
+        }),
       });
       ok = res.ok;
       rejected = !res.ok;

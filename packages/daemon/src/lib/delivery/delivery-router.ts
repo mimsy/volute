@@ -51,7 +51,20 @@ export type SessionConfig = {
   delivery?: DeliveryMode;
   interrupt?: boolean;
   rateLimit?: RateLimit;
+  replyInstructions?: ReplyInstructionsMode;
 };
+
+/**
+ * When a turn on the thread opens with the reminder of how to reply (`volute chat send …`):
+ * on the session's first message only, on every turn, or never. The mind's template makes
+ * the call; the daemon only resolves the thread's setting and sends it with each delivery.
+ */
+export type ReplyInstructionsMode = "once" | "always" | "never";
+export const REPLY_INSTRUCTIONS_MODES: readonly ReplyInstructionsMode[] = [
+  "once",
+  "always",
+  "never",
+];
 
 /** At most `max` wakes on the thread per `windowMinutes`; wakes beyond that defer. */
 export type RateLimit = { max: number; windowMinutes: number };
@@ -88,6 +101,7 @@ export type ResolvedSessionConfig = {
   instructions?: string;
   interrupt: boolean;
   rateLimit?: RateLimit;
+  replyInstructions: ReplyInstructionsMode;
 };
 
 export type MatchMeta = {
@@ -331,7 +345,13 @@ const KNOWN_RULE_KEYS = new Set([
   "senderKind",
   "event",
 ]);
-const KNOWN_THREAD_KEYS = new Set(["instructions", "delivery", "interrupt", "rateLimit"]);
+const KNOWN_THREAD_KEYS = new Set([
+  "instructions",
+  "delivery",
+  "interrupt",
+  "rateLimit",
+  "replyInstructions",
+]);
 
 function quoteKeys(keys: string[]): string {
   return keys.map((k) => `"${k}"`).join(", ");
@@ -386,6 +406,17 @@ export function routesConfigProblems(config: RoutingConfig): string[] {
           `threads[${JSON.stringify(pattern)}] has rateLimit ` +
             `${JSON.stringify(threadConfig.rateLimit)}, which is ignored — it needs a "max" ` +
             `of at least 1 and a positive "windowMinutes", e.g. { "max": 6, "windowMinutes": 60 }.`,
+        );
+      }
+      if (
+        "replyInstructions" in threadConfig &&
+        parseReplyInstructions(threadConfig.replyInstructions) == null
+      ) {
+        problems.push(
+          `threads[${JSON.stringify(pattern)}] has replyInstructions ` +
+            `${JSON.stringify(threadConfig.replyInstructions)}, which is ignored — it is one of ` +
+            `${REPLY_INSTRUCTIONS_MODES.map((m) => `"${m}"`).join(", ")}. Until it's fixed, ` +
+            `you're reminded how to reply once per session there, as if it weren't set.`,
         );
       }
       const d = threadConfig.delivery;
@@ -640,6 +671,7 @@ export function resolveDeliveryMode(
   const defaults: ResolvedSessionConfig = {
     delivery: { mode: "immediate" },
     interrupt: false,
+    replyInstructions: "once",
   };
 
   if (!config.threads) {
@@ -653,6 +685,7 @@ export function resolveDeliveryMode(
           triggers: batch.triggers,
         },
         interrupt: false,
+        replyInstructions: "once",
       };
     }
     return defaults;
@@ -692,6 +725,7 @@ export function resolveDeliveryMode(
         instructions: sessionConfig.instructions,
         interrupt: sessionConfig.interrupt ?? false,
         rateLimit: parseRateLimit(sessionConfig.rateLimit) ?? undefined,
+        replyInstructions: parseReplyInstructions(sessionConfig.replyInstructions) ?? "once",
       };
     }
   }
@@ -707,6 +741,7 @@ export function resolveDeliveryMode(
         triggers: batch.triggers,
       },
       interrupt: false,
+      replyInstructions: "once",
     };
   }
 
@@ -721,6 +756,13 @@ function parseRateLimit(value: unknown): RateLimit | null {
   if (typeof max !== "number" || !(Math.floor(max) >= 1)) return null;
   if (typeof windowMinutes !== "number" || !(windowMinutes > 0)) return null;
   return { max: Math.floor(max), windowMinutes };
+}
+
+/** A thread's `replyInstructions`, or null when it's malformed (reported as a problem). */
+function parseReplyInstructions(value: unknown): ReplyInstructionsMode | null {
+  return REPLY_INSTRUCTIONS_MODES.includes(value as ReplyInstructionsMode)
+    ? (value as ReplyInstructionsMode)
+    : null;
 }
 
 // --- Mentions ---

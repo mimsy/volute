@@ -743,4 +743,94 @@ describe("DeliveryManager durability", () => {
       await removeMind(name);
     });
   });
+
+  // A thread's replyInstructions is resolved here and nowhere else — a delivery path that
+  // leaves it off leaves that thread's turns on the template default (#1205).
+  describe("replyInstructions field on delivery POSTs", () => {
+    const replyInstructionsOf = (body: unknown) =>
+      (body as { replyInstructions?: string }).replyInstructions;
+
+    it("sends 'once' by default on an immediate delivery", async () => {
+      const srv = await startMindServer();
+      servers.push(srv.server);
+      const name = await registerMind(srv.port, IMMEDIATE);
+
+      manager = new DeliveryManager();
+      manager.setRunningCheck(() => true);
+      await manager.routeAndDeliver(name, { channel: "test:ch", sender: "alice", content: "hi" });
+
+      assert.equal(srv.received.length, 1);
+      assert.equal(replyInstructionsOf(srv.received[0]), "once");
+      await removeMind(name);
+    });
+
+    it("sends the thread's setting on an immediate delivery", async () => {
+      const srv = await startMindServer();
+      servers.push(srv.server);
+      const name = await registerMind(srv.port, {
+        rules: [{ channel: "*", thread: "main" }],
+        threads: { main: { replyInstructions: "always" } },
+        gateUnmatched: false,
+      });
+
+      manager = new DeliveryManager();
+      manager.setRunningCheck(() => true);
+      await manager.routeAndDeliver(name, { channel: "test:ch", sender: "alice", content: "hi" });
+
+      assert.equal(srv.received.length, 1);
+      assert.equal(replyInstructionsOf(srv.received[0]), "always");
+      await removeMind(name);
+    });
+
+    it("sends the thread's setting on a batch delivery", async () => {
+      const srv = await startMindServer();
+      servers.push(srv.server);
+      const name = await registerMind(srv.port, {
+        rules: [{ channel: "test:*", thread: "group" }],
+        threads: {
+          group: {
+            delivery: { mode: "batch", debounce: 0, maxWait: 0 },
+            replyInstructions: "never",
+          },
+        },
+        gateUnmatched: false,
+      });
+
+      manager = new DeliveryManager();
+      manager.setRunningCheck(() => true);
+      await manager.routeAndDeliver(name, { channel: "test:ch", sender: "alice", content: "hi" });
+      await waitFor(() => srv.received.length > 0);
+
+      assert.ok((srv.received[0] as { batch?: unknown }).batch, "delivered as a batch");
+      assert.equal(replyInstructionsOf(srv.received[0]), "never");
+      await removeMind(name);
+    });
+
+    it("sends the thread's setting on a gated channel's release", async () => {
+      const srv = await startMindServer();
+      servers.push(srv.server);
+      const name = await registerMind(srv.port, {
+        rules: [{ channel: "@someone-else", thread: "main" }],
+        threads: { "*": { replyInstructions: "always" } },
+        gateUnmatched: true,
+      });
+
+      manager = new DeliveryManager();
+      manager.setRunningCheck(() => true);
+      // The "[New channel]" invite arrives as a system event, not a routed message.
+      const messages = () => srv.received.filter((b) => (b as { kind?: string }).kind !== "event");
+      const res = await manager.routeAndDeliver(name, {
+        channel: "test:ch",
+        sender: "alice",
+        content: "hi",
+      });
+      assert.equal(res.routed && res.mode, "gated");
+
+      await manager.acceptChannel(name, "test:ch");
+      await waitFor(() => messages().length > 0);
+
+      assert.equal(replyInstructionsOf(messages()[0]), "always");
+      await removeMind(name);
+    });
+  });
 });
